@@ -7,6 +7,7 @@ import {
   readFile,
   readdir,
   rename,
+  rm,
   writeFile,
 } from "node:fs/promises";
 import { dirname, join, matchesGlob } from "node:path";
@@ -27,6 +28,7 @@ import {
 import {
   executeWorkflowFixture as execFileAsync,
   workflowGit as git,
+  workflowFixtureEnvironment,
 } from "../../support/workflowGit.js";
 
 async function commit(directory: string) {
@@ -117,7 +119,7 @@ async function runPlanScript(
     {
       cwd: directory,
       env: {
-        ...process.env,
+        ...workflowFixtureEnvironment(),
         BASE_SHA: base,
         HEAD_SHA: head,
         GITHUB_SHA: head,
@@ -383,8 +385,16 @@ it("selects code checks for documentation filenames containing line separators",
 });
 
 it.each([
+  "artifacts.d.mts",
+  "artifacts.mjs",
+  "failure-report.d.mts",
+  "failure-report.mjs",
+  "github-api.d.mts",
+  "github-api.mjs",
   "job-timings.mjs",
   "job-timings-batch.mjs",
+  "pr-ci-health.d.mts",
+  "pr-ci-health.mjs",
   "test-report.mjs",
   "test-timing-reporter.mjs",
   "test-history.mjs",
@@ -427,6 +437,36 @@ it("keeps unknown CI scripts on the fast Linux baseline", async () => {
   for (const flag of CI_FLAGS) expect(full[flag]).toBe(true);
 });
 
+// Linux lanes skip a test gated to macOS; changing one runs the macOS lane.
+it.for([
+  [`it.skipIf(process.platform !== "darwin")("runs", () => {});\n`, true],
+  [`it.skipIf(process.platform === "linux")("runs", () => {});\n`, true],
+  [`it("runs everywhere", () => {});\n`, false],
+] as const)(
+  "selects the macOS lane for a changed test that may be gated to it: %j",
+  async ([source, apple]) => {
+    const { directory, base } = await fixture();
+    const test = "tests/boundary/filesystem/gated.test.ts";
+    const head = await change(directory, [test], source);
+    expect(await classify(directory, base, head)).toMatchObject({ apple });
+  },
+);
+
+it("does not select the macOS lane for a deleted macOS-gated test", async () => {
+  const { directory } = await fixture();
+  const test = "tests/boundary/filesystem/gated.test.ts";
+  const base = await change(
+    directory,
+    [test],
+    `it.skipIf(process.platform !== "darwin")("runs", () => {});\n`,
+  );
+  await rm(join(directory, test));
+  const head = await commit(directory);
+  expect(await classify(directory, base, head)).toMatchObject({
+    apple: false,
+  });
+});
+
 it("does not credit a fixture test as coverage for an unrelated shared script", async () => {
   const { directory } = await fixture();
   const module = "scripts/lib/uncovered.mjs";
@@ -444,6 +484,54 @@ it("does not credit a fixture test as coverage for an unrelated shared script", 
     testSelection: {
       mode: "full",
       reason: `No test reaches shared script module: ${module}`,
+    },
+  });
+});
+
+it("does not let an unrelated changed test mask an untraced fixture module", async () => {
+  const { directory } = await fixture();
+  const implementation = "tests/fixtures/dynamic/provider.ts";
+  const consumer = "tests/boundary/filesystem/dynamicFixture.test.ts";
+  const unrelated = "tests/boundary/filesystem/unrelated.test.ts";
+  await change(
+    directory,
+    [consumer],
+    "await import(`../../fixtures/dynamic/${fixtureName}.js`);\n",
+  );
+  const base = await change(directory, [implementation, unrelated]);
+  const head = await change(
+    directory,
+    [implementation, unrelated],
+    "changed\n",
+  );
+  expect(await runPlanScript(directory, base, head)).toMatchObject({
+    testSelection: {
+      mode: "full",
+      reason: `Input is not traced to tests: ${implementation}`,
+    },
+  });
+});
+
+it("keeps selection narrow when a changed fixture module has a traced consumer", async () => {
+  const { directory } = await fixture();
+  const implementation = "tests/fixtures/dynamic/provider.ts";
+  const consumer = "tests/boundary/filesystem/dynamicFixture.test.ts";
+  const unrelated = "tests/boundary/filesystem/unrelated.test.ts";
+  await change(
+    directory,
+    [consumer],
+    'await import("../../fixtures/dynamic/provider.js");\n',
+  );
+  const base = await change(directory, [implementation, unrelated]);
+  const head = await change(
+    directory,
+    [implementation, unrelated],
+    "changed\n",
+  );
+  expect(await runPlanScript(directory, base, head)).toMatchObject({
+    testSelection: {
+      mode: "selected",
+      files: [consumer, unrelated],
     },
   });
 });
@@ -879,86 +967,106 @@ it.each(["", "not-a-commit"])(
   },
 );
 
-it("selects a completed CI ancestor rather than a foreign or non-terminal run", async ({
-  skip,
-}) => {
-  skip(process.platform === "win32", "the fake gh is a POSIX shell script");
-  const { directory, base } = await fixture();
-  const foreignBase = await change(directory, ["README.md"]);
-  const head = await change(directory, ["src/evm/client.ts"]);
-  const bin = join(directory, "fake-bin");
-  await mkdir(bin);
-  const gh = join(bin, "gh");
-  await writeFile(gh, '#!/bin/sh\ncat "$GH_FIXTURE_RESPONSE"\n');
-  await chmod(gh, 0o755);
-  const response = join(directory, "runs.json");
-  await writeFile(
-    response,
-    JSON.stringify({
-      workflow_runs: [
-        {
-          status: "completed",
-          path: ".github/workflows/ci.yml@refs/heads/main",
-          event: "push",
-          conclusion: "success",
-          head_branch: "main",
-          head_repository: { full_name: "untrusted/fork" },
-          head_sha: foreignBase,
-        },
-        {
-          status: "in_progress",
-          path: ".github/workflows/ci.yml@refs/heads/main",
-          event: "push",
-          conclusion: "success",
-          head_branch: "main",
-          head_repository: { full_name: "owner/repo" },
-          head_sha: foreignBase,
-        },
-        {
-          status: "completed",
-          path: ".github/workflows/release.yml@refs/heads/main",
-          event: "push",
-          conclusion: "success",
-          head_branch: "main",
-          head_repository: { full_name: "owner/repo" },
-          head_sha: foreignBase,
-        },
-        {
-          status: "completed",
-          path: ".github/workflows/ci.yml@refs/heads/main",
-          event: "push",
-          conclusion: "success",
-          head_branch: "main",
-          head_repository: { full_name: "owner/repo" },
-          head_sha: base,
-        },
+it.for([
+  {
+    scenario: "recent ancestor",
+    sameHeadRuns: 0,
+    includeBase: true,
+    calls: [5],
+  },
+  {
+    scenario: "older ancestor",
+    sameHeadRuns: 2,
+    includeBase: true,
+    calls: [5, 100],
+  },
+  {
+    scenario: "short list exhausted",
+    sameHeadRuns: 0,
+    includeBase: false,
+    calls: [5],
+  },
+  {
+    scenario: "ancestor outside search window",
+    sameHeadRuns: 97,
+    includeBase: true,
+    calls: [5, 100],
+  },
+])(
+  "looks up the trusted CI baseline for $scenario",
+  async ({ sameHeadRuns, includeBase, calls }, { skip }) => {
+    skip(process.platform === "win32", "the fake gh uses a POSIX shebang");
+    const { directory, base } = await fixture();
+    const foreignBase = await change(directory, ["README.md"]);
+    const head = await change(directory, ["src/evm/client.ts"]);
+    const bin = join(directory, "fake-bin");
+    await mkdir(bin);
+    const gh = join(bin, "gh");
+    await writeFile(
+      gh,
+      `#!${process.execPath}
+const fs = require("node:fs");
+const size = Number(process.argv.find((arg) => arg.startsWith("per_page=")).slice(9));
+fs.appendFileSync(process.env.GH_REQUEST_LOG, size + "\\n");
+console.log(JSON.stringify({ workflow_runs: JSON.parse(process.env.GH_FIXTURE_RUNS).slice(0, size) }));
+`,
+    );
+    await chmod(gh, 0o755);
+    const candidate = {
+      status: "completed",
+      path: ".github/workflows/ci.yml@refs/heads/main",
+      event: "push",
+      conclusion: "success",
+      head_branch: "main",
+      head_repository: { full_name: "owner/repo" },
+      head_sha: foreignBase,
+    };
+    const runs = [
+      { ...candidate, head_repository: { full_name: "untrusted/fork" } },
+      { ...candidate, status: "in_progress" },
+      { ...candidate, path: ".github/workflows/release.yml@refs/heads/main" },
+      ...Array.from({ length: sameHeadRuns }, () => ({
+        ...candidate,
+        head_sha: head,
+      })),
+    ];
+    if (includeBase) runs.push({ ...candidate, head_sha: base });
+    const output = join(directory, "baseline-output");
+    const log = join(directory, "request-log");
+    const result = await execFileAsync(
+      process.execPath,
+      [
+        fileURLToPath(
+          new URL("../../../scripts/ci/baseline.mjs", import.meta.url),
+        ),
       ],
-    }),
-  );
-  const output = join(directory, "baseline-output");
-  const result = await execFileAsync(
-    process.execPath,
-    [
-      fileURLToPath(
-        new URL("../../../scripts/ci/baseline.mjs", import.meta.url),
-      ),
-    ],
-    {
-      cwd: directory,
-      env: {
-        ...process.env,
-        PATH: `${bin}:${process.env.PATH}`,
-        GH_FIXTURE_RESPONSE: response,
-        CI_REPOSITORY: "owner/repo",
-        CI_DEFAULT_BRANCH: "main",
-        HEAD_SHA: head,
-        GITHUB_OUTPUT: output,
+      {
+        cwd: directory,
+        env: {
+          ...workflowFixtureEnvironment(),
+          PATH: `${bin}:${process.env.PATH}`,
+          GH_FIXTURE_RUNS: JSON.stringify(runs),
+          GH_REQUEST_LOG: log,
+          CI_REPOSITORY: "owner/repo",
+          CI_DEFAULT_BRANCH: "main",
+          HEAD_SHA: head,
+          GITHUB_OUTPUT: output,
+        },
       },
-    },
-  );
-  expect(JSON.parse(result.stdout)).toEqual({ base, reason: "" });
-  expect(await readFile(output, "utf8")).toBe(`base=${base}\nreason=\n`);
-});
+    );
+    const expectedBase = includeBase && runs.length <= 100 ? base : "";
+    const reason = expectedBase
+      ? ""
+      : "No trusted successful CI push baseline is an ancestor of this head";
+    expect(JSON.parse(result.stdout)).toEqual({ base: expectedBase, reason });
+    expect(await readFile(output, "utf8")).toBe(
+      `base=${expectedBase}\nreason=${reason}\n`,
+    );
+    expect(
+      (await readFile(log, "utf8")).trim().split("\n").map(Number),
+    ).toEqual(calls);
+  },
+);
 
 it("returns an empty baseline when GitHub lookup fails", async ({ skip }) => {
   skip(process.platform === "win32", "the fake gh is a POSIX shell script");
@@ -979,17 +1087,18 @@ it("returns an empty baseline when GitHub lookup fails", async ({ skip }) => {
     {
       cwd: directory,
       env: {
-        ...process.env,
+        ...workflowFixtureEnvironment(),
         PATH: `${bin}:${process.env.PATH}`,
         CI_REPOSITORY: "owner/repo",
         CI_DEFAULT_BRANCH: "main",
+        CI_BASELINE_EVENT: "schedule",
         HEAD_SHA: head,
       },
     },
   );
   expect(JSON.parse(result.stdout)).toMatchObject({
     base: "",
-    reason: expect.stringContaining("Could not read"),
+    reason: "Could not read a successful CI schedule baseline from GitHub",
   });
   expect(head).not.toBe(base);
 });
@@ -1221,6 +1330,18 @@ it.each([
     { code: true, ghidra_bridge: true, runtime: false, package: false },
   ],
   [
+    "scripts/verify-real-ghidra-project-coverage.mjs",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
+    "tests/conformance/ghidra/selected-project-coverage.c",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
+    "tests/conformance/ghidra/ReaSelectedProjectSeeds.java",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
     "scripts/verify-ghidra-loader-relocation.mjs",
     { code: true, ghidra_bridge: true, runtime: false, package: false },
   ],
@@ -1376,6 +1497,7 @@ it.each([
       package: true,
       binary_layout: true,
       signal_recording: true,
+      packet_capture: true,
       recorded_crash: false,
       workflows: true,
     },
@@ -1388,6 +1510,7 @@ it.each([
       package: true,
       binary_layout: true,
       signal_recording: true,
+      packet_capture: true,
       recorded_crash: false,
       workflows: true,
     },
@@ -1879,7 +2002,7 @@ it.each(["evm", "browser"])(
     const run = (result: string) =>
       execFileAsync(process.execPath, [command], {
         env: {
-          ...process.env,
+          ...workflowFixtureEnvironment(),
           CI_JOBS: JSON.stringify({ ...jobs, [scope]: { result } }),
         },
       });
@@ -2030,36 +2153,6 @@ it.each([
     },
   ],
   [
-    "scripts/lib/cli-process-environment.mjs",
-    {
-      code: true,
-      package: true,
-      runtime: true,
-      javascript_recovery: true,
-      readiness: false,
-    },
-  ],
-  [
-    "scripts/lib/runtime-admission.mjs",
-    {
-      code: true,
-      package: true,
-      runtime: true,
-      javascript_recovery: true,
-      readiness: false,
-    },
-  ],
-  [
-    "scripts/lib/runtime-admission.d.mts",
-    {
-      code: true,
-      package: true,
-      runtime: true,
-      javascript_recovery: true,
-      readiness: false,
-    },
-  ],
-  [
     "tests/conformance/readiness/report/reconstructionReadiness.ts",
     {
       code: true,
@@ -2089,6 +2182,21 @@ it.each([
   ],
 ])("preserves scope boundaries for %s", async (path, expected) => {
   expect(await classifyPaths([path])).toMatchObject(expected);
+});
+
+it.each([
+  "scripts/lib/cli-compiled-runtime.mjs",
+  "scripts/lib/cli-process-environment.mjs",
+  "scripts/lib/runtime-admission.mjs",
+  "scripts/lib/runtime-admission.d.mts",
+])("selects packaged CLI runtime checks for %s", async (path) => {
+  expect(await classifyPaths([path])).toMatchObject({
+    code: true,
+    package: true,
+    runtime: true,
+    javascript_recovery: true,
+    readiness: false,
+  });
 });
 
 it("unions provider scopes across mixed changes and deletions", async () => {
@@ -2277,7 +2385,13 @@ const workflowFile = async (name: string): Promise<unknown> =>
 
 const scopesSchema = z.object({
   CI_FLAGS: z.array(z.string()),
-  CI_LANES: z.record(z.string(), z.object({ paths: z.array(z.string()) })),
+  CI_LANES: z.record(
+    z.string(),
+    z.object({
+      paths: z.array(z.string()),
+      earlyInputs: z.array(z.string()).optional(),
+    }),
+  ),
   MANUAL_VERIFIERS: z.array(z.string()),
 });
 
@@ -2330,7 +2444,10 @@ it("owns every explicit native-host test path with the lane that runs it", async
 });
 
 it("never runs a manual-only verifier from an automatic workflow", async () => {
-  const { MANUAL_VERIFIERS } = await loadScopes();
+  const { MANUAL_VERIFIERS, CI_LANES } = await loadScopes();
+  const ownedAutomaticInputs = Object.values(CI_LANES).flatMap(
+    (lane) => lane.earlyInputs ?? [],
+  );
   const scripts = z
     .object({ scripts: z.record(z.string(), z.string()) })
     .parse(
@@ -2370,8 +2487,10 @@ it("never runs a manual-only verifier from an automatic workflow", async () => {
   }
   expect(files.size).toBeGreaterThan(0);
   expect(
-    [...files].filter((file) =>
-      MANUAL_VERIFIERS.some((pattern) => matchesGlob(file, pattern)),
+    [...files].filter(
+      (file) =>
+        MANUAL_VERIFIERS.some((pattern) => matchesGlob(file, pattern)) &&
+        !ownedAutomaticInputs.some((pattern) => matchesGlob(file, pattern)),
     ),
   ).toEqual([]);
 });
@@ -2492,9 +2611,11 @@ it("keeps a non-UTF-8 Git name distinct from a literal replacement character", a
     "tree",
     "raw-tree",
   ]);
-  expect(() => gitRepository(directory).readFiles(tree, ["\uFFFD.ts"])).toThrow(
-    `Git could not read ${tree}:\uFFFD.ts`,
-  );
+  // Exercise both a small read and a full-tree index lookup.
+  for (const revision of [tree, `${tree}^{tree}`])
+    expect(() =>
+      gitRepository(directory).readFiles(revision, ["\uFFFD.ts"]),
+    ).toThrow(`Git could not read ${revision}:\uFFFD.ts`);
 });
 
 it("outputs only changed, tracked JS and TS paths for fast PR typed lint", async () => {

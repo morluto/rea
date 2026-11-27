@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256 as descriptorHash } from "../support/sha256.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -15,9 +15,6 @@ import {
 } from "../../src/native/elf/ElfNotes.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
-
-const descriptorHash = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 const buildCoreNotes = (): Buffer =>
   Buffer.concat([

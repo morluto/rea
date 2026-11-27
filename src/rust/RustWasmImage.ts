@@ -8,16 +8,11 @@ import {
   unsupportedInput,
 } from "../domain/parseFailure.js";
 import { readByteSourceSlice, type ByteSource } from "../domain/byteSource.js";
+import { RUST_WASM_SECTION_BUDGET } from "../domain/rust/rustBinary.js";
 
 /** The ParseFailure format of WebAssembly section framing. */
 export const WASM_FORMAT = "wasm";
 
-/**
- * Producer output holds a few dozen sections. The format sets no bound, and a
- * 256 MiB input of three-byte custom sections would otherwise keep this
- * section walk busy for about 89 million sections.
- */
-export const MAX_WASM_SECTIONS = 65_536;
 const PREAMBLE = Buffer.from("\0asm", "latin1");
 const CORE_MODULE_VERSION = Buffer.from([1, 0, 0, 0]);
 const COMPONENT_LAYER = Buffer.from([1, 0]);
@@ -53,6 +48,12 @@ const WASM_YIELD_INTERVAL = 256;
 export const readRustWasmSectionsFromReader = async (
   source: ByteSource,
   pause?: ZstandardFramePause,
+  /**
+   * Producer output holds a few dozen sections. The format sets no bound, and
+   * a 256 MiB input of three-byte custom sections would otherwise keep this
+   * walk busy for about 89 million sections.
+   */
+  maxSections: number = RUST_WASM_SECTION_BUDGET.default_value,
 ): Promise<RustWasmSections> => {
   const readSlice = (offset: number, length: number) =>
     readByteSourceSlice(source, offset, length);
@@ -99,11 +100,12 @@ export const readRustWasmSectionsFromReader = async (
         { offset: cursor, field: "section" },
       );
     // Admit one complete frame before charging any section payload work.
-    if (sections === MAX_WASM_SECTIONS)
+    // Sections are walked in turn, so the complete count is unknown here.
+    if (sections === maxSections)
       throw decodeLimit(
         WASM_FORMAT,
-        `WebAssembly module declares more than ${MAX_WASM_SECTIONS} sections`,
-        { name: "max_wasm_sections", maximum: MAX_WASM_SECTIONS },
+        `WebAssembly module declares more than max_wasm_sections (${String(maxSections)}) sections`,
+        { name: "max_wasm_sections", maximum: maxSections },
         { offset: cursor },
       );
     if (id === CUSTOM_SECTION) {

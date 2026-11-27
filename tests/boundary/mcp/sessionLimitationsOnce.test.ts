@@ -10,6 +10,7 @@ import { createServer } from "../../../src/server/createServer.js";
 import { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import { InvestigationRecords } from "../../../src/application/investigation/InvestigationRecords.js";
 import type { AnalysisClient } from "../../../src/ports/AnalysisProvider.js";
+import { createFixtureProviderIdentity } from "../../fixtures/analysisExecution.js";
 import { createTestProviderRouter } from "../../fixtures/binarySession.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { completedOperationEvidence } from "../../../src/application/binary/SessionEvidenceReuse.js";
@@ -19,11 +20,7 @@ import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js
 const validation = createMcpSchemaValidation();
 afterAll(() => validation.clear());
 
-const provider = {
-  id: "fixture",
-  name: "Fixture analysis provider",
-  version: "1",
-};
+const provider = createFixtureProviderIdentity();
 const SESSION = [
   "Fixture session limitation: auto-analysis completed before results.",
   "Fixture session limitation: closing discards metadata edits.",

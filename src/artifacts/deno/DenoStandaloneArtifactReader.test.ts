@@ -1,8 +1,7 @@
 import { createHash } from "node:crypto";
 import { buffer } from "node:stream/consumers";
 import type { FileHandle } from "node:fs/promises";
-import { open, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { open } from "node:fs/promises";
 
 import { expect, it, vi } from "vitest";
 import { phaseGate } from "../../../tests/support/lifecycleHarness.js";
@@ -18,7 +17,7 @@ import {
 } from "../../domain/native/elfNotes.js";
 import { MAX_INSPECT_PE_FILE_BYTES } from "../../domain/native/peResources.js";
 import { peResourceFixture } from "../../domain/pe/peResources.fixture.js";
-import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import { createTestTempFile } from "../../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../../tests/fixtures/artifactInventory.js";
 import { artifactFormatDescriptor } from "../artifactFormats.js";
 import {
@@ -77,12 +76,8 @@ it("keeps a confirmed Deno inventory when another pack recognizer is limited", a
 
 const secret = "super-secret-value";
 
-const writeCarrier = async (name: string, bytes: Buffer): Promise<string> => {
-  const root = await createTestTempDirectory("rea-deno-reader-");
-  const path = join(root, name);
-  await writeFile(path, bytes);
-  return path;
-};
+const writeCarrier = (name: string, bytes: Buffer): Promise<string> =>
+  createTestTempFile("rea-deno-reader-", name, bytes);
 
 const sectionFor = (
   contents: Buffer,
@@ -238,7 +233,7 @@ it("accepts identical duplicate sections and rejects differing ones", async () =
   const other = buildDenoSection({ vfsFileData: Buffer.from("other\n") });
   await expect(
     inventoryOf("different", denoMachO([section, other])),
-  ).rejects.toMatchObject({ reason: "format" });
+  ).rejects.toMatchObject({ reason: "malformed" });
 });
 
 it("leaves an ELF note that is not a Deno section unclassified as deno", async () => {
@@ -257,7 +252,7 @@ it("fails closed when a named section is truncated or lacks the opening marker",
       "truncated",
       denoMachO(Buffer.concat([DENO_FIXTURE_SECTION_MAGIC, Buffer.alloc(4)])),
     ),
-  ).rejects.toMatchObject({ reason: "format" });
+  ).rejects.toMatchObject({ reason: "malformed" });
   await expect(
     inventoryOf("unmarked", denoMachO(Buffer.from("not-a-deno-section!!"))),
   ).rejects.toMatchObject({ reason: "unavailable" });
@@ -284,7 +279,7 @@ it("does not follow a symlink and refuses to open it", async () => {
       formatMetadata: { symlink_dest_parts: ["main.ts"] },
     });
     await expect(reader.open(link!)).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
     });
   } finally {
     await reader.close();
@@ -641,7 +636,7 @@ it("rejects unequal duplicate lengths without hashing payloads", async () => {
   );
   expect(probe).toMatchObject({
     status: "present",
-    failure: { reason: "format" },
+    failure: { reason: "malformed" },
   });
   expect(payloadBytes).toBe(0);
 });
@@ -661,7 +656,7 @@ it("stops hashing duplicate sections at the first mismatch", async () => {
   );
   expect(probe).toMatchObject({
     status: "present",
-    failure: { reason: "format" },
+    failure: { reason: "malformed" },
   });
   expect(payloadBytes).toBe(8192);
 });
@@ -737,7 +732,7 @@ it("fails closed on an Intel trailer truncated by its last byte", async () => {
     locateDenoStandalone(bytesHandle(bytes), bytes.length),
   ).resolves.toMatchObject({
     status: "present",
-    failure: { reason: "format" },
+    failure: { reason: "malformed" },
   });
 });
 
@@ -900,7 +895,7 @@ it.each([
       expect(result).toMatchObject({
         status: "present",
         failure: {
-          reason: "format",
+          reason: "malformed",
           ...(diagnostic === undefined
             ? {}
             : { message: expect.stringMatching(diagnostic) }),
@@ -1241,7 +1236,7 @@ it("fails closed when the enclosing Intel trailer is truncated around a nested a
     locateDenoStandalone(bytesHandle(bytes), bytes.length),
   ).resolves.toMatchObject({
     status: "present",
-    failure: { reason: "format" },
+    failure: { reason: "malformed" },
   });
 });
 
@@ -1325,7 +1320,7 @@ it("fails closed on side-by-side Intel trailers with different bytes", async () 
     locateDenoStandalone(bytesHandle(bytes), bytes.length),
   ).resolves.toMatchObject({
     status: "present",
-    failure: { reason: "format" },
+    failure: { reason: "malformed" },
   });
 });
 
@@ -1505,7 +1500,7 @@ it("rejects a universal Deno image whose sibling slice cannot be read", async ()
   ).resolves.toMatchObject({
     status: "present",
     failure: {
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining("declared more than once"),
     },
   });
@@ -1518,7 +1513,7 @@ it("rejects a universal Deno image whose sibling slice cannot be read", async ()
   ).resolves.toMatchObject({
     status: "present",
     failure: {
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining("slice 1 cannot be read"),
     },
   });
@@ -1541,7 +1536,7 @@ it("fails closed when the d3n0l4nd section is zero-fill", async () => {
     ).resolves.toMatchObject({
       status: "present",
       failure: {
-        reason: "format",
+        reason: "malformed",
         message: expect.stringContaining("zero-fill"),
       },
     });
@@ -1577,7 +1572,10 @@ it("rejects a confirmed Deno section whose parent segment exceeds the image", as
     locateDenoStandalone(bytesHandle(image), image.length),
   ).resolves.toMatchObject({
     status: "present",
-    failure: { reason: "format", message: expect.stringContaining("segment") },
+    failure: {
+      reason: "malformed",
+      message: expect.stringContaining("segment"),
+    },
   });
 });
 
@@ -1589,7 +1587,7 @@ it("rejects a Deno section outside its segment virtual extent", async () => {
   ).resolves.toMatchObject({
     status: "present",
     failure: {
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining("virtual extent"),
     },
   });
@@ -1613,7 +1611,7 @@ it("fails closed when the d3n0l4nd section exceeds its segment's file extent", a
     ).resolves.toMatchObject({
       status: "present",
       failure: {
-        reason: "format",
+        reason: "malformed",
         message: expect.stringContaining("segment's file extent"),
       },
     });
@@ -1644,7 +1642,7 @@ it("leaves a damaged __SUI segment without a d3n0l4nd section to native inventor
   ).resolves.toMatchObject({
     status: "present",
     failure: {
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining("load commands are truncated"),
     },
   });
@@ -1669,7 +1667,7 @@ it("rejects a universal Deno image whose sibling holds an unparseable segment co
   ).resolves.toMatchObject({
     status: "present",
     failure: {
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining("slice 0"),
     },
   });
@@ -1694,7 +1692,7 @@ it("fails closed on a confirmed SUI note whose descriptor size exceeds its table
   await expect(probeElf(deno)).resolves.toMatchObject({
     status: "present",
     failure: {
-      reason: "format",
+      reason: "malformed",
       message: expect.stringMatching(/exceeds its table/iu),
     },
   });
@@ -1721,7 +1719,7 @@ it("fails closed on a truncated __SUI section record that names d3n0l4nd", async
   ).resolves.toMatchObject({
     status: "present",
     failure: {
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining("d3n0l4nd section is truncated"),
     },
   });
@@ -1744,7 +1742,7 @@ it("fails closed on nonzero bytes after the last note in a SUI note table", asyn
   await expect(probeElf(dirty)).resolves.toMatchObject({
     status: "present",
     failure: {
-      reason: "format",
+      reason: "malformed",
       message: expect.stringMatching(/trailing non-zero bytes/iu),
     },
   });
@@ -1777,7 +1775,7 @@ it("rejects a universal Deno image whose FAT row misstates a slice's CPU", async
   ).resolves.toMatchObject({
     status: "present",
     failure: {
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining("disagrees with its Mach-O header"),
     },
   });
@@ -1793,7 +1791,7 @@ it("fails closed when the enclosing Intel trailer length is not a safe integer",
   ).resolves.toMatchObject({
     status: "present",
     failure: {
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining("trailer is truncated"),
     },
   });
@@ -1811,7 +1809,7 @@ it.each([0n, 7n])(
     ).resolves.toMatchObject({
       status: "present",
       failure: {
-        reason: "format",
+        reason: "malformed",
         message: expect.stringContaining("shorter than its marker"),
       },
     });
@@ -1877,7 +1875,7 @@ it("rejects a confirmed Deno section when header and segment widths disagree", a
     locateDenoStandalone(bytesHandle(image), image.length),
   ).resolves.toMatchObject({
     status: "present",
-    failure: { reason: "format" },
+    failure: { reason: "malformed" },
   });
 });
 

@@ -26,6 +26,7 @@ import {
 } from "../../../tests/fixtures/nativeHeaders.js";
 import type { ArtifactEntry } from "../../resources/ArtifactReader.js";
 import { dfuseFile } from "../../domain/firmware/dfuse.fixture.js";
+import { buildIso9660Image } from "../../domain/iso9660/iso9660.fixture.js";
 import {
   RP2040_FAMILY,
   patternBytes,
@@ -42,6 +43,8 @@ import {
 } from "../../../tests/fixtures/espImage.js";
 import { devicetreeFixture } from "../../domain/firmware/devicetree.fixture.js";
 import { fitFixture } from "../fit/FitImage.fixture.js";
+import { twoVolumeUbiImage } from "../../domain/firmware/ubiImage.fixture.js";
+import { sampleAndroidVbmeta } from "../../domain/firmware/androidVbmeta.fixture.js";
 
 it("joins only observed PE signature bytes across stream chunks", () => {
   const bytes = pe(0x8664, 8190);
@@ -163,7 +166,7 @@ it("projects the parsed ASAR header size when admission rejects an archive", () 
     throw new Error("ASAR admission failure was not classified");
 
   const projected = projectAnalysisError(
-    translateArtifactFailure("inspect_artifact", failure),
+    translateArtifactFailure("inspect_artifact", "/selected/artifact", failure),
   );
   expect(projected.details?.limit).toMatchObject({
     required_value: headerBytes,
@@ -585,6 +588,32 @@ it("classifies nested HEX and S-record content as containers by bytes", () => {
   ).toEqual({ kind: "resource", format: "file" });
 });
 
+it("classifies nested UBI images as containers by a valid UBI# header", () => {
+  const image = twoVolumeUbiImage();
+  expect(classifyArtifactBytesAtPath("nand/rootfs.ubi", image)).toEqual({
+    kind: "container",
+    format: "ubi-image",
+  });
+  image.writeUInt32BE(0, 60);
+  expect(classifyArtifactBytesAtPath("nand/rootfs.ubi", image)).toEqual({
+    kind: "resource",
+    format: "file",
+  });
+});
+
+it("classifies a standalone vbmeta image by AVB0 magic", () => {
+  expect(
+    classifyArtifactBytesAtPath("vbmeta.img", sampleAndroidVbmeta()),
+  ).toEqual({
+    kind: "container",
+    format: "android-vbmeta",
+  });
+  expect(classifyArtifactBytesAtPath("boot.img", Buffer.from("AVBf"))).toEqual({
+    kind: "resource",
+    format: "file",
+  });
+});
+
 it("classifies nested ESP images as containers by bytes", () => {
   const image = espImage({ segments: ESP32C3_APP_SEGMENTS });
   expect(classifyArtifactBytesAtPath("ota/update.dat", image)).toEqual({
@@ -631,6 +660,26 @@ it("classifies nested UF2 by block magics and DfuSe by prefix and suffix", () =>
   expect(
     classifyArtifactContent("firmware/update.bin", partial, dfu.length + 1),
   ).toMatchObject({ format: "file" });
+});
+
+it("classifies an ISO 9660 image by its sector 16 descriptor, under any name", () => {
+  const { bytes } = buildIso9660Image({
+    files: [{ path: "a.txt", bytes: Buffer.from("a") }],
+  });
+  expect(classifyArtifactBytesAtPath("media/disk.bin", bytes)).toEqual({
+    kind: "container",
+    format: "iso9660",
+  });
+  // Routing needs only the signature; parsing reports the truncation.
+  expect(
+    classifyArtifactBytesAtPath("media/disk", bytes.subarray(0, 32_768 + 7)),
+  ).toEqual({ kind: "container", format: "iso9660" });
+  const damaged = Buffer.from(bytes);
+  damaged.write("CD002", 32_769, "latin1");
+  expect(classifyArtifactBytesAtPath("media/disk.iso", damaged)).toEqual({
+    kind: "resource",
+    format: "file",
+  });
 });
 
 it("classifies a $MFT stream by its FILE record header, under any name", () => {

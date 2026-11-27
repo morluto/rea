@@ -103,7 +103,7 @@ it("reads signed TYPE_INT64 constants and rejects a truncated payload", async ()
       code: "unsupported_target",
       details: {
         operation: "inspect_python_pyc",
-        format_failure: expect.stringMatching(/^(?:malformed|truncated)$/u),
+        failure_kind: expect.stringMatching(/^(?:malformed|truncated)$/u),
         reason: expect.stringContaining("64-bit integer"),
       },
     });
@@ -233,7 +233,7 @@ it("rejects negative code fields for magics after constructor validation was add
       code: "unsupported_target",
       details: {
         operation: "inspect_python_pyc",
-        format_failure: expect.stringMatching(/^(?:malformed|truncated)$/u),
+        failure_kind: expect.stringMatching(/^(?:malformed|truncated)$/u),
         reason: expect.stringContaining("co_flags is negative"),
       },
     });

@@ -1,14 +1,14 @@
 import { createHash } from "node:crypto";
-import { open, readFile, writeFile } from "node:fs/promises";
+import { open, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { Readable } from "node:stream";
 import { crc32, deflateRawSync, gzipSync } from "node:zlib";
+import { buffer } from "node:stream/consumers";
 
 import { describe, expect, it } from "vitest";
 
 import { waitFor } from "../../../tests/support/testWait.js";
 
-import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import { createTestTempFile } from "../../../tests/fixtures/temporaryDirectory.js";
 import {
   inventoryArtifact,
   materializeArtifactInventory,
@@ -21,7 +21,9 @@ import type {
   ArtifactTraversalOmission,
 } from "../../resources/index.js";
 import { TarArtifactReader } from "./TarArtifactReader.js";
-import { GzipTarStream } from "./TarByteStream.js";
+import { walkTar } from "./TarWalk.js";
+import { DEFAULT_TAR_READER_LIMITS } from "../../domain/artifactReaderLimits.js";
+import { GzipTarStream, TarStreamEnded } from "./TarByteStream.js";
 import {
   gzipTarFixture,
   RELEASE_TAR_MEMBERS,
@@ -31,18 +33,8 @@ import {
   type TarFixtureMember,
 } from "./tar.fixture.js";
 
-const collect = async (stream: Readable): Promise<Buffer> => {
-  const chunks: Buffer[] = [];
-  for await (const chunk of stream) chunks.push(chunk as Buffer);
-  return Buffer.concat(chunks);
-};
-
-const write = async (name: string, bytes: Buffer): Promise<string> => {
-  const directory = await createTestTempDirectory("rea-tar-");
-  const path = join(directory, name);
-  await writeFile(path, bytes);
-  return path;
-};
+const write = (name: string, bytes: Buffer): Promise<string> =>
+  createTestTempFile("rea-tar-", name, bytes);
 
 const read = async (bytes: Buffer, options: { expanded?: number } = {}) => {
   const reader = new TarArtifactReader(
@@ -64,7 +56,7 @@ const read = async (bytes: Buffer, options: { expanded?: number } = {}) => {
       if (entry.kind === "file")
         contents.set(
           entry.path,
-          (await collect(await reader.open(entry))).toString("utf8"),
+          (await buffer(await reader.open(entry))).toString("utf8"),
         );
     return {
       entries,
@@ -144,8 +136,18 @@ describe.each([
       uname: "builder",
     });
     expect(result.entries[1]?.sourcePath).toBe("./app/run.x86_64");
+    expect(result.entries[1]?.limitations).toEqual([]);
     expect(result.contents.get("app/data.pck")).toBe("GDPC-not-really");
-    expect(result.coverage).toEqual([{ status: "complete", limitations: [] }]);
+    expect(result.coverage).toEqual([
+      {
+        status: "complete",
+        limitations: [
+          expect.stringMatching(
+            /^\d+ tar member name\(s\) have a leading current-directory prefix/u,
+          ),
+        ],
+      },
+    ]);
     expect(result.metadata).toMatchObject({
       kind: "tar",
       compression,
@@ -238,6 +240,78 @@ describe.each([
   });
 });
 
+describe.each([
+  ["stored", tarFixture],
+  ["gzip", gzipTarFixture],
+] as const)("%s tar header-only members", (_name, build) => {
+  it("reads the next header after header-only members that declare a size", async () => {
+    // Skipped as data, the directory size would hide hidden.sh and the
+    // other sizes would misalign every later header.
+    const result = await read(
+      build([
+        { name: "dir/", type: "5", mode: 0o755, size: 1024 },
+        { name: "dir/hidden.sh", data: "hidden", mode: 0o755 },
+        { name: "dir/latest", type: "2", linkname: "hidden.sh", size: 512 },
+        { name: "dir/pipe", type: "6", size: 512 },
+        { name: "dir/tty", type: "3", size: 512 },
+        { name: "dir/a.txt", data: "a" },
+      ]),
+    );
+    expect(result.entries.map(({ path, kind }) => ({ path, kind }))).toEqual([
+      { path: "dir/", kind: "directory" },
+      { path: "dir/hidden.sh", kind: "file" },
+      { path: "dir/latest", kind: "symlink" },
+      { path: "dir/a.txt", kind: "file" },
+    ]);
+    expect(result.contents).toEqual(
+      new Map([
+        ["dir/hidden.sh", "hidden"],
+        ["dir/a.txt", "a"],
+      ]),
+    );
+    expect(result.omissions).toEqual([
+      { path: "dir/pipe", kind: "fifo" },
+      { path: "dir/tty", kind: "character-device" },
+    ]);
+    expect(result.metadata).toMatchObject({
+      member_count: 4,
+      end_state: "end-marker",
+    });
+  });
+
+  it("ignores pax and long-name sizes on header-only members", async () => {
+    const longDir = `${"d/".repeat(60)}dir/`;
+    const result = await read(
+      build([
+        {
+          name: "latest",
+          type: "2",
+          linkname: "a.txt",
+          pax: { size: "512" },
+        },
+        { name: "a.txt", data: "a" },
+        {
+          name: "././@LongLink",
+          type: "L",
+          data: `${longDir}\u0000`,
+          dialect: "gnu",
+        },
+        // A NUL typeflag is a directory only through its resolved name.
+        { name: "truncated", type: "\u0000", dialect: "gnu", size: 512 },
+        { name: "b.txt", data: "b" },
+      ]),
+    );
+    expect(result.entries.map(({ path, kind }) => ({ path, kind }))).toEqual([
+      { path: "latest", kind: "symlink" },
+      { path: "a.txt", kind: "file" },
+      { path: longDir, kind: "directory" },
+      { path: "b.txt", kind: "file" },
+    ]);
+    expect(result.contents.get("b.txt")).toBe("b");
+    expect(result.coverage).toEqual([{ status: "complete", limitations: [] }]);
+  });
+});
+
 describe("truncated tar", () => {
   it("drops a stored member whose data the file does not hold", async () => {
     const bytes = tarFixture([
@@ -267,6 +341,31 @@ describe("truncated tar", () => {
     expect(result.coverage[0]?.limitations[0]).toMatch(
       /^gzip stream ends before its end marker after \d+ decompressed byte\(s\); tar members after that point were not inventoried\.$/u,
     );
+  });
+
+  it("refuses a gzip stream that ends before the first tar block as the carrier's own failure", async () => {
+    const ended = new TarStreamEnded(
+      {
+        kind: "truncated",
+        format: "gzip",
+        detail:
+          "gzip stream ends before its end marker after 0 decompressed byte(s)",
+      },
+      undefined,
+    );
+    const stream = {
+      position: 0,
+      read: () => Promise.reject(ended),
+      skip: () => Promise.reject(ended),
+      trailingCarrierNonZero: () => Promise.reject(ended),
+      close: () => undefined,
+    };
+    await expect(
+      walkTar(stream, undefined, DEFAULT_TAR_READER_LIMITS),
+    ).rejects.toMatchObject({
+      reason: "truncated",
+      parseFailure: { kind: "truncated", format: "gzip" },
+    });
   });
 
   it("refuses a file whose first header is invalid as malformed tar", async () => {
@@ -346,8 +445,8 @@ describe("gzip expansion", () => {
     try {
       const entries: ArtifactEntry[] = [];
       for await (const entry of reader.entries()) entries.push(entry);
-      const second = await collect(await reader.open(entries[1]!));
-      const first = await collect(await reader.open(entries[0]!));
+      const second = await buffer(await reader.open(entries[1]!));
+      const first = await buffer(await reader.open(entries[0]!));
       expect([first.toString(), second.toString()]).toEqual([
         "first",
         "second",
@@ -451,6 +550,38 @@ describe("tar header edge cases", () => {
     ]);
   });
 
+  it("decodes a pax path under hdrcharset=BINARY as Latin-1 and keeps later members", async () => {
+    // Python tarfile and libarchive write this for a name that is not UTF-8.
+    const pax = Buffer.from(
+      "21 hdrcharset=BINARY\n17 path=caf\xe9.txt\n",
+      "latin1",
+    );
+    const strict = Buffer.from("17 path=caf\xe9.txt\n", "latin1");
+    const archive = (records: Buffer) =>
+      Buffer.concat([
+        tarHeader({ name: "PaxHeader", type: "x" }, records.length),
+        records,
+        Buffer.alloc(512 - records.length),
+        tarMembers([
+          { name: "ignored", data: "a" },
+          { name: "after.txt", data: "b" },
+        ]),
+        end,
+      ]);
+    const result = await read(archive(pax));
+    expect(result.entries.map((entry) => entry.path)).toEqual([
+      "café.txt",
+      "after.txt",
+    ]);
+    expect(result.entries[0]?.limitations).toEqual([
+      "tar pax path is not UTF-8 under hdrcharset=BINARY; decoded as Latin-1; raw hex: 636166e92e747874.",
+    ]);
+    expect(result.metadata?.end_state).toBe("end-marker");
+    expect(result.coverage[0]?.status).toBe("complete");
+    // Without hdrcharset=BINARY the value must still be UTF-8.
+    expect((await read(archive(strict))).metadata?.end_state).toBe("malformed");
+  });
+
   it("raises cancellation from a gzip read that is waiting for output", async () => {
     // A descriptor whose reads never complete keeps the inflater waiting.
     const handle = { read: () => new Promise<never>(() => undefined) };
@@ -462,6 +593,133 @@ describe("tar header edge cases", () => {
       await expect(pending).rejects.toMatchObject({ reason: "cancelled" });
     } finally {
       stream.close();
+    }
+  });
+
+  it("refuses repeated global pax headers at the retained metadata allowance", async () => {
+    const metadataBytes = 64 * 1024;
+    const value = "x".repeat(8_000);
+    const pieces: Buffer[] = [];
+    const perRecord = Buffer.byteLength("k000") + value.length + 64;
+    const count = Math.floor(metadataBytes / perRecord) + 2;
+    for (let index = 0; index < count; index += 1) {
+      const key = `k${String(index).padStart(3, "0")}`;
+      const body = ` ${key}=${value}\n`;
+      let length = Buffer.byteLength(body) + 1;
+      while (String(length).length + Buffer.byteLength(body) !== length)
+        length = String(length).length + Buffer.byteLength(body);
+      const pax = Buffer.from(`${String(length)}${body}`);
+      pieces.push(
+        tarHeader({ name: "PaxHeader", type: "g" }, pax.length),
+        pax,
+        Buffer.alloc((512 - (pax.length % 512)) % 512),
+      );
+    }
+    const reader = new TarArtifactReader(
+      await write("global-pax-budget.tar", Buffer.concat(pieces)),
+      undefined,
+      undefined,
+      { ...DEFAULT_TAR_READER_LIMITS, metadata_bytes: metadataBytes },
+    );
+    try {
+      await expect(async () => {
+        for await (const entry of reader.entries()) void entry;
+      }).rejects.toMatchObject({
+        reason: "limit",
+        boundary: "memory",
+        readerLimit: {
+          parameter: "artifact_limits.tar.metadata_bytes",
+          effective_value: metadataBytes,
+          unit: "bytes",
+          can_increase: true,
+        },
+      });
+    } finally {
+      await reader.close();
+    }
+  });
+
+  it("charges hdrcharset=BINARY warnings to the retained metadata allowance", async () => {
+    const metadataBytes = 64 * 1024;
+    // The same-sized uname leaves the global map charge unchanged; only the
+    // warnings grow.
+    // "8012 uname=" + 8000 bytes + "\n" is 8012 bytes.
+    const pax = Buffer.concat([
+      Buffer.from("21 hdrcharset=BINARY\n8012 uname="),
+      Buffer.alloc(8_000, 0xe9),
+      Buffer.from("\n"),
+    ]);
+    const header = Buffer.concat([
+      tarHeader({ name: "PaxHeader", type: "g" }, pax.length),
+      pax,
+      Buffer.alloc((512 - (pax.length % 512)) % 512),
+    ]);
+    const count = Math.floor(metadataBytes / (2 * 8_000)) + 2;
+    const reader = new TarArtifactReader(
+      await write(
+        "global-pax-binary-budget.tar",
+        Buffer.concat(Array.from({ length: count }, () => header)),
+      ),
+      undefined,
+      undefined,
+      { ...DEFAULT_TAR_READER_LIMITS, metadata_bytes: metadataBytes },
+    );
+    try {
+      await expect(async () => {
+        for await (const entry of reader.entries()) void entry;
+      }).rejects.toMatchObject({
+        reason: "limit",
+        boundary: "memory",
+        readerLimit: { parameter: "artifact_limits.tar.metadata_bytes" },
+      });
+    } finally {
+      await reader.close();
+    }
+  });
+
+  it("refunds hdrcharset=BINARY warnings that no inventoried member keeps", async () => {
+    const metadataBytes = 64 * 1024;
+    const pax = Buffer.concat([
+      Buffer.from("21 hdrcharset=BINARY\n8012 uname="),
+      Buffer.alloc(8_000, 0xe9),
+      Buffer.from("\n"),
+    ]);
+    const local = Buffer.concat([
+      tarHeader({ name: "PaxHeader", type: "x" }, pax.length),
+      pax,
+      Buffer.alloc((512 - (pax.length % 512)) % 512),
+    ]);
+    const fifo = (index: number) =>
+      tarHeader({ name: `fifo${String(index)}`, type: "6" }, 0);
+    const count = Math.floor(metadataBytes / (2 * 8_000)) + 2;
+    // Each warning is discarded by an omitted member, or by the next local
+    // header that replaces it.
+    const archives = [
+      Array.from({ length: count }, (_, index) =>
+        Buffer.concat([local, fifo(index)]),
+      ),
+      [...Array.from({ length: count }, () => local), fifo(0)],
+    ];
+    for (const [index, pieces] of archives.entries()) {
+      const reader = new TarArtifactReader(
+        await write(
+          `local-pax-binary-refund-${String(index)}.tar`,
+          Buffer.concat([...pieces, end]),
+        ),
+        undefined,
+        undefined,
+        { ...DEFAULT_TAR_READER_LIMITS, metadata_bytes: metadataBytes },
+      );
+      const omissions: ArtifactTraversalOmission[] = [];
+      try {
+        for await (const entry of reader.entries(undefined, {
+          onOmission: (value) => omissions.push(value),
+        }))
+          void entry;
+      } finally {
+        await reader.close();
+      }
+      expect(omissions.length).toBeGreaterThan(0);
     }
   });
 

@@ -2,6 +2,7 @@
 export interface AnalysisSettingValues {
   readonly "asar.max_header_bytes": number;
   readonly "asar.max_listing_bytes": number;
+  readonly "artifact.member_count": number;
   readonly "ghidra.value_flow_max_operations": number;
   readonly "ghidra.value_flow_max_inputs_per_operation": number;
   readonly "ghidra.value_flow_max_edges": number;
@@ -21,6 +22,7 @@ export interface AnalysisSettingValues {
   readonly "native.matching_representation_bytes": number;
   readonly "bridge.max_request_bytes": number;
   readonly "bridge.max_reply_bytes": number;
+  readonly "browser.timeline_retained_bytes": number;
   readonly "debugger.command_deadline_ms": number;
   readonly "debugger.max_command_output_bytes": number;
   readonly "hopper.caller_scan_budget_ms": number;
@@ -28,10 +30,13 @@ export interface AnalysisSettingValues {
   readonly "kuna.project_timeout_ms": number;
   readonly "kuna.function_timeout_ms": number;
   readonly "pwntools.max_input_bytes": number;
+  readonly "producer.output_bytes": number;
   readonly "windows.change_time_drift_ms": number;
   readonly "windows.change_time_settle_poll_ms": number;
   readonly "windows.change_time_settle_max_polls": number;
   readonly "zstd.max_frames": number;
+  readonly "delivery.agent_result_budget_bytes": number;
+  readonly "delivery.cli_retained_evidence_bytes": number;
 }
 export type AnalysisSettingId = keyof AnalysisSettingValues;
 export interface AnalysisSettingsSnapshot {
@@ -104,6 +109,11 @@ export type AnalysisControlLimit = {
       readonly control_kind: "parameter";
       readonly parameter: string;
       readonly applies_at: "next_call";
+      /**
+       * The smallest value that admits the refused request, when the
+       * producer measured it before refusing.
+       */
+      readonly required_value?: number;
     }
   | {
       readonly control_kind: "environment";

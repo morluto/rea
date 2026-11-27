@@ -1,4 +1,4 @@
-import { serializeCanonicalValue } from "../canonicalDigest.js";
+import { canonicalJsonSerializer } from "../canonicalDigest.js";
 import { z } from "zod";
 
 import { IDENTIFIER_PATTERN } from "../stringPatterns.js";
@@ -129,12 +129,9 @@ type AcyclicGraphFacts =
     };
 type GraphFacts = { readonly kind: "cyclic" } | AcyclicGraphFacts;
 
-export const canonicalTraceJson = (value: unknown): string => {
-  const serialized = serializeCanonicalValue(value);
-  if (serialized === undefined)
-    throw new TypeError("Trace specification contains a non-JSON value");
-  return serialized;
-};
+export const canonicalTraceJson = canonicalJsonSerializer(
+  "Trace specification contains a non-JSON value",
+);
 
 export const processTraceCardinalityBounds = (
   cardinality: ProcessTraceSpecification["events"][number]["cardinality"],

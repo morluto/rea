@@ -382,7 +382,7 @@ const parseFatMachO = (
     );
   }
   const alignmentIssue = inspectFatSliceAlignment(selected.declaration);
-  if (alignmentIssue !== null) return err(alignmentIssue.reason);
+  if (alignmentIssue !== null) return err(alignmentIssue.detail);
   const sliceIdentityError = fatSliceIdentityError(
     bytes,
     selected.declaration,
@@ -514,7 +514,7 @@ const fatIdentityError = (
   if (identity.state === "needs-slice-header")
     return "FAT slice identity is outside the bounded prefix";
   if (identity.state === "not-mach-o") return "unsupported binary format";
-  if (identity.state === "malformed") return identity.reason;
+  if (identity.state === "failed") return identity.failure.detail;
   return null;
 };
 

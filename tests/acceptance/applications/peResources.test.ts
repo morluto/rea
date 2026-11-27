@@ -10,7 +10,10 @@ import { peResourcesSchema } from "../../../src/domain/native/peResources.js";
 import { peResourceFixture } from "../../../src/domain/pe/peResources.fixture.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import {
+  expectAdapterErrorParity,
+  parseMcpToolError,
+} from "../../fixtures/mcpToolError.js";
 import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 
 type PeResourceCall = (
@@ -46,14 +49,18 @@ const expectPeInputFailureAcrossAdapters = async (input: {
           details: {
             operation: "inspect_pe_resources",
             path,
-            format_failure: expect.stringMatching(/^(?:malformed|truncated)$/u),
+            failure_kind: expect.stringMatching(/^(?:malformed|truncated)$/u),
           },
         },
   );
   const response = await call({ path });
   expect(response.isError).toBe(true);
   expect(response.structuredContent).toBeUndefined();
-  expect(parseMcpToolError(response)).toEqual({ error: result.json });
+  expectAdapterErrorParity(
+    parseMcpToolError(response).error,
+    result.json,
+    "inspect_pe_resources",
+  );
 };
 
 const expectPeInputFailuresAcrossAdapters = async (input: {
@@ -163,7 +170,25 @@ const expectPeResourceNameExtentsAcrossAdapters = async (
     });
     const response = await call({ path });
     expect(response.isError).toBe(true);
-    expect(parseMcpToolError(response)).toEqual({ error: result.json });
+    // Each adapter names the control in its own spelling: the CLI adds the
+    // flag to details.limit and to the generated recovery.
+    const { error } = parseMcpToolError(response);
+    const cliJson = result.json as {
+      readonly remediation: { readonly action: string };
+      readonly details: { readonly limit: { readonly cli_flag?: string } };
+    };
+    expect(cliJson.details.limit.cli_flag).toBe("--max-metadata-bytes");
+    expect(cliJson.remediation.action).toContain("--max-metadata-bytes");
+    expect(error.remediation.action).toContain(
+      "Pass a larger max_metadata_bytes on the next inspect_pe_resources call",
+    );
+    const { cli_flag: _flag, ...cliLimit } = cliJson.details.limit;
+    const { remediation: _mcpRemediation, ...mcpFacts } = error;
+    const { remediation: _cliRemediation, ...cliFacts } = cliJson;
+    expect(mcpFacts).toEqual({
+      ...cliFacts,
+      details: { ...cliJson.details, limit: cliLimit },
+    });
   }
 };
 

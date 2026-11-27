@@ -1,0 +1,25 @@
+export const obligationCategories = {
+  statuses: [
+    "unowned",
+    "characterized",
+    "implemented",
+    "verified",
+    "contradicted",
+    "blocked",
+    "out-of-scope",
+    "unknown",
+  ],
+  applicationLayers: [
+    "cli",
+    "protocol",
+    "electron",
+    "persistence",
+    "process",
+    "runtime",
+    "packaging",
+    "native-abi",
+    "application",
+    "other",
+  ],
+  sourceStates: ["candidate", "observed", "reviewed", "unknown"],
+} as const;

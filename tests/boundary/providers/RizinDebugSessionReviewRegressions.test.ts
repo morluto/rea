@@ -738,23 +738,39 @@ setInterval(() => {}, 1000);
       REA_DEBUGGER_COMMAND_DEADLINE_MS: "2000",
     });
 
-    // Close starts while the command is still running and shortly before
-    // its deadline, so the timed-out command shares close's in-flight stop.
-    // That stop times out against the detach race and returns incomplete;
-    // only the late unavailable declaration may still terminate Rizin.
+    // Close cannot queue a detach behind an active command. The command's
+    // deadline must still clean up the debugger using its held command turn.
     const executed = manager.execute(sessionId, "dc");
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 1500));
     const closed = await manager.close(sessionId);
-    const result = await executed;
 
     expect(closed.ok).toBe(false);
-    expect(result.ok).toBe(false);
+    if (!closed.ok) {
+      expect(closed.error.diagnostics?.debugger_cleanup).toBe(
+        "inferior-state-unknown",
+      );
+      expect(closed.error.cleanupIncomplete).toBe(true);
+    }
+    const result = await executed;
+
+    expect(result.ok, result.ok ? "" : result.error.message).toBe(true);
+    if (result.ok) {
+      expect(result.value.result.completion_status).toBe("unknown");
+      expect(result.value.evidence.limitations).toContainEqual(
+        expect.stringMatching(
+          /terminated without a verified inferior detach.*resynchroniz/iu,
+        ),
+      );
+    }
+    if (!closed.ok) expect(closed.error.cleanupIncomplete).toBe(false);
     const pidText = await readFile(pidPath, "utf8");
     await waitFor(() => {
       expect(() => process.kill(Number(pidText), 0)).toThrow();
     });
-    // The session stays retained for retry even though Rizin is gone.
+    // Keep the published session addressable until its explicit close retry.
     expect(manager.status(sessionId)).toBeDefined();
+    expect((await manager.close(sessionId)).ok).toBe(true);
+    expect(manager.status(sessionId)).toBeUndefined();
   },
 );
 

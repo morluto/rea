@@ -2,6 +2,7 @@ import { readFile, readdir, stat } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript6";
+import { mapWithConcurrency } from "./bounded-file-reads.mjs";
 
 // Recognized numeric REA_ limit reads must be an analysis setting or a
 // documented exception with a reason. External behavioral witnesses are
@@ -1230,6 +1231,12 @@ const restartOnlyBounds = (owners) => {
       exportedNumber(owners.mcpResponse, "MAXIMUM_RESPONSE_BYTES"),
     ),
     phaseBound(phases.toolsList),
+    bound(
+      "REA_MCP_TOOLS_LIST_PAGE_BYTES",
+      exportedNumber(owners.limits, "DEFAULT_MCP_TOOLS_LIST_PAGE_BYTES"),
+      exportedNumber(owners.limits, "MINIMUM_MCP_TOOLS_LIST_PAGE_BYTES"),
+      exportedNumber(owners.limits, "MAXIMUM_MCP_TOOLS_LIST_PAGE_BYTES"),
+    ),
     bound("REA_RECONNECT_TIMEOUT_SECONDS", seconds, seconds, seconds),
     bound(
       "REA_SWIFTC_COMPILE_TIMEOUT_MS",
@@ -1355,11 +1362,12 @@ if (direct) {
   }
 
   const discovered = discoverNumericLimitUses(
-    await Promise.all(
-      (await listFiles(join(root, "src"))).map(async (path) => ({
+    await mapWithConcurrency(
+      await listFiles(join(root, "src")),
+      async (path) => ({
         path: relative(root, path),
         source: await readFile(path, "utf8"),
-      })),
+      }),
     ),
   );
 

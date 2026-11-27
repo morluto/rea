@@ -277,6 +277,7 @@ export const parseElfUnwindRangesFromHandle = async (
     source,
     () => yieldArtifactRead(signal),
     OPERATION,
+    { structureBytes: input.max_structure_bytes },
   );
   const steps = elfUnwindRangesSteps(
     source.size,

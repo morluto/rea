@@ -11,7 +11,7 @@ import {
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisProtocolError,
-  AnalysisUnsupportedTargetError,
+  unsupportedTarget,
 } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { adbArguments, runAdbCapture } from "./AdbCommand.js";
@@ -185,9 +185,10 @@ export const inspectAdbPackageOperation = async ({
   const stdout = ran.value.stdout;
   if (/Unable to find package:/u.test(stdout) || stdout.trim() === "")
     return err(
-      new AnalysisUnsupportedTargetError(
+      unsupportedTarget(
         operation,
         request.input.serial,
+        "android-package",
         `Package Manager did not report details for ${request.input.package}; it may not be installed for user 0`,
       ),
     );

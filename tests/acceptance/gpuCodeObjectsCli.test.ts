@@ -1180,7 +1180,7 @@ cliTest(
       category: "unsupported_target",
       details: {
         operation: "inspect_gpu_code_objects",
-        format_failure: "malformed",
+        failure_kind: "malformed",
         reason: expect.stringContaining(
           "MZ header does not declare a PE image",
         ),

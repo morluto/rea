@@ -15,7 +15,10 @@ import {
   jsonResult,
 } from "./enhancedToolsHarness.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { observed as ok } from "../../fixtures/analysisExecution.js";
+import {
+  createFixtureProviderIdentity,
+  observed as ok,
+} from "../../fixtures/analysisExecution.js";
 
 afterEach(closeEnhancedToolResources);
 
@@ -158,7 +161,7 @@ it("pages observed references and preserves provider completeness through MCP", 
         ok: true,
         value: createAnalysisExecution(
           addresses,
-          { id: "fixture", name: "Fixture analysis provider", version: "1" },
+          createFixtureProviderIdentity(),
           providerTruncated === undefined
             ? {}
             : { referencesTruncated: providerTruncated },

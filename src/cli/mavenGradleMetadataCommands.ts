@@ -24,6 +24,7 @@ export const registerMavenGradleMetadataCommands = (
         "Inspect a Maven POM or Gradle module-metadata document without running Maven or Gradle",
       positionals: ["path"],
       callerPaths: ["path"],
+      jsonText: ["report_limits"],
       fields: {
         path: {
           description: "Local Maven pom.xml or Gradle .module metadata file",

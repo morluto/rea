@@ -1,21 +1,58 @@
+import { producerLimitControl } from "../producerResourceLimits.js";
 import { timerDurationMsSchema } from "../analysisResourceLimits.js";
 import { z } from "zod";
 import { requirePresence } from "../schemaConstraints.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 import type { JsonValue } from "../jsonValue.js";
+import type { AnalysisParameterLimit } from "../analysisSettings.js";
 
 /** Fixed SQLite value/record and complete-worker-reply allowance. */
 export const SQLITE_DATABASE_OUTPUT_BYTES = 16 * 1024 * 1024;
 
 /** SQLite exposes this table as a row source but omits its own catalog entry. */
 export const SQLITE_SCHEMA_TABLE_NAME = "sqlite_schema";
+/**
+ * The only other spelling SQLite resolves in every schema.
+ *
+ * "Alternative Names" in the schema-table documentation: `sqlite_master` "works anywhere",
+ * while `sqlite_temp_schema` and `sqlite_temp_master` only resolve for the TEMP database.
+ * PRAGMA inventory and the stored catalog bytes use the canonical spelling only, so a caller
+ * name has to be normalized before those lookups.
+ */
+export const SQLITE_SCHEMA_TABLE_ALIAS = "sqlite_master";
+/** The canonical catalog spelling for a recognized caller spelling. */
+export const sqliteCatalogSpelling = (name: string): string =>
+  name === SQLITE_SCHEMA_TABLE_ALIAS ? SQLITE_SCHEMA_TABLE_NAME : name;
 export const sqliteSchemaHasObjectDeclaration = (name: string): boolean =>
-  name !== SQLITE_SCHEMA_TABLE_NAME;
+  sqliteCatalogSpelling(name) !== SQLITE_SCHEMA_TABLE_NAME;
 
 /** Default ordinary-table sample size when the caller selects a table. */
 export const SQLITE_ROW_LIMIT_DEFAULT = 20;
 /** Execution budget, bounded by the runtime's signed 32-bit timer range. */
 export const DEFAULT_SQLITE_WORKER_TIMEOUT_MS = 30_000;
+/**
+ * Combined database and WAL bytes copied into the private snapshot when
+ * producer_limits.input_bytes is omitted. The copy streams to disk, so a
+ * larger value costs disk, not memory: up to this much private disk per
+ * inspection, and the provider admits two at a time.
+ */
+export const DEFAULT_SQLITE_INPUT_BYTES = 2 * 1024 * 1024 * 1024;
+
+/**
+ * The snapshot input budget, as the per-call parameter that raises it, with
+ * the combined database and WAL size the refused snapshot needs when known.
+ */
+export const sqliteInputLimit = (
+  effectiveValue: number,
+  requiredValue?: number,
+): AnalysisParameterLimit => ({
+  ...producerLimitControl(
+    "input_bytes",
+    effectiveValue,
+    DEFAULT_SQLITE_INPUT_BYTES,
+  ),
+  ...(requiredValue === undefined ? {} : { required_value: requiredValue }),
+});
 
 const nonnegative = z.int().nonnegative();
 const hex = z.string().regex(/^(?:[0-9a-f]{2})*$/);
@@ -95,6 +132,12 @@ export const inspectSqliteDatabaseInputSchema = sqliteTableSelectionSchema
       .optional()
       .describe(
         `Deadline in milliseconds for worker startup, queries and reply writing (default ${String(DEFAULT_SQLITE_WORKER_TIMEOUT_MS)}), not snapshot acquisition or the whole call. Allow client headroom for acquisition, reply reads, cleanup and delivery. Fixed byte/heap limits do not change.`,
+      ),
+    producer_limits: z
+      .strictObject({ input_bytes: z.int().positive().safe().optional() })
+      .optional()
+      .describe(
+        `Per-call producer limits in bytes. input_bytes bounds the combined database and WAL copied into the private snapshot (default ${String(DEFAULT_SQLITE_INPUT_BYTES)}); the copy streams to disk. Applies on the next call; no restart. Does not raise the worker heap, the value/record/reply allowances or worker_timeout_ms.`,
       ),
   })
   .describe("When schema_scope is selected_table, also provide table.")
@@ -262,6 +305,14 @@ export const sqliteInspectionParameters = (
     : { schema_scope: input.schema_scope }),
   ...(input.row_limit === undefined ? {} : { row_limit: input.row_limit }),
   ...(input.row_offset === undefined ? {} : { row_offset: input.row_offset }),
+  ...(input.producer_limits === undefined
+    ? {}
+    : {
+        producer_limits:
+          input.producer_limits.input_bytes === undefined
+            ? {}
+            : { input_bytes: input.producer_limits.input_bytes },
+      }),
 });
 
 /** One contract owner interprets omitted scope for adapters and selection checks. */

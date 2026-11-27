@@ -104,6 +104,14 @@ export interface ElfDependencyFixtureOptions {
   readonly omitSymentTag?: boolean;
   /** Leaves DT_SYMTAB out of the dynamic table. */
   readonly omitSymtabTag?: boolean;
+  /** Leaves DT_VERNEED out of the dynamic table while keeping DT_VERNEEDNUM. */
+  readonly omitVerneedTag?: boolean;
+  /** Leaves DT_VERDEF out of the dynamic table while keeping DT_VERDEFNUM. */
+  readonly omitVerdefTag?: boolean;
+  /** Overrides or adds DT_VERNEEDNUM in the dynamic table. */
+  readonly verneedCount?: number;
+  /** Overrides or adds DT_VERDEFNUM in the dynamic table. */
+  readonly verdefCount?: number;
   /** Splits the identity PT_LOAD in two halfway through the .hash table. */
   readonly splitLoadAtHash?: boolean;
   /** Adds a one-byte zero-fill load alias at this offset into .gnu.version. */
@@ -254,10 +262,19 @@ const verdefRecord = (
   return bytes;
 };
 
-const sysvHash = (symbolCount: number, little: boolean): Buffer => {
-  const bytes = Buffer.alloc(8 + 4 + 4 * symbolCount);
-  write32(bytes, 0, 1, little);
-  write32(bytes, 4, symbolCount, little);
+/** 64-bit s390x and Alpha store each DT_HASH entry in eight bytes. */
+const sysvHashEntryBytes = ({ bits, machine }: FixtureConfig): 4 | 8 =>
+  bits === 64 && (machine === 22 || machine === 0x9026) ? 8 : 4;
+
+const sysvHash = (
+  symbolCount: number,
+  little: boolean,
+  entryBytes: 4 | 8,
+): Buffer => {
+  const bytes = Buffer.alloc(entryBytes * (3 + symbolCount));
+  const low = entryBytes === 8 && !little ? 4 : 0;
+  write32(bytes, low, 1, little);
+  write32(bytes, entryBytes + low, symbolCount, little);
   return bytes;
 };
 
@@ -398,6 +415,10 @@ interface FixtureConfig {
   readonly sectionEntrySizes: Readonly<Record<string, number>>;
   readonly omitSymentTag: boolean;
   readonly omitSymtabTag: boolean;
+  readonly omitVerneedTag: boolean;
+  readonly omitVerdefTag: boolean;
+  readonly verneedCount: number | undefined;
+  readonly verdefCount: number | undefined;
   readonly splitLoadAtHash: boolean;
   readonly versymZeroFillOffset: number | undefined;
 }
@@ -499,6 +520,10 @@ const fixtureConfig = (options: ElfDependencyFixtureOptions): FixtureConfig => {
     sectionEntrySizes: options.sectionEntrySizes ?? {},
     omitSymentTag: options.omitSymentTag === true,
     omitSymtabTag: options.omitSymtabTag === true,
+    omitVerneedTag: options.omitVerneedTag === true,
+    omitVerdefTag: options.omitVerdefTag === true,
+    verneedCount: options.verneedCount,
+    verdefCount: options.verdefCount,
     splitLoadAtHash: options.splitLoadAtHash === true,
     versymZeroFillOffset: options.versymZeroFillOffset,
   };
@@ -569,7 +594,9 @@ const buildDependencyTables = (config: FixtureConfig): DependencyTables => {
     dynstrBytes: dynstr.bytes({ dropLastNul: config.truncateDynstr }),
     dynsym: Buffer.concat(symbols),
     versym,
-    hash: config.omitHash ? Buffer.alloc(0) : sysvHash(symbols.length, little),
+    hash: config.omitHash
+      ? Buffer.alloc(0)
+      : sysvHash(symbols.length, little, sysvHashEntryBytes(config)),
     gnuHashBytes: config.gnuHash
       ? gnuHashTable(
           symbols.length,
@@ -644,17 +671,22 @@ const buildDynamicTags = (
   if (!config.omitSymentTag) addTag(11, bits === 64 ? 24 : 16);
   addTag(0x6ffffff0, offsets.versymOff);
   if (tables.verneedBytes.length !== 0) {
-    addTag(0x6ffffffe, offsets.verneedOff);
+    if (!config.omitVerneedTag) addTag(0x6ffffffe, offsets.verneedOff);
     addTag(
       0x6fffffff,
-      config.earlyVersionLinkEnd === "verneed"
-        ? Math.max(config.verneed.length, 2)
-        : config.verneed.length,
+      config.verneedCount ??
+        (config.earlyVersionLinkEnd === "verneed"
+          ? Math.max(config.verneed.length, 2)
+          : config.verneed.length),
     );
+  } else if (config.verneedCount !== undefined) {
+    addTag(0x6fffffff, config.verneedCount);
   }
   if (tables.verdefBytes.length !== 0) {
-    addTag(0x6ffffffc, offsets.verdefOff);
-    addTag(0x6ffffffd, config.verdef.length);
+    if (!config.omitVerdefTag) addTag(0x6ffffffc, offsets.verdefOff);
+    addTag(0x6ffffffd, config.verdefCount ?? config.verdef.length);
+  } else if (config.verdefCount !== undefined) {
+    addTag(0x6ffffffd, config.verdefCount);
   }
   if (config.flags1 !== null) addTag(0x6ffffffb, config.flags1);
   addTag(0, 0);
@@ -899,7 +931,7 @@ const writeDependencySections = (
           tables.hash.length,
           3,
           0,
-          4,
+          sysvHashEntryBytes(config),
         ],
     [
       ".dynsym",

@@ -1,6 +1,9 @@
 import { describe, expect, it, onTestFinished } from "vitest";
 
-import { observed } from "../../../tests/fixtures/analysisExecution.js";
+import {
+  createFixtureProviderIdentity,
+  observed,
+} from "../../../tests/fixtures/analysisExecution.js";
 import {
   createBinarySessionTargets,
   createTestBinarySession,
@@ -17,11 +20,7 @@ import type {
 import { buildCapabilityInventory } from "../CapabilityInventory.js";
 import { offeredOperationAlternatives } from "../OperationAlternatives.js";
 
-const IDENTITY = {
-  id: "fixture",
-  name: "Fixture analysis provider",
-  version: "1",
-} as const;
+const IDENTITY = createFixtureProviderIdentity();
 const GENERIC =
   "This analysis is unavailable for the current target. Choose another analysis or target.";
 
