@@ -20,6 +20,7 @@ const MIGRATED_PROVIDER_ROOTS = new Set([
   "oci",
   "rust",
   "wasm",
+  "yara",
   "captures",
   "signals",
   "android",

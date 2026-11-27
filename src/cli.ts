@@ -36,6 +36,7 @@ import * as debPackageModule from "./cli/debPackageCommands.js";
 import * as nugetNupkgModule from "./cli/nugetNupkgCommands.js";
 import * as vsixPackageModule from "./cli/vsixPackageCommands.js";
 import * as ociImageLayoutModule from "./cli/ociImageLayoutCommands.js";
+import * as yaraModule from "./cli/yaraCommands.js";
 import * as erlangModule from "./cli/erlangCommands.js";
 import * as v8CodeCacheModule from "./cli/v8CodeCacheCommands.js";
 import * as mavenGradleMetadataModule from "./cli/mavenGradleMetadataCommands.js";
@@ -101,6 +102,7 @@ const CLI_COMMAND_MODULES: CliCommandModules = {
   nugetNupkg: nugetNupkgModule,
   vsixPackage: vsixPackageModule,
   ociImageLayout: ociImageLayoutModule,
+  yara: yaraModule,
   erlang: erlangModule,
   v8CodeCache: v8CodeCacheModule,
   mavenGradleMetadata: mavenGradleMetadataModule,

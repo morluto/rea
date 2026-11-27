@@ -23,6 +23,8 @@ import {
   tarEntryMetadataSchema,
   switchExecutableMetadataSchema,
   switchExecutableEntryMetadataSchema,
+  n64RomEntryMetadataSchema,
+  n64RomMetadataSchema,
 } from "./formatMetadata/packageAndGameMetadata.js";
 import {
   bfltMetadataSchema,
@@ -49,6 +51,8 @@ import {
 import {
   androidBootImageEntryMetadataSchema,
   androidBootImageMetadataSchema,
+  androidDtboEntryMetadataSchema,
+  androidDtboMetadataSchema,
   androidOtaPartitionMetadataSchema,
   androidOtaPayloadMetadataSchema,
   androidVbmetaEntryMetadataSchema,
@@ -120,6 +124,8 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   qualcommMbnMetadataSchema,
   androidBootImageMetadataSchema,
   androidBootImageEntryMetadataSchema,
+  androidDtboMetadataSchema,
+  androidDtboEntryMetadataSchema,
   androidVbmetaMetadataSchema,
   androidVbmetaEntryMetadataSchema,
   androidVbmetaDescriptorEntryMetadataSchema,
@@ -132,6 +138,8 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   gpuAssetRegionMetadataSchema,
   ndsMetadataSchema,
   ndsEntryMetadataSchema,
+  n64RomMetadataSchema,
+  n64RomEntryMetadataSchema,
 ]);
 export type ArtifactFormatMetadata = z.infer<
   typeof artifactFormatMetadataSchema
@@ -281,6 +289,14 @@ const declarationsByKind: {
   "android-boot-image-entry": {
     notCompared:
       "role and index restate the entry's path, compression is observed from its bytes, and load addresses, names and board IDs come from the image header or vendor ramdisk table, which the image's content comparison covers.",
+  },
+  "android-dtbo": {
+    notCompared:
+      "Its header facts come from the image's own bytes, which content comparison covers.",
+  },
+  "android-dtbo-entry": {
+    notCompared:
+      "index, offset, size, id, rev, flags, custom words, compression, and FDT magic observation come from the container's table and stored entry bytes, which container and entry content comparison cover.",
   },
   "android-vbmeta": {
     notCompared:
@@ -443,6 +459,14 @@ const declarationsByKind: {
   nds: {
     notCompared:
       "Its header and table facts come from the ROM's own bytes, which content comparison covers.",
+  },
+  "n64-rom": {
+    notCompared:
+      "Its header, CIC and CRC facts come from the ROM's own bytes, which content comparison covers. source_order names the dump, not a change in the served image.",
+  },
+  "n64-rom-entry": {
+    notCompared:
+      "role repeats the member path. source_order and decoded name the dump order; the served bytes are compared by content.",
   },
   /**
    * CPU load and entry addresses and overlay RAM and initialization facts.

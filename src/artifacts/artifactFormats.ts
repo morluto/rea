@@ -21,6 +21,7 @@ import {
 } from "../resources/index.js";
 import type { ArtifactReaderAdmission } from "./ArtifactReaderAdmission.js";
 import { AndroidBootImageArtifactReader } from "./AndroidBootImageArtifactReader.js";
+import { AndroidDtboArtifactReader } from "./AndroidDtboArtifactReader.js";
 import { AndroidVbmetaArtifactReader } from "./AndroidVbmetaArtifactReader.js";
 import {
   AsarArtifactReader,
@@ -42,6 +43,7 @@ import { FitArtifactReader } from "./FitArtifactReader.js";
 import type { GodotPckAdmission } from "./GodotPckLocation.js";
 import { GodotPckArtifactReader } from "./GodotPckArtifactReader.js";
 import { InesArtifactReader } from "./InesArtifactReader.js";
+import { N64RomArtifactReader } from "./N64RomArtifactReader.js";
 import { NdsRomArtifactReader } from "./NdsRomArtifactReader.js";
 import { Iso9660ArtifactReader } from "./Iso9660ArtifactReader.js";
 import { QualcommMbnArtifactReader } from "./QualcommMbnArtifactReader.js";
@@ -470,6 +472,20 @@ const NON_ZIP_FORMATS = {
         options.readerLimits?.expanded_bytes,
       ),
   }),
+  "n64-rom": container("n64-rom", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "Nintendo 64 ROM inventory reports cartridge header facts, the IPL3/CIC variant and the CRC pair when that variant is known. header.bin, ipl3.bin and program.z64 are big-endian ranges: stored when the dump is z64, decoded when it is v64 or n64. Nothing is executed or patched. A CRC mismatch is a limitation.",
+    createReader: (path, options) =>
+      new N64RomArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.expanded_bytes,
+      ),
+  }),
   dds: gpuAsset("dds"),
   glb: gpuAsset("glb"),
   ktx: gpuAsset("ktx"),
@@ -495,6 +511,21 @@ const NON_ZIP_FORMATS = {
       "Android boot image inventory establishes header facts and stored component bytes. Payloads are not decompressed, the v4 signature and AVB footer are not verified, and the image is not executed.",
     createReader: (path, options) =>
       new AndroidBootImageArtifactReader(path, sourceOf(options)),
+  }),
+  "android-dtbo": container("android-dtbo", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "Android DTBO inventory establishes dt_table_header and dt_table_entry table facts, verifies leading 0xd00dfeed FDT magic on uncompressed entries, and bounds stored entry bytes. Compressed payloads are not decompressed, device trees are not overlaid, and images are not executed.",
+    createReader: (path, options) =>
+      new AndroidDtboArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.android_dtbo,
+        options.readerLimits?.expanded_bytes,
+      ),
   }),
   "android-ota-payload": container("android-ota-payload", {
     roleContainer: true,
