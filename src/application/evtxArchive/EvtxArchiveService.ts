@@ -23,7 +23,10 @@ import { parseEvtxArchive } from "../../domain/evtxArchive/parseEvtxArchive.js";
 import type { AnalysisParameterLimit } from "../../domain/analysisSettings.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
-import { parseAnalysisInput } from "../AnalysisInput.js";
+import {
+  callerAnalysisParameters,
+  parseAnalysisInput,
+} from "../AnalysisInput.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
 /**
@@ -149,6 +152,7 @@ export const inspectEvtxArchiveEvidence = async (
     options.signal,
   );
   if (!admitted.ok) return admitted;
+  const callerParameters = callerAnalysisParameters(rawInput);
   const input = admitted.value;
   const source = await readArchive(input, resources, options.signal);
   if (!source.ok) return source;
@@ -169,12 +173,12 @@ export const inspectEvtxArchiveEvidence = async (
     {
       operation,
       predicateType: "rea.evtx-archive-inventory",
-      parameters: {
+      parameters: callerParameters({
         path: input.path,
         format: input.format,
         max_file_bytes: input.max_file_bytes,
         max_records: input.max_records,
-      },
+      }),
       result: archive,
       confidence: "observed",
       limitations: archive.limitations,

@@ -88,3 +88,16 @@ it("binds the refused max_file_bytes as an adjustable budget that names the need
     },
   });
 });
+
+it("keeps budget fields the caller omitted out of Evidence parameters", async () => {
+  const root = await createTestTempDirectory("rea-evtx-evidence-parameters-");
+  const path = join(root, "events.evtx");
+  await writeFile(path, "ElfFile\0");
+  const resources = new ArtifactResourceScope();
+  onTestFinished(() => resources.close());
+  const result = await inspectEvtxArchiveEvidence({ path }, resources);
+  if (!result.ok) throw new Error(result.error.message);
+  // A caller that selected only the path must not read back REA's resolved
+  // budgets as their own selection.
+  expect(result.value.evidence.parameters).toEqual({ path });
+});
