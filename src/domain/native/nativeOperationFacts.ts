@@ -1,4 +1,5 @@
-import type { z } from "zod";
+import { z } from "zod";
+import { functionBodySchema } from "./functionBody.js";
 import { nativeInventoryRowsSchemas } from "./nativeInventory.js";
 import { containingProcedureResolutionSchema } from "./nativeObservation.js";
 
@@ -32,6 +33,21 @@ export const listProceduresFact = factContract(
   "procedure inventory",
   nativeInventoryRowsSchemas.names,
 );
+export const exportBodyMetadataSchema = z.strictObject({
+  body: functionBodySchema,
+  limitations: z.array(z.string()),
+});
+
+export const decompileExportInventoryFact = factContract(
+  "list_procedures",
+  "procedure inventory for decompile export",
+  z.array(
+    nativeInventoryRowsSchemas.names.element.extend({
+      export_body_metadata: exportBodyMetadataSchema.exactOptional(),
+    }),
+  ),
+);
+
 export const searchProceduresFact = factContract(
   "search_procedures",
   "procedure search result",

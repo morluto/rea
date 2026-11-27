@@ -1068,6 +1068,7 @@ export const createGhidraProviderClient = (input: {
   const inventoryExecution = (
     operation: "list_documents" | "list_procedures",
     called: Result<JsonValue, GhidraSessionError>,
+    includesExportBodyMetadata = false,
   ) => {
     if (!called.ok)
       return err(
@@ -1081,6 +1082,38 @@ export const createGhidraProviderClient = (input: {
     const parsed = parseGhidraInventoryResult(operation, called.value, null);
     if (!parsed.ok) return parsed;
     const { value, ...observation } = parsed.value;
+    if (includesExportBodyMetadata && Array.isArray(value)) {
+      const common = ghidraSessionCommonLimitations(projection.source);
+      const perOperation = ghidraOperationLimitations(
+        "procedure_info",
+        projection.source,
+      );
+      const session = sessionLimitations("procedure_info");
+      const rows = value.map((row) => {
+        if (!isRecord(row) || !isRecord(row.export_body_metadata)) return row;
+        const metadata = row.export_body_metadata;
+        if (!Array.isArray(metadata.limitations)) return row;
+        return {
+          ...row,
+          export_body_metadata: {
+            ...metadata,
+            limitations: [
+              ...common,
+              ...perOperation,
+              ...metadata.limitations,
+              ...session,
+            ],
+          },
+        };
+      });
+      return ok(
+        projectExecution(
+          operation,
+          ownedJsonValueSchema.parse(rows),
+          observation,
+        ),
+      );
+    }
     return ok(projectExecution(operation, value, observation));
   };
   const loadImageExecution = async (raw: JsonValue, signal?: AbortSignal) => {
@@ -1209,7 +1242,11 @@ export const createGhidraProviderClient = (input: {
       // attempt, so `callTool` reuses this launch; a restart is checked again.
       const started = await startSession(operation, options);
       if (!started.ok) return started;
-      const called = await client.callTool(operation, input.value, {
+      const wireInput =
+        operation === "list_procedures" && options?.includeExportBodyMetadata
+          ? { ...input.value, export_body_metadata: true }
+          : input.value;
+      const called = await client.callTool(operation, wireInput, {
         ...operationLimits,
         ...(options?.signal === undefined ? {} : { signal: options.signal }),
         ...(options?.progress === undefined
@@ -1218,7 +1255,11 @@ export const createGhidraProviderClient = (input: {
       });
       if (called.ok) providerStarted = true;
       if (operation === "list_documents" || operation === "list_procedures")
-        return inventoryExecution(operation, called);
+        return inventoryExecution(
+          operation,
+          called,
+          options?.includeExportBodyMetadata === true,
+        );
       if (!called.ok) {
         const entry = await machoMainEntryHint(
           called.error,
@@ -1343,6 +1384,7 @@ export const createGhidraProviderClient = (input: {
     executeIfReady: async (operation, parameters, options) => {
       if (operation !== "list_documents" && operation !== "list_procedures")
         return undefined;
+      if (options?.includeExportBodyMetadata) return undefined;
       if (extensionFailure !== undefined) return err(extensionFailure);
       const input = parseGhidraInventoryInput(operation, parameters);
       if (!input.ok) return input;

@@ -3,6 +3,7 @@ import {
   parseGhidraAddressNameResult,
 } from "./GhidraAddressNameValues.js";
 import { GHIDRA_INVENTORY_OPERATIONS } from "./GhidraInventoryOperations.js";
+import { exportBodyMetadataSchema } from "../domain/native/nativeOperationFacts.js";
 import { nativeSearchFields } from "../domain/native/nativeSearch.js";
 import { nativeSymbolMetadataSchema } from "../domain/native/nativeSymbol.js";
 import { nativeAddressObservationSchema } from "../domain/native/nativeAddress.js";
@@ -349,7 +350,11 @@ const resultSchemas = {
   address_name: z.string().nullable(),
   list_documents: z.array(z.string().min(1)).length(1),
   list_names: z.array(symbolItem),
-  list_procedures: z.array(procedureItem),
+  list_procedures: z.array(
+    procedureItem.extend({
+      export_body_metadata: exportBodyMetadataSchema.exactOptional(),
+    }),
+  ),
   list_segments: z.array(segment),
   list_strings: z.array(stringItem),
   procedure_address: nativeAddressObservationSchema,

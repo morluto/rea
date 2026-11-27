@@ -106,7 +106,7 @@ export interface WorkflowAnalysisPort extends AnalysisOperationPort {
   /** Publish caveats only after admitting an observation for a workflow item. */
   recordItemLimitations?(
     operation: AnalysisOperation,
-    execution: AnalysisExecution,
+    execution: Pick<AnalysisExecution, "provider" | "limitations">,
   ): void;
 }
 
@@ -126,7 +126,7 @@ export const executeComposedWorkflow = async (
   const workScope = new AnalysisWorkScope();
   const recordLimitations = (
     operation: AnalysisOperation,
-    execution: AnalysisExecution,
+    execution: Pick<AnalysisExecution, "provider" | "limitations">,
   ): void => {
     for (const limitation of execution.limitations) {
       const fact = {

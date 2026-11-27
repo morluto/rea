@@ -41,6 +41,8 @@ import {
 } from "../domain/relationshipCoverage.js";
 
 export interface ExecutionOptions {
+  /** Request available export-body facts with the procedure inventory. */
+  readonly includeExportBodyMetadata?: true;
   /** Ephemeral state shared only by one composed workflow. */
   readonly workScope?: AnalysisWorkScope;
   /** A single CLI answer bound to its isolated target, not a persistent default document. */

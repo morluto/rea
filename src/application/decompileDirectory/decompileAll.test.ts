@@ -153,6 +153,8 @@ const harness = (options?: {
   readonly addressCaveats?: boolean;
   /** Addresses procedure_info classifies as external, as Ghidra does for imports. */
   readonly external?: readonly string[];
+  readonly exportMetadata?: readonly string[];
+  readonly rejectExportMetadata?: boolean;
 }) => {
   const procedures = options?.procedures ?? [
     { address: "0x3000", name: "Bar::late" },
@@ -160,6 +162,7 @@ const harness = (options?: {
     { address: "0x2000", name: "Foo::helper" },
   ];
   const calls: RecordedCall[] = [];
+  const metadataRequests: boolean[] = [];
   const port: AnalysisOperationPort = {
     execute: (operation, parameters, execution) => {
       calls.push({
@@ -167,14 +170,45 @@ const harness = (options?: {
         procedure: parameters.procedure,
         origin: execution?.selectorOrigin,
       });
-      if (operation === "list_procedures")
+      if (operation === "list_procedures") {
+        const enriched = execution?.includeExportBodyMetadata === true;
+        metadataRequests.push(enriched);
+        if (enriched && options?.rejectExportMetadata)
+          return Promise.resolve(
+            err(
+              new AnalysisResourceConstraintError(
+                operation,
+                "transport",
+                "fixture reply exceeded its limit",
+                null,
+              ),
+            ),
+          );
         return Promise.resolve(
           ok(
             createAnalysisExecution(
-              procedures.map((procedure) => ({
-                address: procedure.address,
-                value: procedure.name,
-              })),
+              procedures.map(({ address, name }) => {
+                if (
+                  !execution?.includeExportBodyMetadata ||
+                  !options?.exportMetadata?.includes(address)
+                )
+                  return { address, value: name };
+                const external = options.external?.includes(address) === true;
+                return {
+                  address,
+                  value: name,
+                  procedure: { external, thunk: false, thunk_target: null },
+                  export_body_metadata: {
+                    body: (external
+                      ? externalInfoFor(address)
+                      : infoFor(address)
+                    ).body,
+                    limitations: options.addressCaveats
+                      ? [`info caveat at ${address}`]
+                      : [],
+                  },
+                };
+              }),
               provider,
               {
                 analysisProfile: options?.listProfile ?? profile,
@@ -186,6 +220,7 @@ const harness = (options?: {
             ),
           ),
         );
+      }
       if (operation === "procedure_info") {
         if (options?.info === "unavailable")
           return Promise.resolve(
@@ -261,7 +296,13 @@ const harness = (options?: {
       return Promise.resolve(err(new AnalysisInputError(operation)));
     },
   };
-  return { calls, port, tools: new EnhancedTools(port), procedures };
+  return {
+    calls,
+    port,
+    tools: new EnhancedTools(port),
+    procedures,
+    metadataRequests,
+  };
 };
 
 const run = (
@@ -456,6 +497,59 @@ describe("decompile_all inventory limitations", () => {
 
 describe("decompile_all external functions", () => {
   const directory = useOutputDirectory();
+
+  it("reuses inventory body facts, falls back for uncovered rows, and resumes the same export", async () => {
+    const options = { external: ["0x1000"], addressCaveats: true };
+    const baseline = harness(options);
+    const optimized = harness({
+      ...options,
+      exportMetadata: ["0x1000", "0x2000"],
+    });
+    const baselinePath = join(
+      await createTestTempDirectory("rea-decompile-reference-"),
+      "out",
+    );
+    for (const [fixture, path] of [
+      [baseline, baselinePath],
+      [optimized, directory()],
+    ] as const) {
+      const first = await run(fixture.tools, path);
+      expect(first.ok).toBe(true);
+      const second = await run(fixture.tools, path, { resume: true });
+      expect(second.ok).toBe(true);
+    }
+    expect(
+      of(baseline.calls, "procedure_info").map(({ procedure }) => procedure),
+    ).toEqual(["0x1000", "0x2000", "0x3000"]);
+    expect(
+      of(optimized.calls, "procedure_info").map(({ procedure }) => procedure),
+    ).toEqual(["0x3000"]);
+    for (const path of [
+      DECOMPILE_DIRECTORY_INDEX_NAME,
+      DECOMPILE_DIRECTORY_JOURNAL_NAME,
+      "functions/0x2000.c",
+      "functions/0x3000.c",
+    ])
+      expect(await readFile(join(directory(), path), "utf8")).toBe(
+        await readFile(join(baselinePath, path), "utf8"),
+      );
+  });
+
+  it("retries a bounded metadata reply as a plain inventory and avoids enrichment for limited exports", async () => {
+    const limited = harness({ rejectExportMetadata: true });
+    const limitedPath = join(
+      await createTestTempDirectory("rea-decompile-limited-"),
+      "out",
+    );
+    expect((await run(limited.tools, limitedPath, { limit: 1 })).ok).toBe(true);
+    expect(limited.metadataRequests).toEqual([false]);
+    expect(of(limited.calls, "procedure_info")).toHaveLength(1);
+
+    const bounded = harness({ rejectExportMetadata: true });
+    expect((await run(bounded.tools, directory())).ok).toBe(true);
+    expect(bounded.metadataRequests).toEqual([true, false]);
+    expect(of(bounded.calls, "procedure_info")).toHaveLength(3);
+  });
 
   it("reports an external function as external without requesting its pseudocode", async () => {
     const { calls, tools } = harness({ external: ["0x1000", "0x2000"] });

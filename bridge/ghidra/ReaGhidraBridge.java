@@ -2638,11 +2638,41 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     private StreamingResult listProcedures(JsonObject params) throws Exception {
-        requireKeys(params, Set.of("document"));
+        boolean enriched = params.has("export_body_metadata");
+        requireKeys(params, enriched ? Set.of("document", "export_body_metadata") : Set.of("document"));
         requireDocument(params);
         List<ProcedureEntry> entries = procedures();
+        Map<ProcedureEntry, JsonObject> metadata = enriched && requireBoolean(params, "export_body_metadata")
+            ? exportBodyMetadata(entries) : Map.of();
         monitor.checkCancelled();
-        return out -> writeProcedureEntries(out, entries);
+        return out -> writeProcedureEntries(out, entries, metadata);
+    }
+
+    private Map<ProcedureEntry, JsonObject> exportBodyMetadata(List<ProcedureEntry> entries) throws Exception {
+        // This advisory enrichment shares the inventory reply with its original rows.
+        // Retain at most 4 MiB of extra JSON; the export uses procedure_info for the rest.
+        int remainingBytes = 4 * 1024 * 1024;
+        Map<ProcedureEntry, JsonObject> metadata = new IdentityHashMap<>();
+        for (ProcedureEntry entry : entries) {
+            monitor.checkCancelled();
+            Function function = entry.function();
+            JsonObject body;
+            try {
+                body = functionBody(function);
+            } catch (IllegalStateException unsupportedBody) {
+                // Let the existing per-function query project the specific refusal.
+                continue;
+            }
+            JsonObject item = new JsonObject();
+            item.add("body", body);
+            item.add("limitations", GSON.toJsonTree(functionBoundaryLimitations(
+                function, currentProgram.getListing().getInstructions(function.getBody(), true)
+            )));
+            remainingBytes -= GSON.toJson(item).getBytes(StandardCharsets.UTF_8).length + 30;
+            if (remainingBytes < 0) break;
+            metadata.put(entry, item);
+        }
+        return metadata;
     }
 
     private JsonArray listSegments(JsonObject params) {
@@ -5861,10 +5891,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
         out.endArray();
     }
 
-    private static void writeProcedureEntries(JsonWriter out, List<ProcedureEntry> entries) throws IOException {
+    private static void writeProcedureEntries(JsonWriter out, List<ProcedureEntry> entries,
+            Map<ProcedureEntry, JsonObject> metadata) throws IOException {
         out.beginArray();
         for (ProcedureEntry entry : entries) {
-            writeResultItem(out, entry.address(), entry.value(), "procedure", entry.facts(), entry.symbol(), List.of());
+            writeResultItem(out, entry.address(), entry.value(), "procedure", entry.facts(), entry.symbol(),
+                List.of(), metadata.get(entry));
         }
         out.endArray();
     }
@@ -5928,7 +5960,24 @@ public final class ReaGhidraBridge extends HeadlessScript {
         SymbolFacts symbol,
         List<String> matchedAliases
     ) throws IOException {
+        writeResultItem(out, address, value, factsName, facts, symbol, matchedAliases, null);
+    }
+
+    private static void writeResultItem(
+        JsonWriter out,
+        Address address,
+        String value,
+        String factsName,
+        InventoryFacts facts,
+        SymbolFacts symbol,
+        List<String> matchedAliases,
+        JsonObject exportBodyMetadata
+    ) throws IOException {
         out.beginObject();
+        if (exportBodyMetadata != null) {
+            out.name("export_body_metadata");
+            GSON.toJson(exportBodyMetadata, out);
+        }
         out.name("address").value(canonicalAddress(address));
         out.name("value").value(value);
         if (factsName != null) {
