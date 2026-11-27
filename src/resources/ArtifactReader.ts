@@ -287,6 +287,7 @@ export interface ArtifactReader {
     | "fit"
     | "qualcomm-mbn"
     | "ntfs-mft"
+    | "systemd-journal"
     | "auditd-log"
     | "pkg"
     | "file";

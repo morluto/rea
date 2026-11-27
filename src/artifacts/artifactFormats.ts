@@ -60,6 +60,7 @@ import { Uf2ArtifactReader } from "./Uf2ArtifactReader.js";
 import { NtfsMftArtifactReader } from "./NtfsMftArtifactReader.js";
 import { AuditdLogArtifactReader } from "./AuditdLogArtifactReader.js";
 import { AndroidOtaPayloadArtifactReader } from "./AndroidOtaPayloadArtifactReader.js";
+import { SystemdJournalArtifactReader } from "./SystemdJournalArtifactReader.js";
 import { AndroidSparseImageArtifactReader } from "./AndroidSparseImageArtifactReader.js";
 import { UbiImageArtifactReader } from "./UbiImageArtifactReader.js";
 import { UImageArtifactReader } from "./UImageArtifactReader.js";
@@ -93,6 +94,11 @@ export interface ArtifactReaderConstruction {
    * and the container's own bytes; universal Mach-O lipo records consume it.
    */
   readonly integrity?: ArtifactIntegrityPolicyName | undefined;
+  /**
+   * First per-record header a windowed reader retains. Only a page of the
+   * `format_record_headers` view sets it; inventory always starts at 0.
+   */
+  readonly recordHeaderStart?: number | undefined;
 }
 
 export interface FormatDescriptor {
@@ -751,6 +757,18 @@ const NON_ZIP_FORMATS = {
       "MFT inventory reports whole-stream counts and up to 32 physical FILE record details, including fixup coverage, supported names, timestamps, declared sizes and attributes. Bounded attribute-list links expose verified metadata from acquired extension records, with explicit reference outcomes and omissions. Nonresident list values and file contents are not recovered; full paths and complete change history are not established. Use inspect_ntfs_journal for caller-paired journal events.",
     createReader: (path, options) =>
       new NtfsMftArtifactReader(path, sourceOf(options)),
+  }),
+  "systemd-journal": described("systemd-journal", {
+    ...plain,
+    // A journal is data, not a program: nothing in it is executed.
+    role: "resource",
+    retainClassifiedSource: true,
+    readerLimitation:
+      "Systemd journal inventory reports the file header and the first 32 object headers, including counts by object type, declared header and arena sizes, and object extents; later object headers page through inspect_analysis_view's format_record_headers collection, which re-reads the unchanged file. Object payloads are not decompressed or decoded, so entries, fields, timestamps and boot filters are not available; file integrity and authenticity are not established.",
+    createReader: (path, options) =>
+      new SystemdJournalArtifactReader(path, sourceOf(options), {
+        objectHeaderStart: options.recordHeaderStart ?? 0,
+      }),
   }),
   "auditd-log": described("auditd-log", {
     ...plain,

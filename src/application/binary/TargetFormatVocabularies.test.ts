@@ -159,6 +159,7 @@ const TARGETS: TargetFixtures = {
   },
   fit: { ...archive, format: "fit" },
   "ntfs-mft": { ...archive, format: "ntfs-mft" },
+  "systemd-journal": { ...archive, format: "systemd-journal" },
   "auditd-log": { ...archive, format: "auditd-log" },
   plist: { ...artifact, format: "plist" },
   javascript: { ...artifact, format: "javascript" },

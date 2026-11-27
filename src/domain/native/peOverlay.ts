@@ -108,6 +108,7 @@ export const PE_OVERLAY_LEADING_FORMATS = [
   "devicetree",
   "esp-nvs",
   "deb",
+  "systemd-journal",
   "auditd-log",
 ] as const;
 export type PeOverlayLeadingFormat =
