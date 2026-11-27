@@ -44,8 +44,8 @@ export interface GhidraRequestOptions {
    */
   readonly limits?: GhidraAdmittedLimits;
   /**
-   * Runs when this request leaves the queue and is about to be written.
-   * A request removed while it is still queued never runs it.
+   * Runs immediately before the wire writes a frame that passed admission.
+   * A request removed while queued, or refused before that write, never runs it.
    */
   readonly onAdmitted?: () => void;
 }

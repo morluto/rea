@@ -174,6 +174,10 @@ export class GhidraWire {
       );
     }
     const payload = JSON.stringify(payloadValue);
+    // Ownership of background work moves only with a frame that passed
+    // admission. An oversized hint never reaches the socket and must not
+    // replace the previous owner.
+    options.onAdmitted?.();
     // Only the request being written owns the next reply's ceiling; a
     // refused or still-queued request never changes it.
     this.#replyLimit = replyLimit;

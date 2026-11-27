@@ -565,9 +565,10 @@ export class GhidraClient {
       readonly valueFlowLimits?: NativeValueFlowLimits;
     },
   ): Promise<Result<JsonValue, GhidraSessionError>> {
-    // One worker pool. Ownership changes only when a read-ahead request is
-    // admitted, so a request rejected while queued leaves the current owner.
-    // A window with no signal still replaces that owner.
+    // One worker pool. Ownership changes only when the wire writes the
+    // read-ahead frame, after its admission checks. A request rejected while
+    // queued or refused before the write leaves the current owner. A window
+    // with no signal still replaces that owner.
     const readAhead = options.decompileReadAhead;
     const carriesReadAhead = readAhead !== undefined && readAhead.length > 1;
     const pattern =

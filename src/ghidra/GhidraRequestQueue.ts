@@ -185,7 +185,6 @@ export class GhidraRequestQueue {
     try {
       let result: GhidraQueuedRequestResult;
       try {
-        entry.options.onAdmitted?.();
         result = await this.execute(
           entry.method,
           entry.parameters,
