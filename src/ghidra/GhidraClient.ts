@@ -33,6 +33,7 @@ import {
   type ProviderOperationHealth,
 } from "../domain/providerOperationHealth.js";
 import { readRuntimeSetting } from "../config/runtimeAnalysisSettings.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   retainCloseOutcome,
@@ -1028,6 +1029,17 @@ export class GhidraClient {
       {
         reason: errorMessage(cause),
         diagnostics: this.#diagnostics(),
+        // A checkpoint refusal stays primary; cleanup that also failed after
+        // it is reported beside it, and its resources are retained above.
+        ...((cause instanceof GhidraCheckpointSupersededError ||
+          cause instanceof GhidraCheckpointBusyError) &&
+        cause.cleanupFailure !== undefined
+          ? {
+              checkpoint_cleanup_failure: projectAnalysisError(
+                cause.cleanupFailure,
+              ),
+            }
+          : {}),
       },
       {
         cause,

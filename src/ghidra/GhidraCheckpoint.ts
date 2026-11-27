@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { Deadline } from "../domain/deadline.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -110,6 +111,8 @@ const failure = (directory: string, reason: string, cause?: unknown) =>
  * fault. `wait` is the bound this session applied.
  */
 export class GhidraCheckpointBusyError extends Error {
+  /** Cleanup that also failed after the refusal; the refusal stays primary. */
+  cleanupFailure: AnalysisError | undefined;
   constructor(
     readonly directory: string,
     readonly owner: { readonly runId: string; readonly processId: number },
@@ -129,6 +132,8 @@ export class GhidraCheckpointBusyError extends Error {
  * overwriting the newer generation.
  */
 export class GhidraCheckpointSupersededError extends Error {
+  /** Cleanup that also failed after the refusal; the refusal stays primary. */
+  cleanupFailure: AnalysisError | undefined;
   constructor(
     readonly directory: string,
     readonly stage: "restore" | "save",
@@ -506,6 +511,10 @@ export class GhidraCheckpoint {
     let failed = false;
     try {
       this.#lease = await this.#acquireLease(admission, leaseSignal);
+      // Acquiring the lease is the cancellation cutoff: an abort that arrived
+      // during acquisition stops before publication, and the cleanup below
+      // releases the lease. Once past here the bounded publication completes.
+      assertArtifactReadActive(leaseSignal);
       const current = await readManifest(
         this.selection,
         this.resources,
@@ -534,12 +543,17 @@ export class GhidraCheckpoint {
     try {
       await this.retryCleanup();
     } catch (cause: unknown) {
-      if (failed)
-        throw analysisErrorWithCleanupFailure(
-          classify(primary),
-          classify(cause),
-        );
-      throw cause;
+      if (!failed) throw cause;
+      // A refusal is the owner's typed outcome: keep it primary, unwrapped,
+      // so its consumers still read it, and carry the cleanup failure on it.
+      if (
+        primary instanceof GhidraCheckpointSupersededError ||
+        primary instanceof GhidraCheckpointBusyError
+      ) {
+        primary.cleanupFailure ??= classify(cause);
+        throw primary;
+      }
+      throw analysisErrorWithCleanupFailure(classify(primary), classify(cause));
     }
     if (failed)
       throw primary instanceof GhidraCheckpointSupersededError ||

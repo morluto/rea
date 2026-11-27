@@ -1,3 +1,4 @@
+import { retainCloseOutcome } from "../domain/engineCloseReport.js";
 import {
   projectSessionError,
   type GhidraProjection,
@@ -1385,9 +1386,14 @@ export const createGhidraProviderClient = (input: {
       const closed = await client.close();
       const retained = nativeAotOwner?.cleanupFailure;
       if (retained === undefined) return closed;
-      return closed.ok
-        ? err(retained)
-        : err(analysisErrorWithCleanupDependencies(closed.error, retained));
+      return err(
+        retainCloseOutcome(
+          closed.ok
+            ? retained
+            : analysisErrorWithCleanupDependencies(closed.error, retained),
+          closed,
+        ),
+      );
     },
   });
 };

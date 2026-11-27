@@ -410,6 +410,70 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
+it.skipIf(process.platform === "win32")(
+  "discards on the next close when a refused save's lease release also failed",
+  async () => {
+    const f = await fixture();
+    expect((await f.client.start()).ok).toBe(true);
+    const stale = await peer(f);
+    expect((await stale.client.start()).ok).toBe(true);
+    expect((await rename(f.client)).ok).toBe(true);
+    expect((await rename(stale.client)).ok).toBe(true);
+    expect((await f.client.close()).ok).toBe(true);
+    const manifest = join(f.selection.directory, "current.json");
+    const published = await readFile(manifest, "utf8");
+    const leases = await vi.importActual<
+      typeof import("../../../../src/process/OwnedLease.js")
+    >("../../../../src/process/OwnedLease.js");
+    vi.mocked(acquireOwnedLease).mockImplementationOnce(async (input) => {
+      const result = await leases.acquireOwnedLease(input);
+      if (!result.acquired) return result;
+      let failed = false;
+      return {
+        acquired: true,
+        lease: {
+          ...result.lease,
+          release: async () => {
+            if (!failed) {
+              failed = true;
+              throw new Error("controlled lease release failure");
+            }
+            await result.lease.release();
+          },
+        },
+      };
+    });
+    const refused = await stale.client.close();
+    if (refused.ok) throw new Error("the stale save unexpectedly succeeded");
+    // Still the refusal, with the lease failure reported beside it.
+    expect(refused.error.cause).toBeInstanceOf(GhidraCheckpointSupersededError);
+    expect(refused.error).toMatchObject({
+      remediationAction: expect.stringMatching(/edits were not saved/),
+      diagnostics: {
+        checkpoint_cleanup_failure: expect.objectContaining({
+          code: expect.any(String),
+        }),
+      },
+    });
+    expect(stale.client.unsavedCloseReport()).toMatchObject({
+      checkpoint: { status: "discarded" },
+    });
+    // The refusal was recorded, so the next close discards instead of
+    // attempting the impossible save again.
+    expect(await stale.client.close()).toEqual({
+      ok: true,
+      value: {
+        checkpoint: {
+          status: "discarded",
+          reason: "superseded",
+          directory: f.selection.directory,
+        },
+      },
+    });
+    expect(await readFile(manifest, "utf8")).toBe(published);
+  },
+);
+
 it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
   "reports released-unsaved edits on the close whose later cleanup fails, and not again on its retry",
   async () => {

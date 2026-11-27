@@ -321,6 +321,85 @@ it.skipIf(process.platform === "win32").each(["restored", "analyzed"] as const)(
   },
 );
 
+/** Fail the next acquired lease's first release, then release normally. */
+const failNextLeaseRelease = async () => {
+  const leases = await vi.importActual<
+    typeof import("../process/OwnedLease.js")
+  >("../process/OwnedLease.js");
+  vi.mocked(acquireOwnedLease).mockImplementationOnce(async (input) => {
+    const result = await leases.acquireOwnedLease(input);
+    if (!result.acquired) return result;
+    let failed = false;
+    return {
+      acquired: true,
+      lease: {
+        ...result.lease,
+        release: async () => {
+          if (!failed) {
+            failed = true;
+            throw new Error("controlled lease release failure");
+          }
+          await result.lease.release();
+        },
+      },
+    };
+  });
+};
+
+it.skipIf(process.platform === "win32")(
+  "keeps a refused save typed when releasing its lease also fails",
+  async () => {
+    const f = await fixture();
+    const stale = peerOf(f);
+    await f.owner.admit("first");
+    await f.owner.publish(f.packed);
+    await stale.admit("stale");
+    await f.owner.publish(await edit(f, "first-edited"));
+    const staged = await edit(f, "stale-edited");
+    await failNextLeaseRelease();
+    const refused = await stale.publish(staged).catch((cause) => cause);
+    // The refusal stays the owner's typed outcome, not a wrapped error.
+    expect(refused).toBeInstanceOf(GhidraCheckpointSupersededError);
+    expect(refused).toMatchObject({ stage: "save" });
+    expect(refused.cleanupFailure?.cause).toMatchObject({
+      message: "controlled lease release failure",
+    });
+    expect(stale.hasResources).toBe(true);
+    await stale.retryCleanup();
+    expect(stale.hasResources).toBe(false);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "stops before publishing when the lease wait is aborted while the lease is being acquired",
+  async () => {
+    const f = await fixture();
+    await f.owner.admit("first");
+    await f.owner.publish(f.packed);
+    const manifest = join(f.selection.directory, "current.json");
+    const committed = await readFile(manifest, "utf8");
+    const leases = await vi.importActual<
+      typeof import("../process/OwnedLease.js")
+    >("../process/OwnedLease.js");
+    const forced = new AbortController();
+    // The forced stop arrives during the acquisition's own directory work.
+    vi.mocked(acquireOwnedLease).mockImplementationOnce(async (input) => {
+      forced.abort(new Error("forced stop"));
+      return leases.acquireOwnedLease(input);
+    });
+    await expect(
+      f.owner.publish(await edit(f, "edited"), undefined, forced.signal),
+    ).rejects.toThrow();
+    expect(await readFile(manifest, "utf8")).toBe(committed);
+    // The acquired lease was released by the publication's cleanup.
+    expect(f.owner.hasResources).toBe(false);
+    const peer = peerOf(f);
+    expect((await peer.admit("peer"))?.sha256).toBe(
+      f.owner.observation.source?.sha256,
+    );
+  },
+);
+
 it.skipIf(process.platform === "win32")(
   "refuses a save when the manifest it restored was removed",
   async () => {

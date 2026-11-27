@@ -5,8 +5,13 @@ import type { CallToolResult } from "@modelcontextprotocol/client";
 import { expect, it, vi } from "vitest";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import type { EngineCloseReport } from "../../../src/domain/engineCloseReport.js";
-import { ok } from "../../../src/domain/result.js";
+import {
+  retainCloseOutcome,
+  type EngineCloseReport,
+} from "../../../src/domain/engineCloseReport.js";
+import { err, ok } from "../../../src/domain/result.js";
+import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
+import { connectGhidraMcp } from "./ghidraMcpHarness.js";
 import type { AnalysisProvider } from "../../../src/ports/AnalysisProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
 import {
@@ -182,5 +187,58 @@ it("reports released edits on a close whose process-capture cleanup fails", asyn
   } finally {
     cleanup.mockRestore();
     await dispose();
+  }
+});
+
+it("reports a GhidraProvider close's discard through its deferred client, on success and on a cleanup failure", async () => {
+  const closes = [
+    // The JVM stopped and released the edits, then a runtime root remained.
+    err(
+      retainCloseOutcome(
+        new ProviderCleanupError("ghidra", ["/runtime/root"], {
+          reason: "runtime root removal denied",
+        }),
+        discarded,
+      ),
+    ),
+    ok(null),
+    ok(discarded),
+  ];
+  const harness = await connectGhidraMcp(
+    "close-binary-ghidra-discard",
+    undefined,
+    {
+      close: () => Promise.resolve(closes.shift() ?? ok(null)),
+    },
+  );
+  const call = (name: string, arguments_: Record<string, unknown>) =>
+    harness.mcp.callTool({
+      name,
+      arguments: arguments_,
+    }) as Promise<CallToolResult>;
+  try {
+    // The engine starts with the first analysis, not at open.
+    expect(
+      (await call("address_name", { address: "0x401000" })).isError,
+    ).not.toBe(true);
+    const failed = await call("close_binary", {});
+    expect(failed.isError).toBe(true);
+    expect(
+      parseMcpToolError(failed).error.details?.partial_observation,
+    ).toEqual(discarded);
+    // The retry releases the rest and does not report the discard again.
+    expect((await call("close_binary", {})).structuredContent).toEqual({
+      result: null,
+    });
+
+    await call("open_binary", { path: process.execPath });
+    await call("address_name", { address: "0x401000" });
+    const closed = await call("close_binary", {});
+    expect(
+      toolContract("close_binary").outputSchema.parse(closed.structuredContent)
+        .result,
+    ).toEqual(discarded);
+  } finally {
+    await harness.close();
   }
 });
