@@ -7,6 +7,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rename,
   rm,
   writeFile,
@@ -16,19 +17,41 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
 
-const { WINDOWS_NATIVE_ARTIFACT, createWindowsNativeManifest } =
-  await importVerifierSource(
-    new URL("../src/domain/windowsNativeArtifact.ts", import.meta.url).href,
-    import.meta.url,
-  );
+const {
+  WINDOWS_NATIVE_ARTIFACT,
+  WINDOWS_NATIVE_INSPECTION_FIXTURE_SOURCE_FILES,
+  WINDOWS_NATIVE_NODE_VERSION,
+  WINDOWS_NATIVE_SOURCE_FILES,
+  WINDOWS_NATIVE_TARGETS,
+  computeWindowsNativeSourceSha256,
+  createWindowsNativeManifest,
+  parseWindowsNativeManifest,
+  validateWindowsNativeArtifact,
+} = await importVerifierSource(
+  new URL("../src/domain/windowsNativeArtifact.ts", import.meta.url).href,
+  import.meta.url,
+);
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const nodeVersion = "22.19.0";
-const compiler = "x86_64-w64-mingw32-g++";
+const nodeVersion = WINDOWS_NATIVE_NODE_VERSION;
 const cache = join(homedir(), ".cache", "rea-windows-native");
-const inspectionFixture = process.argv[2] === "--inspection-fixture";
-if (process.argv.length > 3 || (process.argv.length > 2 && !inspectionFixture))
+const arguments_ = process.argv.slice(2);
+const inspectionFixture = arguments_.includes("--inspection-fixture");
+const archFlag = arguments_.find((argument) => argument.startsWith("--arch="));
+const architecture = archFlag?.slice("--arch=".length) ?? "x64";
+if (architecture !== "x64" && architecture !== "arm64")
+  throw new Error("Windows native --arch must be x64 or arm64");
+const allowed = new Set(
+  [inspectionFixture ? "--inspection-fixture" : undefined, archFlag].filter(
+    (argument) => argument !== undefined,
+  ),
+);
+if (arguments_.some((argument) => !allowed.has(argument)))
   throw new Error("Unknown Windows native build argument");
+const compilerPrefixFor = (arch) =>
+  arch === "arm64" ? "aarch64-w64-mingw32" : "x86_64-w64-mingw32";
+const compilerPrefix = compilerPrefixFor(architecture);
+const compiler = `${compilerPrefix}-g++`;
 const output = inspectionFixture
   ? join(root, ".cache", "windows-native-inspection-fixture")
   : join(root, "native", "windows", "build");
@@ -51,11 +74,37 @@ const run = (command, args, cwd = root) => {
 };
 if (process.platform !== "linux")
   throw new Error(
-    "The Windows x64 artifact build lane currently requires Linux and MinGW-w64.",
+    "The Windows native artifact build lane currently requires Linux and MinGW-w64.",
   );
 run(compiler, ["--version"]);
 await mkdir(cache, { recursive: true });
 await mkdir(output, { recursive: true });
+const canonicalOutput = await realpath(output);
+const provenancePath = join(cache, "build-provenance.json");
+const provenanceKeyFor = (arch) => `${canonicalOutput}::${arch}`;
+const probeToolchainSha256 = (arch) => {
+  const prefix = compilerPrefixFor(arch);
+  const gpp = spawnSync(`${prefix}-g++`, ["-v"], {
+    cwd: root,
+    encoding: "utf8",
+    maxBuffer: 4 * 1_024 * 1_024,
+    timeout: 30_000,
+  });
+  if (gpp.error !== undefined || gpp.status !== 0) return undefined;
+  const dlltool = spawnSync(`${prefix}-dlltool`, ["--version"], {
+    cwd: root,
+    encoding: "utf8",
+    maxBuffer: 4 * 1_024 * 1_024,
+    timeout: 30_000,
+  });
+  if (dlltool.error !== undefined) return undefined;
+  // llvm-dlltool does not support --version; GNU dlltool prints its banner.
+  const dlltoolBanner = dlltool.status === 0 ? dlltool.stdout.trim() : "";
+  return createHash("sha256")
+    .update(`compiler:${prefix}-g++\n${`${gpp.stdout}${gpp.stderr}`.trim()}\n`)
+    .update(`dlltool:${prefix}-dlltool\n${dlltoolBanner}\n`)
+    .digest("hex");
+};
 const exists = async (path) =>
   access(path).then(
     () => true,
@@ -117,7 +166,7 @@ if (!(await exists(join(headers, "node_api.h")))) {
   run("tar", ["xzf", archive, "-C", cache]);
   headers = join(cache, `node-v${nodeVersion}`, "include", "node");
 }
-const artifact = WINDOWS_NATIVE_ARTIFACT.artifact;
+const artifact = WINDOWS_NATIVE_TARGETS[architecture].artifact;
 // MSVC short-import libraries do not produce a correct Node import table with
 // GNU ld. Generate a GNU delay-import library for the exact stable Node-API
 // symbols; addon.cc binds it to the host executable, whatever its file name.
@@ -129,6 +178,21 @@ const sourceText = (
     ),
   )
 ).join("\n");
+const sourceInputPaths = inspectionFixture
+  ? WINDOWS_NATIVE_INSPECTION_FIXTURE_SOURCE_FILES
+  : WINDOWS_NATIVE_SOURCE_FILES;
+const sourceEntries = await Promise.all(
+  sourceInputPaths.map(async (path) => [
+    path,
+    await readFile(join(root, path)),
+  ]),
+);
+const sourceDigest = computeWindowsNativeSourceSha256(
+  Object.fromEntries(sourceEntries),
+  { nodeVersion, inspectionFixture },
+);
+if (!sourceDigest.ok) throw sourceDigest.error;
+const sourceSha256 = sourceDigest.value;
 const symbols = [
   ...new Set(
     [...sourceText.matchAll(/\b(napi_[a-z0-9_]+)\s*\(/gu)].map(
@@ -146,8 +210,10 @@ try {
   );
   // dlltool derives PE symbols from the output operand, so pass its basename.
   run(
-    "x86_64-w64-mingw32-dlltool",
-    ["-d", "node-api.def", "-y", "libnode-api.a"],
+    `${compilerPrefix}-dlltool`,
+    architecture === "arm64"
+      ? ["-d", "node-api.def", "-l", "libnode-api.a"]
+      : ["-d", "node-api.def", "-y", "libnode-api.a"],
     importDirectory,
   );
   run(compiler, [
@@ -160,6 +226,7 @@ try {
     "-static-libgcc",
     "-static-libstdc++",
     "-Wl,--no-insert-timestamp",
+    ...(architecture === "arm64" ? ["-Wl,--delayload=node.exe"] : []),
     `-I${headers}`,
     "native/windows/src/addon.cc",
     inspectionFixture
@@ -167,6 +234,7 @@ try {
       : "native/windows/src/filesystem.cc",
     "native/windows/src/process.cc",
     library,
+    ...(architecture === "arm64" ? ["-ldelayimp"] : []),
     "-ladvapi32",
     "-lbcrypt",
     "-lntdll",
@@ -180,13 +248,111 @@ const packageJson = JSON.parse(
   await readFile(join(root, "package.json"), "utf8"),
 );
 const bytes = await readFile(join(output, artifact));
-const created = createWindowsNativeManifest(packageJson.version, bytes);
+const currentToolchainSha256 = probeToolchainSha256(architecture);
+const readBuildProvenance = async () => {
+  if (!(await exists(provenancePath))) return {};
+  try {
+    const parsed = JSON.parse(await readFile(provenancePath, "utf8"));
+    return parsed !== null &&
+      typeof parsed === "object" &&
+      !Array.isArray(parsed)
+      ? parsed
+      : {};
+  } catch {
+    return {};
+  }
+};
+const hasMatchingProvenance = (
+  entry,
+  expectedArtifactSha256,
+  expectedSourceSha256,
+  expectedToolchainSha256,
+) =>
+  entry !== null &&
+  typeof entry === "object" &&
+  !Array.isArray(entry) &&
+  entry.artifactSha256 === expectedArtifactSha256 &&
+  entry.sourceSha256 === expectedSourceSha256 &&
+  entry.toolchainSha256 === expectedToolchainSha256;
+const provenance = await readBuildProvenance();
+const manifestPath = join(output, "manifest.json");
+const preservedArtifacts = {};
+if (await exists(manifestPath)) {
+  try {
+    const previousRaw = JSON.parse(await readFile(manifestPath, "utf8"));
+    const previousParsed = parseWindowsNativeManifest(
+      previousRaw,
+      packageJson.version,
+    );
+    if (
+      previousParsed.ok &&
+      previousParsed.value.sourceSha256 === sourceSha256
+    ) {
+      const candidateArchs =
+        previousParsed.value.artifacts !== undefined
+          ? Object.keys(previousParsed.value.artifacts)
+          : [previousParsed.value.architecture];
+      for (const candidateArch of candidateArchs) {
+        if (candidateArch === architecture) continue;
+        const resolved = parseWindowsNativeManifest(
+          previousRaw,
+          packageJson.version,
+          candidateArch,
+        );
+        if (!resolved.ok) continue;
+        const candidatePath = join(output, resolved.value.artifact);
+        if (!(await exists(candidatePath))) continue;
+        const candidateToolchainSha256 = probeToolchainSha256(candidateArch);
+        if (candidateToolchainSha256 === undefined) continue;
+        const key = provenanceKeyFor(candidateArch);
+        const recorded = Object.hasOwn(provenance, key)
+          ? provenance[key]
+          : undefined;
+        if (
+          !hasMatchingProvenance(
+            recorded,
+            resolved.value.artifactSha256,
+            sourceSha256,
+            candidateToolchainSha256,
+          )
+        )
+          continue;
+        const candidateBytes = await readFile(candidatePath);
+        if (validateWindowsNativeArtifact(resolved.value, candidateBytes).ok)
+          preservedArtifacts[candidateArch] = {
+            artifact: resolved.value.artifact,
+            artifactSha256: resolved.value.artifactSha256,
+          };
+      }
+    }
+  } catch {
+    // Replace unreadable or stale manifest state with the newly built target.
+  }
+}
+const created = createWindowsNativeManifest(packageJson.version, bytes, {
+  architecture,
+  sourceSha256,
+  preservedArtifacts,
+  includeArtifactsTable: true,
+});
 if (!created.ok) throw created.error;
 const metadata = created.value;
-await writeFile(
-  join(output, "manifest.json"),
-  `${JSON.stringify(metadata, null, 2)}\n`,
-);
+const nextProvenance = { ...provenance };
+for (const [arch, target] of Object.entries(WINDOWS_NATIVE_TARGETS)) {
+  if (metadata.artifacts?.[arch] === undefined) {
+    await rm(join(output, target.artifact), { force: true });
+    delete nextProvenance[provenanceKeyFor(arch)];
+  }
+}
+if (currentToolchainSha256 !== undefined)
+  nextProvenance[provenanceKeyFor(architecture)] = {
+    artifactSha256: metadata.artifactSha256,
+    sourceSha256,
+    toolchainSha256: currentToolchainSha256,
+  };
+else delete nextProvenance[provenanceKeyFor(architecture)];
+await writeFile(manifestPath, `${JSON.stringify(metadata, null, 2)}\n`);
+await writeFile(provenancePath, `${JSON.stringify(nextProvenance, null, 2)}\n`);
 process.stdout.write(
   `${JSON.stringify({ ...metadata, artifactBytes: bytes.length })}\n`,
 );

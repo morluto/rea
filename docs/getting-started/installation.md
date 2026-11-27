@@ -1192,7 +1192,7 @@ copying license secrets into logs, or killing unrelated Hopper processes.
 ## Ghidra
 
 REA connects to an existing Ghidra installation on Linux x64/arm64, macOS x64/arm64,
-or experimental Windows x64 P0.
+or experimental Windows x64/arm64 P0.
 It accepts Ghidra 12.x (>=12.2) and the 64-bit full JDK declared by that installation's
 `application.java.min` and `application.java.max`. The JDK's reported platform must also
 map to the same native decompiler directory as the host: a JDK running under
@@ -1244,9 +1244,10 @@ inline.
 
 Each installation must include the native decompiler for the host
 architecture in `Ghidra/Features/Decompiler/os/<platform>/` or the corresponding
-`build/os/<platform>/` directory. Linux ARM64 uses `linux_arm_64`. Official
-release archives ship native binaries only for Windows and Linux x64, so on
-Linux ARM64 build them with the release's
+`build/os/<platform>/` directory. Linux ARM64 uses `linux_arm_64` and Windows
+ARM64 uses `win_arm_64`. Official release archives ship native binaries only
+for Windows and Linux x64, so on Linux or Windows ARM64 build them with the
+release's
 [native component instructions](https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.2_build/GhidraDocs/GettingStarted.md#building-native-components).
 REA checks the executable prerequisite by inspecting the file's own executable
 header, so a native component built for another platform or architecture is

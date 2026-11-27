@@ -7,6 +7,10 @@ import { expect } from "vitest";
 import { processTest } from "../../support/process/processFixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { windowsNativeArtifactFixture } from "../../fixtures/windowsNativeArtifact.js";
+import {
+  WINDOWS_NATIVE_SOURCE_FILES,
+  computeWindowsNativeSourceSha256,
+} from "../../../src/domain/windowsNativeArtifact.js";
 
 const repository = fileURLToPath(new URL("../../..", import.meta.url));
 
@@ -107,6 +111,35 @@ for (const mode of ["preinstall source", "packed source-free"]) {
         ...manifest,
         artifactBytes: bytes.length,
       });
+
+      const arm64 = windowsNativeArtifactFixture("arm64");
+      await writeFile(join(artifactRoot, arm64.manifest.artifact), arm64.bytes);
+      const unindexed = await run();
+      expect(unindexed.exitCode).not.toBe(0);
+      expect(unindexed.stderr).toContain("Unindexed Windows native artifact");
+
+      const multiManifest = {
+        ...arm64.manifest,
+        artifacts: {
+          x64: {
+            artifact: manifest.artifact,
+            artifactSha256: manifest.artifactSha256,
+          },
+          arm64: {
+            artifact: arm64.manifest.artifact,
+            artifactSha256: arm64.manifest.artifactSha256,
+          },
+        },
+      };
+      await writeFile(manifestPath, JSON.stringify(multiManifest));
+      const validMulti = await run();
+      expect(validMulti.exitCode, validMulti.stderr).toBe(0);
+      expect(JSON.parse(validMulti.stdout)).toEqual({
+        ok: true,
+        ...multiManifest,
+        artifactBytes: arm64.bytes.length,
+      });
+
       await writeFile(
         manifestPath,
         JSON.stringify({ ...manifest, extra: true }),
@@ -186,5 +219,71 @@ processTest.skipIf(process.platform !== "linux")(
 
     const cached = await run("bad upstream content");
     expect(cached.stderr).toContain(`extraction received: ${validBytes}`);
+  },
+);
+
+processTest(
+  "requires sourceSha256 to match native sources and scripts/build-windows-native.mjs in a source checkout",
+  async ({ processes }) => {
+    const root = await createTestTempDirectory(
+      "rea-native-artifact-source-verifier-",
+    );
+    await mkdir(join(root, "scripts"), { recursive: true });
+    await copyFile(
+      join(repository, "scripts/verify-windows-native-artifact.mjs"),
+      join(root, "scripts/verify-windows-native-artifact.mjs"),
+    );
+    await copyModuleGraph(root, "scripts/lib/verifier-source-loader.mjs");
+    await copyModuleGraph(root, "src/domain/windowsNativeArtifact.ts");
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({ type: "module", version: "1.0.0" }),
+    );
+    const sourceBytes: Record<string, Buffer> = {};
+    for (const sourcePath of WINDOWS_NATIVE_SOURCE_FILES) {
+      const bytes = await readFile(join(repository, sourcePath));
+      sourceBytes[sourcePath] = bytes;
+      const target = join(root, sourcePath);
+      await mkdir(dirname(target), { recursive: true });
+      await writeFile(target, bytes);
+    }
+    const sourceDigest = computeWindowsNativeSourceSha256(sourceBytes);
+    expect(sourceDigest.ok).toBe(true);
+    if (!sourceDigest.ok) throw sourceDigest.error;
+
+    const artifactRoot = join(root, "native/windows/build");
+    await mkdir(artifactRoot, { recursive: true });
+    const { bytes, manifest } = windowsNativeArtifactFixture();
+    await writeFile(join(artifactRoot, manifest.artifact), bytes);
+    const manifestPath = join(artifactRoot, "manifest.json");
+    const run = () =>
+      processes.run(
+        process.execPath,
+        [join(root, "scripts/verify-windows-native-artifact.mjs")],
+        { cwd: root },
+      );
+
+    await writeFile(manifestPath, JSON.stringify(manifest));
+    const missingSourceDigest = await run();
+    expect(missingSourceDigest.exitCode).not.toBe(0);
+    expect(missingSourceDigest.stderr).toContain("sourceSha256 does not match");
+
+    await writeFile(
+      manifestPath,
+      JSON.stringify({ ...manifest, sourceSha256: sourceDigest.value }),
+    );
+    const matching = await run();
+    expect(matching.exitCode, matching.stderr).toBe(0);
+
+    const buildScript = sourceBytes["scripts/build-windows-native.mjs"];
+    expect(buildScript).toBeDefined();
+    if (buildScript === undefined) return;
+    await writeFile(
+      join(root, "scripts/build-windows-native.mjs"),
+      Buffer.concat([buildScript, Buffer.from("\n// recipe changed\n")]),
+    );
+    const staleRecipe = await run();
+    expect(staleRecipe.exitCode).not.toBe(0);
+    expect(staleRecipe.stderr).toContain("scripts/build-windows-native.mjs");
   },
 );
