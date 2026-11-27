@@ -313,6 +313,188 @@ it("keeps duplicate, truncated, wrapped and out-of-text tables as limitations", 
   });
 });
 
+it("counts shape and range issues across duplicate linkedit commands while decoding the first", async () => {
+  const firstRecord = {
+    status: "present" as const,
+    dataoff: 0x4000,
+    datasize: 7,
+    file_offset: 0x4000,
+    in_linkedit: true,
+  };
+
+  const misSizedDup = await parse(
+    machoFunctionStartsImage({
+      starts: { deltas: ARM64_DELTAS, duplicate: { commandSize: 24 } },
+    }),
+  );
+  expect(misSizedDup.function_starts).toEqual(firstRecord);
+  expect(misSizedDup.starts.map((start) => start.vmaddr)).toEqual(ARM);
+  expect(misSizedDup.coverage).toMatchObject({
+    status: "partial",
+    total_starts: 3,
+    duplicate_commands: 1,
+    mis_sized_commands: 1,
+    outside_linkedit: 0,
+    truncated_commands: 0,
+  });
+  expect(misSizedDup.limitations).toEqual(
+    expect.arrayContaining([TEXT.duplicateStarts, TEXT.misSizedStarts]),
+  );
+
+  const outsideDup = await parse(
+    machoFunctionStartsImage({
+      starts: { deltas: ARM64_DELTAS, duplicate: { offset: 0x2000 } },
+    }),
+  );
+  expect(outsideDup.function_starts).toEqual(firstRecord);
+  expect(outsideDup.starts.map((start) => start.vmaddr)).toEqual(ARM);
+  expect(outsideDup.coverage).toMatchObject({
+    status: "partial",
+    total_starts: 3,
+    duplicate_commands: 1,
+    mis_sized_commands: 0,
+    outside_linkedit: 1,
+    truncated_commands: 0,
+  });
+  expect(outsideDup.limitations).toEqual(
+    expect.arrayContaining([TEXT.duplicateStarts, TEXT.outsideStarts]),
+  );
+
+  const pastFileDup = await parse(
+    machoFunctionStartsImage({
+      starts: { deltas: ARM64_DELTAS, duplicate: { declaredSize: 0x2000 } },
+    }),
+  );
+  expect(pastFileDup.function_starts).toEqual(firstRecord);
+  expect(pastFileDup.starts.map((start) => start.vmaddr)).toEqual(ARM);
+  expect(pastFileDup.coverage).toMatchObject({
+    status: "partial",
+    total_starts: 3,
+    duplicate_commands: 1,
+    mis_sized_commands: 0,
+    outside_linkedit: 1,
+    truncated_commands: 1,
+  });
+  expect(pastFileDup.limitations).toEqual(
+    expect.arrayContaining([
+      TEXT.duplicateStarts,
+      TEXT.outsideStarts,
+      TEXT.startsPastFile,
+    ]),
+  );
+
+  const overlappingDup = await parse(
+    machoFunctionStartsImage({
+      starts: {
+        deltas: ARM64_DELTAS,
+        duplicate: { commandSize: 24, offset: 0x2000, declaredSize: 0x4000 },
+      },
+    }),
+  );
+  expect(overlappingDup.function_starts).toEqual(firstRecord);
+  expect(overlappingDup.starts.map((start) => start.vmaddr)).toEqual(ARM);
+  expect(overlappingDup.coverage).toMatchObject({
+    status: "partial",
+    total_starts: 3,
+    duplicate_commands: 1,
+    mis_sized_commands: 1,
+    outside_linkedit: 1,
+    truncated_commands: 1,
+  });
+  expect(overlappingDup.limitations).toEqual(
+    expect.arrayContaining([
+      TEXT.duplicateStarts,
+      TEXT.misSizedStarts,
+      TEXT.outsideStarts,
+      TEXT.startsPastFile,
+    ]),
+  );
+});
+
+it("handles short null-range linkedit commands and duplicate LC_DATA_IN_CODE counters", async () => {
+  const shortDup = await parse(
+    machoFunctionStartsImage({
+      starts: { deltas: ARM64_DELTAS, duplicate: { commandSize: 8 } },
+    }),
+  );
+  expect(shortDup.function_starts).toEqual({
+    status: "present",
+    dataoff: 0x4000,
+    datasize: 7,
+    file_offset: 0x4000,
+    in_linkedit: true,
+  });
+  expect(shortDup.starts.map((start) => start.vmaddr)).toEqual(ARM);
+  expect(shortDup.coverage).toMatchObject({
+    status: "partial",
+    total_starts: 3,
+    duplicate_commands: 1,
+    mis_sized_commands: 1,
+    outside_linkedit: 0,
+    truncated_commands: 0,
+  });
+
+  const shortFirstWithBadDup = await parse(
+    machoFunctionStartsImage({
+      starts: {
+        deltas: ARM64_DELTAS,
+        commandSize: 8,
+        duplicate: { commandSize: 24, offset: 0x2000, declaredSize: 0x4000 },
+      },
+    }),
+  );
+  expect(shortFirstWithBadDup.function_starts).toEqual({
+    status: "present",
+    dataoff: null,
+    datasize: null,
+    file_offset: null,
+    in_linkedit: null,
+  });
+  expect(shortFirstWithBadDup.starts).toEqual([]);
+  expect(shortFirstWithBadDup.coverage).toMatchObject({
+    status: "partial",
+    total_starts: 0,
+    duplicate_commands: 1,
+    mis_sized_commands: 2,
+    outside_linkedit: 1,
+    truncated_commands: 1,
+  });
+
+  const badDataDup = await parse(
+    machoFunctionStartsImage({
+      starts: { deltas: ARM64_DELTAS },
+      data: {
+        entries: [{ offset: 0x1080, length: 8, kind: 1 }],
+        duplicate: { commandSize: 24, offset: 0x2000, declaredSize: 0x4000 },
+      },
+    }),
+  );
+  expect(badDataDup.data_in_code).toEqual({
+    status: "present",
+    dataoff: 0x4200,
+    datasize: 8,
+    file_offset: 0x4200,
+    in_linkedit: true,
+  });
+  expect(badDataDup.data_in_code_entries).toHaveLength(1);
+  expect(badDataDup.coverage).toMatchObject({
+    status: "partial",
+    total_data_in_code: 1,
+    duplicate_commands: 1,
+    mis_sized_commands: 1,
+    outside_linkedit: 1,
+    truncated_commands: 1,
+  });
+  expect(badDataDup.limitations).toEqual(
+    expect.arrayContaining([
+      TEXT.duplicateData,
+      TEXT.misSizedData,
+      TEXT.outsideData,
+      TEXT.dataPastFile,
+    ]),
+  );
+});
+
 it("flags linkedit placement, anchors, padding and data-in-code shape", async () => {
   const misplaced = await parse(
     machoFunctionStartsImage({

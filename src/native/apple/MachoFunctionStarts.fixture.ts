@@ -12,6 +12,12 @@ const CPU = {
 
 export type MachoFunctionStartsCpu = keyof typeof CPU;
 
+export interface MachoLinkeditDuplicateCommand {
+  readonly offset?: number;
+  readonly declaredSize?: number;
+  readonly commandSize?: number;
+}
+
 export interface MachoFunctionStartBlob {
   readonly deltas?: readonly bigint[];
   readonly blob?: Buffer;
@@ -26,7 +32,7 @@ export interface MachoFunctionStartBlob {
   readonly declaredSize?: number;
   /** linkedit_data_command cmdsize. Default 16. */
   readonly commandSize?: number;
-  readonly duplicate?: boolean;
+  readonly duplicate?: boolean | MachoLinkeditDuplicateCommand;
 }
 
 export interface MachoDataInCodeBlob {
@@ -40,7 +46,7 @@ export interface MachoDataInCodeBlob {
   readonly offset?: number;
   readonly declaredSize?: number;
   readonly commandSize?: number;
-  readonly duplicate?: boolean;
+  readonly duplicate?: boolean | MachoLinkeditDuplicateCommand;
 }
 
 export interface MachoFunctionStartsImageOptions {
@@ -173,8 +179,8 @@ const linkeditCommand = (
   const bytes = Buffer.alloc(size);
   bytes.writeUInt32LE(command, 0);
   bytes.writeUInt32LE(size, 4);
-  bytes.writeUInt32LE(dataoff, 8);
-  bytes.writeUInt32LE(datasize, 12);
+  if (size >= 12) bytes.writeUInt32LE(dataoff, 8);
+  if (size >= 16) bytes.writeUInt32LE(datasize, 12);
   return bytes;
 };
 
@@ -184,6 +190,30 @@ const place = (file: Buffer, offset: number, bytes: Buffer): void => {
       `fixture payload at ${offset} does not fit in ${file.length} bytes`,
     );
   bytes.copy(file, offset);
+};
+
+const appendDuplicateCommand = (
+  file: Buffer,
+  commands: Buffer[],
+  options: {
+    readonly command: number;
+    readonly duplicate: boolean | MachoLinkeditDuplicateCommand | undefined;
+    readonly defaultOffset: number;
+    readonly decoy: Buffer;
+  },
+): void => {
+  if (options.duplicate === undefined || options.duplicate === false) return;
+  const spec = options.duplicate === true ? {} : options.duplicate;
+  if (spec.offset === undefined)
+    place(file, options.defaultOffset, options.decoy);
+  commands.push(
+    linkeditCommand(
+      options.command,
+      spec.offset ?? options.defaultOffset,
+      spec.declaredSize ?? options.decoy.length,
+      spec.commandSize ?? 16,
+    ),
+  );
 };
 
 /**
@@ -261,11 +291,12 @@ export const machoFunctionStartsImage = (
         options.starts.commandSize ?? 16,
       ),
     );
-    if (options.starts.duplicate === true) {
-      const decoy = Buffer.concat([encodeUleb(1n), Buffer.from([0])]);
-      place(file, 0x4400, decoy);
-      commands.push(linkeditCommand(0x26, 0x4400, decoy.length, 16));
-    }
+    appendDuplicateCommand(file, commands, {
+      command: 0x26,
+      duplicate: options.starts.duplicate,
+      defaultOffset: 0x4400,
+      decoy: Buffer.concat([encodeUleb(1n), Buffer.from([0])]),
+    });
   }
   if (options.data !== undefined) {
     const payload = encodeData(options.data);
@@ -279,13 +310,14 @@ export const machoFunctionStartsImage = (
         options.data.commandSize ?? 16,
       ),
     );
-    if (options.data.duplicate === true) {
-      const decoy = encodeData({
+    appendDuplicateCommand(file, commands, {
+      command: 0x29,
+      duplicate: options.data.duplicate,
+      defaultOffset: 0x4600,
+      decoy: encodeData({
         entries: [{ offset: 0x10, length: 1, kind: 1 }],
-      });
-      place(file, 0x4600, decoy);
-      commands.push(linkeditCommand(0x29, 0x4600, decoy.length, 16));
-    }
+      }),
+    });
   }
   const commandBytes = Buffer.concat(commands);
   file.writeUInt32LE(0xfeedfacf, 0);

@@ -173,15 +173,25 @@ const loadTable = async (
       declared: 0,
     };
   const first = matches[0]!;
-  const misSized = first.size === LINKEDIT_COMMAND_BYTES ? 0 : 1;
   const duplicate = matches.length - 1;
+  let misSized = 0;
+  let outside = 0;
+  let pastFile = 0;
+  for (const match of matches) {
+    if (match.size !== LINKEDIT_COMMAND_BYTES) misSized += 1;
+    if (match.dataOffset === null || match.dataSize === null) continue;
+    if (!insideLinkedit(linkedit, match.dataOffset, match.dataSize))
+      outside += 1;
+    if (blobPastFile(source.size, match.dataOffset, match.dataSize))
+      pastFile += 1;
+  }
   if (first.dataOffset === null || first.dataSize === null)
     return {
       record: { ...absentCommand, status: "present" },
       misSized,
       duplicate,
-      outside: 0,
-      pastFile: 0,
+      outside,
+      pastFile,
       bytes: Buffer.alloc(0),
       declared: 0,
     };
@@ -192,6 +202,7 @@ const loadTable = async (
     dataOffset >= source.size
       ? 0
       : Math.min(dataSize, source.size - dataOffset);
+  if (!declaredPastFile && bytes.length < available) pastFile += 1;
   const container = sliceFileOffset + dataOffset;
   return {
     record: {
@@ -203,8 +214,8 @@ const loadTable = async (
     },
     misSized,
     duplicate,
-    outside: insideLinkedit(linkedit, dataOffset, dataSize) ? 0 : 1,
-    pastFile: declaredPastFile || bytes.length < available ? 1 : 0,
+    outside,
+    pastFile,
     bytes,
     declared: dataSize,
   };
