@@ -1534,6 +1534,7 @@ changes nothing:
 | Repeated parameter or member name; struct or union without members                                                  | refused            | refused                               |
 | Array parameter (Ghidra stores a pointer)                                                                           | refused            | not applicable                        |
 | A type name the database holds as different types                                                                   | refused            | refused                               |
+| Anything Ghidra's parser reports a diagnostic for, such as a repeated enumerator name                               | refused            | refused                               |
 | `#pragma pack`, bit-fields, flexible and zero-length arrays, enum constant expressions, several typedef declarators | not applicable     | applied; the stored layout shows them |
 | `_Noreturn`, a calling convention the compiler specification defines                                                | applied            | not applicable                        |
 | `const`, `volatile`                                                                                                 | accepted, reported | accepted, reported                    |
@@ -1542,7 +1543,12 @@ changes nothing:
 effect on layout or storage, so the stored type and the readback omit them.
 The result's `dropped_qualifiers` lists each one with its line and column, and
 for a signature its zero-based `parameter_index` (`null` for the return type),
-so the omission is visible without comparing the text with the readback. A
+so the omission is visible without comparing the text with the readback. Ghidra's parser can report a diagnostic, such as a repeated enumerator it
+drops, and still succeed; REA refuses such text with Ghidra's message, which
+names the nearest type but has no line or column. Parsing runs inside the
+edit's own transaction, because Ghidra's parser fills an existing empty
+composite of the same name in place, so a refusal leaves even such a type
+unchanged. A
 type name that exists in several categories is accepted only when every type
 of that name is equivalent; otherwise the refusal lists their category paths,
 because C text cannot select one.

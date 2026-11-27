@@ -1857,16 +1857,17 @@ public final class ReaGhidraBridge extends HeadlessScript {
         for (String field : List.of("name", "comment", "inline_comment")) {
             if (params.has(field)) validateAnnotationText(requireText(params, field), field);
         }
-        // Parsing reads the type database without writing it, so a refused prototype needs no rollback.
         int signatureBound = callerCTextBound(
             params, "signature_max_utf16", DEFAULT_FUNCTION_SIGNATURE_UTF16, MAX_FUNCTION_SIGNATURE_UTF16);
-        SignatureEdit signature = params.has("signature")
-            ? parseFunctionSignature(function, requireText(params, "signature"), signatureBound,
-                callerParenthesisBound(params)) : null;
-        FunctionDefinitionDataType prototype = signature == null ? null : signature.prototype();
+        int parenthesisBound = callerParenthesisBound(params);
         int transaction = currentProgram.startTransaction("REA function annotations");
         boolean commit = false;
         try {
+            // Ghidra's parser writes the database (see parseCallerC), so it runs inside this rollback.
+            SignatureEdit signature = params.has("signature")
+                ? parseFunctionSignature(function, requireText(params, "signature"), signatureBound, parenthesisBound)
+                : null;
+            FunctionDefinitionDataType prototype = signature == null ? null : signature.prototype();
             String leafName = params.has("name")
                 ? symbolLeafName(function.getSymbol(), requireString(params, "name")) : null;
             // Validate edits through Ghidra's own setters, including name rules.
@@ -2210,9 +2211,17 @@ public final class ReaGhidraBridge extends HeadlessScript {
             MIN_C_PARENTHESIS_DEPTH, DEFAULT_C_PARENTHESIS_DEPTH, MAX_C_PARENTHESIS_DEPTH);
     }
 
-    /** Parse caller C text against the type database without storing anything in it. */
+    /**
+     * Parse caller C text against the type database. Even with storeDataType
+     * false, Ghidra's parser writes the database: a definition whose name
+     * matches an existing empty composite fills that type in place, in the
+     * parser's own nested transaction. The caller's open transaction is
+     * therefore the only rollback for a refused or failed edit.
+     */
     private ParsedCallerC parseCallerC(
             String text, String field, boolean declarations, String code, int maximum, int maxParenthesisDepth) {
+        if (currentProgram.getCurrentTransactionInfo() == null)
+            throw new IllegalStateException("Caller C must be parsed inside the edit's transaction");
         validateAnnotationText(text, field);
         if (text.length() > maximum)
             throw new RequestFailure(declarations ? "declarations_length_limit" : "signature_length_limit",
@@ -2236,6 +2245,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
         if (!parser.didParseSucceed())
             throw new RequestFailure(code, "Ghidra's C parser rejected " + field + ": " + cParserReason(parser.getParseMessages()));
+        // The parser records what it could not apply, such as a repeated
+        // enumerator it drops, and still reports success.
+        String diagnostics = cParserDiagnostics(parser.getParseMessages());
+        if (!diagnostics.isEmpty())
+            throw new RequestFailure(code, "Ghidra's C parser reported " + field + ": " + diagnostics +
+                "; it would not apply the text as written, so nothing was changed");
         return new ParsedCallerC(parser, admitted.droppedQualifiers());
     }
 
@@ -2263,6 +2278,22 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
 
     /** Keep the location and offending token; drop the generated expected-token list. */
+    /**
+     * Ghidra's own diagnostic lines. Without a header file the parser has no
+     * position to give; it names the nearest type when it has one.
+     */
+    private static String cParserDiagnostics(String messages) {
+        if (messages == null) return "";
+        List<String> lines = new ArrayList<>();
+        for (String line : messages.split("\\R")) {
+            String stripped = line.strip();
+            if (stripped.isEmpty() || stripped.startsWith("In file ") ||
+                    stripped.equals("Near datatype: undefined") || stripped.equals("Near datatype: - none -")) continue;
+            lines.add(stripped);
+        }
+        return lines.isEmpty() ? "" : cParserReason(String.join("; ", lines));
+    }
+
     private static String cParserReason(String message) {
         if (message == null || message.isBlank()) return "no reason reported";
         int expected = message.indexOf("Was expecting");
@@ -2346,51 +2377,55 @@ public final class ReaGhidraBridge extends HeadlessScript {
             throw new RequestFailure("invalid_request", "Bridge request fields are invalid");
         String code = "invalid_type_declarations";
         String declarations = requireText(params, "declarations");
-        ParsedCallerC parsedDeclarations = parseCallerC(declarations, "declarations", true, code,
-            callerCTextBound(params, "declarations_max_utf16", DEFAULT_TYPE_DECLARATIONS_UTF16, MAX_TYPE_DECLARATIONS_UTF16),
-            callerParenthesisBound(params));
-        CParser parser = parsedDeclarations.parser();
-        if (!parser.getFunctions().isEmpty())
-            throw new RequestFailure(code, "declarations must not declare functions or function-pointer members: " +
-                String.join(", ", new TreeSet<>(parser.getFunctions().keySet())));
-        // `typedef struct s {...} s;` names one Ghidra type; the composite stands for both.
-        Map<String, DataType> defined = new TreeMap<>(parser.getTypes());
-        defined.putAll(parser.getEnums());
-        defined.putAll(parser.getComposites());
-        if (defined.isEmpty())
-            throw new RequestFailure(code, "declarations define no struct, union, enum or typedef");
-        DataTypeManager types = currentProgram.getDataTypeManager();
-        Set<DataType> parsed = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
-        parsed.addAll(defined.values());
-        List<String> conflicts = new ArrayList<>();
-        Set<String> existing = new HashSet<>();
-        for (Map.Entry<String, DataType> entry : defined.entrySet()) {
-            monitor.checkCancelled();
-            String name = entry.getKey();
-            DataType type = entry.getValue();
-            if (type instanceof ghidra.program.model.data.Composite composite) {
-                if (composite.getNumComponents() == 0)
-                    throw new RequestFailure(code, "declarations leave " + name + " without members; define every struct or union they use");
-                Set<String> members = new HashSet<>();
-                for (ghidra.program.model.data.DataTypeComponent component : composite.getComponents())
-                    if (component.getFieldName() != null && !members.add(component.getFieldName()))
-                        throw new RequestFailure(code, name + " repeats member name " + component.getFieldName());
-            }
-            requireStoredDependencies(name, type, parsed, types,
-                java.util.Collections.newSetFromMap(new IdentityHashMap<>()));
-            String path = CALLER_DEFINED_TYPES.getPath() + "/" + name;
-            List<DataType> sameName = new ArrayList<>();
-            types.findDataTypes(name, sameName);
-            for (DataType other : sameName) {
-                if (other.getPathName().equals(path)) existing.add(name);
-                else conflicts.add(name + " (existing " + other.getPathName() + ")");
-            }
-        }
-        if (!conflicts.isEmpty())
-            throw new RequestFailure("data_type_conflict", "The database already holds types with these names: " + String.join(", ", conflicts));
+        int lengthBound = callerCTextBound(
+            params, "declarations_max_utf16", DEFAULT_TYPE_DECLARATIONS_UTF16, MAX_TYPE_DECLARATIONS_UTF16);
+        int parenthesisBound = callerParenthesisBound(params);
+        // Ghidra's parser writes the database (see parseCallerC), so parsing,
+        // validation and storage share one rollback: a refusal changes nothing.
         int transaction = currentProgram.startTransaction("REA data type definitions");
         boolean commit = false;
         try {
+            ParsedCallerC parsedDeclarations =
+                parseCallerC(declarations, "declarations", true, code, lengthBound, parenthesisBound);
+            CParser parser = parsedDeclarations.parser();
+            if (!parser.getFunctions().isEmpty())
+                throw new RequestFailure(code, "declarations must not declare functions or function-pointer members: " +
+                    String.join(", ", new TreeSet<>(parser.getFunctions().keySet())));
+            // `typedef struct s {...} s;` names one Ghidra type; the composite stands for both.
+            Map<String, DataType> defined = new TreeMap<>(parser.getTypes());
+            defined.putAll(parser.getEnums());
+            defined.putAll(parser.getComposites());
+            if (defined.isEmpty())
+                throw new RequestFailure(code, "declarations define no struct, union, enum or typedef");
+            DataTypeManager types = currentProgram.getDataTypeManager();
+            Set<DataType> parsed = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+            parsed.addAll(defined.values());
+            List<String> conflicts = new ArrayList<>();
+            Set<String> existing = new HashSet<>();
+            for (Map.Entry<String, DataType> entry : defined.entrySet()) {
+                monitor.checkCancelled();
+                String name = entry.getKey();
+                DataType type = entry.getValue();
+                if (type instanceof ghidra.program.model.data.Composite composite) {
+                    if (composite.getNumComponents() == 0)
+                        throw new RequestFailure(code, "declarations leave " + name + " without members; define every struct or union they use");
+                    Set<String> members = new HashSet<>();
+                    for (ghidra.program.model.data.DataTypeComponent component : composite.getComponents())
+                        if (component.getFieldName() != null && !members.add(component.getFieldName()))
+                            throw new RequestFailure(code, name + " repeats member name " + component.getFieldName());
+                }
+                requireStoredDependencies(name, type, parsed, types,
+                    java.util.Collections.newSetFromMap(new IdentityHashMap<>()));
+                String path = CALLER_DEFINED_TYPES.getPath() + "/" + name;
+                List<DataType> sameName = new ArrayList<>();
+                types.findDataTypes(name, sameName);
+                for (DataType other : sameName) {
+                    if (other.getPathName().equals(path)) existing.add(name);
+                    else conflicts.add(name + " (existing " + other.getPathName() + ")");
+                }
+            }
+            if (!conflicts.isEmpty())
+                throw new RequestFailure("data_type_conflict", "The database already holds types with these names: " + String.join(", ", conflicts));
             for (DataType type : defined.values()) type.setCategoryPath(CALLER_DEFINED_TYPES);
             JsonArray rows = new JsonArray();
             for (Map.Entry<String, DataType> entry : defined.entrySet()) {

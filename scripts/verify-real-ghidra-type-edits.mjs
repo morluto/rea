@@ -35,6 +35,8 @@ const runtime = join(root, "runtime"),
 const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const sourcePath = join(root, "fixture.c"),
   target = join(root, "type-edit-fixture");
+const opaqueSourcePath = join(root, "opaque.c"),
+  opaqueTarget = join(root, "opaque-fixture");
 const env = {
   ...process.env,
   HOME: root,
@@ -194,6 +196,29 @@ int main(void) { struct session one = { 1, "one", 16, 1.5, 0 }; return (int)rea_
       sourcePath,
       "-o",
       target,
+    ],
+    { timeout: 120_000, maxBuffer: 16 * 1024 * 1024 },
+  );
+  // With DWARF, Ghidra imports the forward-declared struct as an empty
+  // composite in the program's own archive: the type its parser fills in place.
+  // An ELF object embeds its DWARF and needs no link step; Mach-O keeps it in a
+  // separate dSYM, so macOS cross-compiles the object.
+  await writeFile(
+    opaqueSourcePath,
+    "struct rea_opaque;\n__attribute__((noinline)) void *rea_keep(struct rea_opaque *o) { return o; }\n",
+  );
+  await commands.exec(
+    "cc",
+    [
+      "-O1",
+      "-g",
+      "-c",
+      ...(process.platform === "darwin"
+        ? ["--target=x86_64-unknown-linux-gnu"]
+        : []),
+      opaqueSourcePath,
+      "-o",
+      opaqueTarget,
     ],
     { timeout: 120_000, maxBuffer: 16 * 1024 * 1024 },
   );
@@ -575,6 +600,10 @@ typedef struct { volatile int k; } rea_unnamed_t;`,
           ["enum { REA_A, REA_B };", /unnamed enum/u],
           ["typedef enum { REA_A } rea_enum_t;", /unnamed enum/u],
           [
+            "enum rea_mode { REA_BUSY = 1, REA_BUSY = 2 };",
+            /Ghidra's C parser reported declarations: duplicate enum value: rea_mode : REA_BUSY : 2/u,
+          ],
+          [
             "struct { int a; };",
             /unnamed struct or union definition at line 1, column 8/u,
           ],
@@ -619,6 +648,7 @@ typedef struct { volatile int k; } rea_unnamed_t;`,
           "rea_nested",
           "rea_kept",
           "rea_enum_t",
+          "rea_mode",
         ])
           assert.equal(
             await typeStatus(first, `/rea_caller_defined/${name}`),
@@ -810,6 +840,57 @@ typedef struct { volatile int k; } rea_unnamed_t;`,
         return {};
       } finally {
         await bounded.close();
+      }
+    },
+  );
+  await phase(
+    "a refused definition leaves an existing empty composite unchanged",
+    async () => {
+      const opaque = await connect();
+      try {
+        await opaque.call("open_binary", {
+          path: opaqueTarget,
+          provider_id: "ghidra",
+        });
+        const placeholder = "/DWARF/_UNCATEGORIZED_/rea_opaque";
+        const fields = async () => {
+          const type = await opaque.call("inspect_native_data_type", {
+            type: placeholder,
+          });
+          assert.equal(type.status, "available");
+          return type.fields.length;
+        };
+        assert.equal(await fields(), 0);
+        // Ghidra's parser fills an empty composite of the same name in place,
+        // in its own transaction, before REA refuses the name conflict.
+        const conflict = await opaque.refused(
+          "define_native_data_types",
+          { declarations: "struct rea_opaque { int x; };" },
+          "declarations",
+        );
+        assert.match(
+          conflict.message,
+          new RegExp(`rea_opaque \\(existing ${placeholder}\\)`, "u"),
+        );
+        assert.equal(await fields(), 0);
+        // A parser diagnostic is refused, and the edit's rollback covers parsing.
+        const diagnostic = await opaque.refused(
+          "define_native_data_types",
+          {
+            declarations:
+              "struct rea_opaque { int x; }; enum rea_mode { REA_BUSY = 1, REA_BUSY = 2 };",
+          },
+          "declarations",
+        );
+        assert.match(
+          diagnostic.message,
+          /duplicate enum value: rea_mode : REA_BUSY : 2/u,
+        );
+        assert.equal(await fields(), 0);
+        await opaque.call("close_binary");
+        return {};
+      } finally {
+        await opaque.close();
       }
     },
   );
