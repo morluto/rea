@@ -218,7 +218,8 @@ export type GhidraTypeEditRefusalCode =
   | "unknown_data_type"
   | "ambiguous_data_type"
   | "invalid_type_declarations"
-  | "data_type_conflict";
+  | "data_type_conflict"
+  | "conflicting_type_definitions";
 
 /** Bridge refusals of caller C text over a bound on Ghidra's uncancellable parser. */
 export const GHIDRA_C_PARSER_LIMIT_CODES = [
@@ -244,7 +245,8 @@ export const isGhidraTypeEditRefusalCode = (
   code === "unknown_data_type" ||
   code === "ambiguous_data_type" ||
   code === "invalid_type_declarations" ||
-  code === "data_type_conflict";
+  code === "data_type_conflict" ||
+  code === "conflicting_type_definitions";
 
 /** Bridge input failures share classification with their domain error projection. */
 export const isGhidraInputFailureCode = (code: string | undefined): boolean =>

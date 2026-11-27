@@ -565,6 +565,43 @@ struct rea_after { char c; int i; };`;
     await phase(
       "a conflicting or unsupported definition stores nothing",
       async () => {
+        // A tag and a typedef share a Ghidra name only when they are one type.
+        // A sibling in the same text must stay unstored with them.
+        for (const declarations of [
+          "struct rea_tag_alias { int x; }; typedef int rea_tag_alias; struct rea_tag_sibling { int y; };",
+          "enum rea_enum_alias { REA_A = 1 }; typedef int rea_enum_alias; struct rea_enum_sibling { int y; };",
+        ]) {
+          const error = requireMcpToolError(
+            await first.raw("define_native_data_types", { declarations }),
+          );
+          assert.equal(error.code, "invalid_request");
+          assert.equal(error.retryable, false);
+          assert.equal(error.recovery, undefined);
+          assert.deepEqual(
+            error.details?.issues?.map((issue) => ({
+              path: issue.path,
+              reason: issue.reason,
+            })),
+            [{ path: ["declarations"], reason: "invalid_value" }],
+          );
+          assert.equal(
+            error.details?.diagnostics?.remote_code,
+            "conflicting_type_definitions",
+          );
+          assert.deepEqual(error.details?.related_operations, [
+            "define_native_data_types",
+          ]);
+        }
+        for (const name of [
+          "rea_tag_alias",
+          "rea_tag_sibling",
+          "rea_enum_alias",
+          "rea_enum_sibling",
+        ])
+          assert.equal(
+            await typeStatus(first, `/rea_caller_defined/${name}`),
+            "unavailable",
+          );
         const conflict = await first.refused(
           "define_native_data_types",
           {

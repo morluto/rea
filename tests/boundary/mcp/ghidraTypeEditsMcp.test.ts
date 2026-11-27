@@ -7,7 +7,10 @@ import {
   type JsonValue,
 } from "../../../src/domain/jsonValue.js";
 import { err, ok } from "../../../src/domain/result.js";
-import { GhidraSessionError } from "../../../src/ghidra/GhidraSessionError.js";
+import {
+  bindGhidraSessionFailure,
+  GhidraSessionError,
+} from "../../../src/ghidra/GhidraSessionError.js";
 import { GhidraRemoteError } from "../../../src/ghidra/protocol.js";
 import { connectGhidraMcp, ghidraFixtureResult } from "./ghidraMcpHarness.js";
 
@@ -718,3 +721,59 @@ it.each(["annotate_native_function", "define_native_data_types"] as const)(
     }
   },
 );
+
+it("refuses non-equivalent types that share one Ghidra name and stores nothing", async () => {
+  const remoteCode = "conflicting_type_definitions";
+  const failure = bindGhidraSessionFailure((scope) => ({
+    diagnostic_scope: scope,
+  }))(
+    "remote",
+    "declarations define different types under one name: item; nothing was changed",
+    new GhidraRemoteError(
+      remoteCode,
+      "declarations define different types under one name: item; nothing was changed",
+    ),
+    { remoteCode },
+  );
+  const harness = await connectGhidraMcp(
+    "ghidra-conflicting-type-definitions",
+    (requested, input) =>
+      Promise.resolve(
+        requested === "define_native_data_types"
+          ? err(failure)
+          : ok(ghidraFixtureResult(requested, input)),
+      ),
+  );
+  try {
+    const { error } = parseMcpToolError(
+      await harness.mcp.callTool({
+        name: "define_native_data_types",
+        arguments: {
+          declarations: "struct item { int x; }; typedef int item;",
+        },
+      }),
+    );
+    expect(error).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+      retryable: false,
+      details: {
+        operation: "define_native_data_types",
+        issues: [{ path: ["declarations"], reason: "invalid_value" }],
+        diagnostics: {
+          diagnostic_scope: "request",
+          remote_code: remoteCode,
+        },
+        related_operations: ["define_native_data_types"],
+      },
+    });
+    expect(error.recovery).toBeUndefined();
+    const next = await harness.mcp.callTool({
+      name: "procedure_info",
+      arguments: { procedure: "0x401000" },
+    });
+    expect(next.isError).not.toBe(true);
+  } finally {
+    await harness.close();
+  }
+});

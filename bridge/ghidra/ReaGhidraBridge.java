@@ -2881,6 +2881,57 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 applied.getPrototypeString(false) + "; requested " + prototype.getPrototypeString(false));
     }
 
+    /**
+     * Ghidra keeps typedefs, enum tags and struct or union tags in separate
+     * maps and stores one type per name. A typedef of its own struct or enum
+     * (`typedef struct s { ... } s`) is that tag, recorded once. Overlapping
+     * names stay one stored type only when the definitions are equivalent;
+     * any other overlap is refused so the call stores every definition or none.
+     */
+    private static Map<String, DataType> mergeCallerTypeMaps(
+            Map<String, DataType> typedefs,
+            Map<String, DataType> enumerations,
+            Map<String, DataType> composites) {
+        Map<String, DataType> defined = new TreeMap<>();
+        Set<String> collisions = new TreeSet<>();
+        absorbCallerTypes(defined, collisions, typedefs);
+        absorbCallerTypes(defined, collisions, enumerations);
+        absorbCallerTypes(defined, collisions, composites);
+        if (!collisions.isEmpty())
+            throw new RequestFailure("conflicting_type_definitions",
+                "declarations define different types under one name: " + String.join(", ", collisions) +
+                "; nothing was changed");
+        return defined;
+    }
+
+    private static void absorbCallerTypes(
+            Map<String, DataType> defined, Set<String> collisions, Map<String, DataType> incoming) {
+        for (Map.Entry<String, DataType> entry : incoming.entrySet()) {
+            String name = entry.getKey();
+            DataType type = entry.getValue();
+            DataType existing = defined.get(name);
+            if (existing == null) {
+                defined.put(name, type);
+                continue;
+            }
+            if (!sameCallerType(existing, type)) {
+                collisions.add(name);
+                continue;
+            }
+            // The tag is the type a matching typedef names.
+            if (callerTag(type) && !callerTag(existing)) defined.put(name, type);
+        }
+    }
+
+    private static boolean sameCallerType(DataType left, DataType right) {
+        return left == right || left.isEquivalent(right) || right.isEquivalent(left);
+    }
+
+    private static boolean callerTag(DataType type) {
+        return type instanceof ghidra.program.model.data.Composite ||
+            type instanceof ghidra.program.model.data.Enum;
+    }
+
     private JsonObject defineNativeDataTypes(JsonObject params) throws Exception {
         if (!Set.of("declarations", "declarations_max_utf16").containsAll(params.keySet()) || !params.has("declarations"))
             throw new RequestFailure("invalid_request", "Bridge request fields are invalid");
@@ -2900,10 +2951,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
             if (!parser.getFunctions().isEmpty())
                 throw new RequestFailure(code, "declarations must not declare functions or function-pointer members: " +
                     String.join(", ", new TreeSet<>(parser.getFunctions().keySet())));
-            // `typedef struct s {...} s;` names one Ghidra type; the composite stands for both.
-            Map<String, DataType> defined = new TreeMap<>(parser.getTypes());
-            defined.putAll(parser.getEnums());
-            defined.putAll(parser.getComposites());
+            Map<String, DataType> defined = mergeCallerTypeMaps(
+                parser.getTypes(), parser.getEnums(), parser.getComposites());
             if (defined.isEmpty())
                 throw new RequestFailure(code, "declarations define no struct, union, enum or typedef");
             DataTypeManager types = currentProgram.getDataTypeManager();

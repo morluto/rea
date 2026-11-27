@@ -800,6 +800,14 @@ const GHIDRA_TYPE_EDIT_REFUSALS: Readonly<
       operations: ["inspect_native_data_type"],
     },
   },
+  conflicting_type_definitions: {
+    fields: { define_native_data_types: "declarations" },
+    recovery: {
+      action:
+        "Give each distinct type its own name. C keeps a struct, union or enum tag and a typedef in separate namespaces, and Ghidra stores both under one name. Repeat this call (MCP define_native_data_types; CLI rea define-native-data-types) with the renamed text. Nothing in this call was stored.",
+      operations: ["define_native_data_types"],
+    },
+  },
 };
 
 const ghidraTypeEditRefusal = (

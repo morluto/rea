@@ -1543,7 +1543,12 @@ definitions and stores all of them or none in the category
 `source: "caller-defined"`; they are the caller's assertions about layout, not
 observations of the target. A name the database already holds in any category
 is refused and never replaced; repeating an equivalent caller definition
-reports `unchanged`.
+reports `unchanged`. Ghidra keeps a struct, union or enum tag in a different
+map from a typedef and stores one type per name. When the declarations give
+that name to definitions that are not equivalent, such as
+`struct item { int x; }; typedef int item;`, the call is refused with
+`details.diagnostics.remote_code` `conflicting_type_definitions` and stores
+nothing. `typedef struct s { ... } s;` is one struct and is stored.
 
 Ghidra's C parser accepts several constructs and records nothing for them. REA
 refuses those before parsing, names the construct and its line and column, and
