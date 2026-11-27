@@ -392,6 +392,58 @@ describe("androidDtboFormat", () => {
     expect(raisedTableBudget.ok).toBe(true);
   });
 
+  it("accepts entries that share one payload, as mkdtimg writes a repeated file", () => {
+    // Hand-built in mkdtimg's layout: header (32), two rows (64), one
+    // 16-byte payload at 96 that both rows name.
+    const image = Buffer.alloc(112);
+    image.writeUInt32BE(0xd7b7ab1e, 0);
+    image.writeUInt32BE(112, 4);
+    image.writeUInt32BE(32, 8);
+    image.writeUInt32BE(32, 12);
+    image.writeUInt32BE(2, 16);
+    image.writeUInt32BE(32, 20);
+    image.writeUInt32BE(2048, 24);
+    for (const [row, id] of [
+      [32, 7],
+      [64, 9],
+    ] as const) {
+      image.writeUInt32BE(16, row);
+      image.writeUInt32BE(96, row + 4);
+      image.writeUInt32BE(id, row + 8);
+    }
+    const header = parseAndroidDtboHeader(image, image.length);
+    if (!header.ok) throw new Error(header.error.message);
+    const table = parseAndroidDtboEntries(header.value, image.subarray(32, 96));
+    if (!table.ok) throw new Error(table.error.message);
+    expect(
+      table.value.entries.map(({ id, dtOffset }) => [id, dtOffset]),
+    ).toEqual([
+      [7, 96],
+      [9, 96],
+    ]);
+    expect(table.value.limitations).toContain(
+      "DTBO entries 0 and 1 share the stored payload [96, 112).",
+    );
+    expect(table.value.unaccountedRanges).toEqual([]);
+  });
+
+  it("reports bytes inside total_size that nothing claims", () => {
+    const image = Buffer.alloc(96);
+    image.writeUInt32BE(0xd7b7ab1e, 0);
+    image.writeUInt32BE(96, 4);
+    image.writeUInt32BE(32, 8);
+    image.writeUInt32BE(32, 12);
+    image.writeUInt32BE(1, 16);
+    image.writeUInt32BE(32, 20);
+    image.writeUInt32BE(16, 32);
+    image.writeUInt32BE(80, 36);
+    const header = parseAndroidDtboHeader(image, image.length);
+    if (!header.ok) throw new Error(header.error.message);
+    const table = parseAndroidDtboEntries(header.value, image.subarray(32, 64));
+    if (!table.ok) throw new Error(table.error.message);
+    expect(table.value.unaccountedRanges).toEqual([[64, 80]]);
+  });
+
   it("rejects out-of-bounds and overlapping entry payloads", () => {
     const parseWithEntries = (buf: Buffer) => {
       const hdr = parseAndroidDtboHeader(buf, buf.length);

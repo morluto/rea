@@ -16,9 +16,41 @@ import { err, ok, type Result } from "../result.js";
 
 export const ANDROID_DTBO_FORMAT = "android-dtbo" as const;
 
-export const ANDROID_DTBO_MAGIC = 0xd7b7ab1e;
-export const ANDROID_DTBO_HEADER_MIN_SIZE = 32;
-export const ANDROID_DTBO_ENTRY_MIN_SIZE = 32;
+/**
+ * Field layout of AOSP `system/libufdt` `utils/src/dt_table.h`. Every field is
+ * a big-endian `uint32_t` (mkdtimg writes them with `cpu_to_fdt32`).
+ */
+export const ANDROID_DTBO_MAGIC = 0xd7b7ab1e; // DT_TABLE_MAGIC
+export const ANDROID_DTBO_HEADER_MIN_SIZE = 32; // sizeof(struct dt_table_header)
+export const ANDROID_DTBO_ENTRY_MIN_SIZE = 32; // sizeof(struct dt_table_entry)
+
+/** `struct dt_table_header` field offsets. */
+const HEADER = {
+  magic: 0,
+  totalSize: 4,
+  headerSize: 8,
+  dtEntrySize: 12,
+  dtEntryCount: 16,
+  dtEntriesOffset: 20,
+  pageSize: 24,
+  version: 28,
+} as const;
+
+/**
+ * `struct dt_table_entry` (version 0) and `struct dt_table_entry_v1` field
+ * offsets. Version 1 replaces `custom[0]` with `flags`, whose four least
+ * significant bits hold `enum dt_compression_info`.
+ */
+const ENTRY = {
+  dtSize: 0,
+  dtOffset: 4,
+  id: 8,
+  rev: 12,
+  customV0: [16, 20, 24, 28],
+  flagsV1: 16,
+  customV1: [20, 24, 28],
+} as const;
+const DT_COMPRESSION_INFO_MASK = 0x0f;
 
 export interface AndroidDtboLimitSpec {
   readonly name: string;
@@ -70,6 +102,8 @@ export interface AndroidDtboTableEntry {
 export interface AndroidDtboParsedTable {
   readonly entries: readonly AndroidDtboTableEntry[];
   readonly limitations: readonly string[];
+  /** Ranges inside `total_size` that no header, table row or payload claims. */
+  readonly unaccountedRanges: readonly (readonly [number, number])[];
 }
 
 export function hasAndroidDtboMagic(prefix: Uint8Array): boolean {
@@ -85,7 +119,7 @@ export function hasAndroidDtboMagic(prefix: Uint8Array): boolean {
 export function decodeDtboCompression(
   flags: number,
 ): AndroidDtboCompressionMode {
-  switch (flags & 0x0f) {
+  switch (flags & DT_COMPRESSION_INFO_MASK) {
     case 0:
       return "none";
     case 1:
@@ -156,14 +190,14 @@ export function parseAndroidDtboHeader(
   }
 
   const reader = new BinaryReader(prefix, false, ANDROID_DTBO_FORMAT);
-  const magic = reader.u32(0);
-  const totalSize = reader.u32(4);
-  const headerSize = reader.u32(8);
-  const dtEntrySize = reader.u32(12);
-  const dtEntryCount = reader.u32(16);
-  const dtEntriesOffset = reader.u32(20);
-  const pageSize = reader.u32(24);
-  const rawVersion = reader.u32(28);
+  const magic = reader.u32(HEADER.magic);
+  const totalSize = reader.u32(HEADER.totalSize);
+  const headerSize = reader.u32(HEADER.headerSize);
+  const dtEntrySize = reader.u32(HEADER.dtEntrySize);
+  const dtEntryCount = reader.u32(HEADER.dtEntryCount);
+  const dtEntriesOffset = reader.u32(HEADER.dtEntriesOffset);
+  const pageSize = reader.u32(HEADER.pageSize);
+  const rawVersion = reader.u32(HEADER.version);
 
   if (rawVersion !== 0 && rawVersion !== 1) {
     return err(
@@ -353,6 +387,7 @@ export function parseAndroidDtboEntries(
       limitations: [
         "Android DTBO header declares dt_entry_count 0; no child device tree blobs are present.",
       ],
+      unaccountedRanges: unaccountedRanges(header, []),
     });
   }
 
@@ -382,30 +417,21 @@ export function parseAndroidDtboEntries(
   for (let index = 0; index < header.dtEntryCount; index++) {
     const rowOffset = index * header.dtEntrySize;
     const absRowOffset = tableStart + rowOffset;
-    const dtSize = reader.u32(rowOffset);
-    const dtOffset = reader.u32(rowOffset + 4);
-    const id = reader.u32(rowOffset + 8);
-    const rev = reader.u32(rowOffset + 12);
+    const dtSize = reader.u32(rowOffset + ENTRY.dtSize);
+    const dtOffset = reader.u32(rowOffset + ENTRY.dtOffset);
+    const id = reader.u32(rowOffset + ENTRY.id);
+    const rev = reader.u32(rowOffset + ENTRY.rev);
 
     let flags: number | null = null;
     let compression: AndroidDtboCompressionMode | null = null;
     let custom: readonly number[];
 
     if (header.version === 0) {
-      custom = [
-        reader.u32(rowOffset + 16),
-        reader.u32(rowOffset + 20),
-        reader.u32(rowOffset + 24),
-        reader.u32(rowOffset + 28),
-      ];
+      custom = ENTRY.customV0.map((at) => reader.u32(rowOffset + at));
     } else {
-      flags = reader.u32(rowOffset + 16);
+      flags = reader.u32(rowOffset + ENTRY.flagsV1);
       compression = decodeDtboCompression(flags);
-      custom = [
-        reader.u32(rowOffset + 20),
-        reader.u32(rowOffset + 24),
-        reader.u32(rowOffset + 28),
-      ];
+      custom = ENTRY.customV1.map((at) => reader.u32(rowOffset + at));
     }
 
     const entryEnd = dtOffset + dtSize;
@@ -486,6 +512,15 @@ export function parseAndroidDtboEntries(
     const curr = orderedByOffset[i];
     if (!prev || !curr) continue;
     const prevEnd = prev.dtOffset + prev.dtSize;
+    // mkdtimg writes a repeated input file once and points every entry for
+    // it at the same payload (mkdtimg_core.c search_fdt_info), so an exactly
+    // shared range is valid. Any other intersection is malformed.
+    if (prev.dtOffset === curr.dtOffset && prev.dtSize === curr.dtSize) {
+      limitations.push(
+        `DTBO entries ${prev.index} and ${curr.index} share the stored payload [${curr.dtOffset}, ${prevEnd}).`,
+      );
+      continue;
+    }
     if (prevEnd > curr.dtOffset) {
       return err(
         malformedInput(
@@ -497,5 +532,38 @@ export function parseAndroidDtboEntries(
     }
   }
 
-  return ok({ entries: parsed, limitations });
+  return ok({
+    entries: parsed,
+    limitations,
+    unaccountedRanges: unaccountedRanges(header, orderedByOffset),
+  });
 }
+
+/**
+ * Byte ranges inside `total_size` that neither the header, the entry table
+ * nor any entry payload claims. mkdtimg writes them contiguously, so a gap
+ * may hold bytes no entry lists.
+ */
+const unaccountedRanges = (
+  header: AndroidDtboHeader,
+  ordered: readonly AndroidDtboTableEntry[],
+): readonly (readonly [number, number])[] => {
+  const claimed: (readonly [number, number])[] = [
+    [0, header.headerSize] as const,
+    [
+      header.dtEntriesOffset,
+      header.dtEntriesOffset + header.tableSize,
+    ] as const,
+    ...ordered.map(
+      (entry) => [entry.dtOffset, entry.dtOffset + entry.dtSize] as const,
+    ),
+  ].sort((left, right) => left[0] - right[0]);
+  const gaps: (readonly [number, number])[] = [];
+  let reached = 0;
+  for (const [start, end] of claimed) {
+    if (start > reached) gaps.push([reached, start]);
+    reached = Math.max(reached, end);
+  }
+  if (header.totalSize > reached) gaps.push([reached, header.totalSize]);
+  return gaps;
+};

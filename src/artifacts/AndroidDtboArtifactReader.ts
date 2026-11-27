@@ -148,7 +148,8 @@ export class AndroidDtboArtifactReader extends PositionalArtifactReader<AndroidD
 
       const isCompressed =
         row.compression !== null && row.compression !== "none";
-      const hasFdtMagic = !isCompressed && hasDevicetreeMagic(magicBytes);
+      // A compressed payload's inner magic is unknown, not absent.
+      const hasFdtMagic = isCompressed ? null : hasDevicetreeMagic(magicBytes);
       const entryLimitations: string[] = [];
 
       if (isCompressed) {
@@ -158,7 +159,7 @@ export class AndroidDtboArtifactReader extends PositionalArtifactReader<AndroidD
             : `DTBO entry ${row.index} declares ${row.compression} compression (flags 0x${(row.flags ?? 0).toString(16).padStart(8, "0")}); compressed DTBO payloads are not decompressed and inner FDT magic was not verified.`;
         entryLimitations.push(message);
         childLimitations.push(message);
-      } else if (!hasFdtMagic) {
+      } else if (hasFdtMagic === false) {
         const message =
           row.dtSize < FDT_MAGIC_PREFIX_BYTES
             ? `DTBO entry ${row.index} (${row.dtSize} bytes) is shorter than the 4-byte FDT magic 0xd00dfeed.`
@@ -210,14 +211,19 @@ export class AndroidDtboArtifactReader extends PositionalArtifactReader<AndroidD
       emitted_entry_count: entries.length,
     };
 
+    const gaps = parsedTable.unaccountedRanges.map(
+      ([start, end]) =>
+        `${end - start} bytes at [${start}, ${end}) inside total_size are not claimed by the header, entry table or any entry and may hold unlisted data.`,
+    );
     return {
       entries,
       formatMetadata: rootMetadata,
       coverage: {
-        status: "complete",
+        status: gaps.length === 0 ? "complete" : "unknown",
         limitations: [
           ...header.limitations,
           ...parsedTable.limitations,
+          ...gaps,
           ...childLimitations,
         ],
       },

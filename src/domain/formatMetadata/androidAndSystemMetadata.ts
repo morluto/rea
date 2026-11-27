@@ -351,7 +351,8 @@ export const androidDtboEntryMetadataSchema = z.strictObject({
   flags: z.number().int().min(0).max(0xffff_ffff).nullable(),
   compression: z.enum(ANDROID_DTBO_COMPRESSION_MODES).nullable(),
   custom: z.array(z.number().int().min(0).max(0xffff_ffff)),
-  fdt_magic_valid: z.boolean(),
+  /** Null for a compressed payload, whose inner magic was not examined. */
+  fdt_magic_valid: z.boolean().nullable(),
 });
 export type AndroidDtboEntryMetadata = z.infer<
   typeof androidDtboEntryMetadataSchema

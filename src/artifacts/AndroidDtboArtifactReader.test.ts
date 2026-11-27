@@ -158,7 +158,7 @@ describe("AndroidDtboArtifactReader", () => {
       expect(entries[0]!.limitations).toEqual([]);
 
       expect(entries[1]!.formatMetadata).toMatchObject({
-        fdt_magic_valid: false,
+        fdt_magic_valid: null,
         compression: "gzip",
         flags: 2,
       });

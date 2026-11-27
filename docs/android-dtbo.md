@@ -42,10 +42,17 @@ For every non-empty entry, the reader probes the first 4 bytes at `dt_offset`:
   an explicit limitation when the bytes are shorter than 4 bytes or start with a
   different magic.
 - Compressed v1 entries (`zlib`, `gzip`, or `unknown`) keep their stored bytes
-  verbatim, set `fdt_magic_valid = false`, and record a limitation stating that
-  compressed payloads are not decompressed.
+  verbatim, set `fdt_magic_valid = null` (the inner magic is unknown, not
+  absent), and record a limitation stating that compressed payloads are not
+  decompressed.
 - Extra bytes beyond the 32-byte header/entry records and trailing file bytes
   after `total_size` remain undecoded and are reported in limitations.
+- Entries that point at exactly the same payload range are valid: `mkdtimg`
+  writes a repeated input file once and points every entry for it at that
+  payload. Each entry is listed, and a limitation names the shared range.
+- Bytes inside `total_size` that the header, entry table and payloads do not
+  claim are reported with their range, and coverage becomes `unknown` because
+  they may hold data no entry lists.
 
 ## Extraction and device tree inspection
 
@@ -69,7 +76,8 @@ propose `extract_artifact` followed by `inspect_devicetree` on the extracted
   and declared `total_size` / file size; the reader reads only 32 bytes from
   `dt_table_header` and 32 decoded bytes per row.
 - Every non-empty entry payload is verified not to overlap `dt_table_header`, the
-  `dt_table_entry` table, any other non-empty entry payload, or `total_size`.
+  `dt_table_entry` table, or `total_size`, and not to partially overlap another
+  non-empty payload (an exactly shared payload is allowed, as above).
 - Table size and row count are bounded by caller-adjustable per-call controls in
   `artifact_limits.android_dtbo` (defaults: `entry_table_bytes = 16777216`,
   `entry_count = 4096`):

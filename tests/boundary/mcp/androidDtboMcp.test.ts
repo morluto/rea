@@ -143,7 +143,7 @@ it("reports explicit compression and FDT-magic limitations for v1 DTBO entries v
           kind: "android-dtbo-entry",
           compression: "gzip",
           flags: 2,
-          fdt_magic_valid: false,
+          fdt_magic_valid: null,
         }),
       }),
     );

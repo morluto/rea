@@ -120,7 +120,7 @@ cliTest(
     ).toMatchObject({
       kind: "android-dtbo-entry",
       compression: "gzip",
-      fdt_magic_valid: false,
+      fdt_magic_valid: null,
     });
     expect(
       graph.occurrences.find((row) => row.logical_path === "dtbo-2.dtbo")
