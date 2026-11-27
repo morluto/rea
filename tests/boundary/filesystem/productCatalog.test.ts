@@ -1,8 +1,8 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -41,15 +41,6 @@ import {
 } from "../../../scripts/lib/product-catalog.mjs";
 
 const root = fileURLToPath(new URL("../../..", import.meta.url));
-const temporaryRoots: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(
-    temporaryRoots
-      .splice(0)
-      .map((path) => rm(path, { recursive: true, force: true })),
-  );
-});
 
 describe("canonical product catalog", () => {
   it("admits every documented browser scenario through the named contract", async () => {
@@ -209,7 +200,6 @@ describe("canonical product catalog drift", () => {
 
   it("fails check mode without rewriting a stale generated artifact", async () => {
     const directory = await createTestTempDirectory("rea-generated-check-");
-    temporaryRoots.push(directory);
     const path = join(directory, "catalog.json");
     await writeFile(path, "stale\n", "utf8");
     await expect(
@@ -234,7 +224,6 @@ describe("canonical product catalog drift", () => {
 
   it("accepts and preserves native generated-file line endings", async () => {
     const directory = await createTestTempDirectory("rea-generated-eol-");
-    temporaryRoots.push(directory);
     const path = join(directory, "catalog.json");
     await writeFile(path, "current\r\n", "utf8");
     await expect(
