@@ -7,6 +7,11 @@ import {
   ntfsAttributeListResolutionSchema,
 } from "../windows/ntfsMftAttributes.js";
 import { MFT_INLINE_HEADER_LIMIT } from "../windows/ntfsMft.js";
+import {
+  AUDITD_INLINE_DIAGNOSTIC_LIMIT,
+  AUDITD_INLINE_EVENT_LIMIT,
+  AUDITD_INLINE_EVENT_TYPE_LIMIT,
+} from "../linux/auditdLog.js";
 import { offset, uint32 } from "./primitives.js";
 
 const ntfsRecordHeaderSchema = z.strictObject({
@@ -316,6 +321,113 @@ export const androidBootImageEntryMetadataSchema = z.strictObject({
 export type AndroidBootImageEntryMetadata = z.infer<
   typeof androidBootImageEntryMetadataSchema
 >;
+
+export const ANDROID_DTBO_COMPRESSION_MODES = [
+  "none",
+  "zlib",
+  "gzip",
+  "unknown",
+] as const;
+
+export type AndroidDtboCompressionMode =
+  (typeof ANDROID_DTBO_COMPRESSION_MODES)[number];
+
+export const androidDtboMetadataSchema = z.strictObject({
+  kind: z.literal("android-dtbo"),
+  magic: z.number().int().min(0).max(0xffff_ffff),
+  total_size: z.number().int().nonnegative(),
+  header_size: z.number().int().nonnegative(),
+  dt_entry_size: z.number().int().nonnegative(),
+  dt_entry_count: z.number().int().nonnegative(),
+  dt_entries_offset: z.number().int().nonnegative(),
+  page_size: z.number().int().nonnegative(),
+  version: z.number().int().nonnegative(),
+  emitted_entry_count: z.number().int().nonnegative(),
+});
+export type AndroidDtboMetadata = z.infer<typeof androidDtboMetadataSchema>;
+
+export const androidDtboEntryMetadataSchema = z.strictObject({
+  kind: z.literal("android-dtbo-entry"),
+  index: z.number().int().nonnegative(),
+  dt_size: z.number().int().nonnegative(),
+  dt_offset: z.number().int().nonnegative(),
+  id: z.number().int().min(0).max(0xffff_ffff),
+  rev: z.number().int().min(0).max(0xffff_ffff),
+  flags: z.number().int().min(0).max(0xffff_ffff).nullable(),
+  compression: z.enum(ANDROID_DTBO_COMPRESSION_MODES).nullable(),
+  custom: z.array(z.number().int().min(0).max(0xffff_ffff)),
+  /** Null for a compressed payload, whose inner magic was not examined. */
+  fdt_magic_valid: z.boolean().nullable(),
+});
+export type AndroidDtboEntryMetadata = z.infer<
+  typeof androidDtboEntryMetadataSchema
+>;
+
+/** Raw source bytes of an auditd token that is not valid UTF-8. */
+const auditdHex = z.string().regex(/^(?:[0-9a-f]{2})+$/u);
+const auditdTypeCount = z.strictObject({
+  type: z.string(),
+  type_hex: auditdHex.exactOptional(),
+  count: offset,
+});
+/** auditd text-log facts: record and event totals plus a sampled event window. */
+export const auditdLogMetadataSchema = z.strictObject({
+  kind: z.literal("auditd-log"),
+  line_count: offset,
+  record_count: offset,
+  event_count: offset,
+  /**
+   * True when an event past the retained window was counted once per run of
+   * its records, so `event_count` may repeat an event. Both bound flags are
+   * false when the tail could not hold an identity it met, which leaves the
+   * total unbounded in either direction.
+   */
+  event_count_upper_bound: z.boolean(),
+  /** Always false: a repeated tail run repeats an event, so no lower bound holds. */
+  event_count_lower_bound: z.boolean(),
+  /** True when a tail identity was dropped, so no bound can be stated. */
+  event_count_identity_omitted: z.boolean(),
+  event_type_counts: z.array(auditdTypeCount),
+  malformed_line_count: offset,
+  malformed_lines: z
+    .array(
+      z.strictObject({
+        line: offset,
+        reason: z.string(),
+        excerpt: z.string(),
+        excerpt_hex: auditdHex.exactOptional(),
+      }),
+    )
+    .max(AUDITD_INLINE_DIAGNOSTIC_LIMIT),
+  omitted_malformed_lines: offset,
+  out_of_order_record_count: offset,
+  duplicate_record_count: offset,
+  interleaved_event_count: offset,
+  events: z
+    .array(
+      z.strictObject({
+        event_id: z.string(),
+        node: z.string().nullable(),
+        node_hex: auditdHex.exactOptional(),
+        event_seconds: offset,
+        event_millis: offset,
+        serial: offset,
+        record_count: offset,
+        record_types: z
+          .array(auditdTypeCount)
+          .max(AUDITD_INLINE_EVENT_TYPE_LIMIT),
+        record_types_omitted: offset,
+        record_types_omitted_exact: z.boolean(),
+        first_line: offset,
+        last_line: offset,
+        duplicate_record_count: offset,
+        interleaved: z.boolean(),
+      }),
+    )
+    .max(AUDITD_INLINE_EVENT_LIMIT),
+  omitted_events: offset,
+  trailing_bytes: offset,
+});
 
 const vbmetaHex = z.string().regex(/^[0-9a-f]*$/u);
 /** An unsigned 64-bit value that is metadata only, as a decimal string. */

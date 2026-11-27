@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { Readable } from "node:stream";
+import type { Readable } from "node:stream";
 
 import { decodeLz4Block } from "../compression/Lz4Block.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
@@ -38,7 +38,11 @@ import {
   malformedArtifact,
 } from "../resources/index.js";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
-import type { ArtifactMemberLifecycle } from "./OwnedArtifactStream.js";
+import {
+  decodedArtifactMemberSource,
+  type ArtifactMemberLifecycle,
+  type DecodedMemberReadState,
+} from "./OwnedArtifactStream.js";
 import {
   PositionalArtifactReader,
   type PositionalArtifactEntries,
@@ -124,32 +128,16 @@ export class SwitchExecutableArtifactReader extends PositionalArtifactReader<
     member: ArtifactMemberLifecycle,
   ): Readable | undefined {
     if (!entry.formatMetadata.compressed) return undefined;
-    const { signal, cancellationFailure } = member;
-    let readState: "idle" | "pending" | "failed" = "idle";
-    const source = Readable.from(
-      this.#decodedSegment(entry, carrier, member, (state) => {
-        readState = state;
-      }),
-      { objectMode: false },
+    return decodedArtifactMemberSource(member, (onStateChange) =>
+      this.#decodedSegment(entry, carrier, member, onStateChange),
     );
-    const onAbort = (): void => {
-      // A pending carrier read or decode owns its failure; once idle (such as
-      // paused on backpressure), destroy the source immediately so pipeline
-      // and reader.close() retire promptly.
-      if (readState === "idle" && !source.destroyed)
-        source.destroy(cancellationFailure(signal.reason));
-    };
-    signal.addEventListener("abort", onAbort, { once: true });
-    source.once("close", () => signal.removeEventListener("abort", onAbort));
-    if (signal.aborted) onAbort();
-    return source;
   }
 
   async *#decodedSegment(
     entry: SwitchEntry,
     { handle, initial }: StableRegularFileDescriptor,
     member: ArtifactMemberLifecycle,
-    onStateChange: (state: "idle" | "pending" | "failed") => void,
+    onStateChange: (state: DecodedMemberReadState) => void,
   ): AsyncIterable<Buffer> {
     const { signal, cancellationFailure } = member;
     let decoded: Buffer | undefined;

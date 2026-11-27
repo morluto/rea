@@ -73,6 +73,7 @@ export const PE_OVERLAY_LEADING_FORMATS = [
   "unrecognized",
   "ines",
   "nds",
+  "n64-rom",
   "zip",
   "godot-pck",
   "unityfs",
@@ -83,6 +84,7 @@ export const PE_OVERLAY_LEADING_FORMATS = [
   "android-boot-image",
   "android-ota-payload",
   "android-vbmeta",
+  "android-dtbo",
   "android-sparse-image",
   "ubi-image",
   "intel-hex",
@@ -106,6 +108,7 @@ export const PE_OVERLAY_LEADING_FORMATS = [
   "python-pyc",
   "devicetree",
   "deb",
+  "auditd-log",
 ] as const;
 export type PeOverlayLeadingFormat =
   (typeof PE_OVERLAY_LEADING_FORMATS)[number];

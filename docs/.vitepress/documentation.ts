@@ -109,6 +109,11 @@ export const documentationSections = [
         route: "/binary-diagnostics",
       },
       {
+        text: "YARA rule matches",
+        source: "guides/native/yara-matches.md",
+        route: "/yara-matches",
+      },
+      {
         text: "ELF separate debug files",
         source: "guides/native/elf-debug-link.md",
         route: "/elf-debug-link",
@@ -354,6 +359,11 @@ export const documentationSections = [
         route: "/android-boot-image",
       },
       {
+        text: "Android DTBO partition images",
+        source: "android-dtbo.md",
+        route: "/android-dtbo",
+      },
+      {
         text: "APK signature schemes",
         source: "apk-signature.md",
         route: "/apk-signature",
@@ -572,6 +582,11 @@ export const documentationSections = [
         text: "Nintendo DS ROMs",
         source: "guides/firmware/nds-roms.md",
         route: "/nds-roms",
+      },
+      {
+        text: "Nintendo 64 ROMs",
+        source: "guides/firmware/n64-roms.md",
+        route: "/n64-roms",
       },
       {
         text: "WeChat mini-program wxapkg archives",

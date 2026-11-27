@@ -569,6 +569,13 @@ authored `remediationAction`, with no `limit`, `fixedAllowance` or
 that count may only shrink, and `--shrink-baselines` lowers it
 ([#14234](https://github.com/morluto/rea/issues/14234)).
 
+A Nintendo 64 ROM above 64 MiB (67,108,864 bytes) is refused as the fixed
+allowance "The Nintendo 64 ROM size allowance" (`n64.rom_bytes`). Retail
+cartridge masks stop at 64 MiB (512 Mbit). The reader refuses the file before
+swapping its bytes. This release has no runtime override.
+`artifact_limits.expanded_bytes` does not raise it. A v64 or n64 dump also
+counts a decoded copy of each member toward `artifact_limits.expanded_bytes`.
+
 JSON values stop at `MAX_JSON_DEPTH` (1000) in
 [`jsonValue.ts`](https://github.com/morluto/rea/blob/main/src/domain/jsonValue.ts):
 "JSON value exceeds maximum nesting depth of 1000. This release has no runtime
@@ -772,21 +779,23 @@ editable setting or active worker telemetry.
 
 `inspect_artifact` and `extract_artifact` accept `bun`, `dotnet_bundle`,
 `node_sea`, `godot`, `iso9660`, `deno`, `wxapkg`, `tar` and
-`android_sparse_image` and `android_vbmeta` groups in `artifact_limits`. Their controls apply when
+`android_sparse_image`, `android_vbmeta` and `android_dtbo` groups in `artifact_limits`. Their controls apply when
 recognition or inventory encounters that format. Supplying a policy does not
 assert the format is present. Unsupported keys are rejected. Each group follows
 one domain-owned default policy. See [.NET bundles](../dotnet-bundles.md),
 [Node SEA](../node-sea.md), [Godot PCK](../godot-pck.md),
 [Bun standalone](../bun-standalone.md), [Deno compile](../deno-standalone.md),
-[wxapkg](../wxapkg.md), [tar](../tar-archives.md) and
-[Android sparse images](../guides/firmware/android-sparse-image.md) and
-[Android vbmeta](../guides/firmware/android-vbmeta.md) for format semantics.
+[wxapkg](../wxapkg.md), [tar](../tar-archives.md),
+[Android sparse images](../guides/firmware/android-sparse-image.md),
+[Android vbmeta](../guides/firmware/android-vbmeta.md) and
+[Android DTBO partition images](../android-dtbo.md) for format semantics.
 
 `artifact_limits.expanded_bytes` selects aggregate plaintext work for ZIP, Bun,
 SEA, PCK, ISO 9660, Deno, wxapkg, tar, macOS flat `.pkg` (including
 `Scripts`/`Payload` cpio archive decoding and scaled cpio member and path-byte
 allowances, plus `Distribution`/`PackageInfo` metadata decoding and scaled
-metadata record and XML-node allowances) and Android sparse image readers, NSO
+metadata record and XML-node allowances), Android sparse image and Android DTBO
+readers (every DTBO row is charged, including rows that share one payload), NSO
 segment decompression, and bFLT gzip decompression (which is also capped at a
 fixed 128 MiB in-memory inflation ceiling), including repeated readable logical
 occurrences. Omission retains each archive's encoded-size-derived default. The

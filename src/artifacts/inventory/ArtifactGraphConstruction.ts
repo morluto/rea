@@ -611,8 +611,9 @@ const artifactRoleForFormat = (
   if (format === "uefi" || isStandaloneArtifactFormat(format))
     return { kind: "resource", format };
   if (format === "plist") return { kind: "plist", format };
-  if (artifactFormatDescriptor(format)?.roleContainer === true)
-    return { kind: "container", format };
+  const descriptor = artifactFormatDescriptor(format);
+  if (descriptor?.roleContainer === true) return { kind: "container", format };
+  if (descriptor?.role !== undefined) return { kind: descriptor.role, format };
   return {
     kind: ["native-addon", "dynamic-library"].includes(byPath.kind)
       ? byPath.kind

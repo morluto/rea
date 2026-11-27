@@ -21,9 +21,10 @@ import {
 } from "../../contracts/decompileDirectory.js";
 import { jsonValueByteLength } from "../../domain/jsonValueByteLength.js";
 import { digestSchema } from "../../domain/digests.js";
-import type {
-  AnalysisExecution,
-  AnalysisOperationPort,
+import {
+  UPCOMING_DECOMPILES_WINDOW,
+  type AnalysisExecution,
+  type AnalysisOperationPort,
 } from "../../ports/AnalysisProvider.js";
 import {
   AnalysisCancelledError,
@@ -816,14 +817,6 @@ const decideProcedure = async (
 };
 
 /**
- * How many upcoming functions one decompile request names. A provider that
- * prepares them together retains that many results at most, so a larger
- * window would only discard work; this is a batching size, not an analysis
- * limit, and a provider is free to ignore it.
- */
-const DECOMPILE_READ_AHEAD = 32;
-
-/**
  * The functions this call will decompile next, starting with the one at
  * `from`. Each later function is decided once, the way the loop decides it,
  * and the decision is kept for the loop. Every attempt, including a file
@@ -848,7 +841,10 @@ const decompileReadAhead = async (
   let attempts = 1;
   let index = from + 1;
   for (; index < input.procedures.length; index++) {
-    if (procedures.length >= DECOMPILE_READ_AHEAD || attempts >= attemptsLeft)
+    if (
+      procedures.length >= UPCOMING_DECOMPILES_WINDOW ||
+      attempts >= attemptsLeft
+    )
       break;
     if (isAborted(input.signal)) break;
     const address = input.procedures[index]!.address;
