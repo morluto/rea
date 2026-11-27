@@ -1,7 +1,11 @@
 import { setImmediate } from "node:timers/promises";
 
 import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
-import { readMachoLinkeditDataCommand } from "../../domain/apple/machoLoadCommands.js";
+import {
+  readMachoHeaderDeclarations,
+  readMachoLinkeditDataCommand,
+} from "../../domain/apple/machoLoadCommands.js";
+import { unrecognizedTarget } from "../../domain/analysisErrorCore.js";
 import {
   readMachoImageFromReader,
   type MachoLoadCommandVisit,
@@ -568,6 +572,22 @@ export const parseMachoFunctionStartsFromHandle = async (
     input.architecture,
   );
   const source = selected.source;
+  // The shared header recognizer returns null for a magic that is not
+  // Mach-O, such as an ELF or PE file passed without `architecture`. That
+  // file is outside this operation, not a malformed Mach-O, so it is reported
+  // as unrecognized before the thin reader would call it malformed. A header
+  // the recognizer rejects for another reason stays a format failure.
+  const header = readMachoHeaderDeclarations(
+    await readByteSourceSlice(source, 0, Math.min(32, source.size)),
+    source.size,
+  );
+  if (header.ok && header.value === null)
+    throw unrecognizedTarget(
+      OPERATION,
+      artifact.path,
+      "macho",
+      "The file is not a thin Mach-O image or a universal Mach-O file.",
+    );
   // The shared image walk hands back the two LINKEDIT data commands, so the
   // load-command table is read and framed once.
   const startsCommands = new LinkeditCommandTally();

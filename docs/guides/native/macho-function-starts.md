@@ -81,8 +81,10 @@ the list.
 
 ## Failures
 
-A file that is not Mach-O, or a universal slice that cannot be read, is a
-target failure. `architecture` on a thin image is refused. A universal file
+A file that is not Mach-O, such as an ELF or PE image, is a target failure
+of kind `unrecognized`: this operation reads only Mach-O. A Mach-O whose
+header or load commands are broken, or a universal slice that cannot be read,
+is a target failure of kind `malformed` or `truncated`. `architecture` on a thin image is refused. A universal file
 without `architecture` is refused.
 
 `max_entries` (default 2,097,152, at most 16,777,216; CLI `--max-entries`)

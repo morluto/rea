@@ -77,6 +77,31 @@ describe("Mach-O function starts provider", () => {
     if (foreign.ok) throw new Error("Expected a target failure");
     expect(foreign.error).toBeInstanceOf(AnalysisTargetFailureError);
     expect(foreign.error._tag).toBe("AnalysisTargetFailureError");
+    expect(foreign.error).toMatchObject({
+      failure: { kind: "unrecognized", format: "macho" },
+    });
+  });
+
+  it("reports an ELF file as unrecognized, not as a malformed Mach-O", async () => {
+    const elf = Buffer.alloc(64);
+    Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1]).copy(elf);
+    const refused = await inspect(elf);
+    if (refused.ok) throw new Error("Expected a target failure");
+    expect(refused.error).toMatchObject({
+      _tag: "AnalysisTargetFailureError",
+      failure: { kind: "unrecognized", format: "macho" },
+    });
+  });
+
+  it("keeps a recognized but cut-off Mach-O header a format failure", async () => {
+    // A 64-bit Mach-O magic with the header cut off after 12 bytes.
+    const cut = arm64FunctionStartsImage().subarray(0, 12);
+    const refused = await inspect(Buffer.from(cut));
+    if (refused.ok) throw new Error("Expected a target failure");
+    expect(refused.error._tag).toBe("AnalysisTargetFailureError");
+    expect((refused.error as AnalysisTargetFailureError).failure.kind).not.toBe(
+      "unrecognized",
+    );
   });
 });
 
