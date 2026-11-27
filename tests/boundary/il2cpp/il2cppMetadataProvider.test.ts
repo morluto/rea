@@ -433,15 +433,24 @@ it("keeps observed source facts with a complete-report refusal", async () => {
   const projected = projectAnalysisError(result.error);
   expect(projected.retryable).toBe(false);
   expect(projected.code).toBe("resource_constraint");
-  expect(projected.remediation.action).toContain(
-    "No complete metadata inventory is retained",
-  );
-  expect(projected.remediation.action).toContain(
-    "Source facts already observed stay with this refusal",
-  );
-  expect(projected.remediation.action).not.toMatch(
-    /does not leave a completed report or Evidence record/u,
-  );
+  expect(projected.details).toMatchObject({
+    limit: {
+      control_kind: "parameter",
+      parameter: "max_output_bytes",
+      effective_value: 256,
+      unit: "bytes",
+      minimum: 1,
+      maximum: 64 * 1024 * 1024,
+      default_value: 64 * 1024 * 1024,
+      applies_at: "next_call",
+    },
+    refusal: {
+      kind: "adjustable_budget",
+      operation: "inspect_il2cpp_metadata",
+      control: "max_output_bytes",
+    },
+  });
+  expect(projected.remediation.action).toContain("max_output_bytes");
   expect(projected.remediation.action).not.toMatch(/worker memory/u);
 });
 
@@ -1331,12 +1340,471 @@ it("reports the exceeded native-link maximum in the public refusal", async () =>
     expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
     expect(result.error).toMatchObject({
       resource: "capacity",
+      fixedAllowance: undefined,
       reportedLimits: {
-        boundary: "native-index-capacity",
+        boundary: "module-array-candidates",
         maximum: 64,
       },
-      fixedAllowance: { limit: 64, unit: "entries" },
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_module_array_candidates",
+        effective_value: 64,
+        unit: "count",
+        minimum: 1,
+        maximum: 4_096,
+        default_value: 64,
+        applies_at: "next_call",
+      },
     });
+    const raised = await provider.inspect({
+      path,
+      binary_path: binaryPath,
+      max_module_array_candidates: 256,
+    });
+    expect(raised.ok).toBe(true);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("enforces per-call max_file_bytes, max_output_bytes, max_binary_bytes, max_structure_bytes, max_native_type_text_bytes and max_native_candidates", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-per-call-budgets-");
+  const path = join(root, "global-metadata.dat");
+  const binaryPath = join(root, "GameAssembly.dylib");
+  const metadataBytes = createLinkedIl2cppMetadataFixture().bytes;
+  const binaryBytes = createIl2cppBinaryFixture();
+  await writeFile(path, metadataBytes);
+  await writeFile(binaryPath, binaryBytes);
+  const provider = new Il2cppMetadataProvider();
+  try {
+    const fileRefused = await provider.inspect({ path, max_file_bytes: 16 });
+    if (fileRefused.ok) throw new Error("Expected max_file_bytes refusal");
+    expect(fileRefused.error).toMatchObject({
+      resource: "file-size",
+      fixedAllowance: undefined,
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_file_bytes",
+        effective_value: 16,
+        required_value: metadataBytes.length,
+        unit: "bytes",
+        default_value: 256 * 1024 * 1024,
+      },
+    });
+
+    const outputRefused = await provider.inspect({
+      path,
+      max_output_bytes: 256,
+    });
+    if (outputRefused.ok) throw new Error("Expected max_output_bytes refusal");
+    expect(outputRefused.error).toMatchObject({
+      resource: "memory",
+      fixedAllowance: undefined,
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_output_bytes",
+        effective_value: 256,
+        unit: "bytes",
+        default_value: 64 * 1024 * 1024,
+      },
+    });
+
+    const binaryRefused = await provider.inspect({
+      path,
+      binary_path: binaryPath,
+      max_binary_bytes: 16,
+    });
+    if (binaryRefused.ok) throw new Error("Expected max_binary_bytes refusal");
+    expect(binaryRefused.error).toMatchObject({
+      resource: "file-size",
+      fixedAllowance: undefined,
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_binary_bytes",
+        effective_value: 16,
+        required_value: binaryBytes.length,
+        unit: "bytes",
+        default_value: 1024 * 1024 * 1024,
+      },
+    });
+
+    const structureRefused = await provider.inspect({
+      path,
+      binary_path: binaryPath,
+      max_structure_bytes: 64,
+    });
+    if (structureRefused.ok)
+      throw new Error("Expected max_structure_bytes refusal");
+    expect(structureRefused.error).toMatchObject({
+      resource: "memory",
+      fixedAllowance: undefined,
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_structure_bytes",
+        effective_value: 64,
+        unit: "bytes",
+        default_value: 16 * 1024 * 1024,
+      },
+    });
+
+    const typeTextRefused = await provider.inspect({
+      path,
+      binary_path: binaryPath,
+      max_native_type_text_bytes: 1,
+    });
+    if (typeTextRefused.ok)
+      throw new Error("Expected max_native_type_text_bytes refusal");
+    expect(typeTextRefused.error).toMatchObject({
+      resource: "memory",
+      fixedAllowance: undefined,
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_native_type_text_bytes",
+        effective_value: 1,
+        unit: "bytes",
+        default_value: 64 * 1024 * 1024,
+      },
+    });
+
+    const candidatesRefused = await provider.inspect({
+      path,
+      binary_path: binaryPath,
+      max_native_candidates: 1,
+    });
+    if (candidatesRefused.ok)
+      throw new Error("Expected max_native_candidates refusal");
+    expect(candidatesRefused.error).toMatchObject({
+      resource: "capacity",
+      fixedAllowance: undefined,
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_native_candidates",
+        effective_value: 1,
+        unit: "count",
+        default_value: 65_536,
+      },
+    });
+
+    const recovered = await provider.inspect({
+      path,
+      binary_path: binaryPath,
+      max_file_bytes: metadataBytes.length,
+      max_output_bytes: 1024 * 1024,
+      max_binary_bytes: binaryBytes.length,
+      max_structure_bytes: 4096,
+      max_native_type_text_bytes: 4096,
+      max_native_candidates: 128,
+    });
+    expect(recovered.ok).toBe(true);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("applies max_structure_bytes to ELF PT_DYNAMIC and max_native_candidates to ELF unresolved relocation overlays", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-elf-budgets-");
+  const path = join(root, "global-metadata.dat");
+  const dynamicElfPath = join(root, "dynamic.so");
+  const unresolvedElfPath = join(root, "unresolved.so");
+  await writeFile(path, createLinkedIl2cppMetadataFixture().bytes);
+
+  const buildMinimalAarch64Elf = (
+    dynamicEntries: readonly (readonly [bigint, bigint])[],
+    extraPayload: Buffer = Buffer.alloc(0),
+    dynamicSizeOverride?: number,
+  ): Buffer => {
+    const phoff = 64;
+    const phnum = 2;
+    const dynOff = 0x100;
+    const dynSize = dynamicSizeOverride ?? (dynamicEntries.length + 1) * 16;
+    const payloadOff =
+      dynOff + Math.max(dynSize, (dynamicEntries.length + 1) * 16);
+    const total = payloadOff + extraPayload.length;
+    const elf = Buffer.alloc(total);
+    elf.set([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1, 0], 0);
+    elf.writeUInt16LE(3, 16); // ET_DYN
+    elf.writeUInt16LE(183, 18); // EM_AARCH64
+    elf.writeUInt32LE(1, 20);
+    elf.writeBigUInt64LE(BigInt(phoff), 32);
+    elf.writeUInt16LE(64, 52);
+    elf.writeUInt16LE(56, 54);
+    elf.writeUInt16LE(phnum, 56);
+    // PT_LOAD covering whole file at VA 0x10000
+    elf.writeUInt32LE(1, phoff);
+    elf.writeUInt32LE(5, phoff + 4);
+    elf.writeBigUInt64LE(0n, phoff + 8);
+    elf.writeBigUInt64LE(0x10000n, phoff + 16);
+    elf.writeBigUInt64LE(0x10000n, phoff + 24);
+    elf.writeBigUInt64LE(BigInt(total), phoff + 32);
+    elf.writeBigUInt64LE(BigInt(total), phoff + 40);
+    elf.writeBigUInt64LE(0x1000n, phoff + 48);
+    // PT_DYNAMIC
+    const dynPh = phoff + 56;
+    elf.writeUInt32LE(2, dynPh);
+    elf.writeUInt32LE(6, dynPh + 4);
+    elf.writeBigUInt64LE(BigInt(dynOff), dynPh + 8);
+    elf.writeBigUInt64LE(0x10000n + BigInt(dynOff), dynPh + 16);
+    elf.writeBigUInt64LE(0x10000n + BigInt(dynOff), dynPh + 24);
+    elf.writeBigUInt64LE(BigInt(dynSize), dynPh + 32);
+    elf.writeBigUInt64LE(BigInt(dynSize), dynPh + 40);
+    elf.writeBigUInt64LE(8n, dynPh + 48);
+    for (let i = 0; i < dynamicEntries.length; i++) {
+      const [tag, val] = dynamicEntries[i]!;
+      elf.writeBigInt64LE(tag, dynOff + i * 16);
+      elf.writeBigUInt64LE(val, dynOff + i * 16 + 8);
+    }
+    extraPayload.copy(elf, payloadOff);
+    return elf;
+  };
+
+  // PT_DYNAMIC size 512 bytes exceeds max_structure_bytes: 256 (phdr table is 112 bytes).
+  await writeFile(
+    dynamicElfPath,
+    buildMinimalAarch64Elf([], Buffer.alloc(0), 512),
+  );
+
+  // 4 unresolved R_AARCH64_GLOB_DAT (type 1025) RELA entries exceed max_native_candidates: 2.
+  const relaEntries = Buffer.alloc(4 * 24);
+  for (let i = 0; i < 4; i++) {
+    relaEntries.writeBigUInt64LE(0x10000n + BigInt(i * 8), i * 24);
+    relaEntries.writeBigUInt64LE((1n << 32n) | 1025n, i * 24 + 8);
+    relaEntries.writeBigInt64LE(0n, i * 24 + 16);
+  }
+  const relaDyn = [
+    [7n, 0x10000n + 0x100n + 64n], // DT_RELA
+    [8n, BigInt(relaEntries.length)], // DT_RELASZ
+    [9n, 24n], // DT_RELAENT
+  ] as const;
+  await writeFile(
+    unresolvedElfPath,
+    buildMinimalAarch64Elf(relaDyn, relaEntries),
+  );
+
+  const provider = new Il2cppMetadataProvider();
+  try {
+    const dynRefused = await provider.inspect({
+      path,
+      binary_path: dynamicElfPath,
+      max_structure_bytes: 256,
+    });
+    if (dynRefused.ok)
+      throw new Error("Expected PT_DYNAMIC max_structure_bytes refusal");
+    expect(dynRefused.error).toMatchObject({
+      resource: "memory",
+      fixedAllowance: undefined,
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_structure_bytes",
+        effective_value: 256,
+        unit: "bytes",
+      },
+    });
+    const dynAdmitted = await provider.inspect({
+      path,
+      binary_path: dynamicElfPath,
+      max_structure_bytes: 1024,
+    });
+    expect(dynAdmitted.ok).toBe(false);
+    if (!dynAdmitted.ok) {
+      expect(dynAdmitted.error).not.toBeInstanceOf(
+        AnalysisResourceConstraintError,
+      );
+    }
+
+    const overlayRefused = await provider.inspect({
+      path,
+      binary_path: unresolvedElfPath,
+      max_native_candidates: 2,
+    });
+    if (overlayRefused.ok)
+      throw new Error(
+        "Expected ELF unresolved overlay max_native_candidates refusal",
+      );
+    expect(overlayRefused.error).toMatchObject({
+      resource: "capacity",
+      fixedAllowance: undefined,
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_native_candidates",
+        effective_value: 2,
+        unit: "count",
+      },
+    });
+    const overlayAdmitted = await provider.inspect({
+      path,
+      binary_path: unresolvedElfPath,
+      max_native_candidates: 256,
+    });
+    expect(overlayAdmitted.ok).toBe(false);
+    if (!overlayAdmitted.ok) {
+      expect(overlayAdmitted.error).not.toBeInstanceOf(
+        AnalysisResourceConstraintError,
+      );
+    }
+  } finally {
+    await provider.close();
+  }
+});
+
+it("reports max_native_candidates when unresolvedPointerMatcher exhausts its budget on Mach-O partial binds", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-partial-bind-budget-");
+  const path = join(root, "global-metadata.dat");
+  const binaryPath = join(root, "GameAssembly.dylib");
+  const metadata = createLinkedIl2cppMetadataFixture();
+  await writeFile(path, metadata.bytes);
+
+  // Append 50 extra copies of "Assembly-CSharp.dll\0" (52 total name addresses
+  // including original Assembly-CSharp.dll + mscorlib.dll) spaced by 273 (0x111)
+  // bytes so every byte lane varies, plus 5 aligned partial-bind slots at
+  // distinct byte overlaps (-3, +1, +2, +3, +4) without touching +8 (methodCount = 3).
+  // Setting raw slot bytes to 0xffffffffffffffff avoids accidental matches when raised.
+  const base = createIl2cppBinaryFixture();
+  const stride = 273;
+  const extraNamesLen = Math.ceil((50 * stride) / 8) * 8;
+  const extraNames = Buffer.alloc(extraNamesLen);
+  for (let i = 0; i < 50; i++)
+    extraNames.write("Assembly-CSharp.dll\0", i * stride, "utf8");
+  const partialSlots = Buffer.alloc(5 * 32);
+  const slotOffsets: number[] = [];
+  const baseSlotsStart = base.length + extraNamesLen + 8;
+  const relativeOverlaps = [-3, 1, 2, 3, 4];
+  for (let i = 0; i < relativeOverlaps.length; i++) {
+    partialSlots.writeBigUInt64LE(0xffff_ffff_ffff_ffffn, i * 32);
+    partialSlots.writeUInt32LE(3, i * 32 + 8);
+    slotOffsets.push(baseSlotsStart + i * 32 + relativeOverlaps[i]!);
+  }
+  const uleb = (value: number): number[] => {
+    const out: number[] = [];
+    let remaining = value;
+    do {
+      const byte = remaining & 0x7f;
+      remaining >>>= 7;
+      out.push(byte | (remaining === 0 ? 0 : 0x80));
+    } while (remaining !== 0);
+    return out;
+  };
+  const streamParts: Buffer[] = [
+    Buffer.from([0x3e, 0x40]),
+    Buffer.from("_FixtureMethod\0", "utf8"),
+    Buffer.from([0x52]), // BIND_TYPE_TEXT_ABSOLUTE32 (4-byte partial slot overlap)
+  ];
+  for (const offset of slotOffsets) {
+    streamParts.push(Buffer.from([0x70, ...uleb(offset), 0x90]));
+  }
+  streamParts.push(Buffer.from([0x00]));
+  const stream = Buffer.concat(streamParts);
+  const crafted = Buffer.concat([
+    base,
+    extraNames,
+    Buffer.alloc(8),
+    partialSlots,
+    stream,
+  ]);
+  const streamOffset = baseSlotsStart + partialSlots.length;
+  // Widen segment vmsize/filesize and attach LC_DYLD_INFO_ONLY at offset 104.
+  crafted.writeBigUInt64LE(BigInt(crafted.length), 64);
+  crafted.writeBigUInt64LE(BigInt(crafted.length), 80);
+  crafted.writeUInt32LE(2, 16);
+  crafted.writeUInt32LE(120, 20);
+  crafted.writeUInt32LE(0x80000022, 104);
+  crafted.writeUInt32LE(48, 108);
+  crafted.writeUInt32LE(streamOffset, 120);
+  crafted.writeUInt32LE(stream.length, 124);
+  crafted.writeUInt32LE(7, 88);
+  crafted.writeUInt32LE(7, 92);
+  await writeFile(binaryPath, crafted);
+
+  const provider = new Il2cppMetadataProvider();
+  try {
+    // 51 name addresses pass nameAddresses (<= 55), giving matcher cap 8 * 55 = 440 entries.
+    // 5 distinct masks * (51 keys + 51 counts) = 510 entries > 440 -> typed max_native_candidates refusal.
+    const refused = await provider.inspect({
+      path,
+      binary_path: binaryPath,
+      max_native_candidates: 55,
+    });
+    if (refused.ok)
+      throw new Error(
+        "Expected unresolvedPointerMatcher max_native_candidates refusal",
+      );
+    expect(refused.error).toBeInstanceOf(AnalysisResourceConstraintError);
+    expect(refused.error).toMatchObject({
+      resource: "capacity",
+      fixedAllowance: undefined,
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_native_candidates",
+        effective_value: 55,
+        unit: "count",
+      },
+    });
+    const raised = await provider.inspect({
+      path,
+      binary_path: binaryPath,
+      max_native_candidates: 256,
+    });
+    expect(raised.ok).toBe(true);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("applies max_native_type_text_bytes to generic method instance naming", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-generic-text-budget-");
+  const path = join(root, "global-metadata.dat");
+  const binaryPath = join(root, "GameAssembly.dylib");
+  await writeFile(
+    path,
+    createIl2cppMetadataFixture({ version: 31, genericOwners: true }).bytes,
+  );
+  await writeFile(
+    binaryPath,
+    createIl2cppBinaryFixture({ genericMethods: {} }),
+  );
+  const provider = new Il2cppMetadataProvider();
+  try {
+    // Plain linking fits within 48 UTF-8 bytes of rendered type text, while
+    // generic method instance naming exceeds it and recovers once raised.
+    const plain = await provider.inspect({
+      path,
+      binary_path: binaryPath,
+      max_native_type_text_bytes: 48,
+    });
+    expect(plain.ok).toBe(true);
+
+    const genericRefused = await provider.inspect({
+      path,
+      binary_path: binaryPath,
+      generic_instances: true,
+      max_native_type_text_bytes: 48,
+    });
+    if (genericRefused.ok)
+      throw new Error(
+        "Expected generic method naming max_native_type_text_bytes refusal",
+      );
+    expect(genericRefused.error).toBeInstanceOf(
+      AnalysisResourceConstraintError,
+    );
+    expect(genericRefused.error).toMatchObject({
+      resource: "memory",
+      fixedAllowance: undefined,
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_native_type_text_bytes",
+        effective_value: 48,
+        unit: "bytes",
+        maximum: 64 * 1024 * 1024,
+        default_value: 64 * 1024 * 1024,
+      },
+    });
+
+    const genericRecovered = await provider.inspect({
+      path,
+      binary_path: binaryPath,
+      generic_instances: true,
+      max_native_type_text_bytes: 4096,
+    });
+    expect(genericRecovered.ok).toBe(true);
   } finally {
     await provider.close();
   }

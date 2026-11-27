@@ -1,5 +1,13 @@
 import { BinaryFormatFailure } from "../domain/binaryContainer.js";
-import { Il2cppBinaryFormatFailure } from "./Il2cppBinaryFormat.js";
+import {
+  DEFAULT_IL2CPP_MODULE_ARRAY_CANDIDATES,
+  DEFAULT_IL2CPP_NATIVE_CANDIDATES,
+} from "../domain/il2cpp/il2cppMetadata.js";
+import {
+  IL2CPP_MODULE_ARRAY_CANDIDATES_LIMIT,
+  IL2CPP_NATIVE_CANDIDATES_LIMIT,
+  Il2cppBinaryFormatFailure,
+} from "./Il2cppBinaryFormat.js";
 import {
   isMapped,
   hasPointerArrayCoverage,
@@ -15,9 +23,6 @@ import {
   isDefinitionTypeKind,
 } from "./Il2cppBinaryTypes.js";
 import type { Il2cppCodeGenModule } from "./Il2cppBinaryFile.js";
-// Bound the retained name-address index independently of binary size. No
-// repeated name is evidence of ambiguous module ownership by itself.
-const TOTAL_NAME_OCCURRENCES = 65536;
 const SCAN_BYTES = 65536;
 
 const hasLegacyMachoFixups = (image: NativeImage): boolean =>
@@ -107,11 +112,12 @@ const matchesAddressLane = (
   return filter.lo32.has(rawUInt32LE(bytes, offset));
 };
 
-/** Index candidates by untouched bytes, retaining bounded representation space. */
+/** Index candidates by untouched bytes; exceeding the budget throws a typed capacity refusal. */
 const unresolvedPointerMatcher = (
   image: NativeImage,
   candidates: Iterable<bigint>,
   candidateCounts?: (candidate: bigint) => Iterable<number>,
+  maxNativeCandidates: number = DEFAULT_IL2CPP_NATIVE_CANDIDATES,
 ): ((
   address: bigint,
   raw: bigint,
@@ -122,9 +128,9 @@ const unresolvedPointerMatcher = (
   const values = [...candidates];
   const masks = new Map<
     bigint,
-    Map<bigint, { counts: Set<number>; minimum: number }> | null
+    Map<bigint, { counts: Set<number>; minimum: number }>
   >();
-  const maximumEntries = 8 * TOTAL_NAME_OCCURRENCES;
+  const maximumEntries = Math.min(8 * maxNativeCandidates, 524_288);
   let indexedEntries = 0;
   return (address, raw, count) => {
     if (!fixups.hasUnresolvedLegacyBytes(address, 8)) return undefined;
@@ -134,7 +140,6 @@ const unresolvedPointerMatcher = (
         knownMask |= 0xffn << BigInt(byte * 8);
     let matches = masks.get(knownMask);
     if (matches === undefined) {
-      // Beyond the retained index budget applicability remains unknown.
       const index = new Map<bigint, { counts: Set<number>; minimum: number }>();
       let entries = 0;
       for (const candidate of values) {
@@ -154,16 +159,19 @@ const unresolvedPointerMatcher = (
             candidateSet.minimum = Math.min(candidateSet.minimum, value);
             entries++;
           }
-        if (entries > maximumEntries - indexedEntries) {
-          masks.set(knownMask, null);
-          return null;
-        }
+        if (entries > maximumEntries - indexedEntries)
+          throw new Il2cppBinaryFormatFailure(
+            "native-index-capacity",
+            `unresolved pointer candidate matcher exceeds ${String(maximumEntries)} entries`,
+            maxNativeCandidates,
+            "entries",
+            IL2CPP_NATIVE_CANDIDATES_LIMIT,
+          );
       }
       matches = index;
       indexedEntries += entries;
       masks.set(knownMask, matches);
     }
-    if (matches === null) return null;
     const candidateSet = matches.get(raw & knownMask);
     if (candidateSet === undefined) return undefined;
     if (candidateCounts === undefined) return null;
@@ -185,6 +193,7 @@ interface NameTrie {
 function* nameAddresses(
   image: NativeImage,
   names: readonly string[],
+  maxNativeCandidates: number,
 ): Generator<void, Map<bigint, readonly number[]>> {
   const root: NameTrie = { next: new Map(), owners: [] };
   let nodes = 1,
@@ -192,12 +201,13 @@ function* nameAddresses(
   for (const [index, name] of names.entries()) {
     if (++work % 256 === 0) yield;
     if (name === "") continue;
-    if (Buffer.byteLength(name) > TOTAL_NAME_OCCURRENCES)
+    if (Buffer.byteLength(name) > maxNativeCandidates)
       throw new Il2cppBinaryFormatFailure(
         "native-index-capacity",
-        `module-name trie exceeds its ${TOTAL_NAME_OCCURRENCES}-node workspace`,
-        TOTAL_NAME_OCCURRENCES,
+        `module-name trie exceeds its ${maxNativeCandidates}-node workspace`,
+        maxNativeCandidates,
         "entries",
+        IL2CPP_NATIVE_CANDIDATES_LIMIT,
       );
     let node = root;
     const bytes = Buffer.from(name, "utf8");
@@ -205,12 +215,13 @@ function* nameAddresses(
       if (++work % 4096 === 0) yield;
       let next = node.next.get(bytes[at]!);
       if (next === undefined) {
-        if (nodes >= TOTAL_NAME_OCCURRENCES)
+        if (nodes >= maxNativeCandidates)
           throw new Il2cppBinaryFormatFailure(
             "native-index-capacity",
-            `module-name trie exceeds its ${TOTAL_NAME_OCCURRENCES}-node workspace`,
-            TOTAL_NAME_OCCURRENCES,
+            `module-name trie exceeds its ${maxNativeCandidates}-node workspace`,
+            maxNativeCandidates,
             "entries",
+            IL2CPP_NATIVE_CANDIDATES_LIMIT,
           );
         next = { next: new Map(), owners: [] };
         node.next.set(bytes[at]!, next);
@@ -247,12 +258,13 @@ function* nameAddresses(
           const address = mapping.address + BigInt(at);
           if (image.elfPointerOverlay?.hasWrites(address, chunk + end - at + 1))
             continue;
-          if (!found.has(address) && found.size >= TOTAL_NAME_OCCURRENCES)
+          if (!found.has(address) && found.size >= maxNativeCandidates)
             throw new Il2cppBinaryFormatFailure(
               "native-index-capacity",
-              `native name-address index exceeds ${TOTAL_NAME_OCCURRENCES} entries`,
-              TOTAL_NAME_OCCURRENCES,
+              `native name-address index exceeds ${maxNativeCandidates} entries`,
+              maxNativeCandidates,
               "entries",
+              IL2CPP_NATIVE_CANDIDATES_LIMIT,
             );
           found.set(address, node.owners);
         }
@@ -286,10 +298,12 @@ function* imageMethodCounts(
 export function* findModules(
   image: NativeImage,
   metadata: Il2cppMetadataDecoded,
+  maxNativeCandidates: number = DEFAULT_IL2CPP_NATIVE_CANDIDATES,
 ): Generator<void, Il2cppCodeGenModule[]> {
   const names = yield* nameAddresses(
     image,
     metadata.images.map((entry) => entry.name),
+    maxNativeCandidates,
   );
   const counts = yield* imageMethodCounts(metadata);
   const countSet = new Set(counts);
@@ -298,8 +312,11 @@ export function* findModules(
     Number.POSITIVE_INFINITY,
   );
   const candidates = new Map<number, Il2cppCodeGenModule[]>();
-  const unresolvedName = unresolvedPointerMatcher(image, names.keys(), (name) =>
-    (names.get(name) ?? []).map((index) => counts[index]!),
+  const unresolvedName = unresolvedPointerMatcher(
+    image,
+    names.keys(),
+    (name) => (names.get(name) ?? []).map((index) => counts[index]!),
+    maxNativeCandidates,
   );
   const rawBytes = image.stored.bytes;
   const legacyFixups = hasLegacyMachoFixups(image);
@@ -449,6 +466,8 @@ export function* findModules(
 export function* findCodeRegistration(
   image: NativeImage,
   modules: readonly Il2cppCodeGenModule[],
+  maxModuleArrayCandidates: number = DEFAULT_IL2CPP_MODULE_ARRAY_CANDIDATES,
+  maxNativeCandidates: number = DEFAULT_IL2CPP_NATIVE_CANDIDATES,
 ): Generator<void, { readonly field: bigint | null; readonly array: bigint }> {
   const expected = new Set(modules.map((module) => module.address));
   const matches: { field: bigint; array: bigint }[] = [];
@@ -524,7 +543,12 @@ export function* findCodeRegistration(
     matches.length === 0 &&
     (architecture === "amd64" || architecture === "arm64")
   ) {
-    const array = yield* findModuleArrayByCode(image, expected);
+    const array = yield* findModuleArrayByCode(
+      image,
+      expected,
+      maxModuleArrayCandidates,
+      maxNativeCandidates,
+    );
     if (array !== null) return { field: null, array };
   }
   if (matches.length !== 1)
@@ -547,14 +571,19 @@ export function* findCodeRegistration(
  * page offset to the same register. Anything else stays
  * code-registration-not-found.
  */
-const MODULE_ARRAY_CANDIDATES = 64;
-
 function* findModuleArrayByCode(
   image: NativeImage,
   expected: ReadonlySet<bigint>,
+  maxModuleArrayCandidates: number,
+  maxNativeCandidates: number,
 ): Generator<void, bigint | null> {
   const arrays = new Set<bigint>();
-  const unresolvedModule = unresolvedPointerMatcher(image, expected);
+  const unresolvedModule = unresolvedPointerMatcher(
+    image,
+    expected,
+    undefined,
+    maxNativeCandidates,
+  );
   const rawBytes = image.stored.bytes;
   const legacyFixups = hasLegacyMachoFixups(image);
   const expectedFilter = createAddressLaneFilter(expected);
@@ -669,12 +698,13 @@ function* findModuleArrayByCode(
       if (at - runStart === (expected.size - 1) * 8) {
         arrays.add(mapping.address + BigInt(runStart));
         // Retain overlapping windows; at most one position per expected module.
-        if (arrays.size > MODULE_ARRAY_CANDIDATES)
+        if (arrays.size > maxModuleArrayCandidates)
           throw new Il2cppBinaryFormatFailure(
             "native-index-capacity",
-            `module-array index exceeds ${MODULE_ARRAY_CANDIDATES} entries`,
-            MODULE_ARRAY_CANDIDATES,
+            `module-array index exceeds ${maxModuleArrayCandidates} entries`,
+            maxModuleArrayCandidates,
             "entries",
+            IL2CPP_MODULE_ARRAY_CANDIDATES_LIMIT,
           );
       }
     }

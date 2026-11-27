@@ -78,8 +78,16 @@ export type Il2cppBinaryReadOptions = Pick<
 > & {
   /** Also link genericMethodTable rows; unrequested paths read no generic table. */
   readonly genericInstances?: boolean;
+  /** Caller's native header/table allowance (`max_structure_bytes`). */
+  readonly maxStructureBytes?: number;
   /** Caller's ELF pointer index allowance (`max_native_index_bytes`). */
   readonly maxNativeIndexBytes?: number;
+  /** Caller's native type-text cache workspace allowance (`max_native_type_text_bytes`). */
+  readonly maxNativeTypeTextBytes?: number;
+  /** Caller's module-name trie and address-index entry allowance (`max_native_candidates`). */
+  readonly maxNativeCandidates?: number;
+  /** Caller's fallback module-array candidate allowance (`max_module_array_candidates`). */
+  readonly maxModuleArrayCandidates?: number;
 };
 
 const assertGenericLinkLayout = (
@@ -104,7 +112,13 @@ export function* linkIl2cppBinarySteps(
   assertGenericLinkLayout(metadata, options);
   yield;
   return yield* linkImageSteps(
-    openImageSteps(bytes, undefined, options.maxNativeIndexBytes),
+    openImageSteps(
+      bytes,
+      undefined,
+      options.maxNativeIndexBytes,
+      options.maxStructureBytes,
+      options.maxNativeCandidates,
+    ),
     metadata,
     facts,
     options,
@@ -120,9 +134,19 @@ export const linkIl2cppBinaryCooperative = async (
 ): Promise<Il2cppBinaryLink> => {
   assertGenericLinkLayout(metadata, options);
   await pause();
-  const container = await readIl2cppBinaryContainerCooperative(bytes, pause);
+  const container = await readIl2cppBinaryContainerCooperative(
+    bytes,
+    pause,
+    options.maxStructureBytes,
+  );
   const steps = linkImageSteps(
-    openImageSteps(bytes, container, options.maxNativeIndexBytes),
+    openImageSteps(
+      bytes,
+      container,
+      options.maxNativeIndexBytes,
+      options.maxStructureBytes,
+      options.maxNativeCandidates,
+    ),
     metadata,
     facts,
     options,
@@ -143,8 +167,17 @@ function* linkImageSteps(
 ): Generator<void, Il2cppBinaryLink> {
   const image = yield* opening;
   const version = metadata.metadata_version;
-  const modules = yield* findModules(image, metadata);
-  const registration_ = yield* findCodeRegistration(image, modules);
+  const modules = yield* findModules(
+    image,
+    metadata,
+    options.maxNativeCandidates,
+  );
+  const registration_ = yield* findCodeRegistration(
+    image,
+    modules,
+    options.maxModuleArrayCandidates,
+    options.maxNativeCandidates,
+  );
   const methodImage = new Int32Array(metadata.methods.length).fill(-1);
   for (const [index, entry] of metadata.images.entries())
     for (let offset = 0; offset < entry.type_count; offset++) {
@@ -213,49 +246,55 @@ function* linkImageSteps(
     metadata.types.length,
     yield* referencedTypeCount(facts),
   );
-  const typeName = createTypeNamer(
-    image,
-    metadata,
-    facts,
-    version,
-    options.beforeText,
-  );
-  function* reference(type: number): Generator<void, Il2cppTypeReference> {
-    if (type === -1) return { type, name: null };
-    if (type < 0 || type >= registration.count)
-      throw new Il2cppBinaryFormatFailure(
-        "invalid-type",
-        `type index ${type} is outside the ${registration.count} binary types`,
-      );
-    // 27.0/27.1 and 27.2 share header version 27 but place byref differently.
-    if (version === 27) return { type, name: null };
-    const address = readSlot(image, registration.types + BigInt(type * 8));
-    if (address === "unknown") return { type, name: null };
-    if (address === null)
-      throw new Il2cppBinaryFormatFailure(
-        "invalid-type",
-        `type ${type} has no mapped type-table slot`,
-      );
-    if (address === 0n)
-      throw new Il2cppBinaryFormatFailure(
-        "invalid-type",
-        `type ${type} has no Il2CppType record`,
-      );
-    return { type, name: yield* typeName(address, 0) };
-  }
-  function* column(types: Int32Array) {
-    const rows: Il2cppTypeReference[] = [];
-    for (let index = 0; index < types.length; index++) {
-      if (index % LINK_BATCH === 0) yield;
-      const row = yield* reference(types[index]!);
-      options.onRow?.(row);
-      rows.push(row);
+  let return_types: Il2cppTypeReference[];
+  let field_types: Il2cppTypeReference[];
+  let parameter_types: Il2cppTypeReference[];
+  {
+    const typeName = createTypeNamer(
+      image,
+      metadata,
+      facts,
+      version,
+      options.beforeText,
+      options.maxNativeTypeTextBytes,
+    );
+    function* reference(type: number): Generator<void, Il2cppTypeReference> {
+      if (type === -1) return { type, name: null };
+      if (type < 0 || type >= registration.count)
+        throw new Il2cppBinaryFormatFailure(
+          "invalid-type",
+          `type index ${type} is outside the ${registration.count} binary types`,
+        );
+      // 27.0/27.1 and 27.2 share header version 27 but place byref differently.
+      if (version === 27) return { type, name: null };
+      const address = readSlot(image, registration.types + BigInt(type * 8));
+      if (address === "unknown") return { type, name: null };
+      if (address === null)
+        throw new Il2cppBinaryFormatFailure(
+          "invalid-type",
+          `type ${type} has no mapped type-table slot`,
+        );
+      if (address === 0n)
+        throw new Il2cppBinaryFormatFailure(
+          "invalid-type",
+          `type ${type} has no Il2CppType record`,
+        );
+      return { type, name: yield* typeName(address, 0) };
     }
-    return rows;
+    function* column(types: Int32Array) {
+      const rows: Il2cppTypeReference[] = [];
+      for (let index = 0; index < types.length; index++) {
+        if (index % LINK_BATCH === 0) yield;
+        const row = yield* reference(types[index]!);
+        options.onRow?.(row);
+        rows.push(row);
+      }
+      return rows;
+    }
+    return_types = yield* column(facts.returnTypes);
+    field_types = yield* column(facts.fieldTypes);
+    parameter_types = yield* column(facts.parameterTypes);
   }
-  const return_types = yield* column(facts.returnTypes);
-  const field_types = yield* column(facts.fieldTypes);
-  const parameter_types = yield* column(facts.parameterTypes);
   const generic_methods =
     options.genericInstances === true
       ? yield* linkGenericMethodsSteps(

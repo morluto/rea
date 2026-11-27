@@ -247,6 +247,17 @@ Refusals that still name a per-call control only in prose are counted by
 `scripts/verify/untyped-budget-refusal-baseline.json` and tracked in
 [#14234](https://github.com/morluto/rea/issues/14234).
 
+Additional `inspect_il2cpp_metadata` per-call parameters (heap-bound allowances keep their existing ceilings):
+
+| Operation                 | Parameter                     |    Default | Floor |    Maximum | Owner                                 |
+| ------------------------- | ----------------------------- | ---------: | ----: | ---------: | ------------------------------------- |
+| `inspect_il2cpp_metadata` | `max_file_bytes`              |  268435456 |     1 |  268435456 | `src/domain/il2cpp/il2cppMetadata.ts` |
+| `inspect_il2cpp_metadata` | `max_output_bytes`            |   67108864 |     1 |   67108864 | `src/domain/il2cpp/il2cppMetadata.ts` |
+| `inspect_il2cpp_metadata` | `max_binary_bytes`            | 1073741824 |     1 | 1073741824 | `src/domain/il2cpp/il2cppMetadata.ts` |
+| `inspect_il2cpp_metadata` | `max_native_type_text_bytes`  |   67108864 |     1 |   67108864 | `src/domain/il2cpp/il2cppMetadata.ts` |
+| `inspect_il2cpp_metadata` | `max_native_candidates`       |      65536 |     1 |      65536 | `src/domain/il2cpp/il2cppMetadata.ts` |
+| `inspect_il2cpp_metadata` | `max_module_array_candidates` |         64 |     1 |       4096 | `src/domain/il2cpp/il2cppMetadata.ts` |
+
 Fixed ceilings are listed with their class and reason in
 `scripts/verify/fixed-ceiling-registry.json`, which `npm run lint` checks with
 `scripts/verify/fixed-ceilings.mjs`; see

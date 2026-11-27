@@ -28,20 +28,31 @@ import type { ByteSource } from "../byteSource.js";
 export const readBinaryContainer = (
   bytes: Buffer,
   operation: string,
+  structureBytes?: number,
 ): BinaryContainer =>
   hasElfMagic(bytes)
-    ? readElfImage(bytes, operation)
-    : readNonElfContainer(bytes);
+    ? readElfImage(
+        bytes,
+        operation,
+        structureBytes === undefined ? undefined : { structureBytes },
+      )
+    : readNonElfContainer(bytes, structureBytes);
 
 /** Read the same facts, allowing the operation to pause during ELF name decoding. */
 export const readBinaryContainerCooperative = async (
   bytes: Buffer,
   operation: string,
   pause: ZstandardFramePause,
+  structureBytes?: number,
 ): Promise<BinaryContainer> =>
   hasElfMagic(bytes)
-    ? readElfImageCooperative(bytes, operation, pause)
-    : readNonElfContainer(bytes);
+    ? readElfImageCooperative(
+        bytes,
+        operation,
+        pause,
+        structureBytes === undefined ? undefined : { structureBytes },
+      )
+    : readNonElfContainer(bytes, structureBytes);
 
 /** Stream ELF, PE, or thin Mach-O headers and sections over a range reader. */
 export const readBinaryContainerFromReader = async (
@@ -100,7 +111,10 @@ export const readBinaryContainerFromReader = async (
   );
 };
 
-const readNonElfContainer = (bytes: Buffer): BinaryContainer => {
+const readNonElfContainer = (
+  bytes: Buffer,
+  structureBytes?: number,
+): BinaryContainer => {
   if (bytes.subarray(0, 2).equals(Buffer.from("MZ"))) return readPeImage(bytes);
   if (bytes.length >= 4) {
     const fatPrefix = readFatHeaderPrefix(bytes);
@@ -129,7 +143,7 @@ const readNonElfContainer = (bytes: Buffer): BinaryContainer => {
         );
     }
     if (readMachoHeaderPrefixFacts(bytes).format !== null)
-      return readMachoImage(bytes);
+      return readMachoImage(bytes, structureBytes);
   }
   throw new BinaryFormatFailure(
     "unsupported",

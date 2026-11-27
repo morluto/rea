@@ -260,6 +260,7 @@ export function* linkGenericMethodsSteps(
     facts,
     version,
     options.beforeText,
+    options.maxNativeTypeTextBytes,
   );
   // Arguments must fill the container their owner declares; a damaged spec
   // would otherwise name an instance that cannot exist. A null instance is

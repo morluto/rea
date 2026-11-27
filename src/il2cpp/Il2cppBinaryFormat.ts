@@ -1,10 +1,10 @@
 import { ParseFailureError } from "../domain/parseFailure.js";
 
-/**
- * Selected-binary file allowance. The ELF pointer index has its own per-call
- * control, `max_native_index_bytes`.
- */
-export const IL2CPP_BINARY_BYTES = 1024 * 1024 * 1024;
+/** Limit name for the native-candidate and unresolved-overlay budget (`max_native_candidates`). */
+export const IL2CPP_NATIVE_CANDIDATES_LIMIT = "native-candidates";
+
+/** Limit name for the fallback module-array candidate budget (`max_module_array_candidates`). */
+export const IL2CPP_MODULE_ARRAY_CANDIDATES_LIMIT = "module-array-candidates";
 
 export const IL2CPP_BINARY_FAILURE_REASONS = {
   unsupported: [

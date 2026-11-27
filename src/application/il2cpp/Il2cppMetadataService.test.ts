@@ -25,7 +25,16 @@ const identity = {
 };
 const report = createEmptyIl2cppMetadataFixture();
 
-it.each([{ binary_architecture: "arm64" }, { generic_instances: true }])(
+it.each([
+  { binary_architecture: "arm64" },
+  { generic_instances: true },
+  { max_binary_bytes: 1024 },
+  { max_structure_bytes: 1024 },
+  { max_native_index_bytes: 1024 },
+  { max_native_type_text_bytes: 1024 },
+  { max_native_candidates: 128 },
+  { max_module_array_candidates: 16 },
+])(
   "binds binary-dependent selectors in the named input contract: %j",
   (selection) => {
     const schema = toolContract("inspect_il2cpp_metadata").inputSchema;
@@ -102,6 +111,19 @@ it("returns explicit complete artifact-bound Evidence without retention", async 
   expect(result.value.subject).toMatchObject({
     local_path: report.artifact.path,
     identity: { format: "file", sha256: report.artifact.sha256 },
+  });
+
+  const explicit = await serviceReturning(report).inspect({
+    path: report.artifact.path,
+    detail: "complete",
+    max_file_bytes: 4096,
+    max_output_bytes: 8192,
+  });
+  if (!explicit.ok) throw explicit.error;
+  expect(explicit.value.parameters).toEqual({
+    path: report.artifact.path,
+    max_file_bytes: 4096,
+    max_output_bytes: 8192,
   });
 });
 

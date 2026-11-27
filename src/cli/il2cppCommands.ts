@@ -83,9 +83,37 @@ export const registerIl2cppCommands = (
           description:
             "Also link generic method instances (Type<Args>$$Method<Args>) and include them in --ghidra-seeds; needs --binary",
         },
+        max_file_bytes: {
+          description:
+            "Maximum bytes read from global-metadata.dat (default and maximum 268435456)",
+        },
+        max_output_bytes: {
+          description:
+            "Maximum encoded UTF-8 bytes for the retained complete IL2CPP metadata report (default and maximum 67108864)",
+        },
+        max_binary_bytes: {
+          description:
+            "Maximum bytes read from --binary (default and maximum 1073741824); needs --binary",
+        },
+        max_structure_bytes: {
+          description:
+            "Maximum bytes of one native header, section or load-command table decoded from --binary, and of its decoded section names (default 16777216, up to 536870912); needs --binary",
+        },
         max_native_index_bytes: {
           description:
             "Estimated bytes for an ELF --binary's relocated-pointer index (default 1073741824); raise when linking stops at this allowance; needs --binary",
+        },
+        max_native_type_text_bytes: {
+          description:
+            "Maximum UTF-8 bytes in the native type-name rendering cache workspace (default and maximum 67108864); needs --binary",
+        },
+        max_native_candidates: {
+          description:
+            "Maximum entries in the native module-name trie, name-address index, and ELF unresolved/zero-fill overlay (default and maximum 65536); needs --binary",
+        },
+        max_module_array_candidates: {
+          description:
+            "Maximum candidate module pointer arrays in the executable-reference fallback search (default 64, up to 4096); needs --binary",
         },
       },
       cliOptions: {

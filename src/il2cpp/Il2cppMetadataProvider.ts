@@ -1,8 +1,9 @@
 import { IL2CPP_METADATA_PROVIDER_IDENTITY } from "./Il2CppMetadataProviderIdentity.js";
 import {
-  Il2cppBinaryFormatFailure,
-  IL2CPP_BINARY_BYTES,
   IL2CPP_BINARY_FORMAT,
+  IL2CPP_MODULE_ARRAY_CANDIDATES_LIMIT,
+  IL2CPP_NATIVE_CANDIDATES_LIMIT,
+  Il2cppBinaryFormatFailure,
   isIl2cppLinkConflict,
 } from "./Il2cppBinaryFormat.js";
 import {
@@ -51,11 +52,17 @@ import {
   cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import {
+  DEFAULT_IL2CPP_BINARY_BYTES,
+  DEFAULT_IL2CPP_FILE_BYTES,
+  DEFAULT_IL2CPP_OUTPUT_BYTES,
+  il2cppBudgetLimit,
   il2cppMetadataSchema,
   il2cppNativeIndexLimit,
   type Il2cppMetadata,
   type Il2cppMetadataProviderInput,
 } from "../domain/il2cpp/il2cppMetadata.js";
+import { NATIVE_STRUCTURE_LIMIT } from "../domain/binaryContainer.js";
+import { nativeStructureLimit } from "../domain/native/nativeStructureBudget.js";
 import { ELF_VIRTUAL_POINTER_INDEX_LIMIT } from "../domain/native/elfPointerRelocations.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -72,9 +79,6 @@ import {
 import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_il2cpp_metadata";
-const INPUT_BYTES = 256 * 1024 * 1024;
-// A 12.9 MB Unity 6000.4 file with 112,232 methods serializes to 7.8 MB.
-const OUTPUT_BYTES = 64 * 1024 * 1024;
 /** Instruction form the module-array fallback matched, per architecture. */
 const inferredReferenceForm = (architecture: string) =>
   architecture === "arm64"
@@ -131,20 +135,39 @@ const failureForPrimary = (
   if (
     cause instanceof Il2cppBinaryFormatFailure &&
     isParseLimit(cause, IL2CPP_BINARY_FORMAT)
-  )
-    return parseLimitConstraint(
-      OPERATION,
-      cause.reason === "native-type-text-capacity" ? "memory" : "capacity",
-      cause,
-      fixedAllowanceOptions(
-        "The IL2CPP native-link allowance",
-        cause.reason === "native-type-text-capacity" ? "parser" : "count",
-        {
-          limit: cause.failure.limit.maximum,
-          ...(cause.unit === undefined ? {} : { unit: cause.unit }),
-        },
-      ),
-    );
+  ) {
+    const selected = cause.failure.limit.maximum;
+    if (cause.failure.limit.name === NATIVE_STRUCTURE_LIMIT)
+      return parseLimitConstraint(OPERATION, "memory", cause, {
+        retryable: false,
+        limit: nativeStructureLimit(selected),
+      });
+    if (cause.reason === "native-type-text-capacity")
+      return parseLimitConstraint(OPERATION, "memory", cause, {
+        retryable: false,
+        limit: il2cppBudgetLimit("max_native_type_text_bytes", selected),
+      });
+    if (cause.reason === "type-nesting-capacity")
+      return parseLimitConstraint(
+        OPERATION,
+        "capacity",
+        cause,
+        fixedAllowanceOptions("The IL2CPP type-nesting allowance", "parser", {
+          limit: selected,
+          unit: "frames",
+        }),
+      );
+    if (cause.failure.limit.name === IL2CPP_MODULE_ARRAY_CANDIDATES_LIMIT)
+      return parseLimitConstraint(OPERATION, "capacity", cause, {
+        retryable: false,
+        limit: il2cppBudgetLimit("max_module_array_candidates", selected),
+      });
+    if (cause.failure.limit.name === IL2CPP_NATIVE_CANDIDATES_LIMIT)
+      return parseLimitConstraint(OPERATION, "capacity", cause, {
+        retryable: false,
+        limit: il2cppBudgetLimit("max_native_candidates", selected),
+      });
+  }
   if (
     cause instanceof Il2cppBinaryFormatFailure &&
     isIl2cppLinkConflict(cause.reason)
@@ -170,24 +193,33 @@ const failureForPrimary = (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure
   ) {
-    if (cause.reason === "limit")
+    if (cause.reason === "limit") {
+      const requiredBytes =
+        cause.observedBytes !== undefined &&
+        cause.observedBytes <= BigInt(Number.MAX_SAFE_INTEGER)
+          ? Number(cause.observedBytes)
+          : undefined;
       return new AnalysisResourceConstraintError(
         OPERATION,
         "file-size",
         cause.message,
-        { maximum_input_bytes: maximum },
+        {
+          maximum_input_bytes: maximum,
+          ...(cause.observedBytes === undefined
+            ? {}
+            : { required: String(cause.observedBytes) }),
+        },
         {
           cause,
-          ...fixedAllowanceOptions(
-            "the fixed IL2CPP input allowance",
-            "input",
-            {
-              limit: maximum,
-              unit: "bytes",
-            },
+          retryable: false,
+          limit: il2cppBudgetLimit(
+            field === "binary_path" ? "max_binary_bytes" : "max_file_bytes",
+            maximum,
+            requiredBytes,
           ),
         },
       );
+    }
     if (cause.reason === "path")
       return stableArtifactInputFailure(cause, OPERATION, field);
   }
@@ -216,7 +248,7 @@ const failureFor = (
   cause: unknown,
   path: string,
   field: "path" | "binary_path" = "path",
-  maximum = INPUT_BYTES,
+  maximum = DEFAULT_IL2CPP_FILE_BYTES,
   metadataPath = path,
 ): AnalysisError => {
   const primary = failureForPrimary(
@@ -291,20 +323,16 @@ const binaryReport = (
   generic_method_instances: link.generic_methods?.instances ?? null,
 });
 
-/**
- * Source facts stay on the refusal. The shared report sentence would deny an
- * Evidence record that this reader attaches and MCP retains.
- */
-const completeReportRecovery =
-  "The IL2CPP complete-report allowance is a fixed report allowance. No complete metadata inventory is retained. Source facts already observed stay with this refusal, and complete CLI JSON does not raise the allowance. Repeating the unchanged request fails the same way.";
-
 const reportLimit = (path: string, maximumBytes: number) =>
   new AnalysisResourceConstraintError(
     OPERATION,
     "memory",
     `Complete IL2CPP metadata for ${path} exceeds the retained report budget; no complete inventory is retained.`,
     { maximum_report_bytes: maximumBytes },
-    { retryable: false, remediationAction: completeReportRecovery },
+    {
+      retryable: false,
+      limit: il2cppBudgetLimit("max_output_bytes", maximumBytes),
+    },
   );
 
 const sourceArtifact = (path: string, snapshot: StableArtifactSnapshot) => ({
@@ -411,7 +439,7 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
 
   /** `outputBytes` exists so tests can reach the guard with small files. */
   constructor(
-    private readonly outputBytes: number = OUTPUT_BYTES,
+    private readonly outputBytes: number = DEFAULT_IL2CPP_OUTPUT_BYTES,
     private readonly yieldControl: () => Promise<void> = setImmediate,
   ) {}
 
@@ -453,6 +481,8 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
           "Only one IL2CPP metadata inspection is admitted per reader.",
           { maximum_concurrent_inspections: 1 },
           {
+            retryable: true,
+            measuredExhaustion: true,
             remediationAction:
               "Retry after the active IL2CPP metadata inspection on this reader completes.",
           },
@@ -479,11 +509,14 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
               ? {}
               : { artifact: observed.binary }),
           };
+    const maxFileBytes = input.max_file_bytes ?? DEFAULT_IL2CPP_FILE_BYTES;
+    const maxBinaryBytes =
+      input.max_binary_bytes ?? DEFAULT_IL2CPP_BINARY_BYTES;
     try {
       return await this.#resources.run(async () => {
         const snapshot = await this.#readArtifact(
           input.path,
-          INPUT_BYTES,
+          maxFileBytes,
           options?.signal,
           (artifact) => {
             observed.artifact = artifact;
@@ -522,7 +555,7 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
           );
           return err(failure);
         }
-        const limit = this.outputBytes;
+        const limit = input.max_output_bytes ?? this.outputBytes;
         const admission = createIl2cppMetadataAdmission(
           limit,
           () => {
@@ -577,7 +610,7 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
           try {
             const binary = await this.#readArtifact(
               binaryPath,
-              IL2CPP_BINARY_BYTES,
+              maxBinaryBytes,
               options?.signal,
               (artifact) => {
                 observed.binary = artifact;
@@ -598,9 +631,26 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
               {
                 ...admission,
                 genericInstances: input.generic_instances === true,
+                ...(input.max_structure_bytes === undefined
+                  ? {}
+                  : { maxStructureBytes: input.max_structure_bytes }),
                 ...(input.max_native_index_bytes === undefined
                   ? {}
                   : { maxNativeIndexBytes: input.max_native_index_bytes }),
+                ...(input.max_native_type_text_bytes === undefined
+                  ? {}
+                  : {
+                      maxNativeTypeTextBytes: input.max_native_type_text_bytes,
+                    }),
+                ...(input.max_native_candidates === undefined
+                  ? {}
+                  : { maxNativeCandidates: input.max_native_candidates }),
+                ...(input.max_module_array_candidates === undefined
+                  ? {}
+                  : {
+                      maxModuleArrayCandidates:
+                        input.max_module_array_candidates,
+                    }),
               },
               async () => {
                 await this.yieldControl();
@@ -617,7 +667,7 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
               cause,
               binaryPath,
               "binary_path",
-              IL2CPP_BINARY_BYTES,
+              maxBinaryBytes,
               input.path,
             );
             failure.partialObservation = metadataSourceEvidence(
@@ -686,7 +736,7 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
         return ok(parsed.data);
       });
     } catch (cause: unknown) {
-      const failure = failureFor(cause, input.path);
+      const failure = failureFor(cause, input.path, "path", maxFileBytes);
       if (observed.artifact !== undefined)
         failure.partialObservation = metadataSourceEvidence(
           observed.artifact,

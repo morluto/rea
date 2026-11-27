@@ -8,6 +8,7 @@ import {
 import { canonicalBase64Schema } from "../stringPatterns.js";
 import type { MachoSliceArchitecture } from "../apple/machoTargetSelection.js";
 import type { AnalysisParameterLimit } from "../analysisSettings.js";
+import { maxStructureBytesSchema } from "../native/nativeStructureBudget.js";
 import { firstDeclaringTypeCycle } from "./il2cppDeclaringTypes.js";
 
 /** The public `binary_architecture` values, in the native reader's spelling. */
@@ -33,6 +34,67 @@ export type Il2cppBinaryArchitecture = keyof typeof IL2CPP_SLICE_SELECTORS;
  * 524,288 addresses. It is an REA admission policy, not a format limit.
  */
 export const DEFAULT_IL2CPP_NATIVE_INDEX_BYTES = 1024 * 1024 * 1024;
+export const DEFAULT_IL2CPP_FILE_BYTES = 256 * 1024 * 1024;
+export const DEFAULT_IL2CPP_OUTPUT_BYTES = 64 * 1024 * 1024;
+export const DEFAULT_IL2CPP_BINARY_BYTES = 1024 * 1024 * 1024;
+export const DEFAULT_IL2CPP_NATIVE_TYPE_TEXT_BYTES = 64 * 1024 * 1024;
+export const DEFAULT_IL2CPP_NATIVE_CANDIDATES = 65_536;
+export const DEFAULT_IL2CPP_MODULE_ARRAY_CANDIDATES = 64;
+
+/** Per-call resource budgets owned by `inspect_il2cpp_metadata`. */
+const IL2CPP_METADATA_BUDGETS = {
+  max_file_bytes: {
+    minimum: 1,
+    maximum: DEFAULT_IL2CPP_FILE_BYTES,
+    default_value: DEFAULT_IL2CPP_FILE_BYTES,
+    unit: "bytes",
+  },
+  max_output_bytes: {
+    minimum: 1,
+    maximum: DEFAULT_IL2CPP_OUTPUT_BYTES,
+    default_value: DEFAULT_IL2CPP_OUTPUT_BYTES,
+    unit: "bytes",
+  },
+  max_binary_bytes: {
+    minimum: 1,
+    maximum: DEFAULT_IL2CPP_BINARY_BYTES,
+    default_value: DEFAULT_IL2CPP_BINARY_BYTES,
+    unit: "bytes",
+  },
+  max_native_type_text_bytes: {
+    minimum: 1,
+    maximum: DEFAULT_IL2CPP_NATIVE_TYPE_TEXT_BYTES,
+    default_value: DEFAULT_IL2CPP_NATIVE_TYPE_TEXT_BYTES,
+    unit: "bytes",
+  },
+  max_native_candidates: {
+    minimum: 1,
+    maximum: DEFAULT_IL2CPP_NATIVE_CANDIDATES,
+    default_value: DEFAULT_IL2CPP_NATIVE_CANDIDATES,
+    unit: "count",
+  },
+  max_module_array_candidates: {
+    minimum: 1,
+    maximum: 4_096,
+    default_value: DEFAULT_IL2CPP_MODULE_ARRAY_CANDIDATES,
+    unit: "count",
+  },
+} as const;
+
+type Il2cppMetadataBudgetParameter = keyof typeof IL2CPP_METADATA_BUDGETS;
+
+export const il2cppBudgetLimit = (
+  parameter: Il2cppMetadataBudgetParameter,
+  effectiveValue: number,
+  requiredValue?: number,
+): AnalysisParameterLimit => ({
+  control_kind: "parameter",
+  parameter,
+  effective_value: effectiveValue,
+  ...IL2CPP_METADATA_BUDGETS[parameter],
+  applies_at: "next_call",
+  ...(requiredValue === undefined ? {} : { required_value: requiredValue }),
+});
 
 /**
  * The per-call control that bounded the ELF virtual pointer index, named by
@@ -163,6 +225,36 @@ export const inspectIl2cppMetadataInputSchema = requirePresence(
       .describe(
         "Also link generic method instances (genericMethodTable rows) to code addresses with Il2CppDumper-style Type<Args>$$Method<Args> names; needs binary_path",
       ),
+    max_file_bytes: z
+      .number()
+      .int()
+      .min(IL2CPP_METADATA_BUDGETS.max_file_bytes.minimum)
+      .max(IL2CPP_METADATA_BUDGETS.max_file_bytes.maximum)
+      .optional()
+      .describe(
+        `Maximum bytes read from global-metadata.dat (default ${String(DEFAULT_IL2CPP_FILE_BYTES)}, up to ${String(IL2CPP_METADATA_BUDGETS.max_file_bytes.maximum)})`,
+      ),
+    max_output_bytes: z
+      .number()
+      .int()
+      .min(IL2CPP_METADATA_BUDGETS.max_output_bytes.minimum)
+      .max(IL2CPP_METADATA_BUDGETS.max_output_bytes.maximum)
+      .optional()
+      .describe(
+        `Maximum encoded UTF-8 bytes admitted for the retained complete IL2CPP metadata report (default ${String(DEFAULT_IL2CPP_OUTPUT_BYTES)}, up to ${String(IL2CPP_METADATA_BUDGETS.max_output_bytes.maximum)})`,
+      ),
+    max_binary_bytes: z
+      .number()
+      .int()
+      .min(IL2CPP_METADATA_BUDGETS.max_binary_bytes.minimum)
+      .max(IL2CPP_METADATA_BUDGETS.max_binary_bytes.maximum)
+      .optional()
+      .describe(
+        `Maximum bytes read from binary_path (default ${String(DEFAULT_IL2CPP_BINARY_BYTES)}, up to ${String(IL2CPP_METADATA_BUDGETS.max_binary_bytes.maximum)}); needs binary_path`,
+      ),
+    max_structure_bytes: maxStructureBytesSchema.describe(
+      "Maximum bytes of one native header, section or load-command table decoded from binary_path, and of its decoded section names (default 16 MiB); needs binary_path",
+    ),
     max_native_index_bytes: z
       .int()
       .positive()
@@ -170,6 +262,33 @@ export const inspectIl2cppMetadataInputSchema = requirePresence(
       .optional()
       .describe(
         `Estimated bytes admitted for an ELF binary_path's relocated-pointer index, charged per distinct relocated address; omitted means ${String(DEFAULT_IL2CPP_NATIVE_INDEX_BYTES)} (1 GiB). Raise it on the next call when linking stops at this allowance; no restart. Host memory and the binary file allowance stay independent. Needs binary_path`,
+      ),
+    max_native_type_text_bytes: z
+      .number()
+      .int()
+      .min(IL2CPP_METADATA_BUDGETS.max_native_type_text_bytes.minimum)
+      .max(IL2CPP_METADATA_BUDGETS.max_native_type_text_bytes.maximum)
+      .optional()
+      .describe(
+        `Maximum UTF-8 bytes retained in the native type-name rendering cache workspace (default ${String(DEFAULT_IL2CPP_NATIVE_TYPE_TEXT_BYTES)}, up to ${String(IL2CPP_METADATA_BUDGETS.max_native_type_text_bytes.maximum)}); needs binary_path`,
+      ),
+    max_native_candidates: z
+      .number()
+      .int()
+      .min(IL2CPP_METADATA_BUDGETS.max_native_candidates.minimum)
+      .max(IL2CPP_METADATA_BUDGETS.max_native_candidates.maximum)
+      .optional()
+      .describe(
+        `Maximum entries retained in the native module-name trie and name-address index (default ${String(DEFAULT_IL2CPP_NATIVE_CANDIDATES)}, up to ${String(IL2CPP_METADATA_BUDGETS.max_native_candidates.maximum)}); needs binary_path`,
+      ),
+    max_module_array_candidates: z
+      .number()
+      .int()
+      .min(IL2CPP_METADATA_BUDGETS.max_module_array_candidates.minimum)
+      .max(IL2CPP_METADATA_BUDGETS.max_module_array_candidates.maximum)
+      .optional()
+      .describe(
+        `Maximum candidate module pointer arrays retained during the executable-reference fallback search (default ${String(DEFAULT_IL2CPP_MODULE_ARRAY_CANDIDATES)}, up to ${String(IL2CPP_METADATA_BUDGETS.max_module_array_candidates.maximum)}); needs binary_path`,
       ),
   }),
   [
@@ -185,10 +304,39 @@ export const inspectIl2cppMetadataInputSchema = requirePresence(
       message: "generic_instances links generic methods in binary_path.",
     },
     {
+      when: "max_binary_bytes",
+      requires: "binary_path",
+      message: "max_binary_bytes bounds reading binary_path.",
+    },
+    {
+      when: "max_structure_bytes",
+      requires: "binary_path",
+      message:
+        "max_structure_bytes bounds decoding container tables of binary_path.",
+    },
+    {
       when: "max_native_index_bytes",
       requires: "binary_path",
       message:
         "max_native_index_bytes bounds the pointer index of binary_path.",
+    },
+    {
+      when: "max_native_type_text_bytes",
+      requires: "binary_path",
+      message:
+        "max_native_type_text_bytes bounds native type-name rendering from binary_path.",
+    },
+    {
+      when: "max_native_candidates",
+      requires: "binary_path",
+      message:
+        "max_native_candidates bounds module-name indexing of binary_path.",
+    },
+    {
+      when: "max_module_array_candidates",
+      requires: "binary_path",
+      message:
+        "max_module_array_candidates bounds module-array fallback search in binary_path.",
     },
   ],
 );

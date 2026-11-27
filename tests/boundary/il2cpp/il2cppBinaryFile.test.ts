@@ -512,7 +512,7 @@ it("refuses an image name repeated past the search bound", () => {
       failure: expect.objectContaining({
         kind: "limit",
         format: "il2cpp-binary",
-        limit: { name: "native-index-capacity", maximum: 65536 },
+        limit: { name: "native-candidates", maximum: 65536 },
       }),
     }),
   );
