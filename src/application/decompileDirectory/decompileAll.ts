@@ -427,20 +427,22 @@ const publishSelected = async (
   input: PublishInput,
 ): Promise<Result<void, AnalysisError>> => {
   let bodySupport: "unknown" | "unavailable" = "unknown";
-  // Index after the last function a read-ahead window already named.
+  // Index after the last function a read-ahead window already examined.
   let preparedUntil = 0;
+  // Decisions a read-ahead window made for later functions; the loop takes
+  // each one instead of deciding that function again.
+  const decided = new Map<number, ProcedureDecision>();
   for (const [index, procedure] of input.procedures.entries()) {
     if (isAborted(input.signal))
       return err(cancelledBy("decompile_all", input.signal));
-    const existing = await existingFile(
-      input.session,
-      procedure.address,
-      input.signal,
-    );
-    if (typeof existing === "object") return err(existing.error);
+    const decision =
+      decided.get(index) ??
+      (await decideProcedure(input.session, procedure.address, input.signal));
+    decided.delete(index);
+    if (decision.kind === "error") return err(decision.error);
     if (isAborted(input.signal))
       return err(cancelledBy("decompile_all", input.signal));
-    if (existing === "skip") {
+    if (decision.kind === "skip") {
       input.state.skipped += 1;
       // A file that reads back and verifies shows the directory works.
       input.state.outputIoStreak = 0;
@@ -456,23 +458,14 @@ const publishSelected = async (
       }
       continue;
     }
-    // The journal header pins the target, provider and profile, so a
-    // recorded external classification still holds. Asking again would only
-    // spend the limit, and a limit below the external count would leave
-    // functions remaining on every resume.
-    // A conflicting or unreadable file at its reserved path is still reported
-    // below rather than hidden by the skip.
-    if (
-      existing === "write" &&
-      input.session.record(procedure.address)?.status === "external"
-    ) {
+    if (decision.kind === "external") {
       input.state.skipped += 1;
       continue;
     }
     if (input.limit !== undefined && input.state.attempted >= input.limit)
       continue;
-    if (index >= preparedUntil) {
-      const window = decompileReadAhead(input, index);
+    if (decision.existing === "write" && index >= preparedUntil) {
+      const window = await decompileReadAhead(input, index, decided);
       preparedUntil = window.until;
       input.state.readAhead =
         window.procedures.length > 1 ? window.procedures : undefined;
@@ -480,7 +473,12 @@ const publishSelected = async (
     input.state.attempted += 1;
     input.state.lastFailureCode = undefined;
     const externalBefore = input.state.external;
-    const outcome = await attemptOne(input, procedure, existing, bodySupport);
+    const outcome = await attemptOne(
+      input,
+      procedure,
+      decision.existing,
+      bodySupport,
+    );
     bodySupport = outcome.bodySupport;
     if (!outcome.result.ok) return outcome.result;
     // An external function writes no file, so it says nothing about the directory.
@@ -498,6 +496,36 @@ const publishSelected = async (
   return ok(undefined);
 };
 
+/** What this call does with one selected function. */
+type ProcedureDecision =
+  /** Its file reads back and verifies against the journal. */
+  | { readonly kind: "skip" }
+  /** The journal records it as external; asking again would spend the limit. */
+  | { readonly kind: "external" }
+  /** It consumes the limit: decompile it, or report its file problem. */
+  | { readonly kind: "attempt"; readonly existing: "write" | "conflict" | "io" }
+  | { readonly kind: "error"; readonly error: AnalysisError };
+
+const decideProcedure = async (
+  session: DecompileExport,
+  address: string,
+  signal: AbortSignal | undefined,
+): Promise<ProcedureDecision> => {
+  const existing = await existingFile(session, address, signal);
+  if (typeof existing === "object")
+    return { kind: "error", error: existing.error };
+  if (existing === "skip") return { kind: "skip" };
+  // The journal header pins the target, provider and profile, so a
+  // recorded external classification still holds. Asking again would only
+  // spend the limit, and a limit below the external count would leave
+  // functions remaining on every resume.
+  // A conflicting or unreadable file at its reserved path is still reported
+  // rather than hidden by the skip.
+  if (existing === "write" && session.record(address)?.status === "external")
+    return { kind: "external" };
+  return { kind: "attempt", existing };
+};
+
 /**
  * How many upcoming functions one decompile request names. A provider that
  * prepares them together retains that many results at most, so a larger
@@ -507,31 +535,43 @@ const publishSelected = async (
 const DECOMPILE_READ_AHEAD = 32;
 
 /**
- * The next functions this call will decompile, starting at `from`. A verified
- * file or a recorded external function is skipped the same way the loop skips
- * it, and the caller's limit bounds the window.
+ * The functions this call will decompile next, starting with the one at
+ * `from`. Each later function is decided once, the way the loop decides it,
+ * and the decision is kept for the loop. Every attempt, including a file
+ * problem that decompiles nothing, counts against the caller's limit.
  */
-const decompileReadAhead = (
+const decompileReadAhead = async (
   input: PublishInput,
   from: number,
-): { readonly procedures: readonly string[]; readonly until: number } => {
-  const remaining =
+  decided: Map<number, ProcedureDecision>,
+): Promise<{
+  readonly procedures: readonly string[];
+  readonly until: number;
+}> => {
+  const attemptsLeft =
     input.limit === undefined
-      ? DECOMPILE_READ_AHEAD
-      : Math.min(DECOMPILE_READ_AHEAD, input.limit - input.state.attempted);
-  const procedures: string[] = [];
-  let index = from;
+      ? Number.POSITIVE_INFINITY
+      : input.limit - input.state.attempted;
+  const procedures = [input.procedures[from]!.address];
+  let attempts = 1;
+  let index = from + 1;
   for (; index < input.procedures.length; index++) {
-    if (procedures.length >= remaining) break;
+    if (procedures.length >= DECOMPILE_READ_AHEAD || attempts >= attemptsLeft)
+      break;
+    if (isAborted(input.signal)) break;
     const address = input.procedures[index]!.address;
-    if (
-      input.session.lastWritten(address) !== undefined ||
-      input.session.record(address)?.status === "external"
-    )
-      continue;
-    procedures.push(address);
+    let decision = decided.get(index);
+    if (decision === undefined) {
+      decision = await decideProcedure(input.session, address, input.signal);
+      decided.set(index, decision);
+    }
+    // The loop reports the failure when it reaches this function.
+    if (decision.kind === "error") break;
+    if (decision.kind !== "attempt") continue;
+    attempts += 1;
+    if (decision.existing === "write") procedures.push(address);
   }
-  return { procedures, until: Math.max(index, from + 1) };
+  return { procedures, until: index };
 };
 
 /** One function this call takes on: report a file problem or decompile it. */

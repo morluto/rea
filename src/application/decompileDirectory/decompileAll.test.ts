@@ -909,6 +909,32 @@ describe("decompile_all filters and layout", () => {
     ]);
   });
 
+  it("names only the functions a resume will request, including deleted files", async () => {
+    const procedures = ["0x1000", "0x2000", "0x3000", "0x4000"].map(
+      (address, index) => ({ address, name: `fn_${index}` }),
+    );
+    const first = harness({ procedures });
+    expect((await run(first.tools, directory(), { limit: 2 })).ok).toBe(true);
+    // Both journaled writes lose their files, so the resume requests them
+    // again and its limit is spent before the unwritten functions.
+    await rm(join(directory(), "functions/0x1000.c"));
+    await rm(join(directory(), "functions/0x2000.c"));
+
+    const resumed = harness({ procedures });
+    expect(
+      (await run(resumed.tools, directory(), { resume: true, limit: 2 })).ok,
+    ).toBe(true);
+    expect(
+      of(resumed.calls, "procedure_pseudo_code").map((call) => [
+        call.procedure,
+        call.upcoming,
+      ]),
+    ).toEqual([
+      ["0x1000", ["0x1000", "0x2000"]],
+      ["0x2000", undefined],
+    ]);
+  });
+
   it("names consecutive windows that cover every requested function once", async () => {
     const procedures = Array.from({ length: 40 }, (_, index) => ({
       address: `0x${(0x1000 + index * 0x10).toString(16)}`,
