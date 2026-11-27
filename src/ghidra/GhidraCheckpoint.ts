@@ -448,6 +448,9 @@ export class GhidraCheckpoint {
     const handoff = new WeakSet<Error>();
     const probeTimedOut = new WeakSet<Error>();
     const probeAborted = new WeakSet<Error>();
+    let heldBy:
+      | { readonly runId: string; readonly processId: number }
+      | undefined;
     for (;;) {
       assertArtifactReadActive(signal);
       let acquired: LeaseAcquisition | undefined;
@@ -524,16 +527,44 @@ export class GhidraCheckpoint {
         )
           throw cause;
       }
-      if (acquired?.acquired === true) return acquired.lease;
-      if (acquired !== undefined && deadline.expired())
-        throw new GhidraCheckpointBusyError(
-          admission.directory,
-          acquired.owner,
-          this.saveWait,
-        );
+      if (acquired?.acquired === true) {
+        // A probe that started in time can finish after the wait, once the
+        // event loop runs it. The lease is kept for this session's cleanup
+        // and the wait is still the busy refusal: publication does not start.
+        if (deadline.expired()) {
+          this.#lease = acquired.lease;
+          throw new GhidraCheckpointBusyError(
+            admission.directory,
+            heldBy,
+            this.saveWait,
+          );
+        }
+        return acquired.lease;
+      }
+      const sawHolder = acquired !== undefined;
+      if (acquired !== undefined) {
+        heldBy = acquired.owner;
+        if (deadline.expired())
+          throw new GhidraCheckpointBusyError(
+            admission.directory,
+            acquired.owner,
+            this.saveWait,
+          );
+      }
       await delay(GHIDRA_CHECKPOINT_SAVE_POLL_MS, undefined, { signal }).catch(
         () => undefined,
       );
+      // The poll callback can run after the wait when the event loop stalls.
+      // A holder already observed for this poll used the whole wait, so do
+      // not probe again. A handoff failure has no holder and is reported by
+      // the next probe once the wait has ended.
+      assertArtifactReadActive(signal);
+      if (sawHolder && deadline.expired())
+        throw new GhidraCheckpointBusyError(
+          admission.directory,
+          heldBy,
+          this.saveWait,
+        );
     }
   }
 

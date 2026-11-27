@@ -552,16 +552,21 @@ it.skipIf(process.platform === "win32")(
 
 it.skipIf(process.platform === "win32").each([
   // Past the 30 s default, a longer launch value keeps polling.
-  // Each probe reads the clock to bound the owner response, then again after the refusal.
+  // Each probe reads the clock to bound the owner response and again after
+  // the refusal. A poll that continues also reads it once the delay returns.
   {
     waitMs: 120_000,
-    clock: [0, 0, 60_000, 60_000, 119_999, 119_999, 120_000],
+    clock: [0, 0, 60_000, 60_000, 60_000, 119_999, 119_999, 119_999, 120_000],
     attempts: 3,
   },
   // A shorter launch value reports busy where the default would still wait.
   { waitMs: 50, clock: [0, 0, 50], attempts: 1 },
   // Unset: the default bound.
-  { waitMs: undefined, clock: [0, 0, 29_999, 29_999, 30_000], attempts: 2 },
+  {
+    waitMs: undefined,
+    clock: [0, 0, 29_999, 29_999, 29_999, 30_000],
+    attempts: 2,
+  },
 ])(
   "holds a held lease for a save wait of $waitMs ms and names that bound when busy",
   async ({ waitMs, clock, attempts }) => {
@@ -580,7 +585,7 @@ it.skipIf(process.platform === "win32").each([
         owner: { runId: "publisher", processId: 4242 },
       });
     // The deadline reads the clock to start, then once to bound each owner
-    // probe and once after each refusal.
+    // probe, once after each refusal, and once when a poll delay returns.
     const now = vi.spyOn(performance, "now");
     for (const reading of clock.slice(0, -1)) now.mockReturnValueOnce(reading);
     now.mockReturnValue(clock.at(-1) ?? 0);
@@ -1106,5 +1111,46 @@ it.skipIf(process.platform === "win32")(
       ],
       secondaryFailures: [{ cause: { caller: "close failed" } }],
     });
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "reports busy when the lease frees only after the save wait",
+  async () => {
+    const f = await fixture();
+    const session = new GhidraCheckpoint(f.selection, f.resources, {
+      waitMs: 50,
+      source: "setting",
+    });
+    owners.push(session);
+    await session.admit("waiter");
+    vi.mocked(acquireOwnedLease).mockImplementation(async () =>
+      vi.mocked(acquireOwnedLease).mock.calls.length === 1
+        ? {
+            acquired: false,
+            owner: { runId: "publisher", processId: 7 },
+          }
+        : {
+            acquired: true,
+            lease: { release: async () => undefined },
+          },
+    );
+    const now = vi.spyOn(performance, "now");
+    now
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(40)
+      .mockReturnValue(50);
+    const busy = await session
+      .publish(f.packed)
+      .catch((cause: unknown) => cause);
+    now.mockRestore();
+    expect(busy).toBeInstanceOf(GhidraCheckpointBusyError);
+    expect(busy).toMatchObject({
+      owner: { runId: "publisher", processId: 7 },
+      wait: { waitMs: 50, source: "setting" },
+    });
+    expect(vi.mocked(acquireOwnedLease)).toHaveBeenCalledTimes(1);
+    expect(session.observation.source).toBeNull();
   },
 );
