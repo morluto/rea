@@ -191,6 +191,7 @@
 * **android:** page class-name search by default and name the next offset ([2b69ddd](https://github.com/morluto/rea/commit/2b69ddd368160556cfcc436c5e1c76130ab83738))
 * **android:** preview 16 JNI bindings and libraries in the summary ([b827326](https://github.com/morluto/rea/commit/b827326ef3ff54a70aa5a27a0d188eb57d2891ca))
 * **android:** record only caller-selected search parameters in Evidence ([d2248df](https://github.com/morluto/rea/commit/d2248dffd04b57902903b91d5c5114327cc3d792))
+* **api-contract:** report details.limit for max_file_bytes and mark heap headroom exhaustion ([#14798](https://github.com/morluto/rea/issues/14798)) ([58a3364](https://github.com/morluto/rea/commit/58a33642f2ab43cbdb8cdc3833a6e2d297acb490))
 * **apk:** disclose v1 scan scope without duplicate names ([#13572](https://github.com/morluto/rea/issues/13572)) ([110b990](https://github.com/morluto/rea/commit/110b990c687bdb498de0134dce8b49547983273a))
 * **apktool:** restore package identity from decoded metadata ([#14767](https://github.com/morluto/rea/issues/14767)) ([5b2936c](https://github.com/morluto/rea/commit/5b2936c4e81b2835443b44235319b1de1f255997))
 * **apple-application:** trust declared coverage for empty disk images ([#13678](https://github.com/morluto/rea/issues/13678)) ([01c0e5a](https://github.com/morluto/rea/commit/01c0e5a870ce1bf684fc1ced8d1cfa74d404e48c))
