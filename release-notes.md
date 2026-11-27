@@ -339,6 +339,7 @@
 * **decompile:** keep the functions directory identity on mounts that renumber after chmod ([#14324](https://github.com/morluto/rea/issues/14324)) ([217f498](https://github.com/morluto/rea/commit/217f498945f656cef207118d241f68a80de51d6c))
 * **delivery:** summarize by size only where the summary can be paged ([89919c8](https://github.com/morluto/rea/commit/89919c836d690e62b178880fd0c65e0303a33f3f))
 * **deps:** parse classes extending module with Babel 8.1.3 ([#14924](https://github.com/morluto/rea/issues/14924)) ([9005a43](https://github.com/morluto/rea/commit/9005a43f341f2f30c515d2c8a28ecf35d64abde8))
+* **deps:** use patched minimatch in development tooling ([#14945](https://github.com/morluto/rea/issues/14945)) ([dc31300](https://github.com/morluto/rea/commit/dc313007b9b92e01b2b83c61eb4fe75865a4126c))
 * **deps:** verify Brainpool publisher signatures with OpenPGP.js 6.3.3 ([#14914](https://github.com/morluto/rea/issues/14914)) ([6cebca7](https://github.com/morluto/rea/commit/6cebca7b07dc644e2e6e55772d3ab14250a9ac70))
 * **desktop:** anchor draft text checks through reflow ([#13708](https://github.com/morluto/rea/issues/13708)) ([7add65d](https://github.com/morluto/rea/commit/7add65ddec97017d7a7d7ba83057aeb9eb529e4d))
 * **desktop:** avoid suggesting edits from incomparable views ([#13596](https://github.com/morluto/rea/issues/13596)) ([7673ab0](https://github.com/morluto/rea/commit/7673ab03a6cb26f045adcffe803801ee71102cb1))
