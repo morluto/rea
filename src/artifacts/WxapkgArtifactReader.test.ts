@@ -227,6 +227,44 @@ describe("WxapkgArtifactReader coverage", () => {
     });
   });
 
+  it("finds a gap between members listed out of byte order", async () => {
+    // Rows for "b" then "a" end at offset 44. "a" holds 44-47, three
+    // unaccounted bytes follow, then "b" holds 51-52.
+    const row = (name: string, offset: number, size: number): Buffer => {
+      const bytes = Buffer.alloc(12 + name.length);
+      bytes.writeUInt32BE(name.length, 0);
+      bytes.write(name, 4, "utf8");
+      bytes.writeUInt32BE(offset, 4 + name.length);
+      bytes.writeUInt32BE(size, 8 + name.length);
+      return bytes;
+    };
+    const header = Buffer.alloc(18);
+    header[0] = 0xbe;
+    header.writeUInt32BE(26, 5);
+    header.writeUInt32BE(9, 9);
+    header[13] = 0xed;
+    header.writeUInt32BE(2, 14);
+    const bytes = Buffer.concat([
+      header,
+      row("b", 51, 2),
+      row("a", 44, 4),
+      Buffer.from("AAAA---BB"),
+    ]);
+    await withReader(bytes, async (reader) => {
+      const entries = await list(reader);
+      expect(entries.map(({ path, byteOffset }) => [path, byteOffset])).toEqual(
+        [
+          ["b", 51],
+          ["a", 44],
+        ],
+      );
+    });
+    expect(await coverageOf(bytes)).toEqual({
+      status: "unknown",
+      limitations: [unaccounted(3, 1, 48)],
+    });
+  });
+
   it("counts unused index bytes and trailing bytes as separate ranges", async () => {
     // One 13-byte row ends at offset 31; eight unused index bytes follow it.
     const padded = buildWxapkg([{ path: "a", data: "Z" }], {
