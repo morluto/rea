@@ -113,3 +113,33 @@ cliTest("inspects xz-compressed control and data members", async ({ cli }) => {
     evidence.normalized_result.ar.members.map((member) => member.name),
   ).toEqual(["debian-binary", "control.tar.xz", "data.tar.xz"]);
 });
+
+cliTest(
+  "matches md5sums paths containing Unicode line separators",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-deb-cli-md5-unicode-");
+    const path = join(root, "unicode-paths.deb");
+    const names = ["usr/share/doc/a\u2028b", "usr/share/doc/c\u2029"];
+    const bytes = debPackageFixture({
+      conffiles: null,
+      scripts: false,
+      md5sums: names.map((name) => `${"0".repeat(32)}  ${name}\n`).join(""),
+      dataEntries: names.map((name) => ({ name: `./${name}`, content: "x" })),
+    });
+    await writeFile(path, bytes);
+    const result = await cli.run({
+      arguments: ["inspect-deb-package", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = completeDebEvidenceSchema.parse(result.json);
+    expect(
+      evidence.normalized_result.data_entries.map((entry) => entry.path),
+    ).toEqual(names);
+    expect(evidence.normalized_result.md5sums_cross_check).toEqual({
+      listed: 2,
+      present: 2,
+      missing_from_inventory: 0,
+      missing_from_md5sums: 0,
+    });
+  },
+);

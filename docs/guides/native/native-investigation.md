@@ -361,7 +361,21 @@ function by function. A process or host that stops between commits leaves at mos
 decompiled functions unrecorded. A resume decompiles those again; when a file is
 already in place and the new bytes match it, the function is counted as skipped
 and recorded with `provider_source.reason: "existing_file_origin_unknown"`
-rather than as a conflict. One run at a time holds an output directory,
+rather than as a conflict. While one provider request for a function, reading its body
+or decompiling it, stays pending, the export reports a `decompile_all` progress
+update every five seconds naming that request, the function's name and
+address, its position among the selected functions, and the elapsed wait;
+requests that settle sooner report nothing. The export's own journal and file
+writes are not timed, so a slow output volume is never reported as a provider
+wait. MCP delivers
+these as progress notifications when the request carries a progress token, and
+the CLI writes each as a `rea_progress` JSON line on stderr, leaving stdout for
+the manifest. Ghidra bounds one function with its decompile deadline. Hopper
+has no per-function deadline and REA cannot interrupt a decompilation Hopper
+has started, so a pathological function holds the serial bridge until Hopper
+finishes or is quit. Cancelling such an export from the CLI ends the command
+with `cleanup_incomplete` while Hopper keeps working; the remediation then
+describes the steps available in Hopper itself. One run at a time holds an output directory,
 identified by its device and inode, through export finalization and any retained cleanup retry; another
 run on the same directory is refused with the holder's process ID, and a
 crashed run can be recovered by the next run. Failed descriptor or staging cleanup remains owned by the session; close the target to retry it. Initialization cleanup preserves unexpected entries rather than recursively removing the directory. Resume hashes existing files in bounded chunks, and index generation reuses committed journal facts already held by the export owner. After five consecutive functions whose files
