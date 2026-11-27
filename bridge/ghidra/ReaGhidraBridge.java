@@ -7,6 +7,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.Writer;
+import java.lang.ref.SoftReference;
 import java.math.BigInteger;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -132,6 +133,7 @@ import ghidra.program.model.pcode.VarnodeAST;
 import ghidra.program.util.ContextEvaluatorAdapter;
 import ghidra.program.util.SymbolicPropogator;
 import ghidra.program.util.VarnodeContext;
+import ghidra.util.UndefinedFunction;
 import ghidra.util.task.TaskMonitor;
 
 public final class ReaGhidraBridge extends HeadlessScript {
@@ -215,11 +217,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
      * otherwise run the native decompiler again. The key carries every input a
      * result depends on; soft references let the heap reclaim large results.
      */
-    private final LinkedHashMap<DecompileCacheKey, java.lang.ref.SoftReference<DecompileResults>> decompileResults =
+    private final LinkedHashMap<DecompileCacheKey, SoftReference<DecompileResults>> decompileResults =
         new LinkedHashMap<>(16, 0.75f, true) {
             @Override
             protected boolean removeEldestEntry(
-                Map.Entry<DecompileCacheKey, java.lang.ref.SoftReference<DecompileResults>> eldest
+                Map.Entry<DecompileCacheKey, SoftReference<DecompileResults>> eldest
             ) {
                 return size() > DECOMPILE_RESULT_ENTRIES;
             }
@@ -1383,7 +1385,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
             throw new RequestFailure("procedure_not_found", "File offset " + coordinate +
                 " maps to analysis address " + canonicalAddress(mapped) +
                 ", but no procedure starts at or contains that address in the current Ghidra analysis. " +
-                "Choose an observed procedure with CLI rea search <path> . --kind procedures --mode regex --provider ghidra --json or MCP list_procedures.");
+                (isCodeOutsideFunctions(mapped)
+                    ? CODE_OUTSIDE_FUNCTIONS + "; procedure_pseudo_code can decompile it on the fly when selected by that analysis address."
+                    : "Choose an observed procedure with CLI rea search <path> . --kind procedures --mode regex --provider ghidra --json or MCP list_procedures."));
         selection.addProperty("file_offset", offset);
         selection.addProperty("mapped_address", canonicalAddress(mapped));
         selection.addProperty("procedure_address", canonicalAddress(function.getEntryPoint()));
@@ -1400,15 +1404,22 @@ public final class ReaGhidraBridge extends HeadlessScript {
      */
     private Function undefinedFunctionAt(String selector, JsonObject selection) throws Exception {
         Address address = isExplicitReaAddress(selector) ? parseReaAddress(selector) : tryParseAddress(selector);
-        if (address == null || !address.isMemoryAddress()) return null;
-        if (currentProgram.getListing().getInstructionContaining(address) == null) return null;
-        if (currentProgram.getFunctionManager().getFunctionContaining(address) != null) return null;
-        ghidra.util.UndefinedFunction undefined =
-            ghidra.util.UndefinedFunction.findFunction(currentProgram, address, monitor);
+        if (address == null || !isCodeOutsideFunctions(address)) return null;
+        UndefinedFunction undefined =
+            UndefinedFunction.findFunction(currentProgram, address, monitor);
         if (undefined == null) return null;
         selection.addProperty("requested_address", canonicalAddress(address));
         selection.addProperty("undefined_function_entry", canonicalAddress(undefined.getEntryPoint()));
         return undefined;
+    }
+
+    private static final String CODE_OUTSIDE_FUNCTIONS =
+        "Ghidra disassembled code there without creating a function, so it is absent from the procedure inventory";
+
+    private boolean isCodeOutsideFunctions(Address address) {
+        return address.isMemoryAddress() &&
+            currentProgram.getListing().getInstructionContaining(address) != null &&
+            functionAtOrContaining(address) == null;
     }
 
     private boolean isMappedAnalysisAddress(String selector) {
@@ -3230,9 +3241,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (function == null)
             // Other procedure operations retain their analysis-address semantics.
             throw new RequestFailure("procedure_not_found", "No procedure exists at the requested address: " + value +
-                (currentProgram.getListing().getInstructionContaining(address) == null ? "" :
-                    ". Ghidra disassembled code there without creating a function, so it is absent from the procedure inventory; " +
-                    "procedure_pseudo_code can decompile it on the fly, and inspect_native_instruction reads its instructions") +
+                (isCodeOutsideFunctions(address) ? ". " + CODE_OUTSIDE_FUNCTIONS +
+                    "; procedure_pseudo_code can decompile it on the fly, and inspect_native_instruction reads its instructions" : "") +
                 "; Ghidra image base: " + canonicalAddress(currentProgram.getImageBase()) +
                 ". Choose an observed analysis address. CLI: rea search <path> . --kind procedures --mode regex --provider ghidra --json; " +
                 "MCP: list_procedures. Inspect the loaded base and source mappings with CLI rea analyze <path> --provider ghidra --json " +
@@ -4655,11 +4665,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
         // so an edit that skipped the explicit invalidation still misses.
         DecompileCacheKey key = new DecompileCacheKey(
             function.getEntryPoint(),
-            function instanceof ghidra.util.UndefinedFunction,
+            function instanceof UndefinedFunction,
             currentProgram.getModificationNumber(),
             decompileMaxPayloadMiB
         );
-        java.lang.ref.SoftReference<DecompileResults> retained = decompileResults.get(key);
+        SoftReference<DecompileResults> retained = decompileResults.get(key);
         DecompileResults reused = retained == null ? null : retained.get();
         if (reused != null) return reused;
         DecompileResults results = decompiler.decompileFunction(
@@ -4690,7 +4700,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             );
         }
         // Only a completed decompilation is reusable; failures stay retryable.
-        decompileResults.put(key, new java.lang.ref.SoftReference<>(results));
+        decompileResults.put(key, new SoftReference<>(results));
         return results;
     }
 

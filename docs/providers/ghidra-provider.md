@@ -218,8 +218,9 @@ the target: one very large function still bounds its window.
 
 If an offset maps to loaded target bytes but no procedure starts at or contains
 the mapped address, the failure preserves both the original file offset and
-analysis address. This differs from an unmapped offset and does not recommend
-retrying the same offset syntax.
+analysis address, and says when that address holds code outside every function
+so that it can be decompiled by analysis address. This differs from an unmapped
+offset and does not recommend retrying the same offset syntax.
 If the function resolves but the backend fails or cancels decompilation, the
 failure retains the selector, mapped address and procedure entry without
 changing the backend failure code.
