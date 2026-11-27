@@ -434,7 +434,6 @@ describe("androidDtboFormat", () => {
     const parseWithEntries = (buf: Buffer) => {
       const hdr = parseAndroidDtboHeader(buf, buf.length);
       if (!hdr.ok) throw hdr.error;
-      if (!hdr.ok) throw hdr.error;
       return parseAndroidDtboEntries(
         hdr.value,
         buf.subarray(
