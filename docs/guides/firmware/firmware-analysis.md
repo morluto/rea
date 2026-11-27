@@ -162,7 +162,11 @@ stream. Read `derivations` to trace each decoded stream back to its carrier.
 LZMA-custom, LZMAF86, and AMD-zlib can yield nested volumes or section chains.
 The LZMAF86 worker reverses the x86 branch filter before mapping decoded bytes.
 A decoder limit makes inspection partial and appears as a size gap in
-extraction. When decoded bytes lack confirmed framing, extraction retains the
+extraction. Only the declared or decoded output size meets that limit: as in
+EDK II's one-call decoder, an LZMA stream's dictionary sizes only the decoder
+window, which never exceeds the output, so a large dictionary on a small
+section decodes. LZMA properties follow the LZMA1 specification (lc 0-8, lp
+0-4, pb 0-4), and a corrupt stream is reported as malformed. When decoded bytes lack confirmed framing, extraction retains the
 decoded stream and reports its unparsed range. Decode derivations cover the
 input range examined by the decoder. Unread LZMA carrier bytes are reported
 as a gap, including an optional end marker when a known-size stream completes
