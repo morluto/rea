@@ -10,7 +10,7 @@ import {
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
 } from "./analysisViewCoverage.js";
 
@@ -58,11 +58,7 @@ export const projectOciImageLayoutView = (
       path: report.artifact.path,
       sha256: report.artifact.snapshot_sha256,
     },
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...report.limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, report.limitations),
     unknowns: [],
     kind: "summary" as const,
     view,

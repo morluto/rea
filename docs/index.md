@@ -53,6 +53,7 @@ For runtime instrumentation, see the [Frida guide](guides/runtime/frida-instrume
   [choose a provider](README.md#provider-setup-and-formats) for your host and target.
 - [Analyze JavaScript or Electron artifacts](guides/javascript/javascript-artifact-reconstruction.md)
   or [relate static findings to runtime observations](guides/javascript/javascript-runtime-reconciliation.md).
+- [Inspect a macOS flat installer package](macos-pkg.md) for XAR contents, installer metadata, and payload members.
 - [Observe a website with CDP](guides/web/browser-observation.md) or
   [inspect an existing network capture](guides/web/web-network-captures.md).
 - [Build an agent environment from a recording](agent-environments-quickstart.md)

@@ -133,29 +133,43 @@ it("retains caller-selected parameters if cancellation arrives as the provider c
   expect(evidenceIds[0]).not.toBe(evidenceIds[1]);
 });
 
-it("accepts an arm64e request answered by its arm64-family slice", async () => {
-  const result = await new DwarfUnitsService({
-    identity,
-    inspect: () =>
-      Promise.resolve(
-        ok({
-          ...report,
-          format: "macho",
-          architecture: "arm64",
-          selected_slice: {
-            kind: "macho-selected-image-v1",
-            container: "fat",
-            offset: 4096,
-            byte_length: 128,
-            cpu_type: 0x0100000c,
-            cpu_subtype: 2,
-            container_table_sha256: "b".repeat(64),
-          },
-        }),
-      ),
-  }).inspect({ path: report.artifact.path, architecture: "arm64e" });
-  if (!result.ok) throw result.error;
-  expect(result.value).toMatchObject({
-    normalized_result: { architecture: "arm64" },
-  });
-});
+it.each([
+  { architecture: "arm64e", subtype: "0x80000002", accepted: true },
+  { architecture: "arm64e", subtype: "0x8000000c", accepted: false },
+  { architecture: "arm64e", subtype: "0x0", accepted: false },
+  { architecture: "arm64e.x1", subtype: "0x8000000c", accepted: true },
+  { architecture: "arm64e.x1", subtype: "0x80000002", accepted: false },
+] as const)(
+  "accepts $architecture for a report of subtype $subtype: $accepted",
+  async ({ architecture, subtype, accepted }) => {
+    const result = await new DwarfUnitsService({
+      identity,
+      inspect: () =>
+        Promise.resolve(
+          ok({
+            ...report,
+            format: "macho",
+            architecture: "arm64",
+            selected_slice: {
+              kind: "macho-selected-image-v1",
+              container: "fat",
+              offset: 4096,
+              byte_length: 128,
+              cpu_type: 0x0100000c,
+              cpu_subtype: Number(subtype),
+              container_table_sha256: "b".repeat(64),
+            },
+          }),
+        ),
+    }).inspect({ path: report.artifact.path, architecture });
+    if (accepted) {
+      if (!result.ok) throw result.error;
+      expect(result.value).toMatchObject({
+        normalized_result: { architecture: "arm64" },
+      });
+    } else {
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisOutputError);
+    }
+  },
+);

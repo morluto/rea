@@ -1,5 +1,9 @@
 import { z } from "zod";
 import {
+  macosPkgEntryMetadataSchema,
+  macosPkgMetadataSchema,
+} from "./formatMetadata/macosPkgMetadata.js";
+import {
   bunStandaloneEntryMetadataSchema,
   bunStandaloneMetadataSchema,
   denoStandaloneEntryMetadataSchema,
@@ -37,6 +41,8 @@ import {
   qualcommMbnMetadataSchema,
   uf2MetadataSchema,
   uf2RegionMetadataSchema,
+  ubiImageMetadataSchema,
+  ubiVolumeMetadataSchema,
   uImageEntryMetadataSchema,
   uImageMetadataSchema,
 } from "./formatMetadata/firmwareMetadata.js";
@@ -51,6 +57,7 @@ import {
   androidSparseImageMetadataSchema,
   compoundFileEntryMetadataSchema,
   compoundFileMetadataSchema,
+  auditdLogMetadataSchema,
   iso9660EntryMetadataSchema,
   iso9660MetadataSchema,
   ntfsMftMetadataSchema,
@@ -90,7 +97,11 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   uImageEntryMetadataSchema,
   androidOtaPayloadMetadataSchema,
   androidOtaPartitionMetadataSchema,
+  macosPkgMetadataSchema,
+  macosPkgEntryMetadataSchema,
   androidSparseImageMetadataSchema,
+  ubiImageMetadataSchema,
+  ubiVolumeMetadataSchema,
   espImageMetadataSchema,
   espImageSegmentMetadataSchema,
   espImageSignatureBlockMetadataSchema,
@@ -99,6 +110,7 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   ntfsMftMetadataSchema,
   compoundFileMetadataSchema,
   compoundFileEntryMetadataSchema,
+  auditdLogMetadataSchema,
   dfuSeMetadataSchema,
   dfuSeElementMetadataSchema,
   bfltMetadataSchema,
@@ -300,9 +312,37 @@ const declarationsByKind: {
     notCompared:
       "name and index restate the entry's path; reconstructed partition bytes are compared by content when they are extractable.",
   },
+  "macos-pkg": {
+    notCompared:
+      "Its fields come from the package's own bytes, which content comparison covers.",
+  },
+  "macos-pkg-entry": {
+    notCompared:
+      "role and layout restate the entry; stored bytes are compared by content.",
+  },
   "android-sparse-image": {
     notCompared:
       "Its header and chunk facts come from the image's own bytes, which content comparison covers. Checksums are recorded, not verified.",
+  },
+  "ubi-image": {
+    notCompared:
+      "Its header layout, eraseblock counts and volume table come from the image's own bytes, which content comparison covers.",
+  },
+  /**
+   * How the volume table declares a volume, independent of PEB placement.
+   * The volume ID is a lookup identity, so renumbering is a change.
+   */
+  "ubi-volume": {
+    declaration: (metadata) => ({
+      id: metadata.id,
+      name: metadata.name,
+      name_bytes_hex: metadata.name_bytes_hex,
+      type: metadata.type,
+      reserved_pebs: metadata.reserved_pebs,
+      alignment: metadata.alignment,
+      update_marker: metadata.update_marker,
+      flags: metadata.flags,
+    }),
   },
   "esp-image": {
     notCompared:
@@ -341,6 +381,10 @@ const declarationsByKind: {
   "compound-file-entry": {
     notCompared:
       "index, parent_index, the tree links and starting_sector are layout, and storage, contiguous and the declared size come from the file's own directory stream and allocation tables, which its content comparison covers.",
+  },
+  "auditd-log": {
+    notCompared:
+      "Its fields come from the file's own record headers, which content comparison covers.",
   },
   dfuse: {
     notCompared:

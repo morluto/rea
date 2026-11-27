@@ -30,6 +30,7 @@ import {
   type InventorySet,
 } from "../artifactInventoryEvidence.js";
 import type { ArtifactInspectionResult } from "../artifactInspection.js";
+import { filterSet } from "./selectViewRows.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   assertOwnedView,
@@ -48,6 +49,7 @@ import {
 } from "./inventoryPathGlob.js";
 import { androidOtaPayloadSummaryMetadataSchema } from "./androidOtaPayloadSummary.js";
 import { androidVbmetaSummaryMetadataSchema } from "./androidVbmetaSummary.js";
+import { ubiImageSummaryMetadataSchema } from "./ubiImageSummary.js";
 import {
   espFlashImageSummaryMetadataSchema,
   summaryRootMetadata,
@@ -136,8 +138,9 @@ export const artifactInventorySummarySchema = z.strictObject({
   manifest: artifactGraphManifestSchema,
   /**
    * An ESP flash layout's nested images appear as summaries here, an
-   * Android OTA payload's partition, group and APEX arrays as counts, and a
-   * vbmeta image's descriptors as counts.
+   * Android OTA payload's partition, group and APEX arrays as counts, a
+   * vbmeta image's descriptors as counts, and a UBI image's volume array as
+   * counts.
    */
   root_format_metadata: z
     .union([
@@ -145,6 +148,7 @@ export const artifactInventorySummarySchema = z.strictObject({
       espFlashImageSummaryMetadataSchema,
       androidOtaPayloadSummaryMetadataSchema,
       androidVbmetaSummaryMetadataSchema,
+      ubiImageSummaryMetadataSchema,
     ])
     .exactOptional(),
   available_counts: z.strictObject({
@@ -336,7 +340,8 @@ export const projectArtifactInventoryView = (
     inventory.manifest.root_format === "qualcomm-mbn" ||
     inventory.manifest.root_format === "android-ota-payload" ||
     inventory.manifest.root_format === "android-vbmeta" ||
-    inventory.manifest.root_format === "android-sparse-image";
+    inventory.manifest.root_format === "android-sparse-image" ||
+    inventory.manifest.root_format === "ubi-image";
   const counts = inventoryCounts(source);
   const limitations = uniqueSorted([
     ...parent.limitations,
@@ -558,14 +563,9 @@ const occurrenceIndices = (
   if (selectors.every((selector) => selector === undefined)) return undefined;
   if (selectors.some((selector) => selector?.length === 0)) return [];
   const rows = source.inventory.occurrences;
-  const paths =
-    view.logical_paths === undefined ? undefined : new Set(view.logical_paths);
-  const kinds =
-    view.entry_kinds === undefined ? undefined : new Set(view.entry_kinds);
-  const artifactKinds =
-    view.artifact_kinds === undefined
-      ? undefined
-      : new Set(view.artifact_kinds);
+  const paths = filterSet(view.logical_paths);
+  const kinds = filterSet(view.entry_kinds);
+  const artifactKinds = filterSet(view.artifact_kinds);
   const globs = view.path_globs?.map(compileInventoryPathGlob);
   const matches = (index: number) => {
     const row = rows[index]!;

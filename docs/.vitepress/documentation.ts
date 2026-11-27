@@ -429,6 +429,11 @@ export const documentationSections = [
         route: "/android-sparse-image",
       },
       {
+        text: "UBI images",
+        source: "guides/firmware/ubi-images.md",
+        route: "/ubi-images",
+      },
+      {
         text: "Flattened devicetree inspection",
         source: "devicetree.md",
         route: "/devicetree",
@@ -529,6 +534,11 @@ export const documentationSections = [
         route: "/python-packaged-applications",
       },
       {
+        text: "Debian package inspection",
+        source: "deb-package.md",
+        route: "/deb-package",
+      },
+      {
         text: "CPython pyc inspection",
         source: "python-pyc.md",
         route: "/python-pyc",
@@ -562,6 +572,11 @@ export const documentationSections = [
         text: "WeChat mini-program wxapkg archives",
         source: "wxapkg.md",
         route: "/wxapkg",
+      },
+      {
+        text: "macOS flat installer packages",
+        source: "macos-pkg.md",
+        route: "/macos-pkg",
       },
       {
         text: "ISO 9660 disc images",

@@ -8,6 +8,7 @@ import type { EspFlashSelection } from "../domain/firmware/espFlashLocation.js";
 import { ANDROID_OTA_PAYLOAD_LIMITATIONS } from "../domain/firmware/androidOtaPayload.js";
 import { ANDROID_SPARSE_IMAGE_LIMITATIONS } from "../domain/firmware/androidSparseImage.js";
 import { ESP_IMAGE_LIMITATIONS } from "../domain/firmware/espImageFacts.js";
+import { UBI_IMAGE_LIMITATIONS } from "../domain/firmware/ubiImage.js";
 import {
   ZIP_PACKAGE_FORMATS,
   type ZipPackageFormat,
@@ -47,6 +48,7 @@ import { Iso9660ArtifactReader } from "./Iso9660ArtifactReader.js";
 import { QualcommMbnArtifactReader } from "./QualcommMbnArtifactReader.js";
 import { HexRecordArtifactReader } from "./HexRecordArtifactReader.js";
 import { MachOSliceArtifactReader } from "./MachOSliceArtifactReader.js";
+import { MacosPkgArtifactReader } from "./MacosPkgArtifactReader.js";
 import { NativeDmgArtifactReader } from "./NativeDmgArtifactReader.js";
 import type { NodeSeaAdmission } from "./nodeSea/NodeSeaAdmission.js";
 import { NodeSeaArtifactReader } from "./NodeSeaArtifactReader.js";
@@ -55,8 +57,10 @@ import { PyInstallerArtifactReader } from "./PyInstallerArtifactReader.js";
 import { UefiArtifactReader } from "../uefi/UefiArtifactReader.js";
 import { Uf2ArtifactReader } from "./Uf2ArtifactReader.js";
 import { NtfsMftArtifactReader } from "./NtfsMftArtifactReader.js";
+import { AuditdLogArtifactReader } from "./AuditdLogArtifactReader.js";
 import { AndroidOtaPayloadArtifactReader } from "./AndroidOtaPayloadArtifactReader.js";
 import { AndroidSparseImageArtifactReader } from "./AndroidSparseImageArtifactReader.js";
+import { UbiImageArtifactReader } from "./UbiImageArtifactReader.js";
 import { UImageArtifactReader } from "./UImageArtifactReader.js";
 import { BfltArtifactReader } from "./BfltArtifactReader.js";
 import { SwitchExecutableArtifactReader } from "./SwitchExecutableArtifactReader.js";
@@ -96,6 +100,11 @@ export interface FormatDescriptor {
   readonly occurrenceContainer: boolean;
   /** Path-role classification treats the format as a container of its own. */
   readonly roleContainer: boolean;
+  /**
+   * Path role for a format whose bytes say nothing about executability, such as
+   * a text log. Without it those formats fall through to `executable`.
+   */
+  readonly role?: "resource" | undefined;
   /** Classification keeps the admitted source for a later reader. */
   readonly retainClassifiedSource: boolean;
   /** Extraction can open this format without an embedded-pack probe. */
@@ -328,7 +337,20 @@ const NON_ZIP_FORMATS = {
     createReader: (path, options) =>
       new NativeDmgArtifactReader(path, options.environment),
   }),
-  pkg: container("pkg", { absentInventory: "platform" }),
+  pkg: container("pkg", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "macOS flat installer inventory reads the XAR header, zlib TOC, Distribution/PackageInfo, gzip cpio Scripts and gzip cpio Payload members. XAR signatures are not verified. pbzx/xz payloads, Bom contents and installer JavaScript are not decoded or executed.",
+    createReader: (path, options) =>
+      new MacosPkgArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.expanded_bytes,
+      ),
+  }),
   asar: container("asar", {
     retainClassifiedSource: true,
     extractable: true,
@@ -395,7 +417,7 @@ const NON_ZIP_FORMATS = {
     extractable: true,
     absentInventory: "unavailable",
     readerLimitation:
-      "UnityFS inventory establishes packaged bytes and metadata; serialized objects, textures, meshes and runtime asset behavior were not decoded. LZMA-compressed members are unsupported.",
+      "UnityFS inventory establishes packaged bytes and metadata; serialized objects, textures, meshes and runtime asset behavior were not decoded.",
     createReader: (path, options) =>
       new UnityFsArtifactReader(path, sourceOf(options)),
   }),
@@ -506,6 +528,15 @@ const NON_ZIP_FORMATS = {
         options.readerLimits?.expanded_bytes,
       ),
   }),
+  "ubi-image": container("ubi-image", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation: UBI_IMAGE_LIMITATIONS.inventoryScope,
+    createReader: (path, options) =>
+      new UbiImageArtifactReader(path, sourceOf(options)),
+  }),
   iso9660: container("iso9660", {
     roleContainer: true,
     retainClassifiedSource: true,
@@ -559,6 +590,7 @@ const NON_ZIP_FORMATS = {
   "windows-shortcut": described("windows-shortcut", plain),
   "python-pyc": described("python-pyc", plain),
   devicetree: described("devicetree", plain),
+  deb: described("deb", plain),
   entitlements: described("entitlements", plain),
   directory: container("directory", {
     absentInventory: "unavailable",
@@ -698,6 +730,15 @@ const NON_ZIP_FORMATS = {
       "MFT inventory reports whole-stream counts and up to 32 physical FILE record details, including fixup coverage, supported names, timestamps, declared sizes and attributes. Bounded attribute-list links expose verified metadata from acquired extension records, with explicit reference outcomes and omissions. Nonresident list values and file contents are not recovered; full paths and complete change history are not established. Use inspect_ntfs_journal for caller-paired journal events.",
     createReader: (path, options) =>
       new NtfsMftArtifactReader(path, sourceOf(options)),
+  }),
+  "auditd-log": described("auditd-log", {
+    ...plain,
+    role: "resource",
+    retainClassifiedSource: true,
+    readerLimitation:
+      "auditd log inventory reports record and event totals, per-type counts and a bounded window of events joined on their full audit event identity (node, timestamp and serial), with duplicate, out-of-order and malformed records counted. Per-record identity is retained for a bounded window of recent events; events and records past it are counted in the totals but their duplicate and interleaving status is not established. Record key-value fields, hex and escaped values, argument ordering and decoded syscall or permission meanings are not interpreted; the log is not treated as complete or authentic.",
+    createReader: (path, options) =>
+      new AuditdLogArtifactReader(path, sourceOf(options)),
   }),
   unknown: described("unknown", plain),
 } satisfies Record<

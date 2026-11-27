@@ -98,6 +98,7 @@ for (const setting of ["GHIDRA_HEADLESS_MAXMEM", "GHIDRA_MAXMEM"]) {
 }
 // CLI launches share one command owner, created before the lane starts a tool.
 const commands = await createVerifierCommands();
+const exec = commands.exec.bind(commands);
 
 /** stdout and stderr of an owned command that exited nonzero. */
 const commandFailureOutput = (cause) => {
@@ -262,16 +263,32 @@ const reports = [];
 let primaryFailure;
 try {
   if (!psp) {
-    // Recordless legacy admission: ABI field 0, no ABI flags record, pinned
-    // 32-bit language. Independent GNU readelf checks the header interpretation.
-    for (const byteOrder of ["little", "big"]) {
-      const fixture = await buildMipsFixture(workspace, byteOrder, "hard", {
-        legacy: true,
-      });
-      const legacy = await inspectLegacyMipsReadelf(fixture.path, byteOrder);
+    for (const { byteOrder, recordlessAbi } of ["little", "big"].flatMap(
+      (byteOrder) =>
+        ["unspecified", "o32"].map((recordlessAbi) => ({
+          byteOrder,
+          recordlessAbi,
+        })),
+    )) {
+      const declared = recordlessAbi === "o32";
+      const fixture = await buildMipsFixture(
+        workspace,
+        byteOrder,
+        "hard",
+        {
+          recordlessAbi,
+        },
+        exec,
+      );
+      const legacy = await inspectLegacyMipsReadelf(
+        fixture.path,
+        byteOrder,
+        recordlessAbi,
+        exec,
+      );
       const resolved = await parseBinaryTarget(fixture.path);
       if (!resolved.ok) throw resolved.error;
-      assert.equal(resolved.value.mips.flags, 0x50000001);
+      assert.equal(resolved.value.mips.flags, legacy.flags);
       assert.equal(resolved.value.mips.abiFlags, null);
       assert.deepEqual(
         resolved.value.mips.limitations ?? [],
@@ -279,7 +296,10 @@ try {
         "REA legacy ABI-record absence interpretation disagrees with GNU readelf",
       );
       assert.equal(resolved.value.sha256, fixture.sha256);
-      const snapshotPath = join(workspace, `${byteOrder}-legacy.snapshot.json`);
+      const snapshotPath = join(
+        workspace,
+        `${byteOrder}-${recordlessAbi}.snapshot.json`,
+      );
       const transport = new StdioClientTransport({
         command: process.execPath,
         args: [entrypoint, "mcp"],
@@ -317,6 +337,18 @@ try {
         const procedures = await call("list_procedures");
         const entry = procedures.find((p) => p.value === "rea_mips_entry");
         assert.ok(entry, "Entry function missing from legacy inventory");
+        if (declared) {
+          const callees = await call("procedure_callees", {
+            procedure: entry.address,
+          });
+          assert.ok(
+            callees.some(
+              (address) =>
+                BigInt(address) === BigInt(legacy.symbols.rea_mips_leaf),
+            ),
+            "Expected PIC call to rea_mips_leaf",
+          );
+        }
         assert.equal(
           BigInt(entry.address),
           BigInt(legacy.symbols.rea_mips_entry),
@@ -356,24 +388,32 @@ try {
         assert.equal(parameters.language_selection, "provider-pinned");
         assert.equal(
           parameters.mips_support_lane,
-          "elf32-exec-arch32-legacy-pinned",
+          declared
+            ? "elf32-exec-o32-arch32-standard"
+            : "elf32-exec-arch32-legacy-pinned",
         );
-        assert.equal(parameters.mips_abi_basis, "inferred-o32-assumption");
+        assert.equal(
+          parameters.mips_abi_basis,
+          declared ? "declared-o32-header" : "inferred-o32-assumption",
+        );
+        const limitations = snapshot.evidence_bundle.records.flatMap(
+          (record) => parseEvidence(record).limitations,
+        );
+        assert.equal(
+          limitations.some((item) =>
+            item.includes("o32 calling conventions are an analysis assumption"),
+          ),
+          !declared,
+        );
         assert.ok(
-          snapshot.evidence_bundle.records.some((record) =>
-            parseEvidence(record).limitations.some((item) =>
-              item.includes("analysis assumption"),
+          limitations.some((item) =>
+            item.includes(
+              declared
+                ? "does not verify floating-point"
+                : "Floating-point ABI semantics are unverified",
             ),
           ),
-          "Legacy o32 assumption limitation missing from retained Evidence",
-        );
-        assert.ok(
-          snapshot.evidence_bundle.records.some((record) =>
-            parseEvidence(record).limitations.some((item) =>
-              item.includes("Floating-point ABI semantics are unverified"),
-            ),
-          ),
-          "Legacy floating-point uncertainty missing from retained Evidence",
+          "Floating-point uncertainty missing from retained Evidence",
         );
         await call("open_binary", {
           path: fixture.path,
@@ -384,7 +424,7 @@ try {
         await call("close_binary");
       } catch (cause) {
         throw new Error(
-          `MIPS legacy ${byteOrder} verification failed; MCP stderr: ${stderr}`,
+          `MIPS32 recordless ${recordlessAbi} ${byteOrder} verification failed; MCP stderr: ${stderr}`,
           { cause },
         );
       } finally {
@@ -397,13 +437,17 @@ try {
       reports.push({
         ...fixture,
         independent_reader: legacy,
-        variant: "recordless-legacy-pinned",
+        variant: declared
+          ? "recordless-declared-o32-pinned"
+          : "recordless-legacy-pinned",
         effective_language: `MIPS:${
           byteOrder === "little" ? "LE" : "BE"
         }:32:default`,
         procedures: "verified-through-snapshot",
         checks: [
-          "recordless header admitted with inferred o32 assumption",
+          declared
+            ? "recordless header admitted with declared o32"
+            : "recordless header admitted with inferred o32 assumption",
           "pinned 32-bit language checked after import",
           "legacy limitations retained in Evidence",
           "snapshot round-trip and profile parameters",
@@ -422,10 +466,10 @@ try {
       ]) {
     const fixture = psp
       ? await buildPspFixture(workspace)
-      : await buildMipsFixture(workspace, byteOrder, floatAbi);
+      : await buildMipsFixture(workspace, byteOrder, floatAbi, {}, exec);
     const independent = psp
       ? fixture
-      : await inspectMipsReadelf(fixture.path, byteOrder, floatAbi);
+      : await inspectMipsReadelf(fixture.path, byteOrder, floatAbi, exec);
     const resolved = await parseBinaryTarget(fixture.path);
     if (!resolved.ok) throw resolved.error;
     if (psp) {

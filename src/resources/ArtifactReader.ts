@@ -267,6 +267,7 @@ export interface ArtifactReader {
     | "android-ota-payload"
     | "android-vbmeta"
     | "android-sparse-image"
+    | "ubi-image"
     | "iso9660"
     | "uefi"
     | "pyinstaller"
@@ -285,6 +286,8 @@ export interface ArtifactReader {
     | "compound-file"
     | "qualcomm-mbn"
     | "ntfs-mft"
+    | "auditd-log"
+    | "pkg"
     | "file";
   entries(
     signal?: AbortSignal,

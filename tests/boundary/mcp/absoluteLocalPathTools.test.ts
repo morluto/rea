@@ -11,6 +11,7 @@ import { WEB_SCRIPT_TOOL_CONTRACTS } from "../../../src/contracts/webScriptToolC
 import { API_CONTRACT_TOOL_CONTRACTS } from "../../../src/contracts/apiContractToolContracts.js";
 import { PLAYWRIGHT_TRACE_TOOL_CONTRACTS } from "../../../src/contracts/playwrightTraceToolContracts.js";
 import { PYTHON_PYC_TOOL_CONTRACTS } from "../../../src/contracts/python/pythonPycToolContracts.js";
+import { DEB_PACKAGE_TOOL_CONTRACTS } from "../../../src/contracts/deb/debPackageToolContracts.js";
 import { NUGET_NUPKG_TOOL_CONTRACTS } from "../../../src/contracts/nuget/nupkgToolContracts.js";
 import { VSIX_PACKAGE_TOOL_CONTRACTS } from "../../../src/contracts/vsix/vsixPackageToolContracts.js";
 import { OCI_IMAGE_LAYOUT_TOOL_CONTRACTS } from "../../../src/contracts/oci/ociImageLayoutToolContracts.js";
@@ -25,6 +26,7 @@ const CONTRACTS = [
   ...API_CONTRACT_TOOL_CONTRACTS,
   ...PLAYWRIGHT_TRACE_TOOL_CONTRACTS,
   ...PYTHON_PYC_TOOL_CONTRACTS,
+  ...DEB_PACKAGE_TOOL_CONTRACTS,
   ...NUGET_NUPKG_TOOL_CONTRACTS,
   ...VSIX_PACKAGE_TOOL_CONTRACTS,
   ...OCI_IMAGE_LAYOUT_TOOL_CONTRACTS,
@@ -43,6 +45,7 @@ const PATH_FIELDS = {
   inspect_devicetree: ["path"],
   inspect_playwright_trace: ["path"],
   inspect_python_pyc: ["path"],
+  inspect_deb_package: ["path"],
   inspect_nuget_nupkg: ["path"],
   inspect_vsix_package: ["path"],
   inspect_oci_image_layout: ["path"],
@@ -153,6 +156,7 @@ it("rejects one relative path field at a time on tools/list", async () => {
     "inspect_devicetree.path",
     "inspect_playwright_trace.path",
     "inspect_python_pyc.path",
+    "inspect_deb_package.path",
     "inspect_nuget_nupkg.path",
     "inspect_vsix_package.path",
     "inspect_oci_image_layout.path",

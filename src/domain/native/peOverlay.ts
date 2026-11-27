@@ -84,6 +84,7 @@ export const PE_OVERLAY_LEADING_FORMATS = [
   "android-ota-payload",
   "android-vbmeta",
   "android-sparse-image",
+  "ubi-image",
   "intel-hex",
   "srec",
   "uf2",
@@ -104,6 +105,8 @@ export const PE_OVERLAY_LEADING_FORMATS = [
   "windows-shortcut",
   "python-pyc",
   "devicetree",
+  "deb",
+  "auditd-log",
 ] as const;
 export type PeOverlayLeadingFormat =
   (typeof PE_OVERLAY_LEADING_FORMATS)[number];
@@ -229,7 +232,6 @@ const peOverlayObjectSchema = z.strictObject({
   limitations: z.array(z.string().min(1)),
 });
 export type PeOverlay = z.infer<typeof peOverlayObjectSchema>;
-export type PeOverlayRange = PeOverlay["ranges"][number];
 
 /** One COFF section the overlay calculation may extend or only list. */
 export interface PeOverlaySectionInput {

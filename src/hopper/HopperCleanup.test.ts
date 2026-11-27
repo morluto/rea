@@ -456,3 +456,59 @@ it("keeps a prepared backing image when native document closure cannot be confir
     await rm(parent, { recursive: true, force: true });
   }
 });
+
+it("tells an ended invocation that Hopper is still working, and a continuing caller how to retry", async () => {
+  const request = vi.fn(async () => ok({ shutdown: true }));
+  const result = await cleanupHopperSession({
+    socket: new Socket(),
+    // The application was not authenticated, so its exit cannot be observed.
+    resources: {
+      ...externalApplicationResources(),
+      externalApplication: undefined,
+    },
+    activeRequest: {
+      requestId: 7,
+      operation: "procedure_pseudo_code",
+      elapsedMs: 470_000,
+      callerState: "cancelled",
+      queuedRequests: 0,
+    },
+    retainDocument: false,
+    progress: undefined,
+    logger: loggerHarness().logger,
+    onDiagnostic: undefined,
+    request,
+    releaseTransport: () => undefined,
+  });
+  if (result.ok) throw new Error("Expected retained Hopper cleanup");
+
+  // No shutdown can be sent behind the operation Hopper is still running.
+  expect(request).not.toHaveBeenCalled();
+  const invocation = projectAnalysisError(result.error, "invocation");
+  expect(invocation).toMatchObject({
+    code: "cleanup_incomplete",
+    details: {
+      resources: ["hopper-document"],
+      diagnostics: {
+        active_request: {
+          operation: "procedure_pseudo_code",
+          elapsed_ms: 470_000,
+          caller_state: "cancelled",
+        },
+      },
+    },
+  });
+  expect(invocation.remediation.action).toContain(
+    "Hopper is still running procedure_pseudo_code",
+  );
+  // Hopper is the user's application and may hold other documents.
+  expect(invocation.remediation.action).toContain(
+    "quit Hopper to stop the work now if it has no other work",
+  );
+  expect(invocation.remediation.action).not.toMatch(
+    /close_binary|MCP|this connection/u,
+  );
+  expect(projectAnalysisError(result.error).remediation.action).toContain(
+    "retry close_binary on this connection",
+  );
+});

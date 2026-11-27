@@ -404,6 +404,20 @@ Preserve artifact SHA-256, the 16-byte header fields, nested code names, and
 bytecode SHA-256. Bytecode is not decompiled. A decoded header does not prove
 the matching `.py` is present. See [CPython pyc inspection](https://github.com/morluto/rea/blob/main/docs/python-pyc.md).
 
+## Debian packages
+
+Use `inspect_deb_package` for an explicit local `.deb` when the question
+concerns ar members, control identity, relationship alternatives, maintainer
+script presence, or the data.tar inventory. No `dpkg`, package installation,
+or target execution is required. The CLI equivalent is
+`inspect-deb-package PATH`. Preserve artifact SHA-256, the debian-binary
+version, parsed relationship operators and architecture qualifiers, script
+interpreter lines and byte lengths, and md5sums path presence. Script text is
+not returned and is never executed. gzip, zstd, xz, and uncompressed members are
+decoded; bzip2 and lzma members are unsupported. Package signatures are
+not verified. Missing optional fields stay null. See
+[Debian package inspection](https://github.com/morluto/rea/blob/main/docs/deb-package.md).
+
 ## Erlang BEAM files
 
 Use `inspect_erlang_beam` for an explicit local `FOR1`/`BEAM` file when the
@@ -933,7 +947,7 @@ numbering gaps leave coverage unknown; a DfuSe suffix CRC mismatch follows
 ### Function annotations in Ghidra
 
 Fresh-import sessions admit annotations; existing-project reuse is read-only.
-Use `annotate_native_function` for one function name and/or entry comments, with at least one explicit change. Review its annotation readback and refreshed dossier inline. Changes are atomic; empty comments clear them, omitted fields preserve them. Later MCP calls observe edits. Normal close saves them when owned Program checkpoint mode is enabled; ephemeral mode discards them. CLI `annotate-native-function` follows the same setting when closing after its updated result. Select the [checkpoint workflow](#continue-editable-ghidra-analysis-across-processes) before edits that must survive a later process. Original executable bytes are unchanged; edits invalidate immutable snapshots. Windows P0 does not admit database mutations. For naming only, `set_address_name` / `set_addresses_names` also work with Ghidra: they name function entries or data addresses (primary labels) and return compact per-address success booleans instead of a dossier. Ghidra rejects batch addresses that request the same name or a name another selected address holds; `raw_result.failures` gives each failure's reason.
+Use `annotate_native_function` for one function name, C prototype (`signature`) and/or entry comments, with at least one explicit change. When pseudocode for a target without debug information reads fixed offsets from one pointer, assert the layout with `define_native_data_types` and set the prototype; treat the resulting field names as your hypothesis (`signature_source: user_defined`, type `source: caller-defined`), not as recovered facts, and confirm each offset against the instructions. Review its annotation readback and refreshed dossier inline. Changes are atomic; empty comments clear them, omitted fields preserve them. Later MCP calls observe edits. Normal close saves them when owned Program checkpoint mode is enabled; ephemeral mode discards them. CLI `annotate-native-function` follows the same setting when closing after its updated result. Select the [checkpoint workflow](#continue-editable-ghidra-analysis-across-processes) before edits that must survive a later process. Original executable bytes are unchanged; edits invalidate immutable snapshots. Windows P0 does not admit database mutations. For naming only, `set_address_name` / `set_addresses_names` also work with Ghidra: they name function entries or data addresses (primary labels) and return compact per-address success booleans instead of a dossier. Ghidra rejects batch addresses that request the same name or a name another selected address holds; `raw_result.failures` gives each failure's reason.
 
 A provider switch or different target can retire the active Ghidra database and discard
 its edits, even if the new provider fails on a later call. Same-target,
@@ -1007,6 +1021,16 @@ stored verbatim. `V1MMWX` PC-client packages report `encrypted` directory
 status with unknown coverage and are refused on extraction; no decryption is
 attempted. See
 [wxapkg](https://github.com/morluto/rea/blob/main/docs/wxapkg.md).
+
+macOS flat installer packages (`.pkg` files beginning with `xar!`) use the
+same inspection/extraction workflows on every host. Prefer a retained summary
+for XAR header/TOC facts, Distribution `pkg-ref` and choices, PackageInfo
+identity, Scripts `preinstall`/`postinstall` presence, and gzip cpio Payload
+paths, including each component's Scripts/Payload until the expansion budget
+is exhausted. XAR signatures are named and not verified. `pbzx` payloads keep
+the stored member with an unsupported-compression refusal; Bom is presence
+and size only; installer JavaScript is never executed. See
+[macOS flat installer packages](https://github.com/morluto/rea/blob/main/docs/macos-pkg.md).
 
 U-Boot legacy uImages use the same inspection/extraction workflows. Prefer a
 retained summary and selected inventory views for header facts or component
@@ -1090,6 +1114,14 @@ chunk counts and stored checksums are root facts; checksums are not verified
 and DONT_CARE blocks are written as zeros. The expanded child is classified
 again. See
 [Android sparse images](https://github.com/morluto/rea/blob/main/docs/guides/firmware/android-sparse-image.md).
+
+UBI images (`UBI#` at offset 0, from `ubinize` or a NAND dump) use the same
+inspection/extraction workflows. Prefer a retained summary for eraseblock
+layout, PEB counts and volume counts. Each volume is `volumes/<name>`,
+reassembled from its LEBs by highest sqnum. A volume with a missing LEB
+stays inventoried with unavailable content. UBIFS inside a volume is not
+decoded. See
+[UBI images](https://github.com/morluto/rea/blob/main/docs/guides/firmware/ubi-images.md).
 
 Nintendo Switch NSO modules (`NSO0`) and NRO executables (`NRO0` at `0x10`)
 use the same inspection and extraction workflows, without running or

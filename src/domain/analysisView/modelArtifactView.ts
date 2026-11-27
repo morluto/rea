@@ -18,11 +18,7 @@ import {
 } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
-import {
-  pickFields,
-  selectIndexedViewRows,
-  selectViewRows,
-} from "./selectViewRows.js";
+import { filterSet, pickFields, selectViewRows } from "./selectViewRows.js";
 import { ok, type Result } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
@@ -32,6 +28,7 @@ import {
 } from "./analysisViewShape.js";
 import {
   completeWithinViewCoverage,
+  boundedViewLimitations,
   boundedViewMessages,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
@@ -210,11 +207,7 @@ export const projectModelArtifactView = (
     parent_operation: "inspect_model_artifact" as const,
     parent_digest: parent.evidenceId.slice(3),
     artifact: { path: report.artifact.path, sha256: report.artifact.sha256 },
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...report.limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, report.limitations),
     unknowns: [
       "Tensor values, runtime execution and inference quality were not inspected.",
       ...(report.artifact.sha256 === null
@@ -257,8 +250,7 @@ export const projectModelArtifactView = (
       : view.collection === "metadata"
         ? keys
         : typeIndices;
-  const indices =
-    view.indices === undefined ? undefined : new Set(view.indices);
+  const indices = filterSet(view.indices);
   const types =
     view.collection === "tensors" && view.types !== undefined
       ? new Set(view.types)
@@ -267,8 +259,7 @@ export const projectModelArtifactView = (
     view.collection === "tensors" && view.storage_validation !== undefined
       ? new Set(view.storage_validation)
       : undefined;
-  const fields =
-    view.fields === undefined ? undefined : new Set<string>(view.fields);
+  const fields = filterSet<string>(view.fields);
   const projectRow = (row: (typeof rows)[number], index: number) =>
     fields === undefined
       ? { ...row, index }
@@ -293,16 +284,13 @@ export const projectModelArtifactView = (
   } else if (indices !== undefined) {
     candidateIndices = indices;
   }
-  const paged =
-    candidateIndices !== undefined
-      ? selectIndexedViewRows(
-          rows,
-          candidateIndices,
-          view,
-          matchesRow,
-          projectRow,
-        )
-      : selectViewRows(rows, view, matchesRow, projectRow);
+  const paged = selectViewRows(
+    rows,
+    view,
+    matchesRow,
+    projectRow,
+    candidateIndices,
+  );
   return ok({
     kind: "model-artifact" as const,
     view,

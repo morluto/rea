@@ -17,6 +17,7 @@ import {
 import { recognizeAndroidOtaPayload } from "./firmware/androidOtaPayload.js";
 import { hasAndroidVbmetaMagic } from "./firmware/androidVbmeta.js";
 import { recognizeAndroidSparseImage } from "./firmware/androidSparseImage.js";
+import { recognizeUbiImage } from "./firmware/ubiImage.js";
 import { claimsExecutableHeader } from "./binaryTarget.js";
 import { hasQualcommMbnHeader } from "./qualcommMbnImage.js";
 import { hasUImageMagic } from "./uimageFormat.js";
@@ -25,12 +26,14 @@ import { hasNroMagic, hasNsoMagic } from "./switchExecutable.js";
 import { hasUnityFsHeader } from "./unityfsFormat.js";
 import { hasCompoundFileSignature } from "./windows/compoundFile.js";
 import { hasMftFileRecordHeader } from "./windows/ntfsMft.js";
+import { hasAuditdLogRecord } from "./linux/auditdLog.js";
 import { hasWindowsShortcutHeader } from "./windows/windowsShortcutHeader.js";
 import { BinaryFormatFailure } from "./binaryContainer.js";
 import {
   hasDevicetreeMagic,
   readDevicetreeHeader,
 } from "./firmware/devicetreeHeader.js";
+import { hasDebPackageHeader } from "./deb/debPackage.js";
 import { observePythonBytecodePrefix } from "./python/pythonBytecodeIdentity.js";
 import { hasSqliteHeader } from "./sqliteFormat.js";
 import { recognizeTarPrefix, tarHeaderRefusal } from "./tarFormat.js";
@@ -64,6 +67,7 @@ export type RecognizedArtifactFormat = Extract<
   | "android-ota-payload"
   | "android-vbmeta"
   | "android-sparse-image"
+  | "ubi-image"
   | "iso9660"
   | "intel-hex"
   | "srec"
@@ -76,6 +80,7 @@ export type RecognizedArtifactFormat = Extract<
   | "compound-file"
   | "qualcomm-mbn"
   | "ntfs-mft"
+  | "auditd-log"
   | "plist"
   | StandaloneArtifactFormat
 >;
@@ -89,6 +94,7 @@ export const STANDALONE_ARTIFACT_FORMATS = [
   "windows-shortcut",
   "python-pyc",
   "devicetree",
+  "deb",
 ] as const;
 
 export type StandaloneArtifactFormat =
@@ -201,6 +207,13 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
             reason: ota.reason,
           };
     },
+    ({ prefix, fileSize }) => {
+      const ubi = recognizeUbiImage(prefix, fileSize);
+      if (ubi === undefined) return undefined;
+      return ubi.state === "recognized"
+        ? { state: "recognized", format: "ubi-image" }
+        : { state: "refused", format: "ubi-image", reason: ubi.reason };
+    },
     ({ prefix }) => {
       const sparse = recognizeAndroidSparseImage(prefix);
       if (sparse === undefined) return undefined;
@@ -260,8 +273,10 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     when("fit", hasFitImagesNode),
     when("compound-file", hasCompoundFileSignature),
     when("ntfs-mft", hasMftFileRecordHeader),
+    when("auditd-log", hasAuditdLogRecord),
     when("sqlite", hasSqliteHeader),
     when("windows-shortcut", hasWindowsShortcutHeader),
+    when("deb", hasDebPackageHeader),
     // Only a pinned CPython magic claims the format; a CR LF trailer alone
     // is too weak a signature for arbitrary bytes.
     when("python-pyc", (prefix) => {
