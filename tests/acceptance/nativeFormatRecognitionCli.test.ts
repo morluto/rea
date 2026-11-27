@@ -117,3 +117,28 @@ for (const [command, operation, image] of [
       expect(["malformed", "truncated"]).toContain(failureKind);
     },
   );
+
+for (const [command, operation] of [
+  ["inspect-go-binary", "inspect_go_binary"],
+  ["inspect-rust-binary", "inspect_rust_binary"],
+] as const)
+  cliTest(
+    `reports a non-native file to ${command} as unrecognized with its facts`,
+    async ({ cli }) => {
+      const { path, json } = await run(
+        cli,
+        command,
+        "target.bin",
+        randomBytes(),
+      );
+      expect(json).toMatchObject({
+        code: "unsupported_target",
+        details: {
+          operation,
+          path,
+          failure_kind: "unrecognized",
+          format: "native-binary",
+        },
+      });
+    },
+  );

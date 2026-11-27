@@ -1,7 +1,8 @@
 import { err, ok, type Result } from "./result.js";
 import type {
+  FormatTargetFailure,
+  FormatTargetFailureKind,
   TargetFailureFacts,
-  TargetFailureOf,
   TruncatedExtent,
 } from "./targetFailure.js";
 
@@ -17,12 +18,7 @@ import type {
  * - `limit`: a named decode budget stopped the parse; the input is not shown
  *   to be invalid.
  */
-export type ParseFailureKind =
-  | "unrecognized"
-  | "malformed"
-  | "truncated"
-  | "unsupported"
-  | "limit";
+export type ParseFailureKind = FormatTargetFailureKind | "limit";
 
 /**
  * The limit a parse stopped at: its stable name, the maximum in force, and,
@@ -46,7 +42,7 @@ export const reportedParseLimit = ({ name, maximum, required }: LimitRef) => ({
 
 /** A parse outcome the parser established, carried with its facts. */
 export type ParseFailure =
-  | TargetFailureOf<"unrecognized" | "malformed" | "truncated" | "unsupported">
+  | FormatTargetFailure
   | (TargetFailureFacts & {
       readonly kind: "limit";
       readonly limit: LimitRef;

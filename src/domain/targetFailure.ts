@@ -106,9 +106,25 @@ export type TargetFailureOf<Kind extends TargetFailureKind> = Extract<
  * all, they break or end inside a structure of the format, or they use a form
  * outside the owner's coverage.
  */
-export type FormatTargetFailure = TargetFailureOf<
-  "unrecognized" | "malformed" | "truncated" | "unsupported"
->;
+export const FORMAT_TARGET_FAILURE_KINDS = [
+  "unrecognized",
+  "malformed",
+  "truncated",
+  "unsupported",
+] as const satisfies readonly TargetFailureKind[];
+export type FormatTargetFailureKind =
+  (typeof FORMAT_TARGET_FAILURE_KINDS)[number];
+export type FormatTargetFailure = TargetFailureOf<FormatTargetFailureKind>;
+
+/**
+ * Whether a reason is a format owner's refusal, which carries the owner's
+ * facts. The one list every wrapper consults, so a new kind cannot be carried
+ * by some wrappers and dropped by others.
+ */
+export const isFormatTargetFailureKind = (
+  kind: string,
+): kind is FormatTargetFailureKind =>
+  (FORMAT_TARGET_FAILURE_KINDS as readonly string[]).includes(kind);
 
 /**
  * When repeating the request can help, after gRPC's status semantics:
