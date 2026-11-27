@@ -111,7 +111,20 @@ export class ArtifactOperationError extends AnalysisError {
 
   constructor(
     /** The public operation whose artifact read or write failed. */
-    readonly operation: string,
+    readonly operation:
+      | "inventory_artifact"
+      | "inspect_artifact"
+      | "inspect_pe_resources"
+      | "inspect_pe_imports"
+      | "extract_artifact"
+      | "decode_interface_builder"
+      | "inspect_asset_catalog"
+      | "inspect_keyed_archive"
+      | "trace_dylib_resolution"
+      | "export_web_scripts"
+      | "trace_web_module_imports"
+      | "trace_web_source_location"
+      | "analyze_javascript_application",
     readonly reason:
       | "limit"
       | "cancelled"
