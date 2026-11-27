@@ -230,7 +230,6 @@ const peOverlayObjectSchema = z.strictObject({
   limitations: z.array(z.string().min(1)),
 });
 export type PeOverlay = z.infer<typeof peOverlayObjectSchema>;
-export type PeOverlayRange = PeOverlay["ranges"][number];
 
 /** One COFF section the overlay calculation may extend or only list. */
 export interface PeOverlaySectionInput {

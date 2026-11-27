@@ -36,8 +36,6 @@ export const SOURCE_MAP_LIMIT_FIELDS = [
 
 export type SourceMapLimitField = (typeof SOURCE_MAP_LIMIT_FIELDS)[number];
 
-export const sourceMapLimitFieldSchema = z.enum(SOURCE_MAP_LIMIT_FIELDS);
-
 /** Per-call source-map budgets shared by the input schema and refusal limits. */
 export const SOURCE_MAP_BUDGETS = {
   map_bytes: {
