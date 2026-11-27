@@ -39,8 +39,11 @@ DOS MZ or FAT header is left to that format when it also contains `SEGA` at
   declared ROM end, counting a word only when both bytes are inside that
   window and inside the image. A mismatch is a limitation.
 - `rom` and `ram` start and end addresses, as declared. Ends are inclusive.
-  The work-RAM check compares 24-bit bus addresses, so the SGDK form
-  `0xE0FF0000`-`0xE0FFFFFF` is the same window as `0x00FF0000`-`0x00FFFFFF`.
+  Address checks use the 68000's 24-bit bus, so the top byte is ignored:
+  the SGDK form `0xE0FF0000`-`0xE0FFFFFF` is work RAM, and a reset PC of
+  `0xFF000200` is inside a ROM range that covers `0x200`. A RAM range is
+  work RAM when it covers at most 64 KiB inside the `0xE00000`-`0xFFFFFF`
+  mirror.
 - `external_ram`. The 12 raw bytes are always kept. Structured access,
   battery and addresses are set when the field starts with `RA` and the type
   byte is one of `0xA0`, `0xB0`, `0xB8`, `0xE0`, `0xF0`, `0xF8`.

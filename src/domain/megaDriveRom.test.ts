@@ -183,13 +183,13 @@ it("flags ROM and RAM ranges that disagree with the image", () => {
 
   const ram = decoded(megaDriveRom({ ramStart: 0xff, ramEnd: 0x10 }));
   expect(ram.limitations.join("\n")).toContain("before RAM start");
-  expect(ram.limitations.join("\n")).not.toContain("work-RAM window");
+  expect(ram.limitations.join("\n")).not.toContain("64 KiB work RAM");
 
   const oversizedRam = decoded(
     megaDriveRom({ ramStart: 0, ramEnd: 0xffff_ffff }),
   );
   expect(oversizedRam.complete).toBe(false);
-  expect(oversizedRam.limitations.join("\n")).toContain("work-RAM window");
+  expect(oversizedRam.limitations.join("\n")).toContain("64 KiB work RAM");
   expect(oversizedRam.metadata.ram).toEqual({ start: 0, end: 0xffff_ffff });
 
   // SGDK declares work RAM with a nonzero top byte, which the 68000's 24-bit
@@ -197,19 +197,35 @@ it("flags ROM and RAM ranges that disagree with the image", () => {
   const sgdkRam = decoded(
     megaDriveRom({ ramStart: 0xe0ff_0000, ramEnd: 0xe0ff_ffff }),
   );
-  expect(sgdkRam.limitations.join("\n")).not.toContain("work-RAM window");
+  expect(sgdkRam.limitations.join("\n")).not.toContain("64 KiB work RAM");
   expect(sgdkRam.metadata.ram).toEqual({
     start: 0xe0ff_0000,
     end: 0xe0ff_ffff,
   });
+  // Work RAM is mirrored every 64 KiB through 0xE00000-0xFFFFFF (Genesis
+  // Plus GX gen_init), so a lower mirror is the same RAM; a range larger
+  // than the 64 KiB RAM still is not.
+  const mirroredRam = decoded(
+    megaDriveRom({ ramStart: 0x00e0_0000, ramEnd: 0x00e0_ffff }),
+  );
+  expect(mirroredRam.limitations.join("\n")).not.toContain("64 KiB work RAM");
+  expect(mirroredRam.metadata.ram).toEqual({
+    start: 0x00e0_0000,
+    end: 0x00e0_ffff,
+  });
+  const wholeMirror = decoded(
+    megaDriveRom({ ramStart: 0x00e0_0000, ramEnd: 0x00ff_ffff }),
+  );
+  expect(wholeMirror.limitations.join("\n")).toContain("64 KiB work RAM");
+
   const wrappedRam = decoded(
     megaDriveRom({ ramStart: 0x00ff_0000, ramEnd: 0x0100_0000 }),
   );
-  expect(wrappedRam.limitations.join("\n")).toContain("work-RAM window");
+  expect(wrappedRam.limitations.join("\n")).toContain("64 KiB work RAM");
 
   const wrongRam = decoded(megaDriveRom({ ramStart: 0, ramEnd: 0xffff }));
   expect(wrongRam.complete).toBe(false);
-  expect(wrongRam.limitations.join("\n")).toContain("work-RAM window");
+  expect(wrongRam.limitations.join("\n")).toContain("64 KiB work RAM");
   expect(wrongRam.metadata.ram).toEqual({ start: 0, end: 0xffff });
 
   const trailing = decoded(megaDriveRom({ romEnd: 0x2ff }));
@@ -316,6 +332,20 @@ it("classifies region letters, one hex digit and other text", () => {
   expect(decoded(megaDriveRom({ regions: "Z" })).metadata.region_style).toBe(
     "other",
   );
+});
+
+it("compares the reset PC with the ROM range on the 68000's 24-bit bus", () => {
+  // The top byte is not driven, so 0xFF000200 fetches from 0x200, inside
+  // the default 0x0-0x3FF ROM range. The declared vector is kept as written.
+  const highByte = decoded(megaDriveRom({ resetPc: 0xff00_0200 }));
+  expect(highByte.limitations.join("\n")).not.toContain(
+    "outside the declared ROM range",
+  );
+  expect(highByte.complete).toBe(true);
+  expect(highByte.metadata.reset_pc).toBe(0xff00_0200);
+  expect(
+    decoded(megaDriveRom({ resetPc: 0xff00_0400 })).limitations.join("\n"),
+  ).toContain("outside the declared ROM range");
 });
 
 it("flags an odd reset PC and a reset PC outside the ROM range", () => {

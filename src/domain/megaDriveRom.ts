@@ -98,17 +98,56 @@ const DEVICE_LETTERS = new Set([
 
 const REGION_LETTERS = new Set(["J", "U", "E", "A", "B"]);
 
-/** Mega Drive 64 KiB 68000 work-RAM address window. */
-const WORK_RAM_START = 0x00ff_0000;
-const WORK_RAM_END = 0x00ff_ffff;
-
 /**
- * The address the 68000 drives for a declared longword. Its bus has 24
- * address lines, so the top byte is ignored: SGDK headers declare work RAM
- * as `0xE0FF0000`-`0xE0FFFFFF`, the same window as `0x00FF0000`-`0x00FFFFFF`.
- * Metadata keeps the declared values; only the window check uses this.
+ * The 68000 side of the Mega Drive memory map, and the only place header
+ * addresses are interpreted. Metadata keeps every declared value; these
+ * helpers decide only whether a declared address means what the header
+ * field says.
+ *
+ * The MC68000 drives 24 address lines, so the top byte of a longword
+ * address is ignored: SGDK headers declare work RAM as
+ * `0xE0FF0000`-`0xE0FFFFFF`, and a reset vector of `0xFF000200` fetches
+ * from `0x200`. The 64 KiB work RAM is mirrored every 64 KiB through
+ * `0xE00000`-`0xFFFFFF` (Genesis Plus GX `gen_init` maps pages `0xE0`
+ * through `0xFF` to it), so `0xE00000`-`0xE0FFFF` is the same RAM as
+ * `0xFF0000`-`0xFFFFFF`.
  */
-const busAddress = (declared: number): number => declared & 0x00ff_ffff;
+const M68000_ADDRESS_MASK = 0x00ff_ffff;
+const WORK_RAM_BYTES = 0x1_0000;
+const WORK_RAM_MIRROR_START = 0x00e0_0000;
+const WORK_RAM_MIRROR_END = 0x00ff_ffff;
+
+const busAddress = (declared: number): number =>
+  (declared & M68000_ADDRESS_MASK) >>> 0;
+
+/** Whether `[start, end]` is an ordered bus range that `outer` contains. */
+const busRangeWithin = (
+  start: number,
+  end: number,
+  outer: { readonly start: number; readonly end: number },
+): boolean => {
+  const from = busAddress(start);
+  const to = busAddress(end);
+  return to >= from && from >= outer.start && to <= outer.end;
+};
+
+/** At most 64 KiB inside the work-RAM mirror, on the 24-bit bus. */
+const addressesWorkRam = (start: number, end: number): boolean =>
+  busRangeWithin(start, end, {
+    start: WORK_RAM_MIRROR_START,
+    end: WORK_RAM_MIRROR_END,
+  }) && busAddress(end) - busAddress(start) + 1 <= WORK_RAM_BYTES;
+
+/** Whether the 68000 fetches `address` from inside the declared ROM range. */
+const addressesRom = (
+  address: number,
+  romStart: number,
+  romEnd: number,
+): boolean =>
+  busRangeWithin(address, address, {
+    start: busAddress(romStart),
+    end: busAddress(romEnd),
+  });
 
 const EXTERNAL_RAM_TYPES: Readonly<
   Record<
@@ -571,13 +610,9 @@ const parseMegaDriveImage = (
     note(
       `Declared RAM end 0x${ramEnd.toString(16)} is before RAM start 0x${ramStart.toString(16)}.`,
     );
-  else if (
-    busAddress(ramStart) < WORK_RAM_START ||
-    busAddress(ramEnd) > WORK_RAM_END ||
-    busAddress(ramEnd) < busAddress(ramStart)
-  )
+  else if (!addressesWorkRam(ramStart, ramEnd))
     note(
-      `Declared RAM range 0x${ramStart.toString(16)}-0x${ramEnd.toString(16)} is outside the 64 KiB work-RAM window 0x${WORK_RAM_START.toString(16)}-0x${WORK_RAM_END.toString(16)} on the 68000's 24-bit address bus.`,
+      `Declared RAM range 0x${ramStart.toString(16)}-0x${ramEnd.toString(16)} is not within the 64 KiB work RAM, which the 68000's 24-bit bus mirrors through 0x${WORK_RAM_MIRROR_START.toString(16)}-0x${WORK_RAM_MIRROR_END.toString(16)}.`,
     );
 
   const externalRaw = image.subarray(
@@ -626,7 +661,7 @@ const parseMegaDriveImage = (
     note(
       `Reset PC 0x${resetPc.toString(16)} is odd; a 68000 fetches instructions from even addresses.`,
     );
-  if (romOrdered && (resetPc < romStart || resetPc > romEnd))
+  if (romOrdered && !addressesRom(resetPc, romStart, romEnd))
     note(
       `Reset PC 0x${resetPc.toString(16)} lies outside the declared ROM range 0x${romStart.toString(16)}-0x${romEnd.toString(16)}.`,
     );

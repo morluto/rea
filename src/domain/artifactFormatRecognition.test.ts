@@ -411,6 +411,24 @@ it("recognizes a Mega Drive image and an SMD dump, and yields to ELF", () => {
       espFlashLayout: false,
     }),
   ).toMatchObject({ state: "recognized", format: "mega-drive-rom" });
+  // 233 and 489 blocks put 0xE9, the ESP image magic, in the copier
+  // header's block-count byte. The SMD signature is decided before the ESP
+  // image, and before the ESP flash layout needs another read. The prefix
+  // reaches the ISO 9660 descriptor at 32 KiB, as inventory routes read it.
+  for (const blocks of [233, 489]) {
+    const collides = interleaveMegaDriveSmd(
+      megaDriveRom({ imageBytes: blocks * 16 * 1024 }),
+    );
+    expect(collides[0]).toBe(0xe9);
+    for (const espFlashLayout of [false, undefined])
+      expect(
+        recognizeArtifactFormat({
+          prefix: collides.subarray(0, 0x9000),
+          fileSize: collides.length,
+          espFlashLayout,
+        }),
+      ).toMatchObject({ state: "recognized", format: "mega-drive-rom" });
+  }
   const elf = megaDriveRom();
   elf[0] = 0x7f;
   elf[1] = 0x45;
