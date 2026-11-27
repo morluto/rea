@@ -17,7 +17,6 @@ import {
   ghidraLanguageIdSchema,
 } from "./ghidraLanguageOverride.js";
 import { ghidraDisabledAnalyzersSchema } from "./ghidraDisabledAnalyzers.js";
-import { ghidraCParserEnvironmentSchemas } from "./ghidraCParserLimits.js";
 import {
   DEFAULT_SWIFTC_COMPILE_TIMEOUT_MS,
   providerStartupTimeoutSchema,
@@ -103,7 +102,6 @@ const environmentSchema = z.object({
   REA_GHIDRA_LANGUAGE_ID: ghidraLanguageIdSchema.optional(),
   REA_GHIDRA_COMPILER_SPEC_ID: ghidraCompilerSpecIdSchema.optional(),
   REA_GHIDRA_DISABLED_ANALYZERS: ghidraDisabledAnalyzersSchema.optional(),
-  ...ghidraCParserEnvironmentSchemas,
   REA_GHIDRA_SEED_FILE: z
     .string()
     .min(1)

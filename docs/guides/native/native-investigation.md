@@ -1521,43 +1521,46 @@ Ghidra's C parser accepts several constructs and records nothing for them. REA
 refuses those before parsing, names the construct and its line and column, and
 changes nothing:
 
-| Construct                                                                                                           | `signature`            | `declarations`                        |
-| ------------------------------------------------------------------------------------------------------------------- | ---------------------- | ------------------------------------- |
-| `__attribute__`, `__declspec`, `_Alignas`, `__packed`, asm labels                                                   | refused                | refused; use `#pragma pack` to pack   |
-| `static`, `extern`, `inline`, `register`, `auto`, `_Thread_local`                                                   | refused                | refused                               |
-| Variable declarations and other non-type statements                                                                 | refused                | refused                               |
-| Preprocessor directives                                                                                             | refused                | refused except `#pragma pack`         |
-| String and character literals                                                                                       | refused                | refused                               |
-| Function body, default argument, second declaration                                                                 | refused                | not applicable                        |
-| Function pointers                                                                                                   | refused                | refused                               |
-| Unnamed enum; unnamed struct or union other than `typedef struct { } name`                                          | refused                | refused                               |
-| Repeated parameter or member name; struct or union without members                                                  | refused                | refused                               |
-| Array parameter (Ghidra stores a pointer)                                                                           | refused                | not applicable                        |
-| A type name the database holds as different types                                                                   | refused                | refused                               |
-| `#pragma pack`, bit-fields, flexible and zero-length arrays, enum constant expressions, several typedef declarators | not applicable         | applied; the stored layout shows them |
-| `_Noreturn`, a calling convention the compiler specification defines                                                | applied                | not applicable                        |
-| `const`, `volatile`                                                                                                 | accepted, not recorded | accepted, not recorded                |
+| Construct                                                                                                           | `signature`        | `declarations`                        |
+| ------------------------------------------------------------------------------------------------------------------- | ------------------ | ------------------------------------- |
+| `__attribute__`, `__declspec`, `_Alignas`, `__packed`, asm labels                                                   | refused            | refused; use `#pragma pack` to pack   |
+| `static`, `extern`, `inline`, `register`, `auto`, `_Thread_local`                                                   | refused            | refused                               |
+| Variable declarations and other non-type statements                                                                 | refused            | refused                               |
+| Preprocessor directives                                                                                             | refused            | refused except `#pragma pack`         |
+| String and character literals                                                                                       | refused            | refused                               |
+| Function body, default argument, second declaration                                                                 | refused            | not applicable                        |
+| Function pointers                                                                                                   | refused            | refused                               |
+| Unnamed enum; unnamed struct or union other than `typedef struct { } name`                                          | refused            | refused                               |
+| Repeated parameter or member name; struct or union without members                                                  | refused            | refused                               |
+| Array parameter (Ghidra stores a pointer)                                                                           | refused            | not applicable                        |
+| A type name the database holds as different types                                                                   | refused            | refused                               |
+| `#pragma pack`, bit-fields, flexible and zero-length arrays, enum constant expressions, several typedef declarators | not applicable     | applied; the stored layout shows them |
+| `_Noreturn`, a calling convention the compiler specification defines                                                | applied            | not applicable                        |
+| `const`, `volatile`                                                                                                 | accepted, reported | accepted, reported                    |
 
 `const` and `volatile` have no representation in Ghidra's type system and no
-effect on layout or storage, so the stored type and the readback omit them. A
+effect on layout or storage, so the stored type and the readback omit them.
+The result's `dropped_qualifiers` lists each one with its line and column, and
+for a signature its zero-based `parameter_index` (`null` for the return type),
+so the omission is visible without comparing the text with the readback. A
 type name that exists in several categories is accepted only when every type
 of that name is equivalent; otherwise the refusal lists their category paths,
 because C text cannot select one.
 
-Ghidra's C parser cannot be cancelled, so three launch controls bound the text
-it parses. They are read when REA starts, are not runtime analysis settings,
-and a refusal names the control, its effective value, source and range:
+Ghidra's C parser cannot be cancelled, so REA bounds the text it parses. Each
+length has a per-call parameter, and a refusal names it with its effective
+value, range and the text's length:
 
-| Environment                              | Default | Range    | Bounds                              |
-| ---------------------------------------- | ------: | -------- | ----------------------------------- |
-| `REA_GHIDRA_SIGNATURE_MAX_UTF16`         |    2048 | 16..4096 | UTF-16 code units of `signature`    |
-| `REA_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16` |    4096 | 16..8192 | UTF-16 code units of `declarations` |
-| `REA_GHIDRA_C_MAX_PARENTHESIS_DEPTH`     |       8 | 1..12    | nested parentheses in either text   |
+| Parameter                                             | Default | Range    | Bounds                              |
+| ----------------------------------------------------- | ------: | -------- | ----------------------------------- |
+| `signature_max_utf16` (`annotate_native_function`)    |    2048 | 16..4096 | UTF-16 code units of `signature`    |
+| `declarations_max_utf16` (`define_native_data_types`) |    4096 | 16..8192 | UTF-16 code units of `declarations` |
 
+Parentheses in either text nest at most 8 levels; that ceiling is fixed.
 The maxima follow measured parse times on Ghidra 12.2: the slowest admitted
 text at the maxima took about 7 seconds (a single chain of 8192 pointer
-declarators), and 2.2 seconds at 12 levels of parentheses; twice the length
-took 100 seconds and each further level doubles the time. Split a larger set
+declarators); twice the length took 100 seconds. Each level of parentheses
+doubles the time (12 levels took 2.2 seconds). Split a larger set
 of definitions across calls. Both edits invalidate immutable analysis
 snapshots and persist exactly as names and comments do: saved on normal close
 in checkpoint mode, discarded otherwise. Cancelling an active edit stops the

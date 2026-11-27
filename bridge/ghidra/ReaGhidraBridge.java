@@ -251,7 +251,6 @@ public final class ReaGhidraBridge extends HeadlessScript {
         existingProject = descriptor.existingProject;
         decompileTimeoutSeconds = descriptor.decompileTimeoutSeconds();
         entryContextRegisters = descriptor.entryContextRegisters();
-        cParserLimits = descriptor.cParserLimits();
         // Windows retains a native immutable bearer descriptor lease until
         // runtime_close; POSIX removes it after this read. Normal cleanup removes
         // the Windows file, while abrupt owner death can leave private residue.
@@ -1846,7 +1845,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     private JsonObject annotateNativeFunction(JsonObject params) throws Exception {
-        if (!Set.of("procedure", "name", "comment", "inline_comment", "signature").containsAll(params.keySet()))
+        if (!Set.of("procedure", "name", "comment", "inline_comment", "signature", "signature_max_utf16")
+                .containsAll(params.keySet()))
             throw new RequestFailure("invalid_request", "Unknown function annotation field");
         if (!params.has("name") && !params.has("comment") && !params.has("inline_comment") && !params.has("signature"))
             throw new RequestFailure("invalid_request", "Supply at least one annotation change");
@@ -1858,8 +1858,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
             if (params.has(field)) validateAnnotationText(requireText(params, field), field);
         }
         // Parsing reads the type database without writing it, so a refused prototype needs no rollback.
-        FunctionDefinitionDataType prototype = params.has("signature")
-            ? parseFunctionSignature(function, requireText(params, "signature")) : null;
+        int signatureBound = callerCTextBound(
+            params, "signature_max_utf16", DEFAULT_FUNCTION_SIGNATURE_UTF16, MAX_FUNCTION_SIGNATURE_UTF16);
+        SignatureEdit signature = params.has("signature")
+            ? parseFunctionSignature(function, requireText(params, "signature"), signatureBound) : null;
+        FunctionDefinitionDataType prototype = signature == null ? null : signature.prototype();
         int transaction = currentProgram.startTransaction("REA function annotations");
         boolean commit = false;
         try {
@@ -1895,6 +1898,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
             JsonObject result = new JsonObject();
             result.add("annotations", readback);
             result.add("dossier", analyzeFunction(query));
+            if (signature != null && !signature.droppedQualifiers().isEmpty())
+                result.add("dropped_qualifiers", signature.droppedQualifiers());
             JsonObject effects = new JsonObject();
             effects.addProperty("scope", "session-analysis-database");
             effects.addProperty("source_bytes_modified", false);
@@ -1914,21 +1919,25 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
     }
 
-    // Ghidra's C parser cannot be cancelled, so these launch controls bound its work.
+    // Ghidra's C parser cannot be cancelled, so REA bounds the text it parses.
     // Measured on Ghidra 12.2 (arm64 macOS): the slowest shape per character is one
     // chain of pointer declarators, cubic in its length: 0.3 s at 2048 UTF-16 units,
-    // 0.8 s at 4096, 6.8 s at 8192 and 100 s at 16384. Each level of nested
-    // parentheses in an expression doubles its parse time, and the cost repeats per
-    // occurrence: 8192 units filled at depth 8 take 0.2 s, at depth 12 2.2 s.
-    // The maxima keep the slowest admitted text under about 7 s.
+    // 0.8 s at 4096, 6.8 s at 8192 and 100 s at 16384. The per-call length controls
+    // (signature_max_utf16, declarations_max_utf16) stop at those maxima, keeping
+    // the slowest admitted text under about 7 s; the TypeScript contract owns the
+    // same defaults and ranges. Each level of nested parentheses in an expression
+    // doubles parse time and the cost repeats per occurrence (8192 units filled at
+    // depth 8 take 0.2 s, at depth 12 2.2 s), so nesting has one fixed ceiling.
     private static final int MIN_C_TEXT_UTF16 = 16;
+    private static final int DEFAULT_FUNCTION_SIGNATURE_UTF16 = 2048;
     private static final int MAX_FUNCTION_SIGNATURE_UTF16 = 4096;
+    private static final int DEFAULT_TYPE_DECLARATIONS_UTF16 = 4096;
     private static final int MAX_TYPE_DECLARATIONS_UTF16 = 8192;
-    private static final int MIN_C_PARENTHESIS_DEPTH = 1;
-    private static final int MAX_C_PARENTHESIS_DEPTH = 12;
-    private record CParserLimits(int signatureUtf16, int declarationsUtf16, int parenthesisDepth) {}
-    private static final CParserLimits DEFAULT_C_PARSER_LIMITS = new CParserLimits(2048, 4096, 8);
-    private CParserLimits cParserLimits = DEFAULT_C_PARSER_LIMITS;
+    private static final int MAX_C_PARENTHESIS_DEPTH = 8;
+    private static final Set<String> C_CONST_QUALIFIERS = Set.of("const", "__const", "__const__");
+    private static final Set<String> C_VOLATILE_QUALIFIERS = Set.of("volatile", "__volatile", "__volatile__");
+    /** Accepted caller C and the qualifiers Ghidra's types cannot record. */
+    private record ParsedCallerC(CParser parser, JsonArray droppedQualifiers) {}
     // Data types carry no SourceType; this category is the persisted mark of caller authorship.
     private static final CategoryPath CALLER_DEFINED_TYPES = new CategoryPath("/rea_caller_defined");
     // Ghidra's parser accepts these and records nothing for them.
@@ -1954,10 +1963,14 @@ public final class ReaGhidraBridge extends HeadlessScript {
      * A declarations text may hold only struct, union, enum and typedef
      * definitions and #pragma pack; a signature holds one prototype.
      */
-    private void admitCallerC(String text, String field, boolean declarations, String code) {
+    private static JsonArray admitCallerC(String text, String field, boolean declarations, String code) {
         final int start = 0, tag = 1, named = 2, body = 3, afterBody = 4, typedef = 5;
         int state = start;
         int line = 1, lineStart = 0, parentheses = 0, braces = 0;
+        // A signature's parameter index: -1 before its parameter list opens, the return type.
+        int parameter = -1;
+        boolean parametersClosed = false;
+        JsonArray dropped = new JsonArray();
         String previous = "";
         String definition = "";
         boolean ended = false;
@@ -2013,16 +2026,34 @@ public final class ReaGhidraBridge extends HeadlessScript {
                         (declarations ? " (use #pragma pack for packing)" : ""), line, column);
                 if (UNAPPLIED_C_SPECIFIERS.contains(token) || (!declarations && token.equals("typedef")))
                     throw refusedConstruct(code, field, "the specifier " + token, line, column);
+                boolean isConst = C_CONST_QUALIFIERS.contains(token);
+                if (isConst || C_VOLATILE_QUALIFIERS.contains(token)) {
+                    JsonObject qualifier = new JsonObject();
+                    qualifier.addProperty("qualifier", isConst ? "const" : "volatile");
+                    qualifier.addProperty("line", line);
+                    qualifier.addProperty("column", column);
+                    if (!declarations)
+                        qualifier.add("parameter_index", parameter < 0 || parametersClosed
+                            ? JsonNull.INSTANCE : GSON.toJsonTree(parameter));
+                    dropped.add(qualifier);
+                }
             } else {
                 token = String.valueOf(character);
             }
             index += token.length();
             if (ended && !token.equals(";"))
                 throw refusedConstruct(code, field, "a second declaration", line, column);
-            if (token.equals("(") && ++parentheses > cParserLimits.parenthesisDepth())
+            if (token.equals("(") && ++parentheses > MAX_C_PARENTHESIS_DEPTH)
                 throw new RequestFailure("parenthesis_depth_limit", field + " nests parentheses " + parentheses +
                     " levels deep at line " + line + ", column " + column);
-            if (token.equals(")")) parentheses = Math.max(0, parentheses - 1);
+            if (!declarations && parentheses == 1 && !parametersClosed) {
+                if (token.equals("(") && parameter < 0) parameter = 0;
+                else if (token.equals(",")) parameter++;
+            }
+            if (token.equals(")")) {
+                if (!declarations && parentheses == 1 && parameter >= 0) parametersClosed = true;
+                parentheses = Math.max(0, parentheses - 1);
+            }
             if (previous.equals("enum") && token.equals("{"))
                 throw refusedConstruct(code, field, "an unnamed enum, which Ghidra would store under a generated name", line, column);
             if (!declarations) {
@@ -2075,18 +2106,28 @@ public final class ReaGhidraBridge extends HeadlessScript {
             }
             previous = token;
         }
+        return dropped;
     }
 
     private static final Pattern PRAGMA_PACK = Pattern.compile("#\\s*pragma\\s+pack\\s*\\([^()]*\\)");
 
+    /** The caller's per-call bound on one C text, or its default; the contract owns the range. */
+    private static int callerCTextBound(JsonObject params, String name, int defaultValue, int maximum) {
+        if (!params.has(name)) return defaultValue;
+        int bound = requireInteger(params, name);
+        if (bound < MIN_C_TEXT_UTF16 || bound > maximum)
+            throw new RequestFailure("invalid_request", name + " must be from " + MIN_C_TEXT_UTF16 + " to " + maximum);
+        return bound;
+    }
+
     /** Parse caller C text against the type database without storing anything in it. */
-    private CParser parseCallerC(String text, String parsed, String field, boolean declarations, String code) {
+    private ParsedCallerC parseCallerC(
+            String text, String parsed, String field, boolean declarations, String code, int maximum) {
         validateAnnotationText(text, field);
-        int maximum = declarations ? cParserLimits.declarationsUtf16() : cParserLimits.signatureUtf16();
         if (text.length() > maximum)
             throw new RequestFailure(declarations ? "declarations_length_limit" : "signature_length_limit",
                 field + " has " + text.length() + " UTF-16 code units");
-        admitCallerC(text, field, declarations, code);
+        JsonArray dropped = admitCallerC(text, field, declarations, code);
         DataTypeManager types = currentProgram.getDataTypeManager();
         CParser parser = new CParser(types, false, new DataTypeManager[] { types });
         try {
@@ -2100,7 +2141,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
         if (!parser.didParseSucceed())
             throw new RequestFailure(code, "Ghidra's C parser rejected " + field + ": " + cParserReason(parser.getParseMessages()));
-        return parser;
+        return new ParsedCallerC(parser, dropped);
     }
 
     /**
@@ -2134,7 +2175,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return reason.length() > 240 ? reason.substring(0, 240) : reason;
     }
 
-    private FunctionDefinitionDataType parseFunctionSignature(Function function, String text) {
+    /** A parsed prototype and the qualifiers in its text that Ghidra does not record. */
+    private record SignatureEdit(FunctionDefinitionDataType prototype, JsonArray droppedQualifiers) {}
+
+    private SignatureEdit parseFunctionSignature(Function function, String text, int maximum) {
         String code = "invalid_function_signature";
         String entry = canonicalAddress(function.getEntryPoint());
         // Ghidra redirects a thunk's prototype to the thunked function, which may be external.
@@ -2142,7 +2186,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
             throw new RequestFailure(code, "Function at " + entry + " is a thunk; its prototype belongs to the function it forwards to");
         String stripped = text.strip();
         // The parser needs a terminated declaration; the bounds apply to the caller's text.
-        CParser parser = parseCallerC(text, stripped.endsWith(";") ? stripped : stripped + ";", "signature", false, code);
+        ParsedCallerC parsed = parseCallerC(
+            text, stripped.endsWith(";") ? stripped : stripped + ";", "signature", false, code, maximum);
+        CParser parser = parsed.parser();
         // The parser invents an empty composite for an undefined struct, union or enum tag.
         Set<String> undefined = new TreeSet<>(parser.getComposites().keySet());
         undefined.addAll(parser.getEnums().keySet());
@@ -2163,7 +2209,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             requireUnambiguousType(parameter.getDataType());
         }
         requireUnambiguousType(prototype.getReturnType());
-        return prototype;
+        return new SignatureEdit(prototype, parsed.droppedQualifiers());
     }
 
     private void applyFunctionSignature(Function function, FunctionDefinitionDataType prototype) throws Exception {
@@ -2204,10 +2250,13 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     private JsonObject defineNativeDataTypes(JsonObject params) throws Exception {
-        requireKeys(params, Set.of("declarations"));
+        if (!Set.of("declarations", "declarations_max_utf16").containsAll(params.keySet()) || !params.has("declarations"))
+            throw new RequestFailure("invalid_request", "Bridge request fields are invalid");
         String code = "invalid_type_declarations";
         String declarations = requireText(params, "declarations");
-        CParser parser = parseCallerC(declarations, declarations, "declarations", true, code);
+        ParsedCallerC parsedDeclarations = parseCallerC(declarations, declarations, "declarations", true, code,
+            callerCTextBound(params, "declarations_max_utf16", DEFAULT_TYPE_DECLARATIONS_UTF16, MAX_TYPE_DECLARATIONS_UTF16));
+        CParser parser = parsedDeclarations.parser();
         if (!parser.getFunctions().isEmpty())
             throw new RequestFailure(code, "declarations must not declare functions or function-pointer members: " +
                 String.join(", ", new TreeSet<>(parser.getFunctions().keySet())));
@@ -2272,6 +2321,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
             }
             JsonObject result = new JsonObject();
             result.add("types", rows);
+            if (!parsedDeclarations.droppedQualifiers().isEmpty())
+                result.add("dropped_qualifiers", parsedDeclarations.droppedQualifiers());
             JsonObject effects = new JsonObject();
             effects.addProperty("scope", "session-analysis-database");
             effects.addProperty("source_bytes_modified", false);
@@ -6820,25 +6871,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             keys.add("existing_project");
         if (parsed.isJsonObject() && parsed.getAsJsonObject().has("entry_context_register"))
             keys.add("entry_context_register");
-        if (parsed.isJsonObject() && parsed.getAsJsonObject().has("c_parser_limits"))
-            keys.add("c_parser_limits");
         JsonObject object = requireObject(parsed, keys);
-        CParserLimits cParserLimits = DEFAULT_C_PARSER_LIMITS;
-        if (object.has("c_parser_limits")) {
-            JsonObject limits = requireObject(object.get("c_parser_limits"),
-                Set.of("signature_max_utf16", "declarations_max_utf16", "max_parenthesis_depth"));
-            cParserLimits = new CParserLimits(
-                requireInteger(limits, "signature_max_utf16"),
-                requireInteger(limits, "declarations_max_utf16"),
-                requireInteger(limits, "max_parenthesis_depth"));
-            if (cParserLimits.signatureUtf16() < MIN_C_TEXT_UTF16 ||
-                cParserLimits.signatureUtf16() > MAX_FUNCTION_SIGNATURE_UTF16 ||
-                cParserLimits.declarationsUtf16() < MIN_C_TEXT_UTF16 ||
-                cParserLimits.declarationsUtf16() > MAX_TYPE_DECLARATIONS_UTF16 ||
-                cParserLimits.parenthesisDepth() < MIN_C_PARENTHESIS_DEPTH ||
-                cParserLimits.parenthesisDepth() > MAX_C_PARENTHESIS_DEPTH)
-                throw new IllegalArgumentException("REA session descriptor is invalid");
-        }
         List<String> entryContext = List.of();
         if (object.has("entry_context_register")) {
             String register = requireString(object, "entry_context_register");
@@ -6863,8 +6896,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             object.has("analysis_extensions") ? object.getAsJsonArray("analysis_extensions") : new JsonArray(),
             decompileTimeout,
             object.has("existing_project") && requireBoolean(object, "existing_project"),
-            entryContext,
-            cParserLimits
+            entryContext
         );
     }
 
@@ -7409,8 +7441,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         JsonArray analysisExtensions,
         int decompileTimeoutSeconds,
         boolean existingProject,
-        List<String> entryContextRegisters,
-        CParserLimits cParserLimits
+        List<String> entryContextRegisters
     ) {}
     private static ValueFlowLimits defaultValueFlowLimits() {
         return new ValueFlowLimits(DEFAULT_HIGH_PCODE_OPS, DEFAULT_HIGH_PCODE_INPUTS_PER_OP, DEFAULT_HIGH_PCODE_DEF_USE_EDGES);

@@ -245,48 +245,75 @@ it.each([
   {
     operation: "annotate_native_function",
     field: "signature",
+    parameter: "signature_max_utf16",
     rangeMaximum: 4096,
   },
   {
     operation: "define_native_data_types",
     field: "declarations",
+    parameter: "declarations_max_utf16",
     rangeMaximum: 8192,
   },
 ] as const)(
-  "refuses $field beyond its control's range maximum before the bridge",
-  async ({ operation, field, rangeMaximum }) => {
+  "refuses $parameter outside its range before the bridge and forwards text of any length",
+  async ({ operation, field, parameter, rangeMaximum }) => {
+    const requests: Readonly<Record<string, JsonValue>>[] = [];
     const harness = await connectGhidraMcp(
       `ghidra-${field}-range`,
-      (requested) =>
-        Promise.resolve(
+      (requested, input) => {
+        requests.push(input);
+        return Promise.resolve(
           ok(
             requested === "define_native_data_types"
               ? { types: [SESSION_TYPE], effects: DEFINITION_EFFECTS }
               : annotationReply("int fixture_main(void)", "user_defined"),
           ),
-        ),
+        );
+      },
     );
     try {
-      const call = (length: number) =>
+      const call = (values: Record<string, JsonValue>) =>
         harness.mcp.callTool({
           name: operation,
           arguments: {
             ...(operation === "annotate_native_function"
               ? { procedure: "0x401000" }
               : {}),
-            [field]: "x".repeat(length),
+            ...values,
           },
         });
       const before = harness.calls.length;
-      const { error } = parseMcpToolError(await call(rangeMaximum + 1));
-      expect(error).toMatchObject({
-        code: "invalid_request",
-        details: { issues: [{ path: [field], maximum: rangeMaximum }] },
-      });
+      for (const bound of [15, rangeMaximum + 1]) {
+        const { error } = parseMcpToolError(
+          await call({ [field]: SIGNATURE, [parameter]: bound }),
+        );
+        expect(error).toMatchObject({
+          code: "invalid_request",
+          details: { issues: [{ path: [parameter] }] },
+        });
+      }
+      if (operation === "annotate_native_function") {
+        // A bound without the text it bounds is an ignored option.
+        const { error } = parseMcpToolError(
+          await call({ name: "renamed", [parameter]: 64 }),
+        );
+        expect(error).toMatchObject({
+          code: "invalid_request",
+          details: { issues: [{ path: [parameter] }] },
+        });
+      }
       expect(harness.calls.length).toBe(before);
-      // Within the range the bridge, which holds the effective value, decides.
-      expect((await call(rangeMaximum)).isError).not.toBe(true);
-      expect(harness.calls.slice(before)).toEqual([operation]);
+      // The bridge measures the text, so a long one is the producer's to refuse.
+      const long = "x".repeat(rangeMaximum + 1);
+      expect((await call({ [field]: long })).isError).not.toBe(true);
+      expect(
+        (await call({ [field]: SIGNATURE, [parameter]: rangeMaximum })).isError,
+      ).not.toBe(true);
+      expect(requests.slice(-2).map((request) => request[parameter])).toEqual([
+        undefined,
+        rangeMaximum,
+      ]);
+      expect(requests.at(-2)?.[field]).toBe(long);
     } finally {
       await harness.close();
     }
@@ -295,61 +322,62 @@ it.each([
 
 it.each([
   {
+    name: "a default bound",
     operation: "annotate_native_function",
     remoteCode: "signature_length_limit",
-    message: "signature has 2049 UTF-16 code units",
-    environment: "REA_GHIDRA_SIGNATURE_MAX_UTF16",
-    configured: undefined,
+    text: "x".repeat(2049),
+    bound: undefined,
     limit: {
+      parameter: "signature_max_utf16",
       effective_value: 2048,
       minimum: 16,
       maximum: 4096,
       default_value: 2048,
+      required_value: 2049,
     },
-    source: "default",
     recovery:
-      /set REA_GHIDRA_SIGNATURE_MAX_UTF16 \(16\.\.4096\).*start a new REA process; update_analysis_settings does not change it/u,
+      /Pass a larger signature_max_utf16 on .*annotate_native_function.*\(at least 2049; range 16\.\.4096\), then retry/u,
   },
   {
+    name: "the caller's bound",
     operation: "define_native_data_types",
     remoteCode: "declarations_length_limit",
-    message: "declarations has 300 UTF-16 code units",
-    environment: "REA_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16",
-    configured: "256",
+    text: "x".repeat(300),
+    bound: 256,
     limit: {
+      parameter: "declarations_max_utf16",
       effective_value: 256,
       minimum: 16,
       maximum: 8192,
       default_value: 4096,
+      required_value: 300,
     },
-    source: "environment",
     recovery:
-      /Split the definitions across several calls.*REA_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16 \(16\.\.8192\)/u,
+      /Pass a larger declarations_max_utf16 .*at least 300; range 16\.\.8192/u,
   },
   {
+    name: "text above the maximum",
     operation: "define_native_data_types",
-    remoteCode: "parenthesis_depth_limit",
-    message:
-      "declarations nests parentheses 13 levels deep at line 1, column 30",
-    environment: "REA_GHIDRA_C_MAX_PARENTHESIS_DEPTH",
-    configured: "12",
-    limit: { effective_value: 12, minimum: 1, maximum: 12, default_value: 8 },
-    source: "environment",
+    remoteCode: "declarations_length_limit",
+    text: "x".repeat(8193),
+    bound: undefined,
+    limit: {
+      parameter: "declarations_max_utf16",
+      effective_value: 4096,
+      minimum: 16,
+      maximum: 8192,
+      default_value: 4096,
+      required_value: 8193,
+    },
     recovery:
-      /REA_GHIDRA_C_MAX_PARENTHESIS_DEPTH is already at its maximum of 12/u,
+      /requires 8193, above the declarations_max_utf16 maximum \(16\.\.8192\); narrow the request/u,
   },
 ] as const)(
-  "names $environment, its effective value, source and range when the bridge refuses over it",
-  async ({
-    operation,
-    remoteCode,
-    message,
-    environment,
-    configured,
-    limit,
-    source,
-    recovery,
-  }) => {
+  "binds a length refusal under $name to its per-call control",
+  async ({ operation, remoteCode, text, bound, limit, recovery }) => {
+    const field =
+      operation === "annotate_native_function" ? "signature" : "declarations";
+    const message = `${field} has ${String(text.length)} UTF-16 code units`;
     const harness = await connectGhidraMcp(
       `ghidra-${remoteCode}`,
       (requested, input) =>
@@ -358,19 +386,20 @@ it.each([
             ? err(new GhidraSessionError("remote", message, {}, { remoteCode }))
             : ok(ghidraFixtureResult(requested, input)),
         ),
-      configured === undefined
-        ? {}
-        : { configEnvironment: { [environment]: configured } },
     );
     try {
-      const reply = await harness.mcp.callTool({
-        name: operation,
-        arguments:
-          operation === "annotate_native_function"
-            ? { procedure: "0x401000", signature: SIGNATURE }
-            : { declarations: DECLARATIONS },
-      });
-      const { error } = parseMcpToolError(reply);
+      const { error } = parseMcpToolError(
+        await harness.mcp.callTool({
+          name: operation,
+          arguments: {
+            ...(operation === "annotate_native_function"
+              ? { procedure: "0x401000" }
+              : {}),
+            [field]: text,
+            ...(bound === undefined ? {} : { [limit.parameter]: bound }),
+          },
+        }),
+      );
       expect(error).toMatchObject({
         code: "resource_constraint",
         category: "resource_constraint",
@@ -378,31 +407,19 @@ it.each([
         details: {
           operation,
           limit: {
-            control_kind: "environment",
-            environment,
+            control_kind: "parameter",
             unit: "count",
-            applies_at: "next_startup",
+            applies_at: "next_call",
             ...limit,
-          },
-          reported_limits: {
-            boundary: environment,
-            maximum: limit.effective_value,
-            source,
-            range_minimum: limit.minimum,
-            range_maximum: limit.maximum,
-            default_value: limit.default_value,
           },
         },
       });
       expect(error.message).toContain(message);
       expect(error.message).toContain(
-        `${environment} admits at most ${String(limit.effective_value)}`,
+        `${limit.parameter} admits at most ${String(limit.effective_value)}`,
       );
-      expect(error.message).toContain(`source: ${source}`);
+      expect(error.message).toContain("Nothing in this call was applied");
       expect(error.remediation.action).toMatch(recovery);
-      expect(error.remediation.action).toContain(
-        "Nothing in this call was applied.",
-      );
       const next = await harness.mcp.callTool({
         name: "procedure_info",
         arguments: { procedure: "0x401000" },
@@ -413,6 +430,112 @@ it.each([
     }
   },
 );
+
+it("reports nested parentheses over the fixed nesting ceiling", async () => {
+  const message =
+    "declarations nests parentheses 9 levels deep at line 1, column 30";
+  const harness = await connectGhidraMcp(
+    "ghidra-parenthesis-depth",
+    (requested, input) =>
+      Promise.resolve(
+        requested === "define_native_data_types"
+          ? err(
+              new GhidraSessionError(
+                "remote",
+                message,
+                {},
+                { remoteCode: "parenthesis_depth_limit" },
+              ),
+            )
+          : ok(ghidraFixtureResult(requested, input)),
+      ),
+  );
+  try {
+    const { error } = parseMcpToolError(
+      await harness.mcp.callTool({
+        name: "define_native_data_types",
+        arguments: { declarations: DECLARATIONS },
+      }),
+    );
+    expect(error).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        operation: "define_native_data_types",
+        refusal: {
+          kind: "fixed_ceiling",
+          allowance: "The Ghidra C parenthesis nesting allowance",
+          allowance_kind: "count",
+          limit: 8,
+          unit: "levels",
+        },
+      },
+    });
+    expect(error.details).not.toHaveProperty("limit");
+    expect(error.message).toContain(message);
+    expect(error.remediation.action).toMatch(
+      /The allowance is 8 levels; this release has no runtime override\. Simplify the nested expression/u,
+    );
+  } finally {
+    await harness.close();
+  }
+});
+
+it("returns the qualifiers each edit could not record", async () => {
+  const qualifier = { qualifier: "const", line: 1, column: 14 };
+  const harness = await connectGhidraMcp(
+    "ghidra-dropped-qualifiers",
+    (requested) =>
+      Promise.resolve(
+        ok(
+          requested === "define_native_data_types"
+            ? {
+                types: [SESSION_TYPE],
+                dropped_qualifiers: [qualifier],
+                effects: DEFINITION_EFFECTS,
+              }
+            : {
+                ...(annotationReply(SIGNATURE, "user_defined") as Record<
+                  string,
+                  JsonValue
+                >),
+                dropped_qualifiers: [
+                  { ...qualifier, parameter_index: 0 },
+                  {
+                    qualifier: "volatile",
+                    line: 1,
+                    column: 1,
+                    parameter_index: null,
+                  },
+                ],
+              },
+        ),
+      ),
+  );
+  try {
+    const defined = await harness.mcp.callTool({
+      name: "define_native_data_types",
+      arguments: { declarations: DECLARATIONS },
+    });
+    expect(defined.structuredContent).toMatchObject({
+      normalized_result: { dropped_qualifiers: [qualifier] },
+    });
+    const annotated = await harness.mcp.callTool({
+      name: "annotate_native_function",
+      arguments: { procedure: "0x401000", signature: SIGNATURE },
+    });
+    expect(annotated.structuredContent).toMatchObject({
+      normalized_result: {
+        dropped_qualifiers: [
+          { ...qualifier, parameter_index: 0 },
+          { qualifier: "volatile", parameter_index: null },
+        ],
+      },
+    });
+  } finally {
+    await harness.close();
+  }
+});
 
 it.each(["annotate_native_function", "define_native_data_types"] as const)(
   "attributes an ambiguous type name in %s to its text and lists the recovery",

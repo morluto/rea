@@ -82,7 +82,6 @@ import {
   type GhidraPspExtension,
 } from "./GhidraPspExtension.js";
 import { errorMessage } from "../kernel/errorMessage.js";
-import type { GhidraCParserLimits } from "../config/ghidraCParserLimits.js";
 
 export interface GhidraLaunchSession {
   readonly runtimeRoot: string;
@@ -276,8 +275,6 @@ export interface GhidraHeadlessLauncherOptions {
   readonly disabledAnalyzers?: readonly string[];
   /** Per-function native decompiler limit passed to the bridge; absent is unbounded. */
   readonly decompileTimeoutSeconds?: number;
-  /** Bounds on caller C text the bridge parses; absent keeps the bridge defaults. */
-  readonly cParserLimits?: GhidraCParserLimits;
   /** Caller seeds committed by the analysis profile, applied before analysis. */
   readonly analysisSeeds?: GhidraSeedCommitment;
   readonly analysisExtensions?: readonly GhidraExtension[];
@@ -446,18 +443,6 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
           ...(extensions.length === 0
             ? {}
             : { analysis_extensions: extensions }),
-          ...(this.options.cParserLimits === undefined
-            ? {}
-            : {
-                c_parser_limits: {
-                  signature_max_utf16:
-                    this.options.cParserLimits.signatureMaxUtf16.value,
-                  declarations_max_utf16:
-                    this.options.cParserLimits.declarationsMaxUtf16.value,
-                  max_parenthesis_depth:
-                    this.options.cParserLimits.parenthesisDepth.value,
-                },
-              }),
           // The bridge reports this entry-context register in load-image observations.
           ...(this.options.rawBinary?.entryContext === undefined
             ? {}

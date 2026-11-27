@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { nativeMetadataRecoverySchema } from "./nativeMetadataRecovery.js";
-import { MAXIMUM_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16 } from "../analysisResourceLimits.js";
+import {
+  DEFAULT_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16,
+  MAXIMUM_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16,
+  MINIMUM_GHIDRA_C_TEXT_UTF16,
+} from "../analysisResourceLimits.js";
 
 /** Select a database type by exact category path or a defined typed data address. */
 export const nativeDataTypeInputSchema = z
@@ -18,11 +22,29 @@ export const nativeDataTypeDefinitionsInputSchema = z.strictObject({
   declarations: z
     .string()
     .min(1)
-    .max(MAXIMUM_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16)
     .describe(
       "C struct, union, enum and typedef definitions, e.g. `struct session { int id; char name[32]; struct session *next; };`. Members may use earlier definitions and existing database types.",
     ),
+  declarations_max_utf16: z
+    .int()
+    .min(MINIMUM_GHIDRA_C_TEXT_UTF16)
+    .max(MAXIMUM_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16)
+    .optional()
+    .describe(
+      `Longest declarations text to parse, in UTF-16 code units (default ${String(DEFAULT_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16)}); the C parser cannot be cancelled`,
+    ),
 });
+
+/** A const or volatile in caller C text, which Ghidra's types cannot record. */
+export const droppedCQualifierSchema = z.strictObject({
+  qualifier: z.enum(["const", "volatile"]),
+  line: z.int().positive(),
+  column: z.int().positive().describe("UTF-16 column in the caller's text"),
+});
+
+/** Present only when the caller's text held qualifiers that were not recorded. */
+export const droppedCQualifiersDescription =
+  "const and volatile in the caller's text that Ghidra has no representation for and did not record; absent when there were none";
 
 /** Readback of each type one atomic definition call stored or found unchanged. */
 export const nativeDataTypeDefinitionsSchema = z.strictObject({
@@ -44,6 +66,11 @@ export const nativeDataTypeDefinitionsSchema = z.strictObject({
       }),
     )
     .min(1),
+  dropped_qualifiers: z
+    .array(droppedCQualifierSchema)
+    .min(1)
+    .optional()
+    .describe(droppedCQualifiersDescription),
   effects: z.strictObject({
     scope: z.literal("session-analysis-database"),
     source_bytes_modified: z.literal(false),

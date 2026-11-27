@@ -45,30 +45,6 @@ export const NUMERIC_LIMIT_REGISTRY = [
       "Caps how many debugger sessions the session manager created at startup will admit. Changing the pool size of a manager that already exists requires a new REA process.",
   },
   {
-    name: "REA_GHIDRA_C_MAX_PARENTHESIS_DEPTH",
-    update_mode: "restart",
-    policy: "restart-only",
-    read: "startup",
-    reason:
-      "Written into the Ghidra bridge's session descriptor when the bridge starts. The bridge owns the C parser it bounds and keeps the value for its lifetime, and a session's edits must be admitted under one bound.",
-  },
-  {
-    name: "REA_GHIDRA_SIGNATURE_MAX_UTF16",
-    update_mode: "restart",
-    policy: "restart-only",
-    read: "startup",
-    reason:
-      "Written into the Ghidra bridge's session descriptor when the bridge starts. The bridge owns the C parser it bounds and keeps the value for its lifetime, and a session's edits must be admitted under one bound.",
-  },
-  {
-    name: "REA_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16",
-    update_mode: "restart",
-    policy: "restart-only",
-    read: "startup",
-    reason:
-      "Written into the Ghidra bridge's session descriptor when the bridge starts. The bridge owns the C parser it bounds and keeps the value for its lifetime, and a session's edits must be admitted under one bound.",
-  },
-  {
     name: "REA_HOPPER_DEMO_DIALOG_TIMEOUT_MS",
     update_mode: "restart",
     policy: "restart-only",

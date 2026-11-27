@@ -22,7 +22,6 @@ import { DEFAULT_REGEX_MATCHING_DEADLINE } from "./regexMatchingDeadline.js";
 import { DEFAULT_REGEX_WORKER_HEAP_REQUEST } from "./regexWorkerHeapRequest.js";
 import { DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET } from "./mcpToolsListPageBudget.js";
 import type { AppConfig } from "./types.js";
-import { ghidraCParserLimitsFrom } from "./ghidraCParserLimits.js";
 /**
  * Environment native analysis admits. JEB validates its own settings during
  * optional provider composition; that setting must not block unrelated
@@ -187,7 +186,6 @@ export const parseConfig = (
     ...(env.REA_GHIDRA_SEED_FILE === undefined
       ? {}
       : { ghidraSeedFile: env.REA_GHIDRA_SEED_FILE }),
-    ghidraCParserLimits: ghidraCParserLimitsFrom(env),
     ...(env.REA_GHIDRA_DISABLED_ANALYZERS === undefined
       ? {}
       : { ghidraDisabledAnalyzers: env.REA_GHIDRA_DISABLED_ANALYZERS }),

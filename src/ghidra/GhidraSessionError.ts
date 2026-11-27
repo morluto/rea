@@ -208,17 +208,21 @@ export type GhidraTypeEditRefusalCode =
   | "invalid_type_declarations"
   | "data_type_conflict";
 
-/** The launch control whose bound a refused prototype or definition text exceeded. */
-export const GHIDRA_C_PARSER_LIMIT_CODES = {
-  signature_length_limit: "signatureMaxUtf16",
-  declarations_length_limit: "declarationsMaxUtf16",
-  parenthesis_depth_limit: "parenthesisDepth",
-} as const;
+/** Bridge refusals of caller C text over a bound on Ghidra's uncancellable parser. */
+export const GHIDRA_C_PARSER_LIMIT_CODES = [
+  "signature_length_limit",
+  "declarations_length_limit",
+  "parenthesis_depth_limit",
+] as const;
+export type GhidraCParserLimitCode =
+  (typeof GHIDRA_C_PARSER_LIMIT_CODES)[number];
 
 export const isGhidraCParserLimitCode = (
   code: string | undefined,
-): code is keyof typeof GHIDRA_C_PARSER_LIMIT_CODES =>
-  code !== undefined && Object.hasOwn(GHIDRA_C_PARSER_LIMIT_CODES, code);
+): code is GhidraCParserLimitCode =>
+  (GHIDRA_C_PARSER_LIMIT_CODES as readonly (string | undefined)[]).includes(
+    code,
+  );
 
 export const isGhidraTypeEditRefusalCode = (
   code: string | undefined,

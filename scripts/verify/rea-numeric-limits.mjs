@@ -1180,30 +1180,6 @@ const restartOnlyBounds = (owners) => {
       exportedNumber(owners.limits, "MAXIMUM_DEBUGGER_MAX_SESSIONS"),
     ),
     bound(
-      "REA_GHIDRA_C_MAX_PARENTHESIS_DEPTH",
-      exportedNumber(owners.limits, "DEFAULT_GHIDRA_C_PARENTHESIS_DEPTH"),
-      exportedNumber(owners.limits, "MINIMUM_GHIDRA_C_PARENTHESIS_DEPTH"),
-      exportedNumber(owners.limits, "MAXIMUM_GHIDRA_C_PARENTHESIS_DEPTH"),
-    ),
-    bound(
-      "REA_GHIDRA_SIGNATURE_MAX_UTF16",
-      exportedNumber(owners.limits, "DEFAULT_GHIDRA_SIGNATURE_MAX_UTF16"),
-      exportedNumber(owners.limits, "MINIMUM_GHIDRA_C_TEXT_UTF16"),
-      exportedNumber(owners.limits, "MAXIMUM_GHIDRA_SIGNATURE_MAX_UTF16"),
-    ),
-    bound(
-      "REA_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16",
-      exportedNumber(
-        owners.limits,
-        "DEFAULT_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16",
-      ),
-      exportedNumber(owners.limits, "MINIMUM_GHIDRA_C_TEXT_UTF16"),
-      exportedNumber(
-        owners.limits,
-        "MAXIMUM_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16",
-      ),
-    ),
-    bound(
       "REA_HOPPER_DEMO_DIALOG_TIMEOUT_MS",
       exportedNumber(
         owners.hopperStartup,

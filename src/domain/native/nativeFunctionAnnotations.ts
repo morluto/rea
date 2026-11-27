@@ -1,6 +1,14 @@
 import { z } from "zod";
 import { functionDossierSchema } from "../native/functionDossier.js";
-import { MAXIMUM_GHIDRA_SIGNATURE_MAX_UTF16 } from "../analysisResourceLimits.js";
+import {
+  DEFAULT_GHIDRA_SIGNATURE_MAX_UTF16,
+  MAXIMUM_GHIDRA_SIGNATURE_MAX_UTF16,
+  MINIMUM_GHIDRA_C_TEXT_UTF16,
+} from "../analysisResourceLimits.js";
+import {
+  droppedCQualifierSchema,
+  droppedCQualifiersDescription,
+} from "./nativeDataType.js";
 
 /** One explicit function's analyst-authored metadata changes. */
 export const nativeFunctionAnnotationsInputSchema = z
@@ -23,10 +31,17 @@ export const nativeFunctionAnnotationsInputSchema = z
     signature: z
       .string()
       .min(1)
-      .max(MAXIMUM_GHIDRA_SIGNATURE_MAX_UTF16)
       .optional()
       .describe(
         "C prototype using types the database already holds, e.g. `double f(struct session *s, unsigned mask)`. Its function name is a placeholder; rename with name. Add missing types with define_native_data_types first.",
+      ),
+    signature_max_utf16: z
+      .int()
+      .min(MINIMUM_GHIDRA_C_TEXT_UTF16)
+      .max(MAXIMUM_GHIDRA_SIGNATURE_MAX_UTF16)
+      .optional()
+      .describe(
+        `Longest signature to parse, in UTF-16 code units (default ${String(DEFAULT_GHIDRA_SIGNATURE_MAX_UTF16)}); the C parser cannot be cancelled`,
       ),
   })
   .refine(
@@ -36,6 +51,15 @@ export const nativeFunctionAnnotationsInputSchema = z
       value.inline_comment !== undefined ||
       value.signature !== undefined,
     "Supply at least one annotation change",
+  )
+  .refine(
+    (value) =>
+      value.signature_max_utf16 === undefined || value.signature !== undefined,
+    {
+      path: ["signature_max_utf16"],
+      message:
+        "signature_max_utf16 bounds a signature; supply signature with it",
+    },
   );
 
 /** Readback and refreshed analysis after one atomic metadata edit. */
@@ -66,6 +90,19 @@ export const nativeFunctionAnnotationsSchema = z
         ),
     }),
     dossier: functionDossierSchema,
+    dropped_qualifiers: z
+      .array(
+        droppedCQualifierSchema.safeExtend({
+          parameter_index: z
+            .int()
+            .nonnegative()
+            .nullable()
+            .describe("Zero-based parameter; null for the return type"),
+        }),
+      )
+      .min(1)
+      .optional()
+      .describe(droppedCQualifiersDescription),
     effects: z.strictObject({
       scope: z.literal("session-analysis-database"),
       source_bytes_modified: z.literal(false),

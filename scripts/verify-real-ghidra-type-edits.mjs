@@ -114,22 +114,30 @@ async function connect(environment = {}) {
         action: error.remediation.action,
       };
     },
-    /** The refusal bound to one launch control of Ghidra's C parser. */
-    overLimit: async (name, args, expected) => {
+    /** The refusal bound to the per-call length control of Ghidra's C parser. */
+    overLimit: async (name, args, limit) => {
       const error = requireMcpToolError(await raw(name, args));
       assert.equal(error.code, "resource_constraint");
       assert.deepEqual(error.details.limit, {
-        control_kind: "environment",
+        control_kind: "parameter",
         unit: "count",
-        applies_at: "next_startup",
-        ...expected.limit,
+        applies_at: "next_call",
+        minimum: 16,
+        ...limit,
       });
-      assert.equal(error.details.reported_limits.source, expected.source);
-      assert.ok(error.message.includes(expected.limit.environment));
-      assert.match(
-        error.remediation.action,
-        /Nothing in this call was applied/u,
+      assert.ok(error.message.includes(limit.parameter));
+      assert.match(error.message, /Nothing in this call was applied/u);
+    },
+    /** The refusal of nesting over the fixed parenthesis ceiling. */
+    overNesting: async (name, args) => {
+      const error = requireMcpToolError(await raw(name, args));
+      assert.equal(error.code, "resource_constraint");
+      assert.equal(error.details.limit, undefined);
+      assert.deepEqual(
+        [error.details.refusal.kind, error.details.refusal.limit],
+        ["fixed_ceiling", 8],
       );
+      assert.match(error.message, /nests parentheses 9 levels deep/u);
     },
     close: () => owner.close(),
   };
@@ -220,58 +228,27 @@ int main(void) { struct session one = { 1, "one", 16, 1.5, 0 }; return (int)rea_
         );
         assert.match(syntax.message, /line 1, column/u);
         // The prototype's own parentheses are one level, so this reaches nine.
+        await first.overNesting("annotate_native_function", {
+          ...rejected,
+          signature: `int total(int a[${"(".repeat(8)}1${")".repeat(8)}])`,
+        });
+        const long = `int total(int a /* ${"x".repeat(2040)} */)`;
         await first.overLimit(
           "annotate_native_function",
+          { ...rejected, signature: long },
           {
-            ...rejected,
-            signature: `int total(int a[${"(".repeat(8)}1${")".repeat(8)}])`,
-          },
-          {
-            source: "default",
-            limit: {
-              environment: "REA_GHIDRA_C_MAX_PARENTHESIS_DEPTH",
-              effective_value: 8,
-              minimum: 1,
-              maximum: 12,
-              default_value: 8,
-            },
-          },
-        );
-        await first.overLimit(
-          "annotate_native_function",
-          {
-            ...rejected,
-            signature: `int total(int a /* ${"x".repeat(2040)} */)`,
-          },
-          {
-            source: "default",
-            limit: {
-              environment: "REA_GHIDRA_SIGNATURE_MAX_UTF16",
-              effective_value: 2048,
-              minimum: 16,
-              maximum: 4096,
-              default_value: 2048,
-            },
+            parameter: "signature_max_utf16",
+            effective_value: 2048,
+            maximum: 4096,
+            default_value: 2048,
+            required_value: long.length,
           },
         );
         // Parentheses inside comments are not nesting, and comments cannot hide it.
-        await first.overLimit(
-          "annotate_native_function",
-          {
-            ...rejected,
-            signature: `int total(int a[${"( /*)*/".repeat(8)}1${")".repeat(8)}])`,
-          },
-          {
-            source: "default",
-            limit: {
-              environment: "REA_GHIDRA_C_MAX_PARENTHESIS_DEPTH",
-              effective_value: 8,
-              minimum: 1,
-              maximum: 12,
-              default_value: 8,
-            },
-          },
-        );
+        await first.overNesting("annotate_native_function", {
+          ...rejected,
+          signature: `int total(int a[${"( /*)*/".repeat(8)}1${")".repeat(8)}])`,
+        });
         // Each is accepted by Ghidra's parser and applied differently or not at all.
         for (const [refusedSignature, reason] of [
           ["double total(int a, int a)", /repeats parameter name a/u],
@@ -410,6 +387,11 @@ typedef struct { volatile int k; } rea_unnamed_t;`,
             ["rea_unnamed_t", "struct", 4],
           ],
         );
+        // Both qualifiers' lines and columns in the declarations text above.
+        assert.deepEqual(applied.dropped_qualifiers, [
+          { qualifier: "const", line: 8, column: 50 },
+          { qualifier: "volatile", line: 10, column: 18 },
+        ]);
         const inspect = (name) =>
           first.call("inspect_native_data_type", {
             type: `/rea_caller_defined/${name}`,
@@ -578,20 +560,16 @@ typedef struct { volatile int k; } rea_unnamed_t;`,
           );
           assert.match(refusal.message, reason);
         }
+        const longDeclarations = `struct rea_kept { int a; /* ${"x".repeat(4096)} */ };`;
         await first.overLimit(
           "define_native_data_types",
+          { declarations: longDeclarations },
           {
-            declarations: `struct rea_kept { int a; /* ${"x".repeat(4096)} */ };`,
-          },
-          {
-            source: "default",
-            limit: {
-              environment: "REA_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16",
-              effective_value: 4096,
-              minimum: 16,
-              maximum: 8192,
-              default_value: 4096,
-            },
+            parameter: "declarations_max_utf16",
+            effective_value: 4096,
+            maximum: 8192,
+            default_value: 4096,
+            required_value: longDeclarations.length,
           },
         );
         for (const name of [
@@ -633,6 +611,10 @@ typedef struct { volatile int k; } rea_unnamed_t;`,
           signature_source: "user_defined",
           calling_convention: updated.annotations.calling_convention,
         });
+        // Ghidra has no const; the edit is applied and the qualifier reported.
+        assert.deepEqual(updated.dropped_qualifiers, [
+          { qualifier: "const", line: 1, column: 14, parameter_index: 0 },
+        ]);
         // The function had no calling convention. The locked storage is the
         // default convention's, and that convention is recorded with it.
         const api = updated.dossier.native_api;
@@ -669,6 +651,7 @@ typedef struct { volatile int k; } rea_unnamed_t;`,
           signature: updated.annotations.signature,
         });
         assert.deepEqual(replayed.annotations, updated.annotations);
+        assert.equal(replayed.dropped_qualifiers, undefined);
         return {};
       },
     );
@@ -713,54 +696,38 @@ typedef struct { volatile int k; } rea_unnamed_t;`,
     },
   );
   await phase(
-    "launch controls reach the bridge and bound the parsed text",
+    "per-call bounds reach the bridge and bound the parsed text",
     async () => {
-      const bounded = await connect({
-        REA_GHIDRA_SIGNATURE_MAX_UTF16: "64",
-        REA_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16: "48",
-        REA_GHIDRA_C_MAX_PARENTHESIS_DEPTH: "2",
-      });
+      const bounded = await connect();
       try {
         await bounded.call("open_binary", {
           path: target,
           provider_id: "ghidra",
         });
-        const control = (
-          environment,
-          effective_value,
-          minimum,
-          maximum,
-          default_value,
-        ) => ({
-          source: "environment",
-          limit: {
-            environment,
-            effective_value,
-            minimum,
-            maximum,
-            default_value,
-          },
-        });
+        const over = `double total(struct session *s, unsigned mask /* ${"x".repeat(20)} */)`;
         await bounded.overLimit(
           "annotate_native_function",
+          { procedure, signature: over, signature_max_utf16: 64 },
           {
-            procedure,
-            signature: `double total(struct session *s, unsigned mask /* ${"x".repeat(20)} */)`,
+            parameter: "signature_max_utf16",
+            effective_value: 64,
+            maximum: 4096,
+            default_value: 2048,
+            required_value: over.length,
           },
-          control("REA_GHIDRA_SIGNATURE_MAX_UTF16", 64, 16, 4096, 2048),
         );
-        await bounded.overLimit(
-          "annotate_native_function",
-          { procedure, signature: "double total(int a[((1))])" },
-          control("REA_GHIDRA_C_MAX_PARENTHESIS_DEPTH", 2, 1, 12, 8),
-        );
+        const declarations =
+          "struct rea_bounded { int first; int second; int third; };";
         await bounded.overLimit(
           "define_native_data_types",
+          { declarations, declarations_max_utf16: 48 },
           {
-            declarations:
-              "struct rea_bounded { int first; int second; int third; };",
+            parameter: "declarations_max_utf16",
+            effective_value: 48,
+            maximum: 8192,
+            default_value: 4096,
+            required_value: declarations.length,
           },
-          control("REA_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16", 48, 16, 8192, 4096),
         );
         assert.equal(
           await typeStatus(bounded, "/rea_caller_defined/rea_bounded"),
@@ -776,11 +743,14 @@ typedef struct { volatile int k; } rea_unnamed_t;`,
         const fitted = await bounded.call("annotate_native_function", {
           procedure,
           signature: exact,
+          signature_max_utf16: 64,
         });
         assert.equal(fitted.annotations.signature_source, "user_defined");
-        // Text within the lowered bounds is still applied.
+        assert.equal(fitted.dropped_qualifiers, undefined);
+        // Text within the lowered bound is still applied.
         const within = await bounded.call("define_native_data_types", {
           declarations: "struct rea_small { int a[(2)]; };",
+          declarations_max_utf16: 48,
         });
         assert.deepEqual(
           within.types.map(({ name, size_bytes }) => [name, size_bytes]),

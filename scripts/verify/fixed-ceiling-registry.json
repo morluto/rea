@@ -199,6 +199,12 @@
       "reason": "Bounds Ghidra's own Ghidra/application.properties, a short key=value installation descriptor of the bring-your-own provider (about 1 KiB); no analysis input passes through it, and a larger file is not a Ghidra installation REA can drive."
     }
   },
+  "src/ghidra/GhidraSessionErrorProjection.ts": {
+    "\"The Ghidra C parenthesis nesting allowance\"": {
+      "class": "representation",
+      "reason": "Bounds parenthesis nesting in caller C text before Ghidra's recursive-descent C parser, which cannot be cancelled, sees it: each level doubles parse time and the cost repeats per occurrence (8192 UTF-16 units filled at depth 8 take 0.2 s, at depth 12 2.2 s on Ghidra 12.2). A prototype's own parameter list is one level."
+    }
+  },
   "src/gpu/GpuCodeObjectsProvider.ts": {
     "\"The GPU object allowance\"": {
       "class": "pending",

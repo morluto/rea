@@ -38,18 +38,20 @@ import type { AnalysisErrorOptions } from "../domain/analysisErrorBase.js";
 import { parseLimitConstraint } from "../domain/parseFailureAnalysisError.js";
 import { decodeLimit } from "../domain/parseFailure.js";
 import {
-  DEFAULT_GHIDRA_C_PARSER_LIMITS,
-  GHIDRA_C_PARSER_CONTROLS,
-  ghidraCParserControlLimit,
-  type GhidraCParserLimits,
-} from "../config/ghidraCParserLimits.js";
+  DEFAULT_GHIDRA_SIGNATURE_MAX_UTF16,
+  DEFAULT_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16,
+  GHIDRA_C_MAX_PARENTHESIS_DEPTH,
+  MAXIMUM_GHIDRA_SIGNATURE_MAX_UTF16,
+  MAXIMUM_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16,
+  MINIMUM_GHIDRA_C_TEXT_UTF16,
+} from "../domain/analysisResourceLimits.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { GhidraLaunchError } from "./GhidraLauncher.js";
 import type { GhidraSessionSource } from "./GhidraProviderCapabilities.js";
 import {
   GHIDRA_STARTUP_DEADLINE_ELAPSED,
   isGhidraInputFailureCode,
   isGhidraTypeEditRefusalCode,
-  GHIDRA_C_PARSER_LIMIT_CODES,
   isGhidraCParserLimitCode,
   type GhidraTypeEditRefusalCode,
   type GhidraSessionError,
@@ -74,7 +76,6 @@ export type GhidraProjectionLimits = Pick<
   AppConfig,
   | "ghidraStartupTimeoutMs"
   | "ghidraDecompileTimeoutSeconds"
-  | "ghidraCParserLimits"
   | "ghidraExistingProject"
 >;
 
@@ -248,7 +249,7 @@ const projectPrimarySessionError = (
   const overLimit = ghidraCParserLimitRefusal(
     operation,
     failure,
-    limits.ghidraCParserLimits ?? DEFAULT_GHIDRA_C_PARSER_LIMITS,
+    request,
     context,
   );
   if (overLimit !== undefined) return overLimit;
@@ -794,14 +795,35 @@ const ghidraTypeEditRefusal = (
       };
 };
 
+/** The per-call control that bounds each caller C text's length. */
+const GHIDRA_C_TEXT_CONTROLS = {
+  signature_length_limit: {
+    field: "signature",
+    parameter: "signature_max_utf16",
+    defaultValue: DEFAULT_GHIDRA_SIGNATURE_MAX_UTF16,
+    maximum: MAXIMUM_GHIDRA_SIGNATURE_MAX_UTF16,
+  },
+  declarations_length_limit: {
+    field: "declarations",
+    parameter: "declarations_max_utf16",
+    defaultValue: DEFAULT_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16,
+    maximum: MAXIMUM_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16,
+  },
+} as const;
+
+const GHIDRA_C_PARSER_LIMIT_REASON =
+  "Ghidra's C parser cannot be cancelled, so REA bounds the text it parses. Nothing in this call was applied";
+
 /**
- * A prototype or definition text over one of the C parser's launch controls.
- * The bridge refused it before parsing, so the session is unaffected.
+ * Caller C text over a bound on Ghidra's parser. The bridge refused it before
+ * parsing, so the session is unaffected. Length has a per-call control whose
+ * value and the text's measured length come from the request; nesting depth
+ * is a fixed ceiling.
  */
 const ghidraCParserLimitRefusal = (
   operation: string,
   failure: GhidraSessionError,
-  limits: GhidraCParserLimits,
+  request: Readonly<Record<string, JsonValue>> | undefined,
   context: AnalysisErrorOptions,
 ): AnalysisResourceConstraintError | undefined => {
   if (
@@ -809,46 +831,65 @@ const ghidraCParserLimitRefusal = (
     !isGhidraCParserLimitCode(failure.remoteCode)
   )
     return undefined;
-  const control = GHIDRA_C_PARSER_LIMIT_CODES[failure.remoteCode];
-  const limit = limits[control];
-  const { environment, minimum, maximum, defaultValue } =
-    GHIDRA_C_PARSER_CONTROLS[control];
-  const unit =
-    control === "parenthesisDepth"
-      ? "levels of nested parentheses"
-      : "UTF-16 code units";
-  const bound = `${environment} admits at most ${String(limit.value)} ${unit} (source: ${limit.source}; range ${String(minimum)}..${String(maximum)}; default ${String(defaultValue)})`;
   const { cause: _cause, ...options } = context;
+  if (failure.remoteCode === "parenthesis_depth_limit")
+    return parseLimitConstraint(
+      operation,
+      "cpu",
+      decodeLimit(
+        "c-declarations",
+        `${failure.message}; at most ${String(GHIDRA_C_MAX_PARENTHESIS_DEPTH)} levels are admitted. ${GHIDRA_C_PARSER_LIMIT_REASON}`,
+        {
+          name: "Ghidra C parenthesis nesting",
+          maximum: GHIDRA_C_MAX_PARENTHESIS_DEPTH,
+        },
+        { cause: failure },
+      ),
+      {
+        ...options,
+        requestSent: true,
+        ...fixedAllowanceOptions(
+          "The Ghidra C parenthesis nesting allowance",
+          "count",
+          {
+            limit: GHIDRA_C_MAX_PARENTHESIS_DEPTH,
+            unit: "levels",
+            narrowing:
+              "Simplify the nested expression; a prototype's own parameter list is one level.",
+          },
+        ),
+      },
+    );
+  const control = GHIDRA_C_TEXT_CONTROLS[failure.remoteCode];
+  const requested = request?.[control.parameter];
+  const effective =
+    typeof requested === "number" ? requested : control.defaultValue;
+  const text = request?.[control.field];
   return parseLimitConstraint(
     operation,
     "cpu",
     decodeLimit(
       "c-declarations",
-      `${failure.message}; ${bound}. Ghidra's C parser cannot be cancelled, so REA bounds the text it parses`,
-      { name: environment, maximum: limit.value },
+      `${failure.message}; ${control.parameter} admits at most ${String(effective)} UTF-16 code units. ${GHIDRA_C_PARSER_LIMIT_REASON}`,
+      { name: control.parameter, maximum: effective },
       { cause: failure },
     ),
     {
       ...options,
-      reportedLimitContext: {
-        source: limit.source,
-        range_minimum: minimum,
-        range_maximum: maximum,
-        default_value: defaultValue,
-      },
-      limit: ghidraCParserControlLimit(control, limit),
       retryable: false,
       requestSent: true,
-      remediationAction:
-        (control === "declarationsMaxUtf16"
-          ? "Split the definitions across several calls, or shorten them. "
-          : control === "signatureMaxUtf16"
-            ? "Shorten the prototype. "
-            : "Simplify the nested expression. ") +
-        (limit.value < maximum
-          ? `To admit more, set ${environment} (${String(minimum)}..${String(maximum)}) in the environment that starts REA and start a new REA process; update_analysis_settings does not change it.`
-          : `${environment} is already at its maximum of ${String(maximum)}; this release admits no larger value.`) +
-        " Nothing in this call was applied.",
+      limit: {
+        control_kind: "parameter",
+        parameter: control.parameter,
+        effective_value: effective,
+        unit: "count",
+        minimum: MINIMUM_GHIDRA_C_TEXT_UTF16,
+        maximum: control.maximum,
+        default_value: control.defaultValue,
+        applies_at: "next_call",
+        // The bridge measured the whole text before refusing it.
+        ...(typeof text === "string" ? { required_value: text.length } : {}),
+      },
     },
   );
 };
