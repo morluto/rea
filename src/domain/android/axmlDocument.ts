@@ -35,7 +35,7 @@ const FORBIDDEN_XML = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/;
  * Element names, attribute names and declared prefixes must be XML NCNames;
  * a colon can never appear because prefixes are tracked separately.
  */
-const XML_NCNAME = /^[\p{L}_][\p{L}\p{N}._-]*$/u;
+const XML_NCNAME = /^[\p{L}_][\p{L}\p{N}\p{M}._·-]*$/u;
 const ANDROID_NS_URI = "http://schemas.android.com/apk/res/android";
 const ANDROID_ATTR_ID_MIN = 0x01010000;
 const ANDROID_ATTR_ID_MAX = 0x0101ffff;
@@ -73,8 +73,11 @@ const NODE_HEADER_BYTES = 16;
 const ATTR_EXT_HEADER_BYTES = 20;
 const ATTRIBUTE_BYTES = 20;
 
-/** AOSP Res_value complex radix multipliers, indexed by the data radix bits. */
-const RADIX_MULTS = [1 / (1 << 23), 1 / (1 << 15), 1 / (1 << 7), 1];
+/**
+ * AOSP Res_value complex radix multipliers, indexed by the data radix bits:
+ * radix 0 keeps the mantissa integral, radix 3 scales it by 2^-23.
+ */
+const RADIX_MULTS = [1, 1 / (1 << 7), 1 / (1 << 15), 1 / (1 << 23)];
 const DIMENSION_UNITS = ["px", "dip", "sp", "pt", "in", "mm"];
 const FRACTION_UNITS = ["%", "%p"];
 
@@ -153,9 +156,11 @@ class StringPool {
     const flags = reader.u32(base + 16);
     const stringsStart = reader.u32(base + 20);
     const stylesStart = reader.u32(base + 24);
-    if (stringCount > AXML_MAX_STRINGS)
+    const maxStrings = limits.maxStrings ?? AXML_MAX_STRINGS;
+    const maxStringBytes = limits.maxStringBytes ?? AXML_MAX_STRING_BYTES;
+    if (stringCount > maxStrings)
       return limitFailure(
-        `string pool declares ${stringCount} strings above the ${AXML_MAX_STRINGS} bound`,
+        `string pool declares ${stringCount} strings above the ${maxStrings} bound`,
       );
     if (styleCount > stringCount)
       return formatFailure(
@@ -186,13 +191,14 @@ class StringPool {
         return formatFailure(
           "styles are declared but the styles region is absent",
         );
-      const stylesEnd = chunkEnd - dataStart;
-      const stylesFloor = base + stylesStart - dataStart;
+      // Style offsets are relative to the styles region itself, so the
+      // first valid record carries offset zero.
+      const stylesBytes = chunkEnd - (base + stylesStart);
       for (let i = 0; i < styleCount; i++) {
         const rel = reader.u32(
           base + header.headerSize + (stringCount + i) * 4,
         );
-        if (rel < stylesFloor || rel >= stylesEnd)
+        if (rel >= stylesBytes)
           return formatFailure(
             `style ${i} offset points outside the styles region`,
           );
@@ -202,7 +208,7 @@ class StringPool {
     const strings: string[] = new Array(stringCount);
     // Retained strings live as UTF-16; the ceiling counts heap bytes and is
     // charged from the declared unit count before any string materializes.
-    const retained = new Budget(AXML_MAX_STRING_BYTES);
+    const retained = new Budget(maxStringBytes);
     for (let i = 0; i < stringCount; i++) {
       const rel = reader.u32(base + header.headerSize + i * 4);
       const at = dataStart + rel;
@@ -398,11 +404,13 @@ const renderTypedValue = (
       return f32[0]!.toString();
     }
     case TYPE_DIMENSION: {
-      const unit = DIMENSION_UNITS[data & 0xf] ?? "";
+      const unit = DIMENSION_UNITS[data & 0xf];
+      if (unit === undefined) return undefined;
       return `${complexToFloat(data)}${unit}`;
     }
     case TYPE_FRACTION: {
-      const unit = FRACTION_UNITS[data & 0xf] ?? "";
+      const unit = FRACTION_UNITS[data & 0xf];
+      if (unit === undefined) return undefined;
       return `${complexToFloat(data) * 100}${unit}`;
     }
     case TYPE_INT_DEC:
@@ -561,8 +569,10 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
     let rootSeen = false;
     let uninterpretedChunks = 0;
     const stack: {
-      index: number;
-      nsIndex: number;
+      /** Local-name string value, compared by value at the end tag. */
+      localName: string;
+      /** Namespace URI string value; empty when the element has none. */
+      nsUri: string;
       name: string;
       text: boolean;
       /** Emitted bindings to undo when the element closes. */
@@ -598,7 +608,10 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
      * otherwise preserved without padding.
      */
     const sanitizeComment = (text: string): string => {
-      let safe = text.replace(/-{2,}/g, (run) => run.split("").join(" "));
+      let safe = text.replace(
+        /-{2,}/g,
+        (run) => "-".repeat(1) + " -".repeat(run.length - 1),
+      );
       if (safe.endsWith("-")) safe = `${safe} `;
       return safe;
     };
@@ -720,6 +733,10 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
         return inferAndroidPrefix(decls, forAttribute);
       // The xml: prefix is predefined and needs no declaration.
       if (uri === XML_NS_URI) return ok("xml:");
+      // XML Namespaces reserves the xmlns URI: it can never be bound, so a
+      // name in it cannot be projected as a qualified XML name at all.
+      if (uri === XMLNS_NS_URI)
+        return err(formatError("a name uses the reserved xmlns namespace URI"));
       // A name in a URI-bound namespace with no usable binding needs a
       // synthesized prefix declared on the current element; attributes
       // cannot use the default namespace and elements without one would
@@ -920,8 +937,11 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
           if (prefix === NO_PREFIX && nsIndex === NO_INDEX) continue;
           needDecl(decls, prefix, uri);
         }
-        for (const prefix of [...pendingNs.keys()]) {
-          if (decls.get(prefix) === pendingNs.get(prefix))
+        for (const [prefix, uri] of [...pendingNs]) {
+          // Drain every binding this element accounts for, whether it is
+          // declared fresh on this tag or already satisfied by the output
+          // scope; otherwise redundant bindings accumulate without bound.
+          if (decls.get(prefix) === uri || emittedNs.get(prefix) === uri)
             pendingNs.delete(prefix);
         }
         const elemPrefix =
@@ -967,6 +987,17 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
             resourceMap[aNameIndex]! >= ANDROID_ATTR_ID_MIN &&
             resourceMap[aNameIndex]! <= ANDROID_ATTR_ID_MAX;
           const expandedUri = inferredAndroid ? ANDROID_NS_URI : aUri;
+          // Attribute names that carry namespace-declaration meaning would
+          // either duplicate a decoder-written xmlns binding or silently
+          // rebind the subtree; the projection cannot represent them.
+          if (
+            aName.value === "xmlns" ||
+            aName.value.startsWith("xmlns:") ||
+            expandedUri === XMLNS_NS_URI
+          )
+            return formatFailure(
+              `attribute ${aNameIndex} collides with namespace declarations`,
+            );
           const siblings = seenAttrs.get(expandedUri);
           if (siblings?.has(aName.value) === true)
             return formatFailure(
@@ -1036,9 +1067,13 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
           emittedNs.set(prefix, uri);
         }
         for (const encoded of attrTexts) out.push(encoded);
+        const elemNsUri =
+          nsIndex === NO_INDEX ? "" : (pool.get(nsIndex) ?? undefined);
+        if (elemNsUri === undefined)
+          return formatFailure(`element namespace index ${nsIndex} is invalid`);
         stack.push({
-          index: nameIndex,
-          nsIndex,
+          localName: nameResult.value,
+          nsUri: elemNsUri,
           name: `${elemPrefix.value}${nameResult.value}`,
           text: false,
           decls: declUndo,
@@ -1052,13 +1087,27 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
         const open = stack.pop();
         if (open === undefined)
           return formatFailure("end element without an open element");
-        if (open.index !== nameIndex)
+        // Compare expanded names by value: a valid pool may carry duplicate
+        // entries, so the matching end tag can reference a different index
+        // for the same name or URI string.
+        const endName = pool.get(nameIndex);
+        if (endName === null || endName === undefined)
           return formatFailure(
-            `end element name index ${nameIndex} does not match ${open.index}`,
+            `end element name index ${nameIndex} is invalid`,
           );
-        if (open.nsIndex !== nsIndex)
+        const endNsUri =
+          nsIndex === NO_INDEX ? "" : (pool.get(nsIndex) ?? undefined);
+        if (endNsUri === undefined)
           return formatFailure(
-            `end element namespace index ${nsIndex} does not match ${open.nsIndex}`,
+            `end element namespace index ${nsIndex} is invalid`,
+          );
+        if (open.localName !== endName)
+          return formatFailure(
+            `end element name does not match the open element`,
+          );
+        if (open.nsUri !== endNsUri)
+          return formatFailure(
+            `end element namespace does not match the open element`,
           );
         // Declarations emitted on the open tag leave the output scope here.
         for (const undo of open.decls.reverse()) {

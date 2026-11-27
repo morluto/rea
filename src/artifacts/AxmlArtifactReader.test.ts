@@ -185,12 +185,12 @@ describe("axml value rendering", () => {
         kind: "start",
         name: "view",
         attrs: [
-          // mantissa 16 << 8 | radix 3 (1.0) | unit 1 (dip) → "16dip"
-          { name: "width", typed: [0x05, (16 << 8) | (3 << 4) | 1] },
-          // negative mantissa -2 << 8 | radix 2 (1/128) | unit 0 (px) → -0.015625px
-          { name: "offset", typed: [0x05, (-2 << 8) | (2 << 4) | 0] },
-          // mantissa 256 << 8 | radix 0 (2^-23) | fraction unit 0 → percent
-          { name: "weight", typed: [0x06, (256 << 8) | (0 << 4) | 0] },
+          // mantissa 16 << 8 | radix 0 (integral) | unit 1 (dip) → "16dip"
+          { name: "width", typed: [0x05, (16 << 8) | (0 << 4) | 1] },
+          // negative mantissa -2 << 8 | radix 1 (2^-7) | unit 0 (px) → -0.015625px
+          { name: "offset", typed: [0x05, (-2 << 8) | (1 << 4) | 0] },
+          // mantissa 2^22 << 8 | radix 3 (2^-23) | fraction unit 0 → 0.5 × 100%
+          { name: "weight", typed: [0x06, (4194304 << 8) | (3 << 4) | 0] },
         ],
       },
       { kind: "end", name: "view" },
@@ -199,7 +199,7 @@ describe("axml value rendering", () => {
       const xml = await text(await reader.open((await list(reader))[0]!));
       expect(xml).toContain('width="16dip"');
       expect(xml).toContain('offset="-0.015625px"');
-      expect(xml).toContain('weight="0.0030517578125%"');
+      expect(xml).toContain('weight="50%"');
     });
   });
 
