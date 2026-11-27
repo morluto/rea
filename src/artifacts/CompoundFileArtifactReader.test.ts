@@ -475,6 +475,32 @@ it("retries a shared preparation cancelled by another traversal", async () => {
   }
 });
 
+it("rechecks the carrier before yielding cached entries again", async () => {
+  const path = await write(
+    "cached.automaticDestinations-ms",
+    compoundFile({
+      entries: rootWith(1, [{ name: "Stream", type: 2, start: 2, size: 512 }]),
+    }),
+  );
+  const reader = new CompoundFileArtifactReader(path);
+  try {
+    const first: string[] = [];
+    for await (const entry of reader.entries()) first.push(entry.path);
+    expect(first).toContain("Stream");
+    // The cached listing is reused, but it must not be reported for a carrier
+    // that no longer matches the one it was built from.
+    await writeFile(path, Buffer.alloc(0));
+    const again = async (): Promise<string[]> => {
+      const paths: string[] = [];
+      for await (const entry of reader.entries()) paths.push(entry.path);
+      return paths;
+    };
+    await expect(again()).rejects.toMatchObject({ reason: "integrity" });
+  } finally {
+    await reader.close();
+  }
+});
+
 it("verifies the carrier before returning an empty stream", async () => {
   const path = await write(
     "empty-rewritten.automaticDestinations-ms",

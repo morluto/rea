@@ -30,6 +30,7 @@ import {
   readFileHandleChunks,
 } from "../filesystem/readFileHandleChunks.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
+import { AbortedWait, waitForAbortable } from "../process/AbortablePromise.js";
 
 /**
  * A compound file's directories and allocation tables describe containers
@@ -77,30 +78,11 @@ export class CompoundFileArtifactReader implements ArtifactReader {
   ): AsyncIterable<ArtifactEntry> {
     await this.#scope.run(async () => {
       this.#assertOpen(signal);
-      for (;;) {
-        const pending = (this.#prepared ??= {
-          signal,
-          promise: this.#prepare(signal),
-        });
-        try {
-          await pending.promise;
-          break;
-        } catch (cause: unknown) {
-          // A preparation bound to another caller's signal stays cached when
-          // that caller aborts, so this traversal retries under its own signal
-          // instead of inheriting a cancellation it never received.
-          if (this.#prepared === pending) this.#prepared = undefined;
-          if (
-            pending.signal !== signal &&
-            signal?.aborted !== true &&
-            artifactReadCancelledBy(cause, pending.signal)
-          ) {
-            this.#assertOpen(signal);
-            continue;
-          }
-          throw cause;
-        }
-      }
+      await this.#awaitPreparation(signal);
+      // Cached entries outlive the traversal that produced them, so a source
+      // rewritten since then must be noticed here rather than reported stale.
+      await this.#source.read(signal);
+      this.#assertOpen(signal);
     });
     // Only an entry without a name or outside the root's tree has no path; the
     // parse already names each of those in its limitations.
@@ -248,6 +230,41 @@ export class CompoundFileArtifactReader implements ArtifactReader {
         "unavailable",
         "compound file reader is closed",
       );
+  }
+
+  /**
+   * Wait for the shared preparation, but let this caller cancel its own wait.
+   * A preparation started under another caller's signal stays cached when that
+   * caller aborts, so this traversal retries under its own signal instead of
+   * inheriting a cancellation it never received.
+   */
+  async #awaitPreparation(signal?: AbortSignal): Promise<void> {
+    for (;;) {
+      this.#assertOpen(signal);
+      const pending = (this.#prepared ??= {
+        signal,
+        promise: this.#prepare(signal),
+      });
+      try {
+        const outcome = await waitForAbortable(pending.promise, signal);
+        if (outcome instanceof AbortedWait)
+          throw new ArtifactReaderFailure(
+            "cancelled",
+            "compound file read cancelled",
+            { cause: outcome.carried },
+          );
+        return;
+      } catch (cause: unknown) {
+        if (this.#prepared === pending) this.#prepared = undefined;
+        if (
+          pending.signal !== signal &&
+          signal?.aborted !== true &&
+          artifactReadCancelledBy(cause, pending.signal)
+        )
+          continue;
+        throw cause;
+      }
+    }
   }
 
   async #prepare(signal?: AbortSignal): Promise<void> {
