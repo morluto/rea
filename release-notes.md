@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **macho:** select arm64e.x1 slices of universal Mach-O files by exact subtype ([#14881](https://github.com/morluto/rea/issues/14881))
 * **elf:** an inspect_elf_unwind_ranges call that omits limit returns at most 64 ranges. Page with next_offset, or pass limit.
 * **android:** a search_android_classes call that omits limit returns at most 256 matches. Page with next_offset, or pass a larger limit.
 * **artifacts:** an extract_artifact call that omits detail on an extraction above the agent result budget now returns the retained summary. Pass detail: "complete" (--detail complete) for the previous shape.
@@ -495,6 +496,7 @@
 * **macho:** preserve retained magic from valid FAT ranges ([#13910](https://github.com/morluto/rea/issues/13910)) ([9dba673](https://github.com/morluto/rea/commit/9dba67368d01092f723bc074416eefcbe7546293))
 * **macho:** report a FAT header or table cut off by the file's end as truncated ([#14233](https://github.com/morluto/rea/issues/14233)) ([187793b](https://github.com/morluto/rea/commit/187793ba6158b23efe81160ac8ae6334a700bf35))
 * **macho:** report Mach-O read failures as target failures and delete MachoReadIssue ([#14416](https://github.com/morluto/rea/issues/14416)) ([5b79ae5](https://github.com/morluto/rea/commit/5b79ae5d62be355c5f955fe43c42a8e15b891a64))
+* **macho:** select arm64e.x1 slices of universal Mach-O files by exact subtype ([#14881](https://github.com/morluto/rea/issues/14881)) ([92b082b](https://github.com/morluto/rea/commit/92b082bcaf3e224fd0d03d7279728516fcbd45e7))
 * **managed:** isolate invalid string loads from member coverage ([#13588](https://github.com/morluto/rea/issues/13588)) ([4d507e8](https://github.com/morluto/rea/commit/4d507e861282e8ffa5f0e2e09fc523e40a5dd6e7))
 * **maven:** preserve property value spelling ([#13442](https://github.com/morluto/rea/issues/13442)) ([b43084c](https://github.com/morluto/rea/commit/b43084c7fd892524bce20982719ef08df3310687))
 * **maven:** read Maven 4.1.0 model POMs ([#14089](https://github.com/morluto/rea/issues/14089)) ([0c59c2e](https://github.com/morluto/rea/commit/0c59c2ed4e46ff52c69cb9f216c069e7b703f658))
@@ -1004,6 +1006,7 @@
 * **config:** unify decimal-integer env schemas onto positiveDecimalIntegerSchema ([#14587](https://github.com/morluto/rea/issues/14587)) ([289c5b1](https://github.com/morluto/rea/commit/289c5b13d937f4048d546fe98306e76cf48550a2))
 * **desktop:** project captured drafts through the guest schema ([#14338](https://github.com/morluto/rea/issues/14338)) ([57ae5dc](https://github.com/morluto/rea/commit/57ae5dcbc4f9ed131e536e6fd5655bcd90165be6))
 * **desktop:** read OpenPGP packet lengths through BinaryReader ([006581b](https://github.com/morluto/rea/commit/006581b838fe64cd2a1b5b22d508c525e92bdf2d)), refs [#11865](https://github.com/morluto/rea/issues/11865)
+* **desktop:** share XML parent pointers in task drafts ([#14905](https://github.com/morluto/rea/issues/14905)) ([670e705](https://github.com/morluto/rea/commit/670e70587a51ffd74f2d1f142f8774cbdfed4073))
 * **desktop:** validate task pointer syntax at its shared owner ([7b856fa](https://github.com/morluto/rea/commit/7b856fa5a14d4a361d445c1efd4b1f9037994259))
 * **discovery:** share regular-file and execute-permission checks ([#14749](https://github.com/morluto/rea/issues/14749)) ([a21beb4](https://github.com/morluto/rea/commit/a21beb4a0b6dc53f1887ae1b63f8f31acb45646a))
 * **doctor:** share client registration checks ([#14529](https://github.com/morluto/rea/issues/14529)) ([ff2f1c2](https://github.com/morluto/rea/commit/ff2f1c2f72a5cbe696086d64a28d450dcd7dc4b5))
@@ -1180,6 +1183,7 @@
 * **views:** reuse invalid-view results and row selectors ([#14314](https://github.com/morluto/rea/issues/14314)) ([5dafc31](https://github.com/morluto/rea/commit/5dafc31d23f8f6f13a57b9b374411f412917d199))
 * **views:** reuse JSON record and request-line projections ([#14582](https://github.com/morluto/rea/issues/14582)) ([3d46331](https://github.com/morluto/rea/commit/3d4633176f15f3bd8072751af788bf31c7f2e0d8))
 * **views:** reuse optional filters in report projections ([#14877](https://github.com/morluto/rea/issues/14877)) ([09a5b9c](https://github.com/morluto/rea/commit/09a5b9cef9393a8bd34ce096ed402fb72baf12e0))
+* **views:** share bounded parent and report limitations ([#14902](https://github.com/morluto/rea/issues/14902)) ([2874a6e](https://github.com/morluto/rea/commit/2874a6e21f7eb17dedc34bf6e614a5be96bcd591))
 * **views:** share count projections across analysis summaries ([#14600](https://github.com/morluto/rea/issues/14600)) ([c8f42a8](https://github.com/morluto/rea/commit/c8f42a872d39046a1dd3ae3e431642671b3b9357))
 * **views:** share default page request fields ([#14633](https://github.com/morluto/rea/issues/14633)) ([d639828](https://github.com/morluto/rea/commit/d63982890e70c55b09704249cde0327537e610f0))
 * **views:** share fixed page budget errors ([#14479](https://github.com/morluto/rea/issues/14479)) ([a2fd2d7](https://github.com/morluto/rea/commit/a2fd2d7d3045951ee684b6612294495d9c4f7435))
