@@ -577,20 +577,25 @@ const parseVsixManifestDocument = (
     const element = metadataChild(name);
     return element === undefined ? null : xmlTrimmedDirectText(element);
   };
+  const displayName = metadataText("DisplayName");
+  const description = metadataText("Description");
+  const identityAttribute = (name: string) =>
+    identityElement === undefined
+      ? null
+      : xmlTrimmedAttribute(identityElement, name);
   return {
     identity:
-      identityElement === undefined
+      identityElement === undefined &&
+      displayName === null &&
+      description === null
         ? null
         : {
-            id: xmlTrimmedAttribute(identityElement, "Id"),
-            version: xmlTrimmedAttribute(identityElement, "Version"),
-            publisher: xmlTrimmedAttribute(identityElement, "Publisher"),
-            target_platform: xmlTrimmedAttribute(
-              identityElement,
-              "TargetPlatform",
-            ),
-            display_name: metadataText("DisplayName"),
-            description: metadataText("Description"),
+            id: identityAttribute("Id"),
+            version: identityAttribute("Version"),
+            publisher: identityAttribute("Publisher"),
+            target_platform: identityAttribute("TargetPlatform"),
+            display_name: displayName,
+            description,
           },
     engine: propertyById.get("Microsoft.VisualStudio.Code.Engine") ?? null,
     extensionDependencies: parseExtensionList(
