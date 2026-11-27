@@ -911,6 +911,7 @@
 * **adb:** extract AdbFileStaging module from AdbProvider ([#13705](https://github.com/morluto/rea/issues/13705)) ([5a163e8](https://github.com/morluto/rea/commit/5a163e8e7511a65ce5f804d64d30761d4fe78075))
 * **adb:** extract package and app lifecycle operations from AdbProvider ([#13988](https://github.com/morluto/rea/issues/13988)) ([ada3ea6](https://github.com/morluto/rea/commit/ada3ea6305d35bcdb04c506bbc2af611203094f0))
 * **adb:** extract read-only shell inspection operations from AdbProvider ([#13975](https://github.com/morluto/rea/issues/13975)) ([25e7a85](https://github.com/morluto/rea/commit/25e7a85687b8f875fcfc88d57762f58132043602))
+* **analysis-view:** reuse field selection for retained rows ([#14816](https://github.com/morluto/rea/issues/14816)) ([55e518c](https://github.com/morluto/rea/commit/55e518c394b1f8aa4ca651fd0f15c6cd786a4ed6))
 * **analysis-view:** unify 4 retained-summary wrappers into executeRetainedSummaryOperation ([#13810](https://github.com/morluto/rea/issues/13810)) ([55c4f56](https://github.com/morluto/rea/commit/55c4f5633c47411a0b2a2ed85c550d3d1af1adda))
 * **android:** share boot image parser layout types ([#14695](https://github.com/morluto/rea/issues/14695)) ([dde8a9d](https://github.com/morluto/rea/commit/dde8a9db05747c1cb88cd5a8a0ea9d4045111175))
 * **apk:** remove the unused buffered v1 entry reader ([#14506](https://github.com/morluto/rea/issues/14506)) ([3983d2f](https://github.com/morluto/rea/commit/3983d2f517a6da56f0070db135086c273417c4ae))
