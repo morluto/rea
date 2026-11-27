@@ -186,6 +186,16 @@ const yaraArguments = (staged: StagedScanInputs): readonly string[] => [
   staged.target.snapshotPath,
 ];
 
+/**
+ * yara 4.x `cli/yara.c` ends through `exit_with_code(EXIT_FAILURE)` for compile
+ * errors, `--fail-on-warnings` and scan errors, and C's EXIT_FAILURE is 1.
+ */
+const YARA_EXIT_FAILURE = 1;
+
+/** The rule file paths yara was given, as it names them in diagnostics. */
+const ruleSnapshotPaths = (staged: StagedScanInputs): readonly string[] =>
+  staged.rules.map((rule) => rule.snapshotPath);
+
 /** The selected rule file yara named in a compile error, if it is one. */
 const ruleFileIndex = (staged: StagedScanInputs, source: string): number => {
   const prefix = `${RULE_NAMESPACE}:`;
@@ -406,11 +416,12 @@ const yaraOutcomeContext = (
     const diagnostics = parseYaraDiagnostics(
       outcome.output?.snapshot.stderr.text ?? "",
       staged.target.snapshotPath,
+      ruleSnapshotPaths(staged),
     );
-    // yara exits 1 after printing why it refused the rules or the file.
+    // yara exits EXIT_FAILURE after printing why it refused the rules or the file.
     const reported =
       outcome.kind === "exited" &&
-      outcome.exitCode === 1 &&
+      outcome.exitCode === YARA_EXIT_FAILURE &&
       outcome.signal === null &&
       !outcome.stopRequested &&
       outcome.output?.truncated === false;
@@ -1020,6 +1031,7 @@ export class YaraMatchesProvider implements YaraMatchesPort {
       const diagnostics = parseYaraDiagnostics(
         observedSnapshot.stderr.text,
         staged.target.snapshotPath,
+        ruleSnapshotPaths(staged),
       );
       return ok({
         parsed: parsed.value,

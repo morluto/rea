@@ -172,6 +172,29 @@ describe("parseYaraMeta", () => {
     ]);
   });
 
+  it("decodes every escape yara's print_escaped_data writes", () => {
+    // Quote, apostrophe and backslash are backslash-escaped; 0x07..0x0d use
+    // C escapes; other control and high bytes are three-digit octal.
+    expect(
+      parseYaraMeta(String.raw`a="it\'s \"q\" \\ \a\b\t\n\v\f\r\033\177"`),
+    ).toEqual([
+      {
+        identifier: "a",
+        type: "string",
+        value: 'it\'s "q" \\ \x07\x08\t\n\x0b\x0c\r\x1b\x7f',
+      },
+    ]);
+  });
+
+  it("refuses an octal escape yara does not write", () => {
+    expect(parseYaraMeta(String.raw`a="\1"`)).toBe(
+      "unknown escape \\1 in a meta string",
+    );
+    expect(parseYaraMeta(String.raw`a="\400"`)).toBe(
+      "unknown escape \\4 in a meta string",
+    );
+  });
+
   it("keeps non UTF-8 strings as hex bytes", () => {
     expect(parseYaraMeta('a="\\377\\376"')).toEqual([
       { identifier: "a", type: "bytes", value: "fffe" },
@@ -281,5 +304,50 @@ describe("parseYaraDiagnostics", () => {
       scanErrors: [{ path: SCANNED, reason: "could not open file" }],
       unrecognized: ["something else"],
     });
+  });
+
+  it("ends a FILE yara was given exactly, and any other FILE at the first location", () => {
+    const odd = "/r/odd(2): x.yar";
+    expect(
+      parseYaraDiagnostics(
+        [
+          `${odd}(4): error: syntax error, unexpected "(9): error: "`,
+          '/inc/a.yar(3): error: undefined identifier "b(1): c"',
+          'error: rule "R" in /inc/a.yar(5): duplicated string identifier "$a(2): "',
+          `error: rule "S" in ${odd}(6): undefined string "$x"`,
+        ].join("\n"),
+        SCANNED,
+        [odd],
+      ).compileErrors,
+    ).toEqual([
+      {
+        kind: "syntax",
+        source: odd,
+        line: 4,
+        rule: null,
+        message: 'syntax error, unexpected "(9): error: "',
+      },
+      {
+        kind: "undefined",
+        source: "/inc/a.yar",
+        line: 3,
+        rule: null,
+        message: 'undefined identifier "b(1): c"',
+      },
+      {
+        kind: "duplicate",
+        source: "/inc/a.yar",
+        line: 5,
+        rule: "R",
+        message: 'duplicated string identifier "$a(2): "',
+      },
+      {
+        kind: "undefined",
+        source: odd,
+        line: 6,
+        rule: "S",
+        message: 'undefined string "$x"',
+      },
+    ]);
   });
 });

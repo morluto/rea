@@ -36,7 +36,28 @@ const safeInteger = (text: string, radix: 10 | 16): number | undefined => {
   return value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : undefined;
 };
 
-/** Decode one quoted meta string as yara escapes it: \n \t \r \" \\ and octal \NNN. */
+/**
+ * The escapes yara 4.x `cli/yara.c` `print_escaped_data` writes for a string
+ * meta value (unchanged from v4.2.0 to v4.6.0): a backslash before a double
+ * quote, a single quote or a backslash; the C escapes a, b, t, n, v, f and r
+ * for bytes 0x07 to 0x0d; and a backslash with exactly three octal digits for
+ * every other byte below 0x20 or at or above 0x7f.
+ */
+const META_ESCAPES: Readonly<Record<string, number>> = {
+  '"': 0x22,
+  "'": 0x27,
+  "\\": 0x5c,
+  a: 0x07,
+  b: 0x08,
+  t: 0x09,
+  n: 0x0a,
+  v: 0x0b,
+  f: 0x0c,
+  r: 0x0d,
+};
+const META_OCTAL_ESCAPE = /^[0-3][0-7]{2}/u;
+
+/** Decode one quoted meta string as yara escapes it. */
 const decodeMetaString = (
   text: string,
   start: number,
@@ -52,20 +73,16 @@ const decodeMetaString = (
       continue;
     }
     const next = text[index + 1];
-    const simple = { n: 0x0a, t: 0x09, r: 0x0d, '"': 0x22, "\\": 0x5c }[
-      next ?? ""
-    ];
+    const simple = next === undefined ? undefined : META_ESCAPES[next];
     if (simple !== undefined) {
       bytes.push(simple);
       index += 2;
       continue;
     }
-    const octal = /^[0-7]{1,3}/u.exec(text.slice(index + 1, index + 4))?.[0];
+    const octal = META_OCTAL_ESCAPE.exec(text.slice(index + 1, index + 4))?.[0];
     if (octal === undefined)
       return `unknown escape \\${next ?? ""} in a meta string`;
-    const value = Number.parseInt(octal, 8);
-    if (value > 0xff) return `octal escape \\${octal} exceeds one byte`;
-    bytes.push(value);
+    bytes.push(Number.parseInt(octal, 8));
     index += 1 + octal.length;
   }
   return "unterminated meta string";
@@ -301,11 +318,35 @@ export interface YaraDiagnostics {
 //   FILE(LINE): LEVEL: MESSAGE                  (it does not, e.g. includes)
 // cli/common.c writes `error: could not open file: FILE` for a rule file it
 // cannot open. FILE is the path passed to yara, after any NAMESPACE: prefix.
-const RULE_DIAGNOSTIC =
-  /^(error|warning): rule "([^"]*)" in (.+)\((\d+)\): (.+)$/u;
-const SOURCE_DIAGNOSTIC = /^(.+)\((\d+)\): (error|warning): (.+)$/u;
+// A file name or a message may itself contain `(N): `, so a FILE yara was
+// given is matched exactly; any other FILE, such as an included file, ends at
+// the first `(N): ` (the shortest file name), never the last.
+const RULE_DIAGNOSTIC_PREFIX = /^(error|warning): rule "([^"]*)" in /u;
+const LEVELS = ["error", "warning"] as const;
+const LOCATION = /^\((\d+)\): /u;
 const OPEN_ERROR = /^error: could not open file: (.+)$/u;
 const BARE_WARNING = /^warning: .+$/u;
+
+/** Split `FILE(LINE): REST`, preferring a FILE yara was given. */
+const splitLocation = (
+  text: string,
+  sources: readonly string[],
+): { source: string; line: number; rest: string } | undefined => {
+  for (const source of sources) {
+    if (!text.startsWith(source)) continue;
+    const location = LOCATION.exec(text.slice(source.length));
+    if (location !== null)
+      return {
+        source,
+        line: Number(location[1]),
+        rest: text.slice(source.length + location[0].length),
+      };
+  }
+  const shortest = /^(.+?)\((\d+)\): (.*)$/su.exec(text);
+  return shortest === null
+    ? undefined
+    : { source: shortest[1]!, line: Number(shortest[2]), rest: shortest[3]! };
+};
 
 const INCLUDE_MESSAGE =
   /^(?:can't open include file: |callback failed to provide include resource: |includes? circular reference$|too many levels of included rules$|includes depth exceeded$|includes are disabled$)/u;
@@ -322,10 +363,14 @@ export const yaraCompileErrorKind = (message: string): YaraCompileErrorKind =>
           ? "duplicate"
           : "other";
 
-/** Classify yara stderr by line; scan errors must name the scanned path. */
+/**
+ * Classify yara stderr by line; scan errors must name the scanned path.
+ * `ruleSources` are the rule file paths yara was given, matched exactly.
+ */
 export const parseYaraDiagnostics = (
   stderr: string,
   scannedPath: string,
+  ruleSources: readonly string[] = [],
 ): YaraDiagnostics => {
   const scanError = `error scanning ${scannedPath}: `;
   const warnings: string[] = [];
@@ -333,38 +378,62 @@ export const parseYaraDiagnostics = (
   const scanErrors: YaraDiagnostics["scanErrors"][number][] = [];
   const unrecognized: string[] = [];
   const diagnostic = (
-    level: string,
-    source: string,
-    line: number,
+    level: (typeof LEVELS)[number],
+    located: { source: string; line: number },
     rule: string | null,
     message: string,
     raw: string,
-  ) => {
+  ): void => {
     if (level === "warning") warnings.push(raw);
     else
       compileErrors.push({
         kind: yaraCompileErrorKind(message),
-        source,
-        line,
+        source: located.source,
+        line: located.line,
         rule,
         message,
       });
+  };
+  const parse = (line: string): boolean => {
+    const ruled = RULE_DIAGNOSTIC_PREFIX.exec(line);
+    if (ruled !== null) {
+      const located = splitLocation(line.slice(ruled[0].length), ruleSources);
+      if (located === undefined || located.rest === "") return false;
+      diagnostic(
+        ruled[1] as (typeof LEVELS)[number],
+        located,
+        ruled[2]!,
+        located.rest,
+        line,
+      );
+      return true;
+    }
+    const located = splitLocation(line, ruleSources);
+    if (located === undefined) return false;
+    const level = LEVELS.find((candidate) =>
+      located.rest.startsWith(`${candidate}: `),
+    );
+    if (level === undefined || located.rest.length <= level.length + 2)
+      return false;
+    diagnostic(
+      level,
+      located,
+      null,
+      located.rest.slice(level.length + 2),
+      line,
+    );
+    return true;
   };
   for (const raw of stderr.split("\n")) {
     const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
     if (line.trim() === "") continue;
     let match: RegExpExecArray | null;
-    if ((match = RULE_DIAGNOSTIC.exec(line)) !== null)
-      diagnostic(
-        match[1]!,
-        match[3]!,
-        Number(match[4]),
-        match[2]!,
-        match[5]!,
-        line,
-      );
-    else if ((match = SOURCE_DIAGNOSTIC.exec(line)) !== null)
-      diagnostic(match[3]!, match[1]!, Number(match[2]), null, match[4]!, line);
+    if (line.startsWith(scanError) && line.length > scanError.length)
+      scanErrors.push({
+        path: scannedPath,
+        reason: line.slice(scanError.length),
+      });
+    else if (parse(line)) continue;
     else if ((match = OPEN_ERROR.exec(line)) !== null)
       compileErrors.push({
         kind: "unreadable_file",
@@ -372,11 +441,6 @@ export const parseYaraDiagnostics = (
         line: null,
         rule: null,
         message: "could not open file",
-      });
-    else if (line.startsWith(scanError) && line.length > scanError.length)
-      scanErrors.push({
-        path: scannedPath,
-        reason: line.slice(scanError.length),
       });
     else if (BARE_WARNING.test(line)) warnings.push(line);
     else unrecognized.push(line);
