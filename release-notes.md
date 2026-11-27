@@ -552,6 +552,7 @@
 * **native:** refresh bundle provenance on reopen ([e35780d](https://github.com/morluto/rea/commit/e35780d042a9428c0a619ec42cf11794f5d7525c))
 * **native:** report details.limit for native reader per-call budgets ([#14622](https://github.com/morluto/rea/issues/14622)) ([50d13f9](https://github.com/morluto/rea/commit/50d13f9f08dd4f026f190b2ee27c885f95b6e0b5))
 * **native:** report details.limit for remaining native reader budgets and make BEAM table rows adjustable ([#14631](https://github.com/morluto/rea/issues/14631)) ([1badb6a](https://github.com/morluto/rea/commit/1badb6a8ae9d5a9696bc13091fa32485a0392183))
+* **native:** report non-native bytes as unrecognized, not malformed ([#14936](https://github.com/morluto/rea/issues/14936)) ([13f618e](https://github.com/morluto/rea/commit/13f618e8e3e48dc67a21ef86598d59fa87774e78))
 * **native:** require dyld's __restrict section before reporting a restricted Mach-O ([#13024](https://github.com/morluto/rea/issues/13024)) ([7a11884](https://github.com/morluto/rea/commit/7a11884c0897062867e62c0c6d1079342ef8d861))
 * **native:** resolve name and import selectors through one owner ([#14250](https://github.com/morluto/rea/issues/14250)) ([cab39c6](https://github.com/morluto/rea/commit/cab39c640a50726d7766f202046a403ba8e72fff))
 * **native:** resolve Objective-C protocol _classProperties via pointer fixups ([#14283](https://github.com/morluto/rea/issues/14283)) ([5a283a5](https://github.com/morluto/rea/commit/5a283a5f874fdb472afdd4355733aced05c38d02))
