@@ -33,6 +33,10 @@ import {
 } from "../domain/providerOperationHealth.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
+import {
+  GhidraCheckpointBusyError,
+  GhidraCheckpointSupersededError,
+} from "./GhidraCheckpoint.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { GhidraLaunchError } from "./GhidraLauncher.js";
 import type { GhidraSessionSource } from "./GhidraProviderCapabilities.js";
@@ -116,6 +120,34 @@ const projectPrimarySessionError = (
   if (failure.configurationFailure !== undefined)
     return failure.configurationFailure;
   if (failure.kind === "checkpoint") {
+    if (failure.cause instanceof GhidraCheckpointBusyError)
+      return new AnalysisCapabilityUnavailableError(
+        "ghidra",
+        operation,
+        failure.cause.message,
+        {
+          ...context,
+          retryable: true,
+          userMessage: `${failure.cause.message}. One session at a time opens a target through a checkpoint directory.`,
+          remediationAction:
+            "Wait for that session to close the target, or close it, then repeat this call unchanged. If that session saved Program edits when it closed, the repeated call reports that the checkpoint changed; then reopen the target to restore the saved checkpoint. To analyze the same target concurrently, start this process without REA_GHIDRA_CHECKPOINT_DIR; it then uses a private ephemeral import.",
+        },
+      );
+    // The session's committed profile names the generation it selected, so
+    // the unchanged call cannot succeed; reopening selects the current one.
+    if (failure.cause instanceof GhidraCheckpointSupersededError)
+      return new AnalysisCapabilityUnavailableError(
+        "ghidra",
+        operation,
+        failure.cause.message,
+        {
+          ...context,
+          retryable: false,
+          userMessage: `${failure.cause.message}.`,
+          remediationAction:
+            "Reopen the target: call open_binary again for this path, or rerun the CLI command. The current checkpoint is intact and REA_GHIDRA_CHECKPOINT_DIR needs no change.",
+        },
+      );
     if (failure.cause instanceof AnalysisError)
       return analysisClientFailureForOperation(
         failure.cause,

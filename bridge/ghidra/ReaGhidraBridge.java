@@ -7,6 +7,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.Writer;
+import java.lang.ref.SoftReference;
 import java.math.BigInteger;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -132,6 +133,7 @@ import ghidra.program.model.pcode.VarnodeAST;
 import ghidra.program.util.ContextEvaluatorAdapter;
 import ghidra.program.util.SymbolicPropogator;
 import ghidra.program.util.VarnodeContext;
+import ghidra.util.UndefinedFunction;
 import ghidra.util.task.TaskMonitor;
 
 public final class ReaGhidraBridge extends HeadlessScript {
@@ -209,6 +211,25 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private List<StringEntry> stringInventory;
     private Boolean swiftProgramCached;
     private DecompInterface decompiler;
+    /**
+     * Completed decompilations of the current Program state, least recently
+     * used first. DecompInterface keeps no results, so a repeated request would
+     * otherwise run the native decompiler again. The key carries every input a
+     * result depends on; soft references let the heap reclaim large results.
+     */
+    private final LinkedHashMap<DecompileCacheKey, SoftReference<DecompileResults>> decompileResults =
+        new LinkedHashMap<>(16, 0.75f, true) {
+            @Override
+            protected boolean removeEldestEntry(
+                Map.Entry<DecompileCacheKey, SoftReference<DecompileResults>> eldest
+            ) {
+                return size() > DECOMPILE_RESULT_ENTRIES;
+            }
+        };
+    // Fixed: this bounds retained Java objects, not analysis the caller can
+    // observe. A miss only repeats a decompile, and soft references release
+    // entries under heap pressure. Ghidra's own panel keeps 10 by default.
+    private static final int DECOMPILE_RESULT_ENTRIES = 32;
     private boolean existingProject;
     // A refused Program may only report its admission failure to the client.
     private String identityAdmissionFailure;
@@ -476,7 +497,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 decompileTimeoutSeconds = request.decompileTimeoutSeconds() == null
                     ? descriptor.decompileTimeoutSeconds() : request.decompileTimeoutSeconds();
                 valueFlowLimits = request.valueFlowLimits();
-                applyDecompilePayloadLimit(request.decompileMaxPayloadMiB());
+                applyRequestDecompilerOptions(request);
                 dispatchAndWrite(writer, request, descriptor);
             }
             catch (RequestFailure failure) {
@@ -1250,6 +1271,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return options;
     }
 
+    /**
+     * Only a request that carries decompiler options changes them. Another
+     * read leaves the session's payload limit, and the decompiles completed
+     * under it, in place.
+     */
+    private void applyRequestDecompilerOptions(Request request) {
+        if (request.decompilePayload() != null)
+            applyDecompilePayloadLimit(request.decompilePayload().mebibytes());
+    }
+
     private void applyDecompilePayloadLimit(Integer payloadMiB) {
         if (java.util.Objects.equals(decompileMaxPayloadMiB, payloadMiB)) return;
         // DecompInterface supports live setOptions: it updates the existing
@@ -1257,6 +1288,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (!decompiler.setOptions(decompileOptions(payloadMiB)))
             throw new RequestFailure("decompile_options_failed", "Ghidra could not apply the selected native decompiler payload limit");
         decompiler.flushCache();
+        decompileResults.clear();
         decompileMaxPayloadMiB = payloadMiB;
     }
 
@@ -1278,18 +1310,30 @@ public final class ReaGhidraBridge extends HeadlessScript {
         JsonObject selection = new JsonObject();
         Function function = resolveDecompileProcedure(selector, selection);
         try {
-            String value = decompiledText(decompile(function));
+            DecompileResults results = decompile(function);
+            String value = decompiledText(results);
+            Function decompiled = decompiledFunction(function, results);
+            List<String> limitations = new ArrayList<>(functionBoundaryLimitations(
+                decompiled,
+                currentProgram.getListing().getInstructions(decompiled.getBody(), true)
+            ));
+            if (selection.has("undefined_function_entry"))
+                limitations.add(0, undefinedFunctionLimitation(selection));
             JsonObject result = functionObservation(
                 value == null ? JsonNull.INSTANCE : GSON.toJsonTree(value),
-                functionBoundaryLimitations(
-                    function,
-                    currentProgram.getListing().getInstructions(function.getBody(), true)
-                )
+                limitations
             );
-            if (selection.size() > 0) result.add("selection", selection);
+            // The file-offset selection is a contract field; an undefined
+            // function's inferred entry is carried by its limitation.
+            if (selection.has("file_offset")) {
+                JsonObject fileOffsetSelection = new JsonObject();
+                for (String key : List.of("file_offset", "mapped_address", "procedure_address"))
+                    fileOffsetSelection.add(key, selection.get(key));
+                result.add("selection", fileOffsetSelection);
+            }
             return result;
         } catch (RequestFailure failure) {
-            if (selection.size() == 0) throw failure;
+            if (!selection.has("mapped_address")) throw failure;
             // Preserve completed resolution facts without changing the backend's
             // failure code or suggesting that the successful mapping was invalid.
             throw new RequestFailure(failure.code, "Selector " + selector +
@@ -1308,8 +1352,13 @@ public final class ReaGhidraBridge extends HeadlessScript {
             } catch (RequestFailure failure) {
                 // Existing names/addresses win. Only an unresolved numeric input
                 // can fall back to source coordinates; ambiguity never falls back.
-                if (!failure.code.equals("procedure_not_found") || !selector.matches("0x[0-9a-fA-F]+"))
-                    throw failure;
+                if (!failure.code.equals("procedure_not_found")) throw failure;
+                // Analyzed code outside every function is still an analysis
+                // address, so it wins over a file-offset reading of the number.
+                Address requested = isExplicitReaAddress(selector) ? parseReaAddress(selector) : tryParseAddress(selector);
+                Function undefined = requested == null ? null : undefinedFunctionAt(requested, selection);
+                if (undefined != null) return undefined;
+                if (!selector.matches("0x[0-9a-fA-F]+")) throw failure;
             }
         }
         String coordinate = explicitOffset ? selector.substring(prefix.length()) : selector;
@@ -1339,11 +1388,18 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 " has multiple loaded mappings: " + candidates.stream().map(ReaGhidraBridge::canonicalAddress).toList() +
                 "; select an explicit analysis address");
         if (candidates.isEmpty())
-            throw new RequestFailure("file_offset_unmapped", "File offset " + coordinate +
+            throw new RequestFailure("file_offset_unmapped",
+                (explicitOffset || !isMappedAnalysisAddress(selector) ? "" :
+                    coordinate + " is a mapped analysis address that holds no disassembled code and no procedure. Read as a file offset instead: ") +
+                "File offset " + coordinate +
                 " has no loaded source mapping for the admitted target file; Ghidra image base: " + canonicalAddress(currentProgram.getImageBase()) +
                 ". Inspect mappings with rea inspect-native-load-image <path> --provider ghidra --json or MCP inspect_native_load_image.");
         Address mapped = candidates.get(0);
+        // A file offset names the same location as its mapped analysis
+        // address, so it resolves the way that address does, including code
+        // outside every function.
         Function function = functionAtOrContaining(mapped);
+        if (function == null) function = undefinedFunctionAt(mapped, selection);
         if (function == null)
             throw new RequestFailure("procedure_not_found", "File offset " + coordinate +
                 " maps to analysis address " + canonicalAddress(mapped) +
@@ -1353,6 +1409,47 @@ public final class ReaGhidraBridge extends HeadlessScript {
         selection.addProperty("mapped_address", canonicalAddress(mapped));
         selection.addProperty("procedure_address", canonicalAddress(function.getEntryPoint()));
         return function;
+    }
+
+    /**
+     * Ghidra can disassemble code without creating a function for it, for
+     * example a range named only by an exception-frame entry and reached
+     * through a data reference, as `main` is in a stripped ELF. The decompiler
+     * panel reads such code through an on-the-fly UndefinedFunction, which
+     * leaves the Program unchanged; this does the same and records that the
+     * entry is inferred from control flow and absent from the inventory.
+     */
+    private Function undefinedFunctionAt(Address address, JsonObject selection) throws Exception {
+        if (!isCodeOutsideFunctions(address)) return null;
+        UndefinedFunction undefined =
+            UndefinedFunction.findFunction(currentProgram, address, monitor);
+        if (undefined == null) return null;
+        selection.addProperty("requested_address", canonicalAddress(address));
+        selection.addProperty("undefined_function_entry", canonicalAddress(undefined.getEntryPoint()));
+        return undefined;
+    }
+
+    private static final String CODE_OUTSIDE_FUNCTIONS =
+        "Ghidra disassembled code there without creating a function, so it is absent from the procedure inventory";
+
+    private boolean isCodeOutsideFunctions(Address address) {
+        return address.isMemoryAddress() &&
+            currentProgram.getListing().getInstructionContaining(address) != null &&
+            functionAtOrContaining(address) == null;
+    }
+
+    private boolean isMappedAnalysisAddress(String selector) {
+        Address address = tryParseAddress(selector);
+        return address != null && address.isMemoryAddress() && currentProgram.getMemory().contains(address);
+    }
+
+    private static String undefinedFunctionLimitation(JsonObject selection) {
+        return "No Ghidra function contains " + selection.get("requested_address").getAsString() +
+            ": Ghidra disassembled this code without creating a function, so it is absent from the procedure inventory. " +
+            "This pseudocode is Ghidra's on-the-fly decompilation from " +
+            selection.get("undefined_function_entry").getAsString() +
+            ", an entry inferred by following control flow back from the requested address. " +
+            "The entry and extent are not an analyzed function boundary, and the Program is unchanged.";
     }
 
     private boolean isTargetSource(FileBytes source) throws Exception {
@@ -1806,6 +1903,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         nameInventory = null;
         procedureInventory = null;
         procedureNameIndex = null;
+        decompileResults.clear();
         if (decompiler != null) decompiler.flushCache();
     }
 
@@ -2642,37 +2740,74 @@ public final class ReaGhidraBridge extends HeadlessScript {
         requireKeys(params, enriched ? Set.of("document", "export_body_metadata") : Set.of("document"));
         requireDocument(params);
         List<ProcedureEntry> entries = procedures();
-        Map<ProcedureEntry, JsonObject> metadata = enriched && requireBoolean(params, "export_body_metadata")
-            ? exportBodyMetadata(entries) : Map.of();
+        Map<ProcedureEntry, JsonObject> metadata = enriched
+            ? exportBodyMetadata(entries, requireInteger(params, "export_body_metadata")) : Map.of();
         monitor.checkCancelled();
         return out -> writeProcedureEntries(out, entries, metadata);
     }
 
-    private Map<ProcedureEntry, JsonObject> exportBodyMetadata(List<ProcedureEntry> entries) throws Exception {
-        // This advisory enrichment shares the inventory reply with its original rows.
-        // Retain at most 4 MiB of extra JSON; the export uses procedure_info for the rest.
-        int remainingBytes = 4 * 1024 * 1024;
+    private Map<ProcedureEntry, JsonObject> exportBodyMetadata(List<ProcedureEntry> entries, int replyBytes)
+            throws Exception {
+        // Count the ordinary rows with the real encoder. Reserve framing for the
+        // response object, request ID and newline before admitting any extra work.
+        Utf8CountingWriter counter = new Utf8CountingWriter();
+        JsonWriter plain = GSON.newJsonWriter(new SurrogateEscapingWriter(counter));
+        plain.setSerializeNulls(true);
+        writeProcedureEntries(plain, entries, Map.of());
+        ExportMetadataBudget budget = new ExportMetadataBudget(
+            Math.min(4 * 1024 * 1024L, replyBytes - counter.bytes - 64)
+        );
         Map<ProcedureEntry, JsonObject> metadata = new IdentityHashMap<>();
         for (ProcedureEntry entry : entries) {
             monitor.checkCancelled();
+            // Covers the field name, fixed JSON members, extra punctuation and
+            // the single shared inferred-no-return explanation.
+            if (!budget.claim(1024)) break;
             Function function = entry.function();
             JsonObject body;
             try {
-                body = functionBody(function);
+                body = functionBody(function, budget);
             } catch (IllegalStateException unsupportedBody) {
-                // Let the existing per-function query project the specific refusal.
-                continue;
+                continue; // The ordinary procedure_info path projects the refusal.
             }
+            if (body == null) break;
+            FunctionBoundaryLimitations boundary = new FunctionBoundaryLimitations(function, budget);
+            for (Instruction instruction : currentProgram.getListing().getInstructions(function.getBody(), true)) {
+                boundary.observe(instruction);
+                if (boundary.budgetExhausted) break;
+            }
+            if (boundary.budgetExhausted) break;
             JsonObject item = new JsonObject();
             item.add("body", body);
-            item.add("limitations", GSON.toJsonTree(functionBoundaryLimitations(
-                function, currentProgram.getListing().getInstructions(function.getBody(), true)
-            )));
-            remainingBytes -= GSON.toJson(item).getBytes(StandardCharsets.UTF_8).length + 30;
-            if (remainingBytes < 0) break;
+            item.add("limitations", GSON.toJsonTree(boundary.values()));
             metadata.put(entry, item);
         }
         return metadata;
+    }
+
+    private static final class ExportMetadataBudget {
+        private long remaining;
+        private ExportMetadataBudget(long remaining) {
+            this.remaining = remaining;
+        }
+        private boolean claim(long bytes) {
+            if (bytes > remaining) return false;
+            remaining -= bytes;
+            return true;
+        }
+    }
+
+    private static final class Utf8CountingWriter extends Writer {
+        private long bytes;
+        @Override
+        public void write(char[] chars, int offset, int length) {
+            for (int i = offset; i < offset + length; i++) {
+                char ch = chars[i];
+                bytes += ch < 0x80 ? 1 : ch < 0x800 ? 2 : 3;
+            }
+        }
+        @Override public void flush() {}
+        @Override public void close() {}
     }
 
     private JsonArray listSegments(JsonObject params) {
@@ -3188,6 +3323,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (function == null)
             // Other procedure operations retain their analysis-address semantics.
             throw new RequestFailure("procedure_not_found", "No procedure exists at the requested address: " + value +
+                (isCodeOutsideFunctions(address) ? ". " + CODE_OUTSIDE_FUNCTIONS +
+                    "; procedure_pseudo_code can decompile it on the fly, and inspect_native_instruction reads its instructions" : "") +
                 "; Ghidra image base: " + canonicalAddress(currentProgram.getImageBase()) +
                 ". Choose an observed analysis address. CLI: rea search <path> . --kind procedures --mode regex --provider ghidra --json; " +
                 "MCP: list_procedures. Inspect the loaded base and source mappings with CLI rea analyze <path> --provider ghidra --json " +
@@ -4606,6 +4743,17 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (function.isExternal() || function.getBody().isEmpty()) {
             return null;
         }
+        // The modification number changes with every committed Program edit,
+        // so an edit that skipped the explicit invalidation still misses.
+        DecompileCacheKey key = new DecompileCacheKey(
+            function.getEntryPoint(),
+            function instanceof UndefinedFunction,
+            currentProgram.getModificationNumber(),
+            decompileMaxPayloadMiB
+        );
+        SoftReference<DecompileResults> retained = decompileResults.get(key);
+        DecompileResults reused = retained == null ? null : retained.get();
+        if (reused != null) return reused;
         DecompileResults results = decompiler.decompileFunction(
             function,
             decompileTimeoutSeconds,
@@ -4633,8 +4781,28 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 " MiB. " + decompilePayloadRecovery()
             );
         }
+        // Only a completed decompilation is reusable; failures stay retryable.
+        decompileResults.put(key, new SoftReference<>(results));
         return results;
     }
+
+    /**
+     * The function whose body the decompilation covers. Ghidra's decompile
+     * callback widens an UndefinedFunction's body to the code it followed, so
+     * a reused result keeps the widened function; a fresh lookup of the same
+     * entry covers only that entry.
+     */
+    private static Function decompiledFunction(Function requested, DecompileResults results) {
+        return results == null || results.getFunction() == null ? requested : results.getFunction();
+    }
+
+    /** Every input a completed decompilation of one Program state depends on. */
+    private record DecompileCacheKey(
+        Address entry,
+        boolean undefinedFunction,
+        long programModification,
+        Integer maxPayloadMiB
+    ) {}
 
     private String decompilePayloadRecovery() {
         int effective = decompiler.getOptions().getMaxPayloadMBytes();
@@ -4869,6 +5037,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
     private final class FunctionBoundaryLimitations {
         private final Function function;
+        private final ExportMetadataBudget budget;
+        private boolean budgetExhausted;
         private final boolean checkLoaderRelocations = !loaderInitializedRelocations.isEmpty();
         private final boolean checkBorlandSeh = isX86_32Program();
         private final List<String> limitations = new ArrayList<>();
@@ -4878,7 +5048,21 @@ public final class ReaGhidraBridge extends HeadlessScript {
         private Instruction previous;
 
         private FunctionBoundaryLimitations(Function function) {
+            this(function, null);
+        }
+
+        private FunctionBoundaryLimitations(Function function, ExportMetadataBudget budget) {
             this.function = function;
+            this.budget = budget;
+        }
+
+        private boolean retain(String limitation) {
+            if (budget != null && !budget.claim(4L + 6L * limitation.length())) {
+                budgetExhausted = true;
+                return false;
+            }
+            limitations.add(limitation);
+            return true;
         }
 
         private void observe(Instruction instruction) throws Exception {
@@ -4889,7 +5073,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             monitor.checkCancelled();
             TerminalCall terminal = terminalCall(instruction);
             if (terminal != null) {
-                limitations.add(terminal.limitation());
+                if (!retain(terminal.limitation())) return;
                 if (terminal.inferredNoReturn()) inferredNoReturnCall = true;
             }
             if (checkLoaderRelocations && referencesFrom != null) {
@@ -4900,14 +5084,14 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     );
                     if (relocation == null || !observedLoaderRelocations.add(relocation.address()))
                         continue;
-                    limitations.add(loaderInitializedRelocationLimitation(relocation));
+                    if (!retain(loaderInitializedRelocationLimitation(relocation))) return;
                 }
             }
             if (checkBorlandSeh) {
                 if (beforePrevious != null && previous != null) {
                     String seh = borlandSehHandlerLimitation(
                         function, beforePrevious, previous, instruction);
-                    if (seh != null) limitations.add(seh);
+                    if (seh != null && !retain(seh)) return;
                 }
                 beforePrevious = previous;
                 previous = instruction;
@@ -6032,6 +6216,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
     /** Observe the entire AddressSet; range endpoints are inclusive, not a guessed span. */
     private static JsonObject functionBody(Function function) {
+        return functionBody(function, null);
+    }
+
+    private static JsonObject functionBody(Function function, ExportMetadataBudget budget) {
         JsonArray ranges = new JsonArray();
         BigInteger total = BigInteger.ZERO;
         Address first = null;
@@ -6046,9 +6234,13 @@ public final class ReaGhidraBridge extends HeadlessScript {
             if (start.getAddressSpace().getAddressableUnitSize() != 1) {
                 throw new IllegalStateException("Function body byte coverage requires a byte-addressed space");
             }
+            String startText = canonicalAddress(start);
+            String endText = canonicalAddress(end);
+            if (budget != null && !budget.claim(40L + 6L * (startText.length() + endText.length())))
+                return null;
             JsonObject value = new JsonObject();
-            value.addProperty("start", canonicalAddress(start));
-            value.addProperty("end", canonicalAddress(end));
+            value.addProperty("start", startText);
+            value.addProperty("end", endText);
             ranges.add(value);
             BigInteger begin = new BigInteger(Long.toUnsignedString(start.getOffset()));
             BigInteger finish = new BigInteger(Long.toUnsignedString(end.getOffset()));
@@ -6471,11 +6663,15 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (parsed.isJsonObject() && parsed.getAsJsonObject().has("decompile_max_payload_mib"))
             keys.add("decompile_max_payload_mib");
         JsonObject object = requireObject(parsed, keys);
-        Integer payloadMiB = null;
-        if (object.has("decompile_max_payload_mib") && !object.get("decompile_max_payload_mib").isJsonNull()) {
-            payloadMiB = requireInteger(object, "decompile_max_payload_mib");
-            if (payloadMiB < 1 || payloadMiB > MAX_DECOMPILE_PAYLOAD_MIB)
-                throw new IllegalArgumentException("Invalid per-request native decompiler payload limit");
+        DecompilePayload payload = null;
+        if (object.has("decompile_max_payload_mib")) {
+            Integer payloadMiB = null;
+            if (!object.get("decompile_max_payload_mib").isJsonNull()) {
+                payloadMiB = requireInteger(object, "decompile_max_payload_mib");
+                if (payloadMiB < 1 || payloadMiB > MAX_DECOMPILE_PAYLOAD_MIB)
+                    throw new IllegalArgumentException("Invalid per-request native decompiler payload limit");
+            }
+            payload = new DecompilePayload(payloadMiB);
         }
         ValueFlowLimits flowLimits = defaultValueFlowLimits();
         if (object.has("value_flow_limits")) {
@@ -6503,7 +6699,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (params == null || !params.isJsonObject()) {
             throw new IllegalArgumentException("Bridge request parameters are invalid");
         }
-        return new Request(id, requireString(object, "method"), params.getAsJsonObject(), timeout, payloadMiB, flowLimits);
+        return new Request(id, requireString(object, "method"), params.getAsJsonObject(), timeout, payload, flowLimits);
     }
 
     private static JsonObject requireObject(JsonElement element, Set<String> keys) {
@@ -6682,10 +6878,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
     // writer while escaping surrogates so large replies avoid multi-x heap copies.
     private static final class SurrogateEscapingWriter extends Writer {
         private static final char[] HEX_DIGITS = "0123456789abcdef".toCharArray();
-        private final BufferedWriter delegate;
+        private final Writer delegate;
         private final char[] surrogateEscape = { '\\', 'u', '0', '0', '0', '0' };
 
-        private SurrogateEscapingWriter(BufferedWriter delegate) {
+        private SurrogateEscapingWriter(Writer delegate) {
             this.delegate = delegate;
         }
 
@@ -7008,7 +7204,14 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return new ValueFlowLimits(DEFAULT_HIGH_PCODE_OPS, DEFAULT_HIGH_PCODE_INPUTS_PER_OP, DEFAULT_HIGH_PCODE_DEF_USE_EDGES);
     }
     private record ValueFlowLimits(int maxOperations, int maxInputsPerOperation, int maxEdges) {}
-    private record Request(int id, String method, JsonObject params, Integer decompileTimeoutSeconds, Integer decompileMaxPayloadMiB, ValueFlowLimits valueFlowLimits) {}
+    /**
+     * A request's decompiler payload selection. A null selection means the
+     * request carried no decompiler options; a null limit inside one selects
+     * the installed Ghidra default.
+     */
+    private record DecompilePayload(Integer mebibytes) {}
+
+    private record Request(int id, String method, JsonObject params, Integer decompileTimeoutSeconds, DecompilePayload decompilePayload, ValueFlowLimits valueFlowLimits) {}
 
     private static final class RequestFailure extends RuntimeException {
         private final String code;

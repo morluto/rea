@@ -20,6 +20,8 @@ import { acquireOwnedLease } from "../process/OwnedLease.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import {
   GhidraCheckpoint,
+  GhidraCheckpointBusyError,
+  GhidraCheckpointSupersededError,
   hashGhidraPackedProgram,
   resolveGhidraCheckpoint,
 } from "./GhidraCheckpoint.js";
@@ -212,6 +214,29 @@ it.skipIf(process.platform === "win32")(
 );
 
 it.skipIf(process.platform === "win32")(
+  "reports a busy retry as superseded once the owner saves edits and closes",
+  async () => {
+    const f = await fixture();
+    await f.owner.acquire("first");
+    const waiting = new GhidraCheckpoint(f.selection, f.resources);
+    owners.push(waiting);
+    await expect(waiting.acquire("second")).rejects.toBeInstanceOf(
+      GhidraCheckpointBusyError,
+    );
+    // The first publication records initial analysis, which a waiting
+    // session may adopt; the second records the owner's Program edits.
+    await f.owner.publish(f.packed);
+    const edited = join(f.root, "edited.gzf");
+    await writeFile(edited, "edited checkpoint");
+    await f.owner.publish(edited);
+    await f.owner.close();
+    await expect(waiting.acquire("second")).rejects.toBeInstanceOf(
+      GhidraCheckpointSupersededError,
+    );
+  },
+);
+
+it.skipIf(process.platform === "win32")(
   "refuses state changed after profile resolution without replacing the current manifest",
   async () => {
     const f = await fixture();
@@ -227,8 +252,8 @@ it.skipIf(process.platform === "win32")(
       join(f.selection.directory, "current.json"),
       "utf8",
     );
-    await expect(stale.acquire("stale")).rejects.toThrow(
-      /changed after profile selection/,
+    await expect(stale.acquire("stale")).rejects.toBeInstanceOf(
+      GhidraCheckpointSupersededError,
     );
     await expect(stale.publish(f.packed)).rejects.toThrow(
       /no admitted session lease/,

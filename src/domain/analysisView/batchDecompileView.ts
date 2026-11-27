@@ -37,7 +37,11 @@ import {
   analysisTextPage,
   analysisTextPageItemSchema,
 } from "./analysisViewText.js";
-import { selectIndexedViewRows, selectViewRows } from "./selectViewRows.js";
+import {
+  selectIndexedViewRows,
+  selectViewRows,
+  filterSet,
+} from "./selectViewRows.js";
 
 const OPERATION = "batch_decompile" as const;
 
@@ -263,9 +267,6 @@ const batchUnknowns = (items: readonly BatchDecompileItem[]): string[] => {
   ];
 };
 
-const selected = <Value>(values: readonly Value[] | undefined) =>
-  values === undefined ? undefined : new Set(values);
-
 const itemRow = (
   item: BatchDecompileItem,
   index: number,
@@ -363,10 +364,10 @@ export const projectBatchDecompileView = (
       coverage: completeWithinViewCoverage(1),
     });
   if (view.collection === "items") {
-    const indices = selected(view.where.indices);
-    const addresses = selected(view.where.addresses);
-    const entries = selected(view.where.procedure_addresses);
-    const statuses = selected<string>(view.where.statuses);
+    const indices = filterSet(view.where.indices);
+    const addresses = filterSet(view.where.addresses);
+    const entries = filterSet(view.where.procedure_addresses);
+    const statuses = filterSet<string>(view.where.statuses);
     const matches = (item: (typeof batch.items)[number]) =>
       (addresses === undefined || addresses.has(item.address)) &&
       (statuses === undefined || statuses.has(item.status)) &&
