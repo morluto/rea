@@ -63,7 +63,19 @@ cliTest.skipIf(process.platform !== "linux")(
         },
       },
     });
-    expect(input.json).not.toHaveProperty("details.refusal");
+    expect(input.json).toMatchObject({
+      details: {
+        limit: { required_value: 18, cli_flag: "--producer-limits" },
+        refusal: {
+          kind: "adjustable_budget",
+          control: "producer_limits.input_bytes",
+          required_value: 18,
+        },
+      },
+      remediation: {
+        action: `inspect_pcap_capture reached its producer_limits.input_bytes budget of 8 bytes. Pass a larger producer_limits.input_bytes (in --producer-limits) on the next rea inspect-pcap-capture run (at least 18 bytes; range 1..${String(Number.MAX_SAFE_INTEGER)} bytes), then retry.`,
+      },
+    });
 
     // The stub's tshark JSON exceeds a 16-byte output budget.
     const output = await cli.run({

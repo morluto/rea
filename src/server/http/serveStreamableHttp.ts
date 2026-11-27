@@ -309,6 +309,8 @@ const closeAsOwner = (session: LiveSession): Promise<void> => {
 export class McpSessionSlot {
   #live: LiveSession | undefined;
   #arming: Promise<LiveSession> | undefined;
+  /** Initialize replacements run one at a time. The next starts after the previous response exists. */
+  #handover: Promise<void> = Promise.resolve();
   #closed = false;
   #hookRan = false;
   #draining = false;
@@ -351,6 +353,10 @@ export class McpSessionSlot {
 
   async #handle(request: Request): Promise<Response> {
     if (this.#closed) return SHUTTING_DOWN();
+    // A presented session id is never a new client. Arming here would accept a
+    // stale id as initialize, because the SDK does not validate that header
+    // on an initialization request.
+    if (request.headers.has("mcp-session-id")) return this.#presented(request);
     const initialization = await classifyInitializePost(request);
     if (initialization === "batch")
       return jsonError(
@@ -358,12 +364,36 @@ export class McpSessionSlot {
         -32600,
         "Initialize must be a single JSON-RPC object, not a batch",
       );
+    if (initialization === "initialize")
+      return this.#enqueueInitialize(request);
+    return this.#useCurrent(request);
+  }
+
+  /**
+   * Claim the initialize queue before awaiting. Two new clients then cannot
+   * both close one session and share the transport that replaces it.
+   */
+  #enqueueInitialize(request: Request): Promise<Response> {
+    const previous = this.#handover;
+    let release = (): void => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const settled = previous.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.#handover = settled.then(() => gate);
+    return settled.then(() => this.#openInitialize(request)).finally(release);
+  }
+
+  async #openInitialize(request: Request): Promise<Response> {
+    if (this.#closed) return SHUTTING_DOWN();
     if (this.#draining) await this.#live?.transport.close();
     if (this.#closed) return SHUTTING_DOWN();
     const open = this.#live;
     if (
       open?.transport.sessionId !== undefined &&
-      initialization === "initialize" &&
       // A client that left while its initialize was probed would evict the session for nobody.
       !request.signal.aborted
     ) {
@@ -371,6 +401,11 @@ export class McpSessionSlot {
       this.logger?.info("MCP HTTP session replaced by a new client");
       await closeAsOwner(open);
     }
+    return this.#useCurrent(request);
+  }
+
+  async #useCurrent(request: Request): Promise<Response> {
+    if (this.#draining) await this.#live?.transport.close();
     if (this.#closed) return SHUTTING_DOWN();
     const session = await this.#current();
     // Shutdown may have closed the slot while this request was arming it.
@@ -378,9 +413,30 @@ export class McpSessionSlot {
     return session.handle(request);
   }
 
+  /** Answer one request that already named a session. Never arms a transport. */
+  async #presented(request: Request): Promise<Response> {
+    const presented = request.headers.get("mcp-session-id");
+    const matches = (
+      session: LiveSession | undefined,
+    ): session is LiveSession =>
+      presented !== null &&
+      session !== undefined &&
+      session.transport.sessionId !== undefined &&
+      session.transport.sessionId === presented;
+    // An unmatched id must not join the drain. A timeout there would answer 503.
+    if (!matches(this.#live)) return SESSION_NOT_FOUND();
+    if (this.#draining) await this.#live?.transport.close();
+    if (this.#closed) return SHUTTING_DOWN();
+    const current = this.#live;
+    if (!matches(current)) return SESSION_NOT_FOUND();
+    return current.handle(request);
+  }
+
   /** Cancel and drain MCP work before any shared provider shutdown hook can run. */
   async prepareShutdown(): Promise<void> {
     this.#closed = true;
+    // A queued initialize must observe the closed slot before it can arm.
+    await this.#handover.catch(() => undefined);
     await this.#arming?.catch(() => undefined);
     const open = this.#live;
     // The session stays owned until its shutdown succeeds, so a retry can finish it.

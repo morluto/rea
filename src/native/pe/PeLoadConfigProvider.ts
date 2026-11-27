@@ -12,14 +12,9 @@ import {
 import type { PeLoadConfigPort } from "../../ports/binaryDiagnostics/PeLoadConfigPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import type { ResourceConstraintRecovery } from "../../domain/analysisErrorCore.js";
-import {
-  fixedAllowanceOptions,
-  type FixedCeilingFacts,
-} from "../../domain/fixedAllowanceRemediation.js";
 import {
   MAX_INSPECT_PE_LOAD_CONFIG_FILE_BYTES,
-  MAX_INSPECT_PE_LOAD_CONFIG_CALLBACKS,
+  peLoadConfigCallbackLimit,
   type InspectPeLoadConfigInput,
 } from "../../domain/native/peLoadConfig.js";
 import { err, ok } from "../../domain/result.js";
@@ -90,25 +85,6 @@ export class PeLoadConfigProvider implements PeLoadConfigPort {
   }
 }
 
-const limitRecovery = (
-  limit: PeLoadConfigLimit | null,
-  input: InspectPeLoadConfigInput,
-  ceiling: FixedCeilingFacts,
-): ResourceConstraintRecovery =>
-  limit === "callbacks"
-    ? {
-        retryable: false,
-        remediationAction:
-          input.max_callbacks >= MAX_INSPECT_PE_LOAD_CONFIG_CALLBACKS
-            ? `The image exceeds the ${String(MAX_INSPECT_PE_LOAD_CONFIG_CALLBACKS)}-callback ceiling; select a smaller artifact.`
-            : `Raise max_callbacks above ${String(input.max_callbacks)} or select a smaller artifact.`,
-      }
-    : fixedAllowanceOptions(
-        "The PE structural decoding allowance",
-        "parser",
-        ceiling,
-      );
-
 const peLoadConfigFailure = (
   cause: unknown,
   input: InspectPeLoadConfigInput,
@@ -125,7 +101,11 @@ const peLoadConfigFailure = (
         bytes: PE_FILE_CEILING_BYTES,
       },
       limits: PE_LOAD_CONFIG_LIMITS,
-      limitRecovery: (limit, ceiling) => limitRecovery(limit, input, ceiling),
+      // A running callback count knows only the budget it passed.
+      limitRecovery: (_limit, failure) => ({
+        retryable: false,
+        limit: peLoadConfigCallbackLimit(failure.maximum_bytes),
+      }),
     },
     observed,
   );

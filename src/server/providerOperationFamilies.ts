@@ -96,7 +96,9 @@ export const artifactExecutionParameters = (
   parameters: Readonly<Record<string, JsonValue>>,
 ): Readonly<Record<string, JsonValue>> => {
   if (operation !== "extract_artifact") return parameters;
-  const execution = artifactExtractionInputSchema.parse(parameters);
+  const execution = artifactExtractionInputSchema
+    .omit({ detail: true })
+    .parse(parameters);
   return {
     ...execution,
     output_root: createArtifactExtractionDestination(execution.output_root),

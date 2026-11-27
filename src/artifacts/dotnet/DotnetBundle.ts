@@ -171,15 +171,9 @@ export const readDotnetBundle = async (
   }
   const files: DotnetBundleFile[] = [];
   const paths = new ArtifactPathRegistry({
+    group: "dotnet_bundle",
     maxParts: limits.path_parts,
     maxNodes: limits.path_nodes,
-    limitFailure: (field, maximum, required) =>
-      artifactReaderLimitFailure(
-        `artifact_limits.dotnet_bundle.${field}`,
-        maximum,
-        "count",
-        required,
-      ),
   });
   let expandedBytes = 0n;
   for (let index = 0; index < count; index++) {

@@ -95,6 +95,7 @@ import {
   type EspFlashSelection,
 } from "../domain/firmware/espFlashLocation.js";
 import { espFlashSelectionError } from "../domain/firmware/espFlashSelection.js";
+import { zipDeclaresAndroidPackage } from "../domain/zip/androidPackageDirectory.js";
 import {
   hasTrailingZipArchive,
   zipRootPackageFormat,
@@ -541,12 +542,18 @@ const readOpenedBinaryTarget = async (
       (await hasTrailingZipArchive(metadata.size, (position, length) =>
         readHandleRange(handle, position, length, signal),
       ))
-    )
+    ) {
+      const format = await zipRootFormatByContent(
+        classificationPath,
+        metadata.size,
+        (position, length) => readHandleRange(handle, position, length, signal),
+      );
       return ok({
         ...(await artifactIdentity()),
         kind: "archive",
-        format: zipRootPackageFormat(classificationPath),
+        format,
       });
+    }
     const reason =
       typeof detected.error === "string"
         ? detected.error
@@ -703,6 +710,21 @@ const detectDatabaseEngine = async (
   return path.toLowerCase().endsWith(".hop") ? "hopper" : null;
 };
 
+/**
+ * Named ZIP suffixes win. A generic ZIP root is an APK when its central
+ * directory lists a root Android package entry. An `.aab` stays a ZIP:
+ * an Android App Bundle is not a standalone APK.
+ */
+const zipRootFormatByContent = async (
+  path: string,
+  size: number,
+  read: (position: number, length: number) => Promise<Uint8Array>,
+) => {
+  const named = zipRootPackageFormat(path);
+  if (named !== "zip" || path.toLowerCase().endsWith(".aab")) return named;
+  return (await zipDeclaresAndroidPackage(size, read)) === true ? "apk" : named;
+};
+
 const detectArtifactFormat = async (
   path: string,
   source: StableRegularFileDescriptor,
@@ -778,7 +800,9 @@ const detectArtifactFormat = async (
     throwIfTargetResolutionCancelled(signal);
     if (recognition.state === "recognized")
       return recognition.format === "zip"
-        ? zipRootPackageFormat(lower)
+        ? zipRootFormatByContent(lower, initial.size, (position, length) =>
+            readHandleRange(handle, position, length, signal),
+          )
         : recognition.format;
     if (recognition.state === "refused")
       throw new BinaryTargetError(path, recognition.reason, {

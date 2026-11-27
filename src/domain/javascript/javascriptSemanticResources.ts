@@ -14,10 +14,12 @@ import type {
 } from "./javascriptSemanticIr.js";
 import {
   readExactJavaScriptLiteral,
+  isNullishJavaScriptSyntax,
   isObjectPrototypeSetter,
   primitiveOwnKeys,
   semanticStaticPropertyName,
   staticJavaScriptTruthiness,
+  staticObjectProperty,
   staticObjectPropertyReader,
   staticObjectCopyPropertyReader,
   unwrapJavaScriptExpression,
@@ -26,10 +28,12 @@ import { isUnmodifiedGlobalReference } from "./javascriptSemanticGlobalReference
 import {
   bindingEffectsConfinedToReceiverCalls,
   bindingMethodMayHaveChanged,
+  ambientPathMayObserveAt,
   opaqueCodeMayRebindBinding,
   prototypeMutationMayPrecede,
 } from "./javascriptSemanticEffectLog.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
@@ -38,13 +42,20 @@ import {
 } from "./javascriptSemanticState.js";
 import {
   builtinDataEffectIdentity,
+  builtinModuleSlotUnmodified,
+  builtinModuleSubtreeUnmodified,
+  builtinSharedPrototypeUnmodified,
   dataEffectMemberCallee,
   outerDataEffectBinding,
   requiredModuleChanged,
   traverseDataEffects,
   type DataEffectTraversalContext,
 } from "./javascriptSemanticDataEffectHelpers.js";
-import { FS_OPEN_FLAGS, range } from "./javascriptStaticAnalysisHelpers.js";
+import {
+  BUFFER_ENCODINGS,
+  FS_OPEN_FLAGS,
+  range,
+} from "./javascriptStaticAnalysisHelpers.js";
 
 const RELEASE_METHODS = ["close", "destroy", "end"] as const;
 
@@ -57,6 +68,7 @@ interface ResourceCandidate {
   readonly resultBindingId: string | null;
   /** The initial result is the opening Promise; later writes may replace it. */
   readonly resultIsPromise: boolean;
+  readonly constructorUncertain?: true;
 }
 
 /** Recover built-in filesystem/network acquisition and local release handles. */
@@ -71,25 +83,129 @@ export const collectJavaScriptSemanticResources = (
     callableStack: [],
     ancestors: [],
   };
-  const acquisitions = collectAcquisitions(program, context).filter(
-    (candidate) =>
-      !socketPortInFirstArgument(candidate) ||
-      (!rejectsSocketLiteralArguments(
+  const acquisitions = collectAcquisitions(program, context)
+    .map((candidate): ResourceCandidate =>
+      streamOptionsInSecondArgument(candidate) &&
+      (!builtinModuleSlotUnmodified(
+        "fs",
+        [
+          candidate.method === "createReadStream"
+            ? "ReadStream"
+            : "WriteStream",
+        ],
         candidate.node,
-        candidate.specifier,
-        context,
-      ) &&
-        !rejectsTlsProtocolVersionLiteral(
+        state,
+      ) ||
+        !builtinSharedPrototypeUnmodified(
+          "fs",
+          [
+            candidate.method === "createReadStream"
+              ? "FileReadStream"
+              : "FileWriteStream",
+            "prototype",
+          ],
+          candidate.node,
+          state,
+        ) ||
+        !builtinModuleSubtreeUnmodified(
+          "fs",
+          [
+            candidate.method === "createReadStream"
+              ? "ReadStream"
+              : "WriteStream",
+            "prototype",
+          ],
+          candidate.node,
+          state,
+        ) ||
+        // Node lazily captures the stream superclass when fs streams initialize.
+        // A replacement before that point can change constructor validation.
+        !builtinModuleSubtreeUnmodified(
+          "stream",
+          [
+            candidate.method === "createReadStream" ? "Readable" : "Writable",
+            "prototype",
+          ],
+          candidate.node,
+          state,
+        ) ||
+        // `Readable` and `Writable` both extend `Stream`, so a member installed on
+        // that shared ancestor is inherited by the stream Node builds. Measured on
+        // Node 24.22.1: with `Stream.prototype.start` defined as a getter returning 0,
+        // `createReadStream(p, {start:-1})` returns a handle while the unmutated call
+        // throws `ERR_OUT_OF_RANGE`.
+        !builtinModuleSubtreeUnmodified(
+          "stream",
+          ["Stream", "prototype"],
+          candidate.node,
+          state,
+        ) ||
+        // The CommonJS root export *is* the constructor, so
+        // `const Stream = require("node:stream")` records its mutation at
+        // `["prototype", …]` rather than under the named slot. Measured on Node
+        // 24.22.1, both spellings construct a handle from `{start:-1}`.
+        !builtinModuleSubtreeUnmodified(
+          "stream",
+          ["prototype"],
+          candidate.node,
+          state,
+        ) ||
+        // `Stream` itself extends `EventEmitter`, so a member installed there is
+        // inherited too. Node exposes that constructor at two identities, and the
+        // CommonJS root export *is* the constructor, so
+        // `const EventEmitter = require("node:events")` records its mutation at
+        // `["prototype", …]` rather than under the named slot. Measured on Node
+        // 24.22.1, both spellings construct a handle from `{start:-1}`.
+        !builtinModuleSubtreeUnmodified(
+          "events",
+          ["EventEmitter", "prototype"],
+          candidate.node,
+          state,
+        ) ||
+        !builtinModuleSubtreeUnmodified(
+          "events",
+          ["prototype"],
+          candidate.node,
+          state,
+        ))
+        ? { ...candidate, constructorUncertain: true }
+        : candidate,
+    )
+    .filter(
+      (candidate) =>
+        !socketPortInFirstArgument(candidate) ||
+        (!rejectsSocketLiteralArguments(
           candidate.node,
           candidate.specifier,
-          context.state,
+          context,
         ) &&
-        !rejectsSocketHostMember(
+          !rejectsTlsProtocolVersionLiteral(
+            candidate.node,
+            candidate.specifier,
+            context.state,
+          ) &&
+          !rejectsSocketHostMember(
+            candidate.node,
+            candidate.specifier,
+            context.state,
+          ) &&
+          (candidate.builtinAuthority === "candidate" ||
+            !rejectsSocketPortMember(
+              candidate.node,
+              candidate.specifier,
+              context,
+            ))),
+    )
+    .filter(
+      (candidate) =>
+        !streamOptionsInSecondArgument(candidate) ||
+        candidate.constructorUncertain === true ||
+        !rejectsStreamOptionsLiteral(
           candidate.node,
-          candidate.specifier,
-          context.state,
-        )),
-  );
+          candidate.method === "createReadStream",
+          context,
+        ),
+    );
   return [
     ...acquisitions.map(immutableAcquisition),
     ...collectReleases(program, context, acquisitions),
@@ -114,6 +230,466 @@ const rejectsFlagOrModeLiteral = (value: t.Node): boolean => {
     (t.isUnaryExpression(value) &&
       t.isBigIntLiteral(unwrapJavaScriptExpression(value.argument).node))
   );
+};
+
+/**
+ * `fs.createReadStream` and `fs.createWriteStream` take their options object in slot 1.
+ *
+ * Node validates `start`, `end`, `fd`, `highWaterMark` and `encoding` there before it
+ * constructs the stream, so a value it rejects throws synchronously and no handle
+ * exists. Being a stream, that handle is what the release facts attach to, so a
+ * wrongly retained acquisition also invents a teardown.
+ */
+const streamOptionsInSecondArgument = (
+  candidate: Pick<AcquisitionReference, "specifier" | "method">,
+): boolean =>
+  candidate.specifier === "fs" &&
+  (candidate.method === "createReadStream" ||
+    candidate.method === "createWriteStream");
+
+/**
+ * The number a stream-option member evaluates to, or a marker for the shapes that are
+ * not numbers at all.
+ *
+ * `absent` is a member Node skips; `refused` is a present value whose type Node
+ * rejects with `ERR_INVALID_ARG_TYPE`. `undefined` is a value this reader cannot price.
+ *
+ * The unary arm reuses `unaryOperandNumber`, which already resolves `-`, `+` and `~`
+ * chains exactly, so `~0` is `-1` and `~-1` is `0` rather than the operand's magnitude.
+ * `!`, `typeof` and `delete` yield a boolean or a string, which Node refuses.
+ */
+type StreamMemberValue =
+  | { readonly kind: "absent" }
+  | { readonly kind: "refused" }
+  | { readonly kind: "number"; readonly value: number }
+  | undefined;
+
+/**
+ * The BigInt literal a `+`/`-`/`~` chain ends at, or `undefined`.
+ *
+ * `-(-1n)` and `~0n` are still BigInts, so a member that accepts only numbers refuses
+ * them just as it refuses `-1n`. `unaryOperandNumber` cannot price that operand, which is
+ * why the chain is read here instead of only its immediate argument.
+ */
+const unaryBigIntOperand = (
+  value: t.UnaryExpression,
+): bigint | "throws" | undefined => {
+  // Walk to the innermost caller before applying the operators outward, because `~0n` is
+  // `-1n` and `~-1n` is `0n`: reading only the literal's digits swaps truthy for falsy.
+  const chain: t.UnaryExpression[] = [];
+  let current: t.Node = value;
+  let literal: t.BigIntLiteral | undefined;
+  for (let depth = 0; depth < 8; depth += 1) {
+    const node: t.Node = unwrapJavaScriptExpression(current).node;
+    if (t.isBigIntLiteral(node)) {
+      literal = node;
+      break;
+    }
+    if (!t.isUnaryExpression(node) || !["+", "-", "~"].includes(node.operator))
+      return undefined;
+    chain.push(node);
+    current = node.argument;
+  }
+  if (literal === undefined) return undefined;
+  let result = BigInt(String(literal.value).replace(/_/gu, ""));
+  for (const operator of chain.reverse()) {
+    // Unary `+` on a BigInt throws a TypeError, so the call never reaches a handle.
+    if (operator.operator === "+") return "throws";
+    result = operator.operator === "-" ? -result : ~result;
+  }
+  return result;
+};
+
+const streamMemberValue = (
+  value: t.Node,
+  context: DataEffectTraversalContext,
+): StreamMemberValue => {
+  if (isAbsentOptionValue(value, context.state)) return { kind: "absent" };
+  if (t.isNumericLiteral(value)) return { kind: "number", value: value.value };
+  if (t.isUnaryExpression(value)) {
+    if (
+      value.operator === "!" ||
+      value.operator === "typeof" ||
+      value.operator === "delete"
+    )
+      return { kind: "refused" };
+    // A unary operator over a BigInt literal is still a BigInt, which Node refuses
+    // before a handle exists. `unaryOperandNumber` cannot read that operand, so
+    // without this the member would stay undecided and keep the acquisition.
+    if (unaryBigIntOperand(value) !== undefined) return { kind: "refused" };
+    const number = unaryOperandNumber(value, context, 0);
+    return number === undefined ? undefined : { kind: "number", value: number };
+  }
+  if (
+    t.isIdentifier(value) &&
+    (value.name === "NaN" || value.name === "Infinity")
+  )
+    return isUnmodifiedGlobalReference(value, context.state, value.name)
+      ? {
+          kind: "number",
+          value: value.name === "NaN" ? Number.NaN : Number.POSITIVE_INFINITY,
+        }
+      : undefined;
+  // Every remaining exactly readable value is a type Node refuses for these members.
+  // A method written in shorthand reaches this reader as an `ObjectMethod`, and a class
+  // expression has the same runtime type as a function: measured on Node 24.22.1,
+  // `createReadStream(p, {start(){}})`, `{start: function(){}}` and `{start: class{}}`
+  // all throw `ERR_INVALID_ARG_TYPE`.
+  if (
+    t.isStringLiteral(value) ||
+    t.isTemplateLiteral(value) ||
+    t.isBooleanLiteral(value) ||
+    t.isBigIntLiteral(value) ||
+    t.isObjectExpression(value) ||
+    t.isNewExpression(value) ||
+    t.isObjectMethod(value) ||
+    t.isArrayExpression(value) ||
+    t.isFunctionExpression(value) ||
+    t.isArrowFunctionExpression(value) ||
+    t.isClassExpression(value) ||
+    t.isRegExpLiteral(value) ||
+    // `import.meta` is always an object in a module, so a numeric member rejects it just
+    // as it rejects a literal object. `fd` is the exception and is handled by its caller.
+    (t.isMetaProperty(value) && value.meta.name === "import")
+  )
+    return { kind: "refused" };
+  return undefined;
+};
+
+/**
+ * Whether an options literal has a member that runs code when Node copies it.
+ *
+ * Node enumerates the literal's own keys and copies them in declaration order, so a
+ * getter listed before a plain member can replace that member's value before it is
+ * read. Measured on Node 24.22.1, `createReadStream(p, {get reset(){this.start=0},
+ * start:-1})` constructs a stream while the same literal without the getter throws
+ * `ERR_OUT_OF_RANGE`, so the getter's presence makes every other member undecided.
+ *
+ * A computed string key does not help: `{get ["reset"](){this.start=0}, start:-1}`
+ * also constructs a stream, because the key is materialised when the literal is
+ * created and then enumerated like any other. So every getter counts, computed or not.
+ *
+ * A `set` accessor is not read during the copy and a plain method is not invoked, so
+ * neither affects a later member.
+ */
+const optionsHasEagerAccessor = (object: t.ObjectExpression): boolean =>
+  object.properties.some(
+    (property) => t.isObjectMethod(property) && property.kind === "get",
+  );
+
+/**
+ * Whether a stream's options object provably throws before the handle exists.
+ *
+ * Measured on Node 24.22.1. Each member has its own check, and the bounds differ:
+ *
+ * - `start`: an integer in `[0, Number.MAX_SAFE_INTEGER]`, so `Infinity` is out of
+ *   range here. `-0` is zero, so the sign alone does not decide.
+ * - `end`: the same range plus `Infinity`, which Node reads as "read to the end". A
+ *   write stream ignores `end` entirely, so `createWriteStream(p, {end: -1})` still
+ *   creates a handle and the `start > end` ordering check does not apply there.
+ * - `fd`: an integer in `[0, 2_147_483_647]`, the signed 32-bit range.
+ * - `highWaterMark`: a non-negative integer with no upper bound — `1e21` is accepted
+ *   while `Infinity` is not.
+ * - `encoding`: a nullish or otherwise falsy value is skipped, so only a truthy
+ *   literal is decided, and a string must be one `Buffer` accepts.
+ *
+ * For `start`, `end` and `fd`, a string, boolean, BigInt, object, array, function or
+ * regular expression throws `ERR_INVALID_ARG_TYPE`; `null` is present there while
+ * `fd` and `highWaterMark` treat it as absent. A member this reader cannot price, and
+ * an options expression that is not an object literal, leave the call undecided.
+ */
+const rejectsStreamOptionsLiteral = (
+  node: t.CallExpression | t.OptionalCallExpression,
+  readStream: boolean,
+  context: DataEffectTraversalContext,
+): boolean => {
+  // A spread before the options slot shifts the runtime position, so slot 1 is not
+  // provably the options object.
+  if (t.isSpreadElement(node.arguments[0])) return false;
+  const options = node.arguments[1];
+  if (options === undefined || t.isSpreadElement(options)) return false;
+  const value = unwrapJavaScriptExpression(options).node;
+  if (!t.isObjectExpression(value)) return false;
+  // A getter anywhere in the literal can replace another member before Node reads it,
+  // so no member's declared value is what Node sees.
+  if (optionsHasEagerAccessor(value)) return false;
+  // Node copies into an ordinary object. An inherited setter may intercept a
+  // copied value, so a source-visible prototype change before (or possibly
+  // before) this call makes the copied members uncertain.
+  if (prototypeMutationMayPrecede(context.state, "Object", node)) return false;
+  // Node copies own enumerable keys by assignment. An own __proto__ key, including
+  // one supplied by a spread or dynamic key, can install setters on the copy before
+  // a later option is assigned. The literal's values then do not prove a rejection.
+  if (staticObjectProperty(value, "__proto__").status !== "missing")
+    return false;
+  const member = (name: string): StreamMemberValue => {
+    const read = staticObjectProperty(value, name);
+    if (read.status !== "explicit") return undefined;
+    const memberValue = unwrapJavaScriptExpression(read.value as t.Node).node;
+    if (name === "fd" && t.isNewExpression(memberValue)) return undefined;
+    // `import.meta` is the one object `fd` accepts: measured on Node 24.22.1, after
+    // `Object.setPrototypeOf(import.meta, handle)` with a real `FileHandle`,
+    // `createReadStream(p, {fd: import.meta, autoClose: false})` constructs and reads. That
+    // mutation names `import.meta` itself rather than `Object.prototype`, so the recorded
+    // object-prototype question cannot see it; the member stays undecided instead of being
+    // priced as refused.
+    if (name === "fd" && t.isMetaProperty(memberValue)) return undefined;
+    // A FileHandle can be the prototype of an object literal, so the literal's
+    // shape alone does not prove that Node rejects it as a descriptor.
+    if (
+      name === "fd" &&
+      t.isObjectExpression(memberValue) &&
+      staticObjectProperty(memberValue, "__proto__").status !== "missing"
+    )
+      return undefined;
+    // An array or regular-expression literal is normally not a descriptor, but
+    // `Object.setPrototypeOf` on `Array.prototype` or `RegExp.prototype` can make it
+    // `instanceof FileHandle`. Measured on Node 24.22.1 with a real `FileHandle` as
+    // either prototype, `createReadStream(p, {fd: []})` and
+    // `createReadStream(p, {fd: /x/})` construct a stream and read from the descriptor.
+    if (
+      name === "fd" &&
+      (t.isArrayExpression(memberValue) || t.isRegExpLiteral(memberValue))
+    ) {
+      const owner = t.isArrayExpression(memberValue) ? "Array" : "RegExp";
+      if (prototypeMutationMayPrecede(context.state, owner, node))
+        return undefined;
+    }
+    return streamMemberValue(memberValue, context);
+  };
+  const rejectsIndex = (
+    name: string,
+    max: number,
+    nullIsAbsent: boolean,
+    unlimited: boolean,
+  ): boolean => {
+    const read = staticObjectProperty(value, name);
+    if (read.status !== "explicit") return false;
+    if (t.isNullLiteral(unwrapJavaScriptExpression(read.value as t.Node).node))
+      return !nullIsAbsent;
+    const found = member(name);
+    if (found === undefined || found.kind === "absent") return false;
+    if (found.kind === "refused") return true;
+    const number = found.value;
+    if (unlimited && number === Number.POSITIVE_INFINITY) return false;
+    return !Number.isInteger(number) || number < 0 || number > max;
+  };
+  // `start` and `fd` share the safe-integer range; `end` additionally admits
+  // `Infinity`, and only a read stream looks at it at all.
+  if (rejectsIndex("start", Number.MAX_SAFE_INTEGER, false, false)) return true;
+  if (readStream && rejectsIndex("end", Number.MAX_SAFE_INTEGER, false, true))
+    return true;
+  if (rejectsIndex("fd", 2_147_483_647, true, false)) return true;
+  // No upper bound for a buffer budget, but `Infinity` and a fraction still throw.
+  if (rejectsIndex("highWaterMark", Number.POSITIVE_INFINITY, true, false))
+    return true;
+  // `start` above `end` throws `ERR_OUT_OF_RANGE`. Only a read stream has an `end`,
+  // and `Infinity` there is above every readable `start`, so it never trips this.
+  if (readStream) {
+    const start = member("start");
+    const end = member("end");
+    if (
+      start !== undefined &&
+      end !== undefined &&
+      start.kind === "number" &&
+      end.kind === "number" &&
+      Number.isFinite(start.value) &&
+      Number.isFinite(end.value) &&
+      start.value > end.value
+    )
+      return true;
+  }
+  if (
+    rejectsStreamEncoding(
+      value,
+      context,
+      readStream,
+      streamEncodingValidatorUnmodified(node, context.state),
+      streamEncodingDecoderUnmodified(node, context.state),
+    )
+  )
+    return true;
+  return false;
+};
+
+/**
+ * Whether the lazily loaded read-side decoder still resolves to Node's own export.
+ *
+ * `fs.createReadStream` constructs a `StringDecoder` for the encoding, and the class it
+ * captures comes from the `string_decoder` module at first use. Measured on Node 24.22.1
+ * with a replaced `StringDecoder` and an admitting `Buffer.isEncoding`,
+ * `createReadStream(p, {encoding:"nope"})` returns a handle, while either replacement
+ * alone still throws.
+ */
+const streamEncodingDecoderUnmodified = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  builtinModuleSlotUnmodified(
+    "string_decoder",
+    ["StringDecoder"],
+    node,
+    state,
+  ) &&
+  builtinModuleSubtreeUnmodified(
+    "string_decoder",
+    ["StringDecoder"],
+    node,
+    state,
+  );
+
+/**
+ * Stream option admission consults the mutable Buffer predicate.
+ *
+ * `Buffer.prototype.constructor` is `Buffer` itself, so a write through that route
+ * replaces the same predicate the encoding check calls. Measured on Node 24.22.1, with a
+ * named `Buffer as B` import, `B.prototype.constructor.isEncoding = () => true` makes
+ * `createWriteStream(p, {encoding:"nope"})` return a handle while the unmutated call
+ * throws `ERR_INVALID_ARG_VALUE`. The recorded mutation path is
+ * `["Buffer","prototype","constructor","isEncoding"]`, which a prefix-only slot query for
+ * `["Buffer","isEncoding"]` never matches, so both routes are consulted.
+ */
+const streamEncodingValidatorUnmodified = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const selected = ["global", "Buffer", "isEncoding"];
+  const changed = ambientPathMayObserveAt(state, node, selected, "contents");
+  return (
+    !changed &&
+    builtinModuleSlotUnmodified(
+      "buffer",
+      ["Buffer", "isEncoding"],
+      node,
+      state,
+    ) &&
+    builtinModuleSubtreeUnmodified(
+      "buffer",
+      ["Buffer", "prototype", "constructor", "isEncoding"],
+      node,
+      state,
+    )
+  );
+};
+
+/**
+ * Truthiness of a stream-option value, including forms the shared reader leaves open.
+ *
+ * `staticJavaScriptTruthiness` covers literals, but a unary result is also exactly
+ * readable here: measured on Node 24.22.1, `!1` is `false` and `~-1` is `0`, both
+ * skipped, while `!0`, `~0` and `typeof 1` are truthy and refused. An unshadowed
+ * `Infinity` is truthy and `NaN` is falsy, matching their values.
+ */
+const encodingTruthiness = (
+  value: t.Node,
+  context: DataEffectTraversalContext,
+): boolean | undefined => {
+  const shared = staticJavaScriptTruthiness(value);
+  if (shared !== undefined) return shared;
+  // A shorthand method, a class expression and a regular expression are all objects at
+  // runtime, so they are truthy like the function and object literals the shared reader
+  // already covers. Measured on Node 24.22.1, `{encoding: /x/}` throws
+  // `ERR_INVALID_ARG_VALUE` for both stream methods.
+  if (
+    t.isObjectMethod(value) ||
+    t.isClassExpression(value) ||
+    t.isRegExpLiteral(value) ||
+    t.isNewExpression(value) ||
+    // `import.meta` is always an object in a module. Measured on Node 24.22.1,
+    // `createReadStream(p, {encoding: import.meta})` throws `ERR_INVALID_ARG_VALUE`.
+    (t.isMetaProperty(value) && value.meta.name === "import")
+  )
+    return true;
+  if (
+    t.isIdentifier(value) &&
+    (value.name === "NaN" || value.name === "Infinity")
+  )
+    return isUnmodifiedGlobalReference(value, context.state, value.name)
+      ? value.name === "Infinity"
+      : undefined;
+  if (!t.isUnaryExpression(value)) return undefined;
+  // `typeof` is a non-empty string and `void` is `undefined`. A `delete`
+  // expression can return either boolean, so its truthiness is unknown.
+  if (value.operator === "typeof") return true;
+  if (value.operator === "delete") return undefined;
+  if (value.operator === "void") return false;
+  // `!` over an exactly readable operand is the negation of its truthiness.
+  if (value.operator === "!") {
+    const operand = encodingTruthiness(
+      unwrapJavaScriptExpression(value.argument).node,
+      context,
+    );
+    return operand === undefined ? undefined : !operand;
+  }
+  // `-`, `+` and `~` chains resolve to a number exactly, so `~0` is `-1` and truthy
+  // while `~-1` is `0` and falsy. A non-finite result is truthy except for `NaN`.
+  // A `+`/`-` chain over a BigInt literal is a BigInt: `-0n` is falsy like `0n`, and any
+  // other value is truthy. Measured on Node 24.22.1, `{encoding: -1n}` throws
+  // `ERR_INVALID_ARG_VALUE` while `{encoding: -0n}` is accepted as "not given".
+  const bigint = unaryBigIntOperand(value);
+  // A unary `+` on a BigInt throws before the member is read, so nothing is constructed;
+  // the truthy branch refuses it, which is the same verdict by the other route.
+  if (bigint === "throws") return true;
+  if (bigint !== undefined) return bigint !== 0n;
+  const number = unaryOperandNumber(value, context, 0);
+  if (number === undefined) return undefined;
+  return number !== 0 && !Number.isNaN(number);
+};
+
+/**
+ * Whether a stream `encoding` member is one Node's `Buffer` refuses.
+ *
+ * Node skips the member when it is falsy and otherwise requires a string `Buffer`
+ * accepts. Truthiness and the string check are separate questions from the numeric
+ * bounds the other members use, so this reads them separately instead of reusing the
+ * index rules — a boolean or a unary result can be falsy and therefore skipped.
+ *
+ * Measured on Node 24.22.1: `0`, `-0`, `""`, `false`, `0n`, `NaN`, `!1` (which is
+ * `false`), `~-1` (which is `0`) and a `void` member are all skipped, while `-1`, `1.5`,
+ * `Infinity`, `-Infinity`, `{}`, `[]`, `!0`, `typeof 1` and a method all throw
+ * `ERR_INVALID_ARG_VALUE`.
+ *
+ * An interpolated template stays undecided: `` `ut${"f8"}` `` produces a valid encoding,
+ * so its shape alone does not prove a throw.
+ */
+const rejectsStreamEncoding = (
+  options: t.ObjectExpression,
+  context: DataEffectTraversalContext,
+  readStream: boolean,
+  validatorUnmodified: boolean,
+  decoderUnmodified: boolean,
+): boolean => {
+  const read = staticObjectProperty(options, "encoding");
+  if (read.status !== "explicit") return false;
+  const value = unwrapJavaScriptExpression(read.value as t.Node).node;
+  if (isAbsentOptionValue(value, context.state)) return false;
+  const text = t.isStringLiteral(value)
+    ? value.value
+    : t.isTemplateLiteral(value) && value.expressions.length === 0
+      ? value.quasis[0]?.value.cooked
+      : undefined;
+  if (text !== undefined && text !== null) {
+    if (text.length === 0 || BUFFER_ENCODINGS.has(text.toLowerCase()))
+      return false;
+    // An unknown encoding throws from whichever gate runs first. A write stream has
+    // only the `Buffer.isEncoding` check, so replacing that predicate lifts it. A read
+    // stream also builds a `StringDecoder`, so it still throws while that decoder is
+    // Node's own. Measured on Node 24.22.1: replaced `Buffer.isEncoding` alone still
+    // throws `ERR_UNKNOWN_ENCODING` for a read stream, and only both replacements
+    // together construct a handle.
+    return readStream
+      ? validatorUnmodified || decoderUnmodified
+      : validatorUnmodified;
+  }
+  // Fail-closed for the truthy shapes below whenever either gate may have changed.
+  if (!validatorUnmodified) return false;
+  const truthiness = encodingTruthiness(value, context);
+  if (truthiness === undefined) return false;
+  // A falsy member never reaches Node's check, whatever its type.
+  if (!truthiness) return false;
+  // A truthy string was decided by the encoding set above; only a truthy non-string
+  // reaches here, and Node refuses every one of those.
+  return !t.isStringLiteral(value) && !t.isTemplateLiteral(value);
 };
 
 /**
@@ -589,6 +1165,8 @@ const collectReleases = (
             ),
           ) &&
           (binding.kind !== "parameter" || receiver.hasDefiniteInitializer) &&
+          linked.length === 1 &&
+          linked[0]?.constructorUncertain !== true &&
           holdsOnlyAcquisitions(binding, linked, context.state),
         "resource release resolution partial",
       ),
@@ -693,13 +1271,33 @@ const holdsOnlyAcquisitions = (
     },
   );
 
-const isNullishPlaceholder = (
+const isUndefinedPlaceholder = (
   value: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): boolean =>
-  t.isNullLiteral(value) ||
   t.isUnaryExpression(value, { operator: "void" }) ||
   isUnmodifiedGlobalReference(value, state, "undefined");
+
+const isNullishPlaceholder = (
+  value: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => t.isNullLiteral(value) || isUndefinedPlaceholder(value, state);
+
+/**
+ * Whether a member value is absent, which Node reads as "this option was not passed".
+ *
+ * `null` and `void …` are absent by syntax. The bare `undefined` name is absent only
+ * while nothing has rebound it: under `const undefined = false` the member carries
+ * `false`, so the option is present.
+ */
+const isAbsentOptionValue = (
+  value: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  isNullishJavaScriptSyntax(value) ||
+  (t.isIdentifier(value) &&
+    value.name === "undefined" &&
+    isUnmodifiedGlobalReference(value, state, "undefined"));
 
 const immutableAcquisition = (
   candidate: ResourceCandidate,
@@ -714,7 +1312,10 @@ const immutableAcquisition = (
   ownerCallableId: candidate.ownerCallableId,
   resultBindingId: candidate.resultBindingId,
   linkedResourceIds: [],
-  resolution: "complete",
+  resolution: knownCoverage(
+    candidate.constructorUncertain !== true,
+    "the constructor that produced this acquisition is not certain",
+  ),
 });
 
 interface AcquisitionReference {
@@ -752,6 +1353,20 @@ const acquisitionMethod = (
 const resourceCandidateId = (candidate: ResourceCandidate): string =>
   `resource:acquire:${String(candidate.node.start ?? -1)}:${String(candidate.node.end ?? -1)}`;
 
+const isValidSocketPortNumber = (port: number): boolean =>
+  Number.isInteger(port) && port >= 0 && port <= 65535;
+
+const isValidSocketPortString = (port: string): boolean =>
+  port.trim().length > 0 && isValidSocketPortNumber(Number(port));
+
+const isUnshadowedNonFiniteIdentifier = (
+  value: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  t.isIdentifier(value) &&
+  (value.name === "NaN" || value.name === "Infinity") &&
+  isUnmodifiedGlobalReference(value, state, value.name);
+
 /**
  * `net` and `tls` validate a numeric port before creating a socket, so a
  * literal port outside `[0, 65535]`, a fractional, non-finite, BigInt, boolean
@@ -761,14 +1376,23 @@ const resourceCandidateId = (candidate: ResourceCandidate): string =>
  * Node also rejects.
  *
  * `net` also rejects an omitted or undefined port, before it returns a socket.
- * TLS merges later options, so an undefined first argument alone cannot decide
- * its admission. Object arguments and spread positions remain undecided here.
+ * TLS merges later options, so a later `port`, `path`, `socket`, or dynamic
+ * object argument can override the first slot.
  */
 const rejectsSocketLiteralArguments = (
   node: t.CallExpression | t.OptionalCallExpression,
   specifier: string,
   context: DataEffectTraversalContext,
 ): boolean => {
+  if (specifier === "tls" && node.arguments.length > 1) {
+    const effective = socketOptionReader(node, specifier, context.state);
+    if (
+      effective === undefined ||
+      socketIgnoresTcpOptions(effective, specifier, context.state, node) ||
+      effective("port") !== undefined
+    )
+      return false;
+  }
   const port = node.arguments[0];
   if (port === undefined) return specifier === "net";
   if (t.isSpreadElement(port)) return false;
@@ -786,26 +1410,15 @@ const rejectsSocketLiteralArguments = (
     t.isBooleanLiteral(value)
   )
     return true;
-  if (t.isNumericLiteral(value))
-    return (
-      !Number.isInteger(value.value) || value.value < 0 || value.value > 65535
-    );
+  if (t.isNumericLiteral(value)) return !isValidSocketPortNumber(value.value);
   // `NaN` and `Infinity` are unshadowed globals, and neither is a port.
-  if (
-    t.isIdentifier(value) &&
-    (value.name === "NaN" || value.name === "Infinity") &&
-    isUnmodifiedGlobalReference(value, context.state, value.name)
-  )
-    return true;
+  if (isUnshadowedNonFiniteIdentifier(value, context.state)) return true;
   // Numeric unary operators are judged by their result: `-0` is port zero,
   // and `~(-1.5)` is zero too. `typeof` instead yields a nonempty IPC path.
   if (t.isUnaryExpression(value)) {
     if (value.operator === "!" || value.operator === "delete") return true;
     const number = unaryOperandNumber(value, context, 0);
-    return (
-      number !== undefined &&
-      (!Number.isInteger(number) || number < 0 || number > 65535)
-    );
+    return number !== undefined && !isValidSocketPortNumber(number);
   }
   return false;
 };
@@ -855,9 +1468,7 @@ const tlsOptionMerge = (
     )
       return "object";
     if (
-      t.isFunctionExpression(value) ||
-      t.isArrowFunctionExpression(value) ||
-      t.isClassExpression(value) ||
+      isFunctionValuedSyntax(value) ||
       primitiveOwnKeys(value, (child) => isNullishPlaceholder(child, state)) !==
         null
     )
@@ -919,14 +1530,13 @@ const socketOptionReader = (
   const isNullish = (value: t.Node) => isNullishPlaceholder(value, state);
   // A known source value proves the final option only when target writes are
   // ordinary. Target prototypes and copied __proto__ can absorb later writes.
+  const targetPrototype = target?.properties.find(
+    (property): property is t.ObjectProperty =>
+      t.isObjectProperty(property) && isObjectPrototypeSetter(property),
+  );
   if (
-    target?.properties.some(
-      (property) =>
-        !t.isSpreadElement(property) &&
-        isObjectPrototypeSetter(property) &&
-        t.isObjectProperty(property) &&
-        primitiveOwnKeys(property.value, isNullish) === null,
-    )
+    targetPrototype !== undefined &&
+    primitiveOwnKeys(targetPrototype.value, isNullish) === null
   )
     return undefined;
   const sourceReader = staticObjectCopyPropertyReader(source, isNullish);
@@ -945,8 +1555,20 @@ const socketOptionReader = (
       (property) => t.isObjectMethod(property) && property.kind !== "method",
     ),
   );
-  const readers = [staticObjectPropertyReader(target, isNullish), sourceReader];
+  const targetReader = staticObjectPropertyReader(target, isNullish);
+  const readers = [targetReader, sourceReader];
+  const inheritedSetterMayPrecede =
+    specifier === "tls" &&
+    (targetPrototype === undefined ||
+      !t.isNullLiteral(
+        unwrapJavaScriptExpression(targetPrototype.value).node,
+      )) &&
+    prototypeMutationMayPrecede(state, "Object", node);
   return (member) => {
+    // TLS assigns into the target. An inherited setter can absorb both a
+    // positional default and a copied source value before an own slot exists.
+    if (inheritedSetterMayPrecede && targetReader(member).status !== "explicit")
+      return "unknown";
     let read: t.Node | "unknown" | undefined;
     for (const reader of readers) {
       const property = reader(member);
@@ -1010,12 +1632,7 @@ const rejectsTlsProtocolVersionLiteral = (
     if (t.isUnaryExpression(read)) return read.operator !== "void";
     // `NaN` and `Infinity` are unshadowed globals and neither is a version name, the
     // same way the adjacent port filter treats them.
-    if (
-      t.isIdentifier(read) &&
-      (read.name === "NaN" || read.name === "Infinity") &&
-      isUnmodifiedGlobalReference(read, state, read.name)
-    )
-      return true;
+    if (isUnshadowedNonFiniteIdentifier(read, state)) return true;
     if (readExactJavaScriptLiteral(read).found) return true;
     // Every other statically known shape is truthy and not a string, so the call throws.
     if (
@@ -1106,6 +1723,73 @@ const rejectsSecureProtocolLiteral = (
 };
 
 /**
+ * Whether `tls.connect` slot 0 supplies a pipe name (`path`) before later option
+ * objects are merged. Measured on Node 24/26: `normalizeConnectArgs` treats any
+ * string where `Number(s) >= 0` is false (such as `"/tmp/s"` or `"-1"`) as `path`.
+ */
+const tlsPositionalSuppliesPipePath = (
+  node: t.CallExpression | t.OptionalCallExpression,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const firstArg = node.arguments[0];
+  if (firstArg === undefined || t.isSpreadElement(firstArg)) return false;
+  const first = unwrapJavaScriptExpression(firstArg).node;
+  if (
+    t.isObjectExpression(first) ||
+    t.isArrayExpression(first) ||
+    t.isRegExpLiteral(first) ||
+    t.isNewExpression(first) ||
+    isFunctionValuedSyntax(first) ||
+    primitiveOwnKeys(first, (child) => isNullishPlaceholder(child, state)) ===
+      "none" ||
+    isUnshadowedNonFiniteIdentifier(first, state)
+  )
+    return false;
+  if (t.isStringLiteral(first)) return !(Number(first.value) >= 0);
+  if (t.isTemplateLiteral(first) && first.expressions.length === 0) {
+    const cooked = first.quasis[0]?.value.cooked;
+    return typeof cooked === "string" ? !(Number(cooked) >= 0) : true;
+  }
+  if (t.isUnaryExpression(first)) {
+    // Only `typeof` yields a string whose `Number(...)` is NaN (a pipe path).
+    return first.operator === "typeof";
+  }
+  return true;
+};
+
+/**
+ * Whether a `path` or TLS `socket` takes precedence over `host` and `port`,
+ * including via an inherited `Object.prototype` property when absent.
+ */
+const socketIgnoresTcpOptions = (
+  effective: (member: string) => t.Node | "unknown" | undefined,
+  specifier: string,
+  state: JavaScriptSemanticAnalysisState,
+  node: t.CallExpression | t.OptionalCallExpression,
+): boolean => {
+  const falsy = (value: t.Node) =>
+    isNullishPlaceholder(value, state) ||
+    staticJavaScriptTruthiness(value) === false;
+  // Node reads an absent member through the prototype chain, so a write to
+  // Object.prototype that may run first can supply a path or socket.
+  const inheritable = prototypeMutationMayPrecede(state, "Object", node);
+  for (const member of specifier === "tls" ? ["path", "socket"] : ["path"]) {
+    const value = effective(member);
+    if (value === "unknown" || (value !== undefined && !falsy(value)))
+      return true;
+    if (
+      member === "path" &&
+      value === undefined &&
+      specifier === "tls" &&
+      tlsPositionalSuppliesPipePath(node, state)
+    )
+      return true;
+    if (value === undefined && inheritable) return true;
+  }
+  return false;
+};
+
+/**
  * Whether a `net`/`tls` call carries a `host` option Node rejects.
  *
  * Measured on Node 24.22.1: both connect through `options.host || "localhost"` and
@@ -1123,18 +1807,7 @@ const rejectsSocketHostMember = (
 ): boolean => {
   const effective = socketOptionReader(node, specifier, state);
   if (effective === undefined) return false;
-  const falsy = (value: t.Node) =>
-    isNullishPlaceholder(value, state) ||
-    staticJavaScriptTruthiness(value) === false;
-  // Node reads an absent member through the prototype chain, so a write to
-  // Object.prototype that may run first can supply a path or socket.
-  const inheritable = prototypeMutationMayPrecede(state, "Object", node);
-  for (const member of specifier === "tls" ? ["path", "socket"] : ["path"]) {
-    const value = effective(member);
-    if (value === "unknown" || (value !== undefined && !falsy(value)))
-      return false;
-    if (value === undefined && inheritable) return false;
-  }
+  if (socketIgnoresTcpOptions(effective, specifier, state, node)) return false;
   const host = effective("host");
   if (host === undefined || host === "unknown") return false;
   // Every statically truthy shape other than a string literal is a non-string.
@@ -1142,6 +1815,84 @@ const rejectsSocketHostMember = (
     staticJavaScriptTruthiness(host) === true &&
     !t.isStringLiteral(unwrapJavaScriptExpression(host).node)
   );
+};
+
+const rejectsSocketPortOptionValue = (
+  rawPort: t.Node,
+  context: DataEffectTraversalContext,
+): boolean => {
+  const value = unwrapJavaScriptExpression(rawPort).node;
+  // Explicit `null` throws ERR_INVALID_ARG_TYPE even when `options.path` is passed;
+  // `undefined` / `void` is checked alongside `options.path` in `rejectsSocketPortMember`.
+  if (t.isNullLiteral(value)) return true;
+  if (isUndefinedPlaceholder(value, context.state)) return false;
+  if (t.isStringLiteral(value)) return !isValidSocketPortString(value.value);
+  if (t.isTemplateLiteral(value)) {
+    if (value.expressions.length > 0) return false;
+    const cooked = value.quasis[0]?.value.cooked;
+    return typeof cooked === "string" && !isValidSocketPortString(cooked);
+  }
+  if (t.isNumericLiteral(value)) return !isValidSocketPortNumber(value.value);
+  if (isUnshadowedNonFiniteIdentifier(value, context.state)) return true;
+  if (t.isUnaryExpression(value)) {
+    if (
+      value.operator === "!" ||
+      value.operator === "delete" ||
+      value.operator === "typeof"
+    )
+      return true;
+    const argument = unwrapJavaScriptExpression(value.argument).node;
+    if (
+      t.isBigIntLiteral(argument) ||
+      isUnmodifiedGlobalReference(argument, context.state, "undefined")
+    )
+      return true;
+    const number = unaryOperandNumber(value, context, 0);
+    return number !== undefined && !isValidSocketPortNumber(number);
+  }
+  return (
+    t.isBooleanLiteral(value) ||
+    t.isBigIntLiteral(value) ||
+    t.isRegExpLiteral(value) ||
+    t.isObjectExpression(value) ||
+    t.isArrayExpression(value) ||
+    t.isObjectMethod(value) ||
+    t.isArrowFunctionExpression(value) ||
+    t.isFunctionExpression(value) ||
+    t.isClassExpression(value) ||
+    t.isNewExpression(value)
+  );
+};
+
+/**
+ * Whether a `net`/`tls` call carries a statically known `options.port` Node rejects.
+ * Uses `socketOptionReader` so TLS option merging, spread/accessor overrides, and
+ * `path` / `socket` / `Object.prototype` precedence follow Node's `net`/`tls` rules.
+ */
+const rejectsSocketPortMember = (
+  node: t.CallExpression | t.OptionalCallExpression,
+  specifier: string,
+  context: DataEffectTraversalContext,
+): boolean => {
+  const effective = socketOptionReader(node, specifier, context.state);
+  if (effective === undefined) return false;
+  if (socketIgnoresTcpOptions(effective, specifier, context.state, node))
+    return false;
+  const port = effective("port");
+  if (port === undefined || port === "unknown") return false;
+  if (
+    isUndefinedPlaceholder(unwrapJavaScriptExpression(port).node, context.state)
+  ) {
+    const path = effective("path");
+    if (path === "unknown") return false;
+    // Absent or nullish `path` with `port: undefined` throws ERR_MISSING_ARGS;
+    // any non-nullish `path` (including `""`, `0`, `false`) connects on port 0.
+    return (
+      path === undefined ||
+      isNullishPlaceholder(unwrapJavaScriptExpression(path).node, context.state)
+    );
+  }
+  return rejectsSocketPortOptionValue(port, context);
 };
 
 /** Only `net`/`tls` sockets take a port in argument 0. */

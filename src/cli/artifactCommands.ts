@@ -3,6 +3,7 @@ import { OPEN_BINARY_TOOL_CONTRACT } from "../contracts/openBinaryToolContract.j
 import { contractNamed } from "./contractCliDescription.js";
 import type { CliSessionTarget } from "./contractCliDescriptionTypes.js";
 import { registerContractCommand } from "./contractCommand.js";
+import { PRODUCER_LIMITS_HELP } from "./producerLimitsOption.js";
 import { runOnSessionTarget } from "./contractCommandRunners.js";
 
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
@@ -51,7 +52,7 @@ const artifactTarget = {
 const artifactFields = {
   artifact_limits: {
     description:
-      "JSON artifact producer admissions: bun, dotnet_bundle, node_sea, godot, and expanded_bytes. Omitted fields keep defaults; changes apply on the next call without restart. Independent of summary/paging and client delivery limits.",
+      "JSON artifact producer admissions: bun, dotnet_bundle, node_sea, godot, android_sparse_image, android_vbmeta, and expanded_bytes. Omitted fields keep defaults; changes apply on the next call without restart. Independent of summary/paging and client delivery limits.",
   },
   integrity_policy: {
     description: "Behavior when declared artifact integrity does not match",
@@ -97,6 +98,7 @@ const registerInventoryCommands = (
             "Inventory occurrence ID to extract (repeatable); omit to extract all regular entries",
         },
       },
+      evidenceDelivery: true,
     },
     (input, context) =>
       run(
@@ -174,9 +176,11 @@ const registerAppleBundleCommands = (
     {
       description: "Inspect compiled Apple asset catalog metadata",
       sessionTarget: { description: "Apple .app bundle path" },
+      jsonText: ["producer_limits"],
       fields: {
         offset: { description: "First metadata record" },
         limit: { description: "Maximum records to return" },
+        producer_limits: { description: PRODUCER_LIMITS_HELP },
       },
     },
     run,

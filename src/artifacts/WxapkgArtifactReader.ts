@@ -6,6 +6,7 @@ import type { Readable } from "node:stream";
 import {
   ArtifactReaderFailure,
   artifactFixedLimitFailure,
+  artifactReaderLimitFailure,
   copyArtifactEntry,
   assertProducedEntry,
   type ArtifactEntry,
@@ -20,6 +21,10 @@ import { readArtifactFileBytes } from "./ArtifactFileRange.js";
 import type { ArtifactFormatMetadata } from "../domain/artifactFormatMetadata.js";
 import type { WxapkgMetadata } from "../domain/formatMetadata/packageAndGameMetadata.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
+import {
+  DEFAULT_WXAPKG_READER_LIMITS,
+  type WxapkgReaderLimits,
+} from "../domain/artifactReaderLimits.js";
 import {
   readWxapkgFileTable,
   readWxapkgHeader,
@@ -59,7 +64,12 @@ export class WxapkgArtifactReader implements ArtifactReader {
   #admittedReadOperations = 0;
   #closing = false;
 
-  constructor(path: string, admitted?: StableRegularFileDescriptor) {
+  constructor(
+    path: string,
+    admitted?: StableRegularFileDescriptor,
+    private readonly limits: WxapkgReaderLimits = DEFAULT_WXAPKG_READER_LIMITS,
+    private readonly expandedBytes?: number,
+  ) {
     this.#source = new ArtifactFileSource(path, "wxapkg package", admitted);
   }
 
@@ -177,9 +187,11 @@ export class WxapkgArtifactReader implements ArtifactReader {
       handle,
       header,
       initial.size,
+      this.limits,
       signal,
     );
-    const budget = artifactExpansionBudgetBytes(initial.size);
+    const budget =
+      this.expandedBytes ?? artifactExpansionBudgetBytes(initial.size);
     const entries = new Map<string, WxapkgEntryState>();
     let declaredBytes = 0n;
     for (let index = 0; index < members.length; index++) {
@@ -189,10 +201,13 @@ export class WxapkgArtifactReader implements ArtifactReader {
       // Overlapping member ranges are valid; each declared path causes a read.
       declaredBytes += BigInt(member.size);
       if (declaredBytes > BigInt(budget))
-        throw new ArtifactReaderFailure(
-          "limit",
-          `wxapkg members declare ${String(declaredBytes)} bytes, exceeding the ${String(budget)}-byte plaintext-work budget`,
-          { boundary: "memory" },
+        throw artifactReaderLimitFailure(
+          "artifact_limits.expanded_bytes",
+          budget,
+          "bytes",
+          // Later members are not counted, so the total is a lower bound.
+          undefined,
+          "memory",
         );
       const adapterKey = `wxapkg-entry:${String(index)}`;
       entries.set(adapterKey, {

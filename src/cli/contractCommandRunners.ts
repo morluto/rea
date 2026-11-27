@@ -127,6 +127,7 @@ export const runOnSessionTarget =
       signal,
       detail: delivery.detail,
       evidenceOutput: delivery.evidenceOutput,
+      rerunRecoversResult: delivery.rerunRecoversResult,
       ...(delivery.view === undefined ? {} : { view: delivery.view }),
     });
   };
@@ -214,6 +215,7 @@ export const runDirectOnTarget =
       signal,
       detail: delivery.detail,
       evidenceOutput,
+      rerunRecoversResult: delivery.rerunRecoversResult,
     });
   };
 
@@ -354,6 +356,7 @@ export const deliverWithService =
       signal: context.signal,
       detail: delivery.detail,
       evidenceOutput: delivery.evidenceOutput,
+      rerunRecoversResult: delivery.rerunRecoversResult,
       ...(delivery.view === undefined ? {} : { view: delivery.view }),
     });
   };

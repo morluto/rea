@@ -411,7 +411,7 @@ const readStableArtifactChunks = async <Value>(options: {
       throw new ArtifactReaderFailure(
         "limit",
         `Selected artifact exceeds ${String(maximumBytes)} bytes: ${path}`,
-        { boundary: "file-size" },
+        { boundary: "file-size", observedBytes: stat.size },
       );
   });
   return withArtifactFileHandle(

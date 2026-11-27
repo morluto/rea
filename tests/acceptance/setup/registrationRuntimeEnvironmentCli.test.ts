@@ -82,6 +82,7 @@ const selectedProviderEnvironment = (home: string) => ({
   REA_BROWSER_NO_SANDBOX: "false",
   REA_PWNTOOLS_PYTHON: join(home, "offline-python"),
   REA_PWNTOOLS_MAX_INPUT_BYTES: "67108864",
+  REA_PRODUCER_OUTPUT_BYTES: "8388608",
   REA_PWNDBG_GDB: join(home, "pwndbg-gdb"),
   REA_PWNDBG_GDBINIT: join(home, "pwndbg-gdbinit"),
   REA_PWNDBG_VENV_PATH: join(home, "pwndbg-venv"),

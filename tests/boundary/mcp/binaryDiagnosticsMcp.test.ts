@@ -62,16 +62,18 @@ it("reports the exhausted native export allowance through MCP", async () => {
       bytes: peRepeatedExportNamesImage(0x3000),
       boundary: "retained_text",
       maximum: 16777216,
-      expected: "fixed byte allowance",
-      excluded: "fixed count",
+      parameter: "max_text_bytes",
+      excluded: "max_entries",
+      unit: "bytes",
     },
     {
       filename: "count-limit.dll",
       bytes: peStoredExportTableImage(0x40001),
       boundary: "rows",
       maximum: 262144,
-      expected: "fixed count",
-      excluded: "fixed byte allowance",
+      parameter: "max_entries",
+      excluded: "max_text_bytes",
+      unit: "count",
     },
   ];
   for (const fixture of cases) {
@@ -86,13 +88,20 @@ it("reports the exhausted native export allowance through MCP", async () => {
       code: "resource_constraint",
       retryable: false,
       details: {
+        limit: {
+          control_kind: "parameter",
+          parameter: fixture.parameter,
+          effective_value: fixture.maximum,
+          unit: fixture.unit,
+          applies_at: "next_call",
+        },
         reported_limits: {
           boundary: fixture.boundary,
           maximum: fixture.maximum,
         },
       },
     });
-    expect(error.remediation.action).toContain(fixture.expected);
+    expect(error.remediation.action).toContain(fixture.parameter);
     expect(error.remediation.action).not.toContain(fixture.excluded);
   }
 });

@@ -10,7 +10,10 @@ import { ownedJsonValueSchema } from "../domain/jsonValue.js";
 import { PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY } from "./providerIdentities.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { BrowserObservationError } from "../domain/browserObservationError.js";
+import {
+  BrowserObservationError,
+  browserCleanupObservation,
+} from "../domain/browserObservationError.js";
 import type {
   RetainBrowserScenarioCleanup,
   BrowserScenarioSessionPort,
@@ -141,7 +144,9 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
           throw new BrowserObservationError(OPERATION, "cleanup_failed", {
             cause,
             cleanup: {
-              reason: this.redactError(cause),
+              reason: this.redactError(
+                new Error(browserCleanupObservation(cause).reason),
+              ),
               resources: this.cleanupLease.cleanupResources ?? [],
             },
           });
@@ -206,6 +211,15 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
         options.retainCleanup?.(lease);
       },
     });
+    let openingSettled = false;
+    void opening.then(
+      () => {
+        openingSettled = true;
+      },
+      () => {
+        openingSettled = true;
+      },
+    );
     let opened: OpenedScenarioBrowser;
     try {
       opened = await withPlaywrightExecutionBoundary(
@@ -251,11 +265,15 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
           },
         },
       );
+      // Own the cleanup before awaiting it. An open that already failed gets
+      // its bounded release now, so a clean failure is not reported as
+      // retained; a cancellation of a still-pending open returns at once.
       options.retainCleanup?.(cleanup);
-      void withPlaywrightExecutionBoundary(
+      const releasing = withPlaywrightExecutionBoundary(
         () => cleanup.release(),
         1_000,
       ).catch(() => undefined);
+      if (openingSettled) await releasing;
       throw cause;
     }
     const session = await this.initializeSession(
@@ -486,6 +504,10 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
     return this.eventCapture.limitations();
   }
 
+  captureFinalized(): boolean {
+    return this.eventCapture.captureFinalized();
+  }
+
   storageLimitations(): readonly string[] {
     return this.storage?.limitations() ?? [];
   }
@@ -582,7 +604,9 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
           : new BrowserObservationError(OPERATION, "cleanup_failed", {
               cause,
               cleanup: {
-                reason: this.redactError(cause),
+                reason: this.redactError(
+                  new Error(browserCleanupObservation(cause).reason),
+                ),
                 resources: this.cleanupLease.cleanupResources ?? [],
               },
             });

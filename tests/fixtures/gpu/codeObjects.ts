@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { deflateSync, zstdCompressSync } from "node:zlib";
 import { encode } from "@msgpack/msgpack";
+import { lz4LiteralBlock } from "../lz4LiteralBlock.js";
+
 export const ptxFixture = `// Producer-shaped static PTX; portable tests do not invoke a GPU compiler.
 .version 8.8
 .target sm_80
@@ -388,22 +390,6 @@ export const amdAbiFixture = (
   bytes[7] = osAbi;
   bytes.writeUInt32LE(0x36, 48);
   return bytes;
-};
-/**
- * One final LZ4 literal sequence, the block form CUDA's 0x2000 profile stores.
- * A single sequence is valid LZ4: separate sequences need an intervening match.
- */
-const lz4LiteralBlock = (data: Buffer): Buffer => {
-  const head = [Math.min(data.length, 15) << 4];
-  if (data.length >= 15) {
-    let extra = data.length - 15;
-    while (extra >= 255) {
-      head.push(255);
-      extra -= 255;
-    }
-    head.push(extra);
-  }
-  return Buffer.concat([Buffer.from(head), data]);
 };
 export const cudaFixture = (
   compression: "none" | "zstd" | "lz4" | "legacy" = "none",
