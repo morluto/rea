@@ -176,8 +176,7 @@ export const registerBinaryDiagnosticsCommands = (
           description: "Local thin Mach-O or universal Mach-O image",
         },
         architecture: {
-          description:
-            "Slice to read from a universal Mach-O, by CPU family; required for universal files and rejected for any other file",
+          description: UNIVERSAL_SLICE_ARCHITECTURE_HELP,
         },
       },
     },
