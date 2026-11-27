@@ -7,6 +7,7 @@ import type {
 } from "../../domain/formatMetadata/mediaAssetMetadata.js";
 import { BinaryReader } from "../../domain/binaryContainer.js";
 import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
+import { byteToHex } from "../../kernel/byteToHex.js";
 import {
   malformedInput,
   truncatedInput,
@@ -753,7 +754,7 @@ export const bink2Layout = (
   const known =
     revisionChar !== null && BINK2_KNOWN_REVISIONS.has(revisionChar);
   const unplaced = !known
-    ? `Bink 2 revision byte 0x${revision.toString(16).padStart(2, "0")} is not a revision FFmpeg's Bink demuxer reads; the audio track and frame-offset tables after offset ${String(BINK2_FIXED_HEADER_BYTES)} were not located.`
+    ? `Bink 2 revision byte 0x${byteToHex(revision)} is not a revision FFmpeg's Bink demuxer reads; the audio track and frame-offset tables after offset ${String(BINK2_FIXED_HEADER_BYTES)} were not located.`
     : (videoFlags & BINK2_UNSETTLED_VIDEO_FLAGS) !== 0
       ? `Bink 2 video flags 0x${videoFlags.toString(16)} set a bit after which reference readers disagree about further header words; the audio track and frame-offset tables after offset ${String(BINK2_FIXED_HEADER_BYTES)} were not located.`
       : undefined;
