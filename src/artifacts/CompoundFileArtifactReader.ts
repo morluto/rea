@@ -7,6 +7,7 @@ import type {
 } from "../domain/formatMetadata/androidAndSystemMetadata.js";
 import type { RegionDecodeFailure } from "../domain/firmware/regionDecoder.js";
 import {
+  COMPOUND_FILE_FIXED_LIMITS,
   createCompoundFileDecoder,
   type CompoundFileChainProblem,
   type CompoundFileDirectoryEntry,
@@ -16,6 +17,7 @@ import {
   ArtifactFileSource,
   ArtifactReaderFailure,
   ArtifactResourceScope,
+  artifactFixedLimitFailure,
   artifactReadCancelledBy,
   assertArtifactReadActive,
   copyArtifactEntry,
@@ -319,16 +321,33 @@ export class CompoundFileArtifactReader implements ArtifactReader {
   }
 
   #failure(failure: RegionDecodeFailure): ArtifactReaderFailure {
-    return failure.kind === "malformed"
-      ? malformedArtifact(
-          "compound-file",
-          `compound file is malformed: ${failure.message}`,
-        )
-      : new ArtifactReaderFailure(
-          "limit",
-          `compound file exceeds a fixed limit: ${failure.message}`,
-          failure.boundary === undefined ? {} : { boundary: failure.boundary },
-        );
+    if (failure.kind === "malformed")
+      return malformedArtifact(
+        "compound-file",
+        `compound file is malformed: ${failure.message}`,
+      );
+    // A fixed refusal names its ceiling, so the caller can tell what the
+    // release will never exceed rather than reading the prose alone.
+    const ceiling =
+      failure.boundary === undefined
+        ? undefined
+        : COMPOUND_FILE_FIXED_LIMITS.get(failure.boundary);
+    if (ceiling !== undefined)
+      return artifactFixedLimitFailure(
+        {
+          name: ceiling.name,
+          kind: "parser",
+          limit: ceiling.limit,
+          unit: ceiling.unit,
+        },
+        `compound file exceeds a fixed limit: ${failure.message}`,
+        failure.boundary,
+      );
+    return new ArtifactReaderFailure(
+      "limit",
+      `compound file exceeds a fixed limit: ${failure.message}`,
+      failure.boundary === undefined ? {} : { boundary: failure.boundary },
+    );
   }
 }
 

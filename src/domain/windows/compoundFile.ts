@@ -21,11 +21,33 @@ export const hasCompoundFileSignature = (prefix: Uint8Array): boolean =>
   Buffer.from(prefix.subarray(0, COMPOUND_FILE_MAGIC_BYTES)).toString("hex") ===
     COMPOUND_FILE_MAGIC;
 
-/**
- * Fixed whole-file ceiling. The directory and allocation tables are read
+/** Fixed whole-file ceiling. The directory and allocation tables are read
  * whole; stream contents are not, so this bounds the container itself.
  */
 export const COMPOUND_FILE_MAX_BYTES = 512 * 1024 * 1024;
+
+/** Fixed facts for the limits this format refuses on, by `boundary`. */
+export const COMPOUND_FILE_FIXED_LIMITS = new Map<
+  NonNullable<RegionDecodeFailure["boundary"]>,
+  { readonly name: string; readonly limit: number; readonly unit: string }
+>([
+  [
+    "file-size",
+    {
+      name: "The compound file whole-file allowance",
+      limit: COMPOUND_FILE_MAX_BYTES,
+      unit: "bytes",
+    },
+  ],
+  [
+    "capacity",
+    {
+      name: "The compound file directory-entry allowance",
+      limit: 1_048_576,
+      unit: "entries",
+    },
+  ],
+]);
 
 /** Sector ids are 32-bit; these three values are markers rather than sectors. */
 export const CFB_FREE_SECTOR = 0xffff_ffff;

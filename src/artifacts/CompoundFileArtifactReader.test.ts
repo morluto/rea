@@ -1,4 +1,4 @@
-import { stat, writeFile } from "node:fs/promises";
+import { stat, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it, vi } from "vitest";
@@ -6,6 +6,10 @@ import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
 import { CompoundFileArtifactReader } from "./CompoundFileArtifactReader.js";
+import {
+  COMPOUND_FILE_FIXED_LIMITS,
+  COMPOUND_FILE_MAX_BYTES,
+} from "../domain/windows/compoundFile.js";
 import { ArtifactFileSource } from "../resources/ArtifactFileSource.js";
 import { assertArtifactReadActive } from "../resources/ArtifactFileOperation.js";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
@@ -422,6 +426,30 @@ it("refuses a version the container does not define", async () => {
       await write("version-2.automaticDestinations-ms", bytes),
     ),
   ).rejects.toThrow(/only versions 3 and 4 are supported/u);
+});
+
+it("refuses a file above the whole-file ceiling with its ceiling named", async () => {
+  const path = await write(
+    "oversized.automaticDestinations-ms",
+    compoundFile({ entries: rootWith(undefined, []) }),
+  );
+  // A sparse file: the size is beyond the fixed ceiling without writing it all.
+  await truncate(path, COMPOUND_FILE_MAX_BYTES + 1);
+  const reader = new CompoundFileArtifactReader(path);
+  try {
+    await expect(
+      reader.entries()[Symbol.asyncIterator]().next(),
+    ).rejects.toMatchObject({
+      reason: "limit",
+      fixedAllowance: {
+        name: COMPOUND_FILE_FIXED_LIMITS.get("file-size")?.name,
+        limit: COMPOUND_FILE_MAX_BYTES,
+        unit: "bytes",
+      },
+    });
+  } finally {
+    await reader.close();
+  }
 });
 
 it("retries a shared preparation cancelled by another traversal", async () => {
