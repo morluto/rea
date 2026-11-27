@@ -532,6 +532,15 @@ rea extract-artifact ./game.nds --json
 See [Nintendo DS ROMs](../guides/firmware/nds-roms.md) for header detection, member paths,
 checksum and range limitations, and what is not decoded.
 
+Inventory and extract a Sega Mega Drive or Genesis ROM, including an SMD dump:
+
+```sh
+rea inspect-artifact ./game.bin --detail summary --json
+rea extract-artifact ./game.smd --json
+```
+
+See [Sega Mega Drive ROMs](../guides/firmware/mega-drive-roms.md) for the vector
+table, checksum, SMD de-interleave, and the raw m68k hand-off.
 Inventory and extract a Nintendo 64 ROM. z64, v64 and n64 dumps all yield a
 big-endian `program.z64`:
 

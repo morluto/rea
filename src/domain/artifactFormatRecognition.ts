@@ -9,6 +9,7 @@ import { detectHexRecordEncoding } from "./firmware/hexRecords.js";
 import { hasUf2Block } from "./firmware/uf2.js";
 import { hasGodotPckHeader } from "./godotPckFormat.js";
 import { nesContainerFormat, parseInesLayout } from "./inesContainer.js";
+import { type MegaDriveLayout, recognizeMegaDriveRom } from "./megaDriveRom.js";
 import { n64RomRecognition } from "./n64Rom.js";
 import { hasNdsHeader } from "./ndsRom.js";
 import {
@@ -60,6 +61,7 @@ export type RecognizedArtifactFormat = Extract<
   ArtifactFormatId,
   | "ines"
   | "nds"
+  | "mega-drive-rom"
   | "n64-rom"
   | "zip"
   | "godot-pck"
@@ -174,6 +176,17 @@ const when =
     claims(prefix) ? { state: "recognized", format } : undefined;
 
 /**
+ * The Mega Drive layout this prefix shows. It yields to ELF, Mach-O, DOS MZ
+ * and FAT, so a native header is not claimed because its bytes also match.
+ */
+const megaDriveLayout = (
+  prefix: Buffer,
+  fileSize: number,
+): MegaDriveLayout | undefined =>
+  claimsExecutableHeader(prefix, fileSize)
+    ? undefined
+    : recognizeMegaDriveRom(prefix, fileSize);
+/**
  * The one ordered recognizer table. Inventory classification and binary
  * target resolution both walk it, so the same bytes reach the same verdict;
  * each route decides only what a refusal or a missing input means for it.
@@ -283,6 +296,17 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
         ? { state: "recognized", format: "iso9660" }
         : undefined;
     },
+    // An SMD copier dump stores its 16 KiB block count in byte 0, so 233 or
+    // 489 blocks put 0xE9 there, the ESP image magic. The ESP image has only
+    // that one-byte magic and plausibility checks; an SMD dump must also carry
+    // the AA BB copier mark at byte 8, the SEGA bytes its interleaving puts at
+    // 640 and 641, and a size of exactly 512 bytes plus whole blocks. The
+    // stronger SMD signature is therefore decided first. A plain image has
+    // only SEGA at 0x100 and is decided after the leading-magic formats below.
+    ({ prefix, fileSize }) =>
+      megaDriveLayout(prefix, fileSize) === "smd"
+        ? { state: "recognized", format: "mega-drive-rom" }
+        : undefined,
     // A C3 or S3 flash dump begins with its bootloader image, so the flash
     // layout is decided before the image header.
     ({ espFlashLayout }) =>
@@ -333,6 +357,12 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     },
     // Binary plists, including keyed archives, often use other extensions.
     when("plist", hasBinaryPlistSignature),
+    // A plain image: SEGA at 0x100. The SMD layout was decided before the
+    // ESP image above.
+    ({ prefix, fileSize }) =>
+      megaDriveLayout(prefix, fileSize) === "plain"
+        ? { state: "recognized", format: "mega-drive-rom" }
+        : undefined,
     // No magic: the stored logo CRC and a matching checksum claim it, after
     // every format with a leading signature.
     when("nds", hasNdsHeader),

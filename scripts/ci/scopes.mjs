@@ -164,6 +164,8 @@ const PATH_SCOPES = {
     "tests/boundary/filesystem/inesCancellation.test.ts",
     "src/artifacts/NdsRomArtifactReader*.ts",
     "src/domain/ndsRom*.ts",
+    "src/artifacts/MegaDriveRomArtifactReader*.ts",
+    "src/domain/megaDriveRom*.ts",
     "src/artifacts/N64RomArtifactReader*.ts",
     "src/domain/n64Rom*.ts",
     "src/hopper/BridgeLauncher.ts",
