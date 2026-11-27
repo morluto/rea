@@ -732,14 +732,16 @@ class TimelineCapture {
         "payload_limit",
         {
           detail: `Armed timeline rows exceeded the ${String(allowance)}-byte timeline allowance. Request identities keep a separate counter.`,
-          limit: {
-            ...analysisSettingLimit(
-              "browser.timeline_retained_bytes",
-              allowance,
-              this.timelineAllowance.source,
-            ),
-            required_value: this.#timelineBytes + bytes,
+          // Later rows in this window are not measured, so this sum is a
+          // lower bound and must not be reported as required_value.
+          reportedLimits: {
+            measured_timeline_bytes: this.#timelineBytes + bytes,
           },
+          limit: analysisSettingLimit(
+            "browser.timeline_retained_bytes",
+            allowance,
+            this.timelineAllowance.source,
+          ),
         },
       );
       this.end("window_elapsed");

@@ -475,7 +475,10 @@ One call can pass `timeline_retained_bytes` (CLI `--timeline-retained-bytes`).
 A running REA changes the default for later calls with
 `update_analysis_settings`. The range is 1 to `Number.MAX_SAFE_INTEGER`.
 A row that does not fit fails the observation with `payload_limit` and
-`details.limit`, and does not return a shorter timeline. Raising the
+`details.limit`, and does not return a shorter timeline.
+`details.reported_limits.measured_timeline_bytes` counts the retained rows
+and the refused row. Later rows in the window are not counted, so the limit
+has no `required_value`. Raising the
 timeline allowance does not raise the request-identity counter, and the
 reverse is also true. Event count has no separate ceiling.
 

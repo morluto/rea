@@ -13,6 +13,7 @@ const observeOverBudget = async (
   stage: 1 | 2,
   input: { readonly timeline_retained_bytes?: number },
 ) => {
+  let seenLifecycleEvents = 0;
   let received: () => void = () => {};
   const delivered = new Promise<void>((resolve) => {
     received = resolve;
@@ -23,7 +24,9 @@ const observeOverBudget = async (
     .mockImplementation(function (this: CdpConnection, listener) {
       return onEvent.call(this, (event) => {
         listener(event);
-        if (event.registered?.method === "Page.lifecycleEvent") received();
+        if (event.registered?.method !== "Page.lifecycleEvent") return;
+        seenLifecycleEvents += 1;
+        if (seenLifecycleEvents === 4) received();
       });
     });
   const browser = await startFakeCdpBrowser({ commandEvents: () => [] });
@@ -99,13 +102,13 @@ it("fails an armed timeline that exceeds the per-call allowance", async () => {
     source: "request",
     update_mode: "parameter",
   });
-  expect(projected.details?.limit).toMatchObject({
-    required_value: expect.any(Number),
-  });
-  const required = (
-    projected.details?.limit as { required_value?: number } | undefined
-  )?.required_value;
-  expect(required).toBeGreaterThan(512);
+  expect(projected.details?.limit).not.toHaveProperty("required_value");
+  const measured = (
+    projected.details?.reported_limits as
+      | { measured_timeline_bytes?: number }
+      | undefined
+  )?.measured_timeline_bytes;
+  expect(measured).toBeGreaterThan(512);
   expect(projected.remediation?.action).toContain("timeline_retained_bytes");
   expect(projected.remediation?.action).toContain("update_analysis_settings");
   expect(browser.commands.map(({ method }) => method)).toContain(
