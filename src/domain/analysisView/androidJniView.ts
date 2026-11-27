@@ -31,11 +31,7 @@ import {
   pageViewCoverage,
   analysisViewCoverageSchema,
 } from "./analysisViewCoverage.js";
-import {
-  selectIndexedViewRows,
-  selectViewRows,
-  filterSet,
-} from "./selectViewRows.js";
+import { selectViewRows, filterSet } from "./selectViewRows.js";
 
 const reportSchema = androidResultSchemas.inspect_android_jni_bindings;
 const readReport = createAnalysisViewResultReader(reportSchema);
@@ -271,10 +267,7 @@ export const projectAndroidJniView = (
     const pick = <Row extends object>(
       rows: readonly Row[],
       matches: (row: Row) => boolean,
-    ) =>
-      indices !== undefined
-        ? selectIndexedViewRows(rows, indices, view, matches, project)
-        : selectViewRows(rows, view, matches, project);
+    ) => selectViewRows(rows, view, matches, project, indices);
     let selected: { rows: object[]; total: number };
     switch (view.collection) {
       case "declarations": {

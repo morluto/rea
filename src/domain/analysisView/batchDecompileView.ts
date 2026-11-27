@@ -37,11 +37,7 @@ import {
   analysisTextPage,
   analysisTextPageItemSchema,
 } from "./analysisViewText.js";
-import {
-  selectIndexedViewRows,
-  selectViewRows,
-  filterSet,
-} from "./selectViewRows.js";
+import { selectViewRows, filterSet } from "./selectViewRows.js";
 
 const OPERATION = "batch_decompile" as const;
 
@@ -376,16 +372,13 @@ export const projectBatchDecompileView = (
           entries.has(item.procedure.address)));
     const projectItem = (item: (typeof batch.items)[number], index: number) =>
       itemRow(item, index, view.include_pseudocode);
-    const { rows, total } =
-      indices !== undefined
-        ? selectIndexedViewRows(
-            batch.items,
-            indices,
-            view,
-            matches,
-            projectItem,
-          )
-        : selectViewRows(batch.items, view, matches, projectItem);
+    const { rows, total } = selectViewRows(
+      batch.items,
+      view,
+      matches,
+      projectItem,
+      indices,
+    );
     return ok({
       kind: "batch-decompile" as const,
       view,
