@@ -254,9 +254,6 @@ export type ElectronFuseImplication = z.infer<
   typeof electronFuseImplicationSchema
 >;
 export type ElectronFuseReport = z.infer<typeof electronFuseReportSchema>;
-export type InspectElectronFusesInput = z.infer<
-  typeof inspectElectronFusesInputSchema
->;
 export type InspectElectronFusesRequest = z.input<
   typeof inspectElectronFusesInputSchema
 >;
