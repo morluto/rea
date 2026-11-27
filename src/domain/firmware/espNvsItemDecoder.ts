@@ -1,18 +1,24 @@
-import { createHash } from "node:crypto";
 import { crc32 } from "node:zlib";
+import { byteToHex } from "../../kernel/byteToHex.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
+import { decodeStrictUtf8, isStrictUtf8 } from "../strictUtf8.js";
 import {
-  readInt32At,
-  readInt64At,
+  BinaryReader,
   readUint16At,
   readUint32At,
   readUint64At,
 } from "../binaryContainer.js";
-import type { EspNvsDataType, EspNvsEntry } from "./espNvs.js";
+import {
+  ESP_NVS_ENTRY_BYTES,
+  ESP_NVS_ENTRY_COUNT,
+  ESP_NVS_ENTRY_DATA_OFFSET,
+  type EspNvsDataType,
+  type EspNvsEntry,
+} from "./espNvs.js";
 
 const CRC_SEED = 0xffff_ffff;
-const MAX_BLOB_PREVIEW_BYTES = 128;
-const EMPTY_SHA256 = sha256Hex(Buffer.alloc(0));
+export const MAX_BLOB_PREVIEW_BYTES = 128;
+export const EMPTY_SHA256 = sha256Hex(Buffer.alloc(0));
 
 /** Compute ESP-IDF `esp_rom_crc32_le(0xffffffff, buf, len)`. */
 export const espIdfCrc32 = (bytes: Uint8Array): number =>
@@ -26,10 +32,29 @@ export const computeNvsItemHeaderCrc = (slot32: Uint8Array): number => {
   return espIdfCrc32(packed);
 };
 
-export const decodeCString16 = (bytes16: Uint8Array): string => {
+/** Decode bytes as UTF-8, keeping a leading U+FEFF as stored, or null when malformed. */
+const utf8OrNull = (bytes: Uint8Array): string | null =>
+  isStrictUtf8(bytes) ? decodeStrictUtf8(bytes, "preserve") : null;
+
+/**
+ * Decode a 16-byte NVS key. ESP-IDF writes at most 15 bytes and a NUL, so a
+ * key without a NUL or with invalid UTF-8 is reported; its bytes are kept
+ * one-to-one as Latin-1 so the stored identity is not altered.
+ */
+export const decodeNvsKey = (
+  bytes16: Uint8Array,
+): { readonly key: string; readonly problem?: string } => {
   const nul = bytes16.indexOf(0);
   const slice = nul === -1 ? bytes16 : bytes16.subarray(0, nul);
-  return Buffer.from(slice).toString("utf8");
+  const text = utf8OrNull(slice);
+  if (nul !== -1 && text !== null) return { key: text };
+  return {
+    key: Buffer.from(slice).toString("latin1"),
+    problem:
+      nul === -1
+        ? "key has no NUL terminator within its 16 bytes"
+        : "key is not valid UTF-8 and is shown byte-for-byte as Latin-1",
+  };
 };
 
 export interface RawBlobChunk {
@@ -58,56 +83,63 @@ export interface RawBlobIndex {
   readonly headerCrcValid: boolean;
 }
 
-const decodePrimitiveValue = (
-  typeCode: number,
-  data8: Uint8Array,
-): {
-  readonly dataType: EspNvsDataType;
-  readonly integerText: string;
-} | null => {
-  switch (typeCode) {
-    case 0x01:
-      return { dataType: "u8", integerText: String(data8[0]!) };
-    case 0x11: {
-      const v = data8[0]!;
-      return { dataType: "i8", integerText: String(v > 127 ? v - 256 : v) };
-    }
-    case 0x02:
-      return {
-        dataType: "u16",
-        integerText: String(readUint16At(data8, 0, true)),
-      };
-    case 0x12: {
-      const u = readUint16At(data8, 0, true);
-      return {
-        dataType: "i16",
-        integerText: String(u > 32767 ? u - 65536 : u),
-      };
-    }
-    case 0x04:
-      return {
-        dataType: "u32",
-        integerText: String(readUint32At(data8, 0, true)),
-      };
-    case 0x14:
-      return {
-        dataType: "i32",
-        integerText: String(readInt32At(data8, 0, true)),
-      };
-    case 0x08:
-      return {
-        dataType: "u64",
-        integerText: readUint64At(data8, 0, true).toString(10),
-      };
-    case 0x18:
-      return {
-        dataType: "i64",
-        integerText: readInt64At(data8, 0, true).toString(10),
-      };
-    default:
-      return null;
+/** ESP-IDF `ItemType` codes (`nvs_handle.hpp`, `nvs.h`). */
+export const ITEM_TYPE = {
+  SZ: 0x21,
+  BLOB: 0x41,
+  BLOB_DATA: 0x42,
+  BLOB_IDX: 0x48,
+  U8: 0x01,
+} as const;
+/** ESP-IDF `Item::CHUNK_ANY`: the chunk index of every item that is not `BLOB_DATA`. */
+const CHUNK_ANY = 0xff;
+/** Namespace index 0 holds namespace definitions (`NVS_CONST_NS_INDEX`). */
+const NAMESPACE_INDEX = 0;
+
+type PrimitiveValue =
+  | { readonly dataType: EspNvsDataType; readonly integerText: string }
+  | { readonly dataType: EspNvsDataType; readonly floatText: string };
+
+const integer = (
+  dataType: EspNvsDataType,
+  read: (value: BinaryReader) => bigint | number,
+) => ({
+  dataType,
+  read: (value: BinaryReader): PrimitiveValue => ({
+    dataType,
+    integerText: String(read(value)),
+  }),
+});
+const float = (
+  dataType: EspNvsDataType,
+  read: (value: BinaryReader) => number,
+) => ({
+  dataType,
+  read: (value: BinaryReader): PrimitiveValue => ({
+    dataType,
+    floatText: String(read(value)),
+  }),
+});
+
+/** The one-entry item types and their little-endian 8-byte value encodings. */
+const PRIMITIVE_TYPES: ReadonlyMap<
+  number,
+  {
+    readonly dataType: EspNvsDataType;
+    readonly read: (value: BinaryReader) => PrimitiveValue;
   }
-};
+> = new Map([
+  [0x01, integer("u8", (v) => v.u8(0))],
+  [0x11, integer("i8", (v) => v.i8(0))],
+  [0x02, integer("u16", (v) => v.u16(0))],
+  [0x12, integer("i16", (v) => v.i16(0))],
+  [0x04, integer("u32", (v) => v.u32(0))],
+  [0x14, integer("i32", (v) => v.i32(0))],
+  [0x08, integer("u64", (v) => readUint64At(v.bytes, 0, true))],
+  [0x18, integer("i64", (v) => v.i64(0))],
+  [0x24, float("float", (v) => v.f32(0))],
+  [0x28, float("double", (v) => v.f64(0))],
+]);
 
 export interface DecodedSingleSlotResult {
   readonly consumedSlots: number;
@@ -120,11 +152,71 @@ export interface DecodedSingleSlotResult {
   readonly immediateEntry?: Omit<EspNvsEntry, "namespace">;
   readonly blobChunk?: RawBlobChunk;
   readonly blobIndex?: RawBlobIndex;
-  readonly crcMismatch?: boolean;
-  readonly anomaly?: string;
+  /** The item header failed CRC32 or ESP-IDF's consistency rules, so none of its fields were trusted. */
+  readonly inconsistentHeader?: boolean;
+  /** The header was trusted but the item itself is damaged or unusable. */
+  readonly damagedItem?: boolean;
+  readonly anomalies: readonly string[];
 }
 
-const entryCompleteness = (
+const ENTRY_BYTES = ESP_NVS_ENTRY_BYTES;
+const ENTRIES_PER_PAGE = ESP_NVS_ENTRY_COUNT;
+/** ESP-IDF `(UINT8_MAX / 2) * (ENTRY_COUNT - 1) * ENTRY_SIZE`: two version ranges of chunk indexes. */
+const MAX_BLOB_INDEX_DATA_BYTES =
+  Math.floor(255 / 2) * (ENTRIES_PER_PAGE - 1) * ENTRY_BYTES;
+
+/**
+ * ESP-IDF `Item::checkHeaderConsistency` after the CRC32: one-entry types use
+ * span 1, `BLOB_IDX` uses span 1 and chunk index 0xff with a bounded size,
+ * `BLOB_DATA` never uses chunk index 0xff, and a variable item's span is one
+ * header entry plus its data rounded up to whole entries, within the page.
+ * Every other type is invalid. Returns the reason, or undefined when consistent.
+ */
+const itemHeaderInconsistency = (
+  slot: Uint8Array,
+  entryIndex: number,
+): string | undefined => {
+  const typeCode = slot[1]!;
+  const span = slot[2]!;
+  const chunkIndex = slot[3]!;
+  const typeText = `0x${byteToHex(typeCode)}`;
+  if (PRIMITIVE_TYPES.has(typeCode))
+    return span === 1
+      ? undefined
+      : `declares span ${String(span)} for one-entry type ${typeText}`;
+  if (typeCode === ITEM_TYPE.BLOB_IDX) {
+    if (span !== 1) return `declares BLOB_IDX span ${String(span)}`;
+    if (chunkIndex !== CHUNK_ANY)
+      return `declares BLOB_IDX chunk index ${String(chunkIndex)} instead of 0xff`;
+    const dataSize = readUint32At(slot, 24, true);
+    return dataSize > MAX_BLOB_INDEX_DATA_BYTES
+      ? `declares BLOB_IDX size ${String(dataSize)} above the ${String(MAX_BLOB_INDEX_DATA_BYTES)}-byte maximum`
+      : undefined;
+  }
+  if (isVariableLengthType(typeCode)) {
+    if (typeCode === ITEM_TYPE.BLOB_DATA && chunkIndex === CHUNK_ANY)
+      return "declares BLOB_DATA chunk index 0xff";
+    const dataSize = readUint16At(slot, 24, true);
+    const remainingEntries = ENTRIES_PER_PAGE - entryIndex;
+    if (dataSize > (remainingEntries - 1) * ENTRY_BYTES)
+      return `declares ${String(dataSize)} data bytes past the end of the page`;
+    if (span > remainingEntries)
+      return `declares span ${String(span)} past the end of the page`;
+    const expectedSpan = 1 + Math.ceil(dataSize / ENTRY_BYTES);
+    return span === expectedSpan
+      ? undefined
+      : `declares span ${String(span)} for ${String(dataSize)} data bytes (expected ${String(expectedSpan)})`;
+  }
+  return `has unrecognized item type ${typeText}`;
+};
+
+/** ESP-IDF `isVariableLengthType`: SZ, BLOB (v1) and BLOB_DATA carry a length and data CRC32. */
+const isVariableLengthType = (typeCode: number): boolean =>
+  typeCode === ITEM_TYPE.SZ ||
+  typeCode === ITEM_TYPE.BLOB ||
+  typeCode === ITEM_TYPE.BLOB_DATA;
+
+export const entryCompleteness = (
   crcValid: boolean,
   chunksComplete: boolean,
 ): EspNvsEntry["completeness"] => {
@@ -133,127 +225,71 @@ const entryCompleteness = (
   return "complete";
 };
 
-const buildImmediateVariableEntry = (options: {
-  readonly pageIndex: number;
-  readonly pageFileOffset: number;
-  readonly entryIndex: number;
-  readonly nsIndex: number;
-  readonly typeCode: number;
-  readonly span: number;
-  readonly key: string;
-  readonly payload: Buffer;
-  readonly crcValid: boolean;
-}): DecodedSingleSlotResult => {
-  const {
-    pageIndex,
-    pageFileOffset,
-    entryIndex,
-    nsIndex,
-    typeCode,
-    span,
-    key,
-    payload,
-    crcValid,
-  } = options;
-  const fileOffset = pageFileOffset + 64 + entryIndex * 32;
-  const payloadAnomaly = crcValid
-    ? {}
-    : {
-        crcMismatch: true,
-        anomaly: `Page ${String(pageIndex)} slot ${String(entryIndex)} at offset 0x${fileOffset.toString(16)} ("${key}") failed variable-payload CRC32 or length check.`,
-      };
-  if (typeCode === 0x21) {
-    const nulIdx = payload.indexOf(0);
-    const strBytes = nulIdx === -1 ? payload : payload.subarray(0, nulIdx);
-    return {
-      consumedSlots: span,
-      immediateEntry: {
-        page_index: pageIndex,
-        entry_index: entryIndex,
-        file_offset: fileOffset,
-        namespace_id: nsIndex,
-        key,
-        data_type: "sz",
-        raw_type_code: typeCode,
-        span,
-        value_text: strBytes.toString("utf8"),
-        value_integer: null,
-        blob_size: null,
-        blob_preview_hex: null,
-        blob_sha256: null,
-        crc_valid: crcValid,
-        completeness: entryCompleteness(crcValid, true),
-      },
-      ...payloadAnomaly,
-    };
-  }
-  const preview = payload.subarray(0, MAX_BLOB_PREVIEW_BYTES).toString("hex");
-  return {
-    consumedSlots: span,
-    immediateEntry: {
-      page_index: pageIndex,
-      entry_index: entryIndex,
-      file_offset: fileOffset,
-      namespace_id: nsIndex,
-      key,
-      data_type: "blob_v1",
-      raw_type_code: typeCode,
-      span,
-      value_text: null,
-      value_integer: null,
-      blob_size: payload.length,
-      blob_preview_hex: preview,
-      blob_sha256: sha256Hex(payload),
-      crc_valid: crcValid,
-      completeness: entryCompleteness(crcValid, true),
-    },
-    ...payloadAnomaly,
-  };
-};
-
-const decodeVariableSpanItem = (options: {
+interface SlotContext {
   readonly pageBytes: Buffer;
   readonly pageIndex: number;
   readonly pageSeqNo: number;
   readonly pageFileOffset: number;
   readonly entryIndex: number;
-  readonly nsIndex: number;
-  readonly typeCode: number;
-  readonly span: number;
-  readonly chunkIndex: number;
-  readonly key: string;
-  readonly data8: Uint8Array;
-}): DecodedSingleSlotResult => {
-  const {
-    pageBytes,
-    pageIndex,
-    pageSeqNo,
-    pageFileOffset,
-    entryIndex,
-    nsIndex,
-    typeCode,
-    span,
-    chunkIndex,
-    key,
-    data8,
-  } = options;
-  const declaredLen = readUint16At(data8, 0, true);
-  const declaredDataCrc = readUint32At(data8, 4, true);
-  const maxSpanBytes = (span - 1) * 32;
-  const payloadStart = 64 + (entryIndex + 1) * 32;
-  const availableBytes = Math.max(
-    0,
-    Math.min(maxSpanBytes, 4096 - payloadStart),
-  );
-  const sliceLen = Math.min(declaredLen, availableBytes);
-  const payload = Buffer.from(
-    pageBytes.subarray(payloadStart, payloadStart + sliceLen),
-  );
-  const crcValid =
-    sliceLen === declaredLen && espIdfCrc32(payload) === declaredDataCrc;
-  const fileOffset = pageFileOffset + 64 + entryIndex * 32;
+}
 
-  if (typeCode === 0x42) {
+const slotLabel = (context: SlotContext, key?: string): string => {
+  const offset =
+    context.pageFileOffset +
+    ESP_NVS_ENTRY_DATA_OFFSET +
+    context.entryIndex * ENTRY_BYTES;
+  const name = key === undefined ? "" : ` ("${key}")`;
+  return `Page ${String(context.pageIndex)} slot ${String(context.entryIndex)} at offset 0x${offset.toString(16)}${name}`;
+};
+
+export const emptyValues = {
+  value_text: null,
+  value_integer: null,
+  value_float: null,
+  blob_size: null,
+  blob_preview_hex: null,
+  blob_sha256: null,
+} as const;
+
+export const blobValues = (payload: Buffer) => ({
+  blob_size: payload.length,
+  blob_preview_hex: payload.subarray(0, MAX_BLOB_PREVIEW_BYTES).toString("hex"),
+  blob_sha256: sha256Hex(payload),
+});
+
+/** Decode a consistent SZ, BLOB (v1) or BLOB_DATA item and its payload entries. */
+const decodeVariableSpanItem = (
+  context: SlotContext,
+  header: {
+    readonly nsIndex: number;
+    readonly typeCode: number;
+    readonly span: number;
+    readonly chunkIndex: number;
+    readonly key: string;
+    readonly data8: Uint8Array;
+  },
+  anomalies: string[],
+): DecodedSingleSlotResult => {
+  const { nsIndex, typeCode, span, chunkIndex, key, data8 } = header;
+  const { pageBytes, pageIndex, pageSeqNo, pageFileOffset, entryIndex } =
+    context;
+  // The consistency check bounds the declared size by the page.
+  const dataSize = readUint16At(data8, 0, true);
+  const declaredDataCrc = readUint32At(data8, 4, true);
+  const payloadStart =
+    ESP_NVS_ENTRY_DATA_OFFSET + (entryIndex + 1) * ENTRY_BYTES;
+  const payload = Buffer.from(
+    pageBytes.subarray(payloadStart, payloadStart + dataSize),
+  );
+  const crcValid = espIdfCrc32(payload) === declaredDataCrc;
+  const fileOffset =
+    pageFileOffset + ESP_NVS_ENTRY_DATA_OFFSET + entryIndex * ENTRY_BYTES;
+  if (!crcValid)
+    anomalies.push(
+      `${slotLabel(context, key)} failed its data CRC32${typeCode === ITEM_TYPE.BLOB_DATA ? ` (chunk ${String(chunkIndex)})` : ""}.`,
+    );
+
+  if (typeCode === ITEM_TYPE.BLOB_DATA) {
     return {
       consumedSlots: span,
       blobChunk: {
@@ -268,96 +304,110 @@ const decodeVariableSpanItem = (options: {
         payload,
         crcValid,
       },
-      ...(crcValid
-        ? {}
-        : {
-            crcMismatch: true,
-            anomaly: `Page ${String(pageIndex)} slot ${String(entryIndex)} at offset 0x${fileOffset.toString(16)} ("${key}" chunk ${String(chunkIndex)}) failed BLOB_DATA payload CRC32 or length check.`,
-          }),
+      ...(crcValid ? {} : { damagedItem: true }),
+      anomalies,
     };
   }
-  return buildImmediateVariableEntry({
-    pageIndex,
-    pageFileOffset,
-    entryIndex,
-    nsIndex,
-    typeCode,
-    span,
+  const base = {
+    page_index: pageIndex,
+    entry_index: entryIndex,
+    file_offset: fileOffset,
+    namespace_id: nsIndex,
     key,
-    payload,
-    crcValid,
-  });
+    raw_type_code: typeCode,
+    span,
+    crc_valid: crcValid,
+    completeness: entryCompleteness(crcValid, true),
+    superseded: false,
+  };
+  if (typeCode === ITEM_TYPE.SZ) {
+    const nul = payload.indexOf(0);
+    const text = utf8OrNull(nul === -1 ? payload : payload.subarray(0, nul));
+    if (text === null)
+      anomalies.push(
+        `${slotLabel(context, key)} stores a string that is not valid UTF-8; its bytes are reported as a blob digest and preview.`,
+      );
+    return {
+      consumedSlots: span,
+      immediateEntry: {
+        ...base,
+        data_type: "sz",
+        ...emptyValues,
+        ...(text === null ? blobValues(payload) : { value_text: text }),
+      },
+      ...(crcValid ? {} : { damagedItem: true }),
+      anomalies,
+    };
+  }
+  return {
+    consumedSlots: span,
+    immediateEntry: {
+      ...base,
+      data_type: "blob_v1",
+      ...emptyValues,
+      ...blobValues(payload),
+    },
+    ...(crcValid ? {} : { damagedItem: true }),
+    anomalies,
+  };
 };
 
 /** Decode one written NVS entry starting at `entryIndex` (0..125). */
-export const decodeWrittenNvsSlot = (options: {
-  readonly pageBytes: Buffer;
-  readonly pageIndex: number;
-  readonly pageSeqNo: number;
-  readonly pageFileOffset: number;
-  readonly entryIndex: number;
-}): DecodedSingleSlotResult => {
+export const decodeWrittenNvsSlot = (
+  context: SlotContext,
+): DecodedSingleSlotResult => {
   const { pageBytes, pageIndex, pageSeqNo, pageFileOffset, entryIndex } =
-    options;
-  const slotOffset = 64 + entryIndex * 32;
+    context;
+  const slotOffset = ESP_NVS_ENTRY_DATA_OFFSET + entryIndex * ENTRY_BYTES;
   const slotFileOffset = pageFileOffset + slotOffset;
-  const slot = pageBytes.subarray(slotOffset, slotOffset + 32);
-  const declaredHeaderCrc = readUint32At(slot, 4, true);
-  const headerCrcValid = computeNvsItemHeaderCrc(slot) === declaredHeaderCrc;
+  const slot = pageBytes.subarray(slotOffset, slotOffset + ENTRY_BYTES);
 
-  // Never trust span, key, or type fields from an item header whose CRC32 failed:
-  // a single flipped bit in `span` would skip subsequent intact entries, and
-  // trailing payload slots of a damaged multi-slot item are not item headers.
-  if (!headerCrcValid) {
+  // Never trust span, key, or type fields from a header that fails CRC32 or
+  // ESP-IDF's consistency rules: a damaged span would skip intact entries,
+  // and the payload entries of a damaged item are not item headers.
+  const headerProblem =
+    computeNvsItemHeaderCrc(slot) === readUint32At(slot, 4, true)
+      ? itemHeaderInconsistency(slot, entryIndex)
+      : "failed its item-header CRC32";
+  if (headerProblem !== undefined) {
     return {
       consumedSlots: 1,
-      crcMismatch: true,
-      anomaly: `Page ${String(pageIndex)} slot ${String(entryIndex)} at offset 0x${slotFileOffset.toString(16)} failed item-header CRC32; advancing 1 slot to recover subsequent entries.`,
+      inconsistentHeader: true,
+      anomalies: [
+        `${slotLabel(context)} ${headerProblem}; its fields were not trusted and the walk advanced 1 slot.`,
+      ],
     };
   }
 
   const nsIndex = slot[0]!;
   const typeCode = slot[1]!;
-  const rawSpan = slot[2]!;
-  const maxRemainingSpan = 126 - entryIndex;
+  const span = slot[2]!;
   const chunkIndex = slot[3]!;
-  const key = decodeCString16(slot.subarray(8, 24));
+  const decodedKey = decodeNvsKey(slot.subarray(8, 24));
+  const key = decodedKey.key;
   const data8 = slot.subarray(24, 32);
+  const anomalies: string[] = [];
+  if (decodedKey.problem !== undefined)
+    anomalies.push(`${slotLabel(context, key)} ${decodedKey.problem}.`);
 
-  if (nsIndex === 0 && typeCode === 0x01) {
+  if (nsIndex === NAMESPACE_INDEX) {
     const nsId = data8[0]!;
-    if (rawSpan === 1 && nsId >= 1 && nsId <= 254) {
+    if (typeCode === ITEM_TYPE.U8 && nsId >= 1 && nsId <= 254) {
       return {
         consumedSlots: 1,
         namespaceDef: { id: nsId, name: key, pageIndex, entryIndex },
+        anomalies,
       };
     }
-    return {
-      consumedSlots: 1,
-      crcMismatch: true,
-      anomaly: `Page ${String(pageIndex)} slot ${String(entryIndex)} at offset 0x${slotFileOffset.toString(16)} carries an invalid namespace definition (id=${String(nsId)}, span=${String(rawSpan)}).`,
-    };
+    anomalies.push(
+      typeCode === ITEM_TYPE.U8
+        ? `${slotLabel(context, key)} defines namespace id ${String(nsId)} outside 1..254.`
+        : `${slotLabel(context, key)} has namespace index 0, reserved for namespace definitions, with item type 0x${byteToHex(typeCode)}; it was not decoded.`,
+    );
+    return { consumedSlots: span, damagedItem: true, anomalies };
   }
 
-  if (nsIndex === 0) {
-    if (rawSpan < 1 || rawSpan > maxRemainingSpan) {
-      return {
-        consumedSlots: 1,
-        crcMismatch: true,
-        anomaly: `Page ${String(pageIndex)} slot ${String(entryIndex)} at offset 0x${slotFileOffset.toString(16)} declares out-of-bounds span ${String(rawSpan)}.`,
-      };
-    }
-    return { consumedSlots: rawSpan };
-  }
-
-  if (typeCode === 0x48) {
-    if (rawSpan !== 1) {
-      return {
-        consumedSlots: 1,
-        crcMismatch: true,
-        anomaly: `Page ${String(pageIndex)} slot ${String(entryIndex)} at offset 0x${slotFileOffset.toString(16)} ("${key}") declares invalid BLOB_IDX span ${String(rawSpan)}.`,
-      };
-    }
+  if (typeCode === ITEM_TYPE.BLOB_IDX) {
     return {
       consumedSlots: 1,
       blobIndex: {
@@ -372,229 +422,41 @@ export const decodeWrittenNvsSlot = (options: {
         chunkStart: data8[5]!,
         headerCrcValid: true,
       },
+      anomalies,
     };
   }
 
-  if (typeCode === 0x21 || typeCode === 0x41 || typeCode === 0x42) {
-    if (rawSpan < 2 || rawSpan > maxRemainingSpan) {
-      return {
-        consumedSlots: 1,
-        crcMismatch: true,
-        anomaly: `Page ${String(pageIndex)} slot ${String(entryIndex)} at offset 0x${slotFileOffset.toString(16)} ("${key}") declares invalid variable-item span ${String(rawSpan)}.`,
-      };
-    }
-    return decodeVariableSpanItem({
-      pageBytes,
-      pageIndex,
-      pageSeqNo,
-      pageFileOffset,
-      entryIndex,
-      nsIndex,
-      typeCode,
-      span: rawSpan,
-      chunkIndex,
-      key,
-      data8,
-    });
+  if (isVariableLengthType(typeCode)) {
+    return decodeVariableSpanItem(
+      context,
+      { nsIndex, typeCode, span, chunkIndex, key, data8 },
+      anomalies,
+    );
   }
 
-  const prim = decodePrimitiveValue(typeCode, data8);
-  if (prim !== null && rawSpan !== 1) {
-    return {
-      consumedSlots: 1,
-      crcMismatch: true,
-      anomaly: `Page ${String(pageIndex)} slot ${String(entryIndex)} at offset 0x${slotFileOffset.toString(16)} ("${key}") declares invalid primitive span ${String(rawSpan)}.`,
-    };
-  }
-  const span = rawSpan >= 1 && rawSpan <= maxRemainingSpan ? rawSpan : 1;
+  // The consistency check admits only one-entry primitive types here.
+  const prim = PRIMITIVE_TYPES.get(typeCode)!.read(
+    new BinaryReader(Buffer.from(data8), true, "esp-nvs"),
+  );
   return {
-    consumedSlots: span,
+    consumedSlots: 1,
     immediateEntry: {
       page_index: pageIndex,
       entry_index: entryIndex,
       file_offset: slotFileOffset,
       namespace_id: nsIndex,
       key,
-      data_type: prim?.dataType ?? "unknown",
+      data_type: prim.dataType,
       raw_type_code: typeCode,
-      span,
-      value_text: null,
-      value_integer: prim?.integerText ?? null,
-      blob_size: null,
-      blob_preview_hex: null,
-      blob_sha256: null,
+      span: 1,
+      ...emptyValues,
+      ...("integerText" in prim
+        ? { value_integer: prim.integerText }
+        : { value_float: prim.floatText }),
       crc_valid: true,
       completeness: "complete",
+      superseded: false,
     },
+    anomalies,
   };
-};
-
-interface ReassembledBlobSummary {
-  readonly joinedLength: number;
-  readonly previewHex: string;
-  readonly sha256: string;
-  readonly allPresent: boolean;
-  readonly chunksCrcValid: boolean;
-}
-
-/** Reassemble v2 multi-chunk `BLOB_IDX` + `BLOB_DATA` items and surface orphan chunks. */
-export const reassembleNvsV2Blobs = (
-  indices: readonly RawBlobIndex[],
-  chunks: readonly RawBlobChunk[],
-  onCheckpoint?: () => void,
-): Omit<EspNvsEntry, "namespace">[] => {
-  // Index stored chunks once by namespace -> key -> chunkIndex, keeping the
-  // newest page sequence number for any overwritten chunk index.
-  const bestByNsKey = new Map<number, Map<string, Map<number, RawBlobChunk>>>();
-  for (let i = 0; i < chunks.length; i += 1) {
-    if ((i & 255) === 0) onCheckpoint?.();
-    const ch = chunks[i]!;
-    let byKey = bestByNsKey.get(ch.nsIndex);
-    if (byKey === undefined) {
-      byKey = new Map<string, Map<number, RawBlobChunk>>();
-      bestByNsKey.set(ch.nsIndex, byKey);
-    }
-    let byChunkIndex = byKey.get(ch.key);
-    if (byChunkIndex === undefined) {
-      byChunkIndex = new Map<number, RawBlobChunk>();
-      byKey.set(ch.key, byChunkIndex);
-    }
-    const existing = byChunkIndex.get(ch.chunkIndex);
-    if (existing === undefined || ch.pageSeqNo > existing.pageSeqNo) {
-      byChunkIndex.set(ch.chunkIndex, ch);
-    }
-  }
-
-  const sortedByNsKey = new Map<number, Map<string, readonly RawBlobChunk[]>>();
-  for (const [nsIndex, byKey] of bestByNsKey) {
-    const sortedByKey = new Map<string, readonly RawBlobChunk[]>();
-    for (const [key, byChunkIndex] of byKey) {
-      sortedByKey.set(
-        key,
-        [...byChunkIndex.values()].sort((a, b) => a.chunkIndex - b.chunkIndex),
-      );
-    }
-    sortedByNsKey.set(nsIndex, sortedByKey);
-  }
-
-  const usedChunkRefs = new Set<RawBlobChunk>();
-  const reassemblyCache = new Map<
-    number,
-    Map<string, Map<number, ReassembledBlobSummary>>
-  >();
-  const out: Omit<EspNvsEntry, "namespace">[] = [];
-
-  for (let i = 0; i < indices.length; i += 1) {
-    if ((i & 255) === 0) onCheckpoint?.();
-    const idx = indices[i]!;
-    const rangeKey = ((idx.chunkStart & 0xff) << 8) | (idx.chunkCount & 0xff);
-    let cacheByKey = reassemblyCache.get(idx.nsIndex);
-    if (cacheByKey === undefined) {
-      cacheByKey = new Map<string, Map<number, ReassembledBlobSummary>>();
-      reassemblyCache.set(idx.nsIndex, cacheByKey);
-    }
-    let cacheByRange = cacheByKey.get(idx.key);
-    if (cacheByRange === undefined) {
-      cacheByRange = new Map<number, ReassembledBlobSummary>();
-      cacheByKey.set(idx.key, cacheByRange);
-    }
-    let summary = cacheByRange.get(rangeKey);
-    if (summary === undefined) {
-      const seriesChunks = sortedByNsKey.get(idx.nsIndex)?.get(idx.key);
-      if (seriesChunks === undefined || idx.chunkCount === 0) {
-        summary = {
-          joinedLength: 0,
-          previewHex: "",
-          sha256: EMPTY_SHA256,
-          allPresent: false,
-          chunksCrcValid: true,
-        };
-      } else {
-        const endChunk = idx.chunkStart + idx.chunkCount;
-        const preview = Buffer.allocUnsafe(MAX_BLOB_PREVIEW_BYTES);
-        // not-an-allowance: bounded 128-byte preview fill cursor
-        let previewFilled = 0;
-        // not-an-allowance: total reassembled payload byte accumulator
-        let joinedLength = 0;
-        // not-an-allowance: matched chunk counter in [chunkStart, endChunk)
-        let matchedCount = 0;
-        let chunksCrcValid = true;
-        const hash = createHash("sha256");
-
-        for (const ch of seriesChunks) {
-          if (ch.chunkIndex < idx.chunkStart) continue;
-          if (ch.chunkIndex >= endChunk) break;
-          usedChunkRefs.add(ch);
-          matchedCount += 1;
-          if (!ch.crcValid) chunksCrcValid = false;
-          joinedLength += ch.payload.length;
-          hash.update(ch.payload);
-          if (previewFilled < MAX_BLOB_PREVIEW_BYTES && ch.payload.length > 0) {
-            const copyBytes = Math.min(
-              MAX_BLOB_PREVIEW_BYTES - previewFilled,
-              ch.payload.length,
-            );
-            ch.payload.copy(preview, previewFilled, 0, copyBytes);
-            previewFilled += copyBytes;
-          }
-        }
-
-        summary = {
-          joinedLength,
-          previewHex: preview.subarray(0, previewFilled).toString("hex"),
-          sha256: matchedCount === 0 ? EMPTY_SHA256 : hash.digest("hex"),
-          allPresent: matchedCount === idx.chunkCount,
-          chunksCrcValid,
-        };
-      }
-      cacheByRange.set(rangeKey, summary);
-    }
-
-    const allCrcValid = idx.headerCrcValid && summary.chunksCrcValid;
-    const complete =
-      summary.allPresent && summary.joinedLength === idx.totalSize;
-    out.push({
-      page_index: idx.pageIndex,
-      entry_index: idx.entryIndex,
-      file_offset: idx.fileOffset,
-      namespace_id: idx.nsIndex,
-      key: idx.key,
-      data_type: "blob_v2",
-      raw_type_code: 0x48,
-      span: 1,
-      value_text: null,
-      value_integer: null,
-      blob_size: summary.joinedLength,
-      blob_preview_hex: summary.previewHex,
-      blob_sha256: summary.sha256,
-      crc_valid: allCrcValid,
-      completeness: entryCompleteness(allCrcValid, complete),
-    });
-  }
-
-  for (let i = 0; i < chunks.length; i += 1) {
-    if ((i & 255) === 0) onCheckpoint?.();
-    const ch = chunks[i]!;
-    if (usedChunkRefs.has(ch)) continue;
-    out.push({
-      page_index: ch.pageIndex,
-      entry_index: ch.entryIndex,
-      file_offset: ch.fileOffset,
-      namespace_id: ch.nsIndex,
-      key: ch.key,
-      data_type: "blob_data_orphan",
-      raw_type_code: 0x42,
-      span: ch.span,
-      value_text: null,
-      value_integer: null,
-      blob_size: ch.payload.length,
-      blob_preview_hex: ch.payload
-        .subarray(0, MAX_BLOB_PREVIEW_BYTES)
-        .toString("hex"),
-      blob_sha256: sha256Hex(ch.payload),
-      crc_valid: ch.crcValid,
-      completeness: ch.crcValid ? "missing_chunks" : "crc_mismatch",
-    });
-  }
-  return out;
 };

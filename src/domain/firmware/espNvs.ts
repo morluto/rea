@@ -3,7 +3,14 @@ import type { AnalysisLimit } from "../analysisSettings.js";
 import { knownCoverageStatusSchema } from "../coverage.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 
+/** ESP-IDF `nvs_constants.h`: page size, entry size and count, and the page layout. */
 export const ESP_NVS_PAGE_BYTES = 4096;
+export const ESP_NVS_ENTRY_BYTES = 32;
+export const ESP_NVS_ENTRY_COUNT = 126;
+/** NVS_CONST_PAGE_ENTRY_TABLE_OFFSET: the 2-bit entry-state bitmap after the 32-byte header. */
+export const ESP_NVS_ENTRY_TABLE_OFFSET = 32;
+/** NVS_CONST_PAGE_ENTRY_DATA_OFFSET: the first 32-byte entry. */
+export const ESP_NVS_ENTRY_DATA_OFFSET = 64;
 export const DEFAULT_ESP_NVS_MAX_FILE_BYTES = 32 * 1024 * 1024;
 export const MAX_ESP_NVS_FILE_BYTES = 64 * 1024 * 1024;
 export const MAX_ESP_NVS_INLINE_ENTRIES = 0x7fff_ffff;
@@ -74,12 +81,20 @@ export const inspectEspNvsRequestSchema = inspectEspNvsInputSchema.extend({
 
 export type InspectEspNvsRequest = z.output<typeof inspectEspNvsRequestSchema>;
 
+/**
+ * ESP-IDF `Page::PageState`: UNINITIALIZED (0xffffffff) is reported as
+ * `empty`; `corrupt` (0xfffffff0) is the state firmware writes for a damaged
+ * page and `invalid` is 0. Any other value is `unknown`. The header CRC32 is a
+ * separate fact on the page summary.
+ */
 export const espNvsPageStateSchema = z.enum([
   "empty",
   "active",
   "full",
   "freeing",
-  "corrupt_or_encrypted",
+  "corrupt",
+  "invalid",
+  "unknown",
 ]);
 export type EspNvsPageState = z.infer<typeof espNvsPageStateSchema>;
 
@@ -91,9 +106,15 @@ export const espNvsPageSummarySchema = z.strictObject({
   seq_no: z.number().int().min(0).nullable(),
   format_version: z.enum(["v1", "v2", "unknown"]).nullable(),
   header_crc_valid: z.boolean().nullable(),
+  /** Whether this page's entries were walked: a valid header in an active, full or freeing state. */
+  entries_decoded: z.boolean(),
   written_slot_count: z.number().int().min(0),
   erased_slot_count: z.number().int().min(0),
   empty_slot_count: z.number().int().min(0),
+  /** Entry-state bitmap value 0b01, which ESP-IDF only reaches through inconsistent flash. */
+  illegal_slot_count: z.number().int().min(0),
+  /** Written slots whose 32-byte item header failed CRC32 or ESP-IDF's header consistency rules. */
+  inconsistent_item_count: z.number().int().min(0),
 });
 export type EspNvsPageSummary = z.infer<typeof espNvsPageSummarySchema>;
 
@@ -114,6 +135,8 @@ export const espNvsDataTypeSchema = z.enum([
   "i32",
   "u64",
   "i64",
+  "float",
+  "double",
   "sz",
   "blob_v1",
   "blob_v2",
@@ -134,12 +157,20 @@ export const espNvsEntrySchema = z.strictObject({
   span: z.number().int().min(1).max(126),
   value_text: z.string().nullable(),
   value_integer: z.string().nullable(),
+  /** Decimal text of a stored IEEE 754 float or double, exact for the stored bits. */
+  value_float: z.string().nullable(),
   blob_size: z.number().int().min(0).nullable(),
   blob_preview_hex: z.string().nullable(),
   blob_sha256: z.string().nullable(),
   crc_valid: z.boolean(),
   // domain-vocabulary: NVS entry CRC and v2 multi-chunk blob reassembly state
   completeness: z.enum(["complete", "missing_chunks", "crc_mismatch"]),
+  /**
+   * A later written copy of the same namespace, key and type exists: a higher
+   * page sequence number, or a later slot on the same page. ESP-IDF reads that
+   * copy; this one is a leftover from an interrupted rewrite or page move.
+   */
+  superseded: z.boolean(),
 });
 export type EspNvsEntry = z.infer<typeof espNvsEntrySchema>;
 
@@ -165,7 +196,8 @@ export const espNvsReportSchema = z.strictObject({
   namespaces: z.array(espNvsNamespaceSchema),
   entries: z.array(espNvsEntrySchema),
   corrupt_entry_count: z.number().int().min(0),
-  corrupt_or_encrypted_page_count: z.number().int().min(0),
+  /** Pages whose entries were not walked; see each page's state and header_crc_valid. */
+  undecoded_page_count: z.number().int().min(0),
   anomalies: z.array(z.string()),
   limitations: z.array(z.string()),
 });

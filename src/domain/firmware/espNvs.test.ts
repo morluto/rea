@@ -194,7 +194,7 @@ describe("parseEspNvsPartition", () => {
     });
   });
 
-  it("flags encrypted or corrupt pages as corrupt_or_encrypted with partial coverage", () => {
+  it("does not decode a page whose header fails CRC32, as whole-flash encryption produces", () => {
     const encrypted = Buffer.alloc(4096);
     for (let i = 0; i < encrypted.length; i += 1) {
       encrypted[i] = (i * 73 + 19) & 0xff;
@@ -210,8 +210,12 @@ describe("parseEspNvsPartition", () => {
     });
     expect(res.ok).toBe(true);
     if (!res.ok) return;
-    expect(res.value.pages[0]?.state).toBe("corrupt_or_encrypted");
-    expect(res.value.corrupt_or_encrypted_page_count).toBe(1);
+    expect(res.value.pages[0]).toMatchObject({
+      state: "unknown",
+      header_crc_valid: false,
+      entries_decoded: false,
+    });
+    expect(res.value.undecoded_page_count).toBe(1);
     expect(res.value.coverage.status).toBe("partial");
   });
 
@@ -351,5 +355,188 @@ describe("parseEspNvsPartition", () => {
     if (res.ok) return;
     expect(res.error.kind).toBe("malformed");
     expect(res.error.message).toContain("partition_bytes (12288)");
+  });
+
+  const parse = (image: Buffer) => {
+    const res = parseEspNvsPartition({
+      artifact: {
+        path: "/tmp/nvs.bin",
+        sha256: "c".repeat(64),
+        bytes: image.length,
+      },
+      partitionOffset: 0,
+      sliceBytes: image,
+    });
+    if (!res.ok) throw new Error(res.error.message);
+    expect(espNvsReportSchema.safeParse(res.value).success).toBe(true);
+    return res.value;
+  };
+
+  const writeRawSlot = (
+    page: Buffer,
+    slotIdx: number,
+    fields: {
+      readonly nsId: number;
+      readonly typeCode: number;
+      readonly span?: number;
+      readonly chunkIndex?: number;
+      readonly key: string;
+      readonly data: Buffer;
+    },
+  ): void => {
+    const off = 64 + slotIdx * 32;
+    const s = page.subarray(off, off + 32);
+    s.fill(0xff);
+    s[0] = fields.nsId;
+    s[1] = fields.typeCode;
+    s[2] = fields.span ?? 1;
+    s[3] = fields.chunkIndex ?? 0xff;
+    writeKey(s, fields.key);
+    fields.data.copy(s, 24, 0, 8);
+    s.writeUInt32LE(computeNvsItemHeaderCrc(s), 4);
+    setBitmapWritten(page, slotIdx, fields.span ?? 1);
+  };
+
+  it("decodes float and double items, which ESP-IDF stores as 0x24 and 0x28", () => {
+    const page = initActivePage(1);
+    writeNamespaceSlot(page, 0, "cal", 1);
+    const f = Buffer.alloc(8, 0xff);
+    f.writeFloatLE(1.5, 0);
+    writeRawSlot(page, 1, { nsId: 1, typeCode: 0x24, key: "gain", data: f });
+    const d = Buffer.alloc(8);
+    d.writeDoubleLE(-0.1, 0);
+    writeRawSlot(page, 2, { nsId: 1, typeCode: 0x28, key: "offset", data: d });
+    const report = parse(page);
+    expect(report.entries).toEqual([
+      expect.objectContaining({
+        key: "gain",
+        data_type: "float",
+        value_float: "1.5",
+        value_integer: null,
+      }),
+      expect.objectContaining({
+        key: "offset",
+        data_type: "double",
+        value_float: "-0.1",
+      }),
+    ]);
+    expect(report.coverage.status).toBe("complete");
+  });
+
+  it("distinguishes ESP-IDF page states and does not decode a page firmware marked CORRUPT", () => {
+    const corrupt = initActivePage(3);
+    writeNamespaceSlot(corrupt, 0, "wifi", 1);
+    corrupt.writeUInt32LE(0xffff_fff0, 0); // CORRUPT; the header CRC excludes the state
+    const freeing = initActivePage(4);
+    freeing.writeUInt32LE(0xffff_fff8, 0);
+    const report = parse(Buffer.concat([corrupt, freeing]));
+    expect(
+      report.pages.map((page) => [page.state, page.entries_decoded]),
+    ).toEqual([
+      ["corrupt", false],
+      ["freeing", true],
+    ]);
+    expect(report.namespaces).toEqual([]);
+    expect(report.undecoded_page_count).toBe(1);
+    expect(report.anomalies.join("\n")).toContain("firmware marked it CORRUPT");
+  });
+
+  it("reports a valid page whose every item header is unreadable as consistent with NVS encryption", () => {
+    const page = initActivePage(1);
+    // NVS encryption keeps the header and bitmap in plaintext and encrypts entries.
+    for (let i = 64; i < 64 + 3 * 32; i += 1) page[i] = (i * 151 + 7) & 0xff;
+    setBitmapWritten(page, 0, 3);
+    const report = parse(page);
+    expect(report.pages[0]).toMatchObject({
+      state: "active",
+      header_crc_valid: true,
+      entries_decoded: true,
+      inconsistent_item_count: 3,
+    });
+    expect(report.entries).toEqual([]);
+    expect(report.anomalies.at(-1)).toContain(
+      "consistent with an encrypted NVS partition",
+    );
+    expect(report.coverage.status).toBe("partial");
+  });
+
+  it("does not trust a CRC-valid header that breaks ESP-IDF's consistency rules", () => {
+    const page = initActivePage(1);
+    writeNamespaceSlot(page, 0, "app", 1);
+    // A string whose span (5) disagrees with its 10 data bytes (expected 2).
+    const data = Buffer.alloc(8, 0xff);
+    data.writeUInt16LE(10, 0);
+    writeRawSlot(page, 1, {
+      nsId: 1,
+      typeCode: 0x21,
+      span: 5,
+      key: "name",
+      data,
+    });
+    writeU32Slot({ page, slotIdx: 2, nsId: 1, key: "after", val: 7 });
+    // An unrecognized type is invalid, not an entry with an unknown value.
+    writeRawSlot(page, 6, {
+      nsId: 1,
+      typeCode: 0x99,
+      key: "odd",
+      data: Buffer.alloc(8),
+    });
+    const report = parse(page);
+    expect(report.entries.map((entry) => entry.key)).toEqual(["after"]);
+    // Slot 1, its three unwritten "payload" slots 3..5 marked written by the
+    // bitmap, and slot 6 are all untrusted; slot 2 is still recovered.
+    expect(report.pages[0]?.inconsistent_item_count).toBe(5);
+    expect(report.anomalies.join("\n")).toMatch(
+      /declares span 5 for 10 data bytes \(expected 2\)/u,
+    );
+    expect(report.anomalies.join("\n")).toContain(
+      "unrecognized item type 0x99",
+    );
+  });
+
+  it("marks older copies of a key superseded by a newer page or a later slot", () => {
+    const older = initActivePage(7);
+    older.writeUInt32LE(0xffff_fff8, 0); // FREEING: its items were copied forward
+    writeNamespaceSlot(older, 0, "wifi", 1);
+    writeU32Slot({ page: older, slotIdx: 1, nsId: 1, key: "channel", val: 1 });
+    const newer = initActivePage(8);
+    writeU32Slot({ page: newer, slotIdx: 0, nsId: 1, key: "channel", val: 6 });
+    writeU32Slot({ page: newer, slotIdx: 1, nsId: 1, key: "power", val: 10 });
+    writeU32Slot({ page: newer, slotIdx: 2, nsId: 1, key: "power", val: 20 });
+    const report = parse(Buffer.concat([older, newer]));
+    expect(
+      report.entries.map((entry) => [
+        entry.key,
+        entry.value_integer,
+        entry.superseded,
+      ]),
+    ).toEqual([
+      ["channel", "1", true],
+      ["channel", "6", false],
+      ["power", "10", true],
+      ["power", "20", false],
+    ]);
+  });
+
+  it("keeps the bytes of a non-UTF-8 string and key instead of replacing them", () => {
+    const page = initActivePage(1);
+    writeNamespaceSlot(page, 0, "raw", 1);
+    writeVarSlot({
+      page,
+      slotIdx: 1,
+      nsId: 1,
+      typeCode: 0x21,
+      chunkIndex: 0xff,
+      key: "bin",
+      payload: Buffer.from([0xc3, 0x28, 0x00]),
+    });
+    const report = parse(page);
+    expect(report.entries[0]).toMatchObject({
+      data_type: "sz",
+      value_text: null,
+      blob_size: 3,
+      blob_preview_hex: "c32800",
+    });
+    expect(report.anomalies.join("\n")).toContain("not valid UTF-8");
   });
 });

@@ -49,7 +49,7 @@ const {
   coverage,
   namespaces,
   corrupt_entry_count,
-  corrupt_or_encrypted_page_count,
+  undecoded_page_count,
 } = espNvsReportSchema.shape;
 
 const counts = {
@@ -57,7 +57,7 @@ const counts = {
   namespace_count: z.int().nonnegative(),
   entry_count: z.int().nonnegative(),
   corrupt_entry_count,
-  corrupt_or_encrypted_page_count,
+  undecoded_page_count,
   anomaly_count: z.int().nonnegative(),
 };
 
@@ -100,7 +100,7 @@ export const projectEspNvsView = (
     namespace_count: r.namespaces.length,
     entry_count: r.entries.length,
     corrupt_entry_count: r.corrupt_entry_count,
-    corrupt_or_encrypted_page_count: r.corrupt_or_encrypted_page_count,
+    undecoded_page_count: r.undecoded_page_count,
     anomaly_count: r.anomalies.length,
   };
   const shared = {
@@ -110,7 +110,7 @@ export const projectEspNvsView = (
     artifact: { path: r.artifact.path, sha256: r.artifact.sha256 },
     limitations: boundedViewLimitations(parent, r.limitations),
     unknowns: [
-      "Encrypted NVS pages (XTS-AES with nvs_keys) cannot be decrypted without key material and remain classified as corrupt_or_encrypted.",
+      "Encrypted NVS entries (XTS-AES with nvs_keys) cannot be decrypted without key material; their pages decode with every item header unreadable.",
     ],
   };
   if (view.kind === "summary")
