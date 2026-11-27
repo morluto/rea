@@ -168,10 +168,10 @@ const levenshteinDistance = (
 
   if (bLen - aLen > maxDistance) return maxDistance + 1;
 
-  let previous = Array.from({ length: aLen + 1 }, (_, i) => i);
+  let previous: number[] = Array.from({ length: aLen + 1 }, (_, i) => i);
 
   for (let j = 1; j <= bLen; j += 1) {
-    const current = Array.from({ length: aLen + 1 });
+    const current: number[] = Array.from({ length: aLen + 1 }, () => 0);
     current[0] = j;
     let minInRow = j;
 
