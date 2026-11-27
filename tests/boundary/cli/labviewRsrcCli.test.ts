@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { expect } from "vitest";
 
 import { LABVIEW_TOOL_CONTRACTS } from "../../../src/contracts/labview/labviewToolContracts.js";
+import { labviewArtifactSchema } from "../../../src/domain/labview/labviewArtifact.js";
 import { labviewContainer } from "../../fixtures/labview/rsrc.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
@@ -37,8 +38,10 @@ cliTest(
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
 
     for (const value of [result.json, response.structuredContent]) {
+      // The advertised output admits complete or summary detail; this small
+      // container is delivered complete, so read it as the complete report.
       const evidence = contract.outputSchema.parse(value);
-      const report = evidence.normalized_result;
+      const report = labviewArtifactSchema.parse(evidence.normalized_result);
       expect(report.artifact).toMatchObject({
         path,
         sha256: digest,
