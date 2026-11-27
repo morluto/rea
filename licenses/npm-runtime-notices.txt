@@ -1,7 +1,7 @@
 REA third-party npm runtime copyright, license and NOTICE texts
 Collected from integrity-verified locked npm archives. Release-specific supplements and upstream notice gaps are identified in their entries.
 External engines are separately obtained; see THIRD_PARTY_NOTICES.md.
-Runtime dependency fingerprint (SHA-256): c799e69ef22941770b4c29d98ea9272cf8d98ee81656137dab4491818e6a6098
+Runtime dependency fingerprint (SHA-256): d423a0fbe497336fdefa44f041c45536e54fdeba797b295019405c2a7f4e45ab
 
 ===== @babel/helper-string-parser@8.1.2 =====
 Declared license: MIT
@@ -7602,10 +7602,10 @@ The third_party/ subdirectory contains code with other licenses. None of it is
 used by default, but certain options use it (e.g., the optional closure compiler
 flag will run closure compiler from third_party/).
 
-===== plist@5.1.1 =====
+===== plist@5.1.2 =====
 Declared license: MIT
-Archive: https://registry.npmjs.org/plist/-/plist-5.1.1.tgz
-Integrity: sha512-n55fGiwWNHf6zFdP9qvtr1x7P898lfJ/rbDvB3pYqVRcO+iG3sl5SSkGSLiIoAI9ZZc2F3Ga/5wPtM8EqhgSqA==
+Archive: https://registry.npmjs.org/plist/-/plist-5.1.2.tgz
+Integrity: sha512-sAsRKAzFGIdewBCE1IptS7Ncvi0JTjTkFrhjwjT6dDS+R3PIrSLosErSJCfpfnpJ1v5lRh7ZLQnERZnEiUDj/A==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE ---

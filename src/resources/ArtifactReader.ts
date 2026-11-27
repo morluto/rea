@@ -285,6 +285,7 @@ export interface ArtifactReader {
     | "fit"
     | "qualcomm-mbn"
     | "ntfs-mft"
+    | "pkg"
     | "file";
   entries(
     signal?: AbortSignal,

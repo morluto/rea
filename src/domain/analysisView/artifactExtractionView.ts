@@ -38,6 +38,7 @@ import {
   compileInventoryPathGlob,
   inventoryPathGlobSchema,
 } from "./inventoryPathGlob.js";
+import { pickFields } from "./selectViewRows.js";
 
 export const EXTRACT_ARTIFACT_OPERATION = "extract_artifact" as const;
 
@@ -197,16 +198,6 @@ const summarize = (
   };
 };
 
-const pick = (
-  row: Extracted,
-  fields: ReadonlySet<keyof Extracted> | undefined,
-): Partial<Extracted> => {
-  if (fields === undefined) return row;
-  const picked: Partial<Record<keyof Extracted, unknown>> = {};
-  for (const field of fields) picked[field] = row[field];
-  return picked as Partial<Extracted>;
-};
-
 /** Exact selectors intersect; an empty selector matches nothing. */
 const artifactMatcher = (
   view: Extract<ExtractionView, { collection: "artifacts" }>,
@@ -241,7 +232,7 @@ const collectionPage = (
         matches: artifactMatcher(view),
         project: (row, index): z.output<typeof extractedArtifactRowSchema> => ({
           index,
-          ...pick(row, fields),
+          ...(fields === undefined ? row : pickFields(row, fields)),
         }),
       },
       owner,

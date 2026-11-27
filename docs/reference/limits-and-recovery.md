@@ -108,8 +108,11 @@ their per-call budgets (`max_file_bytes`, entry, depth and decoded-byte budgets,
 `inspect_devicetree` bounds its estimated decoded representation with
 `max_decoded_bytes` (default 32 MiB, at most 256 MiB).
 `inspect_elf_dependencies`, `inspect_elf_unwind_ranges`, `inspect_apple_ips`,
-`inspect_dwarf_units`, `inspect_native_initializers`, `inspect_pe_overlay`, `inspect_pe_resources`
-(`max_entries`) and `inspect_erlang_beam` report it too. The per-page symbol-name text allowance of `inspect_elf_unwind_ranges` is a fixed allowance (`details.refusal.kind` `fixed_ceiling`); its `narrowing` asks for a smaller page `limit` or paging with `offset`. `inspect_erlang_beam` accepts `max_table_rows` (export,
+`inspect_dwarf_units`, `inspect_native_initializers`, `inspect_pe_overlay`,
+`inspect_pe_resources` (`max_entries`), `inspect_api_contract` (`max_file_bytes`),
+`compare_wasm_interfaces` (`max_interface_bytes`),
+`trace_web_source_location` (`source_map_limits.*`) and
+`inspect_erlang_beam` report it too. The per-page symbol-name text allowance of `inspect_elf_unwind_ranges` is a fixed allowance (`details.refusal.kind` `fixed_ceiling`); its `narrowing` asks for a smaller page `limit` or paging with `offset`. `inspect_erlang_beam` accepts `max_table_rows` (export,
 import and lambda rows combined; default 65,536, at most 1,048,576).
 
 ### Native table structure budget
@@ -758,7 +761,10 @@ one domain-owned default policy. See [.NET bundles](../dotnet-bundles.md),
 [Android vbmeta](../guides/firmware/android-vbmeta.md) for format semantics.
 
 `artifact_limits.expanded_bytes` selects aggregate plaintext work for ZIP, Bun,
-SEA, PCK, ISO 9660, Deno, wxapkg, tar and Android sparse image readers, NSO
+SEA, PCK, ISO 9660, Deno, wxapkg, tar, macOS flat `.pkg` (including
+`Scripts`/`Payload` cpio archive decoding and scaled cpio member and path-byte
+allowances, plus `Distribution`/`PackageInfo` metadata decoding and scaled
+metadata record and XML-node allowances) and Android sparse image readers, NSO
 segment decompression, and bFLT gzip decompression (which is also capped at a
 fixed 128 MiB in-memory inflation ceiling), including repeated readable logical
 occurrences. Omission retains each archive's encoded-size-derived default. The
