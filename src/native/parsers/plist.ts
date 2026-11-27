@@ -44,6 +44,7 @@ import {
   estimateBinaryPlistExpansion,
   isPlistDecodeBudgetFailure,
   isPlistInternalDtdFailure,
+  plistDecodeMinimumEstimatedBytes,
   preflightXmlPlistBytes,
   preflightXmlPropertyListDecode,
 } from "../../domain/apple/propertyListDecodeBudget.js";
@@ -127,17 +128,17 @@ const plistDecodeBudgetError = (
   cause: ParseFailureError<"limit">,
   maxDecodedBytes: number,
 ): AnalysisResourceConstraintError => {
-  const required =
-    typeof cause.failure.limit.required === "number"
-      ? cause.failure.limit.required
-      : undefined;
+  const minimumEstimatedBytes = plistDecodeMinimumEstimatedBytes(cause);
   return parseLimitConstraint("inspect_plist", "memory", cause, {
     retryable: false,
-    limit: nativePlistBudgetLimit(
-      "max_decoded_bytes",
-      maxDecodedBytes,
-      required,
-    ),
+    ...(minimumEstimatedBytes === undefined
+      ? {}
+      : {
+          reportedLimitContext: {
+            minimum_estimated_bytes: minimumEstimatedBytes,
+          },
+        }),
+    limit: nativePlistBudgetLimit("max_decoded_bytes", maxDecodedBytes),
   });
 };
 
