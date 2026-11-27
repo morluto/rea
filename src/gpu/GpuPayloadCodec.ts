@@ -39,13 +39,17 @@ class GpuTruncatedPayloadFailure extends BinaryFormatFailure {
 export const isTruncatedGpuPayloadFailure = (
   error: unknown,
 ): error is BinaryFormatFailure => error instanceof GpuTruncatedPayloadFailure;
-/** Completed codec bytes and their encoded extent share one completion owner. */
+/** Completed codec bytes, their encoded extent, and whether input ended where another frame could still continue. */
 export const decodeGpuPayloadStream = async (
   bytes: Buffer,
   compression: "zlib" | "zstd",
   maximumDecodedSize: number,
   signal?: AbortSignal,
-): Promise<{ buffer: Buffer; consumedBytes: number }> => {
+): Promise<{
+  buffer: Buffer;
+  consumedBytes: number;
+  inputExhausted: boolean;
+}> => {
   assertArtifactReadActive(signal);
   const maxOutputLength = Math.max(1, maximumDecodedSize);
   if (compression === "zstd") {
@@ -95,7 +99,11 @@ export const decodeGpuPayloadStream = async (
         },
       );
     }
-    return { buffer: decoded.bytes, consumedBytes: decoded.consumedBytes };
+    return {
+      buffer: decoded.bytes,
+      consumedBytes: decoded.consumedBytes,
+      inputExhausted: decoded.inputExhausted,
+    };
   }
   let result: unknown;
   try {
@@ -123,7 +131,7 @@ export const decodeGpuPayloadStream = async (
     consumed > bytes.length
   )
     rejectGpu("GPU decoder returned an invalid complete codec extent");
-  return { buffer: decoded, consumedBytes: consumed };
+  return { buffer: decoded, consumedBytes: consumed, inputExhausted: false };
 };
 export const decodeGpuPayload = async (
   bytes: Buffer,

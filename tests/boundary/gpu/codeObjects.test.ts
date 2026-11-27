@@ -2542,6 +2542,79 @@ it("keeps corrupt CCOB v1 recovery distinct from max_object_bytes window truncat
       .map((o) => o.inspection),
   ).toEqual(["complete", "complete"]);
 
+  // Trailing zero-output Zstandard frames (skippable frame and empty Zstd frame)
+  // after a complete data frame: cutting a budget or cached window at the frame
+  // boundary (+0), inside the tail magic (+1..+3), in the tail header, or in the
+  // tail body must refill when max_object_bytes admits the full stream or report
+  // ccobWindowLimit() capacity instead of publishing a short extent.
+  const skippablePayload = Buffer.from("skip-tail-payload");
+  const skippableTail = Buffer.alloc(8 + skippablePayload.length);
+  skippableTail.writeUInt32LE(0x184d2a50, 0);
+  skippableTail.writeUInt32LE(skippablePayload.length, 4);
+  skippablePayload.copy(skippableTail, 8);
+  const emptyZstdTail = zstdCompressSync(Buffer.alloc(0));
+  expect(emptyZstdTail.length).toBeGreaterThanOrEqual(8);
+
+  const zeroOutputCases = [
+    {
+      name: "skippable",
+      tail: skippableTail,
+      cuts: [0, 1, 2, 3, 6, 10],
+    },
+    {
+      name: "empty-zstd",
+      tail: emptyZstdTail,
+      cuts: [0, 1, 2, 3, 5, emptyZstdTail.length - 1],
+    },
+  ] as const;
+
+  for (const { tail, cuts } of zeroOutputCases) {
+    const withTailEncoded = Buffer.concat([multiFrames, tail]);
+    const withTailV1 = Buffer.concat([zstdHeader, withTailEncoded]);
+    const siblingWithTail = Buffer.concat([prefixV1, withTailV1]);
+    for (const extra of cuts) {
+      // Budget cuts off the trailing zero-output frame: decoded === smallBundle.length
+      // already matches the declaration, yet capacity must be reported without a short extent.
+      const cutBudget = multiFrames.length + extra;
+      expect(smallBundle.length).toBeLessThanOrEqual(cutBudget);
+      expect(cutBudget).toBeLessThan(withTailEncoded.length);
+      const cutTail = await inspect(withTailV1, {
+        analysis: "inventory",
+        max_object_bytes: cutBudget,
+      });
+      if (!cutTail.ok) throw cutTail.error;
+      expect(cutTail.value.objects).toHaveLength(1);
+      expect(cutTail.value.objects[0]).toMatchObject({
+        kind: "hip-bundle",
+        inspection: "capacity",
+        limitations: expect.arrayContaining([
+          expect.stringContaining(
+            `Legacy CCOB v1 compressed payload exceeds the ${String(cutBudget)}-byte object budget (parameter: max_object_bytes)`,
+          ),
+        ]),
+      });
+
+      // Cached window from sibling 1 ends inside sibling 2's trailing zero-output frame
+      // while max_object_bytes admits sibling 2 completely: refill must succeed cleanly.
+      const refillBudget =
+        prefixStored.length + 20 + multiFrames.length + extra;
+      expect(refillBudget).toBeGreaterThanOrEqual(withTailEncoded.length);
+      const refilledTail = await inspect(siblingWithTail, {
+        analysis: "inventory",
+        max_object_bytes: refillBudget,
+      });
+      if (!refilledTail.ok) throw refilledTail.error;
+      const tailBundles = refilledTail.value.objects.filter(
+        (o) => o.kind === "hip-bundle",
+      );
+      expect(tailBundles.map((b) => b.inspection)).toEqual([
+        "complete",
+        "complete",
+      ]);
+      expect(tailBundles[1]?.encoded_size).toBe(withTailEncoded.length);
+    }
+  }
+
   // max_work_bytes stays capped at main's 512 MiB heap ceiling.
   const overWorkMax = inspectGpuCodeObjectsInputSchema.safeParse({
     path: "/tmp/sample.ptx",

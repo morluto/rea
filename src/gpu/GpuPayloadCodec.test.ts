@@ -89,6 +89,14 @@ it.each(["zlib", "zstd"] as const)(
     expect(await decodeGpuPayloadStream(input, codec, source.length)).toEqual({
       buffer: source,
       consumedBytes: compressed.length,
+      inputExhausted: false,
+    });
+    expect(
+      await decodeGpuPayloadStream(compressed, codec, source.length),
+    ).toEqual({
+      buffer: source,
+      consumedBytes: compressed.length,
+      inputExhausted: codec === "zstd",
     });
     await expect(
       decodeGpuPayloadStream(compressed.subarray(0, -1), codec, source.length),

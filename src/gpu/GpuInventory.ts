@@ -30,7 +30,6 @@ import {
   projectZstandardFrameAllowance,
   ZstandardFrameAllowanceError,
 } from "../domain/compression/zstandardFrameAllowance.js";
-import { hasIncompleteZstandardMagicPrefix } from "../domain/compression/zstandardFrameWire.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { createHash } from "node:crypto";
 import { scheduler } from "node:timers/promises";
@@ -842,6 +841,7 @@ export class GpuInventory {
             const decodeRefilledWindow = async (): Promise<{
               buffer: Buffer;
               consumedBytes: number;
+              inputExhausted: boolean;
             }> => {
               // Retire the previous window before allocating its replacement.
               encoded = undefined;
@@ -863,7 +863,11 @@ export class GpuInventory {
             };
             let refilled = false;
             let completed:
-              | { buffer: Buffer; consumedBytes: number }
+              | {
+                  buffer: Buffer;
+                  consumedBytes: number;
+                  inputExhausted: boolean;
+                }
               | undefined = await decodeGpuPayloadStream(
               encoded,
               compression,
@@ -887,20 +891,11 @@ export class GpuInventory {
                 throw ccobWindowLimit();
               throw cause;
             });
-            // Multi-frame Zstandard payloads cut cleanly between frames or inside
-            // the next frame's 4-byte magic return success for the completed prefix
-            // instead of throwing truncation. Check for an incomplete window before
-            // publishing the short extent.
-            const cutAtFrameBoundary = (): boolean =>
-              completed !== undefined &&
-              compression === "zstd" &&
-              completed.buffer.length < decoded &&
-              encoded !== undefined &&
-              hasIncompleteZstandardMagicPrefix(
-                encoded,
-                completed.consumedBytes,
-              );
-            if (cutAtFrameBoundary()) {
+            // When the decoder stopped because the supplied window ran out at a
+            // frame boundary or partial next-frame magic (including before a
+            // trailing skippable or empty Zstandard frame), refill a short cached
+            // window or report capacity if max_object_bytes truncated the container.
+            if (completed.inputExhausted) {
               if (!refilled && cached && available < inputSize) {
                 // Release the partial decode output before allocating a refilled window.
                 completed = undefined;
@@ -908,7 +903,7 @@ export class GpuInventory {
                 completed = await decodeRefilledWindow();
               }
               if (
-                cutAtFrameBoundary() &&
+                completed.inputExhausted &&
                 total - width > this.#budgets.maxObjectBytes
               )
                 throw ccobWindowLimit();
