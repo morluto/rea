@@ -31,6 +31,11 @@ import {
   xmlTrimmedDirectText,
 } from "../domain/xmlDocument.js";
 import { countJsonValues } from "../domain/jsonValue.js";
+import {
+  NODE_FILE_CANDIDATES,
+  NODE_INDEX_CANDIDATES,
+  resolveEntryPoint,
+} from "../domain/nodePackageEntry.js";
 import { decodeXmlPlistText } from "../domain/propertyListXmlText.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { hasZipSignature } from "../domain/zipPackageFormat.js";
@@ -347,34 +352,11 @@ const packageJsonEntryDirectoryOnly = (value: unknown): boolean => {
 };
 
 /**
- * Suffixes tried after the declared path, in order. VS Code loads `main`
- * through Node's CommonJS file and directory lookup, and the web extension
- * host adds `.js` to a `browser` entry that lacks it.
+ * The web extension host adds `.js` to a `browser` entry that lacks it; the
+ * shared Node file and index candidates and the member lookup are owned by
+ * `nodePackageEntry`, so VS Code's `main` resolves exactly as it does elsewhere.
  */
-const NODE_FILE_CANDIDATES = ["", ".js", ".json", ".node"] as const;
-const NODE_INDEX_CANDIDATES = [
-  "/index.js",
-  "/index.json",
-  "/index.node",
-] as const;
 const BROWSER_ENTRY_CANDIDATES = ["", ".js"] as const;
-
-/**
- * The member an entry point resolves to, or the declared path when none.
- * Member names match exactly, as on a case-sensitive file system; a match
- * that holds only when case is ignored is reported separately.
- */
-const resolveEntryPoint = (
-  declared: string,
-  suffixes: readonly string[],
-  memberPaths: ReadonlySet<string>,
-): { path: string; present: boolean } => {
-  for (const suffix of suffixes) {
-    const candidate = `${declared}${suffix}`;
-    if (memberPaths.has(candidate)) return { path: candidate, present: true };
-  }
-  return { path: declared, present: false };
-};
 
 /**
  * A member that matches an unresolved entry point only when case is ignored.

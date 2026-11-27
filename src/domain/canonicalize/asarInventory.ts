@@ -11,6 +11,7 @@ import {
   type NormalizerBudget,
 } from "./normalizer.js";
 import { ellipsisExcerpt } from "../excerpt.js";
+import { resolveNodeFileEntry } from "../nodePackageEntry.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 /** Path length beyond which an inventory entry reads as inflation, not a real module. */
@@ -125,38 +126,26 @@ export interface AsarReachability {
   readonly limitation?: string;
 }
 
-/**
- * CommonJS `main`-field resolution siblings, in Node's search order: an
- * extensionless `main` resolves to the file itself, then to one of these
- * siblings, then to an `index` file of that extension under the directory.
- */
-const MAIN_RESOLUTION_EXTENSIONS = [".js", ".json", ".node"] as const;
-
 /** Shared empty inventory for callers resolving without a validated listing. */
 const EMPTY_LOADABLE_SET: ReadonlySet<string> = new Set();
 
 /**
- * This pass owns ASAR `main`-entry resolution. Node resolves a package.json
- * `main` of "./lib" to the file `lib`, else `lib.js`/`lib.json`/`lib.node`, else
- * the directory index `lib/index.js`/`.json`/`.node`. Resolving against the
- * validated inventory (`files`, the archive's loadable entries) gives the real
- * startup file reachable priority instead of a bare `lib` directory, which an
- * unverified filler listed earlier could otherwise outrank for the fact budget.
- * With no inventory the specifier is returned normalized but unresolved, so
- * reachability degrades to a best-effort literal rather than a false negative.
+ * Normalize a package.json `main` into the archive's member namespace (a leading
+ * `./` or `/` and a trailing `/` carry no member), then resolve it through the
+ * shared Node entry-point owner. Node loads a `main` of "./lib" as the file
+ * `lib`, else `lib.js`/`.json`/`.node`, else the directory index
+ * `lib/index.{js,json,node}`; resolving against the validated inventory (`files`,
+ * the archive's loadable entries) gives the real startup file reachable priority
+ * instead of a bare `lib` directory that an earlier filler could outrank. With
+ * no inventory the normalized specifier stands as a best-effort literal rather
+ * than a false negative.
  */
 export const resolveMainEntry = (
   specifier: string,
   files: ReadonlySet<string>,
 ): string => {
   const base = specifier.replace(/^\.?\//u, "").replace(/\/+$/u, "");
-  if (files.size === 0 || files.has(base)) return base;
-  for (const extension of MAIN_RESOLUTION_EXTENSIONS)
-    if (files.has(`${base}${extension}`)) return `${base}${extension}`;
-  for (const extension of MAIN_RESOLUTION_EXTENSIONS)
-    if (files.has(`${base}/index${extension}`))
-      return `${base}/index${extension}`;
-  return base;
+  return files.size === 0 ? base : resolveNodeFileEntry(base, files).path;
 };
 
 /** Best-effort reachable module paths from an archive's own package.json bytes. */
