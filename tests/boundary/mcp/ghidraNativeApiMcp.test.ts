@@ -564,3 +564,41 @@ it("retains unavailable Ghidra native API observations across live reobservation
     await harness.close();
   }
 });
+
+describe("Ghidra parameter-list facts", () => {
+  it("reports a variadic prototype and its unreported arguments through inspect_native_api", async () => {
+    const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
+    if (!dossier.native_api?.available) throw new Error("Expected native API");
+    dossier.native_api.parameter_list = { basis: "signature", variadic: true };
+    const harness = await connectGhidraMcp(
+      "ghidra-parameter-list",
+      async (operation) => {
+        if (operation !== "analyze_function")
+          throw new Error(`Unexpected operation: ${operation}`);
+        return ok(jsonValueSchema.parse({ value: dossier, limitations: [] }));
+      },
+    );
+    try {
+      const inspection = await harness.mcp.callTool({
+        name: "inspect_native_api",
+        arguments: { procedure: "fixture_main" },
+      });
+      expect(inspection.isError).not.toBe(true);
+      const result = nativeApiInspectionResultSchema.parse(
+        sessionEvidence(harness.session, inspection.structuredContent)
+          .normalized_result,
+      );
+      expect(result.boundary).toMatchObject({
+        available: true,
+        parameters: [],
+        parameter_list: { basis: "signature", variadic: true },
+      });
+      // No storage is claimed for the variable arguments; they stay unknown.
+      expect(result.residual_unknowns).toContain(
+        "Which arguments do callers pass after the 0 fixed parameter(s), and where are they stored?",
+      );
+    } finally {
+      await harness.close();
+    }
+  });
+});

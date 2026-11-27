@@ -2,6 +2,7 @@ import { z } from "zod";
 import { nativeAddressObservationSchema } from "../domain/native/nativeAddress.js";
 import {
   availableNativeApiBoundarySchema,
+  nativeParameterListSchema,
   unavailableNativeApiBoundarySchema,
 } from "../domain/native/nativeApiBoundary.js";
 import {
@@ -31,11 +32,15 @@ const ghidraJumpTable = jumpTable.extend({
   ),
 });
 
-/** Ghidra API facts carry canonical coordinates and HighFunction provenance. */
+/**
+ * Ghidra API facts carry canonical coordinates and HighFunction provenance.
+ * The packaged bridge always reports the HighFunction's parameter-list basis.
+ */
 export const ghidraNativeApiBoundary = z.discriminatedUnion("available", [
   unavailableNativeApiBoundarySchema,
   availableNativeApiBoundarySchema.extend({
     provenance: z.literal("ghidra-high-function"),
+    parameter_list: nativeParameterListSchema,
     jump_tables: z.array(ghidraJumpTable),
   }),
 ]);

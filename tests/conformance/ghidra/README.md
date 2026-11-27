@@ -50,6 +50,13 @@ no-overwrite CLI delivery. It checks the target and project files for changes.
   `complete`. The `ghidra-bridge-sources` CI job runs it; the bytes are never
   executed. It does not establish which references Ghidra's own analysis
   records for other slot shapes.
+- `ReaParameterListProbe.java` decompiles source-owned x86-64 functions, two
+  with Ghidra's default signature and three with authored `int f(void)`,
+  `int f(...)` and `int f(int x)` signatures, through the production bridge.
+  The `ghidra-bridge-sources` CI job checks each `native_api.parameter_list`
+  basis and varargs flag, and that value-flow parameters match the boundary.
+  It does not establish how analysis or imports set signatures; the bytes are
+  never executed.
 - `inventory.c` produces separate x86-64 debug and stripped ELF executables.
   It covers imports, an external `puts` function, linker thunks, source symbols,
   direct calls, a targetless callback call, two referenced strings, and a

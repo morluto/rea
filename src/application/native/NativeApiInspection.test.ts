@@ -138,3 +138,43 @@ describe("native API inspection", () => {
     ).toBe(false);
   });
 });
+
+describe("native API parameter lists", () => {
+  const withParameterList = (parameterList: unknown) => {
+    const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
+    const boundary = dossier.native_api;
+    if (boundary?.available !== true)
+      throw new TypeError("Ghidra native API fixture is unavailable");
+    const { parameter_list: _omitted, ...older } = boundary;
+    return functionDossierSchema.parse({
+      ...dossier,
+      native_api:
+        parameterList === undefined
+          ? older
+          : { ...boundary, parameter_list: parameterList },
+    });
+  };
+  const variadicUnknown =
+    "Which arguments do callers pass after the 0 fixed parameter(s), and where are they stored?";
+
+  it("names the unreported variable arguments of a variadic prototype", () => {
+    const inspection = projectNativeApiInspection(
+      withParameterList({ basis: "signature", variadic: true }),
+    );
+    expect(inspection.boundary).toMatchObject({
+      parameter_list: { basis: "signature", variadic: true },
+    });
+    expect(inspection.residual_unknowns).toContain(variadicUnknown);
+  });
+
+  it.each([
+    { basis: "signature", variadic: false },
+    { basis: "recovered", variadic: false },
+    undefined,
+  ])("adds no variable-argument unknown for %j", (parameterList) => {
+    expect(
+      projectNativeApiInspection(withParameterList(parameterList))
+        .residual_unknowns,
+    ).not.toContain(variadicUnknown);
+  });
+});
