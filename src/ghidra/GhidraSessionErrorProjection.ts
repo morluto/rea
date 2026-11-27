@@ -1,5 +1,9 @@
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS } from "../domain/analysisResourceLimits.js";
+import {
+  ghidraCheckpointSaveWaitLimit,
+  ghidraCheckpointSaveWaitRecovery,
+} from "../config/ghidraCheckpointSaveWait.js";
 import { z } from "zod";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
@@ -129,8 +133,10 @@ const projectPrimarySessionError = (
           ...context,
           retryable: true,
           userMessage: `${failure.cause.message}. Sessions share a checkpointed target; one at a time saves it.`,
-          remediationAction:
-            "Wait for that session's save to finish, then repeat this call unchanged.",
+          remediationAction: ghidraCheckpointSaveWaitRecovery(
+            failure.cause.wait,
+          ),
+          limit: ghidraCheckpointSaveWaitLimit(failure.cause.wait),
         },
       );
     // The session's committed profile names the generation it selected, so

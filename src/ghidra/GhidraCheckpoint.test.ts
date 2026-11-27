@@ -413,6 +413,46 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
+it.skipIf(process.platform === "win32").each([
+  // Past the 30 s default, a longer launch value keeps polling.
+  { waitMs: 120_000, clock: [0, 60_000, 119_999, 120_000], attempts: 3 },
+  // A shorter launch value reports busy where the default would still wait.
+  { waitMs: 50, clock: [0, 50], attempts: 1 },
+  // Unset: the default bound.
+  { waitMs: undefined, clock: [0, 29_999, 30_000], attempts: 2 },
+])(
+  "holds a held lease for a save wait of $waitMs ms and names that bound when busy",
+  async ({ waitMs, clock, attempts }) => {
+    const f = await fixture();
+    const wait =
+      waitMs === undefined
+        ? undefined
+        : ({ waitMs, source: "setting" } as const);
+    const session = new GhidraCheckpoint(f.selection, f.resources, wait);
+    owners.push(session);
+    await session.admit("waiting");
+    vi.mocked(acquireOwnedLease)
+      .mockClear()
+      .mockResolvedValue({
+        acquired: false,
+        owner: { runId: "publisher", processId: 4242 },
+      });
+    // The deadline reads the clock once to start and once after each refusal.
+    const now = vi.spyOn(performance, "now");
+    for (const reading of clock.slice(0, -1)) now.mockReturnValueOnce(reading);
+    now.mockReturnValue(clock.at(-1) ?? 0);
+    const busy = await session.publish(f.packed).catch((cause) => cause);
+    now.mockRestore();
+    expect(busy).toBeInstanceOf(GhidraCheckpointBusyError);
+    expect(vi.mocked(acquireOwnedLease)).toHaveBeenCalledTimes(attempts);
+    expect(busy.wait).toEqual(wait ?? { waitMs: 30_000, source: "default" });
+    expect(busy.message).toContain(
+      `REA_GHIDRA_CHECKPOINT_SAVE_WAIT_MS is ${String(waitMs ?? 30_000)} ms (source ${waitMs === undefined ? "default" : "launch environment"}; default 30000, floor 50, maximum 600000)`,
+    );
+    expect(session.hasResources).toBe(false);
+  },
+);
+
 it.skipIf(process.platform === "win32").each(["manifest", "packed"] as const)(
   "re-reads a checkpoint replaced while a lease-free reader had its %s open",
   async (stage) => {

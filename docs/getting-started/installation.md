@@ -1690,9 +1690,27 @@ one session at a time.
 Two related refusals are not configuration faults and leave the checkpoint
 intact. A session whose selected checkpoint was replaced before its Ghidra
 process restored it reports `capability_unavailable` with `retryable: false`;
-reopen the target. A save that waits 30 seconds for another session's
+reopen the target. A save that waits its whole save wait for another session's
 publication reports a retryable `capability_unavailable` naming that session;
 repeat the call.
+
+The save wait is 30,000 ms by default. Set
+`REA_GHIDRA_CHECKPOINT_SAVE_WAIT_MS` to an integer from 50 to 600,000
+milliseconds in the environment that starts REA to change how long
+`close_binary`, or the first save of a startup, waits for another session's
+publication. The floor is one 50 ms poll of the lease; the maximum is ten
+minutes, past which a held lease is a stalled publisher and not a save in
+progress. REA reads the value when it starts and each session keeps the bound
+it opened with, so a change needs a restart; `update_analysis_settings` does
+not change it and `inspect_analysis_settings` does not list it. The busy
+refusal names the control, the value applied, whether it came from the default
+or the launch environment, and the range, and reports them as an environment
+`details.limit`. An empty, malformed or out-of-range value does not fall back
+to the default: `rea doctor` and registration validation report it, REA still
+starts, and a checkpointed Ghidra session refuses to open with
+`configuration_invalid` until it is corrected. Sessions without a checkpoint
+never apply the wait. The control lengthens only this session's wait; it does
+not shorten the other session's save.
 
 The directory retains the current manifest and packed Program. Publication
 writes and syncs a new packed file before atomically replacing the manifest;

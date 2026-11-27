@@ -1,4 +1,5 @@
 import { inspectAnalysisSettingSeeds } from "../config/analysisSettings.js";
+import { inspectGhidraCheckpointSaveWait } from "../config/ghidraCheckpointSaveWait.js";
 import {
   parseEnvironment,
   parseEnvironmentValues,
@@ -35,10 +36,10 @@ export const validateRegistrationEnvironment = (
       ? parseEnvironmentValues(runtimeEnvironment, unresolvedSettings)
       : parseEnvironment(runtimeEnvironment, unresolvedSettings);
   if (!validated.ok) return validated;
-  const seedIssues = inspectAnalysisSettingSeeds(
-    runtimeEnvironment,
-    unresolvedSettings,
-  );
+  const seedIssues = [
+    ...inspectAnalysisSettingSeeds(runtimeEnvironment, unresolvedSettings),
+    ...inspectGhidraCheckpointSaveWait(runtimeEnvironment, unresolvedSettings),
+  ];
   if (seedIssues.length > 0)
     return err(
       new ConfigurationError("Invalid REA environment configuration", {

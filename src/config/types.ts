@@ -9,6 +9,8 @@ import type { McpToolCatalogProfile } from "./mcpToolCatalogProfile.js";
 import type { McpToolsListPageBudget } from "./mcpToolsListPageBudget.js";
 import type { BridgeMaxRequestBytes } from "./bridgeMaxRequestBytes.js";
 import type { BridgeMaxReplyBytes } from "./bridgeMaxReplyBytes.js";
+import type { GhidraCheckpointSaveWait } from "./ghidraCheckpointSaveWait.js";
+import type { Result } from "../domain/result.js";
 import type { RegexMatchingDeadline } from "./regexMatchingDeadline.js";
 import type { RegexWorkerHeapRequest } from "./regexWorkerHeapRequest.js";
 import type { HopperCallerScanBudget } from "./hopperCallerScanBudget.js";
@@ -41,6 +43,15 @@ export interface AppConfig {
   readonly ghidraExistingProject?: GhidraProjectSelection;
   /** Opt-in storage for checkpoints of REA-owned Ghidra Programs. */
   readonly ghidraCheckpointDirectory?: string;
+  /**
+   * Launch-only bound on a checkpoint save's wait for another session's
+   * publication; absent keeps the default. A refused launch value stays a
+   * failure for the sessions that would apply it, never the default.
+   */
+  readonly ghidraCheckpointSaveWait?: Result<
+    GhidraCheckpointSaveWait,
+    ConfigurationError
+  >;
   readonly ghidraNativeAotJar?: string;
   readonly ilspyCmdPath: string | undefined;
   /**

@@ -25,6 +25,12 @@ import {
 } from "../filesystem/RegularFile.js";
 import { acquireOwnedLease, type OwnedLease } from "../process/OwnedLease.js";
 import {
+  DEFAULT_GHIDRA_CHECKPOINT_SAVE_WAIT,
+  GHIDRA_CHECKPOINT_SAVE_POLL_MS,
+  ghidraCheckpointSaveWaitFacts,
+  type GhidraCheckpointSaveWait,
+} from "../config/ghidraCheckpointSaveWait.js";
+import {
   copyGhidraRegularFile,
   ghidraFileDialect,
   readGhidraProfileArtifact,
@@ -93,23 +99,20 @@ const failure = (directory: string, reason: string, cause?: unknown) =>
     },
   );
 
-/** How long a save waits for another session's publication to finish. */
-export const GHIDRA_CHECKPOINT_PUBLICATION_WAIT_MS = 30_000;
-const PUBLICATION_POLL_MS = 50;
-
 /**
  * Another live REA session held this checkpoint's publication lease for the
  * whole bounded wait. The directory and its setting are valid, so this is
  * contention that ends when that publication finishes, not a configuration
- * fault.
+ * fault. `wait` is the bound this session applied.
  */
 export class GhidraCheckpointBusyError extends Error {
   constructor(
     readonly directory: string,
     readonly owner: { readonly runId: string; readonly processId: number },
+    readonly wait: GhidraCheckpointSaveWait,
   ) {
     super(
-      `Ghidra checkpoint at ${JSON.stringify(directory)} is being saved by another REA session (run ${owner.runId}, process ${String(owner.processId)})`,
+      `Ghidra checkpoint at ${JSON.stringify(directory)} is being saved by another REA session (run ${owner.runId}, process ${String(owner.processId)}), and that save did not finish within this session's save wait: ${ghidraCheckpointSaveWaitFacts(wait)}`,
     );
     this.name = "GhidraCheckpointBusyError";
   }
@@ -322,6 +325,8 @@ export class GhidraCheckpoint {
   constructor(
     readonly selection: GhidraCheckpointSelection,
     private readonly resources: ArtifactResourceScope,
+    /** Bound on waiting for another session's publication, fixed for this session. */
+    private readonly saveWait: GhidraCheckpointSaveWait = DEFAULT_GHIDRA_CHECKPOINT_SAVE_WAIT,
   ) {
     this.#state = selection.state;
   }
@@ -406,7 +411,7 @@ export class GhidraCheckpoint {
     admission: { readonly directory: string; readonly runId: string },
     signal?: AbortSignal,
   ): Promise<OwnedLease> {
-    const deadline = Deadline.after(GHIDRA_CHECKPOINT_PUBLICATION_WAIT_MS);
+    const deadline = Deadline.after(this.saveWait.waitMs);
     for (;;) {
       assertArtifactReadActive(signal);
       const acquired = await acquireOwnedLease({
@@ -432,8 +437,9 @@ export class GhidraCheckpoint {
         throw new GhidraCheckpointBusyError(
           admission.directory,
           acquired.owner,
+          this.saveWait,
         );
-      await delay(PUBLICATION_POLL_MS, undefined, { signal }).catch(
+      await delay(GHIDRA_CHECKPOINT_SAVE_POLL_MS, undefined, { signal }).catch(
         () => undefined,
       );
     }

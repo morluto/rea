@@ -675,8 +675,24 @@ export const createGhidraProviderClient = (input: {
     () => config.ghidraStartupTimeoutMs,
   );
   if (!startupTimeout.ok) return startupTimeout;
+  // Only a checkpointed session applies the save wait, so only it refuses an
+  // invalid launch value.
+  const checkpointSaveWait = config.ghidraCheckpointSaveWait;
+  if (
+    checkpoint.data !== undefined &&
+    checkpointSaveWait !== undefined &&
+    !checkpointSaveWait.ok
+  )
+    return checkpointSaveWait;
   const client = clientFactory({
-    ...(checkpoint.data === undefined ? {} : { checkpoint: checkpoint.data }),
+    ...(checkpoint.data === undefined
+      ? {}
+      : {
+          checkpoint: checkpoint.data,
+          ...(checkpointSaveWait?.ok === true
+            ? { checkpointSaveWait: checkpointSaveWait.value }
+            : {}),
+        }),
     startupTimeoutMs: startupTimeout.value,
     readStartupTimeoutMs: () => config.ghidraStartupTimeoutMs,
     bridgeMaxRequestBytes: config.bridgeMaxRequestBytes,

@@ -145,6 +145,7 @@ import {
   GhidraCheckpointSupersededError,
   type GhidraPackedProgram,
 } from "./GhidraCheckpoint.js";
+import { ghidraCheckpointSaveWaitRecovery } from "../config/ghidraCheckpointSaveWait.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
 const SHUTDOWN_TIMEOUT_MS = 10_000;
@@ -266,7 +267,11 @@ export class GhidraClient {
     this.#checkpoint =
       options.checkpoint === undefined
         ? undefined
-        : new GhidraCheckpoint(options.checkpoint, this.#fileResources);
+        : new GhidraCheckpoint(
+            options.checkpoint,
+            this.#fileResources,
+            options.checkpointSaveWait,
+          );
     this.#options = {
       ...options,
       startupTimeoutMs:
@@ -981,7 +986,11 @@ export class GhidraClient {
               remediationAction:
                 "Another REA session saved this target's Ghidra checkpoint first, so this session's Program edits were not saved and the current checkpoint is unchanged. Closing the target again discards those edits and releases the session; then reopen the target and reapply them.",
             }
-          : {}),
+          : cause instanceof GhidraCheckpointBusyError
+            ? {
+                remediationAction: ghidraCheckpointSaveWaitRecovery(cause.wait),
+              }
+            : {}),
       },
     );
     return this.#retainCleanupFailure(failure);

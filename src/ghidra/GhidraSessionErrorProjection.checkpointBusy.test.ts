@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   GhidraCheckpointBusyError,
   GhidraCheckpointSupersededError,
@@ -10,10 +11,11 @@ import { projectSessionError } from "./GhidraSessionErrorProjection.js";
 
 describe("a checkpoint being saved by another session", () => {
   it("projects as retryable contention, not as an invalid setting", () => {
-    const busy = new GhidraCheckpointBusyError("/private/checkpoints", {
-      runId: "run-a",
-      processId: 4242,
-    });
+    const busy = new GhidraCheckpointBusyError(
+      "/private/checkpoints",
+      { runId: "run-a", processId: 4242 },
+      { waitMs: 1_200, source: "setting" },
+    );
     const projected = projectSessionError(
       "list_documents",
       new GhidraSessionError("checkpoint", busy.message, {}, { cause: busy }),
@@ -33,6 +35,33 @@ describe("a checkpoint being saved by another session", () => {
     );
     expect(projected.remediationAction).not.toContain(
       "Correct REA_GHIDRA_CHECKPOINT_DIR",
+    );
+    // The exhausted wait is a launch control: name it, its value and range.
+    expect(projected.limit).toEqual({
+      control_kind: "environment",
+      environment: "REA_GHIDRA_CHECKPOINT_SAVE_WAIT_MS",
+      effective_value: 1_200,
+      unit: "ms",
+      minimum: 50,
+      maximum: 600_000,
+      default_value: 30_000,
+      applies_at: "next_startup",
+    });
+    for (const text of [projected.message, projected.remediationAction])
+      expect(text).toContain(
+        "REA_GHIDRA_CHECKPOINT_SAVE_WAIT_MS is 1200 ms (source launch environment; default 30000, floor 50, maximum 600000)",
+      );
+    expect(projected.remediationAction).toContain(
+      "environment that starts REA and restart REA",
+    );
+    expect(projectAnalysisError(projected, "continuing").details).toMatchObject(
+      {
+        limit: {
+          control_kind: "environment",
+          environment: "REA_GHIDRA_CHECKPOINT_SAVE_WAIT_MS",
+          effective_value: 1_200,
+        },
+      },
     );
   });
 
