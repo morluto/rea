@@ -36,6 +36,12 @@ const mappingPath = {
     ),
 };
 
+/**
+ * Default page of class-name matches: an empty query lists every class, and
+ * a large APK has tens of thousands.
+ */
+export const ANDROID_CLASS_SEARCH_PAGE = 256;
+
 /** Caller intent for static Android inspection, independent of its engine. */
 export const androidInputSchemas = {
   inspect_android_package: z.strictObject(target),
@@ -48,9 +54,9 @@ export const androidInputSchemas = {
     limit: z
       .int()
       .positive()
-      .optional()
+      .default(ANDROID_CLASS_SEARCH_PAGE)
       .describe(
-        "Maximum number of matching class names to return; omit to return all matches",
+        `Maximum number of matching class names to return (default ${String(ANDROID_CLASS_SEARCH_PAGE)}); next_offset starts the next page`,
       ),
     offset: z
       .int()
@@ -278,6 +284,13 @@ export const androidResultSchemas = {
     query: z.string(),
     total_classes: z.int().nonnegative(),
     matches: z.array(z.string()),
+    next_offset: z
+      .int()
+      .nonnegative()
+      .nullable()
+      .describe(
+        "Offset of the next page of matches; null when no match follows this page",
+      ),
     duplicate_names: z.array(
       z.strictObject({
         name: z.string(),

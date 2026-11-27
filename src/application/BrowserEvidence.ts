@@ -238,6 +238,10 @@ const browserParameters = (
     ...("observation_ms" in input
       ? { observation_ms: input.observation_ms }
       : {}),
+    ...("timeline_retained_bytes" in input &&
+    input.timeline_retained_bytes !== undefined
+      ? { timeline_retained_bytes: input.timeline_retained_bytes }
+      : {}),
     ...("include_accessibility_text" in input
       ? {
           include_accessibility_text: input.include_accessibility_text,

@@ -31,5 +31,16 @@ export const decodeStrictUtf8 = (
   bom: Utf8BomPolicy,
 ): string => (bom === "preserve" ? preserving : stripping).decode(bytes);
 
+/** Preserve a leading BOM as field data and return null on invalid UTF-8. */
+export const decodeUtf8PreservingBomOrNull = (
+  bytes: Uint8Array,
+): string | null => {
+  try {
+    return decodeStrictUtf8(bytes, "preserve");
+  } catch {
+    return null;
+  }
+};
+
 /** Whether the bytes are well-formed UTF-8, without building the string. */
 export const isStrictUtf8 = (bytes: Uint8Array): boolean => isUtf8(bytes);

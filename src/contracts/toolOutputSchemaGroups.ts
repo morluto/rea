@@ -74,6 +74,7 @@ import {
   listArchitecturesSchema,
 } from "../domain/native/nativeInspection.js";
 import { artifactExtractionResultSchema } from "../domain/artifactGraph.js";
+import { artifactExtractionSummaryViewResultSchema } from "../domain/analysisView/summarySchemas/artifactExtractionSummarySchemas.js";
 import { artifactInspectionResultSchema } from "../domain/artifactInspection.js";
 import { interfaceBuilderAnalysisSchema } from "../domain/apple/interfaceBuilderGraph.js";
 import { dylibResolutionResultSchema } from "../domain/apple/dylibResolution.js";
@@ -447,7 +448,12 @@ export const artifactOutputSchemas = {
       artifactInventorySummaryViewResultSchema,
     ]),
   ),
-  extract_artifact: evidenceResultOf(artifactExtractionResultSchema),
+  extract_artifact: evidenceResultOf(
+    z.union([
+      artifactExtractionResultSchema,
+      artifactExtractionSummaryViewResultSchema,
+    ]),
+  ),
   decode_interface_builder: evidenceResultOf(
     z.union([
       interfaceBuilderAnalysisSchema,

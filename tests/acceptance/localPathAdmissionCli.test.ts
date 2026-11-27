@@ -11,6 +11,7 @@ import { cliTest } from "../support/cli/cliFixture.js";
 const fileCommands = [
   "inspect-sqlite-database",
   "inspect-python-pyc",
+  "inspect-deb-package",
   "inspect-apk-signature",
   "inspect-packet-capture",
   "decode-signal-recording",

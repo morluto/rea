@@ -20,6 +20,7 @@ import type {
   ContractCliSessionTarget,
   ContractField,
   DocumentContract,
+  ProjectedContract,
 } from "./contractCliDescriptionTypes.js";
 import {
   admitsOmission,
@@ -194,10 +195,11 @@ const DOCUMENT_KEY = "inputJson";
  * page is selected from a retained summary, so it needs summary delivery.
  */
 const admitDocumentDelivery = (
-  operation: string,
+  contract: Pick<ProjectedContract, "name" | "effects">,
   viewDelivery: (CliViewDelivery & { readonly schema: z.ZodType }) | undefined,
   values: Readonly<Record<string, unknown>>,
 ): Result<CliEvidenceDeliveryChoice, AnalysisInputError> => {
+  const operation = contract.name;
   let view: AnalysisViewRequest | undefined;
   if (viewDelivery !== undefined) {
     const decoded = parseCliJsonOption(
@@ -234,6 +236,7 @@ const admitDocumentDelivery = (
   const delivery: CliEvidenceDeliveryChoice = {
     detail,
     evidenceOutput: values.evidence_output as string | undefined,
+    rerunRecoversResult: contract.effects?.idempotent !== false,
     ...(view === undefined ? {} : { view }),
   };
   const refused = cliEvidenceDeliveryInputError({ ...delivery, operation });
@@ -351,7 +354,7 @@ export const describeContractDocumentCommand = <
     admitDelivery: (values) =>
       evidenceDelivery
         ? admitDocumentDelivery(
-            contract.name,
+            contract,
             viewDelivery === undefined
               ? undefined
               : { ...viewDelivery, schema: viewSchema },
