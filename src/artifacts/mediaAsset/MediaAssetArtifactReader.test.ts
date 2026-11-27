@@ -174,7 +174,9 @@ describe("Ogg Opus headers", () => {
   it("reads OpusTags from the OpusHead stream across another stream's pages", async () => {
     const bytes = Buffer.concat([
       oggPage(0, 0n, opusHeadPacket(), 2),
-      oggPage(0, 0n, Buffer.from("other-stream-header"), 2, undefined, 0x9999),
+      oggPage(0, 0n, Buffer.from("other-stream-header"), 2, {
+        serial: 0x9999,
+      }),
       oggPage(1, 0n, opusTagsPacket(Buffer.from("enc")), 0),
       oggPage(2, 960n, Buffer.from([0xfc, 1, 2]), 4),
     ]);
@@ -365,9 +367,9 @@ describe("RIFF chunk framing", () => {
     const bytes = riff([fmt(), chunk("data", Buffer.from([1, 2, 3]))]);
     const result = await read("riff-xma2", bytes);
     expect(result.metadata).toMatchObject({ extent_check: "consistent" });
-    expect(result.contents.get("chunks/1.data")).toEqual(
-      Buffer.from([1, 2, 3]),
-    );
+    expect(
+      result.contents.get("chunks/1.data")?.equals(Buffer.from([1, 2, 3])),
+    ).toBe(true);
     expect(
       result.coverage[0]?.limitations.some((line) =>
         line.includes("without its pad byte"),
@@ -388,7 +390,7 @@ describe("RIFF chunk framing", () => {
   });
 });
 
-describe("Bink 2 headers", () => {
+describe("Bink 2 header offsets", () => {
   it("reads header words at the offsets FFmpeg's Bink demuxer uses", async () => {
     // Known-answer header written field by field at absolute offsets, so it
     // does not share the fixture builder's field order.
@@ -424,7 +426,9 @@ describe("Bink 2 headers", () => {
       { path: "frames.bin", byteOffset: 60, declaredSize: 0x20 },
     ]);
   });
+});
 
+describe("Bink 2 headers", () => {
   it("reports revision, frames, dimensions, fps and the offset table", async () => {
     const bytes = bink2Fixture(10);
     const tableBytes = 44;

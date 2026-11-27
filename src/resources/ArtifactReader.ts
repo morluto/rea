@@ -251,6 +251,7 @@ export interface ArtifactReader {
     | ZipPackageFormat
     | "asar"
     | "ines"
+    | "nds"
     | "godot-pck"
     | "unityfs"
     | "wxapkg"
@@ -264,9 +265,13 @@ export interface ArtifactReader {
     | "bink2"
     | "vulkan-pipeline-cache"
     | "uimage"
+    | "nso"
+    | "nro"
     | "android-boot-image"
     | "android-ota-payload"
+    | "android-vbmeta"
     | "android-sparse-image"
+    | "ubi-image"
     | "iso9660"
     | "uefi"
     | "pyinstaller"
@@ -279,9 +284,12 @@ export interface ArtifactReader {
     | "esp-image"
     | "uf2"
     | "dfuse"
+    | "bflt"
     | "esp-flash-image"
     | "fit"
+    | "qualcomm-mbn"
     | "ntfs-mft"
+    | "pkg"
     | "file";
   entries(
     signal?: AbortSignal,

@@ -620,8 +620,7 @@ export const riffXma2Layout = async (
   const blockAlign = fmtFields.u16(12);
   const bitsPerSample = fmtFields.u16(14);
   // A 16-byte PCMWAVEFORMAT-style fmt has no cbSize: unknown, not zero.
-  const extraBytes =
-    fmtRead >= WAVEFORMATEX_BYTES ? fmtFields.u16(16) : null;
+  const extraBytes = fmtRead >= WAVEFORMATEX_BYTES ? fmtFields.u16(16) : null;
   const hasXma2Fields =
     fmtRead >= XMA2_FMT_READ_BYTES &&
     extraBytes !== null &&
@@ -630,22 +629,21 @@ export const riffXma2Layout = async (
     limitations.push(
       `The fmt chunk declares tag 0x166 but holds ${String(fmt.length)} byte(s), not the ${String(XMA2_FMT_READ_BYTES)}-byte XMA2WAVEFORMATEX; the XMA2 fields were not read.`,
     );
-  const xma2 =
-    hasXma2Fields
-      ? {
-          num_streams: fmtFields.u16(18),
-          channel_mask: fmtFields.u32(20),
-          samples_encoded: fmtFields.u32(24),
-          bytes_per_block: fmtFields.u32(28),
-          play_begin: fmtFields.u32(32),
-          play_length: fmtFields.u32(36),
-          loop_begin: fmtFields.u32(40),
-          loop_length: fmtFields.u32(44),
-          loop_count: fmtFields.u8(48),
-          encoder_version: fmtFields.u8(49),
-          block_count: fmtFields.u16(50),
-        }
-      : null;
+  const xma2 = hasXma2Fields
+    ? {
+        num_streams: fmtFields.u16(18),
+        channel_mask: fmtFields.u32(20),
+        samples_encoded: fmtFields.u32(24),
+        bytes_per_block: fmtFields.u32(28),
+        play_begin: fmtFields.u32(32),
+        play_length: fmtFields.u32(36),
+        loop_begin: fmtFields.u32(40),
+        loop_length: fmtFields.u32(44),
+        loop_count: fmtFields.u8(48),
+        encoder_version: fmtFields.u8(49),
+        block_count: fmtFields.u16(50),
+      }
+    : null;
 
   const regions: MediaAssetRegion[] = completeChunks.map((chunk, index) => ({
     path: `chunks/${String(index)}.${chunkFileSuffix(chunk.id)}`,

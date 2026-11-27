@@ -25,7 +25,10 @@ export const hasGzipMagic = (prefix: Uint8Array): boolean =>
 /** Header dialect, from the `magic` and `version` fields. */
 export type TarHeaderDialect = "ustar" | "gnu";
 
-const headerDialect = (block: Uint8Array): TarHeaderDialect | undefined => {
+export const tarHeaderDialect = (
+  block: Uint8Array,
+): TarHeaderDialect | undefined => {
+  if (block.length < TAR_MAGIC_OFFSET + 8) return undefined;
   const magic = Buffer.from(
     block.buffer,
     block.byteOffset + TAR_MAGIC_OFFSET,
@@ -47,7 +50,8 @@ export const isZeroBlock = (block: Uint8Array): boolean =>
  * checksum field read as spaces. Historic writers summed signed bytes, which
  * POSIX readers also accept.
  */
-const checksumMatches = (block: Uint8Array): boolean => {
+export const tarHeaderChecksumMatches = (block: Uint8Array): boolean => {
+  if (block.length < TAR_BLOCK_BYTES) return false;
   const declared = parseTarNumber(
     block.subarray(
       TAR_CHECKSUM_OFFSET,
@@ -137,14 +141,14 @@ export const parseTarHeaderBlock = (block: Uint8Array): TarHeaderParse => {
   if (block.length !== TAR_BLOCK_BYTES)
     return { state: "invalid", reason: "header block is incomplete" };
   if (isZeroBlock(block)) return { state: "zero" };
-  const dialect = headerDialect(block);
+  const dialect = tarHeaderDialect(block);
   if (dialect === undefined)
     return {
       state: "invalid",
       reason:
         "header has no ustar magic (pre-POSIX v7 headers are unsupported)",
     };
-  if (!checksumMatches(block))
+  if (!tarHeaderChecksumMatches(block))
     return { state: "invalid", reason: "header checksum does not match" };
   const number = (offset: number, length: number) =>
     parseTarNumber(block.subarray(offset, offset + length));
@@ -202,6 +206,16 @@ export const hasTarHeader = (prefix: Uint8Array): boolean =>
  */
 const GZIP_TAR_PROBE_INPUT_BYTES = 2048;
 const GZIP_TAR_PROBE_OUTPUT_BYTES = 4 * 1024 * 1024;
+
+/**
+ * Prefix needed for a gzip member with an RFC 1952 FEXTRA field. XLEN is a
+ * 16-bit byte count, so readers can extend acquisition only for this framing
+ * without raising their ordinary format probe limit.
+ */
+export const gzipTarExtraFieldProbeBytes = (prefix: Uint8Array): number =>
+  prefix.length >= 12 && hasGzipMagic(prefix) && (prefix[3]! & 0x4) !== 0
+    ? 12 + (prefix[10]! | (prefix[11]! << 8)) + GZIP_TAR_PROBE_INPUT_BYTES + 8
+    : 0;
 
 /**
  * Bytes of an RFC 1952 member header, including FEXTRA, FNAME, FCOMMENT and
@@ -268,7 +282,7 @@ export const recognizeTarPrefix = (
 export const tarHeaderRefusal = (prefix: Uint8Array): string | undefined => {
   if (prefix.length < TAR_BLOCK_BYTES) return undefined;
   const block = prefix.subarray(0, TAR_BLOCK_BYTES);
-  if (headerDialect(block) === undefined) return undefined;
+  if (tarHeaderDialect(block) === undefined) return undefined;
   const parsed = parseTarHeaderBlock(block);
   return parsed.state === "invalid" ? `tar first ${parsed.reason}` : undefined;
 };
@@ -292,6 +306,58 @@ export const TAR_TYPEFLAGS = {
 
 export type TarPaxRecords = ReadonlyMap<string, string>;
 
+export interface TarPaxRecordError {
+  readonly offset: number;
+  readonly reason: string;
+}
+
+/**
+ * Walk pax extended-header records: `"<length> <key>=<value>\n"`, where
+ * `length` counts the whole record in bytes. Passes each record's raw keyword
+ * and value slices to `onRecord`, leaving UTF-8 policy and key retention to
+ * the caller. Returns the byte offset and reason of the first unreadable
+ * record, or `undefined` when every record parsed (or `stop` was called).
+ */
+export const walkPaxRecords = (
+  bytes: Uint8Array,
+  onRecord: (key: Uint8Array, value: Uint8Array, stop: () => void) => void,
+): TarPaxRecordError | undefined => {
+  let offset = 0;
+  let stopped = false;
+  const stop = () => {
+    stopped = true;
+  };
+  while (offset < bytes.length) {
+    // Trailing NUL padding ends the records.
+    if (bytes[offset] === 0 && bytes.subarray(offset).every((b) => b === 0))
+      break;
+    const space = bytes.indexOf(0x20, offset);
+    if (space === -1 || space - offset > 20)
+      return { offset, reason: "pax record has no length field" };
+    const lengthText = Buffer.from(bytes.subarray(offset, space)).toString(
+      "latin1",
+    );
+    if (!/^[1-9][0-9]*$/u.test(lengthText))
+      return { offset, reason: "pax record length is not a decimal number" };
+    const length = Number(lengthText);
+    const end = offset + length;
+    if (!Number.isSafeInteger(end) || end > bytes.length || end <= space + 1)
+      return {
+        offset,
+        reason: "pax record length exceeds its extended header",
+      };
+    if (bytes[end - 1] !== 0x0a)
+      return { offset, reason: "pax record does not end with a newline" };
+    const body = bytes.subarray(space + 1, end - 1);
+    const equals = body.indexOf(0x3d);
+    if (equals <= 0) return { offset, reason: "pax record has no keyword" };
+    onRecord(body.subarray(0, equals), body.subarray(equals + 1), stop);
+    if (stopped) return undefined;
+    offset = end;
+  }
+  return undefined;
+};
+
 /** Keywords whose values `hdrcharset=BINARY` leaves as raw bytes (POSIX pax "hdrcharset"). */
 const PAX_BINARY_KEYWORDS = new Set(["path", "linkpath", "uname", "gname"]);
 
@@ -308,34 +374,10 @@ export const parsePaxRecords = (
   | { readonly records: TarPaxRecords; readonly latin1: readonly string[] }
   | { readonly reason: string } => {
   const values: [string, Uint8Array][] = [];
-  let offset = 0;
-  while (offset < bytes.length) {
-    // Trailing NUL padding ends the records.
-    if (bytes[offset] === 0 && bytes.subarray(offset).every((b) => b === 0))
-      break;
-    const space = bytes.indexOf(0x20, offset);
-    if (space === -1 || space - offset > 20)
-      return { reason: "pax record has no length field" };
-    const lengthText = Buffer.from(bytes.subarray(offset, space)).toString(
-      "latin1",
-    );
-    if (!/^[1-9][0-9]*$/u.test(lengthText))
-      return { reason: "pax record length is not a decimal number" };
-    const length = Number(lengthText);
-    const end = offset + length;
-    if (!Number.isSafeInteger(end) || end > bytes.length || end <= space + 1)
-      return { reason: "pax record length exceeds its extended header" };
-    if (bytes[end - 1] !== 0x0a)
-      return { reason: "pax record does not end with a newline" };
-    const body = bytes.subarray(space + 1, end - 1);
-    const equals = body.indexOf(0x3d);
-    if (equals <= 0) return { reason: "pax record has no keyword" };
-    values.push([
-      Buffer.from(body.subarray(0, equals)).toString("utf8"),
-      body.subarray(equals + 1),
-    ]);
-    offset = end;
-  }
+  const error = walkPaxRecords(bytes, (key, value) => {
+    values.push([Buffer.from(key).toString("utf8"), value]);
+  });
+  if (error !== undefined) return { reason: error.reason };
   const binary = values.some(
     ([key, value]) =>
       key === "hdrcharset" &&
@@ -360,3 +402,30 @@ export const parsePaxRecords = (
 /** Number of whole blocks that hold `size` data bytes. */
 export const tarPaddedSize = (size: number): number =>
   Math.ceil(size / TAR_BLOCK_BYTES) * TAR_BLOCK_BYTES;
+
+/** A directory header, including an old regular header whose name ends in `/`. */
+export const isTarDirectoryHeader = (flag: number, name: string): boolean =>
+  flag === TAR_TYPEFLAGS.directory || (flag === 0 && name.endsWith("/"));
+
+/** Typeflags POSIX ustar records without data blocks, besides directories. */
+const HEADER_ONLY_TYPEFLAGS: ReadonlySet<number> = new Set([
+  TAR_TYPEFLAGS.symlink,
+  TAR_TYPEFLAGS.characterDevice,
+  TAR_TYPEFLAGS.blockDevice,
+  TAR_TYPEFLAGS.fifo,
+]);
+
+/**
+ * Data bytes stored after a member header. POSIX ustar stores none for
+ * symbolic links, devices, directories and FIFOs, whose size field may still
+ * be nonzero, so the next header follows at once. Hard links keep their size:
+ * pax interchange archives may store a body for them.
+ */
+export const tarStoredDataBytes = (
+  flag: number,
+  name: string,
+  size: number,
+): number =>
+  isTarDirectoryHeader(flag, name) || HEADER_ONLY_TYPEFLAGS.has(flag)
+    ? 0
+    : size;

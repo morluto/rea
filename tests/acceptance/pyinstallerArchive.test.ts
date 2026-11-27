@@ -250,9 +250,14 @@ cliTest(
       scope: "container-entries",
       status: "complete",
     });
-    expect(extracted.limitations).toContainEqual(
+    // The reconstructed header belongs to the file it describes.
+    expect(
+      extracted.artifacts.find(
+        ({ relative_path }) => relative_path === "PYZ.pyz/app.pyc",
+      )?.limitations,
+    ).toContainEqual(
       expect.stringMatching(
-        /^PYZ\.pyz\/app\.pyc:.*header.*reconstructed.*archive.*magic.*digest.*derived file/iu,
+        /header.*reconstructed.*archive.*magic.*digest.*derived file/iu,
       ),
     );
     const expected = new Map([

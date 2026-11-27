@@ -46,9 +46,12 @@ export const oggPage = (
   granule: bigint,
   data: Buffer,
   flags: number,
-  segmentSizes?: readonly number[],
-  serial = 0x1234,
+  layout: {
+    readonly segmentSizes?: readonly number[];
+    readonly serial?: number;
+  } = {},
 ): Buffer => {
+  const { segmentSizes, serial = 0x1234 } = layout;
   const segments =
     segmentSizes === undefined ? [data.length] : [...segmentSizes];
   if (segments.reduce((sum, size) => sum + size, 0) !== data.length)
@@ -135,7 +138,7 @@ export const oggOpusSpannedTagsFixture = (): Buffer => {
   const audioMarker = Buffer.from([0xab, 0xcd, 0xef]);
   return Buffer.concat([
     oggPage(0, 0n, head, 2),
-    oggPage(1, 0n, firstTags, 0, [255]),
+    oggPage(1, 0n, firstTags, 0, { segmentSizes: [255] }),
     oggPage(2, 0n, restTags, 1),
     oggPage(3, 960n, audioMarker, 4),
   ]);

@@ -37,7 +37,7 @@ export const registerRustCommands = (
         producer_limits: { description: PRODUCER_LIMITS_HELP },
         architecture: {
           description:
-            "Slice to read from a universal Mach-O, by CPU family; when several slices share a family, arm64 (arm64 or arm64v8), arm64e (arm64e or arm64e.x1) or x86_64 names the subtype, and a value matching several slices is refused; required for universal files",
+            "Slice to read from a universal Mach-O, by CPU family; arm64e and arm64e.x1 read only a slice of that subtype, as lipo -thin does; when several slices share a family, arm64 (arm64 or arm64v8) or x86_64 names the subtype, and a value matching several slices is refused; required for universal files",
         },
         detail: {
           description:

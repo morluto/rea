@@ -146,8 +146,10 @@ export {
   DestinationCaseCollisionFailure,
   DestinationPathUnrepresentableFailure,
   annotateEnglishUnicodeCaseCollisions,
+  currentDirectoryPrefixLimitation,
   hasDestinationPath,
   normalizeArtifactPath,
+  withoutCurrentDirectoryPrefix,
 } from "./ArtifactPaths.js";
 export { SafeOutputTree } from "./SafeOutputTree.js";
 export {
@@ -169,6 +171,11 @@ export {
   targetDigestChangedFailure,
   withArtifactTargetIdentity,
 } from "./withArtifactTargetIdentity.js";
+export {
+  isZipFileEntry,
+  readBoundedZipMember,
+  zipMemberSize,
+} from "./boundedZipMember.js";
 export {
   ZIP_READER_OPTIONS,
   ZipArtifactReader,

@@ -1049,6 +1049,7 @@ it.each([
   ["<authors> </authors>", "Later"],
   ["<authors><![CDATA[ ]]></authors>", null],
   ['<authors xml:space="preserve"> </authors>', null],
+  ['<authors xml:space="preserve">  Casey  </authors>', "  Casey  "],
 ])("keeps NuGet's first eligible publisher for %s", async (first, expected) => {
   const bytes = await nugetNupkgFixture({
     nuspec: ungroupedNuspec.replace(
@@ -1062,4 +1063,22 @@ it.each([
     defaults,
   );
   expect(report.identity?.authors).toBe(expected);
+});
+
+it("inherits xml:space for publisher text until the field resets it", async () => {
+  const bytes = await nugetNupkgFixture({
+    nuspec: ungroupedNuspec
+      .replace("<package ", '<package xml:space="preserve" ')
+      .replace("<authors>Casey", '<authors xml:space="default">  Casey  ')
+      .replace("Ungrouped dependencies.", "    first\r\n    second\r\n"),
+  });
+  const report = await parseNugetNupkg(
+    bufferByteSource(bytes),
+    artifactOf(bytes),
+    defaults,
+  );
+  expect(report.identity).toMatchObject({
+    authors: "Casey",
+    description: "    first\n    second\n",
+  });
 });

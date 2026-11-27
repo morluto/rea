@@ -240,6 +240,34 @@ it("applies the selected file allowance to the auxiliary document and retains it
     );
     if (result.ok) throw new Error("Expected auxiliary file capacity refusal");
     expect(result.error._tag).toBe("AnalysisResourceConstraintError");
+    const projected = projectAnalysisError(result.error);
+    expect(projected).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_file_bytes",
+          effective_value: 32,
+          unit: "bytes",
+          minimum: 1,
+          maximum: 33_554_432,
+          default_value: 33_554_432,
+          applies_at: "next_call",
+          required_value: 128,
+        },
+        refusal: {
+          kind: "adjustable_budget",
+          operation: "inspect_api_contract",
+          control: "max_file_bytes",
+          effective_value: 32,
+          unit: "bytes",
+          range: { minimum: 1, maximum: 33_554_432 },
+          default_value: 33_554_432,
+          required_value: 128,
+        },
+      },
+    });
     const partial = reportOf(result.error.partialObservation);
     expect(partial.artifact.path).toBe(input.path);
     expect(partial.operations_artifact).toBeNull();

@@ -33,9 +33,9 @@ import { nativeStructureConstraint } from "../../domain/native/nativeStructureBu
 import { requireSelectedNativeImageFromReader } from "../../domain/apple/machoSliceSelection.js";
 import { parseDwarfCompileUnits } from "./DwarfUnitParser.js";
 import {
+  DWARF_RETAINED_SECTIONS_LIMIT,
   DwarfSectionAllowanceFailure,
   locateDwarfSectionsFromHandle,
-  PE_SECTION_NAME_LIMIT,
   type DebugInfoAvailability,
   type LocatedDwarfImage,
 } from "./DwarfSections.js";
@@ -275,22 +275,19 @@ const dwarfUnitsFailure = (
           });
         if (isNativeStructureFailure(failure))
           return nativeStructureConstraint(OPERATION, failure);
-        if (failure instanceof BinaryResourceFailure)
+        if (
+          failure instanceof BinaryResourceFailure &&
+          failure.failure.limit.name === DWARF_RETAINED_SECTIONS_LIMIT
+        )
           return parseLimitConstraint(
             OPERATION,
             "memory",
             failure,
-            failure.failure.limit.name === PE_SECTION_NAME_LIMIT
-              ? fixedAllowanceOptions(
-                  "The PE section-name decoding allowance",
-                  "parser",
-                  binaryResourceCeiling(failure),
-                )
-              : fixedAllowanceOptions(
-                  "The retained DWARF section bound",
-                  "parser",
-                  binaryResourceCeiling(failure),
-                ),
+            fixedAllowanceOptions(
+              "The retained DWARF section bound",
+              "parser",
+              binaryResourceCeiling(failure),
+            ),
           );
         return undefined;
       },

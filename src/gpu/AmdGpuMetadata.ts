@@ -5,20 +5,26 @@ import {
   BinaryResourceFailure,
   BinaryFormatFailure,
 } from "../domain/binaryContainer.js";
+import {
+  DEFAULT_GPU_METADATA_BYTES,
+  DEFAULT_GPU_PARSER_ENTRIES,
+  DEFAULT_GPU_PARSER_VISITS,
+  DEFAULT_GPU_TOKEN_BYTES,
+  GPU_METADATA_BYTES_LIMIT,
+  GPU_PARSER_ENTRIES_LIMIT,
+  GPU_TOKEN_BYTES_LIMIT,
+  type GpuCodeObjectsBudgets,
+} from "../domain/gpu/gpuCodeObjectsBudgets.js";
 import { rejectGpu } from "./GpuSource.js";
 import { isRecord } from "../kernel/isRecord.js";
 
-export const AMD_METADATA_BYTES = 8 * 1024 * 1024;
 const AMD_METADATA_DEPTH = 32;
-const AMD_METADATA_VALUES = 262144;
-const AMD_METADATA_CONTAINER_ENTRIES = 65536;
-const AMD_METADATA_VALUE_BYTES = 65536;
 
-const metadataValueLimit = () =>
+const metadataValueLimit = (maxValues: number) =>
   new BinaryResourceFailure(
     "structure",
-    AMD_METADATA_VALUES,
-    `AMDGPU metadata exceeds its ${String(AMD_METADATA_VALUES)}-value aggregate allowance`,
+    maxValues,
+    `AMDGPU metadata exceeds its ${String(maxValues)}-value aggregate allowance`,
     "amdgpu-metadata-values",
     "entries",
   );
@@ -42,6 +48,11 @@ const preflight = (
   bytes: Buffer,
   keyKinds: AmdMetadataKeys,
   budget: AmdMetadataValueBudget,
+  limits: {
+    readonly maxValues: number;
+    readonly maxContainerEntries: number;
+    readonly maxValueBytes: number;
+  },
 ): Set<string> => {
   const strings = new Set<string>();
   const reader = new BinaryReader(bytes, false, "amdgpu-metadata");
@@ -64,7 +75,7 @@ const preflight = (
         `AMDGPU metadata exceeds its ${String(AMD_METADATA_DEPTH)}-level nesting allowance`,
         "amdgpu-metadata-depth",
       );
-    if (++values > AMD_METADATA_VALUES) throw metadataValueLimit();
+    if (++values > limits.maxValues) throw metadataValueLimit(limits.maxValues);
     const code = bytes[take(1)]!;
     const string =
       (code & 0xe0) === 0xa0 || code === 0xd9 || code === 0xda || code === 0xdb;
@@ -108,6 +119,7 @@ const preflight = (
       payload = width!;
     }
     const start = take(payload);
+    if (code === 0xca || code === 0xcb) return undefined;
     if (code >= 0xcc && code <= 0xcf)
       return code === 0xcf
         ? BigInt.asUintN(64, reader.i64(start))
@@ -135,19 +147,24 @@ const preflight = (
     // its type. Impossible extents are malformed independently of limits.
     if (count > bytes.length - at)
       rejectGpu("Truncated AMDGPU MessagePack metadata container");
-    if ((map ? count / 2 : count) > AMD_METADATA_CONTAINER_ENTRIES)
+    if ((map ? count / 2 : count) > limits.maxContainerEntries)
       throw new BinaryResourceFailure(
         "structure",
-        AMD_METADATA_CONTAINER_ENTRIES,
-        `AMDGPU metadata container exceeds its ${String(AMD_METADATA_CONTAINER_ENTRIES)}-entry allocation budget`,
+        limits.maxContainerEntries,
+        `AMDGPU metadata container exceeds its ${String(limits.maxContainerEntries)}-entry allocation budget`,
+        GPU_PARSER_ENTRIES_LIMIT,
+        "entries",
       );
-    if (payload > AMD_METADATA_VALUE_BYTES)
+    if (payload > limits.maxValueBytes)
       throw new BinaryResourceFailure(
         "structure",
-        AMD_METADATA_VALUE_BYTES,
-        `AMDGPU metadata value exceeds its ${String(AMD_METADATA_VALUE_BYTES)}-byte allocation budget`,
+        limits.maxValueBytes,
+        `AMDGPU metadata value exceeds its ${String(limits.maxValueBytes)}-byte allocation budget`,
+        GPU_TOKEN_BYTES_LIMIT,
+        "bytes",
       );
-    if (count > AMD_METADATA_VALUES - values) throw metadataValueLimit();
+    if (count > limits.maxValues - values)
+      throw metadataValueLimit(limits.maxValues);
     if (string) {
       strings.add(`${bytes.byteOffset + start}:${payload}`);
       try {
@@ -189,14 +206,31 @@ export const readAmdMetadata = (
   bytes: Buffer,
   keys: AmdMetadataKeys = "string",
   budget = new AmdMetadataValueBudget(),
+  budgets?: Pick<
+    GpuCodeObjectsBudgets,
+    | "maxMetadataBytes"
+    | "maxParserVisits"
+    | "maxParserEntries"
+    | "maxTokenBytes"
+  >,
 ): unknown => {
-  if (bytes.length > AMD_METADATA_BYTES)
+  const maxMetadataBytes =
+    budgets?.maxMetadataBytes ?? DEFAULT_GPU_METADATA_BYTES;
+  const limits = {
+    maxValues: budgets?.maxParserVisits ?? DEFAULT_GPU_PARSER_VISITS,
+    maxContainerEntries:
+      budgets?.maxParserEntries ?? DEFAULT_GPU_PARSER_ENTRIES,
+    maxValueBytes: budgets?.maxTokenBytes ?? DEFAULT_GPU_TOKEN_BYTES,
+  };
+  if (bytes.length > maxMetadataBytes)
     throw new BinaryResourceFailure(
       "structure",
-      AMD_METADATA_BYTES,
-      "AMDGPU metadata exceeds 8 MiB",
+      maxMetadataBytes,
+      `AMDGPU metadata exceeds ${String(maxMetadataBytes)} bytes`,
+      GPU_METADATA_BYTES_LIMIT,
+      "bytes",
     );
-  const strings = preflight(bytes, keys, budget);
+  const strings = preflight(bytes, keys, budget, limits);
   const stringValue = (value: unknown): string => {
     if (
       !(value instanceof Uint8Array) ||
@@ -245,10 +279,10 @@ export const readAmdMetadata = (
           return rejectGpu("AMDGPU metadata map key is not a string");
         },
         useBigInt64: true,
-        maxStrLength: AMD_METADATA_VALUE_BYTES,
-        maxBinLength: AMD_METADATA_VALUE_BYTES,
-        maxArrayLength: AMD_METADATA_CONTAINER_ENTRIES,
-        maxMapLength: AMD_METADATA_CONTAINER_ENTRIES,
+        maxStrLength: limits.maxValueBytes,
+        maxBinLength: limits.maxValueBytes,
+        maxArrayLength: limits.maxContainerEntries,
+        maxMapLength: limits.maxContainerEntries,
         maxExtLength: 0,
       }),
     );

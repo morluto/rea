@@ -98,6 +98,7 @@ export const registerApktoolCommands = (
         signal,
         detail: delivery.detail,
         evidenceOutput: delivery.evidenceOutput,
+        rerunRecoversResult: delivery.rerunRecoversResult,
         ...(delivery.view === undefined ? {} : { view: delivery.view }),
       });
     },
