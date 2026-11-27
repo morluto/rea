@@ -19,10 +19,77 @@ interface ParsedDyldExport extends ParsedDyldSymbolFields {
   readonly sourceSymbol?: string;
 }
 
+interface ImportReading {
+  readonly name: string;
+  readonly weak: boolean | null;
+  readonly source: string;
+  readonly addend?: string | null;
+}
+
+/**
+ * Each split of one row's text at Apple's flag and library framing. A chained
+ * row's leading space is read both as framing and as part of the name.
+ */
+const importReadings = (row: string, chained: boolean): ImportReading[] => {
+  const starts = chained && row.startsWith(" ") ? [row, row.slice(1)] : [row];
+  const readings: ImportReading[] = [];
+  for (const start of starts)
+    for (const separator of start.matchAll(/ (?:\[weak-import\])? \(from /gu)) {
+      const source = start.slice(separator.index + separator[0].length, -1);
+      if (!start.endsWith(")") || source.length === 0) continue;
+      const name = start.slice(0, separator.index);
+      if (name.length === 0) continue;
+      readings.push({
+        name,
+        weak: separator[0].includes("[weak-import]") ? true : null,
+        source,
+      });
+    }
+  return readings;
+};
+
+/** dyld_info appends a nonzero bind-target addend to the name as `+0x` hex. */
+const ADDEND_SUFFIX = /\+0x[\da-f]+$/iu;
+
+/**
+ * The addend a chained row prints after the exact import-table name: null when
+ * the row is that name alone, undefined when the row is not that name.
+ */
+const tableNameAddend = (
+  text: string,
+  tableName: string,
+): string | null | undefined =>
+  text === tableName
+    ? null
+    : text.startsWith(tableName)
+      ? /^\+(0x[\da-f]+)$/iu.exec(text.slice(tableName.length))?.[1]
+      : undefined;
+
+/**
+ * The readings that agree with a row's exact import-table name, each with any
+ * printed addend separated, or undefined when the table does not settle it.
+ * The table holds the exact name, so a row that is that name plus a `+0x`
+ * suffix prints a bind addend rather than a longer literal name.
+ */
+const tableReadings = (
+  readings: readonly ImportReading[],
+  tableName: string | null | undefined,
+  suffixed: boolean,
+): ImportReading[] | undefined =>
+  typeof tableName === "string" && (readings.length > 1 || suffixed)
+    ? readings.flatMap((candidate) => {
+        const addend = tableNameAddend(candidate.name, tableName);
+        return addend === undefined
+          ? []
+          : [{ ...candidate, name: tableName, addend }];
+      })
+    : undefined;
+
 /**
  * Decode Apple's literal import framing. Competing readings of a chained row
  * are settled by the import-table name at the row's ordinal when the caller
  * supplies the table, otherwise by symbol-table names, requested when needed.
+ * The table name also separates a printed addend suffix from a literal name.
  */
 export const parseDyldImports = (
   output: string,
@@ -32,8 +99,11 @@ export const parseDyldImports = (
 ): {
   readonly items: ParsedDyldImport[];
   readonly needsNameInventory: boolean;
+  /** A chained row ends in an addend-like suffix that only the table settles. */
+  readonly needsImportTable: boolean;
 } => {
   let needsNameInventory = false;
+  let needsImportTable = false;
   const items = output
     .split("\n")
     .flatMap<ParsedDyldImport>((rawLine, index) => {
@@ -51,48 +121,39 @@ export const parseDyldImports = (
       // but two in installed-tool captures. nm names establish that boundary.
       const ordinal = hasChainedFixups ? /^0x[\da-f]+ /iu.exec(line) : null;
       const row = ordinal === null ? line : line.slice(ordinal[0].length);
-      const starts =
-        ordinal !== null && row.startsWith(" ") ? [row, row.slice(1)] : [row];
-      const readings: { name: string; weak: boolean | null; source: string }[] =
-        [];
-      for (const start of starts)
-        for (const separator of start.matchAll(
-          / (?:\[weak-import\])? \(from /gu,
-        )) {
-          const source = start.slice(separator.index + separator[0].length, -1);
-          if (!start.endsWith(")") || source.length === 0) continue;
-          const name = start.slice(0, separator.index);
-          if (name.length === 0) continue;
-          readings.push({
-            name,
-            weak: separator[0].includes("[weak-import]") ? true : null,
-            source,
-          });
-        }
+      const readings = importReadings(row, ordinal !== null);
       // A chained row's ordinal indexes the slice's own import table.
       const tableName =
         ordinal === null || chainedImportTable === undefined
           ? undefined
           : chainedImportTable[Number(ordinal[0].trimEnd())];
+      const suffixed =
+        hasChainedFixups &&
+        readings.some(({ name }) => ADDEND_SUFFIX.test(name));
       if (
         readings.length > 1 &&
         knownImportNames === undefined &&
         tableName === undefined
       )
         needsNameInventory = true;
+      if (suffixed && ordinal !== null && tableName === undefined)
+        needsImportTable = true;
+      const tabled = tableReadings(readings, tableName, suffixed);
       const matching =
-        readings.length <= 1
+        tabled ??
+        (readings.length <= 1
           ? readings
           : tableName !== undefined
-            ? readings.filter(({ name }) => name === tableName)
+            ? []
             : knownImportNames !== undefined
               ? readings.filter(({ name }) => knownImportNames.has(name))
-              : readings;
+              : readings);
       const reading = matching.length === 1 ? matching[0] : undefined;
       const ambiguousSuffix =
+        tabled === undefined &&
         reading !== undefined &&
         hasChainedFixups &&
-        /\+0x[\da-f]+$/iu.test(reading.name);
+        ADDEND_SUFFIX.test(reading.name);
       const unknownName =
         !framed ||
         (hasChainedFixups && ordinal === null) ||
@@ -110,7 +171,7 @@ export const parseDyldImports = (
           name: unknownName || ambiguousSuffix ? null : reading.name,
           raw_name: unknownName ? line : ambiguousSuffix ? reading.name : null,
           name_status: unknownName || ambiguousSuffix ? "ambiguous" : "exact",
-          addend: null,
+          addend: unknownName ? null : (reading.addend ?? null),
           address: null,
           weak: (reading ?? common)?.weak ?? null,
           reexport: null,
@@ -118,7 +179,7 @@ export const parseDyldImports = (
         },
       ];
     });
-  return { items, needsNameInventory };
+  return { items, needsNameInventory, needsImportTable };
 };
 
 /** Apple prints two spaces after the address; one-space captures remain readable. */

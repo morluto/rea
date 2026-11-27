@@ -388,10 +388,11 @@ export const inspectNativeMacho = async (
     sliceOutput(dyldImports),
     hasChainedFixups,
   );
-  if (parsedImports.needsNameInventory) {
+  if (parsedImports.needsNameInventory || parsedImports.needsImportTable) {
     // Chained rows print entries of the binary's own import table by ordinal.
     // Its exact names settle the ordinal spacing even for imports that the
-    // symbol table omits or lists as defined, such as weak-def coalescing.
+    // symbol table omits or lists as defined, such as weak-def coalescing,
+    // and separate a printed bind addend from the name it follows.
     const chainedTable = hasChainedFixups
       ? await readChainedImportNames(context, binary, offset, size)
       : undefined;
@@ -402,7 +403,13 @@ export const inspectNativeMacho = async (
         undefined,
         chainedTable.value,
       );
-    else {
+    else if (!parsedImports.needsNameInventory) {
+      // Symbol-table names cannot tell an addend from a literal name suffix.
+      if (chainedTable !== undefined)
+        limitations.push(
+          `The chained-fixup import table is unusable (${chainedTable.error}); chained import names ending in a +0x suffix stay ambiguous.`,
+        );
+    } else {
       if (chainedTable !== undefined)
         limitations.push(
           `The chained-fixup import table is unusable (${chainedTable.error}); chained import names are matched against the undefined symbol table instead.`,

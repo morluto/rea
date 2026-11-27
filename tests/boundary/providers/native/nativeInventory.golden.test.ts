@@ -947,12 +947,108 @@ it("keeps a chained row unknown when its ordinal is outside the import table", (
   ]);
 });
 
+it("separates a printed chained bind addend from the import-table name", () => {
+  // Installed dyld_info rows from macOS 27.2 /usr/bin/certtool (arm64e).
+  const output = [
+    "      0x0000  __ZTVN10__cxxabiv117__class_type_infoE+0x10  (from libc++)",
+    "      0x0001  __ZTISt9exception  (from libc++)",
+    "      0x0002  _fixture_weak+0x8 [weak-import] (from libFixture)",
+    "      0x0003  _fixture_data+0x1F881F67  (from libFixture)",
+    "      0x0004  _fixture_data  (from libFixture)",
+  ].join("\n");
+  const table = [
+    "__ZTVN10__cxxabiv117__class_type_infoE",
+    "__ZTISt9exception",
+    "_fixture_weak",
+    "_fixture_data",
+    "_fixture_data",
+  ];
+  expect(parseDyldImports(output, true)).toMatchObject({
+    needsNameInventory: true,
+    needsImportTable: true,
+  });
+  const exact = (
+    name: string,
+    addend: string | null,
+    source: string,
+    weak: boolean | null = null,
+  ) => ({
+    name,
+    raw_name: null,
+    name_status: "exact",
+    addend,
+    address: null,
+    weak,
+    reexport: null,
+    source,
+  });
+  expect(parseDyldImports(output, true, undefined, table)).toEqual({
+    needsNameInventory: false,
+    needsImportTable: false,
+    items: [
+      exact("__ZTVN10__cxxabiv117__class_type_infoE", "0x10", "libc++"),
+      exact("__ZTISt9exception", null, "libc++"),
+      exact("_fixture_weak", "0x8", "libFixture", true),
+      exact("_fixture_data", "0x1F881F67", "libFixture"),
+      exact("_fixture_data", null, "libFixture"),
+    ],
+  });
+});
+
+it("asks for the import table when only a one-space chained row has a suffix", () => {
+  const output = "      0x0000 _fixture_data+0x4  (from libFixture)";
+  expect(parseDyldImports(output, true)).toMatchObject({
+    needsNameInventory: false,
+    needsImportTable: true,
+    items: [{ name: null, raw_name: "_fixture_data+0x4" }],
+  });
+  expect(
+    parseDyldImports(output, true, undefined, ["_fixture_data"]).items,
+  ).toMatchObject([
+    { name: "_fixture_data", name_status: "exact", addend: "0x4" },
+  ]);
+  // Unchained rows print no ordinal, so a suffix there is part of the name.
+  expect(
+    parseDyldImports("      _literal+0x4  (from libFixture)", false),
+  ).toMatchObject({ needsImportTable: false });
+});
+
+it("keeps a literal suffix and an unmatched table name apart from an addend", () => {
+  const output = [
+    "      0x0000  _literal+0x4  (from libFixture)",
+    "      0x0001  _other+0x4  (from libFixture)",
+    "      0x0002  _fixture_data+0x  (from libFixture)",
+    "      0x0003  _fixture_data+0x4-  (from libFixture)",
+  ].join("\n");
+  expect(
+    parseDyldImports(output, true, undefined, [
+      "_literal+0x4",
+      "_fixture_data",
+      "_fixture_data",
+      "_fixture_data",
+    ]).items,
+  ).toMatchObject([
+    // The table proves the suffix belongs to the name.
+    { name: "_literal+0x4", name_status: "exact", addend: null },
+    // A different table name leaves the row unknown rather than renamed.
+    {
+      name: null,
+      raw_name: "0x0001  _other+0x4  (from libFixture)",
+      name_status: "ambiguous",
+      addend: null,
+    },
+    { name: null, name_status: "ambiguous", addend: null },
+    { name: null, name_status: "ambiguous", addend: null },
+  ]);
+});
+
 it("keeps missing and competing undefined-name matches unknown", () => {
   const output = "      0x0000  _literal  (from library)";
   expect(parseDyldImports(output, true).needsNameInventory).toBe(true);
   for (const names of [new Set<string>(), new Set(["_literal", " _literal"])])
     expect(parseDyldImports(output, true, names)).toEqual({
       needsNameInventory: false,
+      needsImportTable: false,
       items: [
         {
           name: null,
@@ -972,6 +1068,56 @@ it("reports a chained bind addend separately in native inspection", async () => 
   const outputs: Record<string, string> = {};
   for (const tool of ["lipo", "nm", "dwarfdump", "vtool"])
     outputs[tool] = await fixture(`dyld-inventory/${tool}.txt`);
+  outputs["nm:-gju"] = "_fixture_data\n";
+  outputs["dyld_info:-imports"] =
+    "-imports:\n      0x0000 _fixture_data  (from libFixture)\n      0x0001 _fixture_data+0x4  (from libFixture)\n";
+  outputs["dyld_info:-exports"] = await fixture("dyld-inventory/exports.txt");
+  const client = new NativeMacOSProvider(
+    {},
+    inventoryRunner(outputs),
+    "darwin",
+  ).createClient(
+    await inventoryTarget(
+      true,
+      chainedImportPayload(["_fixture_data", "_fixture_data"]),
+    ),
+  );
+  const execution = await client.execute("inspect_macho", {});
+  if (!execution.ok) throw execution.error;
+  expect(execution.value.result).toMatchObject({
+    imports: {
+      exhaustive: false,
+      limitations: expect.not.arrayContaining([
+        "Import text contains name, flags, library, or addend boundaries whose split is ambiguous.",
+      ]),
+      items: [
+        {
+          name: "_fixture_data",
+          runtime_name: "fixture_data",
+          raw_name: null,
+          name_status: "exact",
+          addend: null,
+          source: "libFixture",
+        },
+        {
+          name: "_fixture_data",
+          runtime_name: "fixture_data",
+          raw_name: null,
+          name_status: "exact",
+          addend: "0x4",
+          source: "libFixture",
+        },
+      ],
+    },
+  });
+  // The import table alone separates the addend; nm cannot.
+  expect(JSON.stringify(execution.value.result)).not.toContain('"-gju"');
+});
+
+it("keeps a chained bind addend ambiguous when the import table is unusable", async () => {
+  const outputs: Record<string, string> = {};
+  for (const tool of ["lipo", "nm", "dwarfdump", "vtool"])
+    outputs[tool] = await fixture(`dyld-inventory/${tool}.txt`);
   outputs["dyld_info:-imports"] =
     "-imports:\n      0x0000 _fixture_data  (from libFixture)\n      0x0001 _fixture_data+0x4  (from libFixture)\n";
   outputs["dyld_info:-exports"] = await fixture("dyld-inventory/exports.txt");
@@ -983,6 +1129,11 @@ it("reports a chained bind addend separately in native inspection", async () => 
   const execution = await client.execute("inspect_macho", {});
   if (!execution.ok) throw execution.error;
   expect(execution.value.result).toMatchObject({
+    limitations: expect.arrayContaining([
+      expect.stringMatching(
+        /^The chained-fixup import table is unusable \(.+\); chained import names ending in a \+0x suffix stay ambiguous\.$/u,
+      ),
+    ]),
     imports: {
       exhaustive: false,
       limitations: expect.arrayContaining([
