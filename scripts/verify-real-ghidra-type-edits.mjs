@@ -1265,16 +1265,25 @@ struct rea_after { char c; int i; };`;
           return type.fields.length;
         };
         assert.equal(await fields(), 0);
-        // Ghidra's parser fills an empty composite of the same name in place,
-        // in its own transaction, before REA refuses the name conflict.
-        const conflict = await opaque.refused(
-          "define_native_data_types",
-          { declarations: "struct rea_opaque { int x; };" },
-          "declarations",
+        // Ghidra's parser fills this empty composite in place. The call refuses
+        // that replacement, and the placeholder stays empty.
+        const conflict = requireMcpToolError(
+          await opaque.raw("define_native_data_types", {
+            declarations: "struct rea_opaque { int x; };",
+          }),
         );
-        assert.match(
-          conflict.message,
-          new RegExp(`rea_opaque \\(existing ${placeholder}\\)`, "u"),
+        assert.equal(conflict.code, "invalid_request");
+        assert.equal(conflict.retryable, false);
+        assert.equal(
+          conflict.details?.diagnostics?.remote_code,
+          "data_type_conflict",
+        );
+        assert.deepEqual(
+          conflict.details?.issues?.map((issue) => ({
+            path: issue.path,
+            reason: issue.reason,
+          })),
+          [{ path: ["declarations"], reason: "invalid_value" }],
         );
         assert.equal(await fields(), 0);
         // A parser diagnostic is refused, and the edit's rollback covers parsing.
