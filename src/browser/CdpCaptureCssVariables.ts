@@ -8,6 +8,8 @@ import {
   type BrowserCssVariableItem,
   type BrowserCssVariables,
 } from "../domain/browserObservationSchemas.js";
+import { boundedList } from "../domain/boundedList.js";
+import { ellipsisExcerpt } from "../domain/excerpt.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { CdpCommandRejection } from "./CdpCommandRejection.js";
 import {
@@ -18,6 +20,7 @@ import {
 } from "./CdpCaptureValues.js";
 import type { CdpConnection } from "./CdpConnection.js";
 import { optionalCdpCommand } from "./CdpOptionalCommand.js";
+import type { CdpCommand, CdpCommandParams } from "./protocol/CdpCommands.js";
 
 const MAX_RETAINED_CSS_VARIABLES = 250;
 const MAX_INTAKE_CSS_VARIABLES = 2000;
@@ -28,17 +31,59 @@ const MAX_CSS_VALUE_LENGTH = 512;
 const sanitizeDiagnosticPreview = (text: string): string =>
   text.replace(/[\u0000-\u001F\u007F-\u009F\u202A-\u202E\u2066-\u2069]/gu, "");
 
+const decodeCssUrlWithSpanMap = (
+  rawUrl: string,
+): {
+  readonly decoded: string;
+  readonly rawStartMap: readonly number[];
+  readonly rawEndMap: readonly number[];
+} => {
+  if (!rawUrl.includes("\\")) {
+    const rawStartMap = Array.from({ length: rawUrl.length }, (_, i) => i);
+    const rawEndMap = Array.from({ length: rawUrl.length }, (_, i) => i + 1);
+    return { decoded: rawUrl, rawStartMap, rawEndMap };
+  }
+  let decoded = "";
+  const rawStartMap: number[] = [];
+  const rawEndMap: number[] = [];
+  let curr = 0;
+  while (curr < rawUrl.length) {
+    const ch = rawUrl[curr]!;
+    if (ch === "\\") {
+      const [unescaped, nextPos] = consumeEscape(rawUrl, curr + 1);
+      for (let k = 0; k < unescaped.length; k++) {
+        rawStartMap.push(curr);
+        rawEndMap.push(nextPos);
+      }
+      decoded += unescaped;
+      curr = nextPos;
+    } else {
+      rawStartMap.push(curr);
+      rawEndMap.push(curr + 1);
+      decoded += ch;
+      curr++;
+    }
+  }
+  return { decoded, rawStartMap, rawEndMap };
+};
+
 const redactCssUrl = (
   rawUrl: string,
 ): { readonly url: string; readonly redacted: boolean } => {
-  const { credentials } = parseRecordedTransportUrl(rawUrl);
+  const { decoded, rawStartMap, rawEndMap } = decodeCssUrlWithSpanMap(rawUrl);
+  const { credentials } = parseRecordedTransportUrl(decoded);
   if (credentials !== null && typeof credentials === "object") {
+    const rawStart = rawStartMap[credentials.start] ?? rawUrl.length;
+    const rawEnd =
+      credentials.end === 0
+        ? 0
+        : (rawEndMap[credentials.end - 1] ?? rawUrl.length);
     return {
-      url: `${rawUrl.slice(0, credentials.start)}${rawUrl.slice(credentials.end)}`,
+      url: `${rawUrl.slice(0, rawStart)}${rawUrl.slice(rawEnd)}`,
       redacted: true,
     };
   }
-  const sanitized = sanitizeBrowserUrl(rawUrl);
+  const sanitized = sanitizeBrowserUrl(decoded);
   if (sanitized.redacted) {
     return { url: sanitized.url, redacted: true };
   }
@@ -291,18 +336,41 @@ const emptyCssVariables = (
   items: [],
 });
 
-const safeCdpCommand = async (
+const safeCdpCommand = async <M extends CdpCommand>(
   context: {
     readonly connection: CdpConnection;
     readonly sessionId: string | undefined;
     readonly signal?: AbortSignal;
+    readonly events?: {
+      readonly completeness: {
+        readonly exclude: (
+          section: "css_variables",
+          reason: "invalid_protocol_value",
+          count: number | null,
+        ) => void;
+      };
+    };
   },
-  method: string,
-  parameters: Readonly<Record<string, unknown>>,
+  method: M,
+  parameters: CdpCommandParams<M>,
   limitations: string[],
 ): Promise<unknown | undefined> => {
   try {
-    return await optionalCdpCommand(context, method, parameters, limitations);
+    const result = await optionalCdpCommand(
+      context,
+      method,
+      parameters,
+      limitations,
+    );
+    if (result.ok) return result.value;
+    if (result.error._tag === "CdpMalformedReply") {
+      context.events?.completeness.exclude(
+        "css_variables",
+        "invalid_protocol_value",
+        1,
+      );
+    }
+    return undefined;
   } catch (cause: unknown) {
     if (cause instanceof CdpCommandRejection && cause.code === -32000) {
       limitations.push(
@@ -440,11 +508,10 @@ export const captureCssVariables = async (
       totalObserved += 1;
       rejectedCount += 1;
       if (rejectedPreviews.length < MAX_REJECTED_PREVIEWS) {
-        const sanitizedName = sanitizeDiagnosticPreview(name);
-        const truncatedName =
-          sanitizedName.length > MAX_PREVIEW_NAME_LENGTH
-            ? `${sanitizedName.slice(0, MAX_PREVIEW_NAME_LENGTH - 3)}...`
-            : sanitizedName;
+        const truncatedName = ellipsisExcerpt(
+          sanitizeDiagnosticPreview(name),
+          MAX_PREVIEW_NAME_LENGTH,
+        );
         rejectedPreviews.push(
           `${truncatedName} (missing or invalid protocol string value)`,
         );
@@ -471,11 +538,10 @@ export const captureCssVariables = async (
     } else {
       rejectedCount += 1;
       if (rejectedPreviews.length < MAX_REJECTED_PREVIEWS) {
-        const sanitizedName = sanitizeDiagnosticPreview(name);
-        const truncatedName =
-          sanitizedName.length > MAX_PREVIEW_NAME_LENGTH
-            ? `${sanitizedName.slice(0, MAX_PREVIEW_NAME_LENGTH - 3)}...`
-            : sanitizedName;
+        const truncatedName = ellipsisExcerpt(
+          sanitizeDiagnosticPreview(name),
+          MAX_PREVIEW_NAME_LENGTH,
+        );
         const issue =
           parsed.error.issues[0]?.message ?? "invalid token format or size";
         rejectedPreviews.push(`${truncatedName} (${issue})`);
@@ -510,7 +576,7 @@ export const captureCssVariables = async (
   );
 
   const total = totalObserved;
-  const items = validItems.slice(0, MAX_RETAINED_CSS_VARIABLES);
+  const items = [...boundedList(validItems, MAX_RETAINED_CSS_VARIABLES).items];
   const redactedCount = items.filter((item) => item.redacted).length;
   if (redactedCount > 0) {
     limitations.push(

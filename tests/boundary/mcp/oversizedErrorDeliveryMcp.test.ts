@@ -1,10 +1,15 @@
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import {
+  Client,
+  InMemoryTransport,
+  isInitializeRequest,
+  SUPPORTED_PROTOCOL_VERSIONS,
+} from "@modelcontextprotocol/client";
 import {
   STDIO_DEFAULT_MAX_BUFFER_SIZE,
   type CallToolResult,
 } from "@modelcontextprotocol/server";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
@@ -12,8 +17,11 @@ import type { EvidenceWriter } from "../../../src/application/investigation/Inve
 import { EvidenceIntegrityError } from "../../../src/domain/evidenceErrors.js";
 import type { Evidence } from "../../../src/domain/evidence.js";
 import { err, ok } from "../../../src/domain/result.js";
+import { isDeepStrictEqual } from "node:util";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
+import * as toolResultEncoding from "../../../src/server/toolResultEncoding.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const delivery = createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
 const UNTRUSTED_TARGET_CONTENT = {
@@ -35,6 +43,108 @@ const failureWithName = (
     ]),
     targetContent,
   );
+
+it.each(SUPPORTED_PROTOCOL_VERSIONS)(
+  "reuses a projected error through MCP %s and re-encodes budget or provenance mismatches",
+  async (version) => {
+    const projectedDelivery = createToolResultDelivery(8192);
+    const smaller = createToolResultDelivery(4096);
+    const server = new EvidenceMcpServer(
+      { name: "projected-error-server", version: "1" },
+      { capabilities: {} },
+      undefined,
+      projectedDelivery,
+    );
+    server.registerTool(
+      "record_unknown",
+      { inputSchema: z.object({}) },
+      async () => failureWithName(0, false, projectedDelivery),
+    );
+    server.registerTool(
+      "export_evidence_bundle",
+      { inputSchema: z.object({}) },
+      async () => failureWithName(0, false, smaller),
+    );
+    server.registerTool(
+      "list_strings",
+      { inputSchema: z.object({}) },
+      async () => failureWithName(0, false, projectedDelivery),
+    );
+    for (const [name, selectedDelivery] of [
+      ["overflow_matching_budget", projectedDelivery],
+      ["overflow_mismatched_budget", smaller],
+    ] as const) {
+      server.registerTool(name, { inputSchema: z.object({}) }, async () =>
+        failureWithName(16 * 1024, true, selectedDelivery),
+      );
+    }
+    const client = new Client(
+      { name: "projected-error-client", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    const send = clientTransport.send.bind(clientTransport);
+    const initialize = vi
+      .spyOn(clientTransport, "send")
+      .mockImplementation((message, options) =>
+        send(
+          isInitializeRequest(message)
+            ? {
+                ...message,
+                params: { ...message.params, protocolVersion: version },
+              }
+            : message,
+          options,
+        ),
+      );
+    const encode = vi.spyOn(toolResultEncoding, "encodeToolResult");
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      expect(client.getNegotiatedProtocolVersion()).toBe(version);
+      for (const [name, encodings] of [
+        ["record_unknown", 1],
+        ["export_evidence_bundle", 2],
+        ["list_strings", 2],
+      ] as const) {
+        encode.mockClear();
+        const result = await client.callTool({ name, arguments: {} });
+        expect(parseMcpToolError(result)).toMatchObject({
+          error: { code: "invalid_request" },
+        });
+        expect(encode).toHaveBeenCalledTimes(encodings);
+        if (name === "list_strings")
+          expect(result._meta).toEqual(UNTRUSTED_TARGET_CONTENT);
+      }
+      for (const [name, budgets] of [
+        ["overflow_matching_budget", [projectedDelivery.resultBudgetBytes]],
+        [
+          "overflow_mismatched_budget",
+          [smaller.resultBudgetBytes, projectedDelivery.resultBudgetBytes],
+        ],
+      ] as const) {
+        encode.mockClear();
+        const result = await client.callTool({ name, arguments: {} });
+        expect(parseMcpToolError(result)).toMatchObject({
+          error: { code: "resource_constraint" },
+        });
+        // Delivery can try a compact projection before transport sees the error.
+        // Count only encodings of the original diagnostic.
+        const initial = encode.mock.calls[0]![0];
+        expect(initial).toMatchObject({ error: { code: "invalid_request" } });
+        const original = encode.mock.calls.filter(([value]) =>
+          isDeepStrictEqual(value, initial),
+        );
+        expect(original.map(([, budget]) => budget)).toEqual(budgets);
+      }
+    } finally {
+      initialize.mockRestore();
+      encode.mockRestore();
+      await Promise.all([client.close(), server.close()]);
+    }
+  },
+);
 
 // The delivered error carries its JSON once, as text, so only a diagnostic
 // larger than the whole budget is oversized.
@@ -63,7 +173,10 @@ const exerciseDeliveryFailure = async (
       content: [{ type: "text", text: "still connected" }],
     }),
   );
-  const client = new Client({ name: "oversized-error-client", version: "1" });
+  const client = new Client(
+    { name: "oversized-error-client", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -159,40 +272,83 @@ it("retains the complete oversized diagnostic before removing its private struct
   expect(retained[0]?.raw_result).toEqual(oversizedFailure());
 });
 
-it("delivers an error whose text fits although structured and text copies would not", async () => {
-  const nameBytes = Math.ceil(STDIO_DEFAULT_MAX_BUFFER_SIZE / 2) + 64 * 1024;
+it("retains an oversized failed-open receipt with its original error", async () => {
   const retained: Evidence[] = [];
+  const limited = createToolResultDelivery(8192);
   const server = new EvidenceMcpServer(
-    { name: "mid-sized-error-test", version: "1" },
+    { name: "oversized-open-test", version: "1" },
     { capabilities: {} },
     (evidence) => {
       retained.push(evidence);
       return ok("added");
     },
-    delivery,
+    limited,
   );
-  server.registerTool("mid_failure", { inputSchema: z.object({}) }, async () =>
-    failureWithName(nameBytes),
+  const selected = {
+    path: "/owned/previous.elf",
+    sha256: "1".repeat(64),
+    kind: "executable" as const,
+    format: "elf" as const,
+    architecture: "x86_64" as const,
+  };
+  server.registerTool("open_failure", { inputSchema: z.object({}) }, async () =>
+    limited.toDetailedErrorToolResult(
+      new AnalysisInputError("open_binary", undefined, [
+        {
+          path: ["path"],
+          reason: "invalid_value",
+          message: "x".repeat(16384),
+        },
+      ]),
+      {
+        selection_at_failure: {
+          kind: "binary",
+          path: selected.path,
+          sha256: selected.sha256,
+        },
+        target_at_open_completion: selected,
+        provider_id_at_open_completion: "ghidra",
+      },
+      false,
+    ),
   );
-  const client = new Client({ name: "mid-sized-error-client", version: "1" });
+  const client = new Client(
+    { name: "oversized-open-client", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
     await server.connect(serverTransport);
     await client.connect(clientTransport);
-    const failure = await client.callTool({
-      name: "mid_failure",
+    const response = await client.callTool({
+      name: "open_failure",
       arguments: {},
     });
-    expect(failure.isError).toBe(true);
-    expect(failure.structuredContent).toBeUndefined();
-    expect(parseMcpToolError(failure)).toEqual(
-      failureWithName(nameBytes).structuredContent,
-    );
-    expect(retained).toHaveLength(0);
-    expect(Buffer.byteLength(JSON.stringify(failure))).toBeLessThan(
-      STDIO_DEFAULT_MAX_BUFFER_SIZE,
-    );
+    expect(retained).toHaveLength(1);
+    expect(parseMcpToolError(response)).toMatchObject({
+      error: {
+        code: "resource_constraint",
+        details: {
+          reported_limits: {
+            original_error_code: "invalid_request",
+            evidence_reference: {
+              kind: "retained-evidence",
+              evidence_id: retained[0]?.evidence_id,
+            },
+          },
+        },
+      },
+    });
+    expect(retained[0]?.normalized_result).toMatchObject({
+      error: {
+        code: "invalid_request",
+        details: {
+          target_at_open_completion: selected,
+          provider_id_at_open_completion: "ghidra",
+        },
+      },
+    });
   } finally {
     await Promise.all([client.close(), server.close()]);
   }
@@ -225,7 +381,10 @@ it("keeps the untrusted target-content marker on an oversized error's replacemen
     { inputSchema: z.object({ required: z.string() }) },
     async (): Promise<CallToolResult> => ({ content: [] }),
   );
-  const client = new Client({ name: "oversized-target-client", version: "1" });
+  const client = new Client(
+    { name: "oversized-target-client", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -288,10 +447,14 @@ it.each([false, true])(
       deliveredErrorBytes(fittingName, targetContent, boundaryDelivery),
     ).toBe(boundaryDelivery.resultBudgetBytes);
     const toolName = targetContent ? "procedure_pseudo_code" : "record_unknown";
+    const retained: Evidence[] = [];
     const server = new EvidenceMcpServer(
       { name: "error-budget-test", version: "1" },
       { capabilities: {} },
-      undefined,
+      (evidence) => {
+        retained.push(evidence);
+        return ok("added");
+      },
       boundaryDelivery,
     );
     server.registerTool(toolName, { inputSchema: z.object({}) }, async () =>
@@ -303,7 +466,10 @@ it.each([false, true])(
       async () =>
         failureWithName(fittingName + 1, targetContent, boundaryDelivery),
     );
-    const client = new Client({ name: "error-budget-client", version: "1" });
+    const client = new Client(
+      { name: "error-budget-client", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -314,6 +480,11 @@ it.each([false, true])(
         arguments: {},
       });
       expect(fitting.isError).toBe(true);
+      expect(fitting.structuredContent).toBeUndefined();
+      expect(Buffer.byteLength(JSON.stringify(fitting))).toBe(
+        boundaryDelivery.resultBudgetBytes,
+      );
+      expect(retained).toHaveLength(0);
       expect(fitting._meta).toEqual(
         targetContent ? UNTRUSTED_TARGET_CONTENT : undefined,
       );
@@ -331,7 +502,10 @@ it.each([false, true])(
         error: {
           code: "resource_constraint",
           details: {
-            reported_limits: { original_error_code: "invalid_request" },
+            reported_limits: {
+              original_error_code: "invalid_request",
+              response_bytes_at_least: boundaryDelivery.resultBudgetBytes + 1,
+            },
           },
         },
       });
@@ -339,5 +513,4 @@ it.each([false, true])(
       await Promise.all([client.close(), server.close()]);
     }
   },
-  20000,
 );

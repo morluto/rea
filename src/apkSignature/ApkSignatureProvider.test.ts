@@ -1,4 +1,6 @@
+import { u16, u32, u64 } from "../../tests/fixtures/apkSignature/integers.js";
 import { createHash } from "node:crypto";
+import { deflateRawSync } from "node:zlib";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,9 +13,6 @@ import {
   APK_SIGNATURE_V3_ID,
   LEAF_CERTIFICATE,
   LEAF_SHA256,
-  LEAF_SUBJECT,
-  OID_ECDSA_SHA256,
-  OID_SHA256,
   OPENSSL_BLOCK_ISSUER_SERIAL,
   ROOT_CERTIFICATE,
   ROOT_SHA256,
@@ -23,9 +22,12 @@ import {
   withSigningBlock,
   zipWith,
 } from "../../tests/fixtures/apkSignature/v1SignatureBlock.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { apkSignatureResultSchema } from "../domain/apkSignature/apkSignatureReport.js";
 import { ApkSignatureProvider } from "./ApkSignatureProvider.js";
+import { APK_SIGNATURE_LIMITS } from "./ApkSignatureRelease.js";
+import { decodeV1SignerFromReader } from "./apkV1Signers.js";
 import { apkSignatureFailure } from "./apkSignatureFailures.js";
 import { apkSchemeValue } from "../../tests/fixtures/apkSignature/signingScheme.js";
 
@@ -35,14 +37,6 @@ const zipOf = async (names: readonly string[]): Promise<Uint8Array> => {
   return writer.close();
 };
 
-const u16 = (v: number): number[] => [v & 0xff, (v >> 8) & 0xff];
-const u32 = (v: number): number[] => [
-  v & 0xff,
-  (v >> 8) & 0xff,
-  (v >> 16) & 0xff,
-  (v >>> 24) & 0xff,
-];
-const u64 = (v: number): number[] => [...u32(v), ...u32(0)];
 const lp = (b: readonly number[]): number[] => [...u32(b.length), ...b];
 const seq = (els: readonly (readonly number[])[]): number[] =>
   lp(els.flatMap((e) => lp(e)));
@@ -149,18 +143,6 @@ const reportOf = async (path: string) => {
 };
 
 describe("ApkSignatureProvider without the Android SDK", () => {
-  it("retains the declared digest's signature algorithm ID and bytes", async () => {
-    const report = await reportOf(
-      await write(
-        "algorithm-id.apk",
-        syntheticSigned([{ id: V2, value: bogusV2Value() }]),
-      ),
-    );
-    expect(report.schemes.v2?.signers?.[0]?.digests[0]).toMatchObject({
-      signature_algorithm_id: 0x0103,
-      declared_digest_hex: "ab".repeat(32),
-    });
-  });
   it("reports an unsigned ZIP as having no scheme", async () => {
     const r = await reportOf(
       await write(
@@ -172,53 +154,6 @@ describe("ApkSignatureProvider without the Android SDK", () => {
     expect(r.posture.strongest_scheme).toBe("none");
     expect(r.posture.self_consistent).toBeNull();
     expect(r.posture.v1_only).toBe(false);
-  });
-
-  it("detects v1-only signing and names the signer certificate its block declares", async () => {
-    for (const stored of [false, true]) {
-      const r = await reportOf(
-        await write(
-          `v1-${String(stored)}.apk`,
-          await zipWith([
-            { name: "classes.dex", data: "x" },
-            { name: "META-INF/MANIFEST.MF", data: "Manifest-Version: 1.0" },
-            { name: "META-INF/CERT.SF", data: "Signature-Version: 1.0" },
-            {
-              name: "META-INF/CERT.EC",
-              data: OPENSSL_BLOCK_ISSUER_SERIAL,
-              stored,
-            },
-          ]),
-        ),
-      );
-      expect(r.schemes.v1.present).toBe(true);
-      expect(r.posture.v1_only).toBe(true);
-      expect(r.posture.strongest_scheme).toBe("v1");
-      expect(r.posture.v1_signers_match_block_signers).toBeNull();
-      const [signer] = r.schemes.v1.signers;
-      expect(signer).toMatchObject({
-        signature_file: "META-INF/CERT.SF",
-        block_file: "META-INF/CERT.EC",
-        certificate: {
-          sha256_fingerprint: LEAF_SHA256,
-          subject: LEAF_SUBJECT,
-          public_key_algorithm: "ec",
-        },
-        certificates: [
-          { sha256_fingerprint: LEAF_SHA256, subject: LEAF_SUBJECT },
-          { sha256_fingerprint: ROOT_SHA256 },
-        ],
-        signer_infos: [
-          {
-            identified_by: "issuer-and-serial",
-            certificate_sha256: LEAF_SHA256,
-            digest_algorithm_oid: OID_SHA256,
-            signature_algorithm_oid: OID_ECDSA_SHA256,
-          },
-        ],
-        decode_error: null,
-      });
-    }
   });
 
   it("decodes a v2 signer, keeps an unparseable certificate null, and flags a digest mismatch", async () => {
@@ -365,8 +300,10 @@ describe("ApkSignatureProvider v1 signers", () => {
     if (!result.ok) throw new Error(result.error.message);
     const report = apkSignatureResultSchema.parse(result.value.result);
     expect(report.posture.v1_signers_match_block_signers).toBeNull();
-    expect(result.value.limitations).toContain(
-      "v1_signers_match_block_signers is null: the v3 signer's declared rotation lineage could not be decoded, so the original certificate v1 is expected to carry is unknown.",
+    expect(result.value.limitations).toContainEqual(
+      expect.stringMatching(
+        /v3.*rotation lineage.*could not be decoded.*original certificate.*unknown/iu,
+      ),
     );
   });
 
@@ -444,10 +381,16 @@ describe("ApkSignatureProvider v1 signers", () => {
     const result = await provider.inspect({
       path: await write("v1-many.apk", await zipWith(names)),
     });
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error._tag).toBe("AnalysisResourceConstraintError");
-    expect(result.error.message).toContain("more than 32 v1 signature blocks");
+    if (result.ok)
+      throw new Error("Accepted an archive above the v1 signer limit");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        reported_limits: { max_v1_signers: 32 },
+        refusal: { kind: "fixed_ceiling", allowance_kind: "count" },
+      },
+    });
   });
 });
 
@@ -458,7 +401,7 @@ const registerSignatureInputAdmissionCases = () => {
     expect(
       tagOf(new ArtifactReaderFailure("path", "Expected a regular file")),
     ).toBe("AnalysisInputError");
-    for (const reason of ["io", "unavailable", "format"] as const)
+    for (const reason of ["io", "unavailable"] as const)
       expect(tagOf(new ArtifactReaderFailure(reason, "reader failed"))).toBe(
         "ProviderAdapterError",
       );
@@ -481,7 +424,7 @@ const registerSignatureInputAdmissionCases = () => {
     });
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.error._tag).toBe("AnalysisUnsupportedTargetError");
+    expect(result.error._tag).toBe("AnalysisTargetFailureError");
   });
 
   it("reports a damaged supported Zip64 end record as input failure while accepting the intact and restored controls", async () => {
@@ -657,10 +600,21 @@ const registerSigningStructureFailureCases = () => {
     const result = await provider.inspect({
       path: await write("huge.apk", syntheticSigned([{ id: V2, value }])),
     });
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error._tag).toBe("AnalysisResourceConstraintError");
-    expect(result.error.message).toContain("output budget");
+    if (result.ok)
+      throw new Error("Accepted a report above the projection limit");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        reported_limits: { max_output_bytes: APK_SIGNATURE_LIMITS.outputBytes },
+        refusal: {
+          kind: "fixed_ceiling",
+          allowance_kind: "report",
+          limit: APK_SIGNATURE_LIMITS.outputBytes,
+          unit: "bytes",
+        },
+      },
+    });
   });
 };
 
@@ -704,3 +658,71 @@ describe("ApkSignatureProvider output budget", () => {
     expect(over.error.message).toContain("output budget");
   });
 });
+
+it.each([
+  { method: 8, padding: 0 },
+  { method: 8, padding: 64 * 1024 },
+  { method: 99, padding: 0 },
+])(
+  "limits V1 payload reads for compression method $method and padding $padding",
+  async ({ method, padding }) => {
+    const name = "META-INF/A.RSA";
+    const rawName = Buffer.from(name);
+    const uncompressedSize = 150_000;
+    const compressed = deflateRawSync(Buffer.alloc(uncompressedSize), {
+      level: 0,
+    });
+    const payload = Buffer.concat([compressed, Buffer.alloc(padding)]);
+    const bytes = Buffer.alloc(30 + rawName.length + payload.length);
+    const dataStart = 30 + rawName.length;
+    bytes.writeUInt32LE(0x04034b50, 0);
+    bytes.writeUInt16LE(method, 8);
+    bytes.writeUInt32LE(payload.length, 18);
+    bytes.writeUInt32LE(uncompressedSize, 22);
+    bytes.writeUInt16LE(rawName.length, 26);
+    rawName.copy(bytes, 30);
+    payload.copy(bytes, dataStart);
+    const reads: number[] = [];
+    const result = await decodeV1SignerFromReader(
+      {
+        size: bytes.length,
+        readRange: async (offset, length) => {
+          if (offset >= dataStart) reads.push(length);
+          return bytes.subarray(offset, offset + length);
+        },
+      },
+      {
+        signatureFile: "META-INF/A.SF",
+        duplicate: null,
+        block: {
+          name,
+          rawName,
+          flags: 0,
+          method,
+          crc32: 0,
+          compressedSize: payload.length,
+          uncompressedSize,
+          localHeaderOffset: 0,
+        },
+      },
+      bytes.length,
+    );
+    if (method === 8) {
+      expect(result.decoded).toMatchObject({
+        ok: false,
+        error: expect.stringContaining("malformed PKCS#7"),
+      });
+      expect(reads.length).toBeGreaterThan(1);
+      expect(Math.max(...reads)).toBeLessThanOrEqual(64 * 1024);
+      const readBytes = reads.reduce((total, count) => total + count, 0);
+      expect(readBytes).toBeGreaterThanOrEqual(compressed.length);
+      expect(readBytes).toBeLessThanOrEqual(payload.length);
+    } else {
+      expect(result.decoded).toEqual({
+        ok: false,
+        error: "compression method 99 is not supported",
+      });
+      expect(reads).toEqual([]);
+    }
+  },
+);

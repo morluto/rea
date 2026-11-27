@@ -1,5 +1,11 @@
 import { execFile } from "node:child_process";
-import { appendFile, copyFile, mkdir, writeFile } from "node:fs/promises";
+import {
+  appendFile,
+  copyFile,
+  mkdir,
+  readFile,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -17,7 +23,7 @@ const run = promisify(execFile);
 const itDarwin = it.skipIf(process.platform !== "darwin");
 const executableSegments = ["Contents", "MacOS", "hopper"];
 
-const infoPlist = (identifier: string): string =>
+const infoPlist = (identifier: string, entries = ""): string =>
   `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -27,7 +33,7 @@ const infoPlist = (identifier: string): string =>
   <key>CFBundleExecutable</key>
   <string>hopper</string>
   <key>CFBundlePackageType</key>
-  <string>APPL</string>
+  <string>APPL</string>${entries}
 </dict>
 </plist>
 `;
@@ -56,8 +62,25 @@ const buildBundle = async (
   return app;
 };
 
+const minimumEntry = (value: string): string =>
+  `\n  <key>LSMinimumSystemVersion</key>\n  ${value}`;
+
+/** An unsigned bundle carrying only an Info.plist, for requirement reads. */
+const infoPlistBundle = async (entries: string): Promise<string> => {
+  const root = await createTestTempDirectory("rea-hopper-minimum-");
+  const app = join(root, "Hopper Disassembler.app");
+  await mkdir(join(app, "Contents"), { recursive: true });
+  await writeFile(
+    join(app, "Contents", "Info.plist"),
+    infoPlist(HOPPER_PUBLISHER.bundleIdentifier, entries),
+  );
+  return app;
+};
+
 const host = () =>
-  systemMacHopperInstallHost("/home/rea-test", { ...process.env });
+  systemMacHopperInstallHost("/home/rea-test", { ...process.env }, () =>
+    Promise.resolve(undefined),
+  );
 
 describe("macOS Hopper publisher verification", () => {
   itDarwin(
@@ -89,9 +112,39 @@ describe("macOS Hopper publisher verification", () => {
     await expect(host().validBundle(app)).resolves.toBe("invalid_signature");
   });
 
+  it.each([
+    { entries: minimumEntry("<string>12.4</string>"), declared: "12.4" },
+    { entries: "", declared: undefined },
+  ])(
+    "reads the XML Info.plist minimum macOS version $declared",
+    async ({ entries, declared }) => {
+      const app = await infoPlistBundle(entries);
+      await expect(host().minimumSystemVersion(app)).resolves.toBe(declared);
+    },
+  );
+
+  itDarwin("reads a binary Info.plist minimum macOS version", async () => {
+    const app = await infoPlistBundle(minimumEntry("<string>13.0.1</string>"));
+    await run("/usr/bin/plutil", [
+      "-convert",
+      "binary1",
+      join(app, "Contents", "Info.plist"),
+    ]);
+    await expect(host().minimumSystemVersion(app)).resolves.toBe("13.0.1");
+  });
+
+  it("refuses a minimum macOS version that is not text", async () => {
+    const app = await infoPlistBundle(minimumEntry("<real>12.4</real>"));
+    const failure = host().minimumSystemVersion(app);
+    await expect(failure).rejects.toBeInstanceOf(TypeError);
+    // The refusal names the key and the exact plist it read.
+    await expect(failure).rejects.toThrow("LSMinimumSystemVersion");
+    await expect(failure).rejects.toThrow(join(app, "Contents", "Info.plist"));
+  });
+
   it("discloses the exact code requirement the installer enforces", () => {
     expect(macHopperInstallDisclosure.commands).toContain(
-      `codesign --verify --strict '-R= identifier "${HOPPER_PUBLISHER.bundleIdentifier}" and anchor apple generic and certificate leaf[subject.OU] = "${HOPPER_PUBLISHER.teamIdentifier}"' <mounted-hopper.app>`,
+      `/usr/bin/codesign --verify --strict '-R= identifier "${HOPPER_PUBLISHER.bundleIdentifier}" and anchor apple generic and certificate leaf[subject.OU] = "${HOPPER_PUBLISHER.teamIdentifier}"' <mounted-hopper.app>`,
     );
   });
 
@@ -122,12 +175,53 @@ describe("macOS Hopper publisher verification", () => {
     "accepts the officially signed Hopper application",
     async () => {
       await expect(host().validBundle(realApp ?? "")).resolves.toBe("verified");
+      await expect(host().minimumSystemVersion(realApp ?? "")).resolves.toMatch(
+        /^\d+(?:\.\d+)*$/u,
+      );
       await expect(
         verifyMacHopperNativeHelper(
           join(realApp ?? "", ...executableSegments),
           process.env,
         ),
       ).resolves.toBe("verified");
+    },
+  );
+});
+
+describe("macOS Hopper installer tools", () => {
+  // POSIX shell stand-ins; Windows has no macOS installer path to exercise.
+  it.skipIf(process.platform === "win32")(
+    "never runs a codesign, hdiutil or open found on REA's PATH",
+    async () => {
+      const root = await createTestTempDirectory("rea-hopper-path-tools-");
+      const bin = join(root, "bin");
+      const ran = join(root, "ran");
+      await mkdir(bin);
+      for (const tool of ["codesign", "hdiutil", "open"])
+        await writeFile(
+          join(bin, tool),
+          `#!/bin/sh\necho ${tool} >> '${ran}'\n`,
+          { mode: 0o755 },
+        );
+      const installer = systemMacHopperInstallHost(
+        "/home/rea-test",
+        { ...process.env, PATH: bin },
+        () => Promise.resolve(undefined),
+      );
+      const app = join(root, "Hopper Disassembler.app");
+      const [verification] = await Promise.allSettled([
+        installer.validBundle(app),
+        installer.mount(join(root, "hopper.dmg"), join(root, "mount")),
+        installer.openApplication(app),
+      ]);
+      // A stand-in that exits 0 must not pass the publisher check.
+      expect(verification).not.toEqual({
+        status: "fulfilled",
+        value: "verified",
+      });
+      await expect(readFile(ran, "utf8")).rejects.toMatchObject({
+        code: "ENOENT",
+      });
     },
   );
 });

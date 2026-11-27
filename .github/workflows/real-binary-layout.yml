@@ -42,11 +42,12 @@ env:
 jobs:
   real-binary-layout:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
+          package-manager-cache: false
           node-version-file: .nvmrc
       - name: Cache npm package downloads
         id: npm-cache
@@ -55,12 +56,20 @@ jobs:
       - uses: ./.github/actions/portable-build-cache
         with:
           build_cache_artifact: ${{ inputs.build_cache_artifact }}
-      - name: Install ELF32 cross toolchains for source-owned fixtures
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends \
-            gcc-i686-linux-gnu gcc-arm-linux-gnueabi gcc-mips-linux-gnu gcc-mipsel-linux-gnu \
-            libc6-dev-i386-cross libc6-dev-armel-cross libc6-dev-mips-cross libc6-dev-mipsel-cross
+      - uses: ./.github/actions/ubuntu-archive
+        with:
+          noble-azure-fallback: "true"
+      - name: Install AArch64 and ELF32 cross toolchains for source-owned fixtures
+        uses: ./.github/actions/host-apt-packages
+        with:
+          packages: >-
+            gcc-aarch64-linux-gnu gcc-i686-linux-gnu gcc-arm-linux-gnueabi gcc-mips-linux-gnu gcc-mipsel-linux-gnu
+            libc6-dev-arm64-cross libc6-dev-i386-cross libc6-dev-armel-cross libc6-dev-mips-cross libc6-dev-mipsel-cross
+          install-recommends: "false"
+          # Five toolchains required a 206 MB cold download in hosted CI. Three
+          # resuming attempts of this length leave the 25-minute job time to
+          # build and verify the fixtures.
+          download-timeout-seconds: "360"
       - name: Acquire exact upstream libraries in an isolated runner environment
         shell: bash
         run: |

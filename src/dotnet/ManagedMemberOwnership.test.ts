@@ -3,28 +3,21 @@ import { describe, expect, vi } from "vitest";
 
 import { inspectManagedArtifactBytes } from "./ManagedArtifactInspector.js";
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
-import { managedDecodeBudget } from "./ManagedDecodeBudget.js";
-import { memberDeclaringTypeRowLookup } from "./ManagedMemberOwnership.js";
-import { memberListIndexSize } from "./ManagedMemberPointers.js";
-import { readTypeMemberListFacts } from "./ManagedTypeMemberLists.js";
-import { readManagedMetadataLayout } from "./ManagedMetadataLayout.js";
+import {
+  attachManagedDecodeBudget,
+  ManagedDecodeBudget,
+  ManagedRepresentationFailure,
+} from "../domain/managed/managedDecodeBudget.js";
+import { memberDeclaringTypeRowLookup } from "../domain/managed/managedMemberOwnership.js";
+import { memberListIndexSize } from "../domain/managed/managedMemberPointers.js";
+import { readTypeMemberListFacts } from "../domain/managed/managedTypeMemberLists.js";
+import { metadataRowOffset } from "../domain/managed/managedMetadataLayout.js";
 import {
   buildManagedMemberPointerFixture,
   buildManagedPeFixture,
   managedPeFixtureTarget,
 } from "./ManagedPe.fixture.js";
-import { readManagedPeLayout } from "./ManagedPeReader.js";
-import { ManagedReaderFailure } from "./ManagedReaderFailure.js";
-
-const metadataLayout = (bytes: Buffer) => {
-  const pe = readManagedPeLayout(bytes);
-  if (pe.cli === null) throw new Error("Fixture omitted CLI metadata");
-  return readManagedMetadataLayout(
-    bytes,
-    pe.rvaToOffset(pe.cli.metadata.rva, pe.cli.metadata.size, "cli.metadata"),
-    pe.cli.metadata.size,
-  );
-};
+import { readManagedFixtureMetadataLayout } from "./ManagedPeMetadata.fixture.js";
 
 describe("managed declaring type ownership", () => {
   it.prop([
@@ -40,7 +33,7 @@ describe("managed declaring type ownership", () => {
     "matches literal ownership ranges for valid nondecreasing list starts",
     ([fields, methods]) => {
       const bytes = buildManagedMemberPointerFixture();
-      const layout = metadataLayout(bytes);
+      const layout = readManagedFixtureMetadataLayout(bytes);
       const types = layout.table(2);
       if (types === undefined) throw new Error("Fixture omitted TypeDef");
       for (let row = 0; row < 3; row++) {
@@ -59,6 +52,8 @@ describe("managed declaring type ownership", () => {
       const target = managedPeFixtureTarget(bytes);
       const members = inspectManagedMembersBytes(bytes, target);
       const artifact = inspectManagedArtifactBytes(bytes, target);
+      const ownerNames = ["<Module>", "Fixture.A", "Fixture.B"];
+      let expectedAttributeOwner: string | null | undefined;
       for (const [table, starts] of [
         ["fields", fields],
         ["methods", methods],
@@ -74,15 +69,16 @@ describe("managed declaring type ownership", () => {
               break;
             }
           }
-          return owner === null ? null : members.types[owner]?.full_name;
+          return owner === null ? null : ownerNames[owner];
         });
         expect(members[table].map((member) => member.declaring_type)).toEqual(
           expected,
         );
+        if (table === "methods") expectedAttributeOwner = expected[0];
       }
-      expect(artifact.attributes[0]?.type_name).toBe(
-        members.methods[0]?.declaring_type,
-      );
+      expect(artifact.attributes[0]).toMatchObject({
+        type_name: expectedAttributeOwner,
+      });
     },
   );
 
@@ -92,7 +88,7 @@ describe("managed declaring type ownership", () => {
       additionalEmptyTypes: count - 3,
       methodRowCount: count,
     });
-    const layout = metadataLayout(bytes);
+    const layout = readManagedFixtureMetadataLayout(bytes);
     const types = layout.table(2);
     if (types === undefined) throw new Error("Fixture omitted TypeDef");
     const methodOffset =
@@ -118,18 +114,10 @@ describe("managed declaring type ownership", () => {
 
   it("admits ownership storage before allocation and retains failed admission", () => {
     const bytes = buildManagedPeFixture();
-    const layout = metadataLayout(bytes);
+    const layout = readManagedFixtureMetadataLayout(bytes);
     const facts = readTypeMemberListFacts(bytes, layout);
-    const budget = managedDecodeBudget(layout);
-    const capacityFailure = new ManagedReaderFailure({
-      code: "resource-limit",
-      scope: "metadata.representation",
-      offset: layout.table(2)?.offset ?? null,
-      detail: "No remaining ownership index capacity",
-    });
-    const admission = vi.spyOn(budget, "reserve").mockImplementation(() => {
-      throw capacityFailure;
-    });
+    attachManagedDecodeBudget(layout, new ManagedDecodeBudget(1));
+    const lookup = () => memberDeclaringTypeRowLookup(bytes, layout, 6, facts);
     let allocations = 0;
     vi.stubGlobal(
       "Uint32Array",
@@ -141,17 +129,106 @@ describe("managed declaring type ownership", () => {
       }),
     );
     try {
-      expect(() =>
-        memberDeclaringTypeRowLookup(bytes, layout, 6, facts),
-      ).toThrow(capacityFailure);
-      expect(() =>
-        memberDeclaringTypeRowLookup(bytes, layout, 6, facts),
-      ).toThrow(capacityFailure);
-      expect(admission).toHaveBeenCalledTimes(1);
+      const [first, retry] = [0, 1].map(() => {
+        try {
+          return lookup();
+        } catch (cause: unknown) {
+          return cause;
+        }
+      });
+      expect(first).toBeInstanceOf(ManagedRepresentationFailure);
+      expect(first).toMatchObject({
+        issue: {
+          scope: "metadata.representation",
+          offset: layout.table(2)?.offset,
+        },
+      });
+      expect(retry).toBe(first);
       expect(allocations).toBe(0);
     } finally {
       vi.unstubAllGlobals();
-      admission.mockRestore();
     }
+  });
+});
+
+describe("selected FieldList and MethodList interval iteration", () => {
+  it("completes one selected field and method within the caller's representation budget", () => {
+    const bytes = buildManagedPeFixture({
+      additionalEmptyTypes: 2,
+      fieldRowCount: 4096,
+      methodRowCount: 4096,
+      distinctMemberNames: true,
+      firstTypeFieldRowCount: 1,
+      firstTypeMethodRowCount: 1,
+    });
+    const result = inspectManagedMembersBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+      {
+        typeNames: ["Fixture.Empty0"],
+        maxRepresentationBytes: 48 * 1024,
+      },
+    );
+    expect(result.coverage).toEqual({ state: "complete", issues: [] });
+    expect(result.fields).toMatchObject([
+      { token: "0x04000001", name: "Field0", declaring_type: "Fixture.Empty0" },
+    ]);
+    expect(result.methods).toMatchObject([
+      {
+        token: "0x06000001",
+        name: "Method0",
+        declaring_type: "Fixture.Empty0",
+      },
+    ]);
+  });
+
+  it("falls back cleanly when FieldList or MethodList pointers decrease", () => {
+    const bytes = buildManagedPeFixture({
+      additionalEmptyTypes: 3,
+      fieldRowCount: 3,
+      methodRowCount: 3,
+      distinctMemberNames: true,
+    });
+    const layout = readManagedFixtureMetadataLayout(bytes);
+    const fieldColOffset =
+      4 + 2 * layout.stringIndexSize + layout.codedIndexSize("TypeDefOrRef");
+    const methodColOffset = fieldColOffset + memberListIndexSize(layout, 4);
+    const row2 = metadataRowOffset(layout, 2, 2);
+    const row3 = metadataRowOffset(layout, 2, 3);
+    const row4 = metadataRowOffset(layout, 2, 4);
+    bytes.writeUInt16LE(2, row2 + fieldColOffset);
+    bytes.writeUInt16LE(3, row3 + fieldColOffset);
+    bytes.writeUInt16LE(2, row4 + fieldColOffset);
+    bytes.writeUInt16LE(2, row2 + methodColOffset);
+    bytes.writeUInt16LE(3, row3 + methodColOffset);
+    bytes.writeUInt16LE(2, row4 + methodColOffset);
+
+    const result = inspectManagedMembersBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+      { typeNames: ["Fixture.Empty0", "Fixture.Empty1"] },
+    );
+    expect(result.coverage).toMatchObject({
+      state: "partial",
+      issues: expect.arrayContaining([
+        expect.objectContaining({
+          code: "invalid-row",
+          offset: row4 + fieldColOffset,
+          detail: expect.stringContaining("FieldList start 2 decreases"),
+        }),
+        expect.objectContaining({
+          code: "invalid-row",
+          offset: row4 + methodColOffset,
+          detail: expect.stringContaining("MethodList start 2 decreases"),
+        }),
+      ]),
+    });
+    expect(result.fields.map(({ name }) => name)).toEqual(["Field0"]);
+    expect(result.methods.map(({ name }) => name)).toEqual(["Method0"]);
+    expect(result.user_strings).toEqual({
+      state: "partial",
+      literals: [],
+      issues: [],
+    });
   });
 });

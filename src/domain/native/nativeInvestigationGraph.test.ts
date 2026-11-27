@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { objcSwiftMetadataSchema } from "./objcSwiftMetadata.js";
+import {
+  inspectNativeDispatchMetadata,
+  objcSwiftMetadataSchema,
+} from "./objcSwiftMetadata.js";
 
 import {
   nativeInvestigationGraphSchema,
@@ -139,6 +142,41 @@ describe("native investigation graph traces", () => {
     expect(trace).toMatchObject({ reached_depth: 1, truncated: false });
   });
 
+  it.each(["forward", "backward"] as const)(
+    "keeps tracing after an edge to a missing node in the %s direction",
+    (direction) => {
+      const forward = direction === "forward";
+      const partial = nativeInvestigationGraphSchema.parse({
+        ...graph,
+        truncated: true,
+        edges: [
+          {
+            ...graph.edges[0],
+            id: "missing-endpoint",
+            from: forward ? "b" : "missing",
+            to: forward ? "missing" : "b",
+          },
+          ...graph.edges,
+        ],
+      });
+      const trace = traceNativeInvestigationGraph(partial, {
+        start: "b",
+        direction,
+        limits: { max_edges: forward ? 2 : 1 },
+      });
+      expect(trace.edges.map(({ id }) => id)).toEqual([forward ? "2" : "1"]);
+      expect(trace.nodes.map(({ id }) => id)).toEqual([
+        "b",
+        forward ? "c" : "a",
+      ]);
+      expect(trace).toMatchObject({
+        truncated: true,
+        reason: "edge_target_missing_from_graph",
+        reached_depth: 1,
+      });
+    },
+  );
+
   it("retains observed and inferred route edges plus unresolved dispatch", () => {
     const trace = traceNativeInvestigationGraph(graph, { start: "a" });
     expect(trace.nodes.map(({ id }) => id)).toEqual(["a", "b", "c"]);
@@ -188,12 +226,70 @@ describe("native investigation graph traces", () => {
       truncated: false,
     });
   });
+
+  it.each([
+    { start: "a", limits: {}, reason: "source_graph_truncated" },
+    { start: "missing", limits: {}, reason: "start_node_missing" },
+    { start: "a", limits: { max_depth: 0 }, reason: "max_depth_reached" },
+  ])(
+    "retains source truncation alongside $reason",
+    ({ start, limits, reason }) => {
+      const trace = traceNativeInvestigationGraph(
+        { ...graph, truncated: true },
+        { start, limits },
+      );
+      expect(trace).toMatchObject({ truncated: true, reason });
+      expect(trace.limitations).toContain(
+        "The supplied graph was truncated; relationships omitted from that source remain unknown.",
+      );
+    },
+  );
 });
 
+it.each(["forward", "backward"] as const)(
+  "reports a missing endpoint after the last eligible %s edge fills the budget",
+  (direction) => {
+    const forward = direction === "forward";
+    const partial = nativeInvestigationGraphSchema.parse({
+      ...graph,
+      truncated: true,
+      edges: [
+        graph.edges[0],
+        {
+          ...graph.edges[0],
+          id: "missing-endpoint",
+          from: forward ? "b" : "missing",
+          to: forward ? "missing" : "a",
+        },
+      ],
+    });
+    const trace = traceNativeInvestigationGraph(partial, {
+      start: forward ? "a" : "b",
+      direction,
+      limits: { max_edges: 1 },
+    });
+    expect(trace.edges.map(({ id }) => id)).toEqual(["1"]);
+    expect(trace).toMatchObject({
+      truncated: true,
+      reason: "edge_target_missing_from_graph",
+      reached_depth: 1,
+    });
+  },
+);
+
 describe("Interface Builder dispatch joins", () => {
-  it.each(["BuildViewController", "BuildView", "BuildButton", "BuildHandler"])(
-    "joins an action to its declared %s receiver class",
-    (className) => {
+  it.each([
+    {
+      className: "BuildViewController",
+      recordOffset: 1944,
+      existingOffset: null,
+    },
+    { className: "BuildView", recordOffset: 6040, existingOffset: null },
+    { className: "BuildButton", recordOffset: null, existingOffset: null },
+    { className: "BuildHandler", recordOffset: 1944, existingOffset: 1916 },
+  ])(
+    "joins the declared $className without mixing record and implementation offsets",
+    ({ className, recordOffset, existingOffset }) => {
       const ui = buildInterfaceBuilderAnalysis({
         targetSha256: "b".repeat(64),
         toolVersion: "test",
@@ -221,7 +317,119 @@ describe("Interface Builder dispatch joins", () => {
         ],
         limits: interfaceBuilderLimitsSchema.parse({}),
       });
-      const joined = joinInterfaceBuilderDispatch(ui.graph, {
+      const recordLocation = {
+        address: recordOffset === null ? "0x1000" : "0x2000",
+        file_offset: recordOffset,
+      };
+      const recordEvidence = [
+        {
+          kind: recordOffset === null ? "symbol" : "binary_metadata",
+          description: "Explicit synthetic method-record location",
+          location: recordLocation,
+          artifact_path: "/synthetic/Fixture",
+          artifact_sha256: "b".repeat(64),
+        },
+      ];
+      const mappedEvidence = [
+        {
+          ...recordEvidence[0],
+          kind: "reference",
+          description: "Explicit independently mapped handler",
+          location: { address: "0x1000", file_offset: existingOffset },
+        },
+      ];
+      const inputGraph =
+        existingOffset === null
+          ? ui.graph
+          : nativeInvestigationGraphSchema.parse({
+              ...ui.graph,
+              nodes: [
+                ...ui.graph.nodes,
+                {
+                  id: "native:function:0x1000",
+                  kind: "function",
+                  name: "Already mapped handler",
+                  location: { address: "0x1000", file_offset: existingOffset },
+                  attributes: {},
+                  evidence: mappedEvidence,
+                },
+              ],
+            });
+      const metadata = objcSwiftMetadataSchema.parse({
+        ...inspectNativeDispatchMetadata([], 1),
+        objc_dispatch_implementations: [
+          {
+            class_name: className,
+            selector: "buildTapped:",
+            method_type: "instance",
+            implementation_address: "0x1000",
+            location: recordLocation,
+            decode: { status: "decoded", reason: null },
+            evidence: recordEvidence,
+          },
+        ],
+      });
+      const joined = joinInterfaceBuilderDispatch(inputGraph, metadata);
+      expect(joined.edges).toContainEqual(
+        expect.objectContaining({
+          relation: "objc_dispatch",
+          resolution: "resolved",
+          to: "native:function:0x1000",
+          evidence: expect.arrayContaining(recordEvidence),
+        }),
+      );
+      const handler = joined.nodes.find(
+        ({ id }) => id === "native:function:0x1000",
+      );
+      expect(handler?.location).toEqual({
+        address: "0x1000",
+        file_offset: existingOffset,
+      });
+      expect(handler?.evidence).toEqual(
+        existingOffset === null ? recordEvidence : mappedEvidence,
+      );
+      expect(metadata.objc_dispatch_implementations[0]?.location).toEqual(
+        recordLocation,
+      );
+    },
+  );
+});
+
+describe("Objective-C category ownership joins", () => {
+  it.each([
+    { className: "BuildViewController", category: "BuilderActions" },
+    { className: "BuildViewController(Literal)", category: undefined },
+  ])(
+    "matches exact instance owner $className with category $category",
+    ({ className, category }) => {
+      const ui = buildInterfaceBuilderAnalysis({
+        targetSha256: "b".repeat(64),
+        toolVersion: "test",
+        documents: [
+          {
+            relativePath: "Main.nib",
+            archiveSha256: "c".repeat(64),
+            documentKind: "nib",
+            raw: {
+              "com.apple.ibtool.document.objects": {
+                controller: { customClass: className },
+                button: { class: "UIButton" },
+              },
+              "com.apple.ibtool.document.connections": {
+                button: [
+                  {
+                    type: "action",
+                    label: "buildTapped:",
+                    destinationId: "controller",
+                  },
+                ],
+              },
+            },
+          },
+        ],
+        limits: interfaceBuilderLimitsSchema.parse({}),
+      });
+      const metadata = {
         objc_classes: [],
         objc_protocols: [],
         objc_categories: [],
@@ -230,12 +438,32 @@ describe("Interface Builder dispatch joins", () => {
         objc_protocol_records: [],
         objc_dispatch_implementations: [
           {
-            class_name: className,
+            class_name: "BuildViewController",
             selector: "buildTapped:",
-            method_type: "instance",
+            method_type: "class" as const,
+            implementation_address: "0x9999",
+            location: { address: "0x9999", file_offset: 0 },
+            decode: { status: "decoded" as const, reason: null },
+            evidence,
+          },
+          {
+            class_name: className,
+            ...(category === undefined ? {} : { category }),
+            selector: "buildTapped:",
+            method_type: "instance" as const,
             implementation_address: "0x1000",
             location: { address: "0x1000", file_offset: 0 },
-            decode: { status: "decoded", reason: null },
+            decode: { status: "decoded" as const, reason: null },
+            evidence,
+          },
+          {
+            // A binary class identity does not declare a category.
+            class_name: `${className}(Legacy)`,
+            selector: "buildTapped:",
+            method_type: "instance" as const,
+            implementation_address: "0x2000",
+            location: { address: "0x2000", file_offset: 0 },
+            decode: { status: "partial" as const, reason: "symbol_name_only" },
             evidence,
           },
         ],
@@ -245,7 +473,9 @@ describe("Interface Builder dispatch joins", () => {
         relative_pointers: [],
         coverage: [],
         db_save_result: null,
-      });
+      };
+
+      const joined = joinInterfaceBuilderDispatch(ui.graph, metadata);
       expect(joined.edges).toContainEqual(
         expect.objectContaining({
           relation: "objc_dispatch",
@@ -253,84 +483,11 @@ describe("Interface Builder dispatch joins", () => {
           to: "native:function:0x1000",
         }),
       );
+      expect(joined.edges).not.toContainEqual(
+        expect.objectContaining({ to: "native:function:0x9999" }),
+      );
     },
   );
-
-  it("chooses an instance method and matches category-qualified owner names", () => {
-    const ui = buildInterfaceBuilderAnalysis({
-      targetSha256: "b".repeat(64),
-      toolVersion: "test",
-      documents: [
-        {
-          relativePath: "Main.nib",
-          archiveSha256: "c".repeat(64),
-          documentKind: "nib",
-          raw: {
-            "com.apple.ibtool.document.objects": {
-              controller: { customClass: "BuildViewController" },
-              button: { class: "UIButton" },
-            },
-            "com.apple.ibtool.document.connections": {
-              button: [
-                {
-                  type: "action",
-                  label: "buildTapped:",
-                  destinationId: "controller",
-                },
-              ],
-            },
-          },
-        },
-      ],
-      limits: interfaceBuilderLimitsSchema.parse({}),
-    });
-    const metadata = {
-      objc_classes: [],
-      objc_protocols: [],
-      objc_categories: [],
-      swift_decls: [],
-      objc_ivars: [],
-      objc_protocol_records: [],
-      objc_dispatch_implementations: [
-        {
-          class_name: "BuildViewController",
-          selector: "buildTapped:",
-          method_type: "class" as const,
-          implementation_address: "0x9999",
-          location: { address: "0x9999", file_offset: 0 },
-          decode: { status: "decoded" as const, reason: null },
-          evidence,
-        },
-        {
-          class_name: "BuildViewController(BuilderActions)",
-          selector: "buildTapped:",
-          method_type: "instance" as const,
-          implementation_address: "0x1000",
-          location: { address: "0x1000", file_offset: 0 },
-          decode: { status: "decoded" as const, reason: null },
-          evidence,
-        },
-      ],
-      swift_conformances: [],
-      swift_dispatch_slots: [],
-      swift_symbols: [],
-      relative_pointers: [],
-      coverage: [],
-      db_save_result: null,
-    };
-
-    const joined = joinInterfaceBuilderDispatch(ui.graph, metadata);
-    expect(joined.edges).toContainEqual(
-      expect.objectContaining({
-        relation: "objc_dispatch",
-        resolution: "resolved",
-        to: "native:function:0x1000",
-      }),
-    );
-    expect(joined.edges).not.toContainEqual(
-      expect.objectContaining({ to: "native:function:0x9999" }),
-    );
-  });
 });
 
 describe("placeholder dispatch joins", () => {
@@ -454,4 +611,16 @@ it("counts an authored action with an unresolved receiver in dispatch coverage",
       reason: "authored_action_receiver_unresolved",
     }),
   );
+});
+
+it("keeps all own Interface Builder attributes through the graph schema", () => {
+  const attributes = JSON.parse(
+    '{"__proto__":{"recorded":true},"constructor":"authored","prototype":null}',
+  );
+  const projected = nativeInvestigationGraphSchema.parse({
+    ...graph,
+    nodes: graph.nodes.map((node) => ({ ...node, attributes })),
+  });
+  expect(projected.nodes[0]?.attributes).toEqual(attributes);
+  expect(Object.hasOwn(projected.nodes[0]!.attributes, "__proto__")).toBe(true);
 });

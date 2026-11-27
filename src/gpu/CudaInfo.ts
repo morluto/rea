@@ -1,45 +1,82 @@
 import {
   BinaryReader,
   BinaryResourceFailure,
-} from "../native/metadata/BinaryContainer.js";
-import { GPU_OBJECT_BYTES, GPU_REPORT_BYTES, rejectGpu } from "./GpuSource.js";
+} from "../domain/binaryContainer.js";
+import {
+  DEFAULT_GPU_OBJECT_BYTES,
+  DEFAULT_GPU_PARSER_VISITS,
+  DEFAULT_GPU_REPORT_BYTES,
+  GPU_OBJECT_BYTES_LIMIT,
+  GPU_PARSER_VISITS_LIMIT,
+  type GpuCodeObjectsBudgets,
+} from "../domain/gpu/gpuCodeObjectsBudgets.js";
+import { rejectGpu } from "./GpuSource.js";
+import { Budget } from "../domain/budget.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 
 /** Shared by every metadata record, symbol and temporary index in one CUDA ELF. */
 export class CudaMetadataBudget {
-  #visits = 0;
-  #readBytes = 0;
-  #indexBytes = 0;
+  readonly #maxVisits: number;
+  readonly #maxReadBytes: number;
+  readonly #maxIndexBytes: number;
+  readonly #visits: Budget;
+  readonly #readBytes: Budget;
+  readonly #indexBytes: Budget;
+  constructor(
+    budgets?: Pick<
+      GpuCodeObjectsBudgets,
+      "maxParserVisits" | "maxObjectBytes" | "maxReportBytes"
+    >,
+  ) {
+    this.#maxVisits = budgets?.maxParserVisits ?? DEFAULT_GPU_PARSER_VISITS;
+    this.#maxReadBytes = budgets?.maxObjectBytes ?? DEFAULT_GPU_OBJECT_BYTES;
+    this.#maxIndexBytes = budgets?.maxReportBytes ?? DEFAULT_GPU_REPORT_BYTES;
+    this.#visits = new Budget(this.#maxVisits);
+    this.#readBytes = new Budget(this.#maxReadBytes);
+    this.#indexBytes = new Budget(this.#maxIndexBytes);
+  }
   visit(): void {
-    if (++this.#visits > 262144)
-      throw new BinaryResourceFailure(
-        "structure",
-        262144,
-        "CUDA metadata exceeds 262144 aggregate record/symbol visits",
-      );
+    this.#visits.charge(
+      1,
+      () =>
+        new BinaryResourceFailure(
+          "structure",
+          this.#maxVisits,
+          `CUDA metadata exceeds ${String(this.#maxVisits)} aggregate record/symbol visits`,
+          GPU_PARSER_VISITS_LIMIT,
+          "entries",
+        ),
+    );
   }
   read(size: number): void {
-    if (size > GPU_OBJECT_BYTES - this.#readBytes)
-      throw new BinaryResourceFailure(
-        "structure",
-        GPU_OBJECT_BYTES,
-        "CUDA metadata exceeds 128 MiB aggregate section reads",
-      );
-    this.#readBytes += size;
+    this.#readBytes.charge(
+      size,
+      () =>
+        new BinaryResourceFailure(
+          "structure",
+          this.#maxReadBytes,
+          `CUDA metadata exceeds ${String(this.#maxReadBytes)}-byte aggregate section reads`,
+          GPU_OBJECT_BYTES_LIMIT,
+          "bytes",
+        ),
+    );
   }
   retain(value: JsonValue): void {
-    const size = jsonValueByteLength(value, GPU_REPORT_BYTES) + 2;
-    if (size > GPU_REPORT_BYTES - this.#indexBytes)
-      throw new BinaryResourceFailure(
-        "structure",
-        GPU_REPORT_BYTES,
-        "CUDA metadata exceeds the 16 MiB temporary index budget",
-      );
-    this.#indexBytes += size;
+    this.#indexBytes.charge(
+      jsonValueByteLength(value, this.#maxIndexBytes) + 2,
+      () =>
+        new BinaryResourceFailure(
+          "structure",
+          this.#maxIndexBytes,
+          `CUDA metadata exceeds the ${String(this.#maxIndexBytes)}-byte temporary index budget`,
+          "gpu-retained-report-bytes",
+          "bytes",
+        ),
+    );
   }
 }
-export interface CudaInfoRecord {
+interface CudaInfoRecord {
   readonly format: number;
   readonly attribute: number;
   readonly value: number;
@@ -53,7 +90,7 @@ export function* readCudaInfo(
   little: boolean,
   budget = new CudaMetadataBudget(),
 ): Generator<CudaInfoRecord> {
-  const reader = new BinaryReader(bytes, little);
+  const reader = new BinaryReader(bytes, little, "cuda-nv-info");
   for (let offset = 0; offset < bytes.length;) {
     budget.visit();
     const head = reader.range(offset, 4, "CUDA nv.info record");
@@ -85,6 +122,7 @@ export const readCudaParameters = (
     [];
   const byteDeclarations = new Set<number>();
   const limitations: string[] = [];
+  const reader = new BinaryReader(bytes, little, "cuda-nv-info");
   let complete = true;
   for (const record of readCudaInfo(bytes, little, budget)) {
     if (record.format === 3 && record.attribute === 0x19)
@@ -98,13 +136,16 @@ export const readCudaParameters = (
       complete = false;
       continue;
     }
-    const r = new BinaryReader(record.data, little);
-    if (r.u32(0) !== 0) complete = false;
+    const base = record.offset + 4;
+    if (reader.u32(base) !== 0) complete = false;
     const parameter = {
-      ordinal: r.u16(4),
+      ordinal: reader.u16(base + 4),
       name: null,
-      offset: r.u16(6),
-      size: record.attribute === 0x45 ? r.u32(8) : r.u32(8) >>> 18,
+      offset: reader.u16(base + 6),
+      size:
+        record.attribute === 0x45
+          ? reader.u32(base + 8)
+          : reader.u32(base + 8) >>> 18,
       type: null,
       hidden: null,
     };

@@ -6,6 +6,7 @@
  * producer may emit but OpenSSL does not (reordered or missing certificates,
  * several SignerInfos, BER indefinite lengths, malformed fields).
  */
+import { u32, u64 } from "./integers.js";
 import { Uint8ArrayReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { apkSchemeValue } from "./signingScheme.js";
 
@@ -117,15 +118,18 @@ const certificateParts = (certificate: Uint8Array) => {
 };
 
 /** tbsCertificate fields a SignerInfo names: issuer Name TLV and serial content. */
-const issuerAndSerial = (certificate: Uint8Array): Uint8Array => {
+const issuerAndSerial = (
+  certificate: Uint8Array,
+  serial?: Uint8Array,
+): Uint8Array => {
   // Fixture certificates are v3 with short-form serials: walk the known layout.
   const { fields } = certificateParts(certificate);
-  const serial = fields[1]!;
+  const serialField = fields[1]!;
   const issuer = fields[3]!;
   return tlv(
     0x30,
     certificate.subarray(issuer.start, issuer.end),
-    certificate.subarray(serial.start, serial.end),
+    serial ?? certificate.subarray(serialField.start, serialField.end),
   );
 };
 
@@ -157,6 +161,23 @@ export const withSubject = (
     tlv(
       0x30,
       ...fields.map((field, index) => (index === 5 ? subject : part(field))),
+    ),
+    ...outer.map(part),
+  );
+};
+
+/** Replace a fixture serial INTEGER (the full TLV) without asserting a valid signature. */
+export const withSerial = (
+  certificate: Uint8Array,
+  serial: Uint8Array,
+): Uint8Array => {
+  const { fields, outer } = certificateParts(certificate);
+  const part = ({ start, end }: DerSpan) => certificate.subarray(start, end);
+  return tlv(
+    0x30,
+    tlv(
+      0x30,
+      ...fields.map((field, index) => (index === 1 ? serial : part(field))),
     ),
     ...outer.map(part),
   );
@@ -200,19 +221,83 @@ export const withExtension = (
   );
 };
 
+/** The certificate with its `extensions [3]` field declared twice. */
+export const withRepeatedExtensions = (certificate: Uint8Array): Uint8Array => {
+  const { fields, outer } = certificateParts(certificate);
+  const part = ({ start, end }: DerSpan) => certificate.subarray(start, end);
+  return tlv(
+    0x30,
+    tlv(
+      0x30,
+      ...fields.flatMap((field) =>
+        certificate[field.start] === 0xa3
+          ? [part(field), part(field)]
+          : [part(field)],
+      ),
+    ),
+    ...outer.map(part),
+  );
+};
+
+/**
+ * The certificate with its one `extensions [3]` field replaced by a
+ * subjectKeyIdentifier extension for each key identifier, in order.
+ */
+export const withSubjectKeyIdentifiers = (
+  certificate: Uint8Array,
+  ...keyIdentifiers: readonly Uint8Array[]
+): Uint8Array => {
+  const { fields, outer } = certificateParts(certificate);
+  const part = ({ start, end }: DerSpan) => certificate.subarray(start, end);
+  const extensions = tlv(
+    0xa3,
+    tlv(
+      0x30,
+      ...keyIdentifiers.map((keyIdentifier) =>
+        tlv(0x30, oid("2.5.29.14"), tlv(0x04, tlv(0x04, keyIdentifier))),
+      ),
+    ),
+  );
+  return tlv(
+    0x30,
+    tlv(
+      0x30,
+      ...fields.map((field) =>
+        certificate[field.start] === 0xa3 ? extensions : part(field),
+      ),
+    ),
+    ...outer.map(part),
+  );
+};
+
 export interface SignerInfoSpec {
   /** Certificate whose issuer and serial the SignerInfo names. */
   readonly names: Uint8Array;
   /** Replace the required signature TLV, including omission for malformed fixtures. */
   readonly signature?: Uint8Array;
+  /**
+   * INTEGER content of issuerAndSerialNumber.serialNumber when it must differ
+   * from the certificate named by `names`.
+   */
+  readonly serial?: Uint8Array;
+  /** Complete digest algorithm OID TLV, including bounded-parser fixtures. */
+  readonly digestAlgorithmOid?: Uint8Array;
 }
 
-export const signerInfo = ({ names, signature }: SignerInfoSpec): Uint8Array =>
+export const signerInfo = ({
+  names,
+  signature,
+  serial,
+  digestAlgorithmOid,
+}: SignerInfoSpec): Uint8Array =>
   tlv(
     0x30,
     integer(1),
-    issuerAndSerial(names),
-    algorithm(OID_SHA256),
+    issuerAndSerial(
+      names,
+      serial === undefined ? undefined : tlv(0x02, serial),
+    ),
+    tlv(0x30, digestAlgorithmOid ?? oid(OID_SHA256)),
     algorithm(OID_ECDSA_SHA256),
     signature ?? tlv(0x04, Uint8Array.from([1, 2, 3])),
   );
@@ -222,6 +307,8 @@ export const signedDataBlock = (options: {
   readonly certificates: readonly Uint8Array[];
   readonly signerInfos: readonly Uint8Array[];
   readonly contentType?: string;
+  readonly encapsulatedContent?: Uint8Array;
+  readonly digestAlgorithmOid?: Uint8Array;
 }): Uint8Array =>
   tlv(
     0x30,
@@ -231,8 +318,14 @@ export const signedDataBlock = (options: {
       tlv(
         0x30,
         integer(1),
-        tlv(0x31, algorithm(OID_SHA256)),
-        tlv(0x30, oid("1.2.840.113549.1.7.1")),
+        tlv(0x31, tlv(0x30, options.digestAlgorithmOid ?? oid(OID_SHA256))),
+        tlv(
+          0x30,
+          oid("1.2.840.113549.1.7.1"),
+          ...(options.encapsulatedContent === undefined
+            ? []
+            : [tlv(0xa0, options.encapsulatedContent)]),
+        ),
         tlv(0xa0, ...options.certificates),
         tlv(0x31, ...options.signerInfos),
       ),
@@ -268,13 +361,6 @@ export const zipWith = async (
   return writer.close();
 };
 
-const u32 = (v: number): number[] => [
-  v & 0xff,
-  (v >> 8) & 0xff,
-  (v >> 16) & 0xff,
-  (v >>> 24) & 0xff,
-];
-const u64 = (v: number): number[] => [...u32(v), ...u32(0)];
 const lp = (b: Uint8Array): Buffer =>
   Buffer.concat([Buffer.from(u32(b.length)), b]);
 

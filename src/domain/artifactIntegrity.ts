@@ -2,6 +2,7 @@ import { z } from "zod";
 
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/u);
 const md5 = z.string().regex(/^[a-f0-9]{32}$/u);
+const crc32 = z.string().regex(/^[a-f0-9]{8}$/u);
 
 /** A container's claim is distinct from the SHA-256 identity of observed bytes. */
 export const artifactIntegrityClaimSchema = z.discriminatedUnion("algorithm", [
@@ -22,9 +23,32 @@ export const artifactMd5PairSchema = z.object({
   declared_md5: md5,
   observed_md5: md5,
 });
+/**
+ * A container's DFU suffix checksum over its own bytes before `dwCRC`: CRC-32
+ * without the final inversion, as the suffix stores it.
+ */
+export const artifactDfuCrc32PairSchema = z.object({
+  algorithm: z.literal("dfu-crc32"),
+  declared_crc32: crc32,
+  observed_crc32: crc32,
+});
+/**
+ * A container's standard IEEE CRC-32 checksum over its payload bytes, such as
+ * a legacy U-Boot uImage data CRC.
+ */
+export const artifactCrc32PairSchema = z.object({
+  algorithm: z.literal("crc32"),
+  declared_crc32: crc32,
+  observed_crc32: crc32,
+});
+/** A checksum a container declares over its own bytes, with the observed value. */
+export type ArtifactContainerIntegrityPair =
+  | z.infer<typeof artifactDfuCrc32PairSchema>
+  | z.infer<typeof artifactCrc32PairSchema>;
 export type ArtifactIntegrityPair =
   | z.infer<typeof artifactSha256PairSchema>
-  | z.infer<typeof artifactMd5PairSchema>;
+  | z.infer<typeof artifactMd5PairSchema>
+  | ArtifactContainerIntegrityPair;
 
 /** The canonical portable fields shared by inventory and inspection findings. */
 export const artifactIntegrityPair = (
@@ -38,17 +62,46 @@ export const artifactIntegrityPair = (
 /** Select only digest facts from an authenticated inventory contradiction. */
 export const artifactIntegrityPairOf = (
   pair: ArtifactIntegrityPair,
-): ArtifactIntegrityPair =>
-  "declared_sha256" in pair
+): ArtifactIntegrityPair => {
+  if ("declared_sha256" in pair)
+    return {
+      declared_sha256: pair.declared_sha256,
+      observed_sha256: pair.observed_sha256,
+    };
+  return pair.algorithm === "md5"
     ? {
-        declared_sha256: pair.declared_sha256,
-        observed_sha256: pair.observed_sha256,
-      }
-    : {
         algorithm: pair.algorithm,
         declared_md5: pair.declared_md5,
         observed_md5: pair.observed_md5,
+      }
+    : {
+        algorithm: pair.algorithm,
+        declared_crc32: pair.declared_crc32,
+        observed_crc32: pair.observed_crc32,
       };
+};
+
+/**
+ * Verifiable explanation when stripping Authenticode restores an ASAR-declared
+ * SHA-256. Observed companion bytes remain untrusted; this does not attest the
+ * signature or treat the entry as matching for equivalence.
+ */
+export const signedAfterPackingExplanationSchema = z.strictObject({
+  kind: z.literal("signed-after-packing"),
+  platform: z.literal("pe-authenticode"),
+  unsigned_sha256: sha256,
+  certificate_table_bytes: z
+    .number()
+    .int()
+    .nonnegative()
+    .max(Number.MAX_SAFE_INTEGER),
+  signer_subjects: z.array(z.string()),
+  /** False when a signer identity or certificate table could not be resolved. */
+  signer_subjects_complete: z.boolean(),
+});
+export type SignedAfterPackingExplanation = z.infer<
+  typeof signedAfterPackingExplanationSchema
+>;
 
 export type ArtifactIntegrityDetails = {
   readonly logicalPath: string;
@@ -57,11 +110,17 @@ export type ArtifactIntegrityDetails = {
   | {
       readonly declaredSha256: string | null;
       readonly calculatedSha256: string | null;
+      readonly signingExplanation?: SignedAfterPackingExplanation;
     }
   | {
       readonly algorithm: "md5";
       readonly declaredMd5: string;
       readonly calculatedMd5: string | null;
+    }
+  | {
+      readonly algorithm: "dfu-crc32" | "crc32";
+      readonly declaredCrc32: string;
+      readonly calculatedCrc32: string | null;
     }
 );
 
@@ -71,6 +130,7 @@ export const artifactIntegrityDetails = (
   claim: ArtifactIntegrityClaim | null,
   observed: string | null,
   unpacked: boolean,
+  signingExplanation?: SignedAfterPackingExplanation,
 ): ArtifactIntegrityDetails => ({
   logicalPath,
   unpacked,
@@ -80,22 +140,51 @@ export const artifactIntegrityDetails = (
         declaredMd5: claim.digest,
         calculatedMd5: observed,
       }
-    : { declaredSha256: claim?.digest ?? null, calculatedSha256: observed }),
+    : {
+        declaredSha256: claim?.digest ?? null,
+        calculatedSha256: observed,
+        ...(signingExplanation === undefined ? {} : { signingExplanation }),
+      }),
 });
+
+/** Error details for a container checksum that disagrees with its own bytes. */
+export const artifactContainerIntegrityDetails = (
+  logicalPath: string,
+  pair: ArtifactContainerIntegrityPair,
+): ArtifactIntegrityDetails => ({
+  logicalPath,
+  unpacked: false,
+  algorithm: pair.algorithm,
+  declaredCrc32: pair.declared_crc32,
+  calculatedCrc32: pair.observed_crc32,
+});
+
+const projectedDigests = (details: ArtifactIntegrityDetails) => {
+  if ("declaredSha256" in details)
+    return {
+      declared_sha256: details.declaredSha256,
+      calculated_sha256: details.calculatedSha256,
+      ...(details.signingExplanation === undefined
+        ? {}
+        : { signing_explanation: details.signingExplanation }),
+    };
+  return details.algorithm === "md5"
+    ? {
+        algorithm: details.algorithm,
+        declared_md5: details.declaredMd5,
+        calculated_md5: details.calculatedMd5,
+      }
+    : {
+        algorithm: details.algorithm,
+        declared_crc32: details.declaredCrc32,
+        calculated_crc32: details.calculatedCrc32,
+      };
+};
 
 export const projectArtifactIntegrityDetails = (
   details: ArtifactIntegrityDetails,
 ) => ({
   logical_path: details.logicalPath,
-  ...("declaredSha256" in details
-    ? {
-        declared_sha256: details.declaredSha256,
-        calculated_sha256: details.calculatedSha256,
-      }
-    : {
-        algorithm: details.algorithm,
-        declared_md5: details.declaredMd5,
-        calculated_md5: details.calculatedMd5,
-      }),
+  ...projectedDigests(details),
   unpacked: details.unpacked,
 });

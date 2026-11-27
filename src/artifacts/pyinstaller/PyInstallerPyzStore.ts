@@ -11,20 +11,24 @@ import {
   sameRegularFileState,
   type StableRegularFileDescriptor,
 } from "../../filesystem/RegularFile.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
 import {
+  ArtifactReaderFailure,
   ArtifactResourceScope,
   type ArtifactResourceOwner,
-} from "../ArtifactResourceScope.js";
-import { abortIfNeeded } from "../ArtifactHash.js";
-import { readArtifactFileChunks } from "../readArtifactFileChunks.js";
+  readArtifactFileChunks,
+  abortIfNeeded,
+  artifactFileAdmissionFailure,
+  malformedArtifact,
+} from "../../resources/index.js";
 import {
   pyInstallerMemberStream,
   readPyInstallerMemberPrefix,
 } from "./PyInstallerMemberStream.js";
-import type { CArchiveEntry } from "./CArchiveLayout.js";
+import {
+  isCArchivePythonModule,
+  type CArchiveEntry,
+} from "./CArchiveLayout.js";
 import type { PyInstallerMember } from "./CArchiveMembers.js";
-import { artifactFileAdmissionFailure } from "../ArtifactFileAdmission.js";
 import {
   reconstructedPycHeader,
   isHeaderlessPythonCode,
@@ -74,9 +78,9 @@ export class PyInstallerPyzStore {
   ): Promise<CArchiveBytecodeHeader> {
     const unchanged = { header: undefined, limitation: undefined };
     if (magic === undefined) return unchanged;
-    if (entry.typeCode === "s")
+    if (entry.role === "script")
       return { header: reconstructedPycHeader(magic), limitation: undefined };
-    if (entry.typeCode !== "m" && entry.typeCode !== "M") return unchanged;
+    if (!isCArchivePythonModule(entry)) return unchanged;
     const prefix = await readPyInstallerMemberPrefix(
       async (active) =>
         (
@@ -114,11 +118,11 @@ export class PyInstallerPyzStore {
     archiveStart: number,
     entry: CArchiveEntry,
     signal?: AbortSignal,
-  ): Promise<{ handle: FileHandle; start: number }> {
+  ): Promise<{ handle: FileHandle; start: number; size: number }> {
     abortIfNeeded(signal);
     if (entry.compressedSize === 0)
-      throw new ArtifactReaderFailure(
-        "format",
+      throw malformedArtifact(
+        "pyinstaller",
         "Compressed PYZ image has no zlib bytes",
       );
     this.#root ??= await mkdtemp(join(tmpdir(), "rea-pyz-"));
@@ -151,7 +155,7 @@ export class PyInstallerPyzStore {
     abortIfNeeded(signal);
     const { handle: opened, initial } = await this.#admit(path, signal);
     this.#images.set(opened, { path, initial });
-    return { handle: opened, start: 0 };
+    return { handle: opened, start: 0, size: initial.size };
   }
 
   async release(handle: FileHandle): Promise<void> {
@@ -240,6 +244,9 @@ export class PyInstallerPyzStore {
       const source = await openRegularFile(path, {
         symlinks: "reject",
         signal,
+        // REA just wrote this private image. Settling would wait out a fresh
+        // Windows ChangeTime once per image; external archives still settle.
+        changeTime: "as-written",
       });
       this.#retain(path, new OwnedFileHandle(source.handle));
       return source;
@@ -306,6 +313,7 @@ export class PyInstallerPyzStore {
       throw new ArtifactReaderFailure(
         "integrity",
         "Private PYZ image changed after parsing",
+        { integrityCheck: "container-identity" },
       );
   }
 }

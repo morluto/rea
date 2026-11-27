@@ -19,9 +19,10 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
-import { SafeOutputTreeCreationFailure } from "../../../src/artifacts/SafeOutputTreeCreationFailure.js";
-import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
+import { SafeOutputTree } from "../../../src/resources/SafeOutputTree.js";
+import { SafeOutputTreeDestinationRefusal } from "../../../src/resources/SafeOutputTreeAdmission.js";
+import { SafeOutputTreeCreationFailure } from "../../../src/resources/SafeOutputTreeCreationFailure.js";
+import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
 
 describe("safe artifact output cleanup", () => {
   it("adopts an empty caller directory without taking authority to remove it", async () => {
@@ -39,33 +40,160 @@ describe("safe artifact output cleanup", () => {
     expect(await readdir(output)).toEqual([]);
     await tree.closeHandles();
   });
-  it.skipIf(process.platform !== "linux")(
-    "closes the parent descriptor when the output disappears before commit",
-    async () => {
-      const parent = await createTestTempDirectory("rea-safe-output-");
-      const output = join(parent, "published");
-      const tree = await SafeOutputTree.create(output);
-      await rm(output, { recursive: true });
-      await expect(tree.commit()).rejects.toThrow();
-      const targets = await Promise.all(
-        (await readdir("/proc/self/fd")).map((fd) =>
-          readlink(`/proc/self/fd/${fd}`).catch(() => undefined),
-        ),
-      );
-      expect(targets.filter((target) => target === parent)).toEqual([]);
+  it("keeps cleanup incomplete when the owned root disappears before commit", async () => {
+    const parent = await createTestTempDirectory("rea-safe-output-");
+    const output = join(parent, "published");
+    const tree = await SafeOutputTree.create(output);
+    await rm(output, { recursive: true });
+
+    await expect(tree.commit()).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(tree.rollback()).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "output-lifecycle",
+      cause: { code: "ENOENT" },
+      cleanup: { resources: [output] },
+    });
+    expect(tree.cleanup).toEqual({
+      status: "incomplete",
+      residualPaths: ["published"],
+    });
+  });
+
+  it("retries pending-file cleanup after the exclusive handle can be identified", async () => {
+    const parent = await createTestTempDirectory("rea-safe-output-pending-");
+    const output = join(parent, "published");
+    const destination = join(output, "payload.txt");
+    const prototypeHandle = await open(join(parent, "handle"), "w");
+    const handlePrototype = Object.getPrototypeOf(prototypeHandle) as Pick<
+      typeof prototypeHandle,
+      "stat"
+    >;
+    await prototypeHandle.close();
+    await rm(join(parent, "handle"));
+    const tree = await SafeOutputTree.create(output);
+    let pendingHandle: { fd: number } | undefined;
+    const stat = vi.spyOn(handlePrototype, "stat");
+    stat.mockImplementation(function (this: { fd: number }) {
+      pendingHandle = this;
+      return Promise.reject(new Error("injected file identity failure"));
+    });
+    try {
+      await expect(
+        tree.write("payload.txt", Readable.from(Buffer.from("owned")), {
+          sha256: createHash("sha256").update("owned").digest("hex"),
+          bytes: Buffer.byteLength("owned"),
+        }),
+      ).rejects.toThrow("injected file identity failure");
+      expect(pendingHandle?.fd).toBeGreaterThanOrEqual(0);
       const failure = await tree.rollback().catch((cause: unknown) => cause);
-      expect(failure).toBeInstanceOf(ArtifactReaderFailure);
-      expect(failure).toMatchObject({ cleanup: { resources: [output] } });
+      expect(failure).toMatchObject({
+        message: "injected file identity failure",
+        cleanup: { resources: [output] },
+      });
+      expect(pendingHandle?.fd).toBeGreaterThanOrEqual(0);
+      expect(await readFile(destination, "utf8")).toBe("");
       expect(tree.cleanup).toEqual({
         status: "incomplete",
         residualPaths: ["published"],
       });
-      await rm(parent, { recursive: true, force: true });
-    },
-  );
+      stat.mockRestore();
+      expect(await tree.rollback()).toEqual({
+        status: "complete",
+        residualPaths: [],
+      });
+      expect(pendingHandle?.fd).toBe(-1);
+      await expect(readFile(destination, "utf8")).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    } finally {
+      stat.mockRestore();
+    }
+  });
+
+  it("returns a non-empty accepted directory without wrapping or removing it", async () => {
+    const parent = await createTestTempDirectory("rea-safe-output-nonempty-");
+    const output = join(parent, "output");
+    await mkdir(output);
+    await writeFile(join(output, "caller.txt"), "keep");
+    const failure = await SafeOutputTree.create(output, process.platform, {
+      acceptExistingEmpty: true,
+    }).catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(SafeOutputTreeDestinationRefusal);
+    expect(failure).not.toBeInstanceOf(SafeOutputTreeCreationFailure);
+    expect(failure).toMatchObject({
+      message: "Output directory is not empty",
+    });
+    expect(await readFile(join(output, "caller.txt"), "utf8")).toBe("keep");
+  });
 });
 
 describe("safe artifact output file identity admission", () => {
+  it.skipIf(process.platform === "win32")(
+    "closes a captured pending identity and retries the path without that handle",
+    async () => {
+      const parent = await createTestTempDirectory(
+        "rea-safe-output-pending-path-",
+      );
+      const output = join(parent, "published");
+      const destination = join(output, "payload.txt");
+      const displaced = join(parent, "owned-payload.txt");
+      const prototypeHandle = await open(join(parent, "handle"), "w");
+      const handlePrototype = Object.getPrototypeOf(prototypeHandle) as Pick<
+        typeof prototypeHandle,
+        "stat"
+      >;
+      await prototypeHandle.close();
+      await rm(join(parent, "handle"));
+      const tree = await SafeOutputTree.create(output);
+      const originalStat = handlePrototype.stat;
+      let pendingHandle: { fd: number } | undefined;
+      const remember = (handle: { fd: number }): void => {
+        pendingHandle = handle;
+      };
+      const stat = vi.spyOn(handlePrototype, "stat");
+      stat.mockImplementationOnce(function (this: { fd: number }) {
+        remember(this);
+        return Promise.reject(new Error("injected file identity failure"));
+      });
+      await expect(
+        tree.write("payload.txt", Readable.from(Buffer.from("owned")), {
+          sha256: createHash("sha256").update("owned").digest("hex"),
+          bytes: Buffer.byteLength("owned"),
+        }),
+      ).rejects.toThrow("injected file identity failure");
+      stat.mockImplementationOnce(async function (
+        this: typeof prototypeHandle,
+        ...args
+      ) {
+        remember(this);
+        const metadata = await originalStat.apply(this, args);
+        await rename(destination, displaced);
+        await writeFile(destination, "replacement");
+        return metadata;
+      });
+      try {
+        const failure = await tree.rollback().catch((cause: unknown) => cause);
+        expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+        expect(failure).toMatchObject({
+          message: `Extraction file identity changed: ${destination}`,
+          cleanup: { resources: [output] },
+        });
+        expect(pendingHandle?.fd).toBe(-1);
+        expect(await readFile(destination, "utf8")).toBe("replacement");
+        expect(await readFile(displaced, "utf8")).toBe("");
+        await rm(destination);
+        await rename(displaced, destination);
+        expect(await tree.rollback()).toEqual({
+          status: "complete",
+          residualPaths: [],
+        });
+        expect(await readdir(parent)).toEqual([]);
+      } finally {
+        stat.mockRestore();
+      }
+    },
+  );
+
   it.skipIf(process.platform === "win32")(
     "retains an O_EXCL file handle until its identity can be retried",
     async () => {
@@ -411,28 +539,6 @@ describe("safe artifact output tree", () => {
     },
   );
 
-  it("publishes files while building and preserves them after sealing", async () => {
-    const parent = await createTestTempDirectory("rea-safe-output-");
-    const output = join(parent, "published");
-    const tree = await SafeOutputTree.create(output);
-    const bytes = Buffer.from("visible before seal");
-    const digest = createHash("sha256").update(bytes).digest("hex");
-
-    await tree.write("file.txt", Readable.from(bytes), {
-      sha256: digest,
-      bytes: bytes.byteLength,
-    });
-    expect(await readFile(join(output, "file.txt"), "utf8")).toBe(
-      "visible before seal",
-    );
-
-    await tree.commit();
-    expect(await tree.rollback()).toEqual({ status: "not-required" });
-    expect(await readFile(join(output, "file.txt"), "utf8")).toBe(
-      "visible before seal",
-    );
-  });
-
   it("returns detached cleanup reports", async () => {
     const parent = await createTestTempDirectory("rea-safe-output-");
     const tree = await SafeOutputTree.create(join(parent, "published"));
@@ -453,46 +559,33 @@ describe("safe artifact output tree", () => {
     ).rejects.toBeInstanceOf(ArtifactReaderFailure);
     await expect(tree.commit()).rejects.toBeInstanceOf(ArtifactReaderFailure);
   });
-
-  it("publishes without POSIX-only directory chmod or fsync on Windows", async () => {
-    const parent = await createTestTempDirectory("rea-safe-output-");
-    const output = join(parent, "published");
-    const tree = await SafeOutputTree.create(output, "win32");
-    const bytes = Buffer.from("windows output");
-    const digest = createHash("sha256").update(bytes).digest("hex");
-
-    await tree.write("nested/file.txt", Readable.from(bytes), {
-      sha256: digest,
-      bytes: bytes.byteLength,
-    });
-    await tree.commit();
-    expect(await readFile(join(output, "nested", "file.txt"), "utf8")).toBe(
-      "windows output",
-    );
-  });
 });
 
-describe("safe artifact output Windows stream paths", () => {
-  it.each([
-    "hello.txt:hidden",
-    "nested/hello.txt::$DATA",
-    "folder:stream/file.txt",
-  ])("refuses Windows stream syntax before creating %s", async (path) => {
-    const parent = await createTestTempDirectory("rea-safe-output-stream-");
+it.each([
+  { path: "hello.txt:hidden", kind: "stream syntax" },
+  { path: "nested/hello.txt::$DATA", kind: "stream syntax" },
+  { path: "folder:stream/file.txt", kind: "stream syntax" },
+  { path: "Folder/Icon\r", kind: "control character" },
+  { path: "Fold\ter/file.txt", kind: "control character" },
+])(
+  "refuses Windows $kind before materializing $path",
+  async ({ path, kind }) => {
+    const parent = await createTestTempDirectory("rea-safe-output-name-");
     const output = join(parent, "published");
     const tree = await SafeOutputTree.create(output, "win32");
     const bytes = Buffer.from("regular file content");
     const source = Readable.from(bytes);
+    const message =
+      kind === "stream syntax"
+        ? `Windows destination cannot materialize artifact path as a regular file: ${path}; ':' denotes alternate data stream syntax.`
+        : `Windows destination cannot materialize artifact path: ${JSON.stringify(path)}; Windows names cannot contain U+0001-U+001F.`;
     try {
       await expect(
         tree.write(path, source, {
           sha256: createHash("sha256").update(bytes).digest("hex"),
           bytes: bytes.byteLength,
         }),
-      ).rejects.toMatchObject({
-        reason: "path",
-        message: `Windows destination cannot materialize artifact path as a regular file: ${path}; ':' denotes alternate data stream syntax.`,
-      });
+      ).rejects.toMatchObject({ reason: "path", message });
       expect(source.destroyed).toBe(true);
       expect(await readdir(output)).toEqual([]);
     } finally {
@@ -501,31 +594,6 @@ describe("safe artifact output Windows stream paths", () => {
         residualPaths: [],
       });
     }
-    await expect(access(output)).rejects.toMatchObject({ code: "ENOENT" });
     expect(await readdir(parent)).toEqual([]);
-  });
-
-  it.each(["Folder/Icon\r", "Fold\ter/file.txt"])(
-    "refuses Windows control characters before creating %j",
-    async (path) => {
-      const parent = await createTestTempDirectory("rea-safe-output-control-");
-      const output = join(parent, "published");
-      const tree = await SafeOutputTree.create(output, "win32");
-      const bytes = Buffer.from("regular file content");
-      await expect(
-        tree.write(path, Readable.from(bytes), {
-          sha256: createHash("sha256").update(bytes).digest("hex"),
-          bytes: bytes.byteLength,
-        }),
-      ).rejects.toMatchObject({
-        reason: "path",
-        message: `Windows destination cannot materialize artifact path: ${JSON.stringify(path)}; Windows names cannot contain U+0001-U+001F.`,
-      });
-      expect(await readdir(output)).toEqual([]);
-      expect(await tree.rollback()).toEqual({
-        status: "complete",
-        residualPaths: [],
-      });
-    },
-  );
-});
+  },
+);

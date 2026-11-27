@@ -5,20 +5,21 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 import { build, buildBinary, type PlistValue } from "plist";
-import { estimateBinaryPlistExpansion } from "./PropertyListDecodeBudget.js";
+import { AnalysisTargetFailureError } from "../../domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import { estimateBinaryPlistExpansion } from "../../domain/apple/propertyListDecodeBudget.js";
+import { scanBinaryPlistScalars } from "../../domain/apple/plistScalars.js";
 import {
   decodeKeyedArchiveBytes,
   inspectBundleKeyedArchive,
 } from "./KeyedArchiveReader.js";
-import {
-  PlistNestingLimitError,
-  unknownDateLimitation,
-} from "../../domain/apple/plistValue.js";
+import { PlistNestingLimitError } from "../../domain/apple/plistValue.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
 import { deeplyNestedXmlPlist } from "../../../tests/fixtures/keyedArchiveXmlNesting.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { scanBinaryPlistScalars } from "./PlistScalars.js";
 import { embedSubmillisecondDateInWideIntegerPayload } from "../../../tests/fixtures/binaryPlistScalarAlias.js";
 import {
+  binaryPlistObjectTable,
   readBinaryPlistObjectOffset,
   readBinaryPlistObjectTableLayout,
   writeBinaryPlistObjectOffset,
@@ -53,6 +54,17 @@ const binaryArchiveWithDate = (): Buffer =>
     }),
   );
 
+// Locate the known binary date independently of the scanner under test.
+const fixtureDateOffset = (bytes: Buffer, seconds: number): number => {
+  const encoded = Buffer.alloc(9);
+  encoded[0] = 0x33;
+  encoded.writeDoubleBE(seconds, 1);
+  const offset = bytes.indexOf(encoded);
+  if (offset < 0 || bytes.indexOf(encoded, offset + 1) !== -1)
+    throw new Error("binary archive fixture must contain exactly one date");
+  return offset;
+};
+
 const binaryArchiveWithOverlappingDate = (): Buffer => {
   const bytes = Buffer.from(
     buildBinary({
@@ -65,19 +77,17 @@ const binaryArchiveWithOverlappingDate = (): Buffer => {
       $top: { root: { UID: 1 } },
     }),
   );
-  const date = scanBinaryPlistScalars(bytes).dates[0];
-  if (date === undefined)
-    throw new Error("binary archive fixture lost its date");
-  bytes.writeDoubleBE(0.0005, date.payloadOffset);
+  const dateOffset = fixtureDateOffset(bytes, 0);
+  bytes.writeDoubleBE(0.0005, dateOffset + 1);
   const objectTable = readBinaryPlistObjectTableLayout(bytes);
   for (let objectId = 0; objectId < objectTable.objectCount; objectId += 1) {
     const offset = readBinaryPlistObjectOffset(bytes, objectTable, objectId);
-    if (offset !== date.offset && bytes[offset] === 0x40) {
+    if (offset !== dateOffset && bytes[offset] === 0x40) {
       writeBinaryPlistObjectOffset(
         bytes,
         objectTable,
         objectId,
-        date.payloadOffset + 1,
+        dateOffset + 2,
       );
       return bytes;
     }
@@ -87,14 +97,12 @@ const binaryArchiveWithOverlappingDate = (): Buffer => {
 
 const binaryArchiveDateCrossingOffsetTable = (): Buffer => {
   const bytes = Buffer.from(binaryArchiveWithDate());
-  const date = scanBinaryPlistScalars(bytes).dates[0];
-  if (date === undefined)
-    throw new Error("binary archive fixture lost its date");
+  const dateOffset = fixtureDateOffset(bytes, 0.1);
   const objectTable = readBinaryPlistObjectTableLayout(bytes);
   let dateObjectId = -1;
   for (let objectId = 0; objectId < objectTable.objectCount; objectId += 1) {
     if (
-      readBinaryPlistObjectOffset(bytes, objectTable, objectId) === date.offset
+      readBinaryPlistObjectOffset(bytes, objectTable, objectId) === dateOffset
     )
       dateObjectId = objectId;
   }
@@ -151,11 +159,7 @@ describe("keyed archive scalar projection", () => {
         offset: 0,
         limit: 2,
       }),
-    ).toThrow(
-      expect.objectContaining({
-        message: "binary plist date object is truncated",
-      }),
-    );
+    ).toThrow(/date.*truncated/iu);
   });
 
   it("keeps overlapping date precision unknown without changing its sibling object", () => {
@@ -178,7 +182,9 @@ describe("keyed archive scalar projection", () => {
       }),
     );
     expect(graph.limitations).toContainEqual(
-      expect.stringContaining("sub-millisecond source records overlap"),
+      expect.stringMatching(
+        /1 date.*unknown timestamps.*sub.millisecond.*overlap/iu,
+      ),
     );
   });
 });
@@ -232,27 +238,29 @@ describe("inert keyed archive decoding", () => {
       expect.objectContaining({ source: 1, target: 2, status: "resolved" }),
     );
   });
-  it("reports an XML archive dictionary keyed __proto__ as omitted", () => {
-    const xml = build({ ...archive, $objects: ["$null", "value"] }).replace(
-      "<key>$top</key>",
-      "<key>__proto__</key><string>x</string><key>$top</key>",
-    );
+  it("preserves an XML object dictionary keyed __proto__", () => {
+    const xml = build({
+      ...archive,
+      $objects: ["$null", { prototypeKey: "x" }],
+    }).replace("<key>prototypeKey</key>", "<key>__proto__</key>");
     const graph = decodeKeyedArchiveBytes(Buffer.from(xml), {
       offset: 0,
       limit: 2,
     });
-    expect(graph.objects.map(({ value }) => value)).toEqual(["$null", "value"]);
-    expect(graph.limitations).toContain(
-      "1 dictionary entry keyed __proto__ was omitted because REA results cannot represent that key.",
-    );
+    expect(graph.objects.map(({ value }) => value)).toEqual([
+      "$null",
+      { ["__proto__"]: "x" },
+    ]);
+    expect(
+      graph.limitations.some((value) => value.includes("keyed __proto__")),
+    ).toBe(false);
   });
-  it("reports a binary archive dictionary keyed __proto__ as omitted", () => {
+  it("preserves a binary object dictionary keyed __proto__", () => {
     const placeholder = "proto_key";
     const encoded = Buffer.from(
       buildBinary({
         ...archive,
-        [placeholder]: "hidden",
-        $objects: ["$null", "value"],
+        $objects: ["$null", { [placeholder]: "hidden" }],
       }),
     );
     const start = encoded.indexOf(placeholder);
@@ -261,9 +269,10 @@ describe("inert keyed archive decoding", () => {
     Buffer.from("__proto__").copy(encoded, start);
 
     const graph = decodeKeyedArchiveBytes(encoded, { offset: 0, limit: 2 });
-    expect(graph.limitations).toContain(
-      "Dictionary entries keyed __proto__ were omitted because REA results cannot represent that key.",
-    );
+    expect(graph.objects[1]?.value).toEqual({ ["__proto__"]: "hidden" });
+    expect(
+      graph.limitations.some((value) => value.includes("keyed __proto__")),
+    ).toBe(false);
   });
   it("does not report a binary __proto__ value as an omitted key", () => {
     const graph = decodeKeyedArchiveBytes(
@@ -276,9 +285,9 @@ describe("inert keyed archive decoding", () => {
       ),
       { offset: 0, limit: 2 },
     );
-    expect(graph.limitations).not.toContain(
-      "Dictionary entries keyed __proto__ were omitted because REA results cannot represent that key.",
-    );
+    expect(
+      graph.limitations.some((value) => value.includes("keyed __proto__")),
+    ).toBe(false);
   });
   it("rejects missing roots, malformed plist, and non-keyed archives", () => {
     expect(() =>
@@ -298,7 +307,7 @@ describe("inert keyed archive decoding", () => {
         offset: 0,
         limit: 1,
       }),
-    ).toThrow("NSKeyedArchiver");
+    ).toThrow("not a keyed archive");
     expect(() =>
       decodeKeyedArchiveBytes(Buffer.from(buildBinary(archive)), {
         root: "missing",
@@ -417,9 +426,13 @@ describe("binary plist reference preflight", () => {
     expect(() =>
       decodeKeyedArchiveBytes(keyedRoot([plistArray([8])]), selection),
     ).toThrow(
-      new TypeError(
-        "binary plist object references form a cycle, which a property list cannot represent",
-      ),
+      expect.objectContaining({
+        failure: expect.objectContaining({
+          kind: "malformed",
+          detail:
+            "binary plist object references form a cycle, which a property list cannot represent",
+        }),
+      }),
     );
   });
 
@@ -433,7 +446,14 @@ describe("binary plist reference preflight", () => {
         keyedRoot([...levels, plistString("x")]),
         selection,
       ),
-    ).toThrow(RangeError);
+    ).toThrow(
+      expect.objectContaining({
+        failure: expect.objectContaining({
+          kind: "limit",
+          limit: { name: "plist-decode-bytes", maximum: 512 * 1024 * 1024 },
+        }),
+      }),
+    );
   });
 
   it("decodes shared leaf references", () => {
@@ -447,6 +467,10 @@ describe("binary plist reference preflight", () => {
       [2, "$null"],
     ]);
   });
+});
+
+describe("binary plist dictionary materialization", () => {
+  const selection = { offset: 0, limit: 10 };
 
   it("recognizes a shared key object used by separate dictionaries", () => {
     const graph = decodeKeyedArchiveBytes(
@@ -460,18 +484,24 @@ describe("binary plist reference preflight", () => {
       ]),
       selection,
     );
-    expect(graph.limitations).toContain(
-      "Dictionary entries keyed __proto__ were omitted because REA results cannot represent that key.",
-    );
+    expect(graph.objects.map(({ value }) => value)).toEqual([
+      { ["__proto__"]: "first" },
+      { ["__proto__"]: "second" },
+    ]);
+    expect(
+      graph.limitations.some((value) => value.includes("keyed __proto__")),
+    ).toBe(false);
   });
 
-  it("reports binary omission presence without claiming a count", () => {
+  it("preserves nested keys while duplicate entries retain the last value", () => {
     const placeholder = "proto_key";
     const nested = Buffer.from(
       buildBinary({
         ...archive,
-        [placeholder]: { [placeholder]: "hidden", visible: true },
-        $objects: ["$null", "value"],
+        $objects: [
+          "$null",
+          { [placeholder]: { [placeholder]: "hidden", visible: true } },
+        ],
       }),
     );
     let index = nested.indexOf(placeholder);
@@ -480,9 +510,14 @@ describe("binary plist reference preflight", () => {
       index = nested.indexOf(placeholder, index + placeholder.length);
     }
     const nestedGraph = decodeKeyedArchiveBytes(nested, selection);
-    expect(nestedGraph.limitations).toContain(
-      "Dictionary entries keyed __proto__ were omitted because REA results cannot represent that key.",
-    );
+    expect(nestedGraph.objects[1]?.value).toEqual({
+      ["__proto__"]: { ["__proto__"]: "hidden", visible: true },
+    });
+    expect(
+      nestedGraph.limitations.some((value) =>
+        value.includes("keyed __proto__"),
+      ),
+    ).toBe(false);
 
     const shadowedValue = keyedRoot([
       plistArray([9]),
@@ -497,12 +532,7 @@ describe("binary plist reference preflight", () => {
     expect(keyOffset).toBeGreaterThanOrEqual(0);
     Buffer.from("__proto__").copy(shadowedValue, keyOffset);
     const shadowedGraph = decodeKeyedArchiveBytes(shadowedValue, selection);
-    expect(shadowedGraph.limitations).toContain(
-      "Dictionary entries keyed __proto__ were omitted because REA results cannot represent that key.",
-    );
-    expect(shadowedGraph.limitations).not.toContain(
-      "1 dictionary entry keyed __proto__ was omitted because REA results cannot represent that key.",
-    );
+    expect(shadowedGraph.objects[0]?.value).toEqual({ shadow: "replacement" });
   });
 
   it("detects UTF-16 binary dictionary keys", () => {
@@ -515,9 +545,10 @@ describe("binary plist reference preflight", () => {
       ]),
       selection,
     );
-    expect(graph.limitations).toContain(
-      "Dictionary entries keyed __proto__ were omitted because REA results cannot represent that key.",
-    );
+    expect(graph.objects[0]?.value).toEqual({ ["__proto__"]: "hidden" });
+    expect(
+      graph.limitations.some((value) => value.includes("keyed __proto__")),
+    ).toBe(false);
   });
 
   it("detects extended-length UTF-16 binary dictionary keys", () => {
@@ -530,9 +561,10 @@ describe("binary plist reference preflight", () => {
       ]),
       selection,
     );
-    expect(graph.limitations).toContain(
-      "Dictionary entries keyed __proto__ were omitted because REA results cannot represent that key.",
-    );
+    expect(graph.objects[0]?.value).toEqual({ ["__proto__"]: "hidden" });
+    expect(
+      graph.limitations.some((value) => value.includes("keyed __proto__")),
+    ).toBe(false);
   });
 });
 
@@ -561,11 +593,70 @@ const mutateCanonicalDate = (
   return bytes;
 };
 
+/** Move the last offset-table entry into the trailer's unused first byte. */
+const runOffsetTableIntoTrailer = (bytes: Buffer): Buffer => {
+  const trailer = bytes.length - 32;
+  const shifted = Buffer.concat([
+    bytes.subarray(0, trailer - 1),
+    bytes.subarray(trailer),
+  ]);
+  shifted[shifted.length - 32] = bytes[trailer - 1] ?? 0;
+  return shifted;
+};
+
 const dateScalar = (iso8601: string | null) => ({
   id: 1,
   kind: "scalar" as const,
   status: "observed" as const,
   value: { $plist_type: "date", iso8601 },
+});
+
+const oneUnknownDate = /\b1 date value.*could not represent.*timestamps/iu;
+const twoUnknownDates = /\b2 date value.*could not represent.*timestamps/iu;
+
+/** One binary-plist UID wider than an exact JavaScript integer. */
+const binaryPlistWithOversizedUid = (): Buffer => {
+  const width = 8;
+  let value = BigInt(Number.MAX_SAFE_INTEGER) + 1n;
+  const record = Buffer.alloc(width + 1);
+  record[0] = 0x80 | (width - 1);
+  for (let byte = width - 1; byte >= 0; byte -= 1) {
+    record[byte + 1] = Number(value & 0xffn);
+    value >>= 8n;
+  }
+  const offsetTable = 8 + record.length;
+  const bytes = Buffer.alloc(offsetTable + 1 + 32);
+  record.copy(bytes, 8);
+  return binaryPlistObjectTable(bytes, [8], offsetTable);
+};
+
+describe("binary keyed archive UID facts", () => {
+  it("keeps the reader's binary-plist UID facts on the target failure", async () => {
+    const bytes = binaryPlistWithOversizedUid();
+    const root = await createTestTempDirectory("rea-keyed-oversized-uid-");
+    await writeFile(join(root, "archive.plist"), bytes);
+    const rejected = await inspectBundleKeyedArchive({
+      bundlePath: root,
+      targetSha256: createHash("sha256").update(bytes).digest("hex"),
+      parameters: { path: "archive.plist" },
+    }).catch((cause: unknown) => cause);
+    expect(rejected).toBeInstanceOf(AnalysisTargetFailureError);
+    if (!(rejected instanceof AnalysisTargetFailureError))
+      throw new Error("expected a target failure");
+    expect(rejected.failure).toMatchObject({
+      kind: "unsupported",
+      format: "binary-plist",
+      field: "uid",
+      undecodedContent: true,
+    });
+    expect(projectAnalysisError(rejected).details).toMatchObject({
+      operation: "inspect_keyed_archive",
+      path: join(root, "archive.plist"),
+      failure_kind: "unsupported",
+      format: "binary-plist",
+      field: "uid",
+    });
+  });
 });
 
 describe("binary keyed archive dates", () => {
@@ -577,7 +668,11 @@ describe("binary keyed archive dates", () => {
     expect(graph.objects[1]).toMatchObject(
       dateScalar("2001-01-01T00:00:00.100Z"),
     );
-    expect(graph.limitations).not.toContain(unknownDateLimitation(1));
+    expect(graph.limitations).not.toContainEqual(
+      expect.stringMatching(
+        /date value.*decoder could not represent.*timestamps/iu,
+      ),
+    );
     expect(Buffer.compare(bytes, pythonBinaryDateControl)).toBe(0);
     expect(createHash("sha256").update(bytes).digest("hex")).toBe(
       "39f08db8341bd74220352dfd559485515cce1e6035e08f27a59ab8f856374a30",
@@ -592,11 +687,19 @@ describe("binary keyed archive dates", () => {
     expect(inspected.objects[1]).toMatchObject(
       dateScalar("2001-01-01T00:00:00.100Z"),
     );
-    expect(inspected.limitations).not.toContain(unknownDateLimitation(1));
+    expect(inspected.limitations).not.toContainEqual(
+      expect.stringMatching(
+        /date value.*decoder could not represent.*timestamps/iu,
+      ),
+    );
     expect(
       Buffer.compare(await readFile(join(root, "archive.plist")), bytes),
     ).toBe(0);
   });
+});
+
+describe("binary keyed archive invalid dates", () => {
+  const selection = { offset: 0, limit: 10 };
 
   it.each(
     [0x30, 0x31, 0x32, 0x34].map(
@@ -609,11 +712,18 @@ describe("binary keyed archive dates", () => {
         copy[offset] = marker;
       });
       const original = Buffer.from(bytes);
-      expect(() => decodeKeyedArchiveBytes(bytes, selection)).toThrow(
-        new TypeError(
-          `binary plist date marker 0x${marker.toString(16)} is invalid`,
-        ),
-      );
+      let decodeFailure: unknown;
+      try {
+        decodeKeyedArchiveBytes(bytes, selection);
+      } catch (cause: unknown) {
+        decodeFailure = cause;
+      }
+      expect(decodeFailure).toBeInstanceOf(ParseFailureError);
+      expect(decodeFailure).toMatchObject({ kind: "malformed" });
+      if (!(decodeFailure instanceof Error))
+        throw new Error("Expected invalid date marker to fail");
+      expect(decodeFailure.message).toContain(`0x${marker.toString(16)}`);
+      expect(decodeFailure.message).toMatch(/date marker.*invalid/iu);
       expect(Buffer.compare(bytes, original)).toBe(0);
       if (marker === 0x30)
         expect(createHash("sha256").update(bytes).digest("hex")).toBe(
@@ -630,8 +740,8 @@ describe("binary keyed archive dates", () => {
         }),
       ).rejects.toMatchObject({
         name: "ArtifactReaderFailure",
-        reason: "format",
-        message: `Cannot decode selected Foundation keyed archive: binary plist date marker 0x${marker.toString(16)} is invalid`,
+        reason: "malformed",
+        message: expect.stringContaining(decodeFailure.message),
       });
       expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
     },
@@ -647,9 +757,11 @@ describe("binary keyed archive dates", () => {
     expect(JSON.stringify(graph.objects[1]?.value)).not.toContain(
       "2001-01-01T00:00:00.100Z",
     );
-    expect(graph.limitations).toContain(unknownDateLimitation(1));
-    expect(graph.limitations.join("\n")).not.toContain(
-      "number metadata could not be completely observed",
+    expect(graph.limitations).toContainEqual(
+      expect.stringMatching(oneUnknownDate),
+    );
+    expect(graph.limitations).not.toContainEqual(
+      expect.stringMatching(/number metadata.*could not.*observed/iu),
     );
     expect(Buffer.compare(submillisecond, original)).toBe(0);
     expect(createHash("sha256").update(submillisecond).digest("hex")).toBe(
@@ -663,7 +775,9 @@ describe("binary keyed archive dates", () => {
       parameters: { path: "archive.plist" },
     });
     expect(inspected.objects[1]).toMatchObject(dateScalar(null));
-    expect(inspected.limitations).toContain(unknownDateLimitation(1));
+    expect(inspected.limitations).toContainEqual(
+      expect.stringMatching(oneUnknownDate),
+    );
     expect(
       Buffer.compare(
         await readFile(join(root, "archive.plist")),
@@ -703,8 +817,65 @@ describe("binary keyed archive dates", () => {
       { $plist_type: "date", iso8601: null },
       { $plist_type: "date", iso8601: null },
     ]);
-    expect(mixedGraph.limitations).toContain(unknownDateLimitation(2));
+    expect(mixedGraph.limitations).toContainEqual(
+      expect.stringMatching(twoUnknownDates),
+    );
     expect(Buffer.compare(mixed, mixedOriginal)).toBe(0);
+  });
+});
+
+describe("binary keyed archive post-table objects", () => {
+  it("preserves exact integer decimals when an archive string follows the offset table", () => {
+    const original = Buffer.from(
+      buildBinary({
+        $archiver: "NSKeyedArchiver",
+        $version: 100000,
+        $top: { root: { UID: 2 } },
+        $objects: [
+          "$null",
+          "hello",
+          9007199254740993n as unknown as PlistValue,
+        ],
+      }),
+    );
+    const intMarkerOffset = original.indexOf(0x13);
+    expect(intMarkerOffset).toBeGreaterThan(0);
+    // Overwrite the 8-byte integer payload with exact 9007199254740993n
+    original.writeBigInt64BE(9007199254740993n, intMarkerOffset + 1);
+
+    const stringBytes = Buffer.from("\x55hello", "latin1");
+    const stringOffset = original.indexOf(stringBytes);
+    expect(stringOffset).toBeGreaterThan(0);
+    const trailerOffset = original.length - 32;
+    const tableOffset = Number(original.readBigUInt64BE(trailerOffset + 24));
+    const count = Number(original.readBigUInt64BE(trailerOffset + 8));
+    const width = original[trailerOffset + 6] ?? 1;
+
+    const post = Buffer.concat([
+      original.subarray(0, trailerOffset),
+      stringBytes,
+      original.subarray(trailerOffset),
+    ]);
+    const newTrailerOffset = post.length - 32;
+    for (let i = 0; i < count; i += 1) {
+      const offset = post.readUIntBE(tableOffset + i * width, width);
+      if (offset === stringOffset) {
+        post.writeUIntBE(trailerOffset, tableOffset + i * width, width);
+      }
+    }
+    post.writeBigUInt64BE(BigInt(tableOffset), newTrailerOffset + 24);
+
+    const graph = decodeKeyedArchiveBytes(post, { offset: 0, limit: 10 });
+    expect(graph.objects[2]).toMatchObject({
+      id: 2,
+      status: "observed",
+      value: { $plist_type: "integer", decimal: "9007199254740993" },
+    });
+    expect(
+      graph.limitations.some((lim) =>
+        lim.includes("could not be completely observed"),
+      ),
+    ).toBe(false);
   });
 });
 
@@ -725,16 +896,16 @@ describe("binary plist date object region", () => {
     bytes.writeBigUInt64BE(BigInt(offsetTable), trailer + 24);
     expect(() =>
       estimateBinaryPlistExpansion(bytes, 1024 * 1024, { bounds: "strict" }),
-    ).toThrow(new TypeError("binary plist date object is truncated"));
+    ).toThrow(/date.*truncated/iu);
     // Decoder bounds extend other objects to the end of the file. The date
     // payload still has to end at the offset table. The keyed-archive reader
     // uses those bounds and must refuse the same payload.
     expect(() =>
       estimateBinaryPlistExpansion(bytes, 1024 * 1024, { bounds: "decoder" }),
-    ).toThrow(new TypeError("binary plist date object is truncated"));
+    ).toThrow(/date.*truncated/iu);
     expect(() =>
       decodeKeyedArchiveBytes(bytes, { offset: 0, limit: 1 }),
-    ).toThrow(new TypeError("binary plist date object is truncated"));
+    ).toThrow(/date.*truncated/iu);
   });
 
   it("refuses a decoder-bounds date whose marker sits past the offset table", () => {
@@ -753,10 +924,147 @@ describe("binary plist date object region", () => {
     bytes.writeBigUInt64BE(8n, trailer + 24);
     expect(() =>
       estimateBinaryPlistExpansion(bytes, 1024 * 1024, { bounds: "decoder" }),
-    ).toThrow(new TypeError("binary plist date object is truncated"));
+    ).toThrow(/date.*truncated/iu);
     expect(() =>
       decodeKeyedArchiveBytes(bytes, { offset: 0, limit: 1 }),
-    ).toThrow(new TypeError("binary plist date object is truncated"));
+    ).toThrow(/date.*truncated/iu);
+  });
+
+  it("keeps a sub-millisecond instant unknown when the offset table runs into the trailer", () => {
+    const submillisecond = mutateCanonicalDate((offset, copy) => {
+      copy.writeDoubleBE(0.1005, offset + 1);
+    });
+    // Decoder bounds admit this table.
+    const overlapping = runOffsetTableIntoTrailer(submillisecond);
+    const original = Buffer.from(overlapping);
+
+    const graph = decodeKeyedArchiveBytes(overlapping, {
+      offset: 0,
+      limit: 10,
+    });
+
+    expect(graph.objects[1]).toMatchObject(dateScalar(null));
+    expect(graph.limitations).toContainEqual(
+      expect.stringMatching(oneUnknownDate),
+    );
+    expect(graph.limitations).not.toContainEqual(
+      expect.stringMatching(/number metadata.*could not.*observed/iu),
+    );
+    expect(Buffer.compare(overlapping, original)).toBe(0);
+  });
+
+  it("rebuilds a complete trailer when isolating an overlapping date whose table runs into the trailer", () => {
+    // Isolating the sub-millisecond date clones it and rebuilds the offset
+    // table; only the old table's bytes before the trailer are replaced.
+    const bytes = runOffsetTableIntoTrailer(binaryArchiveWithOverlappingDate());
+    const original = Buffer.from(bytes);
+
+    const graph = decodeKeyedArchiveBytes(bytes, {
+      root: "root",
+      offset: 0,
+      limit: 4,
+    });
+
+    expect(graph.objects).toContainEqual(
+      expect.objectContaining({
+        id: 1,
+        value: { $plist_type: "date", iso8601: null },
+      }),
+    );
+    expect(graph.objects).toContainEqual(
+      expect.objectContaining({
+        id: 2,
+        value: { $plist_type: "data", base64: "" },
+      }),
+    );
+    expect(Buffer.compare(bytes, original)).toBe(0);
+  });
+});
+
+describe("binary plist clone rewrite", () => {
+  /** A sub-millisecond date overlapped by an empty data object, plus data <07>. */
+  const overlappingDateWithSpareObject = () => {
+    const bytes = Buffer.from(
+      buildBinary({
+        ...archive,
+        $objects: [
+          "$null",
+          new Date("2001-01-01T00:00:00.000Z"),
+          Buffer.alloc(0),
+          Buffer.from([7]),
+        ],
+        $top: { root: { UID: 1 } },
+      }),
+    );
+    const date = scanBinaryPlistScalars(bytes).dates[0];
+    if (date === undefined) throw new Error("fixture lost its date");
+    // 0.0005 s encodes 0x40 as its second payload byte: an empty data record.
+    bytes.writeDoubleBE(0.0005, date.payloadOffset);
+    const table = readBinaryPlistObjectTableLayout(bytes);
+    const objectWith = (record: readonly number[]) => {
+      for (let objectId = 0; objectId < table.objectCount; objectId += 1) {
+        const offset = readBinaryPlistObjectOffset(bytes, table, objectId);
+        if (record.every((byte, index) => bytes[offset + index] === byte))
+          return objectId;
+      }
+      throw new Error("fixture lost an object");
+    };
+    const empty = objectWith([0x40]);
+    const spare = objectWith([0x41, 7]);
+    writeBinaryPlistObjectOffset(bytes, table, empty, date.payloadOffset + 1);
+    return { bytes, spare };
+  };
+
+  it("keeps an object stored in the trailer's spare bytes when isolating an overlapping date", () => {
+    const fixture = overlappingDateWithSpareObject();
+    // Run the table into the trailer, then move data <07> into the trailer's
+    // spare bytes after the table. Decoder bounds admit both placements.
+    const bytes = runOffsetTableIntoTrailer(fixture.bytes);
+    const trailer = bytes.length - 32;
+    bytes.set([0x41, 7], trailer + 1);
+    writeBinaryPlistObjectOffset(
+      bytes,
+      readBinaryPlistObjectTableLayout(bytes),
+      fixture.spare,
+      trailer + 1,
+    );
+    const original = Buffer.from(bytes);
+
+    const graph = decodeKeyedArchiveBytes(bytes, {
+      root: "root",
+      offset: 0,
+      limit: 5,
+    });
+
+    expect(graph.objects.map(({ id, value }) => [id, value])).toEqual([
+      [0, "$null"],
+      [1, { $plist_type: "date", iso8601: null }],
+      [2, { $plist_type: "data", base64: "" }],
+      [3, { $plist_type: "data", base64: "Bw==" }],
+    ]);
+    expect(Buffer.compare(bytes, original)).toBe(0);
+  });
+
+  it("leaves the trailer intact when a reachable date's payload runs into it", () => {
+    // Root array <0x200> at 0x100. The date at trailer - 1 stores its
+    // payload in the trailer, ending with the offset and reference widths.
+    // The 8-byte offset table at trailer + 9 reads the object count and top
+    // object fields, each shifted by one byte: 0x200 and 0x100.
+    const bytes = Buffer.alloc(545);
+    bytes.write("bplist00", 0, "latin1");
+    const trailer = bytes.length - 32;
+    bytes.set([0xa1, 0], 0x100);
+    bytes[trailer - 1] = 0x33;
+    bytes.set([0x3f, 0xb9, 0x99, 0x99, 0x99, 0x99, 8, 1], trailer);
+    bytes.writeBigUInt64BE(2n, trailer + 8);
+    bytes.writeBigUInt64BE(1n, trailer + 16);
+    bytes.writeBigUInt64BE(BigInt(trailer + 9), trailer + 24);
+    const original = Buffer.from(bytes);
+
+    expect(() =>
+      decodeKeyedArchiveBytes(bytes, { offset: 0, limit: 1 }),
+    ).toThrow("not a keyed archive");
+    expect(Buffer.compare(bytes, original)).toBe(0);
   });
 });
 
@@ -893,7 +1201,7 @@ it("preserves exact integers in XML authored UID dictionaries", () => {
   expect(graph.total_references).toBe(1);
 });
 
-it("preserves XML dictionary identity when prototype-key omission leaves a CF$UID field", () => {
+it("preserves XML dictionary identity beside an authored CF$UID field", () => {
   const xml = build({
     $archiver: "NSKeyedArchiver",
     $objects: [
@@ -907,7 +1215,9 @@ it("preserves XML dictionary identity when prototype-key omission leaves a CF$UI
     offset: 0,
     limit: 10,
   });
-  expect(graph.objects[1]?.value).toEqual({ authoredRecord: { CF$UID: 2 } });
+  expect(graph.objects[1]?.value).toEqual({
+    authoredRecord: { CF$UID: 2, ["__proto__"]: "authored" },
+  });
   expect(graph.total_references).toBe(2);
   expect(graph.references).toEqual([
     expect.objectContaining({
@@ -923,9 +1233,7 @@ it("preserves XML dictionary identity when prototype-key omission leaves a CF$UI
       status: "resolved",
     }),
   ]);
-  expect(graph.limitations).toContainEqual(
-    expect.stringMatching(
-      /\b1 dictionary entry\b.*\b__proto__\b.*\bomitted\b/u,
-    ),
-  );
+  expect(
+    graph.limitations.some((value) => value.includes("keyed __proto__")),
+  ).toBe(false);
 });

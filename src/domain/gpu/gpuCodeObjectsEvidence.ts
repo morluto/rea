@@ -1,3 +1,4 @@
+import { unknownTarget } from "../targetIdentity.js";
 import {
   createEvidence,
   type Evidence,
@@ -19,6 +20,30 @@ const gpuParameters = (parameters: GpuCodeObjectsInput) => ({
   ...(parameters.expected_sha256 === undefined
     ? {}
     : { expected_sha256: parameters.expected_sha256 }),
+  ...(parameters.max_object_bytes === undefined
+    ? {}
+    : { max_object_bytes: parameters.max_object_bytes }),
+  ...(parameters.max_work_bytes === undefined
+    ? {}
+    : { max_work_bytes: parameters.max_work_bytes }),
+  ...(parameters.max_report_bytes === undefined
+    ? {}
+    : { max_report_bytes: parameters.max_report_bytes }),
+  ...(parameters.max_metadata_bytes === undefined
+    ? {}
+    : { max_metadata_bytes: parameters.max_metadata_bytes }),
+  ...(parameters.max_structure_bytes === undefined
+    ? {}
+    : { max_structure_bytes: parameters.max_structure_bytes }),
+  ...(parameters.max_parser_entries === undefined
+    ? {}
+    : { max_parser_entries: parameters.max_parser_entries }),
+  ...(parameters.max_parser_visits === undefined
+    ? {}
+    : { max_parser_visits: parameters.max_parser_visits }),
+  ...(parameters.max_token_bytes === undefined
+    ? {}
+    : { max_token_bytes: parameters.max_token_bytes }),
 });
 
 /** One Evidence interpretation for success and observations retained by file finalization failures. */
@@ -49,13 +74,15 @@ export const createGpuCodeObjectsPartialEvidence = (
   provider: EvidenceProvider,
   parameters: GpuCodeObjectsInput,
 ): Evidence =>
-  createEvidence(undefined, provider, {
+  createEvidence(unknownTarget("not-observed"), provider, {
     operation: "inspect_gpu_code_objects",
     parameters: gpuParameters(parameters),
     result: report,
     confidence: "observed",
-    subjectUnavailableReason:
-      "The interrupted inspection did not complete final file identity verification; root digest and completeness are unknown.",
+
     locations: [{ kind: "artifact-path", path: report.artifact.path }],
-    limitations: report.limitations,
+    limitations: [
+      "The interrupted inspection did not complete final file identity verification; root digest and completeness are unknown.",
+      ...report.limitations,
+    ],
   });

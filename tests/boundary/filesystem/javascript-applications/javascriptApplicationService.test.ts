@@ -7,7 +7,7 @@ import { parseEvidence } from "../../../../src/domain/evidence.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { writeJavaScriptSourceSelectionFixture } from "../../../fixtures/javascriptSourceSelection.js";
 
-import { ArtifactReaderFailure } from "../../../../src/artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../../../src/resources/ArtifactReader.js";
 import { scanCanonicalArtifactInventory } from "../../../fixtures/artifactInventory.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
@@ -17,7 +17,7 @@ import {
   readJavaScriptArtifactFiles,
 } from "../../../support/javascriptApplicationScope.js";
 import { createJavaScriptArtifactReader } from "../../../../src/artifacts/javascript/JavaScriptArtifactReader.js";
-import { createJavaScriptSourceAnalysis } from "../../../../src/artifacts/javascript/JavaScriptSourceAnalysis.js";
+import { createJavaScriptSourceAnalysis } from "../../../../src/javascript/analysis/JavaScriptSourceAnalysis.js";
 import { analyzeAndAdoptJavaScriptArtifactFiles } from "../../../../src/application/javascript/JavaScriptArtifactAnalysis.js";
 import { createJavaScriptSemanticGraphProjection } from "../../../../src/application/javascript/JavaScriptSemanticGraphBuilder.js";
 import { immutableArtifactGraph } from "../../../fixtures/javascriptArtifactGraph.js";
@@ -315,8 +315,9 @@ describe("Selected JavaScript source failure diagnostics", () => {
         "Unselected content changes must still fail integrity verification",
       );
     expect(projectAnalysisError(result.error)).toMatchObject({
-      code: "artifact_operation_failed",
-      details: { reason: "integrity" },
+      code: "artifact_changed",
+      retry: "backoff",
+      details: { reason: "integrity", failure_kind: "changed" },
     });
   });
 
@@ -400,8 +401,9 @@ describe("JavaScript application failure diagnostics", () => {
       code: "unreadable_output",
       details: {
         operation: "analyze_javascript_application",
-        reason:
-          "Result schema rejected 1 issue at /semantic_graph/nodes/42/application_node_ids/0 (custom)",
+        reason: expect.stringMatching(
+          /schema.*1 issue.*\/semantic_graph\/nodes\/42\/application_node_ids\/0.*custom/i,
+        ),
       },
     });
   });
@@ -553,5 +555,57 @@ describe("JavaScript application cleanup diagnostics", () => {
       cleanup,
       partialObservation,
     });
+  });
+});
+
+describe("JavaScript application symbolic coverage", () => {
+  it("analyzes sources spreading recursive call results while preserving coverage limits and independent endpoints", async () => {
+    const root = await createTestTempDirectory("rea-js-recursive-spread-");
+    await writeFile(
+      join(root, "self.js"),
+      'function f(o) { const stay = f(o); return { ...stay, c: stay.sc.startsWith("k") }; }\nfetch("/kept-self");\n',
+    );
+    await writeFile(
+      join(root, "mutual.js"),
+      'function a(o) { const stay = b(o); return { ...stay, c: stay.sc.startsWith("k") }; }\nfunction b(o) { const stay = a(o); return { ...stay, c: stay.sc.startsWith("k") }; }\nfetch("/kept-mutual");\n',
+    );
+    const result = await analyzeJavaScriptApplication({
+      input_path: root,
+      format: "directory",
+      source_paths: ["self.js", "mutual.js"],
+    });
+    if (!result.ok) throw result.error;
+    const normalized = javascriptApplicationAnalysisResultSchema.parse(
+      result.value.normalized_result,
+    );
+    expect(normalized.statistics).toMatchObject({
+      parsed_javascript_files: 2,
+      parse_failures: 0,
+    });
+    const endpoints = normalized.graph.nodes
+      .filter(({ kind }) => kind === "endpoint")
+      .flatMap(({ observations }) =>
+        observations.map(({ properties }) => properties.value),
+      )
+      .sort();
+    expect(endpoints).toEqual(["/kept-mutual", "/kept-self"]);
+
+    const assetObservations = normalized.graph.nodes
+      .filter(({ kind }) => kind === "javascript-asset")
+      .flatMap(({ observations }) => observations);
+    for (const path of ["self.js", "mutual.js"]) {
+      const observation = assetObservations.find(
+        ({ properties }) => properties.path === path,
+      );
+      expect(observation?.properties).toMatchObject({
+        parse_status: "partial",
+        analysis_coverage: {
+          examination: {
+            status: "limited",
+            electron_call_paths_limited: true,
+          },
+        },
+      });
+    }
   });
 });

@@ -3,8 +3,10 @@ import { once } from "node:events";
 import { createServer } from "node:http";
 import type { Socket } from "node:net";
 import { fileURLToPath } from "node:url";
+import { Ajv2020 } from "ajv/dist/2020.js";
 import { promisify } from "node:util";
 import { expect, it, onTestFinished } from "vitest";
+import { z } from "zod";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { webEventListenersSchema } from "../../src/domain/webEventListeners.js";
 import { startRuntimeBrowser } from "../fixtures/webRuntime.js";
@@ -18,24 +20,76 @@ const environment = () => ({
   HOPPER_LAUNCHER_PATH: "/rea-unconfigured-provider/hopper",
 });
 
+const executionProgress = z.object({
+  rea_progress: z.object({
+    phase: z.literal("browser_execution"),
+    completed: z.literal(1),
+  }),
+});
+
+/** Buffer complete stderr lines so a progress event cannot borrow fields from another line. */
+const executionReadyReader = () => {
+  let pending = "";
+  return (chunk: string): boolean => {
+    const lines = (pending + chunk).split("\n");
+    pending = lines.pop() ?? "";
+    return lines.some((line) => {
+      try {
+        return executionProgress.safeParse(JSON.parse(line)).success;
+      } catch {
+        // Other stderr lines are not necessarily JSON progress events.
+        return false;
+      }
+    });
+  };
+};
+
+it("arms only for a complete matching browser execution progress event", () => {
+  const ready = executionReadyReader();
+  expect(
+    ready('{"rea_progress":{"phase":"browser_execution","completed":0}}\n'),
+  ).toBe(false);
+  expect(ready('{"rea_progress":{"phase":"other","completed":1}}\n')).toBe(
+    false,
+  );
+  expect(
+    ready('{"rea_progress":{"phase":"browser_execution","completed":10}}\n'),
+  ).toBe(false);
+  expect(ready('other stderr\n{"rea_progress":{"phase":"browser_')).toBe(false);
+  expect(ready('execution","completed":1}}\n')).toBe(true);
+});
+
 it("advertises the canonical observation duration bounds through the compiled CLI", async () => {
   const { stdout } = await promisify(execFile)(
     process.execPath,
     [entrypoint, "observe-web-execution", "--schema", "--json"],
     { env: environment(), timeout: 20_000 },
   );
-  expect(JSON.parse(stdout)).toMatchObject({
-    options: {
-      properties: {
-        observationMs: {
-          type: "integer",
-          minimum: 1,
-          maximum: 2_147_483_647,
-          default: 10_000,
-        },
+  const observationMs = (
+    JSON.parse(stdout) as {
+      options: {
+        properties: Record<string, Parameters<Ajv2020["compile"]>[0]>;
+      };
+    }
+  ).options.properties.observationMs;
+  if (observationMs === undefined)
+    throw new Error("observe-web-execution advertises no observationMs");
+  expect(observationMs).toMatchObject({
+    default: 10_000,
+    anyOf: [
+      {
+        type: "integer",
+        minimum: 1,
+        maximum: 2_147_483_647,
       },
-    },
+      { type: "string" },
+    ],
   });
+  const validate = new Ajv2020({ strict: false }).compile(observationMs);
+  for (const token of ["1", "010000", "2147483647"])
+    expect(validate(token), token).toBe(true);
+  for (const token of ["0", "2147483648", "0x10"])
+    expect(validate(token), token).toBe(false);
 });
 
 it("runs the compiled public listener command through its default native CDP composition", async () => {
@@ -86,17 +140,15 @@ it("translates SIGINT after real CLI arming into awaited instrumentation cleanup
   let stderr = "";
   let stdout = "";
   let armed = false;
+  const executionReady = executionReadyReader();
   const timer = setTimeout(() => child.kill("SIGKILL"), 20_000);
+  child.stderr.setEncoding("utf8");
   child.stdout.on("data", (chunk) => {
     stdout += chunk;
   });
-  child.stderr.on("data", (chunk) => {
+  child.stderr.on("data", (chunk: string) => {
     stderr += chunk;
-    if (
-      !armed &&
-      stderr.includes('"completed":1') &&
-      stderr.includes("browser_execution")
-    ) {
+    if (!armed && executionReady(chunk)) {
       armed = true;
       child.kill("SIGINT");
     }
@@ -135,106 +187,59 @@ const cancellationSignals =
 interface CliCancellationCommand {
   readonly command: string;
   readonly operation: string;
-  readonly buildArgs: (endpoint: string) => readonly string[];
+  readonly arguments: readonly string[];
 }
 
 const cancellationCommands: readonly CliCancellationCommand[] = [
   {
     command: "observe-web-execution",
     operation: "observe_web_execution",
-    buildArgs: (endpoint) => [
-      "observe-web-execution",
-      endpoint,
-      "page-fixture",
-      "--observation-ms",
-      "30000",
-      "--json",
-    ],
+    arguments: ["page-fixture", "--observation-ms", "30000"],
   },
   {
     command: "inspect-web-event-listeners",
     operation: "inspect_web_event_listeners",
-    buildArgs: (endpoint) => [
-      "inspect-web-event-listeners",
-      endpoint,
-      "page-fixture",
-      "body",
-      "--json",
-    ],
+    arguments: ["page-fixture", "body"],
   },
   {
     command: "list-browser-targets",
     operation: "list_browser_targets",
-    buildArgs: (endpoint) => ["list-browser-targets", endpoint, "--json"],
+    arguments: [],
   },
   {
     command: "inspect-web-page",
     operation: "inspect_web_page",
-    buildArgs: (endpoint) => [
-      "inspect-web-page",
-      endpoint,
-      "page-fixture",
-      "--json",
-    ],
+    arguments: ["page-fixture"],
   },
   {
     command: "analyze-web-bundle",
     operation: "analyze_web_bundle",
-    buildArgs: (endpoint) => [
-      "analyze-web-bundle",
-      endpoint,
-      "page-fixture",
-      "--json",
-    ],
+    arguments: ["page-fixture"],
   },
   {
     command: "observe-web-session",
     operation: "observe_web_session",
-    buildArgs: (endpoint) => [
-      "observe-web-session",
-      endpoint,
-      "page-fixture",
-      "--json",
-    ],
+    arguments: ["page-fixture"],
   },
   {
     command: "discover-webmcp-tools",
     operation: "discover_webmcp_tools",
-    buildArgs: (endpoint) => [
-      "discover-webmcp-tools",
-      endpoint,
-      "page-fixture",
-      "--json",
-    ],
+    arguments: ["page-fixture"],
   },
   {
     command: "capture-web-screenshot",
     operation: "capture_web_screenshot",
-    buildArgs: (endpoint) => [
-      "capture-web-screenshot",
-      endpoint,
-      "page-fixture",
-      "--json",
-    ],
+    arguments: ["page-fixture"],
   },
   {
     command: "list-javascript-runtime-targets",
     operation: "list_javascript_runtime_targets",
-    buildArgs: (endpoint) => [
-      "list-javascript-runtime-targets",
-      endpoint,
-      "--json",
-    ],
+    arguments: [],
   },
   {
     command: "observe-javascript-runtime",
     operation: "observe_javascript_runtime",
-    buildArgs: (endpoint) => [
-      "observe-javascript-runtime",
-      endpoint,
-      "target-fixture",
-      "--json",
-    ],
+    arguments: ["target-fixture"],
   },
 ];
 
@@ -248,7 +253,7 @@ const cancellationCases = cancellationCommands.flatMap((command) =>
 
 it.each(cancellationCases)(
   "$command preserves $signal status and awaited cleanup during CDP discovery",
-  async ({ command, operation, buildArgs, signal, expectedExitCode }) => {
+  async ({ command, operation, arguments: args, signal, expectedExitCode }) => {
     const sockets = new Set<Socket>();
     const server = createServer(() => undefined);
     server.on("connection", (socket) => {
@@ -265,7 +270,7 @@ it.each(cancellationCases)(
 
     const child = spawn(
       process.execPath,
-      [entrypoint, ...buildArgs(endpoint)],
+      [entrypoint, command, endpoint, ...args, "--json"],
       {
         env: environment(),
         stdio: ["ignore", "pipe", "pipe"],

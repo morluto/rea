@@ -1,4 +1,10 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
+import { constants as bufferConstants } from "node:buffer";
+import {
+  parameterBudgetLimit,
+  type ParameterBudget,
+} from "../parameterBudget.js";
 
 const kind = z.enum(["func", "table", "memory", "global", "tag", "unknown"]);
 const valueType = z.enum([
@@ -47,7 +53,7 @@ const signature = z.discriminatedUnion("kind", [
 
 /** Typed observations decoded once at the WABT producer boundary. */
 export const wasmInterfaceSchema = z.object({
-  state: z.enum(["complete", "partial"]),
+  state: knownCoverageStatusSchema,
   entries: z.array(
     z
       .object({
@@ -87,7 +93,32 @@ export type WasmInterfaceSignature = NonNullable<
 export type WasmInterfaceValueType = z.infer<typeof valueType>;
 
 /** Bound eager typed output and repeated signature expansion independently of WAT bytes. */
-export const WASM_INTERFACE_REPRESENTATION_BYTES = 32 * 1024 * 1024;
+export const DEFAULT_WASM_INTERFACE_REPRESENTATION_BYTES = 32 * 1024 * 1024;
+export const MAX_WASM_INTERFACE_REPRESENTATION_BYTES =
+  bufferConstants.MAX_STRING_LENGTH;
+/** Per-call typed WASM interface budget shared by the input schema and refusal limit. */
+export const WASM_INTERFACE_BYTE_BUDGET: ParameterBudget = {
+  minimum: 1,
+  maximum: MAX_WASM_INTERFACE_REPRESENTATION_BYTES,
+  default_value: DEFAULT_WASM_INTERFACE_REPRESENTATION_BYTES,
+  unit: "bytes",
+};
+/** Build a structured per-call refusal limit using the input schema's own bounds. */
+export const wasmInterfaceByteBudgetLimit = (effectiveValue: number) =>
+  parameterBudgetLimit(
+    "max_interface_bytes",
+    WASM_INTERFACE_BYTE_BUDGET,
+    effectiveValue,
+  );
+export const wasmInterfaceByteBudgetSchema = z
+  .number()
+  .int()
+  .min(WASM_INTERFACE_BYTE_BUDGET.minimum)
+  .max(WASM_INTERFACE_BYTE_BUDGET.maximum)
+  .exactOptional()
+  .describe(
+    `Typed interface representation admission in bytes (default ${String(WASM_INTERFACE_BYTE_BUDGET.default_value)}, range ${String(WASM_INTERFACE_BYTE_BUDGET.minimum)}..${String(WASM_INTERFACE_BYTE_BUDGET.maximum)}; maximum follows the runtime string ceiling). Applies on the next inspection or comparison without restart. Raising this does not restore facts omitted from previously produced partial Evidence; inspect again with a larger producer budget first.`,
+  );
 
 /** Conservative JSON/retention charge; shared arrays still expand at every occurrence. */
 export const wasmInterfaceEntryRepresentationBytes = (

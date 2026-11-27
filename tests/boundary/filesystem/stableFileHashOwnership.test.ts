@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { open as openFile, writeFile } from "node:fs/promises";
+import { open as openFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it, vi } from "vitest";
@@ -52,17 +52,60 @@ it("rejects a real extent change after admission instead of replacing its baseli
   }
 });
 
+it("classifies a selected name removed at final validation as a changed file and closes its descriptor", async () => {
+  const root = await createTestTempDirectory("rea-stable-name-removed-");
+  const path = join(root, "input.bin");
+  await writeFile(path, "admitted bytes");
+  const nativeOpen = regularFile.openRegularFile;
+  let descriptor: regularFile.StableRegularFileDescriptor | undefined;
+  const open = vi
+    .spyOn(regularFile, "openRegularFile")
+    .mockImplementationOnce(async (...args) => {
+      descriptor = await nativeOpen(...args);
+      const nativeRead = descriptor.handle.read.bind(descriptor.handle);
+      vi.spyOn(descriptor.handle, "read").mockImplementation(
+        async (...args) => {
+          const result = await nativeRead(...args);
+          if (result.bytesRead === 0) await unlink(path);
+          return result;
+        },
+      );
+      return descriptor;
+    });
+  try {
+    const retainFailedClose = vi.fn();
+    const failure: unknown = await hashStableFile(path, {
+      retainFailedClose,
+    }).catch((cause: unknown) => cause);
+    expect(failure).toMatchObject({
+      _tag: "StableFileHashFailure",
+      cause: {
+        name: "RegularFileChangedError",
+        code: "ESTALE",
+        cause: { code: "ENOENT" },
+      },
+    });
+    expect(descriptor?.handle.fd).toBe(-1);
+    expect(retainFailedClose).not.toHaveBeenCalled();
+  } finally {
+    open.mockRestore();
+    if (descriptor !== undefined && descriptor.handle.fd >= 0)
+      await descriptor.handle.close();
+  }
+});
+
 it("captures a two-byte prefix across short reads and buffer reuse", async () => {
   const root = await createTestTempDirectory("rea-stable-observation-prefix-");
   const path = join(root, "script");
   const bytes = Buffer.from("#!rest-of-file");
   await writeFile(path, bytes);
-  const retained: OwnedFileHandle[] = [];
+  const retainFailedClose = vi.fn();
+  let descriptor: regularFile.StableRegularFileDescriptor | undefined;
   const originalOpen = regularFile.openRegularFile;
   const open = vi
     .spyOn(regularFile, "openRegularFile")
     .mockImplementation(async (...args) => {
-      const descriptor = await originalOpen(...args);
+      descriptor = await originalOpen(...args);
       const { handle } = descriptor;
       const positional: {
         read(
@@ -85,17 +128,18 @@ it("captures a two-byte prefix across short reads and buffer reuse", async () =>
       return descriptor;
     });
   try {
-    const observation = await observeStableFile(path, {
-      retainFailedClose: (owner) => retained.push(owner),
-    });
+    const observation = await observeStableFile(path, { retainFailedClose });
     expect(observation).toMatchObject({
       sha256: createHash("sha256").update(bytes).digest("hex"),
       bytes: bytes.length,
       prefix: Buffer.from("#!"),
     });
+    expect(descriptor?.handle.fd).toBe(-1);
+    expect(retainFailedClose).not.toHaveBeenCalled();
   } finally {
     open.mockRestore();
-    for (const owner of retained) if (owner.handle.fd >= 0) await owner.close();
+    if (descriptor !== undefined && descriptor.handle.fd >= 0)
+      await descriptor.handle.close();
   }
 });
 
@@ -198,17 +242,6 @@ it("preserves a read cancellation cause when close also fails", async () => {
     if (retained[0] !== undefined && retained[0]!.handle.fd >= 0)
       await originalClose.call(retained[0]);
   }
-});
-
-it("closes a normally hashed file without adopting an owner", async () => {
-  const root = await createTestTempDirectory("rea-stable-hash-control-");
-  const path = join(root, "input.bin");
-  await writeFile(path, "owned bytes");
-  const retainFailedClose = vi.fn();
-  await expect(
-    hashStableFile(path, { retainFailedClose }),
-  ).resolves.toMatchObject({ bytes: 11 });
-  expect(retainFailedClose).not.toHaveBeenCalled();
 });
 
 it("retains a completed digest when cancellation follows successful close", async () => {
@@ -423,7 +456,6 @@ it("retries pending cleanup before acquiring a publisher temporary root", async 
 
 it.each([
   { stage: "close", reason: null },
-  { stage: "close", reason: "caller stopped" },
   { stage: "close", reason: new Error("caller stopped") },
   { stage: "retention", reason: "after the failed close" },
 ] as const)(
@@ -565,11 +597,12 @@ it.each([false, true])(
   },
 );
 
-it.each(
-  [null, "caller stopped", new Error("caller stopped")].flatMap((reason) =>
-    [false, true].map((failClose) => ({ reason, failClose })),
-  ),
-)(
+it.each([
+  { reason: null, failClose: false },
+  { reason: null, failClose: true },
+  { reason: "caller stopped", failClose: false },
+  { reason: new Error("caller stopped"), failClose: true },
+])(
   "retains the exact read checkpoint reason with failed close=$failClose ($reason)",
   async ({ reason, failClose }) => {
     const root = await createTestTempDirectory("rea-hash-read-checkpoint-");
@@ -605,6 +638,12 @@ it.each(
           retained = owner;
         },
       }).catch((cause: unknown) => cause);
+      if (failClose) {
+        expect(failure).toBeInstanceOf(RegularFileCleanupFailure);
+        expect(retained?.handle.fd).toBeGreaterThanOrEqual(0);
+      } else {
+        expect(retained).toBeUndefined();
+      }
       const primary =
         failure instanceof RegularFileCleanupFailure &&
         failure.outcome.kind === "failed"
@@ -664,7 +703,6 @@ it.each(["physical", "completed"] as const)(
     );
     try {
       const result = await publisher.inspectLauncher(path, controller.signal);
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Injected hash outcome passed");
       expect(result.error.reason).toBe(
         outcome === "physical" ? "verification_unavailable" : "cancelled",

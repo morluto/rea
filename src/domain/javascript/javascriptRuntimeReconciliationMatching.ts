@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import { createJavaScriptApplicationEdge } from "./javascriptApplicationGraph.js";
 import type { ApplicationEdge } from "./javascriptApplicationGraphSchemas.js";
 import type { ApplicationGraphEvidence } from "./javascriptApplicationEvidenceSchemas.js";
@@ -47,6 +48,7 @@ interface EvaluatedMatch {
 }
 
 interface CandidateIndex {
+  readonly containingAssets: ReadonlyMap<string, ReadonlySet<string>>;
   readonly byCategoryDigest: ReadonlyMap<
     string,
     readonly StaticRuntimeCandidate[]
@@ -85,8 +87,32 @@ const reconcileEntity = (
       index,
     });
 
-  const location = locations.at(0);
-  if (locations.length === 1 && location !== undefined) {
+  // A factory's containing-file path is not a separate script location. Only
+  // suppress it when a located asset in the same layer is proven to contain it.
+  const locatedAssets = new Set(
+    locations.flatMap(({ candidate, mapping }) =>
+      candidate.node.kind === "javascript-asset"
+        ? [
+            JSON.stringify([
+              candidate.layer.layerId,
+              mapping.path,
+              candidate.node.node_id,
+            ]),
+          ]
+        : [],
+    ),
+  );
+  const wholeFileLocations = locations.filter(({ candidate, mapping }) => {
+    if (candidate.node.kind !== "javascript-module") return true;
+    const assets = index.containingAssets.get(candidateKey(candidate));
+    return ![...(assets ?? [])].some((asset) =>
+      locatedAssets.has(
+        JSON.stringify([candidate.layer.layerId, mapping.path, asset]),
+      ),
+    );
+  });
+  const location = wholeFileLocations.at(0);
+  if (wholeFileLocations.length === 1 && location !== undefined) {
     const located = location;
     return matched(entity, located.candidate, {
       basis: located.mapping.basis,
@@ -94,13 +120,13 @@ const reconcileEntity = (
       reason: "unique-location-match",
     });
   }
-  if (locations.length > 1)
+  if (wholeFileLocations.length > 1)
     return unresolved(entity, {
       status: "ambiguous",
-      basis: strongestLocationBasis(locations),
+      basis: strongestLocationBasis(wholeFileLocations),
       confidence: "unknown",
       reason: "ambiguous-static-candidates",
-      candidates: locations.map(({ candidate }) => candidate),
+      candidates: wholeFileLocations.map(({ candidate }) => candidate),
     });
   return withoutStaticCandidate(entity, mapped, "unknown");
 };
@@ -260,13 +286,13 @@ const indexCandidates = (
   >();
   for (const candidate of candidates) {
     for (const { sha256 } of candidate.digests)
-      appendIndex(
+      appendToMapList(
         byCategoryDigest,
         categoryDigestKey(candidate.category, sha256),
         candidate,
       );
     for (const path of candidate.paths)
-      appendIndex(
+      appendToMapList(
         byLayerCategoryPath,
         layerCategoryPathKey(candidate.layer.layerId, candidate.category, path),
         candidate,
@@ -275,23 +301,60 @@ const indexCandidates = (
       for (const { path, sourcePath } of candidate.nativeDeclarationPaths[
         style
       ])
-        appendIndex(
+        appendToMapList(
           byNativeDeclarationPath,
           `${style}\0${layerCategoryPathKey(candidate.layer.layerId, candidate.category, path)}`,
           { candidate, sourcePath },
         );
   }
-  return { byCategoryDigest, byLayerCategoryPath, byNativeDeclarationPath };
+  return {
+    byCategoryDigest,
+    byLayerCategoryPath,
+    byNativeDeclarationPath,
+    containingAssets: indexContainingAssets(candidates),
+  };
 };
 
-const appendIndex = <Value>(
-  index: Map<string, Value[]>,
-  key: string,
-  candidate: Value,
-): void => {
-  const values = index.get(key);
-  if (values === undefined) index.set(key, [candidate]);
-  else values.push(candidate);
+/** Index the producer's asset -> chunk -> module containment facts once. */
+const indexContainingAssets = (
+  candidates: readonly StaticRuntimeCandidate[],
+): ReadonlyMap<string, ReadonlySet<string>> => {
+  const layers = new Map(candidates.map(({ layer }) => [layer.layerId, layer]));
+  const result = new Map<string, Set<string>>();
+  for (const layer of layers.values()) {
+    const nodes = new Map(
+      layer.graph.nodes.map((node) => [node.node_id, node]),
+    );
+    const chunks = new Map<string, Set<string>>();
+    for (const edge of layer.graph.edges) {
+      if (edge.relation !== "contains") continue;
+      const source = nodes.get(edge.source_node_id);
+      const target = nodes.get(edge.target_node_id);
+      if (source?.kind !== "javascript-asset" || target === undefined) continue;
+      if (target.kind === "javascript-chunk") {
+        const assets = chunks.get(target.node_id) ?? new Set<string>();
+        assets.add(source.node_id);
+        chunks.set(target.node_id, assets);
+      } else if (target.kind === "javascript-module") {
+        const key = `${layer.layerId}:${target.node_id}`;
+        const assets = result.get(key) ?? new Set<string>();
+        assets.add(source.node_id);
+        result.set(key, assets);
+      }
+    }
+    for (const edge of layer.graph.edges) {
+      if (edge.relation !== "contains") continue;
+      const assets = chunks.get(edge.source_node_id);
+      const target = nodes.get(edge.target_node_id);
+      if (assets === undefined || target?.kind !== "javascript-module")
+        continue;
+      const key = `${layer.layerId}:${target.node_id}`;
+      const existing = result.get(key) ?? new Set<string>();
+      for (const asset of assets) existing.add(asset);
+      result.set(key, existing);
+    }
+  }
+  return result;
 };
 
 const categoryDigestKey = (category: string, digest: string): string =>

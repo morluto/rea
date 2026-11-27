@@ -6,12 +6,15 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
+import { spawn } from "node:child_process";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { describe, expect, it } from "vitest";
 
 import { execFileOutput } from "../../../src/process/ExecFileOutput.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { copyScriptsWithImports } from "../../support/scriptImportClosure.js";
 
 const run = (
   root: string,
@@ -47,15 +50,17 @@ const commit = (root: string, message: string) =>
 
 const fixture = async () => {
   const root = await createTestTempDirectory("rea-development-tests-");
-  await mkdir(join(root, "scripts", "lib"), { recursive: true });
   await mkdir(join(root, "src"));
-  for (const path of [
-    "scripts/run-development-tests.mjs",
-    "scripts/run-exact-tests.mjs",
-    "scripts/lib/development-tests.mjs",
-    "scripts/lib/test-projects.mjs",
-  ])
-    await copyFile(join(process.cwd(), path), join(root, path));
+  // The runner spawns the exact-test and exclusive-lock scripts.
+  await copyScriptsWithImports(
+    [
+      "scripts/run-development-tests.mjs",
+      "scripts/run-exact-tests.mjs",
+      "scripts/run-exclusive.mjs",
+      "scripts/run-exclusive-command.mjs",
+    ],
+    root,
+  );
   await symlink(
     join(process.cwd(), "node_modules"),
     join(root, "node_modules"),
@@ -63,9 +68,12 @@ const fixture = async () => {
   );
   await writeFile(join(root, "package.json"), '{"type":"module"}\n');
   await writeFile(join(root, ".gitignore"), "node_modules\nselected.txt\n");
+  // Disable Vitest's disk module cache in nested fixture configs; root/node_modules
+  // symlinks the parent workspace's node_modules, so a lockfile mismatch would
+  // otherwise clear the parent runner's node_modules/.vitest-cache mid-run.
   await writeFile(
     join(root, "vitest.config.mjs"),
-    'export default { test: { projects: [{ test: { name: "domain", include: ["src/**/*.test.ts"] } }] } };\n',
+    'export default { test: { fsModuleCache: false, projects: [{ test: { name: "domain", fsModuleCache: false, include: ["src/**/*.test.ts"] } }] } };\n',
   );
   await writeFile(join(root, "src/value.ts"), "export const value = 1;\n");
   await writeFile(
@@ -138,7 +146,7 @@ describe("development test runner symlink aliases", () => {
         kind === "file" ? "src/value.test.ts" : "src/domain/value.test.ts";
       await writeFile(
         join(root, "vitest.config.mjs"),
-        `export default { test: { projects: [{ test: { name: "domain", include: ["${includedSelection}"] } }] } };\n`,
+        `export default { test: { fsModuleCache: false, projects: [{ test: { name: "domain", fsModuleCache: false, include: ["${includedSelection}"] } }] } };\n`,
       );
 
       await expect(
@@ -155,6 +163,74 @@ describe("development test runner symlink aliases", () => {
       await testCommand(root, mode, includedSelection);
       expect(await readFile(join(root, "selected.txt"), "utf8")).toBe("1");
     }
+  });
+});
+
+describe("development test runner prerequisite ownership", () => {
+  it("prepares artifacts for filesystem aliases without folding distinct filenames", async () => {
+    const root = await fixture();
+    const canonical = "tests/boundary/mcp/guidanceMcp.test.ts";
+    const selected = "tests/boundary/mcp/GUIDANCEMcp.test.ts";
+    await mkdir(join(root, "tests/boundary/mcp"), { recursive: true });
+    await writeFile(
+      join(root, canonical),
+      "// Artifact-consuming test fixture\n",
+    );
+    let sameFile = true;
+    try {
+      await lstat(join(root, selected));
+    } catch (cause) {
+      if (
+        !(cause instanceof Error) ||
+        !("code" in cause) ||
+        cause.code !== "ENOENT"
+      )
+        throw cause;
+      sameFile = false;
+      await writeFile(join(root, selected), "// Distinct test fixture\n");
+    }
+    for (const path of [canonical, selected]) {
+      const result = await testCommand(root, "focused", path, "--dry-run");
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        paths: [path],
+        needsBuild: true,
+        artifactTasks:
+          path === canonical || sameFile ? ["artifacts:skills"] : [],
+        vitestArguments: ["run", path],
+      });
+    }
+  });
+
+  it("retains built-project admission for an aliased provider conformance test", async ({
+    skip,
+  }) => {
+    const root = await fixture();
+    const directory = "tests/conformance/providers/hopper";
+    const canonical = `${directory}/realHopperSearch.test.ts`;
+    const selected = `${directory}/REALHopperSearch.test.ts`;
+    await mkdir(join(root, directory), { recursive: true });
+    await writeFile(join(root, canonical), "// Built conformance fixture\n");
+    try {
+      await lstat(join(root, selected));
+    } catch (cause) {
+      if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
+        skip("The host distinguishes the selected filename casing");
+      throw cause;
+    }
+    const result = await testCommand(root, "focused", selected, "--dry-run");
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      paths: [selected],
+      needsBuild: true,
+      vitestArguments: ["run", selected],
+    });
+    await expect(
+      testCommand(root, "local", selected, "--dry-run"),
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining(
+        `Use test:focused for built test projects: ${selected}`,
+      ),
+    });
   });
 });
 
@@ -236,7 +312,7 @@ describe("development test runner exact selection", () => {
     );
     await writeFile(
       join(root, "vitest.config.mjs"),
-      'export default { test: { projects: [{ test: { name: "domain", include: ["src/value.test.ts"] } }] } };\n',
+      'export default { test: { fsModuleCache: false, projects: [{ test: { name: "domain", fsModuleCache: false, include: ["src/value.test.ts"] } }] } };\n',
     );
     await expect(
       testCommand(root, "focused", "src/value.test.ts", "src/excluded.test.ts"),
@@ -267,11 +343,18 @@ describe("development test runner exact selection", () => {
   it("preserves all configured projects for an exact file", async () => {
     const root = await fixture();
     await writeFile(
-      join(root, "vitest.config.mjs"),
-      'export default { test: { projects: ["domain", "evaluation"].map(name => ({ test: { name, include: ["src/value.test.ts"] } })) } };\n',
+      join(root, "src/value.test.ts"),
+      'import { it } from "vitest"; import { writeFileSync } from "node:fs"; it("records the project", () => writeFileSync(`selected-${process.env.REA_TEST_PROJECT}.txt`, "ran"));\n',
     );
-    const result = await testCommand(root, "focused", "src/value.test.ts");
-    expect(result.stdout).toMatch(/Test Files\s+2 passed/u);
+    await writeFile(
+      join(root, "vitest.config.mjs"),
+      'export default { test: { fsModuleCache: false, projects: ["domain", "evaluation"].map(name => ({ test: { name, fsModuleCache: false, env: { REA_TEST_PROJECT: name }, include: ["src/value.test.ts"] } })) } };\n',
+    );
+    await testCommand(root, "focused", "src/value.test.ts");
+    for (const name of ["domain", "evaluation"])
+      expect(await readFile(join(root, `selected-${name}.txt`), "utf8")).toBe(
+        "ran",
+      );
   });
 
   it("fails an exact file with no tests even when another selected file passes", async () => {
@@ -285,6 +368,76 @@ describe("development test runner exact selection", () => {
     });
     expect(await readFile(join(root, "selected.txt"), "utf8")).toBe("1");
   });
+});
+
+describe("development test runner cancellation", () => {
+  it.runIf(process.platform !== "win32")(
+    "waits for the owned test process group on cancellation",
+    async () => {
+      const root = await fixture();
+      const ready = join(root, "descendant-ready");
+      const activity = join(root, "descendant-activity");
+      const release = join(root, "descendant-release");
+      await writeFile(
+        join(root, "descendant.cjs"),
+        `
+        const fs = require("node:fs");
+        process.on("SIGTERM", () => {});
+        fs.writeFileSync("descendant-activity", "active\\n");
+        fs.writeFileSync("descendant-ready", "ready");
+        const timer = setInterval(() => {
+          if (fs.existsSync("descendant-release")) { clearInterval(timer); clearTimeout(deadline); return; }
+          fs.appendFileSync("descendant-activity", "active\\n");
+        }, 20);
+        const deadline = setTimeout(() => clearInterval(timer), 10000);
+      `,
+      );
+      await writeFile(
+        join(root, "src/value.test.ts"),
+        'import { it } from "vitest"; import { spawn } from "node:child_process"; it("waits", async () => { spawn(process.execPath, ["descendant.cjs"], { stdio: "ignore" }); await new Promise(() => {}); }, 30000);',
+      );
+      const runner = spawn(
+        process.execPath,
+        ["scripts/run-development-tests.mjs", "local", "src/value.test.ts"],
+        { cwd: root, stdio: "ignore" },
+      );
+      const closed = new Promise<{
+        code: number | null;
+        signal: string | null;
+      }>((resolve) =>
+        runner.once("exit", (code, signal) => resolve({ code, signal })),
+      );
+      try {
+        let started = false;
+        for (let attempt = 0; attempt < 200; attempt += 1) {
+          try {
+            await readFile(ready);
+            started = true;
+            break;
+          } catch (cause) {
+            if (
+              !(cause instanceof Error) ||
+              !("code" in cause) ||
+              cause.code !== "ENOENT"
+            )
+              throw cause;
+            await delay(50);
+          }
+        }
+        expect(started).toBe(true);
+        runner.kill("SIGTERM");
+        expect(await closed).toEqual({ code: 143, signal: null });
+        const stopped = await readFile(activity, "utf8");
+        await delay(100);
+        expect(await readFile(activity, "utf8")).toBe(stopped);
+      } finally {
+        await writeFile(release, "stop");
+        if (runner.exitCode === null && runner.signalCode === null)
+          runner.kill("SIGTERM");
+        await closed;
+      }
+    },
+  );
 });
 
 describe("development test runner public CLI", () => {
@@ -359,7 +512,7 @@ describe("development test runner public CLI", () => {
     expect(changed.stdout).toContain("1 passed");
     const focused = await testCommand(root, "focused", "src/value.test.ts");
     expect(focused.stdout).toContain("1 passed");
-  }, 60_000);
+  });
 
   it("reports a missing comparison base and rejects missing or compiled-boundary paths", async () => {
     const root = await fixture();

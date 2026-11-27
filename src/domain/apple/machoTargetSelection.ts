@@ -2,6 +2,10 @@ import { z } from "zod";
 
 import type { AnalysisProfileCommitment } from "../analysisProfile.js";
 import type { BinaryArchitecture } from "../binaryTargetTypes.js";
+import {
+  machoKnownArm64Subtype,
+  machoKnownX86_64Subtype,
+} from "./machoCpuIdentity.js";
 
 /** Provider-neutral observed identity of one Mach-O image selected from a source. */
 export const machoTargetSelectionSchema = z
@@ -19,17 +23,18 @@ export const machoTargetSelectionSchema = z
       .nullable(),
   })
   .superRefine((selection, context) => {
-    if (
-      (selection.container === "thin" &&
-        (selection.offset !== 0 ||
-          selection.container_table_sha256 !== null)) ||
-      (selection.container === "fat" &&
-        selection.container_table_sha256 === null)
-    )
-      context.addIssue({
-        code: "custom",
-        message: "Invalid Mach-O container identity",
-      });
+    // Each refusal names the rule for its container, so the selection can be
+    // corrected without the canonical schema.
+    const problem =
+      selection.container === "thin"
+        ? selection.offset !== 0 || selection.container_table_sha256 !== null
+          ? "A thin Mach-O selection has offset 0 and container_table_sha256 null"
+          : undefined
+        : selection.container_table_sha256 === null
+          ? "A fat Mach-O selection requires the container_table_sha256 of its fat header table"
+          : undefined;
+    if (problem !== undefined)
+      context.addIssue({ code: "custom", message: problem });
   });
 
 export type MachoTargetSelection = z.infer<typeof machoTargetSelectionSchema>;
@@ -52,15 +57,80 @@ export const MACHO_CPU_TYPES = {
   arm64: 0x0100000c,
 } as const satisfies Partial<Record<BinaryArchitecture, number>>;
 
-/** Caller-selected CPU family of one universal Mach-O slice. */
+/** Caller-selected architecture of one universal Mach-O slice. */
 export const machoSliceArchitectureSchema = z
-  .enum(["x86", "x86_64", "arm", "arm64"])
+  .enum(["x86", "x86_64", "arm", "arm64", "arm64e", "arm64e.x1"])
   .describe(
-    "CPU family of the slice to read from a universal (FAT) Mach-O. Required for universal files and rejected for every other image.",
-  ) satisfies z.ZodType<keyof typeof MACHO_CPU_TYPES>;
+    "Architecture of the slice to read from a universal (FAT) Mach-O. Required for universal files and rejected for every other image. A CPU family with one slice is selected by its family name; arm64e and arm64e.x1 each read only a slice of that subtype, as lipo -thin does. When several slices share a family, the value must name the slice's subtype: arm64 reads the arm64 or arm64v8 slice, and x86_64 the x86_64 slice but not x86_64h; capability bits are ignored. A value that matches no slice or several is refused.",
+  ) satisfies z.ZodType<keyof typeof MACHO_CPU_TYPES | "arm64e" | "arm64e.x1">;
 export type MachoSliceArchitecture = z.infer<
   typeof machoSliceArchitectureSchema
 >;
+
+/**
+ * Whether a value names an arm64 subtype rather than a CPU family, so it reads
+ * only a slice of that subtype, even as its family's only slice.
+ */
+export const machoSliceNamesSubtypeOnly = (
+  architecture: MachoSliceArchitecture,
+): architecture is "arm64e" | "arm64e.x1" =>
+  architecture === "arm64e" || architecture === "arm64e.x1";
+
+/** The CPU family whose slices an architecture value selects. */
+export const machoSliceFamily = (
+  architecture: MachoSliceArchitecture,
+): keyof typeof MACHO_CPU_TYPES =>
+  machoSliceNamesSubtypeOnly(architecture) ? "arm64" : architecture;
+
+/**
+ * The architecture value that names a slice's subtype exactly, as
+ * `lipo -thin` does, or undefined when no accepted value names it. Capability
+ * bits are ignored, and `arm64v8` reads as `arm64`.
+ */
+export const machoSliceSubtypeSelector = (
+  cpuType: number,
+  cpuSubtype: number,
+): MachoSliceArchitecture | undefined => {
+  if (cpuType === MACHO_CPU_TYPES.arm64)
+    switch (machoKnownArm64Subtype(cpuSubtype)) {
+      case "arm64":
+      case "arm64v8":
+        return "arm64";
+      case "arm64e":
+        return "arm64e";
+      case "arm64e.x1":
+        return "arm64e.x1";
+      default:
+        return undefined;
+    }
+  if (cpuType === MACHO_CPU_TYPES.x86_64)
+    return machoKnownX86_64Subtype(cpuSubtype) === "x86_64"
+      ? "x86_64"
+      : undefined;
+  return undefined;
+};
+
+/**
+ * Whether a reported universal slice answers the caller's architecture value.
+ * Only a universal image has a selection, and only one needs a value. The
+ * slice must be of the value's CPU family; arm64e and arm64e.x1 also require
+ * their subtype, while a family name may read the family's only slice
+ * whatever its subtype.
+ */
+export const machoSelectionAnswersArchitecture = (
+  selection:
+    | { readonly cpu_type: number; readonly cpu_subtype: number }
+    | null
+    | undefined,
+  architecture: MachoSliceArchitecture | undefined,
+): boolean =>
+  selection === null || selection === undefined || architecture === undefined
+    ? (selection === null || selection === undefined) ===
+      (architecture === undefined)
+    : selection.cpu_type === MACHO_CPU_TYPES[machoSliceFamily(architecture)] &&
+      (!machoSliceNamesSubtypeOnly(architecture) ||
+        machoSliceSubtypeSelector(selection.cpu_type, selection.cpu_subtype) ===
+          architecture);
 
 /** Confirm the selected header's CPU family agrees with the caller's request. */
 export const machoTargetSelectionMatchesArchitecture = (
@@ -102,16 +172,21 @@ export const sameMachoTargetSelection = (
   left.cpu_subtype === right.cpu_subtype &&
   left.container_table_sha256 === right.container_table_sha256;
 
-/** Evidence subject format of a metadata report that read an ELF, PE, thin Mach-O or universal slice. */
+/**
+ * Evidence subject format of a metadata report that read an ELF, PE, thin
+ * Mach-O or universal slice, or a WebAssembly module, which is a file as for WABT.
+ */
 export const metadataReportSubjectFormat = (report: {
-  readonly format: "elf" | "pe" | "macho";
+  readonly format: "elf" | "pe" | "macho" | "wasm";
   readonly selected_slice?: MachoTargetSelection;
-}): "elf" | "pe" | "mach-o" | "mach-o-universal" =>
-  report.format !== "macho"
-    ? report.format
-    : report.selected_slice === undefined
-      ? "mach-o"
-      : "mach-o-universal";
+}): "elf" | "pe" | "mach-o" | "mach-o-universal" | "file" =>
+  report.format === "wasm"
+    ? "file"
+    : report.format !== "macho"
+      ? report.format
+      : report.selected_slice === undefined
+        ? "mach-o"
+        : "mach-o-universal";
 
 /**
  * Whether a metadata report's own container and CPU agree with the universal
@@ -119,7 +194,7 @@ export const metadataReportSubjectFormat = (report: {
  */
 export const selectedSliceAgreesWithReport = (
   selection: MachoTargetSelection,
-  format: "elf" | "pe" | "macho",
+  format: "elf" | "pe" | "macho" | "wasm",
   architecture: BinaryArchitecture | undefined,
 ): boolean =>
   selection.container === "fat" &&

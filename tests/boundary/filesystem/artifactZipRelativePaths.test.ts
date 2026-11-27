@@ -7,8 +7,8 @@ import { expect, it } from "vitest";
 import { writeOrderedZip } from "../../fixtures/artifactEntryOrder.js";
 import { inventoryArtifact } from "../../fixtures/artifactInventory.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import type { ArtifactEntry } from "../../../src/artifacts/ArtifactReader.js";
-import { ZipArtifactReader } from "../../../src/artifacts/ZipArtifactReader.js";
+import type { ArtifactEntry } from "../../../src/resources/ArtifactReader.js";
+import { ZipArtifactReader } from "../../../src/resources/index.js";
 
 it("retains distinct occurrences when ZIP paths normalize to the same child", async () => {
   const root = await createTestTempDirectory("rea-zip-relative-duplicates-");
@@ -23,14 +23,19 @@ it("retains distinct occurrences when ZIP paths normalize to the same child", as
   expect(
     new Set(occurrences.map(({ occurrence_id }) => occurrence_id)).size,
   ).toBe(2);
+  // source_path keeps the recorded name; one reader-level note counts them.
   expect(occurrences).toContainEqual(
     expect.objectContaining({
       logical_path: "data.txt",
-      limitations: [
-        'ZIP member name "./data.txt" has a leading current-directory prefix omitted from its logical path.',
-      ],
+      source_path: "./data.txt",
+      limitations: [],
     }),
   );
+  expect(inventory.limitations).toContain(
+    "1 ZIP member name(s) have a leading current-directory prefix (./) omitted from their logical paths; each occurrence's source_path keeps the recorded name.",
+  );
+  // A normalized name is not a coverage gap: every byte is still accounted for.
+  expect(inventory.coverage.status).toBe("complete");
 });
 
 it.each([".", "././."])(

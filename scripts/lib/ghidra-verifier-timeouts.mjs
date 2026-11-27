@@ -21,11 +21,3 @@ export function resolveGhidraVerifierTimeouts(environment) {
     requestOptions: { timeout: publicRequestTimeoutMs },
   };
 }
-
-/** Bind every verifier MCP operation to the same owned request budget. */
-export function createGhidraVerifierMcpOperations(client, requestOptions) {
-  return {
-    connect: (transport) => client.connect(transport, requestOptions),
-    callTool: (request) => client.callTool(request, requestOptions),
-  };
-}

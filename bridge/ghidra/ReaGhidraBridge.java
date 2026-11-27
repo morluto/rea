@@ -6,6 +6,8 @@ import java.io.BufferedWriter;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.Writer;
+import java.lang.ref.SoftReference;
 import java.math.BigInteger;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -29,17 +31,31 @@ import java.security.MessageDigest;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.NavigableMap;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.TreeSet;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
@@ -47,10 +63,15 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
+import com.google.gson.JsonIOException;
 import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.google.gson.stream.JsonWriter;
 
+import ghidra.app.cmd.function.ApplyFunctionSignatureCmd;
+import ghidra.app.cmd.function.FunctionRenameOption;
+import ghidra.app.util.cparser.C.CParser;
 import ghidra.app.util.headless.HeadlessScript;
 import ghidra.app.decompiler.DecompInterface;
 import ghidra.app.decompiler.DecompileOptions;
@@ -60,10 +81,13 @@ import ghidra.app.decompiler.ClangCaseToken;
 import ghidra.app.decompiler.ClangNode;
 import ghidra.framework.Application;
 import ghidra.app.util.bin.format.pdb.PdbParserConstants;
+import ghidra.app.util.opinion.ElfLoader;
 import ghidra.framework.options.Options;
 import ghidra.program.model.address.Address;
+import ghidra.program.model.address.AddressFactory;
 import ghidra.program.model.address.AddressIterator;
 import ghidra.program.model.address.AddressSet;
+import ghidra.program.model.address.AddressSetView;
 import ghidra.program.model.address.AddressSpace;
 import ghidra.program.model.address.AddressRange;
 import ghidra.program.model.address.AddressRangeIterator;
@@ -73,24 +97,36 @@ import ghidra.program.model.block.CodeBlockIterator;
 import ghidra.program.model.block.CodeBlockReference;
 import ghidra.program.model.block.CodeBlockReferenceIterator;
 import ghidra.program.model.data.StringDataInstance;
+import ghidra.program.model.data.CategoryPath;
 import ghidra.program.model.data.DataType;
+import ghidra.program.model.data.DataTypeConflictHandler;
+import ghidra.program.model.data.DataTypeManager;
+import ghidra.program.model.data.FunctionDefinitionDataType;
+import ghidra.program.model.data.ParameterDefinition;
+import ghidra.program.model.data.MutabilitySettingsDefinition;
+import ghidra.program.model.data.Undefined;
+import ghidra.program.model.lang.OperandType;
 import ghidra.program.model.lang.Register;
 import ghidra.program.model.scalar.Scalar;
+import ghidra.program.model.listing.Bookmark;
+import ghidra.program.model.listing.BookmarkType;
 import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.Data;
 import ghidra.program.model.listing.DataIterator;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.FunctionIterator;
+import ghidra.program.model.listing.FunctionManager;
+import ghidra.program.model.listing.FunctionSignature;
 import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.listing.InstructionIterator;
 import ghidra.program.model.listing.Listing;
 import ghidra.program.model.listing.Variable;
+import ghidra.program.model.listing.VariableStorage;
 import ghidra.program.model.mem.MemoryBlock;
 import ghidra.program.model.mem.MemoryBlockSourceInfo;
 import ghidra.program.database.mem.FileBytes;
 import ghidra.program.model.address.SegmentedAddress;
 import ghidra.program.model.reloc.Relocation;
-import java.io.ByteArrayOutputStream;
 import ghidra.program.model.symbol.Namespace;
 import ghidra.program.model.symbol.FlowType;
 import ghidra.program.model.symbol.RefType;
@@ -100,6 +136,8 @@ import ghidra.program.model.symbol.SourceType;
 import ghidra.program.model.symbol.Symbol;
 import ghidra.program.model.symbol.SymbolIterator;
 import ghidra.program.model.symbol.SymbolTable;
+import ghidra.program.model.symbol.SymbolType;
+import ghidra.program.model.symbol.SymbolUtilities;
 import ghidra.program.model.pcode.FunctionPrototype;
 import ghidra.program.model.pcode.HighFunction;
 import ghidra.program.model.pcode.HighParam;
@@ -114,15 +152,29 @@ import ghidra.program.model.pcode.VarnodeAST;
 import ghidra.program.util.ContextEvaluatorAdapter;
 import ghidra.program.util.SymbolicPropogator;
 import ghidra.program.util.VarnodeContext;
+import ghidra.util.UndefinedFunction;
+import ghidra.util.exception.CancelledException;
+import ghidra.util.task.TaskMonitor;
+import ghidra.util.task.TaskMonitorAdapter;
 
 public final class ReaGhidraBridge extends HeadlessScript {
     // At most 24 KiB after worst-case JSON escaping (six bytes per UTF-16 unit).
     private static final int PDB_ATTRIBUTE_UTF16_BUDGET = 4096;
-    private static final int MAX_HIGH_PCODE_OPS = 3000;
-    private static final int MAX_HIGH_PCODE_INPUTS_PER_OP = 64;
-    private static final int MAX_HIGH_PCODE_DEF_USE_EDGES = 12000;
+    private static final int DEFAULT_HIGH_PCODE_OPS = 3000;
+    private static final int DEFAULT_HIGH_PCODE_INPUTS_PER_OP = 64;
+    private static final int DEFAULT_HIGH_PCODE_DEF_USE_EDGES = 12000;
     private static final Gson GSON = new GsonBuilder().serializeNulls().create();
+    private static final Map<SymbolType, String> NORMALIZED_SYMBOL_TYPES = new ConcurrentHashMap<>();
+    private static final Map<SourceType, String> NORMALIZED_SOURCES = new ConcurrentHashMap<>();
+    private static final Pattern NON_ALNUM_RUN = Pattern.compile("[^a-z0-9]+");
+    private static final Pattern EDGE_UNDERSCORES = Pattern.compile("^_+|_+$");
+    private static final Pattern FS_PTR_PREFIX =
+        Pattern.compile("(?i)\\b(?:byte|word|dword|qword)\\s+ptr\\s+");
+    private static final Pattern WHITESPACE_RUN = Pattern.compile("\\s+");
     private final Map<FileBytes, Boolean> targetSourceIdentity = new IdentityHashMap<>();
+    private final Map<FileBytes, String> originalFileBytesSha256 = new IdentityHashMap<>();
+    private final NavigableMap<Address, LoaderInitializedRelocation> loaderInitializedRelocations =
+        new TreeMap<>();
     private String admittedTargetSha256;
     private static final Set<String> DESCRIPTOR_KEYS = Set.of(
         "transport",
@@ -142,6 +194,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private static final String[] CAPABILITIES = {
         "read_binary_inventory_summary",
         "annotate_native_function",
+        "define_native_data_types",
         "set_address_name",
         "set_addresses_names",
         "inspect_native_load_image",
@@ -174,16 +227,87 @@ public final class ReaGhidraBridge extends HeadlessScript {
         "xrefs"
     };
 
-    private List<InventoryItem> nameInventory;
-    private List<FunctionEntry> procedureInventory;
-    private List<InventoryItem> stringInventory;
+    private List<NameEntry> nameInventory;
+    private List<ProcedureEntry> procedureInventory;
+    private Map<String, Object> procedureNameIndex;
+    private List<StringEntry> stringInventory;
+    private Boolean swiftProgramCached;
     private DecompInterface decompiler;
+    /**
+     * Completed decompilations of the current Program state, least recently
+     * used first. DecompInterface keeps no results, so a repeated request would
+     * otherwise run the native decompiler again. The key carries every input a
+     * result depends on; soft references let the heap reclaim large results.
+     */
+    private final LinkedHashMap<DecompileCacheKey, SoftReference<DecompileResults>> decompileResults =
+        new LinkedHashMap<>(16, 0.75f, true) {
+            @Override
+            protected boolean removeEldestEntry(
+                Map.Entry<DecompileCacheKey, SoftReference<DecompileResults>> eldest
+            ) {
+                return size() > DECOMPILE_RESULT_ENTRIES;
+            }
+        };
+    // Fixed: this bounds retained Java objects, not analysis the caller can
+    // observe. A miss only repeats a decompile, and soft references release
+    // entries under heap pressure. Ghidra's own panel keeps 10 by default.
+    private static final int DECOMPILE_RESULT_ENTRIES = 32;
+    /**
+     * Read-ahead: functions a workflow will request next, decompiled in the
+     * background by REA's own worker threads, each with its own decompiler
+     * process. The carrying request never waits for them; it decompiles its own
+     * function on the session decompiler. A later request takes a finished
+     * result, waits for one that is running, or decompiles a queued one itself.
+     * Guarded by decompileAheadLock.
+     */
+    private final ArrayDeque<AheadTask> decompileAheadQueue = new ArrayDeque<>();
+    private final LinkedHashMap<DecompileCacheKey, AheadTask> decompileAheadTasks = new LinkedHashMap<>();
+    /**
+     * Tasks a worker has started, including one a request has removed from
+     * the map while it waits. Disposal must still cancel that monitor.
+     */
+    private final Set<AheadTask> decompileAheadActive =
+        Collections.newSetFromMap(new IdentityHashMap<>());
+    private int decompileAheadLiveWorkers;
+    // Advanced by disposal: workers of an older generation stop, and their
+    // results are never served, so an edit or option change cannot reuse them.
+    private long decompileAheadGeneration;
+    private static final int DECOMPILE_AHEAD_WORKERS = 8;
+    // A hint beyond the retained results would evict the window's own first
+    // results before their requests arrive, so later selectors are ignored.
+    private static final int DECOMPILE_AHEAD_WINDOW = DECOMPILE_RESULT_ENTRIES;
+    // Fixed: read-ahead serves consecutive requests of one workflow, which
+    // arrive milliseconds apart. A worker idle this long closes its native
+    // decompiler process and exits; a later window starts workers again.
+    private static final long DECOMPILE_AHEAD_IDLE_MILLIS = 30_000;
+    // Disposal cancels running decompiles, which end promptly; this bounds the
+    // wait for their workers before an edit or shutdown continues.
+    private static final long DECOMPILE_AHEAD_STOP_MILLIS = 10_000;
+    private final Object decompileAheadLock = new Object();
+    private final ExecutorService decompileAheadThreads = Executors.newCachedThreadPool(task -> {
+        Thread thread = new Thread(task, "REA decompile read-ahead");
+        thread.setDaemon(true);
+        return thread;
+    });
+    private boolean existingProject;
+    // A refused Program may only report its admission failure to the client.
+    private String identityAdmissionFailure;
     /** Per-function native decompiler limit from the session; 0 leaves it unbounded. */
     private int decompileTimeoutSeconds;
+    private Integer decompileMaxPayloadMiB;
+    // DecompileProcess converts MiB to bytes using a signed-int left shift.
+    private static final int MAX_DECOMPILE_PAYLOAD_MIB = Integer.MAX_VALUE >> 20;
+    private ValueFlowLimits valueFlowLimits = defaultValueFlowLimits();
+    // Context registers whose entry values TypeScript committed for this import, such as TMode.
+    private List<String> entryContextRegisters = List.of();
+    // The registers GHIDRA_RAW_ENTRY_CONTEXT can commit; the launcher tests keep them equal.
+    private static final Set<String> ENTRY_CONTEXT_REGISTERS = Set.of("TMode");
     // DecompileProcess converts seconds to an int millisecond timer delay.
     private static final int MAX_DECOMPILE_TIMEOUT_SECONDS = Integer.MAX_VALUE / 1000;
     private final ReaGhidraExtensions analysisExtensions = new ReaGhidraExtensions();
     private static AddressSpace sessionDefaultAddressSpace;
+    private Path checkpointDirectory;
+    private long checkpointModification;
 
     @Override
     public void run() throws Exception {
@@ -192,8 +316,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
             throw new IllegalArgumentException("REA bridge requires one session descriptor");
         }
         Path descriptorPath = Path.of(arguments[0]);
+        checkpointDirectory = descriptorPath.toAbsolutePath().normalize().getParent();
         SessionDescriptor descriptor = readDescriptor(descriptorPath);
+        existingProject = descriptor.existingProject;
         decompileTimeoutSeconds = descriptor.decompileTimeoutSeconds();
+        entryContextRegisters = descriptor.entryContextRegisters();
         // Windows retains a native immutable bearer descriptor lease until
         // runtime_close; POSIX removes it after this read. Normal cleanup removes
         // the Windows file, while abrupt owner death can leave private residue.
@@ -207,6 +334,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
         sessionDefaultAddressSpace =
             currentProgram.getAddressFactory().getDefaultAddressSpace();
+        if (currentProgram.getExecutableFormat().equals("Old-style DOS Executable (COM)") &&
+            !currentProgram.getOptions(ghidra.program.model.listing.Program.PROGRAM_INFO)
+                .getBoolean("REA DOS COM prepared", false)) {
+            throw new IllegalStateException("REA DOS COM entry/context preparation failed");
+        }
         if (currentProgram.getExecutableFormat().equals("Raw Binary")) {
             boolean dosCom = currentProgram.getLanguageID().getIdAsString()
                 .equals("x86:LE:16:Real Mode");
@@ -223,14 +355,17 @@ public final class ReaGhidraBridge extends HeadlessScript {
             throw new IllegalStateException("Ghidra provider version does not match the session");
         }
         String importedSha256 = currentProgram.getExecutableSHA256();
-        if (importedSha256 == null ||
-            !constantTimeEquals(
-                importedSha256.toLowerCase(Locale.ROOT),
-                descriptor.targetSha256
-            )) {
-            throw new IllegalStateException(
-                "Ghidra imported-byte digest does not match the admitted target"
-            );
+        if (importedSha256 == null || !importedSha256.matches("(?i)[0-9a-f]{64}")) {
+            identityAdmissionFailure = "import_identity_unavailable";
+        }
+        else if (!constantTimeEquals(importedSha256.toLowerCase(Locale.ROOT),
+                                     descriptor.targetSha256)) {
+            identityAdmissionFailure = "import_identity_mismatch";
+        }
+        if (identityAdmissionFailure != null) {
+            end(false);
+            serve(descriptor);
+            return;
         }
         admittedTargetSha256 = descriptor.targetSha256;
         // GhidraScript wraps run() in a transaction. End it before serving so
@@ -240,10 +375,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
             if (!descriptor.transport.equals("unix-socket") && descriptor.analysisExtensions.size() > 0)
                 throw new IOException("Windows Ghidra P0 does not admit metadata recovery or database mutation.");
             analysisExtensions.analyze(descriptor.analysisExtensions, currentProgram, monitor);
+            // Read-only sessions keep the discovered limitation but cannot mark blocks volatile.
+            protectLoaderInitializedRelocations(
+                !descriptor.existingProject && descriptor.transport.equals("unix-socket"));
             initializeDecompiler();
+            checkpointModification = currentProgram.getModificationNumber();
             serve(descriptor);
         }
         finally {
+            disposeDecompileAhead();
+            decompileAheadThreads.shutdownNow();
             if (decompiler != null) {
                 decompiler.dispose();
                 decompiler = null;
@@ -376,25 +517,126 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
     }
 
+    /**
+     * One frame handed from the connection reader to the request handler: a
+     * request with its cancellation monitor, an unusable frame, a read
+     * failure, or the end of the connection when every field is unset.
+     */
+    private record Inbound(Request request, TaskMonitor monitor, boolean invalid, IOException failure) {}
+
+    // A full queue only delays the reader; REA writes one Program request at a
+    // time, plus lifecycle requests beside it.
+    private static final int INBOUND_REQUEST_CAPACITY = 8;
+
+    /** Monitors of requests that were read and have not been answered. */
+    private final Map<Integer, TaskMonitor> requestMonitors = new ConcurrentHashMap<>();
+
+    private Inbound admitRequest(Request request) {
+        // Registered before the handler can see the request, so a cancel read
+        // right behind it finds the monitor even while the request still waits.
+        TaskMonitor requestMonitor = new TaskMonitorAdapter(true);
+        requestMonitors.put(request.id, requestMonitor);
+        return new Inbound(request, requestMonitor, false, null);
+    }
+
+    /**
+     * Read frames while the handler works. This is the bridge's only second
+     * thread: it never touches the Program or the writer. It cancels the
+     * monitor of the request a `cancel` frame names, cancels read-ahead for
+     * an `abandon_decompile_read_ahead` frame without waiting for workers,
+     * and queues every other frame in arrival order, so requests still run
+     * one at a time.
+     */
+    private void readRequests(
+            SessionDescriptor descriptor,
+            BufferedReader reader,
+            BlockingQueue<Inbound> inbound) {
+        try {
+            while (true) {
+                String line;
+                try {
+                    line = reader.readLine();
+                }
+                catch (IOException exception) {
+                    inbound.put(new Inbound(null, null, false, exception));
+                    return;
+                }
+                if (line == null) {
+                    inbound.put(new Inbound(null, null, false, null));
+                    return;
+                }
+                Request request;
+                try {
+                    request = parseRequest(line, descriptor.token);
+                    if (request.method.equals("cancel")) {
+                        requireKeys(request.params, Set.of("request_id"));
+                        // A request that already answered has no monitor left.
+                        TaskMonitor active = requestMonitors.get(requireInteger(request.params, "request_id"));
+                        if (active != null) active.cancel();
+                        continue;
+                    }
+                    if (request.method.equals("abandon_decompile_read_ahead")) {
+                        requireKeys(request.params, Set.of());
+                        // Not queued behind the handler, and not waited on
+                        // here: the cancel frame for the request that is
+                        // waiting on a taken task must still be read inside
+                        // the client's cancel grace.
+                        cancelDecompileAhead();
+                        continue;
+                    }
+                }
+                catch (RuntimeException exception) {
+                    inbound.put(new Inbound(null, null, true, null));
+                    return;
+                }
+                inbound.put(admitRequest(request));
+            }
+        }
+        catch (InterruptedException exception) {
+            // The handler finished with this connection.
+        }
+    }
+
     private void serveClient(
             SessionDescriptor descriptor,
             BufferedReader reader,
             BufferedWriter writer,
             Request first) throws Exception {
+        TaskMonitor scriptMonitor = monitor;
+        BlockingQueue<Inbound> inbound = new ArrayBlockingQueue<>(INBOUND_REQUEST_CAPACITY);
+        if (first != null) inbound.put(admitRequest(first));
+        Thread requestReader = new Thread(
+            () -> readRequests(descriptor, reader, inbound), "rea-bridge-request-reader");
+        requestReader.setDaemon(true);
+        requestReader.start();
+        try {
+            serveRequests(descriptor, writer, inbound);
+        }
+        finally {
+            monitor = scriptMonitor;
+            requestMonitors.clear();
+            // Interrupting a blocked channel read closes the connection, which
+            // the caller is about to do anyway.
+            requestReader.interrupt();
+        }
+    }
+
+    private void serveRequests(
+            SessionDescriptor descriptor,
+            BufferedWriter writer,
+            BlockingQueue<Inbound> inbound) throws Exception {
         while (true) {
-            Request request = first;
-            first = null;
-            if (request == null) {
-                String line = reader.readLine();
-                if (line == null) return;
-                try {
-                    request = parseRequest(line, descriptor.token);
-                }
-                catch (RuntimeException exception) {
-                    writeFailure(writer, 1, "invalid_request", "Bridge request is invalid");
-                    return;
-                }
+            Inbound next = inbound.take();
+            if (next.failure() != null) throw next.failure();
+            if (next.invalid()) {
+                // The request id may not have parsed, so the connection-level
+                // failure uses id 0, which no client request uses.
+                writeFailure(writer, CONNECTION_FAILURE_ID, "invalid_request", "Bridge request is invalid");
+                return;
             }
+            Request request = next.request();
+            if (request == null) return;
+            monitor = next.monitor();
             try {
                 if (request.method.equals("shutdown")) {
                     requireKeys(request.params, Set.of());
@@ -404,12 +646,36 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     writeSuccess(writer, request.id, result);
                     return;
                 }
+                if (identityAdmissionFailure != null) {
+                    // Keep the producer alive until the client has consumed the
+                    // refusal and closed or sent shutdown. Every other request
+                    // remains refused, including further startup attempts.
+                    writeFailure(writer, request.id, identityAdmissionFailure,
+                        "Ghidra imported identity admission failed");
+                    continue;
+                }
                 decompileTimeoutSeconds = request.decompileTimeoutSeconds() == null
                     ? descriptor.decompileTimeoutSeconds() : request.decompileTimeoutSeconds();
-                writeSuccess(writer, request.id, handleRequest(request, descriptor));
+                valueFlowLimits = request.valueFlowLimits();
+                applyRequestDecompilerOptions(request);
+                monitor.checkCancelled();
+                dispatchAndWrite(writer, request, descriptor);
             }
             catch (RequestFailure failure) {
-                writeFailure(writer, request.id, failure.code, failure.getMessage());
+                writeFailure(writer, request.id, failure);
+            }
+            catch (StackOverflowError exhausted) {
+                // Ghidra's data-type code can overflow while holding its database
+                // lock, which then stays held: the Program can no longer be saved
+                // or trusted. Admission bounds caller types (MAX_C_TYPE_DEPTH) so
+                // this is not reachable from caller text; if it happens anyway,
+                // say why and end the session rather than keep serving it.
+                writeFailure(writer, request.id, "bridge_exception",
+                    "StackOverflowError: Ghidra exhausted its stack and may hold its database lock; this Ghidra session cannot continue");
+                throw exhausted;
+            }
+            catch (CancelledException exception) {
+                writeFailure(writer, request.id, "request_cancelled", "Ghidra request was cancelled");
             }
             catch (Exception exception) {
                 writeFailure(
@@ -419,14 +685,20 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     exception.getClass().getSimpleName() + ": " + safeMessage(exception)
                 );
             }
+            finally {
+                requestMonitors.remove(request.id);
+            }
         }
     }
 
-    private JsonElement handleRequest(Request request, SessionDescriptor descriptor)
-            throws Exception {
+    private void dispatchAndWrite(
+            BufferedWriter writer,
+            Request request,
+            SessionDescriptor descriptor) throws Exception {
         if (request.method.equals("ping")) {
             requireKeys(request.params, Set.of());
-            return sessionInfo(descriptor);
+            writeSuccess(writer, request.id, sessionInfo(descriptor));
+            return;
         }
         if (analysisTimeoutOccurred()) {
             throw new RequestFailure(
@@ -434,7 +706,22 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 "Ghidra auto-analysis did not complete for this Program"
             );
         }
+        if (descriptor.existingProject && isMutatingOperation(request.method))
+            throw new RequestFailure("method_unavailable", "Existing Ghidra project sessions are read-only");
+        switch (request.method) {
+            case "list_names" -> writeStreamingSuccess(writer, request.id, listNames(request.params));
+            case "list_procedures" -> writeStreamingSuccess(writer, request.id, listProcedures(request.params));
+            case "list_strings" -> writeStreamingSuccess(writer, request.id, listStrings(request.params));
+            case "search_procedures" -> writeStreamingSuccess(writer, request.id, search(request.params, true));
+            case "search_strings" -> writeStreamingSuccess(writer, request.id, search(request.params, false));
+            default -> writeSuccess(writer, request.id, handleRequest(request, descriptor));
+        }
+    }
+
+    private JsonElement handleRequest(Request request, SessionDescriptor descriptor)
+            throws Exception {
         return switch (request.method) {
+            case "checkpoint_program" -> checkpointProgram(request.params, descriptor);
             case "read_binary_inventory_summary" -> binaryInventorySummary(request.params);
             case "inspect_native_load_image" -> inspectNativeLoadImage(request.params);
             case "read_bytes" -> readMemoryBytes(request.params);
@@ -442,21 +729,28 @@ public final class ReaGhidraBridge extends HeadlessScript {
             case "address_to_file_offset" -> addressToFileOffset(request.params);
             case "address_name" -> addressName(request.params);
             case "list_documents" -> listDocuments(request.params);
-            case "list_names" -> listNames(request.params);
-            case "list_procedures" -> listProcedures(request.params);
             case "list_segments" -> listSegments(request.params);
-            case "list_strings" -> listStrings(request.params);
             case "procedure_address" -> procedureAddress(request.params);
             case "procedure_assembly" -> procedureAssembly(request.params);
             case "procedure_callees" -> procedureCalls(request.params, false);
             case "procedure_callers" -> procedureCalls(request.params, true);
             case "procedure_info" -> procedureInfo(request.params);
-            case "procedure_pseudo_code" -> procedurePseudocode(request.params);
+            case "procedure_pseudo_code" -> {
+                try {
+                    decompileAhead(request.decompileReadAhead());
+                    yield procedurePseudocode(request.params);
+                }
+                finally {
+                    // Read-ahead is speculative work for this workflow; a
+                    // cancelled request abandons it rather than leaving it running.
+                    // After this reply, the client sends abandon_decompile_read_ahead
+                    // if the same workflow stops before its next request.
+                    if (monitor.isCancelled()) disposeDecompileAhead();
+                }
+            }
             case "read_function_instructions" -> readFunctionInstructions(request.params);
             case "procedure_references" -> procedureReferences(request.params);
             case "resolve_containing_procedure" -> containingProcedure(request.params);
-            case "search_procedures" -> search(request.params, true);
-            case "search_strings" -> search(request.params, false);
             case "inspect_native_data_type" -> inspectNativeDataType(request.params);
             case "inspect_native_instruction" -> inspectNativeInstruction(request.params, true);
             case "resolve_native_call_targets" -> resolveNativeCallTargets(request.params);
@@ -479,11 +773,46 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     throw new RequestFailure("method_unavailable", "Windows P0 does not admit database mutation");
                 yield annotateNativeFunction(request.params);
             }
+            case "define_native_data_types" -> {
+                if (!descriptor.transport.equals("unix-socket"))
+                    throw new RequestFailure("method_unavailable", "Windows P0 does not admit database mutation");
+                yield defineNativeDataTypes(request.params);
+            }
             default -> throw new RequestFailure(
                 "method_unavailable",
                 "Bridge method is unavailable"
             );
         };
+    }
+
+    private static boolean isMutatingOperation(String method) {
+        return method.equals("annotate_native_function") || method.equals("define_native_data_types") ||
+            method.equals("set_address_name") || method.equals("set_addresses_names");
+    }
+
+    /** Internal lifecycle request: the destination is inside this owned runtime. */
+    private JsonObject checkpointProgram(JsonObject params, SessionDescriptor descriptor) throws Exception {
+        requireKeys(params, Set.of("path", "force"));
+        if (descriptor.existingProject || !descriptor.transport.equals("unix-socket"))
+            throw new RequestFailure("method_unavailable", "This Program has no checkpoint authority");
+        Path output = Path.of(requireString(params, "path")).toAbsolutePath().normalize();
+        if (!output.getParent().equals(checkpointDirectory) ||
+            !output.getFileName().toString().matches("checkpoint-[a-f0-9-]{36}\\.gzf"))
+            throw new RequestFailure("invalid_request", "Checkpoint destination must belong to this runtime");
+        JsonElement forced = params.get("force");
+        if (!forced.isJsonPrimitive() || !forced.getAsJsonPrimitive().isBoolean())
+            throw new RequestFailure("invalid_request", "Checkpoint force must be a boolean");
+        boolean force = forced.getAsBoolean();
+        JsonObject result = new JsonObject();
+        boolean changed = currentProgram.getModificationNumber() != checkpointModification;
+        result.addProperty("saved", force || changed);
+        if (force || changed) {
+            if (Files.exists(output)) throw new RequestFailure("invalid_request", "Checkpoint destination already exists");
+            currentProgram.saveToPackedFile(output.toFile(), monitor);
+            checkpointModification = currentProgram.getModificationNumber();
+            result.addProperty("path", output.toString());
+        }
+        return result;
     }
 
     private JsonObject sessionInfo(SessionDescriptor descriptor) throws Exception {
@@ -511,14 +840,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.addProperty("run_id", descriptor.runId);
         result.addProperty("profile_digest", descriptor.profileDigest);
         result.add("provider", provider);
-        boolean readOnly = !descriptor.transport.equals("unix-socket");
+        boolean readOnly = descriptor.existingProject || !descriptor.transport.equals("unix-socket");
         result.addProperty("read_only", readOnly);
-        result.addProperty("analysis_complete", !timedOut);
+        if (descriptor.existingProject) {
+            result.add("analysis_complete", JsonNull.INSTANCE);
+            result.addProperty("existing_project", true);
+        } else result.addProperty("analysis_complete", !timedOut);
         result.addProperty("analysis_timed_out", timedOut);
         result.add("capabilities", GSON.toJsonTree(
             java.util.Arrays.stream(CAPABILITIES)
-                .filter(value -> !readOnly || !(value.equals("annotate_native_function")
-                    || value.equals("set_address_name") || value.equals("set_addresses_names")))
+                .filter(value -> !readOnly || !isMutatingOperation(value))
                 .toArray(String[]::new)
         ));
         result.add("target", target);
@@ -540,6 +871,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
         String softFloat = currentProgram.getOptions(ghidra.program.model.listing.Program.PROGRAM_INFO)
             .getString("REA MIPS soft-float storage", null);
         if (softFloat != null) result.add("mips_soft_float_storage", JsonParser.parseString(softFloat));
+        // Written by ReaGhidraRiscvCallingConvention after analysis; REA requires it
+        // exactly when the committed profile declares a RISC-V calling-convention policy.
+        String riscvCallingConvention = currentProgram.getOptions(ghidra.program.model.listing.Program.PROGRAM_INFO)
+            .getString("REA RISC-V calling convention", null);
+        if (riscvCallingConvention != null) result.add("riscv_calling_convention", JsonParser.parseString(riscvCallingConvention));
+        // Written by ReaGhidraPrepareElfLoad before auto-analysis; REA requires it
+        // exactly when the committed profile declares a RISC-V load preparation.
+        String loadPreparation = currentProgram.getOptions(ghidra.program.model.listing.Program.PROGRAM_INFO)
+            .getString("REA ELF load preparation", null);
+        if (loadPreparation != null) result.add("elf_load_preparation", JsonParser.parseString(loadPreparation));
         return result;
     }
 
@@ -583,6 +924,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     private String hashFileBytes(FileBytes source, boolean modified) throws Exception {
+        if (!modified) {
+            // Original FileBytes are immutable across analysis edits.
+            String cached = originalFileBytesSha256.get(source);
+            if (cached != null) return cached;
+        }
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
         byte[] chunk = new byte[65536];
         for (long offset = 0; offset < source.getSize();) {
@@ -595,7 +941,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
             digest.update(chunk, 0, read);
             offset += read;
         }
-        return bytesHex(digest.digest());
+        String hash = bytesHex(digest.digest());
+        if (!modified) {
+            originalFileBytesSha256.put(source, hash);
+        }
+        return hash;
     }
 
     private String hashMemory(Address start, long length) throws Exception {
@@ -679,6 +1029,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             }
             row.addProperty("status", relocation.getStatus().toString());
             row.addProperty("type", relocation.getType());
+            row.add("symbol", GSON.toJsonTree(relocation.getSymbolName()));
             row.add("values", GSON.toJsonTree(relocation.getValues() == null ? new long[0] : relocation.getValues()));
             byte[] original = relocation.getBytes();
             row.add("original_bytes_hex", original == null ? JsonNull.INSTANCE : GSON.toJsonTree(bytesHex(original)));
@@ -702,7 +1053,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
             JsonObject context = new JsonObject();
             context.addProperty("address", canonicalAddress(entry));
             JsonArray registers = new JsonArray();
-            for (String name : new String[] { "CS", "DS", "ES", "SS" }) {
+            List<String> names = new ArrayList<>(List.of("CS", "DS", "ES", "SS"));
+            for (String name : entryContextRegisters) if (!names.contains(name)) names.add(name);
+            for (String name : names) {
                 Register register = currentProgram.getRegister(name);
                 if (register == null) continue;
                 JsonObject row = new JsonObject();
@@ -756,6 +1109,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return result;
     }
 
+    private record ByteSearchBlock(MemoryBlock block, Address low, Address high) {}
+
     private JsonObject searchMemoryBytes(JsonObject params, SessionDescriptor descriptor) throws Exception {
         // mask, start, end, and cursor are omitted when absent; JSON encoding drops those keys.
         Set<String> keys = params.keySet();
@@ -799,8 +1154,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
         String cursor = params.has("cursor") ? requireString(params, "cursor") : null;
         Address resume = null;
         if (cursor != null) {
+            // The prefix is a one-way digest of target, profile, pattern,
+            // mask, bounds, and document. A mismatch cannot name which one
+            // differs, so this code reports the binding instead of schema repair.
             if (!cursor.startsWith(binding + ":"))
-                throw new RequestFailure("invalid_request", "Byte search cursor does not match the target and query");
+                throw new RequestFailure("byte_search_cursor_mismatch",
+                    "Byte search cursor does not match this search. It is bound to the target, analysis profile (including a selected Ghidra project), pattern, mask, bounds, and document, and does not identify which of those differs.");
             resume = parseReaAddress(cursor.substring(binding.length() + 1));
             MemoryBlock resumedBlock = currentProgram.getMemory().getBlock(resume);
             Address bound = start == null ? end : start;
@@ -816,18 +1175,22 @@ public final class ReaGhidraBridge extends HeadlessScript {
         JsonArray blocks = new JsonArray();
         JsonArray skipped = new JsonArray();
         JsonArray notLoaded = new JsonArray();
-        long covered = 0;
-        String next = null;
+        JsonArray overlays = new JsonArray();
+        List<ByteSearchBlock> eligible = new ArrayList<>();
         for (MemoryBlock block : ordered) {
             monitor.checkCancelled();
             Address low = block.getStart();
             Address high = block.getEnd();
             Address bound = start == null ? end : start;
             if (bound != null && !bound.getAddressSpace().equals(low.getAddressSpace())) continue;
-            // Without bounds, search loaded memory only. Non-loaded file parts
-            // (such as .symtab) and overlays stay reachable through explicit bounds.
-            if (bound == null && (!block.isLoaded() || block.isOverlay())) {
+            // Without bounds, search loaded non-overlay memory. Unloaded file
+            // parts and loaded overlays stay reachable through explicit bounds.
+            if (bound == null && !block.isLoaded()) {
                 notLoaded.add(byteSearchCoverage(block, low, high));
+                continue;
+            }
+            if (bound == null && block.isOverlay()) {
+                overlays.add(byteSearchCoverage(block, low, high));
                 continue;
             }
             if (start != null && low.compareTo(start) < 0) low = start;
@@ -837,46 +1200,73 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 skipped.add(byteSearchCoverage(block, low, high));
                 continue;
             }
-            if (next != null) continue;
-            if (resume != null && low.compareTo(resume) < 0) low = resume;
-            if (low.compareTo(high) > 0 || !low.getAddressSpace().equals(high.getAddressSpace())) continue;
-            Address at = low;
-            Address examinedEnd = high;
-            while (at != null && at.compareTo(high) <= 0 && high.subtract(at) >= bytes.length - 1L) {
+            eligible.add(new ByteSearchBlock(block, low, high));
+        }
+        long covered = 0;
+        String next = null;
+        for (int first = 0; first < eligible.size() && next == null;) {
+            monitor.checkCancelled();
+            int last = first;
+            while (last + 1 < eligible.size()) {
                 monitor.checkCancelled();
-                // Ghidra's end address bounds candidate starts, not the final matched byte.
-                Address found = currentProgram.getMemory().findBytes(at, high.subtract(bytes.length - 1L), bytes, masks, true, monitor);
-                monitor.checkCancelled();
-                if (found == null || high.subtract(found) < bytes.length - 1L) break;
-                if (matches.size() == limit) {
-                    next = binding + ":" + canonicalAddress(found);
-                    examinedEnd = found.addNoWrap(bytes.length - 1L);
-                    break;
-                }
-                JsonObject match = new JsonObject();
-                match.addProperty("address", canonicalAddress(found));
-                match.addProperty("segment", block.getName());
-                Long offset = targetFileOffset(block, found).offset();
-                match.add("file_offset", offset == null ? JsonNull.INSTANCE : GSON.toJsonTree(offset));
-                Function function = currentProgram.getFunctionManager().getFunctionContaining(found);
-                JsonObject procedure = new JsonObject();
-                if (function != null) {
-                    procedure.addProperty("address", canonicalAddress(function.getEntryPoint()));
-                    procedure.addProperty("name", function.getName(true));
-                }
-                match.add("procedure", function == null ? JsonNull.INSTANCE : procedure);
-                matches.add(match);
-                at = found.next();
+                ByteSearchBlock previous = eligible.get(last);
+                ByteSearchBlock following = eligible.get(last + 1);
+                if (!previous.high().getAddressSpace().equals(following.low().getAddressSpace()) ||
+                    previous.high().next() == null || !previous.high().next().equals(following.low())) break;
+                last++;
             }
-            JsonObject coverage = byteSearchCoverage(block, low, examinedEnd);
-            covered = Math.addExact(covered, coverage.get("bytes").getAsLong());
-            blocks.add(coverage);
+            Address low = eligible.get(first).low();
+            Address high = eligible.get(last).high();
+            if (resume != null && low.compareTo(resume) < 0) low = resume;
+            if (low.compareTo(high) <= 0 && low.getAddressSpace().equals(high.getAddressSpace())) {
+                Address at = low;
+                Address examinedEnd = high;
+                while (at != null && at.compareTo(high) <= 0 && high.subtract(at) >= bytes.length - 1L) {
+                    monitor.checkCancelled();
+                    // findBytes bounds candidate starts. The entire candidate remains in this eligible run.
+                    Address found = currentProgram.getMemory().findBytes(at, high.subtract(bytes.length - 1L), bytes, masks, true, monitor);
+                    monitor.checkCancelled();
+                    if (found == null || high.subtract(found) < bytes.length - 1L) break;
+                    if (matches.size() == limit) {
+                        next = binding + ":" + canonicalAddress(found);
+                        examinedEnd = found.addNoWrap(bytes.length - 1L);
+                        break;
+                    }
+                    MemoryBlock matchBlock = currentProgram.getMemory().getBlock(found);
+                    JsonObject match = new JsonObject();
+                    match.addProperty("address", canonicalAddress(found));
+                    match.addProperty("segment", matchBlock.getName());
+                    Long offset = targetFileOffset(matchBlock, found).offset();
+                    match.add("file_offset", offset == null ? JsonNull.INSTANCE : GSON.toJsonTree(offset));
+                    Function function = currentProgram.getFunctionManager().getFunctionContaining(found);
+                    JsonObject procedure = new JsonObject();
+                    if (function != null) {
+                        procedure.addProperty("address", canonicalAddress(function.getEntryPoint()));
+                        procedure.addProperty("name", function.getName(true));
+                    }
+                    match.add("procedure", function == null ? JsonNull.INSTANCE : procedure);
+                    matches.add(match);
+                    at = found.next();
+                }
+                for (int index = first; index <= last; index++) {
+                    monitor.checkCancelled();
+                    ByteSearchBlock item = eligible.get(index);
+                    Address coveredLow = item.low().compareTo(low) < 0 ? low : item.low();
+                    Address coveredHigh = item.high().compareTo(examinedEnd) > 0 ? examinedEnd : item.high();
+                    if (coveredLow.compareTo(coveredHigh) > 0) continue;
+                    JsonObject coverage = byteSearchCoverage(item.block(), coveredLow, coveredHigh);
+                    covered = Math.addExact(covered, coverage.get("bytes").getAsLong());
+                    blocks.add(coverage);
+                }
+            }
+            first = last + 1;
         }
         JsonObject searched = new JsonObject();
         searched.add("blocks", blocks);
         searched.addProperty("bytes", covered);
         searched.add("skipped_uninitialized", skipped);
         searched.add("skipped_not_loaded", notLoaded);
+        searched.add("skipped_overlays", overlays);
         JsonObject result = new JsonObject();
         result.add("matches", matches);
         result.add("searched", searched);
@@ -914,26 +1304,193 @@ public final class ReaGhidraBridge extends HeadlessScript {
         requireKeys(params, Set.of("document", "address"));
         requireDocument(params);
         Address address = requireAddress(params, "address");
+        String at = canonicalAddress(address);
+        // A well-formed address can still lack one exact source offset. Each
+        // outcome has its own code, so REA reports the reason rather than
+        // schema repair. Initialization, not the loaded flag, decides whether
+        // source bytes can exist: file-backed overlays are not loaded.
         MemoryBlock block = currentProgram.getMemory().getBlock(address);
-        if (block == null || !block.isInitialized())
-            throw new RequestFailure("invalid_request", "Address has no initialized file-backed memory: " + canonicalAddress(address));
+        if (block == null)
+            throw new RequestFailure("address_unmapped",
+                "Address " + at + " is outside every Ghidra memory block");
+        if (!block.isInitialized())
+            throw new RequestFailure("address_uninitialized",
+                "Address " + at + " is in uninitialized Ghidra memory block " + block.getName());
         TargetFileOffset mapping = targetFileOffset(block, address);
-        if (mapping.mappings() != 1)
-            throw new RequestFailure("invalid_request", "Address has " + mapping.mappings() + " authoritative target-file mappings: " + canonicalAddress(address));
+        if (mapping.mappings() == 0)
+            throw new RequestFailure("file_mapping_absent",
+                "Address " + at + " in initialized Ghidra memory block " + block.getName() +
+                " has no authoritative mapping to the admitted target file");
+        if (mapping.mappings() > 1)
+            throw new RequestFailure("file_mapping_ambiguous",
+                "Address " + at + " has " + mapping.mappings() +
+                " authoritative mappings to the admitted target file");
         Long fileOffset = mapping.offset();
         if (fileOffset == null)
-            throw new RequestFailure("invalid_request", "Address lacks a safe file offset: " + canonicalAddress(address));
+            throw new RequestFailure("file_offset_unrepresentable",
+                "Address " + at + " maps to an admitted target-file offset beyond the exact JSON integer range");
         JsonObject result = new JsonObject();
-        result.addProperty("address", canonicalAddress(address));
+        result.addProperty("address", at);
         result.addProperty("file_offset", fileOffset);
         return result;
     }
 
-    private void initializeDecompiler() {
+    /**
+     * Ghidra applies most loader relocations, but one it cannot apply (for
+     * example an ELF copy relocation in RELRO, whose value comes from another
+     * object, or a TLS slot that only the dynamic loader fills) keeps its
+     * on-disk bytes while the runtime loader supplies a different value. Mark
+     * such a destination in a non-writable loaded block volatile before opening
+     * the decompiler so those bytes cannot be constant-propagated as if they
+     * were runtime values.
+     *
+     * Volatility is set on the destination's own data item (its Mutability
+     * setting), so the rest of the block, for example the GOT entries Ghidra
+     * applied beside a TLS slot, stays foldable. Where no data item can be
+     * placed on exactly the destination, the whole block is marked volatile
+     * instead. This changes only the ephemeral analysis database: source
+     * FileBytes and the original target remain untouched, and block
+     * permissions are preserved.
+     *
+     * Without database-mutation authority (Windows P0 or a caller's existing
+     * project) the relocations are still recorded so affected procedures carry
+     * the limitation, but nothing is marked volatile.
+     */
+    private void protectLoaderInitializedRelocations(boolean markVolatile) throws Exception {
+        String elfFileType = currentProgram.getOptions(
+            ghidra.program.model.listing.Program.PROGRAM_INFO
+        ).getString(ElfLoader.ELF_FILE_TYPE_PROPERTY, "");
+        // Ghidra also marks ELF ET_DYN and ET_CORE programs relocatable.
+        if (currentProgram.getRelocationTable().isRelocatable() &&
+            !elfFileType.equals("shared object")) return;
+        Map<Address, LoaderInitializedRelocation> discovered = new TreeMap<>();
+        Map<Address, MemoryBlock> blocks = new TreeMap<>();
+        Iterator<Relocation> iterator = currentProgram.getRelocationTable().getRelocations();
+        while (iterator.hasNext()) {
+            monitor.checkCancelled();
+            Relocation relocation = iterator.next();
+            // An applied relocation already holds the value the loader writes
+            // (for example GLOB_DAT or RELATIVE), so folding it is correct and
+            // keeping its block foldable preserves GOT-call pseudocode.
+            Relocation.Status status = relocation.getStatus();
+            if (status == Relocation.Status.APPLIED || status == Relocation.Status.APPLIED_OTHER)
+                continue;
+            Address location = relocation.getAddress();
+            MemoryBlock block = currentProgram.getMemory().getBlock(location);
+            if (block == null || !block.isLoaded() || !block.isInitialized() || block.isWrite())
+                continue;
+            long lengthInBytes = relocation.getLength();
+            int addressableUnitSize = location.getAddressSpace().getAddressableUnitSize();
+            long lengthInAddressableUnits = Math.max(
+                1L,
+                (lengthInBytes + addressableUnitSize - 1L) / addressableUnitSize
+            );
+            discovered.put(
+                location,
+                new LoaderInitializedRelocation(
+                    location,
+                    lengthInAddressableUnits,
+                    block.getName(),
+                    relocation.getSymbolName()
+                )
+            );
+            blocks.put(location, block);
+        }
+        if (discovered.isEmpty()) return;
+        loaderInitializedRelocations.putAll(discovered);
+        if (!markVolatile) return;
+
+        int transaction = currentProgram.startTransaction("REA loader relocation semantics");
+        boolean commit = false;
+        try {
+            Listing listing = currentProgram.getListing();
+            Set<MemoryBlock> wholeBlocks =
+                java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+            for (LoaderInitializedRelocation relocation : discovered.values()) {
+                monitor.checkCancelled();
+                Data data = volatileRelocationData(listing, relocation);
+                if (data == null) wholeBlocks.add(blocks.get(relocation.address()));
+                else MutabilitySettingsDefinition.DEF.setChoice(
+                    data, MutabilitySettingsDefinition.VOLATILE);
+            }
+            for (MemoryBlock block : wholeBlocks) {
+                monitor.checkCancelled();
+                if (!block.isVolatile()) block.setVolatile(true);
+            }
+            commit = true;
+        }
+        finally {
+            currentProgram.endTransaction(transaction, commit);
+        }
+    }
+
+    /**
+     * The data item that starts at this relocation destination and covers it,
+     * created as undefined bytes when nothing is defined there; null when an
+     * instruction occupies it or a data item starts before it.
+     */
+    private Data volatileRelocationData(
+            Listing listing, LoaderInitializedRelocation relocation) throws Exception {
+        Address start = relocation.address();
+        long length = relocation.lengthInAddressableUnits();
+        if (length > Integer.MAX_VALUE) return null;
+        Data existing = listing.getDefinedDataContaining(start);
+        if (existing != null)
+            return existing.getAddress().equals(start) && existing.getLength() >= length
+                ? existing
+                : null;
+        // A range iterator only sees instructions whose start lies in the range.
+        if (listing.getInstructionContaining(start) != null) return null;
+        Address end = start.add(length - 1);
+        if (listing.getInstructions(new ghidra.program.model.address.AddressSet(start, end), true)
+                .hasNext())
+            return null;
+        if (listing.getDefinedData(new ghidra.program.model.address.AddressSet(start, end), true)
+                .hasNext())
+            return null;
+        return listing.createData(start, Undefined.getUndefinedDataType((int) length));
+    }
+
+    private LoaderInitializedRelocation loaderInitializedRelocationAt(Address address) {
+        Map.Entry<Address, LoaderInitializedRelocation> entry =
+            loaderInitializedRelocations.floorEntry(address);
+        if (entry == null) return null;
+        LoaderInitializedRelocation relocation = entry.getValue();
+        return relocation.contains(address) ? relocation : null;
+    }
+
+    private DecompileOptions decompileOptions(Integer payloadMiB) {
         DecompileOptions options = new DecompileOptions();
         options.setMaxInstructions(Integer.MAX_VALUE);
+        if (payloadMiB != null) options.setMaxPayloadMBytes(payloadMiB);
+        return options;
+    }
+
+    /**
+     * Only a request that carries decompiler options changes them. Another
+     * read leaves the session's payload limit, and the decompiles completed
+     * under it, in place.
+     */
+    private void applyRequestDecompilerOptions(Request request) {
+        if (request.decompilePayload() != null)
+            applyDecompilePayloadLimit(request.decompilePayload().mebibytes());
+    }
+
+    private void applyDecompilePayloadLimit(Integer payloadMiB) {
+        if (java.util.Objects.equals(decompileMaxPayloadMiB, payloadMiB)) return;
+        // DecompInterface supports live setOptions: it updates the existing
+        // DecompileProcess result-size bound before sending native options.
+        if (!decompiler.setOptions(decompileOptions(payloadMiB)))
+            throw new RequestFailure("decompile_options_failed", "Ghidra could not apply the selected native decompiler payload limit");
+        decompiler.flushCache();
+        decompileResults.clear();
+        disposeDecompileAhead();
+        decompileMaxPayloadMiB = payloadMiB;
+    }
+
+    private void initializeDecompiler() {
         decompiler = new DecompInterface();
-        decompiler.setOptions(options);
+        decompiler.setOptions(decompileOptions(decompileMaxPayloadMiB));
         decompiler.toggleCCode(true);
         decompiler.toggleSyntaxTree(true);
         decompiler.toggleJumpLoads(true);
@@ -949,24 +1506,35 @@ public final class ReaGhidraBridge extends HeadlessScript {
         JsonObject selection = new JsonObject();
         Function function = resolveDecompileProcedure(selector, selection);
         try {
-            String value = decompiledText(decompile(function));
+            DecompileResults results = decompile(function);
+            String value = decompiledText(results);
+            Function decompiled = decompiledFunction(function, results);
+            List<String> limitations = new ArrayList<>(functionBoundaryLimitations(
+                decompiled,
+                currentProgram.getListing().getInstructions(decompiled.getBody(), true)
+            ));
+            if (selection.has("undefined_function_entry"))
+                limitations.add(0, undefinedFunctionLimitation(selection));
             JsonObject result = functionObservation(
                 value == null ? JsonNull.INSTANCE : GSON.toJsonTree(value),
-                functionBoundaryLimitations(
-                    function,
-                    currentProgram.getListing().getInstructions(function.getBody(), true)
-                )
+                limitations
             );
-            if (selection.size() > 0) result.add("selection", selection);
+            // The file-offset selection is a contract field; an undefined
+            // function's inferred entry is carried by its limitation.
+            if (selection.has("file_offset")) {
+                JsonObject fileOffsetSelection = new JsonObject();
+                for (String key : List.of("file_offset", "mapped_address", "procedure_address"))
+                    fileOffsetSelection.add(key, selection.get(key));
+                result.add("selection", fileOffsetSelection);
+            }
             return result;
         } catch (RequestFailure failure) {
-            if (selection.size() == 0) throw failure;
+            if (!selection.has("mapped_address")) throw failure;
             // Preserve completed resolution facts without changing the backend's
             // failure code or suggesting that the successful mapping was invalid.
-            throw new RequestFailure(failure.code, "Selector " + selector +
+            throw failure.prefixed("Selector " + selector +
                 " mapped to analysis address " + selection.get("mapped_address").getAsString() +
-                " and procedure " + canonicalAddress(function.getEntryPoint()) +
-                "; " + failure.getMessage());
+                " and procedure " + canonicalAddress(function.getEntryPoint()) + "; ");
         }
     }
 
@@ -979,8 +1547,13 @@ public final class ReaGhidraBridge extends HeadlessScript {
             } catch (RequestFailure failure) {
                 // Existing names/addresses win. Only an unresolved numeric input
                 // can fall back to source coordinates; ambiguity never falls back.
-                if (!failure.code.equals("not_found") || !selector.matches("0x[0-9a-fA-F]+"))
-                    throw failure;
+                if (!failure.code.equals("procedure_not_found")) throw failure;
+                // Analyzed code outside every function is still an analysis
+                // address, so it wins over a file-offset reading of the number.
+                Address requested = isExplicitReaAddress(selector) ? parseReaAddress(selector) : tryParseAddress(selector);
+                Function undefined = requested == null ? null : undefinedFunctionAt(requested, selection);
+                if (undefined != null) return undefined;
+                if (!selector.matches("0x[0-9a-fA-F]+")) throw failure;
             }
         }
         String coordinate = explicitOffset ? selector.substring(prefix.length()) : selector;
@@ -1006,17 +1579,24 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
         List<Address> candidates = new ArrayList<>(mappedAddresses);
         if (candidates.size() > 1)
-            throw new RequestFailure("ambiguous", "File offset " + coordinate +
+            throw new RequestFailure("file_offset_ambiguous", "File offset " + coordinate +
                 " has multiple loaded mappings: " + candidates.stream().map(ReaGhidraBridge::canonicalAddress).toList() +
                 "; select an explicit analysis address");
         if (candidates.isEmpty())
-            throw new RequestFailure("not_found", "File offset " + coordinate +
+            throw new RequestFailure("file_offset_unmapped",
+                (explicitOffset || !isMappedAnalysisAddress(selector) ? "" :
+                    coordinate + " is a mapped analysis address that holds no disassembled code and no procedure. Read as a file offset instead: ") +
+                "File offset " + coordinate +
                 " has no loaded source mapping for the admitted target file; Ghidra image base: " + canonicalAddress(currentProgram.getImageBase()) +
                 ". Inspect mappings with rea inspect-native-load-image <path> --provider ghidra --json or MCP inspect_native_load_image.");
         Address mapped = candidates.get(0);
+        // A file offset names the same location as its mapped analysis
+        // address, so it resolves the way that address does, including code
+        // outside every function.
         Function function = functionAtOrContaining(mapped);
+        if (function == null) function = undefinedFunctionAt(mapped, selection);
         if (function == null)
-            throw new RequestFailure("not_found", "File offset " + coordinate +
+            throw new RequestFailure("procedure_not_found", "File offset " + coordinate +
                 " maps to analysis address " + canonicalAddress(mapped) +
                 ", but no procedure starts at or contains that address in the current Ghidra analysis. " +
                 "Choose an observed procedure with CLI rea search <path> . --kind procedures --mode regex --provider ghidra --json or MCP list_procedures.");
@@ -1024,6 +1604,47 @@ public final class ReaGhidraBridge extends HeadlessScript {
         selection.addProperty("mapped_address", canonicalAddress(mapped));
         selection.addProperty("procedure_address", canonicalAddress(function.getEntryPoint()));
         return function;
+    }
+
+    /**
+     * Ghidra can disassemble code without creating a function for it, for
+     * example a range named only by an exception-frame entry and reached
+     * through a data reference, as `main` is in a stripped ELF. The decompiler
+     * panel reads such code through an on-the-fly UndefinedFunction, which
+     * leaves the Program unchanged; this does the same and records that the
+     * entry is inferred from control flow and absent from the inventory.
+     */
+    private Function undefinedFunctionAt(Address address, JsonObject selection) throws Exception {
+        if (!isCodeOutsideFunctions(address)) return null;
+        UndefinedFunction undefined =
+            UndefinedFunction.findFunction(currentProgram, address, monitor);
+        if (undefined == null) return null;
+        selection.addProperty("requested_address", canonicalAddress(address));
+        selection.addProperty("undefined_function_entry", canonicalAddress(undefined.getEntryPoint()));
+        return undefined;
+    }
+
+    private static final String CODE_OUTSIDE_FUNCTIONS =
+        "Ghidra disassembled code there without creating a function, so it is absent from the procedure inventory";
+
+    private boolean isCodeOutsideFunctions(Address address) {
+        return address.isMemoryAddress() &&
+            currentProgram.getListing().getInstructionContaining(address) != null &&
+            functionAtOrContaining(address) == null;
+    }
+
+    private boolean isMappedAnalysisAddress(String selector) {
+        Address address = tryParseAddress(selector);
+        return address != null && address.isMemoryAddress() && currentProgram.getMemory().contains(address);
+    }
+
+    private static String undefinedFunctionLimitation(JsonObject selection) {
+        return "No Ghidra function contains " + selection.get("requested_address").getAsString() +
+            ": Ghidra disassembled this code without creating a function, so it is absent from the procedure inventory. " +
+            "This pseudocode is Ghidra's on-the-fly decompilation from " +
+            selection.get("undefined_function_entry").getAsString() +
+            ", an entry inferred by following control flow back from the requested address. " +
+            "The entry and extent are not an analyzed function boundary, and the Program is unchanged.";
     }
 
     private boolean isTargetSource(FileBytes source) throws Exception {
@@ -1076,7 +1697,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private JsonObject procedureCalls(JsonObject params, boolean callers) throws Exception {
         requireKeys(params, Set.of("document", "procedure"));
         requireDocument(params);
-        Function function = resolveProcedure(requireString(params, "procedure"));
+        String selector = requireString(params, "procedure");
+        if (callers) {
+            Address target = incomingNonProcedureAddress(selector);
+            if (target != null) return addressCallers(target);
+        }
+        Function function = resolveProcedure(selector);
         Set<Function> observed = callers
             ? function.getCallingFunctions(monitor)
             : function.getCalledFunctions(monitor);
@@ -1136,16 +1762,18 @@ public final class ReaGhidraBridge extends HeadlessScript {
             )
         );
         requireDocument(params);
-        Function function = resolveProcedure(requireString(params, "procedure"));
+        String selector = requireString(params, "procedure");
         String direction = requireString(params, "direction");
         if (!direction.equals("incoming") && !direction.equals("outgoing")) {
             throw new RequestFailure("invalid_request", "direction must be incoming or outgoing");
         }
-        List<Reference> references = collectReferences(function, direction);
-        JsonArray edges = new JsonArray();
-        for (Reference reference : references) {
-            edges.add(referenceEdge(reference));
+        if (direction.equals("incoming")) {
+            Address target = incomingNonProcedureAddress(selector);
+            if (target != null) return addressReferences(target);
         }
+        Function function = resolveProcedure(selector);
+        List<Reference> references = collectReferences(function, direction);
+        JsonArray edges = referenceEdges(references);
         JsonObject result = new JsonObject();
         result.add("procedure", procedureIdentity(function));
         result.addProperty("direction", direction);
@@ -1168,6 +1796,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.add("unresolved_calls", unresolvedCalls);
         return functionObservation(result, limitations);
     }
+
+    /** Fields, enum members or function parameters serialized per inspected type; the rest are counted. */
+    private static final int MAX_INSPECTED_TYPE_ENTRIES = 20_000;
 
     private JsonObject inspectNativeDataType(JsonObject params) throws Exception {
         requireKeys(params, Set.of("document", "type", "address"));
@@ -1199,13 +1830,13 @@ public final class ReaGhidraBridge extends HeadlessScript {
             if (type.getSourceArchive() != null) result.addProperty("source_archive", type.getSourceArchive().getName());
             if (type.getLength() >= 0) result.addProperty("size_bytes", type.getLength());
             if (type.getAlignment() > 0) result.addProperty("alignment_bytes", type.getAlignment());
-            String kind = type instanceof ghidra.program.model.data.Structure ? "struct" : type instanceof ghidra.program.model.data.Union ? "union" : type instanceof ghidra.program.model.data.Enum ? "enum" : type instanceof ghidra.program.model.data.Pointer ? "pointer" : type instanceof ghidra.program.model.data.Array ? "array" : type instanceof ghidra.program.model.data.TypeDef ? "typedef" : type instanceof ghidra.program.model.data.BuiltInDataType ? "scalar" : "unsupported";
-            result.addProperty("kind", kind);
+            result.addProperty("kind", dataTypeKind(type));
+            if (isCallerDefinedType(type)) result.addProperty("source", "caller-defined");
             if (type instanceof ghidra.program.model.data.Composite composite) {
                 result.addProperty("packing_enabled", composite.isPackingEnabled());
                 ghidra.program.model.data.DataTypeComponent[] components = composite.getComponents();
                 totalFields = components.length;
-                for (int index = 0; index < Math.min(components.length, 20_000); index++) {
+                for (int index = 0; index < Math.min(components.length, MAX_INSPECTED_TYPE_ENTRIES); index++) {
                     monitor.checkCancelled();
                     ghidra.program.model.data.DataTypeComponent component = components[index];
                     JsonObject field = new JsonObject();
@@ -1219,6 +1850,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     if (component.getDataType() instanceof ghidra.program.model.data.BitFieldDataType bitfield) {
                         field.addProperty("bit_size", bitfield.getBitSize());
                         field.addProperty("bit_offset", bitfield.getBitOffset());
+                        JsonObject bitField = new JsonObject();
+                        bitField.addProperty("base_type_id", bitfield.getBaseDataType().getPathName());
+                        bitField.addProperty("declared_bit_size", bitfield.getDeclaredBitSize());
+                        bitField.addProperty("component_type_lookup", typeLookupResult(bitfield));
+                        bitField.addProperty("base_type_lookup", typeLookupResult(bitfield.getBaseDataType()));
+                        field.add("bit_field", bitField);
                     }
                     field.addProperty("status", "observed");
                     field.addProperty("flexible_tail", "unknown");
@@ -1228,7 +1865,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 String[] names = enumeration.getNames();
                 totalFields = names.length;
                 java.util.Arrays.sort(names);
-                for (int index = 0; index < Math.min(names.length, 20_000); index++) {
+                for (int index = 0; index < Math.min(names.length, MAX_INSPECTED_TYPE_ENTRIES); index++) {
                     monitor.checkCancelled();
                     JsonObject member = new JsonObject();
                     member.addProperty("name", names[index]);
@@ -1243,18 +1880,48 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 result.addProperty("array_stride_bytes", array.getElementLength());
             } else if (type instanceof ghidra.program.model.data.TypeDef alias) {
                 result.addProperty("referenced_type", alias.getDataType().getPathName());
+            } else if (type instanceof ghidra.program.model.data.FunctionDefinition function) {
+                JsonObject prototype = new JsonObject();
+                prototype.addProperty("return_type", function.getReturnType().getPathName());
+                JsonArray parameters = new JsonArray();
+                // An existing project type can hold any number of parameters; bound them like fields.
+                ghidra.program.model.data.ParameterDefinition[] arguments = function.getArguments();
+                for (int index = 0; index < Math.min(arguments.length, MAX_INSPECTED_TYPE_ENTRIES); index++) {
+                    monitor.checkCancelled();
+                    ghidra.program.model.data.ParameterDefinition parameter = arguments[index];
+                    JsonObject item = new JsonObject();
+                    String name = parameter.getName();
+                    item.add("name", name == null || name.isEmpty() ? JsonNull.INSTANCE : GSON.toJsonTree(name));
+                    item.addProperty("type", parameter.getDataType().getPathName());
+                    parameters.add(item);
+                }
+                prototype.add("parameters", parameters);
+                prototype.addProperty("total_parameters", arguments.length);
+                prototype.addProperty("parameters_truncated", arguments.length > MAX_INSPECTED_TYPE_ENTRIES);
+                prototype.addProperty("varargs", function.hasVarArgs());
+                prototype.addProperty("calling_convention", function.getCallingConventionName());
+                result.add("function_definition", prototype);
             }
         }
         result.add("fields", fields);
         result.add("members", members);
         result.addProperty("total_fields", totalFields);
-        result.addProperty("truncated", totalFields > 20_000);
-        result.add("limitations", GSON.toJsonTree(List.of("Layouts are Ghidra data-type database observations; original debug/source authority and flexible-tail semantics are not inferred. Nested and recursive types retain category-path identities for separate inspection.", "At most 20000 fields or enum members are serialized per type to bound provider output. total_fields and truncated report omissions. Enum values preserve Ghidra's signed long representation.")));
+        result.addProperty("truncated", totalFields > MAX_INSPECTED_TYPE_ENTRIES);
+        result.add("limitations", GSON.toJsonTree(List.of("Layouts are Ghidra data-type database observations; original debug/source authority and flexible-tail semantics are not inferred. Component type paths do not necessarily identify separately registered types; bit-field lookups report whether the manager resolves equivalent types.", "At most 20000 fields, enum members or function parameters are serialized per type to bound provider output. total_fields and truncated report omitted fields and members; function_definition.total_parameters and parameters_truncated report omitted parameters. Enum values preserve Ghidra's signed long representation.")));
         if (type != null) {
             JsonObject metadata = analysisExtensions.inspectDataType(currentProgram, type, address, monitor);
             if (metadata != null) result.add("metadata_recovery", metadata);
         }
         return result;
+    }
+
+    private static String dataTypeKind(DataType type) {
+        return type instanceof ghidra.program.model.data.Structure ? "struct" : type instanceof ghidra.program.model.data.Union ? "union" : type instanceof ghidra.program.model.data.Enum ? "enum" : type instanceof ghidra.program.model.data.Pointer ? "pointer" : type instanceof ghidra.program.model.data.Array ? "array" : type instanceof ghidra.program.model.data.TypeDef ? "typedef" : type instanceof ghidra.program.model.data.FunctionDefinition ? "function" : type instanceof ghidra.program.model.data.BuiltInDataType ? "scalar" : "unsupported";
+    }
+
+    private String typeLookupResult(DataType type) {
+        DataType resolved = currentProgram.getDataTypeManager().getDataType(type.getPathName());
+        return resolved == null ? "not-found" : resolved.isEquivalent(type) ? "equivalent" : "different";
     }
 
     private JsonObject instructionReference(Reference reference) {
@@ -1304,8 +1971,29 @@ public final class ReaGhidraBridge extends HeadlessScript {
         flow.addProperty("conditional", false);
         flow.addProperty("computed", false);
         if (instruction == null) {
-            result.addProperty("status", !currentProgram.getMemory().contains(address) ? "outside-memory" : currentProgram.getListing().getInstructionContaining(address) != null
-                ? "not-instruction-boundary" : currentProgram.getListing().getDefinedDataContaining(address) != null ? "data" : "undecodable");
+            Instruction containing = currentProgram.getListing().getInstructionContaining(address);
+            boolean inMemory = currentProgram.getMemory().contains(address);
+            Data containingData = inMemory && containing == null
+                ? currentProgram.getListing().getDefinedDataContaining(address) : null;
+            result.addProperty("status", !inMemory ? "outside-memory" : containing != null
+                ? "not-instruction-boundary" : containingData != null ? "data" : "not-in-listing");
+            if (inMemory && containing == null && containingData != null) {
+                JsonObject parentData = new JsonObject();
+                parentData.addProperty("address", canonicalAddress(containingData.getAddress()));
+                parentData.addProperty("length", containingData.getLength());
+                parentData.addProperty("type_id", containingData.getDataType().getPathName());
+                parentData.addProperty("provenance", "ghidra-listing");
+                result.add("containing_data", parentData);
+            }
+            if (containing != null && currentProgram.getMemory().contains(address)) {
+                JsonObject containingInstruction = new JsonObject();
+                containingInstruction.addProperty("address", canonicalAddress(containing.getAddress()));
+                containingInstruction.addProperty("length", containing.getLength());
+                containingInstruction.addProperty("mnemonic", containing.getMnemonicString());
+                containingInstruction.addProperty("raw_disassembly", containing.toString());
+                containingInstruction.addProperty("provenance", "ghidra-listing");
+                result.add("containing_instruction", containingInstruction);
+            }
             for (String key : List.of("bytes", "length", "mnemonic", "raw_disassembly")) result.add(key, JsonNull.INSTANCE);
         } else {
             result.addProperty("status", "decoded");
@@ -1377,6 +2065,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             result.add("incoming_references", incomingReferences);
         }
         List<String> limitations = new ArrayList<>(List.of("Operand components are Ghidra Listing decoder tokens; effective memory base/index/displacement roles and per-instruction context mode are unavailable. The mode field is the program language variant."));
+        if (result.get("status").getAsString().equals("not-in-listing")) limitations.add("No listed instruction or defined data covers this in-memory address. REA did not attempt a decode; the memory may be uninitialized or contain valid instructions.");
         if (flow.get("kind").getAsString().equals("terminal")) limitations.add("No RETURN operation was observed in the provider's instruction p-code; terminal classification remains generic.");
         result.add("limitations", GSON.toJsonTree(limitations));
         return result;
@@ -1432,10 +2121,13 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return result;
     }
 
-    private void invalidateAnalysisCaches() {
+    // Renames and comments never mutate DefinedData string literals, so keep stringInventory intact.
+    private void invalidateSymbolAndDecompilerCaches() {
         nameInventory = null;
         procedureInventory = null;
-        stringInventory = null;
+        procedureNameIndex = null;
+        decompileResults.clear();
+        disposeDecompileAhead();
         if (decompiler != null) decompiler.flushCache();
     }
 
@@ -1446,13 +2138,20 @@ public final class ReaGhidraBridge extends HeadlessScript {
         value.addProperty("name", procedureName(function));
         value.addProperty("comment", currentProgram.getListing().getComment(CommentType.PRE, entry));
         value.addProperty("inline_comment", currentProgram.getListing().getComment(CommentType.EOL, entry));
+        // The formal prototype omits storage-derived parameters. It reparses as a
+        // signature edit when its function and type names are C identifiers.
+        value.addProperty("signature", function.getSignature(true).getPrototypeString(false));
+        value.addProperty("signature_source", normalizedSource(function.getSignatureSource()));
+        value.addProperty("calling_convention", function.getCallingConventionName());
         return value;
     }
 
     private JsonObject annotateNativeFunction(JsonObject params) throws Exception {
-        if (!Set.of("procedure", "name", "comment", "inline_comment").containsAll(params.keySet()))
+        if (!Set.of("procedure", "name", "comment", "inline_comment", "signature", "signature_max_utf16",
+                    "parenthesis_max_depth")
+                .containsAll(params.keySet()))
             throw new RequestFailure("invalid_request", "Unknown function annotation field");
-        if (!params.has("name") && !params.has("comment") && !params.has("inline_comment"))
+        if (!params.has("name") && !params.has("comment") && !params.has("inline_comment") && !params.has("signature"))
             throw new RequestFailure("invalid_request", "Supply at least one annotation change");
         Function function = resolveProcedure(requireString(params, "procedure"));
         Address entry = function.getEntryPoint();
@@ -1461,9 +2160,17 @@ public final class ReaGhidraBridge extends HeadlessScript {
         for (String field : List.of("name", "comment", "inline_comment")) {
             if (params.has(field)) validateAnnotationText(requireText(params, field), field);
         }
+        int signatureBound = callerCTextBound(
+            params, "signature_max_utf16", DEFAULT_FUNCTION_SIGNATURE_UTF16, MAX_FUNCTION_SIGNATURE_UTF16);
+        int parenthesisBound = callerParenthesisBound(params);
         int transaction = currentProgram.startTransaction("REA function annotations");
         boolean commit = false;
         try {
+            // Ghidra's parser writes the database (see parseCallerC), so it runs inside this rollback.
+            SignatureEdit signature = params.has("signature")
+                ? parseFunctionSignature(function, requireText(params, "signature"), signatureBound, parenthesisBound)
+                : null;
+            FunctionDefinitionDataType prototype = signature == null ? null : signature.prototype();
             String leafName = params.has("name")
                 ? symbolLeafName(function.getSymbol(), requireString(params, "name")) : null;
             // Validate edits through Ghidra's own setters, including name rules.
@@ -1477,8 +2184,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
             }
             if (params.has("name"))
                 function.setName(leafName, SourceType.USER_DEFINED);
+            if (prototype != null) applyFunctionSignature(function, prototype);
             monitor.checkCancelled();
-            invalidateAnalysisCaches();
+            invalidateSymbolAndDecompilerCaches();
             JsonObject readback = annotationReadback(function);
             for (String field : List.of("name", "comment", "inline_comment")) {
                 if (!params.has(field)) continue;
@@ -1495,6 +2203,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
             JsonObject result = new JsonObject();
             result.add("annotations", readback);
             result.add("dossier", analyzeFunction(query));
+            if (signature != null && !signature.droppedQualifiers().isEmpty())
+                result.add("dropped_qualifiers", signature.droppedQualifiers());
             JsonObject effects = new JsonObject();
             effects.addProperty("scope", "session-analysis-database");
             effects.addProperty("source_bytes_modified", false);
@@ -1510,7 +2220,1215 @@ public final class ReaGhidraBridge extends HeadlessScript {
         finally {
             currentProgram.endTransaction(transaction, commit);
             // Rollback also invalidates inventory and decompiler views.
-            invalidateAnalysisCaches();
+            invalidateSymbolAndDecompilerCaches();
+        }
+    }
+
+    // Ghidra's C parser cannot be cancelled, so REA bounds the text it parses.
+    // Measured on Ghidra 12.2 (arm64 macOS): the slowest shape per character is one
+    // chain of pointer declarators, cubic in its length: 0.3 s at 2048 UTF-16 units,
+    // 0.8 s at 4096, 6.8 s at 8192 and 100 s at 16384. The per-call length controls
+    // (signature_max_utf16, declarations_max_utf16) stop at those maxima, keeping
+    // the slowest admitted text under about 7 s; the TypeScript contract owns the
+    // same defaults and ranges. Each level of nested parentheses in an expression
+    // doubles parse time and the cost repeats per occurrence (8192 units filled at
+    // depth 8 take 0.2 s, at depth 12 2.2 s), so parenthesis_max_depth stops at 12.
+    private static final int MIN_C_TEXT_UTF16 = 16;
+    private static final int DEFAULT_FUNCTION_SIGNATURE_UTF16 = 2048;
+    private static final int MAX_FUNCTION_SIGNATURE_UTF16 = 4096;
+    private static final int DEFAULT_TYPE_DECLARATIONS_UTF16 = 4096;
+    private static final int MAX_TYPE_DECLARATIONS_UTF16 = 8192;
+    private static final int MIN_C_PARENTHESIS_DEPTH = 1;
+    private static final int DEFAULT_C_PARENTHESIS_DEPTH = 8;
+    private static final int MAX_C_PARENTHESIS_DEPTH = 12;
+    /** Accepted caller C and the qualifiers Ghidra's types cannot record. */
+    /**
+     * soleParameterIdentifiers: identifiers that are a whole parameter slot,
+     * such as a and b in f(a, b). Ghidra types such a name undefined when it
+     * names no type, as in a K&R identifier list, which no parsed fact records.
+     */
+    private record ParsedCallerC(CParser parser, JsonArray droppedQualifiers, Set<String> soleParameterIdentifiers) {}
+    // Data types carry no SourceType; this category is the persisted mark of caller authorship.
+    private static final CategoryPath CALLER_DEFINED_TYPES = new CategoryPath("/rea_caller_defined");
+    /** A token Ghidra's C parser consumes without applying, and what REA does with it. */
+    private record UnappliedCToken(Pattern spelling, String construct, String droppedQualifier) {
+        boolean refused() { return droppedQualifier == null; }
+    }
+
+    private static UnappliedCToken refusedC(String spelling, String construct) {
+        return new UnappliedCToken(Pattern.compile(spelling), construct, null);
+    }
+
+    private static UnappliedCToken droppedC(String spelling, String qualifier) {
+        return new UnappliedCToken(Pattern.compile(spelling), null, qualifier);
+    }
+
+    /**
+     * Every token Ghidra 12.2's C.jj grammar accepts and then ignores, in that
+     * grammar's own spellings (its token regular expressions). REA refuses a
+     * token whose meaning would be lost, such as a pointer width, an attribute
+     * or a storage class, and reports a pure qualifier that changes neither
+     * layout nor storage as dropped. Every other C.jj keyword is applied: base
+     * types (including __int8..__int64, _Bool and _*signed), struct, union,
+     * enum and typedef, calling conventions, _Noreturn, _Alignof and sizeof.
+     * Types the parser invents for an undefined name are a parse result, not a
+     * token; requireNoInventedTypes refuses those.
+     */
+    private static final List<UnappliedCToken> UNAPPLIED_C_TOKENS = List.of(
+        // TypeQualifier: consumed without a Ghidra representation.
+        droppedC("_*const", "const"),
+        droppedC("_*volatile_*", "volatile"),
+        droppedC("_+restrict", "restrict"),
+        droppedC("__unaligned", "__unaligned"),
+        droppedC("__w64", "__w64"),
+        refusedC("__ptr32|__ptr64", "the pointer-width qualifier %s (Ghidra stores a native-width pointer)"),
+        refusedC("__near|__far", "the pointer qualifier %s (Ghidra ignores it)"),
+        // AttributeSpec, DeclSpec and AlignmentSpecifier: parsed and discarded.
+        refusedC("__attribute_*|__declspec|__readableTo|_Alignas|alignas|__packed|__packed__|packed|_*asm_*|_+extension_*",
+            "the attribute or extension %s"),
+        refusedC("\\[\\[", "a [[...]] attribute"),
+        // StorageClassSpecifier and function specifiers: no storage or linkage in a type.
+        refusedC("static|extern|register|auto|_Thread_local|thread_local|_*(?:inline|forceinline)_*", "the specifier %s"),
+        // Pragma operators, assertions and lexer states whose text is skipped.
+        // Ghidra applies a pack through the operator but skips any other pragma; REA admits one spelling.
+        refusedC("__pragma|_Pragma", "the pragma operator %s (write #pragma pack instead)"),
+        refusedC("_Static_assert|static_assert", "the static assertion %s (Ghidra does not store it)"),
+        refusedC("@", "an Objective-C @ directive (Ghidra skips its text)"),
+        refusedC("\\\\", "a backslash (Ghidra's parser skips it)"));
+
+    private static UnappliedCToken unappliedC(String token) {
+        for (UnappliedCToken rule : UNAPPLIED_C_TOKENS)
+            if (rule.spelling().matcher(token).matches()) return rule;
+        return null;
+    }
+
+    private static boolean isCallerDefinedType(DataType type) {
+        CategoryPath category = type.getCategoryPath();
+        return category != null && category.isAncestorOrSelf(CALLER_DEFINED_TYPES);
+    }
+
+    private static RequestFailure refusedConstruct(String code, String field, String construct, int line, int column) {
+        return new RequestFailure(code, field + " contains " + construct + " at line " + line + ", column " + column +
+            "; Ghidra's C parser would not apply it as written, so nothing was changed");
+    }
+
+    /** One token of caller C text and where it starts in the caller's own lines. */
+    private record CToken(String text, int line, int column) {
+        boolean is(String expected) { return text.equals(expected); }
+        boolean isIdentifier() { return isCIdentifierStart(text.charAt(0)); }
+    }
+
+    // C.jj's LETTER: identifiers may hold $, as in its IDENTIFIER token.
+    private static boolean isCIdentifierStart(char character) {
+        return Character.isLetter(character) || character == '_' || character == '$';
+    }
+
+    /**
+     * The one reader of caller C text. Tokens are identifiers, numbers or
+     * single characters; comments, and the byte-order mark C.jj skips, read as
+     * whitespace. CR, LF and CRLF each
+     * end one line, as in Ghidra's own C parser, so positions name the
+     * caller's text. A string or character literal is refused here, so no
+     * later check can mistake its contents for code.
+     */
+    private static final class CTokenizer {
+        private final String text;
+        private final String field;
+        private final String code;
+        private int index;
+        private int line = 1;
+        private int lineStart;
+        /** The text ends inside a line comment, which would swallow anything appended on its line. */
+        private boolean endsInLineComment;
+
+        CTokenizer(String text, String field, String code) {
+            this.text = text;
+            this.field = field;
+            this.code = code;
+        }
+
+        private static boolean isLineBreak(char character) {
+            return character == '\n' || character == '\r';
+        }
+
+        /** Step over one UTF-16 unit, or one CRLF pair, counting line breaks. */
+        private void advance() {
+            char character = text.charAt(index++);
+            if (character == '\r' && index < text.length() && text.charAt(index) == '\n') index++;
+            if (isLineBreak(character)) {
+                line++;
+                lineStart = index;
+            }
+        }
+
+        /**
+         * Skip whitespace and comments up to the next token. Returns false at
+         * the end of the text or, within a directive (lineEnds), at a line
+         * break; a block comment that crosses one there is refused, since it
+         * would carry the directive onto another line.
+         */
+        private boolean skipToToken(boolean lineEnds) {
+            while (index < text.length()) {
+                char character = text.charAt(index);
+                int startLine = line, column = index - lineStart + 1;
+                if (lineEnds && isLineBreak(character)) return false;
+                if (Character.isWhitespace(character) || character == '\ufeff') {
+                    advance();
+                    continue;
+                }
+                if (text.startsWith("//", index)) {
+                    while (index < text.length() && !isLineBreak(text.charAt(index))) index++;
+                    endsInLineComment = index == text.length();
+                    continue;
+                }
+                if (text.startsWith("/*", index)) {
+                    int close = text.indexOf("*/", index + 2);
+                    int stop = close < 0 ? text.length() : close + 2;
+                    while (index < stop) advance();
+                    if (lineEnds && line != startLine)
+                        throw refusedConstruct(code, field,
+                            "a block comment that continues a directive onto another line", startLine, column);
+                    continue;
+                }
+                return true;
+            }
+            return false;
+        }
+
+        /**
+         * The next token, or null at the end of the text or a directive's line.
+         * Iterative throughout: caller text cannot deepen the stack.
+         */
+        CToken next(boolean lineEnds) {
+            if (!skipToToken(lineEnds)) return null;
+            char character = text.charAt(index);
+            int tokenLine = line, column = index - lineStart + 1;
+            if (character == '"' || character == '\'')
+                throw refusedConstruct(code, field, "a string or character literal", tokenLine, column);
+            int stop = index + 1;
+            if (isCIdentifierStart(character) || Character.isDigit(character))
+                while (stop < text.length() &&
+                        (isCIdentifierStart(text.charAt(stop)) || Character.isDigit(text.charAt(stop)))) stop++;
+            String token = text.substring(index, stop);
+            index = stop;
+            // C.jj reads "[" "[" as an attribute, with anything skippable between.
+            if (token.equals("[")) {
+                int savedIndex = index, savedLine = line, savedLineStart = lineStart;
+                boolean savedEnds = endsInLineComment;
+                if (skipToToken(lineEnds) && text.charAt(index) == '[') {
+                    index++;
+                    return new CToken("[[", tokenLine, column);
+                }
+                index = savedIndex;
+                line = savedLine;
+                lineStart = savedLineStart;
+                endsInLineComment = savedEnds;
+            }
+            return new CToken(token, tokenLine, column);
+        }
+    }
+
+    /** What the tokenizer observed in admitted caller C. */
+    private record AdmittedCallerC(JsonArray droppedQualifiers, boolean terminated, boolean endsInLineComment,
+        Set<String> soleParameterIdentifiers) {}
+
+    // Ghidra reads a pack value with Integer.parseInt and, on overflow, keeps the
+    // packing already in effect. A decimal literal is admitted only when that parse accepts it.
+    private static final Pattern PACK_VALUE = Pattern.compile("0|[1-9][0-9]*");
+
+    private static boolean ghidraPackDecimal(String text) {
+        if (!PACK_VALUE.matcher(text).matches()) return false;
+        try {
+            Integer.parseInt(text);
+            return true;
+        } catch (NumberFormatException overflow) {
+            return false;
+        }
+    }
+
+    /**
+     * Whether Ghidra 12.2's PragmaSpecifier applies these #pragma pack operands
+     * as C does, tracking the labels pushed so far. It ignores a bare (push),
+     * so its pop would restore nothing; a pop with nothing pushed keeps the
+     * current packing; and a plain pop keeps popping past labelled entries
+     * until it finds an unlabelled one. Admitted: (), (n), (push, n),
+     * (push, id), (push, id, n), (pop) over an unlabelled push and
+     * (pop, id) over a push of id.
+     */
+    private static boolean appliedPackOperands(List<CToken> operands, ArrayDeque<String> labels) {
+        List<String> texts = operands.stream().map(CToken::text).toList();
+        java.util.function.Predicate<String> value = ReaGhidraBridge::ghidraPackDecimal;
+        java.util.function.Predicate<String> label = text -> isCIdentifierStart(text.charAt(0)) &&
+            !text.equals("push") && !text.equals("pop");
+        boolean push = !texts.isEmpty() && texts.get(0).equals("push");
+        boolean pop = !texts.isEmpty() && texts.get(0).equals("pop");
+        switch (texts.size()) {
+            case 0:
+                return true;
+            case 1:
+                if (value.test(texts.get(0))) return true;
+                if (!pop || !"".equals(labels.peek())) return false;
+                labels.pop();
+                return true;
+            case 3:
+                if (!texts.get(1).equals(",")) return false;
+                if (push && (value.test(texts.get(2)) || label.test(texts.get(2)))) {
+                    labels.push(value.test(texts.get(2)) ? "" : texts.get(2));
+                    return true;
+                }
+                if (!pop || !label.test(texts.get(2)) || !labels.contains(texts.get(2))) return false;
+                while (!labels.pop().equals(texts.get(2))) { }
+                return true;
+            case 5:
+                if (!push || !texts.get(1).equals(",") || !label.test(texts.get(2)) ||
+                        !texts.get(3).equals(",") || !value.test(texts.get(4))) return false;
+                labels.push(texts.get(2));
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /**
+     * Admit one directive from the tokens after its #. Only a declarations
+     * text's #pragma pack in a form Ghidra applies is admitted. C.jj reads
+     * "#pragma" as one token and "#" followed by a space as a line marker
+     * whose text it skips, so the name must follow # directly.
+     */
+    private static void admitCallerCDirective(
+            CTokenizer tokens, CToken hash, String field, boolean declarations, String code, ArrayDeque<String> packLabels) {
+        CToken first = tokens.next(true);
+        String name = first == null ? "" : first.text();
+        boolean adjacent = first != null && first.line() == hash.line() && first.column() == hash.column() + 1;
+        // Any other directive is refused by its name, before its operands are read.
+        List<CToken> directive = new ArrayList<>();
+        if (declarations && adjacent && name.equals("pragma"))
+            for (CToken token = tokens.next(true); token != null; token = tokens.next(true)) directive.add(token);
+        boolean pack = directive.size() >= 3 && directive.get(0).is("pack") && directive.get(1).is("(") &&
+            directive.get(directive.size() - 1).is(")") &&
+            appliedPackOperands(directive.subList(2, directive.size() - 1), packLabels);
+        if (!adjacent && first != null)
+            throw refusedConstruct(code, field, "# separated from its directive name (Ghidra reads it as a line marker)",
+                hash.line(), hash.column());
+        if (!pack && !directive.isEmpty() && directive.get(0).is("pack"))
+            throw refusedConstruct(code, field, "#pragma pack with operands Ghidra ignores or reads differently " +
+                "(it applies (), (n), (push, n), (push, id), (push, id, n) with a decimal n from 0 through 2147483647, (pop) over an unlabelled push and (pop, id) over a push of id)",
+                hash.line(), hash.column());
+        if (!pack)
+            throw refusedConstruct(code, field, "the directive #" + name +
+                (name.equals("pragma") ? " (only #pragma pack is applied)" : ""), hash.line(), hash.column());
+    }
+
+    // One decimal or hex integer literal with no suffix, read the same way by C and by Ghidra.
+    private static final Pattern C_PLAIN_INTEGER = Pattern.compile("0|[1-9][0-9]*|0[xX][0-9a-fA-F]+");
+
+    /**
+     * The value of one constant expression (an enum value, array size or
+     * bit-field width), admitted only as a single decimal or hex integer
+     * literal within int, optionally negated. Ghidra 12.2 evaluates C constant
+     * expressions with its own rules: names, casts and sizeof stay unevaluated
+     * and default, values outside int are truncated, and comparisons and
+     * unsigned arithmetic differ from C (~0U >> 1 is -1). Emulating C against
+     * that evaluator is an open-ended set of mismatches, so anything but one
+     * literal is refused at its position and the caller writes the value.
+     */
+    /** Admit the next token of a constant expression as it is read, so a refusal names the first token that leaves the form. */
+    private static void admitConstantToken(List<CToken> expression, CToken token, String field, String code) {
+        boolean admitted = expression.isEmpty()
+            ? token.is("-") || C_PLAIN_INTEGER.matcher(token.text()).matches()
+            : expression.size() == 1 && expression.get(0).is("-") && C_PLAIN_INTEGER.matcher(token.text()).matches();
+        if (!admitted)
+            throw refusedConstruct(code, field, "the constant expression token " + token.text() +
+                " (Ghidra evaluates C constant expressions differently from C; write the computed value as one " +
+                "decimal or hex integer literal, optionally negated, without suffixes)", token.line(), token.column());
+    }
+
+    /** The value of an admitted constant expression; a value outside int, which Ghidra would truncate, is refused. */
+    private static long admitConstantExpression(List<CToken> tokens, String field, String code) {
+        CToken literal = tokens.get(tokens.size() - 1);
+        if (literal.is("-"))
+            throw refusedConstruct(code, field, "a lone - as a constant expression", literal.line(), literal.column());
+        boolean negative = tokens.size() == 2;
+        String digits = literal.text();
+        java.math.BigInteger value = digits.startsWith("0x") || digits.startsWith("0X")
+            ? new java.math.BigInteger(digits.substring(2), 16) : new java.math.BigInteger(digits);
+        if (negative) value = value.negate();
+        if (value.compareTo(java.math.BigInteger.valueOf(Integer.MIN_VALUE)) < 0 ||
+                value.compareTo(java.math.BigInteger.valueOf(Integer.MAX_VALUE)) > 0)
+            throw refusedConstruct(code, field, "the literal " + (negative ? "-" : "") + digits +
+                ", outside int (Ghidra truncates it; write a value within int)", literal.line(), literal.column());
+        return value.longValue();
+    }
+
+    private static void endParameterSlot(List<CToken> slot, Set<String> soleParameters) {
+        if (slot.size() == 1 && slot.get(0).isIdentifier()) soleParameters.add(slot.get(0).text());
+        slot.clear();
+    }
+
+    // A definition's ret (*name)(parameters) declarator, read one token at a time.
+    private static final int FN_NONE = 0, FN_POINTER = 1, FN_NAME = 2, FN_AFTER_NAME = 3,
+        FN_OPEN_PARAMETERS = 4, FN_PARAMETERS = 5;
+    // C.jj's calling-convention tokens. Ghidra applies one before the declarator's
+    // parenthesis and drops one inside it (Ghidra 12.2, probed).
+    private static final Pattern C_CALLING_CONVENTION =
+        Pattern.compile("_+(?:cdecl|stdcall|fastcall|vectorcall|rustcall|pascal)");
+
+    /**
+     * The next position in a function-pointer declarator. Ghidra 12.2 stores
+     * ret (*name)(parameters), its pointer-to-pointer and array forms, with
+     * the return type, parameters and varargs as written. It drops a calling
+     * convention inside the parenthesis, and a parameter that is itself a
+     * function declarator gets a function type named after the parameter, so
+     * both are refused; a typedef of the inner function pointer is admitted.
+     */
+    private static int nextFunctionDeclarator(int position, CToken token, CToken opening, String field, String code) {
+        String text = token.text();
+        int line = token.line(), column = token.column();
+        if ((position == FN_POINTER || position == FN_NAME) && C_CALLING_CONVENTION.matcher(text).matches())
+            throw refusedConstruct(code, field, "the calling convention " + text + " inside a function-pointer " +
+                "declarator (Ghidra drops it there; write it before the parenthesis, as in int " + text + " (*name)(int))",
+                line, column);
+        return switch (position) {
+            case FN_NONE -> FN_POINTER;
+            case FN_POINTER -> {
+                // Reported at the parenthesis itself, the construct that is not admitted.
+                if (!text.equals("*"))
+                    throw refusedConstruct(code, field, "a parenthesis that does not open a function pointer (*name) " +
+                        "(grouped declarators and function types are not admitted; a definition admits only " +
+                        "ret (*name)(parameters))", opening.line(), opening.column());
+                yield FN_NAME;
+            }
+            case FN_NAME -> {
+                // Further stars and the dropped qualifiers reported above keep the declarator open.
+                if (text.equals("*") || unappliedC(text) != null) yield FN_NAME;
+                if (!token.isIdentifier())
+                    throw refusedConstruct(code, field, "a function-pointer declarator without a member or typedef name",
+                        line, column);
+                yield FN_AFTER_NAME;
+            }
+            case FN_AFTER_NAME -> {
+                if (text.equals("[")) yield FN_AFTER_NAME;
+                if (!text.equals(")"))
+                    throw refusedConstruct(code, field, "a function-pointer declarator that is not (*name) or (*name[N])",
+                        line, column);
+                yield FN_OPEN_PARAMETERS;
+            }
+            case FN_OPEN_PARAMETERS -> {
+                if (!text.equals("("))
+                    throw refusedConstruct(code, field, "a function-pointer declarator without a parameter list",
+                        line, column);
+                yield FN_PARAMETERS;
+            }
+            default -> {
+                if (text.equals(")")) yield FN_NONE;
+                if (text.equals("("))
+                    throw refusedConstruct(code, field, "a parenthesis in a function-pointer parameter list (one function-" +
+                        "pointer level is admitted; typedef the inner function pointer and use its name)", line, column);
+                if (Set.of("{", "}", ";", "=", ":").contains(text))
+                    throw refusedConstruct(code, field, "'" + text + "' in a function-pointer parameter list", line, column);
+                yield FN_PARAMETERS;
+            }
+        };
+    }
+
+    /**
+     * Tokenize caller C once, before the parser sees it: bound parenthesis
+     * nesting and refuse every construct Ghidra's parser accepts and drops.
+     * A declarations text may hold only struct, union, enum and typedef
+     * definitions and #pragma pack, with parentheses only in a member's or
+     * typedef's function-pointer declarator; a signature holds one prototype.
+     */
+    private static AdmittedCallerC admitCallerC(
+            String text, String field, boolean declarations, String code, int maxParenthesisDepth) {
+        final int start = 0, tag = 1, named = 2, body = 3, afterBody = 4, typedef = 5;
+        int state = start;
+        int parentheses = 0, braces = 0;
+        // The deepest nesting in the whole text, so a refusal reports the depth to admit.
+        int deepest = 0, beyondLine = 0, beyondColumn = 0;
+        // A signature's parameter index: -1 before its parameter list opens, the return type.
+        int parameter = -1;
+        boolean parametersClosed = false;
+        JsonArray dropped = new JsonArray();
+        String previous = "";
+        String definition = "";
+        boolean ended = false;
+        CTokenizer tokens = new CTokenizer(text, field, code);
+        // Labels of the #pragma pack pushes admitted so far, innermost first.
+        ArrayDeque<String> packLabels = new ArrayDeque<>();
+        // Declarations: whether each open brace is an enum body, the constant
+        // expression being read, and the next implicit enumerator value.
+        ArrayDeque<Boolean> enumBodies = new ArrayDeque<>();
+        boolean enumPending = false;
+        List<CToken> expression = null;
+        Set<String> expressionEnds = Set.of();
+        boolean enumExpression = false;
+        Long explicitEnumValue = null;
+        CToken enumerator = null;
+        long nextEnumValue = 0;
+        // Declarations: position within a ret (*name)(parameters) declarator.
+        int declarator = FN_NONE;
+        CToken declaratorOpening = null;
+        boolean functionParameters = false;
+        // The tokens of the parameter slot being read, of a signature or a function pointer.
+        List<CToken> slot = new ArrayList<>();
+        Set<String> soleParameters = new HashSet<>();
+        for (CToken next = tokens.next(false); next != null; next = tokens.next(false)) {
+            String token = next.text();
+            int line = next.line(), column = next.column();
+            if (next.is("#")) {
+                admitCallerCDirective(tokens, next, field, declarations, code, packLabels);
+                continue;
+            }
+            if (!declarations && token.equals("typedef"))
+                throw refusedConstruct(code, field, "the specifier typedef", line, column);
+            if (declarations && token.equals("_Noreturn"))
+                throw refusedConstruct(code, field, "_Noreturn (Ghidra does not store it on a function-pointer type)", line, column);
+            UnappliedCToken unapplied = unappliedC(token);
+            if (unapplied != null && unapplied.refused())
+                throw refusedConstruct(code, field, String.format(unapplied.construct(), token) +
+                    (declarations && unapplied.construct().startsWith("the attribute") ? " (use #pragma pack for packing)" : ""),
+                    line, column);
+            if (unapplied != null) {
+                JsonObject qualifier = new JsonObject();
+                qualifier.addProperty("qualifier", unapplied.droppedQualifier());
+                qualifier.addProperty("line", line);
+                qualifier.addProperty("column", column);
+                if (!declarations)
+                    qualifier.add("parameter_index", parameter < 0 || parametersClosed
+                        ? JsonNull.INSTANCE : GSON.toJsonTree(parameter));
+                dropped.add(qualifier);
+            }
+            if (ended && !token.equals(";"))
+                throw refusedConstruct(code, field, "a second declaration", line, column);
+            if (next.is("(") && ++parentheses > deepest) {
+                deepest = parentheses;
+                if (deepest == maxParenthesisDepth + 1) {
+                    beyondLine = line;
+                    beyondColumn = column;
+                }
+            }
+            boolean slotOpen = !declarations && parameter >= 0 && !parametersClosed;
+            if (!declarations && parentheses == 1 && !parametersClosed) {
+                if (token.equals("(") && parameter < 0) parameter = 0;
+                else if (token.equals(",")) {
+                    parameter++;
+                    endParameterSlot(slot, soleParameters);
+                } else if (slotOpen && !token.equals(")")) slot.add(next);
+            } else if (slotOpen && !token.equals(")")) slot.add(next);
+            if (token.equals(")")) {
+                if (!declarations && parentheses == 1 && parameter >= 0) {
+                    parametersClosed = true;
+                    endParameterSlot(slot, soleParameters);
+                }
+                parentheses = Math.max(0, parentheses - 1);
+            }
+            if (previous.equals("enum") && token.equals("{"))
+                throw refusedConstruct(code, field, "an unnamed enum, which Ghidra would store under a generated name", line, column);
+            if (!declarations) {
+                if (token.equals("{"))
+                    throw refusedConstruct(code, field, "a function body", line, column);
+                if (token.equals("="))
+                    throw refusedConstruct(code, field, "a default argument or initializer", line, column);
+                if (previous.equals("(") && token.equals("*"))
+                    throw refusedConstruct(code, field, "a function-pointer declarator", line, column);
+                if (token.equals(";")) ended = true;
+                previous = token;
+                continue;
+            }
+            boolean top = braces == 0 && parentheses == 0;
+            // Enum values, array sizes and bit-field widths are constant expressions
+            // Ghidra evaluates itself; admitConstantExpression owns which ones it gets right.
+            if (expression != null) {
+                if (!expressionEnds.contains(token)) {
+                    admitConstantToken(expression, next, field, code);
+                    expression.add(next);
+                } else {
+                    Long value = expression.isEmpty() ? null : admitConstantExpression(expression, field, code);
+                    if (enumExpression) explicitEnumValue = value;
+                    expression = null;
+                }
+            } else if (declarator != FN_NONE || token.equals("(")) {
+                boolean member = braces > 0 && Boolean.FALSE.equals(enumBodies.peek());
+                boolean alias = state == typedef && braces == 0;
+                if (declarator == FN_NONE && !(member || alias) ||
+                        declarator == FN_NONE && !(previous.equals("*") || previous.equals(",") ||
+                            isCIdentifierStart(previous.isEmpty() ? ' ' : previous.charAt(0))))
+                    throw refusedConstruct(code, field, "a parenthesis outside a function-pointer declarator (a definition " +
+                        "admits parentheses only in a member or typedef of the form ret (*name)(parameters))", line, column);
+                if (declarator == FN_PARAMETERS && !token.equals(")") && !token.equals("(")) functionParameters = true;
+                if (declarator == FN_PARAMETERS && token.equals(")") && !functionParameters)
+                    throw refusedConstruct(code, field, "an empty parameter list (Ghidra stores () as (void); write " +
+                        "(void) for a function without parameters)", line, column);
+                if (declarator == FN_OPEN_PARAMETERS) functionParameters = false;
+                if (declarator == FN_PARAMETERS) {
+                    if (token.equals(",") || token.equals(")")) endParameterSlot(slot, soleParameters);
+                    else slot.add(next);
+                }
+                if (declarator == FN_NONE) declaratorOpening = next;
+                declarator = nextFunctionDeclarator(declarator, next, declaratorOpening, field, code);
+                // Array sizes after the name and in parameters are the literal-only constants below.
+                if (token.equals("[")) {
+                    expression = new ArrayList<>();
+                    enumExpression = false;
+                    expressionEnds = Set.of("]");
+                }
+            } else if (token.equals("[") || (token.equals("=") && Boolean.TRUE.equals(enumBodies.peek())) ||
+                    (token.equals(":") && Boolean.FALSE.equals(enumBodies.peek()) && !enumPending)) {
+                expression = new ArrayList<>();
+                enumExpression = token.equals("=");
+                expressionEnds = token.equals("[") ? Set.of("]") : enumExpression ? Set.of(",", "}") : Set.of(";", ",");
+            }
+            boolean inEnum = Boolean.TRUE.equals(enumBodies.peek());
+            if (inEnum && expression == null && next.isIdentifier() && (previous.equals("{") || previous.equals(",")))
+                enumerator = next;
+            // Ghidra numbers an enumerator without a value one past the previous, in int.
+            if (inEnum && expression == null && enumerator != null && (token.equals(",") || token.equals("}"))) {
+                long value = explicitEnumValue != null ? explicitEnumValue : nextEnumValue;
+                if (value > Integer.MAX_VALUE)
+                    throw refusedConstruct(code, field, "the enumerator " + enumerator.text() +
+                        ", whose implicit value leaves int (Ghidra truncates it)", enumerator.line(), enumerator.column());
+                nextEnumValue = value + 1;
+                explicitEnumValue = null;
+                enumerator = null;
+            }
+            if (token.equals("enum")) enumPending = true;
+            if (token.equals(";")) enumPending = false;
+            if (token.equals("{")) {
+                enumBodies.push(enumPending);
+                if (enumPending) nextEnumValue = 0;
+                enumPending = false;
+            }
+            if (token.equals("}") && !enumBodies.isEmpty()) enumBodies.pop();
+            if (token.equals("{")) braces++;
+            if (token.equals("}")) braces = Math.max(0, braces - 1);
+            switch (state) {
+                case start -> {
+                    if (token.equals("typedef")) state = typedef;
+                    else if (token.equals("struct") || token.equals("union") || token.equals("enum")) state = tag;
+                    else if (!token.equals(";"))
+                        throw refusedConstruct(code, field,
+                            "a declaration that is not a struct, union, enum or typedef definition (" + token + ")", line, column);
+                }
+                case tag -> {
+                    if (!next.isIdentifier())
+                        throw refusedConstruct(code, field, "an unnamed struct or union definition", line, column);
+                    definition = token;
+                    state = named;
+                }
+                case named -> {
+                    if (token.equals("{")) state = body;
+                    else if (token.equals(";")) state = start;
+                    else throw refusedConstruct(code, field, "a variable declaration (" + token + ")", line, column);
+                }
+                case body -> {
+                    if (braces == 0) state = afterBody;
+                }
+                case afterBody -> {
+                    if (!token.equals(";"))
+                        throw refusedConstruct(code, field,
+                            "a variable or declarator (" + token + ") after the definition of " + definition, line, column);
+                    state = start;
+                }
+                default -> {
+                    if (top && token.equals(";")) state = start;
+                    if (top && token.equals("="))
+                        throw refusedConstruct(code, field, "an initializer", line, column);
+                }
+            }
+            previous = token;
+        }
+        // Measured over the whole text, so the refusal names the depth that admits it.
+        if (deepest > maxParenthesisDepth)
+            throw new RequestFailure("parenthesis_depth_limit", field + " nests parentheses " + deepest +
+                " levels deep, first beyond " + maxParenthesisDepth + " at line " + beyondLine + ", column " + beyondColumn,
+                null, deepest);
+        return new AdmittedCallerC(dropped, ended, tokens.endsInLineComment, soleParameters);
+    }
+
+    /**
+     * Ghidra 12.2 stores, names and compares a data type recursively through
+     * its pointer, array, typedef and member chain. Measured on Ghidra 12.2
+     * (macOS arm64): 1024 levels resolve, 2048 exhaust the stack inside
+     * addDataType while its database lock is held, which leaves that lock held
+     * and the Program unusable. REA refuses a type deeper than this, a
+     * quarter of the last measured safe depth, before Ghidra walks it.
+     */
+    private static final int MAX_C_TYPE_DEPTH = 256;
+
+    /**
+     * Refuse a parsed type whose longest pointer, array, typedef, bit-field
+     * or member chain, including chains through existing database types,
+     * exceeds MAX_C_TYPE_DEPTH. Iterative with memoized depths; a chain back
+     * into a type still being walked (a self-referential pointer) adds no
+     * depth, because Ghidra resolves that reference without recursing.
+     */
+    private static void requireBoundedTypeDepth(DataType root, String name, String field) {
+        Map<DataType, Integer> depths = new IdentityHashMap<>();
+        Set<DataType> open = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+        ArrayDeque<DataType> stack = new ArrayDeque<>();
+        stack.push(root);
+        while (!stack.isEmpty()) {
+            DataType type = stack.peek();
+            if (depths.containsKey(type)) {
+                stack.pop();
+                continue;
+            }
+            List<DataType> children = cTypeChildren(type);
+            boolean ready = true;
+            if (open.add(type)) {
+                for (DataType child : children)
+                    if (child != null && !depths.containsKey(child) && !open.contains(child)) {
+                        stack.push(child);
+                        ready = false;
+                    }
+                if (!ready) continue;
+            }
+            int depth = 1;
+            for (DataType child : children)
+                if (child != null && depths.containsKey(child)) depth = Math.max(depth, depths.get(child) + 1);
+            depths.put(type, depth);
+            open.remove(type);
+            stack.pop();
+        }
+        // The whole chain is measured, so the reported depth is the one compared with the limit.
+        int depth = depths.get(root);
+        if (depth > MAX_C_TYPE_DEPTH)
+            throw new RequestFailure("type_depth_limit", field + " defines " + name + ", chained " + depth +
+                " levels deep through pointers, arrays, typedefs, members or existing database types");
+    }
+
+    private static List<DataType> cTypeChildren(DataType type) {
+        if (type instanceof ghidra.program.model.data.Pointer pointer) return java.util.Collections.singletonList(pointer.getDataType());
+        if (type instanceof ghidra.program.model.data.Array array) return List.of(array.getDataType());
+        if (type instanceof ghidra.program.model.data.BitFieldDataType bitField) return List.of(bitField.getBaseDataType());
+        if (type instanceof ghidra.program.model.data.TypeDef alias) return List.of(alias.getDataType());
+        if (type instanceof ghidra.program.model.data.FunctionDefinition function) {
+            List<DataType> children = new ArrayList<>();
+            children.add(function.getReturnType());
+            for (ghidra.program.model.data.ParameterDefinition argument : function.getArguments())
+                children.add(argument.getDataType());
+            return children;
+        }
+        if (type instanceof ghidra.program.model.data.Composite composite) {
+            List<DataType> children = new ArrayList<>();
+            for (ghidra.program.model.data.DataTypeComponent component : composite.getComponents())
+                children.add(component.getDataType());
+            return children;
+        }
+        return List.of();
+    }
+
+    /** The caller's per-call bound, or its default; the contract owns the range. */
+    private static int callerBound(JsonObject params, String name, int minimum, int defaultValue, int maximum) {
+        if (!params.has(name)) return defaultValue;
+        int bound = requireInteger(params, name);
+        if (bound < minimum || bound > maximum)
+            throw new RequestFailure("invalid_request", name + " must be from " + minimum + " to " + maximum);
+        return bound;
+    }
+
+    private static int callerCTextBound(JsonObject params, String name, int defaultValue, int maximum) {
+        return callerBound(params, name, MIN_C_TEXT_UTF16, defaultValue, maximum);
+    }
+
+    private static int callerParenthesisBound(JsonObject params) {
+        return callerBound(params, "parenthesis_max_depth",
+            MIN_C_PARENTHESIS_DEPTH, DEFAULT_C_PARENTHESIS_DEPTH, MAX_C_PARENTHESIS_DEPTH);
+    }
+
+    /**
+     * Parse caller C text against the type database. Even with storeDataType
+     * false, Ghidra's parser writes the database: a definition whose name
+     * matches an existing empty composite fills that type in place, in the
+     * parser's own nested transaction. The caller's open transaction is
+     * therefore the only rollback for a refused or failed edit.
+     */
+    private ParsedCallerC parseCallerC(
+            String text, String field, boolean declarations, String code, int maximum, int maxParenthesisDepth) {
+        if (currentProgram.getCurrentTransactionInfo() == null)
+            throw new IllegalStateException("Caller C must be parsed inside the edit's transaction");
+        validateAnnotationText(text, field);
+        if (text.length() > maximum)
+            throw new RequestFailure(declarations ? "declarations_length_limit" : "signature_length_limit",
+                field + " has " + text.length() + " UTF-16 code units", null, text.length());
+        AdmittedCallerC admitted = admitCallerC(text, field, declarations, code, maxParenthesisDepth);
+        DataTypeManager types = currentProgram.getDataTypeManager();
+        CParser parser = new CParser(types, false, new DataTypeManager[] { types });
+        try {
+            // The parser needs a terminated prototype, and its // skip token
+            // requires a line break. Nothing precedes the caller's text, so the
+            // parser's positions name the caller's own lines. A line comment at
+            // the end gets a newline first, so a semicolon added for an
+            // unterminated prototype is not swallowed.
+            String source = admitted.endsInLineComment() ? text + "\n" : text;
+            parser.parse(declarations || admitted.terminated() ? source : source + ";");
+        }
+        catch (ghidra.app.util.cparser.C.ParseException | ghidra.app.util.cparser.C.TokenMgrError rejected) {
+            throw new RequestFailure(code, "Ghidra's C parser rejected " + field + ": " + cParserReason(rejected.getMessage()));
+        }
+        if (!parser.didParseSucceed())
+            throw new RequestFailure(code, "Ghidra's C parser rejected " + field + ": " + cParserReason(parser.getParseMessages()));
+        // The parser records what it could not apply, such as a repeated
+        // enumerator it drops, and still reports success.
+        String diagnostics = cParserDiagnostics(parser.getParseMessages());
+        if (!diagnostics.isEmpty())
+            throw new RequestFailure(code, "Ghidra's C parser reported " + field + ": " + diagnostics +
+                "; it would not apply the text as written, so nothing was changed");
+        // Before anything walks the parsed types recursively (naming, comparing, storing).
+        for (Map<String, DataType> parsedTypes : List.of(
+                parser.getComposites(), parser.getEnums(), parser.getTypes(), parser.getFunctions()))
+            for (Map.Entry<String, DataType> parsedType : parsedTypes.entrySet())
+                requireBoundedTypeDepth(parsedType.getValue(), parsedType.getKey(), field);
+        return new ParsedCallerC(parser, admitted.droppedQualifiers(), admitted.soleParameterIdentifiers());
+    }
+
+    /**
+     * The parser picks one type for a name. When the database holds another,
+     * different type under the same name, the caller cannot select between them.
+     */
+    private void requireUnambiguousType(DataType type) {
+        DataType named = type;
+        while (named instanceof ghidra.program.model.data.Pointer || named instanceof ghidra.program.model.data.Array)
+            named = named instanceof ghidra.program.model.data.Pointer pointer
+                ? pointer.getDataType() : ((ghidra.program.model.data.Array) named).getDataType();
+        if (named == null || named instanceof ghidra.program.model.data.BuiltInDataType) return;
+        List<DataType> sameName = new ArrayList<>();
+        currentProgram.getDataTypeManager().findDataTypes(named.getName(), sameName);
+        Set<String> candidates = new TreeSet<>();
+        for (DataType other : sameName)
+            if (!other.getPathName().equals(named.getPathName()) && !other.isEquivalent(named))
+                candidates.add(other.getPathName());
+        if (candidates.isEmpty()) return;
+        candidates.add(named.getPathName());
+        throw new RequestFailure("ambiguous_data_type", "The type name " + named.getName() +
+            " names different types in the database: " + String.join(", ", candidates));
+    }
+
+
+    /** Keep the location and offending token; drop the generated expected-token list. */
+    /**
+     * Ghidra's own diagnostic lines. Without a header file the parser has no
+     * position to give; it names the nearest type when it has one.
+     */
+    private static String cParserDiagnostics(String messages) {
+        if (messages == null) return "";
+        List<String> lines = new ArrayList<>();
+        for (String line : messages.split("\\R")) {
+            String stripped = line.strip();
+            if (stripped.isEmpty() || stripped.startsWith("In file ") ||
+                    stripped.equals("Near datatype: undefined") || stripped.equals("Near datatype: - none -")) continue;
+            lines.add(stripped);
+        }
+        return lines.isEmpty() ? "" : cParserReason(String.join("; ", lines));
+    }
+
+    private static String cParserReason(String message) {
+        if (message == null || message.isBlank()) return "no reason reported";
+        int expected = message.indexOf("Was expecting");
+        String reason = WHITESPACE_RUN.matcher(expected < 0 ? message : message.substring(0, expected)).replaceAll(" ").strip();
+        return reason.length() > 240 ? reason.substring(0, 240) : reason;
+    }
+
+    /** A parsed prototype and the qualifiers in its text that Ghidra does not record. */
+    private record SignatureEdit(FunctionDefinitionDataType prototype, JsonArray droppedQualifiers) {}
+
+    private SignatureEdit parseFunctionSignature(Function function, String text, int maximum, int maxParenthesisDepth) {
+        String code = "invalid_function_signature";
+        String entry = canonicalAddress(function.getEntryPoint());
+        // Ghidra redirects a thunk's prototype to the thunked function, which may be external.
+        if (function.isThunk())
+            throw new RequestFailure(code, "Function at " + entry + " is a thunk; its prototype belongs to the function it forwards to");
+        ParsedCallerC parsed = parseCallerC(text, "signature", false, code, maximum, maxParenthesisDepth);
+        CParser parser = parsed.parser();
+        // The parser invents an empty composite or enum for an undefined tag, and a
+        // prototype defines no types, so every type it reports was invented.
+        Set<String> undefined = new TreeSet<>(parser.getComposites().keySet());
+        undefined.addAll(parser.getEnums().keySet());
+        undefined.addAll(parser.getTypes().keySet());
+        if (!undefined.isEmpty())
+            throw new RequestFailure("unknown_data_type", "signature uses types the database does not define: " +
+                String.join(", ", undefined));
+        Map<String, DataType> functions = parser.getFunctions();
+        if (functions.size() != 1 ||
+            !(functions.values().iterator().next() instanceof FunctionDefinitionDataType prototype))
+            throw new RequestFailure(code, "signature must be one C function prototype without function-pointer parameters; found " +
+                functions.size() + " function declarators");
+        requireCallerParameters(prototype, parsed.soleParameterIdentifiers(), "signature", code);
+        for (ParameterDefinition parameter : prototype.getArguments())
+            requireUnambiguousType(parameter.getDataType());
+        requireUnambiguousType(prototype.getReturnType());
+        return new SignatureEdit(prototype, parsed.droppedQualifiers());
+    }
+
+    private void applyFunctionSignature(Function function, FunctionDefinitionDataType prototype) throws Exception {
+        String code = "invalid_function_signature";
+        String entry = canonicalAddress(function.getEntryPoint());
+        // Ghidra assigns the locked parameter storage with the compiler specification's
+        // default convention when the function has none. Recording that convention keeps
+        // the decompiler from reporting locked storage under an unknown convention.
+        if (function.getCallingConvention() == null && prototype.hasUnknownCallingConventionName())
+            prototype.setCallingConvention(currentProgram.getCompilerSpec().getDefaultCallingConvention().getName());
+        // The prototype's own name is never applied; the name field owns renames.
+        ApplyFunctionSignatureCmd command = new ApplyFunctionSignatureCmd(
+            function.getEntryPoint(), prototype, SourceType.USER_DEFINED, false, false,
+            DataTypeConflictHandler.DEFAULT_HANDLER, FunctionRenameOption.NO_CHANGE);
+        if (!command.applyTo(currentProgram, monitor))
+            throw new RequestFailure(code, "Ghidra refused the signature at " + entry + ": " +
+                (command.getStatusMsg() == null ? "no reason reported" : command.getStatusMsg()));
+        FunctionSignature applied = function.getSignature(true);
+        ParameterDefinition[] requested = prototype.getArguments();
+        ParameterDefinition[] observed = applied.getArguments();
+        boolean matches = function.getSignatureSource() == SourceType.USER_DEFINED &&
+            applied.getReturnType().isEquivalent(prototype.getReturnType()) &&
+            applied.hasVarArgs() == prototype.hasVarArgs() &&
+            (!prototype.hasNoReturn() || function.hasNoReturn()) &&
+            observed.length == requested.length &&
+            (prototype.hasUnknownCallingConventionName() ||
+                prototype.getCallingConventionName().equals(function.getCallingConventionName()));
+        for (int index = 0; matches && index < requested.length; index++) {
+            String name = requested[index].getName();
+            matches = observed[index].getDataType().isEquivalent(requested[index].getDataType()) &&
+                (name == null || name.isEmpty() || name.equals(observed[index].getName()));
+        }
+        // Ghidra settles array parameters, renames parameters that collide with
+        // other symbols and ignores conventions the compiler specification lacks.
+        if (!matches)
+            throw new RequestFailure(code, "Ghidra applied a different prototype at " + entry + " than requested: " +
+                applied.getPrototypeString(false) + "; requested " + prototype.getPrototypeString(false));
+    }
+
+    /**
+     * Ghidra keeps typedefs, enum tags and struct or union tags in separate
+     * maps and stores one type per name. A typedef of its own struct or enum
+     * (`typedef struct s { ... } s`) is that tag, recorded once. Overlapping
+     * names stay one stored type only when the definitions are equivalent;
+     * any other overlap is refused so the call stores every definition or none.
+     */
+    private static Map<String, DataType> mergeCallerTypeMaps(
+            Map<String, DataType> typedefs,
+            Map<String, DataType> enumerations,
+            Map<String, DataType> composites) {
+        Map<String, DataType> defined = new TreeMap<>();
+        Set<String> collisions = new TreeSet<>();
+        absorbCallerTypes(defined, collisions, typedefs);
+        absorbCallerTypes(defined, collisions, enumerations);
+        absorbCallerTypes(defined, collisions, composites);
+        if (!collisions.isEmpty())
+            throw new RequestFailure("conflicting_type_definitions",
+                "declarations define different types under one name: " + String.join(", ", collisions) +
+                "; nothing was changed");
+        return defined;
+    }
+
+    private static void absorbCallerTypes(
+            Map<String, DataType> defined, Set<String> collisions, Map<String, DataType> incoming) {
+        for (Map.Entry<String, DataType> entry : incoming.entrySet()) {
+            String name = entry.getKey();
+            DataType type = entry.getValue();
+            DataType existing = defined.get(name);
+            if (existing == null) {
+                defined.put(name, type);
+                continue;
+            }
+            if (!sameCallerType(existing, type)) {
+                collisions.add(name);
+                continue;
+            }
+            // The tag is the type a matching typedef names.
+            if (callerTag(type) && !callerTag(existing)) defined.put(name, type);
+        }
+    }
+
+    private static boolean sameCallerType(DataType left, DataType right) {
+        return left == right || left.isEquivalent(right) || right.isEquivalent(left);
+    }
+
+    private static boolean callerTag(DataType type) {
+        return type instanceof ghidra.program.model.data.Composite ||
+            type instanceof ghidra.program.model.data.Enum;
+    }
+
+    /**
+     * Composites with no defined components, keyed by identity to the length
+     * they had before parsing. Ghidra's parser fills such a composite in place
+     * when storeDataType is false, and that object is the definition it returns.
+     */
+    private Map<DataType, Integer> emptyCompositeLengths() {
+        Map<DataType, Integer> lengths = new IdentityHashMap<>();
+        Iterator<DataType> all = currentProgram.getDataTypeManager().getAllDataTypes();
+        while (all.hasNext()) {
+            DataType type = all.next();
+            if (type instanceof ghidra.program.model.data.Composite composite &&
+                    composite.getNumDefinedComponents() == 0)
+                lengths.put(type, composite.getLength());
+        }
+        return lengths;
+    }
+
+    /** A filled empty composite is a replacement of a database type, so the call stores nothing. */
+    private void requireUnfilledComposites(Map<DataType, Integer> before) {
+        DataTypeManager types = currentProgram.getDataTypeManager();
+        Set<String> replaced = new TreeSet<>();
+        for (Map.Entry<DataType, Integer> entry : before.entrySet()) {
+            DataType type = entry.getKey();
+            if (!(type instanceof ghidra.program.model.data.Composite composite) || !types.contains(type)) {
+                replaced.add(type.getPathName());
+                continue;
+            }
+            if (composite.getNumDefinedComponents() != 0 || composite.getLength() != entry.getValue())
+                replaced.add(composite.getPathName());
+        }
+        if (replaced.isEmpty()) return;
+        throw new RequestFailure("data_type_conflict",
+            "Parsing would replace an empty type already in the database: " + String.join(", ", replaced) +
+            "; nothing was changed");
+    }
+
+    private JsonObject defineNativeDataTypes(JsonObject params) throws Exception {
+        if (!Set.of("declarations", "declarations_max_utf16").containsAll(params.keySet()) || !params.has("declarations"))
+            throw new RequestFailure("invalid_request", "Bridge request fields are invalid");
+        String code = "invalid_type_declarations";
+        String declarations = requireText(params, "declarations");
+        int lengthBound = callerCTextBound(
+            params, "declarations_max_utf16", DEFAULT_TYPE_DECLARATIONS_UTF16, MAX_TYPE_DECLARATIONS_UTF16);
+        // Ghidra's parser writes the database (see parseCallerC), so parsing,
+        // validation and storage share one rollback: a refusal changes nothing.
+        int transaction = currentProgram.startTransaction("REA data type definitions");
+        boolean commit = false;
+        try {
+            // An empty composite is filled in place by the parser. Remember those
+            // shapes so a fill is not later mistaken for an unchanged definition.
+            Map<DataType, Integer> emptyComposites = emptyCompositeLengths();
+            ParsedCallerC parsedDeclarations =
+                // Declarations admit only one-level function-pointer parentheses (see admitCallerC), so no nesting bound applies.
+                parseCallerC(declarations, "declarations", true, code, lengthBound, MAX_C_PARENTHESIS_DEPTH);
+            requireUnfilledComposites(emptyComposites);
+            CParser parser = parsedDeclarations.parser();
+            Map<String, DataType> defined = mergeCallerTypeMaps(
+                parser.getTypes(), parser.getEnums(), parser.getComposites());
+            if (defined.isEmpty())
+                throw new RequestFailure(code, "declarations define no struct, union, enum or typedef");
+            Map<String, FunctionDefinitionDataType> functionTypes = callerFunctionTypes(
+                defined, parser, parsedDeclarations.soleParameterIdentifiers(), code);
+            DataTypeManager types = currentProgram.getDataTypeManager();
+            Set<DataType> parsed = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+            parsed.addAll(defined.values());
+            parsed.addAll(functionTypes.values());
+            List<String> conflicts = new ArrayList<>();
+            Set<String> existing = new HashSet<>();
+            for (Map.Entry<String, DataType> entry : defined.entrySet()) {
+                monitor.checkCancelled();
+                String name = entry.getKey();
+                DataType type = entry.getValue();
+                // Ghidra's parser invents an empty type for a struct, union or enum
+                // tag that neither the text nor the database defines, and reports nothing.
+                if (type instanceof ghidra.program.model.data.Enum enumeration && enumeration.getCount() == 0)
+                    throw new RequestFailure(code, "declarations leave enum " + name + " without members; define every enum they use");
+                if (type instanceof ghidra.program.model.data.Composite composite) {
+                    if (composite.getNumComponents() == 0)
+                        throw new RequestFailure(code, "declarations leave " + name + " without members; define every struct or union they use");
+                    Set<String> members = new HashSet<>();
+                    for (ghidra.program.model.data.DataTypeComponent component : composite.getComponents())
+                        if (component.getFieldName() != null && !members.add(component.getFieldName()))
+                            throw new RequestFailure(code, name + " repeats member name " + component.getFieldName());
+                }
+                requireStoredDependencies(name, type, parsed, types,
+                    java.util.Collections.newSetFromMap(new IdentityHashMap<>()));
+                String path = CALLER_DEFINED_TYPES.getPath() + "/" + name;
+                List<DataType> sameName = new ArrayList<>();
+                types.findDataTypes(name, sameName);
+                for (DataType other : sameName) {
+                    if (other.getPathName().equals(path)) existing.add(name);
+                    else conflicts.add(name + " (existing " + other.getPathName() + ")");
+                }
+            }
+            for (Map.Entry<String, FunctionDefinitionDataType> entry : functionTypes.entrySet()) {
+                List<DataType> sameName = new ArrayList<>();
+                types.findDataTypes(entry.getKey(), sameName);
+                for (DataType other : sameName)
+                    if (!other.getPathName().equals(CALLER_DEFINED_TYPES.getPath() + "/" + entry.getKey()))
+                        conflicts.add(entry.getKey() + " (existing " + other.getPathName() + ")");
+            }
+            if (!conflicts.isEmpty())
+                throw new RequestFailure("data_type_conflict", "The database already holds types with these names: " + String.join(", ", conflicts));
+            for (DataType type : defined.values()) type.setCategoryPath(CALLER_DEFINED_TYPES);
+            // Function types first, so the members and typedefs that point to them resolve to the stored ones.
+            for (Map.Entry<String, FunctionDefinitionDataType> entry : functionTypes.entrySet()) {
+                monitor.checkCancelled();
+                String path = CALLER_DEFINED_TYPES.getPath() + "/" + entry.getKey();
+                DataType stored = types.addDataType(entry.getValue(), DataTypeConflictHandler.DEFAULT_HANDLER);
+                if (!stored.getPathName().equals(path))
+                    throw new RequestFailure("data_type_conflict", "The function-pointer type " + entry.getKey() +
+                        " is already defined differently as " + path + "; its member or typedef changed its prototype");
+            }
+            JsonArray rows = new JsonArray();
+            for (Map.Entry<String, DataType> entry : defined.entrySet()) {
+                monitor.checkCancelled();
+                String name = entry.getKey();
+                String path = CALLER_DEFINED_TYPES.getPath() + "/" + name;
+                DataType stored = types.addDataType(entry.getValue(), DataTypeConflictHandler.DEFAULT_HANDLER);
+                // The default handler keeps a differing existing type and stores the new one under a conflict name.
+                if (!stored.getPathName().equals(path))
+                    throw new RequestFailure("data_type_conflict", name + " is already defined differently as " + path);
+                DataType readback = types.getDataType(path);
+                if (readback == null || !readback.isEquivalent(entry.getValue()))
+                    throw new RequestFailure("data_type_readback_mismatch", "Data type readback differs for " + path);
+                JsonObject row = new JsonObject();
+                row.addProperty("id", path);
+                row.addProperty("name", name);
+                row.addProperty("kind", dataTypeKind(readback));
+                row.add("size_bytes", readback.getLength() < 0 ? JsonNull.INSTANCE : GSON.toJsonTree(readback.getLength()));
+                row.addProperty("status", existing.contains(name) ? "unchanged" : "defined");
+                rows.add(row);
+            }
+            JsonObject result = new JsonObject();
+            result.add("types", rows);
+            if (!parsedDeclarations.droppedQualifiers().isEmpty())
+                result.add("dropped_qualifiers", parsedDeclarations.droppedQualifiers());
+            JsonObject effects = new JsonObject();
+            effects.addProperty("scope", "session-analysis-database");
+            effects.addProperty("source_bytes_modified", false);
+            result.add("effects", effects);
+            monitor.checkCancelled();
+            commit = true;
+            return result;
+        }
+        catch (ghidra.util.exception.DuplicateNameException | IllegalArgumentException exception) {
+            throw new RequestFailure(code, "Ghidra refused the declarations: " + safeMessage(exception));
+        }
+        finally {
+            currentProgram.endTransaction(transaction, commit);
+        }
+    }
+
+    /**
+     * The function types of the function-pointer members and typedefs the
+     * declarations define, each under a name derived from its declarator:
+     * owner.member for a member, typedef.target for a typedef. Ghidra's parser
+     * names them by a per-parse counter, which would collide across calls and
+     * break idempotency. A K&R identifier list or an unknown parameter type
+     * leaves Ghidra's undefined placeholder as the parameter type; refuse it.
+     */
+    private static Map<String, FunctionDefinitionDataType> callerFunctionTypes(
+            Map<String, DataType> defined, CParser parser, Set<String> soleParameterIdentifiers, String code) {
+        Map<String, FunctionDefinitionDataType> named = new TreeMap<>();
+        Set<DataType> reached = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+        for (Map.Entry<String, DataType> entry : defined.entrySet()) {
+            DataType type = entry.getValue();
+            if (type instanceof ghidra.program.model.data.Composite composite) {
+                for (ghidra.program.model.data.DataTypeComponent component : composite.getComponents()) {
+                    DataType member = component.getDataType();
+                    FunctionDefinitionDataType function = pointedFunction(member);
+                    if (function == null) continue;
+                    nameCallerFunction(named, reached, entry.getKey() + "." + component.getFieldName(), function,
+                        soleParameterIdentifiers, code);
+                    DataType renamed = withCurrentArrayNames(member);
+                    if (renamed != member) composite.dataTypeReplaced(member, renamed);
+                }
+            } else if (type instanceof ghidra.program.model.data.TypeDef alias) {
+                DataType target = alias.getDataType();
+                FunctionDefinitionDataType function = pointedFunction(target);
+                if (function == null) continue;
+                nameCallerFunction(named, reached, entry.getKey() + ".target", function, soleParameterIdentifiers, code);
+                DataType renamed = withCurrentArrayNames(target);
+                if (renamed != target) alias.dataTypeReplaced(target, renamed);
+            }
+        }
+        for (Map.Entry<String, DataType> entry : parser.getFunctions().entrySet())
+            if (!reached.contains(entry.getValue()))
+                throw new RequestFailure(code, "declarations declare the function " + entry.getKey() +
+                    "; define functions with annotate_native_function, and function pointers as members or typedefs");
+        return named;
+    }
+
+    /**
+     * An array keeps the element name it was built with, so after its function
+     * type is renamed it would be stored under the parser's counter name (and
+     * Ghidra 12.2 then fails resolving it). Rebuild each array level around the
+     * renamed element; a pointer derives its name from its target and needs none.
+     */
+    private static DataType withCurrentArrayNames(DataType type) {
+        if (!(type instanceof ghidra.program.model.data.Array array)) return type;
+        return new ghidra.program.model.data.ArrayDataType(withCurrentArrayNames(array.getDataType()),
+            array.getNumElements(), array.getElementLength(), array.getDataTypeManager());
+    }
+
+    /**
+     * The parameter list of a prototype the caller wrote, a signature or a
+     * function-pointer member or typedef. Ghidra's parser keeps a repeated
+     * parameter name, and leaves its undefined placeholder as the type of a
+     * K&R identifier or an unknown type name, without a diagnostic.
+     */
+    private static void requireCallerParameters(ghidra.program.model.data.FunctionDefinition prototype,
+            Set<String> soleParameterIdentifiers, String subject, String code) {
+        Set<String> names = new HashSet<>();
+        for (ghidra.program.model.data.ParameterDefinition parameter : prototype.getArguments()) {
+            String name = parameter.getName();
+            if (name != null && !name.isEmpty() && !names.add(name))
+                throw new RequestFailure(code, subject + " repeats parameter name " + name);
+            // An explicit undefined x keeps both tokens; a bare name that is not a type becomes undefined.
+            if (parameter.getDataType() == DataType.DEFAULT && name != null && soleParameterIdentifiers.contains(name))
+                throw new RequestFailure(code, subject + " names parameter " + name + " without a type (a K&R " +
+                    "identifier list or an undeclared type name), which Ghidra stores as undefined; write each parameter's type");
+        }
+    }
+
+    /** The function type a pointer, or an array of pointers, refers to; null for any other type. */
+    private static FunctionDefinitionDataType pointedFunction(DataType type) {
+        boolean pointer = false;
+        while (type instanceof ghidra.program.model.data.Pointer || type instanceof ghidra.program.model.data.Array) {
+            if (type instanceof ghidra.program.model.data.Pointer reference) {
+                pointer = true;
+                type = reference.getDataType();
+            } else type = ((ghidra.program.model.data.Array) type).getDataType();
+        }
+        return pointer && type instanceof FunctionDefinitionDataType function ? function : null;
+    }
+
+    private static void nameCallerFunction(Map<String, FunctionDefinitionDataType> named, Set<DataType> reached,
+            String name, FunctionDefinitionDataType function, Set<String> soleParameterIdentifiers, String code) {
+        if (!reached.add(function)) return;
+        if (named.containsKey(name))
+            throw new RequestFailure(code, "declarations name two function-pointer types " + name +
+                "; rename the member or typedef");
+        requireCallerParameters(function, soleParameterIdentifiers, "the function pointer " + name, code);
+        try {
+            function.setNameAndCategory(CALLER_DEFINED_TYPES, name);
+        }
+        catch (ghidra.util.InvalidNameException exception) {
+            throw new RequestFailure(code, "Ghidra refused the function-pointer type name " + name + ": " + safeMessage(exception));
+        }
+        named.put(name, function);
+    }
+
+    /** Every named type a definition reaches must be defined here or already stored. */
+    private void requireStoredDependencies(
+            String owner, DataType root, Set<DataType> parsed, DataTypeManager types, Set<DataType> visited) {
+        // A worklist, not recursion: caller text sets how deep pointer, array and member chains go.
+        // ArrayDeque admits no null, and a generic pointer has no pointed-to type.
+        ArrayDeque<DataType> pending = new ArrayDeque<>();
+        pending.push(root);
+        while (!pending.isEmpty()) {
+            DataType type = pending.pop();
+            if (!visited.add(type)) continue;
+            // Pointer, array and bit-field types are built-in classes; look through them first.
+            if (type instanceof ghidra.program.model.data.Pointer || type instanceof ghidra.program.model.data.Array ||
+                    type instanceof ghidra.program.model.data.BitFieldDataType) {
+                for (DataType child : cTypeChildren(type)) if (child != null) pending.push(child);
+                continue;
+            }
+            if (type instanceof ghidra.program.model.data.BuiltInDataType) continue;
+            if (!parsed.contains(type)) {
+                if (types.contains(type)) {
+                    requireUnambiguousType(type);
+                    continue;
+                }
+                throw new RequestFailure("invalid_type_declarations", owner +
+                    " embeds an unnamed or undeclared type (" + type.getName() + "); declare it by name in the same declarations");
+            }
+            if (type instanceof ghidra.program.model.data.TypeDef || type instanceof ghidra.program.model.data.Composite ||
+                    type instanceof ghidra.program.model.data.FunctionDefinition)
+                for (DataType child : cTypeChildren(type)) if (child != null) pending.push(child);
         }
     }
 
@@ -1589,8 +3507,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
             .filter(reference -> !function.getBody().contains(reference.getFromAddress()))
             .toList();
         List<Reference> outgoingReferences = collectReferences(function, "outgoing");
-        JsonArray incoming = referenceEdges(incomingReferences);
-        JsonArray outgoing = referenceEdges(outgoingReferences);
+        Map<Address, Function> resolvedFunctions = new HashMap<>();
+        Map<Address, JsonObject> procedureIdentities = new HashMap<>();
+        JsonArray incoming = referenceEdges(incomingReferences, resolvedFunctions, procedureIdentities);
+        JsonArray outgoing = referenceEdges(outgoingReferences, resolvedFunctions, procedureIdentities);
         JsonArray comments = comments(function);
         Set<Function> callerFunctions = function.getCallingFunctions(monitor);
         JsonArray callers = procedureIdentities(callerFunctions);
@@ -1627,7 +3547,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.add(
             "native_api",
             decompilerFailure == null
-                ? nativeApiBoundary(function, decompilation)
+                ? nativeApiBoundary(function, decompilation, scan.instructions)
                 : unavailableNativeApiBoundary(decompilerFailure)
         );
         result.add(
@@ -1645,6 +3565,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
             !scan.truncated(), "The function instruction scan was truncated."
         ));
         result.add("facet_availability", availability);
+        JsonArray limitationCodes = new JsonArray();
+        limitationCodes.add("unresolved_computed_or_indirect_flows");
+        limitationCodes.add("provider_specific_representations");
+        result.add("limitation_codes", limitationCodes);
         JsonArray limitations = new JsonArray();
         limitations.add(
             "Unresolved computed or indirect flows without target addresses are not represented as reference edges."
@@ -1714,7 +3638,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         while (operations.hasNext()) {
             monitor.checkCancelled();
             PcodeOpAST operation = operations.next();
-            if (selected.size() >= MAX_HIGH_PCODE_OPS) {
+            if (selected.size() >= valueFlowLimits.maxOperations()) {
                 omittedOperationsLowerBound = 1;
                 break;
             }
@@ -1742,6 +3666,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         JsonArray effects = new JsonArray();
         int omittedInputs = 0;
         int omittedEdges = 0;
+        boolean edgeLimitReached = false;
         for (PcodeOpAST operation : selected) {
             monitor.checkCancelled();
             String operationId = operationIds.get(operation);
@@ -1757,14 +3682,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
             value.addProperty("block_membership", operation.getParent() == null ? "detached" : "member");
             JsonArray inputs = new JsonArray();
             int inputCount = operation.getNumInputs();
-            int capturedInputs = Math.min(inputCount, MAX_HIGH_PCODE_INPUTS_PER_OP);
+            int capturedInputs = Math.min(inputCount, valueFlowLimits.maxInputsPerOperation());
             for (int inputIndex = 0; inputIndex < capturedInputs; inputIndex += 1) {
                 Varnode input = operation.getInput(inputIndex);
                 inputs.add(varnodeValue(input));
                 if (input instanceof VarnodeAST astInput) {
                     if (astInput.getHigh() instanceof HighParam parameter) {
-                        if (parameterUses.size() >= MAX_HIGH_PCODE_DEF_USE_EDGES) omittedEdges++;
-                        else {
+                        if (parameterUses.size() >= valueFlowLimits.maxEdges()) {
+                            edgeLimitReached = true;
+                            omittedEdges++;
+                        } else {
                             JsonObject use = new JsonObject();
                             use.addProperty("ordinal", parameter.getSlot());
                             use.addProperty("use", operationId);
@@ -1775,7 +3702,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     PcodeOp definition = astInput.getDef();
                     if (definition instanceof PcodeOpAST astDefinition) {
                         String definitionId = operationIds.get(astDefinition);
-                        if (definitionId == null || defUse.size() >= MAX_HIGH_PCODE_DEF_USE_EDGES) {
+                        if (definitionId == null || defUse.size() >= valueFlowLimits.maxEdges()) {
+                            if (defUse.size() >= valueFlowLimits.maxEdges()) edgeLimitReached = true;
                             omittedEdges += 1;
                         } else {
                             JsonObject edge = new JsonObject();
@@ -1798,6 +3726,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
         JsonObject result = new JsonObject();
         result.addProperty("available", true);
         result.addProperty("provenance", "ghidra-high-pcode");
+        JsonObject limits = new JsonObject();
+        limits.addProperty("max_operations", valueFlowLimits.maxOperations());
+        limits.addProperty("max_inputs_per_operation", valueFlowLimits.maxInputsPerOperation());
+        limits.addProperty("max_edges", valueFlowLimits.maxEdges());
+        result.add("limits", limits);
+        JsonArray limitsReached = new JsonArray();
+        if (omittedOperationsLowerBound > 0) limitsReached.add("max_operations");
+        if (omittedInputs > 0) limitsReached.add("max_inputs_per_operation");
+        if (edgeLimitReached) limitsReached.add("max_edges");
+        result.add("limits_reached", limitsReached);
         result.add("operations", operationValues);
         result.add("def_use", defUse);
         result.add("parameters", parameterValues);
@@ -1820,16 +3758,39 @@ public final class ReaGhidraBridge extends HeadlessScript {
             "Def-use links do not cross function boundaries and may omit memory aliasing, call side effects, or unresolved indirect flow."
         );
         limitations.add(
+            "Memory read/write effects cover high-p-code LOAD and STORE operations only; direct memory address varnodes in other operations are not included. An empty effect list does not establish that no memory is accessed. Recorded instruction references may provide complementary evidence."
+        );
+        limitations.add(
             "Memory read/write effects include stack and temporary memory operations; they do not identify persistent state or business meaning."
         );
         limitations.add(
-            "Operation, input, and def-use limits can truncate large functions; inspect truncation, omitted lower bounds, and known omitted counts before drawing conclusions."
+            "Operation, input, and def-use limits can truncate large functions; inspect the effective limits, limits_reached and omitted counts before drawing conclusions."
         );
         limitations.add(
             "Known omitted-edge counts cover links omitted from retained operations; omitted operations may contain additional uncounted links."
         );
+        if (omittedOperationsLowerBound > 0)
+            limitations.add(valueFlowLimitRecovery("max_operations", valueFlowLimits.maxOperations()));
+        if (omittedInputs > 0)
+            limitations.add(valueFlowLimitRecovery("max_inputs_per_operation", valueFlowLimits.maxInputsPerOperation()));
+        if (edgeLimitReached)
+            limitations.add(valueFlowLimitRecovery("max_edges", valueFlowLimits.maxEdges()));
         result.add("limitations", limitations);
         return result;
+    }
+
+    private static String valueFlowLimitRecovery(String field, int effective) {
+        String setting = "ghidra.value_flow_" + field;
+        String environment = "REA_GHIDRA_VALUE_FLOW_" + field.toUpperCase(Locale.ROOT);
+        String adjustment = effective < Integer.MAX_VALUE
+            ? "In MCP, use update_analysis_settings with setting " + setting +
+                ", action set and a larger integer value from 1 to " + Integer.MAX_VALUE +
+                ", then repeat the selected function analysis on this Program without restarting REA. " +
+                "For a one-shot CLI retry, set " + environment +
+                " to a larger count in the environment that starts the next rea invocation, then repeat the selected analysis; the previous invocation's Program is no longer active."
+            : "The setting is at its Java integer maximum; select a smaller function for this projection.";
+        return setting + " reached its effective value of " + effective + ". " + adjustment +
+            " These controls do not raise the decompile deadline, bridge transport or MCP client limits.";
     }
 
     private String pcodeOperationId(PcodeOpAST operation) {
@@ -1922,41 +3883,61 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return symbol == null ? JsonNull.INSTANCE : GSON.toJsonTree(symbol.getName(true));
     }
 
-    // Analyst naming: a function entry renames the function, other addresses get a primary label.
-    private boolean applyAddressName(Address address, String name) throws Exception {
+    // Analyst naming: a function entry renames the function; another mapped
+    // address renames its non-dynamic primary label or receives a new global
+    // label. Resolve that destination without editing the program.
+    private AddressNameTarget addressNameTarget(Address address, String name)
+        throws ghidra.util.exception.InvalidInputException {
         if (!currentProgram.getMemory().contains(address))
             throw new RequestFailure("invalid_request", "Address is not mapped: " + canonicalAddress(address));
         validateAnnotationText(name, "name");
+        Symbol edited = editedNameSymbol(address);
+        return edited == null
+            ? new AddressNameTarget(address, currentProgram.getGlobalNamespace(), name)
+            : new AddressNameTarget(address, edited.getParentNamespace(), symbolLeafName(edited, name));
+    }
+
+    private Symbol editedNameSymbol(Address address) {
+        Function function = currentProgram.getFunctionManager().getFunctionAt(address);
+        if (function != null) return function.getSymbol();
+        Symbol primary = currentProgram.getSymbolTable().getPrimarySymbol(address);
+        return primary == null || primary.isDynamic() ? null : primary;
+    }
+
+    // Every address whose label or function symbol holds the destination.
+    private List<Address> addressNameHolders(AddressNameTarget target) {
+        Set<Address> holders = new TreeSet<>();
+        for (Symbol symbol : currentProgram.getSymbolTable().getLabelOrFunctionSymbols(target.leaf(), target.namespace()))
+            holders.add(symbol.getAddress());
+        return List.copyOf(holders);
+    }
+
+    // Apply one planned destination in its own transaction. Null means the
+    // edit committed with matching primary-symbol readback.
+    private String applyAddressName(AddressNameTarget target) {
+        Address address = target.address();
         int transaction = currentProgram.startTransaction("REA address name");
         boolean commit = false;
         try {
             Function function = currentProgram.getFunctionManager().getFunctionAt(address);
-            SymbolTable table = currentProgram.getSymbolTable();
-            Symbol primary = function == null ? table.getPrimarySymbol(address) : function.getSymbol();
-            Namespace namespace = primary == null
-                ? currentProgram.getGlobalNamespace()
-                : primary.getParentNamespace();
-            String expected = primary == null ? name : symbolLeafName(primary, name);
-            for (Symbol symbol : table.getLabelOrFunctionSymbols(expected, namespace)) {
-                if (!address.equals(symbol.getAddress())) return false;
-            }
+            Symbol edited = editedNameSymbol(address);
             if (function != null) {
-                function.setName(expected, SourceType.USER_DEFINED);
+                function.setName(target.leaf(), SourceType.USER_DEFINED);
+            } else if (edited != null) {
+                edited.setName(target.leaf(), SourceType.USER_DEFINED);
             } else {
-                if (primary != null && !primary.isDynamic()) {
-                    primary.setName(expected, SourceType.USER_DEFINED);
-                } else {
-                    Symbol created = table.createLabel(address, expected, SourceType.USER_DEFINED);
-                    created.setPrimary();
-                }
+                Symbol created = currentProgram.getSymbolTable().createLabel(address, target.leaf(), SourceType.USER_DEFINED);
+                created.setPrimary();
             }
-            invalidateAnalysisCaches();
             Symbol readback = currentProgram.getSymbolTable().getPrimarySymbol(address);
-            commit = readback != null && expected.equals(readback.getName());
-            return commit;
+            commit = readback != null && target.leaf().equals(readback.getName());
+            return commit ? null : "readback_mismatch";
         }
-        catch (ghidra.util.exception.InvalidInputException | ghidra.util.exception.DuplicateNameException exception) {
-            return false;
+        catch (ghidra.util.exception.InvalidInputException exception) {
+            return "invalid_name";
+        }
+        catch (ghidra.util.exception.DuplicateNameException exception) {
+            return "duplicate_name";
         }
         finally {
             currentProgram.endTransaction(transaction, commit);
@@ -1966,7 +3947,17 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private JsonElement setAddressName(JsonObject params) throws Exception {
         requireKeys(params, Set.of("document", "address", "name"));
         requireDocument(params);
-        return GSON.toJsonTree(applyAddressName(requireAddress(params, "address"), requireString(params, "name")));
+        String key = requireString(params, "address");
+        Address address = requireAddress(params, "address");
+        String name = requireString(params, "name");
+        // A single edit keeps request errors for unmapped addresses and
+        // unrepresentable text; other outcomes share the batch representation.
+        if (!currentProgram.getMemory().contains(address))
+            throw new RequestFailure("invalid_request", "Address is not mapped: " + canonicalAddress(address));
+        validateAnnotationText(name, "name");
+        Map<String, String> requested = new LinkedHashMap<>();
+        requested.put(key, name);
+        return applyAddressNames(requested);
     }
 
     private JsonElement setAddressesNames(JsonObject params) throws Exception {
@@ -1974,34 +3965,136 @@ public final class ReaGhidraBridge extends HeadlessScript {
         requireDocument(params);
         if (!params.has("names") || !params.get("names").isJsonObject())
             throw new RequestFailure("invalid_request", "names must be an object of address -> name");
+        Map<String, String> requested = new LinkedHashMap<>();
+        for (Map.Entry<String, JsonElement> entry : params.getAsJsonObject("names").entrySet())
+            requested.put(entry.getKey(), entry.getValue().getAsString());
+        return applyAddressNames(requested);
+    }
+
+    // Decide every request from the names held before any edit, so object
+    // member order never selects which address receives a name. Reply with
+    // per-key results and reasons; a contested destination is listed once in
+    // conflicts and failures refer to it by index.
+    private JsonObject applyAddressNames(Map<String, String> requested) {
+        Map<String, Address> addressesByKey = new LinkedHashMap<>();
         Map<Address, List<AddressNameRequest>> requestsByAddress = new LinkedHashMap<>();
-        JsonObject result = new JsonObject();
-        for (Map.Entry<String, JsonElement> entry : params.getAsJsonObject("names").entrySet()) {
+        for (Map.Entry<String, String> entry : requested.entrySet()) {
+            Address address = null;
             try {
-                Address address = parseReaAddress(entry.getKey());
+                address = parseReaAddress(entry.getKey());
                 requestsByAddress.computeIfAbsent(address, ignored -> new ArrayList<>())
-                    .add(new AddressNameRequest(entry.getKey(), address, entry.getValue().getAsString()));
+                    .add(new AddressNameRequest(entry.getKey(), address, entry.getValue()));
             }
             catch (RequestFailure failure) {
-                result.addProperty(entry.getKey(), false);
+                // The key keeps its own invalid_address outcome below.
+            }
+            addressesByKey.put(entry.getKey(), address);
+        }
+        Map<Address, AddressNameFailure> failures = new HashMap<>();
+        Map<AddressNameDestination, List<AddressNameTarget>> destinations = new LinkedHashMap<>();
+        for (Map.Entry<Address, List<AddressNameRequest>> selected : requestsByAddress.entrySet()) {
+            Address address = selected.getKey();
+            String name = selected.getValue().get(0).name;
+            if (selected.getValue().stream().anyMatch(request -> !request.name.equals(name))) {
+                failures.put(address, new AddressNameFailure("conflicting_alias_names", null));
+                continue;
+            }
+            if (!currentProgram.getMemory().contains(address)) {
+                failures.put(address, new AddressNameFailure("unmapped_address", null));
+                continue;
+            }
+            try {
+                AddressNameTarget target = addressNameTarget(address, name);
+                destinations.computeIfAbsent(target.destination(), ignored -> new ArrayList<>()).add(target);
+            }
+            catch (RequestFailure | ghidra.util.exception.InvalidInputException exception) {
+                failures.put(address, new AddressNameFailure("invalid_name", null));
             }
         }
-        for (List<AddressNameRequest> requests : requestsByAddress.values()) {
-            String name = requests.get(0).name;
-            boolean conflictingAliasNames = requests.stream()
-                .anyMatch(request -> !request.name.equals(name));
-            boolean success = false;
-            if (!conflictingAliasNames) {
-                try {
-                    success = applyAddressName(requests.get(0).address, name);
-                }
-                catch (RequestFailure failure) {
-                    // Keep per-address failures in the existing batch result shape.
-                }
+        // Reject a destination that several selected addresses request, or
+        // that another address holds, instead of letting order pick a winner.
+        List<AddressNameConflict> conflicts = new ArrayList<>();
+        List<AddressNameTarget> independent = new ArrayList<>();
+        for (List<AddressNameTarget> requesters : destinations.values()) {
+            AddressNameTarget first = requesters.get(0);
+            List<Address> holders = addressNameHolders(first);
+            String reason;
+            if (requesters.size() > 1) {
+                reason = "duplicate_requested_name";
+            } else if (holders.stream().allMatch(first.address()::equals)) {
+                independent.add(first);
+                continue;
+            } else if (holders.stream().anyMatch(holder ->
+                !holder.equals(first.address()) && !requestsByAddress.containsKey(holder))) {
+                reason = "name_held_by_unselected_address";
+            } else {
+                reason = "name_held_by_selected_address";
             }
-            for (AddressNameRequest request : requests)
-                result.addProperty(request.inputAddress, success);
+            AddressNameConflict conflict = new AddressNameConflict(
+                first.namespace(),
+                first.leaf(),
+                requesters.stream().map(AddressNameTarget::address).sorted().toList(),
+                holders
+            );
+            conflicts.add(conflict);
+            for (AddressNameTarget target : requesters)
+                failures.put(target.address(), new AddressNameFailure(reason, conflict));
         }
+        // Independent edits have distinct destinations that no other address
+        // holds, so their results do not depend on application order.
+        try {
+            for (AddressNameTarget target : independent) {
+                String reason = applyAddressName(target);
+                if (reason != null) failures.put(target.address(), new AddressNameFailure(reason, null));
+            }
+        }
+        finally {
+            if (!independent.isEmpty()) {
+                invalidateSymbolAndDecompilerCaches();
+            }
+        }
+        // Requesters belong to exactly one destination, so ordering conflicts
+        // by their first requester gives indexes independent of member order.
+        conflicts.sort(Comparator.comparing((AddressNameConflict conflict) -> conflict.requesters().get(0)));
+        Map<AddressNameConflict, Integer> indexes = new IdentityHashMap<>();
+        JsonArray contested = new JsonArray();
+        for (AddressNameConflict conflict : conflicts) {
+            indexes.put(conflict, contested.size());
+            JsonObject value = new JsonObject();
+            if (conflict.namespace().isGlobal()) value.add("namespace", JsonNull.INSTANCE);
+            else value.addProperty("namespace", conflict.namespace().getName(true));
+            value.addProperty("name", conflict.leaf());
+            value.add("requested_by", canonicalAddresses(conflict.requesters()));
+            value.add("held_by", canonicalAddresses(conflict.holders()));
+            contested.add(value);
+        }
+        JsonObject results = new JsonObject();
+        JsonObject failed = new JsonObject();
+        for (Map.Entry<String, Address> entry : addressesByKey.entrySet()) {
+            Address address = entry.getValue();
+            AddressNameFailure failure = address == null
+                ? new AddressNameFailure("invalid_address", null)
+                : failures.get(address);
+            results.addProperty(entry.getKey(), failure == null);
+            if (failure == null) continue;
+            JsonObject value = new JsonObject();
+            if (address == null) value.add("address", JsonNull.INSTANCE);
+            else value.addProperty("address", canonicalAddress(address));
+            value.addProperty("reason", failure.reason());
+            if (failure.conflict() == null) value.add("conflict", JsonNull.INSTANCE);
+            else value.addProperty("conflict", indexes.get(failure.conflict()));
+            failed.add(entry.getKey(), value);
+        }
+        JsonObject result = new JsonObject();
+        result.add("results", results);
+        result.add("failures", failed);
+        result.add("conflicts", contested);
+        return result;
+    }
+
+    private static JsonArray canonicalAddresses(List<Address> addresses) {
+        JsonArray result = new JsonArray();
+        for (Address address : addresses) result.add(canonicalAddress(address));
         return result;
     }
 
@@ -2017,34 +4110,87 @@ public final class ReaGhidraBridge extends HeadlessScript {
         JsonObject result = new JsonObject();
         result.addProperty("document", currentProgram.getName());
         result.add("segments", segments());
-        // Count the owning inventories, preserving their exact discovery rules
-        // without serializing function identities or string values for counts.
-        result.addProperty("procedure_count", procedures().size());
-        result.addProperty("string_count", strings().size());
+        // Preserve exact discovery deduplication and non-null string rules
+        // without materializing unrequested inventories in memory.
+        result.addProperty("procedure_count", countProcedures());
+        result.addProperty("string_count", countStrings());
         return result;
     }
 
-    private JsonArray listNames(JsonObject params) throws Exception {
-        requireKeys(params, Set.of("document", "address"));
-        requireDocument(params);
-        List<InventoryItem> inventory = names();
-        String requested = optionalString(params, "address");
-        if (requested != null) {
-            Address address = parseReaAddress(requested);
-            inventory = inventory.stream()
-                .filter(item -> item.address.equals(address))
-                .toList();
+    private int countProcedures() throws Exception {
+        if (procedureInventory != null) {
+            return procedureInventory.size();
         }
-        return inventory(inventory, "symbol");
+        Set<Address> seen = new HashSet<>();
+        countUniqueFunctions(seen, currentProgram.getFunctionManager().getFunctions(true));
+        countUniqueFunctions(seen, currentProgram.getFunctionManager().getExternalFunctions());
+        return seen.size();
     }
 
-    private JsonArray listProcedures(JsonObject params) throws Exception {
+    private void countUniqueFunctions(Set<Address> seen, FunctionIterator functions) throws Exception {
+        while (functions.hasNext()) {
+            monitor.checkCancelled();
+            seen.add(functions.next().getEntryPoint());
+        }
+    }
+
+    private int countStrings() throws Exception {
+        if (stringInventory != null) {
+            return stringInventory.size();
+        }
+        int count = 0;
+        DataIterator dataItems = currentProgram.getListing().getDefinedData(true);
+        while (dataItems.hasNext()) {
+            monitor.checkCancelled();
+            Data data = dataItems.next();
+            if (!data.hasStringValue()) {
+                continue;
+            }
+            if (StringDataInstance.getStringDataInstance(data).getStringValue() == null) {
+                continue;
+            }
+            count++;
+        }
+        return count;
+    }
+
+    private StreamingResult listNames(JsonObject params) throws Exception {
+        requireKeys(params, Set.of("document", "address"));
+        requireDocument(params);
+        String requested = optionalString(params, "address");
+        List<NameEntry> entries;
+        if (requested != null) {
+            Address address = parseReaAddress(requested);
+            if (nameInventory != null) {
+                entries = sliceAtAddress(nameInventory, NameEntry::address, address);
+            } else if (!address.isMemoryAddress() && !address.isExternalAddress()) {
+                entries = List.of();
+            } else {
+                List<NameEntry> found = new ArrayList<>();
+                for (Symbol symbol : currentProgram.getSymbolTable().getSymbols(address)) {
+                    monitor.checkCancelled();
+                    Address symbolAddress = symbol.getAddress();
+                    if (!symbolAddress.isMemoryAddress() && !symbolAddress.isExternalAddress()) {
+                        continue;
+                    }
+                    found.add(new NameEntry(symbolAddress, symbol.getName(true), symbolFacts(symbol)));
+                }
+                found.sort(NAME_ORDER);
+                entries = found;
+            }
+        } else {
+            entries = names();
+        }
+        monitor.checkCancelled();
+        return out -> writeNameEntries(out, entries);
+    }
+
+    private StreamingResult listProcedures(JsonObject params) throws Exception {
         requireKeys(params, Set.of("document"));
         requireDocument(params);
-        List<InventoryItem> inventory = procedures().stream()
-            .map(FunctionEntry::item)
-            .toList();
-        return inventory(inventory, "procedure");
+        List<ProcedureEntry> entries = procedures();
+        monitor.checkCancelled();
+        return out -> writeProcedureEntries(out, entries);
     }
 
     private JsonArray listSegments(JsonObject params) {
@@ -2067,18 +4213,25 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return result;
     }
 
-    private JsonArray listStrings(JsonObject params) throws Exception {
+    private StreamingResult listStrings(JsonObject params) throws Exception {
         requireKeys(params, Set.of("document", "address"));
         requireDocument(params);
-        List<InventoryItem> inventory = strings();
         String requested = optionalString(params, "address");
+        List<StringEntry> entries;
         if (requested != null) {
             Address address = parseReaAddress(requested);
-            inventory = inventory.stream()
-                .filter(item -> item.address.equals(address))
-                .toList();
+            if (stringInventory != null) {
+                entries = sliceAtAddress(stringInventory, StringEntry::address, address);
+            } else {
+                Data data = currentProgram.getListing().getDefinedDataAt(address);
+                StringEntry entry = data == null ? null : stringEntry(data);
+                entries = entry == null ? List.of() : List.of(entry);
+            }
+        } else {
+            entries = strings();
         }
-        return inventory(inventory, "string");
+        monitor.checkCancelled();
+        return out -> writeStringEntries(out, entries);
     }
 
     private JsonElement procedureAddress(JsonObject params) throws Exception {
@@ -2091,10 +4244,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         requireKeys(params, Set.of("document", "address"));
         requireDocument(params);
         Address query = requireAddress(params, "address");
-        Function function = currentProgram.getFunctionManager().getFunctionAt(query);
-        if (function == null && query.isMemoryAddress()) {
-            function = currentProgram.getFunctionManager().getFunctionContaining(query);
-        }
+        Function function = functionAtOrContaining(query);
         JsonObject result = new JsonObject();
         result.addProperty("query_address", canonicalAddress(query));
         if (function != null) {
@@ -2109,11 +4259,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return result;
     }
 
-    private JsonArray search(JsonObject params, boolean procedureSearch) throws Exception {
-        requireKeys(
-            params,
-            Set.of("pattern", "mode", "case_sensitive", "document")
-        );
+    private StreamingResult search(JsonObject params, boolean procedureSearch) throws Exception {
+        Set<String> keys = new HashSet<>(Set.of("pattern", "mode", "case_sensitive", "document"));
+        if (params.has("literal_ascii_candidate")) keys.add("literal_ascii_candidate");
+        if (params.has("literal_ascii_substring")) keys.add("literal_ascii_substring");
+        requireKeys(params, keys);
         requireDocument(params);
         String expression = requireString(params, "pattern");
         String mode = requireString(params, "mode");
@@ -2121,28 +4271,110 @@ public final class ReaGhidraBridge extends HeadlessScript {
             throw new RequestFailure("invalid_request", "mode must be literal or regex");
         }
         boolean caseSensitive = requireBoolean(params, "case_sensitive");
-        List<InventoryItem> inventory = procedureSearch
-            ? procedures().stream().map(FunctionEntry::item).toList()
-            : strings();
-        ValueMatcher matcher = mode.equals("literal")
-            ? literalMatcher(expression, caseSensitive)
-            : regexMatcher(expression, caseSensitive);
-        JsonArray items = new JsonArray();
-        for (InventoryItem item : inventory) {
-            monitor.checkCancelled();
-            if (!matcher.matches(item.value)) {
-                continue;
-            }
-            items.add(resultItem(item, null));
+        ValueMatcher matcher;
+        if (mode.equals("literal") && !caseSensitive) {
+            if (!params.has("literal_ascii_candidate"))
+                throw new RequestFailure("invalid_request", "Insensitive literal search requires an ASCII candidate");
+            matcher = literalCandidateMatcher(
+                optionalString(params, "literal_ascii_candidate"),
+                optionalString(params, "literal_ascii_substring")
+            );
+        } else {
+            if (params.has("literal_ascii_candidate") || params.has("literal_ascii_substring"))
+                throw new RequestFailure("invalid_request", "ASCII candidate applies only to insensitive literals");
+            matcher = mode.equals("literal")
+                ? literalMatcher(expression)
+                : regexMatcher(expression, caseSensitive);
         }
-        return items;
+        if (procedureSearch) {
+            // Search the names exact lookup accepts, keeping one row per
+            // procedure under its primary name. An unbuilt inventory is
+            // scanned without retaining it for one ad-hoc search.
+            List<ProcedureEntry> entries =
+                procedureInventory != null ? procedureInventory : buildProcedures();
+            List<MatchedProcedure> matches = new ArrayList<>();
+            for (ProcedureEntry entry : entries) {
+                monitor.checkCancelled();
+                ProcedureNameMatch match = matchProcedureNames(entry, matcher);
+                if (!match.matched()) {
+                    continue;
+                }
+                matches.add(new MatchedProcedure(entry, match.aliases()));
+            }
+            return out -> writeMatchedProcedures(out, matches);
+        }
+        List<StringEntry> matches = new ArrayList<>();
+        if (stringInventory != null) {
+            for (StringEntry entry : stringInventory) {
+                monitor.checkCancelled();
+                if (matcher.matches(entry.value())) {
+                    matches.add(entry);
+                }
+            }
+        } else {
+            // A selective search must not materialize and retain the full
+            // string inventory for one ad-hoc query; scan defined data and
+            // keep only matches, in the inventory's deterministic order.
+            DataIterator dataItems = currentProgram.getListing().getDefinedData(true);
+            while (dataItems.hasNext()) {
+                monitor.checkCancelled();
+                StringEntry entry = matchedStringEntry(dataItems.next(), matcher);
+                if (entry != null) {
+                    matches.add(entry);
+                }
+            }
+            matches.sort(STRING_ORDER);
+        }
+        return out -> writeStringEntries(out, matches);
     }
 
-    private List<InventoryItem> names() throws Exception {
+    /**
+     * The one definition of the names that select a procedure, shared by exact
+     * lookup and search: its primary name and every other symbol at its exact
+     * entry, each in leaf or namespace-qualified spelling. A label inside the
+     * body never names the procedure. Matching secondary symbols are reported
+     * by their qualified names, sorted.
+     */
+    private static ProcedureNameMatch matchProcedureNames(ProcedureEntry entry, ValueMatcher matcher) {
+        boolean primary = spellingMatches(entry.leafName(), entry.value(), entry.leafIsSuffix(), matcher);
+        if (entry.aliases().isEmpty()) {
+            return new ProcedureNameMatch(primary, List.of());
+        }
+        List<String> matchedAliases = null;
+        for (ProcedureAlias alias : entry.aliases()) {
+            if (!spellingMatches(alias.leaf(), alias.qualified(), alias.leafIsSuffix(), matcher)) continue;
+            if (alias.qualified().equals(entry.value())) {
+                primary = true;
+                continue;
+            }
+            if (matchedAliases == null) matchedAliases = new ArrayList<>(2);
+            if (matchedAliases.isEmpty() || !matchedAliases.get(matchedAliases.size() - 1).equals(alias.qualified())) {
+                matchedAliases.add(alias.qualified());
+            }
+        }
+        return new ProcedureNameMatch(primary, matchedAliases == null ? List.of() : matchedAliases);
+    }
+
+    /** When a leaf ends its qualified spelling, substring matching on qualified already implies leaf coverage. */
+    private static boolean spellingMatches(
+            String leaf,
+            String qualified,
+            boolean leafIsSuffix,
+            ValueMatcher matcher) {
+        if (matcher.matches(qualified)) {
+            return true;
+        }
+        if (leaf.equals(qualified) || (!matcher.requiresLeafCheck() && leafIsSuffix)) {
+            return false;
+        }
+        return matcher.matches(leaf);
+    }
+
+    private List<NameEntry> names() throws Exception {
         if (nameInventory != null) {
             return nameInventory;
         }
-        List<InventoryItem> result = new ArrayList<>();
+        List<NameEntry> result = new ArrayList<>();
         SymbolIterator symbols = currentProgram.getSymbolTable().getAllSymbols(true);
         while (symbols.hasNext()) {
             monitor.checkCancelled();
@@ -2151,88 +4383,309 @@ public final class ReaGhidraBridge extends HeadlessScript {
             if (!address.isMemoryAddress() && !address.isExternalAddress()) {
                 continue;
             }
-            JsonObject facts = symbolMetadata(symbol);
-            result.add(new InventoryItem(address, symbol.getName(true), facts, null));
+            result.add(new NameEntry(address, symbol.getName(true), symbolFacts(symbol)));
         }
-        result.sort(INVENTORY_ORDER);
+        result.sort(NAME_ORDER);
         nameInventory = List.copyOf(result);
         return nameInventory;
     }
 
-    private List<FunctionEntry> procedures() throws Exception {
+    private List<ProcedureEntry> procedures() throws Exception {
         if (procedureInventory != null) {
             return procedureInventory;
         }
-        List<FunctionEntry> result = new ArrayList<>();
-        Set<Address> seen = new HashSet<>();
-        appendFunctions(result, seen, currentProgram.getFunctionManager().getFunctions(true));
-        appendFunctions(result, seen, currentProgram.getFunctionManager().getExternalFunctions());
-        result.sort((left, right) -> INVENTORY_ORDER.compare(left.item, right.item));
-        procedureInventory = List.copyOf(result);
+        procedureInventory = List.copyOf(buildProcedures());
         return procedureInventory;
     }
 
+    private List<ProcedureEntry> buildProcedures() throws Exception {
+        List<ProcedureEntry> result = new ArrayList<>();
+        Set<Address> seen = new HashSet<>();
+        appendFunctions(result, seen, currentProgram.getFunctionManager().getFunctions(true));
+        appendFunctions(result, seen, currentProgram.getFunctionManager().getExternalFunctions());
+        result.sort(PROCEDURE_ORDER);
+        return result;
+    }
+
     private void appendFunctions(
-            List<FunctionEntry> destination,
+            List<ProcedureEntry> destination,
             Set<Address> seen,
             FunctionIterator functions) throws Exception {
+        SymbolTable symbolTable = currentProgram.getSymbolTable();
         while (functions.hasNext()) {
             monitor.checkCancelled();
             Function function = functions.next();
-            if (!seen.add(function.getEntryPoint())) {
+            Address entryPoint = function.getEntryPoint();
+            if (!seen.add(entryPoint)) {
                 continue;
             }
-            JsonObject facts = new JsonObject();
-            facts.addProperty("external", function.isExternal());
-            facts.addProperty("thunk", function.isThunk());
             Function target = function.isThunk() ? function.getThunkedFunction(false) : null;
-            if (target == null) {
-                facts.add("thunk_target", JsonNull.INSTANCE);
-            }
-            else {
-                facts.addProperty("thunk_target", canonicalAddress(target.getEntryPoint()));
-            }
-            Symbol symbol = function.getSymbol();
-            InventoryItem item = new InventoryItem(
-                function.getEntryPoint(),
-                symbol == null ? function.getName() : symbol.getName(true),
-                facts,
-                symbol == null ? null : symbolMetadata(symbol)
+            ProcedureFacts facts = new ProcedureFacts(
+                function.isExternal(),
+                function.isThunk(),
+                target == null ? null : target.getEntryPoint()
             );
-            destination.add(new FunctionEntry(function, item));
+            Symbol symbol = function.getSymbol();
+            String leafName = function.getName();
+            String value = symbol == null ? leafName : symbol.getName(true);
+            List<ProcedureAlias> aliases = List.of();
+            for (Symbol candidate : symbolTable.getSymbols(entryPoint)) {
+                monitor.checkCancelled();
+                String qualified = candidate.getName(true);
+                String candidateLeaf = candidate.getName();
+                if (qualified.equals(value) && candidateLeaf.equals(leafName)) {
+                    continue;
+                }
+                if (aliases.isEmpty()) {
+                    aliases = new ArrayList<>(2);
+                }
+                aliases.add(new ProcedureAlias(
+                    candidateLeaf.equals(qualified) ? qualified : candidateLeaf,
+                    qualified
+                ));
+            }
+            if (aliases.size() > 1) {
+                aliases.sort(Comparator.comparing(ProcedureAlias::qualified));
+            }
+            if (!aliases.isEmpty()) {
+                aliases = List.copyOf(aliases);
+            }
+            destination.add(new ProcedureEntry(
+                function,
+                entryPoint,
+                value,
+                leafName.equals(value) ? value : leafName,
+                aliases,
+                facts,
+                symbol == null ? null : symbolFacts(symbol)
+            ));
         }
     }
 
-    private List<InventoryItem> strings() throws Exception {
+    private List<StringEntry> strings() throws Exception {
         if (stringInventory != null) {
             return stringInventory;
         }
-        List<InventoryItem> result = new ArrayList<>();
+        List<StringEntry> result = new ArrayList<>();
         DataIterator dataItems = currentProgram.getListing().getDefinedData(true);
         while (dataItems.hasNext()) {
             monitor.checkCancelled();
-            Data data = dataItems.next();
-            if (!data.hasStringValue()) {
-                continue;
+            StringEntry entry = stringEntry(dataItems.next());
+            if (entry != null) {
+                result.add(entry);
             }
-            StringDataInstance instance = StringDataInstance.getStringDataInstance(data);
-            String value = instance.getStringValue();
-            if (value == null) {
-                continue;
-            }
-            JsonObject facts = new JsonObject();
-            String charset = instance.getCharsetName();
-            facts.addProperty("encoding", charset == null || charset.isEmpty() ? "unknown" : charset);
-            facts.addProperty(
-                "termination",
-                instance.isMissingNullTerminator() ? "missing" : "present_or_not_required"
-            );
-            facts.addProperty("byte_length", Math.max(0, data.getLength()));
-            result.add(new InventoryItem(data.getAddress(), value, facts, null));
         }
-        result.sort(INVENTORY_ORDER);
+        result.sort(STRING_ORDER);
         stringInventory = List.copyOf(result);
         return stringInventory;
+    }
+
+    private static StringFacts stringFacts(Data data, StringDataInstance instance) {
+        String charset = instance.getCharsetName();
+        return new StringFacts(
+            charset == null || charset.isEmpty() ? "unknown" : charset,
+            instance.isMissingNullTerminator(),
+            Math.max(0, data.getLength())
+        );
+    }
+
+    private static StringEntry stringEntry(Data data) {
+        if (!data.hasStringValue()) {
+            return null;
+        }
+        StringDataInstance instance = StringDataInstance.getStringDataInstance(data);
+        String value = instance.getStringValue();
+        if (value == null) {
+            return null;
+        }
+        return new StringEntry(data.getAddress(), value, stringFacts(data, instance));
+    }
+
+    /** Match before allocating facts, so a selective search retains only its matches. */
+    private static StringEntry matchedStringEntry(Data data, ValueMatcher matcher) {
+        if (!data.hasStringValue()) {
+            return null;
+        }
+        StringDataInstance instance = StringDataInstance.getStringDataInstance(data);
+        String value = instance.getStringValue();
+        if (value == null || !matcher.matches(value)) {
+            return null;
+        }
+        return new StringEntry(data.getAddress(), value, stringFacts(data, instance));
+    }
+
+    private Map<String, Object> procedureIndex() {
+        if (procedureNameIndex != null) {
+            return procedureNameIndex;
+        }
+        Map<String, Object> index = new HashMap<>(procedureInventory.size() * 2);
+        for (ProcedureEntry entry : procedureInventory) {
+            Function function = entry.function();
+            indexProcedureName(index, entry.value(), function);
+            if (!entry.leafName().equals(entry.value())) {
+                indexProcedureName(index, entry.leafName(), function);
+            }
+            for (ProcedureAlias alias : entry.aliases()) {
+                indexProcedureName(index, alias.qualified(), function);
+                if (!alias.leaf().equals(alias.qualified())) {
+                    indexProcedureName(index, alias.leaf(), function);
+                }
+            }
+        }
+        procedureNameIndex = index;
+        return index;
+    }
+
+    private static void indexProcedureName(Map<String, Object> index, String name, Function function) {
+        Object existing = index.get(name);
+        if (existing == null) {
+            index.put(name, function);
+            return;
+        }
+        if (existing instanceof Function single) {
+            if (!single.getEntryPoint().equals(function.getEntryPoint())) {
+                List<Function> list = new ArrayList<>(2);
+                list.add(single);
+                list.add(function);
+                index.put(name, list);
+            }
+            return;
+        }
+        @SuppressWarnings("unchecked")
+        List<Function> list = (List<Function>) existing;
+        if (!list.get(list.size() - 1).getEntryPoint().equals(function.getEntryPoint())) {
+            list.add(function);
+        }
+    }
+
+    private Function resolveProcedureByName(String value) throws Exception {
+        if (procedureInventory != null) {
+            Object hit = procedureIndex().get(value);
+            if (hit == null) return null;
+            if (hit instanceof Function function) return function;
+            @SuppressWarnings("unchecked")
+            List<Function> matches = (List<Function>) hit;
+            throw ambiguousProcedureFailure(value, matches);
+        }
+        List<Function> matches = resolveProcedureCandidatesDirect(value);
+        if (matches.size() > 1) {
+            throw ambiguousProcedureFailure(value, matches);
+        }
+        return matches.size() == 1 ? matches.get(0) : null;
+    }
+
+    private List<Function> resolveProcedureCandidatesDirect(String value) throws Exception {
+        SymbolTable symbolTable = currentProgram.getSymbolTable();
+        FunctionManager functionManager = currentProgram.getFunctionManager();
+        AddressFactory addressFactory = currentProgram.getAddressFactory();
+        TreeMap<Address, Function> candidates = new TreeMap<>();
+
+        // Ghidra leaf names can contain "::" (for example namespace "ns" + leaf
+        // "other::work" -> "ns::other::work"). Try every "::" suffix because
+        // SymbolTable.getSymbols(name) indexes leaf spellings rather than full paths.
+        Set<String> candidateLeafNames = new LinkedHashSet<>();
+        addProcedureLookupCandidate(candidateLeafNames, value);
+        int separator = value.indexOf("::");
+        while (separator >= 0 && separator + 2 < value.length()) {
+            addProcedureLookupCandidate(candidateLeafNames, value.substring(separator + 2));
+            separator = value.indexOf("::", separator + 1);
+        }
+
+        for (String candidateName : candidateLeafNames) {
+            monitor.checkCancelled();
+            SymbolIterator symbols = symbolTable.getSymbols(candidateName);
+            while (symbols.hasNext()) {
+                monitor.checkCancelled();
+                addCandidateFunctionAndThunks(candidates, functionManager, symbols.next().getAddress());
+            }
+            Address dynamicAddress = SymbolUtilities.parseDynamicName(addressFactory, candidateName);
+            if (dynamicAddress != null) {
+                addCandidateFunctionAndThunks(candidates, functionManager, dynamicAddress);
+            }
+        }
+
+        if (candidates.isEmpty()) {
+            return List.of();
+        }
+        List<Function> matches = new ArrayList<>(candidates.size() == 1 ? 1 : 4);
+        for (Function function : candidates.values()) {
+            monitor.checkCancelled();
+            if (procedureExactMatch(symbolTable, function, value)) {
+                matches.add(function);
+            }
+        }
+        return matches;
+    }
+
+    private static void addProcedureLookupCandidate(Set<String> candidates, String candidate) {
+        if (!candidate.isEmpty()) {
+            candidates.add(candidate);
+        }
+        String stripped = candidate;
+        while (stripped.startsWith("thunk_")) {
+            stripped = stripped.substring("thunk_".length());
+            if (!stripped.isEmpty()) {
+                candidates.add(stripped);
+            }
+        }
+    }
+
+    private void addCandidateFunctionAndThunks(
+        TreeMap<Address, Function> candidates,
+        FunctionManager functionManager,
+        Address address
+    ) throws Exception {
+        if (!address.isMemoryAddress() && !address.isExternalAddress()) {
+            return;
+        }
+        Function function = functionManager.getFunctionAt(address);
+        if (function == null) {
+            return;
+        }
+        if (candidates.putIfAbsent(function.getEntryPoint(), function) == null) {
+            Address[] thunkAddresses = function.getFunctionThunkAddresses(true);
+            if (thunkAddresses != null) {
+                for (Address thunkAddress : thunkAddresses) {
+                    monitor.checkCancelled();
+                    Function thunk = functionManager.getFunctionAt(thunkAddress);
+                    if (thunk != null) {
+                        candidates.putIfAbsent(thunk.getEntryPoint(), thunk);
+                    }
+                }
+            }
+        }
+    }
+
+    private static boolean procedureExactMatch(
+        SymbolTable symbolTable,
+        Function function,
+        String value
+    ) {
+        if (function.getName().equals(value)) {
+            return true;
+        }
+        Symbol primarySymbol = function.getSymbol();
+        if (primarySymbol != null && primarySymbol.getName(true).equals(value)) {
+            return true;
+        }
+        for (Symbol symbol : symbolTable.getSymbols(function.getEntryPoint())) {
+            if (symbol.getName().equals(value) || symbol.getName(true).equals(value)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static RequestFailure ambiguousProcedureFailure(String value, List<Function> matches) {
+        JsonArray candidates = new JsonArray();
+        for (Function function : matches) candidates.add(canonicalAddress(function.getEntryPoint()));
+        return new RequestFailure(
+            "procedure_ambiguous",
+            "Ghidra procedure name is ambiguous: " + value +
+                "; select an exact entry address from " + matches.stream()
+                    .map(function -> canonicalAddress(function.getEntryPoint())).toList(),
+            candidates
+        );
     }
 
     private Function resolveProcedure(String value) throws Exception {
@@ -2240,41 +4693,21 @@ public final class ReaGhidraBridge extends HeadlessScript {
         // exact symbol name, even when every character is a hexadecimal digit.
         boolean explicitAddress = isExplicitReaAddress(value);
         if (!explicitAddress) {
-            List<Function> matches = new ArrayList<>();
-            for (FunctionEntry entry : procedures()) {
-                monitor.checkCancelled();
-                Function function = entry.function;
-                Symbol symbol = function.getSymbol();
-                String qualified = symbol == null ? function.getName() : symbol.getName(true);
-                boolean matchesName = function.getName().equals(value) || qualified.equals(value);
-                if (!matchesName) {
-                    // Imported labels (for example Mach-O _main) can share a
-                    // function entry without becoming its primary symbol. Only
-                    // exact entries qualify; an interior label is not a selector.
-                    for (Symbol entrySymbol : currentProgram.getSymbolTable().getSymbols(function.getEntryPoint())) {
-                        monitor.checkCancelled();
-                        if (entrySymbol.getName().equals(value) || entrySymbol.getName(true).equals(value)) {
-                            matchesName = true;
-                            break;
-                        }
-                    }
-                }
-                if (matchesName) matches.add(function);
-            }
-            if (matches.size() > 1)
-                throw new RequestFailure("ambiguous", "Ghidra procedure name is ambiguous: " + value +
-                    "; select an exact entry address from " + matches.stream()
-                        .map(function -> canonicalAddress(function.getEntryPoint())).toList());
-            if (matches.size() == 1) return matches.get(0);
+            // Imported labels (for example Mach-O _main) can share a function
+            // entry without becoming its primary symbol; search accepts the same.
+            Function matched = resolveProcedureByName(value);
+            if (matched != null) return matched;
         }
         // Retain legacy bare-hex address input only when no symbol matches.
         Address address = explicitAddress ? parseReaAddress(value) : tryParseAddress(value);
         if (address == null)
-            throw new RequestFailure("not_found", "Unknown Ghidra procedure name or address: " + value);
+            throw new RequestFailure("procedure_not_found", "Unknown Ghidra procedure name or address: " + value);
         Function function = functionAtOrContaining(address);
         if (function == null)
             // Other procedure operations retain their analysis-address semantics.
-            throw new RequestFailure("not_found", "No procedure exists at the requested address: " + value +
+            throw new RequestFailure("procedure_not_found", "No procedure exists at the requested address: " + value +
+                (isCodeOutsideFunctions(address) ? ". " + CODE_OUTSIDE_FUNCTIONS +
+                    "; procedure_pseudo_code can decompile it on the fly, and inspect_native_instruction reads its instructions" : "") +
                 "; Ghidra image base: " + canonicalAddress(currentProgram.getImageBase()) +
                 ". Choose an observed analysis address. CLI: rea search <path> . --kind procedures --mode regex --provider ghidra --json; " +
                 "MCP: list_procedures. Inspect the loaded base and source mappings with CLI rea analyze <path> --provider ghidra --json " +
@@ -2283,6 +4716,68 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return function;
     }
 
+    private static final String NON_PROCEDURE_LIMITATION =
+        "The selected address is outside every Ghidra function, such as an import address-table slot or a data label. " +
+        "The result lists the ReferenceManager's references to that address with their containing functions; unrecorded references remain unknown.";
+
+    /**
+     * An explicit memory address outside every function selects that address
+     * for incoming references, such as an import address-table slot. Names stay
+     * procedure selectors: REA's shared selector owner resolves a name outside
+     * every function and asks again by its address.
+     */
+    private Address incomingNonProcedureAddress(String value) {
+        if (!isExplicitReaAddress(value)) return null;
+        Address address = tryParseAddress(value);
+        if (address == null || !address.isMemoryAddress() || !currentProgram.getMemory().contains(address)) return null;
+        return functionAtOrContaining(address) == null ? address : null;
+    }
+
+    private JsonObject nonProcedureIdentity(Address address) {
+        JsonObject result = new JsonObject();
+        result.addProperty("address", canonicalAddress(address));
+        Symbol symbol = currentProgram.getSymbolTable().getPrimarySymbol(address);
+        result.addProperty("name", symbol == null ? canonicalAddress(address) : symbol.getName(true));
+        result.add("symbol", symbol == null ? JsonNull.INSTANCE : symbolMetadata(symbol));
+        result.add("classification", JsonNull.INSTANCE);
+        JsonObject body = new JsonObject();
+        body.addProperty("available", false);
+        body.addProperty("reason", "The address is outside every Ghidra function; it has no function body");
+        result.add("body", body);
+        return result;
+    }
+
+    private List<Reference> referencesToAddress(Address address) throws Exception {
+        TreeMap<String, Reference> observed = new TreeMap<>();
+        visitObservedReferencesTo(address, reference -> addReference(observed, reference));
+        List<Reference> result = new ArrayList<>(observed.values());
+        result.sort(REFERENCE_ORDER);
+        return result;
+    }
+
+    private JsonObject addressReferences(Address address) throws Exception {
+        JsonObject result = new JsonObject();
+        result.add("procedure", nonProcedureIdentity(address));
+        result.addProperty("direction", "incoming");
+        result.add("references", referenceEdges(referencesToAddress(address)));
+        result.addProperty("reference_kinds_available", true);
+        result.add("unresolved_calls", new JsonArray());
+        return functionObservation(result, List.of(NON_PROCEDURE_LIMITATION));
+    }
+
+    private JsonObject addressCallers(Address address) throws Exception {
+        TreeMap<Address, Function> callers = new TreeMap<>();
+        for (Reference reference : referencesToAddress(address)) {
+            monitor.checkCancelled();
+            Function function = functionAtOrContaining(reference.getFromAddress());
+            if (function != null) callers.putIfAbsent(function.getEntryPoint(), function);
+        }
+        JsonArray result = new JsonArray();
+        for (Address entry : callers.keySet()) result.add(canonicalAddress(entry));
+        return functionObservation(result, List.of(NON_PROCEDURE_LIMITATION));
+    }
+
+    /** Exact entries include externals; containment applies only to memory addresses. */
     private Function functionAtOrContaining(Address address) {
         Function function = currentProgram.getFunctionManager().getFunctionAt(address);
         return function == null && address.isMemoryAddress()
@@ -2292,7 +4787,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
     private JsonObject nativeApiBoundary(
         Function function,
-        DecompileResults decompilation
+        DecompileResults decompilation,
+        List<Instruction> instructions
     ) throws Exception {
         if (decompilation == null || decompilation.getHighFunction() == null) {
             return unavailableNativeApiBoundary(
@@ -2378,15 +4874,276 @@ public final class ReaGhidraBridge extends HeadlessScript {
             );
         }
 
-        JumpTable[] recoveredJumpTables = highFunction.getJumpTables();
-        List<ClangNode> caseTokens = new ArrayList<>();
-        if (decompilation.getCCodeMarkup() != null) {
-            decompilation.getCCodeMarkup().flatten(caseTokens);
+        if (currentProgram.getLanguageID().getIdAsString().startsWith("x86:LE:32:")) {
+            DecompiledFunction inferred = decompilation.getDecompiledFunction();
+            if (signatureSource.equals("analysis") && inferred != null) {
+                result.add(
+                    "prototype_conflicts",
+                    prototypeConflicts(
+                        function, prototype, instructions, inferred.getSignature(), signatureSource)
+                );
+            }
+            limitations.add(
+                "Prototype conflict checks cover direct EBP-framed argument reads and immediate RET cleanup under an inferred stdcall convention in analysis-inferred x86-32 signatures only; no diagnostic does not establish a correct signature."
+            );
         }
-        for (int index = 0; index < recoveredJumpTables.length; index += 1) {
-            jumpTables.add(inferredJumpTable(recoveredJumpTables[index], caseTokens));
+
+        JumpTable[] recoveredJumpTables = highFunction.getJumpTables();
+        if (recoveredJumpTables.length > 0) {
+            Map<Address, List<ClangCaseToken>> caseTokensByTarget =
+                indexCaseTokens(decompilation.getCCodeMarkup());
+            for (int index = 0; index < recoveredJumpTables.length; index += 1) {
+                jumpTables.add(inferredJumpTable(recoveredJumpTables[index], caseTokensByTarget));
+            }
         }
         return result;
+    }
+
+    private Map<Address, List<ClangCaseToken>> indexCaseTokens(ClangNode root)
+        throws Exception {
+        Map<Address, List<ClangCaseToken>> casesByTarget = new HashMap<>();
+        if (root == null) return casesByTarget;
+        ArrayDeque<ClangNode> stack = new ArrayDeque<>();
+        stack.push(root);
+        while (!stack.isEmpty()) {
+            monitor.checkCancelled();
+            ClangNode node = stack.pop();
+            if (node instanceof ClangCaseToken token) {
+                PcodeOp operation = token.getPcodeOp();
+                if (operation != null && operation.getParent() != null) {
+                    casesByTarget
+                        .computeIfAbsent(operation.getParent().getStart(), ignored -> new ArrayList<>())
+                        .add(token);
+                }
+            }
+            for (int index = node.numChildren() - 1; index >= 0; index -= 1) {
+                ClangNode child = node.Child(index);
+                if (child != null) stack.push(child);
+            }
+        }
+        return casesByTarget;
+    }
+
+    private JsonArray prototypeConflicts(
+        Function function,
+        FunctionPrototype prototype,
+        List<Instruction> instructions,
+        String signature,
+        String signatureSource
+    ) throws Exception {
+        JsonArray conflicts = new JsonArray();
+        int count = prototype.getNumParams();
+        if (count == 0) {
+            FrameRead read = framedStackRead(function.getEntryPoint(), instructions, monitor);
+            if (read != null) {
+                JsonObject conflict = prototypeConflict(
+                    "stack-argument-read", signature, signatureSource, count, read.instruction());
+                conflict.addProperty("frame_offset_bytes", read.offset());
+                conflict.add("unresolved_assumptions", GSON.toJsonTree(List.of(
+                    "The frame-relative read is not proof of a source-level parameter or its type.",
+                    "The instruction does not establish the value's origin or the function's complete computation."
+                )));
+                conflicts.add(conflict);
+            }
+        }
+        String convention = prototype.getModelName();
+        if (!"__stdcall".equalsIgnoreCase(convention)) return conflicts;
+        int inferredStackBytes = 0;
+        for (int index = 0; index < count; index++) {
+            HighSymbol parameter = prototype.getParam(index);
+            if (parameter == null) return conflicts;
+            VariableStorage storage = parameter.getStorage();
+            if (storage == null || !storage.isStackStorage() || storage.isCompoundStorage() ||
+                storage.size() != 4 || storage.getStackOffset() != 4 + inferredStackBytes)
+                return conflicts;
+            inferredStackBytes += 4;
+        }
+        for (Instruction instruction : reachablePrototypeInstructions(
+            function.getEntryPoint(), instructions, monitor)) {
+            monitor.checkCancelled();
+            Instruction terminal = instruction;
+            if (instruction.getMnemonicString().equalsIgnoreCase("JMP") &&
+                instruction.getFlows().length == 1) {
+                Address target = instruction.getFlows()[0];
+                // A direct one-hop shared epilogue is evidence, not additional owned
+                // body. A target belonging to another function is a tail call, whose
+                // cleanup belongs to that callee rather than this prototype.
+                if (!function.getBody().contains(target) &&
+                    functionAtOrContaining(target) == null) {
+                    terminal = currentProgram.getListing().getInstructionAt(target);
+                    if (terminal == null) continue;
+                }
+            }
+            Long cleanup = conflictingReturnCleanup(terminal, inferredStackBytes);
+            if (cleanup == null) continue;
+            JsonObject conflict = prototypeConflict(
+                "return-stack-cleanup", signature, signatureSource, count, terminal);
+            conflict.addProperty("cleanup_bytes", cleanup);
+            conflict.addProperty("inferred_stack_bytes", inferredStackBytes);
+            conflict.add("unresolved_assumptions", GSON.toJsonTree(List.of(
+                "The cleanup difference does not establish a missing, extra or differently sized source parameter.",
+                "Hidden arguments, alternate entry paths and the compiler's calling convention remain unverified."
+            )));
+            conflicts.add(conflict);
+            break;
+        }
+        return conflicts;
+    }
+
+    static Long conflictingReturnCleanup(Instruction instruction, int inferredStackBytes) {
+        if (!instruction.getMnemonicString().equalsIgnoreCase("RET") ||
+            instruction.getNumOperands() != 1 ||
+            !OperandType.isScalar(instruction.getOperandType(0))) return null;
+        Object[] objects = instruction.getOpObjects(0);
+        if (objects.length != 1 || !(objects[0] instanceof Scalar immediate)) return null;
+        long cleanup = immediate.getUnsignedValue();
+        return cleanup <= 0xffff && cleanup != inferredStackBytes ? cleanup : null;
+    }
+
+    private static Map<Address, Instruction> decodedByAddress(List<Instruction> instructions) {
+        Map<Address, Instruction> decoded = new HashMap<>();
+        for (Instruction instruction : instructions) decoded.put(instruction.getAddress(), instruction);
+        return decoded;
+    }
+
+    static List<Instruction> reachablePrototypeInstructions(
+        Address entry, List<Instruction> instructions, TaskMonitor monitor
+    ) throws Exception {
+        Map<Address, Instruction> decoded = decodedByAddress(instructions);
+        List<Instruction> reachable = new ArrayList<>();
+        Set<Address> visited = new HashSet<>();
+        ArrayDeque<Address> pending = new ArrayDeque<>();
+        pending.add(entry);
+        while (!pending.isEmpty()) {
+            monitor.checkCancelled();
+            Address address = pending.removeFirst();
+            if (!visited.add(address)) continue;
+            Instruction instruction = decoded.get(address);
+            if (instruction == null) continue;
+            reachable.add(instruction);
+            queuePrototypeSuccessors(instruction, decoded, pending);
+        }
+        return reachable;
+    }
+
+    private static void queuePrototypeSuccessors(
+        Instruction instruction, Map<Address, Instruction> decoded, ArrayDeque<Address> pending
+    ) {
+        Address fallThrough = instruction.getFallThrough();
+        if (fallThrough != null && decoded.containsKey(fallThrough)) pending.add(fallThrough);
+        // A call target's instructions belong to a different invocation.
+        if (instruction.getFlowType().isCall()) return;
+        for (Address destination : instruction.getFlows()) {
+            if (decoded.containsKey(destination)) pending.add(destination);
+        }
+    }
+
+    /** Follow only decoded, reachable instruction edges while the entry EBP frame survives. */
+    static FrameRead framedStackRead(
+        Address entry,
+        List<Instruction> instructions,
+        TaskMonitor monitor
+    ) throws Exception {
+        Map<Address, Instruction> decoded = decodedByAddress(instructions);
+        // An owned block below the entry can precede it in the scan, so the
+        // prologue is located by address instead of list position.
+        Instruction push = decoded.get(entry);
+        Instruction frame = push == null ? null : decoded.get(push.getFallThrough());
+        if (push == null || frame == null ||
+            !push.getMnemonicString().equalsIgnoreCase("PUSH") ||
+            !registerOperand(push, 0, "EBP") ||
+            !frame.getMnemonicString().equalsIgnoreCase("MOV") ||
+            !registerOperand(frame, 0, "EBP") ||
+            !registerOperand(frame, 1, "ESP"))
+            return null;
+        ArrayDeque<Address> pending = new ArrayDeque<>();
+        if (frame.getFallThrough() != null) pending.add(frame.getFallThrough());
+        Set<Address> visited = new HashSet<>();
+        while (!pending.isEmpty()) {
+            monitor.checkCancelled();
+            Address address = pending.removeFirst();
+            if (!visited.add(address)) continue;
+            Instruction instruction = decoded.get(address);
+            if (instruction == null) continue;
+            Long offset = frameArgumentOffset(instruction);
+            if (offset != null) return new FrameRead(instruction, offset);
+            // The read uses the old EBP value; a write invalidates only successors.
+            if (writesFramePointer(instruction)) continue;
+            queuePrototypeSuccessors(instruction, decoded, pending);
+        }
+        return null;
+    }
+
+    static record FrameRead(Instruction instruction, long offset) {}
+
+    private static Long frameArgumentOffset(Instruction instruction) {
+        PcodeOp[] operations = instruction.getPcode();
+        for (int operand = 0; operand < instruction.getNumOperands(); operand++) {
+            int type = instruction.getOperandType(operand);
+            if (!OperandType.isDynamic(type) && !OperandType.isIndirect(type)) continue;
+            Object[] objects = instruction.getOpObjects(operand);
+            if (objects.length != 2) continue;
+            Register base = null;
+            Scalar offset = null;
+            for (Object object : objects) {
+                if (object instanceof Register register) base = register;
+                else if (object instanceof Scalar scalar) offset = scalar;
+            }
+            // An indexed operand has additional objects, not a direct [EBP + disp].
+            if (base == null || offset == null ||
+                !base.getName().equalsIgnoreCase("EBP") || offset.getSignedValue() < 8)
+                continue;
+            PcodeOp[] addressOps = instruction.getPcode(operand);
+            if (addressOps.length == 0) continue;
+            Varnode pointer = addressOps[addressOps.length - 1].getOutput();
+            if (pointer == null) continue;
+            for (PcodeOp operation : operations) {
+                // LOAD's second input is the address being read. A LOAD from
+                // ESP (POP's source) cannot justify a read through [EBP + disp].
+                if (operation.getOpcode() == PcodeOp.LOAD &&
+                    pointer.equals(operation.getInput(1))) return offset.getSignedValue();
+            }
+        }
+        return null;
+    }
+
+    private static boolean writesFramePointer(Instruction instruction) {
+        Register frame = instruction.getProgram().getRegister("EBP");
+        if (frame == null) return true;
+        for (Object object : instruction.getResultObjects()) {
+            if (object instanceof Register register &&
+                register.getBaseRegister().equals(frame.getBaseRegister())) return true;
+        }
+        // Include implicit and partial-register writes even when the listing's
+        // result-object summary omits them (for example LEAVE or XCHG).
+        for (PcodeOp operation : instruction.getPcode()) {
+            Varnode output = operation.getOutput();
+            if (output == null || !output.isRegister()) continue;
+            Register register = instruction.getProgram().getRegister(output);
+            if (register != null &&
+                register.getBaseRegister().equals(frame.getBaseRegister())) return true;
+        }
+        return false;
+    }
+
+    private static boolean registerOperand(Instruction instruction, int index, String name) {
+        if (instruction.getNumOperands() <= index) return false;
+        Object[] objects = instruction.getOpObjects(index);
+        return objects.length == 1 && objects[0] instanceof Register register &&
+            register.getName().equalsIgnoreCase(name);
+    }
+
+    private static JsonObject prototypeConflict(
+        String kind, String signature, String source, int count, Instruction instruction
+    ) {
+        JsonObject conflict = new JsonObject();
+        conflict.addProperty("kind", kind);
+        conflict.addProperty("inferred_signature", signature);
+        conflict.addProperty("signature_source", source);
+        conflict.addProperty("inferred_parameter_count", count);
+        conflict.addProperty("instruction_address", canonicalAddress(instruction.getAddress()));
+        conflict.addProperty("instruction", renderInstruction(instruction));
+        return conflict;
     }
 
     private static JsonObject unavailableNativeValueFlow(String reason) {
@@ -2494,7 +5251,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
     private JsonObject inferredJumpTable(
         JumpTable jumpTable,
-        List<ClangNode> caseTokens
+        Map<Address, List<ClangCaseToken>> caseTokensByTarget
     ) throws Exception {
         JsonObject result = new JsonObject();
         result.addProperty(
@@ -2612,7 +5369,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
         result.add("data_sources", dataSources);
         Address[] targets = jumpTable.getCases();
-        TypedJumpTableCases typedCases = typedJumpTableCases(jumpTable, caseTokens);
+        TypedJumpTableCases typedCases = typedJumpTableCases(jumpTable, caseTokensByTarget);
         // Table indices identify the register bounded by CMP. Typed labels may
         // instead identify a selector before normalization (for example, SUB
         // index, selector, #10). Do not merge those distinct value identities.
@@ -2785,72 +5542,73 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
     private TypedJumpTableCases typedJumpTableCases(
         JumpTable jumpTable,
-        List<ClangNode> tokens
+        Map<Address, List<ClangCaseToken>> tokensByTarget
     ) throws Exception {
         TypedJumpTableCases result = new TypedJumpTableCases();
-        Set<Address> targets = new HashSet<>();
-        for (Address target : jumpTable.getCases()) targets.add(target);
-        for (ClangNode node : tokens) {
-            monitor.checkCancelled();
-            if (!(node instanceof ClangCaseToken token)) continue;
-            PcodeOp operation = token.getPcodeOp();
-            if (operation == null || operation.getParent() == null) continue;
-            PcodeBlockBasic block = operation.getParent();
-            Address target = block.getStart();
-            if (!targets.contains(target)) continue;
-            PcodeOp dispatch = null;
-            boolean ambiguousDispatch = false;
-            boolean includesDispatch = false;
-            for (int index = 0; index < block.getInSize(); index += 1) {
-                PcodeBlock predecessor = block.getIn(index);
-                if (!(predecessor instanceof PcodeBlockBasic basic)) continue;
-                PcodeOp last = basic.getLastOp();
-                if (last == null || last.getOpcode() != PcodeOp.BRANCHIND) continue;
-                if (last.getSeqnum().getTarget().equals(jumpTable.getSwitchAddress())) {
-                    includesDispatch = true;
+        Set<Address> seenTargets = new HashSet<>();
+        for (Address target : jumpTable.getCases()) {
+            if (!seenTargets.add(target)) continue;
+            List<ClangCaseToken> bucket = tokensByTarget.get(target);
+            if (bucket == null) continue;
+            for (ClangCaseToken token : bucket) {
+                monitor.checkCancelled();
+                PcodeOp operation = token.getPcodeOp();
+                if (operation == null || operation.getParent() == null) continue;
+                PcodeBlockBasic block = operation.getParent();
+                PcodeOp dispatch = null;
+                boolean ambiguousDispatch = false;
+                boolean includesDispatch = false;
+                for (int index = 0; index < block.getInSize(); index += 1) {
+                    PcodeBlock predecessor = block.getIn(index);
+                    if (!(predecessor instanceof PcodeBlockBasic basic)) continue;
+                    PcodeOp last = basic.getLastOp();
+                    if (last == null || last.getOpcode() != PcodeOp.BRANCHIND) continue;
+                    if (last.getSeqnum().getTarget().equals(jumpTable.getSwitchAddress())) {
+                        includesDispatch = true;
+                    }
+                    if (dispatch != null && dispatch != last) ambiguousDispatch = true;
+                    dispatch = last;
                 }
-                if (dispatch != null && dispatch != last) ambiguousDispatch = true;
-                dispatch = last;
-            }
-            if (!includesDispatch) continue;
-            if (ambiguousDispatch) {
-                result.unknownTargets.add(target);
-                result.limitations.add(
-                    "A typed case/default block has multiple indirect dispatch predecessors; REA cannot attribute its label to one switch."
-                );
-                continue;
-            }
-            // Default is a typed label role, not an OFF sentinel: Ghidra can
-            // encode a default token with an ordinary in-range case value.
-            if ("default".equals(token.getText())) {
-                result.defaults.add(target);
-                continue;
-            }
-            Long value = exactTypedCaseValue(token);
-            if (value == null) {
-                result.unknownTargets.add(target);
-                result.limitations.add(
-                    "Typed case label " + token.getText() +
-                    " has encoded unsigned magnitude " + Long.toUnsignedString(token.getValue()) +
-                    " at recovered target " + canonicalAddress(target) +
-                    " for dispatch " + canonicalAddress(jumpTable.getSwitchAddress()) +
-                    "; the label is nonliteral, inconsistent with its encoded magnitude, or outside the exact JSON integer range, so its numeric case value remains unknown."
-                );
-                continue;
-            }
-            if (result.ambiguousValues.contains(value)) {
-                result.unknownTargets.add(target);
-                continue;
-            }
-            Address previous = result.cases.putIfAbsent(value, target);
-            if (previous != null && !previous.equals(target)) {
-                result.cases.remove(value);
-                result.ambiguousValues.add(value);
-                result.unknownTargets.add(previous);
-                result.unknownTargets.add(target);
-                result.limitations.add(
-                    "Typed tokens assign one case value to different recovered destinations; that case remains unknown."
-                );
+                if (!includesDispatch) continue;
+                if (ambiguousDispatch) {
+                    result.unknownTargets.add(target);
+                    result.limitations.add(
+                        "A typed case/default block has multiple indirect dispatch predecessors; REA cannot attribute its label to one switch."
+                    );
+                    continue;
+                }
+                // Default is a typed label role, not an OFF sentinel: Ghidra can
+                // encode a default token with an ordinary in-range case value.
+                if ("default".equals(token.getText())) {
+                    result.defaults.add(target);
+                    continue;
+                }
+                Long value = exactTypedCaseValue(token);
+                if (value == null) {
+                    result.unknownTargets.add(target);
+                    result.limitations.add(
+                        "Typed case label " + token.getText() +
+                        " has encoded unsigned magnitude " + Long.toUnsignedString(token.getValue()) +
+                        " at recovered target " + canonicalAddress(target) +
+                        " for dispatch " + canonicalAddress(jumpTable.getSwitchAddress()) +
+                        "; the label is nonliteral, inconsistent with its encoded magnitude, or outside the exact JSON integer range, so its numeric case value remains unknown."
+                    );
+                    continue;
+                }
+                if (result.ambiguousValues.contains(value)) {
+                    result.unknownTargets.add(target);
+                    continue;
+                }
+                Address previous = result.cases.putIfAbsent(value, target);
+                if (previous != null && !previous.equals(target)) {
+                    result.cases.remove(value);
+                    result.ambiguousValues.add(value);
+                    result.unknownTargets.add(previous);
+                    result.unknownTargets.add(target);
+                    result.limitations.add(
+                        "Typed tokens assign one case value to different recovered destinations; that case remains unknown."
+                    );
+                }
             }
         }
         return result;
@@ -2987,7 +5745,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (!currentProgram.getLanguageID().getIdAsString().startsWith("AARCH64:")) {
             return null;
         }
-        Function function = containingFunction(jumpTable.getSwitchAddress());
+        Function function = functionAtOrContaining(jumpTable.getSwitchAddress());
         if (function == null) return null;
 
         List<Instruction> instructions = new ArrayList<>();
@@ -3368,7 +6126,21 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (function.isExternal() || function.getBody().isEmpty()) {
             return null;
         }
-        DecompileResults results = decompiler.decompileFunction(
+        // The modification number changes with every committed Program edit,
+        // so an edit that skipped the explicit invalidation still misses.
+        DecompileCacheKey key = new DecompileCacheKey(
+            function.getEntryPoint(),
+            function instanceof UndefinedFunction,
+            currentProgram.getModificationNumber(),
+            decompileMaxPayloadMiB
+        );
+        SoftReference<DecompileResults> retained = decompileResults.get(key);
+        DecompileResults reused = retained == null ? null : retained.get();
+        if (reused != null) return reused;
+        DecompileResults results = takeDecompileAhead(key, decompileTimeoutSeconds);
+        // A failure or timeout read ahead for this request already spent its
+        // deadline, so it is reported rather than started again.
+        if (results == null) results = decompiler.decompileFunction(
             function,
             decompileTimeoutSeconds,
             monitor
@@ -3389,10 +6161,323 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (!results.decompileCompleted()) {
             throw new RequestFailure(
                 "decompile_failed",
-                "Ghidra decompilation failed: " + diagnosticMessage(results.getErrorMessage())
+                "Ghidra decompilation failed: " + diagnosticMessage(results.getErrorMessage()) +
+                ". The effective native decompiler payload allowance is " +
+                decompiler.getOptions().getMaxPayloadMBytes() +
+                " MiB. " + decompilePayloadRecovery()
             );
         }
+        // Only a completed decompilation is reusable; failures stay retryable.
+        decompileResults.put(key, new SoftReference<>(results));
         return results;
+    }
+
+    /** One function read ahead: queued, running on a worker, or finished. */
+    private static final class AheadTask {
+        final Function function;
+        final DecompileCacheKey key;
+        final int timeoutSeconds;
+        final TaskMonitor monitor = new TaskMonitorAdapter(true);
+        final CompletableFuture<DecompileResults> done = new CompletableFuture<>();
+        boolean started;
+
+        AheadTask(Function function, DecompileCacheKey key, int timeoutSeconds) {
+            this.function = function;
+            this.key = key;
+            this.timeoutSeconds = timeoutSeconds;
+        }
+    }
+
+    /**
+     * Queue the functions after the carrying request's own one for background
+     * decompilation and return at once: the carrying request decompiles its own
+     * function on the session decompiler without waiting. Workers start only
+     * for the queued work, at most one per queued function.
+     */
+    private void decompileAhead(List<String> selectors) throws Exception {
+        if (selectors.size() < 2) return;
+        long modification = currentProgram.getModificationNumber();
+        Integer payloadMiB = decompileMaxPayloadMiB;
+        Address own;
+        try {
+            own = resolveProcedure(selectors.get(0)).getEntryPoint();
+        } catch (RequestFailure unresolved) {
+            own = null;
+        }
+        List<AheadTask> pending = new ArrayList<>();
+        Set<Address> seen = new HashSet<>();
+        if (own != null) seen.add(own);
+        for (int index = 1; index < selectors.size(); index++) {
+            Function function;
+            try {
+                function = resolveProcedure(selectors.get(index));
+            } catch (RequestFailure unresolved) {
+                continue;
+            }
+            if (function instanceof UndefinedFunction || function.isExternal() ||
+                    function.getBody().isEmpty() || !seen.add(function.getEntryPoint())) continue;
+            DecompileCacheKey key = new DecompileCacheKey(function.getEntryPoint(), false, modification, payloadMiB);
+            SoftReference<DecompileResults> retained = decompileResults.get(key);
+            if (retained != null && retained.get() != null) continue;
+            pending.add(new AheadTask(function, key, decompileTimeoutSeconds));
+        }
+        synchronized (decompileAheadLock) {
+            for (AheadTask task : pending) {
+                if (decompileAheadTasks.containsKey(task.key)) continue;
+                decompileAheadTasks.put(task.key, task);
+                decompileAheadQueue.add(task);
+            }
+            // Tasks nobody took are dropped oldest first beyond two windows:
+            // finished results, and queued work no worker has started. A
+            // running decompile stays until it finishes; the worker cap
+            // bounds how many of those can be in progress.
+            trimDecompileAhead();
+            // A single queued function is cheaper to decompile when its own
+            // request arrives than to start a decompiler process for it.
+            if (decompileAheadQueue.size() < 2 && decompileAheadLiveWorkers == 0) return;
+            // Each worker is a native decompiler process with its own view of
+            // the Program, so the worker count bounds memory as well as CPU.
+            int limit = Math.max(1, Math.min(Runtime.getRuntime().availableProcessors(), DECOMPILE_AHEAD_WORKERS));
+            int wanted = Math.min(limit, decompileAheadQueue.size()) - decompileAheadLiveWorkers;
+            long generation = decompileAheadGeneration;
+            for (int started = 0; started < wanted; started++) {
+                decompileAheadLiveWorkers++;
+                try {
+                    decompileAheadThreads.execute(() -> runDecompileAheadWorker(generation, payloadMiB));
+                } catch (RuntimeException rejected) {
+                    decompileAheadLiveWorkers--;
+                    break;
+                }
+            }
+            decompileAheadLock.notifyAll();
+        }
+    }
+
+    /**
+     * Publish one worker outcome, then drop unrequested tasks beyond two
+     * windows. A result that completes after the last hint is trimmed here,
+     * and so is queued work no worker has started.
+     */
+    private void completeDecompileAhead(AheadTask task, DecompileResults results) {
+        task.done.complete(results);
+        synchronized (decompileAheadLock) {
+            decompileAheadActive.remove(task);
+            trimDecompileAhead();
+        }
+    }
+
+    /**
+     * Caller holds decompileAheadLock. Drops the oldest tasks beyond two
+     * windows. A task a worker has started but not finished stays: at most
+     * one such task exists per live worker. Queued tasks are removed from
+     * the queue as well, so a later window cannot leave an unbounded backlog.
+     */
+    private void trimDecompileAhead() {
+        int excess = decompileAheadTasks.size() - 2 * DECOMPILE_AHEAD_WINDOW;
+        if (excess <= 0) return;
+        Iterator<AheadTask> retained = decompileAheadTasks.values().iterator();
+        while (excess > 0 && retained.hasNext()) {
+            AheadTask task = retained.next();
+            if (task.started && !task.done.isDone()) continue;
+            if (!task.started) {
+                decompileAheadQueue.remove(task);
+                task.monitor.cancel();
+            }
+            retained.remove();
+            excess--;
+        }
+    }
+
+    /**
+     * Open a decompiler, then take queued functions until the queue stays
+     * empty for the idle time or disposal advances the generation. Opening
+     * runs on the worker's own thread, so workers become ready independently
+     * while the session decompiler serves requests.
+     */
+    private void runDecompileAheadWorker(long generation, Integer payloadMiB) {
+        DecompInterface worker = null;
+        AheadTask task = null;
+        try {
+            worker = decompileAheadOpener.apply(payloadMiB);
+            if (worker == null) return;
+            while (true) {
+                synchronized (decompileAheadLock) {
+                    long idleUntil = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(DECOMPILE_AHEAD_IDLE_MILLIS);
+                    while (generation == decompileAheadGeneration && decompileAheadQueue.isEmpty()) {
+                        long remaining = idleUntil - System.nanoTime();
+                        if (remaining <= 0) return;
+                        decompileAheadLock.wait(Math.max(1, TimeUnit.NANOSECONDS.toMillis(remaining)));
+                    }
+                    if (generation != decompileAheadGeneration) return;
+                    task = decompileAheadQueue.poll();
+                    task.started = true;
+                    decompileAheadActive.add(task);
+                }
+                DecompileResults results;
+                try {
+                    results = worker.decompileFunction(task.function, task.timeoutSeconds, task.monitor);
+                } catch (RuntimeException failure) {
+                    results = null;
+                }
+                completeDecompileAhead(task, results);
+                task = null;
+            }
+        } catch (InterruptedException stopped) {
+            Thread.currentThread().interrupt();
+        } catch (RuntimeException failure) {
+            // A worker that cannot open or run leaves its functions to their requests.
+        } finally {
+            if (task != null) completeDecompileAhead(task, null);
+            if (worker != null) worker.dispose();
+            synchronized (decompileAheadLock) {
+                decompileAheadLiveWorkers--;
+                decompileAheadLock.notifyAll();
+            }
+        }
+    }
+
+    /** Opens a worker's decompiler; a field so the conformance probe can inject one. */
+    private java.util.function.Function<Integer, DecompInterface> decompileAheadOpener =
+        this::openDecompileAheadDecompiler;
+
+    /**
+     * A worker's own decompiler process, configured as the session decompiler.
+     * Each opens the Program independently, so workers open concurrently.
+     */
+    private DecompInterface openDecompileAheadDecompiler(Integer payloadMiB) {
+        DecompInterface worker = new DecompInterface();
+        worker.setOptions(decompileOptions(payloadMiB));
+        worker.toggleCCode(true);
+        worker.toggleSyntaxTree(true);
+        worker.toggleJumpLoads(true);
+        if (worker.openProgram(currentProgram)) return worker;
+        worker.dispose();
+        return null;
+    }
+
+    /**
+     * The read-ahead result for this request's function, or null when it
+     * should decompile it itself. A finished or running result is used
+     * whatever its outcome, including a timeout, so the function is never
+     * decompiled twice; a running one is waited for, and its worker's own
+     * native deadline, which started earlier, bounds that wait. A queued one
+     * that no worker has started is taken back and decompiled here at once.
+     *
+     * The deadline matters only where the cache policy says it does: a
+     * completed decompilation is reusable under any deadline, as cached ones
+     * are, but a failure, a timeout or unfinished work under a different
+     * deadline than this request's is cancelled and decompiled again, so a
+     * changed ghidra.decompile_timeout_seconds applies and the reported limit
+     * is the one used.
+     */
+    private DecompileResults takeDecompileAhead(DecompileCacheKey key, int timeoutSeconds) {
+        AheadTask task;
+        synchronized (decompileAheadLock) {
+            task = decompileAheadTasks.remove(key);
+            if (task == null) return null;
+            if (!task.started) {
+                decompileAheadQueue.remove(task);
+                return null;
+            }
+        }
+        if (task.timeoutSeconds != timeoutSeconds) {
+            DecompileResults finished = task.done.getNow(null);
+            if (finished != null && finished.decompileCompleted() && !finished.isCancelled() &&
+                    !finished.isTimedOut()) return finished;
+            task.monitor.cancel();
+            return null;
+        }
+        while (true) {
+            // Cancelling the waiting request cancels the decompile it waits
+            // for, as a cancelled foreground decompile would be.
+            if (monitor.isCancelled()) {
+                task.monitor.cancel();
+                throw new RequestFailure("decompile_cancelled", "Ghidra decompilation was cancelled");
+            }
+            try {
+                DecompileResults results = task.done.get(50, TimeUnit.MILLISECONDS);
+                // A cancelled read-ahead was abandoned, not decompiled.
+                return results == null || results.isCancelled() ? null : results;
+            } catch (TimeoutException running) {
+                continue;
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                task.monitor.cancel();
+                throw new RequestFailure("decompile_cancelled", "Ghidra decompilation was cancelled");
+            } catch (ExecutionException unavailable) {
+                return null;
+            }
+        }
+    }
+
+    /**
+     * Cancel read-ahead without waiting. The socket reader uses this so a
+     * following cancel frame is not stuck behind the worker stop bound.
+     * A task already taken by a waiting request is still cancelled.
+     */
+    private void cancelDecompileAhead() {
+        synchronized (decompileAheadLock) {
+            decompileAheadGeneration++;
+            for (AheadTask task : decompileAheadTasks.values()) task.monitor.cancel();
+            for (AheadTask task : decompileAheadActive) task.monitor.cancel();
+            decompileAheadTasks.clear();
+            decompileAheadQueue.clear();
+            decompileAheadLock.notifyAll();
+        }
+    }
+
+    /**
+     * Stop read-ahead and wait for its workers to exit: pooled decompilers
+     * hold native state for the Program and options they opened with, so an
+     * edit, an option change, a cancelled workflow or shutdown releases them.
+     * Workers still opening see the new generation and close without work.
+     */
+    private void disposeDecompileAhead() {
+        cancelDecompileAhead();
+        synchronized (decompileAheadLock) {
+            long stopUntil = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(DECOMPILE_AHEAD_STOP_MILLIS);
+            boolean interrupted = false;
+            while (decompileAheadLiveWorkers > 0) {
+                long remaining = stopUntil - System.nanoTime();
+                if (remaining <= 0) break;
+                try {
+                    decompileAheadLock.wait(Math.max(1, TimeUnit.NANOSECONDS.toMillis(remaining)));
+                } catch (InterruptedException stop) {
+                    interrupted = true;
+                    break;
+                }
+            }
+            if (interrupted) Thread.currentThread().interrupt();
+        }
+    }
+
+    /**
+     * The function whose body the decompilation covers. Ghidra's decompile
+     * callback widens an UndefinedFunction's body to the code it followed, so
+     * a reused result keeps the widened function; a fresh lookup of the same
+     * entry covers only that entry.
+     */
+    private static Function decompiledFunction(Function requested, DecompileResults results) {
+        return results == null || results.getFunction() == null ? requested : results.getFunction();
+    }
+
+    /** Every input a completed decompilation of one Program state depends on. */
+    private record DecompileCacheKey(
+        Address entry,
+        boolean undefinedFunction,
+        long programModification,
+        Integer maxPayloadMiB
+    ) {}
+
+    private String decompilePayloadRecovery() {
+        int effective = decompiler.getOptions().getMaxPayloadMBytes();
+        if (effective >= MAX_DECOMPILE_PAYLOAD_MIB)
+            return "If the diagnostic reports payload exhaustion, the native payload allowance is already at its supported maximum; no higher value is accepted. Use analyze_function for available listing facts or explicitly select a smaller function for decompilation.";
+        return "If the diagnostic reports payload exhaustion, in MCP raise ghidra.decompile_max_payload_mib with update_analysis_settings " +
+            "(integer MiB from 1 to " + MAX_DECOMPILE_PAYLOAD_MIB +
+            ") and repeat the selected operation on this Program without restarting REA. " +
+            "For a one-shot CLI retry, set REA_GHIDRA_DECOMPILE_MAX_PAYLOAD_MIB to a larger MiB value in the environment that starts the next rea invocation, then repeat the selected operation; the previous invocation's Program is no longer active. " +
+            "Runtime null or an omitted launch seed restores the installed Ghidra default. This does not raise the decompile deadline, high-pcode projection budgets or MCP client limits.";
     }
 
     private static String decompiledText(DecompileResults results) {
@@ -3440,9 +6525,23 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return result;
     }
 
-    private static JsonObject callRelationshipCoverage(
+    private JsonObject callRelationshipCoverage(
             CallBoundaryObservation calls, Integer missingCallers) {
         JsonObject coverage = completeResolvedCallCoverage();
+        JsonObject discovery = new JsonObject();
+        if (missingCallers != null) {
+            JsonObject callers = new JsonObject();
+            callers.addProperty("status", "unknown");
+            callers.addProperty("reason", "Recorded incoming references do not establish additional computed callers elsewhere in the program.");
+            discovery.add("callers", callers);
+        }
+        if (calls != null && !calls.computedCallSites().isEmpty()) {
+            JsonObject callees = new JsonObject();
+            callees.addProperty("status", "unknown");
+            callees.addProperty("reason", computedCallTargetLimitation(calls.computedCallSites()));
+            discovery.add("callees", callees);
+        }
+        if (!discovery.isEmpty()) coverage.add("discovery", discovery);
         Integer omitted = calls == null ? null : calls.unrepresentedCalleeCalls();
         JsonArray directions = new JsonArray();
         if (missingCallers != null && missingCallers > 0) directions.add("callers");
@@ -3457,20 +6556,49 @@ public final class ReaGhidraBridge extends HeadlessScript {
             if (calls == null && missingCallers == null) directions.add("callers");
             directions.add("callees");
             coverage.add("limited_directions", directions);
-            return coverage;
+            return qualifyProjectCallCoverage(coverage, calls, missingCallers);
         }
         JsonArray limitations = new JsonArray();
         if (callerLimitation != null) limitations.add(callerLimitation);
+        if (omitted != null && omitted > 0) directions.add("callees");
         if (omitted != null && omitted > 0) {
             limitations.add("Ghidra's callee inventory omits targets of " + omitted +
                 " call reference(s) or decoded call(s) without destinations.");
-            directions.add("callees");
         }
         if (!limitations.isEmpty()) {
             coverage.addProperty("status", "partial");
             coverage.add("limitations", limitations);
             coverage.add("limited_directions", directions);
         }
+        return qualifyProjectCallCoverage(coverage, calls, missingCallers);
+    }
+
+    private JsonObject qualifyProjectCallCoverage(
+            JsonObject coverage, CallBoundaryObservation calls, Integer missingCallers) {
+        if (!existingProject) return coverage;
+        String reason = "The selected project's prior analysis completeness is unknown; " +
+            "the recorded call relationships may omit undiscovered callers or callees.";
+        String status = coverage.get("status").getAsString();
+        // A single-direction read with known omissions is still partial; an
+        // unknown project history adds a limitation rather than erasing them.
+        if (status.equals("partial") && (calls == null || missingCallers == null)) {
+            coverage.getAsJsonArray("limitations").add(reason);
+            return coverage;
+        }
+        if (status.equals("unknown")) reason += " " + coverage.get("reason").getAsString();
+        if (status.equals("partial")) {
+            for (JsonElement limitation : coverage.getAsJsonArray("limitations"))
+                reason += " " + limitation.getAsString();
+        }
+        JsonArray directions = new JsonArray();
+        if (missingCallers != null || (calls == null && missingCallers == null))
+            directions.add("callers");
+        if (calls != null || (calls == null && missingCallers == null))
+            directions.add("callees");
+        coverage.addProperty("status", "unknown");
+        coverage.addProperty("reason", reason);
+        coverage.remove("limitations");
+        coverage.add("limited_directions", directions);
         return coverage;
     }
 
@@ -3485,9 +6613,27 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return coverage;
     }
 
+    /** Name a few sites inline; reference reads and call-target queries recover the rest. */
+    private static final int NAMED_COMPUTED_CALL_SITES = 4;
+
+    /**
+     * A computed call's ReferenceManager targets are static candidates: Ghidra
+     * records no proof that other values cannot reach the call, so the callee
+     * set stays incomplete while the recorded candidates remain observed.
+     */
+    private static String computedCallTargetLimitation(List<String> sites) {
+        if (sites.isEmpty()) return null;
+        int named = Math.min(sites.size(), NAMED_COMPUTED_CALL_SITES);
+        String listed = String.join(", ", sites.subList(0, named)) +
+            (sites.size() > named ? " and " + (sites.size() - named) + " more" : "");
+        return "Ghidra records call reference targets at " + sites.size() +
+            " computed call site(s) (" + listed + "); these static references do not establish" +
+            " every possible target, so additional callees remain unknown.";
+    }
+
     private boolean unrepresentedCaller(Reference reference, Set<Function> callers) {
         if (!reference.getReferenceType().isCall()) return false;
-        Function caller = containingFunction(reference.getFromAddress());
+        Function caller = functionAtOrContaining(reference.getFromAddress());
         return caller == null || !callers.contains(caller);
     }
 
@@ -3519,11 +6665,18 @@ public final class ReaGhidraBridge extends HeadlessScript {
             monitor.checkCancelled();
             calls.observe(reference);
         }
+        List<String> computedCallSites = new ArrayList<>();
+        boolean checkRelocations = !loaderInitializedRelocations.isEmpty();
         for (Instruction instruction : instructions) {
-            boundary.observe(instruction);
-            if (!instruction.getFlowType().isCall()) continue;
+            FlowType flow = instruction.getFlowType();
+            boolean isCall = flow.isCall();
+            Reference[] referencesFrom = (checkRelocations || isCall)
+                ? instruction.getReferencesFrom()
+                : null;
+            boundary.observe(instruction, referencesFrom);
+            if (!isCall) continue;
             boolean destination = false;
-            for (Reference reference : instruction.getReferencesFrom()) {
+            for (Reference reference : referencesFrom) {
                 if (!reference.getReferenceType().isCall()) continue;
                 destination = true;
                 break;
@@ -3533,14 +6686,27 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 calls.unresolved(instruction.getAddress(),
                     "Instruction decoder identifies a call but ReferenceManager supplies no call destination");
             }
+            // The same decoded flow classifies resolve_native_call_targets'
+            // mechanism; its recorded targets are candidates, not a closed set.
+            else if (flow.isComputed()) computedCallSites.add(canonicalAddress(instruction.getAddress()));
         }
         return new CallBoundaryObservation(boundary.values(),
-            returnedCallees == null ? null : calls.unrepresented, calls.unresolvedCalls());
+            returnedCallees == null ? null : calls.unrepresented, calls.unresolvedCalls(),
+            List.copyOf(computedCallSites));
+    }
+
+    private boolean isX86_32Program() {
+        return currentProgram.getDefaultPointerSize() == 4 &&
+            "x86".equalsIgnoreCase(currentProgram.getLanguage().getProcessor().toString());
     }
 
     private final class FunctionBoundaryLimitations {
         private final Function function;
+        private final boolean checkLoaderRelocations = !loaderInitializedRelocations.isEmpty();
+        private final boolean checkBorlandSeh = isX86_32Program();
         private final List<String> limitations = new ArrayList<>();
+        private boolean inferredNoReturnCall;
+        private final Set<Address> observedLoaderRelocations = new HashSet<>();
         private Instruction beforePrevious;
         private Instruction previous;
 
@@ -3549,21 +6715,87 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
 
         private void observe(Instruction instruction) throws Exception {
+            observe(instruction, checkLoaderRelocations ? instruction.getReferencesFrom() : null);
+        }
+
+        private void observe(Instruction instruction, Reference[] referencesFrom) throws Exception {
             monitor.checkCancelled();
-            String limitation = terminalCallLimitation(instruction);
-            if (limitation != null) limitations.add(limitation);
-            if (beforePrevious != null && previous != null) {
-                String seh = borlandSehHandlerLimitation(
-                    function, beforePrevious, previous, instruction);
-                if (seh != null) limitations.add(seh);
+            TerminalCall terminal = terminalCall(instruction);
+            if (terminal != null) {
+                limitations.add(terminal.limitation());
+                if (terminal.inferredNoReturn()) inferredNoReturnCall = true;
             }
-            beforePrevious = previous;
-            previous = instruction;
+            if (checkLoaderRelocations && referencesFrom != null) {
+                for (Reference reference : referencesFrom) {
+                    if (!reference.getReferenceType().isRead()) continue;
+                    LoaderInitializedRelocation relocation = loaderInitializedRelocationAt(
+                        reference.getToAddress()
+                    );
+                    if (relocation == null || !observedLoaderRelocations.add(relocation.address()))
+                        continue;
+                    limitations.add(loaderInitializedRelocationLimitation(relocation));
+                }
+            }
+            if (checkBorlandSeh) {
+                if (beforePrevious != null && previous != null) {
+                    String seh = borlandSehHandlerLimitation(
+                        function, beforePrevious, previous, instruction);
+                    if (seh != null) limitations.add(seh);
+                }
+                beforePrevious = previous;
+                previous = instruction;
+            }
         }
 
         private List<String> values() {
-            return List.copyOf(limitations);
+            if (!inferredNoReturnCall) return List.copyOf(limitations);
+            List<String> result = new ArrayList<>();
+            // One consequence and recovery per function, ahead of the call-specific facts so a
+            // bounded summary that admits limitations in order keeps it. The text names no
+            // address, so those summaries also deduplicate it across functions.
+            result.add("A terminal call in this function targets a callee that " +
+                "Ghidra's Non-Returning Functions - Discovered analyzer inferred cannot return, so Ghidra " +
+                "excluded that call's fall-through from the analyzed body and from the pseudocode and facts " +
+                "derived from it. If the callee returns, code reachable only through that fall-through is " +
+                "missing from this result. To compare, analyze a fresh import with " +
+                "REA_GHIDRA_DISABLED_ANALYZERS='Non-Returning Functions - Discovered'.");
+            result.addAll(limitations);
+            return result;
         }
+    }
+
+    /** A terminal call's limitation and whether its no-return flag was analyzer-inferred. */
+    private record TerminalCall(String limitation, boolean inferredNoReturn) {}
+
+    /**
+     * Ghidra's Non-Returning Functions - Discovered analyzer bookmarks each entry it marks with
+     * this Analysis comment; the name-list Known analyzer uses "Non-Returning Function Identified".
+     * A missing bookmark leaves the flag's origin unknown, never declared.
+     */
+    private boolean discoveredNoReturn(Function target) {
+        Function thunked = target.isThunk() ? target.getThunkedFunction(true) : null;
+        return hasDiscoveredNoReturnBookmark(target) ||
+            (thunked != null && hasDiscoveredNoReturnBookmark(thunked));
+    }
+
+    private boolean hasDiscoveredNoReturnBookmark(Function function) {
+        Bookmark bookmark = currentProgram.getBookmarkManager().getBookmark(
+            function.getEntryPoint(), BookmarkType.ANALYSIS, "Non-Returning Function");
+        return bookmark != null && "Non-Returning Function Found".equals(bookmark.getComment());
+    }
+
+    private static String loaderInitializedRelocationLimitation(
+            LoaderInitializedRelocation relocation) {
+        String symbol = relocation.symbolName();
+        String symbolDetail = symbol == null || symbol.isBlank()
+            ? "an unnamed relocation"
+            : "the relocation for " + symbol;
+        return "This procedure reads bytes affected by the loader relocation at " +
+            canonicalAddress(relocation.address()) + " in non-writable block " +
+            relocation.blockName() +
+            ", which contains " + symbolDetail +
+            "; the file-backed value may differ from the loader-initialized runtime value, " +
+            "so constants derived from this location are not authoritative.";
     }
 
     private String borlandSehHandlerLimitation(
@@ -3606,10 +6838,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
     private static String normalizedFsMemoryOperand(Instruction instruction) {
         String representation = instruction.getDefaultOperandRepresentation(0);
-        representation = representation.replaceAll("(?i)\\b(?:byte|word|dword|qword)\\s+ptr\\s+", "")
-            .replaceAll("\\s+", "");
-        return representation.regionMatches(true, 0, "fs:", 0, 3) &&
-            representation.indexOf('[') >= 0 ? representation : null;
+        if (representation.indexOf('[') < 0) return null;
+        representation = WHITESPACE_RUN.matcher(
+            FS_PTR_PREFIX.matcher(representation).replaceAll("")
+        ).replaceAll("");
+        return representation.regionMatches(true, 0, "fs:", 0, 3) ? representation : null;
     }
 
     private static boolean hasRegisterOperand(
@@ -3634,7 +6867,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         void observe(Reference reference) {
             if (!reference.getReferenceType().isCall()) return;
             // Reference identity follows the same containing-function owner as referenceEdge.
-            Function target = containingFunction(reference.getToAddress());
+            Function target = functionAtOrContaining(reference.getToAddress());
             if (returnedCallees != null && (target == null || !returnedCallees.contains(target)))
                 unrepresented++;
             if (target == null) unresolved(reference.getFromAddress(),
@@ -3658,9 +6891,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
     }
 
-    private String terminalCallLimitation(Instruction instruction) {
+    private TerminalCall terminalCall(Instruction instruction) {
         if (!instruction.getFlowType().isCall() || !instruction.getFlowType().isTerminal())
             return null;
+        boolean inferred = false;
         Address[] destinations = instruction.getFlows();
         StringBuilder limitation = new StringBuilder();
         limitation.append("Ghidra Listing reports a terminal call at ")
@@ -3689,14 +6923,18 @@ public final class ReaGhidraBridge extends HeadlessScript {
             Function target = destinations.length == 1
                 ? currentProgram.getFunctionManager().getFunctionAt(destinations[0])
                 : null;
-            if (target != null && target.hasNoReturn()) {
+            if (target != null && target.hasNoReturn() && discoveredNoReturn(target)) {
+                inferred = true;
+                limitation.append(" Ghidra's Non-Returning Functions - Discovered analyzer bookmarked this callee as a non-returning function it found; the flag is an analysis inference, not an independent verification that the callee cannot return.");
+            }
+            else if (target != null && target.hasNoReturn()) {
                 limitation.append(" This records Ghidra's FunctionManager flag, not an independent verification that the callee cannot return.");
             }
             else {
                 limitation.append(" The reason for the terminal flow is not established by this observation.");
             }
         }
-        return limitation.toString();
+        return new TerminalCall(limitation.toString(), inferred);
     }
 
     private static String renderAssembly(List<Instruction> instructions) {
@@ -3706,17 +6944,21 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private static List<String> renderAssemblyLines(List<Instruction> instructions) {
         List<String> result = new ArrayList<>();
         for (Instruction instruction : instructions) {
-            StringBuilder line = new StringBuilder();
-            line.append(canonicalAddress(instruction.getAddress()));
-            line.append(": ");
-            line.append(instruction.getMnemonicString());
-            for (int index = 0; index < instruction.getNumOperands(); index += 1) {
-                line.append(index == 0 ? " " : ", ");
-                line.append(instruction.getDefaultOperandRepresentation(index));
-            }
-            result.add(line.toString());
+            result.add(
+                canonicalAddress(instruction.getAddress()) + ": " + renderInstruction(instruction)
+            );
         }
         return result;
+    }
+
+    private static String renderInstruction(Instruction instruction) {
+        StringBuilder line = new StringBuilder();
+        line.append(instruction.getMnemonicString());
+        for (int index = 0; index < instruction.getNumOperands(); index += 1) {
+            line.append(index == 0 ? " " : ", ");
+            line.append(instruction.getDefaultOperandRepresentation(index));
+        }
+        return line.toString();
     }
 
     private List<Reference> collectReferences(
@@ -3793,29 +7035,62 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     private JsonArray referenceEdges(List<Reference> references) {
+        return referenceEdges(references, new HashMap<>(), new HashMap<>());
+    }
+
+    private JsonArray referenceEdges(
+        List<Reference> references,
+        Map<Address, Function> resolvedFunctions,
+        Map<Address, JsonObject> procedureIdentities
+    ) {
         JsonArray result = new JsonArray();
         for (Reference reference : references) {
-            result.add(referenceEdge(reference));
+            result.add(referenceEdge(reference, resolvedFunctions, procedureIdentities));
         }
         return result;
     }
 
-    private JsonObject referenceEdge(Reference reference) {
+    private JsonObject referenceEdge(
+        Reference reference,
+        Map<Address, Function> resolvedFunctions,
+        Map<Address, JsonObject> procedureIdentities
+    ) {
         JsonObject result = new JsonObject();
-        result.addProperty("source_address", canonicalAddress(reference.getFromAddress()));
-        result.addProperty("target_address", canonicalAddress(reference.getToAddress()));
-        Function source = containingFunction(reference.getFromAddress());
-        Function target = containingFunction(reference.getToAddress());
+        Address fromAddress = reference.getFromAddress();
+        Address toAddress = reference.getToAddress();
+        result.addProperty("source_address", canonicalAddress(fromAddress));
+        result.addProperty("target_address", canonicalAddress(toAddress));
+        Function source = cachedFunctionAtOrContaining(resolvedFunctions, fromAddress);
+        Function target = cachedFunctionAtOrContaining(resolvedFunctions, toAddress);
         result.add(
             "source_procedure",
-            source == null ? JsonNull.INSTANCE : procedureIdentity(source)
+            source == null ? JsonNull.INSTANCE : cachedProcedureIdentity(procedureIdentities, source)
         );
         result.add(
             "target_procedure",
-            target == null ? JsonNull.INSTANCE : procedureIdentity(target)
+            target == null ? JsonNull.INSTANCE : cachedProcedureIdentity(procedureIdentities, target)
         );
         result.add("kind", referenceKind(reference));
         return result;
+    }
+
+    private Function cachedFunctionAtOrContaining(Map<Address, Function> cache, Address address) {
+        if (!cache.containsKey(address)) {
+            Function resolved = functionAtOrContaining(address);
+            cache.put(address, resolved);
+            return resolved;
+        }
+        return cache.get(address);
+    }
+
+    private static JsonObject cachedProcedureIdentity(Map<Address, JsonObject> cache, Function function) {
+        Address entry = function.getEntryPoint();
+        JsonObject identity = cache.get(entry);
+        if (identity == null) {
+            identity = procedureIdentity(function);
+            cache.put(entry, identity);
+        }
+        return identity;
     }
 
     private static JsonObject referenceKind(Reference reference) {
@@ -3837,14 +7112,6 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.addProperty("primary", reference.isPrimary());
         result.addProperty("operand_index", reference.getOperandIndex());
         result.addProperty("external", reference.isExternalReference());
-        return result;
-    }
-
-    private Function containingFunction(Address address) {
-        Function result = currentProgram.getFunctionManager().getFunctionAt(address);
-        if (result == null && address.isMemoryAddress()) {
-            result = currentProgram.getFunctionManager().getFunctionContaining(address);
-        }
         return result;
     }
 
@@ -3973,59 +7240,82 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return result;
     }
 
-    private JsonArray referencedStrings(List<Reference> references) {
+    private JsonArray referencedStrings(List<Reference> references) throws Exception {
         TreeMap<String, JsonObject> observed = new TreeMap<>();
+        Map<Address, String[]> resolved = new HashMap<>();
+        Listing listing = currentProgram.getListing();
         for (Reference reference : references) {
-            Data data = currentProgram.getListing().getDefinedDataContaining(
-                reference.getToAddress()
-            );
-            if (data == null || !data.hasStringValue()) {
+            monitor.checkCancelled();
+            Address target = reference.getToAddress();
+            String[] entry;
+            if (resolved.containsKey(target)) {
+                entry = resolved.get(target);
+            } else {
+                Data data = listing.getDefinedDataContaining(target);
+                String value = data != null && data.hasStringValue()
+                    ? StringDataInstance.getStringDataInstance(data).getStringValue()
+                    : null;
+                entry = value == null ? null : new String[] { canonicalAddress(data.getAddress()), value };
+                resolved.put(target, entry);
+            }
+            if (entry == null) {
                 continue;
             }
-            String value = StringDataInstance.getStringDataInstance(data).getStringValue();
-            if (value == null) {
-                continue;
-            }
+            String sourceAddress = canonicalAddress(reference.getFromAddress());
             JsonObject item = new JsonObject();
-            item.addProperty("address", canonicalAddress(data.getAddress()));
-            item.addProperty("value", value);
-            item.addProperty("source_address", canonicalAddress(reference.getFromAddress()));
-            String key = canonicalAddress(data.getAddress()) + "\u0000" + value + "\u0000" +
-                canonicalAddress(reference.getFromAddress());
+            item.addProperty("address", entry[0]);
+            item.addProperty("value", entry[1]);
+            item.addProperty("source_address", sourceAddress);
+            String key = entry[0] + "\u0000" + entry[1] + "\u0000" + sourceAddress;
             observed.put(key, item);
-            }
+        }
         JsonArray result = new JsonArray();
         observed.values().forEach(result::add);
         return result;
     }
 
-    private JsonArray referencedNames(List<Reference> references) {
+    private JsonArray referencedNames(List<Reference> references) throws Exception {
         TreeMap<String, JsonObject> observed = new TreeMap<>();
+        Map<Address, String> resolved = new HashMap<>();
+        SymbolTable symbolTable = currentProgram.getSymbolTable();
         for (Reference reference : references) {
-            Symbol symbol = currentProgram.getSymbolTable().getPrimarySymbol(
-                reference.getToAddress()
-            );
-            if (symbol == null) {
+            monitor.checkCancelled();
+            Address target = reference.getToAddress();
+            String name;
+            if (resolved.containsKey(target)) {
+                name = resolved.get(target);
+            } else {
+                Symbol symbol = symbolTable.getPrimarySymbol(target);
+                name = symbol == null ? null : symbol.getName(true);
+                resolved.put(target, name);
+            }
+            if (name == null) {
                 continue;
             }
+            String targetAddress = canonicalAddress(target);
+            String sourceAddress = canonicalAddress(reference.getFromAddress());
             JsonObject item = new JsonObject();
-            item.addProperty("address", canonicalAddress(reference.getToAddress()));
-            item.addProperty("value", symbol.getName(true));
-            item.addProperty("source_address", canonicalAddress(reference.getFromAddress()));
-            String key = canonicalAddress(reference.getToAddress()) + "\u0000" +
-                symbol.getName(true) + "\u0000" + canonicalAddress(reference.getFromAddress());
+            item.addProperty("address", targetAddress);
+            item.addProperty("value", name);
+            item.addProperty("source_address", sourceAddress);
+            String key = targetAddress + "\u0000" + name + "\u0000" + sourceAddress;
             observed.put(key, item);
-            }
+        }
         JsonArray result = new JsonArray();
         observed.values().forEach(result::add);
         return result;
     }
 
     private boolean swiftProgram() {
+        if (swiftProgramCached != null) return swiftProgramCached;
         for (MemoryBlock block : currentProgram.getMemory().getBlocks()) {
             String name = block.getName();
-            if (name.startsWith("__swift5_") || name.startsWith("swift5_")) return true;
+            if (name.startsWith("__swift5_") || name.startsWith("swift5_")) {
+                swiftProgramCached = Boolean.TRUE;
+                return true;
+            }
         }
+        swiftProgramCached = Boolean.FALSE;
         return false;
     }
 
@@ -4057,11 +7347,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
             @Override
             public boolean evaluateContextBefore(VarnodeContext context, Instruction instruction) {
                 // Returning true ends only the current flow, so every queued flow checks the shared stop.
-                if (budget.stopped()) return true;
+                if ((monitor != null && monitor.isCancelled()) || budget.stopped()) return true;
                 FlowType flow = instruction.getFlowType();
-                Address[] flowTargets = instruction.getFlows();
-                boolean unresolvedJump = flow.isJump() && !flow.isConditional() && flowTargets.length == 0;
-                for (Register[] pair : swiftStringPairs(function, instruction, registers)) {
+                boolean unconditionalJump = flow.isJump() && !flow.isConditional();
+                Address[] flowTargets = unconditionalJump ? instruction.getFlows() : null;
+                boolean unresolvedJump = unconditionalJump && flowTargets.length == 0;
+                for (Register[] pair : swiftStringPairs(function, instruction, registers, flow, unconditionalJump, flowTargets)) {
                     Long word = registerConstant(context, pair[0]);
                     Long object = registerConstant(context, pair[1]);
                     if (word == null || object == null) continue;
@@ -4082,6 +7373,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                                 break;
                             }
                             value = selectedValue(function, instruction, register);
+                            if (monitor != null && monitor.isCancelled()) return true;
                             selectedValues.put(provenanceKey, value);
                         }
                         if (value) {
@@ -4126,6 +7418,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 return false;
             }
         }, false, monitor);
+        monitor.checkCancelled();
         JsonArray literals = new JsonArray();
         observed.values().forEach(literals::add);
         JsonArray omissions = new JsonArray();
@@ -4136,31 +7429,46 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private static List<Register[]> swiftStringPairs(
         Function function,
         Instruction instruction,
-        Register[] registers
+        Register[] registers,
+        FlowType flow,
+        boolean unconditionalJump,
+        Address[] flowTargets
     ) {
-        List<Register[]> pairs = new ArrayList<>();
         if (instruction.getMnemonicString().equals("stp")) {
             Register first = instruction.getRegister(0);
             Register second = instruction.getRegister(1);
             if (first != null && second != null && first.getBitLength() == 64 && second.getBitLength() == 64) {
-                pairs.add(new Register[] {first, second});
+                return List.<Register[]>of(new Register[] {first, second});
             }
-            return pairs;
+            return List.of();
         }
-        FlowType flow = instruction.getFlowType();
         boolean returns = false;
-        for (PcodeOp operation : instruction.getPcode()) {
-            if (operation.getOpcode() == PcodeOp.RETURN) returns = true;
+        if (flow.isTerminal()) {
+            for (PcodeOp operation : instruction.getPcode()) {
+                if (operation.getOpcode() == PcodeOp.RETURN) {
+                    returns = true;
+                    break;
+                }
+            }
         }
         // A jump is a proven tail call only when it has resolved targets and all leave the
         // body. For unresolved targetless jumps, candidate literals remain unknown omissions.
-        Address[] targets = instruction.getFlows();
-        boolean tailCall = flow.isJump() && !flow.isConditional() && targets.length > 0 &&
-            Arrays.stream(targets).allMatch(target -> !function.getBody().contains(target));
-        boolean unresolvedJump = flow.isJump() && !flow.isConditional() && targets.length == 0;
-        if (!flow.isCall() && !returns && !tailCall && !unresolvedJump) return pairs;
+        boolean tailCall = false;
+        if (unconditionalJump && flowTargets.length > 0) {
+            tailCall = true;
+            AddressSetView body = function.getBody();
+            for (Address target : flowTargets) {
+                if (body.contains(target)) {
+                    tailCall = false;
+                    break;
+                }
+            }
+        }
+        boolean unresolvedJump = unconditionalJump && flowTargets.length == 0;
+        if (!flow.isCall() && !returns && !tailCall && !unresolvedJump) return List.of();
         // A String occupies two consecutive registers among x0-x7, or x0 and x1 when returned.
         int lastFirstRegister = returns ? 0 : 6;
+        List<Register[]> pairs = new ArrayList<>(lastFirstRegister + 1);
         for (int index = 0; index <= lastFirstRegister; index++) {
             pairs.add(new Register[] {registers[index], registers[index + 1]});
         }
@@ -4184,6 +7492,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             targets.push(register.getBaseRegister());
         }
         while (!instructions.isEmpty()) {
+            if (monitor != null && monitor.isCancelled()) return false;
             Instruction instruction = instructions.pop();
             Register target = targets.pop();
             if (!visited.add(canonicalAddress(instruction.getAddress()) + "\u0000" + target.getName())) continue;
@@ -4407,28 +7716,101 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return value.replaceAll("[\\r\\n]+", " ");
     }
 
-    private JsonArray inventory(
-        List<InventoryItem> inventory,
-        String factsName) throws Exception {
-        JsonArray result = new JsonArray();
-        for (InventoryItem item : inventory) {
-            monitor.checkCancelled();
-            result.add(resultItem(item, factsName));
+    private static void writeNameEntries(JsonWriter out, List<NameEntry> entries) throws IOException {
+        out.beginArray();
+        for (NameEntry entry : entries) {
+            writeResultItem(out, entry.address(), entry.value(), "symbol", entry.facts(), null, List.of());
         }
-        return result;
+        out.endArray();
     }
 
-    private static JsonObject resultItem(InventoryItem item, String factsName) {
-        JsonObject result = new JsonObject();
-        result.addProperty("address", canonicalAddress(item.address));
-        result.addProperty("value", item.value);
+    private static void writeProcedureEntries(JsonWriter out, List<ProcedureEntry> entries) throws IOException {
+        out.beginArray();
+        for (ProcedureEntry entry : entries) {
+            writeResultItem(out, entry.address(), entry.value(), "procedure", entry.facts(), entry.symbol(), List.of());
+        }
+        out.endArray();
+    }
+
+    private static void writeMatchedProcedures(JsonWriter out, List<MatchedProcedure> matches) throws IOException {
+        out.beginArray();
+        for (MatchedProcedure match : matches) {
+            ProcedureEntry entry = match.entry();
+            writeResultItem(
+                out,
+                entry.address(),
+                entry.value(),
+                "procedure",
+                entry.facts(),
+                entry.symbol(),
+                match.matchedAliases()
+            );
+        }
+        out.endArray();
+    }
+
+    private static void writeStringEntries(JsonWriter out, List<StringEntry> entries) throws IOException {
+        out.beginArray();
+        for (StringEntry entry : entries) {
+            writeResultItem(out, entry.address(), entry.value(), "string", entry.facts(), null, List.of());
+        }
+        out.endArray();
+    }
+
+    private static <T> List<T> sliceAtAddress(
+        List<T> sortedEntries,
+        java.util.function.Function<T, Address> addressExtractor,
+        Address target
+    ) {
+        int low = 0;
+        int high = sortedEntries.size();
+        while (low < high) {
+            int mid = (low + high) >>> 1;
+            if (addressExtractor.apply(sortedEntries.get(mid)).compareTo(target) < 0) {
+                low = mid + 1;
+            } else {
+                high = mid;
+            }
+        }
+        if (low >= sortedEntries.size() || !addressExtractor.apply(sortedEntries.get(low)).equals(target)) {
+            return List.of();
+        }
+        int end = low + 1;
+        while (end < sortedEntries.size() && addressExtractor.apply(sortedEntries.get(end)).equals(target)) {
+            end++;
+        }
+        return sortedEntries.subList(low, end);
+    }
+
+    private static void writeResultItem(
+        JsonWriter out,
+        Address address,
+        String value,
+        String factsName,
+        InventoryFacts facts,
+        SymbolFacts symbol,
+        List<String> matchedAliases
+    ) throws IOException {
+        out.beginObject();
+        out.name("address").value(canonicalAddress(address));
+        out.name("value").value(value);
         if (factsName != null) {
-            result.add(factsName, item.facts.deepCopy());
+            out.name(factsName);
+            facts.writeJson(out);
         }
-        if (item.symbol != null) {
-            result.add("symbol", item.symbol.deepCopy());
+        if (symbol != null) {
+            out.name("symbol");
+            symbol.writeJson(out);
         }
-        return result;
+        if (!matchedAliases.isEmpty()) {
+            out.name("matched_aliases");
+            out.beginArray();
+            for (String alias : matchedAliases) {
+                out.value(alias);
+            }
+            out.endArray();
+        }
+        out.endObject();
     }
 
     private static JsonObject memoryRegion(MemoryBlock block, String imageBase) {
@@ -4532,14 +7914,17 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     private static String canonicalAddress(Address address) {
-        return canonicalOffset(
+        return canonicalHexOffset(
             address.getAddressSpace(),
-            new BigInteger(Long.toUnsignedString(address.getOffset()))
+            "0x" + Long.toHexString(address.getOffset())
         );
     }
 
     private static String canonicalOffset(AddressSpace space, BigInteger offset) {
-        String value = "0x" + offset.toString(16);
+        return canonicalHexOffset(space, "0x" + offset.toString(16));
+    }
+
+    private static String canonicalHexOffset(AddressSpace space, String value) {
         if (space.equals(sessionDefaultAddressSpace)) {
             return value;
         }
@@ -4629,6 +8014,19 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     private static String encodeAddressSpace(String value) {
+        for (int index = 0; index < value.length(); index++) {
+            char item = value.charAt(index);
+            if (!((item >= 'A' && item <= 'Z') ||
+                  (item >= 'a' && item <= 'z') ||
+                  (item >= '0' && item <= '9') ||
+                  item == '.' || item == '_' || item == '~' || item == '-')) {
+                return encodeAddressSpaceBytes(value);
+            }
+        }
+        return value;
+    }
+
+    private static String encodeAddressSpaceBytes(String value) {
         StringBuilder result = new StringBuilder();
         for (byte item : value.getBytes(StandardCharsets.UTF_8)) {
             int unsigned = Byte.toUnsignedInt(item);
@@ -4678,33 +8076,125 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     private static String normalizedSymbolType(Symbol symbol) {
-        String value = symbol.getSymbolType().toString()
-            .toLowerCase(Locale.ROOT)
-            .replaceAll("[^a-z0-9]+", "_")
-            .replaceAll("^_+|_+$", "");
-        return value.isEmpty() ? "unknown" : value;
+        return NORMALIZED_SYMBOL_TYPES.computeIfAbsent(symbol.getSymbolType(), type -> {
+            String value = EDGE_UNDERSCORES.matcher(
+                NON_ALNUM_RUN.matcher(type.toString().toLowerCase(Locale.ROOT)).replaceAll("_")
+            ).replaceAll("");
+            return value.isEmpty() ? "unknown" : value;
+        });
+    }
+
+    private static SymbolFacts symbolFacts(Symbol symbol) {
+        return new SymbolFacts(
+            symbol.isPrimary(),
+            symbol.isDynamic(),
+            symbol.isExternal(),
+            normalizedSymbolType(symbol),
+            normalizedSource(symbol.getSource())
+        );
     }
 
     private static JsonObject symbolMetadata(Symbol symbol) {
-        JsonObject facts = new JsonObject();
-        facts.addProperty("primary", symbol.isPrimary());
-        facts.addProperty("dynamic", symbol.isDynamic());
-        facts.addProperty("external", symbol.isExternal());
-        facts.addProperty("type", normalizedSymbolType(symbol));
-        facts.addProperty("source", normalizedSource(symbol.getSource()));
-        return facts;
+        return symbolFacts(symbol).toJson();
     }
 
     private static String normalizedSource(SourceType source) {
-        return source.name().toLowerCase(Locale.ROOT);
+        return NORMALIZED_SOURCES.computeIfAbsent(source, item -> item.name().toLowerCase(Locale.ROOT));
     }
 
-    private static ValueMatcher literalMatcher(String pattern, boolean caseSensitive) {
-        String needle = caseSensitive ? pattern : pattern.toLowerCase(Locale.ROOT);
-        return value -> {
-            String candidate = caseSensitive ? value : value.toLowerCase(Locale.ROOT);
-            return candidate.contains(needle);
+    private static ValueMatcher literalMatcher(String pattern) {
+        return nonLeafMatcher(value -> value.contains(pattern));
+    }
+
+    private static boolean containsNonAscii(String value) {
+        for (int index = 0; index < value.length(); index++) {
+            if (value.charAt(index) > 127) return true;
+        }
+        return false;
+    }
+
+    private static void requireAsciiCandidate(String asciiPattern) {
+        for (int index = 0; index < asciiPattern.length(); index++) {
+            if (asciiPattern.charAt(index) > 127) {
+                throw new RequestFailure("invalid_request", "ASCII candidate contains a non-ASCII character");
+            }
+        }
+    }
+
+    private static boolean containsFoldedAscii(String value, String asciiPattern) {
+        int patternLength = asciiPattern.length();
+        if (patternLength == 0) {
+            return true;
+        }
+        int valueLength = value.length();
+        if (valueLength < patternLength) {
+            return false;
+        }
+        char firstTarget = asciiPattern.charAt(0);
+        int limit = valueLength - patternLength;
+        for (int index = 0; index <= limit; index++) {
+            if (foldAsciiCandidateChar(value.charAt(index)) != firstTarget) {
+                continue;
+            }
+            int matched = 1;
+            while (matched < patternLength &&
+                   foldAsciiCandidateChar(value.charAt(index + matched)) == asciiPattern.charAt(matched)) {
+                matched++;
+            }
+            if (matched == patternLength) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // REA's host owns ECMAScript /iu simple case folding. Across all 1,114,112
+    // Unicode code points, only U+017F (ſ -> s) and U+212A (K -> k) fold to
+    // ASCII. When asciiPattern is null, the pattern has a non-ASCII char without
+    // an ASCII fold, so only source strings containing non-ASCII (and any
+    // required ASCII-foldable substring) stay eligible.
+    private static ValueMatcher literalCandidateMatcher(String asciiPattern, String asciiSubstring) {
+        if (asciiPattern == null) {
+            if (asciiSubstring == null || asciiSubstring.isEmpty()) {
+                return nonLeafMatcher(value -> containsNonAscii(value));
+            }
+            requireAsciiCandidate(asciiSubstring);
+            return nonLeafMatcher(value ->
+                containsFoldedAscii(value, asciiSubstring) && containsNonAscii(value)
+            );
+        }
+        requireAsciiCandidate(asciiPattern);
+        if (asciiPattern.isEmpty()) {
+            return nonLeafMatcher(value -> true);
+        }
+        return nonLeafMatcher(value -> containsFoldedAscii(value, asciiPattern));
+    }
+
+    private interface StringCheck {
+        boolean test(String value);
+    }
+
+    private static ValueMatcher nonLeafMatcher(StringCheck check) {
+        return new ValueMatcher() {
+            @Override
+            public boolean matches(String value) {
+                return check.test(value);
+            }
+
+            @Override
+            public boolean requiresLeafCheck() {
+                return false;
+            }
         };
+    }
+
+    private static int foldAsciiCandidateChar(char ch) {
+        if (ch <= 127) {
+            return (ch >= 'A' && ch <= 'Z') ? ch + ('a' - 'A') : ch;
+        }
+        if (ch == '\u017F') return 's';
+        if (ch == '\u212A') return 'k';
+        return -1;
     }
 
     private static ValueMatcher regexMatcher(String expression, boolean caseSensitive) {
@@ -4720,7 +8210,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             // without retaining its cause. This producer reason is not bad syntax.
             if (exception.getDescription().equals("Stack overflow during pattern compilation"))
                 throw regexStackExhausted(expression, "compiling");
-            throw new RequestFailure("invalid_request", "Invalid regex pattern " + expression + ": " + exception.getDescription() + " at index " + exception.getIndex());
+            throw new RequestFailure("invalid_regex_pattern", "Invalid regex pattern " + expression + ": " + exception.getDescription() + " at index " + exception.getIndex());
         }
         catch (StackOverflowError exhausted) {
             throw regexStackExhausted(expression, "compiling");
@@ -4752,7 +8242,18 @@ public final class ReaGhidraBridge extends HeadlessScript {
             keys.add("analysis_extensions");
         if (parsed.isJsonObject() && parsed.getAsJsonObject().has("decompile_timeout_seconds"))
             keys.add("decompile_timeout_seconds");
+        if (parsed.isJsonObject() && parsed.getAsJsonObject().has("existing_project"))
+            keys.add("existing_project");
+        if (parsed.isJsonObject() && parsed.getAsJsonObject().has("entry_context_register"))
+            keys.add("entry_context_register");
         JsonObject object = requireObject(parsed, keys);
+        List<String> entryContext = List.of();
+        if (object.has("entry_context_register")) {
+            String register = requireString(object, "entry_context_register");
+            if (!ENTRY_CONTEXT_REGISTERS.contains(register))
+                throw new IllegalArgumentException("REA session descriptor is invalid");
+            entryContext = List.of(register);
+        }
         int decompileTimeout = 0;
         if (object.has("decompile_timeout_seconds")) {
             decompileTimeout = requireInteger(object, "decompile_timeout_seconds");
@@ -4768,7 +8269,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
             requireString(object, "provider_version"),
             requireString(object, "profile_digest"),
             object.has("analysis_extensions") ? object.getAsJsonArray("analysis_extensions") : new JsonArray(),
-            decompileTimeout
+            decompileTimeout,
+            object.has("existing_project") && requireBoolean(object, "existing_project"),
+            entryContext
         );
     }
 
@@ -4777,7 +8280,34 @@ public final class ReaGhidraBridge extends HeadlessScript {
         Set<String> keys = new HashSet<>(REQUEST_KEYS);
         if (parsed.isJsonObject() && parsed.getAsJsonObject().has("decompile_timeout_seconds"))
             keys.add("decompile_timeout_seconds");
+        if (parsed.isJsonObject() && parsed.getAsJsonObject().has("value_flow_limits"))
+            keys.add("value_flow_limits");
+        if (parsed.isJsonObject() && parsed.getAsJsonObject().has("decompile_max_payload_mib"))
+            keys.add("decompile_max_payload_mib");
+        if (parsed.isJsonObject() && parsed.getAsJsonObject().has("decompile_read_ahead"))
+            keys.add("decompile_read_ahead");
         JsonObject object = requireObject(parsed, keys);
+        DecompilePayload payload = null;
+        if (object.has("decompile_max_payload_mib")) {
+            Integer payloadMiB = null;
+            if (!object.get("decompile_max_payload_mib").isJsonNull()) {
+                payloadMiB = requireInteger(object, "decompile_max_payload_mib");
+                if (payloadMiB < 1 || payloadMiB > MAX_DECOMPILE_PAYLOAD_MIB)
+                    throw new IllegalArgumentException("Invalid per-request native decompiler payload limit");
+            }
+            payload = new DecompilePayload(payloadMiB);
+        }
+        ValueFlowLimits flowLimits = defaultValueFlowLimits();
+        if (object.has("value_flow_limits")) {
+            JsonObject limits = requireObject(object.get("value_flow_limits"),
+                Set.of("max_operations", "max_inputs_per_operation", "max_edges"));
+            int operations = requireInteger(limits, "max_operations");
+            int inputs = requireInteger(limits, "max_inputs_per_operation");
+            int edges = requireInteger(limits, "max_edges");
+            if (operations < 1 || inputs < 1 || edges < 1)
+                throw new IllegalArgumentException("Invalid per-request value-flow limits");
+            flowLimits = new ValueFlowLimits(operations, inputs, edges);
+        }
         Integer timeout = null;
         if (object.has("decompile_timeout_seconds")) {
             JsonElement value = object.get("decompile_timeout_seconds");
@@ -4793,7 +8323,20 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (params == null || !params.isJsonObject()) {
             throw new IllegalArgumentException("Bridge request parameters are invalid");
         }
-        return new Request(id, requireString(object, "method"), params.getAsJsonObject(), timeout);
+        List<String> readAhead = new ArrayList<>();
+        if (object.has("decompile_read_ahead")) {
+            JsonElement selectors = object.get("decompile_read_ahead");
+            if (!selectors.isJsonArray())
+                throw new IllegalArgumentException("Invalid decompile read-ahead");
+            for (JsonElement selector : selectors.getAsJsonArray()) {
+                if (!selector.isJsonPrimitive() || !selector.getAsJsonPrimitive().isString())
+                    throw new IllegalArgumentException("Invalid decompile read-ahead");
+                // The hint is advisory: selectors past one window are ignored.
+                if (readAhead.size() < DECOMPILE_AHEAD_WINDOW) readAhead.add(selector.getAsString());
+            }
+        }
+        return new Request(id, requireString(object, "method"), params.getAsJsonObject(), timeout, payload, flowLimits,
+            List.copyOf(readAhead));
     }
 
     private static JsonObject requireObject(JsonElement element, Set<String> keys) {
@@ -4911,14 +8454,38 @@ public final class ReaGhidraBridge extends HeadlessScript {
         writeResponse(writer, response);
     }
 
+    private static void writeStreamingSuccess(BufferedWriter writer, int id, StreamingResult result)
+            throws IOException {
+        JsonWriter out = GSON.newJsonWriter(new SurrogateEscapingWriter(writer));
+        out.setSerializeNulls(true);
+        out.beginObject();
+        out.name("id").value(id);
+        out.name("ok").value(true);
+        out.name("result");
+        result.write(out);
+        out.endObject();
+        out.flush();
+        writer.newLine();
+        writer.flush();
+    }
+
+    /** Reserved response id for a failure not tied to one parsed request. */
+    private static final int CONNECTION_FAILURE_ID = 0;
+
     private static void writeFailure(
             BufferedWriter writer,
             int id,
             String code,
             String message) throws IOException {
+        writeFailure(writer, id, new RequestFailure(code, message));
+    }
+
+    private static void writeFailure(BufferedWriter writer, int id, RequestFailure failure) throws IOException {
         JsonObject error = new JsonObject();
-        error.addProperty("code", code);
-        error.addProperty("message", message);
+        error.addProperty("code", failure.code);
+        error.addProperty("message", failure.getMessage());
+        if (failure.candidates != null) error.add("candidates", failure.candidates);
+        if (failure.requiredValue != null) error.addProperty("required_value", failure.requiredValue);
         JsonObject response = new JsonObject();
         response.addProperty("id", id);
         response.addProperty("ok", false);
@@ -4927,19 +8494,122 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     private static void writeResponse(BufferedWriter writer, JsonObject response) throws IOException {
-        String encoded = GSON.toJson(response);
-        // Gson leaves UTF-16 surrogates literal. Escape them in JSON so even
-        // diagnostics quoting ill-formed caller text remain lossless UTF-8.
-        int start = 0;
-        for (int index = 0; index < encoded.length(); index++) {
-            if (!Character.isSurrogate(encoded.charAt(index))) continue;
-            writer.write(encoded, start, index - start);
-            writer.write("\\u" + Integer.toHexString(encoded.charAt(index)));
-            start = index + 1;
+        try {
+            GSON.toJson(response, new SurrogateEscapingWriter(writer));
         }
-        writer.write(encoded, start, encoded.length() - start);
+        catch (JsonIOException exception) {
+            if (exception.getCause() instanceof IOException ioException) {
+                throw ioException;
+            }
+            throw exception;
+        }
         writer.newLine();
         writer.flush();
+    }
+
+    // Gson leaves UTF-16 surrogates literal. Stream directly to the socket
+    // writer while escaping surrogates so large replies avoid multi-x heap copies.
+    private static final class SurrogateEscapingWriter extends Writer {
+        private static final char[] HEX_DIGITS = "0123456789abcdef".toCharArray();
+        private final BufferedWriter delegate;
+        private final char[] surrogateEscape = { '\\', 'u', '0', '0', '0', '0' };
+
+        private SurrogateEscapingWriter(BufferedWriter delegate) {
+            this.delegate = delegate;
+        }
+
+        private void writeSurrogateEscape(char ch) throws IOException {
+            surrogateEscape[2] = HEX_DIGITS[(ch >>> 12) & 0xf];
+            surrogateEscape[3] = HEX_DIGITS[(ch >>> 8) & 0xf];
+            surrogateEscape[4] = HEX_DIGITS[(ch >>> 4) & 0xf];
+            surrogateEscape[5] = HEX_DIGITS[ch & 0xf];
+            delegate.write(surrogateEscape, 0, 6);
+        }
+
+        @Override
+        public void write(int ch) throws IOException {
+            char value = (char) ch;
+            if (Character.isSurrogate(value)) {
+                writeSurrogateEscape(value);
+            } else {
+                delegate.write(ch);
+            }
+        }
+
+        @Override
+        public void write(char[] cbuf, int off, int len) throws IOException {
+            java.util.Objects.checkFromIndexSize(off, len, cbuf.length);
+            int start = off;
+            int end = off + len;
+            for (int index = off; index < end; index++) {
+                char ch = cbuf[index];
+                if (!Character.isSurrogate(ch)) continue;
+                if (index > start) {
+                    delegate.write(cbuf, start, index - start);
+                }
+                writeSurrogateEscape(ch);
+                start = index + 1;
+            }
+            if (end > start) {
+                delegate.write(cbuf, start, end - start);
+            }
+        }
+
+        @Override
+        public void write(String str, int off, int len) throws IOException {
+            java.util.Objects.checkFromIndexSize(off, len, str.length());
+            int start = off;
+            int end = off + len;
+            for (int index = off; index < end; index++) {
+                char ch = str.charAt(index);
+                if (!Character.isSurrogate(ch)) continue;
+                if (index > start) {
+                    delegate.write(str, start, index - start);
+                }
+                writeSurrogateEscape(ch);
+                start = index + 1;
+            }
+            if (end > start) {
+                delegate.write(str, start, end - start);
+            }
+        }
+
+        @Override
+        public Writer append(CharSequence csq) throws IOException {
+            if (csq == null) {
+                delegate.write("null");
+            } else if (csq instanceof String str) {
+                write(str, 0, str.length());
+            } else {
+                append(csq, 0, csq.length());
+            }
+            return this;
+        }
+
+        @Override
+        public Writer append(CharSequence csq, int start, int end) throws IOException {
+            if (csq == null) {
+                delegate.write("null", start, end - start);
+            } else if (csq instanceof String str) {
+                write(str, start, end - start);
+            } else {
+                java.util.Objects.checkFromToIndex(start, end, csq.length());
+                for (int index = start; index < end; index++) {
+                    write(csq.charAt(index));
+                }
+            }
+            return this;
+        }
+
+        @Override
+        public void flush() {
+            // Caller issues writer.newLine() + writer.flush() once at frame end.
+        }
+
+        @Override
+        public void close() {
+            // Socket writer outlives one response frame.
+        }
     }
 
     private static String safeMessage(Exception exception) {
@@ -4949,12 +8619,43 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
     private interface ValueMatcher {
         boolean matches(String value);
+
+        default boolean requiresLeafCheck() {
+            return true;
+        }
     }
 
-    private static final Comparator<InventoryItem> INVENTORY_ORDER =
-        Comparator.comparing(InventoryItem::address)
-            .thenComparing(InventoryItem::value)
-            .thenComparing(item -> GSON.toJson(item.facts));
+    private interface StreamingResult {
+        void write(JsonWriter out) throws IOException;
+    }
+
+    private interface InventoryFacts {
+        JsonObject toJson();
+        void writeJson(JsonWriter out) throws IOException;
+    }
+
+    private static int compareInventory(
+        Address leftAddress,
+        String leftValue,
+        InventoryFacts leftFacts,
+        Address rightAddress,
+        String rightValue,
+        InventoryFacts rightFacts
+    ) {
+        int cmp = leftAddress.compareTo(rightAddress);
+        if (cmp != 0) return cmp;
+        cmp = leftValue.compareTo(rightValue);
+        if (cmp != 0) return cmp;
+        if (leftFacts.equals(rightFacts)) return 0;
+        return GSON.toJson(leftFacts.toJson()).compareTo(GSON.toJson(rightFacts.toJson()));
+    }
+
+    private static final Comparator<NameEntry> NAME_ORDER = (left, right) ->
+        compareInventory(left.address(), left.value(), left.facts(), right.address(), right.value(), right.facts());
+    private static final Comparator<ProcedureEntry> PROCEDURE_ORDER = (left, right) ->
+        compareInventory(left.address(), left.value(), left.facts(), right.address(), right.value(), right.facts());
+    private static final Comparator<StringEntry> STRING_ORDER = (left, right) ->
+        compareInventory(left.address(), left.value(), left.facts(), right.address(), right.value(), right.facts());
     private static final Comparator<Reference> REFERENCE_ORDER =
         Comparator.comparing(Reference::getFromAddress)
             .thenComparing(Reference::getToAddress)
@@ -4962,11 +8663,154 @@ public final class ReaGhidraBridge extends HeadlessScript {
             .thenComparingInt(Reference::getOperandIndex)
             .thenComparing(Reference::isPrimary);
 
-    private record InventoryItem(Address address, String value, JsonObject facts, JsonObject symbol) {}
+    private record SymbolFacts(
+        boolean primary,
+        boolean dynamic,
+        boolean external,
+        String type,
+        String source
+    ) implements InventoryFacts {
+        @Override
+        public JsonObject toJson() {
+            JsonObject facts = new JsonObject();
+            facts.addProperty("primary", primary);
+            facts.addProperty("dynamic", dynamic);
+            facts.addProperty("external", external);
+            facts.addProperty("type", type);
+            facts.addProperty("source", source);
+            return facts;
+        }
+
+        @Override
+        public void writeJson(JsonWriter out) throws IOException {
+            out.beginObject();
+            out.name("primary").value(primary);
+            out.name("dynamic").value(dynamic);
+            out.name("external").value(external);
+            out.name("type").value(type);
+            out.name("source").value(source);
+            out.endObject();
+        }
+    }
+
+    private record ProcedureFacts(
+        boolean external,
+        boolean thunk,
+        Address thunkTarget
+    ) implements InventoryFacts {
+        @Override
+        public JsonObject toJson() {
+            JsonObject facts = new JsonObject();
+            facts.addProperty("external", external);
+            facts.addProperty("thunk", thunk);
+            if (thunkTarget == null) {
+                facts.add("thunk_target", JsonNull.INSTANCE);
+            } else {
+                facts.addProperty("thunk_target", canonicalAddress(thunkTarget));
+            }
+            return facts;
+        }
+
+        @Override
+        public void writeJson(JsonWriter out) throws IOException {
+            out.beginObject();
+            out.name("external").value(external);
+            out.name("thunk").value(thunk);
+            out.name("thunk_target");
+            if (thunkTarget == null) {
+                out.nullValue();
+            } else {
+                out.value(canonicalAddress(thunkTarget));
+            }
+            out.endObject();
+        }
+    }
+
+    private record StringFacts(
+        String encoding,
+        boolean missingNullTerminator,
+        int byteLength
+    ) implements InventoryFacts {
+        @Override
+        public JsonObject toJson() {
+            JsonObject facts = new JsonObject();
+            facts.addProperty("encoding", encoding);
+            facts.addProperty(
+                "termination",
+                missingNullTerminator ? "missing" : "present_or_not_required"
+            );
+            facts.addProperty("byte_length", byteLength);
+            return facts;
+        }
+
+        @Override
+        public void writeJson(JsonWriter out) throws IOException {
+            out.beginObject();
+            out.name("encoding").value(encoding);
+            out.name("termination").value(
+                missingNullTerminator ? "missing" : "present_or_not_required"
+            );
+            out.name("byte_length").value(byteLength);
+            out.endObject();
+        }
+    }
+
+    private record MatchedProcedure(ProcedureEntry entry, List<String> matchedAliases) {}
+    private record NameEntry(Address address, String value, SymbolFacts facts) {}
+    private record ProcedureAlias(String leaf, String qualified, boolean leafIsSuffix) {
+        ProcedureAlias(String leaf, String qualified) {
+            this(leaf, qualified, qualified.endsWith(leaf));
+        }
+    }
+    private record ProcedureEntry(
+        Function function,
+        Address address,
+        String value,
+        String leafName,
+        boolean leafIsSuffix,
+        List<ProcedureAlias> aliases,
+        ProcedureFacts facts,
+        SymbolFacts symbol
+    ) {
+        ProcedureEntry(
+            Function function,
+            Address address,
+            String value,
+            String leafName,
+            List<ProcedureAlias> aliases,
+            ProcedureFacts facts,
+            SymbolFacts symbol
+        ) {
+            this(function, address, value, leafName, value.endsWith(leafName), aliases, facts, symbol);
+        }
+    }
+    private record StringEntry(Address address, String value, StringFacts facts) {}
     private record AddressNameRequest(String inputAddress, Address address, String name) {}
-    private record FunctionEntry(Function function, InventoryItem item) {}
+    private record AddressNameDestination(long namespace, String leaf) {}
+    private record AddressNameTarget(Address address, Namespace namespace, String leaf) {
+        AddressNameDestination destination() {
+            return new AddressNameDestination(namespace.getID(), leaf);
+        }
+    }
+    private record AddressNameConflict(Namespace namespace, String leaf, List<Address> requesters, List<Address> holders) {}
+    private record AddressNameFailure(String reason, AddressNameConflict conflict) {}
+    private record LoaderInitializedRelocation(
+        Address address, long lengthInAddressableUnits, String blockName, String symbolName
+    ) {
+        private boolean contains(Address candidate) {
+            if (!candidate.hasSameAddressSpace(address) || candidate.compareTo(address) < 0)
+                return false;
+            long displacement = candidate.subtract(address);
+            return displacement >= 0 && displacement < lengthInAddressableUnits;
+        }
+    }
+    private record ProcedureNameMatch(boolean primary, List<String> aliases) {
+        boolean matched() {
+            return primary || !aliases.isEmpty();
+        }
+    }
     private record FunctionAnalysisObservation(JsonObject dossier, List<String> limitations, JsonObject relationshipCoverage, boolean decompilerFailed) {}
-    private record CallBoundaryObservation(List<String> limitations, Integer unrepresentedCalleeCalls, JsonArray unresolvedCalls) {}
+    private record CallBoundaryObservation(List<String> limitations, Integer unrepresentedCalleeCalls, JsonArray unresolvedCalls, List<String> computedCallSites) {}
     private record SwiftStringLiteralDecode(JsonArray literals, JsonArray omissions) {}
     private record SwiftLiteralLayout(
         String representation,
@@ -4985,16 +8829,50 @@ public final class ReaGhidraBridge extends HeadlessScript {
         String providerVersion,
         String profileDigest,
         JsonArray analysisExtensions,
-        int decompileTimeoutSeconds
+        int decompileTimeoutSeconds,
+        boolean existingProject,
+        List<String> entryContextRegisters
     ) {}
-    private record Request(int id, String method, JsonObject params, Integer decompileTimeoutSeconds) {}
+    private static ValueFlowLimits defaultValueFlowLimits() {
+        return new ValueFlowLimits(DEFAULT_HIGH_PCODE_OPS, DEFAULT_HIGH_PCODE_INPUTS_PER_OP, DEFAULT_HIGH_PCODE_DEF_USE_EDGES);
+    }
+    private record ValueFlowLimits(int maxOperations, int maxInputsPerOperation, int maxEdges) {}
+    /**
+     * A request's decompiler payload selection. A null selection means the
+     * request carried no decompiler options; a null limit inside one selects
+     * the installed Ghidra default.
+     */
+    private record DecompilePayload(Integer mebibytes) {}
+
+    private record Request(int id, String method, JsonObject params, Integer decompileTimeoutSeconds, DecompilePayload decompilePayload, ValueFlowLimits valueFlowLimits,
+        List<String> decompileReadAhead) {}
 
     private static final class RequestFailure extends RuntimeException {
         private final String code;
+        /** Every matching selector candidate, for an ambiguous selection only. */
+        private final JsonArray candidates;
 
         RequestFailure(String code, String message) {
+            this(code, message, null);
+        }
+
+        /** The measured value a per-call control must admit, for a bounded refusal only. */
+        private final Integer requiredValue;
+
+        RequestFailure(String code, String message, JsonArray candidates) {
+            this(code, message, candidates, null);
+        }
+
+        RequestFailure(String code, String message, JsonArray candidates, Integer requiredValue) {
             super(message);
             this.code = code;
+            this.candidates = candidates;
+            this.requiredValue = requiredValue;
+        }
+
+        /** The same failure, its facts kept, with context before its message. */
+        RequestFailure prefixed(String context) {
+            return new RequestFailure(code, context + getMessage(), candidates, requiredValue);
         }
     }
 

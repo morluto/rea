@@ -24,8 +24,19 @@ export class ServedOrder {
     this.#keys.splice(anchor, 0, key);
   }
 
+  /** Put these keys, in this order, in the places they already hold among the others. */
+  arrange(keys: readonly string[]): void {
+    if (keys.length === 0) return;
+    const wanted = new Set(keys);
+    let next = 0;
+    for (let index = 0; index < this.#keys.length; index++) {
+      if (wanted.has(this.#keys[index]!)) this.#keys[index] = keys[next++]!;
+    }
+  }
+
   remove(key: string): void {
-    this.#keys = this.#keys.filter((member) => member !== key);
+    const index = this.#keys.indexOf(key);
+    if (index !== -1) this.#keys.splice(index, 1);
   }
 
   remember(type: string, collection: string): void {

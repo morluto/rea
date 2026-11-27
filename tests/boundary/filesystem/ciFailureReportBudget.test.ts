@@ -34,7 +34,7 @@ const evidence = (
     turboVersion: "2.11.7",
     platform: "linux",
     architecture: "x64",
-    taskHashes: { "lint:built": "a".repeat(16) },
+    taskHashes: { lint: "a".repeat(16) },
   },
   diagnostics,
 });
@@ -350,6 +350,27 @@ it("keeps unavailable job inventories at run scope", async () => {
       reason: "job_inventory_unavailable",
     },
   ]);
+});
+
+it("records failed jobs without fetching artifacts when the PR base is missing", async () => {
+  const input = fixture([20], 1);
+  const getRun = input.api.getRun;
+  input.api.getRun = async (...args) => ({
+    ...(await getRun(...args)),
+    pull_requests: [],
+  });
+
+  const result = await report(input);
+  expect(result.boundedInput.mainCandidateRuns).toBe(1);
+  expect(result.failures).toMatchObject([
+    {
+      runId: 100,
+      job: "Static checks",
+      classification: "unknown",
+      reason: "no_matching_verified_main_failure",
+    },
+  ]);
+  expect(input.artifacts).toEqual([]);
 });
 
 it.each([

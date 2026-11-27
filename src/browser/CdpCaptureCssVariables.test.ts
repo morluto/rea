@@ -356,7 +356,7 @@ it("truncates excessively long rejected names and bounds preview list in limitat
   expect(limitationMsg).toContain(
     "5 root CSS custom properties were rejected:",
   );
-  expect(limitationMsg).toContain("...");
+  expect(limitationMsg).toContain("…");
   expect(limitationMsg).toContain("and 2 more");
   expect(limitationMsg.includes(longName)).toBe(false);
 });
@@ -779,6 +779,10 @@ it("redacts credentials from quoted and unquoted CSS URLs including opposite quo
           name: "--escaped-function-name",
           value: "u\\72l(https://alice:secret@example.com/a)",
         },
+        {
+          name: "--escaped-payload-at",
+          value: 'url("https://alice:secret\\40 example.com/a\\"b")',
+        },
       ],
     },
     "CSS.disable": {},
@@ -816,6 +820,11 @@ it("redacts credentials from quoted and unquoted CSS URLs including opposite quo
       value: "url(https://example.com/a\\)b)",
     },
     {
+      name: "--escaped-payload-at",
+      redacted: true,
+      value: 'url("https://example.com/a\\"b")',
+    },
+    {
       name: "--escaped-single-quote",
       redacted: true,
       value: "url('https://example.com/a\\'b')",
@@ -844,7 +853,7 @@ it("redacts credentials from quoted and unquoted CSS URLs including opposite quo
   expect(
     limitations.some((lim) =>
       lim.includes(
-        "8 root CSS custom property values had transport credentials redacted",
+        "9 root CSS custom property values had transport credentials redacted",
       ),
     ),
   ).toBe(true);

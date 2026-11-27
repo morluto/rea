@@ -1,0 +1,147 @@
+import * as t from "@babel/types";
+import { expect, it } from "vitest";
+import { parseJavaScriptSource } from "./javascriptSourceParser.js";
+import { javaScriptExecutions } from "./javascriptSemanticExecutionPoints.js";
+import { childNodes } from "./javascriptSemanticTraversal.js";
+import { semanticPropertyReadSources } from "./javascriptSemanticIterationSources.js";
+
+it("treats a node type it does not know as code that may run", () => {
+  const future = { type: "FutureExpression" } as unknown as t.Node;
+  expect(javaScriptExecutions(future, null)).toMatchObject([
+    { kind: "unsupported-syntax", node: future },
+  ]);
+});
+
+const parsed = (source: string): t.Program => {
+  const file = parseJavaScriptSource(source, "classification.jsx");
+  if (file === null) throw new Error(`Fixture did not parse: ${source}`);
+  return file.program;
+};
+
+/** Kinds per node type for every node in one parsed program. */
+const kindsByType = (source: string): Map<string, string[]> => {
+  const kinds = new Map<string, string[]>();
+  const pending: { node: t.Node; parent: t.Node | null }[] = [
+    { node: parsed(source), parent: null },
+  ];
+  while (pending.length > 0) {
+    const { node, parent } = pending.pop()!;
+    for (const { kind } of javaScriptExecutions(node, parent))
+      kinds.set(node.type, [...(kinds.get(node.type) ?? []), kind]);
+    for (const child of childNodes(node))
+      pending.push({ node: child, parent: node });
+  }
+  return kinds;
+};
+
+it.each([
+  ["value === other; !value; typeof value; void value; value && other;", {}],
+  ["value + other;", { BinaryExpression: ["coercion"] }],
+  ["`${value}`;", { TemplateLiteral: ["coercion"] }],
+  ["tag`${value}`;", { TaggedTemplateExpression: ["tagged-template"] }],
+  ["value.key;", { MemberExpression: ["property-read"] }],
+  [
+    "value.key = 1;",
+    {
+      AssignmentExpression: ["property-write"],
+      MemberExpression: ["property-read"],
+    },
+  ],
+  ["binding = value;", {}],
+  ["const { key } = value;", { VariableDeclarator: ["destructuring"] }],
+  ["const [first] = value;", { VariableDeclarator: ["iteration"] }],
+  ["const copy = [...value];", { SpreadElement: ["iteration"] }],
+  ["const copy = { ...value };", { SpreadElement: ["property-copy"] }],
+  ["for (const item of value);", { ForOfStatement: ["iteration"] }],
+  [
+    "try { throw source; } catch ({ value }) {}",
+    { CatchClause: ["destructuring"] },
+  ],
+  ["try { throw source; } catch ([value]) {}", { CatchClause: ["iteration"] }],
+  ["async function f() { await value; }", { AwaitExpression: ["thenable"] }],
+  ["function* f() { yield value; }", { YieldExpression: ["suspension"] }],
+  ["function* f() { yield* value; }", { YieldExpression: ["iteration"] }],
+  ["{ using resource = value; }", { VariableDeclarator: ["disposal"] }],
+  ["class C extends Base {}", { ClassDeclaration: ["class-definition"] }],
+  [
+    "@decorate class C {}",
+    { ClassDeclaration: ["class-definition", "decorator"] },
+  ],
+  ["import(value);", { ImportExpression: ["dynamic-import"] }],
+  ["with (value) key;", { WithStatement: ["dynamic-scope"] }],
+  ["<Element prop={value} />;", { JSXElement: ["jsx-element"] }],
+  ['import "side-effect";', { ImportDeclaration: ["module-evaluation"] }],
+  ["new Factory(value);", { NewExpression: ["construction"] }],
+  ["call(value);", { CallExpression: ["call"] }],
+])("classifies %s", (source, expected) => {
+  expect(Object.fromEntries(kindsByType(source))).toEqual(expected);
+});
+
+it("exposes the enumerated object", () => {
+  const node = parsed("for (const key in value);").body[0];
+  if (!t.isForInStatement(node)) throw new Error("Expected for-in statement");
+  expect(javaScriptExecutions(node, null)).toMatchObject([
+    { kind: "enumeration", operands: [node.right] },
+  ]);
+});
+
+it.each(["!trigger", "typeof trigger", "void trigger", "trigger === 1"])(
+  "retains catch property reads when %s may invoke a global accessor",
+  (expression) => {
+    const statement = parsed(`try { ${expression}; } catch ({ value }) {}`)
+      .body[0];
+    if (!t.isTryStatement(statement) || statement.handler == null)
+      throw new Error("Expected catch clause");
+    expect(semanticPropertyReadSources(statement.handler, statement)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          projection: expect.arrayContaining(["value"]),
+        }),
+      ]),
+    );
+  },
+);
+
+it("detaches member receiver on sequence member calls while preserving property-read and leading calls", () => {
+  const direct = parsed("obj.method(arg);");
+  const directStmt = direct.body[0];
+  if (
+    !t.isExpressionStatement(directStmt) ||
+    !t.isCallExpression(directStmt.expression)
+  )
+    throw new Error("Expected direct call");
+  expect(javaScriptExecutions(directStmt.expression, directStmt)).toEqual([
+    {
+      kind: "call",
+      node: directStmt.expression,
+      operands: [
+        (directStmt.expression.callee as t.MemberExpression).object,
+        directStmt.expression.arguments[0],
+      ],
+    },
+  ]);
+
+  const sequence = parsed("(0, obj.method)(arg);");
+  const seqStmt = sequence.body[0];
+  if (
+    !t.isExpressionStatement(seqStmt) ||
+    !t.isCallExpression(seqStmt.expression)
+  )
+    throw new Error("Expected sequence call");
+  expect(javaScriptExecutions(seqStmt.expression, seqStmt)).toEqual([
+    {
+      kind: "call",
+      node: seqStmt.expression,
+      operands: [seqStmt.expression.arguments[0]],
+    },
+  ]);
+  expect(Object.fromEntries(kindsByType("(0, obj.method)(arg);"))).toEqual({
+    CallExpression: ["call"],
+    MemberExpression: ["property-read"],
+  });
+  expect(
+    Object.fromEntries(kindsByType("(sideEffect(), localFn)(arg);")),
+  ).toEqual({
+    CallExpression: ["call", "call"],
+  });
+});

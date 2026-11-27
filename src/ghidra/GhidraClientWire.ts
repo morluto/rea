@@ -1,15 +1,25 @@
 import type { Socket } from "node:net";
 
 import {
+  admitBridgeRequestLimit,
   bridgeRequestOversizeError,
   type BridgeMaxRequestBytes,
 } from "../config/bridgeMaxRequestBytes.js";
+import {
+  admitBridgeReplyLimit,
+  DEFAULT_BRIDGE_MAX_REPLY,
+  type BridgeMaxReplyBytes,
+} from "../config/bridgeMaxReplyBytes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
-import { err, type Result } from "../domain/result.js";
+import { err, ok, type Result } from "../domain/result.js";
+import type { ConfigurationError } from "../domain/configurationErrors.js";
 import type { Logger } from "pino";
 import type { PendingOperations } from "../process/PendingOperations.js";
-import type { GhidraRequestOptions } from "./GhidraClientTypes.js";
+import type {
+  GhidraAdmittedLimits,
+  GhidraRequestOptions,
+} from "./GhidraClientTypes.js";
 import type {
   GhidraSessionError,
   GhidraSessionFailureFactory,
@@ -28,14 +38,75 @@ export interface GhidraWireOptions {
   readonly failure: GhidraSessionFailureFactory;
   /** Effective Ghidra request ceiling; the bridge itself enforces none. */
   readonly bridgeMaxRequestBytes: BridgeMaxRequestBytes;
+  /** Effective reply line ceiling, admitted with each request. */
+  readonly bridgeMaxReplyBytes: BridgeMaxReplyBytes;
 }
 
 /** Owns the socket write and pending-reply lifecycle for one bridge session. */
 export class GhidraWire {
   readonly #options: GhidraWireOptions;
+  #replyLimit: BridgeMaxReplyBytes = DEFAULT_BRIDGE_MAX_REPLY;
+  /** Reply ceilings of written requests whose replies have not settled. */
+  readonly #inFlightReplyLimits = new Map<number, BridgeMaxReplyBytes>();
+  #sessionLimits: GhidraAdmittedLimits | undefined;
 
   constructor(options: GhidraWireOptions) {
     this.#options = options;
+  }
+
+  /**
+   * The ceiling for the next reply line. The stream measures a line before it
+   * can read the reply's id, so while requests overlap (a shutdown written
+   * beside an active request) the largest in-flight ceiling applies. With
+   * none in flight it is the ceiling of the request last written.
+   */
+  replyLimit(): BridgeMaxReplyBytes {
+    let selected: BridgeMaxReplyBytes | undefined;
+    for (const limit of this.#inFlightReplyLimits.values())
+      if (selected === undefined || limit.maximumBytes > selected.maximumBytes)
+        selected = limit;
+    return selected ?? this.#replyLimit;
+  }
+
+  /**
+   * Copy the effective request and reply ceilings in the admitting caller's
+   * context. A malformed launch seed no override covers is an admission
+   * refusal carrying its `ConfigurationError`.
+   */
+  admitLimits(): Result<GhidraAdmittedLimits, GhidraSessionError> {
+    const requestLimit = admitBridgeRequestLimit(
+      this.#options.bridgeMaxRequestBytes,
+    );
+    if (!requestLimit.ok) return err(this.#refused(requestLimit.error));
+    const replyLimit = admitBridgeReplyLimit(this.#options.bridgeMaxReplyBytes);
+    if (!replyLimit.ok) return err(this.#refused(replyLimit.error));
+    return ok({
+      requestLimit: requestLimit.value,
+      replyLimit: replyLimit.value,
+    });
+  }
+
+  /**
+   * Admit the ceilings a session starts with and keep them for its cleanup.
+   * Cleanup must not depend on the current settings: an override reset after
+   * startup can expose a malformed launch seed, and refusing the checkpoint or
+   * shutdown request then would leave the JVM and its files behind.
+   */
+  admitSessionLimits(): Result<GhidraAdmittedLimits, GhidraSessionError> {
+    const limits = this.admitLimits();
+    if (limits.ok) this.#sessionLimits = limits.value;
+    return limits;
+  }
+
+  /** Ceilings admitted when the current session started, for its cleanup. */
+  sessionLimits(): GhidraAdmittedLimits | undefined {
+    return this.#sessionLimits;
+  }
+
+  #refused(cause: ConfigurationError): GhidraSessionError {
+    return this.#options.failure("admission", cause.message, cause, {
+      configurationFailure: cause,
+    });
   }
 
   /** Write one authenticated request and return its correlated reply. */
@@ -71,15 +142,31 @@ export class GhidraWire {
       ...(options.decompileTimeoutSeconds === undefined
         ? {}
         : { decompile_timeout_seconds: options.decompileTimeoutSeconds }),
+      ...(options.valueFlowLimits === undefined
+        ? {}
+        : { value_flow_limits: options.valueFlowLimits }),
+      ...(options.decompileMaxPayloadMiB === undefined
+        ? {}
+        : { decompile_max_payload_mib: options.decompileMaxPayloadMiB }),
+      ...(options.decompileReadAhead === undefined
+        ? {}
+        : { decompile_read_ahead: [...options.decompileReadAhead] }),
     };
-    const payloadBytes = jsonValueByteLength(payloadValue);
+    const limits =
+      options.limits === undefined ? this.admitLimits() : ok(options.limits);
+    if (!limits.ok) return limits;
+    const { requestLimit, replyLimit } = limits.value;
+    const payloadBytes = jsonValueByteLength(
+      payloadValue,
+      requestLimit.maximumBytes,
+    );
     // Refuse before registering the operation and before any socket write, so
     // an oversized request never reaches the bridge or occupies a pending key.
-    if (payloadBytes > this.#options.bridgeMaxRequestBytes.maximumBytes) {
+    if (payloadBytes > requestLimit.maximumBytes) {
       const oversize = bridgeRequestOversizeError(
         method,
-        this.#options.bridgeMaxRequestBytes,
-        payloadBytes,
+        requestLimit,
+        { bytesAtLeast: payloadBytes },
         "Ghidra",
       );
       return err(
@@ -87,6 +174,14 @@ export class GhidraWire {
       );
     }
     const payload = JSON.stringify(payloadValue);
+    // Ownership of background work moves only with a frame that passed
+    // admission. An oversized hint never reaches the socket and must not
+    // replace the previous owner.
+    options.onAdmitted?.();
+    // Only the request being written owns the next reply's ceiling; a
+    // refused or still-queued request never changes it.
+    this.#replyLimit = replyLimit;
+    this.#inFlightReplyLimits.set(id, replyLimit);
     const response = this.#options.pending.wait(id, {
       ...(timeoutMs === undefined
         ? {}
@@ -105,6 +200,20 @@ export class GhidraWire {
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       cancelledValue: () => err(this.#cancelled(options.signal)),
     });
+    // A cancel is a request frame with its own id and no reply: the reply of
+    // the request it names is the acknowledgement.
+    const onInterrupt = (): void => {
+      if (!this.#options.pending.has(id) || socket.destroyed) return;
+      socket.write(
+        `${JSON.stringify({
+          id: this.#options.nextId(),
+          token,
+          method: "cancel",
+          params: { request_id: id },
+        })}\n`,
+      );
+    };
+    options.interrupt?.addEventListener("abort", onInterrupt, { once: true });
     socket.write(`${payload}\n`, (cause) => {
       if (cause !== undefined && cause !== null)
         this.#options.pending.settle(
@@ -118,13 +227,35 @@ export class GhidraWire {
           ),
         );
     });
-    const result = await response;
+    const result = await response.finally(() => {
+      options.interrupt?.removeEventListener("abort", onInterrupt);
+      this.#inFlightReplyLimits.delete(id);
+    });
     this.#options.logger[result.ok ? "debug" : "warn"](
       { method, status: result.ok ? "ok" : "error" },
       "Ghidra bridge request completed",
     );
     return result;
   }
+
+  /**
+   * Stop read-ahead workers without waiting for the Program request ahead of
+   * them. Like cancel, this frame has no reply.
+   */
+  abandonReadAhead(): void {
+    const socket = this.#options.getSocket();
+    const token = this.#options.getToken();
+    if (socket === undefined || socket.destroyed || token === undefined) return;
+    socket.write(
+      `${JSON.stringify({
+        id: this.#options.nextId(),
+        token,
+        method: "abandon_decompile_read_ahead",
+        params: {},
+      })}\n`,
+    );
+  }
+
   #cancelled(signal: AbortSignal | undefined): GhidraSessionError {
     return this.#options.failure(
       "cancelled",

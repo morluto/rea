@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
 
-import { browserNetworkBodySchema } from "./browserNetworkEvidence.js";
+import {
+  browserNetworkBodySchema,
+  browserNetworkHeadersSchema,
+} from "./browserNetworkEvidence.js";
 
 const bytes = Buffer.from([0xff, 0, 0xfe]);
 const retained = {
@@ -31,4 +34,71 @@ it("validates the actual retained bytes against canonical base64, count, and dig
     expect(
       browserNetworkBodySchema.safeParse({ ...retained, ...mutation }).success,
     ).toBe(false);
+});
+
+it("authenticates the entire body across base64 windows and a padded tail", () => {
+  const bytes = Buffer.alloc(100_001, 0x41);
+  bytes[48 * 1024] = 0xff;
+  bytes[bytes.length - 1] = 0xfe;
+  const body = {
+    ...retained,
+    bytes: bytes.length,
+    content: bytes.toString("base64"),
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+  };
+  expect(browserNetworkBodySchema.safeParse(body).success).toBe(true);
+  bytes[48 * 1024] = 0;
+  expect(
+    browserNetworkBodySchema.safeParse({
+      ...body,
+      content: bytes.toString("base64"),
+    }).success,
+  ).toBe(false);
+});
+
+it("rejects padding at a nonfinal base64 window boundary", () => {
+  const first = Buffer.alloc(48 * 1024 - 1, 0x41);
+  const last = Buffer.from([0x42, 0x43, 0x44]);
+  expect(
+    browserNetworkBodySchema.safeParse({
+      ...retained,
+      content: first.toString("base64") + last.toString("base64"),
+      bytes: first.length + last.length,
+      sha256: createHash("sha256").update(first).update(last).digest("hex"),
+    }).success,
+  ).toBe(false);
+});
+
+it("dispatches browser network body unavailable reasons and header states", () => {
+  expect(
+    browserNetworkBodySchema.safeParse({ state: "not_requested" }).success,
+  ).toBe(true);
+  expect(
+    browserNetworkBodySchema.safeParse({
+      state: "unavailable",
+      reason: "body-size-limit",
+      message: "too large",
+      limit_bytes: 1024,
+      observed_bytes: 2048,
+    }).success,
+  ).toBe(true);
+  expect(
+    browserNetworkBodySchema.safeParse({
+      state: "unavailable",
+      reason: "body-size-limit",
+      message: "missing bounds",
+    }).success,
+  ).toBe(false);
+  expect(
+    browserNetworkHeadersSchema.safeParse({
+      state: "captured",
+      items: [{ name: "accept", value: "*/*", redacted: false }],
+    }).success,
+  ).toBe(true);
+  expect(
+    browserNetworkHeadersSchema.safeParse({
+      state: "unavailable",
+      message: "omitted",
+    }).success,
+  ).toBe(true);
 });

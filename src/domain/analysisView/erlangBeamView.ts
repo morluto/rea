@@ -1,20 +1,21 @@
 import { z } from "zod";
 import { erlangBeamSchema, type ErlangBeam } from "../erlang/beam.js";
-import type { AnalysisError } from "../analysisErrorBase.js";
-import { err, ok, type Result } from "../result.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { ok } from "../result.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  ownedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
   pageViewCoverage,
+  unavailableViewCoverage,
 } from "./analysisViewCoverage.js";
-import { selectViewRows } from "./selectViewRows.js";
+import { filterSet, selectViewRows } from "./selectViewRows.js";
 
 const atom = erlangBeamSchema.shape.atoms.unwrap().element;
 const exported = erlangBeamSchema.shape.exports.unwrap().element;
@@ -110,26 +111,20 @@ export const erlangBeamSummaryDeliveryShape = {
   detail: z.literal("summary"),
   view: erlangBeamViewRequestSchema.exactOptional(),
 };
-export const erlangBeamDeliverySchema = z.discriminatedUnion("detail", [
-  z.strictObject(erlangBeamCompleteDeliveryShape),
-  z.strictObject(erlangBeamSummaryDeliveryShape),
-]);
 const readReport = createAnalysisViewResultReader(erlangBeamSchema);
 type Table = "atoms" | "exports" | "imports" | "lambdas" | "chunks";
 type Row = NonNullable<ErlangBeam[Table]>[number];
 type BeamView = z.infer<typeof erlangBeamViewRequestSchema>;
 
 /** Select already parsed rows; original atom/lambda indexes are never repurposed. */
-const selectRows = (rows: readonly Row[] | null, view: BeamView) => {
-  const names = view.names === undefined ? undefined : new Set(view.names);
-  const indices =
-    view.indices === undefined ? undefined : new Set(view.indices);
+const selectRows = (source: readonly Row[], view: BeamView) => {
+  const names = filterSet(view.names);
+  const indices = filterSet(view.indices);
   const modules =
     view.collection === "imports" && view.modules !== undefined
       ? new Set(view.modules)
       : undefined;
-  const fields =
-    view.fields === undefined ? undefined : new Set<string>(view.fields);
+  const fields = filterSet<string>(view.fields);
   const project = (row: Row, source_index: number) => ({
     ...Object.fromEntries(
       Object.entries(row).filter(
@@ -138,44 +133,33 @@ const selectRows = (rows: readonly Row[] | null, view: BeamView) => {
     ),
     source_index,
   });
-  const source = rows ?? [];
-  if (names === undefined && indices === undefined && modules === undefined)
-    return {
-      rows: source
-        .slice(view.offset, view.offset + view.limit)
-        .map((row, i) => project(row, view.offset + i)),
-      total: source.length,
-    };
-  return selectViewRows(
-    source,
-    view,
-    (row, i) => {
-      const name = "name" in row ? row.name : row.function;
-      return (
-        (indices === undefined || indices.has(i)) &&
-        (names === undefined || (name !== null && names.has(name))) &&
-        (modules === undefined ||
-          ("module" in row && row.module !== null && modules.has(row.module)))
-      );
-    },
-    project,
-  );
+  const matches =
+    names === undefined && modules === undefined
+      ? undefined
+      : (row: Row) => {
+          const name = "name" in row ? row.name : row.function;
+          return (
+            (names === undefined || (name !== null && names.has(name))) &&
+            (modules === undefined ||
+              ("module" in row &&
+                row.module !== null &&
+                modules.has(row.module)))
+          );
+        };
+  return selectViewRows(source, view, matches, project, indices);
 };
 
 /** Project retained BEAM facts without reopening files or reinterpreting chunks. */
 export const projectErlangBeamView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
-  if (view.kind !== "summary" && view.kind !== "beam")
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message: "BEAM Evidence supports summary and beam views.",
-        },
-      ]),
+  admitted: AdmittedView,
+) => {
+  const view = ownedView<
+    SummaryAnalysisView | z.output<typeof erlangBeamViewRequestSchema>
+  >(admitted, "summary", "beam");
+  if (view === undefined)
+    return invalidAnalysisView(
+      "BEAM Evidence supports summary and beam views.",
     );
   const parsed = readReport(parent);
   if (!parsed.ok) return parsed;
@@ -200,11 +184,7 @@ export const projectErlangBeamView = (
       path: identity.artifact.path,
       sha256: identity.artifact.sha256,
     },
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, limitations),
     unknowns: (["atoms", "exports", "imports", "lambdas"] as const)
       .filter((key) => summary.counts[key] === null)
       .map(
@@ -215,15 +195,25 @@ export const projectErlangBeamView = (
   if (view.kind === "summary")
     return ok({
       ...shared,
-      kind: "summary",
+      kind: "summary" as const,
       view,
       summary,
-      coverage: completeWithinViewCoverage(chunks.length, chunks.length),
+      coverage: completeWithinViewCoverage(chunks.length),
     });
-  const selected = selectRows(parsed.value[view.collection], view);
+  const rows = parsed.value[view.collection];
+  if (rows === null)
+    return ok({
+      ...shared,
+      kind: "beam" as const,
+      view,
+      beam: summary,
+      page: { collection: view.collection, items: [] },
+      coverage: unavailableViewCoverage(),
+    });
+  const selected = selectRows(rows, view);
   return ok({
     ...shared,
-    kind: "beam",
+    kind: "beam" as const,
     view,
     beam: summary,
     page: { collection: view.collection, items: selected.rows },

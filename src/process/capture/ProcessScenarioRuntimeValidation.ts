@@ -1,22 +1,26 @@
-import { constants as fsConstants } from "node:fs";
-import { access, realpath, stat } from "node:fs/promises";
-import { delimiter, isAbsolute, join, resolve, sep } from "node:path";
+import { realpath, stat } from "node:fs/promises";
+
+import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 
 import type { ProcessScenario } from "../../domain/process/processScenario.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
 } from "../../domain/analysisErrorCore.js";
+import { lookupExecutable } from "../ExecutableLookup.js";
 import { snapshotEnvironment } from "../snapshotEnvironment.js";
 import { processCaptureCancelled } from "./ProcessCaptureError.js";
+import { reportedSystemCode } from "../../kernel/reportedSystemCode.js";
 
 /** Resolve caller-selected executable and observation paths for this execution. */
 export const resolveProcessScenarioRuntimePaths = async (
   scenario: ProcessScenario,
   environment: Readonly<Record<string, string | undefined>> = process.env,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): Promise<ProcessScenario> => {
-  const selectedWorkingDirectory = resolve(scenario.working_directory);
+  const selectedWorkingDirectory = absoluteCallerPath(
+    scenario.working_directory,
+  );
   let workingDirectory: string;
   try {
     workingDirectory = await realpath(selectedWorkingDirectory);
@@ -52,11 +56,11 @@ export const resolveProcessScenarioRuntimePaths = async (
     scenario.executable,
     workingDirectory,
     snapshotEnvironment(scenario.environment, platform).PATH ??
-      snapshotEnvironment(environment, platform).PATH ??
-      "",
+      snapshotEnvironment(environment, platform).PATH,
+    platform,
   );
   const observationPaths = scenario.filesystem_observation_paths.map((path) =>
-    resolve(workingDirectory, path),
+    absoluteCallerPath(path, { cwd: workingDirectory }),
   );
   return {
     ...scenario,
@@ -70,52 +74,46 @@ export const resolveProcessScenarioRuntimePaths = async (
  * Resolve a selected executable through the caller's effective PATH. A denied
  * lookup of an explicitly selected path is a host access failure; PATH search
  * continues past denied directories, and an existing file without execute
- * permission remains an invalid selection.
+ * permission remains an invalid selection. The harness verifies the file it
+ * launches, so capture cannot defer to the host's search: where the lookup
+ * stops because a native search can stop there, the scenario is rejected.
  */
-export const resolveExecutable = async (
+const resolveExecutable = async (
   command: string,
   workingDirectory: string,
-  searchPath: string,
+  searchPath: string | undefined,
+  platform: NodeJS.Platform,
 ): Promise<string> => {
-  const directories = searchPath
-    .split(delimiter)
-    .map((directory) =>
-      directory === ""
-        ? workingDirectory
-        : resolve(workingDirectory, directory),
+  const lookup = await lookupExecutable(
+    command,
+    () => workingDirectory,
+    searchPath,
+    { platform },
+  );
+  if (lookup.status === "found") return lookup.path;
+  if (lookup.status === "denied")
+    throw new AnalysisAccessDeniedError(
+      "capture_process_scenario",
+      lookup.path,
+      lookup.code,
+      { cause: lookup.cause },
     );
-  const explicit =
-    isAbsolute(command) ||
-    command.includes("/") ||
-    (sep === "\\" && command.includes("\\"));
-  const candidates = explicit
-    ? [resolve(workingDirectory, command)]
-    : directories.map((directory) => join(directory, command));
-  const failures: string[] = [];
-  for (const candidate of candidates) {
-    let metadata;
-    try {
-      metadata = await stat(candidate);
-    } catch (cause: unknown) {
-      const denial = explicit ? hostAccessDenial(candidate, cause) : undefined;
-      if (denial !== undefined) throw denial;
-      failures.push(`${candidate}${osFailure(cause)}`);
-      continue;
-    }
-    if (!metadata.isFile()) {
-      failures.push(`${candidate} (not a regular file)`);
-      continue;
-    }
-    try {
-      await access(candidate, fsConstants.X_OK);
-      return candidate;
-    } catch (cause: unknown) {
-      failures.push(`${candidate}${osFailure(cause)}`);
-    }
-  }
+  // The scenario's working directory is already resolved, so it is readable.
+  if (lookup.status === "no-working-directory")
+    throw invalidScenarioPath(
+      "working_directory",
+      `working directory could not be read: ${workingDirectory}`,
+      lookup.cause,
+    );
+  // An unbounded lookup cannot be interrupted.
+  if (lookup.status === "interrupted")
+    throw invalidScenarioPath(
+      "executable",
+      `executable lookup was interrupted: ${command}`,
+    );
   throw invalidScenarioPath(
     "executable",
-    `executable could not be resolved: ${command}; checked ${failures.join("; ")}`,
+    `executable could not be resolved: ${command}; checked ${lookup.checked.join("; ")}`,
   );
 };
 
@@ -135,7 +133,7 @@ const hostAccessDenial = (
   selected: string,
   cause: unknown,
 ): AnalysisAccessDeniedError | undefined => {
-  const code = osErrorCode(cause);
+  const code = reportedSystemCode(cause);
   return code === "EACCES" || code === "EPERM"
     ? new AnalysisAccessDeniedError(
         "capture_process_scenario",
@@ -148,16 +146,8 @@ const hostAccessDenial = (
     : undefined;
 };
 
-const osErrorCode = (cause: unknown): string | undefined =>
-  typeof cause === "object" &&
-  cause !== null &&
-  "code" in cause &&
-  typeof cause.code === "string"
-    ? cause.code
-    : undefined;
-
 const osFailure = (cause: unknown): string => {
-  const code = osErrorCode(cause);
+  const code = reportedSystemCode(cause);
   return code === undefined ? "" : ` (${code})`;
 };
 

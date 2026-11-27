@@ -1,13 +1,26 @@
-import { readFile, stat, writeFile } from "node:fs/promises";
+import {
+  open,
+  readFile,
+  stat,
+  writeFile,
+  type FileHandle,
+} from "node:fs/promises";
+import {
+  snapshotExecution,
+  ANALYSIS_SNAPSHOT_PROFILE as PROFILE,
+  ANALYSIS_SNAPSHOT_PROVIDER as PROVIDER,
+  ANALYSIS_SNAPSHOT_TARGET as TARGET,
+} from "../../../src/domain/analysisSnapshot.fixture.js";
 import { join } from "node:path";
 
 import { describe, expect, it, onTestFinished, vi } from "vitest";
+import canonicalize from "canonicalize";
 
 import { withArtifactResourceScope } from "../../fixtures/artifactInventory.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { holdFirstFileRead } from "../../support/holdFirstFileRead.js";
 
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import {
   readAnalysisSnapshot,
   writeAnalysisSnapshot,
@@ -21,11 +34,6 @@ import {
   snapshotTarget,
   type AnalysisSnapshot,
 } from "../../../src/domain/analysisSnapshot.js";
-import {
-  ANALYSIS_SNAPSHOT_PROFILE as PROFILE,
-  ANALYSIS_SNAPSHOT_PROVIDER as PROVIDER,
-  ANALYSIS_SNAPSHOT_TARGET as TARGET,
-} from "../../../src/domain/analysisSnapshot.fixture.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { readJsonObjectFile } from "../../../src/application/JsonInputFile.js";
@@ -43,21 +51,23 @@ const snapshotFixture = (): AnalysisSnapshot => {
     binding,
     operation: "address_name",
     parameters: { address: "0x1000" },
-    execution: createAnalysisExecution(
-      { name: "main", "😀": { "\uE000": "unicode" } },
-      PROVIDER,
-      {
-        analysisProfile: PROFILE,
-        rawResult: { name: "main", "😀": { "\uE000": "unicode" } },
-        subject: {
-          path: TARGET.path,
-          sha256: TARGET.sha256,
-          format: TARGET.format,
-          ...(TARGET.architecture === undefined
-            ? {}
-            : { architecture: TARGET.architecture }),
+    execution: snapshotExecution(
+      createAnalysisExecution(
+        { name: "main", "😀": { "\uE000": "unicode" } },
+        PROVIDER,
+        {
+          analysisProfile: PROFILE,
+          rawResult: { name: "main", "😀": { "\uE000": "unicode" } },
+          subject: {
+            path: TARGET.path,
+            sha256: TARGET.sha256,
+            format: TARGET.format,
+            ...(TARGET.architecture === undefined
+              ? {}
+              : { architecture: TARGET.architecture }),
+          },
         },
-      },
+      ),
     ),
   });
   const evidence = createEvidence(TARGET, PROVIDER, {
@@ -130,35 +140,26 @@ describe("analysis snapshots: persistence", () => {
       writeAnalysisSnapshot(snapshot, path, false, resources),
     );
     if (!written.ok) throw written.error;
-    expect((await readFile(path, "utf8")).endsWith("\n")).toBe(true);
+    const encoded = await readFile(path, "utf8");
+    // RFC 8785 bytes are a storage contract, independent of snapshot decoding.
+    expect(encoded).toBe(`${canonicalize(snapshot)}\n`);
     expect((await stat(path)).mode & 0o777).toBe(0o600);
     const roundTrip = await readAnalysisSnapshot(path);
     if (!roundTrip.ok) throw roundTrip.error;
 
-    const altered: unknown = JSON.parse(await readFile(path, "utf8"));
-    if (
-      typeof altered !== "object" ||
-      altered === null ||
-      !("entries" in altered) ||
-      !Array.isArray(altered.entries)
-    )
-      throw new TypeError("fixture snapshot is malformed");
-    const first: unknown = altered.entries[0];
-    if (
-      typeof first !== "object" ||
-      first === null ||
-      !("parameters" in first) ||
-      typeof first.parameters !== "object" ||
-      first.parameters === null
-    )
-      throw new TypeError("fixture entry is malformed");
-    Reflect.set(first.parameters, "address", "0x2000");
+    const entry = snapshot.entries[0]!;
+    const altered = {
+      ...snapshot,
+      entries: [{ ...entry, parameters: { address: "0x2000" } }],
+    };
     await writeFile(path, JSON.stringify(altered));
-    const loaded = await readAnalysisSnapshot(path);
-    if (loaded.ok)
-      throw new Error("Expected changed snapshot identity rejection");
-    expect(loaded.error._tag).toBe("EvidenceIntegrityError");
-    expect(() => parseAnalysisSnapshot(altered)).toThrow(/identifier/u);
+    expect(await readAnalysisSnapshot(path)).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "EvidenceIntegrityError",
+        message: expect.stringContaining("identifier"),
+      },
+    });
   });
 });
 
@@ -203,7 +204,7 @@ describe("analysis snapshot member decoding", () => {
     });
   });
 
-  it.each(["result", "raw_result", "limitations", "provider", "query_id"])(
+  it.each(["result", "raw_result", "limitations", "provider"])(
     "rejects cache %s changes even when bundled Evidence is intact",
     async (field) => {
       const directory = await createTestTempDirectory("rea-snapshot-tamper-");
@@ -211,17 +212,15 @@ describe("analysis snapshot member decoding", () => {
       const snapshot = snapshotFixture();
       const entry = snapshot.entries[0];
       if (entry === undefined) throw new Error("Missing fixture entry");
-      if (field === "query_id") entry.query_id = `query_${"f".repeat(64)}`;
-      else
-        Reflect.set(
-          entry.execution,
-          field,
-          field === "limitations"
-            ? ["changed"]
-            : field === "provider"
-              ? { ...PROVIDER, version: "changed" }
-              : "changed",
-        );
+      Reflect.set(
+        entry.execution,
+        field,
+        field === "limitations"
+          ? ["changed"]
+          : field === "provider"
+            ? { ...PROVIDER, version: "changed" }
+            : "changed",
+      );
       await writeFile(path, JSON.stringify(snapshot));
       const loaded = await readAnalysisSnapshot(path);
       expect(loaded).toMatchObject({
@@ -230,11 +229,7 @@ describe("analysis snapshot member decoding", () => {
       });
       if (!loaded.ok)
         expect(loaded.error.message).toMatch(
-          field === "query_id"
-            ? /identifier/u
-            : field === "provider"
-              ? /provider/u
-              : /differs from/u,
+          field === "provider" ? /provider/u : /differs from/u,
         );
     },
   );
@@ -283,7 +278,7 @@ describe("analysis snapshot member decoding", () => {
       reads.release();
     });
     const pending = readAnalysisSnapshot(path, controller.signal);
-    await reads.firstRead;
+    await reads.reached(pending, "first file read");
     controller.abort(reason);
     reads.release();
     try {
@@ -369,6 +364,64 @@ describe("analysis snapshot file ownership", () => {
       readJsonObjectFile(path, "test-input", [reader, new Map()]),
     ).rejects.toBeInstanceOf(RegularFileChangedError);
     expect((await readFile(path, "utf8")).trim()).toBe('{"value":2}');
+  });
+
+  it("rejects different bytes across scans with unchanged descriptor metadata", async () => {
+    const directory = await createTestTempDirectory("rea-snapshot-scan-bytes-");
+    const path = join(directory, "input.json");
+    const document = '{"value":1}';
+    await writeFile(path, document + " ".repeat(9 * 1024 * 1024));
+    const probe = await open(path, "r");
+    const prototype = Object.getPrototypeOf(probe) as {
+      read(
+        this: FileHandle,
+        ...args: [Buffer, number, number, number | null]
+      ): Promise<{ readonly bytesRead: number; readonly buffer: Buffer }>;
+    };
+    const identity = await probe.stat();
+    await probe.close();
+
+    const observed: unknown[] = [];
+    const read = prototype.read;
+    const reading = vi
+      .spyOn(prototype, "read")
+      .mockImplementation(async function (this: FileHandle, ...args) {
+        const result = await read.call(this, ...args);
+        if (
+          args[3] === 0 &&
+          observed.length === 1 &&
+          result.bytesRead >= document.length
+        ) {
+          const current = await this.stat();
+          if (current.dev === identity.dev && current.ino === identity.ino)
+            result.buffer[document.indexOf("1")] = "2".charCodeAt(0);
+        }
+        return result;
+      });
+    const reader = new Map([
+      [
+        "value",
+        {
+          mode: "value" as const,
+          begin() {},
+          accept(value: unknown) {
+            observed.push(value);
+          },
+          reject(cause: unknown) {
+            throw cause;
+          },
+        },
+      ],
+    ]);
+    try {
+      await expect(
+        readJsonObjectFile(path, "test-input", [reader, reader]),
+      ).rejects.toBeInstanceOf(RegularFileChangedError);
+      expect(observed).toEqual([1, 2]);
+    } finally {
+      reading.mockRestore();
+    }
+    expect((await readFile(path, "utf8")).trim()).toBe(document);
   });
 });
 

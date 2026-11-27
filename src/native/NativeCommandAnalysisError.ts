@@ -1,36 +1,46 @@
+import type { ArtifactResourceScope } from "../resources/index.js";
+import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
+import {
+  ProcessOwnershipInspectionCancelled,
+  ProcessOwnershipIdentityBatchFailure,
+} from "../process/ProcessInspectionCancellation.js";
+import {
+  retainProcessInspectionCleanup,
+  processInspectionCancellationError,
+} from "../providers/OwnedCommandCleanup.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  type AnalysisTimeoutRecovery,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
-import { NATIVE_MACOS_PROVIDER_IDENTITY as IDENTITY } from "./NativeMacOSProviderMetadata.js";
+import { NATIVE_MACOS_PROVIDER_IDENTITY as IDENTITY } from "./NativeMacosProviderIdentity.js";
 import {
   DEFAULT_NATIVE_COMMAND_TIMEOUT_MS,
   fixedNativeAllowance,
   nativeDeadlineRecovery,
 } from "../domain/native/nativeDeadlines.js";
 import {
-  NATIVE_COMMAND_OUTPUT_BUDGET_BYTES,
   NATIVE_FAILURE_DIAGNOSTIC_BYTES,
   type NativeCommandFailure,
-} from "./CommandRunner.js";
+} from "../providers/NativeCommandRunner.js";
+import { NATIVE_COMMAND_OUTPUT_BUDGET_BYTES } from "../domain/native/nativeCommandOutput.js";
 
 /** Operation-owned text for a command deadline or unavailable requirement. */
 export interface NativeCommandFailurePresentation {
   readonly unavailableMessage?: string;
-  readonly timeoutRecovery?: {
-    readonly userMessage: string;
-    readonly remediationAction: string;
-  };
+  readonly timeoutRecovery?: AnalysisTimeoutRecovery;
 }
 
 /** Translate the command owner's facts once, preserving capture and cleanup authority. */
 export const translateNativeCommandFailure = (
   operation: string,
   failure: NativeCommandFailure,
+  resources: ArtifactResourceScope,
   timeoutMs = DEFAULT_NATIVE_COMMAND_TIMEOUT_MS,
   presentation: NativeCommandFailurePresentation = {},
 ): AnalysisError => {
@@ -59,21 +69,16 @@ export const translateNativeCommandFailure = (
       : error.bindCleanupDependencies([...new Set(markers)]);
   const preparation = failure.preparationFailure;
   if (preparation !== undefined) {
-    const marker = preparation.cleanupFailure;
-    const compiler = preparation.compilerOutcome;
+    const darwin =
+      preparation instanceof DarwinProcessOwnershipInspectionError
+        ? preparation
+        : undefined;
+    const compiler = darwin?.compilerOutcome;
     const options = {
       cause: failure,
-      ...(preparation.capturedOutput === undefined
+      ...(darwin?.capturedOutput === undefined
         ? {}
-        : { capturedOutput: preparation.capturedOutput }),
-      ...(marker === undefined
-        ? {}
-        : {
-            cleanup: {
-              reason: marker.message,
-              resources: marker.cleanupResources,
-            },
-          }),
+        : { capturedOutput: darwin?.capturedOutput }),
       diagnostics: {
         phase: "process-preparation",
         tool: failure.tool,
@@ -93,29 +98,49 @@ export const translateNativeCommandFailure = (
             }),
       },
     };
+    const cancelled = processInspectionCancellationError(
+      preparation,
+      operation,
+    );
+    const cancellationPrimary =
+      preparation instanceof ProcessOwnershipInspectionCancelled ||
+      (preparation instanceof ProcessOwnershipIdentityBatchFailure &&
+        preparation.origin === "cancelled") ||
+      (darwin !== undefined && failure.reason === "cancelled");
     const error =
-      preparation.cancellation === undefined
-        ? new ProviderAdapterError(IDENTITY.id, operation, options)
-        : failure.reason === "timeout"
-          ? new AnalysisTimeoutError(operation, timeoutMs, {
-              ...options,
-              cause: preparation.cancellation.reason,
-              ...(presentation.timeoutRecovery ??
-                nativeDeadlineRecovery({
-                  timeoutMs,
-                  setting: "native_command_timeout_ms",
-                  cliFlag: "--native-command-timeout-ms",
-                  defaultMs: DEFAULT_NATIVE_COMMAND_TIMEOUT_MS,
-                  phase: "macOS native command deadline",
-                  unchanged: `The ${String(NATIVE_COMMAND_OUTPUT_BUDGET_BYTES)}-byte command output allowance and the ${String(NATIVE_FAILURE_DIAGNOSTIC_BYTES)}-byte failure-diagnostic excerpt have no runtime override.`,
-                })),
-            })
-          : new AnalysisCancelledError(operation, {
-              ...options,
-              cause: preparation.cancellation.reason,
-            });
-    return bindCleanup(
-      marker === undefined ? error : error.bindCleanupDependencies([marker]),
+      failure.reason === "timeout"
+        ? new AnalysisTimeoutError(operation, timeoutMs, {
+            ...options,
+            ...(presentation.timeoutRecovery ??
+              nativeDeadlineRecovery({
+                timeoutMs,
+                parameter: "native_command_timeout_ms",
+                defaultMs: DEFAULT_NATIVE_COMMAND_TIMEOUT_MS,
+                phase: "macOS native command deadline",
+                unchanged: `The ${String(NATIVE_COMMAND_OUTPUT_BUDGET_BYTES)}-byte command output allowance and the ${String(NATIVE_FAILURE_DIAGNOSTIC_BYTES)}-byte failure-diagnostic excerpt have no runtime override.`,
+              })),
+          })
+        : cancellationPrimary && cancelled !== undefined
+          ? cancelled
+          : // The ownership helper's compiler deadline is a retryable timeout
+            // with its own setting, not a provider failure.
+            darwin?.compileTimeout !== undefined
+            ? new AnalysisTimeoutError(
+                operation,
+                darwin.compileTimeout.timeoutMs,
+                {
+                  ...options,
+                  userMessage: darwin.compileTimeout.userMessage,
+                  remediationAction: darwin.compileTimeout.remediationAction,
+                  limit: darwin.compileTimeout.limit,
+                },
+              )
+            : new ProviderAdapterError(IDENTITY.id, operation, options);
+    return retainProcessInspectionCleanup(
+      preparation,
+      bindCleanup(error),
+      resources,
+      operation,
     );
   }
   const capturedOutput =
@@ -137,11 +162,11 @@ export const translateNativeCommandFailure = (
           reason: failure.cleanupFailure,
           resources: [...failure.cleanupResources],
         };
-  const errorOptions = {
-    cause: failure,
+  const errorOptionsWithoutCause = {
     ...(capturedOutput === undefined ? {} : { capturedOutput }),
     ...(cleanup === undefined ? {} : { cleanup }),
   };
+  const errorOptions = { cause: failure, ...errorOptionsWithoutCause };
   if (failure.reason === "unavailable") {
     const reason =
       presentation.unavailableMessage ??
@@ -155,12 +180,17 @@ export const translateNativeCommandFailure = (
   }
   if (failure.reason === "cancelled")
     return bindCleanup(
-      new AnalysisCancelledError(operation, {
-        ...errorOptions,
-        ...(failure.cancellation === undefined
-          ? {}
-          : { cause: failure.cancellation.reason }),
-      }),
+      cancelledBy(
+        operation,
+        carriedReason(
+          failure.cancellation === undefined
+            ? failure
+            : failure.cancellation.reason,
+        ),
+        {
+          ...errorOptionsWithoutCause,
+        },
+      ),
     );
   if (failure.reason === "timeout")
     return bindCleanup(
@@ -169,8 +199,7 @@ export const translateNativeCommandFailure = (
         ...(presentation.timeoutRecovery ??
           nativeDeadlineRecovery({
             timeoutMs,
-            setting: "native_command_timeout_ms",
-            cliFlag: "--native-command-timeout-ms",
+            parameter: "native_command_timeout_ms",
             defaultMs: DEFAULT_NATIVE_COMMAND_TIMEOUT_MS,
             phase: "macOS native command deadline",
             unchanged: `The ${String(NATIVE_COMMAND_OUTPUT_BUDGET_BYTES)}-byte command output allowance and the ${String(NATIVE_FAILURE_DIAGNOSTIC_BYTES)}-byte failure-diagnostic excerpt have no runtime override.`,
@@ -189,7 +218,8 @@ export const translateNativeCommandFailure = (
           ...fixedNativeAllowance(
             "The native command output capture allowance",
             "capture",
-            `${String(NATIVE_COMMAND_OUTPUT_BUDGET_BYTES)} bytes`,
+            NATIVE_COMMAND_OUTPUT_BUDGET_BYTES,
+            "bytes",
           ),
         },
       ),

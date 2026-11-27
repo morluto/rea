@@ -1,7 +1,12 @@
 import type { MatchNativeFunctionsInput } from "../../contracts/native/functionMatchingContracts.js";
 import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
-import type { Evidence } from "../../domain/evidence.js";
+import {
+  ANALYSIS_EVIDENCE_PREDICATE,
+  isImmutableEvidence,
+  type Evidence,
+  evidenceFileTarget,
+} from "../../domain/evidence.js";
 import { readEvidence } from "../../domain/evidenceValidation.js";
 import { retainedEvidenceReferenceSchema } from "../../domain/evidenceReference.js";
 import {
@@ -12,13 +17,30 @@ import type { NativeMatchingAdmission } from "./NativeMatchingAdmission.js";
 
 import { nativeMatchingInputError } from "./NativeMatchingInputError.js";
 
-const INVENTORY_OPERATIONS = ["list_procedures"] as const;
-const OBSERVATION_OPERATIONS = [
-  "list_names",
-  "procedure_info",
-  "read_bytes",
-  "analyze_function",
-] as const;
+/** The operations one selected role admits, and how to produce them. */
+interface MatchingSourceRole {
+  readonly operations: readonly string[];
+  /** Matching borrows the record when it never copies the result. */
+  readonly borrowable: boolean;
+  readonly remediationAction?: string;
+}
+
+/** A filtered search cannot replace the inventory, so its refusal names the producers. */
+const INVENTORY_ROLE: MatchingSourceRole = {
+  operations: ["list_procedures"],
+  borrowable: true,
+  remediationAction:
+    "Select complete list_procedures Evidence: MCP list_procedures, or CLI rea list-procedures <path> --json (or --detail summary --evidence_output <bundle> with --source_bundle). search_procedures results are filtered by their pattern and are not inventories.",
+};
+const OBSERVATION_ROLE: MatchingSourceRole = {
+  operations: [
+    "list_names",
+    "procedure_info",
+    "read_bytes",
+    "analyze_function",
+  ],
+  borrowable: false,
+};
 
 /** Authenticate selected roles and their closure without interpreting dependencies as observations. */
 export const resolveNativeMatchingSources = async (
@@ -34,18 +56,30 @@ export const resolveNativeMatchingSources = async (
   readonly sources: readonly Evidence[];
 }> => {
   const sources = new Map<string, Evidence>();
+  /**
+   * Charge only what matching copies. A retained immutable record is borrowed
+   * without cloning. When matching never parses its result, or charges the
+   * representation it derives from it (inventory rows), only its envelope is
+   * charged; walking the result would charge resident memory as if matching
+   * had allocated it.
+   */
   const resolve = async (
     input: unknown,
     path?: readonly (string | number)[],
+    borrowable = false,
   ): Promise<Evidence> => {
     const reference = retainedEvidenceReferenceSchema.safeParse(input);
-    let raw = input;
+    let raw = input,
+      borrowed: Evidence | undefined;
     if (reference.success) {
       const found = resolveEvidenceInput(reference.data, lookup);
       if (!found.ok) throw found.error;
       raw = found.value;
+      if (borrowable && isImmutableEvidence(found.value))
+        borrowed = found.value;
     }
-    await admission.admit(raw);
+    if (borrowed !== undefined) await admission.admitBorrowed(borrowed);
+    else await admission.admit(raw);
     const checked = readEvidence(raw);
     if (!checked.ok)
       throw path !== undefined && !reference.success
@@ -65,25 +99,29 @@ export const resolveNativeMatchingSources = async (
   const select = async (
     raw: unknown,
     path: readonly (string | number)[],
-    operations: readonly string[],
+    { operations, borrowable, remediationAction }: MatchingSourceRole,
   ): Promise<Evidence> => {
-    const evidence = await resolve(raw, path);
+    const evidence = await resolve(raw, path, borrowable);
     if (
-      evidence.predicate_type !== "rea.analysis" ||
+      evidence.predicate_type !== ANALYSIS_EVIDENCE_PREDICATE ||
       !operations.includes(evidence.operation) ||
-      evidence.subject === null
+      evidenceFileTarget(evidence) === undefined
     ) {
       const message = `Expected artifact-bound rea.analysis ${operations.join(" or ")} Evidence, received ${evidence.predicate_type} ${evidence.operation}`;
       throw new AnalysisInputError(
         admission.operation,
-        { userMessage: message },
+        {
+          userMessage: message,
+          ...(remediationAction === undefined ? {} : { remediationAction }),
+        },
         [{ path, reason: "invalid_value", message }],
       );
     }
     return evidence;
   };
-  const left = await select(input.left, ["left"], INVENTORY_OPERATIONS);
-  const right = await select(input.right, ["right"], INVENTORY_OPERATIONS);
+  // readFunctionInventory charges each inventory row before parsing it.
+  const left = await select(input.left, ["left"], INVENTORY_ROLE);
+  const right = await select(input.right, ["right"], INVENTORY_ROLE);
   const observations = async (
     inputs: readonly unknown[],
     field: "left_observations" | "right_observations",
@@ -92,11 +130,7 @@ export const resolveNativeMatchingSources = async (
     const result: Evidence[] = [];
     const seen = new Set<string>();
     for (const [index, input] of inputs.entries()) {
-      const record = await select(
-        input,
-        [field, index],
-        OBSERVATION_OPERATIONS,
-      );
+      const record = await select(input, [field, index], OBSERVATION_ROLE);
       if (
         digestCanonicalValue(record.subject) !==
           digestCanonicalValue(inventory.subject) ||
@@ -136,7 +170,12 @@ export const resolveNativeMatchingSources = async (
   for (const source of sources.values())
     for (const id of source.evidence_links)
       if (!sources.has(id))
-        await resolve({ kind: "retained-evidence", evidence_id: id });
+        // Closure records are only returned for retention, never parsed.
+        await resolve(
+          { kind: "retained-evidence", evidence_id: id },
+          undefined,
+          true,
+        );
   return {
     left,
     right,

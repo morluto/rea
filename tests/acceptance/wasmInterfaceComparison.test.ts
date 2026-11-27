@@ -1,3 +1,8 @@
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../fixtures/canonicalOutputSchema.js";
+import { constants as bufferConstants } from "node:buffer";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -7,10 +12,12 @@ import { createEvidence, parseEvidence } from "../../src/domain/evidence.js";
 import { wasmInterfaceComparisonSchema } from "../../src/contracts/wasm/wasmComparisonContracts.js";
 import { composeBinarySession } from "../../src/application/binary/BinarySessionComposition.js";
 import { AnalysisProviderRegistry } from "../../src/application/binary/AnalysisProviderRegistry.js";
+import { parseWabtWat } from "../../src/wasm/WabtWat.js";
 import { createServer } from "../../src/server/createServer.js";
 import { wasmArtifactFixture } from "../fixtures/wasm/artifact.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 cliTest(
   "compares portable Evidence identically through CLI and retained MCP with schema/provenance",
@@ -89,7 +96,10 @@ cliTest(
     });
     const session = composeBinarySession(new AnalysisProviderRegistry([]));
     const server = createServer({ kind: "session", session });
-    const client = new Client({ name: "wasm-interface-parity", version: "1" });
+    const client = new Client(
+      { name: "wasm-interface-parity", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [ct, st] = InMemoryTransport.createLinkedPair();
     try {
       await server.connect(st);
@@ -97,13 +107,17 @@ cliTest(
       const tool = (await client.listTools()).tools.find(
         (t) => t.name === "compare_wasm_interfaces",
       );
-      if (tool?.outputSchema === undefined)
-        throw new Error("Missing comparison schema");
-      const outputSchema: Record<string, unknown> = tool.outputSchema;
+      if (tool === undefined) throw new Error("Missing comparison schema");
+      const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+        tool.name,
+      );
       const ajv = new Ajv2020({ strict: false, validateFormats: false });
       expect(ajv.validate(tool.inputSchema, input)).toBe(true);
       expect(ajv.validate(tool.inputSchema, { left, right })).toBe(false);
-      const mcp = await client.callTool({ name: tool.name, arguments: input });
+      const mcp = await client.callTool(
+        { name: tool.name, arguments: input },
+        { toolDefinition: withCanonicalOutputSchema(tool) },
+      );
       expect(mcp.isError, JSON.stringify(mcp)).not.toBe(true);
       expect(
         ajv.validate(outputSchema, mcp.structuredContent),
@@ -116,27 +130,175 @@ cliTest(
         left.evidence_id,
         right.evidence_id,
       ]);
-      const retained = await client.callTool({
-        name: tool.name,
-        arguments: {
-          scope: "both",
-          left: { kind: "retained-evidence", evidence_id: left.evidence_id },
-          right: { kind: "retained-evidence", evidence_id: right.evidence_id },
+      const retained = await client.callTool(
+        {
+          name: tool.name,
+          arguments: {
+            scope: "both",
+            left: { kind: "retained-evidence", evidence_id: left.evidence_id },
+            right: {
+              kind: "retained-evidence",
+              evidence_id: right.evidence_id,
+            },
+          },
         },
-      });
+        { toolDefinition: withCanonicalOutputSchema(tool) },
+      );
       expect(retained.isError).not.toBe(true);
       expect(parseEvidence(retained.structuredContent).evidence_id).toBe(
         mcpEvidence.evidence_id,
       );
-      const invalid = await client.callTool({
-        name: tool.name,
-        arguments: { ...input, scope: "all" },
-      });
+      const invalid = await client.callTool(
+        {
+          name: tool.name,
+          arguments: { ...input, scope: "all" },
+        },
+        { toolDefinition: withCanonicalOutputSchema(tool) },
+      );
       expect(invalid.isError).toBe(true);
     } finally {
       await client.close();
       await server.close();
       await session.close();
     }
+  },
+);
+
+cliTest(
+  "does not report colliding debug identifiers as unchanged after a signature change",
+  async ({ cli }) => {
+    const input = (parameter: string) => {
+      const report = wasmArtifactFixture();
+      report.interface = parseWabtWat(
+        `(module (func $same (param i32)) (func $same (param ${parameter})) (export "first" (func $same)) (export "second" (func $same)))`,
+      ).interface;
+      return createEvidence(
+        {
+          path: report.artifact.path,
+          sha256: report.artifact.sha256,
+          format: "file",
+        },
+        { id: "fixture", name: "typed fixture", version: "1" },
+        {
+          operation: "inspect_wasm_artifact",
+          parameters: { path: report.artifact.path },
+          result: report,
+          confidence: "observed",
+        },
+      );
+    };
+    const root = await createTestTempDirectory("rea-wasm-colliding-names-");
+    const path = join(root, "input.json");
+    await writeFile(
+      path,
+      JSON.stringify({
+        left: input("i32"),
+        right: input("i64"),
+        scope: "both",
+      }),
+    );
+    const result = await cli.run({
+      arguments: ["compare-wasm-interfaces", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const report = wasmInterfaceComparisonSchema.parse(
+      parseEvidence(result.json).normalized_result,
+    );
+    expect(report.changes.map(({ state }) => state)).toEqual([
+      "unknown",
+      "unknown",
+    ]);
+    expect(report.summary.unchanged).toBe(0);
+  },
+);
+
+cliTest(
+  "reports details.limit and adjustable_budget refusal when max_interface_bytes is exceeded through the public CLI",
+  async ({ cli }) => {
+    const side = (name: string) => {
+      const report = wasmArtifactFixture();
+      report.interface = parseWabtWat(
+        `(module (func $f (param i32) (result i32)) (export "${name}" (func $f)))`,
+      ).interface;
+      return createEvidence(
+        {
+          path: report.artifact.path,
+          sha256: report.artifact.sha256,
+          format: "file",
+        },
+        { id: "fixture", name: "typed fixture", version: "1" },
+        {
+          operation: "inspect_wasm_artifact",
+          parameters: { path: report.artifact.path },
+          result: report,
+          confidence: "observed",
+        },
+      );
+    };
+    const root = await createTestTempDirectory("rea-wasm-budget-cli-");
+    const refusedPath = join(root, "refused.json");
+    const recoveredPath = join(root, "recovered.json");
+    const left = side("left_export");
+    const right = side("right_export");
+    await writeFile(
+      refusedPath,
+      JSON.stringify({
+        left,
+        right,
+        scope: "both",
+        max_interface_bytes: 1024,
+      }),
+    );
+    await writeFile(
+      recoveredPath,
+      JSON.stringify({
+        left,
+        right,
+        scope: "both",
+        max_interface_bytes: 8192,
+      }),
+    );
+
+    const refused = await cli.run({
+      arguments: ["compare-wasm-interfaces", refusedPath, "--json"],
+    });
+    expect(refused.exitCode, refused.stderr).toBe(1);
+    expect(refused.json).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_interface_bytes",
+          effective_value: 1024,
+          unit: "bytes",
+          minimum: 1,
+          maximum: bufferConstants.MAX_STRING_LENGTH,
+          default_value: 33_554_432,
+          applies_at: "next_call",
+        },
+        refusal: {
+          kind: "adjustable_budget",
+          operation: "compare_wasm_interfaces",
+          control: "max_interface_bytes",
+          effective_value: 1024,
+          unit: "bytes",
+          range: { minimum: 1, maximum: bufferConstants.MAX_STRING_LENGTH },
+          default_value: 33_554_432,
+        },
+      },
+    });
+    expect(
+      (refused.json as { details?: { limit?: unknown } }).details?.limit,
+    ).not.toHaveProperty("required_value");
+
+    const recovered = await cli.run({
+      arguments: ["compare-wasm-interfaces", recoveredPath, "--json"],
+    });
+    expect(recovered.exitCode, recovered.stderr).toBe(0);
+    const report = wasmInterfaceComparisonSchema.parse(
+      parseEvidence(recovered.json).normalized_result,
+    );
+    expect(report.summary).toMatchObject({ added: 1, removed: 1 });
   },
 );

@@ -1,12 +1,19 @@
+import {
+  u16,
+  u32,
+  u64,
+} from "../../../tests/fixtures/apkSignature/integers.js";
 import { createHash } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
 import {
   computeApkContentDigest,
+  computeApkContentDigestStreaming,
   type HashFactory,
 } from "./apkContentDigest.js";
-import { parseZipTail } from "./apkSigningBlock.js";
+import { parseZipTailFromReader } from "./apkSigningBlock.js";
+import { bufferByteSource } from "../byteSource.js";
 
 const nodeHash: HashFactory = (algorithm) => {
   const hash = createHash(algorithm);
@@ -17,15 +24,6 @@ const nodeHash: HashFactory = (algorithm) => {
     digest: () => new Uint8Array(hash.digest()),
   };
 };
-
-const u16 = (v: number): number[] => [v & 0xff, (v >> 8) & 0xff];
-const u32 = (v: number): number[] => [
-  v & 0xff,
-  (v >> 8) & 0xff,
-  (v >> 16) & 0xff,
-  (v >>> 24) & 0xff,
-];
-const u64 = (v: number): number[] => [...u32(v), ...u32(0)];
 
 const eocd = (cdSize: number, cdOffset: number): number[] => [
   ...u32(0x06054b50),
@@ -77,45 +75,53 @@ const withoutBlock = (): Uint8Array => {
   return out;
 };
 
-const digestOf = (
+const digestOf = async (
   bytes: Uint8Array,
   blockStart: number,
   algorithm: "sha256" | "sha512" = "sha256",
-): Uint8Array | null => {
-  const tail = parseZipTail(bytes);
+): Promise<Uint8Array | null> => {
+  const tail = await parseZipTailFromReader(bufferByteSource(bytes, 4));
   if (!tail.ok) throw new Error("bad fixture");
   return computeApkContentDigest(
     bytes,
-    { tail: tail.value, blockStart, algorithm },
+    { tail: tail.value.tail, blockStart, algorithm },
     nodeHash,
   );
 };
 
 describe("computeApkContentDigest", () => {
-  it("equals the digest of the same APK with the signing block removed", () => {
+  it("equals the digest of the same APK with the signing block removed", async () => {
     for (const algorithm of ["sha256", "sha512"] as const) {
-      const signed = digestOf(withBlock(), ENTRIES.length, algorithm);
-      const stripped = digestOf(withoutBlock(), ENTRIES.length, algorithm);
+      const signed = await digestOf(withBlock(), ENTRIES.length, algorithm);
+      const stripped = await digestOf(
+        withoutBlock(),
+        ENTRIES.length,
+        algorithm,
+      );
       expect(signed).not.toBeNull();
       expect(signed).toEqual(stripped);
     }
   });
 
-  it("ignores the signing block's own contents", () => {
-    expect(digestOf(withBlock([1, 2, 3, 4]), ENTRIES.length)).toEqual(
-      digestOf(withBlock([5, 6, 7, 8]), ENTRIES.length),
-    );
+  it("ignores the signing block's own contents", async () => {
+    const first = await digestOf(withBlock([1, 2, 3, 4]), ENTRIES.length);
+    const second = await digestOf(withBlock([5, 6, 7, 8]), ENTRIES.length);
+    expect(first).not.toBeNull();
+    expect(second).not.toBeNull();
+    expect(first).toEqual(second);
   });
 
-  it("changes when a ZIP entry byte changes", () => {
+  it("changes when a ZIP entry byte changes", async () => {
     const tampered = withBlock();
     tampered[1234] = (tampered[1234] ?? 0) ^ 0xff;
-    expect(digestOf(tampered, ENTRIES.length)).not.toEqual(
-      digestOf(withBlock(), ENTRIES.length),
-    );
+    const changed = await digestOf(tampered, ENTRIES.length);
+    const original = await digestOf(withBlock(), ENTRIES.length);
+    expect(changed).not.toBeNull();
+    expect(original).not.toBeNull();
+    expect(changed).not.toEqual(original);
   });
 
-  it("matches for a Node Buffer at a non-zero byteOffset and never mutates its input", () => {
+  it("matches for a Node Buffer at a non-zero byteOffset and never mutates its input", async () => {
     // Regression: readStableArtifact yields a Buffer; Buffer#slice is a view, so
     // rewriting the EOCD through it corrupted byte 16 and skipped the rewrite.
     const plain = withBlock();
@@ -123,17 +129,17 @@ describe("computeApkContentDigest", () => {
     const view = pooled.subarray(64); // non-zero byteOffset over a shared ArrayBuffer
     view.set(plain);
     const before = Buffer.from(view);
-    expect(digestOf(view, ENTRIES.length)).toEqual(
-      digestOf(withoutBlock(), ENTRIES.length),
+    expect(await digestOf(view, ENTRIES.length)).toEqual(
+      await digestOf(withoutBlock(), ENTRIES.length),
     );
     expect(Buffer.from(view).equals(before)).toBe(true);
   });
 
-  it("reports not-computed for a layout with a gap before the EOCD", () => {
+  it("reports not-computed for a layout with a gap before the EOCD", async () => {
     const bytes = withBlock();
-    const tail = parseZipTail(bytes);
+    const tail = await parseZipTailFromReader(bufferByteSource(bytes, 4));
     if (!tail.ok) throw new Error("bad fixture");
-    const gapped = { ...tail.value, centralDirectorySize: 3 }; // CD no longer abuts EOCD
+    const gapped = { ...tail.value.tail, centralDirectorySize: 3 }; // CD no longer abuts EOCD
     expect(
       computeApkContentDigest(
         bytes,
@@ -141,5 +147,29 @@ describe("computeApkContentDigest", () => {
         nodeHash,
       ),
     ).toBeNull();
+  });
+
+  it("matches computeApkContentDigestStreaming across multiple 1 MiB chunks without buffering the file", async () => {
+    const bytes = withBlock();
+    const tail = await parseZipTailFromReader(bufferByteSource(bytes, 4));
+    if (!tail.ok) throw new Error("bad fixture");
+    for (const algorithm of ["sha256", "sha512"] as const) {
+      let maxReadLength = 0;
+      const streamed = await computeApkContentDigestStreaming(
+        {
+          size: bytes.length,
+          readRange: async (offset, length) => {
+            maxReadLength = Math.max(maxReadLength, length);
+            return bytes.subarray(offset, offset + length);
+          },
+        },
+        { tail: tail.value.tail, blockStart: ENTRIES.length, algorithm },
+        nodeHash,
+      );
+      expect(streamed).toEqual(
+        await digestOf(bytes, ENTRIES.length, algorithm),
+      );
+      expect(maxReadLength).toBeLessThanOrEqual(1024 * 1024);
+    }
   });
 });

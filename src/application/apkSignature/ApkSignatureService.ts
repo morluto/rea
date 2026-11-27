@@ -1,27 +1,22 @@
 import { inspectApkSignatureInputSchema } from "../../domain/apkSignature/apkSignatureQuery.js";
 import {
   requireAnalysisViewRetention,
-  projectRetainedAnalysis,
   type AnalysisViewRetention,
-} from "../analysisView/AnalysisViewService.js";
-import { isAbsolute } from "node:path";
+} from "../analysisView/AnalysisViewRetention.js";
 
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { ApkSignaturePort } from "./ApkSignaturePort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { ApkSignaturePort } from "../../ports/apkSignature/ApkSignaturePort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import {
-  AnalysisCancelledError,
-  AnalysisInputError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import {
   apkSignatureMatchesSubject,
   apkSignatureResultSchema,
 } from "../../domain/apkSignature/apkSignatureReport.js";
-import { createEvidence, type Evidence } from "../../domain/evidence.js";
-import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
+import type { Evidence } from "../../domain/evidence.js";
+import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+import { parseAnalysisInput } from "../AnalysisInput.js";
 
 const OPERATION = "inspect_apk_signature";
 
@@ -42,28 +37,14 @@ export class ApkSignatureService {
       recordEvidence: undefined,
     },
   ): Promise<Result<Evidence, AnalysisError>> {
-    if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-      );
-    const input = inspectApkSignatureInputSchema.safeParse(rawInput);
-    if (!input.success)
-      return err(
-        analysisInputErrorFromIssues(OPERATION, input.error.issues, rawInput, {
-          cause: input.error,
-        }),
-      );
-    if (!isAbsolute(input.data.path))
-      return err(
-        new AnalysisInputError(OPERATION, undefined, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: "Expected an absolute filesystem path on this host.",
-          },
-        ]),
-      );
-    const { detail, view, ...parameters } = input.data;
+    const input = parseAnalysisInput(
+      OPERATION,
+      rawInput,
+      inspectApkSignatureInputSchema,
+      options?.signal,
+    );
+    if (!input.ok) return input;
+    const { detail, view, ...parameters } = input.value;
     if (detail === "summary") {
       const ready = requireAnalysisViewRetention(OPERATION, retention);
       if (!ready.ok) return ready;
@@ -74,7 +55,8 @@ export class ApkSignatureService {
     const report = apkSignatureResultSchema.safeParse(execution.result);
     if (
       !report.success ||
-      report.data.artifact.path !== input.data.path ||
+      report.data.artifact.path !== input.value.path ||
+      execution.subject.path !== input.value.path ||
       !apkSignatureMatchesSubject(report.data.artifact, execution.subject)
     )
       return err(
@@ -84,28 +66,25 @@ export class ApkSignatureService {
         ),
       );
     const completed = completeProviderEvidence(
-      createEvidence(execution.subject, execution.provider, {
-        operation: OPERATION,
-        parameters: { path: input.data.path },
-        result: report.data,
-        ...(execution.rawResult === null
-          ? {}
-          : { rawResult: execution.rawResult }),
-        confidence: "observed",
-        locations: execution.locations,
-        limitations: execution.limitations,
-      }),
+      createAnalysisExecutionEvidence(
+        OPERATION,
+        { path: input.value.path },
+        { ...execution, result: report.data },
+        "observed",
+      ),
       options?.signal,
     );
     if (!completed.ok) return completed;
-    return detail === "summary"
-      ? projectRetainedAnalysis(
-          completed.value,
-          retention,
-          view === undefined
-            ? { kind: "summary" }
-            : { kind: "apk-signature", ...view },
-        )
-      : completed;
+    if (detail !== "summary") return completed;
+    const service = await import("../analysisView/AnalysisViewService.js");
+    const ready = completeProviderEvidence(completed.value, options?.signal);
+    if (!ready.ok) return ready;
+    return service.projectRetainedAnalysis(
+      ready.value,
+      retention,
+      view === undefined
+        ? { kind: "summary" }
+        : { kind: "apk-signature", ...view },
+    );
   }
 }

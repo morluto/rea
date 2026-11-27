@@ -1,29 +1,53 @@
-import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  symlink,
+  truncate,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
+import { phaseGate } from "../../../tests/support/lifecycleHarness.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 
 import {
   createAnalysisExecution,
   type AnalysisOperation,
   type AnalysisOperationPort,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
+import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
 import { EnhancedTools } from "../EnhancedTools.js";
+import {
+  COMMIT_GROUP_MAX_OPEN_MS,
+  COMMIT_GROUP_SIZE,
+  OUTPUT_IO_STREAK_LIMIT,
+} from "./decompileAll.js";
 import { DecompileExport } from "./exportTree.js";
+import { FUNCTION_WAIT_REPORT_INTERVAL_MS } from "./decompileAll.js";
+import { ExportResources } from "./exportResources.js";
+import { selectProcedures, validateDecompileBounds } from "./selection.js";
+import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
+import { OwnedStagedOutput } from "../../filesystem/OwnedStagedOutput.js";
 import {
   composedLimitationBudget,
-  createWorkflowEvidence,
   executeComposedWorkflow,
 } from "../WorkflowEvidence.js";
-import { toolContract } from "../../contracts/toolContracts.js";
 import {
   DECOMPILE_DIRECTORY_INDEX_NAME,
   DECOMPILE_DIRECTORY_JOURNAL_NAME,
   decompileDirectoryIndexSchema,
+  decompileDirectoryInputSchema,
   decompileJournalLineSchema,
 } from "../../contracts/decompileDirectory.js";
 import { createAnalysisProfile } from "../../domain/analysisProfile.js";
+import { createEvidence } from "../../domain/evidence.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
@@ -34,6 +58,7 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok } from "../../domain/result.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const provider = { id: "fixture", name: "Fixture", version: "1" };
 const profile = createAnalysisProfile(provider, { decompiler: "fixture" });
@@ -50,6 +75,7 @@ interface RecordedCall {
   readonly operation: AnalysisOperation;
   readonly procedure: unknown;
   readonly origin: unknown;
+  readonly upcoming?: readonly string[];
 }
 
 const subject = {
@@ -126,6 +152,8 @@ const harness = (options?: {
     Record<string, "error" | "timeout" | "empty" | "null">
   >;
   readonly info?: "ok" | "unavailable" | "error";
+  readonly listLimitations?: readonly string[];
+  readonly listProfile?: typeof profile;
   readonly subject?: boolean;
   readonly mismatch?: string;
   readonly unprofiled?: string;
@@ -147,6 +175,9 @@ const harness = (options?: {
         operation,
         procedure: parameters.procedure,
         origin: execution?.selectorOrigin,
+        ...(execution?.upcomingDecompiles === undefined
+          ? {}
+          : { upcoming: execution.upcomingDecompiles }),
       });
       if (operation === "list_procedures")
         return Promise.resolve(
@@ -158,8 +189,11 @@ const harness = (options?: {
               })),
               provider,
               {
-                analysisProfile: profile,
+                analysisProfile: options?.listProfile ?? profile,
                 ...(options?.subject === false ? {} : { subject }),
+                ...(options?.listLimitations === undefined
+                  ? {}
+                  : { limitations: options.listLimitations }),
               },
             ),
           ),
@@ -325,44 +359,110 @@ describe("decompile_all manifest", () => {
     expect(
       of(calls, "list_procedures").every((call) => call.origin === "provider"),
     ).toBe(true);
-    const evidence = createWorkflowEvidence({
-      target: undefined,
-      operation: "decompile_all",
-      parameters: { output_directory: directory() },
-      result: result.value,
-      upstreamProfile: profile,
-      upstreamLimitations: [],
-    });
-    expect(evidence.evidence_id.length).toBeGreaterThan(0);
-    expect(
-      toolContract("decompile_all").outputSchema.safeParse(evidence).success,
-    ).toBe(true);
-    expect(JSON.stringify(evidence)).not.toContain(sentinel);
   });
 
-  it("records one decompiler failure without aborting or writing that file", async () => {
+  it("attributes failures and continues writing later functions", async () => {
     const { tools } = harness({
-      fail: { "0x2000": "error", "0x3000": "timeout" },
+      fail: { "0x1000": "timeout", "0x2000": "error" },
     });
     const result = await run(tools, directory());
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) throw result.error;
     expect(result.value).toMatchObject({
       counts: { written: 1, failed: 2, requested: 3 },
+      failures: [
+        { address: "0x1000", code: "deadline" },
+        { address: "0x2000", code: "invalid_request" },
+      ],
     });
-    const failures = (
-      result.value as { failures: { address: string; code: string }[] }
-    ).failures;
-    expect(failures.map((failure) => failure.code).sort()).toEqual(
-      ["deadline", "invalid_request"].sort(),
-    );
+    for (const name of ["0x1000.c", "0x2000.c"])
+      await expect(
+        stat(join(directory(), "functions", name)),
+      ).rejects.toMatchObject({ code: "ENOENT" });
     await expect(
-      readFile(join(directory(), "functions/0x2000.c")),
-    ).rejects.toThrow();
-    await expect(
-      readFile(join(directory(), "functions/0x1000.c"), "utf8"),
+      readFile(join(directory(), "functions/0x3000.c"), "utf8"),
     ).resolves.toContain(sentinel);
+  });
+});
+
+describe("decompile_all inventory limitations", () => {
+  const directory = useOutputDirectory();
+
+  const readIndex = async (root: string) =>
+    decompileDirectoryIndexSchema.parse(
+      JSON.parse(
+        await readFile(join(root, DECOMPILE_DIRECTORY_INDEX_NAME), "utf8"),
+      ),
+    );
+
+  it("keeps the latest selection's limitations without attaching them to historical files", async () => {
+    const created = await run(
+      harness({ listLimitations: ["first inventory limitation"] }).tools,
+      directory(),
+      { name: "Foo::", limit: 1 },
+    );
+    if (!created.ok) throw created.error;
+    expect(created.value).toMatchObject({
+      inventory_limitations: ["first inventory limitation"],
+      counts: { selected: 2, excluded: 1, requested: 1, remaining: 1 },
+    });
+    const firstIndex = await readIndex(directory());
+    expect(firstIndex.latest_run).toEqual({
+      resume: false,
+      selected: 2,
+      excluded: 1,
+      selection: {
+        name: "Foo::",
+        namespace: null,
+        address_start: null,
+        address_end: null,
+        limit: 1,
+      },
+      inventory_limitations: ["first inventory limitation"],
+    });
+    expect(firstIndex.limitations).toEqual([]);
+    expect(firstIndex.functions).toHaveLength(1);
+    expect(firstIndex.functions[0]?.limitations).toContain(
+      "terminal call may cut the body",
+    );
+    expect(firstIndex.functions[0]?.limitations).not.toContain(
+      "first inventory limitation",
+    );
+
+    const resumed = await run(
+      harness({ listLimitations: ["second inventory limitation"] }).tools,
+      directory(),
+      { resume: true, name: "Bar::" },
+    );
+    if (!resumed.ok) throw resumed.error;
+    expect(resumed.value).toMatchObject({
+      inventory_limitations: ["second inventory limitation"],
+      counts: { selected: 1, excluded: 2, requested: 1, remaining: 0 },
+    });
+    const resumedIndex = await readIndex(directory());
+    expect(resumedIndex.latest_run).toMatchObject({
+      resume: true,
+      selected: 1,
+      excluded: 2,
+      selection: { name: "Bar::" },
+      inventory_limitations: ["second inventory limitation"],
+    });
+    expect(
+      resumedIndex.functions.map((record) => record.address).sort(),
+    ).toEqual(["0x1000", "0x3000"]);
+    expect(
+      resumedIndex.functions.every((record) =>
+        record.limitations?.includes("terminal call may cut the body"),
+      ),
+    ).toBe(true);
+    expect(
+      resumedIndex.functions.every(
+        (record) =>
+          !record.limitations?.includes("first inventory limitation") &&
+          !record.limitations?.includes("second inventory limitation"),
+      ),
+    ).toBe(true);
+    expect(resumedIndex.limitations).toEqual([]);
   });
 });
 
@@ -370,21 +470,22 @@ describe("decompile_all external functions", () => {
   const directory = useOutputDirectory();
 
   it("reports an external function as external without requesting its pseudocode", async () => {
-    const { calls, tools } = harness({ external: ["0x2000"] });
+    const { calls, tools } = harness({ external: ["0x1000", "0x2000"] });
     const result = await run(tools, directory());
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value).toMatchObject({
-      counts: { requested: 3, written: 2, failed: 0, external: 1 },
+      counts: { requested: 3, written: 1, failed: 0, external: 2 },
       failures: [],
     });
     expect(
       of(calls, "procedure_pseudo_code").map((call) => call.procedure),
-    ).not.toContain("0x2000");
-    await expect(
-      readFile(join(directory(), "functions/0x2000.c")),
-    ).rejects.toThrow();
+    ).toEqual(["0x3000"]);
+    for (const address of ["0x1000", "0x2000"])
+      await expect(
+        stat(join(directory(), "functions", `${address}.c`)),
+      ).rejects.toMatchObject({ code: "ENOENT" });
     const index = decompileDirectoryIndexSchema.parse(
       JSON.parse(
         await readFile(
@@ -401,11 +502,6 @@ describe("decompile_all external functions", () => {
         body: { available: true, ranges: [], non_contiguous: false },
       },
     );
-  });
-
-  it("skips a recorded external function on resume without asking the provider again", async () => {
-    const { calls, tools } = harness({ external: ["0x1000", "0x2000"] });
-    expect((await run(tools, directory())).ok).toBe(true);
     calls.length = 0;
     const resumed = await run(tools, directory(), { resume: true, limit: 1 });
 
@@ -417,24 +513,6 @@ describe("decompile_all external functions", () => {
     });
     expect(of(calls, "procedure_info")).toEqual([]);
     expect(of(calls, "procedure_pseudo_code")).toEqual([]);
-  });
-
-  it("reports a conflicting file at a written function's path when a resume finds it external", async () => {
-    expect((await run(harness().tools, directory())).ok).toBe(true);
-    await writeFile(join(directory(), "functions/0x2000.c"), "replaced\n");
-
-    const resumed = await run(
-      harness({ external: ["0x2000"] }).tools,
-      directory(),
-      { resume: true },
-    );
-
-    expect(resumed.ok).toBe(true);
-    if (!resumed.ok) return;
-    expect(resumed.value).toMatchObject({
-      counts: { requested: 1, skipped: 2, failed: 1, external: 0 },
-      failures: [{ address: "0x2000", code: "output_exists" }],
-    });
   });
 
   it("resumes an import recorded as invalid pseudocode by an earlier version as external", async () => {
@@ -499,6 +577,10 @@ describe("decompile_all external functions", () => {
         expect(resumed.error.userMessage).toContain("not a compatible export");
     },
   );
+});
+
+describe("decompile_all pseudocode absence", () => {
+  const directory = useOutputDirectory();
 
   it("reports a null pseudocode result as no pseudocode, not as text of the wrong type", async () => {
     const { tools } = harness({ fail: { "0x2000": "null" } });
@@ -511,6 +593,61 @@ describe("decompile_all external functions", () => {
       failures: [{ address: "0x2000", code: "no_pseudocode" }],
     });
   });
+
+  it.each([
+    ["fits", "Flow exceeded maximum instructions"],
+    ["exceeds the inline budget", "x".repeat(4_096)],
+  ] as const)(
+    "keeps the provider's null-pseudocode reason on the inline row while it %s",
+    async (_case, reason) => {
+      const { port } = harness();
+      const absence = { kind: "provider-failure", reason } as const;
+      const reporting: AnalysisOperationPort = {
+        execute: (operation, parameters, options) =>
+          operation === "procedure_pseudo_code" &&
+          parameters.procedure === "0x2000"
+            ? Promise.resolve(
+                ok(
+                  createAnalysisExecution(null, provider, {
+                    analysisProfile: profile,
+                    pseudocodeAbsence: absence,
+                  }),
+                ),
+              )
+            : port.execute(operation, parameters, options),
+      };
+      const result = await run(new EnhancedTools(reporting), directory());
+      if (!result.ok) throw result.error;
+      const [failure] = (
+        result.value as { failures: Record<string, unknown>[] }
+      ).failures;
+      expect(failure).toMatchObject({
+        address: "0x2000",
+        code: "no_pseudocode",
+      });
+      // Name goes first, then the reason; the index always keeps both.
+      if (reason.length < 100)
+        expect(failure).toMatchObject({
+          name: "Foo::helper",
+          pseudocode_absence: absence,
+        });
+      else {
+        expect(failure).not.toHaveProperty("name");
+        expect(failure).not.toHaveProperty("pseudocode_absence");
+      }
+      const index = decompileDirectoryIndexSchema.parse(
+        JSON.parse(
+          await readFile(
+            join(directory(), DECOMPILE_DIRECTORY_INDEX_NAME),
+            "utf8",
+          ),
+        ),
+      );
+      expect(
+        index.functions.find(({ address }) => address === "0x2000"),
+      ).toMatchObject({ pseudocode_absence: absence });
+    },
+  );
 });
 
 describe("decompile_all resume", () => {
@@ -545,7 +682,7 @@ describe("decompile_all resume", () => {
     const file = join(directory(), "functions/0x1000.c");
     await writeFile(file, "tampered");
     await rm(join(directory(), "functions/0x2000.c"));
-    const next = harness();
+    const next = harness({ external: ["0x1000"] });
     const resumed = await run(next.tools, directory(), { resume: true });
 
     expect(resumed.ok).toBe(true);
@@ -557,12 +694,12 @@ describe("decompile_all resume", () => {
     expect(
       of(next.calls, "procedure_pseudo_code").map((call) => call.procedure),
     ).toEqual(["0x2000"]);
-    const failures = (
-      resumed.value as { failures: { address: string; code: string }[] }
-    ).failures;
-    expect(failures).toEqual([
-      expect.objectContaining({ address: "0x1000", code: "output_exists" }),
-    ]);
+    expect(
+      of(next.calls, "procedure_info").map((call) => call.procedure),
+    ).toEqual(["0x2000"]);
+    expect(resumed.value).toMatchObject({
+      failures: [{ address: "0x1000", code: "output_exists" }],
+    });
     const index = decompileDirectoryIndexSchema.parse(
       JSON.parse(
         await readFile(
@@ -602,27 +739,248 @@ describe("decompile_all resume", () => {
       await readFile(join(directory(), "functions/0x1000.c"), "utf8"),
     ).toContain(sentinel);
   });
+
+  it("names the resume identity that differs instead of directing callers to the input schema", async () => {
+    expect((await run(harness().tools, directory())).ok).toBe(true);
+
+    const resumed = await run(
+      harness({ listProfile: otherProfile }).tools,
+      directory(),
+      { resume: true },
+    );
+
+    expect(resumed.ok).toBe(false);
+    if (resumed.ok) return;
+    expect(resumed.error).toBeInstanceOf(AnalysisInputError);
+    if (!(resumed.error instanceof AnalysisInputError)) return;
+    expect(resumed.error.userMessage).toBe(
+      "The decompile journal does not match the current analysis profile digest.",
+    );
+    expect(resumed.error.conformsToInputContract).toBe(true);
+    expect(resumed.error.remediationAction).toContain("new output directory");
+    expect(resumed.error.issues).toEqual([
+      expect.objectContaining({
+        path: ["output_directory"],
+        expected: expect.objectContaining({
+          analysis_profile_digest: profile.digest,
+        }),
+        observed: expect.objectContaining({
+          analysis_profile_digest: otherProfile.digest,
+        }),
+      }),
+    ]);
+  });
+});
+
+describe("decompile_all retained body coverage", () => {
+  const directory = useOutputDirectory();
+  const limitationsOf = (value: JsonValue): readonly string[] =>
+    (value as { limitations: string[] }).limitations;
+  const unavailableReasons = (index: {
+    readonly functions: readonly {
+      readonly body: { readonly available: boolean; readonly reason?: string };
+    }[];
+  }): string[] =>
+    index.functions.flatMap(({ body }) =>
+      !body.available && body.reason !== undefined ? [body.reason] : [],
+    );
+  const indexOf = async () =>
+    decompileDirectoryIndexSchema.parse(
+      JSON.parse(
+        await readFile(
+          join(directory(), DECOMPILE_DIRECTORY_INDEX_NAME),
+          "utf8",
+        ),
+      ),
+    );
+
+  it("keeps the caveat of retained records through no-op and empty resumes", async () => {
+    const created = await run(
+      harness({ info: "unavailable" }).tools,
+      directory(),
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const createdLimitations = limitationsOf(created.value);
+    // One caveat counts the retained records and repeats their shared reason.
+    expect(createdLimitations).toHaveLength(1);
+    const createdReason = unavailableReasons(await indexOf())[0];
+    expect(createdReason).toBeDefined();
+    expect(createdLimitations[0]).toMatch(/^3 exported function record/u);
+    expect(createdLimitations[0]).toContain(createdReason);
+    const file = join(directory(), "functions/0x1000.c");
+    const before = await readFile(file, "utf8");
+
+    for (const filter of [{}, { name: "NoSuchFunction" }]) {
+      const resumed = harness();
+      const result = await run(resumed.tools, directory(), {
+        resume: true,
+        ...filter,
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value).toMatchObject({ counts: { requested: 0 } });
+      expect(limitationsOf(result.value)).toEqual(createdLimitations);
+      expect((await indexOf()).limitations).toEqual(createdLimitations);
+      expect(of(resumed.calls, "procedure_info")).toHaveLength(0);
+    }
+    expect(await readFile(file, "utf8")).toBe(before);
+    expect(
+      (await indexOf()).functions.map((record) => record.body.available),
+    ).toEqual([false, false, false]);
+  });
+
+  it("counts retained and new unknown bodies and drops the caveat once every body is known", async () => {
+    expect(
+      (await run(harness({ info: "unavailable" }).tools, directory())).ok,
+    ).toBe(true);
+    await rm(join(directory(), "functions/0x1000.c"));
+    const mixed = await run(harness({ info: "error" }).tools, directory(), {
+      resume: true,
+    });
+    expect(mixed.ok).toBe(true);
+    if (!mixed.ok) return;
+    expect(mixed.value).toMatchObject({
+      counts: { written: 1, skipped: 2 },
+    });
+    // Differing reasons are counted together without naming either one.
+    const reasons = new Set(unavailableReasons(await indexOf()));
+    expect(reasons.size).toBe(2);
+    const mixedCaveats = limitationsOf(mixed.value).filter((limitation) =>
+      limitation.startsWith("3 exported function record"),
+    );
+    expect(mixedCaveats).toHaveLength(1);
+    for (const reason of reasons) expect(mixedCaveats[0]).not.toContain(reason);
+
+    for (const address of ["0x1000", "0x2000", "0x3000"])
+      await rm(join(directory(), `functions/${address}.c`));
+    const known = await run(harness().tools, directory(), { resume: true });
+    expect(known.ok).toBe(true);
+    if (!known.ok) return;
+    expect(known.value).toMatchObject({ counts: { written: 3 } });
+    expect(limitationsOf(known.value).join("\n")).not.toContain("body");
+    expect((await indexOf()).limitations).toEqual([]);
+  });
 });
 
 describe("decompile_all filters and layout", () => {
   const directory = useOutputDirectory();
 
   it("filters by name, namespace, and address and reports the excluded count", async () => {
-    const { tools } = harness();
+    const { tools } = harness({
+      procedures: [
+        { address: "0x2000", name: "Foo::helper" },
+        { address: "0x1fff", name: "Foo::early_helper" },
+        { address: "0x2100", name: "Foo::Helper" },
+        { address: "0x2200", name: "Bar::Foo::helper" },
+        { address: "0x3000", name: "Foo::late_helper" },
+      ],
+    });
     const result = await run(tools, directory(), {
       name: "helper",
       namespace: "Foo::",
-      address_start: "0x1500",
+      address_start: "0x2000",
       address_end: "0x2500",
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value).toMatchObject({
-      counts: { selected: 1, excluded: 2, written: 1 },
+      counts: { selected: 1, excluded: 4, written: 1 },
     });
     expect(
       await readFile(join(directory(), "functions/0x2000.c"), "utf8"),
     ).toContain("Foo::helper");
+  });
+
+  it("names the functions it will decompile next on the first request of a window", async () => {
+    const first = harness();
+    expect((await run(first.tools, directory(), { limit: 1 })).ok).toBe(true);
+    // One function is not a batch, so the limit leaves nothing to prepare.
+    expect(
+      of(first.calls, "procedure_pseudo_code").map((call) => call.upcoming),
+    ).toEqual([undefined]);
+
+    const second = harness();
+    expect((await run(second.tools, directory(), { resume: true })).ok).toBe(
+      true,
+    );
+    // The verified file is skipped; the remaining functions form one window,
+    // named once, in the order they will be requested.
+    expect(
+      of(second.calls, "procedure_pseudo_code").map((call) => [
+        call.procedure,
+        call.upcoming,
+      ]),
+    ).toEqual([
+      ["0x2000", ["0x2000", "0x3000"]],
+      ["0x3000", undefined],
+    ]);
+  });
+
+  it("names only the functions a resume will request, including deleted files", async () => {
+    const procedures = ["0x1000", "0x2000", "0x3000", "0x4000"].map(
+      (address, index) => ({ address, name: `fn_${index}` }),
+    );
+    const first = harness({ procedures });
+    expect((await run(first.tools, directory(), { limit: 2 })).ok).toBe(true);
+    // Both journaled writes lose their files, so the resume requests them
+    // again and its limit is spent before the unwritten functions.
+    await rm(join(directory(), "functions/0x1000.c"));
+    await rm(join(directory(), "functions/0x2000.c"));
+
+    const resumed = harness({ procedures });
+    expect(
+      (await run(resumed.tools, directory(), { resume: true, limit: 2 })).ok,
+    ).toBe(true);
+    expect(
+      of(resumed.calls, "procedure_pseudo_code").map((call) => [
+        call.procedure,
+        call.upcoming,
+      ]),
+    ).toEqual([
+      ["0x1000", ["0x1000", "0x2000"]],
+      ["0x2000", undefined],
+    ]);
+  });
+
+  it("names consecutive windows that cover every requested function once", async () => {
+    const procedures = Array.from({ length: 40 }, (_, index) => ({
+      address: `0x${(0x1000 + index * 0x10).toString(16)}`,
+      name: `fn_${index}`,
+    }));
+    const addresses = procedures.map((procedure) => procedure.address);
+    const windows = (calls: readonly RecordedCall[]) =>
+      of(calls, "procedure_pseudo_code").flatMap((call) =>
+        call.upcoming === undefined ? [] : [[call.procedure, call.upcoming]],
+      );
+
+    const whole = harness({ procedures });
+    expect((await run(whole.tools, directory())).ok).toBe(true);
+    expect(windows(whole.calls)).toEqual([
+      [addresses[0], addresses.slice(0, 32)],
+      [addresses[32], addresses.slice(32)],
+    ]);
+
+    // The caller's limit ends the second window, not a full window size.
+    const limited = harness({ procedures });
+    expect(
+      (await run(limited.tools, `${directory()}-limited`, { limit: 34 })).ok,
+    ).toBe(true);
+    expect(windows(limited.calls)).toEqual([
+      [addresses[0], addresses.slice(0, 32)],
+      [addresses[32], addresses.slice(32, 34)],
+    ]);
+
+    // A function found to be external sends no decompile request, so the
+    // next request carries the rest of its window, naming itself first.
+    const external = harness({ procedures, external: [addresses[0]!] });
+    expect((await run(external.tools, `${directory()}-external`)).ok).toBe(
+      true,
+    );
+    expect(windows(external.calls)).toEqual([
+      [addresses[1], addresses.slice(1, 32)],
+      [addresses[32], addresses.slice(32)],
+    ]);
   });
 
   it("stops at a limit and continues in address order on resume", async () => {
@@ -789,6 +1147,93 @@ describe("decompile_all partial results", () => {
     expect(JSON.stringify(index)).not.toContain(sentinel);
   });
 
+  it("names the function and provider request it is waiting on, never its own writes", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const decompiling = phaseGate();
+    const committing = phaseGate();
+    const base = harness({
+      procedures: [
+        { address: "0x1000", name: "quick" },
+        { address: "0x2000", name: "slow" },
+      ],
+    });
+    const port: AnalysisOperationPort = {
+      execute: async (operation, parameters, execution) => {
+        if (
+          operation === "procedure_pseudo_code" &&
+          parameters.procedure === "0x2000"
+        )
+          await decompiling.hold();
+        return base.port.execute(operation, parameters, execution);
+      },
+    };
+    const commit = DecompileExport.prototype.commitFunctionFile;
+    const commitSpy = vi
+      .spyOn(DecompileExport.prototype, "commitFunctionFile")
+      .mockImplementation(async function (
+        this: DecompileExport,
+        relativePath,
+        bytes,
+        ...rest
+      ) {
+        if (relativePath.includes("2000")) await committing.hold();
+        return commit.call(this, relativePath, bytes, ...rest);
+      });
+    const updates: unknown[] = [];
+    const running = new EnhancedTools(port).execute(
+      "decompile_all",
+      { output_directory: directory() },
+      undefined,
+      {
+        report: (update) => {
+          updates.push(update);
+          return Promise.reject(new Error("observer failed"));
+        },
+      },
+    );
+    try {
+      await withVerifierCleanup(async () => {
+        await decompiling.reached(running, "slow function decompile");
+        // The quick function settled before one interval and reported nothing.
+        expect(updates).toEqual([]);
+        await vi.advanceTimersByTimeAsync(FUNCTION_WAIT_REPORT_INTERVAL_MS * 2);
+        expect(updates).toEqual([
+          {
+            phase: "decompile_all",
+            completed: 1,
+            total: 2,
+            message: expect.stringMatching(
+              /^Waiting for the provider to decompile slow at 0x2000 \(\d+s elapsed\); function 2 of 2 selected\.$/u,
+            ),
+          },
+          expect.objectContaining({ phase: "decompile_all", completed: 1 }),
+        ]);
+        decompiling.release();
+        // A slow output volume is the export's own wait, not the provider's.
+        await committing.reached(running, "slow function file commit");
+        await vi.advanceTimersByTimeAsync(FUNCTION_WAIT_REPORT_INTERVAL_MS * 2);
+        expect(updates).toHaveLength(2);
+        committing.release();
+        const result = await running;
+        // A failing observer does not change the export.
+        expect(result.ok ? result.value : result.error).toMatchObject({
+          counts: { written: 2, failed: 0 },
+        });
+        await vi.advanceTimersByTimeAsync(FUNCTION_WAIT_REPORT_INTERVAL_MS * 2);
+        expect(updates).toHaveLength(2);
+      }, [
+        async () => {
+          decompiling.release();
+          committing.release();
+          await running;
+        },
+      ]);
+    } finally {
+      commitSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it("leaves committed files in place when the caller cancels", async () => {
     const controller = new AbortController();
     const procedures = [
@@ -879,7 +1324,7 @@ describe("decompile_all partial results", () => {
     if (!result.ok)
       expect(result.error.userMessage).toContain("before address start");
     expect(calls).toHaveLength(0);
-    await expect(readFile(directory())).rejects.toThrow();
+    await expect(stat(directory())).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
 
@@ -903,6 +1348,17 @@ describe("decompile_all caller coordinates", () => {
       expect(result.value).toMatchObject({
         counts: { selected: 1, excluded: 2, written: 1 },
       });
+    const index = decompileDirectoryIndexSchema.parse(
+      JSON.parse(
+        await readFile(
+          join(directory(), DECOMPILE_DIRECTORY_INDEX_NAME),
+          "utf8",
+        ),
+      ),
+    );
+    expect(index.functions).toMatchObject([
+      { address: "RAM%3Aoverlay:0xabcd", name: "in_range", status: "written" },
+    ]);
   });
 });
 
@@ -1074,22 +1530,34 @@ describe("decompile_all identity and recovery", () => {
 
   it("resumes after a torn final journal line and keeps the journal parseable", async () => {
     const first = harness();
-    expect((await run(first.tools, directory(), { limit: 1 })).ok).toBe(true);
+    const seeded = await run(first.tools, directory(), { limit: 1 });
+    if (!seeded.ok) throw seeded.error;
     const journalPath = join(directory(), DECOMPILE_DIRECTORY_JOURNAL_NAME);
+    const original = await readFile(journalPath, "utf8");
+    const record = decompileJournalLineSchema.parse(
+      JSON.parse(original.trimEnd().split("\n").at(-1)!),
+    );
+    if (record.kind !== "function")
+      throw new Error("Expected a function record");
+    // Resume must decode a committed record even when it spans read windows.
+    const longRecord = JSON.stringify({ ...record, name: "é".repeat(40_000) });
     await writeFile(
       journalPath,
-      `${await readFile(journalPath, "utf8")}{"kind":"function","name":"é\u00e9`,
+      `${original}${longRecord}\n{"kind":"function","name":"éé`,
     );
+    // A sparse unfinished append crosses the former whole-file read cap
+    // without requiring the test to materialize the discarded bytes.
+    await truncate(journalPath, 129 * 1024 * 1024);
     const stray = join(directory(), ".tmp-0123456789abcdef.c");
     await writeFile(stray, "not owned by this run");
     const resumed = await run(harness().tools, directory(), { resume: true });
-    expect(resumed.ok).toBe(true);
-    if (!resumed.ok) return;
+    if (!resumed.ok) throw resumed.error;
     expect(resumed.value).toMatchObject({
       counts: { written: 2, skipped: 1, failed: 0 },
     });
     const text = await readFile(journalPath, "utf8");
     expect(text.endsWith("\n")).toBe(true);
+    expect(text).toContain(`${longRecord}\n`);
     for (const line of text.trimEnd().split("\n"))
       expect(
         decompileJournalLineSchema.safeParse(JSON.parse(line)).success,
@@ -1119,52 +1587,6 @@ describe("decompile_all untrusted directory and provider facts", () => {
     expect(resumed.ok).toBe(false);
     expect(of(next.calls, "procedure_pseudo_code")).toHaveLength(0);
     expect(await readFile(outside, "utf8")).toBe(torn);
-  });
-
-  it("does not take body ranges from procedure_info for another entry point", async () => {
-    const port: AnalysisOperationPort = {
-      execute: (operation) => {
-        if (operation === "list_procedures")
-          return Promise.resolve(
-            ok(
-              createAnalysisExecution(
-                [{ address: "0x1000", value: "main" }],
-                provider,
-                { analysisProfile: profile, subject },
-              ),
-            ),
-          );
-        if (operation === "procedure_info")
-          return Promise.resolve(
-            ok(
-              createAnalysisExecution(infoFor("0x9000"), provider, {
-                analysisProfile: profile,
-              }),
-            ),
-          );
-        return Promise.resolve(
-          ok(
-            createAnalysisExecution(
-              `int main(void) { ${sentinel} }`,
-              provider,
-              {
-                analysisProfile: profile,
-              },
-            ),
-          ),
-        );
-      },
-    };
-    const result = await new EnhancedTools(port).execute("decompile_all", {
-      output_directory: directory(),
-    });
-    expect(result.ok).toBe(true);
-    const text = await readFile(
-      join(directory(), "functions/0x1000.c"),
-      "utf8",
-    );
-    expect(text).toContain("// body: unavailable");
-    expect(text).not.toContain("0x9000");
   });
 
   it("keeps a function's file name after a failed retry that recorded no path", async () => {
@@ -1285,9 +1707,9 @@ describe("decompile_all journal recovery", () => {
     expect(limitations).toContainEqual(
       expect.stringContaining("terminal call may cut the body"),
     );
-    expect(limitations.at(-1)).toBe(
-      "33 per-item provider limitation observations were omitted from this answer; each function's record in decompile-index.json keeps the caveats of the observations it used.",
-    );
+    expect(limitations.at(-1)).toContain("33 per-item provider limitation");
+    expect(limitations.at(-1)).toContain("decompile-index.json");
+    expect(limitations.at(-1)).toContain("decompile-journal.jsonl");
     const last = await readFile(
       join(directory(), "functions/0x1130.c"),
       "utf8",
@@ -1387,6 +1809,14 @@ describe("decompile_all late cancellation", () => {
     if (result.ok) return;
     expect(result.error).toBeInstanceOf(AnalysisCancelledError);
     expect(result.error.cause).toBe(reason);
+    expect(
+      projectAnalysisError(result.error).details?.diagnostics,
+    ).toMatchObject({
+      published_output: {
+        output_directory: directory(),
+        index_path: join(directory(), DECOMPILE_DIRECTORY_INDEX_NAME),
+      },
+    });
     // Finalization still completed, so the export resumes without new work.
     vi.restoreAllMocks();
     const next = harness();
@@ -1446,6 +1876,7 @@ describe("decompile_all cancelled publish loop", () => {
       controller.signal,
     );
     expect(result).toEqual(err(failure));
+    expect(failure.diagnostics?.published_output).toBeUndefined();
   });
 
   it("keeps a journal close failure primary when cancellation stops the publish loop", async () => {
@@ -1465,6 +1896,15 @@ describe("decompile_all cancelled publish loop", () => {
       controller.signal,
     );
     expect(result).toEqual(err(failure));
+    expect(projectAnalysisError(failure).details?.diagnostics).toMatchObject({
+      published_output: {
+        output_directory: directory(),
+        index_path: join(directory(), DECOMPILE_DIRECTORY_INDEX_NAME),
+      },
+    });
+    await expect(
+      readFile(join(directory(), DECOMPILE_DIRECTORY_INDEX_NAME), "utf8"),
+    ).resolves.toContain("functions");
   });
 
   it("reports the caller's reason when cancellation stops the publish loop and finalization succeeds", async () => {
@@ -1538,51 +1978,36 @@ describe("decompile_all cancelled publish loop", () => {
 describe("decompile_all output directory lease", () => {
   const directory = useOutputDirectory();
 
-  /** A port that holds the first decompile until the test lets it finish. */
-  const heldAtFirstDecompile = () => {
+  it("refuses a second run on a directory another run is exporting, then resumes after it", async () => {
     const { port } = harness();
-    let release = (): void => undefined;
-    const released = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    let reached = (): void => undefined;
-    const reachedFirst = new Promise<void>((resolve) => {
-      reached = resolve;
-    });
-    let held = false;
-    const holding: AnalysisOperationPort = {
+    const decompiling = phaseGate();
+    const holder = new EnhancedTools({
       execute: async (operation, parameters, execution) => {
-        if (operation === "procedure_pseudo_code" && !held) {
-          held = true;
-          reached();
-          await released;
-        }
+        if (operation === "procedure_pseudo_code") await decompiling.hold();
         return port.execute(operation, parameters, execution);
       },
-    };
-    return { tools: new EnhancedTools(holding), reachedFirst, release };
-  };
-
-  it("refuses a second run on a directory another run is exporting, then resumes after it", async () => {
-    const first = heldAtFirstDecompile();
-    const exporting = run(first.tools, directory());
-    await first.reachedFirst;
-
-    const competing = harness();
-    const refused = await run(competing.tools, directory(), { resume: true });
-    expect(refused.ok).toBe(false);
-    if (refused.ok) return;
-    // Busy is retryable once the holder finishes, unlike invalid input.
-    expect(refused.error).toBeInstanceOf(AnalysisResourceConstraintError);
-    expect(refused.error).toMatchObject({
-      resource: "capacity",
-      retryable: true,
-      reportedLimits: { holder_process_id: process.pid },
     });
-    // The refused run neither decompiled nor appended to the journal.
-    expect(of(competing.calls, "procedure_pseudo_code")).toHaveLength(0);
+    const exporting = run(holder, directory());
+    await withVerifierCleanup(async () => {
+      await decompiling.reached(exporting, "first decompile with lease held");
+      const competing = harness();
+      const refused = await run(competing.tools, directory(), { resume: true });
+      if (refused.ok)
+        throw new Error("The competing export acquired the held lease");
+      expect(refused.error).toBeInstanceOf(AnalysisResourceConstraintError);
+      expect(refused.error).toMatchObject({
+        resource: "capacity",
+        retryable: true,
+        reportedLimits: { holder_process_id: process.pid },
+      });
+      expect(of(competing.calls, "procedure_pseudo_code")).toHaveLength(0);
+    }, [
+      async () => {
+        decompiling.release();
+        await exporting;
+      },
+    ]);
 
-    first.release();
     const exported = await exporting;
     expect(exported.ok).toBe(true);
     const journal = (
@@ -1686,6 +2111,38 @@ describe("decompile_all repeated output failures", () => {
     ).toBe("written");
   });
 
+  it("keeps counting output_io failures across external functions", async () => {
+    const mixed = Array.from({ length: 11 }, (_, index) => ({
+      address: `0x${(0x1000 + index * 0x10).toString(16)}`,
+      name: `f${index.toString()}`,
+    }));
+    const at = (parity: number) =>
+      mixed.filter((_, index) => index % 2 === parity);
+    expect(
+      (await run(harness({ procedures: mixed }).tools, directory())).ok,
+    ).toBe(true);
+    // Locals cannot be read back; externals have no file to resume from.
+    await blockFiles(at(0).map(({ address }) => address));
+    for (const { address } of at(1))
+      await rm(join(directory(), `functions/${address}.c`));
+    const stopped = await run(
+      harness({
+        procedures: mixed,
+        external: at(1).map(({ address }) => address),
+      }).tools,
+      directory(),
+      { resume: true },
+    );
+    expect(stopped.ok).toBe(false);
+    if (stopped.ok) return;
+    expect(stopped.error).toBeInstanceOf(AnalysisOutputError);
+    expect(stopped.error.diagnostics).toMatchObject({
+      failed: 5,
+      external: 4,
+      consecutive_output_io: 5,
+    });
+  });
+
   it("does not stop when a verified file interrupts the failures", async () => {
     expect((await run(harness({ procedures }).tools, directory())).ok).toBe(
       true,
@@ -1702,5 +2159,1300 @@ describe("decompile_all repeated output failures", () => {
     expect(resumed.value).toMatchObject({
       counts: { failed: 7, skipped: 1, remaining: 0 },
     });
+  });
+});
+
+describe("decompile_all provider cleanup ownership", () => {
+  const directory = useOutputDirectory();
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each([
+    ["procedure_info", false],
+    ["procedure_info", true],
+    ["procedure_pseudo_code", false],
+    ["procedure_pseudo_code", true],
+  ] as const)(
+    "retains %s cleanup and committed work with caller aborted=%s",
+    async (operation, abort) => {
+      const { port } = harness();
+      const controller = new AbortController();
+      const cause = new Error("provider cleanup stopped");
+      const callerReason = new Error("caller stopped");
+      const partial = createEvidence(subject, provider, {
+        operation,
+        parameters: { procedure: "0x2000" },
+        result:
+          operation === "procedure_info"
+            ? infoFor("0x2000")
+            : "int partial(void) {}",
+        analysisProfile: profile,
+        confidence: "observed",
+      });
+      const failure = new AnalysisCancelledError(operation, {
+        cause,
+        partialObservation: partial,
+        capturedOutput: {
+          stdout: "retained provider output",
+          stderr: "",
+          truncated: false,
+        },
+        cleanup: {
+          reason: "descriptor close denied",
+          resources: ["provider descriptor"],
+        },
+      });
+      const lease = new AnalysisCleanupLease(
+        async () => undefined,
+        ["provider descriptor"],
+      );
+      lease.bindCleanupError(failure);
+      const observed: AnalysisOperation[] = [];
+      const failing: AnalysisOperationPort = {
+        execute: (selected, parameters, options) => {
+          observed.push(selected);
+          if (selected === operation && parameters.procedure === "0x2000") {
+            if (abort) controller.abort(callerReason);
+            return Promise.resolve(err(failure));
+          }
+          return port.execute(selected, parameters, options);
+        },
+      };
+      const result = await run(
+        new EnhancedTools(failing),
+        directory(),
+        {},
+        controller.signal,
+      );
+      expect(result).toEqual(err(failure));
+      expect(failure.cause).toBe(cause);
+      if (abort) {
+        expect(failure.secondaryFailures).toHaveLength(1);
+        expect(failure.secondaryFailures[0]).toBeInstanceOf(
+          AnalysisCancelledError,
+        );
+        expect(failure.secondaryFailures[0]?.cause).toBe(callerReason);
+      } else expect(failure.secondaryFailures).toHaveLength(0);
+      expect(failure.partialObservation).toBe(partial);
+      expect(failure.diagnostics?.published_output).toEqual({
+        output_directory: directory(),
+        index_path: join(directory(), DECOMPILE_DIRECTORY_INDEX_NAME),
+      });
+      expect(failure.capturedOutput?.stdout).toBe("retained provider output");
+      expect(failure.cleanupIncomplete).toBe(true);
+      expect(observed.at(-1)).toBe(operation);
+      const index = decompileDirectoryIndexSchema.parse(
+        JSON.parse(
+          await readFile(
+            join(directory(), DECOMPILE_DIRECTORY_INDEX_NAME),
+            "utf8",
+          ),
+        ),
+      );
+      expect(index.functions).toHaveLength(1);
+      expect(index.functions[0]).toMatchObject({
+        address: "0x1000",
+        status: "written",
+      });
+      await expect(
+        readFile(join(directory(), "functions", "0x1000.c"), "utf8"),
+      ).resolves.toContain(sentinel);
+      await lease.release();
+      expect(failure.cleanupIncomplete).toBe(false);
+    },
+  );
+});
+
+describe("decompile_all mixed cleanup ownership", () => {
+  const directory = useOutputDirectory();
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each([false, true])(
+    "waits for provider and journal cleanup owners with a composed provider failure: %s",
+    async (composed) => {
+      const { port } = harness();
+      const providerCleanupFailure = new AnalysisOutputError(
+        "procedure_info",
+        "provider cleanup failed",
+        {
+          cleanup: {
+            reason: "provider close denied",
+            resources: ["provider descriptor"],
+          },
+        },
+      );
+      const closeFailure = new AnalysisOutputError(
+        "decompile_all",
+        "journal cleanup failed",
+        {
+          cleanup: {
+            reason: "journal close denied",
+            resources: ["journal descriptor"],
+          },
+        },
+      );
+      const providerLease = new AnalysisCleanupLease(
+        async () => undefined,
+        ["provider descriptor"],
+      );
+      const journalLease = new AnalysisCleanupLease(
+        async () => undefined,
+        ["journal descriptor"],
+      );
+      providerLease.bindCleanupError(providerCleanupFailure);
+      const providerPrimary = new AnalysisOutputError(
+        "procedure_info",
+        "provider operation failed",
+        {
+          diagnostics: { provider_fact: "preserved" },
+        },
+      );
+      const providerFailure = composed
+        ? analysisErrorWithCleanupFailure(
+            providerPrimary,
+            providerCleanupFailure,
+            "procedure_info",
+          ).bindCleanupDependencies([providerCleanupFailure])
+        : providerCleanupFailure;
+      journalLease.bindCleanupError(closeFailure);
+      const close = DecompileExport.prototype.close;
+      vi.spyOn(DecompileExport.prototype, "close").mockImplementation(
+        async function (this: DecompileExport) {
+          await close.call(this);
+          return err(closeFailure);
+        },
+      );
+      const failing: AnalysisOperationPort = {
+        execute: (operation, parameters, options) =>
+          operation === "procedure_info"
+            ? Promise.resolve(err(providerFailure))
+            : port.execute(operation, parameters, options),
+      };
+      const result = await run(new EnhancedTools(failing), directory());
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.cleanupPrimary).toBe(providerFailure);
+      const receipt = {
+        published_output: {
+          output_directory: directory(),
+          index_path: join(directory(), DECOMPILE_DIRECTORY_INDEX_NAME),
+        },
+      };
+      expect(
+        projectAnalysisError(result.error).details?.diagnostics,
+      ).toMatchObject(receipt);
+      expect(result.error.cleanupResources).toEqual(
+        expect.arrayContaining(["provider descriptor", "journal descriptor"]),
+      );
+      await journalLease.release();
+      expect(closeFailure.cleanupIncomplete).toBe(false);
+      expect(result.error.cleanupIncomplete).toBe(true);
+      await providerLease.release();
+      expect(providerCleanupFailure.cleanupIncomplete).toBe(false);
+      expect(providerFailure.cleanupIncomplete).toBe(false);
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect(result.error.cleanupResources).toEqual([]);
+      expect(
+        projectAnalysisError(result.error).details?.diagnostics,
+      ).toMatchObject(receipt);
+      if (composed)
+        expect(
+          projectAnalysisError(result.error).details?.diagnostics,
+        ).toMatchObject({ provider_fact: "preserved" });
+    },
+  );
+});
+
+describe("decompile_all publication cleanup", () => {
+  const directory = useOutputDirectory();
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each(["function", "index"])(
+    "retains a %s publication cleanup failure after final cleanup succeeds",
+    async (publication) => {
+      const cleanupFailure = new Error("staging removal denied");
+      const originalPublish = ExportResources.prototype.publishStaged;
+      const originalClose = OwnedStagedOutput.prototype.close;
+      const destination = join(
+        directory(),
+        publication === "function"
+          ? "functions/0x1000.c"
+          : DECOMPILE_DIRECTORY_INDEX_NAME,
+      );
+      let selected = false;
+      let failed = false;
+      // Function files and the index both leave staging through this step.
+      vi.spyOn(ExportResources.prototype, "publishStaged").mockImplementation(
+        async function (this: ExportResources, staged, path, mode) {
+          selected = path === destination;
+          return originalPublish.call(this, staged, path, mode);
+        },
+      );
+      vi.spyOn(OwnedStagedOutput.prototype, "close").mockImplementation(
+        async function (this: OwnedStagedOutput) {
+          if (selected && !failed) {
+            failed = true;
+            throw cleanupFailure;
+          }
+          return originalClose.call(this);
+        },
+      );
+      const { tools } = harness();
+      const result = await run(tools, directory());
+      expect(failed).toBe(true);
+      expect(
+        await readFile(join(directory(), "functions/0x1000.c"), "utf8"),
+      ).toContain(sentinel);
+      if (publication === "index")
+        expect(
+          JSON.parse(
+            await readFile(
+              join(directory(), DECOMPILE_DIRECTORY_INDEX_NAME),
+              "utf8",
+            ),
+          ),
+        ).toMatchObject({ functions: expect.any(Array) });
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toBeInstanceOf(AnalysisOutputError);
+      expect(result.error.message).toContain(
+        `decompile ${publication} publication cleanup failed`,
+      );
+      expect(result.error.cause).toMatchObject({
+        message: "staging removal denied",
+      });
+      expect(result.error.cleanupIncomplete).toBe(false);
+      if (publication === "index")
+        expect(
+          projectAnalysisError(result.error).details?.diagnostics,
+        ).toMatchObject({
+          published_output: {
+            output_directory: directory(),
+            index_path: destination,
+          },
+        });
+    },
+  );
+});
+
+describe("decompile_all resumed file cleanup", () => {
+  const directory = useOutputDirectory();
+  afterEach(() => vi.restoreAllMocks());
+  it.each(["journaled", "unjournaled"])(
+    "reports a %s file verification close failure after final cleanup succeeds",
+    async (kind) => {
+      const { tools } = harness();
+      expect((await run(tools, directory())).ok).toBe(true);
+      if (kind === "unjournaled") {
+        const journal = join(directory(), DECOMPILE_DIRECTORY_JOURNAL_NAME);
+        const header = (await readFile(journal, "utf8")).split("\n")[0];
+        await writeFile(journal, `${header}\n`);
+      }
+      const identity = await stat(join(directory(), "functions/0x1000.c"));
+      const close = OwnedFileHandle.prototype.close;
+      let failed = false;
+      vi.spyOn(OwnedFileHandle.prototype, "close").mockImplementation(
+        async function (this: OwnedFileHandle) {
+          const observed = await this.handle.stat();
+          if (
+            !failed &&
+            observed.dev === identity.dev &&
+            observed.ino === identity.ino
+          ) {
+            failed = true;
+            throw new Error("verification close denied");
+          }
+          return close.call(this);
+        },
+      );
+      const result = await run(tools, directory(), { resume: true });
+      expect(failed).toBe(true);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.message).toContain("verification cleanup failed");
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect(
+        await readFile(join(directory(), "functions/0x1000.c"), "utf8"),
+      ).toContain(sentinel);
+      const resumed = await run(tools, directory(), { resume: true });
+      expect(resumed.ok).toBe(true);
+      if (resumed.ok)
+        expect(resumed.value).toMatchObject({ counts: { skipped: 3 } });
+    },
+  );
+});
+
+describe("decompile_all journal UTF-8 fidelity", () => {
+  const directory = useOutputDirectory();
+
+  it.each([
+    { label: "invalid UTF-8", replacement: Buffer.from([0xff]), refused: true },
+    {
+      label: "a literal replacement character",
+      replacement: Buffer.from("\ufffd"),
+      refused: false,
+    },
+  ])(
+    "distinguishes $label in a committed function record",
+    async ({ replacement, refused }) => {
+      expect((await run(harness().tools, directory())).ok).toBe(true);
+      const path = join(directory(), DECOMPILE_DIRECTORY_JOURNAL_NAME);
+      const indexPath = join(directory(), DECOMPILE_DIRECTORY_INDEX_NAME);
+      const indexBefore = await readFile(indexPath);
+      const original = await readFile(path);
+      const at = original.indexOf(Buffer.from('"name":"Foo::main"')) + 8;
+      expect(at).toBeGreaterThan(8);
+      const changed = Buffer.concat([
+        original.subarray(0, at),
+        replacement,
+        original.subarray(at + 1),
+      ]);
+      await writeFile(path, changed);
+      const next = harness();
+      const result = await run(next.tools, directory(), { resume: true });
+      expect(result.ok).toBe(!refused);
+      if (refused) {
+        if (result.ok) throw new Error("Expected incompatible committed bytes");
+        expect(result.error).toBeInstanceOf(AnalysisInputError);
+        expect(result.error.userMessage).toContain("not a compatible export");
+        expect((await readFile(indexPath)).equals(indexBefore)).toBe(true);
+      }
+      expect(of(next.calls, "procedure_pseudo_code")).toHaveLength(0);
+      expect((await readFile(path)).equals(changed)).toBe(true);
+    },
+  );
+
+  it("repairs an invalid UTF-8 tail outside the committed journal", async () => {
+    expect((await run(harness().tools, directory(), { limit: 1 })).ok).toBe(
+      true,
+    );
+    const path = join(directory(), DECOMPILE_DIRECTORY_JOURNAL_NAME);
+    await writeFile(
+      path,
+      Buffer.concat([await readFile(path), Buffer.from([0xff])]),
+    );
+    const result = await run(harness().tools, directory(), { resume: true });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw result.error;
+    expect(result.value).toMatchObject({ counts: { written: 2, skipped: 1 } });
+    expect((await readFile(path)).includes(0xff)).toBe(false);
+  });
+});
+
+describe("decompile_all settled function outcome precedence", () => {
+  const directory = useOutputDirectory();
+
+  it.each([
+    { independent: false, typedCancellation: false },
+    { independent: true, typedCancellation: false },
+    { independent: false, typedCancellation: true },
+    { independent: true, typedCancellation: true },
+  ])(
+    "retains the settled outcome before late abort: %j",
+    async ({ independent, typedCancellation }) => {
+      const controller = new AbortController();
+      const reason = { request: "after provider outcome settled" };
+      const physical = new AnalysisOutputError(
+        "procedure_pseudo_code",
+        "physical rejection",
+        { userMessage: "physical rejection" },
+      );
+      const providerStop = new AnalysisCancelledError("procedure_pseudo_code", {
+        cause: "provider cancelled",
+      });
+      const { port } = harness({
+        procedures: [{ address: "0x1000", name: "main" }],
+      });
+      let calls = 0;
+      const stopping: AnalysisOperationPort = {
+        execute: (operation, parameters, options) => {
+          if (operation !== "procedure_pseudo_code")
+            return port.execute(operation, parameters, options);
+          calls += 1;
+          if (independent && calls === 1)
+            return Promise.resolve(
+              ok(
+                createAnalysisExecution(null, provider, {
+                  analysisProfile: profile,
+                  pseudocodeAbsence: {
+                    kind: "provider-failure",
+                    reason: "initial provider failure",
+                  },
+                }),
+              ),
+            );
+          const result = Promise.resolve(
+            err(typedCancellation ? providerStop : physical),
+          );
+          // This observer runs only after the provider's typed outcome has settled.
+          void result.then(() => controller.abort(reason));
+          return result;
+        },
+      };
+      const result = await run(
+        new EnhancedTools(stopping),
+        directory(),
+        independent ? { retry_failed: "independent_fresh" } : {},
+        controller.signal,
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("Expected caller cancellation");
+      expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+      expect(result.error.cause).toBe(reason);
+      expect(calls).toBe(independent ? 2 : 1);
+      const index = decompileDirectoryIndexSchema.parse(
+        JSON.parse(
+          await readFile(
+            join(directory(), DECOMPILE_DIRECTORY_INDEX_NAME),
+            "utf8",
+          ),
+        ),
+      );
+      if (!typedCancellation)
+        expect(index.functions).toMatchObject([
+          {
+            address: "0x1000",
+            status: "failed",
+            failure: { message: "physical rejection" },
+          },
+        ]);
+      else if (independent)
+        expect(index.functions).toMatchObject([
+          {
+            address: "0x1000",
+            status: "failed",
+            failure: { code: "no_pseudocode" },
+          },
+        ]);
+      else expect(index.functions).toEqual([]);
+      const records = (
+        await readFile(
+          join(directory(), DECOMPILE_DIRECTORY_JOURNAL_NAME),
+          "utf8",
+        )
+      )
+        .trimEnd()
+        .split("\n")
+        .map((line) => decompileJournalLineSchema.parse(JSON.parse(line)));
+      expect(records.slice(1)).toHaveLength(
+        independent ? (typedCancellation ? 1 : 2) : typedCancellation ? 0 : 1,
+      );
+    },
+  );
+});
+
+it("keeps a settled null failure but starts no independent retry after caller abort", async () => {
+  const directory = join(
+    await createTestTempDirectory("rea-decompile-retry-admission-"),
+    "out",
+  );
+  const controller = new AbortController();
+  const reason = { request: "after first null failure" };
+  const { port } = harness({
+    procedures: [{ address: "0x1000", name: "main" }],
+  });
+  let calls = 0;
+  const stopping: AnalysisOperationPort = {
+    execute: (operation, parameters, options) => {
+      if (operation !== "procedure_pseudo_code")
+        return port.execute(operation, parameters, options);
+      calls += 1;
+      const result = Promise.resolve(
+        ok(
+          createAnalysisExecution(null, provider, {
+            analysisProfile: profile,
+            pseudocodeAbsence: {
+              kind: "provider-failure",
+              reason: "observed function failure",
+            },
+          }),
+        ),
+      );
+      void result.then(() => controller.abort(reason));
+      return result;
+    },
+  };
+  const result = await run(
+    new EnhancedTools(stopping),
+    directory,
+    { retry_failed: "independent_fresh" },
+    controller.signal,
+  );
+  if (result.ok) throw new Error("Expected cancelled completion");
+  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  expect(result.error.cause).toBe(reason);
+  expect(calls).toBe(1);
+  const index = decompileDirectoryIndexSchema.parse(
+    JSON.parse(
+      await readFile(join(directory, DECOMPILE_DIRECTORY_INDEX_NAME), "utf8"),
+    ),
+  );
+  expect(index.functions).toMatchObject([
+    {
+      status: "failed",
+      pseudocode_absence: {
+        kind: "provider-failure",
+        reason: "observed function failure",
+      },
+    },
+  ]);
+  expect(index.functions[0]?.limitations ?? []).not.toContain(
+    "Independent retry was not attempted because the provider did not report a function failure for this observation.",
+  );
+});
+
+describe("decompile_all grouped commits", () => {
+  const directory = useOutputDirectory();
+  // Group sizes are asserted exactly, so the clock that bounds how long a
+  // group stays open moves only when a test advances it.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["performance"] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  const numbered = (count: number) =>
+    Array.from({ length: count }, (_, index) => ({
+      address: `0x${(0x1000 + index * 0x10).toString(16)}`,
+      name: `f${index.toString()}`,
+    }));
+  const addresses = (procedures: readonly Procedure[]) =>
+    procedures.map(({ address }) => address);
+  const fileOf = (address: string) =>
+    join(directory(), `functions/${address}.c`);
+
+  const journalRecords = async () =>
+    (
+      await readFile(
+        join(directory(), DECOMPILE_DIRECTORY_JOURNAL_NAME),
+        "utf8",
+      )
+    )
+      .trimEnd()
+      .split("\n")
+      .slice(1)
+      .map((line) => {
+        const record = decompileJournalLineSchema.parse(JSON.parse(line));
+        if (record.kind !== "function")
+          throw new Error("Expected a function record");
+        return record;
+      });
+
+  const stagingDirectories = async () =>
+    (await readdir(directory())).filter((name) =>
+      name.startsWith(".decompile-stage-"),
+    );
+
+  /** Sizes of the journal appends a run makes, in order. */
+  const observeAppends = () => {
+    const sizes: number[] = [];
+    const append = DecompileExport.prototype.append;
+    vi.spyOn(DecompileExport.prototype, "append").mockImplementation(function (
+      this: DecompileExport,
+      records,
+    ) {
+      if (records.length > 0) sizes.push(records.length);
+      return append.call(this, records);
+    });
+    return sizes;
+  };
+
+  it("commits full groups and the final partial group in visit order", async () => {
+    const procedures = numbered(COMMIT_GROUP_SIZE * 2 + 3);
+    const appends = observeAppends();
+    const result = await run(harness({ procedures }).tools, directory());
+    if (!result.ok) throw result.error;
+    expect(result.value).toMatchObject({
+      counts: { written: procedures.length, failed: 0, remaining: 0 },
+    });
+    expect(appends).toEqual([COMMIT_GROUP_SIZE, COMMIT_GROUP_SIZE, 3]);
+    const records = await journalRecords();
+    expect(records.map((record) => record.address)).toEqual(
+      addresses(procedures),
+    );
+    for (const record of records)
+      expect(sha256Hex(await readFile(fileOf(record.address)))).toBe(
+        record.sha256,
+      );
+    expect(await stagingDirectories()).toEqual([]);
+  });
+
+  it("publishes a group's files before appending any of its records", async () => {
+    const procedures = numbered(COMMIT_GROUP_SIZE);
+    const append = DecompileExport.prototype.append;
+    const missingAtAppend: string[] = [];
+    let appended = 0;
+    vi.spyOn(DecompileExport.prototype, "append").mockImplementation(
+      async function (this: DecompileExport, records) {
+        for (const record of records) {
+          appended += 1;
+          if (
+            record.relative_path !== undefined &&
+            (await stat(join(this.root, record.relative_path)).catch(
+              () => undefined,
+            )) === undefined
+          )
+            missingAtAppend.push(record.address);
+        }
+        return append.call(this, records);
+      },
+    );
+    const result = await run(harness({ procedures }).tools, directory());
+    expect(result.ok).toBe(true);
+    expect(appended).toBe(COMMIT_GROUP_SIZE);
+    expect(missingAtAppend).toEqual([]);
+  });
+
+  it("commits the functions decompiled before a cancellation inside a group", async () => {
+    const procedures = numbered(COMMIT_GROUP_SIZE + 4);
+    const stopAt = procedures[COMMIT_GROUP_SIZE + 2]?.address;
+    const controller = new AbortController();
+    const { port } = harness({ procedures });
+    const stopping: AnalysisOperationPort = {
+      execute: (operation, parameters, execution) => {
+        if (
+          operation === "procedure_pseudo_code" &&
+          parameters.procedure === stopAt
+        )
+          controller.abort();
+        return port.execute(operation, parameters, execution);
+      },
+    };
+    const appends = observeAppends();
+    const result = await run(
+      new EnhancedTools(stopping),
+      directory(),
+      {},
+      controller.signal,
+    );
+    if (result.ok) throw new Error("Expected cancellation");
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    // One full group, then the two functions pending when the caller aborted.
+    expect(appends).toEqual([COMMIT_GROUP_SIZE, 2]);
+    const kept = addresses(procedures.slice(0, COMMIT_GROUP_SIZE + 2));
+    expect((await journalRecords()).map((record) => record.address)).toEqual(
+      kept,
+    );
+    for (const address of kept)
+      await expect(readFile(fileOf(address), "utf8")).resolves.toContain(
+        sentinel,
+      );
+    for (const address of addresses(procedures.slice(COMMIT_GROUP_SIZE + 2)))
+      await expect(stat(fileOf(address))).rejects.toThrow();
+    expect(await stagingDirectories()).toEqual([]);
+    const resumed = await run(harness({ procedures }).tools, directory(), {
+      resume: true,
+    });
+    if (!resumed.ok) throw resumed.error;
+    expect(resumed.value).toMatchObject({
+      counts: { written: 2, skipped: COMMIT_GROUP_SIZE + 2, failed: 0 },
+    });
+  });
+
+  it("records a write failure and a conflict inside a group and keeps its other functions", async () => {
+    const procedures = numbered(COMMIT_GROUP_SIZE);
+    // Create the directory, then occupy two final names of the next group.
+    const seeded = await run(harness({ procedures }).tools, directory(), {
+      limit: 1,
+    });
+    expect(seeded.ok).toBe(true);
+    const blocked = procedures[3]?.address ?? "";
+    const conflicting = procedures[5]?.address ?? "";
+    await mkdir(fileOf(blocked));
+    await writeFile(fileOf(conflicting), "not this export's bytes");
+    const result = await run(harness({ procedures }).tools, directory(), {
+      resume: true,
+    });
+    if (!result.ok) throw result.error;
+    expect(result.value).toMatchObject({
+      counts: {
+        written: COMMIT_GROUP_SIZE - 3,
+        failed: 2,
+        skipped: 1,
+        remaining: 0,
+      },
+      failures: [
+        { address: blocked, code: "output_io" },
+        { address: conflicting, code: "output_exists" },
+      ],
+    });
+    // Records keep visit order, failures included.
+    expect(
+      (await journalRecords())
+        .slice(1)
+        .map((record) => [record.address, record.status]),
+    ).toEqual(
+      procedures
+        .slice(1)
+        .map(({ address }) => [
+          address,
+          address === blocked || address === conflicting ? "failed" : "written",
+        ]),
+    );
+    await expect(readFile(fileOf(conflicting), "utf8")).resolves.toBe(
+      "not this export's bytes",
+    );
+    expect(await stagingDirectories()).toEqual([]);
+  });
+
+  it("stops inside a group at the fifth write failure and leaves later functions unpublished", async () => {
+    const procedures = numbered(COMMIT_GROUP_SIZE + 1);
+    const seeded = await run(harness({ procedures }).tools, directory(), {
+      limit: 1,
+    });
+    expect(seeded.ok).toBe(true);
+    const blocked = addresses(procedures.slice(1, 1 + OUTPUT_IO_STREAK_LIMIT));
+    for (const address of blocked) await mkdir(fileOf(address));
+    const later = addresses(procedures.slice(1 + OUTPUT_IO_STREAK_LIMIT));
+    expect(later.length).toBeGreaterThan(0);
+    const stopped = await run(harness({ procedures }).tools, directory(), {
+      resume: true,
+    });
+    if (stopped.ok) throw new Error("Expected the export to stop");
+    expect(stopped.error.diagnostics).toMatchObject({
+      attempted: OUTPUT_IO_STREAK_LIMIT,
+      failed: OUTPUT_IO_STREAK_LIMIT,
+      written: 0,
+      skipped: 1,
+      consecutive_output_io: OUTPUT_IO_STREAK_LIMIT,
+    });
+    expect(
+      (await journalRecords()).slice(1).map((record) => record.address),
+    ).toEqual(blocked);
+    // Functions decompiled in the same group after the stop leave nothing.
+    for (const address of later)
+      await expect(stat(fileOf(address))).rejects.toThrow();
+    expect(await stagingDirectories()).toEqual([]);
+    for (const address of blocked)
+      await rm(fileOf(address), { recursive: true });
+    const resumed = await run(harness({ procedures }).tools, directory(), {
+      resume: true,
+    });
+    if (!resumed.ok) throw resumed.error;
+    expect(resumed.value).toMatchObject({
+      counts: { written: COMMIT_GROUP_SIZE, skipped: 1, failed: 0 },
+    });
+  });
+
+  it("resumes without conflicts after a crash lost the last group's journal records", async () => {
+    const procedures = numbered(COMMIT_GROUP_SIZE + 4);
+    const first = await run(harness({ procedures }).tools, directory());
+    expect(first.ok).toBe(true);
+    const journalPath = join(directory(), DECOMPILE_DIRECTORY_JOURNAL_NAME);
+    const lines = (await readFile(journalPath, "utf8")).trimEnd().split("\n");
+    // The last group's files reached the directory, but of its records the
+    // journal holds only a torn first line. One file lost its name as well.
+    const lost = addresses(procedures.slice(COMMIT_GROUP_SIZE));
+    const torn = (lines[1 + COMMIT_GROUP_SIZE] ?? "").slice(0, 40);
+    expect(torn).toHaveLength(40);
+    await writeFile(
+      journalPath,
+      `${lines.slice(0, 1 + COMMIT_GROUP_SIZE).join("\n")}\n${torn}`,
+    );
+    const unnamed = lost[1] ?? "";
+    const before = new Map(
+      await Promise.all(
+        addresses(procedures).map(
+          async (address) =>
+            [address, await readFile(fileOf(address))] as const,
+        ),
+      ),
+    );
+    await rm(fileOf(unnamed));
+    // A stopped process also leaves the staging of files it had not published.
+    const orphan = join(directory(), ".decompile-stage-orphan");
+    await mkdir(orphan);
+    await writeFile(join(orphan, "content"), "staged by the stopped run");
+    const next = harness({ procedures });
+    const resumed = await run(next.tools, directory(), { resume: true });
+    if (!resumed.ok) throw resumed.error;
+    expect(resumed.value).toMatchObject({
+      counts: {
+        written: 1,
+        skipped: procedures.length - 1,
+        failed: 0,
+        remaining: 0,
+      },
+      failures: [],
+    });
+    // Only the functions whose records were lost are decompiled again.
+    expect(
+      of(next.calls, "procedure_pseudo_code").map((call) => call.procedure),
+    ).toEqual(lost);
+    for (const [address, bytes] of before)
+      expect((await readFile(fileOf(address))).equals(bytes)).toBe(true);
+    const records = await journalRecords();
+    expect(records.map((record) => record.address)).toEqual(
+      addresses(procedures),
+    );
+    expect(records.every((record) => record.status === "written")).toBe(true);
+    // A file found in place matches by content; its producer is unknown.
+    expect(
+      records
+        .filter(
+          (record) =>
+            record.provider_source?.status === "unknown" &&
+            record.provider_source.reason === "existing_file_origin_unknown",
+        )
+        .map((record) => record.address),
+    ).toEqual(lost.filter((address) => address !== unnamed));
+    const settled = await run(harness({ procedures }).tools, directory(), {
+      resume: true,
+    });
+    if (!settled.ok) throw settled.error;
+    expect(settled.value).toMatchObject({
+      counts: { written: 0, skipped: procedures.length, failed: 0 },
+    });
+    // Resume neither uses nor removes staging it does not own.
+    expect(await stagingDirectories()).toEqual([".decompile-stage-orphan"]);
+    await expect(readFile(join(orphan, "content"), "utf8")).resolves.toBe(
+      "staged by the stopped run",
+    );
+  });
+
+  it.each(["publication", "journal append"] as const)(
+    "completes a group commit the caller aborts during its %s",
+    async (stage) => {
+      const procedures = numbered(COMMIT_GROUP_SIZE + 4);
+      const controller = new AbortController();
+      if (stage === "publication") {
+        const commit = DecompileExport.prototype.commitFunctionFile;
+        let commits = 0;
+        vi.spyOn(
+          DecompileExport.prototype,
+          "commitFunctionFile",
+        ).mockImplementation(function (
+          this: DecompileExport,
+          relativePath,
+          bytes,
+          staged,
+        ) {
+          commits += 1;
+          if (commits === 3) controller.abort();
+          return commit.call(this, relativePath, bytes, staged);
+        });
+      } else {
+        const append = DecompileExport.prototype.append;
+        vi.spyOn(DecompileExport.prototype, "append").mockImplementation(
+          function (this: DecompileExport, records) {
+            if (records.length > 0) controller.abort();
+            return append.call(this, records);
+          },
+        );
+      }
+      const next = harness({ procedures });
+      const result = await run(next.tools, directory(), {}, controller.signal);
+      if (result.ok) throw new Error("Expected cancellation");
+      expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+      expect(result.error.cleanupIncomplete).toBe(false);
+      // The group in progress is whole: every file and every record.
+      const kept = addresses(procedures.slice(0, COMMIT_GROUP_SIZE));
+      const records = await journalRecords();
+      expect(records.map((record) => record.address)).toEqual(kept);
+      for (const record of records)
+        expect(sha256Hex(await readFile(fileOf(record.address)))).toBe(
+          record.sha256,
+        );
+      // Nothing after the group was requested or left behind.
+      expect(
+        of(next.calls, "procedure_pseudo_code").map((call) => call.procedure),
+      ).toEqual(kept);
+      expect(await readdir(join(directory(), "functions"))).toHaveLength(
+        COMMIT_GROUP_SIZE,
+      );
+      expect(await stagingDirectories()).toEqual([]);
+      const index = decompileDirectoryIndexSchema.parse(
+        JSON.parse(
+          await readFile(
+            join(directory(), DECOMPILE_DIRECTORY_INDEX_NAME),
+            "utf8",
+          ),
+        ),
+      );
+      expect(index.functions.map((record) => record.address)).toEqual(kept);
+      const resumed = await run(harness({ procedures }).tools, directory(), {
+        resume: true,
+      });
+      if (!resumed.ok) throw resumed.error;
+      expect(resumed.value).toMatchObject({
+        counts: { written: 4, skipped: COMMIT_GROUP_SIZE, failed: 0 },
+      });
+    },
+  );
+
+  it("commits the functions decompiled before a provider throws inside a group", async () => {
+    const procedures = numbered(COMMIT_GROUP_SIZE);
+    const { port } = harness({ procedures });
+    const thrown = new Error("provider adapter threw");
+    const throwing: AnalysisOperationPort = {
+      execute: (operation, parameters, execution) =>
+        operation === "procedure_pseudo_code" &&
+        parameters.procedure === procedures[3]?.address
+          ? Promise.reject(thrown)
+          : port.execute(operation, parameters, execution),
+    };
+    await expect(run(new EnhancedTools(throwing), directory())).rejects.toBe(
+      thrown,
+    );
+    const kept = addresses(procedures.slice(0, 3));
+    const records = await journalRecords();
+    expect(records.map((record) => record.address)).toEqual(kept);
+    for (const record of records)
+      expect(sha256Hex(await readFile(fileOf(record.address)))).toBe(
+        record.sha256,
+      );
+    expect(await readdir(join(directory(), "functions"))).toHaveLength(3);
+    expect(await stagingDirectories()).toEqual([]);
+  });
+
+  it("commits each function of a slow provider before requesting the next", async () => {
+    const procedures = numbered(3);
+    const { port } = harness({ procedures });
+    const events: string[] = [];
+    const slow: AnalysisOperationPort = {
+      execute: (operation, parameters, execution) => {
+        if (operation === "procedure_pseudo_code") {
+          events.push(`request ${String(parameters.procedure)}`);
+          vi.advanceTimersByTime(COMMIT_GROUP_MAX_OPEN_MS);
+        }
+        return port.execute(operation, parameters, execution);
+      },
+    };
+    const append = DecompileExport.prototype.append;
+    vi.spyOn(DecompileExport.prototype, "append").mockImplementation(function (
+      this: DecompileExport,
+      records,
+    ) {
+      for (const record of records) events.push(`record ${record.address}`);
+      return append.call(this, records);
+    });
+    const result = await run(new EnhancedTools(slow), directory());
+    if (!result.ok) throw result.error;
+    expect(events).toEqual(
+      addresses(procedures).flatMap((address) => [
+        `request ${address}`,
+        `record ${address}`,
+      ]),
+    );
+  });
+
+  it("commits a group an interval after the previous commit, before it is full", async () => {
+    const procedures = numbered(COMMIT_GROUP_SIZE);
+    const { port } = harness({ procedures });
+    const paced: AnalysisOperationPort = {
+      execute: (operation, parameters, execution) => {
+        if (operation === "procedure_pseudo_code")
+          vi.advanceTimersByTime(COMMIT_GROUP_MAX_OPEN_MS / 2);
+        return port.execute(operation, parameters, execution);
+      },
+    };
+    const appends = observeAppends();
+    const result = await run(new EnhancedTools(paced), directory());
+    if (!result.ok) throw result.error;
+    // Two functions settle per interval, so no group reaches its full size.
+    expect(appends).toEqual([2, 2, 2, 2]);
+    expect((await journalRecords()).map((record) => record.address)).toEqual(
+      addresses(procedures),
+    );
+  });
+
+  it("keeps a discarded staged file owned until a cleanup retry removes it", async () => {
+    const procedures = numbered(COMMIT_GROUP_SIZE + 1);
+    const seeded = await run(harness({ procedures }).tools, directory(), {
+      limit: 1,
+    });
+    expect(seeded.ok).toBe(true);
+    const blocked = addresses(procedures.slice(1, 1 + OUTPUT_IO_STREAK_LIMIT));
+    for (const address of blocked) await mkdir(fileOf(address));
+    const discard = DecompileExport.prototype.discardStaged;
+    const close = OwnedStagedOutput.prototype.close;
+    let discarding = false;
+    vi.spyOn(DecompileExport.prototype, "discardStaged").mockImplementation(
+      function (this: DecompileExport, staged) {
+        discarding = true;
+        return discard.call(this, staged);
+      },
+    );
+    // Removal fails for the discard and for the retry when the export closes.
+    vi.spyOn(OwnedStagedOutput.prototype, "close").mockImplementation(function (
+      this: OwnedStagedOutput,
+    ) {
+      return discarding
+        ? Promise.reject(new Error("staging removal denied"))
+        : close.call(this);
+    });
+    const retained: { close(): Promise<void> }[] = [];
+    const scoped: AnalysisOperationPort = {
+      ...harness({ procedures }).port,
+      resourceScope: {
+        retain: (owner) => void retained.push(owner),
+        run: (operation) => operation(),
+      },
+    };
+    const stopped = await run(new EnhancedTools(scoped), directory(), {
+      resume: true,
+    });
+    if (stopped.ok) throw new Error("Expected the export to stop");
+    const left = (await stagingDirectories()).map((name) =>
+      join(directory(), name),
+    );
+    // The functions decompiled after the stop: their staging is still there
+    // and the failure names exactly those directories as owed cleanup.
+    expect(left).toHaveLength(COMMIT_GROUP_SIZE - OUTPUT_IO_STREAK_LIMIT);
+    expect(stopped.error.cleanupIncomplete).toBe(true);
+    expect(stopped.error.cleanupResources).toEqual(
+      expect.arrayContaining(left),
+    );
+    expect(projectAnalysisError(stopped.error).message).toContain(
+      "Stopped after 5 function files in a row",
+    );
+    // The session's scope holds the export until its cleanup succeeds. The
+    // retry removes the staging and releases the directory lease.
+    expect(retained).toHaveLength(1);
+    discarding = false;
+    await retained[0]?.close();
+    expect(await stagingDirectories()).toEqual([]);
+    expect(stopped.error.cleanupIncomplete).toBe(false);
+    for (const address of blocked)
+      await rm(fileOf(address), { recursive: true });
+    const resumed = await run(harness({ procedures }).tools, directory(), {
+      resume: true,
+    });
+    if (!resumed.ok) throw resumed.error;
+    expect(resumed.value).toMatchObject({
+      counts: { written: COMMIT_GROUP_SIZE, skipped: 1, failed: 0 },
+    });
+  });
+
+  it("keeps a journal failure primary and a stopping provider's cleanup attached", async () => {
+    const { port } = harness();
+    const providerFailure = new AnalysisOutputError(
+      "procedure_pseudo_code",
+      "provider cleanup failed",
+      {
+        cleanup: {
+          reason: "provider close denied",
+          resources: ["provider descriptor"],
+        },
+      },
+    );
+    const lease = new AnalysisCleanupLease(
+      async () => undefined,
+      ["provider descriptor"],
+    );
+    lease.bindCleanupError(providerFailure);
+    const journalFailure = new AnalysisOutputError(
+      "decompile_all",
+      "decompile journal could not be updated",
+    );
+    vi.spyOn(DecompileExport.prototype, "append").mockImplementation(
+      (records) =>
+        Promise.resolve(
+          records.length > 0 ? err(journalFailure) : ok(undefined),
+        ),
+    );
+    const failing: AnalysisOperationPort = {
+      execute: (operation, parameters, options) =>
+        operation === "procedure_pseudo_code" &&
+        parameters.procedure === "0x2000"
+          ? Promise.resolve(err(providerFailure))
+          : port.execute(operation, parameters, options),
+    };
+    const result = await run(new EnhancedTools(failing), directory());
+    if (result.ok) throw new Error("Expected the journal failure");
+    expect(result.error.cleanupPrimary).toBe(journalFailure);
+    expect(result.error.cleanupResources).toEqual(["provider descriptor"]);
+    expect(result.error.cleanupIncomplete).toBe(true);
+    await lease.release();
+    expect(result.error.cleanupIncomplete).toBe(false);
+  });
+
+  it("keeps a later provider's cleanup attached when an earlier write failure stops the group", async () => {
+    const procedures = numbered(COMMIT_GROUP_SIZE);
+    const seeded = await run(harness({ procedures }).tools, directory(), {
+      limit: 1,
+    });
+    expect(seeded.ok).toBe(true);
+    const blocked = addresses(procedures.slice(1, 1 + OUTPUT_IO_STREAK_LIMIT));
+    for (const address of blocked) await mkdir(fileOf(address));
+    const cleanupOwner = procedures[1 + OUTPUT_IO_STREAK_LIMIT]?.address;
+    const providerFailure = new AnalysisOutputError(
+      "procedure_pseudo_code",
+      "provider cleanup failed",
+      {
+        cleanup: {
+          reason: "provider close denied",
+          resources: ["provider descriptor"],
+        },
+      },
+    );
+    const lease = new AnalysisCleanupLease(
+      async () => undefined,
+      ["provider descriptor"],
+    );
+    lease.bindCleanupError(providerFailure);
+    const { port } = harness({ procedures });
+    const failing: AnalysisOperationPort = {
+      execute: (operation, parameters, options) =>
+        operation === "procedure_pseudo_code" &&
+        parameters.procedure === cleanupOwner
+          ? Promise.resolve(err(providerFailure))
+          : port.execute(operation, parameters, options),
+    };
+    const stopped = await run(new EnhancedTools(failing), directory(), {
+      resume: true,
+    });
+    if (stopped.ok) throw new Error("Expected the export to stop");
+    // The write failures stopped the group first, so they stay primary.
+    expect(projectAnalysisError(stopped.error).message).toContain(
+      "Stopped after 5 function files in a row",
+    );
+    expect(stopped.error.cleanupPrimary?.secondaryFailures).toContain(
+      providerFailure,
+    );
+    expect(stopped.error.cleanupResources).toEqual(["provider descriptor"]);
+    expect(stopped.error.cleanupIncomplete).toBe(true);
+    await lease.release();
+    expect(stopped.error.cleanupIncomplete).toBe(false);
+  });
+
+  it("keeps an index failure's cleanup attached behind an earlier publish failure", async () => {
+    const { port } = harness();
+    const journalFailure = new AnalysisOutputError(
+      "decompile_all",
+      "decompile journal could not be updated",
+    );
+    vi.spyOn(DecompileExport.prototype, "append").mockImplementation(
+      (records) =>
+        Promise.resolve(
+          records.length > 0 ? err(journalFailure) : ok(undefined),
+        ),
+    );
+    const indexFailure = new AnalysisOutputError(
+      "decompile_all",
+      "decompile index cleanup failed",
+      {
+        cleanup: {
+          reason: "index staging removal denied",
+          resources: ["index staging"],
+        },
+      },
+    );
+    const lease = new AnalysisCleanupLease(
+      async () => undefined,
+      ["index staging"],
+    );
+    lease.bindCleanupError(indexFailure);
+    vi.spyOn(DecompileExport.prototype, "writeIndex").mockResolvedValue(
+      err(indexFailure),
+    );
+    const result = await run(new EnhancedTools(port), directory());
+    if (result.ok) throw new Error("Expected the journal failure");
+    expect(result.error.cleanupPrimary).toBe(journalFailure);
+    expect(journalFailure.secondaryFailures).toContain(indexFailure);
+    expect(result.error.cleanupResources).toEqual(["index staging"]);
+    expect(result.error.cleanupIncomplete).toBe(true);
+    await lease.release();
+    expect(result.error.cleanupIncomplete).toBe(false);
+  });
+
+  it("keeps a failed commit primary over a provider throw that followed it", async () => {
+    const procedures = numbered(COMMIT_GROUP_SIZE);
+    const { port } = harness({ procedures });
+    const journalFailure = new AnalysisOutputError(
+      "decompile_all",
+      "decompile journal could not be updated",
+    );
+    vi.spyOn(DecompileExport.prototype, "append").mockImplementation(
+      (records) =>
+        Promise.resolve(
+          records.length > 0 ? err(journalFailure) : ok(undefined),
+        ),
+    );
+    const throwing: AnalysisOperationPort = {
+      execute: (operation, parameters, execution) =>
+        operation === "procedure_pseudo_code" &&
+        parameters.procedure === procedures[3]?.address
+          ? Promise.reject(new Error("provider adapter threw"))
+          : port.execute(operation, parameters, execution),
+    };
+    const result = await run(new EnhancedTools(throwing), directory());
+    if (result.ok) throw new Error("Expected the journal failure");
+    expect(result.error).toBe(journalFailure);
+    expect(result.error.diagnostics).toMatchObject({
+      later_unexpected_throw: "Error: provider adapter threw",
+    });
+  });
+
+  it("journals the initial failure when an independent retry throws", async () => {
+    const procedures = [{ address: "0x1000", name: "main" }];
+    const { port } = harness({ procedures });
+    const thrown = new Error("independent retry threw");
+    const throwing: AnalysisOperationPort = {
+      execute: (operation, parameters, execution) => {
+        if (operation !== "procedure_pseudo_code")
+          return port.execute(operation, parameters, execution);
+        if (parameters.analysis === "independent_fresh")
+          return Promise.reject(thrown);
+        return Promise.resolve(
+          ok(
+            createAnalysisExecution(null, provider, {
+              analysisProfile: profile,
+              pseudocodeAbsence: {
+                kind: "provider-failure",
+                reason: "initial provider failure",
+              },
+            }),
+          ),
+        );
+      },
+    };
+    await expect(
+      run(new EnhancedTools(throwing), directory(), {
+        retry_failed: "independent_fresh",
+      }),
+    ).rejects.toBe(thrown);
+    expect(await journalRecords()).toMatchObject([
+      {
+        address: "0x1000",
+        status: "failed",
+        pseudocode_absence: {
+          kind: "provider-failure",
+          reason: "initial provider failure",
+        },
+      },
+    ]);
+  });
+});
+
+describe("directory export selection order", () => {
+  it("orders spaced, padded, and unparsed procedure addresses", () => {
+    const rows = [
+      { address: "unresolved:b", name: "unparsed_b" },
+      { address: "ram:0x20", name: "ram_20" },
+      { address: "0x0010", name: "z_padded" },
+      { address: "0X10", name: "uppercase_unobserved" },
+      { address: "0x10", name: "a_plain" },
+      { address: "0x2", name: "low" },
+      { address: "ram:0x10", name: "ram_10" },
+      { address: "unresolved:a", name: "unparsed_a" },
+    ];
+    const input = decompileDirectoryInputSchema.parse({
+      output_directory: "/tmp/out",
+    });
+    const bounds = validateDecompileBounds(input);
+    if (!bounds.ok) throw bounds.error;
+    const selection = selectProcedures(rows, input, bounds.value);
+    expect(selection.procedures.map(({ address }) => address)).toEqual([
+      "0x2",
+      "0x10",
+      "0x0010",
+      "ram:0x10",
+      "ram:0x20",
+      "0X10",
+      "unresolved:a",
+      "unresolved:b",
+    ]);
   });
 });

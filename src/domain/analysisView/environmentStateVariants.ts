@@ -1,3 +1,8 @@
+import { appendToMapList } from "../appendToMapList.js";
+import {
+  iterateUrlQueryParameters,
+  parseUrlQueryParameterNames,
+} from "../recordedTransportUrl.js";
 import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js";
 import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
 import type { LateLine, StatePlan } from "./environmentStateGate.js";
@@ -9,6 +14,7 @@ import {
   type StateItemView,
   type StateListView,
   type StateRecordFacts,
+  requestLine,
 } from "./environmentStateRules.js";
 
 /** Query names that page a list rather than choose how it shows its entities. */
@@ -46,8 +52,9 @@ export const queryValues = (
   query: string | null | undefined,
 ): Map<string, string[]> => {
   const values = new Map<string, string[]>();
-  for (const [name, value] of new URLSearchParams(query ?? ""))
-    values.set(name, [...(values.get(name) ?? []), value]);
+  for (const [name, value] of iterateUrlQueryParameters(query ?? "")) {
+    appendToMapList(values, name, value);
+  }
   return values;
 };
 
@@ -57,7 +64,7 @@ export const shapesOtherwise = (query: string | null | undefined): boolean =>
 
 /** The query names that may change how a line shows its entities: all but paging. */
 const shapingNames = (query: string | null | undefined): string[] =>
-  [...queryValues(query).keys()].filter(
+  [...new Set(parseUrlQueryParameterNames(query ?? ""))].filter(
     (name) => !PAGING.has(name.toLowerCase()),
   );
 
@@ -131,9 +138,7 @@ const linesByEntity = (
       retain(ENTRY_BYTES);
       const showing = shown.get(key) ?? new Map<string, StateRecordFacts[]>();
       shown.set(key, showing);
-      const group = showing.get(members);
-      if (group === undefined) showing.set(members, [line]);
-      else group.push(line);
+      appendToMapList(showing, members, line);
     }
   return shown;
 };
@@ -407,9 +412,6 @@ export const replayReason = (
     ? "projection"
     : "variant";
 };
-
-const requestLine = (record: StateRecordFacts): string =>
-  record.path + (record.query ?? "");
 
 /** The found lines a replay key tells from the other latest lines, which are parsed once for all of them. */
 const keyedVariants = (

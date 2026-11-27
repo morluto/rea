@@ -1,5 +1,8 @@
 import { expect, it } from "vitest";
-import { inspectSignalDecodersInputSchema } from "../../../src/domain/signals/signalDecoders.js";
+import {
+  inspectSignalDecodersInputSchema,
+  SIGNAL_DECODER_PAGE_RECORDS,
+} from "../../../src/domain/signals/signalDecoders.js";
 import { parseDecoderDiscovery } from "../../../src/signals/parseDecoderDiscovery.js";
 
 it("rejects malformed catalogs and the wrong decoder identity", () => {
@@ -10,7 +13,10 @@ it("rejects malformed catalogs and the wrong decoder identity", () => {
     "Supported protocol decoders:\n  malformed",
   ]) {
     expect(() =>
-      parseDecoderDiscovery(text, inspectSignalDecodersInputSchema.parse({})),
+      parseDecoderDiscovery(
+        text,
+        inspectSignalDecodersInputSchema.parse({ limit: 1 }),
+      ),
     ).toThrow();
   }
   expect(() =>
@@ -38,11 +44,45 @@ it("keeps help line ordinals, blank lines and literal special characters through
   expect(result.output_window.examined).toBe(4);
 });
 
-it("bounds line expansion before constructing help records", () => {
-  expect(() =>
+it("ends a help page at the page record budget without refusing longer output", () => {
+  const text = "ID: uart" + "\n".repeat(SIGNAL_DECODER_PAGE_RECORDS + 4);
+  const all = parseDecoderDiscovery(
+    text,
+    inspectSignalDecodersInputSchema.parse({ decoder: "uart", limit: null }),
+  );
+  expect(all.help_lines).toHaveLength(SIGNAL_DECODER_PAGE_RECORDS);
+  expect(all.output_window).toEqual({
+    unit: "help-lines",
+    examined: SIGNAL_DECODER_PAGE_RECORDS + 4,
+    matching: SIGNAL_DECODER_PAGE_RECORDS + 4,
+    returned: SIGNAL_DECODER_PAGE_RECORDS,
+    has_more: true,
+    record_budget_reached: true,
+  });
+  expect(
     parseDecoderDiscovery(
-      "ID: uart\n" + "\n".repeat(65536),
-      inspectSignalDecodersInputSchema.parse({ decoder: "uart" }),
+      text,
+      inspectSignalDecodersInputSchema.parse({
+        decoder: "uart",
+        offset: SIGNAL_DECODER_PAGE_RECORDS,
+        limit: null,
+      }),
     ),
-  ).toThrow("representation budget");
+  ).toEqual({
+    decoders: [],
+    help_lines: [
+      { line_number: SIGNAL_DECODER_PAGE_RECORDS + 1, text: "" },
+      { line_number: SIGNAL_DECODER_PAGE_RECORDS + 2, text: "" },
+      { line_number: SIGNAL_DECODER_PAGE_RECORDS + 3, text: "" },
+      { line_number: SIGNAL_DECODER_PAGE_RECORDS + 4, text: "" },
+    ],
+    output_window: {
+      unit: "help-lines",
+      examined: SIGNAL_DECODER_PAGE_RECORDS + 4,
+      matching: SIGNAL_DECODER_PAGE_RECORDS + 4,
+      returned: 4,
+      has_more: false,
+      record_budget_reached: false,
+    },
+  });
 });

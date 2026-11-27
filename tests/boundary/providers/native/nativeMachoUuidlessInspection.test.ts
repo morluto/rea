@@ -1,43 +1,40 @@
 import { expect, it } from "vitest";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 
 import { machoImage } from "../../../../src/artifacts/apple/MachoImage.fixture.js";
-import { createServer } from "../../../../src/server/createServer.js";
+import { inspectionImage } from "../../../../src/native/NativeMachoInspection.fixture.js";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
 import {
   NativeCommandFailure,
   type NativeCommandCapture,
   type NativeCommandOptions,
   type NativeCommandRunner,
-} from "../../../../src/native/CommandRunner.js";
+} from "../../../../src/providers/NativeCommandRunner.js";
 import { err, ok } from "../../../../src/domain/result.js";
 import { createTestBinarySession } from "../../../fixtures/binarySession.js";
+import { createApplicationMcpHarness } from "../../../fixtures/applicationMcpHarness.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import {
   NativeFixtureRunner,
-  nativeFixture,
-  nativeMachoTarget,
-  withOtoolMachHeader,
+  nativeMachoTargetForFile,
 } from "../../../fixtures/nativeCommands.js";
 
 const missingUuidDiagnostic = "missing LC_UUID load command";
+const unbackedTextDiagnostic =
+  "section '__TEXT/__text' has offset=0 but is not a zero-fill section type";
 
 const dyldDiagnosticOutput = (path: string, diagnostic: string): string =>
   `${path} [arm64]:\n   ${diagnostic}\n`;
 
-const otoolOutputWithoutUuid = async () => {
-  const otool = await nativeFixture("otool-load.txt");
-  const commandOutput = otool.slice(otool.indexOf("Load command 0\n"));
-  let commandIndex = 0;
-  const withoutUuidCommands = commandOutput
-    .replace(
-      /Load command 1\n\s*cmd LC_UUID\n\s*cmdsize 24\n\s*uuid [^\n]+\n/u,
-      "",
-    )
-    .replace(/^Load command \d+$/gmu, () => `Load command ${commandIndex++}`);
-  return withOtoolMachHeader(withoutUuidCommands);
+const makeTarget = async (name: string, fileType = 2, uuid = false) => {
+  const directory = await createTestTempDirectory("rea-macho-uuid-test-");
+  const path = join(directory, name);
+  await writeFile(
+    path,
+    inspectionImage({ fileType, ...(uuid ? {} : { uuids: [] }) }),
+  );
+  return nativeMachoTargetForFile(path);
 };
 
 class UuidlessDyldRunner implements NativeCommandRunner {
@@ -48,13 +45,13 @@ class UuidlessDyldRunner implements NativeCommandRunner {
   }[] = [];
 
   constructor(
-    otool: string,
     readonly diagnostic = missingUuidDiagnostic,
     readonly stderr = "",
     readonly signal: string | null = null,
+    readonly exitCode = 1,
   ) {
     this.fixture = new NativeFixtureRunner({
-      "otool:-h": otool,
+      lipo: "Non-fat file: fixture is architecture: arm64\n",
       dwarfdump: "",
     });
   }
@@ -79,10 +76,10 @@ class UuidlessDyldRunner implements NativeCommandRunner {
         dyldDiagnosticOutput(arguments_.at(-1) ?? "", this.diagnostic),
       ),
       stderrBytes: Buffer.byteLength(this.stderr),
-      exitCode: 1,
+      exitCode: this.exitCode,
       signal: this.signal,
     };
-    if (options.acceptNonZero) return ok(capture);
+    if (this.exitCode === 0 || options.acceptNonZero) return ok(capture);
     return err(
       new NativeCommandFailure(tool, "nonzero-exit", 1, undefined, {
         stdout: capture.stdout,
@@ -97,43 +94,41 @@ class UuidlessDyldRunner implements NativeCommandRunner {
   }
 }
 
-it.each([
-  { fileType: "4", diagnostic: "unknown mh.filetype 4" },
-  { fileType: "CORE", diagnostic: "unknown mh.filetype 4" },
-  { fileType: "3", diagnostic: "unknown mh.filetype 3" },
-  { fileType: "4", diagnostic: "unknown filetype 4" },
-  { fileType: "3", diagnostic: "unknown filetype 3" },
-  {
-    fileType: "10",
-    diagnostic:
-      "section '__TEXT/__text' has offset=0 but is not a zero-fill section type",
-  },
-])(
-  "classifies $diagnostic for Mach-O type $fileType before nm fallback",
-  async ({ fileType, diagnostic }) => {
-    const otool = [
-      "Mach header",
-      "magic cputype cpusubtype caps filetype ncmds sizeofcmds flags",
-      `0xfeedfacf 16777228 0 0x00 ${fileType} 0 0 0x0`,
-    ].join("\n");
-    const runner = new UuidlessDyldRunner(otool, diagnostic);
-    const path = "/fixture/refused-type";
+// Xcode 26 dyld_info exits 1 after a refusal; Xcode 16 exits 0.
+it.each(
+  [
+    { fileType: 4, diagnostic: "unknown mh.filetype 4" },
+    { fileType: 3, diagnostic: "unknown mh.filetype 3" },
+    { fileType: 4, diagnostic: "unknown filetype 4" },
+    { fileType: 3, diagnostic: "unknown filetype 3" },
+    {
+      fileType: 10,
+      diagnostic: unbackedTextDiagnostic,
+    },
+  ].flatMap((refusal) => [1, 0].map((exitCode) => ({ ...refusal, exitCode }))),
+)(
+  "classifies $diagnostic for Mach-O type $fileType with exit $exitCode before nm fallback",
+  async ({ fileType, diagnostic, exitCode }) => {
+    const runner = new UuidlessDyldRunner(diagnostic, "", null, exitCode);
+    const target = await makeTarget("refused-type", fileType);
+    const path = target.path;
     const result = await new NativeMacOSProvider({}, runner, "darwin")
-      .createClient(nativeMachoTarget(path))
+      .createClient(target)
       .execute("inspect_macho", {});
 
     expect(result).toMatchObject({
       ok: false,
       error: {
-        _tag: "AnalysisUnsupportedTargetError",
+        _tag: "AnalysisTargetFailureError",
         path,
-        reason: expect.stringContaining(
-          fileType === "10" ? "dSYM" : diagnostic,
-        ),
-        remediationAction: expect.stringContaining("linked Mach-O"),
+        failure: {
+          detail: expect.stringContaining(
+            fileType === 10 ? "dSYM" : diagnostic,
+          ),
+        },
         capturedOutput: {
           stdout: dyldDiagnosticOutput(path, diagnostic),
-          exit_code: 1,
+          exit_code: exitCode,
           signal: null,
           truncated: false,
         },
@@ -148,106 +143,122 @@ it.each([
 );
 
 it.each([
-  { fileType: "2", signal: null, diagnostic: "unknown mh.filetype 4" },
-  { fileType: "UNKNOWN", signal: null, diagnostic: "unknown mh.filetype 4" },
-  { fileType: "4", signal: "SIGTERM", diagnostic: "unknown mh.filetype 4" },
-  { fileType: "2", signal: null, diagnostic: "unknown filetype 4" },
-  { fileType: "4", signal: "SIGTERM", diagnostic: "unknown filetype 4" },
+  { fileType: 3, signal: null, exitCode: 0 },
+  { fileType: 3, signal: null, exitCode: 1 },
+  { fileType: 99, signal: null, exitCode: 1 },
+  { fileType: 4, signal: "SIGTERM", exitCode: 1 },
 ])(
-  "keeps $diagnostic as a failure for header $fileType and signal $signal",
-  async ({ fileType, signal, diagnostic }) => {
-    const otool = [
-      "Mach header",
-      "magic cputype cpusubtype caps filetype ncmds sizeofcmds flags",
-      `0xfeedfacf 16777228 0 0x00 ${fileType} 0 0 0x0`,
-    ].join("\n");
-    const runner = new UuidlessDyldRunner(otool, diagnostic, "", signal);
+  "keeps the dyld_info refusal as a failure for header $fileType, exit $exitCode and signal $signal",
+  async ({ fileType, signal, exitCode }) => {
+    const runner = new UuidlessDyldRunner(
+      "unknown mh.filetype 4",
+      "",
+      signal,
+      exitCode,
+    );
+    const target = await makeTarget("conflicting-type", fileType);
     const result = await new NativeMacOSProvider({}, runner, "darwin")
-      .createClient(nativeMachoTarget("/fixture/conflicting-type"))
+      .createClient(target)
       .execute("inspect_macho", {});
 
     expect(result).toMatchObject({
       ok: false,
       error: {
         _tag: signal === null ? "AnalysisOutputError" : "ProviderAdapterError",
-        capturedOutput: { exit_code: 1, signal },
+        capturedOutput: { exit_code: exitCode, signal },
       },
     });
   },
 );
 
-it("returns readable Mach-O Evidence when dyld_info identifies a missing UUID", async () => {
-  const withoutUuid = await otoolOutputWithoutUuid();
-  const runner = new UuidlessDyldRunner(withoutUuid);
-  const result = await new NativeMacOSProvider({}, runner, "darwin")
-    .createClient(nativeMachoTarget("/fixture/no-uuid"))
-    .execute("inspect_macho", {});
+// Xcode 26 dyld_info exits 1 after the diagnostic; Xcode 16 exits 0.
+it.for([1, 0])(
+  "returns readable Mach-O Evidence when dyld_info identifies a missing UUID with exit %i",
+  async (exitCode) => {
+    const target = await makeTarget("no-uuid");
+    const runner = new UuidlessDyldRunner(
+      missingUuidDiagnostic,
+      "",
+      null,
+      exitCode,
+    );
+    const result = await new NativeMacOSProvider({}, runner, "darwin")
+      .createClient(target)
+      .execute("inspect_macho", {});
 
-  expect(result.ok, JSON.stringify(result.ok ? null : result.error)).toBe(true);
-  if (!result.ok) return;
-  expect(result.value.result).toMatchObject({
-    uuid: null,
-    load_commands: { exhaustive: true },
-    imports: { items: [], total: null, exhaustive: false },
-    exports: {
-      items: expect.arrayContaining([
-        expect.objectContaining({ name: "_main", source: "nm" }),
+    expect(result.ok, JSON.stringify(result.ok ? null : result.error)).toBe(
+      true,
+    );
+    if (!result.ok) return;
+    expect(result.value.result).toMatchObject({
+      uuid: null,
+      load_commands: { exhaustive: true },
+      imports: { items: [], total: null, exhaustive: false },
+      exports: {
+        items: expect.arrayContaining([
+          expect.objectContaining({ name: "_main", source: "nm" }),
+        ]),
+        total: null,
+        exhaustive: false,
+      },
+      provenance: expect.arrayContaining([
+        expect.objectContaining({
+          tool: "dyld_info",
+          exit: { code: exitCode, signal: null },
+          stdout_bytes: Buffer.byteLength(
+            dyldDiagnosticOutput(target.path, missingUuidDiagnostic),
+          ),
+        }),
       ]),
-      total: null,
-      exhaustive: false,
-    },
-    provenance: expect.arrayContaining([
-      expect.objectContaining({
-        tool: "dyld_info",
-        exit: { code: 1, signal: null },
-        stdout_bytes: Buffer.byteLength(
-          dyldDiagnosticOutput("/fixture/no-uuid", missingUuidDiagnostic),
-        ),
-      }),
-    ]),
-  });
-  expect(result.value.limitations).toContain(
-    "dyld_info -imports reported 'missing LC_UUID load command'; import observations are unavailable.",
-  );
-  expect(result.value.limitations).toContain(
-    "dyld_info -exports reported 'missing LC_UUID load command'; exports include nm symbol-table observations only.",
-  );
-});
+    });
+    expect(result.value.limitations).toContain(
+      "dyld_info -imports reported 'missing LC_UUID load command'; import observations are unavailable.",
+    );
+    expect(result.value.limitations).toContain(
+      "dyld_info -exports reported 'missing LC_UUID load command'; exports include nm symbol-table observations only.",
+    );
+  },
+);
 
-it("keeps other dyld_info nonzero exits as command failures", async () => {
-  const runner = new UuidlessDyldRunner(
-    await nativeFixture("otool-load.txt"),
-    "malformed load command table",
-  );
-  const result = await new NativeMacOSProvider({}, runner, "darwin")
-    .createClient(nativeMachoTarget("/fixture/malformed"))
-    .execute("inspect_macho", {});
+it.each([
+  { stdout: "malformed load command table", stderr: "" },
+  { stdout: "unknown mh.filetype 4\nmalformed load command", stderr: "" },
+  { stdout: "unknown mh.filetype 4", stderr: "read failed\n" },
+  { stdout: `${missingUuidDiagnostic}\n${unbackedTextDiagnostic}`, stderr: "" },
+])(
+  "preserves a dyld_info command failure with stdout $stdout and stderr $stderr",
+  async ({ stdout, stderr }) => {
+    const target = await makeTarget("malformed", 4);
+    const runner = new UuidlessDyldRunner(stdout, stderr);
+    const result = await new NativeMacOSProvider({}, runner, "darwin")
+      .createClient(target)
+      .execute("inspect_macho", {});
 
-  expect(result.ok).toBe(false);
-  if (result.ok) return;
-  expect(result.error).toMatchObject({
-    _tag: "ProviderAdapterError",
-    diagnostics: { tool: "dyld_info", reason: "nonzero-exit", exit_code: 1 },
-    capturedOutput: {
-      stdout: dyldDiagnosticOutput(
-        "/fixture/malformed",
-        "malformed load command table",
-      ),
-      exit_code: 1,
-      truncated: false,
-    },
-  });
-});
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "ProviderAdapterError",
+        diagnostics: {
+          tool: "dyld_info",
+          reason: "nonzero-exit",
+          exit_code: 1,
+        },
+        capturedOutput: {
+          stdout: dyldDiagnosticOutput(target.path, stdout),
+          stderr,
+          exit_code: 1,
+          truncated: false,
+        },
+      },
+    });
+  },
+);
 
 it("does not treat a newline in the echoed operand path as dyld_info evidence", async () => {
-  const withoutUuid = await otoolOutputWithoutUuid();
-  const path = "/fixture/\nmissing LC_UUID load command\n";
-  const runner = new UuidlessDyldRunner(
-    withoutUuid,
-    "malformed load command table",
-  );
+  const target = await makeTarget("\nmissing LC_UUID load command\n");
+  const runner = new UuidlessDyldRunner("malformed load command table");
   const result = await new NativeMacOSProvider({}, runner, "darwin")
-    .createClient(nativeMachoTarget(path))
+    .createClient(target)
     .execute("inspect_macho", {});
 
   expect(result.ok).toBe(false);
@@ -259,15 +270,14 @@ it("does not treat a newline in the echoed operand path as dyld_info evidence", 
 });
 
 it("does not treat a newline in stderr's echoed operand path as dyld_info evidence", async () => {
-  const withoutUuid = await otoolOutputWithoutUuid();
-  const path = "/fixture/\nmissing LC_UUID load command\n";
+  const target = await makeTarget("\nmissing LC_UUID load command\n");
+  const path = target.path;
   const runner = new UuidlessDyldRunner(
-    withoutUuid,
     "malformed load command table",
     `${path}: file not found`,
   );
   const result = await new NativeMacOSProvider({}, runner, "darwin")
-    .createClient(nativeMachoTarget(path))
+    .createClient(target)
     .execute("inspect_macho", {});
 
   expect(result.ok).toBe(false);
@@ -282,23 +292,22 @@ it("does not treat a newline in stderr's echoed operand path as dyld_info eviden
   });
 });
 
-it("does not call a target UUID-less when otool observed LC_UUID", async () => {
-  const runner = new UuidlessDyldRunner(await nativeFixture("otool-load.txt"));
+it("does not call a target UUID-less when binary contains LC_UUID", async () => {
+  const target = await makeTarget("conflicting-uuid", 2, true);
+  const runner = new UuidlessDyldRunner();
   const result = await new NativeMacOSProvider({}, runner, "darwin")
-    .createClient(nativeMachoTarget("/fixture/conflicting-uuid"))
+    .createClient(target)
     .execute("inspect_macho", {});
 
   expect(result).toMatchObject({
     ok: false,
     error: {
       _tag: "AnalysisOutputError",
-      reason:
-        "dyld_info reported a missing LC_UUID despite an observed LC_UUID load command",
+      reason: expect.stringMatching(
+        /dyld_info.*missing LC_UUID.*observed LC_UUID/i,
+      ),
       capturedOutput: {
-        stdout: dyldDiagnosticOutput(
-          "/fixture/conflicting-uuid",
-          missingUuidDiagnostic,
-        ),
+        stdout: dyldDiagnosticOutput(target.path, missingUuidDiagnostic),
         exit_code: 1,
         signal: null,
       },
@@ -310,45 +319,82 @@ it("delivers partial UUID-less inspection Evidence through production MCP", asyn
   const directory = await createTestTempDirectory("rea-macho-no-uuid-mcp-");
   const path = join(directory, "probe");
   await writeFile(path, machoImage({}));
-  const withoutUuid = await otoolOutputWithoutUuid();
   const session = createTestBinarySession(
-    new NativeMacOSProvider({}, new UuidlessDyldRunner(withoutUuid), "darwin"),
+    new NativeMacOSProvider({}, new UuidlessDyldRunner(), "darwin"),
   );
-  const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "macho-uuidless-test", version: "1" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
-    const opened = await client.callTool({
-      name: "open_binary",
-      arguments: { path },
-    });
-    expect(opened.isError, JSON.stringify(opened.content)).not.toBe(true);
+  const { client } = await createApplicationMcpHarness({
+    session,
+    clientIdentity: { name: "macho-uuidless-test", version: "1" },
+  });
+  const opened = await client.callTool({
+    name: "open_binary",
+    arguments: { path },
+  });
+  expect(opened.isError, JSON.stringify(opened.content)).not.toBe(true);
 
-    const inspected = await client.callTool({
-      name: "inspect_macho",
-      arguments: {},
-    });
-    expect(inspected.isError, JSON.stringify(inspected.content)).not.toBe(true);
-    expect(inspected.structuredContent).toMatchObject({
-      normalized_result: {
-        uuid: null,
-        imports: { items: [], total: null, exhaustive: false },
-        exports: {
-          items: expect.arrayContaining([
-            expect.objectContaining({ name: "_main", source: "nm" }),
-          ]),
-          total: null,
-          exhaustive: false,
-        },
-        limitations: expect.arrayContaining([
-          "dyld_info -imports reported 'missing LC_UUID load command'; import observations are unavailable.",
+  const inspected = await client.callTool({
+    name: "inspect_macho",
+    arguments: {},
+  });
+  expect(inspected.isError, JSON.stringify(inspected.content)).not.toBe(true);
+  expect(inspected.structuredContent).toMatchObject({
+    normalized_result: {
+      uuid: null,
+      imports: { items: [], total: null, exhaustive: false },
+      exports: {
+        items: expect.arrayContaining([
+          expect.objectContaining({ name: "_main", source: "nm" }),
         ]),
+        total: null,
+        exhaustive: false,
+      },
+      limitations: expect.arrayContaining([
+        "dyld_info -imports reported 'missing LC_UUID load command'; import observations are unavailable.",
+      ]),
+    },
+  });
+});
+
+it.each(["unknown platform", "old arm64e bind opcodes not supported"])(
+  "keeps nm exports and the load table when dyld_info refuses the slice with %s",
+  async (diagnostic) => {
+    const target = await makeTarget("refused-slice", 2, true);
+    const runner = new UuidlessDyldRunner(diagnostic);
+    const result = await new NativeMacOSProvider({}, runner, "darwin")
+      .createClient(target)
+      .execute("inspect_macho", {});
+
+    expect(result.ok, JSON.stringify(result.ok ? null : result.error)).toBe(
+      true,
+    );
+    if (!result.ok) return;
+    const importsLimitation = `dyld_info -imports reported '${diagnostic}'; import observations are unavailable.`;
+    const exportsLimitation = `dyld_info -exports reported '${diagnostic}'; exports include nm symbol-table observations only.`;
+    expect(result.value.result).toMatchObject({
+      load_commands: { exhaustive: true },
+      imports: {
+        items: [],
+        total: null,
+        exhaustive: false,
+        limitations: expect.arrayContaining([importsLimitation]),
+      },
+      exports: {
+        items: expect.arrayContaining([
+          expect.objectContaining({ name: "_main", source: "nm" }),
+        ]),
+        total: null,
+        exhaustive: false,
+        limitations: expect.arrayContaining([exportsLimitation]),
       },
     });
-  } finally {
-    await Promise.all([client.close(), server.close(), session.close()]);
-  }
-});
+    expect(result.value.limitations).toEqual(
+      expect.arrayContaining([importsLimitation, exportsLimitation]),
+    );
+    expect(runner.commands.filter(({ tool }) => tool === "nm")).toEqual([
+      {
+        tool: "nm",
+        args: ["-gjU", "--no-dyldinfo", "-arch", "arm64", target.path],
+      },
+    ]);
+  },
+);

@@ -4,6 +4,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { FIXTURE_TOOLS, fixtureCommand } from "./fixture-toolchain.mjs";
 
 const execute = promisify(execFile);
 
@@ -13,12 +14,14 @@ export async function buildMipsFixture(
   byteOrder,
   floatAbi = "hard",
   options = {},
+  run = execute,
 ) {
   if (byteOrder !== "little" && byteOrder !== "big")
     throw new Error("MIPS fixture byte order must be little or big");
   if (floatAbi !== "hard" && floatAbi !== "soft")
     throw new Error("MIPS fixture float ABI must be hard or soft");
-  const legacy = options.legacy === true;
+  const recordlessAbi = options.recordlessAbi;
+  const legacy = recordlessAbi !== undefined;
   const soft = floatAbi === "soft";
   const target = byteOrder === "little" ? "mipsel-linux-gnu" : "mips-linux-gnu";
   const source = fileURLToPath(new URL("../c/mips.c", import.meta.url));
@@ -28,15 +31,16 @@ export async function buildMipsFixture(
   const probe = fileURLToPath(new URL("./mips-probe.S", import.meta.url));
   const path = join(
     directory,
-    `${target}${soft ? "-soft-float" : ""}${legacy ? "-legacy" : ""}.elf`,
+    `${target}${soft ? "-soft-float" : ""}${legacy ? `-recordless-${recordlessAbi}` : ""}.elf`,
   );
   const args = [
     `--target=${target}`,
     `-march=${legacy ? "mips32" : "mips32r2"}`,
     "-mabi=32",
     ...(soft ? ["-msoft-float"] : []),
-    "-mno-abicalls",
-    "-fno-pic",
+    ...(recordlessAbi === "o32"
+      ? ["-mabicalls", "-fPIC"]
+      : ["-mno-abicalls", "-fno-pic"]),
     "-fuse-ld=lld",
     "-nostdlib",
     "-static",
@@ -50,19 +54,21 @@ export async function buildMipsFixture(
     "-o",
     path,
   ];
-  const compiled = await compileMipsFixture(path, byteOrder, 2, args, {
-    expectedFlags: legacy ? 0x50001001 : 0x70001001,
-  });
-  // Legacy variant: retype the ABI record declarations out of the image and
-  // zero the header ABI field, matching pre-ABI-flags 2000s firmware toolchains
-  // (their compilers predate the record; the header leaves the ABI unspecified).
+  const compiled = await compileMipsFixture(
+    path,
+    byteOrder,
+    2,
+    args,
+    {
+      expectedFlags:
+        recordlessAbi === "o32" ? 0x50001007 : legacy ? 0x50001001 : 0x70001001,
+    },
+    run,
+  );
+  // Retype the ABI record independently of the ABI declared by the ELF header.
   let attested = compiled;
   if (legacy) {
     const raw = await readFile(path);
-    const write16 = (offset, value) =>
-      byteOrder === "little"
-        ? raw.writeUInt16LE(value, offset)
-        : raw.writeUInt16BE(value, offset);
     const write32 = (offset, value) =>
       byteOrder === "little"
         ? raw.writeUInt32LE(value, offset)
@@ -78,7 +84,7 @@ export async function buildMipsFixture(
     const flags = read32(36);
     if ((flags & 0xf0000000) !== 0x50000000)
       throw new Error("Legacy fixture did not build as EF_MIPS_ARCH_32");
-    write32(36, flags & ~0x0000f000);
+    if (recordlessAbi === "unspecified") write32(36, flags & ~0x0000f000);
     const programOffset = read32(28);
     const programCount = read16(44);
     if (read16(42) !== 32)
@@ -119,7 +125,10 @@ export async function buildMipsFixture(
       byteOrder === "little"
         ? patched.readUInt32LE(36)
         : patched.readUInt32BE(36);
-    if (patchedFlags !== 0x50000001)
+    if (
+      patchedFlags !==
+      (recordlessAbi === "unspecified" ? 0x50000001 : 0x50001007)
+    )
       throw new Error(
         "Legacy fixture did not end with the recordless o32 declaration",
       );
@@ -158,6 +167,7 @@ export async function buildMipsRelocatableFixture(
   directory,
   byteOrder,
   kernelModule = false,
+  run = execute,
 ) {
   if (byteOrder !== "little" && byteOrder !== "big")
     throw new Error("MIPS fixture byte order must be little or big");
@@ -183,9 +193,60 @@ export async function buildMipsRelocatableFixture(
     path,
   ];
   return {
-    ...(await compileMipsFixture(path, byteOrder, 1, args)),
+    ...(await compileMipsFixture(path, byteOrder, 1, args, {}, run)),
     float_abi: kernelModule ? "soft" : "hard",
     kernel_module_options: kernelModule,
+    source_sha256: createHash("sha256")
+      .update(await readFile(source))
+      .digest("hex"),
+  };
+}
+
+/**
+ * Build the source-owned PIC shared library (ET_DYN) with LLD, which records
+ * the MIPS GOT layout in MIPS_LOCAL_GOTNO/MIPS_GOTSYM. `softFloat` builds the
+ * same library for a soft-float o32 system. Like GNU ld output, text shares
+ * the first segment (page zero, so its local GOT page entry is zero) and
+ * PIC calls stay `jalr $25` through the GOT instead of relaxing to `bal`.
+ */
+export async function buildMipsSharedFixture(
+  directory,
+  byteOrder,
+  softFloat = false,
+  run = execute,
+) {
+  if (byteOrder !== "little" && byteOrder !== "big")
+    throw new Error("MIPS fixture byte order must be little or big");
+  const target = byteOrder === "little" ? "mipsel-linux-gnu" : "mips-linux-gnu";
+  const source = fileURLToPath(new URL("../c/mips-shared.c", import.meta.url));
+  const path = join(directory, `${target}${softFloat ? "-soft-float" : ""}.so`);
+  const args = [
+    `--target=${target}`,
+    "-march=mips32r2",
+    "-mabi=32",
+    ...(softFloat ? ["-msoft-float"] : []),
+    "-mno-relax-pic-calls",
+    "-fPIC",
+    "-shared",
+    "-nostdlib",
+    "-fuse-ld=lld",
+    "-O1",
+    "-Wl,--build-id=none",
+    "-Wl,--no-rosegment",
+    source,
+    "-o",
+    path,
+  ];
+  return {
+    ...(await compileMipsFixture(
+      path,
+      byteOrder,
+      3,
+      args,
+      { expectedFlags: 0x70001007 },
+      run,
+    )),
+    float_abi: softFloat ? "soft" : "hard",
     source_sha256: createHash("sha256")
       .update(await readFile(source))
       .digest("hex"),
@@ -199,10 +260,11 @@ async function compileMipsFixture(
   objectType,
   args,
   options = {},
+  run = execute,
 ) {
-  const compiler = process.env.REA_MIPS_CLANG ?? "clang";
-  const version = await execute(compiler, ["--version"], { timeout: 10000 });
-  await execute(compiler, args, { timeout: 60000 });
+  const compiler = fixtureCommand(FIXTURE_TOOLS.mipsClang);
+  const version = await run(compiler, ["--version"], { timeout: 10000 });
+  await run(compiler, args, { timeout: 60000 });
   const bytes = await readFile(path);
   const read16 =
     byteOrder === "little"

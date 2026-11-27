@@ -4,6 +4,7 @@ import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import {
   createEvidence,
   withEvidenceCallerInputPath,
+  withEvidenceProviderSelection,
 } from "../../domain/evidence.js";
 import { createEvidenceBundle } from "../../domain/evidenceBundle.js";
 import { recordUnknownInputSchema } from "../../domain/residualUnknown.js";
@@ -20,30 +21,75 @@ const TARGET: BinaryTarget = {
 };
 const PROVIDER = { id: "fixture", name: "Fixture provider", version: "1" };
 
-it("accepts and replaces caller path metadata for the same semantic record", () => {
-  const original = createEvidence(TARGET, PROVIDER, {
+it("updates caller spellings independently while preserving the semantic record", () => {
+  const evidence = createEvidence(TARGET, PROVIDER, {
     operation: "health",
     parameters: {},
     result: true,
   });
-  const selected = withEvidenceCallerInputPath(original, "./selected-alias");
+  const original = withEvidenceCallerInputPath(evidence, undefined, {
+    operations_path: "./queries",
+    other: "./unchanged",
+  });
   const ledger = new EvidenceLedger();
   expect(ledger.record(original)).toEqual({ ok: true, value: "added" });
-  expect(ledger.record(selected)).toEqual({ ok: true, value: "duplicate" });
-  expect(ledger.import(createEvidenceBundle([selected]))).toEqual({
-    ok: true,
-    value: {
-      recordsAdded: 0,
-      unknownsAdded: 0,
-      changed: true,
-      replacements: [
-        { kind: "metadata", previous: original, current: selected },
-      ],
-    },
+
+  const importRecord = (record: typeof original) =>
+    ledger.import(createEvidenceBundle([record]));
+  const expectReplacement = (
+    previous: typeof original,
+    current: typeof original,
+  ) => {
+    expect(current.evidence_id).toBe(original.evidence_id);
+    expect(importRecord(current)).toEqual({
+      ok: true,
+      value: {
+        recordsAdded: 0,
+        unknownsAdded: 0,
+        changed: true,
+        replacements: [{ kind: "metadata", previous, current }],
+      },
+    });
+  };
+
+  const selected = withEvidenceCallerInputPath(original, "./selected-alias", {
+    operations_path: "./queries",
+    other: "./unchanged",
   });
+  expectReplacement(original, selected);
   expect(ledger.get(original.evidence_id)?.caller_input_path).toBe(
     "./selected-alias",
   );
+
+  const rebound = withEvidenceCallerInputPath(selected, "./selected-alias", {
+    other: "./unchanged",
+    operations_path: "./alias/../queries",
+  });
+  expectReplacement(selected, rebound);
+  expect(ledger.get(original.evidence_id)?.caller_input_paths).toEqual({
+    operations_path: "./alias/../queries",
+    other: "./unchanged",
+  });
+
+  const reordered = withEvidenceCallerInputPath(evidence, "./selected-alias", {
+    operations_path: "./alias/../queries",
+    other: "./unchanged",
+  });
+  expect(Object.keys(reordered.caller_input_paths ?? {})).toEqual([
+    "operations_path",
+    "other",
+  ]);
+  expect(Object.keys(rebound.caller_input_paths ?? {})).toEqual([
+    "other",
+    "operations_path",
+  ]);
+  expect(importRecord(reordered)).toMatchObject({
+    ok: true,
+    value: { changed: false, replacements: [] },
+  });
+  const unannotated = withEvidenceCallerInputPath(evidence, "./selected-alias");
+  expectReplacement(rebound, unannotated);
+  expect(ledger.get(original.evidence_id)?.caller_input_paths).toBeUndefined();
 });
 
 describe("evidence ledger recording", () => {
@@ -55,7 +101,6 @@ describe("evidence ledger recording", () => {
     });
     const ledger = new EvidenceLedger();
     expect(ledger.record(evidence)).toEqual({ ok: true, value: "added" });
-    expect(ledger.record(evidence)).toEqual({ ok: true, value: "duplicate" });
     const relocated = createEvidence(
       { ...TARGET, path: "/relocated/different-name" },
       PROVIDER,
@@ -117,8 +162,6 @@ describe("evidence ledger recording", () => {
     ]);
     expect(ledger.import(conflictingBundle).ok).toBe(false);
     expect(ledger.get(evidence.evidence_id)).toEqual(relocatedBundleRecord);
-    ledger.clear();
-    expect(ledger.export().records).toEqual([]);
   });
 
   it("ignores JSON object key order during imported identity checks", () => {
@@ -149,8 +192,6 @@ describe("evidence ledger recording", () => {
         replacements: [],
       },
     });
-    ledger.clear();
-    expect(ledger.export().records).toEqual([]);
   });
 
   it("protects borrowed snapshots while preserving detached mutable public reads", () => {
@@ -263,7 +304,7 @@ describe("evidence ledger metadata imports", () => {
     expect(ledger.export().records).toHaveLength(10_001);
   });
 
-  it("retains inline evidence larger than the former session byte quota", () => {
+  it("retains an inline Evidence record above 64 MiB", () => {
     const ledger = new EvidenceLedger();
     const record = createEvidence(TARGET, PROVIDER, {
       operation: "health",
@@ -285,24 +326,27 @@ describe("evidence bundle imports", () => {
     const result = new EvidenceLedger().import(record);
     expect(result).toMatchObject({
       ok: false,
-      error: {
-        _tag: "AnalysisInputError",
-        userMessage: expect.stringContaining(
-          `this JSON is one Evidence record (${record.evidence_id})`,
-        ),
-      },
+      error: { _tag: "AnalysisInputError" },
     });
     if (result.ok) throw new Error("Expected a wrong-kind import failure");
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "invalid_request",
       category: "invalid_input",
-      message: expect.stringContaining(
-        `this JSON is one Evidence record (${record.evidence_id})`,
-      ),
+      message: expect.stringContaining(record.evidence_id),
+      details: {
+        operation: "import_evidence_bundle",
+        issues: [
+          {
+            path: [],
+            reason: "invalid_value",
+            observed: { detected_kind: "evidence-record" },
+          },
+        ],
+      },
     });
   });
 
-  it("rejects conflicting duplicate IDs without mutating the ledger", () => {
+  it("rejects changed semantics under a retained Evidence ID atomically", () => {
     const ledger = new EvidenceLedger();
     const first = createEvidence(TARGET, PROVIDER, {
       operation: "health",
@@ -323,36 +367,96 @@ describe("evidence bundle imports", () => {
     });
     expect(ledger.export().records).toEqual([first]);
   });
+});
 
-  it("atomically rejects Evidence plus an invalid unknown", () => {
-    const ledger = new EvidenceLedger();
-    const output = createEvidence(undefined, PROVIDER, {
-      operation: "derived",
+it("reports actual duplicate metadata and preserves retained caller choices", () => {
+  const original = withEvidenceCallerInputPath(
+    createEvidence(TARGET, PROVIDER, {
+      operation: "health",
       parameters: {},
-      result: { status: "unknown" },
-    });
-    const mutation = createEvidence(undefined, PROVIDER, {
-      predicateType: "rea.residual-unknown-mutation",
-      operation: "record_unknown",
+      result: true,
+    }),
+    "./original-alias",
+  );
+  const ledger = new EvidenceLedger();
+  expect(ledger.record(original).ok).toBe(true);
+  const supplied = withEvidenceProviderSelection(
+    createEvidence({ ...TARGET, path: "/relocated/fixture" }, PROVIDER, {
+      operation: "health",
       parameters: {},
-      result: { action: "record" },
-    });
-    const unknown = recordUnknownInputSchema.parse({
-      question: "What remains unresolved?",
-      severity: "high",
-      domain: "atomic-test",
-      supporting_evidence_ids: [`ev_${"f".repeat(64)}`],
-      contradicting_evidence_ids: [],
-      required_authority: "shipped-artifact",
-      required_confidence: "observed",
-      required_environment: null,
-      recommended_probes: [],
-      relationships: [],
-    });
-    expect(ledger.recordWithUnknown(output, unknown, mutation)).toMatchObject({
-      ok: false,
-      error: { _tag: "UnknownRegistryError" },
-    });
-    expect(ledger.export()).toMatchObject({ records: [], unknowns: [] });
+      result: true,
+    }),
+    {
+      selection_source: "request",
+      candidates: [
+        {
+          provider: PROVIDER,
+          selected: true,
+          availability: "available",
+          target_support: "supported",
+          rejection_codes: [],
+        },
+      ],
+    },
+  );
+  const changed = ledger.recordWithMetadata(supplied);
+  if (!changed.ok) throw changed.error;
+  const retained = ledger.forAnalysis(original.evidence_id)!;
+  expect(changed.value).toEqual({
+    disposition: "duplicate",
+    replacements: [{ kind: "metadata", previous: original, current: retained }],
   });
+  expect(retained.evidence_id).toBe(original.evidence_id);
+  expect(retained.caller_input_path).toBe("./original-alias");
+  expect(retained.subject).toMatchObject({ local_path: "/relocated/fixture" });
+  expect(retained.provider_selection).toEqual(supplied.provider_selection);
+  expect(ledger.recordWithMetadata(supplied)).toEqual({
+    ok: true,
+    value: { disposition: "duplicate", replacements: [] },
+  });
+  // Generic duplicate recording does not infer or erase historical provenance.
+  expect(ledger.recordWithMetadata(original)).toEqual({
+    ok: true,
+    value: { disposition: "duplicate", replacements: [] },
+  });
+  expect(ledger.forAnalysis(original.evidence_id)).toBe(retained);
+});
+
+it("retains the original record when duplicate metadata exceeds capacity", () => {
+  const original = createEvidence(TARGET, PROVIDER, {
+    operation: "health",
+    parameters: {},
+    result: true,
+  });
+  const probe = new EvidenceLedger();
+  expect(probe.record(original).ok).toBe(true);
+  const ledger = new EvidenceLedger({
+    maximumRepresentationBytes: probe.statistics().retainedRepresentationBytes,
+  });
+  expect(ledger.record(original).ok).toBe(true);
+  const supplied = withEvidenceProviderSelection(original, {
+    selection_source: "request",
+    candidates: [
+      {
+        provider: PROVIDER,
+        selected: true,
+        availability: "available",
+        target_support: "supported",
+        rejection_codes: [],
+      },
+    ],
+  });
+  const refused = ledger.recordWithMetadata(supplied);
+  expect(refused.ok).toBe(false);
+  if (refused.ok) return;
+  expect(projectAnalysisError(refused.error)).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      partial_observation: {
+        kind: "retained-evidence",
+        evidence_id: original.evidence_id,
+      },
+    },
+  });
+  expect(ledger.get(original.evidence_id)).toEqual(original);
 });

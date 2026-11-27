@@ -1,6 +1,9 @@
 import { isIP } from "node:net";
 
-import type { ProcessScenario } from "../../domain/process/processScenario.js";
+import {
+  processOutputBytesLimit,
+  type ProcessScenario,
+} from "../../domain/process/processScenario.js";
 
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import type {
@@ -231,7 +234,7 @@ export const createProcessIdentifierLookup = (
 /** Compile one ordered policy for both bounded retention and unrestricted text. */
 const createProcessTextRules = (
   scenario: ProcessScenario,
-  temporaryRoot: string,
+  temporaryRoot: string | undefined,
   pid: ProcessIdentifierSource,
 ): (() => readonly (ProcessTextRule | undefined)[]) => {
   const rules: (ProcessTextRule | undefined)[] = [];
@@ -276,9 +279,9 @@ const createProcessTextRules = (
 };
 
 /** Prepare capture-local matchers while retaining a live terminal PID lookup. */
-export const createProcessTextNormalizer = (
+const createProcessTextNormalizer = (
   scenario: ProcessScenario,
-  temporaryRoot: string,
+  temporaryRoot: string | undefined,
   pid: ProcessIdentifierSource,
 ): ((value: string) => string) => {
   const rules = createProcessTextRules(scenario, temporaryRoot, pid);
@@ -298,7 +301,7 @@ export const createProcessTextNormalizer = (
 /** Normalize terminal text without materializing an intermediate over its byte budget. */
 export const createBoundedProcessTextNormalizer = (
   scenario: ProcessScenario,
-  temporaryRoot: string,
+  temporaryRoot: string | undefined,
   pid: ProcessIdentifierSource,
 ): ((value: string, maxBytes: number) => BoundedProcessTextNormalization) => {
   const rules = createProcessTextRules(scenario, temporaryRoot, pid);
@@ -339,48 +342,62 @@ export const createBoundedProcessTextNormalizer = (
 export const normalizeProcessText = (
   value: string,
   scenario: ProcessScenario,
-  temporaryRoot: string,
+  temporaryRoot: string | undefined,
   pid: number,
 ): string => createProcessTextNormalizer(scenario, temporaryRoot, pid)(value);
+
+// `/dir/` and `/dir/.` name the same directory as `/dir`. Keep one spelling so
+// descendants such as `/dir/file` still meet the path-delimiter lookahead.
+const directoryIdentity = (path: string): string => {
+  let identity = path;
+  while (identity.length > 1 && /\/\.?$/u.test(identity))
+    identity = identity.replace(/\/\.?$/u, "") || "/";
+  return identity;
+};
 
 /** Match original paths once, preferring the most specific selected identity. */
 const createPathRule = (
   scenario: ProcessScenario,
-  temporaryRoot: string,
+  temporaryRoot: string | undefined,
 ):
   | { readonly matcher: RegExp; readonly replace: RegexReplacement }
   | undefined => {
   const aliases = new Map<string, string>();
-  const selected: readonly (readonly [string, string])[] = [
+  const selected: readonly (readonly [string | undefined, string])[] = [
     [temporaryRoot, "<temporary-root>"],
-    [scenario.working_directory, "<working-directory>"],
+    [directoryIdentity(scenario.working_directory), "<working-directory>"],
     [scenario.executable, "<executable>"],
     ...scenario.filesystem_observation_paths.map(
       (root, index): readonly [string, string] => [
-        root,
+        directoryIdentity(root),
         `<filesystem-root-${String(index)}>`,
       ],
     ),
   ];
   for (const [path, alias] of selected)
-    if (path !== "" && !aliases.has(path)) aliases.set(path, alias);
+    if (path !== undefined && path !== "" && !aliases.has(path))
+      aliases.set(path, alias);
   const paths = [...aliases.keys()].sort(
     (left, right) => right.length - left.length,
   );
   if (paths.length === 0) return undefined;
   const pattern = paths
-    .map((path) => path.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"))
+    .map((path) =>
+      path === "/"
+        ? "/(?!/)(?=([^\\s\"']?))"
+        : `${path.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}(?=$|/|[\\s"'])`,
+    )
     .join("|");
   // A selected path is an identity, not an arbitrary text prefix. Only match
   // it at a clear text delimiter; keep the parent-directory case (`/root` in
   // `/root/file`) while leaving punctuation-adjacent names untouched.
-  const matcher = new RegExp(
-    `(^|[\\s"'=:(\\[{<])(${pattern})(?=$|/|[\\s"'])`,
-    "gu",
-  );
+  const matcher = new RegExp(`(^|[\\s"'=:(\\[{<])(${pattern})`, "gu");
   return {
     matcher,
-    replace: (_match, prefix, path) => `${prefix}${aliases.get(path) ?? path}`,
+    replace: (match, prefix, path, rootChild) =>
+      path === "/" && prefix === "<"
+        ? match
+        : `${prefix}${aliases.get(path) ?? path}${path === "/" && rootChild ? "/" : ""}`,
   };
 };
 
@@ -416,7 +433,7 @@ export const normalizeProcessSamples = (
   );
   const normalizeText = createProcessTextNormalizer(
     scenario,
-    "<no-temporary-root>",
+    undefined,
     identifiers,
   );
   const normalizeCommand = (command: string): string =>
@@ -463,6 +480,7 @@ export const normalizeRetainedTerminalFrames = (
     maxBytes: number,
   ) => BoundedProcessTextNormalization,
   maximumBytes: number,
+  reason: "sampled-identifiers" | "sensitive-input" = "sampled-identifiers",
 ): number => {
   let bytes = 0;
   const projected: TerminalFrame[] = [];
@@ -471,18 +489,21 @@ export const normalizeRetainedTerminalFrames = (
     const value = normalize(raw, maximumBytes - bytes);
     if (value.state === "over_budget")
       throw new AnalysisResourceConstraintError(
-        "capture_process",
+        "capture_process_scenario",
         "capacity",
-        "Retained terminal text exceeded the selected output budget after sampled PID normalization.",
+        `Retained terminal text exceeded the selected output budget after ${reason} projection.`,
         {
           maximum_output_bytes: maximumBytes,
           frame_index: frame.sequence,
-          boundary: "terminal-pid-normalization",
+          boundary:
+            reason === "sampled-identifiers"
+              ? "terminal-pid-normalization"
+              : "terminal-sensitive-input-normalization",
         },
         {
+          // Normalization stops at the remaining budget, so the need is unmeasured.
+          limit: processOutputBytesLimit(maximumBytes),
           retryable: false,
-          remediationAction:
-            "Increase limits.output_bytes within its advertised range, or select a narrower scenario. Completed raw PTY chunks remain in partial observations; the corrected normalized representation did not fit.",
         },
       );
     bytes += value.utf8Bytes;

@@ -360,6 +360,7 @@ cliTest(
       const source = factorySource(scenario);
       const directory = join(root, scenario.name);
       await mkdir(directory);
+      await writeFile(join(directory, "package.json"), '{"type":"commonjs"}');
       await writeFile(join(directory, "main.js"), source);
       const runtime = [false, true].map((flag) =>
         runtimeChannels(source, flag),
@@ -416,7 +417,6 @@ cliTest(
       }
     }
   },
-  120_000,
 );
 
 cliTest(
@@ -455,6 +455,7 @@ cliTest(
       expect(channels.length, name).toBe(expected);
       const directory = join(root, name);
       await mkdir(directory);
+      await writeFile(join(directory, "package.json"), '{"type":"commonjs"}');
       await writeFile(join(directory, "main.js"), source);
       const response = await call("analyze_javascript_application", {
         input_path: directory,
@@ -498,5 +499,4 @@ cliTest(
       );
     }
   },
-  30_000,
 );

@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -27,6 +26,10 @@ import {
   completeVerifierRun,
   createVerifierRun,
 } from "./lib/verifier-run.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 const run = createVerifierRun();
 assert.ok(
@@ -50,12 +53,23 @@ const fixtures = fileURLToPath(
   new URL("../tests/conformance/ghidra", import.meta.url),
 );
 const bridge = fileURLToPath(new URL("../bridge/ghidra", import.meta.url));
-const workspace = await mkdtemp(join(tmpdir(), "rea-ghidra-decompiler-"));
+const workspaceFixture = await VerifierFixture.open({
+  prefix: "rea-ghidra-decompiler-",
+});
+const workspace = workspaceFixture.path;
 let cleaned = true;
 let report;
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const injected = "Ghidra decompilation failed: Injected backend failure";
-try {
+// The workspace stays while an owned Ghidra process or server may still use
+// it: this cleanup confirms only once their cleanup was verified.
+workspaceFixture.releaseAfter(() => {
+  if (!cleaned)
+    throw new Error(
+      `Owned Ghidra cleanup is unverified; retaining ${workspace}.`,
+    );
+});
+await withVerifierFixture(workspaceFixture, async () => {
   const targetPath = join(
     workspace,
     process.platform === "darwin" ? "cross-format.dylib" : "cross-format.so",
@@ -161,6 +175,26 @@ try {
       "timed_out_listing_unchanged",
       "timed_out_pseudocode_request_names_limit",
       "session_recovers_after_failure",
+      "read_ahead_carrying_request_does_not_wait_for_startup",
+      "read_ahead_workers_match_queued_work",
+      "read_ahead_queued_function_taken_back",
+      "read_ahead_worker_takes_queued_function",
+      "read_ahead_result_reported_not_decompiled_again",
+      "read_ahead_failure_uncached",
+      "read_ahead_idle_workers_disposed",
+      "read_ahead_running",
+      "read_ahead_running_result_awaited",
+      "read_ahead_running_before_cancel",
+      "read_ahead_cancel_reaches_running_worker",
+      "read_ahead_completed_under_old_deadline",
+      "read_ahead_success_reused_across_deadline_change",
+      "read_ahead_timed_out_under_old_deadline",
+      "read_ahead_timeout_not_reused_after_deadline_change",
+      "read_ahead_single_remainder_starts_no_worker",
+      "read_ahead_opening_workers_disposed",
+      "read_ahead_concurrent_open_program",
+      "read_ahead_private_thread_pool",
+      "read_ahead_hint_clamped_to_window",
     ])
       assert.ok(probe.checks.includes(check), check);
   } finally {
@@ -181,10 +215,12 @@ try {
   if (!degraded.ok) throw degraded.error;
   assert.equal(degraded.value.cachePolicy, "live");
   const dossier = degraded.value.value;
-  assert.deepEqual(dossier.facet_availability.pseudocode, {
-    available: false,
-    reason: injected,
-  });
+  assert.equal(dossier.facet_availability.pseudocode.available, false);
+  // The reason goes on to name the payload allowance and its recovery.
+  assert.ok(
+    dossier.facet_availability.pseudocode.reason.startsWith(`${injected}. `),
+    dossier.facet_availability.pseudocode.reason,
+  );
   assert.equal(dossier.pseudocode, "");
   assert.equal(dossier.native_api.available, false);
   assert.equal(dossier.native_value_flow.available, false);
@@ -295,9 +331,7 @@ try {
     scope:
       "Real Ghidra ELF or Mach-O analysis with an injected decompiler failure; output-contract parsing of the degraded dossier; real read-only TCP provider projection of the healthy path. No target execution; natural decompiler failures, degraded CLI/MCP projection and Windows are unverified.",
   };
-} finally {
-  if (cleaned) await rm(workspace, { recursive: true, force: true });
-}
+});
 console.log(
   JSON.stringify({
     ...report,

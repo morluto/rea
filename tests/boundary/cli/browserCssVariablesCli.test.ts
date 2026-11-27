@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import { createCli } from "../../../src/cli.js";
-import { browserPageInspectionOptions } from "../../../src/cliObservationOptions.js";
 import { BROWSER_TOOL_CONTRACTS } from "../../../src/contracts/browserToolContracts.js";
 
 type CliInstance = ReturnType<typeof createCli>;
@@ -25,22 +24,6 @@ const serve = async (
 };
 
 describe("browser CSS variables CLI and MCP exposure", () => {
-  it("defaults includeCssVariables to false in browserPageInspectionOptions", () => {
-    const parsed = browserPageInspectionOptions.parse({});
-    expect(Reflect.get(parsed, "includeCssVariables")).toBe(false);
-
-    const explicit = browserPageInspectionOptions.parse({
-      includeCssVariables: true,
-    });
-    expect(Reflect.get(explicit, "includeCssVariables")).toBe(true);
-
-    expect(
-      browserPageInspectionOptions.safeParse({
-        includeCssVariables: "invalid",
-      }).success,
-    ).toBe(false);
-  });
-
   it("advertises --include-css-variables in inspect-web-page CLI help", async () => {
     const cli = createCli({});
     const help = await serve(cli, ["inspect-web-page", "--help"]);
@@ -66,13 +49,5 @@ describe("browser CSS variables CLI and MCP exposure", () => {
         }),
       ]),
     );
-  });
-
-  it("rejects invalid non-boolean values for includeCssVariables option", () => {
-    expect(
-      browserPageInspectionOptions.safeParse({
-        includeCssVariables: "not-a-bool",
-      }).success,
-    ).toBe(false);
   });
 });

@@ -1,5 +1,7 @@
 import type { JsonValue } from "../jsonValue.js";
 import {
+  succeeded,
+  ownMember,
   at,
   requestJson,
   isObject,
@@ -13,10 +15,11 @@ import {
   type StateToolFacts,
   type StateView,
 } from "./environmentStateRules.js";
-import { entityTarget, succeeded } from "./environmentStateWriteChecks.js";
+import { entityTarget } from "./environmentStateWriteChecks.js";
 import type { WriteIo } from "./environmentStateWriteEffects.js";
 import {
   pathValuesOf,
+  pathParameterKeys,
   type BodyAddress,
   type StateWritePlan,
   type WriteAddress,
@@ -94,19 +97,20 @@ export const itemAction = (
   )
     return undefined;
   const views = facts.itemViews(target);
+  const itemKey = pathParameterKeys(tool.path_template).get(
+    segments.length - 2,
+  )!;
   const showsEntity = (record: StateRecordFacts): boolean => {
-    const id = pathValuesOf(tool.path_template, record.path)?.get(
-      item.slice(1, -1),
-    );
+    const id = pathValuesOf(tool.path_template, record.path)?.get(itemKey);
     if (id === undefined || record.status === 201) return false;
     if (facts.emptyResponse(record.ordinal)) return true;
     return facts.withBody(record.ordinal, (body) => {
       if (body === undefined || body === null) return true;
-      const located = locateItem(body, id);
+      const located = locateItem(body, id, idField);
       const object =
         located === undefined ? undefined : at(body, located.pointer);
       return (
-        located?.keys.includes(idField) === true &&
+        located !== undefined &&
         isObject(object) &&
         views.some(
           (view) =>
@@ -156,7 +160,8 @@ export const addressOf = (
     )
       return { by: "ids", member, kind };
     return value.every(
-      (entry) => isObject(entry) && scalarText(entry[idField]) !== undefined,
+      (entry) =>
+        isObject(entry) && scalarText(ownMember(entry, idField)) !== undefined,
     )
       ? { by: "elements", member }
       : undefined;
@@ -203,10 +208,9 @@ export const bulkWrite = (
     addressOf(requestJson(facts.requestBody(record.ordinal)), idField),
   );
   const [first] = forms;
-  if (
-    first === undefined ||
-    forms.some((form) => JSON.stringify(form) !== JSON.stringify(first))
-  )
+  if (first === undefined) return undefined;
+  const firstJson = JSON.stringify(first);
+  if (forms.some((form) => JSON.stringify(form) !== firstJson))
     return undefined;
   // An id array names entities only; an update needs members to apply.
   if (effect === "update" && first.by === "ids" && first.member === null)
@@ -235,7 +239,9 @@ export const namedEntities = (
   )
     return undefined;
   const entries = (
-    address.member === null ? body : (body as JsonObject)[address.member]
+    address.member === null
+      ? body
+      : ownMember(body as JsonObject, address.member)
   ) as JsonValue[];
   const shared =
     address.member === null || !isObject(body)
@@ -246,7 +252,10 @@ export const namedEntities = (
   const named = entries.map((entry) =>
     address.by === "ids"
       ? { id: scalarText(entry)!, body: shared }
-      : { id: scalarText((entry as JsonObject)[idField])!, body: entry },
+      : {
+          id: scalarText(ownMember(entry as JsonObject, idField))!,
+          body: entry,
+        },
   ) as NamedEntity[];
   return new Set(named.map(({ id }) => id)).size === named.length
     ? named

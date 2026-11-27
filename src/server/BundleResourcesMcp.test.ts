@@ -1,9 +1,10 @@
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { unknownTarget } from "../domain/targetIdentity.js";
+import { canonicalOutputSchema } from "../../tests/fixtures/canonicalOutputSchema.js";
+import type { Client } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema } from "ajv";
-import { afterEach, expect, it } from "vitest";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { expect, it } from "vitest";
+import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 
@@ -11,7 +12,7 @@ import {
   createAnalysisExecution,
   type AnalysisClient,
   type ProviderIdentity,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { InvestigationRecords } from "../application/investigation/InvestigationRecords.js";
 import { BinarySession } from "../application/binary/BinarySession.js";
 import { AnalysisProviderRegistry } from "../application/binary/AnalysisProviderRegistry.js";
@@ -19,9 +20,17 @@ import { SessionProviderRouter } from "../application/binary/SessionProviderRout
 import { toolContract } from "../contracts/toolContracts.js";
 import { createEvidence } from "../domain/evidence.js";
 import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
-import { createServer } from "./createServer.js";
 import { createArtifactBinarySession } from "../composition/binary.js";
 import { build } from "plist";
+import { createApplicationMcpHarness } from "../../tests/fixtures/applicationMcpHarness.js";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+
+const UNOBSERVED = unknownTarget("not-observed");
+
+/** The subject of an observation whose target identity was not observed. */
+const UNOBSERVED_SUBJECT = {
+  identity: { kind: "unknown", reason: "not-observed" },
+} as const;
 
 const identity: ProviderIdentity = {
   id: "bundle-resource-mcp-fixture",
@@ -29,14 +38,8 @@ const identity: ProviderIdentity = {
   version: "1",
 };
 
-const resources: Array<{ close(): Promise<unknown> }> = [];
-
-afterEach(async () => {
-  await Promise.all(resources.splice(0).map((resource) => resource.close()));
-});
-
 it("routes bundle resource MCP calls with null executable identity and retained Evidence", async () => {
-  const parent = await mkdtemp(join(tmpdir(), "rea-bundle-resource-mcp-"));
+  const parent = await createTestTempDirectory("rea-bundle-resource-mcp-");
   const bundle = join(parent, "Fixture.app");
   await mkdir(bundle);
   const plistPath = join(bundle, "Info.plist");
@@ -82,23 +85,21 @@ it("routes bundle resource MCP calls with null executable identity and retained 
     new InvestigationRecords(),
     { createClient: () => ({ client: resourceClient, capabilities: [] }) },
   );
-  const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "bundle-resource-test", version: "1" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  resources.push({
-    close: async () => {
-      await client.close();
-      await server.close();
-      await session.close();
-      await rm(parent, { recursive: true, force: true });
-    },
+  const { client } = await createApplicationMcpHarness({
+    session,
+    clientIdentity: { name: "bundle-resource-test", version: "1" },
   });
 
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
-
   await expectResourceSchemaBranches(client);
+
+  const advertised = (await client.listTools()).tools;
+  for (const name of ["open_binary", "open_bundle_resources", "close_binary"]) {
+    const tool = advertised.find((candidate) => candidate.name === name);
+    expect(tool?.annotations, name).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+    });
+  }
 
   const unbound = await client.callTool({
     name: "inspect_plist",
@@ -173,7 +174,7 @@ it("routes bundle resource MCP calls with null executable identity and retained 
     inspected.structuredContent,
   );
   expect(evidence).toMatchObject({
-    subject: null,
+    subject: UNOBSERVED_SUBJECT,
     normalized_result: {
       source_path: plistPath,
       resource_root: { executable_sha256: null },
@@ -183,7 +184,7 @@ it("routes bundle resource MCP calls with null executable identity and retained 
     .object({ evidence_id: z.string() })
     .parse(evidence).evidence_id;
   expect(session.evidenceById(evidenceId)).toMatchObject({
-    subject: null,
+    subject: UNOBSERVED_SUBJECT,
     operation: "inspect_plist",
     normalized_result: {
       resource_root: { canonical_path: bundle, executable_sha256: null },
@@ -191,11 +192,38 @@ it("routes bundle resource MCP calls with null executable identity and retained 
   });
 });
 
-it("exposes the production resource session through the MCP SDK for a keyless bundle", async () => {
-  const parent = await mkdtemp(
-    join(tmpdir(), "rea-bundle-resource-production-mcp-"),
+const expectExplicitSelection = async (
+  client: Client,
+  request: {
+    readonly name: "decode_interface_builder" | "inspect_keyed_archive";
+    readonly parameters: Record<string, JsonValue>;
+    readonly previous: {
+      readonly normalized_result: unknown;
+      readonly evidence_id: string;
+    };
+  },
+) => {
+  const response = await client.callTool({
+    name: request.name,
+    arguments: request.parameters,
+  });
+  expect(response.isError).not.toBe(true);
+  const evidence = toolContract(request.name).outputSchema.parse(
+    response.structuredContent,
   );
-  const bundle = join(parent, "Fixture.app");
+  expect(evidence.parameters).toEqual(request.parameters);
+  expect(evidence.normalized_result).toEqual(
+    request.previous.normalized_result,
+  );
+  expect(evidence.evidence_id).not.toBe(request.previous.evidence_id);
+};
+
+const createResourceMcpFixture = async () => {
+  const parent = await createTestTempDirectory(
+    "rea-bundle-resource-production-mcp-",
+  );
+  const bundle = join(parent, "Fixture");
+  const alias = join(parent, "Caller");
   const resourceDirectory = join(bundle, "Resources");
   await mkdir(resourceDirectory, { recursive: true });
   await writeFile(join(bundle, "Info.plist"), "<plist><dict/></plist>");
@@ -209,28 +237,25 @@ it("exposes the production resource session through the MCP SDK for a keyless bu
     }),
   );
 
+  await symlink(bundle, alias, "junction");
+  const canonical = await realpath(bundle);
+
   const session = await createArtifactBinarySession({}, process.platform);
-  const server = createServer({ kind: "session", session });
-  const client = new Client({
-    name: "production-bundle-resource-test",
-    version: "1",
+  const { client } = await createApplicationMcpHarness({
+    session,
+    clientIdentity: { name: "production-bundle-resource-test", version: "1" },
   });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  resources.push({
-    close: async () => {
-      await client.close();
-      await server.close();
-      await session.close();
-      await rm(parent, { recursive: true, force: true });
-    },
-  });
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
+
+  return { client, session, alias, canonical };
+};
+
+it("exposes the production resource session through the MCP SDK for a keyless bundle", async () => {
+  const { client, session, alias, canonical } =
+    await createResourceMcpFixture();
 
   const opened = await client.callTool({
     name: "open_bundle_resources",
-    arguments: { path: bundle },
+    arguments: { path: alias },
   });
   expect(opened.isError).not.toBe(true);
   expect(
@@ -238,23 +263,37 @@ it("exposes the production resource session through the MCP SDK for a keyless bu
       opened.structuredContent,
     ),
   ).toMatchObject({
-    result: { canonical_path: bundle, executable_sha256: null },
+    result: {
+      caller_path: alias,
+      canonical_path: canonical,
+      executable_sha256: null,
+    },
   });
 
   const decoded = await client.callTool({
     name: "decode_interface_builder",
-    arguments: {},
+    arguments: { detail: "complete" },
   });
   expect(decoded.isError).not.toBe(true);
   const decodedEvidence = toolContract(
     "decode_interface_builder",
   ).outputSchema.parse(decoded.structuredContent);
   expect(decodedEvidence).toMatchObject({
-    subject: null,
+    subject: UNOBSERVED_SUBJECT,
     normalized_result: {
       target_sha256: null,
-      resource_root: { canonical_path: bundle, executable_sha256: null },
+      resource_root: {
+        caller_path: alias,
+        canonical_path: canonical,
+        executable_sha256: null,
+      },
     },
+  });
+  expect(decodedEvidence.parameters).toEqual({});
+  await expectExplicitSelection(client, {
+    name: "decode_interface_builder",
+    parameters: { max_documents: 64 },
+    previous: decodedEvidence,
   });
   const decodedEvidenceId = z
     .object({ evidence_id: z.string() })
@@ -282,10 +321,10 @@ it("exposes the production resource session through the MCP SDK for a keyless bu
       ),
     ).toMatchObject({
       normalized_result: {
-        artifact: { path: bundle, sha256: null },
+        artifact: { path: canonical, sha256: null },
         resource_root: {
-          caller_path: bundle,
-          canonical_path: bundle,
+          caller_path: alias,
+          canonical_path: canonical,
           executable_sha256: null,
         },
       },
@@ -301,26 +340,51 @@ it("exposes the production resource session through the MCP SDK for a keyless bu
     inspected.structuredContent,
   );
   expect(evidence).toMatchObject({
-    subject: null,
+    subject: UNOBSERVED_SUBJECT,
     normalized_result: {
       archive_path: "Resources/Archive.plist",
       target_sha256: null,
-      resource_root: { canonical_path: bundle, executable_sha256: null },
+      resource_root: {
+        caller_path: alias,
+        canonical_path: canonical,
+        executable_sha256: null,
+      },
       objects: expect.arrayContaining([
         expect.objectContaining({ value: "resource-only-value" }),
       ]),
     },
   });
+  expect(evidence.parameters).toEqual({ path: "Resources/Archive.plist" });
+  await expectExplicitSelection(client, {
+    name: "inspect_keyed_archive",
+    parameters: { path: "Resources/Archive.plist", offset: 0 },
+    previous: evidence,
+  });
   const evidenceId = z
     .object({ evidence_id: z.string() })
     .parse(evidence).evidence_id;
   expect(session.evidenceById(evidenceId)).toMatchObject({
-    subject: null,
+    subject: UNOBSERVED_SUBJECT,
     operation: "inspect_keyed_archive",
     normalized_result: {
-      resource_root: { canonical_path: bundle, executable_sha256: null },
+      resource_root: {
+        caller_path: alias,
+        canonical_path: canonical,
+        executable_sha256: null,
+      },
     },
   });
+  const closed = await client.callTool({ name: "close_binary", arguments: {} });
+  expect(closed.isError).not.toBe(true);
+  const statusAfterClose = await client.callTool({
+    name: "binary_session",
+    arguments: {},
+  });
+  expect(
+    toolContract("binary_session").outputSchema.parse(
+      statusAfterClose.structuredContent,
+    ),
+  ).toMatchObject({ result: { open: false } });
 });
 
 const expectResourceSchemaBranches = async (client: Client): Promise<void> => {
@@ -378,6 +442,7 @@ const expectResourceSchemaBranches = async (client: Client): Promise<void> => {
         archive_path: "Resources/data.archive",
         archive_sha256: "b".repeat(64),
         archive_format: "binary-plist",
+        archiver: "NSKeyedArchiver",
         roots: {},
         objects: [],
         references: [],
@@ -402,7 +467,7 @@ const expectResourceSchemaBranches = async (client: Client): Promise<void> => {
   } as const;
   for (const { name, validResult } of schemaCases) {
     const contract = toolContract(name);
-    const validEvidence = createEvidence(undefined, identity, {
+    const validEvidence = createEvidence(UNOBSERVED, identity, {
       operation: name,
       parameters: {},
       result: validResult,
@@ -421,7 +486,7 @@ const expectResourceSchemaBranches = async (client: Client): Promise<void> => {
         target_sha256: null,
       };
     }
-    const malformedEvidence = createEvidence(undefined, identity, {
+    const malformedEvidence = createEvidence(UNOBSERVED, identity, {
       operation: name,
       parameters: {},
       result: malformedResult,
@@ -430,12 +495,12 @@ const expectResourceSchemaBranches = async (client: Client): Promise<void> => {
       contract.outputSchema.safeParse(malformedEvidence).success,
       `${name} canonical rejects missing resource_root`,
     ).toBe(false);
-    const advertised = advertisedTools.get(name)?.outputSchema;
-    expect(advertised, `${name} is advertised`).toBeDefined();
-    if (advertised === undefined) continue;
+    const advertised = canonicalOutputSchema(name);
     const validateAdvertised = new Ajv2020({
       strict: false,
       validateFormats: false,
+      inlineRefs: false,
+      code: { optimize: false },
     }).compile(advertised as AnySchema);
     const resourceResult = structuredClone(validResult) as Record<
       string,
@@ -449,7 +514,7 @@ const expectResourceSchemaBranches = async (client: Client): Promise<void> => {
         target_sha256: null,
       };
     }
-    const resourceEvidence = createEvidence(undefined, identity, {
+    const resourceEvidence = createEvidence(UNOBSERVED, identity, {
       operation: name,
       parameters: {},
       result: resourceResult,

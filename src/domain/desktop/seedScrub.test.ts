@@ -1,0 +1,586 @@
+import { gunzipSync, gzipSync } from "node:zlib";
+
+import { describe, expect, it } from "vitest";
+
+import { openStateDocument } from "./gzipDocument.js";
+import { SEED_HOME, type HostIdentity } from "./hostIdentity.js";
+import { scrubDconf, scrubSeed } from "./seedScrub.js";
+import { detectStateFormat } from "./stateFormats.js";
+
+const GEANY: HostIdentity = {
+  home: "/home/ada",
+  hostname: "e81232be457d",
+  user: "ada",
+};
+
+/** Text as UTF-16 after a byte-order mark, in either byte order. */
+const utf16 = (text: string, order: "le" | "be") => {
+  const bytes = Buffer.from(`\uFEFF${text}`, "utf16le");
+  return order === "be" ? bytes.swap16() : bytes;
+};
+
+/** A seed at a home path that says nothing of its format. */
+const seed = (format: string) => ({ home: "seed", format });
+
+const scrubbed = (text: string, format: string, identity = GEANY) => {
+  const outcome = scrubSeed(Buffer.from(text), seed(format), identity);
+  return {
+    text: outcome.bytes?.toString("utf8"),
+    holdsIdentity: outcome.holdsIdentity,
+  };
+};
+
+describe("scrubSeed on text", () => {
+  it.each(["le", "be"] as const)(
+    "keeps a leading content U+FEFF after the UTF-16 %s signature",
+    (order) => {
+      const input = utf16("\uFEFFtitle\n/home/ada/file\n", order);
+      const outcome = scrubSeed(input, seed("binary"), GEANY);
+      expect(
+        outcome.bytes?.equals(utf16(`\uFEFFtitle\n${SEED_HOME}/file\n`, order)),
+      ).toBe(true);
+      expect(outcome.holdsIdentity).toBe(false);
+      expect(
+        scrubSeed(
+          utf16("\uFEFFtitle\n/different/home/file\n", order),
+          seed("binary"),
+          GEANY,
+        ),
+      ).toEqual({ bytes: undefined, holdsIdentity: false });
+    },
+  );
+
+  it("rewrites a UTF-8 text seed, keeping its byte-order mark, and leaves a clean one as it is", () => {
+    expect(scrubbed("\uFEFFmail=ada@e81232be457d\n", "keyfile")).toEqual({
+      text: "\uFEFFmail=user@localhost\n",
+      holdsIdentity: false,
+    });
+    expect(scrubbed("wrap=true\n", "text")).toEqual({
+      text: undefined,
+      holdsIdentity: false,
+    });
+  });
+
+  it.each(["le", "be"] as const)(
+    "rewrites a UTF-16 %s seed with a byte-order mark in its own order",
+    (order) => {
+      const outcome = scrubSeed(
+        utf16("20260216;/home/ada/.varicad;ada@e81232be457d\n", order),
+        seed("binary"),
+        GEANY,
+      );
+
+      expect(outcome.bytes?.toString("hex")).toBe(
+        utf16(
+          `20260216;${SEED_HOME}/.varicad;user@localhost\n`,
+          order,
+        ).toString("hex"),
+      );
+    },
+  );
+
+  it("replaces the captured user@localhost of a host named localhost and finds it in bytes it cannot rewrite", () => {
+    const local = { ...GEANY, hostname: "localhost" };
+
+    expect(scrubbed("mail=ada@localhost\n", "keyfile", local)).toEqual({
+      text: "mail=user@localhost\n",
+      holdsIdentity: false,
+    });
+    expect(scrubbed("SQLite format 3\0ada@localhost", "sqlite", local)).toEqual(
+      { text: undefined, holdsIdentity: true },
+    );
+  });
+});
+
+describe("scrubSeed on JSON and XML", () => {
+  it("rewrites JSON strings only, so a host named like a literal leaves the syntax valid", () => {
+    const named = { ...GEANY, hostname: "true" };
+    const outcome = scrubbed(
+      '{"enabled": true, "host": "true", "list": [true, "a true"]}',
+      "json",
+      named,
+    );
+
+    expect(outcome.text).toBe(
+      '{"enabled": true, "host": "localhost", "list": [true, "a localhost"]}',
+    );
+    expect(JSON.parse(outcome.text ?? "")).toEqual({
+      enabled: true,
+      host: "localhost",
+      list: [true, "a localhost"],
+    });
+  });
+
+  it("keeps member names, reporting one that holds the host rather than rewriting it into another", () => {
+    const named = { ...GEANY, hostname: "ubuntu" };
+    const text = String.raw`{"ubuntu": 1, "localhost": 2, "\u0075buntu-dock"
+      : "ubuntu", "list": ["ubuntu"]}`;
+
+    const outcome = scrubbed(text, "json", named);
+
+    expect(outcome).toEqual({
+      text: String.raw`{"ubuntu": 1, "localhost": 2, "\u0075buntu-dock"
+      : "localhost", "list": ["localhost"]}`,
+      holdsIdentity: true,
+    });
+    expect(Object.keys(JSON.parse(outcome.text ?? "") as object)).toEqual([
+      "ubuntu",
+      "localhost",
+      "ubuntu-dock",
+      "list",
+    ]);
+  });
+
+  it("walks a JSON string of 16,000,000 characters, which the capture can retain, without running out of stack", () => {
+    const note = "x".repeat(16_000_000);
+    const text = `{"note": "${note}", "mail": "ada@e81232be457d"}`;
+
+    const outcome = scrubSeed(Buffer.from(text), seed("json"), GEANY);
+
+    expect(outcome.holdsIdentity).toBe(false);
+    expect(outcome.bytes?.length).toBe(text.length - 2);
+    expect(outcome.bytes?.subarray(-29).toString("utf8")).toBe(
+      `x", "mail": "user@localhost"}`,
+    );
+  });
+
+  it("decodes JSON escapes, rewriting an escaped identity and finding one left inside a domain", () => {
+    expect(
+      scrubbed(
+        String.raw`{"mail": "ada@\u006581232be457d", "kept": "\u00e9"}`,
+        "json",
+      ),
+    ).toEqual({
+      text: String.raw`{"mail": "user@localhost", "kept": "\u00e9"}`,
+      holdsIdentity: false,
+    });
+    expect(
+      scrubbed(String.raw`{"url": "http://\u006581232be457d.local/"}`, "json"),
+    ).toEqual({ text: undefined, holdsIdentity: true });
+  });
+
+  it("rewrites XML text, attribute values, comments and CDATA but not names, decoding references", () => {
+    const xml = `<?xml version="1.0"?>\n<m a="ada@&#x65;81232be457d" b='x &amp; y'>ada&#64;e81232be457d<!-- by ada@e81232be457d --><![CDATA[/home/ada/x]]></m>`;
+    const named = { ...GEANY, hostname: "item" };
+
+    const outcome = scrubbed(xml, "xml");
+    const items = scrubbed('<item kind="item">item</item>', "xml", named);
+
+    expect(outcome).toEqual({
+      text: `<?xml version="1.0"?>\n<m a="user@localhost" b='x &amp; y'>user@localhost<!-- by user@localhost --><![CDATA[${SEED_HOME}/x]]></m>`,
+      holdsIdentity: false,
+    });
+    expect(detectStateFormat("m.xml", Buffer.from(outcome.text ?? ""))).toBe(
+      "xml",
+    );
+    expect(items.text).toBe('<item kind="localhost">localhost</item>');
+  });
+
+  it("preserves XML names even when the exported reader treats the document as text", () => {
+    const xml =
+      '<root><Ϳ/><item ubuntu="one" localhost="two">ubuntu</item></root>';
+    expect(detectStateFormat("m.xml", Buffer.from(xml))).toBe("text");
+    expect(scrubbed(xml, "text", { ...GEANY, hostname: "ubuntu" }).text).toBe(
+      '<root><Ϳ/><item ubuntu="one" localhost="two">localhost</item></root>',
+    );
+  });
+
+  it.each(["le", "be"] as const)(
+    "scrubs UTF-16 %s JSON and XML by value, as their UTF-8 forms are, in their own byte order",
+    (order) => {
+      const named = { ...GEANY, hostname: "ubuntu" };
+      const json = '{"ubuntu": 1, "localhost": 2, "dock": "ubuntu"}';
+      const xml = `<?xml version="1.0" encoding="UTF-16"?>\n<ubuntu a="ubuntu">ubuntu</ubuntu>`;
+
+      const outcomes = [
+        { text: json, home: ".config/dock.json" },
+        { text: xml, home: ".config/dock.xml" },
+      ].map(({ text, home }) =>
+        scrubSeed(utf16(text, order), { home, format: "binary" }, named),
+      );
+
+      expect(
+        outcomes.map(({ bytes, holdsIdentity }) => [
+          bytes?.toString("hex"),
+          holdsIdentity,
+        ]),
+      ).toEqual([
+        [
+          utf16(
+            '{"ubuntu": 1, "localhost": 2, "dock": "localhost"}',
+            order,
+          ).toString("hex"),
+          true,
+        ],
+        [
+          utf16(
+            `<?xml version="1.0" encoding="UTF-16"?>\n<ubuntu a="localhost">localhost</ubuntu>`,
+            order,
+          ).toString("hex"),
+          true,
+        ],
+      ]);
+    },
+  );
+
+  it("finds an identity XML references hide inside a domain, which it does not rewrite", () => {
+    expect(scrubbed("<m>http://&#x65;81232be457d.local/</m>", "xml")).toEqual({
+      text: undefined,
+      holdsIdentity: true,
+    });
+  });
+
+  it("scrubs around a reference past the last code point instead of throwing", () => {
+    const outcome = scrubbed(
+      '<m a="&#x110000;">&#1114112; ada@e81232be457d</m>',
+      "xml",
+    );
+    expect(outcome.holdsIdentity).toBe(false);
+    expect(outcome.text).toContain("user@localhost");
+    expect(outcome.text).not.toContain("e81232be457d");
+  });
+});
+
+describe("scrubSeed XML whitespace normalization", () => {
+  it("normalizes literal whitespace in rewritten XML attributes without inventing character references", () => {
+    const xml = '<root path="/home/ada/a\n b" other="/home/ada/a\t b"/>';
+    const outcome = scrubbed(xml, "xml");
+
+    expect(outcome.text).toBe(
+      `<root path="${SEED_HOME}/a  b" other="${SEED_HOME}/a  b"/>`,
+    );
+    expect(outcome.holdsIdentity).toBe(false);
+  });
+
+  it("normalizes literal line endings in rewritten XML character data without inventing CR references", () => {
+    const crlf = `<root>/home/ada/a\r\n b</root>`;
+    const cr = `<root>/home/ada/a\r b</root>`;
+
+    expect(scrubbed(crlf, "xml").text).toBe(`<root>${SEED_HOME}/a\n b</root>`);
+    expect(scrubbed(cr, "xml").text).toBe(`<root>${SEED_HOME}/a\n b</root>`);
+  });
+
+  it("preserves explicit character references in XML attributes and character data", () => {
+    const xml = `<root path="/home/ada/a&#10; b" tab="/home/ada/a&#9; b">/home/ada/a&#13; b</root>`;
+    const outcome = scrubbed(xml, "xml");
+
+    expect(outcome.text).toBe(
+      `<root path="${SEED_HOME}/a&#10; b" tab="${SEED_HOME}/a&#9; b">${SEED_HOME}/a&#13; b</root>`,
+    );
+    expect(outcome.holdsIdentity).toBe(false);
+  });
+
+  it("leaves XML with literal line endings or whitespace byte-for-byte unchanged when no identity matches", () => {
+    const xml = '<root path="/unmatched/path/a\n b">\r\nclean\r\n</root>';
+    const outcome = scrubSeed(Buffer.from(xml), seed("xml"), GEANY);
+
+    expect(outcome.bytes).toBeUndefined();
+    expect(outcome.holdsIdentity).toBe(false);
+  });
+});
+
+describe("scrubSeed on bytes it does not rewrite", () => {
+  it("reports a seed whose shipped bytes still hold the host name or the captured home", () => {
+    const database = Buffer.concat([
+      Buffer.from("SQLite format 3\0"),
+      Buffer.from([0, 1, 2]),
+      Buffer.from("e81232be457d"),
+    ]);
+    const outcomes = [
+      scrubSeed(database, seed("sqlite"), GEANY),
+      scrubSeed(
+        Buffer.from("url=http://e81232be457d.local/\n"),
+        seed("text"),
+        GEANY,
+      ),
+      scrubSeed(Buffer.from("SQLite format 3\0ada"), seed("sqlite"), GEANY),
+      scrubSeed(Buffer.from([0xff, 0xfe, 0x41]), seed("binary"), GEANY),
+    ];
+
+    expect(
+      outcomes.map(({ bytes, holdsIdentity }) => [bytes, holdsIdentity]),
+    ).toEqual([
+      [undefined, true],
+      [undefined, true],
+      [undefined, false],
+      [undefined, false],
+    ]);
+  });
+
+  it("leaves the seed's own home alone, as a capture inside the computer spells it", () => {
+    const inside = { home: SEED_HOME, hostname: "4f0c1d2e3a4b", user: "user" };
+
+    expect(
+      scrubSeed(
+        Buffer.from(`SQLite format 3\0${SEED_HOME}/x`),
+        seed("sqlite"),
+        inside,
+      ),
+    ).toEqual({ bytes: undefined, holdsIdentity: false });
+    expect(
+      scrubbed(`${SEED_HOME}/x user@4f0c1d2e3a4b`, "text", inside),
+    ).toEqual({ text: `${SEED_HOME}/x user@localhost`, holdsIdentity: false });
+  });
+});
+
+describe("scrubDconf", () => {
+  const named = { ...GEANY, hostname: "true" };
+
+  it("rewrites GVariant strings by their decoded values, keeping groups, keys, dictionary keys, literals and bytestrings", () => {
+    const outcome = scrubDconf(
+      {
+        "org/true": {
+          true: "true",
+          mail: String.raw`'ada@\u0074rue'`,
+          quoted: `"it's true"`,
+          list: "['true', \"a 'true'\", 'x']",
+          hosts: "{'true': <'true'>}",
+          blob: "b'true'",
+          count: "uint32 7",
+        },
+      },
+      named,
+    );
+
+    expect(outcome.text).toBe(
+      [
+        "[org/true]",
+        "true=true",
+        "mail='user@localhost'",
+        `quoted="it's localhost"`,
+        "list=['localhost', \"a 'localhost'\", 'x']",
+        "hosts={'true': <'localhost'>}",
+        "blob=b'true'",
+        "count=uint32 7",
+        "",
+      ].join("\n"),
+    );
+    expect(outcome.holdsIdentity).toBe(true);
+  });
+
+  it("escapes what a rewritten string holds that would end it or its line", () => {
+    const outcome = scrubDconf(
+      { "org/notes": { note: String.raw`'true\nit\'s \\ true'` } },
+      named,
+    );
+
+    expect(outcome.text).toBe(
+      String.raw`[org/notes]
+note='localhost\u000ait\'s \\ localhost'
+`,
+    );
+  });
+
+  it.each([
+    ["an unterminated string", "'ada@e81232be457d"],
+    ["an escape naming no character", String.raw`'ada@e81232be457d\u0000'`],
+    ["an object path", "[objectpath '/e81232be457d', '/x']"],
+    ["a signature", "@mg 'e81232be457d'"],
+  ])(
+    "keeps a value holding %s as captured and finds the host in it",
+    (_name, value) => {
+      expect(scrubDconf({ "org/notes": { key: value } }, GEANY)).toEqual({
+        text: `[org/notes]\nkey=${value}\n`,
+        holdsIdentity: true,
+      });
+    },
+  );
+
+  it("finds a host its escapes spell where the scrub does not replace it", () => {
+    expect(
+      scrubDconf(
+        { "org/notes": { url: String.raw`'http://\u006581232be457d.local/'` } },
+        GEANY,
+      ),
+    ).toEqual({
+      text: String.raw`[org/notes]
+url='http://\u006581232be457d.local/'
+`,
+      holdsIdentity: true,
+    });
+  });
+});
+
+/** A BGZF block as htslib writes one: a gzip member whose extra field's `BC` subfield gives the block's size less one. */
+const bgzfBlock = (text: string) => {
+  const block = Buffer.concat([
+    Buffer.from([0x1f, 0x8b, 8, 4, 0, 0, 0, 0, 0, 0xff, 6, 0, 0x42, 0x43]),
+    Buffer.from([2, 0, 0, 0]),
+    gzipSync(text).subarray(10),
+  ]);
+  block.writeUInt16LE(block.length - 1, 16);
+  return block;
+};
+/** A BGZF file: a block for each text, then the empty block that ends one. */
+const bgzf = (...texts: string[]) =>
+  Buffer.concat([...texts, ""].map(bgzfBlock));
+/** A dictzip file: one gzip member named `name`, its extra field's `RA` subfield indexing its one chunk. */
+const dictzip = (text: string, name: string) => {
+  const member = gzipSync(text).subarray(10);
+  const extra = Buffer.alloc(14);
+  extra.writeUInt16LE(12, 0);
+  extra.write("RA", 2, "latin1");
+  [8, 1, 58_315, 1, member.length - 8].forEach((value, index) =>
+    extra.writeUInt16LE(value, 4 + 2 * index),
+  );
+  return Buffer.concat([
+    Buffer.from([0x1f, 0x8b, 8, 0x0c, 0, 0, 0, 0, 2, 3]),
+    extra,
+    Buffer.from(`${name}\0`),
+    member,
+  ]);
+};
+
+describe("scrubSeed on gzip files", () => {
+  const XML = (author: string) =>
+    `<?xml version="1.0" encoding="UTF-8"?>\n<gnm:Workbook xmlns:gnm="http://www.gnumeric.org/v10.dtd"><gnm:Summary><gnm:Item><gnm:name>author</gnm:name><gnm:val-string>${author}</gnm:val-string></gnm:Item></gnm:Summary></gnm:Workbook>\n`;
+  /** A Gnumeric workbook gzip-compressed with a file name and modification time in its header, as gzip(1) writes one. */
+  const workbook = (author: string, name = "Budget.gnumeric") =>
+    Buffer.concat([
+      Buffer.from([0x1f, 0x8b, 8, 8, 0x10, 0x20, 0x30, 0x40, 0, 3]),
+      Buffer.from(`${name}\0`),
+      gzipSync(XML(author)).subarray(10),
+    ]);
+  /** A gzip header's magic, method, flags and modification time, and its operating system. */
+  const header = (bytes: Buffer | undefined) =>
+    bytes === undefined ? undefined : [...bytes.subarray(0, 8), bytes[9]];
+  /** Deflate, no flags (so no file name, comment or extra field), modification time 0 and the operating system unknown. */
+  const DETERMINISTIC = [0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0xff];
+
+  it("scrubs the document inside as its format and compresses it again with no name or time", () => {
+    const outcome = scrubSeed(
+      workbook("ada@e81232be457d in /home/ada/Documents"),
+      seed("xml"),
+      GEANY,
+    );
+
+    expect(outcome.holdsIdentity).toBe(false);
+    expect(outcome.recompressed).toBeUndefined();
+    expect(header(outcome.bytes)).toEqual(DETERMINISTIC);
+    expect(gunzipSync(outcome.bytes ?? Buffer.alloc(0)).toString("utf8")).toBe(
+      XML(`user@localhost in ${SEED_HOME}/Documents`),
+    );
+  });
+
+  it("compresses again a seed whose document needs no edit, so the host name its header holds does not ship, and ships one already so as captured", () => {
+    const outcome = scrubSeed(
+      workbook("x", "e81232be457d-budget.gnumeric"),
+      seed("xml"),
+      GEANY,
+    );
+
+    expect(outcome.holdsIdentity).toBe(false);
+    expect(outcome.recompressed).toBe(true);
+    expect(header(outcome.bytes)).toEqual(DETERMINISTIC);
+    expect(outcome.bytes?.toString("latin1")).not.toContain("e81232be457d");
+    expect(gunzipSync(outcome.bytes ?? Buffer.alloc(0)).toString("utf8")).toBe(
+      XML("x"),
+    );
+    expect(
+      scrubSeed(outcome.bytes ?? Buffer.alloc(0), seed("xml"), GEANY),
+    ).toEqual({ bytes: undefined, holdsIdentity: false });
+  });
+
+  it("compresses again an ordinary seed of several named members whose document needs no edit", () => {
+    const outcome = scrubSeed(
+      Buffer.concat([
+        workbook("x", "e81232be457d-budget.gnumeric"),
+        workbook("y"),
+      ]),
+      seed("xml"),
+      GEANY,
+    );
+
+    expect(outcome.holdsIdentity).toBe(false);
+    expect(outcome.recompressed).toBe(true);
+    expect(header(outcome.bytes)).toEqual(DETERMINISTIC);
+    expect(gunzipSync(outcome.bytes ?? Buffer.alloc(0)).toString("utf8")).toBe(
+      XML("x") + XML("y"),
+    );
+  });
+
+  it("ships a seed whose document needs no edit as captured when a member has an extra field, where BGZF and dictzip index their blocks", () => {
+    const calls = bgzf(
+      "##fileformat=VCFv4.2\n",
+      "#CHROM\tPOS\tID\nchr1\t100\trs1\n",
+    );
+    const endedByBlock = Buffer.concat([workbook("x"), bgzfBlock("")]);
+
+    expect(scrubSeed(calls, seed("text"), GEANY)).toEqual({
+      bytes: undefined,
+      holdsIdentity: false,
+    });
+    expect(scrubSeed(endedByBlock, seed("xml"), GEANY)).toEqual({
+      bytes: undefined,
+      holdsIdentity: false,
+    });
+  });
+
+  it("searches the bytes of a seed with an extra field it ships as captured, finding the host name its header holds", () => {
+    expect(
+      scrubSeed(
+        dictzip("apple\nbanana\n", "e81232be457d.dict"),
+        seed("text"),
+        GEANY,
+      ),
+    ).toEqual({ bytes: undefined, holdsIdentity: true });
+  });
+
+  it("scrubs a BGZF seed whose document holds the host name, compressing it again with no extra field", () => {
+    const outcome = scrubSeed(
+      bgzf("##source=ada@e81232be457d\n", "chr1\t100\n"),
+      seed("text"),
+      GEANY,
+    );
+
+    expect(outcome.holdsIdentity).toBe(false);
+    expect(outcome.recompressed).toBeUndefined();
+    expect(header(outcome.bytes)).toEqual(DETERMINISTIC);
+    expect(gunzipSync(outcome.bytes ?? Buffer.alloc(0)).toString("utf8")).toBe(
+      "##source=user@localhost\nchr1\t100\n",
+    );
+  });
+
+  it("stores a document that deflating would make expand past the 100 times a view reads, so the seed stays readable", () => {
+    // An app that stores its document uncompressed, so the captured file reads.
+    const stored = gzipSync(XML(`ada@e81232be457d ${"x".repeat(60_000)}`), {
+      level: 0,
+    });
+    expect(openStateDocument("Budget.gnumeric", stored)).not.toHaveProperty(
+      "error",
+    );
+
+    const shipped = scrubSeed(stored, seed("xml"), GEANY).bytes;
+
+    expect(
+      openStateDocument("Budget.gnumeric", shipped ?? Buffer.alloc(0)),
+    ).toMatchObject({ format: "xml", compression: "gzip" });
+    expect(
+      openStateDocument("Budget.gnumeric", shipped ?? Buffer.alloc(0)),
+    ).not.toHaveProperty("error");
+  });
+
+  it("reports the identity in the document inside where the scrub leaves it", () => {
+    // XML names are never rewritten.
+    const named = { ...GEANY, hostname: "Workbook" };
+
+    expect(scrubSeed(workbook("x"), seed("xml"), named).holdsIdentity).toBe(
+      true,
+    );
+  });
+
+  it("scrubs a readable document the state view did not read and searches damaged bytes as captured", () => {
+    const damaged = workbook("ada@e81232be457d").subarray(0, 40);
+    const unread = { home: "seed", format: null };
+
+    const scrubbed = scrubSeed(workbook("ada@e81232be457d"), unread, GEANY);
+    expect(scrubbed.holdsIdentity).toBe(false);
+    expect(gunzipSync(scrubbed.bytes ?? Buffer.alloc(0)).toString("utf8")).toBe(
+      XML("user@localhost"),
+    );
+    expect(scrubSeed(Buffer.from(damaged), seed("xml"), GEANY)).toEqual({
+      bytes: undefined,
+      holdsIdentity: false,
+    });
+  });
+});

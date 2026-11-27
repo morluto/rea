@@ -117,12 +117,12 @@ describe("NativeAOT DEHYDRATED_DATA hydration output", () => {
     [
       "COPY past the mapped section",
       [{ copy: fill(NATIVE_AOT_HYDRATION_CAPACITY + 1) }],
-      "Hydrated metadata exceeds its mapped PE section",
+      "exceeds_mapped_section",
     ],
     [
       "pointer fixup past the mapped section after growth",
       [{ copy: fill(NATIVE_AOT_HYDRATION_CAPACITY - 4) }, { fixupPtr: TARGET }],
-      "Hydrated metadata exceeds its mapped PE section",
+      "exceeds_mapped_section",
     ],
     [
       "COPY payload past DEHYDRATED_DATA after growth",
@@ -130,7 +130,7 @@ describe("NativeAOT DEHYDRATED_DATA hydration output", () => {
         { copy: fill(INITIAL_OUTPUT + 1) },
         { raw: Buffer.from([4 << 3, 1, 2]) },
       ],
-      "DEHYDRATED_DATA COPY leaves its section",
+      "copy_leaves_section",
     ],
     [
       "fixup index outside captured sections after growth",
@@ -138,12 +138,61 @@ describe("NativeAOT DEHYDRATED_DATA hydration output", () => {
         { copy: fill(INITIAL_OUTPUT + 1) },
         { raw: Buffer.from([(31 << 3) | 3, 0xff, 0xff, 0xff]) },
       ],
-      "DEHYDRATED_DATA fixup leaves captured PE sections",
+      "fixup_leaves_sections",
     ],
-  ])("reports %s as partial without an overlay", (_case, commands, reason) => {
+  ])("reports %s as partial without an overlay", (_case, commands, detail) => {
     const { summary } = hydrate(commands);
     expect(summary.status).toBe("partial");
     expect(summary.derived_overlay).toBeNull();
-    expect(summary.diagnostics.join("\n")).toContain(reason);
+    expect(summary.reason).toMatchObject({
+      code: "hydration_failed",
+      detail,
+    });
+    expect(summary.diagnostics).toEqual([detail]);
   });
+});
+
+describe("NativeAOT hydration pointer domain", () => {
+  it.each([
+    {
+      label: "negative",
+      imageBase: 0x10000n,
+      delta: -0x80000000,
+    },
+    {
+      label: "above uint64",
+      imageBase: (1n << 64n) - 0x62000n,
+      delta: 0x7fffffff,
+    },
+  ])(
+    "keeps a partial report when an inline pointer is $label",
+    ({ imageBase, delta }) => {
+      const { bytes } = nativeAotPeHydrationFixture([
+        { inlinePtr: [NATIVE_AOT_HYDRATION_BASE] },
+      ]);
+      const fixtureBase = 0x140000000n;
+      bytes.writeBigUInt64LE(imageBase, 0x98 + 24);
+      // Directory rows store absolute VAs. Move them with the image base so
+      // the directory stays admitted and hydration still runs.
+      for (const offset of [0x618, 0x620, 0x630, 0x638]) {
+        const value = bytes.readBigUInt64LE(offset);
+        if (value >= fixtureBase)
+          bytes.writeBigUInt64LE(value - fixtureBase + imageBase, offset);
+      }
+      // The first inline pointer is at RVA 0x3005. Image base 0x10000 makes
+      // that VA 0x13005, and delta -0x80000000 leaves the unsigned domain.
+      bytes.writeInt32LE(delta, 0x1605);
+      const summary = parseNativeAotPe(
+        bytes,
+        nativeAotPeDigest(bytes),
+        NATIVE_AOT_MAX_REPORT_BYTES,
+      ).summary;
+      expect(summary.status).toBe("partial");
+      expect(summary.derived_overlay).toBeNull();
+      expect(summary.reason).toMatchObject({
+        code: "no_system_object_root",
+        hydration: { detail: "pointer_outside_address_domain" },
+      });
+    },
+  );
 });

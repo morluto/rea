@@ -5,6 +5,14 @@ import { TEMPLATE_RULES } from "./analysisView/environmentManifestRules.js";
 import { prefixedDigestSchema } from "./digests.js";
 import { retainedEvidenceReferenceSchema } from "./evidenceReference.js";
 import { absoluteLocalPathStringSchema } from "./localPath.js";
+import { portableBundleNameSchema } from "./portableBundleName.js";
+
+/** A durably published bundle retained when later cleanup fails. */
+export interface EnvironmentBundlePublication {
+  readonly kind: "environment-bundle-publication";
+  readonly directory: string;
+  readonly files: readonly { readonly path: string; readonly bytes: number }[];
+}
 
 /** Capture Evidence retained in this session, or one capture Evidence file on this host. */
 const environmentCaptureSourceSchema = z.discriminatedUnion("kind", [
@@ -26,9 +34,7 @@ export const exportEnvironmentBundleInputSchema = z.strictObject({
   output_directory: absoluteLocalPathStringSchema.describe(
     "Absolute, absent output directory for the bundle folder; parent must exist.",
   ),
-  name: z
-    .string()
-    .min(1)
+  name: portableBundleNameSchema
     .optional()
     .describe(
       "Env folder and env id (kebab-case). Default: the manifest's name; required when the capture's origin is a loopback or IP address.",
@@ -105,6 +111,7 @@ export const environmentBuildReportSchema = z.strictObject({
         "name-from-file",
         "credential-named-members",
         "credential-scan-incomplete",
+        "credential-named-saved-values",
       ]),
       message: z.string(),
       pointers: z

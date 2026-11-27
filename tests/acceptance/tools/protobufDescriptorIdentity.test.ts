@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { expect } from "vitest";
 import { z } from "zod";
 
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { webNetworkCaptureSchema } from "../../../src/domain/webNetworkCapture.js";
 import { protobufHar } from "../../fixtures/protobufCapture.js";
@@ -55,6 +55,14 @@ const descriptorDefinition = () =>
     ],
   });
 
+const invalidFieldNumbers: Readonly<Record<string, number>> = {
+  "missing-number": 0,
+  "negative-number": -1,
+  "reserved-first": 19000,
+  "reserved-last": 19999,
+  "excessive-number": 536870912,
+};
+
 const retainedDetailsSchema = z.object({
   partial_observation: z.strictObject({
     kind: z.literal("retained-evidence"),
@@ -62,18 +70,48 @@ const retainedDetailsSchema = z.object({
   }),
 });
 
-cliTest(
-  "refuses ambiguous descriptor field identities through CLI/MCP while retaining source Evidence",
-  async ({ cli }) => {
+cliTest.for([
+  {
+    problem: "duplicate field numbers",
+    diagnostic: "Duplicate field number 1",
+    variants: ["forward", "reverse", "nested", "oneof"],
+  },
+  {
+    problem: "duplicate field names",
+    diagnostic: "Duplicate field name",
+    variants: ["name-forward", "name-reverse", "nested-name"],
+  },
+  {
+    problem: "invalid field numbers",
+    diagnostic: "Invalid field number",
+    variants: Object.keys(invalidFieldNumbers),
+  },
+])(
+  "refuses $problem through CLI/MCP while retaining source Evidence",
+  async ({ diagnostic, variants }, { cli }) => {
     const root = await createTestTempDirectory("rea-protobuf-field-identity-");
-    const capture = join(root, "capture.har");
-    const text = protobufHar(body, "application/x-protobuf");
-    await writeFile(capture, text);
     const call = await cli.sharedMcpCall!();
-    for (const variant of ["forward", "reverse", "nested", "oneof"]) {
+    const text = protobufHar(body, "application/x-protobuf");
+    for (const [index, variant] of variants.entries()) {
+      const capture = join(root, `${variant}.har`);
+      await writeFile(capture, text);
       const definition = descriptorDefinition();
       const message = definition.file[0]!.messageType[0]!;
-      if (variant === "nested") {
+      if (variant in invalidFieldNumbers) {
+        message.field[1]!.number = invalidFieldNumbers[variant]!;
+      } else if (variant === "name-forward" || variant === "name-reverse") {
+        message.field[1]!.name = message.field[0]!.name;
+        if (variant === "name-reverse") message.field.reverse();
+      } else if (variant === "nested-name") {
+        message.nestedType[0]!.field.push(
+          create(FieldDescriptorProtoSchema, {
+            name: "value",
+            number: 2,
+            type: 5,
+            label: 1,
+          }),
+        );
+      } else if (variant === "nested") {
         message.nestedType[0]!.field.push(
           create(FieldDescriptorProtoSchema, {
             name: "alias",
@@ -102,20 +140,6 @@ cliTest(
       const descriptor = join(root, `${variant}.pb`);
       const bytes = toBinary(FileDescriptorSetSchema, definition);
       await writeFile(descriptor, bytes);
-      const output = await cli.sharedCliRun!({
-        arguments: [
-          "inspect-web-network-capture",
-          capture,
-          "har",
-          "--record",
-          "0",
-          "--protobuf-schema",
-          descriptor,
-          "--protobuf-message",
-          "capture.Message",
-          "--json",
-        ],
-      });
       const expected = {
         code: "invalid_request",
         details: {
@@ -123,12 +147,33 @@ cliTest(
             {
               path: ["protobuf", "schema", "descriptor_set_path"],
               reason: "invalid_format",
+              message: expect.stringContaining(
+                variant in invalidFieldNumbers
+                  ? `${diagnostic} ${invalidFieldNumbers[variant]}`
+                  : diagnostic,
+              ),
             },
           ],
         },
       };
-      expect(output.exitCode, variant).toBe(1);
-      expect(output.json, variant).toMatchObject(expected);
+      if (index === 0) {
+        const output = await cli.run({
+          arguments: [
+            "inspect-web-network-capture",
+            capture,
+            "har",
+            "--record",
+            "0",
+            "--protobuf-schema",
+            descriptor,
+            "--protobuf-message",
+            "capture.Message",
+            "--json",
+          ],
+        });
+        expect(output.exitCode, variant).toBe(1);
+        expect(output.json, variant).toMatchObject(expected);
+      }
       const response = await call("inspect_web_network_capture", {
         capture_path: capture,
         format: "har",
@@ -168,8 +213,8 @@ cliTest(
       expect(
         Buffer.compare(await readFile(descriptor), Buffer.from(bytes)),
       ).toBe(0);
+      expect(await readFile(capture, "utf8")).toBe(text);
     }
-    expect(await readFile(capture, "utf8")).toBe(text);
   },
 );
 
@@ -179,13 +224,21 @@ cliTest(
     const root = await createTestTempDirectory("rea-protobuf-field-control-");
     const capture = join(root, "capture.har");
     const descriptor = join(root, "valid.pb");
-    const definition = toBinary(
-      FileDescriptorSetSchema,
-      descriptorDefinition(),
-    );
+    const valid = descriptorDefinition();
+    valid.file[0]!.messageType[0]!.nestedType[0]!.field[0]!.name = "first";
+    for (const [name, number] of [
+      ["before_reserved", 18999],
+      ["after_reserved", 20000],
+      ["last_legal", 536870911],
+    ] as const) {
+      valid.file[0]!.messageType[0]!.field.push(
+        create(FieldDescriptorProtoSchema, { name, number, type: 5, label: 1 }),
+      );
+    }
+    const definition = toBinary(FileDescriptorSetSchema, valid);
     await writeFile(capture, protobufHar(body, "application/x-protobuf"));
     await writeFile(descriptor, definition);
-    const output = await cli.sharedCliRun!({
+    const output = await cli.run({
       arguments: [
         "inspect-web-network-capture",
         capture,
@@ -238,7 +291,7 @@ cliTest(
       {
         field_id: "offset:8",
         number: 1,
-        schema_name: "value",
+        schema_name: "first",
         schema_value: "4",
       },
     ]);

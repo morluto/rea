@@ -1,4 +1,5 @@
-import { Cli } from "incur";
+import { createCommandCli } from "../../support/cli/commandCli.js";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { expect, it } from "vitest";
 import { registerSignalCommands } from "../../../src/cli/signalCommands.js";
 import { silentLogger } from "../../../src/logger.js";
@@ -23,7 +24,7 @@ it.each([
 ])(
   "rejects invalid selections before invoking the CLI service: $message",
   async ({ flags, message }) => {
-    const cli = Cli.create("signal-selection-test", { sync: false });
+    const cli = createCommandCli();
     let called = false;
     registerSignalCommands(
       cli,
@@ -65,7 +66,7 @@ it.each([false, true])(
   "awaits cleanup retry and preserves completed output when retry failure is %s",
   async (failAgain) => {
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Completed decoder fixture", version: "1" },
       {
         operation: "decode_signal_recording",
@@ -81,7 +82,7 @@ it.each([false, true])(
       { operation: "decode_signal_recording", partialObservation: evidence },
     );
     let closed = false;
-    const cli = Cli.create("signal-cleanup-test", { sync: false });
+    const cli = createCommandCli();
     registerSignalCommands(
       cli,
       silentLogger,

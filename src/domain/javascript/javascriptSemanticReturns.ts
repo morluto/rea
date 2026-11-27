@@ -18,7 +18,7 @@ import type {
 } from "./javascriptExportShapeComparisonSchemas.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { semanticCallableIdForNode } from "./javascriptSemanticProjection.js";
-import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
+import { unwrapPureSemanticSequenceExpression } from "./javascriptSemanticCallResolution.js";
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
@@ -57,7 +57,7 @@ export const collectSemanticReturns = (
       const returned =
         expression.node === null
           ? null
-          : unwrapJavaScriptExpression(expression.node).node;
+          : unwrapPureSemanticSequenceExpression(expression.node, state);
       sites.push({
         returnSiteId: semanticReturnSiteId(
           callable.callableId,
@@ -166,7 +166,7 @@ const callableIdsForBinding = (
   const selected =
     read === undefined
       ? binding
-      : semanticBindingAtRead(binding, read, state.parentsByNode).binding;
+      : semanticBindingAtRead(binding, read, state).binding;
   const initializer = selected.initializers[0];
   if (
     initializer === undefined ||
@@ -191,7 +191,7 @@ const callableIdsForNode = (
   seen: ReadonlySet<string>,
   snapshot = false,
 ): string[] => {
-  const unwrapped = unwrapJavaScriptExpression(node).node;
+  const unwrapped = unwrapPureSemanticSequenceExpression(node, state);
   if (unwrapped !== node)
     return callableIdsForNode(unwrapped, state, admitted, seen, snapshot);
   const direct = semanticCallableIdForNode(node);

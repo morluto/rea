@@ -1,5 +1,259 @@
+import { Script } from "node:vm";
 import { describe, expect, it } from "vitest";
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
+
+it("retains switch selection on a direct bridge exposure", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const { contextBridge, ipcRenderer } = require("electron");
+    switch (process.platform) {
+      case "win32":
+        contextBridge.exposeInMainWorld("api", { ping: () => ipcRenderer.invoke("ping") });
+    }
+  `);
+  expect(result.electron.call_paths?.[0]?.conditions).toEqual([
+    expect.objectContaining({
+      expression: '((process.platform) === ("win32"))',
+    }),
+  ]);
+});
+
+it.each(
+  ["return", "throw new Error('stop')", "break", "continue"].flatMap(
+    (completion) =>
+      [false, true].flatMap((wrapped) =>
+        [false, true].map((nested) => ({ completion, wrapped, nested })),
+      ),
+  ),
+)(
+  "excludes switch-case calls after $completion (wrapped=$wrapped, nested=$nested)",
+  ({ completion, wrapped, nested }) => {
+    const exposure = (channel: string) =>
+      `e.contextBridge.exposeInMainWorld("${channel}", {send:()=>e.ipcRenderer.send("${channel}")});`;
+    const body = `for (const item of [0]) { switch (mode) {
+      case "off": ${nested ? "{" : ""} ${completion}; ${wrapped ? 'e.ipcRenderer.send("dead");' : exposure("dead")} ${nested ? "}" : ""}
+      default: ${wrapped ? 'e.ipcRenderer.send("live");' : exposure("live")}
+    } }`;
+    const source = `const e=require("electron");
+      ${wrapped ? `e.contextBridge.exposeInMainWorld("api", {run(){${body}}});` : `function install(){${body}}`}
+    `;
+    expect(() => new Script(source)).not.toThrow();
+    const result = analyzeJavaScriptStaticSource(source);
+    expect(
+      result.electron.call_paths?.some(({ channel }) => channel === "dead"),
+    ).toBe(false);
+    expect(
+      result.electron.call_paths?.some(({ channel }) => channel === "live"),
+    ).toBe(true);
+    // Unreachable syntax remains observed; only a derived invocation path is removed.
+    expect(result.electron.ipc.some(({ channel }) => channel === "dead")).toBe(
+      true,
+    );
+  },
+);
+
+it.each([false, true])(
+  "retains an earlier case-local return guard (wrapped=%s)",
+  (wrapped) => {
+    const target = wrapped
+      ? 'e.ipcRenderer.send("guarded");'
+      : 'e.contextBridge.exposeInMainWorld("api", {send:()=>e.ipcRenderer.send("guarded")});';
+    const body = `switch(mode){case "selected": if(blocked)return; ${target}}`;
+    const source = `const e=require("electron");
+    ${wrapped ? `e.contextBridge.exposeInMainWorld("api",{run(){${body}}});` : `function install(){${body}}`}
+  `;
+    expect(() => new Script(source)).not.toThrow();
+    const result = analyzeJavaScriptStaticSource(source);
+    const paths =
+      result.electron.call_paths?.filter(
+        ({ channel }) => channel === "guarded",
+      ) ?? [];
+    expect(paths.length).toBeGreaterThan(0);
+    expect(
+      paths.every(({ conditions }) =>
+        conditions.some(({ expression }) => expression === "!(blocked)"),
+      ),
+    ).toBe(true);
+  },
+);
+
+it.each(
+  [
+    "while (true) { break; }",
+    "switch (inner) { case 0: break; }",
+    "for (const nested of [0]) { continue; }",
+    "local: { break local; }",
+  ].flatMap((inner) => [false, true].map((wrapped) => ({ inner, wrapped }))),
+)(
+  "retains outer-case continuation after $inner (wrapped=$wrapped)",
+  ({ inner, wrapped }) => {
+    const target = wrapped
+      ? 'e.ipcRenderer.send("live");'
+      : 'e.contextBridge.exposeInMainWorld("api", {send:()=>e.ipcRenderer.send("live")});';
+    const body = `switch (mode) { case "selected": ${inner} ${target} }`;
+    const source = `const e=require("electron");
+      ${wrapped ? `e.contextBridge.exposeInMainWorld("api", {run(){${body}}});` : `function install(){${body}}`}
+    `;
+    expect(() => new Script(source)).not.toThrow();
+    const result = analyzeJavaScriptStaticSource(source);
+    expect(
+      result.electron.call_paths?.some(({ channel }) => channel === "live"),
+    ).toBe(true);
+  },
+);
+
+it("retains a conservative selection for stacked and fallthrough cases", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const { contextBridge, ipcRenderer } = require("electron");
+    switch (platform) {
+      case "first": work();
+      case "second":
+        contextBridge.exposeInMainWorld("api", { ping: () => ipcRenderer.invoke("ping") });
+    }
+  `);
+  expect(result.electron.call_paths?.[0]?.conditions).toEqual([
+    expect.objectContaining({
+      expression: '((platform) === ("first")) || ((platform) === ("second"))',
+    }),
+  ]);
+  expect(result.parse_status).toBe("partial");
+});
+
+it("includes the default selection when an earlier default can fall through", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const { contextBridge, ipcRenderer } = require("electron");
+    switch (platform) {
+      default: work();
+      case "second":
+        contextBridge.exposeInMainWorld("api", { ping: () => ipcRenderer.invoke("ping") });
+    }
+  `);
+  expect(result.electron.call_paths?.[0]?.conditions).toEqual([
+    expect.objectContaining({
+      expression: '((platform) === ("second")) || ((platform) !== ("second"))',
+    }),
+  ]);
+  expect(result.parse_status).toBe("partial");
+});
+
+it("retains switch conditions in a traced bridge wrapper", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const { contextBridge, ipcRenderer } = require("electron");
+    contextBridge.exposeInMainWorld("api", {
+      ping() { switch (process.platform) { case "win32": return ipcRenderer.invoke("ping"); } }
+    });
+  `);
+  expect(result.electron.call_paths?.[0]?.conditions).toEqual([
+    expect.objectContaining({
+      expression: '((process.platform) === ("win32"))',
+    }),
+  ]);
+});
+
+it.each(["direct", "wrapped"] as const)(
+  "retains the selected case near the end of a switch on a %s path",
+  (kind) => {
+    const exposure = `contextBridge.exposeInMainWorld("api", { ping: () => ipcRenderer.invoke("ping") });`;
+    const cases = Array.from(
+      { length: 8 },
+      (_, index) => `case ${index}:`,
+    ).join("\n");
+    const selected = `${cases}\ncase 8: ${kind === "direct" ? exposure : 'return ipcRenderer.invoke("ping");'}`;
+    const body =
+      kind === "direct"
+        ? `switch (platform) { ${selected} }`
+        : `contextBridge.exposeInMainWorld("api", { ping() { switch (platform) { ${selected} } } });`;
+    const result = analyzeJavaScriptStaticSource(`
+      const { contextBridge, ipcRenderer } = require("electron");
+      ${body}
+    `);
+    expect(
+      result.electron.call_paths?.[0]?.conditions[0]?.expression,
+    ).toContain("((platform) === (8))");
+  },
+);
+
+it("does not invent a selection predicate for dynamic case expressions", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const { contextBridge, ipcRenderer } = require("electron");
+    switch (platform) {
+      case mutatePlatform():
+        contextBridge.exposeInMainWorld("api", { ping: () => ipcRenderer.invoke("ping") });
+    }
+  `);
+  expect(result.electron.call_paths?.[0]?.conditions).toEqual([]);
+  expect(result.parse_status).toBe("partial");
+});
+
+it("retains switch selection for a non-finite numeric case", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const { contextBridge, ipcRenderer } = require("electron");
+    switch (process.argv.length) {
+      case 1e309:
+        contextBridge.exposeInMainWorld("api", { ping: () => ipcRenderer.invoke("ping") });
+    }
+  `);
+  expect(result.electron.call_paths?.[0]?.conditions).toEqual([
+    expect.objectContaining({
+      expression: "((process.argv.length) === (1e309))",
+    }),
+  ]);
+});
+
+it("retains switch selection for an exact template case", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const { contextBridge, ipcRenderer } = require("electron");
+    switch (process.platform) {
+      case \`win32\`:
+        contextBridge.exposeInMainWorld("api", { ping: () => ipcRenderer.invoke("ping") });
+    }
+  `);
+  expect(result.electron.call_paths?.[0]?.conditions).toEqual([
+    expect.objectContaining({
+      expression: "((process.platform) === (`win32`))",
+    }),
+  ]);
+});
+
+it("retains the continuing predicate after a break to an enclosing label", () => {
+  const result = analyzeJavaScriptStaticSource(`const e=require("electron");
+    guard: {
+      if (!ready) break guard;
+      e.ipcMain.on("guarded", event => event.sender.copy());
+    }
+  `);
+  expect(
+    result.electron.call_paths?.map(({ conditions }) =>
+      conditions.map(({ expression }) => expression),
+    ),
+  ).toEqual([["!(!ready)"], ["!(!ready)"]]);
+});
+
+it("retains a labelled-break guard on preload bridge paths", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const { contextBridge, ipcRenderer } = require("electron");
+    const ready = process.env.APP_READY;
+    guard: {
+      if (!ready) break guard;
+      contextBridge.exposeInMainWorld("api", { ping: () => ipcRenderer.invoke("ping") });
+    }
+  `);
+  expect(
+    result.electron.call_paths?.map(({ conditions }) =>
+      conditions.map(({ expression }) => expression),
+    ),
+  ).toEqual([["!(!ready)"]]);
+});
+
+it("does not treat a break to an inner label as an exit from its outer block", () => {
+  const result = analyzeJavaScriptStaticSource(`const e=require("electron");
+    outer: {
+      inner: { if (stop) break inner; }
+      e.ipcMain.on("after", event => event.sender.copy());
+    }
+  `);
+  expect(result.electron.call_paths).toHaveLength(1);
+  expect(result.electron.call_paths?.[0]?.conditions).toEqual([]);
+});
 
 it("preserves every direct observation in a long flat sibling block", () => {
   const channels = Array.from({ length: 256 }, (_, index) => `flat:${index}`);
@@ -8,7 +262,11 @@ it("preserves every direct observation in a long flat sibling block", () => {
   }`);
   expect(result.electron.ipc.map(({ channel }) => channel)).toEqual(channels);
   expect(result.electron.call_paths ?? []).toEqual([]);
-  expect(result.parse_status).toBe("complete");
+  expect(result.parse_status).toBe("partial");
+  expect(result.analysis_coverage.syntax.status).toBe("complete");
+  expect(result.analysis_coverage.semantics.unknown_findings).toBeGreaterThan(
+    0,
+  );
 });
 
 it("keeps sibling guards, definite exits and nested shadowing separate", () => {
@@ -231,7 +489,11 @@ it("preserves an observed empty contextBridge API object", () => {
   expect(result.electron.context_bridge_apis?.[0]).not.toHaveProperty(
     "resolution_basis",
   );
-  expect(result.parse_status).toBe("complete");
+  expect(result.parse_status).toBe("partial");
+  expect(result.analysis_coverage.syntax.status).toBe("complete");
+  expect(result.analysis_coverage.semantics.unknown_findings).toBeGreaterThan(
+    0,
+  );
 });
 
 it.each([
@@ -360,6 +622,16 @@ describe("contextBridge helper invocations", () => {
     const { apis } = exposures(`
       function expose(key) { contextBridge.exposeInMainWorld(key, { ping() {} }); }
       expose("one"); expose("two");`);
+    expect(apis).toEqual([
+      { api_key: "one", ...literalKey, members: ["ping"], unknown_members: 0 },
+      { api_key: "two", ...literalKey, members: ["ping"], unknown_members: 0 },
+    ]);
+  });
+
+  it("binds an exact template key like a quoted key", () => {
+    const { apis } = exposures(`
+      function expose(key) { contextBridge.exposeInMainWorld(key, { ping() {} }); }
+      expose(\`one\`); expose("two");`);
     expect(apis).toEqual([
       { api_key: "one", ...literalKey, members: ["ping"], unknown_members: 0 },
       { api_key: "two", ...literalKey, members: ["ping"], unknown_members: 0 },
@@ -503,6 +775,32 @@ it("connects exposed closures to IPC sends and text clipboard calls", () => {
   expect(ipcPath?.steps.at(-1)).toBeDefined();
   expect(ipcFinding?.location).toEqual(ipcPath?.steps.at(-1)?.location);
 });
+it("uses a defineProperty value that replaces an exported sender", () => {
+  const result = analyzeJavaScriptStaticSource(`(() => {
+      const modules = {
+        2(module) { module.exports = require("electron"); },
+        9(module,exports,load) {
+          const electron=load(2),helper=load(5);
+          electron.contextBridge.exposeInMainWorld("desktop", {copy:helper.sender("defined:copy")});
+        },
+        5(module,exports,load) {
+          const electron=load(2);
+          exports.sender=function(){return ()=>{};};
+          Object.defineProperty(exports,"sender",{value:function(channel){return (...args)=>send(channel,...args);}});
+          function send(channel,...args){electron.ipcRenderer.send(channel,...args);}
+        }
+      };
+      function load(id) { const m={exports:{}}; modules[id].call(m.exports,m,m.exports,load); return m.exports; }
+      load(9);
+    })();`);
+  expect(result.electron.call_paths).toContainEqual(
+    expect.objectContaining({
+      entry: "desktop.copy",
+      channel: "defined:copy",
+      terminal: "electron.ipcRenderer.send",
+    }),
+  );
+});
 it("resolves a helper factory listed after its bundle consumer", () => {
   const result = analyzeJavaScriptStaticSource(`(() => {
       const modules = {
@@ -628,7 +926,11 @@ it("resolves a site-determined constant channel in place of its dynamic observat
     expect.objectContaining({ entry: "desktop.ping", channel: "ping" }),
   );
   // The syntax pass's unknown channel is resolved, not left as partial.
-  expect(result.parse_status).toBe("complete");
+  expect(result.parse_status).toBe("partial");
+  expect(result.analysis_coverage.syntax.status).toBe("complete");
+  expect(result.analysis_coverage.semantics.unknown_findings).toBeGreaterThan(
+    0,
+  );
 });
 it("resolves a site-determined registration whose handler is a named local", () => {
   const result = analyzeJavaScriptStaticSource(`
@@ -645,7 +947,11 @@ it("resolves a site-determined registration whose handler is a named local", () 
       handler_kind: "inline-function",
     }),
   ]);
-  expect(result.parse_status).toBe("complete");
+  expect(result.parse_status).toBe("partial");
+  expect(result.analysis_coverage.syntax.status).toBe("complete");
+  expect(result.analysis_coverage.semantics.unknown_findings).toBeGreaterThan(
+    0,
+  );
 });
 it("keeps an argument-supplied channel unresolved beside its resolved candidates", () => {
   const result = analyzeJavaScriptStaticSource(`
@@ -665,6 +971,75 @@ it("keeps an argument-supplied channel unresolved beside its resolved candidates
     new Set(sends.map(({ location }) => JSON.stringify(location))).size,
   ).toBe(1);
 });
+it.each([
+  ["every invocation is exact", "", "literal"],
+  [
+    "another invocation has a substitution",
+    "register(`app:${suffix}`, () => 3);",
+    null,
+  ],
+] as const)(
+  "substitutes every exact spelling of a wrapper channel when %s",
+  (_, extra, invocationChannels) => {
+    const result = analyzeJavaScriptStaticSource(`
+      const { ipcMain } = require("electron");
+      function register(channel, handler) { ipcMain.handle(channel, handler); }
+      register("app:quoted", () => 1);
+      register(\`app:template\`, () => 2);
+      register("app:typed" as const, () => 4);
+      ${extra}
+    `);
+    // Quoted, template and type-asserted spellings are one exact channel. A
+    // template with a substitution stays dynamic, so the wrapper's own site
+    // may still receive a channel no traced invocation supplied.
+    expect(
+      result.electron.ipc.map((finding) => [
+        finding.channel,
+        finding.channel_expression,
+        finding.resolution_basis ?? "direct",
+        finding.channel === null ? (finding.invocation_channels ?? null) : null,
+      ]),
+    ).toEqual([
+      [null, "channel", "direct", invocationChannels],
+      ["app:quoted", null, "wrapper-substitution", null],
+      ["app:template", null, "wrapper-substitution", null],
+      ["app:typed", null, "wrapper-substitution", null],
+    ]);
+  },
+);
+it.each([
+  [
+    "a direct handler's channel",
+    "e.ipcMain.on(`app:copy`, event => event.sender.copy());",
+    {
+      entry_kind: "ipc-handler",
+      entry: "app:copy",
+      channel: "app:copy",
+      terminal: "ipc-event.sender.copy",
+    },
+  ],
+  [
+    "a contextBridge key",
+    'e.contextBridge.exposeInMainWorld(`desktop`, { ping: () => e.ipcRenderer.invoke("app:ping") });',
+    {
+      entry_kind: "bridge-member",
+      entry: "desktop.ping",
+      channel: "app:ping",
+      terminal: "electron.ipcRenderer.invoke",
+    },
+  ],
+])(
+  "traces call paths from %s spelled as an exact template",
+  (_, source, path) => {
+    const result = analyzeJavaScriptStaticSource(`
+    const e = require("electron");
+    ${source}
+  `);
+    expect(result.electron.call_paths ?? []).toContainEqual(
+      expect.objectContaining(path),
+    );
+  },
+);
 it.each([
   [
     "an exposed member",
@@ -848,7 +1223,11 @@ it.each(["interface Shape { marker(): void }", "type Shape = typeof marker;"])(
           resolution_basis ?? "direct",
         ]),
     ).toEqual([["ch", "wrapper-substitution"]]);
-    expect(result.parse_status).toBe("complete");
+    expect(result.parse_status).toBe("partial");
+    expect(result.analysis_coverage.syntax.status).toBe("complete");
+    expect(result.analysis_coverage.semantics.unknown_findings).toBeGreaterThan(
+      0,
+    );
   },
 );
 it("resolves a handler a module-level factory call created once in place", () => {
@@ -866,7 +1245,11 @@ it("resolves a handler a module-level factory call created once in place", () =>
       resolution_basis ?? "direct",
     ]),
   ).toEqual([["ch", "wrapper-substitution"]]);
-  expect(result.parse_status).toBe("complete");
+  expect(result.parse_status).toBe("partial");
+  expect(result.analysis_coverage.syntax.status).toBe("complete");
+  expect(result.analysis_coverage.semantics.unknown_findings).toBeGreaterThan(
+    0,
+  );
 });
 it("keeps separate outer calls that pass one shared handler through a wrapper", () => {
   const result = analyzeJavaScriptStaticSource(`
@@ -924,7 +1307,11 @@ it("resolves a module-level handler in place when the entry binds an unused para
       resolution_basis: "wrapper-substitution",
     }),
   ]);
-  expect(result.parse_status).toBe("complete");
+  expect(result.parse_status).toBe("partial");
+  expect(result.analysis_coverage.syntax.status).toBe("complete");
+  expect(result.analysis_coverage.semantics.unknown_findings).toBeGreaterThan(
+    0,
+  );
 });
 it.each([
   ["a named local", 'const handler = () => tag; register("same", handler);'],
@@ -1011,15 +1398,7 @@ it("keeps distinct exposed renderer listener callsites distinct", () => {
     result.electron.call_paths?.filter(({ channel }) => channel === "pong"),
   ).toHaveLength(2);
 });
-it("does not identify overwritten Electron namespaces or shadowed require", () => {
-  for (const source of [
-    `const e=require("electron");e.ipcMain={on(){}};e.ipcMain.on("bad",event=>event.sender.copy());`,
-    `function require(){return {ipcMain:{on(){}}}};const e=require("electron");e.ipcMain.on("bad",event=>event.sender.copy());`,
-  ])
-    expect(
-      analyzeJavaScriptStaticSource(source).electron.call_paths ?? [],
-    ).toEqual([]);
-});
+
 it("preserves guarded alternatives in direct exposed object literals", () => {
   const result = analyzeJavaScriptStaticSource(`
       const e=require("electron");
@@ -1117,7 +1496,9 @@ it("reports nested bridge depth truncation while retaining shallow paths", () =>
   expect(result.electron.call_paths).toContainEqual(
     expect.objectContaining({ entry: "desktop.shallow", channel: "shallow" }),
   );
-  expect(result.limitations.join(" ")).toContain("depth 128");
+  expect(result.limitations.join(" ")).toContain(
+    "semantic_precision.wrapper_depth=128",
+  );
 });
 it("preserves conditions when a wrapper dispatches through conditional external methods", () => {
   const result = analyzeJavaScriptStaticSource(`

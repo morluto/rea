@@ -1,15 +1,18 @@
+import { createCommandCli } from "../../support/cli/commandCli.js";
+import { spawnFailure } from "../../support/process/spawnFailure.js";
 import {
   AnalysisOutputError,
   AnalysisResourceConstraintError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { signalDecodersSchema } from "../../../src/domain/signals/signalDecoders.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { runWithAnalysisOperationSnapshot } from "../../../src/domain/analysisOperationSnapshot.js";
 import { OwnedCommandFailure } from "../../../src/process/OwnedCommand.js";
 import { it, expect, onTestFinished } from "vitest";
 import { writeFile, readFile, readdir, chmod, symlink } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { basename, join } from "node:path";
-import { readStableArtifact } from "../../../src/artifacts/readStableArtifact.js";
+import { readStableArtifact } from "../../../src/resources/readStableArtifact.js";
 import { SigrokRecordingProvider } from "../../../src/signals/SigrokRecordingProvider.js";
 import { SignalRecordingService } from "../../../src/application/signals/SignalRecordingService.js";
 import {
@@ -23,7 +26,6 @@ import { createDeferred } from "../../fixtures/binarySession.js";
 import { analysisErrorRemediationAction } from "../../../src/domain/analysisErrorPresentation.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { Cli } from "incur";
 import { registerSignalCommands } from "../../../src/cli/signalCommands.js";
 import { silentLogger } from "../../../src/logger.js";
 
@@ -60,7 +62,7 @@ else if (${JSON.stringify(mode)} === 'invalid-catalog-stdout' && process.argv.in
 else if (${JSON.stringify(mode)} === 'invalid-help-stdout' && process.argv.includes('--show')) process.stdout.write(Buffer.concat([Buffer.from('ID: uart\\nOptions:\\n'), Buffer.from([0xfe])]));
 else if (${JSON.stringify(mode)} === 'malformed-copy') { chmodSync(snapshotName, 0o600); writeFileSync(snapshotName, 'changed'); }
 else if (${JSON.stringify(mode)} === 'oversized-copy') { chmodSync(snapshotName, 0o600); truncateSync(snapshotName, 32 * 1024 * 1024 + 1); }
-else if (${JSON.stringify(mode)} === 'line-budget') process.stdout.write('ID: uart' + '\\n'.repeat(65536));
+else if (${JSON.stringify(mode)} === 'long-help') process.stdout.write('ID: uart' + '\\n'.repeat(65540));
 else if (${JSON.stringify(mode)} === 'overflow') process.stdout.write('x'.repeat(5 * 1024 * 1024));
 else if (${JSON.stringify(mode)} === 'wait') { console.log('ready'); setInterval(() => {}, 1000); }
 else if (${JSON.stringify(mode)} === 'many') process.stdout.write(Array.from({length:90},(_,i)=>'line '+(i+1)+'\\r\\n').join(''));
@@ -77,6 +79,7 @@ const fixture = async (
   mode = "ok",
   failCleanup = false,
   recordingName?: string,
+  launchEnvironment: Readonly<Record<string, string>> = {},
 ) => {
   const directory = await createTestTempDirectory("rea-signal-test-");
   const path = join(
@@ -95,21 +98,33 @@ const fixture = async (
   const configuredCommand =
     mode === "symlink" ? join(directory, "configured-tool") : script;
   if (mode === "symlink") await symlink(script, configuredCommand);
+  // A separate limiter that refuses to start the wrapped tool.
+  const limiter = join(directory, "limiter.mjs");
+  if (mode === "limiter-refused") {
+    await writeFile(
+      limiter,
+      "console.error('prlimit: failed to execute sigrok-cli'); process.exitCode = 1;\n",
+    );
+    await chmod(limiter, 0o700);
+  }
   const controller = new AbortController();
   let calls = 0;
   let mayClean = !failCleanup;
+  let mayStopDecoder = mode !== "process-cleanup";
   const acquired = createDeferred<void>();
   const release = createDeferred<void>();
   const provider = new SigrokRecordingProvider(
     {
       ...process.env,
+      ...launchEnvironment,
       REA_SIGROK_COMMAND: configuredCommand,
-      REA_SIGROK_PRLIMIT_COMMAND: configuredCommand,
+      REA_SIGROK_PRLIMIT_COMMAND:
+        mode === "limiter-refused" ? limiter : configuredCommand,
     },
     async (input) => {
       calls++;
       if (mode === "launch-failure" && !input.arguments.includes("--version"))
-        throw Object.assign(new Error("spawn E2BIG"), { code: "E2BIG" });
+        throw spawnFailure("E2BIG", input.command);
       if (mode === "file-limit" && !input.arguments.includes("--version")) {
         const stdout = { text: "", bytes: 0, observedBytes: 0 };
         const stderr = {
@@ -127,11 +142,23 @@ const fixture = async (
       const spawned = await spawnOwnedProviderProcess({
         ...input,
         command: process.execPath,
-        arguments: [script, ...input.arguments],
+        arguments: [
+          mode === "limiter-refused" ? limiter : script,
+          ...input.arguments,
+        ],
         expectedCommand: process.execPath,
       });
       if (mode === "wait" && !input.arguments.includes("--version"))
         spawned.process.stdout?.once("data", () => controller.abort());
+      if (mode === "process-cleanup" && !input.arguments.includes("--version"))
+        return {
+          ...spawned,
+          // The decoder exits by itself; only the cleanup proof is withheld.
+          cleanup: async () =>
+            mayStopDecoder
+              ? { cleaned: true, signaled: false }
+              : { cleaned: false, reason: "decoder owner remains unverified" },
+        };
       return spawned;
     },
     async () => {
@@ -171,6 +198,7 @@ const fixture = async (
   onTestFinished(async () => {
     release.resolve();
     mayClean = true;
+    mayStopDecoder = true;
     await provider.close();
   });
   const service = new SignalRecordingService(provider);
@@ -184,6 +212,7 @@ const fixture = async (
     release: () => release.resolve(),
     allowCleanup: () => {
       mayClean = true;
+      mayStopDecoder = true;
     },
   };
 };
@@ -198,6 +227,42 @@ it("refuses new acquisition after provider shutdown", async () => {
     error: { _tag: "AnalysisCancelledError" },
   });
   expect(f.calls()).toBe(0);
+});
+
+it("recovers the same recording with caller producer budgets and preserves inherited enforcement", async () => {
+  const f = await fixture();
+  const refused = await f.service.decode({
+    path: f.path,
+    decoders: "uart",
+    producer_limits: { input_bytes: 1 },
+  });
+  expect(refused).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisResourceConstraintError" },
+  });
+  if (refused.ok) throw new Error("Expected input-budget refusal");
+  expect(analysisErrorRemediationAction(refused.error)).toContain(
+    "producer_limits.input_bytes",
+  );
+  const selected = {
+    input_bytes: 1024,
+    output_bytes: 2048,
+    command_timeout_ms: 1000,
+    address_space_bytes: 2147483648,
+    file_bytes: 2097152,
+    cpu_seconds: 45,
+  };
+  const recovered = await f.service.decode({
+    path: f.path,
+    decoders: "uart",
+    producer_limits: selected,
+  });
+  if (!recovered.ok) throw recovered.error;
+  const report = signalRecordingSchema.parse(recovered.value.normalized_result);
+  expect(report.annotations_text).not.toBe("");
+  expect(report.selection.producer_limits).toEqual(selected);
+  expect(report.limits).toEqual({ ...selected, file_bytes: 1048576 });
+  expect(report.resource_limiter.arguments).toContain("--cpu=45:45");
 });
 
 it("pages literal output without changing decoder arguments or normalizing text", async () => {
@@ -517,7 +582,7 @@ it.each([
       "fixture: selected input format was not forwarded",
     );
 
-    const cli = Cli.create("signal-input-format-refusal-test", { sync: false });
+    const cli = createCommandCli();
     registerSignalCommands(cli, silentLogger, {}, f.service);
     let stdout = "";
     let commandExitCode: typeof process.exitCode;
@@ -678,36 +743,43 @@ it("projects sigrok's zero-exit missing-channel refusal through CLI and MCP with
     },
   });
 
-  const cli = Cli.create("signal-channel-refusal-test", { sync: false });
-  registerSignalCommands(cli, silentLogger, {}, f.service);
-  let stdout = "";
-  await cli.serve(
-    [
-      "decode-signal-recording",
-      f.path,
-      "--decoders",
-      "uart:rx=NONEXISTENT:baudrate=9600",
-      "--format",
-      "json",
-    ],
-    {
-      stdout: (text) => {
-        stdout += text;
+  const previousExitCode = process.exitCode;
+  process.exitCode = 0;
+  try {
+    const cli = createCommandCli();
+    registerSignalCommands(cli, silentLogger, {}, f.service);
+    let stdout = "";
+    await cli.serve(
+      [
+        "decode-signal-recording",
+        f.path,
+        "--decoders",
+        "uart:rx=NONEXISTENT:baudrate=9600",
+        "--format",
+        "json",
+      ],
+      {
+        stdout: (text) => {
+          stdout += text;
+        },
+        exit: () => {},
       },
-      exit: () => {},
-    },
-  );
-  expect(JSON.parse(stdout)).toMatchObject({
-    code: "invalid_request",
-    details: {
-      issues: [{ path: ["decoders"], reason: "invalid_value" }],
-      captured_output: {
-        exit_code: 0,
-        stdout: "1000-1105 uart-1: Start bit\n",
-        stderr: expect.stringContaining(refusal),
+    );
+    expect(JSON.parse(stdout)).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [{ path: ["decoders"], reason: "invalid_value" }],
+        captured_output: {
+          exit_code: 0,
+          stdout: "1000-1105 uart-1: Start bit\n",
+          stderr: expect.stringContaining(refusal),
+        },
       },
-    },
-  });
+    });
+    expect(process.exitCode).toBe(1);
+  } finally {
+    process.exitCode = previousExitCode;
+  }
 });
 
 it("does not match channel refusals by substring", async () => {
@@ -721,42 +793,49 @@ it("does not match channel refusals by substring", async () => {
 
 it("projects a missing bare channel target as invalid decoder input through the CLI", async () => {
   const f = await fixture("missing-channel-target");
-  const cli = Cli.create("signal-channel-target-test", { sync: false });
-  registerSignalCommands(cli, silentLogger, {}, f.service);
-  let stdout = "";
-  await cli.serve(
-    [
-      "decode-signal-recording",
-      f.path,
-      "--decoders",
-      "uart:rx:baudrate=9600",
-      "--format",
-      "json",
-    ],
-    {
-      stdout: (text) => {
-        stdout += text;
-      },
-      exit: () => {},
-    },
-  );
-  expect(JSON.parse(stdout)).toMatchObject({
-    code: "invalid_request",
-    details: {
-      issues: [
-        {
-          path: ["decoders"],
-          reason: "invalid_value",
-          message: expect.stringContaining('Channel name for "rx" missing.'),
-        },
+  const previousExitCode = process.exitCode;
+  process.exitCode = 0;
+  try {
+    const cli = createCommandCli();
+    registerSignalCommands(cli, silentLogger, {}, f.service);
+    let stdout = "";
+    await cli.serve(
+      [
+        "decode-signal-recording",
+        f.path,
+        "--decoders",
+        "uart:rx:baudrate=9600",
+        "--format",
+        "json",
       ],
-      captured_output: {
-        exit_code: 0,
-        stdout: "1000-1105 uart-1: Start bit\n",
-        stderr: expect.stringContaining('Channel name for "rx" missing.'),
+      {
+        stdout: (text) => {
+          stdout += text;
+        },
+        exit: () => {},
       },
-    },
-  });
+    );
+    expect(JSON.parse(stdout)).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [
+          {
+            path: ["decoders"],
+            reason: "invalid_value",
+            message: expect.stringContaining('Channel name for "rx" missing.'),
+          },
+        ],
+        captured_output: {
+          exit_code: 0,
+          stdout: "1000-1105 uart-1: Start bit\n",
+          stderr: expect.stringContaining('Channel name for "rx" missing.'),
+        },
+      },
+    });
+    expect(process.exitCode).toBe(1);
+  } finally {
+    process.exitCode = previousExitCode;
+  }
 });
 
 it("does not classify an unselected bare channel warning as caller input", async () => {
@@ -877,33 +956,40 @@ it("reports an unknown decoder ID as the rejected field of each MCP operation", 
 
 it("reports an unknown decoder help selection as CLI invalid input", async () => {
   const f = await fixture("unknown-decoder");
-  const cli = Cli.create("signal-refusal-test", { sync: false });
-  registerSignalCommands(cli, silentLogger, {}, f.service);
-  let stdout = "";
-  await cli.serve(
-    [
-      "inspect-signal-decoders",
-      "--decoder",
-      "nosuchdecoder",
-      "--format",
-      "json",
-    ],
-    {
-      stdout: (text) => {
-        stdout += text;
+  const previousExitCode = process.exitCode;
+  process.exitCode = 0;
+  try {
+    const cli = createCommandCli();
+    registerSignalCommands(cli, silentLogger, {}, f.service);
+    let stdout = "";
+    await cli.serve(
+      [
+        "inspect-signal-decoders",
+        "--decoder",
+        "nosuchdecoder",
+        "--format",
+        "json",
+      ],
+      {
+        stdout: (text) => {
+          stdout += text;
+        },
+        exit: () => {},
       },
-      exit: () => {},
-    },
-  );
-  expect(JSON.parse(stdout)).toMatchObject({
-    code: "invalid_request",
-    message: expect.stringContaining("Omit decoder"),
-    details: {
-      operation: "inspect_signal_decoders",
-      issues: [{ path: ["decoder"], reason: "invalid_value" }],
-      captured_output: { exit_code: 1 },
-    },
-  });
+    );
+    expect(JSON.parse(stdout)).toMatchObject({
+      code: "invalid_request",
+      message: expect.stringContaining("Omit decoder"),
+      details: {
+        operation: "inspect_signal_decoders",
+        issues: [{ path: ["decoder"], reason: "invalid_value" }],
+        captured_output: { exit_code: 1 },
+      },
+    });
+    expect(process.exitCode).toBe(1);
+  } finally {
+    process.exitCode = previousExitCode;
+  }
 });
 
 it.each([
@@ -940,7 +1026,13 @@ it.each(["decode", "discovery"] as const)(
         : await f.service.inspectDecoders({});
     if (result.ok) throw new Error("Expected launch failure");
     expect(f.calls()).toBe(2);
-    expect(result.error.message).toContain("spawn E2BIG");
+    // A launch failure is not tool output: the shared owner reports the
+    // oversized argument list as a resource constraint.
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      resource: "transport",
+      reportedLimits: { spawn_error: "E2BIG" },
+    });
     expect(result.error.capturedOutput).toBeUndefined();
   },
 );
@@ -961,6 +1053,27 @@ it("retains a completed observation and cleanup ownership for retry", async () =
   expect(
     (await readdir(f.directory)).filter((name) => name.startsWith("decoder-")),
   ).toEqual([]);
+});
+
+it("releases a retained decoder process cleanup before the next decode completes", async () => {
+  const f = await fixture("process-cleanup");
+  const input = { path: f.path, decoders: "uart" };
+  const first = await f.service.decode(input);
+  if (first.ok) throw new Error("Expected retained process cleanup");
+  expect(first.error.cleanupIncomplete).toBe(true);
+  expect(first.error.cleanupResources).toContainEqual(
+    expect.stringMatching(/^process-group:\d+$/),
+  );
+  const launches = f.calls();
+  const blocked = await f.service.decode(input);
+  if (blocked.ok) throw new Error("Expected the retained owner to block");
+  expect(blocked.error.cleanupIncomplete).toBe(true);
+  expect(f.calls()).toBe(launches);
+  f.allowCleanup();
+  const retried = await f.service.decode(input);
+  expect(retried.ok).toBe(true);
+  expect(first.error.cleanupIncomplete).toBe(false);
+  expect(f.calls()).toBeGreaterThan(launches);
 });
 
 it("rejects cancelled and invalid requests before any provider work", async () => {
@@ -1063,6 +1176,12 @@ it("refuses unsupported hosts before launching or allocating a workspace", async
     _tag: "AnalysisCapabilityUnavailableError",
     reason: expect.stringContaining("Linux"),
   });
+  // The host is the limit: recovery must not ask for a sigrok command that this
+  // host cannot use, which is what the tool-path branch is for.
+  const unavailable = result.error as { remediationAction?: string };
+  expect(unavailable.remediationAction).toBeDefined();
+  expect(unavailable.remediationAction).toContain("Linux");
+  expect(unavailable.remediationAction).not.toContain("REA_SIGROK_COMMAND");
 });
 
 it("preserves complete Evidence when aborted during post-run integrity checks", async () => {
@@ -1248,52 +1367,162 @@ it("attributes discovery admission failures to discovery while sharing the decod
   });
 });
 
-it.each([
-  "bad-version",
-  "nonzero",
-  "overflow",
-  "line-budget",
-  "wait",
-  "oversized-tool",
-])("preserves discovery failure diagnostics: %s", async (mode) => {
-  const f = await fixture(mode);
-  const result = await f.service.inspectDecoders(
-    {},
-    { signal: f.controller.signal },
-  );
-  expect(result.ok).toBe(false);
-  if (result.ok) throw new Error("Expected failure");
-  expect(result.error).toMatchObject({
-    operation: "inspect_signal_decoders",
+it.each(["bad-version", "nonzero", "overflow", "wait", "oversized-tool"])(
+  "preserves discovery failure diagnostics: %s",
+  async (mode) => {
+    const f = await fixture(mode);
+    const result = await f.service.inspectDecoders(
+      {},
+      { signal: f.controller.signal },
+    );
+    if (result.ok) throw new Error("Expected failure");
+    expect(result.error).toMatchObject({
+      operation: "inspect_signal_decoders",
+    });
+    if (mode === "bad-version")
+      expect(result.error.capturedOutput).toMatchObject({
+        stdout: "sigrok-cli 0.7.1\n",
+        stderr: "version warning\n",
+      });
+    if (mode === "overflow") {
+      expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
+      if (!(result.error instanceof AnalysisResourceConstraintError))
+        throw new Error("Expected command-output allowance refusal");
+      expect(result.error).toMatchObject({
+        resource: "memory",
+        reportedLimits: { output_bytes: 4194304 },
+        retryable: false,
+      });
+      // The per-call field is backed by the session setting.
+      expect(projectAnalysisError(result.error).details?.limit).toMatchObject({
+        setting: "producer.output_bytes",
+        parameter: "producer_limits.output_bytes",
+        effective_value: 4194304,
+        source: "default",
+        update_mode: "runtime",
+        minimum: 1,
+        maximum: Number.MAX_SAFE_INTEGER,
+      });
+      expect(projectAnalysisError(result.error).details?.refusal).toMatchObject(
+        {
+          kind: "adjustable_budget",
+          control: "producer_limits.output_bytes",
+          setting: "producer.output_bytes",
+          effective_value: 4194304,
+          source: "default",
+        },
+      );
+    }
+  },
+);
+
+it("applies a runtime producer.output_bytes override below the per-call field", async () => {
+  const f = await fixture("overflow");
+  const snapshot = (value: number) => ({
+    revision: 1,
+    overrides: { "producer.output_bytes": value },
   });
-  if (mode === "line-budget") {
-    expect(result.error).toMatchObject({
-      _tag: "AnalysisResourceConstraintError",
-    });
-    expect(result.error.capturedOutput?.stdout).toBe(
-      "ID: uart" + "\n".repeat(65536),
-    );
-  }
-  if (mode === "bad-version")
-    expect(result.error.capturedOutput).toMatchObject({
-      stdout: "sigrok-cli 0.7.1\n",
-      stderr: "version warning\n",
-    });
-  if (mode === "overflow") {
-    expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
-    if (!(result.error instanceof AnalysisResourceConstraintError))
-      throw new Error("Expected command-output allowance refusal");
-    expect(result.error).toMatchObject({
-      resource: "memory",
-      retryable: false,
-    });
-    expect(analysisErrorRemediationAction(result.error)).toContain(
-      "The retained command-output allowance",
-    );
-    expect(analysisErrorRemediationAction(result.error)).not.toMatch(
-      /Review the reported worker memory limits/u,
-    );
-  }
+  // A lower session value refuses the 5 MiB output and reports its source.
+  const lowered = await runWithAnalysisOperationSnapshot(snapshot(1024), () =>
+    f.service.inspectDecoders({}),
+  );
+  if (lowered.ok) throw new Error("Expected the lowered output refusal");
+  expect(projectAnalysisError(lowered.error).details?.limit).toMatchObject({
+    setting: "producer.output_bytes",
+    effective_value: 1024,
+    source: "runtime",
+  });
+  // A higher session value admits the output; it then fails only on grammar.
+  const raised = await runWithAnalysisOperationSnapshot(
+    snapshot(8 * 1024 * 1024),
+    () => f.service.inspectDecoders({}),
+  );
+  if (raised.ok) throw new Error("Expected the malformed catalog");
+  // The whole output was admitted; only the catalog grammar refused it.
+  expect(raised.error).toBeInstanceOf(AnalysisOutputError);
+  expect(raised.error.capturedOutput?.stdout).toHaveLength(5 * 1024 * 1024);
+  // An explicit per-call field still wins over the session value.
+  const request = await runWithAnalysisOperationSnapshot(
+    snapshot(8 * 1024 * 1024),
+    () =>
+      f.service.inspectDecoders({ producer_limits: { output_bytes: 2048 } }),
+  );
+  if (request.ok) throw new Error("Expected the per-call output refusal");
+  expect(projectAnalysisError(request.error).details?.limit).toMatchObject({
+    setting: "producer.output_bytes",
+    effective_value: 2048,
+    source: "request",
+    update_mode: "parameter",
+  });
+  await f.service.close();
+});
+
+it("seeds producer.output_bytes from REA_PRODUCER_OUTPUT_BYTES and refuses an invalid seed until a runtime value repairs it", async () => {
+  const seeded = await fixture("overflow", false, undefined, {
+    REA_PRODUCER_OUTPUT_BYTES: "1024",
+  });
+  const refused = await seeded.service.inspectDecoders({});
+  if (refused.ok) throw new Error("Expected the seeded output refusal");
+  expect(projectAnalysisError(refused.error).details?.limit).toMatchObject({
+    setting: "producer.output_bytes",
+    effective_value: 1024,
+    source: "setting",
+  });
+  await seeded.service.close();
+
+  const invalid = await fixture("overflow", false, undefined, {
+    REA_PRODUCER_OUTPUT_BYTES: "0",
+  });
+  const rejected = await invalid.service.inspectDecoders({});
+  if (rejected.ok) throw new Error("Expected the invalid seed refusal");
+  expect(rejected.error).toMatchObject({ _tag: "ConfigurationError" });
+  // A runtime value repairs the session without editing the seed.
+  const repaired = await runWithAnalysisOperationSnapshot(
+    { revision: 1, overrides: { "producer.output_bytes": 2048 } },
+    () => invalid.service.inspectDecoders({}),
+  );
+  if (repaired.ok) throw new Error("Expected the repaired output refusal");
+  expect(projectAnalysisError(repaired.error).details?.limit).toMatchObject({
+    effective_value: 2048,
+    source: "runtime",
+  });
+  // Resetting the override exposes the invalid seed again.
+  const reset = await invalid.service.inspectDecoders({});
+  if (reset.ok) throw new Error("Expected the invalid seed refusal again");
+  expect(reset.error).toMatchObject({ _tag: "ConfigurationError" });
+  await invalid.service.close();
+});
+
+it("pages help output longer than one page record budget instead of refusing it", async () => {
+  const f = await fixture("long-help");
+  const result = await f.service.inspectDecoders({
+    decoder: "uart",
+    limit: null,
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value.normalized_result).toMatchObject({
+    output_window: {
+      unit: "help-lines",
+      examined: 65540,
+      returned: 65536,
+      has_more: true,
+      record_budget_reached: true,
+    },
+  });
+  const later = await f.service.inspectDecoders({
+    decoder: "uart",
+    offset: 65536,
+    limit: null,
+  });
+  if (!later.ok) throw later.error;
+  expect(later.value.normalized_result).toMatchObject({
+    output_window: {
+      returned: 4,
+      has_more: false,
+      record_budget_reached: false,
+    },
+  });
+  await f.service.close();
 });
 
 it("retains completed discovery when cleanup fails, then retries before accepting work", async () => {
@@ -1409,6 +1638,40 @@ it("classifies completed nonzero version probes as configuration failures for bo
           exit_code: 1,
           stdout: expect.stringContaining("sigrok-cli 0.7.2"),
           stderr: "version warning\n",
+        },
+      },
+    });
+  }
+  expect(f.calls()).toBe(2);
+});
+
+it("does not blame sigrok-cli alone when the limiter fails the version probe", async () => {
+  const f = await fixture("limiter-refused");
+  for (const [operation, task] of [
+    [
+      "decode_signal_recording",
+      () => f.service.decode({ path: f.path, decoders: "uart" }),
+    ],
+    ["inspect_signal_decoders", () => f.service.inspectDecoders({})],
+  ] as const) {
+    const result = await task();
+    if (result.ok) throw new Error("Expected version admission refusal");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisCapabilityUnavailableError",
+      providerId: "sigrok-recording",
+      operation,
+    });
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "capability_unavailable",
+      details: {
+        provider_id: "sigrok-recording",
+        operation,
+        // Absent when the probe is reported as a sigrok-cli failure alone.
+        diagnostics: { version_probe_status_owner: "limiter-or-tool" },
+        captured_output: {
+          exit_code: 1,
+          stdout: "",
+          stderr: "prlimit: failed to execute sigrok-cli\n",
         },
       },
     });

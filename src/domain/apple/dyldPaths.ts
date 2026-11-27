@@ -6,12 +6,19 @@ import type {
 import {
   machoArchitectureFamily,
   machoCpuSubtypeBase,
+  machoKnownArm64Subtype,
+  machoKnownX86_64Subtype,
 } from "./machoCpuIdentity.js";
 
 const MAX_SYMLINK_HOPS = 32;
 
 export type PathLookup =
   | { readonly kind: "file"; readonly path: string }
+  | {
+      readonly kind: "undetermined";
+      readonly path: string;
+      readonly targetHex: string;
+    }
   | { readonly kind: "absent" | "escapes" | "not-file" };
 
 /**
@@ -40,6 +47,8 @@ export const resolveTreePath = async (
     const entry = await view.entry(path);
     if (entry === undefined) return { kind: "absent" };
     if (entry.kind === "symlink") {
+      if (entry.target === null)
+        return { kind: "undetermined", path, targetHex: entry.targetHex };
       hops += 1;
       if (hops > MAX_SYMLINK_HOPS) return { kind: "absent" };
       if (entry.target.startsWith("/")) return { kind: "escapes" };
@@ -70,7 +79,10 @@ export const directoryOf = (path: string): string => {
 export const joinPath = (directory: string, rest: string): string =>
   directory === "" ? rest : rest === "" ? directory : `${directory}/${rest}`;
 
-export type Expansion =
+export type Expansion = {
+  /** Recognized dyld token, owned by the same parse that expands the path. */
+  readonly prefix?: "loader_path" | "executable_path";
+} & (
   | {
       readonly scope: "target";
       /** Source-facing expansion retained in candidate Evidence. */
@@ -79,7 +91,8 @@ export type Expansion =
       readonly lookupPath?: string;
     }
   | { readonly scope: "outside"; readonly path: string }
-  | { readonly scope: "undetermined"; readonly path: string };
+  | { readonly scope: "undetermined"; readonly path: string }
+);
 
 /** Expand one dyld path prefix relative to its owning image. */
 export const expandPrefix = (
@@ -95,12 +108,17 @@ export const expandPrefix = (
   if (variable !== null) {
     const rest = variable[2] ?? "";
     if (variable[1] === "loader_path")
-      return { scope: "target", path: joinPath(context.ownerDirectory, rest) };
+      return {
+        scope: "target",
+        path: joinPath(context.ownerDirectory, rest),
+        prefix: "loader_path",
+      };
     return context.executable === null
-      ? { scope: "undetermined", path: raw }
+      ? { scope: "undetermined", path: raw, prefix: "executable_path" }
       : {
           scope: "target",
           path: joinPath(directoryOf(context.executable), rest),
+          prefix: "executable_path",
         };
   }
   if (raw.startsWith("/")) {
@@ -134,6 +152,17 @@ const ARM32_SUBTYPE_PREFERENCES: Readonly<Record<number, readonly number[]>> = {
   12: [12],
 };
 
+/** A display-family fallback does not establish a raw subtype's identity. */
+const knownSubtype = (
+  slice: Pick<MachoSlice, "cpu_type" | "cpu_subtype">,
+): boolean => {
+  if (slice.cpu_type === 0x0100000c)
+    return machoKnownArm64Subtype(slice.cpu_subtype) !== undefined;
+  if (slice.cpu_type === 0x01000007)
+    return machoKnownX86_64Subtype(slice.cpu_subtype) !== undefined;
+  return true;
+};
+
 export const compatibleSlice = (
   slices: readonly MachoSlice[],
   process: Pick<MachoSlice, "architecture" | "cpu_type" | "cpu_subtype">,
@@ -158,12 +187,20 @@ export const compatibleSlice = (
     }
     return { kind: "missing" };
   }
+  const unknownSlices = slices.some(
+    (slice) => slice.cpu_type === process.cpu_type && !knownSubtype(slice),
+  );
+  if (!knownSubtype(process))
+    return slices.some((slice) => slice.cpu_type === process.cpu_type)
+      ? { kind: "unknown" }
+      : { kind: "missing" };
   const processFamily = machoArchitectureFamily(process.architecture);
   for (const architecture of COMPATIBLE_ARCHITECTURES[processFamily] ?? [
     processFamily,
   ]) {
     const slice = slices.find(
       (item) =>
+        knownSubtype(item) &&
         machoArchitectureFamily(item.architecture) === architecture &&
         (processFamily !== "arm64e" ||
           (item.cpu_type === process.cpu_type &&
@@ -172,5 +209,5 @@ export const compatibleSlice = (
     );
     if (slice !== undefined) return { kind: "selected", slice };
   }
-  return { kind: "missing" };
+  return { kind: unknownSlices ? "unknown" : "missing" };
 };

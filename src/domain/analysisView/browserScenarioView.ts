@@ -1,24 +1,31 @@
+import { selectViewRows } from "./selectViewRows.js";
 import type { z } from "zod";
-import type { AnalysisError } from "../analysisErrorBase.js";
 import {
   retainedBrowserScenarioCaptureSchema,
   type RetainedBrowserScenarioCapture as BrowserScenarioCapture,
 } from "../browserScenarioCapture.js";
 import type { BrowserScenarioStep as Step } from "../browserScenarioCaptureValues.js";
-import { compareAsciiStrings } from "../canonicalOrdering.js";
-import { err, ok, type Result } from "../result.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { incrementCount } from "../valueCounts.js";
+import { sortedCountEntries } from "./analysisViewCounts.js";
+import { err, ok } from "../result.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import {
   completeWithinViewCoverage,
   pageViewCoverage,
+  unavailableViewCoverage,
+  type AnalysisViewCoverage,
 } from "./analysisViewCoverage.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
-import type {
-  AnalysisViewCoverage,
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import { analysisTextPage } from "./analysisViewText.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  assertOwnedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import {
   ARTIFACT_SECTIONS,
   stepRowSchema,
@@ -40,16 +47,6 @@ const OPERATION = "capture_browser_scenario" as const;
 const readCapture = createAnalysisViewResultReader(
   retainedBrowserScenarioCaptureSchema,
 );
-
-const unsupportedView = (): AnalysisError =>
-  analysisViewInputError([
-    {
-      path: ["view"],
-      reason: "invalid_value",
-      message:
-        'Parent Evidence operation "capture_browser_scenario" supports summary and browser-scenario views, plus compatible environment views.',
-    },
-  ]);
 
 const sameUrl = (
   left: Step["after_url"] | undefined,
@@ -122,24 +119,6 @@ const focusAccessibility = (
   };
 };
 
-/** Counts in canonical key order; a null origin sorts first. */
-const sortedCounts = <Key extends string | null>(
-  counts: ReadonlyMap<Key, number>,
-): [Key, number][] =>
-  [...counts].sort(([left], [right]) =>
-    left === right
-      ? 0
-      : left === null
-        ? -1
-        : right === null
-          ? 1
-          : compareAsciiStrings(left, right),
-  );
-
-const increment = <Key>(counts: Map<Key, number>, key: Key): void => {
-  counts.set(key, (counts.get(key) ?? 0) + 1);
-};
-
 const eventCounts = (
   capture: BrowserScenarioCapture,
 ): z.infer<typeof browserScenarioSummarySchema>["events"] => {
@@ -147,12 +126,15 @@ const eventCounts = (
     BrowserScenarioCapture["events"]["items"][number]["kind"],
     number
   >();
-  for (const event of capture.events.items) increment(kinds, event.kind);
+  for (const event of capture.events.items) incrementCount(kinds, event.kind);
   const { omissions } = capture.events;
   return {
     retained: capture.events.retained,
     dropped: capture.events.dropped,
-    by_kind: sortedCounts(kinds).map(([kind, count]) => ({ kind, count })),
+    by_kind: sortedCountEntries(kinds).map(([kind, count]) => ({
+      kind,
+      count,
+    })),
     omissions: {
       by_kind: omissions.by_kind,
       network_transactions: omissions.network_transactions.length,
@@ -192,14 +174,7 @@ const selectedPage = <Input, Row>(
   matches: (item: Input, index: number) => boolean,
   project: (item: Input, index: number) => Row,
 ): { rows: Row[]; coverage: AnalysisViewCoverage } => {
-  const rows: Row[] = [];
-  let total = 0;
-  for (const [index, item] of source.entries()) {
-    if (!matches(item, index)) continue;
-    if (total >= view.offset && rows.length < view.limit)
-      rows.push(project(item, index));
-    total += 1;
-  }
+  const { rows, total } = selectViewRows(source, view, matches, project);
   return { rows, coverage: pageViewCoverage(view.offset, rows.length, total) };
 };
 
@@ -210,8 +185,17 @@ const textPage = (
 ) => {
   const artifact = capture.steps[view.step_index]!.artifacts[view.artifact];
   const value = artifact.state === "captured" ? artifact.value : null;
-  const text = value?.text.slice(view.offset, view.offset + view.limit) ?? null;
-  return {
+  const page =
+    value === null
+      ? ok({ item: { text: null }, coverage: unavailableViewCoverage() })
+      : analysisTextPage(
+          value.text,
+          view.offset,
+          view.limit,
+          "Scenario artifact text",
+        );
+  if (!page.ok) return page;
+  return ok({
     items: {
       collection: "text" as const,
       step_index: view.step_index,
@@ -222,25 +206,20 @@ const textPage = (
       bytes: value?.bytes ?? null,
       observed: artifact.state === "truncated" ? artifact.observed : null,
       retained: artifact.state === "truncated" ? artifact.retained : null,
-      text,
+      text: page.value.item.text,
     },
-    coverage: pageViewCoverage(
-      view.offset,
-      text?.length ?? 0,
-      value?.text.length ?? 0,
-    ),
-  };
+    coverage: page.value.coverage,
+  });
 };
 
 /** One stable page of exact recorded facts; no whole-result filtering arrays. */
 const pageRecords = (
   capture: BrowserScenarioCapture,
-  view: BrowserScenarioViewRequest,
+  view: Exclude<BrowserScenarioViewRequest, { collection: "text" }>,
 ): {
   readonly items: z.infer<typeof browserScenarioViewItemsSchema>;
   readonly coverage: AnalysisViewCoverage;
 } => {
-  if (view.collection === "text") return textPage(capture, view);
   const stepSelected = selected(view.step_indices);
   if (view.collection === "steps") {
     const artifacts = new Set(view.artifacts);
@@ -314,10 +293,17 @@ const pageRecords = (
 /** Project retained scenario Evidence without relaunching the browser or replaying actions. */
 export const projectBrowserScenarioView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
+  view: AdmittedView,
+) => {
   if (view.kind !== "summary" && view.kind !== "browser-scenario")
-    return err(unsupportedView());
+    return invalidAnalysisView(
+      'Parent Evidence operation "capture_browser_scenario" supports summary and browser-scenario views, plus compatible environment views.',
+    );
+  assertOwnedView<SummaryAnalysisView | BrowserScenarioViewRequest>(
+    view,
+    "summary",
+    "browser-scenario",
+  );
   const parsed = readCapture(parent);
   if (!parsed.ok) return parsed;
   const capture = parsed.value;
@@ -339,7 +325,7 @@ export const projectBrowserScenarioView = (
   };
   if (view.kind === "summary")
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       ...shared,
       summary: {
@@ -355,7 +341,7 @@ export const projectBrowserScenarioView = (
         network: summarizeBrowserScenarioNetwork(capture),
         limitation_count: shared.limitations.length,
       },
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   if (
     view.collection === "text" &&
@@ -370,8 +356,13 @@ export const projectBrowserScenarioView = (
         },
       ]),
     );
+  const page =
+    view.collection === "text"
+      ? textPage(capture, view)
+      : ok(pageRecords(capture, view));
+  if (!page.ok) return page;
   return ok({
-    kind: "browser-scenario",
+    kind: "browser-scenario" as const,
     view,
     ...shared,
     source_completeness: capture.completeness,
@@ -383,6 +374,6 @@ export const projectBrowserScenarioView = (
       transactions: capture.events.omissions.network_transactions.length,
       transaction_range: capture.events.omissions.network_transaction_range,
     },
-    ...pageRecords(capture, view),
+    ...page.value,
   });
 };

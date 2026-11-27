@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { observedSymlinkTarget } from "../symlinkTarget.js";
+import { utcDateTimeSchema } from "../offsetDateTime.js";
 import { jsonValueSchema } from "../jsonValue.js";
 
 import { normalizationSchema } from "./processScenario.js";
@@ -20,11 +22,11 @@ export interface TerminalFrame {
   readonly sequence: number;
   readonly at_ms: number;
   readonly data: string;
-  /** Original PTY text when normalization changed it; older captures may omit it. */
+  /** Pre-normalization PTY projection, omitted when it equals `data`; sensitive captures redact it. */
   readonly raw_data?: string | undefined;
 }
 
-/** Serialized terminal state after interpreting control and resize sequences. */
+/** Terminal state after control/resize parsing; sensitive captures use redacted PTY input. */
 export interface RenderedTerminalFrame {
   readonly sequence: number;
   readonly at_ms: number;
@@ -37,15 +39,31 @@ export interface RenderedTerminalFrame {
   readonly serialized_state: string;
 }
 
-/** Scheduled terminal interaction with its observed dispatch outcome. */
-export interface InteractionEvent {
-  readonly sequence: number;
-  readonly scheduled_at_ms: number;
-  readonly dispatched_at_ms: number;
-  readonly type: "input" | "resize" | "signal";
-  readonly data: string;
-  readonly outcome: "dispatched" | "target_exited" | "failed";
-}
+/** Scheduled interaction; new private facts are paired, legacy records remain valid. */
+const interactionEventSchema = z
+  .object({
+    sequence: z.int().nonnegative(),
+    scheduled_at_ms: z.int().nonnegative(),
+    dispatched_at_ms: z.int().nonnegative(),
+    type: z.enum(["input", "resize", "signal"]),
+    data: z.string(),
+    sensitive: z.literal(true).optional(),
+    input_bytes: z.int().nonnegative().optional(),
+    outcome: z.enum(["dispatched", "target_exited", "failed"]),
+  })
+  .superRefine((event, context) => {
+    if (
+      (event.sensitive === true) !== (event.input_bytes !== undefined) ||
+      (event.sensitive === true &&
+        (event.type !== "input" || event.data !== ""))
+    )
+      context.addIssue({
+        code: "custom",
+        message:
+          "Private input facts require input type, empty data, sensitive: true and input_bytes together.",
+      });
+  });
+export type InteractionEvent = Readonly<z.infer<typeof interactionEventSchema>>;
 
 /** Observed finalization attempts after a deadline fired. */
 export interface ProcessCaptureFinalization {
@@ -79,7 +97,9 @@ export type FileState = FileStateIdentity &
     | {
         readonly type: "symlink";
         readonly sha256: null;
-        readonly symlink_target: string;
+        readonly symlink_target: string | null;
+        /** Exact stored target bytes; decoded text is only a display projection. */
+        readonly symlink_target_hex: string;
       }
     | {
         readonly type: "directory" | "other";
@@ -171,7 +191,7 @@ export type RecordProcessCaptureEvent = (
   index: number,
 ) => void;
 
-/** Observed process-tree settlement and the cleanup required by that state. */
+/** Observed process-tree settlement and subsequent owned-resource cleanup. */
 export type ProcessSettlement =
   | VerifiedProcessSettlement
   | {
@@ -184,13 +204,35 @@ export type VerifiedProcessSettlement =
   | {
       readonly state: "quiesced";
       readonly elapsed_ms: number;
-      readonly cleanup_outcome: "not_required";
+      readonly cleanup_outcome: "not_required" | "cleaned";
     }
   | {
       readonly state: "alive_at_deadline" | "unverifiable";
       readonly elapsed_ms: number;
       readonly cleanup_outcome: "cleaned" | "failed";
     };
+
+/** The launched root process as the capture observed it. */
+export const processCaptureRootProcessSchema = z.discriminatedUnion("state", [
+  z.strictObject({
+    state: z.literal("observed"),
+    pid: z.int().positive(),
+    start_time: z.string().min(1),
+  }),
+  z.strictObject({ state: z.literal("withheld-by-caller") }),
+  z.strictObject({ state: z.literal("unknown"), reason: z.string().min(1) }),
+]);
+
+/** The launched root process as the capture observed it. */
+export type ProcessCaptureRootProcess =
+  | {
+      readonly state: "observed";
+      readonly pid: number;
+      /** Platform start identity from `src/process`; opaque. */
+      readonly start_time: string;
+    }
+  | { readonly state: "withheld-by-caller" }
+  | { readonly state: "unknown"; readonly reason: string };
 
 /**
  * Process capture observation set.
@@ -219,6 +261,12 @@ export interface UnverifiedProcessCapture {
       readonly state: "path_metadata_unchanged" | "unknown";
       readonly reason: string | null;
     };
+    /**
+     * The launched root process: its PID and the start identity read for it
+     * by the `src/process` identity primitives, withheld when the caller
+     * selected PID normalization, or unknown with the reason.
+     */
+    readonly root_process: ProcessCaptureRootProcess;
     readonly normalization_sha256: string;
   };
   readonly normalization: z.infer<typeof normalizationSchema>;
@@ -333,6 +381,10 @@ export interface IncompleteProcessCaptureObservations {
   readonly manifest: PartialProcessObservationField<
     UnverifiedProcessCapture["manifest"]
   >;
+  /** Facts retained after completion failed; omitted when the failure retained none. */
+  readonly residual_unknowns?:
+    | UnverifiedProcessCapture["residual_unknowns"]
+    | undefined;
 }
 
 const fileStateSchema = z.discriminatedUnion("type", [
@@ -345,12 +397,24 @@ const fileStateSchema = z.discriminatedUnion("type", [
       .nullable(),
     symlink_target: z.null(),
   }),
-  z.object({
-    ...fileStateShape,
-    type: z.literal("symlink"),
-    sha256: z.null(),
-    symlink_target: z.string(),
-  }),
+  z
+    .object({
+      ...fileStateShape,
+      type: z.literal("symlink"),
+      sha256: z.null(),
+      symlink_target: z.string().nullable(),
+      symlink_target_hex: z.string().regex(/^(?:[a-f0-9]{2})+$/u),
+    })
+    .superRefine((file, context) => {
+      const { text } = observedSymlinkTarget(
+        Buffer.from(file.symlink_target_hex, "hex"),
+      );
+      if (file.symlink_target !== text)
+        context.addIssue({
+          code: "custom",
+          message: "Symlink target text contradicts its exact bytes",
+        });
+    }),
   z.object({
     ...fileStateShape,
     type: z.enum(["directory", "other"]),
@@ -397,7 +461,7 @@ const processSettlementSchema = z.discriminatedUnion("state", [
   z.object({
     state: z.literal("quiesced"),
     elapsed_ms: z.int().nonnegative(),
-    cleanup_outcome: z.enum(["not_required", "failed"]),
+    cleanup_outcome: z.enum(["not_required", "cleaned", "failed"]),
   }),
   z.object({
     state: z.enum(["alive_at_deadline", "unverifiable"]),
@@ -455,8 +519,8 @@ const processCaptureShapeSchema = z.strictObject({
     platform: z.string().min(1),
     architecture: z.string().min(1),
     pty_backend: z.literal("node-pty"),
-    started_at: z.iso.datetime(),
-    completed_at: z.iso.datetime(),
+    started_at: utcDateTimeSchema,
+    completed_at: utcDateTimeSchema,
     scenario: z.record(z.string(), jsonValueSchema),
     comparison_contract: z.record(z.string(), jsonValueSchema),
     full_scenario_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
@@ -473,6 +537,7 @@ const processCaptureShapeSchema = z.strictObject({
       state: z.enum(["path_metadata_unchanged", "unknown"]),
       reason: z.string().nullable(),
     }),
+    root_process: processCaptureRootProcessSchema,
     normalization_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
   }),
   normalization: normalizationSchema,
@@ -497,16 +562,7 @@ const processCaptureShapeSchema = z.strictObject({
       serialized_state: z.string(),
     }),
   ),
-  interaction_events: z.array(
-    z.object({
-      sequence: z.int().nonnegative(),
-      scheduled_at_ms: z.int().nonnegative(),
-      dispatched_at_ms: z.int().nonnegative(),
-      type: z.enum(["input", "resize", "signal"]),
-      data: z.string(),
-      outcome: z.enum(["dispatched", "target_exited", "failed"]),
-    }),
-  ),
+  interaction_events: z.array(interactionEventSchema),
   exit: z.object({
     code: z.int().nullable(),
     signal: z.int().nullable(),
@@ -517,7 +573,7 @@ const processCaptureShapeSchema = z.strictObject({
     z.object({
       state: z.literal("quiesced"),
       elapsed_ms: z.int().nonnegative(),
-      cleanup_outcome: z.literal("not_required"),
+      cleanup_outcome: z.enum(["not_required", "cleaned"]),
     }),
     z.object({
       state: z.enum(["alive_at_deadline", "unverifiable"]),
@@ -632,6 +688,8 @@ const incompleteProcessCaptureObservationsSchema = z.strictObject({
   manifest: partialObservationFieldSchema(
     processCaptureShapeSchema.shape.manifest,
   ),
+  residual_unknowns:
+    processCaptureShapeSchema.shape.residual_unknowns.optional(),
 });
 
 const partialCleanupReportSchema = z.strictObject({
@@ -776,7 +834,10 @@ export const partialProcessCaptureObservationSchema = z
       capture.settlement.state === "quiesced"
         ? {
             ...capture.settlement,
-            cleanup_outcome: "not_required" as const,
+            cleanup_outcome:
+              capture.settlement.cleanup_outcome === "cleaned"
+                ? ("cleaned" as const)
+                : ("not_required" as const),
           }
         : { ...capture.settlement, cleanup_outcome: "cleaned" as const };
     const validationCapture: UnverifiedProcessCapture = {

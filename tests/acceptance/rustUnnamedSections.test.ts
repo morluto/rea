@@ -6,6 +6,7 @@ import { expect } from "vitest";
 import { toolContract } from "../../src/contracts/toolContracts.js";
 import { rustBinarySchema } from "../../src/domain/rust/rustBinary.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
+import { expectCliMcpEvidenceParity } from "../fixtures/cliMcpEvidenceParity.js";
 import {
   RUSTC_HASH,
   rustElfSectionNameFixture,
@@ -25,7 +26,7 @@ cliTest(
       if (name === "writable") bytes.writeBigUInt64LE(3n, 384 + 8);
       const path = join(root, `${name}.elf`);
       await writeFile(path, bytes);
-      const output = await cli.sharedCliRun!({
+      const output = await cli.run({
         arguments: ["inspect-rust-binary", path, "--json"],
       });
       expect(output.exitCode, output.stderr).toBe(0);
@@ -51,7 +52,7 @@ cliTest(
         );
       const response = await call("inspect_rust_binary", { path });
       expect(response.isError, JSON.stringify(response)).not.toBe(true);
-      expect(response.structuredContent).toEqual(evidence);
+      expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
       expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
     }
     await client.ping();

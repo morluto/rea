@@ -1,7 +1,7 @@
 import {
   admitManagedProjection,
   managedDecodeBudget,
-} from "./ManagedDecodeBudget.js";
+} from "../domain/managed/managedDecodeBudget.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
   managedArtifactInspectionSchema,
@@ -14,23 +14,25 @@ import {
   readManagedPeLayout,
   type ManagedCliHeader,
   type ManagedPeLayout,
-} from "./ManagedPeReader.js";
+} from "../domain/managed/managedPeReader.js";
 import {
   managedTableRowCounts,
+  unresolvedModuleMetadata,
   readManagedMetadataInventory,
   type ManagedMetadataInventory,
   readManagedResourceDirectory,
-} from "./ManagedMetadataInventory.js";
+} from "../domain/managed/managedMetadataInventory.js";
 import {
   readManagedMetadataLayout,
   type ManagedMetadataLayout,
-} from "./ManagedMetadataLayout.js";
-import { readTypeMemberListFacts } from "./ManagedTypeMemberLists.js";
+} from "../domain/managed/managedMetadataLayout.js";
+import { readTypeMemberListFacts } from "../domain/managed/managedTypeMemberLists.js";
 import {
   ManagedReaderFailure,
+  isManagedCoverageGap,
   managedMetadataFailureStatus,
   type ManagedMetadataHeaderFacts,
-} from "./ManagedReaderFailure.js";
+} from "../domain/managed/managedReaderFailure.js";
 
 const flagNames = (flags: number): string[] => {
   const names: string[] = [];
@@ -111,13 +113,12 @@ const unavailableResult = (
 ): ManagedArtifactInspection => {
   const malformed = layout.cliDirectoryState !== "absent";
   const issues = layout.cliIssue === null ? [] : [layout.cliIssue];
-  const limitations = malformed
-    ? [
-        "The PE declares a CLI directory, but its CLI header could not be admitted.",
-      ]
-    : [
-        "The PE has no CLI data directory; managed metadata and CIL are unavailable.",
-      ];
+  const limitation =
+    layout.cliDirectoryState === "unreadable"
+      ? (layout.cliIssue?.detail ?? "The PE CLI directory could not be read.")
+      : malformed
+        ? "The PE declares a CLI directory, but its CLI header could not be admitted."
+        : "The PE has no CLI data directory; managed metadata and CIL are unavailable.";
   return managedArtifactInspectionSchema.parse(
     admitManagedProjection({
       ...base(target, bytes, layout),
@@ -132,7 +133,7 @@ const unavailableResult = (
             code: malformed
               ? "cli-directory-malformed"
               : "cli-directory-absent",
-            detail: limitations[0],
+            detail: limitation,
             file_offset: layout.cliIssue?.offset ?? null,
           },
         ],
@@ -153,13 +154,15 @@ const unavailableResult = (
         state: malformed ? "partial" : "unavailable",
         issues,
       },
-      limitations,
+      limitations: [limitation],
     }),
   );
 };
 
 interface RuntimeClassificationInput {
   readonly layout: ManagedPeLayout;
+  /** The layout's CLI header, which a managed classification requires. */
+  readonly cli: ManagedCliHeader;
   readonly metadata: ManagedMetadataLayout;
   readonly inventory: ManagedMetadataInventory;
 }
@@ -283,14 +286,13 @@ const managedArchitectureFor = (
 
 const runtimeClassification = ({
   layout,
+  cli,
   metadata,
   inventory,
 }: RuntimeClassificationInput): Pick<
   ManagedArtifactInspection["classification"],
   "runtime_family" | "implementation" | "managed_architecture" | "evidence"
 > => {
-  const cli = layout.cli;
-  if (cli === null) throw new TypeError("Managed classification requires CLI");
   const { runtime_family: runtimeFamily, evidence } = runtimeFamilyFor(
     cli,
     inventory,
@@ -359,11 +361,11 @@ const partialMetadataResult = ({
   attributes: [],
   coverage: { state: "partial", issues: [issue] },
   limitations: [
-    issue.code === "unsupported-metadata"
+    isManagedCoverageGap(issue.code)
       ? issue.detail
       : issue.code === "resource-limit"
         ? "CLI metadata inspection stopped at its representation budget; omitted facts are unknown."
-        : "CLI metadata could not be read because the PE/CLI structure is malformed or unsupported.",
+        : "CLI metadata could not be read because the PE/CLI structure is malformed.",
   ],
 });
 
@@ -371,6 +373,7 @@ const partialMetadataResult = ({
 export const inspectManagedArtifactBytes = (
   bytes: Buffer,
   target: BinaryTarget,
+  maxRepresentationBytes?: number,
 ): ManagedArtifactInspection => {
   const layout = readManagedPeLayout(bytes);
   if (layout.cli === null) return unavailableResult(target, bytes, layout);
@@ -386,6 +389,7 @@ export const inspectManagedArtifactBytes = (
       bytes,
       metadataOffset,
       cli.metadata.size,
+      maxRepresentationBytes,
     );
   } catch (cause: unknown) {
     if (!(cause instanceof ManagedReaderFailure)) throw cause;
@@ -430,13 +434,14 @@ export const inspectManagedArtifactBytes = (
           classification: {
             status: "managed",
             container: "pe",
-            ...runtimeClassification({ layout, metadata, inventory }),
+            ...runtimeClassification({ layout, cli, metadata, inventory }),
           },
           metadata: {
             status: issues.length === 0 ? "complete" : "partial",
             version: metadata.version,
             stream_names: metadata.streamNames,
             table_row_counts: managedTableRowCounts(metadata),
+            ...unresolvedModuleMetadata(inventory),
           },
           module: inventory.module,
           assembly: inventory.assembly,

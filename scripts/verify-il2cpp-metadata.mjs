@@ -6,16 +6,23 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { absoluteCallerPath } from "../dist/filesystem/callerPath.js";
 import { toolContract } from "../dist/contracts/toolContracts.js";
-import { analysisViewResultSchema } from "../dist/domain/analysisView/analysisView.js";
-import { ArtifactResourceScope } from "../dist/artifacts/ArtifactResourceScope.js";
-import { mcpTextValue } from "./lib/mcp-verifier-results.mjs";
+import { il2cppMetadataViewRequestSchema } from "../dist/domain/analysisView/il2cppMetadataView.js";
+import { ArtifactResourceScope } from "../dist/resources/ArtifactResourceScope.js";
+import {
+  requireMcpOutput,
+  requireMcpToolError,
+} from "./lib/mcp-verifier-results.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { hashVerifierFile } from "./lib/verifier-file-resources.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./lib/complete-evidence.mjs";
 
 const args = process.argv.slice(2);
 if (args.includes("--help") || args.includes("-h")) {
   console.log(
-    "Usage: npm run verify:il2cpp:metadata -- [--metadata PATH]\nPATH is a caller-owned, unencrypted global-metadata.dat (version 24, 27, 29, 31 or 39). Without --metadata, only the advertised contract is verified.",
+    "Usage: npm run verify:il2cpp:metadata -- [--metadata PATH]\nPATH is a caller-owned, unencrypted global-metadata.dat (version 24, 27, 29, 31 or 39). Without --metadata, only the MCP tool name is checked.",
   );
   process.exit(0);
 }
@@ -26,7 +33,9 @@ const operation = "inspect_il2cpp_metadata";
 const contract = toolContract(operation);
 const entrypoint = resolve("scripts/rea.mjs");
 const execute = promisify(execFile);
-const client = new Client({ name: "il2cpp-metadata-verifier", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "il2cpp-metadata-verifier", version: "1" }),
+);
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
@@ -43,8 +52,7 @@ const call = async (name, input) => {
     { name, arguments: input },
     { timeout: 120_000 },
   );
-  assert.notEqual(response.isError, true, mcpTextValue(response));
-  return JSON.parse(mcpTextValue(response));
+  return requireMcpOutput(response, name);
 };
 const resources = new ArtifactResourceScope();
 await withVerifierCleanup(async () => {
@@ -58,7 +66,14 @@ await withVerifierCleanup(async () => {
     const started = performance.now();
     const { stdout } = await execute(
       process.execPath,
-      [entrypoint, "inspect-il2cpp-metadata", path, "--json"],
+      [
+        entrypoint,
+        ...(await completeEvidenceCliArguments([
+          "inspect-il2cpp-metadata",
+          path,
+          "--json",
+        ])),
+      ],
       { timeout: 120_000, maxBuffer: 128 * 1024 * 1024 },
     );
     const cliMs = Math.round(performance.now() - started);
@@ -74,17 +89,41 @@ await withVerifierCleanup(async () => {
     if (complete.isError === true) {
       // Large inventories exceed the stdio budget; the result must stay
       // retained and addressable rather than truncated.
-      const { error } = JSON.parse(mcpTextValue(complete));
+      const error = requireMcpToolError(complete);
       assert.equal(error.code, "resource_constraint");
       assert.equal(error.details.reported_limits.boundary, "mcp-response");
       assert.match(error.details.reported_limits.evidence_id, /^ev_/u);
+      const collections = il2cppMetadataViewRequestSchema.options.map(
+        (option) => option.shape.collection.value,
+      );
+      const collection =
+        ["methods", ...collections].find(
+          (name) => Array.isArray(report[name]) && report[name].length > 0,
+        ) ?? "methods";
+      const expectedRows = report[collection].slice(0, 16);
+      const retained = (
+        await call("inspect_analysis_view", {
+          source: {
+            kind: "retained-evidence",
+            evidence_id: error.details.reported_limits.evidence_id,
+          },
+          view: { kind: "il2cpp-metadata", collection, limit: 16 },
+        })
+      ).normalized_result;
+      assert.deepEqual(
+        retained.items,
+        expectedRows.map((row, index) => ({ ...row, index })),
+        "Failed complete delivery must retain its exact Evidence before reanalysis",
+      );
+      if (expectedRows.length === 0)
+        console.log(
+          "[unverified] Retention lookup succeeded, but empty queryable tables provide no nonempty row-content witness",
+        );
       console.log(
         `[ok] MCP complete delivery refused at the stdio budget (${error.details.reported_limits.response_bytes_at_least} bytes) with retained Evidence`,
       );
     } else {
-      const mcp = contract.outputSchema.parse(
-        JSON.parse(mcpTextValue(complete)),
-      );
+      const mcp = requireMcpOutput(complete, operation, contract);
       assert.deepEqual(mcp.normalized_result, report);
       console.log("[ok] CLI/MCP complete Evidence parity");
     }
@@ -108,9 +147,7 @@ await withVerifierCleanup(async () => {
     });
     console.log("[ok] image type ranges and type method ranges agree");
 
-    const summary = contract.outputSchema.parse(
-      await call(operation, { path }),
-    ).normalized_result;
+    const summary = (await call(operation, { path })).normalized_result;
     assert.equal(summary.summary.magic, report.magic);
     assert.deepEqual(summary.summary.counts, {
       sections: report.sections.length,
@@ -135,37 +172,33 @@ await withVerifierCleanup(async () => {
       generic_method_instance_states: null,
       generic_method_issues: null,
     });
-    const page = analysisViewResultSchema.parse(
-      (
-        await call("inspect_analysis_view", {
-          source: {
-            kind: "retained-evidence",
-            evidence_id: summary.parent_evidence_id,
-          },
-          view: { kind: "il2cpp-metadata", collection: "methods", limit: 16 },
-        })
-      ).normalized_result,
-    );
+    const page = (
+      await call("inspect_analysis_view", {
+        source: {
+          kind: "retained-evidence",
+          evidence_id: summary.parent_evidence_id,
+        },
+        view: { kind: "il2cpp-metadata", collection: "methods", limit: 16 },
+      })
+    ).normalized_result;
     assert.deepEqual(
       page.items,
       report.methods.slice(0, 16).map((row, index) => ({ ...row, index })),
     );
-    const last = analysisViewResultSchema.parse(
-      (
-        await call("inspect_analysis_view", {
-          source: {
-            kind: "retained-evidence",
-            evidence_id: summary.parent_evidence_id,
-          },
-          view: {
-            kind: "il2cpp-metadata",
-            collection: "types",
-            offset: Math.max(0, report.types.length - 4),
-            limit: 16,
-          },
-        })
-      ).normalized_result,
-    );
+    const last = (
+      await call("inspect_analysis_view", {
+        source: {
+          kind: "retained-evidence",
+          evidence_id: summary.parent_evidence_id,
+        },
+        view: {
+          kind: "il2cpp-metadata",
+          collection: "types",
+          offset: Math.max(0, report.types.length - 4),
+          limit: 16,
+        },
+      })
+    ).normalized_result;
     const lastOffset = Math.max(0, report.types.length - 4);
     assert.deepEqual(
       last.items,
@@ -185,4 +218,8 @@ await withVerifierCleanup(async () => {
     );
   }
 }, [() => client.close(), () => transport.close(), () => resources.close()]);
-console.log("All asserted IL2CPP metadata CLI/MCP checks passed");
+console.log(
+  path === null
+    ? "IL2CPP metadata MCP tool presence check passed"
+    : "All asserted IL2CPP metadata CLI/MCP checks passed",
+);

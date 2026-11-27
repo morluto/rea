@@ -1,14 +1,16 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { afterEach, expect, it, vi } from "vitest";
 
-import { ApktoolResourceAnalysisService } from "../application/apktool/ApktoolResourceAnalysisService.js";
+import { createApktoolResourceAnalysisService } from "../application/ProviderOperationServices.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   DEFAULT_APKTOOL_DECODE_TIMEOUT_MS,
-  MAX_APKTOOL_DECODE_TIMEOUT_MS,
+  MAX_APKTOOL_DECODE_OUTPUT_BYTES,
 } from "../domain/apktool/apktoolResourceAnalysis.js";
+import { runWithAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
 import {
   OwnedCommandFailure,
   runOwnedCommand,
@@ -49,11 +51,15 @@ afterEach(() => {
   vi.mocked(runOwnedCommand).mockReset();
 });
 
-const completed = (text: string): ProviderProcessSnapshot =>
-  ({
-    stdout: { text },
-    stderr: { text: "" },
-  }) as ProviderProcessSnapshot;
+const completed = (text: string): ProviderProcessSnapshot => {
+  const bytes = Buffer.byteLength(text);
+  return {
+    stdout: { text, bytes, observedBytes: bytes },
+    stderr: { text: "", bytes: 0, observedBytes: 0 },
+    exitCode: 0,
+    signal: null,
+  };
+};
 
 const installLauncher = (): void => {
   vi.mocked(runOwnedCommand).mockImplementation(async (spawn, limits) => {
@@ -68,7 +74,7 @@ const installLauncher = (): void => {
     // process-tree cleanup are covered by apktoolDecodeDeadline.test.ts.
     if (
       limits.timeoutMs === 200 ||
-      limits.timeoutMs === MAX_APKTOOL_DECODE_TIMEOUT_MS
+      limits.timeoutMs === MAX_NODE_TIMER_DELAY_MS
     )
       throw new OwnedCommandFailure("timeout", "Command deadline elapsed.");
     const outputIndex = spawn.arguments.indexOf("-o");
@@ -86,7 +92,7 @@ const decode = async (
   path: string,
   decodeTimeoutMs?: number,
 ) =>
-  new ApktoolResourceAnalysisService(provider).execute(
+  createApktoolResourceAnalysisService(provider).execute(
     "decode_android_resources",
     {
       path,
@@ -98,12 +104,16 @@ const decode = async (
   );
 
 it("applies the omitted 600000 ms decode deadline and a selected value on the next decode", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-apktool-deadline-"));
+  const root = await createTestTempDirectory("rea-apktool-deadline-");
   const path = join(root, "probe.apk");
   await writeFile(path, "apk-bytes");
   installLauncher();
+  const command =
+    process.platform === "win32"
+      ? "C:\\opt\\apktool\\apktool"
+      : "/opt/apktool/apktool";
   const provider = new ApktoolProvider({
-    environment: { REA_APKTOOL_COMMAND: "/opt/apktool/apktool" },
+    environment: { REA_APKTOOL_COMMAND: command },
   });
   try {
     const omitted = await decode(provider, path);
@@ -114,22 +124,30 @@ it("applies the omitted 600000 ms decode deadline and a selected value on the ne
     expect(outputBudgets).toEqual([4 * 1024 * 1024]);
 
     const timedOut = await decode(provider, path, 200);
-    expect(timedOut.ok).toBe(false);
     if (timedOut.ok) throw new Error("Expected a decode deadline");
     const projected = projectAnalysisError(timedOut.error);
+    const decodeDeadline = {
+      control_kind: "parameter",
+      parameter: "decode_timeout_ms",
+      effective_value: 200,
+      unit: "ms",
+      minimum: 1,
+      maximum: MAX_NODE_TIMER_DELAY_MS,
+      default_value: DEFAULT_APKTOOL_DECODE_TIMEOUT_MS,
+      applies_at: "next_call",
+    };
     expect(projected).toMatchObject({
       code: "provider_timeout",
-      details: { timeout_ms: 200 },
+      details: {
+        timeout_ms: 200,
+        limit: decodeDeadline,
+      },
     });
-    expect(projected.message).toContain("200 ms");
-    expect(projected.remediation.action).toContain("decode_timeout_ms");
-    expect(projected.remediation.action).toContain(
-      String(MAX_APKTOOL_DECODE_TIMEOUT_MS),
-    );
-    expect(projected.remediation.action).toContain("600000");
-    expect(projected.remediation.action).toContain("next decode");
-    expect(projected.remediation.action).toContain("no runtime override");
+    expect(projected.details?.limit).not.toHaveProperty("cli_flag");
+    expect(projected.details).not.toHaveProperty("refusal");
     expect(decodeTimeouts).toEqual([DEFAULT_APKTOOL_DECODE_TIMEOUT_MS, 200]);
+    // A selected deadline leaves the separate output capture budget unchanged.
+    expect(outputBudgets).toEqual([4 * 1024 * 1024, 4 * 1024 * 1024]);
 
     const selected = await decode(provider, path, 5_000);
     expect(selected.ok).toBe(true);
@@ -143,14 +161,59 @@ it("applies the omitted 600000 ms decode deadline and a selected value on the ne
       5_000,
     ]);
 
-    const maximum = await decode(provider, path, MAX_APKTOOL_DECODE_TIMEOUT_MS);
-    expect(maximum.ok).toBe(false);
+    const maximum = await decode(provider, path, MAX_NODE_TIMER_DELAY_MS);
     if (maximum.ok) throw new Error("Expected the maximum decode deadline");
-    expect(projectAnalysisError(maximum.error).remediation.action).toContain(
-      "do not increase it further",
-    );
+    expect(projectAnalysisError(maximum.error).details?.limit).toMatchObject({
+      parameter: "decode_timeout_ms",
+      effective_value: MAX_NODE_TIMER_DELAY_MS,
+      maximum: MAX_NODE_TIMER_DELAY_MS,
+    });
   } finally {
     await provider.close();
-    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it("clamps an above-cap producer.output_bytes setting to the Apktool capture budget", async () => {
+  const root = await createTestTempDirectory("rea-apktool-output-cap-");
+  const path = join(root, "probe.apk");
+  await writeFile(path, "apk-bytes");
+  installLauncher();
+  const command =
+    process.platform === "win32"
+      ? "C:\\opt\\apktool\\apktool"
+      : "/opt/apktool/apktool";
+  const above = String(MAX_APKTOOL_DECODE_OUTPUT_BYTES + 1);
+  const seeded = new ApktoolProvider({
+    environment: {
+      REA_APKTOOL_COMMAND: command,
+      REA_PRODUCER_OUTPUT_BYTES: above,
+    },
+  });
+  try {
+    const fromSeed = await decode(seeded, path);
+    expect(fromSeed.ok).toBe(true);
+    expect(outputBudgets).toEqual([MAX_APKTOOL_DECODE_OUTPUT_BYTES]);
+  } finally {
+    await seeded.close();
+  }
+
+  outputBudgets.length = 0;
+  const runtime = new ApktoolProvider({
+    environment: { REA_APKTOOL_COMMAND: command },
+  });
+  try {
+    const fromRuntime = await runWithAnalysisOperationSnapshot(
+      {
+        revision: 1,
+        overrides: {
+          "producer.output_bytes": MAX_APKTOOL_DECODE_OUTPUT_BYTES + 1,
+        },
+      },
+      () => decode(runtime, path),
+    );
+    expect(fromRuntime.ok).toBe(true);
+    expect(outputBudgets).toEqual([MAX_APKTOOL_DECODE_OUTPUT_BYTES]);
+  } finally {
+    await runtime.close();
   }
 });

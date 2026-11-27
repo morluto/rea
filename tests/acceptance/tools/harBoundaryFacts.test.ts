@@ -4,12 +4,118 @@ import { join } from "node:path";
 import { expect } from "vitest";
 
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { PACKAGE_METADATA } from "../../../src/generatedPackageMetadata.js";
 import { webNetworkCaptureSchema } from "../../../src/domain/webNetworkCapture.js";
 import { historicalHar } from "../../fixtures/historicalHar.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { issuesByContractField } from "../../support/cli/cliIssueFields.js";
+
+cliTest(
+  "omits HAR extension payloads from capture previews while retaining complete records",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-har-preview-");
+    const fixture = historicalHar();
+    const entry = fixture.log.entries[0];
+    if (entry === undefined) throw new Error("fixture missing");
+    const marker = "nested-extension-payload";
+    const scalarMarker = "scalar-extension-value";
+    const path = join(root, "capture.har");
+    await writeFile(
+      path,
+      JSON.stringify({
+        log: {
+          ...fixture.log,
+          entries: [
+            {
+              ...entry,
+              name: { payload: marker },
+              type: { body: marker },
+              request: { ...entry.request, reason: { payload: marker } },
+              response: { ...entry.response, method: { payload: marker } },
+            },
+            {
+              ...entry,
+              name: scalarMarker,
+              type: scalarMarker,
+              request: { ...entry.request, reason: scalarMarker },
+              response: { ...entry.response, method: scalarMarker },
+            },
+          ],
+        },
+      }),
+    );
+    const capture = await cli.run({
+      arguments: ["inspect-web-network-capture", path, "har", "--json"],
+    });
+    expect(
+      capture.exitCode,
+      capture.stderr || JSON.stringify(capture.json),
+    ).toBe(0);
+    const evidence = parseEvidence(capture.json);
+    const { call } = await connectLocalToolsMcp();
+    for (const detail of ["preview", "complete"] as const) {
+      const request = {
+        source: { kind: "inline", evidence },
+        view: { kind: "capture", detail, offset: 0, limit: 2 },
+      };
+      const requestPath = join(root, `${detail}.json`);
+      await writeFile(requestPath, JSON.stringify(request));
+      const output = await cli.run({
+        arguments: ["inspect-analysis-view", requestPath, "--json"],
+      });
+      expect(output.exitCode, output.stderr).toBe(0);
+      const result = parseEvidence(output.json).normalized_result;
+      const reply = await call("inspect_analysis_view", request);
+      expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
+      expect(parseEvidence(reply.structuredContent).normalized_result).toEqual(
+        result,
+      );
+      if (detail === "preview") {
+        expect(JSON.stringify(result)).not.toContain(marker);
+        expect(JSON.stringify(result)).not.toContain(scalarMarker);
+        expect(result).toMatchObject({
+          items: [
+            {
+              reported: {
+                startedDateTime: entry.startedDateTime,
+                request: {
+                  method: entry.request.method,
+                  url: entry.request.url,
+                },
+                response: { status: entry.response.status },
+              },
+            },
+            {},
+          ],
+        });
+      } else {
+        expect(result).toMatchObject({
+          items: [
+            {
+              reported: {
+                name: { payload: marker },
+                type: { body: marker },
+                request: { reason: { payload: marker } },
+                response: { method: { payload: marker } },
+              },
+            },
+            {
+              reported: {
+                name: scalarMarker,
+                type: scalarMarker,
+                request: { reason: scalarMarker },
+                response: { method: scalarMarker },
+              },
+            },
+          ],
+        });
+      }
+    }
+  },
+);
 
 cliTest(
   "refuses malformed HAR schema facts before record selection through CLI and MCP",
@@ -55,7 +161,7 @@ cliTest(
       const text = JSON.stringify({ log });
       const path = join(root, `${label}.har`);
       await writeFile(path, text);
-      const output = await cli.run({
+      const invocation = {
         arguments: [
           "inspect-web-network-capture",
           path,
@@ -64,6 +170,10 @@ cliTest(
           "0",
           "--json",
         ],
+      };
+      const output = await cli.run({
+        ...invocation,
+        freshProcess: label === "null-timings",
       });
       expect(output.exitCode).toBe(1);
       const expected = {
@@ -77,7 +187,10 @@ cliTest(
           ],
         },
       };
-      expect(output.json).toMatchObject(expected);
+      // The CLI names the capture by its argument, otherwise as MCP does.
+      expect(
+        issuesByContractField(output.json, { capturePath: "capture_path" }),
+      ).toMatchObject(expected);
       expect(output.json).not.toHaveProperty("evidence_id");
       const reply = await call("inspect_web_network_capture", {
         capture_path: path,
@@ -144,7 +257,7 @@ cliTest(
     const evidence = parseEvidence(output.json);
     const capture = webNetworkCaptureSchema.parse(evidence.normalized_result);
     expect(capture.decoder.version).toBe(
-      "har-schema@2.0.0;har-schema-corrections@1;jsonc-parser@3.3.1;lossless-json@4.3.1",
+      `har-schema@2.0.0;har-schema-corrections@1;jsonc-parser@${PACKAGE_METADATA.jsoncParserVersion};lossless-json@${PACKAGE_METADATA.losslessJsonVersion}`,
     );
     expect(capture.artifact).toMatchObject({
       path,
@@ -204,5 +317,129 @@ cliTest(
       parseEvidence(stateReply.structuredContent).normalized_result,
     ).toEqual(stateEvidence.normalized_result);
     expect(await readFile(path, "utf8")).toBe(text);
+  },
+);
+
+cliTest(
+  "decodes HAR numeric literals with long zero-padded fractional parts without quadratic timeout",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-har-zero-fraction-");
+    const fixture = historicalHar();
+    const literal = `1.${"0".repeat(250_000)}1`;
+    const text = JSON.stringify(fixture).replace(
+      /"time":\s*-?\d+(?:\.\d+)?/u,
+      `"time": ${literal}`,
+    );
+    const path = join(root, "long-fraction.har");
+    await writeFile(path, text);
+
+    const capture = await cli.run({
+      arguments: [
+        "inspect-web-network-capture",
+        path,
+        "har",
+        "--capture-timeout-ms",
+        "4000",
+        "--json",
+      ],
+    });
+    expect(capture.exitCode, capture.stderr || capture.stdout).toBe(0);
+    const evidence = parseEvidence(capture.json);
+    const report = webNetworkCaptureSchema.parse(evidence.normalized_result);
+    expect(report.records[0]?.reported).toMatchObject({ time: null });
+    expect(report.records[0]?.numeric_literals).toContainEqual(
+      expect.objectContaining({
+        pointer: "/time",
+        literal,
+      }),
+    );
+  },
+);
+
+cliTest(
+  "reports credential-named HAR postData.params when postData.text is empty or unreadable without double counting readable text",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-har-postdata-params-");
+    const fixture = historicalHar();
+    const baseEntry = fixture.log.entries[0];
+    if (baseEntry === undefined) throw new Error("fixture missing");
+    const params = [
+      { name: "api_key", value: "secret-1" },
+      { name: "token", value: "secret-2" },
+    ];
+    for (const [label, postData] of [
+      [
+        "empty-text",
+        {
+          mimeType: "application/x-www-form-urlencoded",
+          text: "",
+          params,
+        },
+      ],
+      [
+        "multipart-text",
+        {
+          mimeType: "multipart/form-data; boundary=---b",
+          text: '-----b\r\nContent-Disposition: form-data; name="api_key"\r\n\r\nsecret-1\r\n-----b--',
+          params,
+        },
+      ],
+      [
+        "readable-urlencoded",
+        {
+          mimeType: "application/x-www-form-urlencoded",
+          text: "api_key=secret-1&token=secret-2",
+          params,
+        },
+      ],
+    ] as const) {
+      const path = join(root, `${label}.har`);
+      await writeFile(
+        path,
+        JSON.stringify({
+          log: {
+            ...fixture.log,
+            entries: [
+              {
+                ...baseEntry,
+                request: {
+                  ...baseEntry.request,
+                  method: "POST",
+                  headers: [],
+                  queryString: [],
+                  postData,
+                },
+                response: {
+                  ...baseEntry.response,
+                  headers: [],
+                  content: {
+                    size: 2,
+                    mimeType: "application/json",
+                    text: "{}",
+                  },
+                },
+              },
+            ],
+          },
+        }),
+      );
+      const capture = await cli.run({
+        arguments: ["inspect-web-network-capture", path, "har", "--json"],
+      });
+      expect(capture.exitCode, capture.stderr || capture.stdout).toBe(0);
+      const evidence = parseEvidence(capture.json);
+      const report = webNetworkCaptureSchema.parse(evidence.normalized_result);
+      const credentialNotes = report.limitations.filter((line) =>
+        line.includes("look like credentials"),
+      );
+      expect(credentialNotes, label).toHaveLength(1);
+      expect(credentialNotes[0], label).toContain(
+        "2 recorded header, query parameter or body member names look like credentials",
+      );
+      expect(credentialNotes[0], label).toContain("record 0 request /api_key");
+      expect(credentialNotes[0], label).toContain("record 0 request /token");
+      expect(credentialNotes[0], label).not.toContain("secret-1");
+      expect(credentialNotes[0], label).not.toContain("secret-2");
+    }
   },
 );

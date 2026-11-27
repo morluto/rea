@@ -1,6 +1,9 @@
 import { expect, it } from "vitest";
 
-import { assertVerifierCleanupComplete } from "../../../scripts/lib/verifier-run.mjs";
+import {
+  assertVerifierCleanupComplete,
+  createVerifierPhaseTimings,
+} from "../../../scripts/lib/verifier-run.mjs";
 
 it("requires verified empty lineage before claiming verifier cleanup", () => {
   expect(() =>
@@ -35,4 +38,25 @@ it("requires verified empty lineage before claiming verifier cleanup", () => {
       descendants: [],
     }),
   ).not.toThrow();
+});
+
+it("retains elapsed phase timings when a failed phase is followed by cleanup", () => {
+  let now = 100;
+  const timings = createVerifierPhaseTimings(() => now);
+
+  timings.begin("pack");
+  now += 1200.2;
+  timings.begin("install");
+  now += 327.8;
+  timings.finish("failed");
+  now += 10;
+  timings.begin("cleanup");
+  now += 15;
+  timings.finish();
+
+  expect(timings.snapshot()).toEqual([
+    { phase: "pack", duration_ms: 1200, status: "completed" },
+    { phase: "install", duration_ms: 328, status: "failed" },
+    { phase: "cleanup", duration_ms: 15, status: "completed" },
+  ]);
 });

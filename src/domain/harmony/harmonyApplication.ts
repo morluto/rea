@@ -1,14 +1,8 @@
-import {
-  bridgeCandidateCoverageSchema,
-  projectCartesianCandidates,
-} from "../bridgeCandidateProjection.js";
+import { bridgeCandidateCoverageSchema } from "../bridgeCandidateProjection.js";
 import { z } from "zod";
 import { AnalysisInputError } from "../analysisErrorCore.js";
 
-import {
-  hasCompleteInventoryCoverage,
-  type ParsedInventorySet,
-} from "../artifactInventoryEvidence.js";
+import type { ParsedInventorySet } from "../artifactInventoryEvidence.js";
 import { digestSchema, prefixedDigestSchema } from "../digests.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { nativeRuntimeConvention } from "../nativeConvention.js";
@@ -17,9 +11,12 @@ import {
   projectedComponentSchema,
   projectedInventoryEntries,
   projectedFileComponents,
+  projectManagedNativeCandidates,
   projectionCoverage,
+  projectionCoverageSchema,
   projectionEvidenceIdSchema,
   unavailableComponentSchema,
+  type ProjectedInventoryEntry,
 } from "../mobileApplicationGraphProjection.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { err, ok, type Result } from "../result.js";
@@ -42,6 +39,7 @@ export const harmonyApplicationProjectionResultSchema = z.strictObject({
     javascript: z.array(projectedComponentSchema),
     signing: z.array(projectedComponentSchema),
   }),
+  unclassified_components: z.array(projectedComponentSchema),
   unavailable_components: z.array(unavailableComponentSchema),
   app_pack_children: z.array(
     z.union([projectedComponentSchema, unavailableComponentSchema]),
@@ -56,11 +54,7 @@ export const harmonyApplicationProjectionResultSchema = z.strictObject({
     ] as const),
   ),
   bridge_candidate_coverage: bridgeCandidateCoverageSchema,
-  coverage: z.strictObject({
-    status: z.enum(["complete-within-inventory", "partial"]),
-    // Count completeness is separate from the declared coverage status.
-    inventory_complete: z.boolean(),
-  }),
+  coverage: projectionCoverageSchema,
   limitations: z.array(z.string()),
 });
 
@@ -68,6 +62,15 @@ export type HarmonyApplicationProjectionResult = z.infer<
   typeof harmonyApplicationProjectionResultSchema
 >;
 type Component = z.infer<typeof projectedComponentSchema>;
+
+const PKG_CONTEXT_NOT_READ =
+  "pkgContextInfo.json is inventoried but not read, so bridge_candidates are not narrowed by its isSO declarations; narrowing requires parsed file content that this projection does not receive.";
+
+/** Whether the package carries the build-output declaration this projection cannot read. */
+const pkgContextDeclared = (
+  files: readonly ProjectedInventoryEntry[],
+): boolean =>
+  files.some(({ path }) => /(?:^|\/)pkgContextInfo\.json$/iu.test(path));
 
 /** Project exact HarmonyOS package paths and hashes without decoding or executing target code. */
 export const projectHarmonyInventory = (
@@ -80,11 +83,11 @@ export const projectHarmonyInventory = (
   const { entries, limitations: unresolved } =
     projectedInventoryEntries(inventory);
   const all = projectedFileComponents(entries);
-  const unavailable = entries.flatMap(({ unavailable }) =>
-    unavailable === undefined ? [] : [unavailable],
-  );
   const fileEntries = entries.filter(
     ({ kind }) => kind === "file" || kind === "slice",
+  );
+  const unavailable = fileEntries.flatMap(({ unavailable }) =>
+    unavailable === undefined ? [] : [unavailable],
   );
   const children: HarmonyApplicationProjectionResult["app_pack_children"] = [];
   if (rootFormat === "app-pack") {
@@ -94,27 +97,37 @@ export const projectHarmonyInventory = (
       if (child !== undefined) children.push(child);
     }
   }
-  const classified = classify(all);
-  const bridgeProjection = bridgeCandidates(
+  const manifests = classifyManifests(fileEntries);
+  const classified = classify(all, manifests.components);
+  const classifiedFiles = new Set([
+    ...Object.values(classified).flat(),
+    ...children,
+  ]);
+  const bridgeProjection = projectManagedNativeCandidates(
     classified.bytecode,
     classified.native_libraries,
+    napiBasis,
+  );
+  const { coverage, sourceLimitations, bridgeLimitations } = projectionCoverage(
+    inventory,
+    bridgeProjection.coverage,
+    unavailable.length,
   );
   const limitations = [
     ...unresolved,
     ...inventory.limitations,
-    ...(!hasCompleteInventoryCoverage(inventory, "container-entries")
-      ? ["Source inventory coverage is partial; absence is unknown."]
-      : []),
+    ...sourceLimitations,
     ...(unavailable.length > 0
       ? [
-          "Some inventoried occurrences have no authenticated content identity. Their paths and limitations are retained in unavailable_components; component and runtime absence is unknown.",
+          "Some inventoried files or slices have no authenticated content identity. Their paths and limitations are retained in unavailable_components; component and runtime absence is unknown.",
         ]
       : []),
     "Manifest, module, resource, and signing semantics require a dedicated HarmonyOS provider; this projection reports exact inventory paths and hashes only.",
-    "The packaging model is a path-presence heuristic: a Stage model is claimed only from module.json and a FA model only from config.json; both can coexist with unusual layouts.",
+    "The packaging model is a path-presence heuristic: root module.json indicates Stage and root config.json indicates FA. Both declarations can coexist in unusual layouts.",
     "Runtime families are inferred from inventory formats and paths; filename suffixes do not establish valid Ark bytecode.",
     "The signing component lists META-INF certificate-entry suffixes only; signatures applied by the packaging tool live in the ZIP signing block rather than archive entries, so an empty signing list does not mean the package is unsigned.",
     "Bridge candidates are path-based hypotheses, not decoded N-API declarations or observed runtime calls.",
+    ...(pkgContextDeclared(fileEntries) ? [PKG_CONTEXT_NOT_READ] : []),
     ...(rootFormat === "app-pack"
       ? [
           "App Pack child packages are listed by inventory path only; their contents are not recursively inventoried by this projection.",
@@ -122,11 +135,7 @@ export const projectHarmonyInventory = (
         ]
       : []),
     "HarmonyOS .har shared libraries are not identified by this projection; the .har suffix also names HTTP Archive JSON, so that classification requires verified ZIP bytes.",
-    ...(bridgeProjection.coverage.status === "partial"
-      ? [
-          `Bridge candidate pairs exceeded the projection safety budget; ${bridgeProjection.coverage.omitted_candidates} hypotheses are omitted. Component arrays still include every component from the supplied inventory pages.`,
-        ]
-      : []),
+    ...bridgeLimitations,
   ];
   const withoutId = {
     root_sha256: inventory.manifest.root_sha256,
@@ -134,20 +143,17 @@ export const projectHarmonyInventory = (
     source_evidence_ids: evidence
       .map(({ evidence_id: id }) => id)
       .sort(compareUnicodeCodePoints),
-    packaging_model: packagingModel(
-      fileEntries.filter(({ path }) => !isResourcePath(path)),
-    ),
+    packaging_model: manifests.packagingModel,
     components: classified,
+    unclassified_components: all.filter(
+      (component) => !classifiedFiles.has(component),
+    ),
     unavailable_components: unavailable,
     app_pack_children: children,
     runtime_families: runtimeFamilies(all, classified),
     bridge_candidates: bridgeProjection.candidates,
     bridge_candidate_coverage: bridgeProjection.coverage,
-    coverage: projectionCoverage(
-      inventory,
-      bridgeProjection.coverage.status === "complete" &&
-        unavailable.length === 0,
-    ),
+    coverage,
     limitations,
   };
   return ok(
@@ -181,44 +187,67 @@ const harmonyRootFormat = (
   return ok(root);
 };
 
-const packagingModel = (
-  manifests: readonly { readonly path: string }[],
-): HarmonyApplicationProjectionResult["packaging_model"] => {
-  const stage = manifests.some(({ path }) =>
-    /(?:^|\/)module\.json$/iu.test(path),
-  );
-  const fa = manifests.some(({ path }) => /(?:^|\/)config\.json$/iu.test(path));
-  if (stage) return "stage";
-  if (fa) return "fa";
-  return "unknown";
+/**
+ * Recognize exact ZIP root manifest names. The path hint survives an
+ * unavailable content identity.
+ */
+const classifyManifests = (entries: readonly ProjectedInventoryEntry[]) => {
+  const components: Component[] = [];
+  let packagingModel: HarmonyApplicationProjectionResult["packaging_model"] =
+    "unknown";
+  for (const { path, sourcePath, component } of entries) {
+    if ((sourcePath ?? path) !== path) continue;
+    if (
+      path !== "module.json" &&
+      path !== "config.json" &&
+      path !== "pack.info"
+    )
+      continue;
+    if (component !== undefined) components.push(component);
+    if (path === "module.json") packagingModel = "stage";
+    else if (path === "config.json" && packagingModel === "unknown")
+      packagingModel = "fa";
+  }
+  return { components, packagingModel };
 };
 
-const classify = (all: readonly Component[]) => ({
-  manifests: all.filter(
-    ({ path }) =>
-      /(?:^|\/)(?:module\.json|config\.json|pack\.info)$/iu.test(path) &&
-      !isResourcePath(path),
-  ),
-  bytecode: all.filter(({ path }) => /\.(?:abc|pa)$/iu.test(path)),
-  resources: all.filter(({ path }) => isResourcePath(path)),
-  native_libraries: all.filter(
-    ({ path, format }) =>
-      format === "elf" || /(?:^|\/)libs\/[^/]+\/[^/]+\.so$/iu.test(path),
-  ),
-  javascript: all.filter(
-    ({ path, format }) =>
-      format === "javascript-bundle" || /\.(?:m?js|cjs)$/iu.test(path),
-  ),
-  signing: all.filter(({ path }) =>
-    /^META-INF\/[^/]+\.(?:p7b|sig|cer|crt|pem|provision|rsa|dsa|ec)$/iu.test(
-      path,
-    ),
-  ),
-});
+const HARMONY_BYTECODE_RE = /\.(?:abc|pa)$/iu;
+const HARMONY_NATIVE_LIB_RE = /(?:^|\/)libs\/[^/]+\/[^/]+\.so$/iu;
+const HARMONY_JS_RE = /\.(?:m?js|cjs)$/iu;
+const HARMONY_SIGNING_RE =
+  /^META-INF\/[^/]+\.(?:p7b|sig|cer|crt|pem|provision|rsa|dsa|ec)$/iu;
+const HARMONY_RESOURCES_INDEX_RE = /(?:^|\/)resources\.index$/iu;
+const HARMONY_RESOURCES_DIR_RE =
+  /^(?:resources\/|assets\/[^/]+\/resources\/)/iu;
+
+const classify = (all: readonly Component[], manifests: Component[]) => {
+  const bytecode: Component[] = [];
+  const resources: Component[] = [];
+  const native_libraries: Component[] = [];
+  const javascript: Component[] = [];
+  const signing: Component[] = [];
+  for (const component of all) {
+    const { path, format } = component;
+    if (HARMONY_BYTECODE_RE.test(path)) bytecode.push(component);
+    if (isResourcePath(path)) resources.push(component);
+    if (format === "elf" || HARMONY_NATIVE_LIB_RE.test(path))
+      native_libraries.push(component);
+    if (format === "javascript-bundle" || HARMONY_JS_RE.test(path))
+      javascript.push(component);
+    if (HARMONY_SIGNING_RE.test(path)) signing.push(component);
+  }
+  return {
+    manifests,
+    bytecode,
+    resources,
+    native_libraries,
+    javascript,
+    signing,
+  };
+};
 
 const isResourcePath = (path: string): boolean =>
-  /(?:^|\/)resources\.index$/iu.test(path) ||
-  /^(?:resources\/|assets\/[^/]+\/resources\/)/iu.test(path);
+  HARMONY_RESOURCES_INDEX_RE.test(path) || HARMONY_RESOURCES_DIR_RE.test(path);
 
 const runtimeFamilies = (
   all: readonly Component[],
@@ -228,27 +257,13 @@ const runtimeFamilies = (
     HarmonyApplicationProjectionResult["runtime_families"][number]
   >();
   if (components.bytecode.length > 0) families.add("ark");
-  if (all.some(({ format }) => format === "elf")) families.add("native");
   if (components.javascript.length > 0) families.add("javascript");
-  for (const { path } of all) {
+  for (const { path, format } of all) {
+    if (format === "elf") families.add("native");
     const convention = nativeRuntimeConvention(path);
     if (convention !== null) families.add(convention);
   }
   return [...families].sort(compareUnicodeCodePoints);
-};
-
-const bridgeCandidates = (
-  managed: readonly Component[],
-  native: readonly Component[],
-) => {
-  return projectCartesianCandidates({
-    groups: [{ left: managed, right: native }],
-    createCandidate: (managed_path, target) => ({
-      managed_path,
-      native_path: target.path,
-      basis: napiBasis(target.path),
-    }),
-  });
 };
 
 const napiBasis = (

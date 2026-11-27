@@ -7,11 +7,14 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { buffer } from "node:stream/consumers";
 
 import { createPackage } from "@electron/asar";
 import { describe, expect, it } from "vitest";
 
 import { AsarArtifactReader } from "../../../src/artifacts/AsarArtifactReader.js";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const CONTENT = "module.exports = 'owned';\n";
@@ -153,34 +156,28 @@ describe("ASAR reader cleanup", () => {
     }
   });
 
-  it("closes a member handle adopted while reader shutdown is queued", async () => {
+  it("closes a snapshot handle adopted while reader shutdown is queued", async () => {
     const { archive } = await createArchive();
     let pauseMemberOpen = false;
-    let memberOpenReached!: () => void;
-    let releaseMemberOpen!: () => void;
-    const memberOpenStarted = new Promise<void>((resolve) => {
-      memberOpenReached = resolve;
-    });
-    const memberOpenGate = new Promise<void>((resolve) => {
-      releaseMemberOpen = resolve;
-    });
+    const memberOpen = phaseGate();
     const { reader, opened } = createTrackedReader(archive, {
       beforeAdoption: async (path) => {
         if (pauseMemberOpen && path.includes("rea-asar-snapshot-")) {
           pauseMemberOpen = false;
-          memberOpenReached();
-          await memberOpenGate;
+          await memberOpen.hold();
         }
       },
     });
 
-    try {
-      const entry = await packedMember(reader);
+    let opening: ReturnType<typeof reader.openContainer> | undefined;
+    let closing: ReturnType<typeof reader.close> | undefined;
+    await withVerifierCleanup(async () => {
+      await reader.prepareContainer();
       pauseMemberOpen = true;
-      const opening = reader.open(entry);
-      await memberOpenStarted;
-      const closing = reader.close();
-      releaseMemberOpen();
+      opening = reader.openContainer();
+      await memberOpen.reached(opening, "snapshot handle open");
+      closing = reader.close();
+      memberOpen.release();
       const output = await opening;
       const memberHandle = latestHandle(opened);
       const root = dirname(memberHandle.path);
@@ -189,15 +186,21 @@ describe("ASAR reader cleanup", () => {
 
       expect(output.destroyed).toBe(true);
       await expectSnapshotRemoved(memberHandle.fd, root);
-    } finally {
-      releaseMemberOpen();
-      await reader.close();
-    }
+    }, [
+      memberOpen.release,
+      async () => {
+        await opening;
+      },
+      async () => {
+        await closing;
+      },
+      () => reader.close(),
+    ]);
   });
 });
 
 describe("ASAR preparation cleanup", () => {
-  it("retains a zero-byte member handle when its first close fails", async () => {
+  it("retains the snapshot handle after reading a zero-byte member when close fails", async () => {
     const { archive } = await createArchive("");
     let failNextClose = false;
     const { reader, opened } = createTrackedReader(archive, {
@@ -211,14 +214,26 @@ describe("ASAR preparation cleanup", () => {
     });
     try {
       const entry = await packedMember(reader);
+      const openedBeforeRead = opened.length;
+      const controller = new AbortController();
+      const reason = { entry: entry.path };
+      const opening = reader.open(entry, controller.signal);
+      controller.abort(reason);
+      const failure: unknown = await opening.catch((cause: unknown) => cause);
+      expect(failure).toMatchObject({ reason: "cancelled" });
+      expect(failure instanceof Error && failure.cause).toBe(reason);
+      expect((await buffer(await reader.open(entry))).toString("utf8")).toBe(
+        "",
+      );
+      expect(opened).toHaveLength(openedBeforeRead);
+      const handle = latestHandle(opened);
       failNextClose = true;
-      await expect(reader.open(entry)).rejects.toMatchObject({
+      await expect(reader.close()).rejects.toMatchObject({
         cleanup: {
           reason: "empty member close denied",
-          resources: [expect.any(String)],
+          resources: [handle.path],
         },
       });
-      const handle = latestHandle(opened);
       expectDescriptorOpen(handle.fd);
       expect((await lstat(dirname(handle.path))).isDirectory()).toBe(true);
       await reader.close();
@@ -247,7 +262,7 @@ describe("ASAR preparation cleanup", () => {
     });
     try {
       await expect(packedMember(reader)).rejects.toMatchObject({
-        reason: "format",
+        reason: "malformed",
         message: "ASAR header has invalid Pickle extents",
         cleanup: {
           reason: closeFailure.message,
@@ -299,12 +314,15 @@ it.each(["snapshot", "member"])(
     );
     let active = stage === "snapshot";
     const { reader, opened } = createTrackedReader(archive, {
-      beforeAdoption: async (_path, handle) => {
-        if (active)
-          handle.read = (async () => {
+      beforeAdoption: async (path, handle) => {
+        const originalRead = handle.read;
+        handle.read = (async (...args: readonly unknown[]) => {
+          if (active && (stage === "snapshot" || path !== archive)) {
             controller.abort(null);
             throw failure;
-          }) as FileHandle["read"];
+          }
+          return Reflect.apply(originalRead, handle, args);
+        }) as FileHandle["read"];
       },
     });
     try {

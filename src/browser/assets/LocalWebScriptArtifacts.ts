@@ -1,11 +1,13 @@
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import { lstat, realpath } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
-import { normalizeArtifactPath } from "../../artifacts/ArtifactPaths.js";
-import type { WebScriptArtifactPort } from "../../application/WebScriptArtifactPort.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+import {
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+  normalizeArtifactPath,
+} from "../../resources/index.js";
+import type { WebScriptArtifactPort } from "../../ports/WebScriptArtifactPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
@@ -16,7 +18,7 @@ import type { SelectedWebScriptInput } from "../../domain/webScriptArtifacts.js"
 import { webScriptExportManifestSchema } from "../../domain/webScriptExport.js";
 import {
   decodeWebArtifact,
-  readWebArtifactJson,
+  WebArtifactAcquisition,
   webArtifactReadError,
   type WebArtifactReadContext,
 } from "./WebArtifactReads.js";
@@ -26,6 +28,8 @@ export class LocalWebScriptArtifacts implements WebScriptArtifactPort {
   constructor(
     readonly operation: WebArtifactReadContext["operation"],
     readonly resources = new ArtifactResourceScope(),
+    // The host whose filesystem holds the selected manifest.
+    readonly platform: NodeJS.Platform = HOST_PLATFORM.platform,
   ) {}
 
   close(): Promise<void> {
@@ -53,47 +57,62 @@ export class LocalWebScriptArtifacts implements WebScriptArtifactPort {
   }
 
   async #load(input: SelectedWebScriptInput, options?: ExecutionOptions) {
+    const acquisition = new WebArtifactAcquisition();
     let field: readonly (string | number)[] = ["manifest_path"];
     let targetPath = input.manifest_path;
     let callerSelected = true;
     try {
-      const manifestBytes = await readWebArtifactJson(
+      const manifestBytes = await acquisition.readJson(
+        "manifest",
         input.manifest_path,
         32 * 1024 * 1024,
         options?.signal,
         this.resources,
       );
       const manifest = webScriptExportManifestSchema.parse(manifestBytes.value);
+      acquisition.record(
+        "manifest",
+        {
+          path: input.manifest_path,
+          sha256: manifestBytes.sha256,
+          bytes: manifestBytes.bytes.length,
+        },
+        "manifest-validated",
+      );
       field = ["script_index"];
       const selected = manifest.scripts[input.script_index];
       // A valid manifest without this index is a caller selection fault.
       if (selected === undefined)
         return err(
-          new AnalysisInputError(this.operation, undefined, [
-            manifest.scripts.length === 0
-              ? {
-                  path: ["script_index"],
-                  reason: "invalid_value",
-                  message: "The selected manifest contains no scripts.",
-                }
-              : {
-                  path: ["script_index"],
-                  reason: "out_of_range",
-                  minimum: 0,
-                  maximum: manifest.scripts.length - 1,
-                  message: `No script at index ${String(input.script_index)}; the manifest contains ${String(manifest.scripts.length)} scripts.`,
-                },
-          ]),
+          acquisition.retain(
+            new AnalysisInputError(this.operation, undefined, [
+              manifest.scripts.length === 0
+                ? {
+                    path: ["script_index"],
+                    reason: "invalid_value",
+                    message: "The selected manifest contains no scripts.",
+                  }
+                : {
+                    path: ["script_index"],
+                    reason: "out_of_range",
+                    minimum: 0,
+                    maximum: manifest.scripts.length - 1,
+                    message: `No script at index ${String(input.script_index)}; the manifest contains ${String(manifest.scripts.length)} scripts.`,
+                  },
+            ]),
+          ),
         );
       if (selected.content.state !== "exported")
         return err(
-          new AnalysisCapabilityUnavailableError(
-            "web-module-artifacts",
-            this.operation,
-            "selected_source_unavailable",
-            {
-              userMessage: `Selected script ${String(input.script_index)} has unavailable source bytes (${selected.content.reason}): ${selected.content.message} Capture source bytes before tracing this script.`,
-            },
+          acquisition.retain(
+            new AnalysisCapabilityUnavailableError(
+              "web-module-artifacts",
+              this.operation,
+              "selected_source_unavailable",
+              {
+                userMessage: `Selected script ${String(input.script_index)} has unavailable source bytes (${selected.content.reason}): ${selected.content.message} Capture source bytes before tracing this script.`,
+              },
+            ),
           ),
         );
       // The index has selected a script. Its source metadata belongs to the
@@ -105,7 +124,7 @@ export class LocalWebScriptArtifacts implements WebScriptArtifactPort {
           "path",
           `Selected source path changes during normalization: ${selected.content.relative_path}`,
         );
-      if (process.platform === "win32" && portable.includes("\\"))
+      if (this.platform === "win32" && portable.includes("\\"))
         throw new ArtifactReaderFailure(
           "path",
           `Windows source path cannot contain backslashes as literal name characters: ${JSON.stringify(portable)}`,
@@ -116,11 +135,11 @@ export class LocalWebScriptArtifacts implements WebScriptArtifactPort {
       const sourcePath = join(root, "files", portable);
       targetPath = sourcePath;
       await assertContained(root, sourcePath);
-      const sourceBytes = await readStableArtifact(
+      const sourceBytes = await acquisition.read(
+        "source",
         sourcePath,
         16 * 1024 * 1024,
         options?.signal,
-        undefined,
         this.resources,
       );
       await assertContained(root, sourcePath);
@@ -131,7 +150,7 @@ export class LocalWebScriptArtifacts implements WebScriptArtifactPort {
         throw new ArtifactReaderFailure(
           "integrity",
           `Selected source identity mismatch: ${sourcePath}; expected sha256=${selected.content.sha256}, bytes=${String(selected.content.bytes)}; observed sha256=${sourceBytes.sha256}, bytes=${String(sourceBytes.bytes.length)}.`,
-          undefined,
+          { integrityCheck: "member-identity" },
           {
             logicalPath: selected.content.relative_path,
             declaredSha256: selected.content.sha256,
@@ -139,6 +158,15 @@ export class LocalWebScriptArtifacts implements WebScriptArtifactPort {
             unpacked: false,
           },
         );
+      acquisition.record(
+        "source",
+        {
+          path: sourcePath,
+          sha256: sourceBytes.sha256,
+          bytes: sourceBytes.bytes.length,
+        },
+        "source-verified",
+      );
       const source = decodeWebArtifact(sourceBytes.bytes);
       return ok({
         manifest,
@@ -156,10 +184,12 @@ export class LocalWebScriptArtifacts implements WebScriptArtifactPort {
       });
     } catch (cause: unknown) {
       return err(
-        webArtifactReadError(
-          cause,
-          { operation: this.operation, field, targetPath, callerSelected },
-          options?.signal,
+        acquisition.retain(
+          webArtifactReadError(
+            cause,
+            { operation: this.operation, field, targetPath, callerSelected },
+            options?.signal,
+          ),
         ),
       );
     }

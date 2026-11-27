@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createCli } from "../../src/cli.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { createStubHopperProject } from "../fixtures/hopperProjectFile.js";
 
 const initialExitCode = process.exitCode;
 afterEach(() => {
@@ -40,9 +41,7 @@ describe("CLI selected environment", () => {
     const cli = createCli(environment);
     environment.REA_ANALYSIS_PROVIDER = "changed-provider";
     environment.HOPPER_LAUNCHER_PATH = "/changed/hopper";
-    const root = await createTestTempDirectory("rea-cli-selected-env-");
-    const target = join(root, "fixture.hop");
-    await writeFile(target, "fixture");
+    const target = await createStubHopperProject("rea-cli-selected-env-");
 
     for (const command of [
       ["decompile", target, "main"],
@@ -96,3 +95,52 @@ describe("CLI selected environment", () => {
     expect(serialized).not.toContain("value-must-not-be-captured");
   });
 });
+
+// Real owned probes exercise CLI environment admission; these scripts do not
+// establish native Wireshark behavior.
+it.skipIf(process.platform === "win32").each([
+  { name: "missing", selected: {}, expected: "absent" },
+  {
+    name: "unset",
+    selected: { REA_PCAP_ENV_PROFILE: undefined },
+    expected: "absent",
+  },
+  { name: "empty", selected: { REA_PCAP_ENV_PROFILE: "" }, expected: "" },
+  {
+    name: "selected",
+    selected: { REA_PCAP_ENV_PROFILE: "selected-profile" },
+    expected: "selected-profile",
+  },
+])(
+  "preserves $name PCAP settings after the ambient environment changes",
+  async ({ selected, expected }) => {
+    const root = await createTestTempDirectory("rea-cli-pcap-environment-");
+    const tshark = join(root, "tshark"),
+      capinfos = join(root, "capinfos");
+    for (const [path, label] of [
+      [tshark, "TShark"],
+      [capinfos, "Capinfos"],
+    ] as const)
+      await writeFile(
+        path,
+        `#!/bin/sh\nprintf '${label} (Wireshark) 4.6.6-%s\\n' "` +
+          "${REA_PCAP_ENV_PROFILE-absent}" +
+          '"\n',
+        { mode: 0o755 },
+      );
+    const cli = createCli({
+      REA_TSHARK_COMMAND: tshark,
+      REA_CAPINFOS_COMMAND: capinfos,
+      ...selected,
+    });
+    vi.stubEnv("REA_PCAP_ENV_PROFILE", "late-ambient-profile");
+    const evidence = parseEvidence(await serve(cli, ["inspect-pcap-client"]));
+    expect(evidence.normalized_result).toMatchObject({
+      client: {
+        tshark_version: `TShark (Wireshark) 4.6.6-${expected}`,
+        capinfos_version: `Capinfos (Wireshark) 4.6.6-${expected}`,
+      },
+    });
+    expect(evidence.environment).toBeNull();
+  },
+);

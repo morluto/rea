@@ -8,7 +8,6 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -20,18 +19,10 @@ import {
 } from "../../../src/application/MacHopper.js";
 import { SetupCleanupOwner } from "../../../src/application/SetupCleanupOwner.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
-
-const roots: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(
-    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
-  );
-});
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const temporaryRoot = async (): Promise<string> => {
-  const root = await mkdtemp(join(tmpdir(), "rea-hopper-owned-stage-test-"));
-  roots.push(root);
+  const root = await createTestTempDirectory("rea-hopper-owned-stage-test-");
   return root;
 };
 
@@ -288,7 +279,9 @@ it("reports only retained Mac cleanup roots and clears the live report after exa
   const temporary = join(home, "owned-dmg");
   const stage = join(home, "owned-stage");
   await Promise.all([mkdir(temporary), mkdir(stage)]);
-  const host = systemMacHopperInstallHost(home, { HOME: home });
+  const host = systemMacHopperInstallHost(home, { HOME: home }, () =>
+    Promise.resolve("14.0"),
+  );
   let allowTemporary = false;
   let allowStage = false;
   let temporaryCalls = 0;
