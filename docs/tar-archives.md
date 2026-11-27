@@ -34,8 +34,8 @@ The root occurrence's `format_metadata` (`kind: "tar"`) records:
 - `dialects`: the header magics seen (`ustar`, `gnu`).
 - `pax_headers` and `member_count`.
 - `tar_stream_bytes`: tar bytes examined, which is the decompressed size for gzip.
-- `end_state` and `end_offset`: where the walk stopped. `end-marker` means a zero block. `eof` means the stream ended at a header boundary without one. `malformed` and `truncated` are described below.
-- `trailing_nonzero_bytes`: non-zero bytes after the end marker.
+- `end_state` and `end_offset`: where the walk stopped. `end-marker` means two consecutive 512-byte zero blocks. `eof` means the stream ended at a header boundary without reaching a zero block. When the walk encounters a zero block at a header boundary, `end_offset` identifies the first block of that marker attempt. `malformed` and `truncated` are described below.
+- `trailing_nonzero_bytes`: non-zero bytes after the first zero block, or trailing non-zero bytes after the gzip stream.
 
 Each member's `format_metadata` (`kind: "tar-entry"`) records its header and
 data offsets in the tar stream, typeflag, permission bits, uid, gid, user and
@@ -57,7 +57,8 @@ instead of refusing:
 - A later header that fails its checksum, has no ustar magic, or holds a malformed pax record sets `end_state: "malformed"` at that header's offset.
 - A member whose data runs past the end of the stream is not listed. A header cut off by the end of the stream, or a gzip stream that ends early, sets `end_state: "truncated"`.
 - Corrupt deflate data or a gzip CRC mismatch sets `end_state: "malformed"`. Members whose bytes were fully decompressed before that point are kept.
-- Non-zero bytes after the end marker are counted and named in a limitation.
+- A missing or short second zero block sets `end_state: "truncated"`. A full second block containing non-zero bytes sets `end_state: "malformed"`. Both preserve the members already read and report `unknown` coverage.
+- Non-zero bytes after the first zero block are counted and named in a limitation, including any in an invalid second block.
 
 ## Members that are not read
 

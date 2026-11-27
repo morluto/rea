@@ -13,6 +13,7 @@ import {
   isXmlElement,
   lastSelectorOf,
   resolvePointer,
+  xmlParentPointer,
 } from "./viewPointer.js";
 
 /** How far a text check climbs from a run to the element an attribute names. */
@@ -22,10 +23,6 @@ const isFormattingAttribute = (key: string) =>
   /(?:font(?:name|size|family)?|face|features|colou?r|weight|size|family|style)$/iu.test(
     key.split(":").at(-1) ?? key,
   );
-
-/** The element a member of `children` sits in; none for the root. */
-const parentOf = (pointer: string): string | undefined =>
-  /^(?<parent>.+)\/children\/[^/]+$/u.exec(pointer)?.groups?.parent;
 
 /** An element's text from its text nodes, or from an attribute's values, at a pointer in a view. */
 const textAt = (
@@ -130,13 +127,13 @@ export const attributeTextCheck = (
     isStamp(value)
   )
     return undefined;
-  let ancestor = parentOf(owner);
+  let ancestor = xmlParentPointer(owner);
   for (let climbed = 1; ancestor !== undefined; climbed += 1) {
     if (lastSelectorOf(ancestor).some(({ prefix }) => prefix === "@")) break;
     if (climbed === MAX_CLIMB) return undefined;
-    ancestor = parentOf(ancestor);
+    ancestor = xmlParentPointer(ancestor);
   }
-  if (ancestor === undefined || parentOf(ancestor) === undefined)
+  if (ancestor === undefined || xmlParentPointer(ancestor) === undefined)
     return undefined;
   const after = textAt(ends.final, ancestor, key);
   return holdsRuns(context, ancestor, key) &&

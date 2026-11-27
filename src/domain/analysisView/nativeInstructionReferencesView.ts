@@ -13,7 +13,7 @@ import {
   invalidAnalysisView,
 } from "./analysisViewErrors.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
 import { assertOwnedView, type AdmittedView } from "./analysisViewShape.js";
@@ -96,11 +96,7 @@ export const projectNativeInstructionReferencesView = (
       status: source.status,
       procedure: source.procedure,
     },
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...source.limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, source.limitations),
     unknowns: [
       "Page coverage describes retained references, not provider discovery completeness or runtime execution.",
     ],

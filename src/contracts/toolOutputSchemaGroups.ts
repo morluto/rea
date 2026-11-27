@@ -1,4 +1,5 @@
 import { coverageStatusSchema } from "../domain/coverage.js";
+import { discardedCheckpointEditsSchema } from "../domain/engineCloseReport.js";
 import { procedureReferencesSchema } from "../domain/native/procedureReferences.js";
 import {
   nativeAddressListSchema,
@@ -54,7 +55,10 @@ import { nativeLoadImageSchema } from "../domain/native/nativeLoadImage.js";
 import { nativeUiResultSchema } from "../domain/native/nativeUiObservation.js";
 import { nativeValueTraceSchema } from "../domain/native/nativeValueTrace.js";
 import { bundleResourceRootSchema } from "../domain/apple/bundleResourceRoot.js";
-import { nativeDataTypeSchema } from "../domain/native/nativeDataType.js";
+import {
+  nativeDataTypeDefinitionsSchema,
+  nativeDataTypeSchema,
+} from "../domain/native/nativeDataType.js";
 import { nativeCallObservationResultSchema } from "../domain/native/nativeCallObservation.js";
 import {
   nativeInstructionSchema,
@@ -156,6 +160,7 @@ export const officialOutputSchemas = {
     nativeLoadImageSchema,
     nativeLoadImageSummaryViewResultSchema,
   ),
+  define_native_data_types: evidenceResultOf(nativeDataTypeDefinitionsSchema),
   inspect_native_data_type: evidenceResultOf(nativeDataTypeSchema),
   inspect_native_instruction: evidenceResultOf(nativeInstructionSchema),
   resolve_native_call_targets: evidenceResultOf(nativeCallTargetsSchema),
@@ -525,7 +530,9 @@ export const sessionOutputSchemas = {
           .describe(
             "All retained Evidence records, including observations without replay bindings.",
           ),
+        checkpoint: discardedCheckpointEditsSchema.optional(),
       }),
+      z.strictObject({ checkpoint: discardedCheckpointEditsSchema }),
     ]),
   ),
   // Every session kind crossed with every detail level, so `detail` fixes

@@ -26,7 +26,10 @@ import type {
   ProviderIdentity,
 } from "../../ports/AnalysisProvider.js";
 
-import type { SavedAnalysisSnapshot } from "../../domain/savedAnalysisSnapshot.js";
+import type {
+  ClosedWithSnapshot,
+  EngineCloseReport,
+} from "../../domain/engineCloseReport.js";
 
 /** Selection observed at the end of one serialized open attempt. */
 export type OpenSelectionReceipt =
@@ -112,7 +115,7 @@ export interface BinarySessionPort
       readonly retainProviderDocuments?: boolean;
       readonly cleanupRetry?: AnalysisCleanupRetry;
     },
-  ): Promise<Result<null, AnalysisError>>;
+  ): Promise<Result<EngineCloseReport | null, AnalysisError>>;
   /** Seal runtime acquisition and release investigation state after successful cleanup. */
   dispose(
     options?: Pick<ExecutionOptions, "progress"> & {
@@ -136,7 +139,7 @@ export interface BinarySessionPort
     options?: Pick<ExecutionOptions, "progress"> & {
       readonly cleanupRetry?: AnalysisCleanupRetry;
     },
-  ): Promise<Result<SavedAnalysisSnapshot, AnalysisError>>;
+  ): Promise<Result<ClosedWithSnapshot, AnalysisError>>;
   /** Default complete detail; summary omits provider diagnostics and candidate capabilities. */
   status(options?: {
     readonly signal?: AbortSignal;

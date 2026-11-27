@@ -819,10 +819,9 @@ boundary rather than patched downstream:
   payloads into one combined frame.
 - **Keep analysis views and MCP wire delivery O(limit) and lazy.** Reuse
   validated immutable parent snapshots through `createAnalysisViewResultReader`
-  and `WeakMap` lookup indexes; route explicit `indices` queries through
-  `selectIndexedViewRows`, fast-path unfiltered pages through `selectViewRows`
-  with an omitted predicate, and pick projected columns with `pickFields` rather
-  than `Object.entries(...).filter(...)`. On the MCP delivery path, skip
+  and `WeakMap` lookup indexes. Pass candidate indices to `selectViewRows` for
+  explicit selections and omit the predicate on unfiltered pages. Use
+  `pickFields` to project columns without enumerating each row. On the MCP delivery path, skip
   duplicate Zod validation when the SDK already admitted `inputSchema`, evaluate
   overflow recovery metadata lazily only when a response exceeds its budget, and
   measure wire sizes without joining discarded JSON strings.
