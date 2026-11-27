@@ -2974,16 +2974,14 @@ describe("decompile_all grouped commits", () => {
     );
   });
 
-  it("keeps a discarded staged file owned when its removal fails", async () => {
+  it("keeps a discarded staged file owned until a cleanup retry removes it", async () => {
     const procedures = numbered(COMMIT_GROUP_SIZE + 1);
     const seeded = await run(harness({ procedures }).tools, directory(), {
       limit: 1,
     });
     expect(seeded.ok).toBe(true);
-    for (const address of addresses(
-      procedures.slice(1, 1 + OUTPUT_IO_STREAK_LIMIT),
-    ))
-      await mkdir(fileOf(address));
+    const blocked = addresses(procedures.slice(1, 1 + OUTPUT_IO_STREAK_LIMIT));
+    for (const address of blocked) await mkdir(fileOf(address));
     const discard = DecompileExport.prototype.discardStaged;
     const close = OwnedStagedOutput.prototype.close;
     let discarding = false;
@@ -3001,7 +2999,15 @@ describe("decompile_all grouped commits", () => {
         ? Promise.reject(new Error("staging removal denied"))
         : close.call(this);
     });
-    const stopped = await run(harness({ procedures }).tools, directory(), {
+    const retained: { close(): Promise<void> }[] = [];
+    const scoped: AnalysisOperationPort = {
+      ...harness({ procedures }).port,
+      resourceScope: {
+        retain: (owner) => void retained.push(owner),
+        run: (operation) => operation(),
+      },
+    };
+    const stopped = await run(new EnhancedTools(scoped), directory(), {
       resume: true,
     });
     if (stopped.ok) throw new Error("Expected the export to stop");
@@ -3018,6 +3024,22 @@ describe("decompile_all grouped commits", () => {
     expect(projectAnalysisError(stopped.error).message).toContain(
       "Stopped after 5 function files in a row",
     );
+    // The session's scope holds the export until its cleanup succeeds. The
+    // retry removes the staging and releases the directory lease.
+    expect(retained).toHaveLength(1);
+    discarding = false;
+    await retained[0]?.close();
+    expect(await stagingDirectories()).toEqual([]);
+    expect(stopped.error.cleanupIncomplete).toBe(false);
+    for (const address of blocked)
+      await rm(fileOf(address), { recursive: true });
+    const resumed = await run(harness({ procedures }).tools, directory(), {
+      resume: true,
+    });
+    if (!resumed.ok) throw resumed.error;
+    expect(resumed.value).toMatchObject({
+      counts: { written: COMMIT_GROUP_SIZE, skipped: 1, failed: 0 },
+    });
   });
 
   it("keeps a journal failure primary and a stopping provider's cleanup attached", async () => {
