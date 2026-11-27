@@ -13,7 +13,7 @@ import {
 import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
@@ -127,11 +127,7 @@ export const projectSourceToBundleView = (
     parent_operation: "compare_source_to_bundle" as const,
     parent_digest: parent.evidenceId.slice(3),
     artifact: null,
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...report.limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, report.limitations),
     unknowns: [
       "Candidate correspondence is not behavioral equivalence. Exhausting a selected page does not establish absence outside the examined inputs.",
     ],

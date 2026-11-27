@@ -9,6 +9,8 @@ import {
 } from "./nativeObservationSchemas.js";
 import { nativeInstructionReferencesRequestSchema } from "./nativeInstructionReferencesView.js";
 import { devicetreeViewRequestSchema } from "./devicetreeView.js";
+import { espNvsViewRequestSchema } from "./espNvsView.js";
+import { labviewArtifactViewRequestSchema } from "./labviewArtifactView.js";
 import { uefiExtractionViewRequestSchema } from "./uefiExtractionView.js";
 import { uefiFirmwareViewRequestSchema } from "./uefiFirmwareView.js";
 import { apkSignatureViewRequestSchema } from "../apkSignature/apkSignatureQuery.js";
@@ -100,6 +102,8 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   evidenceJsonViewRequestSchema,
   byteEntropyViewRequestSchema,
   devicetreeViewRequestSchema,
+  espNvsViewRequestSchema,
+  labviewArtifactViewRequestSchema,
   uefiFirmwareViewRequestSchema,
   uefiExtractionViewRequestSchema,
   erlangBeamViewRequestSchema,

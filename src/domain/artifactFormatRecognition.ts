@@ -1,5 +1,7 @@
+import { LABVIEW_RSRC_MAGIC } from "./labview/labviewArtifact.js";
 import type { ArtifactFormatId } from "./artifactGraph.js";
 import { hasAndroidBootImageMagic } from "./androidBootImageFormat.js";
+import { hasAndroidDtboMagic } from "./firmware/androidDtboFormat.js";
 import { hasBinaryPlistSignature } from "./apple/appleArchiveFormat.js";
 import { hasDfuSePrefix, isDfuSeFile } from "./firmware/dfuse.js";
 import { ESP8266_REFUSAL, recognizeEspImage } from "./firmware/espImage.js";
@@ -8,6 +10,8 @@ import { detectHexRecordEncoding } from "./firmware/hexRecords.js";
 import { hasUf2Block } from "./firmware/uf2.js";
 import { hasGodotPckHeader } from "./godotPckFormat.js";
 import { nesContainerFormat, parseInesLayout } from "./inesContainer.js";
+import { type MegaDriveLayout, recognizeMegaDriveRom } from "./megaDriveRom.js";
+import { n64RomRecognition } from "./n64Rom.js";
 import { hasNdsHeader } from "./ndsRom.js";
 import {
   hasIso9660Signature,
@@ -25,12 +29,15 @@ import { hasBfltMagic } from "./bfltExecutable.js";
 import { hasNroMagic, hasNsoMagic } from "./switchExecutable.js";
 import { hasUnityFsHeader } from "./unityfsFormat.js";
 import { hasMftFileRecordHeader } from "./windows/ntfsMft.js";
+import { hasSystemdJournalHeader } from "./linux/systemdJournal.js";
+import { hasAuditdLogRecord } from "./linux/auditdLog.js";
 import { hasWindowsShortcutHeader } from "./windows/windowsShortcutHeader.js";
 import { BinaryFormatFailure } from "./binaryContainer.js";
 import {
   hasDevicetreeMagic,
   readDevicetreeHeader,
 } from "./firmware/devicetreeHeader.js";
+import { hasEspNvsHeader } from "./firmware/espNvsParser.js";
 import { hasDebPackageHeader } from "./deb/debPackage.js";
 import { observePythonBytecodePrefix } from "./python/pythonBytecodeIdentity.js";
 import { hasSqliteHeader } from "./sqliteFormat.js";
@@ -41,6 +48,12 @@ import {
   hasKtx1Identifier,
   hasKtx2Identifier,
 } from "./gpuAssetFormats.js";
+import {
+  hasBink2Header,
+  hasOggOpusHeader,
+  hasRiffXma2Header,
+  hasVulkanPipelineCacheHeader,
+} from "./mediaAssetFormats.js";
 import { hasWxapkgEncryptedMagic, hasWxapkgHeader } from "./wxapkgFormat.js";
 import { hasZipSignature } from "./zipPackageFormat.js";
 
@@ -49,6 +62,8 @@ export type RecognizedArtifactFormat = Extract<
   ArtifactFormatId,
   | "ines"
   | "nds"
+  | "mega-drive-rom"
+  | "n64-rom"
   | "zip"
   | "godot-pck"
   | "unityfs"
@@ -58,10 +73,15 @@ export type RecognizedArtifactFormat = Extract<
   | "glb"
   | "ktx"
   | "ktx2"
+  | "ogg-opus"
+  | "riff-xma2"
+  | "bink2"
+  | "vulkan-pipeline-cache"
   | "uimage"
   | "nso"
   | "nro"
   | "android-boot-image"
+  | "android-dtbo"
   | "android-ota-payload"
   | "android-vbmeta"
   | "android-sparse-image"
@@ -77,6 +97,8 @@ export type RecognizedArtifactFormat = Extract<
   | "fit"
   | "qualcomm-mbn"
   | "ntfs-mft"
+  | "systemd-journal"
+  | "auditd-log"
   | "plist"
   | StandaloneArtifactFormat
 >;
@@ -90,7 +112,9 @@ export const STANDALONE_ARTIFACT_FORMATS = [
   "windows-shortcut",
   "python-pyc",
   "devicetree",
+  "esp-nvs",
   "deb",
+  "labview-rsrc",
 ] as const;
 
 export type StandaloneArtifactFormat =
@@ -154,10 +178,27 @@ const when =
     claims(prefix) ? { state: "recognized", format } : undefined;
 
 /**
+ * The Mega Drive layout this prefix shows. It yields to ELF, Mach-O, DOS MZ
+ * and FAT, so a native header is not claimed because its bytes also match.
+ */
+const megaDriveLayout = (
+  prefix: Buffer,
+  fileSize: number,
+): MegaDriveLayout | undefined =>
+  claimsExecutableHeader(prefix, fileSize)
+    ? undefined
+    : recognizeMegaDriveRom(prefix, fileSize);
+/**
  * The one ordered recognizer table. Inventory classification and binary
  * target resolution both walk it, so the same bytes reach the same verdict;
  * each route decides only what a refusal or a missing input means for it.
  */
+/** A LabVIEW RSRC container starts with its own six-byte magic. */
+const hasLabviewRsrcHeader = (prefix: Buffer): boolean =>
+  prefix.length >= LABVIEW_RSRC_MAGIC.length &&
+  prefix.subarray(0, LABVIEW_RSRC_MAGIC.length).toString("latin1") ===
+    LABVIEW_RSRC_MAGIC;
+
 export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
   [
     ({ prefix, fileSize }) => {
@@ -166,6 +207,13 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
       return layout.ok
         ? { state: "recognized", format: "ines" }
         : { state: "refused", format: "ines", reason: layout.error.detail };
+    },
+    ({ prefix, fileSize }) => {
+      const claim = n64RomRecognition(prefix, fileSize);
+      if (claim === undefined) return undefined;
+      return claim.state === "recognized"
+        ? { state: "recognized", format: "n64-rom" }
+        : { state: "refused", format: "n64-rom", reason: claim.reason };
     },
     when("zip", hasZipSignature),
     when("godot-pck", hasGodotPckHeader),
@@ -187,10 +235,15 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     when("glb", hasGlbHeader),
     when("ktx", hasKtx1Identifier),
     when("ktx2", hasKtx2Identifier),
+    when("ogg-opus", hasOggOpusHeader),
+    when("riff-xma2", hasRiffXma2Header),
+    when("bink2", hasBink2Header),
+    when("vulkan-pipeline-cache", hasVulkanPipelineCacheHeader),
     when("uimage", hasUImageMagic),
     when("nso", hasNsoMagic),
     when("nro", hasNroMagic),
     when("android-boot-image", hasAndroidBootImageMagic),
+    when("android-dtbo", hasAndroidDtboMagic),
     when("android-vbmeta", hasAndroidVbmetaMagic),
     ({ prefix }) => {
       const ota = recognizeAndroidOtaPayload(prefix);
@@ -251,6 +304,17 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
         ? { state: "recognized", format: "iso9660" }
         : undefined;
     },
+    // An SMD copier dump stores its 16 KiB block count in byte 0, so 233 or
+    // 489 blocks put 0xE9 there, the ESP image magic. The ESP image has only
+    // that one-byte magic and plausibility checks; an SMD dump must also carry
+    // the AA BB copier mark at byte 8, the SEGA bytes its interleaving puts at
+    // 640 and 641, and a size of exactly 512 bytes plus whole blocks. The
+    // stronger SMD signature is therefore decided first. A plain image has
+    // only SEGA at 0x100 and is decided after the leading-magic formats below.
+    ({ prefix, fileSize }) =>
+      megaDriveLayout(prefix, fileSize) === "smd"
+        ? { state: "recognized", format: "mega-drive-rom" }
+        : undefined,
     // A C3 or S3 flash dump begins with its bootloader image, so the flash
     // layout is decided before the image header.
     ({ espFlashLayout }) =>
@@ -268,9 +332,15 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     },
     when("fit", hasFitImagesNode),
     when("ntfs-mft", hasMftFileRecordHeader),
+    when("systemd-journal", hasSystemdJournalHeader),
+    when("auditd-log", hasAuditdLogRecord),
     when("sqlite", hasSqliteHeader),
     when("windows-shortcut", hasWindowsShortcutHeader),
     when("deb", hasDebPackageHeader),
+    ({ prefix, fileSize }) =>
+      hasEspNvsHeader(prefix, fileSize)
+        ? { state: "recognized", format: "esp-nvs" }
+        : undefined,
     // Only a pinned CPython magic claims the format; a CR LF trailer alone
     // is too weak a signature for arbitrary bytes.
     when("python-pyc", (prefix) => {
@@ -294,7 +364,14 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
       return { state: "recognized", format: "devicetree" };
     },
     // Binary plists, including keyed archives, often use other extensions.
+    when("labview-rsrc", hasLabviewRsrcHeader),
     when("plist", hasBinaryPlistSignature),
+    // A plain image: SEGA at 0x100. The SMD layout was decided before the
+    // ESP image above.
+    ({ prefix, fileSize }) =>
+      megaDriveLayout(prefix, fileSize) === "plain"
+        ? { state: "recognized", format: "mega-drive-rom" }
+        : undefined,
     // No magic: the stored logo CRC and a matching checksum claim it, after
     // every format with a leading signature.
     when("nds", hasNdsHeader),

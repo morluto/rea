@@ -32,6 +32,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -48,11 +49,13 @@ import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
@@ -66,10 +69,6 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.stream.JsonWriter;
 
-import generic.concurrent.ConcurrentQ;
-import generic.concurrent.ConcurrentQBuilder;
-import generic.concurrent.GThreadPool;
-import generic.concurrent.QResult;
 import ghidra.app.cmd.function.ApplyFunctionSignatureCmd;
 import ghidra.app.cmd.function.FunctionRenameOption;
 import ghidra.app.util.cparser.C.CParser;
@@ -80,7 +79,6 @@ import ghidra.app.decompiler.DecompileResults;
 import ghidra.app.decompiler.DecompiledFunction;
 import ghidra.app.decompiler.ClangCaseToken;
 import ghidra.app.decompiler.ClangNode;
-import ghidra.app.decompiler.parallel.DecompilerCallback;
 import ghidra.framework.Application;
 import ghidra.app.util.bin.format.pdb.PdbParserConstants;
 import ghidra.app.util.opinion.ElfLoader;
@@ -254,32 +252,43 @@ public final class ReaGhidraBridge extends HeadlessScript {
     // observe. A miss only repeats a decompile, and soft references release
     // entries under heap pressure. Ghidra's own panel keeps 10 by default.
     private static final int DECOMPILE_RESULT_ENTRIES = 32;
-    /** Decompiler processes kept between read-ahead windows of one workflow. */
-    private DecompilerCallback<DecompileResults> decompileAheadWorkers;
-    /** REA's own threads, so read-ahead never resizes or queues on Ghidra's shared pools. */
-    private GThreadPool decompileAheadThreads;
+    /**
+     * Read-ahead: functions a workflow will request next, decompiled in the
+     * background by REA's own worker threads, each with its own decompiler
+     * process. The carrying request never waits for them; it decompiles its own
+     * function on the session decompiler. A later request takes a finished
+     * result, waits for one that is running, or decompiles a queued one itself.
+     * Guarded by decompileAheadLock.
+     */
+    private final ArrayDeque<AheadTask> decompileAheadQueue = new ArrayDeque<>();
+    private final LinkedHashMap<DecompileCacheKey, AheadTask> decompileAheadTasks = new LinkedHashMap<>();
+    /**
+     * Tasks a worker has started, including one a request has removed from
+     * the map while it waits. Disposal must still cancel that monitor.
+     */
+    private final Set<AheadTask> decompileAheadActive =
+        Collections.newSetFromMap(new IdentityHashMap<>());
+    private int decompileAheadLiveWorkers;
+    // Advanced by disposal: workers of an older generation stop, and their
+    // results are never served, so an edit or option change cannot reuse them.
+    private long decompileAheadGeneration;
     private static final int DECOMPILE_AHEAD_WORKERS = 8;
     // A hint beyond the retained results would evict the window's own first
     // results before their requests arrive, so later selectors are ignored.
     private static final int DECOMPILE_AHEAD_WINDOW = DECOMPILE_RESULT_ENTRIES;
     // Fixed: read-ahead serves consecutive requests of one workflow, which
-    // arrive milliseconds apart. After this idle time the pooled native
-    // decompiler processes are released; a later window starts them again.
+    // arrive milliseconds apart. A worker idle this long closes its native
+    // decompiler process and exits; a later window starts workers again.
     private static final long DECOMPILE_AHEAD_IDLE_MILLIS = 30_000;
+    // Disposal cancels running decompiles, which end promptly; this bounds the
+    // wait for their workers before an edit or shutdown continues.
+    private static final long DECOMPILE_AHEAD_STOP_MILLIS = 10_000;
     private final Object decompileAheadLock = new Object();
-    private final ScheduledExecutorService decompileAheadReaper =
-        Executors.newSingleThreadScheduledExecutor(task -> {
-            Thread thread = new Thread(task, "REA decompile read-ahead reaper");
-            thread.setDaemon(true);
-            return thread;
-        });
-    private ScheduledFuture<?> decompileAheadIdleRelease;
-    /**
-     * The read-ahead result for the request that carried the window: that
-     * request consumes it whatever its outcome instead of decompiling again.
-     */
-    private DecompileCacheKey decompileAheadForegroundKey;
-    private DecompileResults decompileAheadForeground;
+    private final ExecutorService decompileAheadThreads = Executors.newCachedThreadPool(task -> {
+        Thread thread = new Thread(task, "REA decompile read-ahead");
+        thread.setDaemon(true);
+        return thread;
+    });
     private boolean existingProject;
     // A refused Program may only report its admission failure to the client.
     private String identityAdmissionFailure;
@@ -375,8 +384,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
         finally {
             disposeDecompileAhead();
-            decompileAheadReaper.shutdownNow();
-            if (decompileAheadThreads != null) decompileAheadThreads.shutdownNow();
+            decompileAheadThreads.shutdownNow();
             if (decompiler != null) {
                 decompiler.dispose();
                 decompiler = null;
@@ -534,8 +542,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
     /**
      * Read frames while the handler works. This is the bridge's only second
      * thread: it never touches the Program or the writer. It cancels the
-     * monitor of the request a `cancel` frame names and queues every other
-     * frame in arrival order, so requests still run one at a time.
+     * monitor of the request a `cancel` frame names, cancels read-ahead for
+     * an `abandon_decompile_read_ahead` frame without waiting for workers,
+     * and queues every other frame in arrival order, so requests still run
+     * one at a time.
      */
     private void readRequests(
             SessionDescriptor descriptor,
@@ -563,6 +573,15 @@ public final class ReaGhidraBridge extends HeadlessScript {
                         // A request that already answered has no monitor left.
                         TaskMonitor active = requestMonitors.get(requireInteger(request.params, "request_id"));
                         if (active != null) active.cancel();
+                        continue;
+                    }
+                    if (request.method.equals("abandon_decompile_read_ahead")) {
+                        requireKeys(request.params, Set.of());
+                        // Not queued behind the handler, and not waited on
+                        // here: the cancel frame for the request that is
+                        // waiting on a taken task must still be read inside
+                        // the client's cancel grace.
+                        cancelDecompileAhead();
                         continue;
                     }
                 }
@@ -722,8 +741,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     yield procedurePseudocode(request.params);
                 }
                 finally {
-                    // An unconsumed foreground result belongs to this request only.
-                    clearDecompileAheadForeground();
+                    // Read-ahead is speculative work for this workflow; a
+                    // cancelled request abandons it rather than leaving it running.
+                    // After this reply, the client sends abandon_decompile_read_ahead
+                    // if the same workflow stops before its next request.
+                    if (monitor.isCancelled()) disposeDecompileAhead();
                 }
             }
             case "read_function_instructions" -> readFunctionInstructions(request.params);
@@ -1775,6 +1797,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return functionObservation(result, limitations);
     }
 
+    /** Fields, enum members or function parameters serialized per inspected type; the rest are counted. */
+    private static final int MAX_INSPECTED_TYPE_ENTRIES = 20_000;
+
     private JsonObject inspectNativeDataType(JsonObject params) throws Exception {
         requireKeys(params, Set.of("document", "type", "address"));
         requireDocument(params);
@@ -1811,7 +1836,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 result.addProperty("packing_enabled", composite.isPackingEnabled());
                 ghidra.program.model.data.DataTypeComponent[] components = composite.getComponents();
                 totalFields = components.length;
-                for (int index = 0; index < Math.min(components.length, 20_000); index++) {
+                for (int index = 0; index < Math.min(components.length, MAX_INSPECTED_TYPE_ENTRIES); index++) {
                     monitor.checkCancelled();
                     ghidra.program.model.data.DataTypeComponent component = components[index];
                     JsonObject field = new JsonObject();
@@ -1840,7 +1865,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 String[] names = enumeration.getNames();
                 totalFields = names.length;
                 java.util.Arrays.sort(names);
-                for (int index = 0; index < Math.min(names.length, 20_000); index++) {
+                for (int index = 0; index < Math.min(names.length, MAX_INSPECTED_TYPE_ENTRIES); index++) {
                     monitor.checkCancelled();
                     JsonObject member = new JsonObject();
                     member.addProperty("name", names[index]);
@@ -1855,13 +1880,34 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 result.addProperty("array_stride_bytes", array.getElementLength());
             } else if (type instanceof ghidra.program.model.data.TypeDef alias) {
                 result.addProperty("referenced_type", alias.getDataType().getPathName());
+            } else if (type instanceof ghidra.program.model.data.FunctionDefinition function) {
+                JsonObject prototype = new JsonObject();
+                prototype.addProperty("return_type", function.getReturnType().getPathName());
+                JsonArray parameters = new JsonArray();
+                // An existing project type can hold any number of parameters; bound them like fields.
+                ghidra.program.model.data.ParameterDefinition[] arguments = function.getArguments();
+                for (int index = 0; index < Math.min(arguments.length, MAX_INSPECTED_TYPE_ENTRIES); index++) {
+                    monitor.checkCancelled();
+                    ghidra.program.model.data.ParameterDefinition parameter = arguments[index];
+                    JsonObject item = new JsonObject();
+                    String name = parameter.getName();
+                    item.add("name", name == null || name.isEmpty() ? JsonNull.INSTANCE : GSON.toJsonTree(name));
+                    item.addProperty("type", parameter.getDataType().getPathName());
+                    parameters.add(item);
+                }
+                prototype.add("parameters", parameters);
+                prototype.addProperty("total_parameters", arguments.length);
+                prototype.addProperty("parameters_truncated", arguments.length > MAX_INSPECTED_TYPE_ENTRIES);
+                prototype.addProperty("varargs", function.hasVarArgs());
+                prototype.addProperty("calling_convention", function.getCallingConventionName());
+                result.add("function_definition", prototype);
             }
         }
         result.add("fields", fields);
         result.add("members", members);
         result.addProperty("total_fields", totalFields);
-        result.addProperty("truncated", totalFields > 20_000);
-        result.add("limitations", GSON.toJsonTree(List.of("Layouts are Ghidra data-type database observations; original debug/source authority and flexible-tail semantics are not inferred. Component type paths do not necessarily identify separately registered types; bit-field lookups report whether the manager resolves equivalent types.", "At most 20000 fields or enum members are serialized per type to bound provider output. total_fields and truncated report omissions. Enum values preserve Ghidra's signed long representation.")));
+        result.addProperty("truncated", totalFields > MAX_INSPECTED_TYPE_ENTRIES);
+        result.add("limitations", GSON.toJsonTree(List.of("Layouts are Ghidra data-type database observations; original debug/source authority and flexible-tail semantics are not inferred. Component type paths do not necessarily identify separately registered types; bit-field lookups report whether the manager resolves equivalent types.", "At most 20000 fields, enum members or function parameters are serialized per type to bound provider output. total_fields and truncated report omitted fields and members; function_definition.total_parameters and parameters_truncated report omitted parameters. Enum values preserve Ghidra's signed long representation.")));
         if (type != null) {
             JsonObject metadata = analysisExtensions.inspectDataType(currentProgram, type, address, monitor);
             if (metadata != null) result.add("metadata_recovery", metadata);
@@ -1870,7 +1916,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     private static String dataTypeKind(DataType type) {
-        return type instanceof ghidra.program.model.data.Structure ? "struct" : type instanceof ghidra.program.model.data.Union ? "union" : type instanceof ghidra.program.model.data.Enum ? "enum" : type instanceof ghidra.program.model.data.Pointer ? "pointer" : type instanceof ghidra.program.model.data.Array ? "array" : type instanceof ghidra.program.model.data.TypeDef ? "typedef" : type instanceof ghidra.program.model.data.BuiltInDataType ? "scalar" : "unsupported";
+        return type instanceof ghidra.program.model.data.Structure ? "struct" : type instanceof ghidra.program.model.data.Union ? "union" : type instanceof ghidra.program.model.data.Enum ? "enum" : type instanceof ghidra.program.model.data.Pointer ? "pointer" : type instanceof ghidra.program.model.data.Array ? "array" : type instanceof ghidra.program.model.data.TypeDef ? "typedef" : type instanceof ghidra.program.model.data.FunctionDefinition ? "function" : type instanceof ghidra.program.model.data.BuiltInDataType ? "scalar" : "unsupported";
     }
 
     private String typeLookupResult(DataType type) {
@@ -2196,7 +2242,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private static final int DEFAULT_C_PARENTHESIS_DEPTH = 8;
     private static final int MAX_C_PARENTHESIS_DEPTH = 12;
     /** Accepted caller C and the qualifiers Ghidra's types cannot record. */
-    private record ParsedCallerC(CParser parser, JsonArray droppedQualifiers) {}
+    /**
+     * soleParameterIdentifiers: identifiers that are a whole parameter slot,
+     * such as a and b in f(a, b). Ghidra types such a name undefined when it
+     * names no type, as in a K&R identifier list, which no parsed fact records.
+     */
+    private record ParsedCallerC(CParser parser, JsonArray droppedQualifiers, Set<String> soleParameterIdentifiers) {}
     // Data types carry no SourceType; this category is the persisted mark of caller authorship.
     private static final CategoryPath CALLER_DEFINED_TYPES = new CategoryPath("/rea_caller_defined");
     /** A token Ghidra's C parser consumes without applying, and what REA does with it. */
@@ -2378,7 +2429,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     /** What the tokenizer observed in admitted caller C. */
-    private record AdmittedCallerC(JsonArray droppedQualifiers, boolean terminated, boolean endsInLineComment) {}
+    private record AdmittedCallerC(JsonArray droppedQualifiers, boolean terminated, boolean endsInLineComment,
+        Set<String> soleParameterIdentifiers) {}
 
     // Ghidra reads a pack value with Integer.parseInt and, on overflow, keeps the
     // packing already in effect. A decimal literal is admitted only when that parse accepts it.
@@ -2508,11 +2560,83 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return value.longValue();
     }
 
+    private static void endParameterSlot(List<CToken> slot, Set<String> soleParameters) {
+        if (slot.size() == 1 && slot.get(0).isIdentifier()) soleParameters.add(slot.get(0).text());
+        slot.clear();
+    }
+
+    // A definition's ret (*name)(parameters) declarator, read one token at a time.
+    private static final int FN_NONE = 0, FN_POINTER = 1, FN_NAME = 2, FN_AFTER_NAME = 3,
+        FN_OPEN_PARAMETERS = 4, FN_PARAMETERS = 5;
+    // C.jj's calling-convention tokens. Ghidra applies one before the declarator's
+    // parenthesis and drops one inside it (Ghidra 12.2, probed).
+    private static final Pattern C_CALLING_CONVENTION =
+        Pattern.compile("_+(?:cdecl|stdcall|fastcall|vectorcall|rustcall|pascal)");
+
+    /**
+     * The next position in a function-pointer declarator. Ghidra 12.2 stores
+     * ret (*name)(parameters), its pointer-to-pointer and array forms, with
+     * the return type, parameters and varargs as written. It drops a calling
+     * convention inside the parenthesis, and a parameter that is itself a
+     * function declarator gets a function type named after the parameter, so
+     * both are refused; a typedef of the inner function pointer is admitted.
+     */
+    private static int nextFunctionDeclarator(int position, CToken token, CToken opening, String field, String code) {
+        String text = token.text();
+        int line = token.line(), column = token.column();
+        if ((position == FN_POINTER || position == FN_NAME) && C_CALLING_CONVENTION.matcher(text).matches())
+            throw refusedConstruct(code, field, "the calling convention " + text + " inside a function-pointer " +
+                "declarator (Ghidra drops it there; write it before the parenthesis, as in int " + text + " (*name)(int))",
+                line, column);
+        return switch (position) {
+            case FN_NONE -> FN_POINTER;
+            case FN_POINTER -> {
+                // Reported at the parenthesis itself, the construct that is not admitted.
+                if (!text.equals("*"))
+                    throw refusedConstruct(code, field, "a parenthesis that does not open a function pointer (*name) " +
+                        "(grouped declarators and function types are not admitted; a definition admits only " +
+                        "ret (*name)(parameters))", opening.line(), opening.column());
+                yield FN_NAME;
+            }
+            case FN_NAME -> {
+                // Further stars and the dropped qualifiers reported above keep the declarator open.
+                if (text.equals("*") || unappliedC(text) != null) yield FN_NAME;
+                if (!token.isIdentifier())
+                    throw refusedConstruct(code, field, "a function-pointer declarator without a member or typedef name",
+                        line, column);
+                yield FN_AFTER_NAME;
+            }
+            case FN_AFTER_NAME -> {
+                if (text.equals("[")) yield FN_AFTER_NAME;
+                if (!text.equals(")"))
+                    throw refusedConstruct(code, field, "a function-pointer declarator that is not (*name) or (*name[N])",
+                        line, column);
+                yield FN_OPEN_PARAMETERS;
+            }
+            case FN_OPEN_PARAMETERS -> {
+                if (!text.equals("("))
+                    throw refusedConstruct(code, field, "a function-pointer declarator without a parameter list",
+                        line, column);
+                yield FN_PARAMETERS;
+            }
+            default -> {
+                if (text.equals(")")) yield FN_NONE;
+                if (text.equals("("))
+                    throw refusedConstruct(code, field, "a parenthesis in a function-pointer parameter list (one function-" +
+                        "pointer level is admitted; typedef the inner function pointer and use its name)", line, column);
+                if (Set.of("{", "}", ";", "=", ":").contains(text))
+                    throw refusedConstruct(code, field, "'" + text + "' in a function-pointer parameter list", line, column);
+                yield FN_PARAMETERS;
+            }
+        };
+    }
+
     /**
      * Tokenize caller C once, before the parser sees it: bound parenthesis
      * nesting and refuse every construct Ghidra's parser accepts and drops.
      * A declarations text may hold only struct, union, enum and typedef
-     * definitions and #pragma pack; a signature holds one prototype.
+     * definitions and #pragma pack, with parentheses only in a member's or
+     * typedef's function-pointer declarator; a signature holds one prototype.
      */
     private static AdmittedCallerC admitCallerC(
             String text, String field, boolean declarations, String code, int maxParenthesisDepth) {
@@ -2541,6 +2665,13 @@ public final class ReaGhidraBridge extends HeadlessScript {
         Long explicitEnumValue = null;
         CToken enumerator = null;
         long nextEnumValue = 0;
+        // Declarations: position within a ret (*name)(parameters) declarator.
+        int declarator = FN_NONE;
+        CToken declaratorOpening = null;
+        boolean functionParameters = false;
+        // The tokens of the parameter slot being read, of a signature or a function pointer.
+        List<CToken> slot = new ArrayList<>();
+        Set<String> soleParameters = new HashSet<>();
         for (CToken next = tokens.next(false); next != null; next = tokens.next(false)) {
             String token = next.text();
             int line = next.line(), column = next.column();
@@ -2550,6 +2681,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
             }
             if (!declarations && token.equals("typedef"))
                 throw refusedConstruct(code, field, "the specifier typedef", line, column);
+            if (declarations && token.equals("_Noreturn"))
+                throw refusedConstruct(code, field, "_Noreturn (Ghidra does not store it on a function-pointer type)", line, column);
             UnappliedCToken unapplied = unappliedC(token);
             if (unapplied != null && unapplied.refused())
                 throw refusedConstruct(code, field, String.format(unapplied.construct(), token) +
@@ -2574,12 +2707,19 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     beyondColumn = column;
                 }
             }
+            boolean slotOpen = !declarations && parameter >= 0 && !parametersClosed;
             if (!declarations && parentheses == 1 && !parametersClosed) {
                 if (token.equals("(") && parameter < 0) parameter = 0;
-                else if (token.equals(",")) parameter++;
-            }
+                else if (token.equals(",")) {
+                    parameter++;
+                    endParameterSlot(slot, soleParameters);
+                } else if (slotOpen && !token.equals(")")) slot.add(next);
+            } else if (slotOpen && !token.equals(")")) slot.add(next);
             if (token.equals(")")) {
-                if (!declarations && parentheses == 1 && parameter >= 0) parametersClosed = true;
+                if (!declarations && parentheses == 1 && parameter >= 0) {
+                    parametersClosed = true;
+                    endParameterSlot(slot, soleParameters);
+                }
                 parentheses = Math.max(0, parentheses - 1);
             }
             if (previous.equals("enum") && token.equals("{"))
@@ -2607,13 +2747,31 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     if (enumExpression) explicitEnumValue = value;
                     expression = null;
                 }
-            } else if (token.equals("(")) {
-                // Ghidra applies no parenthesis in a definition as written: function
-                // declarators, attributes, casts, sizeof and grouped declarators are
-                // each refused or reported by its parser, so refuse the first one here.
-                throw refusedConstruct(code, field, "a parenthesis (a struct, union, enum or typedef definition " +
-                    "admits none: Ghidra does not store function declarators, attributes or grouped declarators as written)",
-                    line, column);
+            } else if (declarator != FN_NONE || token.equals("(")) {
+                boolean member = braces > 0 && Boolean.FALSE.equals(enumBodies.peek());
+                boolean alias = state == typedef && braces == 0;
+                if (declarator == FN_NONE && !(member || alias) ||
+                        declarator == FN_NONE && !(previous.equals("*") || previous.equals(",") ||
+                            isCIdentifierStart(previous.isEmpty() ? ' ' : previous.charAt(0))))
+                    throw refusedConstruct(code, field, "a parenthesis outside a function-pointer declarator (a definition " +
+                        "admits parentheses only in a member or typedef of the form ret (*name)(parameters))", line, column);
+                if (declarator == FN_PARAMETERS && !token.equals(")") && !token.equals("(")) functionParameters = true;
+                if (declarator == FN_PARAMETERS && token.equals(")") && !functionParameters)
+                    throw refusedConstruct(code, field, "an empty parameter list (Ghidra stores () as (void); write " +
+                        "(void) for a function without parameters)", line, column);
+                if (declarator == FN_OPEN_PARAMETERS) functionParameters = false;
+                if (declarator == FN_PARAMETERS) {
+                    if (token.equals(",") || token.equals(")")) endParameterSlot(slot, soleParameters);
+                    else slot.add(next);
+                }
+                if (declarator == FN_NONE) declaratorOpening = next;
+                declarator = nextFunctionDeclarator(declarator, next, declaratorOpening, field, code);
+                // Array sizes after the name and in parameters are the literal-only constants below.
+                if (token.equals("[")) {
+                    expression = new ArrayList<>();
+                    enumExpression = false;
+                    expressionEnds = Set.of("]");
+                }
             } else if (token.equals("[") || (token.equals("=") && Boolean.TRUE.equals(enumBodies.peek())) ||
                     (token.equals(":") && Boolean.FALSE.equals(enumBodies.peek()) && !enumPending)) {
                 expression = new ArrayList<>();
@@ -2684,7 +2842,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             throw new RequestFailure("parenthesis_depth_limit", field + " nests parentheses " + deepest +
                 " levels deep, first beyond " + maxParenthesisDepth + " at line " + beyondLine + ", column " + beyondColumn,
                 null, deepest);
-        return new AdmittedCallerC(dropped, ended, tokens.endsInLineComment);
+        return new AdmittedCallerC(dropped, ended, tokens.endsInLineComment, soleParameters);
     }
 
     /**
@@ -2821,7 +2979,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 parser.getComposites(), parser.getEnums(), parser.getTypes(), parser.getFunctions()))
             for (Map.Entry<String, DataType> parsedType : parsedTypes.entrySet())
                 requireBoundedTypeDepth(parsedType.getValue(), parsedType.getKey(), field);
-        return new ParsedCallerC(parser, admitted.droppedQualifiers());
+        return new ParsedCallerC(parser, admitted.droppedQualifiers(), admitted.soleParameterIdentifiers());
     }
 
     /**
@@ -2895,13 +3053,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
             !(functions.values().iterator().next() instanceof FunctionDefinitionDataType prototype))
             throw new RequestFailure(code, "signature must be one C function prototype without function-pointer parameters; found " +
                 functions.size() + " function declarators");
-        Set<String> names = new HashSet<>();
-        for (ParameterDefinition parameter : prototype.getArguments()) {
-            String name = parameter.getName();
-            if (name != null && !name.isEmpty() && !names.add(name))
-                throw new RequestFailure(code, "signature repeats parameter name " + name);
+        requireCallerParameters(prototype, parsed.soleParameterIdentifiers(), "signature", code);
+        for (ParameterDefinition parameter : prototype.getArguments())
             requireUnambiguousType(parameter.getDataType());
-        }
         requireUnambiguousType(prototype.getReturnType());
         return new SignatureEdit(prototype, parsed.droppedQualifiers());
     }
@@ -3046,20 +3200,20 @@ public final class ReaGhidraBridge extends HeadlessScript {
             // shapes so a fill is not later mistaken for an unchanged definition.
             Map<DataType, Integer> emptyComposites = emptyCompositeLengths();
             ParsedCallerC parsedDeclarations =
-                // Declarations admit no parentheses (see admitCallerC), so no nesting bound applies.
+                // Declarations admit only one-level function-pointer parentheses (see admitCallerC), so no nesting bound applies.
                 parseCallerC(declarations, "declarations", true, code, lengthBound, MAX_C_PARENTHESIS_DEPTH);
             requireUnfilledComposites(emptyComposites);
             CParser parser = parsedDeclarations.parser();
-            if (!parser.getFunctions().isEmpty())
-                throw new RequestFailure(code, "declarations must not declare functions or function-pointer members: " +
-                    String.join(", ", new TreeSet<>(parser.getFunctions().keySet())));
             Map<String, DataType> defined = mergeCallerTypeMaps(
                 parser.getTypes(), parser.getEnums(), parser.getComposites());
             if (defined.isEmpty())
                 throw new RequestFailure(code, "declarations define no struct, union, enum or typedef");
+            Map<String, FunctionDefinitionDataType> functionTypes = callerFunctionTypes(
+                defined, parser, parsedDeclarations.soleParameterIdentifiers(), code);
             DataTypeManager types = currentProgram.getDataTypeManager();
             Set<DataType> parsed = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
             parsed.addAll(defined.values());
+            parsed.addAll(functionTypes.values());
             List<String> conflicts = new ArrayList<>();
             Set<String> existing = new HashSet<>();
             for (Map.Entry<String, DataType> entry : defined.entrySet()) {
@@ -3088,9 +3242,25 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     else conflicts.add(name + " (existing " + other.getPathName() + ")");
                 }
             }
+            for (Map.Entry<String, FunctionDefinitionDataType> entry : functionTypes.entrySet()) {
+                List<DataType> sameName = new ArrayList<>();
+                types.findDataTypes(entry.getKey(), sameName);
+                for (DataType other : sameName)
+                    if (!other.getPathName().equals(CALLER_DEFINED_TYPES.getPath() + "/" + entry.getKey()))
+                        conflicts.add(entry.getKey() + " (existing " + other.getPathName() + ")");
+            }
             if (!conflicts.isEmpty())
                 throw new RequestFailure("data_type_conflict", "The database already holds types with these names: " + String.join(", ", conflicts));
             for (DataType type : defined.values()) type.setCategoryPath(CALLER_DEFINED_TYPES);
+            // Function types first, so the members and typedefs that point to them resolve to the stored ones.
+            for (Map.Entry<String, FunctionDefinitionDataType> entry : functionTypes.entrySet()) {
+                monitor.checkCancelled();
+                String path = CALLER_DEFINED_TYPES.getPath() + "/" + entry.getKey();
+                DataType stored = types.addDataType(entry.getValue(), DataTypeConflictHandler.DEFAULT_HANDLER);
+                if (!stored.getPathName().equals(path))
+                    throw new RequestFailure("data_type_conflict", "The function-pointer type " + entry.getKey() +
+                        " is already defined differently as " + path + "; its member or typedef changed its prototype");
+            }
             JsonArray rows = new JsonArray();
             for (Map.Entry<String, DataType> entry : defined.entrySet()) {
                 monitor.checkCancelled();
@@ -3131,6 +3301,106 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
     }
 
+    /**
+     * The function types of the function-pointer members and typedefs the
+     * declarations define, each under a name derived from its declarator:
+     * owner.member for a member, typedef.target for a typedef. Ghidra's parser
+     * names them by a per-parse counter, which would collide across calls and
+     * break idempotency. A K&R identifier list or an unknown parameter type
+     * leaves Ghidra's undefined placeholder as the parameter type; refuse it.
+     */
+    private static Map<String, FunctionDefinitionDataType> callerFunctionTypes(
+            Map<String, DataType> defined, CParser parser, Set<String> soleParameterIdentifiers, String code) {
+        Map<String, FunctionDefinitionDataType> named = new TreeMap<>();
+        Set<DataType> reached = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+        for (Map.Entry<String, DataType> entry : defined.entrySet()) {
+            DataType type = entry.getValue();
+            if (type instanceof ghidra.program.model.data.Composite composite) {
+                for (ghidra.program.model.data.DataTypeComponent component : composite.getComponents()) {
+                    DataType member = component.getDataType();
+                    FunctionDefinitionDataType function = pointedFunction(member);
+                    if (function == null) continue;
+                    nameCallerFunction(named, reached, entry.getKey() + "." + component.getFieldName(), function,
+                        soleParameterIdentifiers, code);
+                    DataType renamed = withCurrentArrayNames(member);
+                    if (renamed != member) composite.dataTypeReplaced(member, renamed);
+                }
+            } else if (type instanceof ghidra.program.model.data.TypeDef alias) {
+                DataType target = alias.getDataType();
+                FunctionDefinitionDataType function = pointedFunction(target);
+                if (function == null) continue;
+                nameCallerFunction(named, reached, entry.getKey() + ".target", function, soleParameterIdentifiers, code);
+                DataType renamed = withCurrentArrayNames(target);
+                if (renamed != target) alias.dataTypeReplaced(target, renamed);
+            }
+        }
+        for (Map.Entry<String, DataType> entry : parser.getFunctions().entrySet())
+            if (!reached.contains(entry.getValue()))
+                throw new RequestFailure(code, "declarations declare the function " + entry.getKey() +
+                    "; define functions with annotate_native_function, and function pointers as members or typedefs");
+        return named;
+    }
+
+    /**
+     * An array keeps the element name it was built with, so after its function
+     * type is renamed it would be stored under the parser's counter name (and
+     * Ghidra 12.2 then fails resolving it). Rebuild each array level around the
+     * renamed element; a pointer derives its name from its target and needs none.
+     */
+    private static DataType withCurrentArrayNames(DataType type) {
+        if (!(type instanceof ghidra.program.model.data.Array array)) return type;
+        return new ghidra.program.model.data.ArrayDataType(withCurrentArrayNames(array.getDataType()),
+            array.getNumElements(), array.getElementLength(), array.getDataTypeManager());
+    }
+
+    /**
+     * The parameter list of a prototype the caller wrote, a signature or a
+     * function-pointer member or typedef. Ghidra's parser keeps a repeated
+     * parameter name, and leaves its undefined placeholder as the type of a
+     * K&R identifier or an unknown type name, without a diagnostic.
+     */
+    private static void requireCallerParameters(ghidra.program.model.data.FunctionDefinition prototype,
+            Set<String> soleParameterIdentifiers, String subject, String code) {
+        Set<String> names = new HashSet<>();
+        for (ghidra.program.model.data.ParameterDefinition parameter : prototype.getArguments()) {
+            String name = parameter.getName();
+            if (name != null && !name.isEmpty() && !names.add(name))
+                throw new RequestFailure(code, subject + " repeats parameter name " + name);
+            // An explicit undefined x keeps both tokens; a bare name that is not a type becomes undefined.
+            if (parameter.getDataType() == DataType.DEFAULT && name != null && soleParameterIdentifiers.contains(name))
+                throw new RequestFailure(code, subject + " names parameter " + name + " without a type (a K&R " +
+                    "identifier list or an undeclared type name), which Ghidra stores as undefined; write each parameter's type");
+        }
+    }
+
+    /** The function type a pointer, or an array of pointers, refers to; null for any other type. */
+    private static FunctionDefinitionDataType pointedFunction(DataType type) {
+        boolean pointer = false;
+        while (type instanceof ghidra.program.model.data.Pointer || type instanceof ghidra.program.model.data.Array) {
+            if (type instanceof ghidra.program.model.data.Pointer reference) {
+                pointer = true;
+                type = reference.getDataType();
+            } else type = ((ghidra.program.model.data.Array) type).getDataType();
+        }
+        return pointer && type instanceof FunctionDefinitionDataType function ? function : null;
+    }
+
+    private static void nameCallerFunction(Map<String, FunctionDefinitionDataType> named, Set<DataType> reached,
+            String name, FunctionDefinitionDataType function, Set<String> soleParameterIdentifiers, String code) {
+        if (!reached.add(function)) return;
+        if (named.containsKey(name))
+            throw new RequestFailure(code, "declarations name two function-pointer types " + name +
+                "; rename the member or typedef");
+        requireCallerParameters(function, soleParameterIdentifiers, "the function pointer " + name, code);
+        try {
+            function.setNameAndCategory(CALLER_DEFINED_TYPES, name);
+        }
+        catch (ghidra.util.InvalidNameException exception) {
+            throw new RequestFailure(code, "Ghidra refused the function-pointer type name " + name + ": " + safeMessage(exception));
+        }
+        named.put(name, function);
+    }
+
     /** Every named type a definition reaches must be defined here or already stored. */
     private void requireStoredDependencies(
             String owner, DataType root, Set<DataType> parsed, DataTypeManager types, Set<DataType> visited) {
@@ -3156,7 +3426,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 throw new RequestFailure("invalid_type_declarations", owner +
                     " embeds an unnamed or undeclared type (" + type.getName() + "); declare it by name in the same declarations");
             }
-            if (type instanceof ghidra.program.model.data.TypeDef || type instanceof ghidra.program.model.data.Composite)
+            if (type instanceof ghidra.program.model.data.TypeDef || type instanceof ghidra.program.model.data.Composite ||
+                    type instanceof ghidra.program.model.data.FunctionDefinition)
                 for (DataType child : cTypeChildren(type)) if (child != null) pending.push(child);
         }
     }
@@ -5866,7 +6137,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         SoftReference<DecompileResults> retained = decompileResults.get(key);
         DecompileResults reused = retained == null ? null : retained.get();
         if (reused != null) return reused;
-        DecompileResults results = takeDecompileAheadForeground(key);
+        DecompileResults results = takeDecompileAhead(key, decompileTimeoutSeconds);
         // A failure or timeout read ahead for this request already spent its
         // deadline, so it is reported rather than started again.
         if (results == null) results = decompiler.decompileFunction(
@@ -5901,178 +6172,282 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return results;
     }
 
+    /** One function read ahead: queued, running on a worker, or finished. */
+    private static final class AheadTask {
+        final Function function;
+        final DecompileCacheKey key;
+        final int timeoutSeconds;
+        final TaskMonitor monitor = new TaskMonitorAdapter(true);
+        final CompletableFuture<DecompileResults> done = new CompletableFuture<>();
+        boolean started;
+
+        AheadTask(Function function, DecompileCacheKey key, int timeoutSeconds) {
+            this.function = function;
+            this.key = key;
+            this.timeoutSeconds = timeoutSeconds;
+        }
+    }
+
     /**
-     * Decompile the functions a workflow will ask for next with several
-     * decompiler processes and keep the completed results for those requests.
-     * The first selector is the carrying request's own function. That request
-     * waits for the window only within its own decompile deadline: siblings
-     * still running when it has its result and the deadline has passed are
-     * cancelled and left for their own requests, which report any failure as
-     * before.
+     * Queue the functions after the carrying request's own one for background
+     * decompilation and return at once: the carrying request decompiles its own
+     * function on the session decompiler without waiting. Workers start only
+     * for the queued work, at most one per queued function.
      */
     private void decompileAhead(List<String> selectors) throws Exception {
-        clearDecompileAheadForeground();
         if (selectors.size() < 2) return;
         long modification = currentProgram.getModificationNumber();
-        List<Function> pending = new ArrayList<>();
+        Integer payloadMiB = decompileMaxPayloadMiB;
+        Address own;
+        try {
+            own = resolveProcedure(selectors.get(0)).getEntryPoint();
+        } catch (RequestFailure unresolved) {
+            own = null;
+        }
+        List<AheadTask> pending = new ArrayList<>();
         Set<Address> seen = new HashSet<>();
-        Address foreground = null;
-        for (int index = 0; index < selectors.size(); index++) {
+        if (own != null) seen.add(own);
+        for (int index = 1; index < selectors.size(); index++) {
             Function function;
             try {
                 function = resolveProcedure(selectors.get(index));
             } catch (RequestFailure unresolved) {
                 continue;
             }
-            if (function.isExternal() || function.getBody().isEmpty() || !seen.add(function.getEntryPoint())) continue;
-            SoftReference<DecompileResults> retained = decompileResults.get(
-                new DecompileCacheKey(function.getEntryPoint(), false, modification, decompileMaxPayloadMiB));
+            if (function instanceof UndefinedFunction || function.isExternal() ||
+                    function.getBody().isEmpty() || !seen.add(function.getEntryPoint())) continue;
+            DecompileCacheKey key = new DecompileCacheKey(function.getEntryPoint(), false, modification, payloadMiB);
+            SoftReference<DecompileResults> retained = decompileResults.get(key);
             if (retained != null && retained.get() != null) continue;
-            if (index == 0) foreground = function.getEntryPoint();
-            pending.add(function);
+            pending.add(new AheadTask(function, key, decompileTimeoutSeconds));
         }
-        if (pending.size() < 2) return;
-        Integer payloadMiB = decompileMaxPayloadMiB;
         synchronized (decompileAheadLock) {
-            if (decompileAheadIdleRelease != null) decompileAheadIdleRelease.cancel(false);
-            if (decompileAheadThreads == null) {
-                decompileAheadThreads = GThreadPool.getPrivateThreadPool("REA decompile read-ahead");
-                // Each worker is a native decompiler process with its own view
-                // of the Program, so the worker count bounds memory as well as
-                // CPU. Fixed: it shapes how the same results are produced, never
-                // what a caller observes, and the host's processor count caps it.
-                decompileAheadThreads.setMaxThreadCount(
-                    Math.max(1, Math.min(Runtime.getRuntime().availableProcessors(), DECOMPILE_AHEAD_WORKERS)));
+            for (AheadTask task : pending) {
+                if (decompileAheadTasks.containsKey(task.key)) continue;
+                decompileAheadTasks.put(task.key, task);
+                decompileAheadQueue.add(task);
             }
-            if (decompileAheadWorkers == null) {
-                decompileAheadWorkers = new DecompilerCallback<>(currentProgram, prepared -> {
-                    prepared.setOptions(decompileOptions(payloadMiB));
-                    prepared.toggleCCode(true);
-                    prepared.toggleSyntaxTree(true);
-                    prepared.toggleJumpLoads(true);
-                }) {
-                    @Override
-                    public DecompileResults process(DecompileResults results, TaskMonitor taskMonitor) {
-                        return results;
-                    }
-                };
-            }
-            decompileAheadWorkers.setTimeout(decompileTimeoutSeconds);
-            try {
-                for (DecompileResults results : decompileWindow(pending, foreground)) {
-                    Address entry = results.getFunction().getEntryPoint();
-                    DecompileCacheKey key = new DecompileCacheKey(entry, false, modification, payloadMiB);
-                    if (entry.equals(foreground)) {
-                        decompileAheadForegroundKey = key;
-                        decompileAheadForeground = results;
-                    }
-                    if (results.decompileCompleted() && !results.isCancelled() && !results.isTimedOut())
-                        decompileResults.put(key, new SoftReference<>(results));
+            // Tasks nobody took are dropped oldest first beyond two windows:
+            // finished results, and queued work no worker has started. A
+            // running decompile stays until it finishes; the worker cap
+            // bounds how many of those can be in progress.
+            trimDecompileAhead();
+            // A single queued function is cheaper to decompile when its own
+            // request arrives than to start a decompiler process for it.
+            if (decompileAheadQueue.size() < 2 && decompileAheadLiveWorkers == 0) return;
+            // Each worker is a native decompiler process with its own view of
+            // the Program, so the worker count bounds memory as well as CPU.
+            int limit = Math.max(1, Math.min(Runtime.getRuntime().availableProcessors(), DECOMPILE_AHEAD_WORKERS));
+            int wanted = Math.min(limit, decompileAheadQueue.size()) - decompileAheadLiveWorkers;
+            long generation = decompileAheadGeneration;
+            for (int started = 0; started < wanted; started++) {
+                decompileAheadLiveWorkers++;
+                try {
+                    decompileAheadThreads.execute(() -> runDecompileAheadWorker(generation, payloadMiB));
+                } catch (RuntimeException rejected) {
+                    decompileAheadLiveWorkers--;
+                    break;
                 }
             }
-            finally {
-                decompileAheadIdleRelease = decompileAheadReaper.schedule(
-                    this::releaseIdleDecompileAhead, DECOMPILE_AHEAD_IDLE_MILLIS,
-                    TimeUnit.MILLISECONDS);
-            }
+            decompileAheadLock.notifyAll();
         }
-        monitor.checkCancelled();
     }
 
     /**
-     * Run one window and return the results that finished. With a configured
-     * deadline the wait ends once the foreground function has its result
-     * (its native deadline bounds that) and the deadline has elapsed.
+     * Publish one worker outcome, then drop unrequested tasks beyond two
+     * windows. A result that completes after the last hint is trimmed here,
+     * and so is queued work no worker has started.
      */
-    private List<DecompileResults> decompileWindow(List<Function> pending, Address foreground) throws Exception {
-        ConcurrentQ<Function, DecompileResults> queue = new ConcurrentQBuilder<Function, DecompileResults>()
-            .setCollectResults(true)
-            .setThreadPool(decompileAheadThreads)
-            .setMonitor(monitor)
-            .build(decompileAheadWorkers);
-        List<DecompileResults> finished = new ArrayList<>();
-        try {
-            queue.add(pending);
-            if (decompileTimeoutSeconds == 0) {
-                collectDecompileResults(queue.waitForResults(), finished);
-                return finished;
-            }
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(decompileTimeoutSeconds);
-            boolean foregroundDone = foreground == null;
-            while (!queue.isEmpty()) {
-                long remaining = deadline - System.nanoTime();
-                if (foregroundDone && remaining <= 0) break;
-                // Past the deadline only the foreground's own native deadline
-                // is still running, so poll briefly until it reports.
-                long wait = remaining > 0 ? remaining : TimeUnit.MILLISECONDS.toNanos(50);
-                for (DecompileResults results : collectDecompileResults(
-                        queue.waitForResults(wait, TimeUnit.NANOSECONDS), finished))
-                    if (results.getFunction().getEntryPoint().equals(foreground)) foregroundDone = true;
-            }
-            // Cancellation reaches each sibling's decompiler through its task
-            // monitor. Results that finished meanwhile are kept; cancelled
-            // ones stay uncached for their own requests.
-            if (!queue.isEmpty()) queue.cancelAllTasks(false);
-            collectDecompileResults(queue.waitForResults(), finished);
-            return finished;
-        }
-        finally {
-            queue.dispose();
-        }
-    }
-
-    private static List<DecompileResults> collectDecompileResults(
-        Collection<QResult<Function, DecompileResults>> results,
-        List<DecompileResults> finished
-    ) {
-        List<DecompileResults> added = new ArrayList<>();
-        for (QResult<Function, DecompileResults> result : results) {
-            if (result.hasError() || result.isCancelled()) continue;
-            DecompileResults value;
-            try {
-                value = result.getResult();
-            } catch (Exception unavailable) {
-                continue;
-            }
-            if (value == null || value.isCancelled() || value.getFunction() == null) continue;
-            added.add(value);
-        }
-        finished.addAll(added);
-        return added;
-    }
-
-    private DecompileResults takeDecompileAheadForeground(DecompileCacheKey key) {
-        DecompileResults results = key.equals(decompileAheadForegroundKey) ? decompileAheadForeground : null;
-        clearDecompileAheadForeground();
-        return results;
-    }
-
-    private void clearDecompileAheadForeground() {
-        decompileAheadForegroundKey = null;
-        decompileAheadForeground = null;
-    }
-
-    private void releaseIdleDecompileAhead() {
+    private void completeDecompileAhead(AheadTask task, DecompileResults results) {
+        task.done.complete(results);
         synchronized (decompileAheadLock) {
-            if (decompileAheadWorkers == null) return;
-            decompileAheadWorkers.dispose();
-            decompileAheadWorkers = null;
-            decompileAheadIdleRelease = null;
+            decompileAheadActive.remove(task);
+            trimDecompileAhead();
         }
     }
 
     /**
-     * Pooled decompilers hold native state for the Program and options they
-     * opened with, so an edit, an option change or shutdown releases them.
+     * Caller holds decompileAheadLock. Drops the oldest tasks beyond two
+     * windows. A task a worker has started but not finished stays: at most
+     * one such task exists per live worker. Queued tasks are removed from
+     * the queue as well, so a later window cannot leave an unbounded backlog.
+     */
+    private void trimDecompileAhead() {
+        int excess = decompileAheadTasks.size() - 2 * DECOMPILE_AHEAD_WINDOW;
+        if (excess <= 0) return;
+        Iterator<AheadTask> retained = decompileAheadTasks.values().iterator();
+        while (excess > 0 && retained.hasNext()) {
+            AheadTask task = retained.next();
+            if (task.started && !task.done.isDone()) continue;
+            if (!task.started) {
+                decompileAheadQueue.remove(task);
+                task.monitor.cancel();
+            }
+            retained.remove();
+            excess--;
+        }
+    }
+
+    /**
+     * Open a decompiler, then take queued functions until the queue stays
+     * empty for the idle time or disposal advances the generation. Opening
+     * runs on the worker's own thread, so workers become ready independently
+     * while the session decompiler serves requests.
+     */
+    private void runDecompileAheadWorker(long generation, Integer payloadMiB) {
+        DecompInterface worker = null;
+        AheadTask task = null;
+        try {
+            worker = decompileAheadOpener.apply(payloadMiB);
+            if (worker == null) return;
+            while (true) {
+                synchronized (decompileAheadLock) {
+                    long idleUntil = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(DECOMPILE_AHEAD_IDLE_MILLIS);
+                    while (generation == decompileAheadGeneration && decompileAheadQueue.isEmpty()) {
+                        long remaining = idleUntil - System.nanoTime();
+                        if (remaining <= 0) return;
+                        decompileAheadLock.wait(Math.max(1, TimeUnit.NANOSECONDS.toMillis(remaining)));
+                    }
+                    if (generation != decompileAheadGeneration) return;
+                    task = decompileAheadQueue.poll();
+                    task.started = true;
+                    decompileAheadActive.add(task);
+                }
+                DecompileResults results;
+                try {
+                    results = worker.decompileFunction(task.function, task.timeoutSeconds, task.monitor);
+                } catch (RuntimeException failure) {
+                    results = null;
+                }
+                completeDecompileAhead(task, results);
+                task = null;
+            }
+        } catch (InterruptedException stopped) {
+            Thread.currentThread().interrupt();
+        } catch (RuntimeException failure) {
+            // A worker that cannot open or run leaves its functions to their requests.
+        } finally {
+            if (task != null) completeDecompileAhead(task, null);
+            if (worker != null) worker.dispose();
+            synchronized (decompileAheadLock) {
+                decompileAheadLiveWorkers--;
+                decompileAheadLock.notifyAll();
+            }
+        }
+    }
+
+    /** Opens a worker's decompiler; a field so the conformance probe can inject one. */
+    private java.util.function.Function<Integer, DecompInterface> decompileAheadOpener =
+        this::openDecompileAheadDecompiler;
+
+    /**
+     * A worker's own decompiler process, configured as the session decompiler.
+     * Each opens the Program independently, so workers open concurrently.
+     */
+    private DecompInterface openDecompileAheadDecompiler(Integer payloadMiB) {
+        DecompInterface worker = new DecompInterface();
+        worker.setOptions(decompileOptions(payloadMiB));
+        worker.toggleCCode(true);
+        worker.toggleSyntaxTree(true);
+        worker.toggleJumpLoads(true);
+        if (worker.openProgram(currentProgram)) return worker;
+        worker.dispose();
+        return null;
+    }
+
+    /**
+     * The read-ahead result for this request's function, or null when it
+     * should decompile it itself. A finished or running result is used
+     * whatever its outcome, including a timeout, so the function is never
+     * decompiled twice; a running one is waited for, and its worker's own
+     * native deadline, which started earlier, bounds that wait. A queued one
+     * that no worker has started is taken back and decompiled here at once.
+     *
+     * The deadline matters only where the cache policy says it does: a
+     * completed decompilation is reusable under any deadline, as cached ones
+     * are, but a failure, a timeout or unfinished work under a different
+     * deadline than this request's is cancelled and decompiled again, so a
+     * changed ghidra.decompile_timeout_seconds applies and the reported limit
+     * is the one used.
+     */
+    private DecompileResults takeDecompileAhead(DecompileCacheKey key, int timeoutSeconds) {
+        AheadTask task;
+        synchronized (decompileAheadLock) {
+            task = decompileAheadTasks.remove(key);
+            if (task == null) return null;
+            if (!task.started) {
+                decompileAheadQueue.remove(task);
+                return null;
+            }
+        }
+        if (task.timeoutSeconds != timeoutSeconds) {
+            DecompileResults finished = task.done.getNow(null);
+            if (finished != null && finished.decompileCompleted() && !finished.isCancelled() &&
+                    !finished.isTimedOut()) return finished;
+            task.monitor.cancel();
+            return null;
+        }
+        while (true) {
+            // Cancelling the waiting request cancels the decompile it waits
+            // for, as a cancelled foreground decompile would be.
+            if (monitor.isCancelled()) {
+                task.monitor.cancel();
+                throw new RequestFailure("decompile_cancelled", "Ghidra decompilation was cancelled");
+            }
+            try {
+                DecompileResults results = task.done.get(50, TimeUnit.MILLISECONDS);
+                // A cancelled read-ahead was abandoned, not decompiled.
+                return results == null || results.isCancelled() ? null : results;
+            } catch (TimeoutException running) {
+                continue;
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                task.monitor.cancel();
+                throw new RequestFailure("decompile_cancelled", "Ghidra decompilation was cancelled");
+            } catch (ExecutionException unavailable) {
+                return null;
+            }
+        }
+    }
+
+    /**
+     * Cancel read-ahead without waiting. The socket reader uses this so a
+     * following cancel frame is not stuck behind the worker stop bound.
+     * A task already taken by a waiting request is still cancelled.
+     */
+    private void cancelDecompileAhead() {
+        synchronized (decompileAheadLock) {
+            decompileAheadGeneration++;
+            for (AheadTask task : decompileAheadTasks.values()) task.monitor.cancel();
+            for (AheadTask task : decompileAheadActive) task.monitor.cancel();
+            decompileAheadTasks.clear();
+            decompileAheadQueue.clear();
+            decompileAheadLock.notifyAll();
+        }
+    }
+
+    /**
+     * Stop read-ahead and wait for its workers to exit: pooled decompilers
+     * hold native state for the Program and options they opened with, so an
+     * edit, an option change, a cancelled workflow or shutdown releases them.
+     * Workers still opening see the new generation and close without work.
      */
     private void disposeDecompileAhead() {
-        clearDecompileAheadForeground();
+        cancelDecompileAhead();
         synchronized (decompileAheadLock) {
-            if (decompileAheadIdleRelease != null) decompileAheadIdleRelease.cancel(false);
-            decompileAheadIdleRelease = null;
-            if (decompileAheadWorkers == null) return;
-            decompileAheadWorkers.dispose();
-            decompileAheadWorkers = null;
+            long stopUntil = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(DECOMPILE_AHEAD_STOP_MILLIS);
+            boolean interrupted = false;
+            while (decompileAheadLiveWorkers > 0) {
+                long remaining = stopUntil - System.nanoTime();
+                if (remaining <= 0) break;
+                try {
+                    decompileAheadLock.wait(Math.max(1, TimeUnit.NANOSECONDS.toMillis(remaining)));
+                } catch (InterruptedException stop) {
+                    interrupted = true;
+                    break;
+                }
+            }
+            if (interrupted) Thread.currentThread().interrupt();
         }
     }
 

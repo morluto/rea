@@ -27,15 +27,12 @@ import {
 } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
+  boundedViewLimitations,
   boundedViewMessages,
   pageViewCoverage,
   analysisViewCoverageSchema,
 } from "./analysisViewCoverage.js";
-import {
-  selectIndexedViewRows,
-  selectViewRows,
-  filterSet,
-} from "./selectViewRows.js";
+import { selectViewRows, filterSet } from "./selectViewRows.js";
 
 const reportSchema = androidResultSchemas.inspect_android_jni_bindings;
 const readReport = createAnalysisViewResultReader(reportSchema);
@@ -190,11 +187,7 @@ export const projectAndroidJniView = (
     parent_evidence_id: parent.evidenceId,
     parent_digest: parent.evidenceId.slice(3),
     artifact: report.apk,
-    limitations: boundedViewMessages(
-      parent.limitations,
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent),
     unknowns: boundedViewMessages(
       report.unknowns,
       parent.evidenceId,
@@ -271,10 +264,7 @@ export const projectAndroidJniView = (
     const pick = <Row extends object>(
       rows: readonly Row[],
       matches: (row: Row) => boolean,
-    ) =>
-      indices !== undefined
-        ? selectIndexedViewRows(rows, indices, view, matches, project)
-        : selectViewRows(rows, view, matches, project);
+    ) => selectViewRows(rows, view, matches, project, indices);
     let selected: { rows: object[]; total: number };
     switch (view.collection) {
       case "declarations": {

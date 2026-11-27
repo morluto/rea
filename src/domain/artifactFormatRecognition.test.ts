@@ -25,9 +25,16 @@ import { devicetreeFixture } from "./firmware/devicetree.fixture.js";
 import { dfuseFile } from "./firmware/dfuse.fixture.js";
 import { DFUSE_SUFFIX_BYTES } from "./firmware/dfuse.js";
 import { ESP8266_REFUSAL } from "./firmware/espImage.js";
+import { espIdfCrc32 } from "./firmware/espNvsItemDecoder.js";
 import { twoVolumeUbiImage } from "./firmware/ubiImage.fixture.js";
 import { buildIso9660Image } from "./iso9660/iso9660.fixture.js";
 import { ISO9660_DESCRIPTOR_OFFSET } from "./iso9660/iso9660Structures.js";
+import {
+  interleaveMegaDriveSmd,
+  megaDriveRom,
+} from "./megaDriveRom.fixture.js";
+import { N64_MAX_ROM_BYTES } from "./n64Rom.js";
+import { n64RomImage } from "./n64Rom.fixture.js";
 
 /** A classic iNES header declaring one 16 KiB PRG bank, with no bank bytes. */
 const headerOnlyInes = (): Buffer => {
@@ -96,6 +103,56 @@ it.each([
   });
 });
 
+it("recognizes a Nintendo 64 ROM in every byte order", () => {
+  for (const order of ["z64", "v64", "n64"] as const) {
+    const encoded = n64RomImage({ order }).encoded;
+    expect(recognize(encoded)).toMatchObject({
+      state: "recognized",
+      format: "n64-rom",
+    });
+  }
+});
+
+it("refuses an odd or implausible Nintendo 64 image and still names an oversized one", () => {
+  const encoded = n64RomImage().encoded;
+  // A z64 image needs no swap, so its length is free; v64 swaps halves and
+  // n64 reverses words.
+  expect(recognize(Buffer.concat([encoded, Buffer.from([0])]))).toMatchObject({
+    state: "recognized",
+    format: "n64-rom",
+  });
+  for (const [order, extra] of [
+    ["v64", 1],
+    ["n64", 2],
+  ] as const) {
+    const odd = Buffer.concat([
+      n64RomImage({ order }).encoded,
+      Buffer.alloc(extra),
+    ]);
+    expect(recognize(odd)).toMatchObject({
+      state: "refused",
+      format: "n64-rom",
+      reason: expect.stringMatching(
+        new RegExp(`${order} ROM length .* multiple of .*normalized$`, "u"),
+      ),
+    });
+  }
+  const badBoot = n64RomImage({ bootAddress: 0 }).encoded;
+  expect(recognize(badBoot)).toMatchObject({
+    state: "refused",
+    format: "n64-rom",
+    reason: expect.stringContaining("Boot address"),
+  });
+  expect(recognize(encoded.subarray(0, 32))).toBeUndefined();
+  expect(
+    recognizeArtifactFormat({
+      prefix: encoded,
+      fileSize: N64_MAX_ROM_BYTES + 4,
+      espFlashLayout: false,
+    }),
+  ).toMatchObject({ state: "recognized", format: "n64-rom" });
+});
+
 it("asks for the DFU trailer only when the prefix claims DfuSe", () => {
   const bytes = dfuseFile({
     targets: [{ alternateSetting: 0, elements: [{ address: 0, data: [1] }] }],
@@ -155,6 +212,14 @@ it("recognizes Android boot and vendor boot image prefixes", () => {
     });
 });
 
+it("recognizes Android DTBO partition table magic prefixes", () => {
+  expect(recognize(Buffer.from([0xd7, 0xb7, 0xab, 0x1e]))).toMatchObject({
+    state: "recognized",
+    format: "android-dtbo",
+  });
+  expect(recognize(Buffer.from([0xd7, 0xb7, 0xab]))).toBeUndefined();
+});
+
 it("recognizes a standalone AVB0 vbmeta image and leaves an AVBf footer", () => {
   expect(recognize(sampleAndroidVbmeta())).toMatchObject({
     state: "recognized",
@@ -171,6 +236,35 @@ it("recognizes a CrAU v2 payload after the uImage magic check", () => {
   expect(recognize(fullAndroidOtaPayload())).toMatchObject({
     state: "recognized",
     format: "android-ota-payload",
+  });
+});
+
+it("recognizes an auditd log by its first record and leaves plain text alone", () => {
+  const record = Buffer.from(
+    "type=SYSCALL msg=audit(1700000000.123:1000): arch=c000003e syscall=59 success=yes\n",
+  );
+  expect(recognize(record)).toMatchObject({
+    state: "recognized",
+    format: "auditd-log",
+  });
+  expect(recognize(Buffer.from("just some text\nand more\n"))).toBeUndefined();
+});
+
+it("decides an auditd claim on a multi-megabyte prefix without overflowing the stack", () => {
+  // Format recognition hands every candidate the whole leading buffer, and
+  // byte-faithful header decoding spreads its code points into one call. A
+  // single spread over a buffer this size throws RangeError instead of
+  // answering, which turned every large text member into an adapter failure.
+  const binary = Buffer.alloc(4 * 1024 * 1024, 0xff);
+  expect(() => recognize(binary)).not.toThrow();
+  expect(recognize(binary)).toBeUndefined();
+  const record = Buffer.concat([
+    Buffer.from("type=SYSCALL msg=audit(1700000000.123:1000): body\n"),
+    Buffer.alloc(4 * 1024 * 1024, 0x41),
+  ]);
+  expect(recognize(record)).toMatchObject({
+    state: "recognized",
+    format: "auditd-log",
   });
 });
 
@@ -389,6 +483,54 @@ it("recognizes a Debian package ar archive whose first member is debian-binary",
   });
 });
 
+it("recognizes a Mega Drive image and an SMD dump, and yields to ELF", () => {
+  const plain = megaDriveRom();
+  expect(recognize(plain)).toMatchObject({
+    state: "recognized",
+    format: "mega-drive-rom",
+  });
+  const smd = interleaveMegaDriveSmd(megaDriveRom({ imageBytes: 16 * 1024 }));
+  expect(recognize(smd)).toMatchObject({
+    state: "recognized",
+    format: "mega-drive-rom",
+  });
+  expect(
+    recognizeArtifactFormat({
+      prefix: smd.subarray(0, 4096),
+      fileSize: smd.length,
+      espFlashLayout: false,
+    }),
+  ).toMatchObject({ state: "recognized", format: "mega-drive-rom" });
+  // 233 and 489 blocks put 0xE9, the ESP image magic, in the copier
+  // header's block-count byte. The SMD signature is decided before the ESP
+  // image, and before the ESP flash layout needs another read. The prefix
+  // reaches the ISO 9660 descriptor at 32 KiB, as inventory routes read it.
+  for (const blocks of [233, 489]) {
+    const collides = interleaveMegaDriveSmd(
+      megaDriveRom({ imageBytes: blocks * 16 * 1024 }),
+    );
+    expect(collides[0]).toBe(0xe9);
+    for (const espFlashLayout of [false, undefined])
+      expect(
+        recognizeArtifactFormat({
+          prefix: collides.subarray(0, 0x9000),
+          fileSize: collides.length,
+          espFlashLayout,
+        }),
+      ).toMatchObject({ state: "recognized", format: "mega-drive-rom" });
+  }
+  const elf = megaDriveRom();
+  elf[0] = 0x7f;
+  elf[1] = 0x45;
+  elf[2] = 0x4c;
+  elf[3] = 0x46;
+  expect(recognize(elf)?.format).not.toBe("mega-drive-rom");
+  const mz = megaDriveRom();
+  mz[0] = 0x4d;
+  mz[1] = 0x5a;
+  expect(recognize(mz)?.format).not.toBe("mega-drive-rom");
+});
+
 it("does not recognize a plain ar archive that is not a Debian package", () => {
   const plainAr = minimalAr([{ name: "hello.o", data: "object" }]);
   expect(recognize(plainAr)).toBeUndefined();
@@ -398,4 +540,24 @@ it("does not recognize a plain ar archive that is not a Debian package", () => {
   ]);
   expect(recognize(lateDebianBinary)).toBeUndefined();
   expect(recognize(Buffer.from("!<arch>\n", "ascii"))).toBeUndefined();
+});
+
+it("recognizes a standalone ESP-IDF NVS partition and ignores erased or unaligned files", () => {
+  const nvs = Buffer.alloc(4096, 0xff);
+  nvs.writeUInt32LE(0xffff_fffe, 0);
+  nvs.writeUInt32LE(1, 4);
+  nvs[8] = 0xfe;
+  nvs.writeUInt32LE(espIdfCrc32(nvs.subarray(4, 28)), 28);
+  expect(recognize(nvs)).toMatchObject({
+    state: "recognized",
+    format: "esp-nvs",
+  });
+  expect(recognize(Buffer.alloc(4096, 0xff))).toBeUndefined();
+  expect(
+    recognizeArtifactFormat({
+      prefix: nvs,
+      fileSize: 4100,
+      espFlashLayout: false,
+    }),
+  ).toBeUndefined();
 });

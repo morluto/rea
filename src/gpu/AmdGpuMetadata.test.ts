@@ -193,3 +193,17 @@ it("accepts non-negative signed MessagePack integer keys and rejects negative or
     ),
   ).toThrow(expect.objectContaining({ kind: "unsupported" }));
 });
+
+it("admits float32 and float64 scalars under a small maxTokenBytes budget", () => {
+  const float64Map = Buffer.from([
+    0x81, 0xa1, 0x61, 0xcb, 0x3f, 0xf8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  ]);
+  expect(
+    readAmdMetadata(float64Map, "string", undefined, {
+      maxMetadataBytes: 1024,
+      maxParserVisits: 100,
+      maxParserEntries: 100,
+      maxTokenBytes: 4,
+    }),
+  ).toEqual({ a: 1.5 });
+});

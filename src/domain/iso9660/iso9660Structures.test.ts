@@ -544,6 +544,63 @@ it("requires . and .. to reference the directory and its parent", () => {
     );
 });
 
+it("checks a .. that names its own directory against that directory's lengths", () => {
+  const { bytes, layout } = buildIso9660Image({
+    files: [{ path: "sub/a.txt", bytes: Buffer.from("a") }],
+  });
+  const subBlock = layout.directoryBlocks.get("sub")!;
+  const start = subBlock * ISO9660_SECTOR_BYTES;
+  // The parent's lengths differ from the directory's, so only a check against
+  // the directory itself accepts the self-describing .. record.
+  const parent = {
+    extentLocation: layout.directoryBlocks.get("")!,
+    dataLength: 2 * ISO9660_SECTOR_BYTES,
+    extendedAttributeLength: 1,
+  };
+  const listing = (damage: (extent: Buffer) => void = () => {}) => {
+    const extent = Buffer.from(
+      bytes.subarray(start, start + ISO9660_SECTOR_BYTES),
+    );
+    extent.copy(extent, 34 + 2, 2, 18);
+    damage(extent);
+    return () =>
+      recordsOf(
+        parseIso9660DirectoryExtent(extent, start, () => {}, ONE_VOLUME, {
+          self: directoryLink(subBlock),
+          parent,
+          parentMayBeSelf: true,
+        }),
+      );
+  };
+  expect(listing()()).toHaveLength(3);
+  for (const [field, offset, damage] of [
+    [
+      "data_length",
+      34 + 10,
+      (extent: Buffer) => {
+        extent.writeUInt32LE(parent.dataLength, 34 + 10);
+        extent.writeUInt32BE(parent.dataLength, 34 + 14);
+      },
+    ],
+    [
+      "extended_attribute_length",
+      34 + 1,
+      (extent: Buffer) => {
+        extent[34 + 1] = parent.extendedAttributeLength;
+      },
+    ],
+  ] as const)
+    expect(listing(damage)).toThrow(
+      expect.objectContaining({
+        failure: expect.objectContaining({
+          kind: "malformed",
+          offset: start + offset,
+          field,
+        }),
+      }),
+    );
+});
+
 it("rejects a reserved . or .. identifier after the opening pair", () => {
   for (const identifier of ["\u0000", "\u0001"]) {
     const { bytes, layout } = buildIso9660Image({

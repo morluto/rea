@@ -1565,8 +1565,9 @@ changes nothing:
 | Preprocessor directives                                                                                                                                                        | refused            | refused except `#pragma pack` in a form Ghidra applies: decimal values from 0 through 2147483647, a `push` with a value or label, a `pop` that matches an admitted push |
 | String and character literals                                                                                                                                                  | refused            | refused                                                                                                                                                                 |
 | Function body, default argument, second declaration                                                                                                                            | refused            | not applicable                                                                                                                                                          |
-| Function pointers                                                                                                                                                              | refused            | refused                                                                                                                                                                 |
-| Any parenthesis in a definition (Ghidra stores no parenthesized form there as written)                                                                                         | not applicable     | refused                                                                                                                                                                 |
+| Function pointers `ret (*name)(parameters)`, `(**name)`, `(*name[N])` as members or typedefs                                                                                   | refused            | applied; see below                                                                                                                                                      |
+| In a function pointer: `()` (Ghidra stores `(void)`), a calling convention inside the parenthesis, `_Noreturn`, a nested function-pointer parameter, an untyped parameter      | not applicable     | refused                                                                                                                                                                 |
+| Any other parenthesis in a definition, such as a grouped declarator or a function type (Ghidra stores none of them as written)                                                 | not applicable     | refused                                                                                                                                                                 |
 | Unnamed enum; unnamed struct or union other than `typedef struct { } name`                                                                                                     | refused            | refused                                                                                                                                                                 |
 | Repeated parameter or member name; struct, union or enum without members (Ghidra invents one for an undefined tag)                                                             | refused            | refused                                                                                                                                                                 |
 | Array parameter (Ghidra stores a pointer)                                                                                                                                      | refused            | not applicable                                                                                                                                                          |
@@ -1576,6 +1577,26 @@ changes nothing:
 | `#pragma pack`, bit-fields, flexible and zero-length arrays, enum values, several typedef declarators                                                                          | not applicable     | applied; the stored layout shows them                                                                                                                                   |
 | `_Noreturn`, a calling convention the compiler specification defines                                                                                                           | applied            | not applicable                                                                                                                                                          |
 | `const`, `volatile`, `restrict`, `__unaligned`, `__w64`                                                                                                                        | accepted, reported | accepted, reported                                                                                                                                                      |
+
+A function-pointer member or typedef, including one after a comma as in
+`int (*open)(int), (*close)(int);`, is stored as a pointer to a function
+type in `/rea_caller_defined`, named `owner.member` for a member (for example
+`/rea_caller_defined/ops.open`) and `typedef.target` for a typedef. Ghidra's
+parser names these types by a counter that restarts with every call, so REA
+names them by declarator: repeating an equivalent definition reports
+`unchanged`, and a differing one is refused. `inspect_native_data_type`
+reports such a type with `kind: "function"` and its `function_definition`:
+return type, parameters with their names, `varargs` and `calling_convention`.
+A calling convention written before the parenthesis, as in
+`int __stdcall (*name)(int)`, is stored by name as written, whether or not the
+program's compiler specification defines it; inside the parenthesis Ghidra
+drops it, so REA refuses that spelling. `()` is refused because Ghidra stores
+it as `(void)`; write `(void)`. A parameter that is itself a function pointer
+gets a function type named after the parameter, so REA refuses it: define a
+typedef for the inner function pointer and use its name. In a signature or
+a function pointer, a repeated parameter name is refused, and so is a
+parameter written as a bare name that is not a type, such as a K&R identifier
+list, which Ghidra would store as `undefined`.
 
 These qualifiers have no representation in Ghidra's type system and no
 effect on layout or storage, so the stored type and the readback omit them.

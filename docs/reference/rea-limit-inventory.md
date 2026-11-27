@@ -61,6 +61,9 @@ override is `source: "runtime"`. The structured field is `update_mode: "runtime"
 | `javascript.analysis_timeout_ms`             | none (`analysis_timeout_ms`)                     | `src/domain/javascript/javascriptAnalysisResourceControls.ts` | 300000                                    |     1 |                             2147483647 | per operation         |
 | `javascript.max_heap_mb`                     | none (`max_heap_mb`)                             | `src/domain/javascript/javascriptAnalysisResourceControls.ts` | 1024                                      |   128 |                                  16384 | next worker           |
 | `wasm.command_timeout_ms`                    | none (`command_timeout_ms`)                      | `src/domain/wasm/wasmArtifact.ts`                             | 30000                                     |     1 |                             2147483647 | per operation         |
+| `yara.command_timeout_ms`                    | `REA_YARA_COMMAND_TIMEOUT_MS`                    | `src/domain/yara/yaraMatches.ts`                              | 60000                                     |     1 |                             2147483647 | per operation         |
+| `yara.max_output_bytes`                      | `REA_YARA_MAX_OUTPUT_BYTES`                      | `src/domain/yara/yaraMatches.ts`                              | 67108864                                  |  4096 |                             1073741824 | per operation         |
+| `yara.max_matches`                           | `REA_YARA_MAX_MATCHES`                           | `src/domain/yara/yaraMatches.ts`                              | 256                                       |     1 |                                 100000 | per operation         |
 | `native.matching_representation_bytes`       | `REA_NATIVE_MATCHING_REPRESENTATION_BYTES`       | `src/domain/analysisResourceLimits.ts`                        | 100663296                                 |     1 |                             1073741824 | per operation         |
 | `delivery.agent_result_budget_bytes`         | `REA_AGENT_RESULT_BUDGET_BYTES`                  | `src/domain/analysisResourceLimits.ts`                        | 32768                                     |  4096 |                               10485760 | per operation         |
 | `delivery.cli_retained_evidence_bytes`       | `REA_CLI_RETAINED_EVIDENCE_BYTES`                | `src/domain/analysisResourceLimits.ts`                        | 268435456                                 |     0 |                            68719476736 | per CLI invocation    |
@@ -188,6 +191,7 @@ or logger.
 | `REA_WABT_BIN_DIRECTORY`             | `src/wasm/WabtArtifactProvider.ts`                 | Filesystem root of the WABT tools.          |
 | `REA_WAKARU_COMMAND`                 | `src/application/SetupRegistrationEnvironment.ts`  | Caller-selected command.                    |
 | `REA_XPROP_COMMAND`                  | `src/application/desktop/DesktopCaptureFailure.ts` | Caller-selected command.                    |
+| `REA_YARA_COMMAND`                   | `src/application/SetupRegistrationEnvironment.ts`  | Caller-selected command.                    |
 
 `REA_MANAGED_LINUX_HOPPER_LAUNCHER` is a fixed path constant, and
 `REA_WORKFLOW_PROVIDER` is a provider identity object. Neither is an
@@ -253,3 +257,15 @@ including IL2CPP's remaining allowances),
 [#14236](https://github.com/morluto/rea/issues/14236) (archive and container
 readers) and [#14237](https://github.com/morluto/rea/issues/14237) (producer
 output and capture).
+
+Additional `inspect_gpu_code_objects` per-call parameters (heap-bound allowances keep their existing ceilings):
+
+| Operation                  | Parameter            |   Default | Floor |   Maximum | Owner                                     |
+| -------------------------- | -------------------- | --------: | ----: | --------: | ----------------------------------------- |
+| `inspect_gpu_code_objects` | `max_object_bytes`   | 134217728 |     1 | 134217728 | `src/domain/gpu/gpuCodeObjectsBudgets.ts` |
+| `inspect_gpu_code_objects` | `max_work_bytes`     | 536870912 |     1 | 536870912 | `src/domain/gpu/gpuCodeObjectsBudgets.ts` |
+| `inspect_gpu_code_objects` | `max_report_bytes`   |  16777216 |     1 |  16777216 | `src/domain/gpu/gpuCodeObjectsBudgets.ts` |
+| `inspect_gpu_code_objects` | `max_metadata_bytes` |   8388608 |     1 |   8388608 | `src/domain/gpu/gpuCodeObjectsBudgets.ts` |
+| `inspect_gpu_code_objects` | `max_parser_entries` |     65536 |     1 |     65536 | `src/domain/gpu/gpuCodeObjectsBudgets.ts` |
+| `inspect_gpu_code_objects` | `max_parser_visits`  |    262144 |     1 |    262144 | `src/domain/gpu/gpuCodeObjectsBudgets.ts` |
+| `inspect_gpu_code_objects` | `max_token_bytes`    |     65536 |     1 |     65536 | `src/domain/gpu/gpuCodeObjectsBudgets.ts` |

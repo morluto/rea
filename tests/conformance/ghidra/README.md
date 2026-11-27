@@ -80,11 +80,15 @@ no-overwrite CLI delivery. It checks the target and project files for changes.
   that `analyze_function` still returns that function's assembly, callers,
   callees, references and basic blocks unchanged, marks pseudocode, native API
   and p-code value flow unavailable with the decompiler's reason, and that
-  cancellation still ends the request. It also injects a read-ahead window
-  whose carrying function times out beside a sibling that never finishes, and
-  checks that the request reports that timeout without decompiling again,
-  waits only within its own deadline, leaves the cancelled sibling uncached,
-  uses REA's own thread pool, and clamps a longer hint to one window. It
+  cancellation still ends the request. It also injects read-ahead workers and
+  checks that the carrying request decompiles its own function without waiting
+  for workers to start; that workers match the queued work and none start for a
+  single function; that a queued function is decompiled by its own request; that
+  a finished or running worker result, including a timeout, is reported without
+  decompiling again; that cancelling a waiting request cancels the running
+  worker; that workers still opening are closed when read-ahead is disposed; that
+  four real decompilers open the Program concurrently; that REA's own thread
+  pool is used; and that a longer hint is clamped to one window. It
   checks that a read without decompiler options keeps the configured payload
   limit and completed decompiles while an explicit `null` restores the Ghidra
   default, and that a repeated decompile of code outside every function keeps

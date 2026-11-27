@@ -32,9 +32,11 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [Go binary build metadata](guides/native/go-binaries.md)
 - [DWARF compile units](guides/native/dwarf-units.md)
 - [Offline binary diagnostics](guides/native/binary-diagnostics.md)
+- [YARA rule matches](guides/native/yara-matches.md)
 - [ELF separate debug files](guides/native/elf-debug-link.md)
 - [ELF and Mach-O initializer functions](guides/native/native-initializers.md)
 - [ELF unwind function ranges](guides/native/elf-unwind-ranges.md)
+- [Mach-O function starts and data in code](guides/native/macho-function-starts.md)
 - [Linux kernel build config](guides/native/kernel-build-config.md)
 - [Recorded crash evidence](guides/native/recorded-crashes.md)
 - [Windows Shell Link shortcuts](guides/native/windows-shortcut.md)
@@ -50,6 +52,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [PE overlay](guides/native/pe-overlay.md)
 - [Match native functions across builds](native-function-matching.md)
 - [Rust binary dependency metadata](rust-binaries.md)
+- [LabVIEW RSRC containers](guides/native/labview-analysis.md)
 - [Static CUDA and HIP code objects](gpu-code-objects.md)
 
 ## JavaScript and Electron
@@ -87,6 +90,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [ADB device inspection and acquisition](guides/android/adb-device-analysis.md)
 - [Flutter build identification](guides/android/flutter-analysis.md)
 - [Android boot and vendor_boot images](android-boot-image.md)
+- [Android DTBO partition images](android-dtbo.md)
 - [APK signature schemes](apk-signature.md)
 
 ## Apple applications
@@ -111,6 +115,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [UBI images](guides/firmware/ubi-images.md)
 - [Flattened devicetree inspection](devicetree.md)
 - [ESP flash images](esp-flash-image.md)
+- [ESP-IDF NVS partitions](guides/firmware/esp-nvs.md)
 - [ESP images](esp-image.md)
 - [U-Boot FIT images](fit-images.md)
 - [Qualcomm MBN images](guides/firmware/qualcomm-mbn-images.md)
@@ -141,12 +146,15 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [UnityFS AssetBundle archives](unityfs.md)
 - [iNES containers](ines-containers.md)
 - [Nintendo DS ROMs](guides/firmware/nds-roms.md)
+- [Sega Mega Drive ROMs](guides/firmware/mega-drive-roms.md)
+- [Nintendo 64 ROMs](guides/firmware/n64-roms.md)
 - [WeChat mini-program wxapkg archives](wxapkg.md)
 - [macOS flat installer packages](macos-pkg.md)
 - [ISO 9660 disc images](guides/firmware/iso9660-images.md)
 - [tar and gzip-compressed tar archives](tar-archives.md)
 - [Nintendo Switch NSO and NRO executables](guides/firmware/switch-executables.md)
 - [GPU asset headers: DDS, GLB, KTX and KTX2](gpu-asset-headers.md)
+- [Media asset headers: Ogg Opus, RIFF/XMA2, Bink 2 and Vulkan pipeline cache](media-asset-headers.md)
 
 ## WebAssembly
 

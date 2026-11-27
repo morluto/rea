@@ -76,24 +76,23 @@ const indexedMetadataText = (
       continue;
     const text = child.textContent ?? "";
     if (!text) continue;
-    // XDocument ignores ordinary XML whitespace. CDATA and xml:space can
-    // retain a whitespace-only value that occupies this key in NuGet's index.
-    if (/[^\t\r\n ]/u.test(text)) return text.trim() || null;
-    if (
-      Array.from(child.childNodes).some(
-        (node) => node.nodeType === 4 && node.nodeValue,
-      )
-    )
-      return null;
     for (
       let scope: Node | null = child;
       isXmlElement(scope);
       scope = scope.parentNode
     ) {
       const space = scope.getAttribute("xml:space");
-      if (space === "preserve") return null;
+      if (space === "preserve") return text.trim() === "" ? null : text;
       if (space === "default") break;
     }
+    if (/[^\t\r\n ]/u.test(text)) return text.trim() || null;
+    // A blank CDATA value still occupies the first matching key.
+    if (
+      Array.from(child.childNodes).some(
+        (node) => node.nodeType === 4 && node.nodeValue,
+      )
+    )
+      return null;
   }
   return null;
 };

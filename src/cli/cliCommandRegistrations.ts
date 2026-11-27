@@ -95,6 +95,10 @@ export const CLI_COMMAND_REGISTRATIONS = {
     "registerReleaseExposureCommands",
   ),
   go: cliRegistrar(() => import("./goCommands.js"), "registerGoCommands"),
+  labview: cliRegistrar(
+    () => import("./labviewCommands.js"),
+    "registerLabviewCommands",
+  ),
   il2cpp: cliRegistrar(
     () => import("./il2cppCommands.js"),
     "registerIl2cppCommands",
@@ -124,6 +128,10 @@ export const CLI_COMMAND_REGISTRATIONS = {
   ociImageLayout: cliRegistrar(
     () => import("./ociImageLayoutCommands.js"),
     "registerOciImageLayoutCommands",
+  ),
+  yara: cliRegistrarWithEnvironment(
+    () => import("./yaraCommands.js"),
+    "registerYaraCommands",
   ),
   erlang: cliRegistrar(
     () => import("./erlangCommands.js"),
@@ -327,6 +335,7 @@ const CLI_FAMILY_REGISTRATIONS: {
     "releaseExposure",
     "go",
     "il2cpp",
+    "labview",
     "model",
     "gpu",
     "rust",
@@ -335,6 +344,7 @@ const CLI_FAMILY_REGISTRATIONS: {
     "nugetNupkg",
     "vsixPackage",
     "ociImageLayout",
+    "yara",
     "erlang",
     "v8CodeCache",
     "mavenGradleMetadata",

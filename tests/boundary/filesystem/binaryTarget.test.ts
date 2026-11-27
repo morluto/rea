@@ -80,6 +80,12 @@ import {
   ktx2Fixture,
   ktxFixture,
 } from "../../../src/artifacts/gpuAsset/gpuAsset.fixture.js";
+import {
+  bink2Fixture,
+  oggOpusFixture,
+  riffXma2Fixture,
+  vulkanPipelineCacheFixture,
+} from "../../../src/artifacts/mediaAsset/mediaAsset.fixture.js";
 
 it.each([
   [4000, false],
@@ -1008,6 +1014,23 @@ it("classifies DDS, GLB, KTX and KTX2 files as archive targets by their headers"
     ["ktx2", ktx2Fixture()],
   ] as const) {
     // An unrelated extension: detection reads the header, not the name.
+    const path = join(directory, `${format}.bin`);
+    await writeFile(path, bytes);
+    expect(await parseBinaryTarget(path)).toMatchObject({
+      ok: true,
+      value: { kind: "archive", format },
+    });
+  }
+});
+
+it("classifies Ogg Opus, RIFF XMA2, Bink 2 and Vulkan pipeline cache files as archive targets by their headers", async () => {
+  const directory = await createTestTempDirectory("rea-media-asset-target-");
+  for (const [format, bytes] of [
+    ["ogg-opus", oggOpusFixture()],
+    ["riff-xma2", riffXma2Fixture()],
+    ["bink2", bink2Fixture()],
+    ["vulkan-pipeline-cache", vulkanPipelineCacheFixture()],
+  ] as const) {
     const path = join(directory, `${format}.bin`);
     await writeFile(path, bytes);
     expect(await parseBinaryTarget(path)).toMatchObject({

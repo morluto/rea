@@ -4,9 +4,11 @@ import type { ElfDebugLink } from "./native/elfDebugLink.js";
 import type { ElfDependencies } from "./native/elfDependencies.js";
 import type { ElfNotes } from "./native/elfNotes.js";
 import type { ElfUnwindRanges } from "./native/elfUnwindRanges.js";
+import type { MachoFunctionStarts } from "./native/machoFunctionStarts.js";
 import type { PeUnwindRanges } from "./native/peUnwindRanges.js";
 import type { KernelBuildConfig } from "./native/kernelBuildConfig.js";
 import type { KernelModule } from "./native/kernelModule.js";
+import type { EspNvsReport } from "./firmware/espNvs.js";
 import type { V8CodeCache } from "./v8/v8CodeCache.js";
 import type { InterfaceBuilderAnalysis } from "./apple/interfaceBuilderGraph.js";
 import type { PartialTaskMeasurement } from "./desktop/taskDifficulty.js";
@@ -726,6 +728,7 @@ import type { CutterBridgeDiscovery } from "./cutterDiscovery.js";
 
 import type { WebTraceObservation } from "./webTraceObservation.js";
 import type { WebArtifactAcquisition } from "./webArtifactAcquisition.js";
+import type { YaraMatches } from "./yara/yaraMatches.js";
 
 /** Provider-neutral evidence collected before a typed analysis failure. */
 export type AnalysisPartialObservation =
@@ -735,6 +738,7 @@ export type AnalysisPartialObservation =
   | ElfDependencies
   | ElfNotes
   | ElfUnwindRanges
+  | MachoFunctionStarts
   | PeUnwindRanges
   | KernelBuildConfig
   | KernelModule
@@ -802,4 +806,6 @@ export type AnalysisPartialObservation =
   | AdbActivityStartPartialObservation
   | AdbAcquiredFilePartialObservation
   | AdbPackagePullPartialObservation
-  | AdbDisplayPartialObservation;
+  | AdbDisplayPartialObservation
+  | EspNvsReport
+  | YaraMatches;

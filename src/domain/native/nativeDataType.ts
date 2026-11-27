@@ -23,7 +23,7 @@ export const nativeDataTypeDefinitionsInputSchema = z.strictObject({
     .string()
     .min(1)
     .describe(
-      "C struct, union, enum and typedef definitions, e.g. `struct session { int id; char name[32]; struct session *next; };`. Members may use earlier definitions and existing database types.",
+      "C struct, union, enum and typedef definitions, e.g. `struct session { int id; char name[32]; struct session *next; };`. Members may use earlier definitions and existing database types. Function pointers are members or typedefs of the form `ret (*name)(params)`.",
     ),
   declarations_max_utf16: z
     .int()
@@ -90,6 +90,7 @@ export const nativeDataTypeSchema = z.strictObject({
     "pointer",
     "array",
     "typedef",
+    "function",
     "scalar",
     "unsupported",
     "unavailable",
@@ -107,6 +108,25 @@ export const nativeDataTypeSchema = z.strictObject({
   referenced_type: z.string().nullable(),
   array_count: z.int().nonnegative().nullable(),
   array_stride_bytes: z.int().nonnegative().nullable(),
+  function_definition: z
+    .strictObject({
+      return_type: z.string(),
+      parameters: z.array(
+        z.strictObject({ name: z.string().nullable(), type: z.string() }),
+      ),
+      total_parameters: z.int().nonnegative(),
+      parameters_truncated: z
+        .boolean()
+        .describe(
+          "At most 20000 parameters are serialized; total_parameters counts all of them",
+        ),
+      varargs: z.boolean(),
+      calling_convention: z.string(),
+    })
+    .optional()
+    .describe(
+      "The prototype of a function type, such as the target of a function-pointer member; present only when kind is function",
+    ),
   fields: z.array(
     z.strictObject({
       ordinal: z.int().nonnegative(),
