@@ -31,6 +31,7 @@ import java.security.MessageDigest;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -48,6 +49,10 @@ import java.util.TreeSet;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
@@ -61,6 +66,11 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.stream.JsonWriter;
 
+import generic.concurrent.ConcurrentQ;
+import generic.concurrent.ConcurrentQBuilder;
+import generic.concurrent.GThreadPool;
+import generic.concurrent.QResult;
+
 import ghidra.app.util.headless.HeadlessScript;
 import ghidra.app.decompiler.DecompInterface;
 import ghidra.app.decompiler.DecompileOptions;
@@ -68,6 +78,7 @@ import ghidra.app.decompiler.DecompileResults;
 import ghidra.app.decompiler.DecompiledFunction;
 import ghidra.app.decompiler.ClangCaseToken;
 import ghidra.app.decompiler.ClangNode;
+import ghidra.app.decompiler.parallel.DecompilerCallback;
 import ghidra.framework.Application;
 import ghidra.app.util.bin.format.pdb.PdbParserConstants;
 import ghidra.app.util.opinion.ElfLoader;
@@ -234,6 +245,32 @@ public final class ReaGhidraBridge extends HeadlessScript {
     // observe. A miss only repeats a decompile, and soft references release
     // entries under heap pressure. Ghidra's own panel keeps 10 by default.
     private static final int DECOMPILE_RESULT_ENTRIES = 32;
+    /** Decompiler processes kept between read-ahead windows of one workflow. */
+    private DecompilerCallback<DecompileResults> decompileAheadWorkers;
+    /** REA's own threads, so read-ahead never resizes or queues on Ghidra's shared pools. */
+    private GThreadPool decompileAheadThreads;
+    private static final int DECOMPILE_AHEAD_WORKERS = 8;
+    // A hint beyond the retained results would evict the window's own first
+    // results before their requests arrive, so later selectors are ignored.
+    private static final int DECOMPILE_AHEAD_WINDOW = DECOMPILE_RESULT_ENTRIES;
+    // Fixed: read-ahead serves consecutive requests of one workflow, which
+    // arrive milliseconds apart. After this idle time the pooled native
+    // decompiler processes are released; a later window starts them again.
+    private static final long DECOMPILE_AHEAD_IDLE_MILLIS = 30_000;
+    private final Object decompileAheadLock = new Object();
+    private final ScheduledExecutorService decompileAheadReaper =
+        Executors.newSingleThreadScheduledExecutor(task -> {
+            Thread thread = new Thread(task, "REA decompile read-ahead reaper");
+            thread.setDaemon(true);
+            return thread;
+        });
+    private ScheduledFuture<?> decompileAheadIdleRelease;
+    /**
+     * The read-ahead result for the request that carried the window: that
+     * request consumes it whatever its outcome instead of decompiling again.
+     */
+    private DecompileCacheKey decompileAheadForegroundKey;
+    private DecompileResults decompileAheadForeground;
     private boolean existingProject;
     // A refused Program may only report its admission failure to the client.
     private String identityAdmissionFailure;
@@ -328,6 +365,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
             serve(descriptor);
         }
         finally {
+            disposeDecompileAhead();
+            decompileAheadReaper.shutdownNow();
+            if (decompileAheadThreads != null) decompileAheadThreads.shutdownNow();
             if (decompiler != null) {
                 decompiler.dispose();
                 decompiler = null;
@@ -657,7 +697,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
             case "procedure_callees" -> procedureCalls(request.params, false);
             case "procedure_callers" -> procedureCalls(request.params, true);
             case "procedure_info" -> procedureInfo(request.params);
-            case "procedure_pseudo_code" -> procedurePseudocode(request.params);
+            case "procedure_pseudo_code" -> {
+                try {
+                    decompileAhead(request.decompileReadAhead());
+                    yield procedurePseudocode(request.params);
+                }
+                finally {
+                    // An unconsumed foreground result belongs to this request only.
+                    clearDecompileAheadForeground();
+                }
+            }
             case "read_function_instructions" -> readFunctionInstructions(request.params);
             case "procedure_references" -> procedureReferences(request.params);
             case "resolve_containing_procedure" -> containingProcedure(request.params);
@@ -1388,6 +1437,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             throw new RequestFailure("decompile_options_failed", "Ghidra could not apply the selected native decompiler payload limit");
         decompiler.flushCache();
         decompileResults.clear();
+        disposeDecompileAhead();
         decompileMaxPayloadMiB = payloadMiB;
     }
 
@@ -2003,6 +2053,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         procedureInventory = null;
         procedureNameIndex = null;
         decompileResults.clear();
+        disposeDecompileAhead();
         if (decompiler != null) decompiler.flushCache();
     }
 
@@ -4786,7 +4837,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
         SoftReference<DecompileResults> retained = decompileResults.get(key);
         DecompileResults reused = retained == null ? null : retained.get();
         if (reused != null) return reused;
-        DecompileResults results = decompiler.decompileFunction(
+        DecompileResults results = takeDecompileAheadForeground(key);
+        // A failure or timeout read ahead for this request already spent its
+        // deadline, so it is reported rather than started again.
+        if (results == null) results = decompiler.decompileFunction(
             function,
             decompileTimeoutSeconds,
             monitor
@@ -4816,6 +4870,181 @@ public final class ReaGhidraBridge extends HeadlessScript {
         // Only a completed decompilation is reusable; failures stay retryable.
         decompileResults.put(key, new SoftReference<>(results));
         return results;
+    }
+
+    /**
+     * Decompile the functions a workflow will ask for next with several
+     * decompiler processes and keep the completed results for those requests.
+     * The first selector is the carrying request's own function. That request
+     * waits for the window only within its own decompile deadline: siblings
+     * still running when it has its result and the deadline has passed are
+     * cancelled and left for their own requests, which report any failure as
+     * before.
+     */
+    private void decompileAhead(List<String> selectors) throws Exception {
+        clearDecompileAheadForeground();
+        if (selectors.size() < 2) return;
+        long modification = currentProgram.getModificationNumber();
+        List<Function> pending = new ArrayList<>();
+        Set<Address> seen = new HashSet<>();
+        Address foreground = null;
+        for (int index = 0; index < selectors.size(); index++) {
+            Function function;
+            try {
+                function = resolveProcedure(selectors.get(index));
+            } catch (RequestFailure unresolved) {
+                continue;
+            }
+            if (function.isExternal() || function.getBody().isEmpty() || !seen.add(function.getEntryPoint())) continue;
+            SoftReference<DecompileResults> retained = decompileResults.get(
+                new DecompileCacheKey(function.getEntryPoint(), false, modification, decompileMaxPayloadMiB));
+            if (retained != null && retained.get() != null) continue;
+            if (index == 0) foreground = function.getEntryPoint();
+            pending.add(function);
+        }
+        if (pending.size() < 2) return;
+        Integer payloadMiB = decompileMaxPayloadMiB;
+        synchronized (decompileAheadLock) {
+            if (decompileAheadIdleRelease != null) decompileAheadIdleRelease.cancel(false);
+            if (decompileAheadThreads == null) {
+                decompileAheadThreads = GThreadPool.getPrivateThreadPool("REA decompile read-ahead");
+                // Each worker is a native decompiler process with its own view
+                // of the Program, so the worker count bounds memory as well as
+                // CPU. Fixed: it shapes how the same results are produced, never
+                // what a caller observes, and the host's processor count caps it.
+                decompileAheadThreads.setMaxThreadCount(
+                    Math.max(1, Math.min(Runtime.getRuntime().availableProcessors(), DECOMPILE_AHEAD_WORKERS)));
+            }
+            if (decompileAheadWorkers == null) {
+                decompileAheadWorkers = new DecompilerCallback<>(currentProgram, prepared -> {
+                    prepared.setOptions(decompileOptions(payloadMiB));
+                    prepared.toggleCCode(true);
+                    prepared.toggleSyntaxTree(true);
+                    prepared.toggleJumpLoads(true);
+                }) {
+                    @Override
+                    public DecompileResults process(DecompileResults results, TaskMonitor taskMonitor) {
+                        return results;
+                    }
+                };
+            }
+            decompileAheadWorkers.setTimeout(decompileTimeoutSeconds);
+            try {
+                for (DecompileResults results : decompileWindow(pending, foreground)) {
+                    Address entry = results.getFunction().getEntryPoint();
+                    DecompileCacheKey key = new DecompileCacheKey(entry, false, modification, payloadMiB);
+                    if (entry.equals(foreground)) {
+                        decompileAheadForegroundKey = key;
+                        decompileAheadForeground = results;
+                    }
+                    if (results.decompileCompleted() && !results.isCancelled() && !results.isTimedOut())
+                        decompileResults.put(key, new SoftReference<>(results));
+                }
+            }
+            finally {
+                decompileAheadIdleRelease = decompileAheadReaper.schedule(
+                    this::releaseIdleDecompileAhead, DECOMPILE_AHEAD_IDLE_MILLIS,
+                    TimeUnit.MILLISECONDS);
+            }
+        }
+        monitor.checkCancelled();
+    }
+
+    /**
+     * Run one window and return the results that finished. With a configured
+     * deadline the wait ends once the foreground function has its result
+     * (its native deadline bounds that) and the deadline has elapsed.
+     */
+    private List<DecompileResults> decompileWindow(List<Function> pending, Address foreground) throws Exception {
+        ConcurrentQ<Function, DecompileResults> queue = new ConcurrentQBuilder<Function, DecompileResults>()
+            .setCollectResults(true)
+            .setThreadPool(decompileAheadThreads)
+            .setMonitor(monitor)
+            .build(decompileAheadWorkers);
+        List<DecompileResults> finished = new ArrayList<>();
+        try {
+            queue.add(pending);
+            if (decompileTimeoutSeconds == 0) {
+                collectDecompileResults(queue.waitForResults(), finished);
+                return finished;
+            }
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(decompileTimeoutSeconds);
+            boolean foregroundDone = foreground == null;
+            while (!queue.isEmpty()) {
+                long remaining = deadline - System.nanoTime();
+                if (foregroundDone && remaining <= 0) break;
+                // Past the deadline only the foreground's own native deadline
+                // is still running, so poll briefly until it reports.
+                long wait = remaining > 0 ? remaining : TimeUnit.MILLISECONDS.toNanos(50);
+                for (DecompileResults results : collectDecompileResults(
+                        queue.waitForResults(wait, TimeUnit.NANOSECONDS), finished))
+                    if (results.getFunction().getEntryPoint().equals(foreground)) foregroundDone = true;
+            }
+            // Cancellation reaches each sibling's decompiler through its task
+            // monitor. Results that finished meanwhile are kept; cancelled
+            // ones stay uncached for their own requests.
+            if (!queue.isEmpty()) queue.cancelAllTasks(false);
+            collectDecompileResults(queue.waitForResults(), finished);
+            return finished;
+        }
+        finally {
+            queue.dispose();
+        }
+    }
+
+    private static List<DecompileResults> collectDecompileResults(
+        Collection<QResult<Function, DecompileResults>> results,
+        List<DecompileResults> finished
+    ) {
+        List<DecompileResults> added = new ArrayList<>();
+        for (QResult<Function, DecompileResults> result : results) {
+            if (result.hasError() || result.isCancelled()) continue;
+            DecompileResults value;
+            try {
+                value = result.getResult();
+            } catch (Exception unavailable) {
+                continue;
+            }
+            if (value == null || value.isCancelled() || value.getFunction() == null) continue;
+            added.add(value);
+        }
+        finished.addAll(added);
+        return added;
+    }
+
+    private DecompileResults takeDecompileAheadForeground(DecompileCacheKey key) {
+        DecompileResults results = key.equals(decompileAheadForegroundKey) ? decompileAheadForeground : null;
+        clearDecompileAheadForeground();
+        return results;
+    }
+
+    private void clearDecompileAheadForeground() {
+        decompileAheadForegroundKey = null;
+        decompileAheadForeground = null;
+    }
+
+    private void releaseIdleDecompileAhead() {
+        synchronized (decompileAheadLock) {
+            if (decompileAheadWorkers == null) return;
+            decompileAheadWorkers.dispose();
+            decompileAheadWorkers = null;
+            decompileAheadIdleRelease = null;
+        }
+    }
+
+    /**
+     * Pooled decompilers hold native state for the Program and options they
+     * opened with, so an edit, an option change or shutdown releases them.
+     */
+    private void disposeDecompileAhead() {
+        clearDecompileAheadForeground();
+        synchronized (decompileAheadLock) {
+            if (decompileAheadIdleRelease != null) decompileAheadIdleRelease.cancel(false);
+            decompileAheadIdleRelease = null;
+            if (decompileAheadWorkers == null) return;
+            decompileAheadWorkers.dispose();
+            decompileAheadWorkers = null;
+        }
     }
 
     /**
@@ -6651,6 +6880,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
             keys.add("value_flow_limits");
         if (parsed.isJsonObject() && parsed.getAsJsonObject().has("decompile_max_payload_mib"))
             keys.add("decompile_max_payload_mib");
+        if (parsed.isJsonObject() && parsed.getAsJsonObject().has("decompile_read_ahead"))
+            keys.add("decompile_read_ahead");
         JsonObject object = requireObject(parsed, keys);
         DecompilePayload payload = null;
         if (object.has("decompile_max_payload_mib")) {
@@ -6688,7 +6919,20 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (params == null || !params.isJsonObject()) {
             throw new IllegalArgumentException("Bridge request parameters are invalid");
         }
-        return new Request(id, requireString(object, "method"), params.getAsJsonObject(), timeout, payload, flowLimits);
+        List<String> readAhead = new ArrayList<>();
+        if (object.has("decompile_read_ahead")) {
+            JsonElement selectors = object.get("decompile_read_ahead");
+            if (!selectors.isJsonArray())
+                throw new IllegalArgumentException("Invalid decompile read-ahead");
+            for (JsonElement selector : selectors.getAsJsonArray()) {
+                if (!selector.isJsonPrimitive() || !selector.getAsJsonPrimitive().isString())
+                    throw new IllegalArgumentException("Invalid decompile read-ahead");
+                // The hint is advisory: selectors past one window are ignored.
+                if (readAhead.size() < DECOMPILE_AHEAD_WINDOW) readAhead.add(selector.getAsString());
+            }
+        }
+        return new Request(id, requireString(object, "method"), params.getAsJsonObject(), timeout, payload, flowLimits,
+            List.copyOf(readAhead));
     }
 
     private static JsonObject requireObject(JsonElement element, Set<String> keys) {
@@ -7200,7 +7444,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
      */
     private record DecompilePayload(Integer mebibytes) {}
 
-    private record Request(int id, String method, JsonObject params, Integer decompileTimeoutSeconds, DecompilePayload decompilePayload, ValueFlowLimits valueFlowLimits) {}
+    private record Request(int id, String method, JsonObject params, Integer decompileTimeoutSeconds, DecompilePayload decompilePayload, ValueFlowLimits valueFlowLimits,
+        List<String> decompileReadAhead) {}
 
     private static final class RequestFailure extends RuntimeException {
         private final String code;
