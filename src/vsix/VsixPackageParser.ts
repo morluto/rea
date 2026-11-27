@@ -4,7 +4,6 @@ import {
   decodeLimit,
   malformedInput,
   ParseFailureError,
-  unsupportedInput,
 } from "../domain/parseFailure.js";
 import {
   Uint8ArrayReader,
@@ -17,7 +16,7 @@ import {
   ArtifactReaderFailure,
   decodeZipEntryText,
   zipEntryNameLimitations,
-  typedZipFailure,
+  throwZipPackageFailure,
   ZIP_READER_OPTIONS,
   zipEntryPath,
   zipListingCoverage,
@@ -132,26 +131,12 @@ const wrapZipFailure = (
     throw new ArtifactReaderFailure("cancelled", "Artifact read cancelled", {
       cause: signal.reason,
     });
-  if (
-    cause instanceof ArtifactReaderFailure ||
-    cause instanceof ParseFailureError
-  )
-    throw cause;
-  const typed = typedZipFailure(cause, compressionMethod);
-  if (typed instanceof ArtifactReaderFailure && typed.reason === "limit")
-    throw typed;
-  if (typed instanceof ArtifactReaderFailure && typed.reason === "unavailable")
-    throw unsupportedInput(
-      VSIX_PACKAGE_FORMAT,
-      `VS Code extension ZIP uses an unsupported layout: ${typed.message}`,
-      { cause: typed },
-    );
-  if (
-    typed instanceof ArtifactReaderFailure &&
-    typed.parseFailure !== undefined
-  )
-    throw malformedInput(VSIX_PACKAGE_FORMAT, typed.message, { cause: typed });
-  throw cause;
+  return throwZipPackageFailure(
+    cause,
+    VSIX_PACKAGE_FORMAT,
+    "VS Code extension",
+    compressionMethod,
+  );
 };
 
 const readMemberBytes = async (
