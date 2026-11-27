@@ -2380,8 +2380,19 @@ public final class ReaGhidraBridge extends HeadlessScript {
     /** What the tokenizer observed in admitted caller C. */
     private record AdmittedCallerC(JsonArray droppedQualifiers, boolean terminated, boolean endsInLineComment) {}
 
-    // Ghidra reads a pack value with Integer.parseInt, so only a decimal literal keeps its C value.
+    // Ghidra reads a pack value with Integer.parseInt and, on overflow, keeps the
+    // packing already in effect. A decimal literal is admitted only when that parse accepts it.
     private static final Pattern PACK_VALUE = Pattern.compile("0|[1-9][0-9]*");
+
+    private static boolean ghidraPackDecimal(String text) {
+        if (!PACK_VALUE.matcher(text).matches()) return false;
+        try {
+            Integer.parseInt(text);
+            return true;
+        } catch (NumberFormatException overflow) {
+            return false;
+        }
+    }
 
     /**
      * Whether Ghidra 12.2's PragmaSpecifier applies these #pragma pack operands
@@ -2394,7 +2405,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
      */
     private static boolean appliedPackOperands(List<CToken> operands, ArrayDeque<String> labels) {
         List<String> texts = operands.stream().map(CToken::text).toList();
-        java.util.function.Predicate<String> value = text -> PACK_VALUE.matcher(text).matches();
+        java.util.function.Predicate<String> value = ReaGhidraBridge::ghidraPackDecimal;
         java.util.function.Predicate<String> label = text -> isCIdentifierStart(text.charAt(0)) &&
             !text.equals("push") && !text.equals("pop");
         boolean push = !texts.isEmpty() && texts.get(0).equals("push");
@@ -2449,7 +2460,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 hash.line(), hash.column());
         if (!pack && !directive.isEmpty() && directive.get(0).is("pack"))
             throw refusedConstruct(code, field, "#pragma pack with operands Ghidra ignores or reads differently " +
-                "(it applies (), (n), (push, n), (push, id), (push, id, n) with a decimal n, (pop) over an unlabelled push and (pop, id) over a push of id)",
+                "(it applies (), (n), (push, n), (push, id), (push, id, n) with a decimal n from 0 through 2147483647, (pop) over an unlabelled push and (pop, id) over a push of id)",
                 hash.line(), hash.column());
         if (!pack)
             throw refusedConstruct(code, field, "the directive #" + name +
@@ -2786,12 +2797,13 @@ public final class ReaGhidraBridge extends HeadlessScript {
         DataTypeManager types = currentProgram.getDataTypeManager();
         CParser parser = new CParser(types, false, new DataTypeManager[] { types });
         try {
-            // The parser needs a terminated prototype. Nothing precedes the caller's
-            // text, so the parser's positions name the caller's own lines; the
-            // terminator ends the last line, or follows it when a line comment
-            // would otherwise swallow it.
-            parser.parse(declarations || admitted.terminated() ? text
-                : text + (admitted.endsInLineComment() ? "\n;" : ";"));
+            // The parser needs a terminated prototype, and its // skip token
+            // requires a line break. Nothing precedes the caller's text, so the
+            // parser's positions name the caller's own lines. A line comment at
+            // the end gets a newline first, so a semicolon added for an
+            // unterminated prototype is not swallowed.
+            String source = admitted.endsInLineComment() ? text + "\n" : text;
+            parser.parse(declarations || admitted.terminated() ? source : source + ";");
         }
         catch (ghidra.app.util.cparser.C.ParseException | ghidra.app.util.cparser.C.TokenMgrError rejected) {
             throw new RequestFailure(code, "Ghidra's C parser rejected " + field + ": " + cParserReason(rejected.getMessage()));

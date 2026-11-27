@@ -559,6 +559,26 @@ struct rea_after { char c; int i; };`;
           (await inspect("rea_node_ptr")).referenced_type,
           "/rea_caller_defined/rea_node *",
         );
+        // A // comment may end the text; Ghidra's lexer still needs a line break.
+        const noted = await first.call("define_native_data_types", {
+          declarations: "struct rea_noted { int x; }; // noted",
+        });
+        assert.deepEqual(
+          noted.types.map(({ name, kind, size_bytes }) => [
+            name,
+            kind,
+            size_bytes,
+          ]),
+          [["rea_noted", "struct", 4]],
+        );
+        const maxPack = await first.call("define_native_data_types", {
+          declarations:
+            "#pragma pack(2147483647)\nstruct rea_pack_max { char c; int i; };",
+        });
+        assert.deepEqual(
+          maxPack.types.map(({ name, size_bytes }) => [name, size_bytes]),
+          [["rea_pack_max", 8]],
+        );
         return { types: defined.types.length + applied.types.length };
       },
     );
@@ -641,6 +661,30 @@ struct rea_after { char c; int i; };`;
         assert.equal(kept.size_bytes, 56);
         assert.equal(kept.fields[0].name, "id");
         assert.equal(kept.fields[0].offset_bytes, 0);
+        // Integer.parseInt rejects this operand and Ghidra would keep the previous packing.
+        const overflow = requireMcpToolError(
+          await first.raw("define_native_data_types", {
+            declarations:
+              "#pragma pack(2147483648)\nstruct rea_pack_overflow { char c; int i; };",
+          }),
+        );
+        assert.equal(overflow.code, "invalid_request");
+        assert.equal(overflow.retryable, false);
+        assert.equal(
+          overflow.details?.diagnostics?.remote_code,
+          "invalid_type_declarations",
+        );
+        assert.deepEqual(
+          overflow.details?.issues?.map((issue) => ({
+            path: issue.path,
+            reason: issue.reason,
+          })),
+          [{ path: ["declarations"], reason: "invalid_value" }],
+        );
+        assert.equal(
+          await typeStatus(first, "/rea_caller_defined/rea_pack_overflow"),
+          "unavailable",
+        );
         const builtin = await first.refused(
           "define_native_data_types",
           { declarations: "struct rea_other { int a; }; typedef long uint;" },
@@ -960,6 +1004,13 @@ struct rea_after { char c; int i; };`;
         assert.deepEqual(reflowed.dropped_qualifiers, [
           { qualifier: "const", line: 2, column: 3, parameter_index: 0 },
         ]);
+        // A terminated prototype may end in a // comment with no newline after it.
+        const commented = await first.call("annotate_native_function", {
+          procedure,
+          signature: `${updated.annotations.signature}; // noted`,
+        });
+        assert.deepEqual(commented.annotations, updated.annotations);
+        assert.equal(commented.dropped_qualifiers, undefined);
         return {};
       },
     );
