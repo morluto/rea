@@ -84,6 +84,7 @@ import {
   resolveProcedureAddress,
 } from "./ProcedureAddressResolution.js";
 import { traceLiteralFeature } from "./EnhancedLiteralTracing.js";
+import type { ProgressReporter } from "../ports/ProgressReporter.js";
 import { projectNativeApiInspection } from "./native/NativeApiInspection.js";
 
 type BatchResolution = {
@@ -130,6 +131,7 @@ export class EnhancedTools {
     name: DirectEnhancedToolName,
     input: unknown,
     signal?: AbortSignal,
+    progress?: ProgressReporter,
   ): EnhancedResult {
     switch (name) {
       case "binary_overview": {
@@ -176,7 +178,11 @@ export class EnhancedTools {
       case "decompile_all": {
         const parsed = enhancedInputSchemas.decompile_all.safeParse(input);
         return parsed.success
-          ? this.executeValidated({ name, input: parsed.data }, signal)
+          ? this.executeValidated(
+              { name, input: parsed.data },
+              signal,
+              progress,
+            )
           : invalidEnhancedInput(name, parsed.error, input);
       }
     }
@@ -186,6 +192,7 @@ export class EnhancedTools {
   executeValidated(
     call: ValidatedEnhancedCall,
     signal?: AbortSignal,
+    progress?: ProgressReporter,
   ): EnhancedResult {
     switch (call.name) {
       case "inspect_native_dispatch_metadata":
@@ -203,7 +210,7 @@ export class EnhancedTools {
       case "batch_decompile":
         return this.#batchDecompile(call.input.addresses, signal);
       case "decompile_all":
-        return decompileAll(this.analysis, call.input, signal);
+        return decompileAll(this.analysis, call.input, signal, progress);
       case "get_call_graph":
         return this.#callGraph(call.input, signal);
       case "analyze_swift_types":

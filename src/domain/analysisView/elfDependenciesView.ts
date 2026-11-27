@@ -16,15 +16,11 @@ import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { namePrefixesSchema, startsWithAny } from "./namePrefixFilter.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
-import {
-  pickFields,
-  selectIndexedViewRows,
-  selectViewRows,
-} from "./selectViewRows.js";
+import { filterSet, pickFields, selectViewRows } from "./selectViewRows.js";
 
 const neededRow = elfDependenciesReportSchema.shape.needed.element;
 const importRow = elfDependenciesReportSchema.shape.imports.element;
@@ -215,11 +211,7 @@ export const projectElfDependenciesView = (
     parent_operation: "inspect_elf_dependencies" as const,
     parent_digest: parent.evidenceId.slice(3),
     artifact: { path: report.artifact.path, sha256: report.artifact.sha256 },
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...report.limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, report.limitations),
     unknowns:
       report.coverage.status === "complete"
         ? []
@@ -236,24 +228,15 @@ export const projectElfDependenciesView = (
       summary,
       coverage: completeWithinViewCoverage(report.needed.length),
     });
-  const indices =
-    view.indices === undefined ? undefined : new Set(view.indices);
+  const indices = filterSet(view.indices);
   if (view.collection === "issues") {
-    const selected =
-      indices === undefined
-        ? selectViewRows(
-            report.issues,
-            view,
-            undefined,
-            (row, source_index) => ({ ...row, source_index }),
-          )
-        : selectIndexedViewRows(
-            report.issues,
-            indices,
-            view,
-            undefined,
-            (row, source_index) => ({ ...row, source_index }),
-          );
+    const selected = selectViewRows(
+      report.issues,
+      view,
+      undefined,
+      (row, source_index) => ({ ...row, source_index }),
+      indices,
+    );
     return ok({
       ...shared,
       kind: "elf-dependencies" as const,
@@ -267,7 +250,7 @@ export const projectElfDependenciesView = (
       ),
     });
   }
-  const names = view.names === undefined ? undefined : new Set(view.names);
+  const names = filterSet(view.names);
   const prefixes = view.name_prefixes;
   const pageRows = <Row extends Record<string, unknown>>(
     rows: readonly Row[],
@@ -297,10 +280,13 @@ export const projectElfDependenciesView = (
               (prefixes === undefined || startsWithAny(name, prefixes))
             );
           };
-    const selected =
-      indices !== undefined
-        ? selectIndexedViewRows(rows, indices, view, matchesName, projectRow)
-        : selectViewRows(rows, view, matchesName, projectRow);
+    const selected = selectViewRows(
+      rows,
+      view,
+      matchesName,
+      projectRow,
+      indices,
+    );
     return ok({
       ...shared,
       kind: "elf-dependencies" as const,

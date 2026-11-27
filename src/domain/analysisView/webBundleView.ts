@@ -9,6 +9,7 @@ import {
   type WebBundleAnalysis,
 } from "../webBundleAnalysis.js";
 import { recordedBrowserOriginSchema } from "../browserObservation.js";
+import { filterSet } from "./selectViewRows.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   assertOwnedView,
@@ -277,8 +278,7 @@ export const projectWebBundleView = (
   type Item =
     | z.output<typeof webBundleEndpointRowSchema>
     | z.output<typeof webBundleInferenceRowSchema>;
-  const fields =
-    view.fields === undefined ? undefined : new Set<string>(view.fields);
+  const fields = filterSet<string>(view.fields);
   const deliverRows = <T>(
     rows: readonly T[],
     matches: ((row: T, source_index: number) => boolean) | undefined,
@@ -365,13 +365,10 @@ export const projectWebBundleView = (
   };
 
   if (view.collection === "endpoints") {
-    const indices =
-      view.indices !== undefined ? new Set(view.indices) : undefined;
-    const values = view.values !== undefined ? new Set(view.values) : undefined;
-    const scriptKeys =
-      view.script_keys !== undefined ? new Set(view.script_keys) : undefined;
-    const mechanisms =
-      view.mechanisms !== undefined ? new Set(view.mechanisms) : undefined;
+    const indices = filterSet(view.indices);
+    const values = filterSet(view.values);
+    const scriptKeys = filterSet(view.script_keys);
+    const mechanisms = filterSet(view.mechanisms);
 
     const filters = [indices, values, scriptKeys, mechanisms];
     return deliverRows(
@@ -395,12 +392,10 @@ export const projectWebBundleView = (
     );
   }
 
-  const indices =
-    view.indices !== undefined ? new Set(view.indices) : undefined;
-  const kinds = view.kinds !== undefined ? new Set(view.kinds) : undefined;
-  const values = view.values !== undefined ? new Set(view.values) : undefined;
-  const scriptKeys =
-    view.script_keys !== undefined ? new Set(view.script_keys) : undefined;
+  const indices = filterSet(view.indices);
+  const kinds = filterSet(view.kinds);
+  const values = filterSet(view.values);
+  const scriptKeys = filterSet(view.script_keys);
 
   const filters = [indices, kinds, values, scriptKeys];
   return deliverRows(

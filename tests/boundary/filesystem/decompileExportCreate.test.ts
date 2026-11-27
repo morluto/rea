@@ -414,7 +414,7 @@ describe("decompile journal ownership", () => {
         failure: { code: "fixture", message: "original failure" },
         limitations: ["original caveat"],
       };
-      const appended = opened.value.append(record);
+      const appended = opened.value.append([record]);
       record.address = "0x2000";
       record.body.reason = "changed body";
       record.failure.message = "changed failure";
@@ -453,6 +453,48 @@ describe("decompile journal ownership", () => {
           failure: { code: "fixture", message: "original failure" },
           limitations: ["original caveat"],
         },
+      ]);
+    } finally {
+      expect((await opened.value.close()).ok).toBe(true);
+    }
+  });
+
+  it("appends the records before an invalid one and reports the invalid record", async () => {
+    const parent = await createTestTempDirectory("rea-decompile-batch-");
+    const root = join(parent, "out");
+    const opened = await DecompileExport.open({
+      placement: { mode: "create", root },
+      identity,
+    });
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+    try {
+      const record = (address: string) => ({
+        address,
+        name: null,
+        status: "failed" as const,
+        body: { available: false as const, reason: "fixture" },
+        failure: { code: "fixture", message: "fixture" },
+      });
+      const appended = await opened.value.append([
+        record("0x1000"),
+        { ...record("0x2000"), relative_path: "../outside.c" },
+        record("0x3000"),
+      ]);
+      expect(appended.ok).toBe(false);
+      expect(opened.value.record("0x1000")).toMatchObject({
+        address: "0x1000",
+      });
+      expect(opened.value.record("0x2000")).toBeUndefined();
+      expect(opened.value.record("0x3000")).toBeUndefined();
+      const lines = (
+        await readFile(join(root, "decompile-journal.jsonl"), "utf8")
+      )
+        .trimEnd()
+        .split("\n");
+      expect(lines.map((line) => JSON.parse(line).address)).toEqual([
+        undefined,
+        "0x1000",
       ]);
     } finally {
       expect((await opened.value.close()).ok).toBe(true);

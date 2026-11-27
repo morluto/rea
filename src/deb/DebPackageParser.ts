@@ -1120,7 +1120,8 @@ const md5Paths = (
       // (backslash, newline or carriage return). The digest is separated from
       // the path by a space and a space or `*`; other spaces stay in the path.
       const escaped = line.startsWith("\\");
-      const match = /^[0-9a-f]{32} [ *](.*)$/iu.exec(
+      // Records are already split on LF. Unicode separators can occur in the name.
+      const match = /^[0-9a-f]{32} [ *](.*)$/isu.exec(
         escaped ? line.slice(1) : line,
       );
       const name =

@@ -3,7 +3,15 @@ import {
   BinaryResourceFailure,
 } from "../domain/binaryContainer.js";
 import type { GpuKernel } from "../domain/gpu/gpuCodeObjects.js";
-import { GPU_REPORT_BYTES, rejectGpu } from "./GpuSource.js";
+import {
+  DEFAULT_GPU_PARSER_ENTRIES,
+  DEFAULT_GPU_REPORT_BYTES,
+  DEFAULT_GPU_TOKEN_BYTES,
+  GPU_PARSER_ENTRIES_LIMIT,
+  GPU_TOKEN_BYTES_LIMIT,
+  type GpuCodeObjectsBudgets,
+} from "../domain/gpu/gpuCodeObjectsBudgets.js";
+import { rejectGpu } from "./GpuSource.js";
 interface Token {
   readonly value: string;
   readonly start: number;
@@ -25,7 +33,12 @@ const isWhitespaceAt = (text: string, at: number, code: number): boolean =>
     : /\s/u.test(text[at]!);
 
 /** Byte coordinates are accumulated once, including non-ASCII comments and quoted strings. */
-function* tokens(text: string): Generator<Token> {
+function* tokens(
+  text: string,
+  maxTokenBytes: number | (() => number) = DEFAULT_GPU_TOKEN_BYTES,
+): Generator<Token> {
+  const limit =
+    typeof maxTokenBytes === "function" ? maxTokenBytes : () => maxTokenBytes;
   const len = text.length;
   let at = 0,
     byte = 0;
@@ -103,11 +116,14 @@ function* tokens(text: string): Generator<Token> {
         byte += 1;
       }
     } else advance();
-    if (at - position > 65536)
+    const currentLimit = limit();
+    if (byte - start > currentLimit)
       throw new BinaryResourceFailure(
         "structure",
-        65536,
+        currentLimit,
         "PTX token exceeds the string budget",
+        GPU_TOKEN_BYTES_LIMIT,
+        "bytes",
       );
     yield { value: text.slice(position, at), start, end: byte };
   }
@@ -298,14 +314,24 @@ export function* readPtxKernels(
   text: string,
   objectId: string,
   targetTracker?: PtxTargetTracker,
+  budgets?: Pick<
+    GpuCodeObjectsBudgets,
+    "maxReportBytes" | "maxParserEntries" | "maxTokenBytes"
+  >,
 ): Generator<{ kernel: GpuKernel; coverage: "complete" | "partial" }> {
-  if (Buffer.byteLength(text) > GPU_REPORT_BYTES)
+  const maxReportBytes = budgets?.maxReportBytes ?? DEFAULT_GPU_REPORT_BYTES;
+  const maxParserEntries =
+    budgets?.maxParserEntries ?? DEFAULT_GPU_PARSER_ENTRIES;
+  const maxTokenBytes = budgets?.maxTokenBytes ?? DEFAULT_GPU_TOKEN_BYTES;
+  if (Buffer.byteLength(text) > maxReportBytes)
     throw new BinaryResourceFailure(
       "structure",
-      GPU_REPORT_BYTES,
-      "PTX text exceeds the 16 MiB retained report budget",
+      maxReportBytes,
+      `PTX text exceeds the ${String(maxReportBytes)}-byte retained report budget`,
+      "gpu-retained-report-bytes",
+      "bytes",
     );
-  const iterator = tokens(text);
+  const iterator = tokens(text, maxTokenBytes);
   const next = (): Token => {
     const value = iterator.next();
     if (value.done) return rejectGpu("Truncated PTX entry declaration");
@@ -355,11 +381,13 @@ export function* readPtxKernels(
     const flush = (): void => {
       if (part.length === 0) return;
       if (part[0] !== ".param") rejectGpu("Unknown PTX parameter declaration");
-      if (parameters.length >= 65536)
+      if (parameters.length >= maxParserEntries)
         throw new BinaryResourceFailure(
           "structure",
-          65536,
+          maxParserEntries,
           "PTX parameter declarations exceed the facts budget",
+          GPU_PARSER_ENTRIES_LIMIT,
+          "entries",
         );
       const value = declaration(part);
       let offset: number | null = null;
@@ -404,8 +432,8 @@ export function* readPtxKernels(
         if (part.length > 128)
           throw new BinaryResourceFailure(
             "structure",
-            65536,
-            "PTX parameter declarations exceed the facts budget",
+            128,
+            "PTX parameter declaration exceeds the fixed 128-token syntax limit",
           );
       }
       flush();
@@ -463,8 +491,8 @@ export function* readPtxKernels(
             if (bodyParameter.length >= 128)
               throw new BinaryResourceFailure(
                 "structure",
-                65536,
-                "PTX parameter declarations exceed the facts budget",
+                128,
+                "PTX parameter declaration exceeds the fixed 128-token syntax limit",
               );
             bodyParameter.push(t.value);
           }
@@ -571,11 +599,13 @@ export function* readPtxKernels(
         "Unsupported PTX register declarations or overflowing totals leave the affected virtual register count unknown.",
       );
     }
-    if (++kernelCount > 65536)
+    if (++kernelCount > maxParserEntries)
       throw new BinaryResourceFailure(
         "structure",
-        65536,
+        maxParserEntries,
         "PTX kernel count exceeds the facts budget",
+        GPU_PARSER_ENTRIES_LIMIT,
+        "entries",
       );
     yield { kernel, coverage };
   }
@@ -658,9 +688,188 @@ export const createPtxTargetTracker = (): PtxTargetTracker => {
 export const ptxTargetIdentity = (target: string): string =>
   target.replace(/^compute_(\d+[a-z]?)$/u, "sm_$1");
 
+/**
+ * Incremental standalone PTX candidate recognizer. Skips leading whitespace
+ * (including UTF-8 BOM and Unicode whitespace) and `//` or `/* ... *\/` comments
+ * across chunks to verify the first module token is `.version <major>.<minor>`
+ * without applying caller object or token budgets to non-PTX inputs.
+ */
+export const createPtxVersionScanner = (): {
+  feed(chunk: Uint8Array): "yes" | "no" | "incomplete";
+  finish(): "yes" | "no";
+} => {
+  type State =
+    | "leading"
+    | "slash"
+    | "line-comment"
+    | "block-comment"
+    | "block-star"
+    | "version-word"
+    | "after-version"
+    | "after-slash"
+    | "after-line-comment"
+    | "after-block-comment"
+    | "after-block-star"
+    | "version-major"
+    | "version-minor";
+  const VERSION_DIRECTIVE = ".version";
+  let state: State = "leading";
+  let wordIndex = 0;
+  let majorValue = 0;
+  let hasMajorDigit = false;
+  let minorValue = 0;
+  let hasMinorDigit = false;
+  let utf8Pending: number[] = [];
+  let utf8Expected = 0;
+
+  const isAsciiWhitespace = (byte: number): boolean =>
+    byte === 0x20 || (byte >= 0x09 && byte <= 0x0d);
+
+  const isUnicodeWhitespace = (bytes: readonly number[]): boolean => {
+    const text = Buffer.from(bytes).toString("utf8");
+    return text.length > 0 && /^\s+$/u.test(text);
+  };
+
+  const stepByte = (byte: number): "yes" | "no" | "incomplete" => {
+    if (utf8Expected > 0) {
+      if ((byte & 0xc0) === 0x80) {
+        utf8Pending.push(byte);
+        if (utf8Pending.length < utf8Expected) return "incomplete";
+        const ws = isUnicodeWhitespace(utf8Pending);
+        utf8Pending = [];
+        utf8Expected = 0;
+        return ws ? "incomplete" : "no";
+      }
+      // Invalid UTF-8 continuation sequence cannot be whitespace.
+      utf8Pending = [];
+      utf8Expected = 0;
+      return "no";
+    }
+    while (true) {
+      if (state === "leading" || state === "after-version") {
+        if (isAsciiWhitespace(byte)) return "incomplete";
+        if (byte >= 0x80) {
+          if (byte >= 0xc2 && byte <= 0xdf) utf8Expected = 2;
+          else if (byte >= 0xe0 && byte <= 0xef) utf8Expected = 3;
+          else if (byte >= 0xf0 && byte <= 0xf4) utf8Expected = 4;
+          else return "no";
+          utf8Pending = [byte];
+          return "incomplete";
+        }
+        if (byte === 0x2f) {
+          state = state === "leading" ? "slash" : "after-slash";
+          return "incomplete";
+        }
+        if (state === "leading") {
+          if (byte !== 0x2e) return "no";
+          state = "version-word";
+          wordIndex = 1;
+          return "incomplete";
+        }
+        if (byte < 0x30 || byte > 0x39) return "no";
+        state = "version-major";
+        majorValue = byte - 0x30;
+        hasMajorDigit = true;
+        return "incomplete";
+      }
+      if (state === "slash" || state === "after-slash") {
+        if (byte === 0x2f) {
+          state = state === "slash" ? "line-comment" : "after-line-comment";
+          return "incomplete";
+        }
+        if (byte === 0x2a) {
+          state = state === "slash" ? "block-comment" : "after-block-comment";
+          return "incomplete";
+        }
+        return "no";
+      }
+      if (state === "line-comment" || state === "after-line-comment") {
+        if (byte === 0x0a)
+          state = state === "line-comment" ? "leading" : "after-version";
+        return "incomplete";
+      }
+      if (state === "block-comment" || state === "after-block-comment") {
+        if (byte === 0x2a)
+          state = state === "block-comment" ? "block-star" : "after-block-star";
+        return "incomplete";
+      }
+      if (state === "block-star" || state === "after-block-star") {
+        if (byte === 0x2f) {
+          state = state === "block-star" ? "leading" : "after-version";
+          return "incomplete";
+        }
+        if (byte !== 0x2a)
+          state =
+            state === "block-star" ? "block-comment" : "after-block-comment";
+        return "incomplete";
+      }
+      if (state === "version-word") {
+        if (isPtxWordChar(byte) && byte !== 0x2e) {
+          if (
+            wordIndex >= VERSION_DIRECTIVE.length ||
+            byte !== VERSION_DIRECTIVE.charCodeAt(wordIndex)
+          )
+            return "no";
+          wordIndex++;
+          return "incomplete";
+        }
+        if (wordIndex !== VERSION_DIRECTIVE.length) return "no";
+        state = "after-version";
+        continue;
+      }
+      if (state === "version-major") {
+        if (byte >= 0x30 && byte <= 0x39) {
+          majorValue = majorValue * 10 + (byte - 0x30);
+          if (!Number.isSafeInteger(majorValue)) return "no";
+          return "incomplete";
+        }
+        if (byte === 0x2e && hasMajorDigit) {
+          state = "version-minor";
+          minorValue = 0;
+          hasMinorDigit = false;
+          return "incomplete";
+        }
+        return "no";
+      }
+      // state === "version-minor"
+      if (byte >= 0x30 && byte <= 0x39) {
+        minorValue = minorValue * 10 + (byte - 0x30);
+        if (!Number.isSafeInteger(minorValue)) return "no";
+        hasMinorDigit = true;
+        return "incomplete";
+      }
+      if (isPtxWordChar(byte)) return "no";
+      return hasMinorDigit ? "yes" : "no";
+    }
+  };
+
+  return {
+    feed(chunk) {
+      for (let i = 0; i < chunk.length; i++) {
+        const verdict = stepByte(chunk[i]!);
+        if (verdict !== "incomplete") return verdict;
+      }
+      return "incomplete";
+    },
+    finish() {
+      return state === "version-minor" && hasMinorDigit && utf8Expected === 0
+        ? "yes"
+        : "no";
+    },
+  };
+};
+
 /** Resolve all module-scope targets through the highest numbered architecture. */
-export const readPtxTarget = (text: string): PtxTargetFacts => {
-  const stream = tokens(text);
+export const readPtxTarget = (
+  text: string,
+  maxTokenBytes: number = DEFAULT_GPU_TOKEN_BYTES,
+): PtxTargetFacts => {
+  // Format recognition (.version <major>.<minor>) must not be preempted by a
+  // caller-lowered max_token_bytes on non-PTX text; enforce it after recognition.
+  let enforceTokenBudget = false;
+  const stream = tokens(text, () =>
+    enforceTokenBudget ? maxTokenBytes : Number.POSITIVE_INFINITY,
+  );
   const tracker = createPtxTargetTracker();
   let depth = 0;
   try {
@@ -673,6 +882,18 @@ export const readPtxTarget = (text: string): PtxTargetFacts => {
       ptxVersion(declaredVersion.value.value) === null
     )
       return { recognized: false, target: null, limitation: null };
+    if (
+      first.value.end - first.value.start > maxTokenBytes ||
+      declaredVersion.value.end - declaredVersion.value.start > maxTokenBytes
+    )
+      throw new BinaryResourceFailure(
+        "structure",
+        maxTokenBytes,
+        "PTX token exceeds the string budget",
+        GPU_TOKEN_BYTES_LIMIT,
+        "bytes",
+      );
+    enforceTokenBudget = true;
     for (const token of stream) {
       if (token.value === "{") {
         depth++;
