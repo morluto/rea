@@ -39,11 +39,3 @@ export const inspectWarcArchiveInputSchema = z.strictObject({
 export type InspectWarcArchiveInput = z.output<
   typeof inspectWarcArchiveInputSchema
 >;
-
-/** CLI-facing aliases so one owner states each bound once. */
-export const warcArchiveFileBytesSchema =
-  inspectWarcArchiveInputSchema.shape.max_file_bytes;
-export const warcArchiveDecodedBytesSchema =
-  inspectWarcArchiveInputSchema.shape.max_decoded_bytes;
-export const warcArchiveRecordsSchema =
-  inspectWarcArchiveInputSchema.shape.max_records;
