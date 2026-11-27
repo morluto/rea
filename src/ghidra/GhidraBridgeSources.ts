@@ -11,6 +11,7 @@ export const GHIDRA_BRIDGE_SOURCES = Object.freeze({
   extensions: "ReaGhidraExtensions.java",
   prepareCom: "ReaGhidraPrepareCom.java",
   prepareRaw: "ReaGhidraPrepareRaw.java",
+  requestLine: "ReaGhidraRequestLine.java",
   prepareDol: "ReaGhidraPrepareDol.java",
   prepareElfLoad: "ReaGhidraPrepareElfLoad.java",
   applySeeds: "ReaGhidraApplySeeds.java",

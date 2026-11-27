@@ -72,8 +72,11 @@ the effective setting, its source, and the exact payload byte count.
 
 `bridge.max_request_bytes` can be changed at runtime with
 `update_analysis_settings`. The launch seed is `REA_BRIDGE_MAX_REQUEST_BYTES`.
-This setting is enforced by the REA client; the Java bridge has no corresponding
-request ceiling.
+The REA client enforces the effective value before writing, with the
+`resource_constraint` failure above. The Java bridge also bounds each request
+line it reads to the value it started with, counting decoded characters, and
+closes the connection when a line exceeds it; a value the client refuses is
+refused there too rather than defaulted or clamped.
 
 ## Admitted inventory semantics
 

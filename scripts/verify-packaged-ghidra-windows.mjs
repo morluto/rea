@@ -204,6 +204,7 @@ try {
     "ReaGhidraPrepareCom.java",
     "ReaGhidraPrepareDol.java",
     "ReaGhidraPrepareRaw.java",
+    "ReaGhidraRequestLine.java",
   ];
   await mkdir(callerDirectory);
   for (const name of scriptCollisions) await mkdir(join(callerDirectory, name));
