@@ -142,6 +142,7 @@
 * **frida:** add optional limit and offset paging to list_frida_processes ([#13854](https://github.com/morluto/rea/issues/13854)) ([9ec23ad](https://github.com/morluto/rea/commit/9ec23ad03bb6feef0ad208170652858eabcb3e4a))
 * **ghidra:** admit RISC-V ilp32f ELF with a derived calling convention ([#8401](https://github.com/morluto/rea/issues/8401)) ([d8aadcc](https://github.com/morluto/rea/commit/d8aadcc69bc65412e1e1545e25f23256f6ab5d8b))
 * **ghidra:** open M-profile raw images at a separate load base ([#7951](https://github.com/morluto/rea/issues/7951)) ([0b51ca0](https://github.com/morluto/rea/commit/0b51ca03de173fcf22059b5512647bc1461022df))
+* **ghidra:** set function signatures and define the types they use ([#14859](https://github.com/morluto/rea/issues/14859)) ([3a8a717](https://github.com/morluto/rea/commit/3a8a717b02edcd41b9dfbf64e82e5f7a761dfd8e))
 * **ida:** support the official Hex-Rays IDA MCP headlessly ([#4813](https://github.com/morluto/rea/issues/4813)) ([6822ebe](https://github.com/morluto/rea/commit/6822ebe1f3a4caec007fcd046754d66317d3349f))
 * **javascript:** add semantic_analysis structure-only mode to analyze_javascript_application ([#14117](https://github.com/morluto/rea/issues/14117)) ([eccd18a](https://github.com/morluto/rea/commit/eccd18a2cc325bb97f66f23a4216dfcacd9e1bca))
 * **javascript:** inventory Expo Router require.context route keys ([#10624](https://github.com/morluto/rea/issues/10624)) ([7b6e816](https://github.com/morluto/rea/commit/7b6e816b0b61d24d1a3b79106481f29db676ea65))
