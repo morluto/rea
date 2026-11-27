@@ -10,7 +10,7 @@ import {
 import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
 } from "./analysisViewCoverage.js";
 
@@ -54,11 +54,7 @@ export const projectNugetNupkgView = (
       path: report.artifact.path,
       sha256: report.artifact.sha256,
     },
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...report.limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, report.limitations),
     unknowns: [],
     kind: "summary" as const,
     view,

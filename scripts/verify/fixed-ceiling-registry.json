@@ -206,15 +206,13 @@
     }
   },
   "src/gpu/GpuCodeObjectsProvider.ts": {
-    "\"The GPU object allowance\"": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "The 128 MiB GPU object read allowance is a resource policy without a control."
+    "\"The GPU nesting allowance\"": {
+      "class": "representation",
+      "reason": "Bounds recursive GPU container nesting (8 levels in GpuInventory.ts) and AMDGPU MessagePack value nesting (32 levels in AmdGpuMetadata.ts) to prevent unbounded call-stack recursion."
     },
-    "\"The GPU parser allowance\"": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "AMDGPU metadata, HIP bundle, CUDA and PTX decode allowances (8 MiB to 512 MiB, visit and token counts) are resource policies without a control."
+    "\"The GPU parser syntax allowance\"": {
+      "class": "representation",
+      "reason": "Fallback fixed parser syntax ceiling (such as 128 tokens per PTX parameter declaration) so unmapped parser BinaryResourceFailure values stay inside the Result error contract."
     }
   },
   "src/ida/IdaMcpConnection.ts": {

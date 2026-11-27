@@ -27,7 +27,7 @@ import {
 } from "./analysisViewShape.js";
 import {
   analysisViewCoverageSchema,
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
@@ -447,11 +447,7 @@ export const projectPlaywrightTraceView = (
     parent_evidence_id: parent.evidenceId,
     parent_operation: PLAYWRIGHT_TRACE_OPERATION,
     parent_digest: parent.evidenceId.slice(3),
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, limitations),
     unknowns: [
       "Recording completeness and cross-stream ordering remain unknown. Resource contents are not decoded.",
     ],
