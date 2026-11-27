@@ -199,6 +199,23 @@ const handleRequest = (socket, server, request, state) => {
       );
       return;
     }
+    // A prototype or type edit changes the Program like a rename does. The
+    // hang mode never answers one and never applies it.
+    if (
+      request.method === "annotate_native_function" ||
+      request.method === "define_native_data_types"
+    ) {
+      if (state.mode === "checkpoint_hang_edit") return;
+      state.checkpointDirty = true;
+      socket.write(
+        JSON.stringify({
+          id: request.id,
+          ok: true,
+          result: { edited: request.method },
+        }) + "\n",
+      );
+      return;
+    }
     if (request.method === "checkpoint_program") {
       void handleCheckpoint(socket, request, state);
       return;

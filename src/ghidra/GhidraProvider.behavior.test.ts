@@ -4230,6 +4230,9 @@ describe("Ghidra empty annotation reference facets", () => {
         name: "fixture_main",
         comment: null,
         inline_comment: null,
+        signature: "undefined fixture_main()",
+        signature_source: "default",
+        calling_convention: "unknown",
       },
       dossier: { ...dossier, incoming_references: [], outgoing_references: [] },
       effects: {
@@ -4263,6 +4266,9 @@ describe("Ghidra empty annotation reference facets", () => {
         name: "fixture_main",
         comment: null,
         inline_comment: null,
+        signature: "undefined fixture_main()",
+        signature_source: "default",
+        calling_convention: "unknown",
       },
       dossier: {
         ...dossier,
