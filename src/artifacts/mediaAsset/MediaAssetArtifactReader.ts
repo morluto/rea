@@ -10,8 +10,8 @@ import { ParseFailureError } from "../../domain/parseFailure.js";
 import { readArtifactFileBytes } from "../ArtifactFileRange.js";
 import {
   PositionalArtifactReader,
+  positionalRegionEntry,
   type PositionalArtifactEntries,
-  type PositionalArtifactEntry,
 } from "../PositionalArtifactReader.js";
 import {
   DEFAULT_MEDIA_ASSET_READER_LIMITS,
@@ -122,24 +122,13 @@ export class MediaAssetArtifactReader extends PositionalArtifactReader<MediaAsse
       this.#limits,
       layout.regions.length,
     );
-    const entries = layout.regions.map((region): PositionalArtifactEntry => ({
-      path: region.path,
-      kind: "file",
-      declaredSize: region.length,
-      compressedSize: null,
-      executable: false,
-      encrypted: false,
-      byteOffset: region.offset,
-      declaredIntegrity: null,
-      unpacked: false,
-      limitations: [],
-      adapterKey: `${this.format}:${region.path}`,
-      formatMetadata: {
+    const entries = layout.regions.map((region) =>
+      positionalRegionEntry(region, this.format, {
         kind: "media-asset-region",
         role: region.role,
         index: region.index,
-      },
-    }));
+      }),
+    );
     return {
       entries,
       coverage: {
