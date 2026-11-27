@@ -1108,17 +1108,25 @@ it.skipIf(process.platform === "win32")(
     });
     owners.push(session);
     await session.admit("waiter");
-    // Node timers run on the event loop's cached clock, which lags under
-    // load, so a probe timer can fire while the deadline still has time
-    // left. Model that skew directly: each probe times out on the wait's
-    // remainder a few milliseconds early.
-    vi.mocked(acquireOwnedLease).mockImplementation(async (input) => {
-      await new Promise((resolve) =>
-        setTimeout(resolve, Math.max(0, (input.probe?.timeoutMs ?? 0) - 10)),
-      );
-      throw input.failure(
-        { kind: "owner_unverified", reason: LEASE_OWNER_RESPONSE_TIMED_OUT },
-        undefined,
+    // Node timers run on the event loop's cached clock, which lags the
+    // deadline's clock under load, so a probe timer can fire while the
+    // deadline still has time left. Hold the deadline's clock still so the
+    // probe's timeout always arrives with time left on it, then move the
+    // clock past the wait before the save's next poll could observe it.
+    const base = performance.now();
+    let now = base;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    vi.mocked(acquireOwnedLease).mockImplementation((input) => {
+      // Due before the save's 50 ms poll timer, so the wait has ended by the
+      // time that poll checks it.
+      setTimeout(() => {
+        now = base + 1000;
+      }, 0);
+      return Promise.reject(
+        input.failure(
+          { kind: "owner_unverified", reason: LEASE_OWNER_RESPONSE_TIMED_OUT },
+          undefined,
+        ),
       );
     });
     const busy = await session
