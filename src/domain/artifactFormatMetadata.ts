@@ -23,6 +23,8 @@ import {
   tarEntryMetadataSchema,
   switchExecutableMetadataSchema,
   switchExecutableEntryMetadataSchema,
+  n64RomEntryMetadataSchema,
+  n64RomMetadataSchema,
 } from "./formatMetadata/packageAndGameMetadata.js";
 import {
   bfltMetadataSchema,
@@ -55,6 +57,7 @@ import {
   androidVbmetaDescriptorEntryMetadataSchema,
   androidVbmetaMetadataSchema,
   androidSparseImageMetadataSchema,
+  auditdLogMetadataSchema,
   iso9660EntryMetadataSchema,
   iso9660MetadataSchema,
   ntfsMftMetadataSchema,
@@ -112,6 +115,7 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   uf2MetadataSchema,
   uf2RegionMetadataSchema,
   ntfsMftMetadataSchema,
+  auditdLogMetadataSchema,
   dfuSeMetadataSchema,
   dfuSeElementMetadataSchema,
   bfltMetadataSchema,
@@ -140,6 +144,8 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   mediaAssetRegionMetadataSchema,
   ndsMetadataSchema,
   ndsEntryMetadataSchema,
+  n64RomMetadataSchema,
+  n64RomEntryMetadataSchema,
 ]);
 export type ArtifactFormatMetadata = z.infer<
   typeof artifactFormatMetadataSchema
@@ -380,6 +386,10 @@ const declarationsByKind: {
     notCompared:
       "Its fields come from the file's own FILE record headers and resident file-name attributes, which content comparison covers.",
   },
+  "auditd-log": {
+    notCompared:
+      "Its fields come from the file's own record headers, which content comparison covers.",
+  },
   dfuse: {
     notCompared:
       "Its fields come from the file's own prefix, target headers and suffix, which content comparison covers.",
@@ -463,6 +473,14 @@ const declarationsByKind: {
   nds: {
     notCompared:
       "Its header and table facts come from the ROM's own bytes, which content comparison covers.",
+  },
+  "n64-rom": {
+    notCompared:
+      "Its header, CIC and CRC facts come from the ROM's own bytes, which content comparison covers. source_order names the dump, not a change in the served image.",
+  },
+  "n64-rom-entry": {
+    notCompared:
+      "role repeats the member path. source_order and decoded name the dump order; the served bytes are compared by content.",
   },
   /**
    * CPU load and entry addresses and overlay RAM and initialization facts.

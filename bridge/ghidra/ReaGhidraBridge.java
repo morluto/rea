@@ -32,6 +32,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -48,11 +49,13 @@ import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
@@ -66,10 +69,6 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.stream.JsonWriter;
 
-import generic.concurrent.ConcurrentQ;
-import generic.concurrent.ConcurrentQBuilder;
-import generic.concurrent.GThreadPool;
-import generic.concurrent.QResult;
 import ghidra.app.cmd.function.ApplyFunctionSignatureCmd;
 import ghidra.app.cmd.function.FunctionRenameOption;
 import ghidra.app.util.cparser.C.CParser;
@@ -80,7 +79,6 @@ import ghidra.app.decompiler.DecompileResults;
 import ghidra.app.decompiler.DecompiledFunction;
 import ghidra.app.decompiler.ClangCaseToken;
 import ghidra.app.decompiler.ClangNode;
-import ghidra.app.decompiler.parallel.DecompilerCallback;
 import ghidra.framework.Application;
 import ghidra.app.util.bin.format.pdb.PdbParserConstants;
 import ghidra.app.util.opinion.ElfLoader;
@@ -254,32 +252,43 @@ public final class ReaGhidraBridge extends HeadlessScript {
     // observe. A miss only repeats a decompile, and soft references release
     // entries under heap pressure. Ghidra's own panel keeps 10 by default.
     private static final int DECOMPILE_RESULT_ENTRIES = 32;
-    /** Decompiler processes kept between read-ahead windows of one workflow. */
-    private DecompilerCallback<DecompileResults> decompileAheadWorkers;
-    /** REA's own threads, so read-ahead never resizes or queues on Ghidra's shared pools. */
-    private GThreadPool decompileAheadThreads;
+    /**
+     * Read-ahead: functions a workflow will request next, decompiled in the
+     * background by REA's own worker threads, each with its own decompiler
+     * process. The carrying request never waits for them; it decompiles its own
+     * function on the session decompiler. A later request takes a finished
+     * result, waits for one that is running, or decompiles a queued one itself.
+     * Guarded by decompileAheadLock.
+     */
+    private final ArrayDeque<AheadTask> decompileAheadQueue = new ArrayDeque<>();
+    private final LinkedHashMap<DecompileCacheKey, AheadTask> decompileAheadTasks = new LinkedHashMap<>();
+    /**
+     * Tasks a worker has started, including one a request has removed from
+     * the map while it waits. Disposal must still cancel that monitor.
+     */
+    private final Set<AheadTask> decompileAheadActive =
+        Collections.newSetFromMap(new IdentityHashMap<>());
+    private int decompileAheadLiveWorkers;
+    // Advanced by disposal: workers of an older generation stop, and their
+    // results are never served, so an edit or option change cannot reuse them.
+    private long decompileAheadGeneration;
     private static final int DECOMPILE_AHEAD_WORKERS = 8;
     // A hint beyond the retained results would evict the window's own first
     // results before their requests arrive, so later selectors are ignored.
     private static final int DECOMPILE_AHEAD_WINDOW = DECOMPILE_RESULT_ENTRIES;
     // Fixed: read-ahead serves consecutive requests of one workflow, which
-    // arrive milliseconds apart. After this idle time the pooled native
-    // decompiler processes are released; a later window starts them again.
+    // arrive milliseconds apart. A worker idle this long closes its native
+    // decompiler process and exits; a later window starts workers again.
     private static final long DECOMPILE_AHEAD_IDLE_MILLIS = 30_000;
+    // Disposal cancels running decompiles, which end promptly; this bounds the
+    // wait for their workers before an edit or shutdown continues.
+    private static final long DECOMPILE_AHEAD_STOP_MILLIS = 10_000;
     private final Object decompileAheadLock = new Object();
-    private final ScheduledExecutorService decompileAheadReaper =
-        Executors.newSingleThreadScheduledExecutor(task -> {
-            Thread thread = new Thread(task, "REA decompile read-ahead reaper");
-            thread.setDaemon(true);
-            return thread;
-        });
-    private ScheduledFuture<?> decompileAheadIdleRelease;
-    /**
-     * The read-ahead result for the request that carried the window: that
-     * request consumes it whatever its outcome instead of decompiling again.
-     */
-    private DecompileCacheKey decompileAheadForegroundKey;
-    private DecompileResults decompileAheadForeground;
+    private final ExecutorService decompileAheadThreads = Executors.newCachedThreadPool(task -> {
+        Thread thread = new Thread(task, "REA decompile read-ahead");
+        thread.setDaemon(true);
+        return thread;
+    });
     private boolean existingProject;
     // A refused Program may only report its admission failure to the client.
     private String identityAdmissionFailure;
@@ -375,8 +384,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
         finally {
             disposeDecompileAhead();
-            decompileAheadReaper.shutdownNow();
-            if (decompileAheadThreads != null) decompileAheadThreads.shutdownNow();
+            decompileAheadThreads.shutdownNow();
             if (decompiler != null) {
                 decompiler.dispose();
                 decompiler = null;
@@ -534,8 +542,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
     /**
      * Read frames while the handler works. This is the bridge's only second
      * thread: it never touches the Program or the writer. It cancels the
-     * monitor of the request a `cancel` frame names and queues every other
-     * frame in arrival order, so requests still run one at a time.
+     * monitor of the request a `cancel` frame names, cancels read-ahead for
+     * an `abandon_decompile_read_ahead` frame without waiting for workers,
+     * and queues every other frame in arrival order, so requests still run
+     * one at a time.
      */
     private void readRequests(
             SessionDescriptor descriptor,
@@ -563,6 +573,15 @@ public final class ReaGhidraBridge extends HeadlessScript {
                         // A request that already answered has no monitor left.
                         TaskMonitor active = requestMonitors.get(requireInteger(request.params, "request_id"));
                         if (active != null) active.cancel();
+                        continue;
+                    }
+                    if (request.method.equals("abandon_decompile_read_ahead")) {
+                        requireKeys(request.params, Set.of());
+                        // Not queued behind the handler, and not waited on
+                        // here: the cancel frame for the request that is
+                        // waiting on a taken task must still be read inside
+                        // the client's cancel grace.
+                        cancelDecompileAhead();
                         continue;
                     }
                 }
@@ -722,8 +741,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     yield procedurePseudocode(request.params);
                 }
                 finally {
-                    // An unconsumed foreground result belongs to this request only.
-                    clearDecompileAheadForeground();
+                    // Read-ahead is speculative work for this workflow; a
+                    // cancelled request abandons it rather than leaving it running.
+                    // After this reply, the client sends abandon_decompile_read_ahead
+                    // if the same workflow stops before its next request.
+                    if (monitor.isCancelled()) disposeDecompileAhead();
                 }
             }
             case "read_function_instructions" -> readFunctionInstructions(request.params);
@@ -6115,7 +6137,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         SoftReference<DecompileResults> retained = decompileResults.get(key);
         DecompileResults reused = retained == null ? null : retained.get();
         if (reused != null) return reused;
-        DecompileResults results = takeDecompileAheadForeground(key);
+        DecompileResults results = takeDecompileAhead(key, decompileTimeoutSeconds);
         // A failure or timeout read ahead for this request already spent its
         // deadline, so it is reported rather than started again.
         if (results == null) results = decompiler.decompileFunction(
@@ -6150,178 +6172,282 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return results;
     }
 
+    /** One function read ahead: queued, running on a worker, or finished. */
+    private static final class AheadTask {
+        final Function function;
+        final DecompileCacheKey key;
+        final int timeoutSeconds;
+        final TaskMonitor monitor = new TaskMonitorAdapter(true);
+        final CompletableFuture<DecompileResults> done = new CompletableFuture<>();
+        boolean started;
+
+        AheadTask(Function function, DecompileCacheKey key, int timeoutSeconds) {
+            this.function = function;
+            this.key = key;
+            this.timeoutSeconds = timeoutSeconds;
+        }
+    }
+
     /**
-     * Decompile the functions a workflow will ask for next with several
-     * decompiler processes and keep the completed results for those requests.
-     * The first selector is the carrying request's own function. That request
-     * waits for the window only within its own decompile deadline: siblings
-     * still running when it has its result and the deadline has passed are
-     * cancelled and left for their own requests, which report any failure as
-     * before.
+     * Queue the functions after the carrying request's own one for background
+     * decompilation and return at once: the carrying request decompiles its own
+     * function on the session decompiler without waiting. Workers start only
+     * for the queued work, at most one per queued function.
      */
     private void decompileAhead(List<String> selectors) throws Exception {
-        clearDecompileAheadForeground();
         if (selectors.size() < 2) return;
         long modification = currentProgram.getModificationNumber();
-        List<Function> pending = new ArrayList<>();
+        Integer payloadMiB = decompileMaxPayloadMiB;
+        Address own;
+        try {
+            own = resolveProcedure(selectors.get(0)).getEntryPoint();
+        } catch (RequestFailure unresolved) {
+            own = null;
+        }
+        List<AheadTask> pending = new ArrayList<>();
         Set<Address> seen = new HashSet<>();
-        Address foreground = null;
-        for (int index = 0; index < selectors.size(); index++) {
+        if (own != null) seen.add(own);
+        for (int index = 1; index < selectors.size(); index++) {
             Function function;
             try {
                 function = resolveProcedure(selectors.get(index));
             } catch (RequestFailure unresolved) {
                 continue;
             }
-            if (function.isExternal() || function.getBody().isEmpty() || !seen.add(function.getEntryPoint())) continue;
-            SoftReference<DecompileResults> retained = decompileResults.get(
-                new DecompileCacheKey(function.getEntryPoint(), false, modification, decompileMaxPayloadMiB));
+            if (function instanceof UndefinedFunction || function.isExternal() ||
+                    function.getBody().isEmpty() || !seen.add(function.getEntryPoint())) continue;
+            DecompileCacheKey key = new DecompileCacheKey(function.getEntryPoint(), false, modification, payloadMiB);
+            SoftReference<DecompileResults> retained = decompileResults.get(key);
             if (retained != null && retained.get() != null) continue;
-            if (index == 0) foreground = function.getEntryPoint();
-            pending.add(function);
+            pending.add(new AheadTask(function, key, decompileTimeoutSeconds));
         }
-        if (pending.size() < 2) return;
-        Integer payloadMiB = decompileMaxPayloadMiB;
         synchronized (decompileAheadLock) {
-            if (decompileAheadIdleRelease != null) decompileAheadIdleRelease.cancel(false);
-            if (decompileAheadThreads == null) {
-                decompileAheadThreads = GThreadPool.getPrivateThreadPool("REA decompile read-ahead");
-                // Each worker is a native decompiler process with its own view
-                // of the Program, so the worker count bounds memory as well as
-                // CPU. Fixed: it shapes how the same results are produced, never
-                // what a caller observes, and the host's processor count caps it.
-                decompileAheadThreads.setMaxThreadCount(
-                    Math.max(1, Math.min(Runtime.getRuntime().availableProcessors(), DECOMPILE_AHEAD_WORKERS)));
+            for (AheadTask task : pending) {
+                if (decompileAheadTasks.containsKey(task.key)) continue;
+                decompileAheadTasks.put(task.key, task);
+                decompileAheadQueue.add(task);
             }
-            if (decompileAheadWorkers == null) {
-                decompileAheadWorkers = new DecompilerCallback<>(currentProgram, prepared -> {
-                    prepared.setOptions(decompileOptions(payloadMiB));
-                    prepared.toggleCCode(true);
-                    prepared.toggleSyntaxTree(true);
-                    prepared.toggleJumpLoads(true);
-                }) {
-                    @Override
-                    public DecompileResults process(DecompileResults results, TaskMonitor taskMonitor) {
-                        return results;
-                    }
-                };
-            }
-            decompileAheadWorkers.setTimeout(decompileTimeoutSeconds);
-            try {
-                for (DecompileResults results : decompileWindow(pending, foreground)) {
-                    Address entry = results.getFunction().getEntryPoint();
-                    DecompileCacheKey key = new DecompileCacheKey(entry, false, modification, payloadMiB);
-                    if (entry.equals(foreground)) {
-                        decompileAheadForegroundKey = key;
-                        decompileAheadForeground = results;
-                    }
-                    if (results.decompileCompleted() && !results.isCancelled() && !results.isTimedOut())
-                        decompileResults.put(key, new SoftReference<>(results));
+            // Tasks nobody took are dropped oldest first beyond two windows:
+            // finished results, and queued work no worker has started. A
+            // running decompile stays until it finishes; the worker cap
+            // bounds how many of those can be in progress.
+            trimDecompileAhead();
+            // A single queued function is cheaper to decompile when its own
+            // request arrives than to start a decompiler process for it.
+            if (decompileAheadQueue.size() < 2 && decompileAheadLiveWorkers == 0) return;
+            // Each worker is a native decompiler process with its own view of
+            // the Program, so the worker count bounds memory as well as CPU.
+            int limit = Math.max(1, Math.min(Runtime.getRuntime().availableProcessors(), DECOMPILE_AHEAD_WORKERS));
+            int wanted = Math.min(limit, decompileAheadQueue.size()) - decompileAheadLiveWorkers;
+            long generation = decompileAheadGeneration;
+            for (int started = 0; started < wanted; started++) {
+                decompileAheadLiveWorkers++;
+                try {
+                    decompileAheadThreads.execute(() -> runDecompileAheadWorker(generation, payloadMiB));
+                } catch (RuntimeException rejected) {
+                    decompileAheadLiveWorkers--;
+                    break;
                 }
             }
-            finally {
-                decompileAheadIdleRelease = decompileAheadReaper.schedule(
-                    this::releaseIdleDecompileAhead, DECOMPILE_AHEAD_IDLE_MILLIS,
-                    TimeUnit.MILLISECONDS);
-            }
+            decompileAheadLock.notifyAll();
         }
-        monitor.checkCancelled();
     }
 
     /**
-     * Run one window and return the results that finished. With a configured
-     * deadline the wait ends once the foreground function has its result
-     * (its native deadline bounds that) and the deadline has elapsed.
+     * Publish one worker outcome, then drop unrequested tasks beyond two
+     * windows. A result that completes after the last hint is trimmed here,
+     * and so is queued work no worker has started.
      */
-    private List<DecompileResults> decompileWindow(List<Function> pending, Address foreground) throws Exception {
-        ConcurrentQ<Function, DecompileResults> queue = new ConcurrentQBuilder<Function, DecompileResults>()
-            .setCollectResults(true)
-            .setThreadPool(decompileAheadThreads)
-            .setMonitor(monitor)
-            .build(decompileAheadWorkers);
-        List<DecompileResults> finished = new ArrayList<>();
-        try {
-            queue.add(pending);
-            if (decompileTimeoutSeconds == 0) {
-                collectDecompileResults(queue.waitForResults(), finished);
-                return finished;
-            }
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(decompileTimeoutSeconds);
-            boolean foregroundDone = foreground == null;
-            while (!queue.isEmpty()) {
-                long remaining = deadline - System.nanoTime();
-                if (foregroundDone && remaining <= 0) break;
-                // Past the deadline only the foreground's own native deadline
-                // is still running, so poll briefly until it reports.
-                long wait = remaining > 0 ? remaining : TimeUnit.MILLISECONDS.toNanos(50);
-                for (DecompileResults results : collectDecompileResults(
-                        queue.waitForResults(wait, TimeUnit.NANOSECONDS), finished))
-                    if (results.getFunction().getEntryPoint().equals(foreground)) foregroundDone = true;
-            }
-            // Cancellation reaches each sibling's decompiler through its task
-            // monitor. Results that finished meanwhile are kept; cancelled
-            // ones stay uncached for their own requests.
-            if (!queue.isEmpty()) queue.cancelAllTasks(false);
-            collectDecompileResults(queue.waitForResults(), finished);
-            return finished;
-        }
-        finally {
-            queue.dispose();
-        }
-    }
-
-    private static List<DecompileResults> collectDecompileResults(
-        Collection<QResult<Function, DecompileResults>> results,
-        List<DecompileResults> finished
-    ) {
-        List<DecompileResults> added = new ArrayList<>();
-        for (QResult<Function, DecompileResults> result : results) {
-            if (result.hasError() || result.isCancelled()) continue;
-            DecompileResults value;
-            try {
-                value = result.getResult();
-            } catch (Exception unavailable) {
-                continue;
-            }
-            if (value == null || value.isCancelled() || value.getFunction() == null) continue;
-            added.add(value);
-        }
-        finished.addAll(added);
-        return added;
-    }
-
-    private DecompileResults takeDecompileAheadForeground(DecompileCacheKey key) {
-        DecompileResults results = key.equals(decompileAheadForegroundKey) ? decompileAheadForeground : null;
-        clearDecompileAheadForeground();
-        return results;
-    }
-
-    private void clearDecompileAheadForeground() {
-        decompileAheadForegroundKey = null;
-        decompileAheadForeground = null;
-    }
-
-    private void releaseIdleDecompileAhead() {
+    private void completeDecompileAhead(AheadTask task, DecompileResults results) {
+        task.done.complete(results);
         synchronized (decompileAheadLock) {
-            if (decompileAheadWorkers == null) return;
-            decompileAheadWorkers.dispose();
-            decompileAheadWorkers = null;
-            decompileAheadIdleRelease = null;
+            decompileAheadActive.remove(task);
+            trimDecompileAhead();
         }
     }
 
     /**
-     * Pooled decompilers hold native state for the Program and options they
-     * opened with, so an edit, an option change or shutdown releases them.
+     * Caller holds decompileAheadLock. Drops the oldest tasks beyond two
+     * windows. A task a worker has started but not finished stays: at most
+     * one such task exists per live worker. Queued tasks are removed from
+     * the queue as well, so a later window cannot leave an unbounded backlog.
+     */
+    private void trimDecompileAhead() {
+        int excess = decompileAheadTasks.size() - 2 * DECOMPILE_AHEAD_WINDOW;
+        if (excess <= 0) return;
+        Iterator<AheadTask> retained = decompileAheadTasks.values().iterator();
+        while (excess > 0 && retained.hasNext()) {
+            AheadTask task = retained.next();
+            if (task.started && !task.done.isDone()) continue;
+            if (!task.started) {
+                decompileAheadQueue.remove(task);
+                task.monitor.cancel();
+            }
+            retained.remove();
+            excess--;
+        }
+    }
+
+    /**
+     * Open a decompiler, then take queued functions until the queue stays
+     * empty for the idle time or disposal advances the generation. Opening
+     * runs on the worker's own thread, so workers become ready independently
+     * while the session decompiler serves requests.
+     */
+    private void runDecompileAheadWorker(long generation, Integer payloadMiB) {
+        DecompInterface worker = null;
+        AheadTask task = null;
+        try {
+            worker = decompileAheadOpener.apply(payloadMiB);
+            if (worker == null) return;
+            while (true) {
+                synchronized (decompileAheadLock) {
+                    long idleUntil = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(DECOMPILE_AHEAD_IDLE_MILLIS);
+                    while (generation == decompileAheadGeneration && decompileAheadQueue.isEmpty()) {
+                        long remaining = idleUntil - System.nanoTime();
+                        if (remaining <= 0) return;
+                        decompileAheadLock.wait(Math.max(1, TimeUnit.NANOSECONDS.toMillis(remaining)));
+                    }
+                    if (generation != decompileAheadGeneration) return;
+                    task = decompileAheadQueue.poll();
+                    task.started = true;
+                    decompileAheadActive.add(task);
+                }
+                DecompileResults results;
+                try {
+                    results = worker.decompileFunction(task.function, task.timeoutSeconds, task.monitor);
+                } catch (RuntimeException failure) {
+                    results = null;
+                }
+                completeDecompileAhead(task, results);
+                task = null;
+            }
+        } catch (InterruptedException stopped) {
+            Thread.currentThread().interrupt();
+        } catch (RuntimeException failure) {
+            // A worker that cannot open or run leaves its functions to their requests.
+        } finally {
+            if (task != null) completeDecompileAhead(task, null);
+            if (worker != null) worker.dispose();
+            synchronized (decompileAheadLock) {
+                decompileAheadLiveWorkers--;
+                decompileAheadLock.notifyAll();
+            }
+        }
+    }
+
+    /** Opens a worker's decompiler; a field so the conformance probe can inject one. */
+    private java.util.function.Function<Integer, DecompInterface> decompileAheadOpener =
+        this::openDecompileAheadDecompiler;
+
+    /**
+     * A worker's own decompiler process, configured as the session decompiler.
+     * Each opens the Program independently, so workers open concurrently.
+     */
+    private DecompInterface openDecompileAheadDecompiler(Integer payloadMiB) {
+        DecompInterface worker = new DecompInterface();
+        worker.setOptions(decompileOptions(payloadMiB));
+        worker.toggleCCode(true);
+        worker.toggleSyntaxTree(true);
+        worker.toggleJumpLoads(true);
+        if (worker.openProgram(currentProgram)) return worker;
+        worker.dispose();
+        return null;
+    }
+
+    /**
+     * The read-ahead result for this request's function, or null when it
+     * should decompile it itself. A finished or running result is used
+     * whatever its outcome, including a timeout, so the function is never
+     * decompiled twice; a running one is waited for, and its worker's own
+     * native deadline, which started earlier, bounds that wait. A queued one
+     * that no worker has started is taken back and decompiled here at once.
+     *
+     * The deadline matters only where the cache policy says it does: a
+     * completed decompilation is reusable under any deadline, as cached ones
+     * are, but a failure, a timeout or unfinished work under a different
+     * deadline than this request's is cancelled and decompiled again, so a
+     * changed ghidra.decompile_timeout_seconds applies and the reported limit
+     * is the one used.
+     */
+    private DecompileResults takeDecompileAhead(DecompileCacheKey key, int timeoutSeconds) {
+        AheadTask task;
+        synchronized (decompileAheadLock) {
+            task = decompileAheadTasks.remove(key);
+            if (task == null) return null;
+            if (!task.started) {
+                decompileAheadQueue.remove(task);
+                return null;
+            }
+        }
+        if (task.timeoutSeconds != timeoutSeconds) {
+            DecompileResults finished = task.done.getNow(null);
+            if (finished != null && finished.decompileCompleted() && !finished.isCancelled() &&
+                    !finished.isTimedOut()) return finished;
+            task.monitor.cancel();
+            return null;
+        }
+        while (true) {
+            // Cancelling the waiting request cancels the decompile it waits
+            // for, as a cancelled foreground decompile would be.
+            if (monitor.isCancelled()) {
+                task.monitor.cancel();
+                throw new RequestFailure("decompile_cancelled", "Ghidra decompilation was cancelled");
+            }
+            try {
+                DecompileResults results = task.done.get(50, TimeUnit.MILLISECONDS);
+                // A cancelled read-ahead was abandoned, not decompiled.
+                return results == null || results.isCancelled() ? null : results;
+            } catch (TimeoutException running) {
+                continue;
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                task.monitor.cancel();
+                throw new RequestFailure("decompile_cancelled", "Ghidra decompilation was cancelled");
+            } catch (ExecutionException unavailable) {
+                return null;
+            }
+        }
+    }
+
+    /**
+     * Cancel read-ahead without waiting. The socket reader uses this so a
+     * following cancel frame is not stuck behind the worker stop bound.
+     * A task already taken by a waiting request is still cancelled.
+     */
+    private void cancelDecompileAhead() {
+        synchronized (decompileAheadLock) {
+            decompileAheadGeneration++;
+            for (AheadTask task : decompileAheadTasks.values()) task.monitor.cancel();
+            for (AheadTask task : decompileAheadActive) task.monitor.cancel();
+            decompileAheadTasks.clear();
+            decompileAheadQueue.clear();
+            decompileAheadLock.notifyAll();
+        }
+    }
+
+    /**
+     * Stop read-ahead and wait for its workers to exit: pooled decompilers
+     * hold native state for the Program and options they opened with, so an
+     * edit, an option change, a cancelled workflow or shutdown releases them.
+     * Workers still opening see the new generation and close without work.
      */
     private void disposeDecompileAhead() {
-        clearDecompileAheadForeground();
+        cancelDecompileAhead();
         synchronized (decompileAheadLock) {
-            if (decompileAheadIdleRelease != null) decompileAheadIdleRelease.cancel(false);
-            decompileAheadIdleRelease = null;
-            if (decompileAheadWorkers == null) return;
-            decompileAheadWorkers.dispose();
-            decompileAheadWorkers = null;
+            long stopUntil = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(DECOMPILE_AHEAD_STOP_MILLIS);
+            boolean interrupted = false;
+            while (decompileAheadLiveWorkers > 0) {
+                long remaining = stopUntil - System.nanoTime();
+                if (remaining <= 0) break;
+                try {
+                    decompileAheadLock.wait(Math.max(1, TimeUnit.NANOSECONDS.toMillis(remaining)));
+                } catch (InterruptedException stop) {
+                    interrupted = true;
+                    break;
+                }
+            }
+            if (interrupted) Thread.currentThread().interrupt();
         }
     }
 

@@ -1,6 +1,8 @@
 /** Synthetic UnityFS (AssetBundle) builders for reader tests. */
 import { lz4LiteralBlock } from "./lz4LiteralBlock.js";
 
+import { createRequire } from "node:module";
+
 export interface UnityFsMember {
   readonly path: string;
   readonly data: string | Buffer;
@@ -29,8 +31,86 @@ const cstring = (value: string): Buffer =>
 
 const align16 = (value: number): number => (value + 15) & ~15;
 
-const maybeCompress = (data: Buffer, compression: number): Buffer =>
-  compression === 2 || compression === 3 ? lz4LiteralBlock(data) : data;
+/** UnityFS LZMA: five property bytes plus the raw stream, no Alone size field. */
+/** Literal and position bits, when a case needs other than Unity's 3/0/2. */
+export interface UnityLzmaBits {
+  readonly lc: number;
+  readonly lp: number;
+  readonly pb: number;
+}
+
+const unityLzmaBlock = (
+  data: Buffer,
+  options?: { readonly endMarker?: boolean; readonly bits?: UnityLzmaBits },
+): Buffer => {
+  const require = createRequire(import.meta.url);
+  const lzma = require("lzma-purejs") as {
+    compressFile(
+      input:
+        | Buffer
+        | {
+            readByte(): number;
+            read?(buffer: number[], offset: number, length: number): number;
+            eof?(): boolean;
+          },
+      output?: undefined,
+      props?: UnityLzmaBits,
+    ): Buffer | Uint8Array;
+  };
+  if (!options?.endMarker) {
+    const alone = Buffer.from(
+      lzma.compressFile(data, undefined, options?.bits),
+    );
+    return Buffer.concat([alone.subarray(0, 5), alone.subarray(13)]);
+  }
+  let position = 0;
+  const alone = Buffer.from(
+    lzma.compressFile({
+      readByte() {
+        return position < data.length ? data[position++]! : -1;
+      },
+      read(buffer: number[], offset: number, length: number) {
+        let count = 0;
+        while (count < length && position < data.length)
+          buffer[offset + count++] = data[position++]!;
+        return count;
+      },
+      eof() {
+        return position >= data.length;
+      },
+    }),
+  );
+  return Buffer.concat([alone.subarray(0, 5), alone.subarray(13)]);
+};
+
+/** UnityFS LZMA as Unity writes it: properties, raw stream, no end marker. */
+export const encodeUnityLzma = (data: Buffer, bits?: UnityLzmaBits): Buffer =>
+  unityLzmaBlock(data, bits === undefined ? undefined : { bits });
+
+/** UnityFS LZMA with an optional end marker still present after the payload. */
+export const encodeUnityLzmaWithEndMarker = (data: Buffer): Buffer =>
+  unityLzmaBlock(data, { endMarker: true });
+
+/**
+ * A UnityFS LZMA block from an independent encoder, liblzma (CPython 3.14
+ * `lzma`, FORMAT_RAW LZMA1, lc=3 lp=0 pb=2, 8 MiB dictionary, as UnityPy's
+ * `compress_lzma` writes it). liblzma ends a raw LZMA1 stream with an end
+ * marker. Decodes to {@link LIBLZMA_UNITY_PLAIN}.
+ */
+export const LIBLZMA_UNITY_BLOCK = Buffer.from(
+  "5d00008000002a9b8927786125f45d29c1db00ce05ec45d1a7618bab7542fa5d08205ad3f3151c6ad851cc22bb450623f515d99384334022fef9b8a2bd3e5ccd3b92d043e47220b880870116c6c164fde1407273cbe86828b33a5798daae3c2481da8839682318ad949d020baf84fffd62e000",
+  "hex",
+);
+export const LIBLZMA_UNITY_PLAIN = Buffer.concat([
+  Buffer.from("UnityFS lzma known-answer payload ".repeat(20)),
+  Buffer.from(Array.from({ length: 64 }, (_, index) => index)),
+]);
+
+const maybeCompress = (data: Buffer, compression: number): Buffer => {
+  if (compression === 1) return unityLzmaBlock(data);
+  if (compression === 2 || compression === 3) return lz4LiteralBlock(data);
+  return data;
+};
 
 interface BlockRecord {
   readonly uncompressedSize: number;
