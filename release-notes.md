@@ -279,6 +279,7 @@
 * **ci:** refresh health diagnostics on workflow retries ([#14349](https://github.com/morluto/rea/issues/14349)) ([5095e12](https://github.com/morluto/rea/commit/5095e1205935b7a4eb7e2d4d1140c6977c641af9))
 * **ci:** reject incomplete merged test timing reports ([#14352](https://github.com/morluto/rea/issues/14352)) ([8a77faf](https://github.com/morluto/rea/commit/8a77faf842e9a3ef5ac54a5fb7aae7424d87ca80))
 * **ci:** remove unused Mach-O classifier failing deep static checks ([#14384](https://github.com/morluto/rea/issues/14384)) ([66f6559](https://github.com/morluto/rea/commit/66f65594f57f1ed3c63db2a43af3139e6962295c))
+* **ci:** require complete path references for test coverage ([#14819](https://github.com/morluto/rea/issues/14819)) ([cd744b1](https://github.com/morluto/rea/commit/cd744b1bfbca7d0951762d9711c6a1263dfe4bfd))
 * **ci:** rerun TODO scans against the host interpreter ([ba093e0](https://github.com/morluto/rea/commit/ba093e0777a1480d45e4391a65b54b4b7c8bd40f))
 * **ci:** retain cache generations per restore version ([#14084](https://github.com/morluto/rea/issues/14084)) ([30b8249](https://github.com/morluto/rea/commit/30b82493ab7f8a1b95be7e5a498ef3bcf5345324))
 * **ci:** retry recorded crash dependency acquisition without stale index cache ([#14076](https://github.com/morluto/rea/issues/14076)) ([98beb54](https://github.com/morluto/rea/commit/98beb5424acc52e6e6116411bf738cb88fa9d8aa))
