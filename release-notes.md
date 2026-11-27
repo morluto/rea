@@ -116,6 +116,7 @@
 * **artifacts:** inventory and extract stored and gzip-compressed tar archives ([#14245](https://github.com/morluto/rea/issues/14245)) ([225a19a](https://github.com/morluto/rea/commit/225a19ae7a39d06d03a8d5df4d9bf44e645a6c54))
 * **artifacts:** inventory auditd logs offline ([#12062](https://github.com/morluto/rea/issues/12062)) ([395a6df](https://github.com/morluto/rea/commit/395a6df911e68c80c0368b8d9384921790f6f7e2))
 * **artifacts:** inventory macOS flat installer packages offline ([#11377](https://github.com/morluto/rea/issues/11377)) ([dbbe334](https://github.com/morluto/rea/commit/dbbe334ec1995f42506dc8d0b651914a55399941))
+* **artifacts:** inventory Nintendo 64 ROM images and normalize byte order offline ([#14911](https://github.com/morluto/rea/issues/14911)) ([17b53ee](https://github.com/morluto/rea/commit/17b53ee004beb47ec5170c7c336dcb012b4dddd8))
 * **artifacts:** inventory Nintendo DS ROM binaries, overlays and file tables offline ([#14664](https://github.com/morluto/rea/issues/14664)) ([51b3671](https://github.com/morluto/rea/commit/51b3671b08714435cc6cc2188ab495db0b70d515))
 * **artifacts:** inventory Nintendo Switch NSO and NRO executables offline ([#14655](https://github.com/morluto/rea/issues/14655)) ([3970afe](https://github.com/morluto/rea/commit/3970afecc6fc3a952e10ec0db4cc21fa6cb7a71d))
 * **artifacts:** inventory OCI image layouts offline ([#12470](https://github.com/morluto/rea/issues/12470)) ([6a6e7b0](https://github.com/morluto/rea/commit/6a6e7b0bbf9d233c8e99e9a2314f28ba07f88199))
@@ -181,6 +182,7 @@
 * **web:** report value-free header names in the api-surface view ([#9504](https://github.com/morluto/rea/issues/9504)) ([fd9cbef](https://github.com/morluto/rea/commit/fd9cbeff743cc5a685917daafc937060ee45d7a5))
 * **website:** publish page-specific previews with the original REA blue ([1dd25d8](https://github.com/morluto/rea/commit/1dd25d87c7ba440b6256c644a556901eac1b3bbb))
 * **website:** recognize contributors in a shared commit-ranked directory ([ba31a11](https://github.com/morluto/rea/commit/ba31a111809e727891c238d1ca5ff9d62f751f0b))
+* **yara:** scan an admitted artifact with caller-supplied YARA rules ([#14688](https://github.com/morluto/rea/issues/14688)) ([bbd1540](https://github.com/morluto/rea/commit/bbd1540d10bf431138cd4e588c80d6ed5634d865))
 
 
 ### Bug Fixes
