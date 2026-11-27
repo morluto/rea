@@ -1,3 +1,4 @@
+import { ANDROID_SUPER_RECOGNITION_BYTES } from "../domain/firmware/androidSuperImage.js";
 import { probeUefiFlashImage } from "../uefi/UefiFormatProbe.js";
 import { BINARY_TARGET_FORMAT_KINDS } from "../domain/targetFormats.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
@@ -748,7 +749,9 @@ const detectArtifactFormat = async (
   throwIfTargetResolutionCancelled(signal);
   const lower = path.toLowerCase();
   // Fill the prefix so a short host read cannot hide a signature.
-  const magic = Buffer.from(await readHandleRange(handle, 0, 4096, signal));
+  const magic = Buffer.from(
+    await readHandleRange(handle, 0, ANDROID_SUPER_RECOGNITION_BYTES, signal),
+  );
   try {
     await assertStableRegularFileIdentity(handle, sourcePath, initial, {
       symlinks: "reject",

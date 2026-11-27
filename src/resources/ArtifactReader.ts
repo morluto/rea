@@ -267,6 +267,7 @@ export interface ArtifactReader {
     | "android-ota-payload"
     | "android-vbmeta"
     | "android-sparse-image"
+    | "android-super-image"
     | "ubi-image"
     | "iso9660"
     | "uefi"

@@ -21,6 +21,7 @@ import {
   MAX_PE_OPTIONAL_HEADER_BYTES,
   PE_RECORD_HEADER_BYTES,
 } from "../domain/binaryTarget.js";
+import { ANDROID_SUPER_RECOGNITION_BYTES } from "../domain/firmware/androidSuperImage.js";
 import { DFUSE_SUFFIX_BYTES } from "../domain/firmware/dfuse.js";
 import {
   ISO9660_DESCRIPTOR_OFFSET,
@@ -33,7 +34,8 @@ import {
 } from "../resources/index.js";
 
 /** Initial bytes required by the other bounded format classifiers. */
-export const ARTIFACT_CLASSIFICATION_PREFIX_BYTES = 8_192;
+export const ARTIFACT_CLASSIFICATION_PREFIX_BYTES =
+  ANDROID_SUPER_RECOGNITION_BYTES;
 /** Final bytes kept for formats identified by a trailer: the DFU suffix. */
 const ARTIFACT_CLASSIFICATION_SUFFIX_BYTES = DFUSE_SUFFIX_BYTES;
 

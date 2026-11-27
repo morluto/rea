@@ -775,6 +775,11 @@ one domain-owned default policy. See [.NET bundles](../dotnet-bundles.md),
 [Android sparse images](../guides/firmware/android-sparse-image.md) and
 [Android vbmeta](../guides/firmware/android-vbmeta.md) for format semantics.
 
+For [Android dynamic partition images](../guides/firmware/firmware-analysis.md#inventory-android-dynamic-partitions),
+`artifact_limits.android_super_image` bounds the declared metadata slot
+count and byte reservation, and the total table records examined across
+copies. The defaults are four slots, 2 MiB, and 8,192 records.
+
 `artifact_limits.expanded_bytes` selects aggregate plaintext work for ZIP, Bun,
 SEA, PCK, ISO 9660, Deno, wxapkg, tar, macOS flat `.pkg` (including
 `Scripts`/`Payload` cpio archive decoding and scaled cpio member and path-byte

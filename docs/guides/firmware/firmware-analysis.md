@@ -559,6 +559,33 @@ REPLACE_ZSTD partition images; delta operations stay inventoried and refuse
 extraction. See [Android OTA update payloads](android-ota-payload.md)
 for header facts, operation types, limits and verification scope.
 
+## Inventory Android dynamic partitions
+
+Run `rea inspect-artifact super.img --json` or call `inspect_artifact` in
+an MCP session opened on the image. REA reads AOSP logical partition metadata
+versions 10.0–10.2 from raw super images and metadata-only templates such as
+`super_empty.img`. For a sparse super image, first use the Android sparse
+image reader's `extract-artifact` workflow and then inspect `image.raw`.
+
+The root reports the selected geometry and metadata copies, their byte offsets,
+and their verified SHA-256 checksums. For raw images REA reads each declared
+slot, using its backup if the primary is malformed, truncated, or
+unsupported. The runtime slot remains unknown. A template
+contains one copy without an assigned slot. Each partition record includes its
+stored name, group, attributes, and ordered linear or zero extents. Linear
+extents name a block device and an offset on that device. An image offset is
+reported when the bytes are in the selected raw image. Partition and extent
+record offsets locate the declarations in the selected metadata copy. When
+a group or device name cannot be decoded as UTF-8, its bytes are reported
+in hex.
+
+The per-call `artifact_limits.android_super_image` policy defaults to four
+slots, 2 MiB of declared metadata reservation, and 8,192 table records
+across inspected copies. The supported maxima are eight slots, 8 MiB, and
+32,768 records. The metadata reservation includes the primary and backup
+slots of a raw image. Partition extraction, EROFS and ext4 decoding,
+companion-device contents, and AVB verification are outside this inventory.
+
 ## Expand Android sparse images
 
 `inspect-artifact` / `extract-artifact` recognize an Android sparse image

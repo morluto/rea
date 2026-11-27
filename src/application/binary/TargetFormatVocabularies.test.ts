@@ -141,6 +141,7 @@ const TARGETS: TargetFixtures = {
   "android-ota-payload": { ...archive, format: "android-ota-payload" },
   "android-vbmeta": { ...archive, format: "android-vbmeta" },
   "android-sparse-image": { ...archive, format: "android-sparse-image" },
+  "android-super-image": { ...archive, format: "android-super-image" },
   "ubi-image": { ...archive, format: "ubi-image" },
   uf2: { ...archive, format: "uf2" },
   dfuse: { ...archive, format: "dfuse" },

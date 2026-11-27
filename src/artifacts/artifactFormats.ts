@@ -58,6 +58,8 @@ import { Uf2ArtifactReader } from "./Uf2ArtifactReader.js";
 import { NtfsMftArtifactReader } from "./NtfsMftArtifactReader.js";
 import { AuditdLogArtifactReader } from "./AuditdLogArtifactReader.js";
 import { AndroidOtaPayloadArtifactReader } from "./AndroidOtaPayloadArtifactReader.js";
+import { AndroidSuperImageArtifactReader } from "./AndroidSuperImageArtifactReader.js";
+import { ANDROID_SUPER_INVENTORY_SCOPE } from "../domain/firmware/androidSuperImage.js";
 import { AndroidSparseImageArtifactReader } from "./AndroidSparseImageArtifactReader.js";
 import { UbiImageArtifactReader } from "./UbiImageArtifactReader.js";
 import { UImageArtifactReader } from "./UImageArtifactReader.js";
@@ -525,6 +527,18 @@ const NON_ZIP_FORMATS = {
         sourceOf(options),
         options.readerLimits?.android_sparse_image,
         options.readerLimits?.expanded_bytes,
+      ),
+  }),
+  "android-super-image": container("android-super-image", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    absentInventory: "unavailable",
+    readerLimitation: ANDROID_SUPER_INVENTORY_SCOPE,
+    createReader: (path, options) =>
+      new AndroidSuperImageArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.android_super_image,
       ),
   }),
   "ubi-image": container("ubi-image", {
