@@ -615,6 +615,41 @@ describe("Bink 2 headers", () => {
     ).toBe(true);
   });
 
+  it("does not treat bytes past the declared end as audio track facts", async () => {
+    // Revision j places tracks at 48; one track needs bytes 48..60. A size field
+    // that ends the container at 48 leaves those bytes outside the declaration
+    // even when the physical file still holds them.
+    const bytes = bink2Fixture(1, {
+      revision: "j",
+      tracks: [
+        {
+          maxDecodedSize: 0x1111,
+          sampleRate: 48_000,
+          flags: 0x3000,
+          trackId: 7,
+        },
+      ],
+    });
+    bytes.writeUInt32LE(40, 4);
+    const result = await read("bink2", bytes);
+    expect(result.metadata).toMatchObject({
+      kind: "bink2",
+      audio_track_count: 1,
+      audio_tracks: null,
+      frame_offset_table_offset: null,
+      frame_offset_table_bytes: null,
+      declared_size_field: 40,
+      extent_check: "trailing-bytes",
+    });
+    expect(result.entries).toEqual([]);
+    expect(result.coverage[0]?.status).toBe("unknown");
+    expect(
+      result.coverage[0]?.limitations.some((line) =>
+        line.includes("audio track tables end at offset"),
+      ),
+    ).toBe(true);
+  });
+
   it("does not claim trailing bytes beyond the declared end as frames", async () => {
     const base = bink2Fixture(10);
     const tableOffset = 48;

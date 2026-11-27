@@ -828,6 +828,27 @@ export const bink2Layout = (
   // Per track: max decoded size words, then (sample rate, flags) pairs, then
   // track IDs, each as one 32-bit word per track.
   const tracksEnd = tracksOffset + 12 * audioTrackCount;
+  if (tracksEnd > declaredEnd) {
+    const fitted = fitRegions("bink2", [], fileSize, declaredEnd);
+    return {
+      metadata: {
+        ...metadataBase,
+        audio_tracks: null,
+        frame_offset_table_offset: null,
+        frame_offset_table_bytes: null,
+        extent_check:
+          fitted.extent === "consistent" ? "truncated" : fitted.extent,
+      },
+      regions: [],
+      limitations: [
+        `Bink 2 audio track tables end at offset ${String(tracksEnd)} but the file declares only ${String(declaredEnd)} bytes; the audio track tables, frame-offset table and frames were not listed.`,
+        ...fitted.limitations.filter(
+          (line) => !line.includes("follow the last declared"),
+        ),
+      ],
+      regionsExamined: "unknown",
+    };
+  }
   if (header.length < tracksEnd)
     throw cutOff(tracksEnd, "Bink 2 audio track tables are cut off");
   const audioTracks = Array.from({ length: audioTrackCount }, (_, index) => {
