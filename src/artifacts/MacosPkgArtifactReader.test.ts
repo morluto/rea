@@ -1,13 +1,12 @@
 import { createHash } from "node:crypto";
 import { buffer } from "node:stream/consumers";
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { Readable } from "node:stream";
 import { deflateSync, gzipSync, inflateSync } from "node:zlib";
 
 import { expect, it, vi } from "vitest";
 
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { collectEntries } from "../../tests/fixtures/artifactEntries.js";
+import { createTestTempFile } from "../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../contracts/artifactComparisonExample.js";
 import { compareArtifacts } from "../domain/artifactComparison.js";
@@ -60,12 +59,8 @@ import {
 } from "./macosPkg/MacosPkg.fixture.js";
 import { parseCpioOdc } from "./macosPkg/CpioOdc.js";
 
-const writePkg = async (name: string, bytes: Buffer): Promise<string> => {
-  const directory = await createTestTempDirectory("rea-macos-pkg-");
-  const path = join(directory, name);
-  await writeFile(path, bytes);
-  return path;
-};
+const writePkg = (name: string, bytes: Buffer): Promise<string> =>
+  createTestTempFile("rea-macos-pkg-", name, bytes);
 
 const entriesOf = async (
   bytes: Buffer,
@@ -557,8 +552,7 @@ it("refuses open() of an oversize gzip member without inflating", async () => {
   const path = await writePkg("open-oversize.pkg", buildGzipPackageInfo());
   const reader = new MacosPkgArtifactReader(path, undefined, 16);
   try {
-    const listed = [];
-    for await (const entry of reader.entries()) listed.push(entry);
+    const listed = await collectEntries(reader);
     const pkgInfo = listed.find((entry) => entry.path === "PackageInfo");
     expect(pkgInfo).toBeDefined();
     await expect(reader.open(pkgInfo!)).rejects.toBeInstanceOf(

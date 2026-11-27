@@ -7,7 +7,6 @@ import {
 } from "../domain/parseFailure.js";
 import {
   Uint8ArrayReader,
-  Uint8ArrayWriter,
   ZipReader,
   type Entry,
   type FileEntry,
@@ -21,6 +20,9 @@ import {
   ZIP_READER_OPTIONS,
   zipEntryPath,
   zipListingCoverage,
+  isZipFileEntry,
+  readBoundedZipMember,
+  zipMemberSize,
 } from "../resources/index.js";
 import {
   isXmlElement,
@@ -120,14 +122,6 @@ const emptyKindCounts = (): VsixPackage["member_kind_counts"] => ({
 
 const nonempty = (value: string): string | null => value.trim() || null;
 
-const zipSize = (value: number | undefined): number | null =>
-  typeof value === "number" && Number.isSafeInteger(value) && value >= 0
-    ? value
-    : null;
-
-const asFileEntry = (entry: Entry): entry is FileEntry =>
-  !entry.directory && "getData" in entry;
-
 const wrapZipFailure = (
   cause: unknown,
   signal: AbortSignal | undefined,
@@ -159,32 +153,6 @@ const wrapZipFailure = (
   throw cause;
 };
 
-/** Refuse expansion past the metadata budget before buffering more output. */
-class BoundedUint8ArrayWriter extends Uint8ArrayWriter {
-  readonly #budget: Budget;
-
-  constructor(
-    maximum: number,
-    private readonly exceeded: (required: number) => Error,
-  ) {
-    super();
-    this.#budget = new Budget(maximum);
-  }
-
-  override async init(size?: number): Promise<void> {
-    if (size !== undefined && size > this.#budget.maximum)
-      throw this.exceeded(size);
-    await super.init?.(size);
-  }
-
-  override async writeUint8Array(array: Uint8Array): Promise<void> {
-    this.#budget.charge(array.length, () =>
-      this.exceeded(this.#budget.used + array.length),
-    );
-    await super.writeUint8Array(array);
-  }
-}
-
 const readMemberBytes = async (
   entry: FileEntry,
   signal: AbortSignal | undefined,
@@ -198,13 +166,8 @@ const readMemberBytes = async (
       `${label} exceeds the ${String(maximum)}-byte budget.`,
       { name: limitName, maximum, required },
     );
-  const declared = zipSize(entry.uncompressedSize);
-  if (declared !== null && declared > maximum) throw exceeded(declared);
   try {
-    return await entry.getData(new BoundedUint8ArrayWriter(maximum, exceeded), {
-      checkSignature: true,
-      ...(signal === undefined ? {} : { signal }),
-    });
+    return await readBoundedZipMember(entry, signal, maximum, exceeded);
   } catch (cause: unknown) {
     return wrapZipFailure(cause, signal, entry.compressionMethod);
   }
@@ -590,28 +553,31 @@ const parseVsixManifestDocument = (
     );
     return empty;
   }
-  const metadata = xmlFirstChildNamed(root, "Metadata");
-  const identityElement =
+  const namespace = root.namespaceURI ?? "";
+  const metadata = xmlFirstChildNamed(root, "Metadata", namespace);
+  const metadataChild = (name: string) =>
     metadata === undefined
       ? undefined
-      : xmlFirstChildNamed(metadata, "Identity");
-  const properties =
-    metadata === undefined
-      ? undefined
-      : xmlFirstChildNamed(metadata, "Properties");
+      : xmlFirstChildNamed(metadata, name, namespace);
+  const identityElement = metadataChild("Identity");
+  const properties = metadataChild("Properties");
   const propertyById = new Map<string, string>();
   if (properties !== undefined)
-    for (const property of xmlChildrenNamed(properties, "Property")) {
+    for (const property of xmlChildrenNamed(
+      properties,
+      "Property",
+      namespace,
+    )) {
       const id = xmlTrimmedAttribute(property, "Id");
       const value = xmlTrimmedAttribute(property, "Value");
       if (id !== null && value !== null && !propertyById.has(id))
         propertyById.set(id, value);
     }
-  const assetsElement = xmlFirstChildNamed(root, "Assets");
+  const assetsElement = xmlFirstChildNamed(root, "Assets", namespace);
   const assets: VsixPackage["assets"] =
     assetsElement === undefined
       ? []
-      : xmlChildrenNamed(assetsElement, "Asset").map((asset) => {
+      : xmlChildrenNamed(assetsElement, "Asset", namespace).map((asset) => {
           const path = xmlTrimmedAttribute(asset, "Path");
           const logical = path === null ? null : vsixPackageLogicalPath(path);
           return {
@@ -621,10 +587,10 @@ const parseVsixManifestDocument = (
               logical === null ? null : presentPaths.has(logical.toLowerCase()),
           };
         });
-  const displayName =
-    metadata === undefined ? null : xmlFirstChildNamed(metadata, "DisplayName");
-  const description =
-    metadata === undefined ? null : xmlFirstChildNamed(metadata, "Description");
+  const metadataText = (name: string) => {
+    const element = metadataChild(name);
+    return element === undefined ? null : xmlTrimmedDirectText(element);
+  };
   return {
     identity:
       identityElement === undefined
@@ -637,10 +603,8 @@ const parseVsixManifestDocument = (
               identityElement,
               "TargetPlatform",
             ),
-            display_name:
-              displayName == null ? null : xmlTrimmedDirectText(displayName),
-            description:
-              description == null ? null : xmlTrimmedDirectText(description),
+            display_name: metadataText("DisplayName"),
+            description: metadataText("Description"),
           },
     engine: propertyById.get("Microsoft.VisualStudio.Code.Engine") ?? null,
     extensionDependencies: splitCsv(
@@ -936,8 +900,7 @@ export const parseVsixPackage = async (
     const pathCounts = new Map<string, number>();
     const caseVariants = new Map<string, Set<string>>();
     for (const entry of entries) {
-      if (entry.directory) continue;
-      if (!asFileEntry(entry)) continue;
+      if (!isZipFileEntry(entry)) continue;
       const sourceName = zipEntryPath(entry);
       const path = vsixPackageLogicalPath(sourceName);
       if (path === "") continue;
@@ -964,8 +927,8 @@ export const parseVsixPackage = async (
       contents.push({
         name: sourceName,
         path,
-        uncompressed_size: zipSize(entry.uncompressedSize),
-        compressed_size: zipSize(entry.compressedSize),
+        uncompressed_size: zipMemberSize(entry.uncompressedSize),
+        compressed_size: zipMemberSize(entry.compressedSize),
         encrypted: entry.encrypted === true,
         kind,
         traverses,
@@ -1090,7 +1053,7 @@ export const parseVsixPackage = async (
       const shouldHash = isVsixInterestingMemberKind(kind) || modeExecutable;
       let hashed: Uint8Array | undefined;
       if (shouldHash && !file.traverses && !file.encrypted) {
-        const declared = zipSize(file.entry.uncompressedSize);
+        const declared = zipMemberSize(file.entry.uncompressedSize);
         const allowance = Math.min(input.max_member_bytes, expansion.remaining);
         const unread = () =>
           allowance < input.max_member_bytes
@@ -1175,7 +1138,7 @@ export const parseVsixPackage = async (
           interestingMembers.push({
             path: file.path,
             kind,
-            bytes: zipSize(file.entry.uncompressedSize),
+            bytes: zipMemberSize(file.entry.uncompressedSize),
             sha256: null,
             classification: "inferred",
           });

@@ -21,6 +21,7 @@ import {
 } from "../javascript/javascriptRouteInventory.js";
 import { javaScriptRouteMechanismSchema } from "../javascript/javascriptRouteFacts.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
+import { filterSet } from "./selectViewRows.js";
 import { assertOwnedView, type AdmittedView } from "./analysisViewShape.js";
 import {
   ANALYSIS_VIEW_PAGE_BYTES as PAGE_BYTES,
@@ -291,8 +292,6 @@ const matches = (
   values: ReadonlySet<string> | undefined,
   value: string | null,
 ): boolean => values === undefined || (value !== null && values.has(value));
-const selectedSet = (values: readonly string[] | undefined) =>
-  values === undefined ? undefined : new Set(values);
 const ranks = { low: 0, medium: 1, high: 2 };
 // Sealing appends this field to a nonempty JSON object after projection.
 const DIGEST_BYTES = jsonValueByteLength({ view_digest: "0".repeat(64) }) - 1;
@@ -513,9 +512,9 @@ export const projectJavaScriptRoutesView = (
   if (page.collection === "routes") {
     const where = page.where,
       filters = {
-        paths: selectedSet(where.paths),
-        classifications: selectedSet(where.classifications),
-        mechanisms: selectedSet(where.mechanisms),
+        paths: filterSet(where.paths),
+        classifications: filterSet(where.classifications),
+        mechanisms: filterSet(where.mechanisms),
       },
       fields = page.fields ?? [
         "path",
@@ -558,9 +557,9 @@ export const projectJavaScriptRoutesView = (
   if (page.collection === "occurrences") {
     const where = page.where,
       filters = {
-        route_ids: selectedSet(where.route_ids),
-        source_ids: selectedSet(where.source_ids),
-        mechanisms: selectedSet(where.mechanisms),
+        route_ids: filterSet(where.route_ids),
+        source_ids: filterSet(where.source_ids),
+        mechanisms: filterSet(where.mechanisms),
       },
       fields = page.fields ?? [
         "mechanism",
@@ -593,8 +592,8 @@ export const projectJavaScriptRoutesView = (
   if (page.collection === "sources") {
     const where = page.where,
       filters = {
-        keys: selectedSet(where.keys),
-        statuses: selectedSet(where.statuses),
+        keys: filterSet(where.keys),
+        statuses: filterSet(where.statuses),
       },
       fields = page.fields ?? [
         "path",
@@ -623,8 +622,8 @@ export const projectJavaScriptRoutesView = (
   }
   const where = page.where,
     filters = {
-      source_ids: selectedSet(where.source_ids),
-      kinds: selectedSet(where.kinds),
+      source_ids: filterSet(where.source_ids),
+      kinds: filterSet(where.kinds),
     },
     fields = page.fields ?? ["source_range", "reason"];
   return deliver(
