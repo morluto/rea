@@ -76,7 +76,7 @@ it("reports the same header facts for a plain image and its SMD dump", () => {
     name: "reset_pc",
     value: 0x200,
   });
-  expect(plainRom.metadata.vectors[14]?.name).toBe("format_error");
+  expect(plainRom.metadata.vectors[14]?.name).toBe("reserved");
   expect(plainRom.metadata.vectors[25]?.name).toBe("interrupt_level_1");
   expect(plainRom.metadata.vectors[32]?.name).toBe("trap_0");
   expect(plainRom.metadata.vectors[47]?.name).toBe("trap_15");

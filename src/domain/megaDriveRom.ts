@@ -319,7 +319,6 @@ const vectorName = (index: number): string => {
   if (index === 9) return "trace";
   if (index === 10) return "line_1010";
   if (index === 11) return "line_1111";
-  if (index === 14) return "format_error";
   if (index === 15) return "uninitialized_interrupt";
   if (index === 24) return "spurious_interrupt";
   if (index >= 25 && index <= 31)
