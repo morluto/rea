@@ -158,6 +158,15 @@ are fixed. A text over a bound is refused before parsing with
 default and `required_value`: the text's length, or its deepest nesting over
 the whole text. The recovery names the larger value to pass, or asks for
 shorter or flatter text, or several calls, when the need is above the maximum.
+A type chained more than 256 levels deep through pointers, arrays, typedefs
+or members, counting existing database types, is refused with
+`details.refusal.kind: "fixed_ceiling"`. Ghidra 12.2 stores, names and
+compares types recursively: 1024 levels resolved and 2048 exhausted the stack
+inside `addDataType` while its database lock was held, leaving the Program
+unable to save. No caller value raises that stack, so the bound is fixed. If
+Ghidra exhausts its stack anyway, the bridge reports it and ends the session
+rather than serve a Program whose lock may be held.
+
 The bridge also refuses, with the construct's line and column (CR, LF and
 CRLF each end a line, as in Ghidra's parser),
 what its parser would accept without applying; see the

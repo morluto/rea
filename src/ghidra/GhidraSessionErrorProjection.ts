@@ -4,6 +4,7 @@ import {
   DEFAULT_GHIDRA_SIGNATURE_MAX_UTF16,
   DEFAULT_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16,
   DEFAULT_GHIDRA_C_PARENTHESIS_DEPTH,
+  GHIDRA_C_MAX_TYPE_DEPTH,
   MAXIMUM_GHIDRA_C_PARENTHESIS_DEPTH,
   MINIMUM_GHIDRA_C_PARENTHESIS_DEPTH,
   MAXIMUM_GHIDRA_SIGNATURE_MAX_UTF16,
@@ -47,6 +48,7 @@ import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import type { AnalysisErrorOptions } from "../domain/analysisErrorBase.js";
 import { parseLimitConstraint } from "../domain/parseFailureAnalysisError.js";
 import { decodeLimit } from "../domain/parseFailure.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { GhidraLaunchError } from "./GhidraLauncher.js";
 import type { GhidraSessionSource } from "./GhidraProviderCapabilities.js";
 import {
@@ -842,6 +844,31 @@ const ghidraCParserLimitRefusal = (
   )
     return undefined;
   const { cause: _cause, ...options } = context;
+  // A stack-safety bound on Ghidra's recursive type code: no value raises it safely.
+  if (failure.remoteCode === "type_depth_limit")
+    return parseLimitConstraint(
+      operation,
+      "memory",
+      decodeLimit(
+        "c-declarations",
+        `${failure.message}; at most ${String(GHIDRA_C_MAX_TYPE_DEPTH)} levels are admitted. Nothing in this call was applied`,
+        {
+          name: "Ghidra C type depth",
+          maximum: GHIDRA_C_MAX_TYPE_DEPTH,
+        },
+        { cause: failure },
+      ),
+      {
+        ...options,
+        requestSent: true,
+        ...fixedAllowanceOptions("The Ghidra C type depth allowance", "count", {
+          limit: GHIDRA_C_MAX_TYPE_DEPTH,
+          unit: "levels",
+          narrowing:
+            "Split the chain with named intermediate types defined in separate calls, or shorten it.",
+        }),
+      },
+    );
   const control = GHIDRA_C_PARSER_CONTROLS[failure.remoteCode];
   const requested = request?.[control.parameter];
   const effective =

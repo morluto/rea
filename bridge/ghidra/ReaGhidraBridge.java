@@ -492,6 +492,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
             catch (RequestFailure failure) {
                 writeFailure(writer, request.id, failure);
             }
+            catch (StackOverflowError exhausted) {
+                // Ghidra's data-type code can overflow while holding its database
+                // lock, which then stays held: the Program can no longer be saved
+                // or trusted. Admission bounds caller types (MAX_C_TYPE_DEPTH) so
+                // this is not reachable from caller text; if it happens anyway,
+                // say why and end the session rather than keep serving it.
+                writeFailure(writer, request.id, "bridge_exception",
+                    "StackOverflowError: Ghidra exhausted its stack and may hold its database lock; this Ghidra session cannot continue");
+                throw exhausted;
+            }
             catch (Exception exception) {
                 writeFailure(
                     writer,
@@ -2054,15 +2064,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
 
         /**
-         * The next token, or null at the end of the text. Within a directive
-         * (lineEnds), a line break also ends the tokens, and a block comment that
-         * crosses one is refused: it would carry the directive onto another line.
+         * Skip whitespace and comments up to the next token. Returns false at
+         * the end of the text or, within a directive (lineEnds), at a line
+         * break; a block comment that crosses one there is refused, since it
+         * would carry the directive onto another line.
          */
-        CToken next(boolean lineEnds) {
+        private boolean skipToToken(boolean lineEnds) {
             while (index < text.length()) {
                 char character = text.charAt(index);
-                int tokenLine = line, column = index - lineStart + 1;
-                if (lineEnds && isLineBreak(character)) return null;
+                int startLine = line, column = index - lineStart + 1;
+                if (lineEnds && isLineBreak(character)) return false;
                 if (Character.isWhitespace(character) || character == '\ufeff') {
                     advance();
                     continue;
@@ -2076,59 +2087,96 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     int close = text.indexOf("*/", index + 2);
                     int stop = close < 0 ? text.length() : close + 2;
                     while (index < stop) advance();
-                    if (lineEnds && line != tokenLine)
+                    if (lineEnds && line != startLine)
                         throw refusedConstruct(code, field,
-                            "a block comment that continues a directive onto another line", tokenLine, column);
+                            "a block comment that continues a directive onto another line", startLine, column);
                     continue;
                 }
-                if (character == '"' || character == '\'')
-                    throw refusedConstruct(code, field, "a string or character literal", tokenLine, column);
-                int stop = index + 1;
-                if (isCIdentifierStart(character) || Character.isDigit(character))
-                    while (stop < text.length() &&
-                            (isCIdentifierStart(text.charAt(stop)) || Character.isDigit(text.charAt(stop)))) stop++;
-                String token = text.substring(index, stop);
-                index = stop;
-                // C.jj reads "[" "[" as an attribute, with anything skippable between.
-                if (token.equals("[")) {
-                    int savedIndex = index, savedLine = line, savedLineStart = lineStart;
-                    boolean savedEnds = endsInLineComment;
-                    CToken after = next(lineEnds);
-                    if (after != null && after.is("[")) return new CToken("[[", tokenLine, column);
-                    index = savedIndex;
-                    line = savedLine;
-                    lineStart = savedLineStart;
-                    endsInLineComment = savedEnds;
-                }
-                return new CToken(token, tokenLine, column);
+                return true;
             }
-            return null;
+            return false;
+        }
+
+        /**
+         * The next token, or null at the end of the text or a directive's line.
+         * Iterative throughout: caller text cannot deepen the stack.
+         */
+        CToken next(boolean lineEnds) {
+            if (!skipToToken(lineEnds)) return null;
+            char character = text.charAt(index);
+            int tokenLine = line, column = index - lineStart + 1;
+            if (character == '"' || character == '\'')
+                throw refusedConstruct(code, field, "a string or character literal", tokenLine, column);
+            int stop = index + 1;
+            if (isCIdentifierStart(character) || Character.isDigit(character))
+                while (stop < text.length() &&
+                        (isCIdentifierStart(text.charAt(stop)) || Character.isDigit(text.charAt(stop)))) stop++;
+            String token = text.substring(index, stop);
+            index = stop;
+            // C.jj reads "[" "[" as an attribute, with anything skippable between.
+            if (token.equals("[")) {
+                int savedIndex = index, savedLine = line, savedLineStart = lineStart;
+                boolean savedEnds = endsInLineComment;
+                if (skipToToken(lineEnds) && text.charAt(index) == '[') {
+                    index++;
+                    return new CToken("[[", tokenLine, column);
+                }
+                index = savedIndex;
+                line = savedLine;
+                lineStart = savedLineStart;
+                endsInLineComment = savedEnds;
+            }
+            return new CToken(token, tokenLine, column);
         }
     }
 
     /** What the tokenizer observed in admitted caller C. */
     private record AdmittedCallerC(JsonArray droppedQualifiers, boolean terminated, boolean endsInLineComment) {}
 
-    // The #pragma pack operands Ghidra applies as written: (), (n), (push), (push, n),
-    // (push, id), (push, id, n), (pop) and (pop, id). It reads n with
-    // Integer.parseInt, so only a decimal literal keeps its C value.
+    // Ghidra reads a pack value with Integer.parseInt, so only a decimal literal keeps its C value.
     private static final Pattern PACK_VALUE = Pattern.compile("0|[1-9][0-9]*");
 
-    private static boolean appliedPackOperands(List<CToken> operands) {
+    /**
+     * Whether Ghidra 12.2's PragmaSpecifier applies these #pragma pack operands
+     * as C does, tracking the labels pushed so far. It ignores a bare (push),
+     * so its pop would restore nothing; a pop with nothing pushed keeps the
+     * current packing; and a plain pop keeps popping past labelled entries
+     * until it finds an unlabelled one. Admitted: (), (n), (push, n),
+     * (push, id), (push, id, n), (pop) over an unlabelled push and
+     * (pop, id) over a push of id.
+     */
+    private static boolean appliedPackOperands(List<CToken> operands, ArrayDeque<String> labels) {
         List<String> texts = operands.stream().map(CToken::text).toList();
         java.util.function.Predicate<String> value = text -> PACK_VALUE.matcher(text).matches();
         java.util.function.Predicate<String> label = text -> isCIdentifierStart(text.charAt(0)) &&
             !text.equals("push") && !text.equals("pop");
-        return switch (texts.size()) {
-            case 0 -> true;
-            case 1 -> value.test(texts.get(0)) || texts.get(0).equals("push") || texts.get(0).equals("pop");
-            case 3 -> texts.get(1).equals(",") && (texts.get(0).equals("push")
-                ? value.test(texts.get(2)) || label.test(texts.get(2))
-                : texts.get(0).equals("pop") && label.test(texts.get(2)));
-            case 5 -> texts.get(0).equals("push") && texts.get(1).equals(",") && label.test(texts.get(2)) &&
-                texts.get(3).equals(",") && value.test(texts.get(4));
-            default -> false;
-        };
+        boolean push = !texts.isEmpty() && texts.get(0).equals("push");
+        boolean pop = !texts.isEmpty() && texts.get(0).equals("pop");
+        switch (texts.size()) {
+            case 0:
+                return true;
+            case 1:
+                if (value.test(texts.get(0))) return true;
+                if (!pop || !"".equals(labels.peek())) return false;
+                labels.pop();
+                return true;
+            case 3:
+                if (!texts.get(1).equals(",")) return false;
+                if (push && (value.test(texts.get(2)) || label.test(texts.get(2)))) {
+                    labels.push(value.test(texts.get(2)) ? "" : texts.get(2));
+                    return true;
+                }
+                if (!pop || !label.test(texts.get(2)) || !labels.contains(texts.get(2))) return false;
+                while (!labels.pop().equals(texts.get(2))) { }
+                return true;
+            case 5:
+                if (!push || !texts.get(1).equals(",") || !label.test(texts.get(2)) ||
+                        !texts.get(3).equals(",") || !value.test(texts.get(4))) return false;
+                labels.push(texts.get(2));
+                return true;
+            default:
+                return false;
+        }
     }
 
     /**
@@ -2138,7 +2186,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
      * whose text it skips, so the name must follow # directly.
      */
     private static void admitCallerCDirective(
-            CTokenizer tokens, CToken hash, String field, boolean declarations, String code) {
+            CTokenizer tokens, CToken hash, String field, boolean declarations, String code, ArrayDeque<String> packLabels) {
         CToken first = tokens.next(true);
         String name = first == null ? "" : first.text();
         boolean adjacent = first != null && first.line() == hash.line() && first.column() == hash.column() + 1;
@@ -2148,17 +2196,160 @@ public final class ReaGhidraBridge extends HeadlessScript {
             for (CToken token = tokens.next(true); token != null; token = tokens.next(true)) directive.add(token);
         boolean pack = directive.size() >= 3 && directive.get(0).is("pack") && directive.get(1).is("(") &&
             directive.get(directive.size() - 1).is(")") &&
-            appliedPackOperands(directive.subList(2, directive.size() - 1));
+            appliedPackOperands(directive.subList(2, directive.size() - 1), packLabels);
         if (!adjacent && first != null)
             throw refusedConstruct(code, field, "# separated from its directive name (Ghidra reads it as a line marker)",
                 hash.line(), hash.column());
         if (!pack && !directive.isEmpty() && directive.get(0).is("pack"))
             throw refusedConstruct(code, field, "#pragma pack with operands Ghidra ignores or reads differently " +
-                "(it applies (), (n), (push), (push, n), (push, id), (push, id, n), (pop) and (pop, id) with a decimal n)",
+                "(it applies (), (n), (push, n), (push, id), (push, id, n) with a decimal n, (pop) over an unlabelled push and (pop, id) over a push of id)",
                 hash.line(), hash.column());
         if (!pack)
             throw refusedConstruct(code, field, "the directive #" + name +
                 (name.equals("pragma") ? " (only #pragma pack is applied)" : ""), hash.line(), hash.column());
+    }
+
+    // C.jj's INTEGER_LITERAL without its i8..i128 extension: decimal, hex or octal, u then l suffixes.
+    private static final Pattern C_INTEGER_LITERAL =
+        Pattern.compile("(0[xX][0-9a-fA-F]+|0[0-7]*|[1-9][0-9]*)[uU]?(?:ll|LL|l|L)?");
+    private static final Map<String, Integer> C_BINARY_PRECEDENCE = Map.ofEntries(
+        Map.entry("*", 13), Map.entry("/", 13), Map.entry("%", 13), Map.entry("+", 12), Map.entry("-", 12),
+        Map.entry("<<", 11), Map.entry(">>", 11), Map.entry("<", 10), Map.entry("<=", 10), Map.entry(">", 10),
+        Map.entry(">=", 10), Map.entry("==", 9), Map.entry("!=", 9), Map.entry("&", 8), Map.entry("^", 7),
+        Map.entry("|", 6), Map.entry("&&", 5), Map.entry("||", 4));
+    private static final Set<String> C_TWO_CHARACTER_OPERATORS =
+        Set.of("<<", ">>", "<=", ">=", "==", "!=", "&&", "||");
+    private static final int C_UNARY_PRECEDENCE = 14;
+
+    /**
+     * The value of one constant expression (an enum value, array size or
+     * bit-field width), admitted only in the subset Ghidra 12.2 evaluates as C
+     * does, or a refusal at the token that leaves it. Ghidra leaves a name,
+     * cast, sizeof, floating or binary literal unevaluated and substitutes a
+     * default (the next implicit enumerator, a zero array size), and it
+     * truncates any value outside int. Integer literals, unary + - ~ !, the
+     * arithmetic, shift, comparison, bitwise and logical operators and
+     * parentheses evaluate correctly while every value stays in int, which
+     * this checks with the same C semantics. Iterative (shunting-yard), so
+     * caller text cannot deepen the stack.
+     */
+    private static long admitConstantExpression(List<CToken> raw, String field, String code) {
+        // Join adjacent single-character tokens into C's two-character operators.
+        List<CToken> tokens = new ArrayList<>();
+        for (CToken token : raw) {
+            CToken last = tokens.isEmpty() ? null : tokens.get(tokens.size() - 1);
+            if (last != null && last.text().length() == 1 && last.line() == token.line() &&
+                    last.column() + 1 == token.column() && C_TWO_CHARACTER_OPERATORS.contains(last.text() + token.text()))
+                tokens.set(tokens.size() - 1, new CToken(last.text() + token.text(), last.line(), last.column()));
+            else tokens.add(token);
+        }
+        ArrayDeque<Long> values = new ArrayDeque<>();
+        ArrayDeque<CToken> operators = new ArrayDeque<>();
+        boolean operand = true;
+        for (CToken token : tokens) {
+            String text = token.text();
+            if (operand && Character.isDigit(text.charAt(0))) {
+                if (!C_INTEGER_LITERAL.matcher(text).matches())
+                    throw refusedConstruct(code, field, "the literal " + text +
+                        " in a constant expression (Ghidra reads only decimal, hex and octal integer literals)",
+                        token.line(), token.column());
+                String digits = text.replaceAll("[uUlL]+$", "");
+                java.math.BigInteger literal = digits.startsWith("0x") || digits.startsWith("0X")
+                    ? new java.math.BigInteger(digits.substring(2), 16)
+                    : digits.length() > 1 && digits.startsWith("0")
+                        ? new java.math.BigInteger(digits.substring(1), 8) : new java.math.BigInteger(digits);
+                if (literal.compareTo(java.math.BigInteger.valueOf(Integer.MAX_VALUE)) > 0)
+                    throw refusedConstruct(code, field, "the literal " + text +
+                        " in a constant expression, above int (Ghidra truncates it)", token.line(), token.column());
+                values.push(literal.longValue());
+                operand = false;
+            } else if (operand && (text.equals("+") || text.equals("-") || text.equals("~") || text.equals("!"))) {
+                operators.push(new CToken("u" + text, token.line(), token.column()));
+            } else if (operand && text.equals("(")) {
+                operators.push(token);
+            } else if (!operand && text.equals(")")) {
+                while (!operators.isEmpty() && !operators.peek().is("("))
+                    applyCOperator(operators.pop(), values, field, code);
+                if (operators.isEmpty())
+                    throw refusedConstruct(code, field, "an unbalanced ) in a constant expression", token.line(), token.column());
+                operators.pop();
+            } else if (!operand && C_BINARY_PRECEDENCE.containsKey(text)) {
+                int precedence = C_BINARY_PRECEDENCE.get(text);
+                while (!operators.isEmpty() && !operators.peek().is("(") &&
+                        cOperatorPrecedence(operators.peek()) >= precedence)
+                    applyCOperator(operators.pop(), values, field, code);
+                operators.push(token);
+                operand = true;
+            } else if (isCIdentifierStart(text.charAt(0))) {
+                throw refusedConstruct(code, field, "the name " + text + " in a constant expression " +
+                    "(Ghidra does not evaluate names, casts or sizeof in enum values, array sizes or bit-field widths; write the value)",
+                    token.line(), token.column());
+            } else {
+                throw refusedConstruct(code, field, "the token " + text + " in a constant expression " +
+                    "(Ghidra evaluates only integer literals with arithmetic, shift, comparison, bitwise and logical operators)",
+                    token.line(), token.column());
+            }
+        }
+        CToken first = tokens.get(0);
+        if (operand)
+            throw refusedConstruct(code, field, "an incomplete constant expression", first.line(), first.column());
+        while (!operators.isEmpty()) {
+            if (operators.peek().is("("))
+                throw refusedConstruct(code, field, "an unbalanced ( in a constant expression",
+                    operators.peek().line(), operators.peek().column());
+            applyCOperator(operators.pop(), values, field, code);
+        }
+        return values.pop();
+    }
+
+    private static int cOperatorPrecedence(CToken operator) {
+        return operator.text().startsWith("u") ? C_UNARY_PRECEDENCE : C_BINARY_PRECEDENCE.get(operator.text());
+    }
+
+    /** Apply one C operator to int operands; a result outside int, which Ghidra would truncate, is refused. */
+    private static void applyCOperator(CToken operator, ArrayDeque<Long> values, String field, String code) {
+        String text = operator.text();
+        long result;
+        if (text.startsWith("u")) {
+            long value = values.pop();
+            result = switch (text) {
+                case "u-" -> -value;
+                case "u~" -> ~value;
+                case "u!" -> value == 0 ? 1 : 0;
+                default -> value;
+            };
+        } else {
+            long right = values.pop(), left = values.pop();
+            if ((text.equals("/") || text.equals("%")) && right == 0)
+                throw refusedConstruct(code, field, "a division by zero in a constant expression", operator.line(), operator.column());
+            if ((text.equals("<<") || text.equals(">>")) && (right < 0 || right > 31 || (text.equals("<<") && left < 0)))
+                throw refusedConstruct(code, field, "a shift C leaves undefined in a constant expression",
+                    operator.line(), operator.column());
+            result = switch (text) {
+                case "*" -> left * right;
+                case "/" -> left / right;
+                case "%" -> left % right;
+                case "+" -> left + right;
+                case "-" -> left - right;
+                case "<<" -> left << right;
+                case ">>" -> left >> right;
+                case "<" -> left < right ? 1 : 0;
+                case "<=" -> left <= right ? 1 : 0;
+                case ">" -> left > right ? 1 : 0;
+                case ">=" -> left >= right ? 1 : 0;
+                case "==" -> left == right ? 1 : 0;
+                case "!=" -> left != right ? 1 : 0;
+                case "&" -> left & right;
+                case "^" -> left ^ right;
+                case "|" -> left | right;
+                case "&&" -> left != 0 && right != 0 ? 1 : 0;
+                default -> left != 0 || right != 0 ? 1 : 0;
+            };
+        }
+        if (result < Integer.MIN_VALUE || result > Integer.MAX_VALUE)
+            throw refusedConstruct(code, field, "a constant expression whose value leaves int (Ghidra truncates it)",
+                operator.line(), operator.column());
+        values.push(result);
     }
 
     /**
@@ -2182,11 +2373,24 @@ public final class ReaGhidraBridge extends HeadlessScript {
         String definition = "";
         boolean ended = false;
         CTokenizer tokens = new CTokenizer(text, field, code);
+        // Labels of the #pragma pack pushes admitted so far, innermost first.
+        ArrayDeque<String> packLabels = new ArrayDeque<>();
+        // Declarations: whether each open brace is an enum body, the constant
+        // expression being read, and the next implicit enumerator value.
+        ArrayDeque<Boolean> enumBodies = new ArrayDeque<>();
+        boolean enumPending = false;
+        List<CToken> expression = null;
+        Set<String> expressionEnds = Set.of();
+        boolean enumExpression = false;
+        int expressionDepth = 0;
+        Long explicitEnumValue = null;
+        CToken enumerator = null;
+        long nextEnumValue = 0;
         for (CToken next = tokens.next(false); next != null; next = tokens.next(false)) {
             String token = next.text();
             int line = next.line(), column = next.column();
             if (next.is("#")) {
-                admitCallerCDirective(tokens, next, field, declarations, code);
+                admitCallerCDirective(tokens, next, field, declarations, code, packLabels);
                 continue;
             }
             if (!declarations && token.equals("typedef"))
@@ -2237,6 +2441,46 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 continue;
             }
             boolean top = braces == 0 && parentheses == 0;
+            // Enum values, array sizes and bit-field widths are constant expressions
+            // Ghidra evaluates itself; admitConstantExpression owns which ones it gets right.
+            if (expression != null) {
+                if (expressionDepth > 0 || !expressionEnds.contains(token)) {
+                    if (token.equals("(") || token.equals("[")) expressionDepth++;
+                    if (token.equals(")") || token.equals("]")) expressionDepth--;
+                    expression.add(next);
+                } else {
+                    Long value = expression.isEmpty() ? null : admitConstantExpression(expression, field, code);
+                    if (enumExpression) explicitEnumValue = value;
+                    expression = null;
+                }
+            } else if (token.equals("[") || (token.equals("=") && Boolean.TRUE.equals(enumBodies.peek())) ||
+                    (token.equals(":") && Boolean.FALSE.equals(enumBodies.peek()) && !enumPending)) {
+                expression = new ArrayList<>();
+                expressionDepth = 0;
+                enumExpression = token.equals("=");
+                expressionEnds = token.equals("[") ? Set.of("]") : enumExpression ? Set.of(",", "}") : Set.of(";", ",");
+            }
+            boolean inEnum = Boolean.TRUE.equals(enumBodies.peek());
+            if (inEnum && expression == null && next.isIdentifier() && (previous.equals("{") || previous.equals(",")))
+                enumerator = next;
+            // Ghidra numbers an enumerator without a value one past the previous, in int.
+            if (inEnum && expression == null && enumerator != null && (token.equals(",") || token.equals("}"))) {
+                long value = explicitEnumValue != null ? explicitEnumValue : nextEnumValue;
+                if (value > Integer.MAX_VALUE)
+                    throw refusedConstruct(code, field, "the enumerator " + enumerator.text() +
+                        ", whose implicit value leaves int (Ghidra truncates it)", enumerator.line(), enumerator.column());
+                nextEnumValue = value + 1;
+                explicitEnumValue = null;
+                enumerator = null;
+            }
+            if (token.equals("enum")) enumPending = true;
+            if (token.equals(";")) enumPending = false;
+            if (token.equals("{")) {
+                enumBodies.push(enumPending);
+                if (enumPending) nextEnumValue = 0;
+                enumPending = false;
+            }
+            if (token.equals("}") && !enumBodies.isEmpty()) enumBodies.pop();
             if (token.equals("{")) braces++;
             if (token.equals("}")) braces = Math.max(0, braces - 1);
             switch (state) {
@@ -2281,6 +2525,77 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 " levels deep, first beyond " + maxParenthesisDepth + " at line " + beyondLine + ", column " + beyondColumn,
                 null, deepest);
         return new AdmittedCallerC(dropped, ended, tokens.endsInLineComment);
+    }
+
+    /**
+     * Ghidra 12.2 stores, names and compares a data type recursively through
+     * its pointer, array, typedef and member chain. Measured on Ghidra 12.2
+     * (macOS arm64): 1024 levels resolve, 2048 exhaust the stack inside
+     * addDataType while its database lock is held, which leaves that lock held
+     * and the Program unusable. REA refuses a type deeper than this, a
+     * quarter of the last measured safe depth, before Ghidra walks it.
+     */
+    private static final int MAX_C_TYPE_DEPTH = 256;
+
+    /**
+     * Refuse a parsed type whose longest pointer, array, typedef, bit-field
+     * or member chain, including chains through existing database types,
+     * exceeds MAX_C_TYPE_DEPTH. Iterative with memoized depths; a chain back
+     * into a type still being walked (a self-referential pointer) adds no
+     * depth, because Ghidra resolves that reference without recursing.
+     */
+    private static void requireBoundedTypeDepth(DataType root, String field) {
+        Map<DataType, Integer> depths = new IdentityHashMap<>();
+        Set<DataType> open = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+        ArrayDeque<DataType> stack = new ArrayDeque<>();
+        stack.push(root);
+        while (!stack.isEmpty()) {
+            DataType type = stack.peek();
+            if (depths.containsKey(type)) {
+                stack.pop();
+                continue;
+            }
+            List<DataType> children = cTypeChildren(type);
+            boolean ready = true;
+            if (open.add(type)) {
+                for (DataType child : children)
+                    if (child != null && !depths.containsKey(child) && !open.contains(child)) {
+                        stack.push(child);
+                        ready = false;
+                    }
+                if (!ready) continue;
+            }
+            int depth = 1;
+            for (DataType child : children)
+                if (child != null && depths.containsKey(child)) depth = Math.max(depth, depths.get(child) + 1);
+            if (depth > MAX_C_TYPE_DEPTH)
+                throw new RequestFailure("type_depth_limit", field + " defines a type chained " + depth +
+                    " levels deep through pointers, arrays, typedefs or members");
+            depths.put(type, depth);
+            open.remove(type);
+            stack.pop();
+        }
+    }
+
+    private static List<DataType> cTypeChildren(DataType type) {
+        if (type instanceof ghidra.program.model.data.Pointer pointer) return java.util.Collections.singletonList(pointer.getDataType());
+        if (type instanceof ghidra.program.model.data.Array array) return List.of(array.getDataType());
+        if (type instanceof ghidra.program.model.data.BitFieldDataType bitField) return List.of(bitField.getBaseDataType());
+        if (type instanceof ghidra.program.model.data.TypeDef alias) return List.of(alias.getDataType());
+        if (type instanceof ghidra.program.model.data.FunctionDefinition function) {
+            List<DataType> children = new ArrayList<>();
+            children.add(function.getReturnType());
+            for (ghidra.program.model.data.ParameterDefinition argument : function.getArguments())
+                children.add(argument.getDataType());
+            return children;
+        }
+        if (type instanceof ghidra.program.model.data.Composite composite) {
+            List<DataType> children = new ArrayList<>();
+            for (ghidra.program.model.data.DataTypeComponent component : composite.getComponents())
+                children.add(component.getDataType());
+            return children;
+        }
+        return List.of();
     }
 
     /** The caller's per-call bound, or its default; the contract owns the range. */
@@ -2330,9 +2645,6 @@ public final class ReaGhidraBridge extends HeadlessScript {
         catch (ghidra.app.util.cparser.C.ParseException | ghidra.app.util.cparser.C.TokenMgrError rejected) {
             throw new RequestFailure(code, "Ghidra's C parser rejected " + field + ": " + cParserReason(rejected.getMessage()));
         }
-        catch (StackOverflowError exhausted) {
-            throw new RequestFailure(code, field + " nests declarators or members deeper than Ghidra's C parser admits");
-        }
         if (!parser.didParseSucceed())
             throw new RequestFailure(code, "Ghidra's C parser rejected " + field + ": " + cParserReason(parser.getParseMessages()));
         // The parser records what it could not apply, such as a repeated
@@ -2341,6 +2653,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (!diagnostics.isEmpty())
             throw new RequestFailure(code, "Ghidra's C parser reported " + field + ": " + diagnostics +
                 "; it would not apply the text as written, so nothing was changed");
+        // Before anything walks the parsed types recursively (naming, comparing, storing).
+        for (Map<String, DataType> parsedTypes : List.of(
+                parser.getComposites(), parser.getEnums(), parser.getTypes(), parser.getFunctions()))
+            for (DataType parsedType : parsedTypes.values()) requireBoundedTypeDepth(parsedType, field);
         return new ParsedCallerC(parser, admitted.droppedQualifiers());
     }
 
@@ -2564,35 +2880,40 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
     /** Every named type a definition reaches must be defined here or already stored. */
     private void requireStoredDependencies(
-            String owner, DataType type, Set<DataType> parsed, DataTypeManager types, Set<DataType> visited) {
-        if (type == null || !visited.add(type)) return;
-        // Pointer and bit-field types are built-in classes; look through them first.
-        if (type instanceof ghidra.program.model.data.Pointer pointer) {
-            requireStoredDependencies(owner, pointer.getDataType(), parsed, types, visited);
-            return;
-        }
-        if (type instanceof ghidra.program.model.data.Array array) {
-            requireStoredDependencies(owner, array.getDataType(), parsed, types, visited);
-            return;
-        }
-        if (type instanceof ghidra.program.model.data.BitFieldDataType bitField) {
-            requireStoredDependencies(owner, bitField.getBaseDataType(), parsed, types, visited);
-            return;
-        }
-        if (type instanceof ghidra.program.model.data.BuiltInDataType) return;
-        if (!parsed.contains(type)) {
-            if (types.contains(type)) {
-                requireUnambiguousType(type);
-                return;
+            String owner, DataType root, Set<DataType> parsed, DataTypeManager types, Set<DataType> visited) {
+        // A worklist, not recursion: caller text sets how deep pointer, array and member chains go.
+        ArrayDeque<DataType> pending = new ArrayDeque<>();
+        pending.push(root);
+        while (!pending.isEmpty()) {
+            DataType type = pending.pop();
+            if (type == null || !visited.add(type)) continue;
+            // Pointer and bit-field types are built-in classes; look through them first.
+            if (type instanceof ghidra.program.model.data.Pointer pointer) {
+                pending.push(pointer.getDataType());
+                continue;
             }
-            throw new RequestFailure("invalid_type_declarations", owner +
-                " embeds an unnamed or undeclared type (" + type.getName() + "); declare it by name in the same declarations");
+            if (type instanceof ghidra.program.model.data.Array array) {
+                pending.push(array.getDataType());
+                continue;
+            }
+            if (type instanceof ghidra.program.model.data.BitFieldDataType bitField) {
+                pending.push(bitField.getBaseDataType());
+                continue;
+            }
+            if (type instanceof ghidra.program.model.data.BuiltInDataType) continue;
+            if (!parsed.contains(type)) {
+                if (types.contains(type)) {
+                    requireUnambiguousType(type);
+                    continue;
+                }
+                throw new RequestFailure("invalid_type_declarations", owner +
+                    " embeds an unnamed or undeclared type (" + type.getName() + "); declare it by name in the same declarations");
+            }
+            if (type instanceof ghidra.program.model.data.TypeDef alias) pending.push(alias.getDataType());
+            if (type instanceof ghidra.program.model.data.Composite composite)
+                for (ghidra.program.model.data.DataTypeComponent component : composite.getComponents())
+                    pending.push(component.getDataType());
         }
-        if (type instanceof ghidra.program.model.data.TypeDef alias)
-            requireStoredDependencies(owner, alias.getDataType(), parsed, types, visited);
-        if (type instanceof ghidra.program.model.data.Composite composite)
-            for (ghidra.program.model.data.DataTypeComponent component : composite.getComponents())
-                requireStoredDependencies(owner, component.getDataType(), parsed, types, visited);
     }
 
     private String symbolLeafName(Symbol symbol, String requested) throws ghidra.util.exception.InvalidInputException {

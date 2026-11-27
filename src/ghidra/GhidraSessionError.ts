@@ -213,6 +213,7 @@ export const GHIDRA_C_PARSER_LIMIT_CODES = [
   "signature_length_limit",
   "declarations_length_limit",
   "parenthesis_depth_limit",
+  "type_depth_limit",
 ] as const;
 export type GhidraCParserLimitCode =
   (typeof GHIDRA_C_PARSER_LIMIT_CODES)[number];

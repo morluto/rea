@@ -544,6 +544,58 @@ it.each([
   },
 );
 
+it("reports a type chained deeper than Ghidra's stack admits as a fixed ceiling", async () => {
+  const message =
+    "declarations defines a type chained 300 levels deep through pointers, arrays, typedefs or members";
+  const harness = await connectGhidraMcp(
+    "ghidra-type-depth",
+    (requested, input) =>
+      Promise.resolve(
+        requested === "define_native_data_types"
+          ? err(
+              new GhidraSessionError(
+                "remote",
+                message,
+                {},
+                { remoteCode: "type_depth_limit" },
+              ),
+            )
+          : ok(ghidraFixtureResult(requested, input)),
+      ),
+  );
+  try {
+    const { error } = parseMcpToolError(
+      await harness.mcp.callTool({
+        name: "define_native_data_types",
+        arguments: { declarations: DECLARATIONS },
+      }),
+    );
+    expect(error).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        operation: "define_native_data_types",
+        refusal: {
+          kind: "fixed_ceiling",
+          allowance: "The Ghidra C type depth allowance",
+          limit: 256,
+          unit: "levels",
+        },
+      },
+    });
+    expect(error.details).not.toHaveProperty("limit");
+    expect(error.message).toContain(message);
+    // The refusal leaves the session usable.
+    const next = await harness.mcp.callTool({
+      name: "procedure_info",
+      arguments: { procedure: "0x401000" },
+    });
+    expect(next.isError).not.toBe(true);
+  } finally {
+    await harness.close();
+  }
+});
+
 it("returns the qualifiers each edit could not record", async () => {
   const qualifier = { qualifier: "const", line: 1, column: 14 };
   // Every other pure qualifier the bridge reports.

@@ -101,6 +101,7 @@ async function connect(environment = {}) {
   const raw = (name, args = {}) =>
     client.callTool({ name, arguments: args }, { timeout: 240000 });
   return {
+    raw,
     call: async (name, args = {}) =>
       requireMcpOperationResult(await raw(name, args), name),
     /** The refusal's single input issue and its recovery. */
@@ -435,7 +436,7 @@ struct rea_natural { char a; int b; }; // after pop
 struct rea_flexible { int n; char data[]; };
 struct rea_bits { unsigned low:3; unsigned high:5; };
 typedef struct rea_node { struct rea_node *next; const int v; } rea_node, *rea_node_ptr;
-enum rea_flags { REA_NONE, REA_EIGHT = 1 << 3, REA_NINE = REA_EIGHT + 1 };
+enum rea_flags { REA_NONE, REA_EIGHT = 1 << 3, REA_MASK = (0x30 | 07) & ~2, REA_NEG = -(4 * 3) % 5, REA_NEXT };
 struct rea_deep { char d[${"(".repeat(10)}1${")".repeat(10)}]; };
 typedef struct { volatile int k; } rea_unnamed_t;`,
           parenthesis_max_depth: 10,
@@ -530,9 +531,12 @@ struct rea_after { char c; int i; };`;
             ["high", 5, 3],
           ],
         );
+        // Values implicit numbering cannot produce: Ghidra evaluated each expression.
         assert.deepEqual((await inspect("rea_flags")).members, [
           { name: "REA_EIGHT", value: "8" },
-          { name: "REA_NINE", value: "9" },
+          { name: "REA_MASK", value: "53" },
+          { name: "REA_NEG", value: "-2" },
+          { name: "REA_NEXT", value: "-1" },
           { name: "REA_NONE", value: "0" },
         ]);
         assert.equal(
@@ -682,6 +686,41 @@ struct rea_after { char c; int i; };`;
             "# pragma pack(1)\nstruct rea_kept { char c; int i; };",
             /# separated from its directive name/u,
           ],
+          // Ghidra leaves these unevaluated or truncated and stores another value.
+          [
+            "enum rea_bad { FIRST = 1, MASK = FIRST << 4 };",
+            /the name FIRST in a constant expression .* at line 1, column 34/u,
+          ],
+          ["struct rea_kept { char a[sizeof(int)]; };", /the name sizeof/u],
+          ["struct rea_kept { char a[(char)300]; };", /the name char/u],
+          [
+            "enum rea_bad { A = 0x80000000 };",
+            /literal 0x80000000 .*above int/u,
+          ],
+          ["enum rea_bad { A = 65536 * 65536 };", /value leaves int/u],
+          ["enum rea_bad { A = 0b11 };", /literal 0b11/u],
+          ["enum rea_bad { A = 1.5 };", /the token \./u],
+          ["enum rea_bad { A = 1 ? 2 : 3 };", /the token \?/u],
+          [
+            "enum rea_bad { A = 2147483647, B };",
+            /enumerator B, whose implicit value leaves int/u,
+          ],
+          [
+            "struct rea_kept { unsigned a : 1 << 40; };",
+            /shift C leaves undefined/u,
+          ],
+          // Ghidra ignores a bare push, so pop would restore nothing.
+          ...[
+            "#pragma pack(push)\n#pragma pack(1)\nstruct rea_kept { char c; int i; };\n#pragma pack(pop)",
+            "#pragma pack(pop)\nstruct rea_kept { char c; int i; };",
+          ].map((declarations) => [
+            declarations,
+            /#pragma pack with operands Ghidra ignores or reads differently \(.*\) at line 1, column 1/u,
+          ]),
+          [
+            "#pragma pack(push, rea, 1)\n#pragma pack(pop)\nstruct rea_kept { char c; int i; };",
+            /#pragma pack with operands .* at line 2, column 1/u,
+          ],
           // Ghidra invents an empty enum for an undefined tag.
           [
             "struct rea_user2 { enum rea_missing_e m; };",
@@ -741,6 +780,7 @@ struct rea_after { char c; int i; };`;
           "rea_user2",
           "rea_missing_e",
           "rea_fwd",
+          "rea_bad",
         ])
           assert.equal(
             await typeStatus(first, `/rea_caller_defined/${name}`),
@@ -932,6 +972,107 @@ struct rea_after { char c; int i; };`;
         return {};
       } finally {
         await bounded.close();
+      }
+    },
+  );
+  await phase(
+    "caller floods within the length bounds are refused and the session survives",
+    async () => {
+      const flood = await connect();
+      try {
+        await flood.call("open_binary", {
+          path: target,
+          provider_id: "ghidra",
+        });
+        const kept = await flood.call("define_native_data_types", {
+          declarations: "struct rea_survivor { int a; };",
+        });
+        assert.equal(kept.types[0].status, "defined");
+        const max = 8192;
+        const floods = [
+          [
+            "define_native_data_types",
+            { declarations: "[".repeat(max), declarations_max_utf16: max },
+          ],
+          [
+            "define_native_data_types",
+            {
+              declarations: `struct rea_flood { int a[${"(".repeat(max - 30)}`,
+              declarations_max_utf16: max,
+            },
+          ],
+          [
+            "define_native_data_types",
+            {
+              declarations: `struct rea_flood { int a${"[1]".repeat((max - 40) / 3)}; };`,
+              declarations_max_utf16: max,
+            },
+          ],
+          [
+            "define_native_data_types",
+            {
+              declarations: `struct rea_flood { int ${"*".repeat(max - 40)} p; };`,
+              declarations_max_utf16: max,
+            },
+          ],
+          [
+            "define_native_data_types",
+            {
+              // Each typedef adds a pointer level and a typedef level.
+              declarations: Array.from(
+                { length: 300 },
+                (_, index) =>
+                  `typedef ${index === 0 ? "int" : `t${String(index - 1)}`} *t${String(index)};`,
+              ).join(""),
+              declarations_max_utf16: max,
+            },
+          ],
+          [
+            "annotate_native_function",
+            {
+              procedure,
+              signature: "[".repeat(4096),
+              signature_max_utf16: 4096,
+            },
+          ],
+          [
+            "annotate_native_function",
+            {
+              procedure,
+              signature: `int total(int ${"*".repeat(4000)} p)`,
+              signature_max_utf16: 4096,
+            },
+          ],
+        ];
+        const outcomes = [];
+        for (const [name, args] of floods) {
+          // Each is refused with a typed result, never a lost connection.
+          const error = requireMcpToolError(await flood.raw(name, args));
+          outcomes.push(error.code);
+        }
+        // Pointer, array and typedef chains are refused before Ghidra walks them.
+        assert.deepEqual(outcomes, [
+          "invalid_request",
+          "resource_constraint",
+          "resource_constraint",
+          "resource_constraint",
+          "resource_constraint",
+          "invalid_request",
+          "resource_constraint",
+        ]);
+        assert.equal(
+          (
+            await flood.call("inspect_native_data_type", {
+              type: "/rea_caller_defined/rea_survivor",
+            })
+          ).status,
+          "available",
+        );
+        // A held database lock would fail this close's checkpoint save.
+        await flood.call("close_binary");
+        return { flood_outcomes: outcomes };
+      } finally {
+        await flood.close();
       }
     },
   );

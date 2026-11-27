@@ -82,6 +82,14 @@ export const MINIMUM_GHIDRA_C_TEXT_UTF16 = 16;
 export const MINIMUM_GHIDRA_C_PARENTHESIS_DEPTH = 1;
 export const DEFAULT_GHIDRA_C_PARENTHESIS_DEPTH = 8;
 export const MAXIMUM_GHIDRA_C_PARENTHESIS_DEPTH = 12;
+/**
+ * Fixed ceiling on how deep a parsed C type chains through pointers, arrays,
+ * typedefs and members. Ghidra 12.2 stores, names and compares a type
+ * recursively: 1024 levels resolve, 2048 exhaust the stack inside
+ * addDataType with its database lock held, leaving the Program unusable. The
+ * Java bridge enforces the same value.
+ */
+export const GHIDRA_C_MAX_TYPE_DEPTH = 256;
 
 /** Default absolute deadline for Hopper launch, analysis, bridge, and readiness. */
 export const DEFAULT_HOPPER_STARTUP_TIMEOUT_MS = 120_000;
