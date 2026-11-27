@@ -1,8 +1,8 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, matchesGlob } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -14,20 +14,10 @@ import {
 } from "../../../scripts/lib/docs-facts.mjs";
 
 const root = fileURLToPath(new URL("../../..", import.meta.url));
-const temporaryRoots: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(
-    temporaryRoots
-      .splice(0)
-      .map((path) => rm(path, { recursive: true, force: true })),
-  );
-});
 
 describe("literal tool counts", () => {
   it("refuses catalog-size restatements in living prose only", async () => {
     const directory = await createTestTempDirectory("rea-tool-count-facts-");
-    temporaryRoots.push(directory);
     const write = async (path: string, content: string) => {
       await mkdir(dirname(join(directory, path)), { recursive: true });
       await writeFile(join(directory, path), content);
@@ -54,7 +44,7 @@ describe("literal tool counts", () => {
     ]);
   });
 
-  it("invalidates the cached documentation check for every scanned root", async () => {
+  it("invalidates the cached documentation check for prose and directly inspected files", async () => {
     const turbo = JSON.parse(
       await readFile(join(root, "turbo.json"), "utf8"),
     ) as {
@@ -74,14 +64,20 @@ describe("literal tool counts", () => {
         : [`${start}/nested/page.md`, `${start}/nested/page.html`],
     );
     expect(samples.every(isLivingProsePath)).toBe(true);
-    expect(samples.filter((path) => !cached(path))).toEqual([]);
+    const directlyInspected = [
+      ".cursor-plugin/skills/reverse-engineer-anything/SKILL.md",
+      ".github/pull_request_template.md",
+      "website/locales/languages.json",
+    ];
+    expect(
+      [...samples, ...directlyInspected].filter((path) => !cached(path)),
+    ).toEqual([]);
   });
 });
 
 describe("translated README facts", () => {
   it("keeps translated readmes linked to canonical setup and tool details", async () => {
     const directory = await createTestTempDirectory("rea-readme-facts-");
-    temporaryRoots.push(directory);
     const translatedPath = join(directory, "docs/readme/README_zh.md");
     const links = [
       "[Agents](docs/getting-started/installation.md#supported-agents)",

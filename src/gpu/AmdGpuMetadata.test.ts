@@ -130,3 +130,80 @@ it("distinguishes an unsupported extension tag from a forbidden MessagePack toke
     expect.objectContaining({ kind: "malformed" }),
   );
 });
+it("admits unsigned integer map keys only for the schema that declares them", () => {
+  // {0x2c0a: 1}, as in PAL `.registers`.
+  const registers = Buffer.from("81cd2c0a01", "hex");
+  expect(() => readAmdMetadata(registers)).toThrow(
+    expect.objectContaining({ kind: "malformed" }),
+  );
+  expect(readAmdMetadata(registers, "string-or-unsigned")).toEqual({
+    "11274": 1,
+  });
+  // {1: 0, 1: 0} repeats a key; {"1": 0, 1: 0} only collides when normalized.
+  expect(() =>
+    readAmdMetadata(Buffer.from("8201000100", "hex"), "string-or-unsigned"),
+  ).toThrow(expect.objectContaining({ kind: "malformed" }));
+  expect(() =>
+    readAmdMetadata(Buffer.from("82a131000100", "hex"), "string-or-unsigned"),
+  ).toThrow(expect.objectContaining({ kind: "unsupported" }));
+});
+it("accepts non-negative signed MessagePack integer keys and rejects negative or cross-width duplicates", () => {
+  for (const [hex, expected] of [
+    ["81d00001", { "0": 1 }],
+    ["81d07f01", { "127": 1 }],
+    ["81d12c0a01", { "11274": 1 }],
+    ["81d20001000001", { "65536": 1 }],
+    ["81d37fffffffffffffff01", { "9223372036854775807": 1 }],
+    ["82d3000000000000000101d3000000000000000202", { "1": 1, "2": 2 }],
+  ] as const) {
+    const encoded = Buffer.from(hex, "hex");
+    expect(readAmdMetadata(encoded, "string-or-unsigned")).toEqual(expected);
+    expect(() => readAmdMetadata(encoded)).toThrow(
+      expect.objectContaining({ kind: "malformed" }),
+    );
+  }
+  for (const negativeHex of [
+    "81d0ff01",
+    "81d08001",
+    "81d1800001",
+    "81d28000000001",
+    "81d3ffffffffffffffff01",
+    "81d3800000000000000001",
+  ]) {
+    expect(() =>
+      readAmdMetadata(Buffer.from(negativeHex, "hex"), "string-or-unsigned"),
+    ).toThrow(expect.objectContaining({ kind: "malformed" }));
+  }
+  // Same numeric value encoded with different integer tags is a duplicate key.
+  for (const dupHex of [
+    "82cd2c0a01d12c0a02",
+    "820101d00102",
+    "82ce0001000001d20001000002",
+    "82cf7fffffffffffffff01d37fffffffffffffff02",
+  ]) {
+    expect(() =>
+      readAmdMetadata(Buffer.from(dupHex, "hex"), "string-or-unsigned"),
+    ).toThrow(expect.objectContaining({ kind: "malformed" }));
+  }
+  // Signed non-negative integer key colliding with same decimal string spelling.
+  expect(() =>
+    readAmdMetadata(
+      Buffer.from("82a5313132373401d12c0a02", "hex"),
+      "string-or-unsigned",
+    ),
+  ).toThrow(expect.objectContaining({ kind: "unsupported" }));
+});
+
+it("admits float32 and float64 scalars under a small maxTokenBytes budget", () => {
+  const float64Map = Buffer.from([
+    0x81, 0xa1, 0x61, 0xcb, 0x3f, 0xf8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  ]);
+  expect(
+    readAmdMetadata(float64Map, "string", undefined, {
+      maxMetadataBytes: 1024,
+      maxParserVisits: 100,
+      maxParserEntries: 100,
+      maxTokenBytes: 4,
+    }),
+  ).toEqual({ a: 1.5 });
+});

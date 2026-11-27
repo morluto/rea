@@ -192,9 +192,10 @@ describe("persistent debugger session managers", () => {
           operation: "start_gdb_session",
           message: expect.stringContaining("automatic-loading disable command"),
           partialObservation: {
-            raw_result: {
+            normalized_result: {
               records: expect.arrayContaining([expect.stringContaining(reply)]),
             },
+            raw_result: null,
           },
         },
       });

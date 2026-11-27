@@ -13,10 +13,12 @@ import type {
 } from "../ports/AnalysisProvider.js";
 import {
   projectRetainedAnalysis,
-  requireAnalysisViewRetention,
   summarizeRetainedAnalysis,
-  type AnalysisViewRetention,
 } from "../application/analysisView/AnalysisViewService.js";
+import {
+  requireAnalysisViewRetention,
+  type AnalysisViewRetention,
+} from "../application/analysisView/AnalysisViewRetention.js";
 import type { AnalysisViewRequest } from "../domain/analysisView/analysisViewRequest.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import type { ToolContract } from "../contracts/toolContractTypes.js";
@@ -57,7 +59,7 @@ export const deliverEvidenceResult = (
   result: Result<Evidence, AnalysisError>,
   contract: ToolContract,
   recordEvidence?: EvidenceWriter["recordEvidence"],
-  viewSource?: JsonValue,
+  viewSource?: JsonValue | (() => JsonValue | undefined),
 ): CallToolResult => {
   if (!result.ok)
     return server.delivery.toPartialErrorToolResult(
@@ -71,6 +73,7 @@ export const deliverEvidenceResult = (
     contract,
     recorded,
     viewSource,
+    recordEvidence,
   );
 };
 
@@ -96,7 +99,7 @@ export const createRetainedSummaryToolHandler = <
   Name extends string,
   InputSchema extends z.ZodType<
     Readonly<Record<string, unknown>> & {
-      readonly detail: "complete" | "summary";
+      readonly detail?: "complete" | "summary" | undefined;
       readonly view?: AnalysisViewRequest;
     }
   >,
@@ -111,6 +114,22 @@ export const createRetainedSummaryToolHandler = <
   return createEvidenceToolHandler(
     server,
     async (rawInput, options) => {
+      if (operation.admission === "sdk") {
+        // The MCP SDK already validated `rawInput` against `contract.inputSchema`.
+        const { detail, view, ...input } = rawInput as z.output<InputSchema>;
+        if (detail === "summary") {
+          const ready = requireAnalysisViewRetention(contract.name, retention);
+          if (!ready.ok) return ready;
+        }
+        const inspected = await operation.summary(input, options);
+        return detail === "summary" && inspected.ok
+          ? projectRetainedAnalysis(
+              inspected.value,
+              retention,
+              view ?? { kind: "summary" },
+            )
+          : inspected;
+      }
       const parsed = contract.inputSchema.safeParse(rawInput);
       if (!parsed.success)
         return err(
@@ -121,23 +140,21 @@ export const createRetainedSummaryToolHandler = <
             { cause: parsed.error },
           ),
         );
-      const { detail, view, ...input } = parsed.data;
+      const { detail, view } = parsed.data;
       if (detail === "summary") {
         const ready = requireAnalysisViewRetention(contract.name, retention);
         if (!ready.ok) return ready;
       }
-      const inspected = await (operation.admission === "sdk"
-        ? operation.summary(input, options)
-        : operation.summary(
-            isRecord(rawInput)
-              ? Object.fromEntries(
-                  Object.entries(rawInput).filter(
-                    ([field]) => field !== "detail" && field !== "view",
-                  ),
-                )
-              : rawInput,
-            options,
-          ));
+      const inspected = await operation.summary(
+        isRecord(rawInput)
+          ? Object.fromEntries(
+              Object.entries(rawInput).filter(
+                ([field]) => field !== "detail" && field !== "view",
+              ),
+            )
+          : rawInput,
+        options,
+      );
       return detail === "summary" && inspected.ok
         ? projectRetainedAnalysis(
             inspected.value,
@@ -187,7 +204,7 @@ export const createEvidenceToolHandler =
           result,
           contract,
           recordEvidence,
-          viewSource?.(input),
+          viewSource === undefined ? undefined : () => viewSource(input),
         );
       },
     );
@@ -569,6 +586,8 @@ export const createAnalysisToolHandler =
                   analyzed.value.evidence,
                   contract,
                   analyzed.value.recorded,
+                  undefined,
+                  retention.recordEvidence,
                 );
         return progress.complete(response);
       },

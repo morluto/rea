@@ -13219,53 +13219,53 @@ msgctxt "runtime"
 msgid "Hit a cactus. Press Play again, or change the speed and restart."
 msgstr ""
 
-#: website/public/assets/dino-demo.js:171
+#: website/public/assets/dino-demo.js:172
 msgctxt "runtime"
 msgid "Pause"
 msgstr ""
 
-#: website/public/assets/dino-demo.js:172
+#: website/public/assets/dino-demo.js:173
 msgctxt "runtime"
 msgid "Running. Space or Jump clears a cactus."
 msgstr ""
 
-#: website/public/assets/dino-demo.js:183 website/public/assets/dino-demo.js:219
-#: website/public/assets/dino-demo.js:224
+#: website/public/assets/dino-demo.js:184 website/public/assets/dino-demo.js:220
+#: website/public/assets/dino-demo.js:226
 msgctxt "runtime"
 msgid "Paused. Press Play to continue."
 msgstr ""
 
-#: website/public/assets/dino-demo.js:203
+#: website/public/assets/dino-demo.js:204
 #, python-brace-format
 msgctxt "runtime"
 msgid "Fixed speed: {speed}. Space or Jump clears a cactus."
 msgstr ""
 
-#: website/public/assets/dino-demo.js:206
+#: website/public/assets/dino-demo.js:207
 #, python-brace-format
 msgctxt "runtime"
 msgid "Fixed speed: {speed}. Press Play to try it."
 msgstr ""
 
-#: website/public/assets/dino-demo.js:215
+#: website/public/assets/dino-demo.js:216
 msgctxt "runtime"
 msgid "Recovered rule: start at 6, then increase toward 13."
 msgstr ""
 
-#: website/public/assets/dino-demo.js:216
+#: website/public/assets/dino-demo.js:217
 #, python-brace-format
 msgctxt "runtime"
 msgid "Fixed speed: {speed}."
 msgstr ""
 
-#: website/public/assets/dino-demo.js:249
+#: website/public/assets/dino-demo.js:251
 msgctxt "runtime"
 msgid ""
 "Replayed the recovered rule. All four values match the controlled original-game check "
 "when rounded to three decimals."
 msgstr ""
 
-#: website/public/assets/dino-demo.js:252
+#: website/public/assets/dino-demo.js:254
 msgctxt "runtime"
 msgid ""
 "The replay differs from the recorded original-game values. Compare the speed rule and "
@@ -13287,27 +13287,27 @@ msgctxt "runtime"
 msgid "For multiplication, 10 becomes 0.1. Press = to multiply."
 msgstr ""
 
-#: website/public/assets/main.js:21
+#: website/public/assets/main.js:24
 msgctxt "runtime"
 msgid "Copied"
 msgstr ""
 
-#: website/public/assets/main.js:23
+#: website/public/assets/main.js:26
 msgctxt "runtime"
 msgid "Code copied to clipboard."
 msgstr ""
 
-#: website/public/assets/main.js:32
+#: website/public/assets/main.js:35
 msgctxt "runtime"
 msgid "Selected"
 msgstr ""
 
-#: website/public/assets/main.js:34
+#: website/public/assets/main.js:37
 msgctxt "runtime"
 msgid "Code selected. Use your keyboard to copy it."
 msgstr ""
 
-#: website/public/assets/main.js:158
+#: website/public/assets/main.js:162
 #, python-brace-format
 msgctxt "runtime"
 msgid "REA on GitHub ({count})"

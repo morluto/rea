@@ -148,7 +148,9 @@ it("accepts an explicit absence report", () => {
     candidate: null,
     verification: null,
     coverage: { status: "complete", examined_sections: 0 },
+    limitation_codes: ["standing_caveats"],
     limitations: [...ELF_DEBUG_LINK_LIMITATIONS],
   });
   expect(parsed.coverage.status).toBe("complete");
+  expect(parsed.limitation_codes).toEqual(["standing_caveats"]);
 });

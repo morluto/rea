@@ -1,13 +1,21 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readFile,
+  symlink,
+  truncate,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import {
   API_CONTRACT_FACT_BYTES,
+  API_CONTRACT_MAX_FILE_BYTES,
   apiContractSchema,
 } from "../../domain/apiContract/apiContract.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { parseEvidence } from "../../domain/evidence.js";
 import { projectAnalysisView } from "../../domain/analysisView/analysisView.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
@@ -109,9 +117,87 @@ it("rejects the selected physical byte budget before parsing", async () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error._tag).toBe("AnalysisResourceConstraintError");
-      if (result.error instanceof AnalysisResourceConstraintError)
+      if (result.error instanceof AnalysisResourceConstraintError) {
         expect(result.error.operation).toBe("inspect_api_contract");
+        expect(result.error.remediationAction).toBeUndefined();
+        expect(result.error.limit).toEqual({
+          control_kind: "parameter",
+          parameter: "max_file_bytes",
+          effective_value: 4,
+          unit: "bytes",
+          minimum: 1,
+          maximum: API_CONTRACT_MAX_FILE_BYTES,
+          default_value: API_CONTRACT_MAX_FILE_BYTES,
+          applies_at: "next_call",
+          required_value: 10,
+        });
+        const projected = projectAnalysisError(result.error);
+        expect(projected).toMatchObject({
+          code: "resource_constraint",
+          retryable: false,
+          details: {
+            limit: result.error.limit,
+            refusal: {
+              kind: "adjustable_budget",
+              operation: "inspect_api_contract",
+              control: "max_file_bytes",
+              effective_value: 4,
+              unit: "bytes",
+              range: { minimum: 1, maximum: API_CONTRACT_MAX_FILE_BYTES },
+              default_value: API_CONTRACT_MAX_FILE_BYTES,
+              required_value: 10,
+            },
+          },
+        });
+        expect(projected.remediation?.action).toContain("max_file_bytes");
+        expect(projected.remediation?.action).toContain("at least 10 bytes");
+      }
     }
+  } finally {
+    await resources.close();
+  }
+});
+
+it("refuses an API document above the 32 MiB max_file_bytes ceiling without suggesting a higher value", async () => {
+  const { path } = await inputFile(Buffer.alloc(0));
+  const oversize = API_CONTRACT_MAX_FILE_BYTES + 1;
+  await truncate(path, oversize);
+  const resources = new ArtifactResourceScope();
+  try {
+    const result = await inspectApiContractEvidence({ path }, resources);
+    if (result.ok) throw new Error("Expected max_file_bytes ceiling refusal");
+    const projected = projectAnalysisError(result.error);
+    expect(projected).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_file_bytes",
+          effective_value: API_CONTRACT_MAX_FILE_BYTES,
+          unit: "bytes",
+          minimum: 1,
+          maximum: API_CONTRACT_MAX_FILE_BYTES,
+          default_value: API_CONTRACT_MAX_FILE_BYTES,
+          applies_at: "next_call",
+          required_value: oversize,
+        },
+        refusal: {
+          kind: "adjustable_budget",
+          operation: "inspect_api_contract",
+          control: "max_file_bytes",
+          effective_value: API_CONTRACT_MAX_FILE_BYTES,
+          unit: "bytes",
+          range: { minimum: 1, maximum: API_CONTRACT_MAX_FILE_BYTES },
+          default_value: API_CONTRACT_MAX_FILE_BYTES,
+          required_value: oversize,
+        },
+      },
+    });
+    expect(projected.remediation?.action).toContain("already at its maximum");
+    expect(projected.remediation?.action).not.toContain(
+      "Pass a larger max_file_bytes",
+    );
   } finally {
     await resources.close();
   }
@@ -231,7 +317,7 @@ it("keeps native JSON source excerpts internal while preserving the failure caus
 });
 
 it.each([
-  [{ openapi: "2.0" }, "AnalysisUnsupportedTargetError"],
+  [{ openapi: "2.0" }, "AnalysisTargetFailureError"],
   [
     {
       openapi: "3.1.2",

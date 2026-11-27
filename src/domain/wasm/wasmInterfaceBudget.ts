@@ -3,6 +3,7 @@ import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
 import {
   DEFAULT_WASM_INTERFACE_REPRESENTATION_BYTES,
   MAX_WASM_INTERFACE_REPRESENTATION_BYTES,
+  wasmInterfaceByteBudgetLimit,
 } from "./wasmInterface.js";
 
 /** One selected interface allowance, shared by nested producer reads and comparison. */
@@ -36,6 +37,7 @@ export class WasmInterfaceBudget {
       },
       {
         retryable: false,
+        limit: wasmInterfaceByteBudgetLimit(this.maximumBytes),
         remediationAction: `${this.maximumBytes < MAX_WASM_INTERFACE_REPRESENTATION_BYTES ? `Raise max_interface_bytes above ${String(this.maximumBytes)} bytes (maximum ${String(MAX_WASM_INTERFACE_REPRESENTATION_BYTES)}) on the next ${this.operation} call.` : `max_interface_bytes is already at the runtime representation maximum of ${String(MAX_WASM_INTERFACE_REPRESENTATION_BYTES)} bytes; no higher interface allowance is supported. A comparison may select only imports or exports; otherwise report the unsupported complete representation.`} No restart is required. Other output, heap and deadline controls do not raise this allowance. A comparison cannot restore facts omitted from partial producer Evidence; inspect the original module with a larger producer budget first when that budget is below its maximum.`,
       },
     );

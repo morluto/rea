@@ -1,5 +1,5 @@
 import * as rootHash from "../../../src/resources/StableRootArtifact.js";
-import { createHash } from "node:crypto";
+import { sha256 } from "../../support/sha256.js";
 import {
   lstat,
   mkdir,
@@ -32,9 +32,6 @@ import {
 import { abortIfNeeded } from "../../../src/resources/StreamDigest.js";
 
 const AGED_FIXTURE_TIME = new Date("2000-01-01T00:00:00Z");
-
-const sha256 = (bytes: Buffer) =>
-  createHash("sha256").update(bytes).digest("hex");
 
 const fileReadPrototype = async (
   path: string,
@@ -379,21 +376,28 @@ it.each([
     name: "oversized NES 2.0",
     bytes: () => nes2Fixture({ header: { 9: 0x01 } }),
     reason: "truncated NES 2.0 payload",
+    kind: "truncated",
   },
-  { name: "UNIF", bytes: () => Buffer.from("UNIF"), reason: "unif" },
+  {
+    name: "UNIF",
+    bytes: () => Buffer.from("UNIF"),
+    reason: "unif",
+    kind: "unsupported",
+  },
   {
     name: "truncated",
     bytes: () => inesFixture().subarray(0, 20),
     reason: "truncated iNES payload",
+    kind: "truncated",
   },
 ])(
   "refuses $name during direct artifact inventory",
-  async ({ bytes, reason }) => {
+  async ({ bytes, reason, kind }) => {
     const root = await createTestTempDirectory("rea-ines-refusal-");
     const path = join(root, "invalid.nes");
     await writeFile(path, bytes());
     await expect(inventoryArtifact(path)).rejects.toMatchObject({
-      reason: "format",
+      reason: kind,
       message: expect.stringContaining(reason),
     });
   },
@@ -642,13 +646,8 @@ it("reports source loss during target hashing as a changed input", async () => {
   ) {
     const result = await originalRead.call(this, ...args);
     const readArguments: readonly unknown[] = args;
-    const [buffer, , , position] = readArguments;
-    if (
-      Buffer.isBuffer(buffer) &&
-      buffer.byteLength === 64 * 1024 &&
-      position === bytes.length &&
-      result.bytesRead === 0
-    ) {
+    const [, , , position] = readArguments;
+    if (position === 0 && result.bytesRead === bytes.length) {
       faultInjected = true;
       await unlink(path);
     }

@@ -537,10 +537,11 @@ describe("values the application assigns", () => {
   });
 });
 
+const itemView = (rows: readonly TimedCaptureRow[]) =>
+  stateOf(rows).views.find((view) => view.tool === "get_books_by_id");
+
 describe("write coverage limits", () => {
   const WHOLE_BOOK = ["slug", "created_at", "updated_at"];
-  const itemView = (rows: readonly TimedCaptureRow[]) =>
-    stateOf(rows).views.find((view) => view.tool === "get_books_by_id");
 
   it("notes no omission from a read that asked for some fields, nor from one of a book the state no longer holds", () => {
     const projected: TimedCaptureRow[] = [
@@ -699,8 +700,6 @@ describe("omissions shown by reads the gate ignores", () => {
     const requiresDetail = {
       required_fields: expect.arrayContaining(["detail"]),
     };
-    const itemView = (rows: readonly TimedCaptureRow[]) =>
-      stateOf(rows).views.find((view) => view.tool === "get_books_by_id");
     expect([running, outgrown].map(itemView)).toMatchObject([
       requiresDetail,
       requiresDetail,
@@ -1321,6 +1320,11 @@ describe("list reads with query values no line recorded", () => {
   });
 });
 
+const bookOnShelf = (id: number, name: string, shelf: string, at: number) => ({
+  ...book(id, name, bookClock(at)),
+  shelf,
+});
+
 describe("list reads on a line they did not name", () => {
   const first = { ...FIRST_BOOK, shelf: "a" };
   const second = { ...SECOND_BOOK, shelf: "b" };
@@ -1358,14 +1362,10 @@ describe("list reads on a line they did not name", () => {
   });
 
   it("lets a sorted read whose values tie fix a create's position, as its order shows where the create put it", () => {
-    const shelved = (id: number, name: string, shelf: string, at: number) => ({
-      ...book(id, name, bookClock(at)),
-      shelf,
-    });
-    const beta = shelved(1, "Beta", "a", 0);
-    const mike = shelved(2, "Mike", "b", 1);
-    const zulu = shelved(3, "Zulu", "a", 2);
-    const alpha = shelved(4, "Alpha", "a", 6);
+    const beta = bookOnShelf(1, "Beta", "a", 0);
+    const mike = bookOnShelf(2, "Mike", "b", 1);
+    const zulu = bookOnShelf(3, "Zulu", "a", 2);
+    const alpha = bookOnShelf(4, "Alpha", "a", 6);
     const rows: TimedCaptureRow[] = [
       ["GET", "/api/books", [beta, mike, zulu]],
       ["GET", "/api/books?shelf=a", [beta, zulu]],
@@ -1421,14 +1421,10 @@ describe("list reads on a line they did not name", () => {
   });
 
   it("leaves a create's position open after a sorted read, for a later whole list to settle", () => {
-    const shelved = (id: number, name: string, shelf: string, at: number) => ({
-      ...book(id, name, bookClock(at)),
-      shelf,
-    });
-    const beta = shelved(1, "Beta", "a", 0);
-    const mike = shelved(2, "Mike", "b", 1);
-    const zulu = shelved(3, "Zulu", "a", 2);
-    const alpha = shelved(4, "Alpha", "a", 6);
+    const beta = bookOnShelf(1, "Beta", "a", 0);
+    const mike = bookOnShelf(2, "Mike", "b", 1);
+    const zulu = bookOnShelf(3, "Zulu", "a", 2);
+    const alpha = bookOnShelf(4, "Alpha", "a", 6);
     const rows: TimedCaptureRow[] = [
       ["GET", "/api/books", [beta, mike, zulu]],
       ["GET", "/api/books?shelf=a", [beta, zulu]],
@@ -1450,13 +1446,9 @@ describe("list reads on a line they did not name", () => {
 });
 
 describe("what a list query read shows of writes", () => {
-  const shelved = (id: number, name: string, shelf: string, at: number) => ({
-    ...book(id, name, bookClock(at)),
-    shelf,
-  });
-  const beta = shelved(1, "Beta", "a", 0);
-  const mike = shelved(2, "Mike", "b", 1);
-  const zulu = shelved(3, "Zulu", "a", 2);
+  const beta = bookOnShelf(1, "Beta", "a", 0);
+  const mike = bookOnShelf(2, "Mike", "b", 1);
+  const zulu = bookOnShelf(3, "Zulu", "a", 2);
   const INIT: TimedCaptureRow[] = [
     ["GET", "/api/books", [beta, mike, zulu]],
     ["GET", "/api/books?shelf=a", [beta, zulu]],
@@ -1488,7 +1480,7 @@ describe("what a list query read shows of writes", () => {
   });
 
   it("leaves a create's position open after a filter that lists only its book, for a later whole list to settle", () => {
-    const alpha = shelved(4, "Alpha", "c", 5);
+    const alpha = bookOnShelf(4, "Alpha", "c", 5);
     const rows: TimedCaptureRow[] = [
       ...INIT,
       ["POST", "/api/books", alpha, 201, { name: "Alpha", shelf: "c" }],
@@ -1838,8 +1830,6 @@ describe("item lines first recorded after a write, against the lines left", () =
     ["GET", "/api/books/3", created],
     late,
   ];
-  const itemView = (rows: TimedCaptureRow[]) =>
-    stateOf(rows).views.find((view) => view.tool === "get_books_by_id");
 
   it("compares a later line with the lines left after variants are dropped, not the dropped ones", () => {
     // The early `expand` line is dropped as a variant, so `include` shows a shelf the lines left never show.

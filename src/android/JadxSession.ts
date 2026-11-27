@@ -414,6 +414,9 @@ export class JadxSession {
                 memory_area: failure.memory_area,
               },
               {
+                // The JVM exhausted the heap it was given; that is measured
+                // occupancy, not a request above a configured budget.
+                measuredExhaustion: true,
                 retryable: false,
                 remediationAction:
                   failure.memory_area === "heap"

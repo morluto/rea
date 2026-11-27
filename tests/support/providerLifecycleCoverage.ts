@@ -294,13 +294,13 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     covered(
       test(
         "src/application/binaryDiagnostics/ByteEntropyService.test.ts",
-        "keeps whole-file identity and entropy while selecting unaligned blocks and a partial tail",
+        "keeps %i-byte blocks relative to an unaligned window across short physical reads",
       ),
     ),
     covered(
       test(
         "src/application/binaryDiagnostics/ByteEntropyService.test.ts",
-        "honors cancellation before and during streaming",
+        "honors cancellation %s and closes any admitted descriptor",
       ),
     ),
   ),
@@ -402,7 +402,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     covered(
       test(
         "tests/boundary/filesystem/flutterBuildProvider.test.ts",
-        "inspects a full synthetic AOT image end to end",
+        "projects each payload shape through the owned snapshot",
       ),
     ),
     covered(
@@ -937,6 +937,10 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
           REVERSE_EDGE_CASES,
           "retains an objdump command's unverified process owner until a later inspection stops it",
         ),
+        test(
+          REVERSE_EDGE_CASES,
+          "stops an owner registered during cleanup retry before admitting another command",
+        ),
       ),
     },
   },
@@ -1239,11 +1243,20 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     },
   },
+  "rea-deb-package": inProcess(
+    covered(
+      test(
+        "tests/acceptance/debPackageCli.test.ts",
+        "inspects a fixture .deb without installing it or running maintainer scripts",
+      ),
+    ),
+    typedFailures("tests/boundary/filesystem/debPackage.test.ts"),
+  ),
   "rea-devicetree": inProcess(
     covered(
       test(
         "tests/acceptance/devicetreeCli.test.ts",
-        "rejects ambiguous Devicetree node paths in correctly hashed Evidence",
+        "inspects a relative DTB and preserves the source",
       ),
     ),
     covered(
@@ -1325,7 +1338,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     covered(
       test(
         "tests/acceptance/elfNotesCli.test.ts",
-        "resolves section note names from zlib and Zstandard string tables through the CLI",
+        "resolves section note names from a compressed string table through the CLI",
       ),
     ),
     typedFailures("tests/boundary/filesystem/elfNotes.test.ts"),
@@ -1347,6 +1360,20 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     ),
     typedFailures("tests/boundary/filesystem/erlangBeam.test.ts"),
+  ),
+  "rea-esp-nvs": inProcess(
+    covered(
+      test(
+        "tests/boundary/mcp/espNvsMcpCli.test.ts",
+        "decodes an NVS slice inside a flash dump with CLI and advertised MCP parity",
+      ),
+    ),
+    covered(
+      test(
+        "src/application/binaryDiagnostics/EspNvsService.test.ts",
+        "honors cancellation before reading and retains completed Evidence on late cancellation",
+      ),
+    ),
   ),
   "rea-harmony-application": inProcess(
     covered(
@@ -1504,7 +1531,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     covered(
       test(
         "tests/acceptance/peCertificatesCli.test.ts",
-        "reports PKCS#7 signer identity and RDN indices through CLI and MCP",
+        "reports PKCS#7 signer identity and BER lengths through both adapters",
       ),
     ),
     typedFailures("tests/boundary/filesystem/peCertificates.test.ts"),
@@ -1527,6 +1554,15 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     ),
     typedFailures("tests/boundary/filesystem/peLoadConfig.test.ts"),
   ),
+  "rea-pe-overlay": inProcess(
+    covered(
+      test(
+        "tests/boundary/filesystem/peOverlay.test.ts",
+        "retains completed PE acquisition through %s",
+      ),
+    ),
+    typedFailures("tests/boundary/filesystem/peOverlay.test.ts"),
+  ),
   "rea-pe-resources": inProcess(
     covered(
       test(
@@ -1535,6 +1571,24 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     ),
     typedFailures("tests/boundary/filesystem/peResources.test.ts"),
+  ),
+  "rea-pe-unwind-ranges": inProcess(
+    covered(
+      test(
+        "tests/acceptance/peUnwindRangesCli.test.ts",
+        "reads x64 exception-directory ranges identically over CLI and MCP",
+      ),
+    ),
+    typedFailures("src/native/pe/PeUnwindRangesProvider.test.ts"),
+  ),
+  "rea-macho-function-starts": inProcess(
+    covered(
+      test(
+        "tests/acceptance/machoFunctionStartsCli.test.ts",
+        "reads Mach-O function starts identically over CLI and MCP",
+      ),
+    ),
+    typedFailures("src/native/apple/MachoFunctionStartsProvider.test.ts"),
   ),
   "rea-playwright-browser-scenario": {
     ownership: "process",
@@ -1636,6 +1690,34 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     ),
   ),
+  "rea-vsix-package": inProcess(
+    covered(
+      test(
+        "tests/boundary/mcp/vsixPackageMcp.test.ts",
+        "advertises inspect_vsix_package and reads package identity",
+      ),
+    ),
+    covered(
+      test(
+        "src/application/vsix/VsixPackageService.test.ts",
+        "retains completed Evidence and caller selections on late cancellation",
+      ),
+    ),
+  ),
+  "rea-oci-image-layout": inProcess(
+    covered(
+      test(
+        "tests/boundary/mcp/ociImageLayoutMcp.test.ts",
+        "advertises inspect_oci_image_layout and reads layout version",
+      ),
+    ),
+    covered(
+      test(
+        "src/application/oci/OciImageLayoutService.test.ts",
+        "retains completed Evidence and caller selections on late cancellation",
+      ),
+    ),
+  ),
   "rea-python-pyc": inProcess(
     covered(
       test(
@@ -1643,7 +1725,12 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
         "reads signed TYPE_INT64 constants and rejects a truncated payload",
       ),
     ),
-    typedFailures("tests/boundary/filesystem/pythonPyc.test.ts"),
+    covered(
+      test(
+        "src/application/python/PythonPycService.test.ts",
+        "retains completed pyc Evidence and the opaque caller reason on late cancellation",
+      ),
+    ),
   ),
   "rea-release-exposure": inProcess(
     covered(
@@ -1663,8 +1750,8 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     ),
     covered(
       test(
-        "src/application/v8CodeCache/V8CodeCacheService.test.ts",
-        "retains a completed V8 code cache observation when the caller cancels as the provider completes",
+        "tests/boundary/filesystem/v8CodeCacheArtifact.test.ts",
+        "retains verified V8 Evidence during $stage",
       ),
     ),
   ),
@@ -1833,7 +1920,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       cancel: covered(
         test(
           "tests/composition/reverseEngineeringCancellation.test.ts",
-          "waits for a cancelled Rizin process to exit before returning",
+          "waits for a Rizin process cancelled during its %s to exit before returning",
         ),
       ),
       cleanup: covered(
@@ -2161,6 +2248,42 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
         test(
           "tests/boundary/javascript-recovery/wakaruIntegration.test.ts",
           "retains a setup-failed publication tree for provider cleanup retry",
+        ),
+      ),
+    },
+  },
+  "yara.command": {
+    ownership: "process",
+    stages: {
+      launch: covered(
+        test(
+          "tests/boundary/providers/yaraMatchesProvider.test.ts",
+          "reports a missing yara command as unavailable with remediation",
+        ),
+      ),
+      handshake: ONE_SHOT,
+      operation: covered(
+        test(
+          "tests/boundary/providers/yaraMatchesProvider.test.ts",
+          "binds matches to the file and rule digests and passes argv without a shell",
+        ),
+      ),
+      cancel: covered(
+        test(
+          "tests/boundary/providers/yaraMatchesProvider.test.ts",
+          "cancels a running scan and leaves nothing to clean up",
+        ),
+      ),
+      cleanup: covered(
+        test(
+          "tests/boundary/providers/yaraMatchesProvider.test.ts",
+          "retains a failed process cleanup and retries it before the next scan",
+        ),
+      ),
+      retry: covered(
+        test(
+          "tests/boundary/providers/yaraMatchesProvider.test.ts",
+          "retains a failed process cleanup and retries it before the next scan",
         ),
       ),
     },

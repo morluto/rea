@@ -208,7 +208,9 @@ export const createStreamableHttpJebMcpConnection: JebMcpConnectionFactory = (
       return waitForAcquisition(state, state.acquisition, signal);
     if (state !== undefined) {
       await dispose(state);
-      if (state !== undefined || closing !== undefined) return connect(signal);
+      // Disposal awaited: a close or the caller's cancellation may have
+      // arrived meanwhile, so admit this connection from the start again.
+      return connect(signal);
     }
     const owner = new JebMcpConnectionOwner(endpoint);
     state = owner;

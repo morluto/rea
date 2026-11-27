@@ -1,3 +1,4 @@
+import { expectResultValue } from "../../tests/support/expectResultValue.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { describe, expect, it } from "vitest";
 
@@ -40,20 +41,22 @@ describe("MCP tool deadline allowance for a Ghidra decompile limit", () => {
 
   it("derives the registration allowance from REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS", () => {
     const details = clientRegistrationEnvironmentDetails(
-      parseClientConfiguration(
-        JSON.stringify({
-          mcpServers: {
-            rea: {
-              command: "rea",
-              args: ["mcp"],
-              env: {
-                REA_ANALYSIS_PROVIDER: "ghidra",
-                REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS: "600",
+      expectResultValue(
+        parseClientConfiguration(
+          JSON.stringify({
+            mcpServers: {
+              rea: {
+                command: "rea",
+                args: ["mcp"],
+                env: {
+                  REA_ANALYSIS_PROVIDER: "ghidra",
+                  REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS: "600",
+                },
               },
             },
-          },
-        }),
-        "json",
+          }),
+          "json",
+        ),
       ),
       undefined,
       HOST_PLATFORM.platform,

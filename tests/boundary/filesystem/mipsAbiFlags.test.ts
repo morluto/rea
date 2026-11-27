@@ -274,8 +274,16 @@ for (const little of [true, false]) {
         ghidraMipsUnsupportedReason(partial) ?? "",
         /ABI declaration inspection is incomplete/u,
       );
+      assert.equal(declarations.value.limitations.length, 1);
+      assert.deepEqual(declarations.value.limitations[0], {
+        kind: "truncated_section_table",
+        offset: sectionOffset,
+        examined: Math.floor(availableBytes / 40),
+        declared: 2,
+        message: declarations.value.limitations[0]?.message,
+      });
       assert.match(
-        declarations.value.limitations.join(" "),
+        declarations.value.limitations[0]?.message ?? "",
         new RegExp(
           `section header table.*examined ${Math.floor(availableBytes / 40)} of 2 complete headers`,
           "u",
@@ -309,6 +317,51 @@ it("refuses uncaptured section declarations while retaining unknown ABI evidence
   assert.equal(resolved.mips.abiFlags, null);
   assert.equal(resolved.mips.limitations, undefined);
   assert.equal(ghidraMipsUnsupportedReason(resolved), null);
+  const carvedRecordless = Buffer.from(bytes);
+  carvedRecordless.writeUInt32LE(0, 28);
+  carvedRecordless.writeUInt16LE(0, 44);
+  carvedRecordless.writeUInt32LE(0x50000001, 36); // Recordless legacy carve keeping truncated e_shoff.
+  const resolvedCarve = await resolveFixture(carvedRecordless);
+  assert.equal(resolvedCarve.mips.abiFlags, null);
+  assert.equal(resolvedCarve.mips.limitations?.length, 1);
+  assert.equal(
+    resolvedCarve.mips.limitations?.[0]?.kind,
+    "truncated_section_table",
+  );
+  assert.match(
+    resolvedCarve.mips.limitations?.[0]?.message ?? "",
+    /MIPS section header table at file offset .* extends beyond the captured file/u,
+  );
+  assert.equal(ghidraMipsUnsupportedReason(resolvedCarve), null);
+});
+it("refuses a partly captured recordless MIPS32 section table when a captured header points past EOF", async () => {
+  const base = withoutSectionTable(fixture());
+  base.writeUInt32LE(0, 28);
+  base.writeUInt16LE(0, 44);
+  base.writeUInt32LE(0x50000001, 36); // Recordless legacy MIPS32 header.
+  // Place a 2-entry section table at EOF with 1 complete header and 7 trailing bytes.
+  const sectionOffset = base.length;
+  const bytes = Buffer.concat([base, Buffer.alloc(47)]);
+  bytes.writeUInt32LE(sectionOffset, 32);
+  bytes.writeUInt16LE(2, 48);
+  // Captured section 0: SHT_PROGBITS with valid in-file payload is admitted with limitation.
+  bytes.writeUInt32LE(1, sectionOffset + 4);
+  bytes.writeUInt32LE(52, sectionOffset + 16);
+  bytes.writeUInt32LE(16, sectionOffset + 20);
+  const admitted = await resolveFixture(bytes);
+  assert.equal(admitted.mips.limitations?.length, 1);
+  assert.equal(admitted.mips.limitations?.[0]?.kind, "truncated_section_table");
+  assert.match(
+    admitted.mips.limitations?.[0]?.message ?? "",
+    /MIPS section header table at file offset .* examined 1 of 2 complete headers/u,
+  );
+  // Captured section 0: SHT_PROGBITS pointing past EOF must be refused.
+  const badPayloadOffset = bytes.length + 1;
+  bytes.writeUInt32LE(badPayloadOffset, sectionOffset + 16);
+  await refuseFixture(
+    bytes,
+    `truncated ELF section 0: declared file range ${badPayloadOffset}..${badPayloadOffset + 16} exceeds the ${bytes.length}-byte file`,
+  );
 });
 for (const little of [true, false]) {
   it(`matches the real MIPS lane's carved-copy refusal (${little ? "LE" : "BE"})`, async () => {
@@ -657,4 +710,130 @@ it("preserves cancellation instead of turning it into malformed target data", as
   const result = await parseBinaryTarget(path, { signal: controller.signal });
   if (result.ok) throw new Error("Cancelled target resolution succeeded");
   assert.ok(result.error instanceof AnalysisCancelledError);
+});
+
+const legacyFixture = (little = true, flags = 0x50000001, type = 2): Buffer => {
+  const bytes = fixture(little);
+  const u16 = (value: number, offset: number) =>
+    little
+      ? bytes.writeUInt16LE(value, offset)
+      : bytes.writeUInt16BE(value, offset);
+  const u32 = (value: number, offset: number) =>
+    little
+      ? bytes.writeUInt32LE(value, offset)
+      : bytes.writeUInt32BE(value, offset);
+  u16(type, 16);
+  u32(flags, 36);
+  u32(0, 52); // Clear PT_MIPS_ABIFLAGS so the image is recordless.
+  u32(0, 172); // Clear SHT_MIPS_ABIFLAGS.
+  return bytes;
+};
+
+for (const little of [true, false]) {
+  it(`retains the declared o32 ABI of recordless MIPS32 firmware (${little ? "LE" : "BE"})`, async () => {
+    const resolved = await resolveFixture(legacyFixture(little, 0x50001007));
+    assert.equal(ghidraMipsUnsupportedReason(resolved), null);
+    expect(ghidraMipsProfileParameters(resolved)).toMatchObject({
+      mips_support_lane: "elf32-exec-o32-arch32-standard",
+      mips_abi_basis: "declared-o32-header",
+      mips_elf: { flags: 0x50001007, abi_flags: null },
+    });
+  });
+  for (const availableBytes of [0, 47]) {
+    it(`admits a carved recordless legacy MIPS32 ET_EXEC with ${availableBytes} section-table bytes (${little ? "LE" : "BE"})`, async () => {
+      const original = legacyFixture(little);
+      const bytes = Buffer.concat([original, Buffer.alloc(availableBytes)]);
+      const sectionOffset = original.length + (availableBytes === 0 ? 1 : 0);
+      if (little) bytes.writeUInt32LE(sectionOffset, 32);
+      else bytes.writeUInt32BE(sectionOffset, 32);
+      const resolved = await resolveFixture(bytes);
+      assert.equal(resolved.mips.abiFlags, null);
+      assert.equal(resolved.mips.limitations?.length, 1);
+      assert.equal(
+        resolved.mips.limitations?.[0]?.kind,
+        "truncated_section_table",
+      );
+      if (resolved.mips.limitations?.[0]?.kind === "truncated_section_table") {
+        assert.equal(resolved.mips.limitations[0].offset, sectionOffset);
+        assert.equal(
+          resolved.mips.limitations[0].examined,
+          Math.floor(availableBytes / 40),
+        );
+        assert.equal(resolved.mips.limitations[0].declared, 2);
+      }
+      assert.equal(ghidraMipsUnsupportedReason(resolved), null);
+      const profileParameters = jsonObjectSchema.parse(
+        ghidraMipsProfileParameters(resolved),
+      );
+      expect(profileParameters).toMatchObject({
+        mips_support_lane: "elf32-exec-arch32-legacy-pinned",
+        language_id: `MIPS:${little ? "LE" : "BE"}:32:default`,
+      });
+    });
+  }
+}
+
+it("still fails closed on carved recordless non-ET_EXEC and fatal ELF framing errors", async () => {
+  // Recordless ET_REL with truncated section table stays refused at target opening.
+  const rel = legacyFixture(true, 0x50000001, 1);
+  rel.writeUInt32LE(rel.length + 1, 32);
+  await refuseFixture(
+    rel,
+    `truncated ELF section header table: declared file range ${rel.length + 1}..${rel.length + 81} exceeds the ${rel.length}-byte file`,
+  );
+
+  // Fatal framing: section header table overlapping fixed header.
+  const overlap = legacyFixture(true);
+  overlap.writeUInt32LE(16, 32);
+  await refuseFixture(
+    overlap,
+    "ELF section header table overlaps the fixed header",
+  );
+
+  // Fatal framing: reserved direct section count e_shnum >= 0xff00.
+  const reserved = legacyFixture(true);
+  reserved.writeUInt16LE(0xff00, 48);
+  await refuseFixture(
+    reserved,
+    "ELF e_shnum uses a reserved direct section count",
+  );
+
+  // Fatal framing: e_shstrndx >= e_shnum.
+  const badNames = legacyFixture(true);
+  badNames.writeUInt32LE(badNames.length + 1, 32);
+  badNames.writeUInt16LE(2, 50);
+  await refuseFixture(
+    badNames,
+    "ELF section-name index lies outside the declared section table",
+  );
+
+  // Fatal framing: extended numbering with uncaptured section zero.
+  const extended = legacyFixture(true);
+  extended.writeUInt32LE(extended.length + 1, 32);
+  extended.writeUInt16LE(0, 48);
+  await refuseFixture(
+    extended,
+    `truncated ELF section header table: declared file range ${extended.length + 1}..${extended.length + 41} exceeds the ${extended.length}-byte file`,
+  );
+
+  // Fatal framing: truncated PT_LOAD program payload on a carved legacy MIPS32 ET_EXEC.
+  const badProgram = legacyFixture(true);
+  badProgram.writeUInt32LE(badProgram.length + 1, 32);
+  badProgram.writeUInt32LE(1, 52); // PT_LOAD
+  badProgram.writeUInt32LE(badProgram.length, 56);
+  badProgram.writeUInt32LE(16, 68);
+  await refuseFixture(
+    badProgram,
+    `truncated ELF program 0: declared file range ${badProgram.length}..${badProgram.length + 16} exceeds the ${badProgram.length}-byte file`,
+  );
+
+  // Complete section table with truncated SHT_PROGBITS section payload stays refused.
+  const badPayload = legacyFixture(true);
+  badPayload.writeUInt32LE(1, 172); // SHT_PROGBITS
+  badPayload.writeUInt32LE(badPayload.length, 184);
+  badPayload.writeUInt32LE(16, 188);
+  await refuseFixture(
+    badPayload,
+    `truncated ELF section 1: declared file range ${badPayload.length}..${badPayload.length + 16} exceeds the ${badPayload.length}-byte file`,
+  );
 });

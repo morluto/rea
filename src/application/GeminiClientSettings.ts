@@ -6,14 +6,15 @@ import { jsonRecordSchema } from "../domain/jsonRecord.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import type { ArtifactResourceScope } from "../resources/index.js";
+import { isEnoentError } from "./ClientConfigPath.js";
 import { currentClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import {
-  clientConfigurationValuesEqual,
   clientRegistrationEntry,
   geminiServerPolicyBlock,
   parseGeminiMcpPolicy,
   type ClientConfigurationDocument,
 } from "./ClientConfigurationDocument.js";
+import { clientConfigurationValuesEqual } from "./ClientConfigurationValues.js";
 import {
   launchedRegistrationEntry,
   readConfigurationFile,
@@ -169,7 +170,7 @@ export const readClientPolicyBlock = async (
     const present = await stat(path).then(
       () => ok(true),
       (cause: unknown) =>
-        cause instanceof Error && "code" in cause && cause.code === "ENOENT"
+        isEnoentError(cause)
           ? ok(false)
           : err({
               kind: "unreadable" as const,

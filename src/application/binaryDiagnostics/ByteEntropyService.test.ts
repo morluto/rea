@@ -4,50 +4,28 @@ import { open, stat, rename, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { byteEntropySchema } from "../../domain/native/byteEntropy.js";
+import {
+  byteEntropySchema,
+  byteEntropyWindowLimit,
+} from "../../domain/native/byteEntropy.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { ByteEntropyService } from "./ByteEntropyService.js";
-
-it("keeps whole-file identity and entropy while selecting unaligned blocks and a partial tail", async () => {
-  const root = await createTestTempDirectory("rea-entropy-");
-  const path = join(root, "bytes");
-  const bytes = Buffer.from(Array.from({ length: 1024 }, (_, i) => i % 256));
-  await writeFile(path, bytes);
-  const result = await new ByteEntropyService().inspect({
-    path,
-    offset: 3,
-    length: 513,
-    block_size: 256,
-  });
-  if (!result.ok) throw result.error;
-  const report = byteEntropySchema.parse(result.value.normalized_result);
-  expect(report.blocks).toEqual([
-    { offset: 3, length: 256, entropy: 8 },
-    { offset: 259, length: 256, entropy: 8 },
-    { offset: 515, length: 1, entropy: 0 },
-  ]);
-  expect(report.file_entropy).toBe(8);
-  expect(report.artifact).toEqual({
-    path,
-    bytes: 1024,
-    sha256: createHash("sha256").update(bytes).digest("hex"),
-  });
-  expect(fileIdentity(result.value.subject).sha256).toBe(
-    report.artifact.sha256,
-  );
-  expect(result.value.confidence).toBe("observed");
-});
 
 it.each([256, 4096, 65536])(
   "keeps %i-byte blocks relative to an unaligned window across short physical reads",
   async (blockSize) => {
     const root = await createTestTempDirectory("rea-entropy-short-reads-");
     const path = join(root, "bytes");
-    const bytes = Buffer.from(
-      Array.from({ length: 3 * 65536 + 256 }, (_, i) => i % 256),
-    );
+    const bytes = Buffer.alloc(3 * 65536 + 256);
+    const selectedOffset = 3;
+    const fullBlockBytes = 2 * 65536;
+    // The selected blocks are uniform over all 256 values. The zero-filled
+    // prefix and suffix make file-wide entropy distinct from window entropy.
+    const values = Buffer.from(Array.from({ length: 256 }, (_, byte) => byte));
+    bytes.fill(values, selectedOffset, selectedOffset + fullBlockBytes);
     await writeFile(path, bytes);
     let reads = 0;
+    let shortReads = 0;
     const service = new ByteEntropyService({
       stat,
       open: async (...args) => {
@@ -61,7 +39,15 @@ it.each([256, 4096, 65536])(
             position: number,
           ) => {
             reads += 1;
-            return read(buffer, offset, Math.min(length, 3571), position);
+            const result = await read(
+              buffer,
+              offset,
+              Math.min(length, 3571),
+              position,
+            );
+            if (result.bytesRead > 0 && result.bytesRead < length)
+              shortReads += 1;
+            return result;
           },
         });
         return file;
@@ -70,31 +56,44 @@ it.each([256, 4096, 65536])(
     try {
       const result = await service.inspect({
         path,
-        offset: 3,
-        length: 2 * 65536 + 1,
+        offset: selectedOffset,
+        length: fullBlockBytes + 1,
         block_size: blockSize,
       });
       if (!result.ok) throw result.error;
       const report = byteEntropySchema.parse(result.value.normalized_result);
-      const fullBlocks = (2 * 65536) / blockSize;
+      const fullBlocks = fullBlockBytes / blockSize;
       expect(report.blocks).toEqual([
         ...Array.from({ length: fullBlocks }, (_, i) => ({
-          offset: 3 + i * blockSize,
+          offset: selectedOffset + i * blockSize,
           length: blockSize,
           entropy: 8,
         })),
-        { offset: 3 + 2 * 65536, length: 1, entropy: 0 },
+        { offset: selectedOffset + fullBlockBytes, length: 1, entropy: 0 },
       ]);
       expect(report.runs).toEqual([
-        { offset: 3, length: 2 * 65536, classification: "high" },
-        { offset: 3 + 2 * 65536, length: 1, classification: "low" },
+        {
+          offset: selectedOffset,
+          length: fullBlockBytes,
+          classification: "high",
+        },
+        {
+          offset: selectedOffset + fullBlockBytes,
+          length: 1,
+          classification: "low",
+        },
       ]);
-      expect(report.file_entropy).toBe(8);
-      expect(report.artifact.sha256).toBe(
-        createHash("sha256").update(bytes).digest("hex"),
+      expect(report.file_entropy).toBe(6.2236);
+      expect(report.limitations).not.toContainEqual(
+        expect.stringContaining("reports a size of 0"),
       );
+      const sha256 = createHash("sha256").update(bytes).digest("hex");
+      expect(report.artifact).toEqual({ path, bytes: bytes.length, sha256 });
+      expect(fileIdentity(result.value.subject).sha256).toBe(sha256);
+      expect(result.value.confidence).toBe("observed");
       // Even with 3,571-byte short reads, finer report resolution does not
       // require hundreds of asynchronous reads of this 193 KiB file.
+      expect(shortReads).toBeGreaterThan(0);
       expect(reads).toBeLessThan(100);
     } finally {
       await service.close();
@@ -147,15 +146,6 @@ it.skipIf(process.platform !== "linux" && process.platform !== "darwin")(
     const service = new ByteEntropyService();
     try {
       for (const [path, code] of cases) {
-        let observedCode: unknown;
-        try {
-          await stat(path);
-        } catch (cause: unknown) {
-          observedCode =
-            cause instanceof Error && "code" in cause ? cause.code : undefined;
-        }
-        expect(observedCode).toBe(code);
-
         const result = await service.inspect({ path });
         if (result.ok) throw new Error(`Expected ${code} path failure`);
         expect(result.error).toMatchObject({
@@ -225,88 +215,69 @@ it.skipIf(process.platform !== "linux")(
   },
 );
 
-it("adds no zero-size limitation to a file with content", async () => {
-  const root = await createTestTempDirectory("rea-entropy-nonempty-");
-  const path = join(root, "one");
-  await writeFile(path, "x");
-  const result = await new ByteEntropyService().inspect({ path });
-  if (!result.ok) throw result.error;
-  expect(
-    byteEntropySchema
-      .parse(result.value.normalized_result)
-      .limitations.join(" "),
-  ).not.toContain("reports a size of 0");
-});
-
-it("honors cancellation before and during streaming", async () => {
-  const root = await createTestTempDirectory("rea-entropy-cancel-");
-  const path = join(root, "bytes");
-  await writeFile(path, Buffer.alloc(1024 * 1024));
-  const service = new ByteEntropyService();
-  const reason = { request: "opaque cancellation" };
-  const before = await service.inspect(
-    { path },
-    { signal: AbortSignal.abort(reason) },
-  );
-  if (before.ok) throw new Error("Expected cancellation before admission");
-  expect(before.error.cause).toBe(reason);
-  expect(before.error.partialObservation).toBeUndefined();
-  const controller = new AbortController();
-  let reads = 0;
-  const streaming = new ByteEntropyService({
-    stat,
-    open: async (...args) => {
+it.each([
+  ["before admission", 0, 0, 0, 0],
+  ["during stat", 1, 0, 0, 0],
+  ["during open", 1, 1, 0, 1],
+  ["during streaming", 1, 1, 1, 1],
+] as const)(
+  "honors cancellation %s and closes any admitted descriptor",
+  async (stage, stats, opens, reads, closes) => {
+    const root = await createTestTempDirectory("rea-entropy-cancel-");
+    const path = join(root, "bytes");
+    await writeFile(path, Buffer.alloc(2 * 65_536));
+    const controller = new AbortController();
+    const reason = { request: "opaque cancellation" };
+    const inspectStat = vi.fn(async (...args: Parameters<typeof stat>) => {
+      const result = await stat(...args);
+      if (stage === "during stat") controller.abort(reason);
+      return result;
+    });
+    let readCount = 0;
+    let closeCount = 0;
+    const inspectOpen = vi.fn(async (...args: Parameters<typeof open>) => {
       const file = await open(...args);
       const read = file.read.bind(file);
+      const close = file.close.bind(file);
       vi.spyOn(file, "read").mockImplementation(async (...readArgs) => {
         const result = await read(...readArgs);
-        reads += 1;
-        controller.abort(reason);
+        readCount += 1;
+        if (stage === "during streaming") controller.abort(reason);
         return result;
       });
+      vi.spyOn(file, "close").mockImplementation(async () => {
+        closeCount += 1;
+        await close();
+      });
+      if (stage === "during open") controller.abort(reason);
       return file;
-    },
-  });
-  const pending = streaming.inspect(
-    { path, block_size: 256 },
-    { signal: controller.signal },
-  );
-  const during = await pending;
-  if (during.ok) throw new Error("Expected cancellation during read");
-  expect(during.error).toMatchObject({ _tag: "AnalysisCancelledError" });
-  expect(during.error.cause).toBe(reason);
-  expect(during.error.partialObservation).toBeUndefined();
-  expect(reads).toBe(1);
-});
+    });
+    const service = new ByteEntropyService({
+      stat: inspectStat as typeof stat,
+      open: inspectOpen,
+    });
 
-it("maps cancellation during open to the cancelled algebra with its original cause", async () => {
-  const root = await createTestTempDirectory("rea-entropy-open-cancel-");
-  const path = join(root, "bytes");
-  await writeFile(path, Buffer.alloc(512));
-  const controller = new AbortController();
-  const reason = new Error("cancelled while opening");
-  const service = new ByteEntropyService({
-    stat,
-    open: async (...args) => {
-      const file = await open(...args);
-      controller.abort(reason);
-      return file;
-    },
-  });
-
-  const result = await service.inspect(
-    { path, block_size: 256 },
-    { signal: controller.signal },
-  );
-
-  if (result.ok) throw new Error("Expected cancellation during open");
-  expect(result.error).toMatchObject({ _tag: "AnalysisCancelledError" });
-  expect(result.error.cause).toBe(reason);
-  expect(projectAnalysisError(result.error)).toMatchObject({
-    code: "cancelled",
-  });
-  await service.close();
-});
+    try {
+      if (stage === "before admission") controller.abort(reason);
+      const result = await service.inspect(
+        { path },
+        { signal: controller.signal },
+      );
+      if (result.ok) throw new Error("Expected cancellation");
+      expect(result.error.cause).toBe(reason);
+      expect(result.error.partialObservation).toBeUndefined();
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "cancelled",
+      });
+      expect(inspectStat).toHaveBeenCalledTimes(stats);
+      expect(inspectOpen).toHaveBeenCalledTimes(opens);
+      expect(readCount).toBe(reads);
+      expect(closeCount).toBe(closes);
+    } finally {
+      await service.close();
+    }
+  },
+);
 
 it.each([false, true])(
   "retains completed Evidence when final close is cancelled (close fails: %s)",
@@ -452,12 +423,46 @@ it("refuses a block series above the output-row limit before scanning", async ()
   expect(projectAnalysisError(result.error)).toMatchObject({
     code: "resource_constraint",
     retryable: false,
+    details: {
+      limit: {
+        control_kind: "parameter",
+        parameter: "block_size",
+        effective_value: 256,
+        unit: "bytes",
+        minimum: 256,
+        maximum: 65536,
+        default_value: 4096,
+        applies_at: "next_call",
+        required_value: 512,
+      },
+    },
     remediation: {
-      action: expect.stringMatching(/shorter window|increase block_size/i),
+      action: expect.stringContaining(
+        "Pass a larger block_size on the next inspect_byte_entropy call (at least 512 bytes",
+      ),
     },
   });
   expect(reads).toBe(0);
   await service.close();
+});
+
+it("names length when no block_size admits the window", () => {
+  expect(
+    byteEntropyWindowLimit(65536, 32_768 * 65536 + 1, 32_768 * 65536 + 1),
+  ).toEqual({
+    control_kind: "parameter",
+    parameter: "length",
+    effective_value: 32_768 * 65536 + 1,
+    unit: "bytes",
+    minimum: 0,
+    maximum: 32_768 * 65536,
+    default_value: 32_768 * 65536 + 1,
+    applies_at: "next_call",
+  });
+  // The reported maximum is the window this call's block_size admits.
+  expect(
+    byteEntropyWindowLimit(4096, 3 * 1024 ** 3, 3 * 1024 ** 3).maximum,
+  ).toBe(32_768 * 4096);
 });
 
 it("retains a failed descriptor close and retries it before opening another file", async () => {

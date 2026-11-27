@@ -10,11 +10,11 @@ import {
   PLAYWRIGHT_TRACE_PROVIDER,
 } from "../domain/playwrightTrace/playwrightTrace.js";
 import { contractNamed } from "./contractCliDescription.js";
+import { registerContractCommand } from "./contractCommand.js";
 import {
   deliverWithService,
-  registerContractCommand,
   type EvidenceInspectionService,
-} from "./contractCommand.js";
+} from "./contractCommandRunners.js";
 import type { CliInstance } from "./types.js";
 
 /** Standard one-shot publication keeps complete inventory Evidence for later offline pages. */
@@ -33,6 +33,7 @@ export const registerPlaywrightTraceCommand = (
       callerPaths: ["path"],
       evidenceDelivery: true,
       viewDelivery: { invalidJson: "view must be valid JSON" },
+      jsonText: ["trace_limits"],
       fields: {
         path: { description: "Local Playwright trace ZIP path" },
         view: {

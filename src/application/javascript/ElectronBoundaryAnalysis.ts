@@ -1,3 +1,4 @@
+import { appendToMapList } from "../../domain/appendToMapList.js";
 import { isPossibleCachedDataCompilation } from "../../domain/javascript/electronDynamicCodeFacts.js";
 import type { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
@@ -73,19 +74,24 @@ export const createElectronIpcContext = (
     .map((transmission) => {
       const owner = owners.get(transmission.key);
       const matching = matchingMainHandlers(handlerIndex, transmission.finding);
-      const candidates = matching.filter(
-        (handler) => owners.get(handler.key) === owner,
-      );
+      const candidates: ElectronIpcRecord[] = [];
+      let hasCandidateAuthority = false;
+      let hasUnknownOwner = false;
+      for (const handler of matching) {
+        const handlerOwner = owners.get(handler.key);
+        if (handlerOwner === owner) candidates.push(handler);
+        if (handler.finding.loader_authority === "candidate")
+          hasCandidateAuthority = true;
+        if (handlerOwner == null) hasUnknownOwner = true;
+      }
       // Unknown ownership can conceal competing dispatch contexts. Different owners
       // do not prove runtime isolation, so retain ambiguity rather than absence.
       const uncertain =
         !coverageComplete ||
         owner == null ||
         transmission.finding.loader_authority === "candidate" ||
-        matching.some(
-          ({ finding }) => finding.loader_authority === "candidate",
-        ) ||
-        matching.some((handler) => owners.get(handler.key) == null);
+        hasCandidateAuthority ||
+        hasUnknownOwner;
       return {
         transmission,
         candidates,
@@ -96,7 +102,7 @@ export const createElectronIpcContext = (
           candidates.length === 1 &&
           candidates[0]?.finding.loader_authority !== "candidate" &&
           isExactIpcHandler(candidates[0]) &&
-          !matching.some((handler) => owners.get(handler.key) == null)
+          !hasUnknownOwner
             ? (candidates[0] ?? null)
             : null,
         status:
@@ -124,16 +130,6 @@ interface MainHandlerIndex {
   readonly wildcardDynamic: readonly ElectronIpcRecord[];
 }
 
-const pushRecordBucket = (
-  map: Map<string, ElectronIpcRecord[]>,
-  key: string,
-  record: ElectronIpcRecord,
-): void => {
-  const bucket = map.get(key);
-  if (bucket === undefined) map.set(key, [record]);
-  else bucket.push(record);
-};
-
 /**
  * Index main handlers by literal channel, guarded literal invocation channels,
  * or wildcard dynamic receivers. An unresolved channel may receive any literal
@@ -151,7 +147,7 @@ const indexMainHandlers = (
     if (!isMainHandler(record)) continue;
     const { finding } = record;
     if (finding.channel !== null) {
-      pushRecordBucket(exactByChannel, finding.channel, record);
+      appendToMapList(exactByChannel, finding.channel, record);
       continue;
     }
     if (
@@ -159,7 +155,7 @@ const indexMainHandlers = (
       finding.invocation_channels === "literal"
     ) {
       for (const channel of new Set(finding.guarded_invocation_channels ?? []))
-        pushRecordBucket(guardedByChannel, channel, record);
+        appendToMapList(guardedByChannel, channel, record);
       continue;
     }
     wildcardDynamic.push(record);
@@ -215,6 +211,15 @@ const electronModuleReferenced = (
   analysis: JavaScriptArtifactAnalysis,
 ): boolean => analysis.files.some(electronModuleReferencedBy);
 
+const countWhere = <T>(
+  items: readonly T[],
+  predicate: (item: T) => boolean,
+): number => {
+  let count = 0;
+  for (const item of items) if (predicate(item)) count++;
+  return count;
+};
+
 /**
  * Every Electron boundary fact family the graph reports. A rejected
  * application projection keeps its static facts on the file node only, so
@@ -228,22 +233,32 @@ export const electronBoundaryFactCount = (
       count +
       (javascript === null || application_projection_failure !== undefined
         ? 0
-        : javascript.electron.browser_windows.filter(provenElectronFinding)
-            .length +
-          javascript.electron.context_bridge_apis.filter(provenElectronFinding)
-            .length +
-          javascript.electron.ipc.filter(provenElectronFinding).length +
-          javascript.electron.sender_validations.filter(provenElectronFinding)
-            .length +
-          javascript.electron.utility_processes.filter(provenElectronFinding)
-            .length +
-          javascript.electron.native_addon_bindings.filter(
+        : countWhere(
+            javascript.electron.browser_windows,
             provenElectronFinding,
-          ).length +
-          javascript.electron.protocols.filter(provenElectronFinding).length +
-          (javascript.electron.dynamic_code ?? []).filter(
+          ) +
+          countWhere(
+            javascript.electron.context_bridge_apis,
+            provenElectronFinding,
+          ) +
+          countWhere(javascript.electron.ipc, provenElectronFinding) +
+          countWhere(
+            javascript.electron.sender_validations,
+            provenElectronFinding,
+          ) +
+          countWhere(
+            javascript.electron.utility_processes,
+            provenElectronFinding,
+          ) +
+          countWhere(
+            javascript.electron.native_addon_bindings,
+            provenElectronFinding,
+          ) +
+          countWhere(javascript.electron.protocols, provenElectronFinding) +
+          countWhere(
+            javascript.electron.dynamic_code ?? [],
             isPossibleCachedDataCompilation,
-          ).length),
+          )),
     0,
   );
 

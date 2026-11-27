@@ -1,7 +1,12 @@
 {
   "schemas": {
-    "input compact": "87bd558a19485f40",
-    "output compact": "4bda7c3651bfc579"
+    "input compact": "6643b2605c71f738",
+    "output compact": "fc6c5d5a78a47254"
   },
-  "patterns": {}
+  "patterns": {
+    "input": [
+      "^observed_endpoint_[0-9a-f]{64}$",
+      "^static_endpoint_[0-9a-f]{64}$"
+    ]
+  }
 }

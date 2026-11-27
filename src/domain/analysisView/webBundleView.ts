@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { boundedList } from "../boundedList.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
 import { jsonValueByteLength } from "../jsonValueByteLength.js";
 import type { JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
@@ -10,6 +9,7 @@ import {
   type WebBundleAnalysis,
 } from "../webBundleAnalysis.js";
 import { recordedBrowserOriginSchema } from "../browserObservation.js";
+import { filterSet } from "./selectViewRows.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   assertOwnedView,
@@ -22,12 +22,12 @@ import {
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
 import {
-  ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
+  ANALYSIS_VIEW_PAGE_BYTES as PAGE_BYTES,
+  analysisViewPageTooLarge,
   analysisViewInputError,
 } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 
-const PAGE_BYTES = 1024 * 1024;
 const DIGEST_BYTES = jsonValueByteLength({ view_digest: "0".repeat(64) }) - 1;
 const PROJECTION_BYTES = PAGE_BYTES - DIGEST_BYTES;
 
@@ -211,18 +211,10 @@ export const projectWebBundleView = (
   };
 
   const tooLarge = (collection: string): Result<never, AnalysisError> =>
-    err(
-      new AnalysisResourceConstraintError(
-        "inspect_analysis_view",
-        "transport",
-        "The requested web-bundle page cannot fit the analysis-view byte budget; select fewer fields or a smaller selection. The complete parent is retained.",
-        {
-          parent_evidence_id: parent.evidenceId,
-          limit_bytes: PAGE_BYTES,
-          collection,
-        },
-        ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
-      ),
+    analysisViewPageTooLarge(
+      parent.evidenceId,
+      "The requested web-bundle page cannot fit the analysis-view byte budget; select fewer fields or a smaller selection. The complete parent is retained.",
+      { collection },
     );
 
   const buildSummary = (): z.output<typeof webBundleSummarySchema> => ({
@@ -286,8 +278,7 @@ export const projectWebBundleView = (
   type Item =
     | z.output<typeof webBundleEndpointRowSchema>
     | z.output<typeof webBundleInferenceRowSchema>;
-  const fields =
-    view.fields === undefined ? undefined : new Set<string>(view.fields);
+  const fields = filterSet<string>(view.fields);
   const deliverRows = <T>(
     rows: readonly T[],
     matches: ((row: T, source_index: number) => boolean) | undefined,
@@ -374,13 +365,10 @@ export const projectWebBundleView = (
   };
 
   if (view.collection === "endpoints") {
-    const indices =
-      view.indices !== undefined ? new Set(view.indices) : undefined;
-    const values = view.values !== undefined ? new Set(view.values) : undefined;
-    const scriptKeys =
-      view.script_keys !== undefined ? new Set(view.script_keys) : undefined;
-    const mechanisms =
-      view.mechanisms !== undefined ? new Set(view.mechanisms) : undefined;
+    const indices = filterSet(view.indices);
+    const values = filterSet(view.values);
+    const scriptKeys = filterSet(view.script_keys);
+    const mechanisms = filterSet(view.mechanisms);
 
     const filters = [indices, values, scriptKeys, mechanisms];
     return deliverRows(
@@ -404,12 +392,10 @@ export const projectWebBundleView = (
     );
   }
 
-  const indices =
-    view.indices !== undefined ? new Set(view.indices) : undefined;
-  const kinds = view.kinds !== undefined ? new Set(view.kinds) : undefined;
-  const values = view.values !== undefined ? new Set(view.values) : undefined;
-  const scriptKeys =
-    view.script_keys !== undefined ? new Set(view.script_keys) : undefined;
+  const indices = filterSet(view.indices);
+  const kinds = filterSet(view.kinds);
+  const values = filterSet(view.values);
+  const scriptKeys = filterSet(view.script_keys);
 
   const filters = [indices, kinds, values, scriptKeys];
   return deliverRows(

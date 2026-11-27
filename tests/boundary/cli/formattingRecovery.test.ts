@@ -3,14 +3,16 @@ import { createCommandCli } from "../../support/cli/commandCli.js";
 import { Writable } from "node:stream";
 
 import { describe, expect, it } from "vitest";
+import { parse as parseYaml } from "yaml";
 
-import { parseCliOutputArguments } from "../../../src/cliOutput.js";
+import { parseCliOutputArguments } from "../../../src/cli/cliOutput.js";
 import { createCliResultOutput } from "../../../src/cli/cliResultOutput.js";
 import {
   cliOperationFailureIdentity,
   cliOperationFailurePayload,
   logCliCommand,
 } from "../../../src/cliLogging.js";
+import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 import { ArtifactOperationError } from "../../../src/domain/artifactOperationError.js";
 import { silentLogger } from "../../../src/logger.js";
 import {
@@ -321,4 +323,139 @@ describe("CLI formatting recovery outcomes", () => {
       process.exitCode = previousExitCode;
     }
   });
+});
+
+// Every CLI presentation recovers a post-result string-capacity failure the
+// same way. tests/acceptance/cliFormattingCapacity.test.ts keeps one real
+// process per encoder boundary and outcome; this table checks each
+// presentation's recovery document in process.
+describe("CLI formatting capacity recovery for each presentation", () => {
+  const presentations = [
+    { name: "default TOON", arguments: [] },
+    { name: "human TOON", arguments: [], terminal: true },
+    { name: "full TOON", arguments: ["--full-output"] },
+    { name: "TOON token count", arguments: ["--token-count"] },
+    { name: "TOON token window", arguments: ["--token-limit", "3"] },
+    {
+      name: "full TOON token window",
+      arguments: ["--full-output", "--token-limit", "3"],
+    },
+    { name: "YAML", arguments: ["--format", "yaml"] },
+    { name: "full YAML", arguments: ["--format", "yaml", "--full-output"] },
+    { name: "Markdown", arguments: ["--format", "md"] },
+    { name: "full Markdown", arguments: ["--format", "md", "--full-output"] },
+    {
+      name: "Markdown token window",
+      arguments: ["--format", "md", "--token-limit", "3"],
+    },
+  ] as const;
+
+  /** A completed command failure whose details exceed a runtime string. */
+  const oversizedFailure = async () => {
+    const previousExitCode = process.exitCode;
+    try {
+      const value = await logCliCommand(silentLogger, "fixture", async () => ({
+        code: "target_unavailable",
+        category: "unavailable",
+        message: "The operation did not complete.",
+        retryable: false,
+        remediation: { action: "Check the selected path." },
+        details: {},
+      }));
+      Object.defineProperty(value, "details", {
+        get() {
+          throw new RangeError("Invalid string length");
+        },
+      });
+      return value;
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  };
+
+  it.for(
+    presentations.flatMap((presentation) =>
+      (["success", "failure"] as const).map((outcome) => ({
+        ...presentation,
+        outcome,
+      })),
+    ),
+  )(
+    "$name returns a typed formatting constraint after $outcome",
+    async ({ outcome, ...presentation }) => {
+      const chunks: Buffer[] = [];
+      const destination = Object.assign(
+        new Writable({
+          write(chunk: Buffer, _encoding, callback) {
+            chunks.push(chunk);
+            callback();
+          },
+        }),
+        { isTTY: "terminal" in presentation },
+      );
+      const options = parseCliOutputArguments(presentation.arguments);
+      const output = createCliResultOutput(options, destination);
+      if (output === undefined) throw new Error("Missing output owner");
+      const value =
+        outcome === "success"
+          ? // The envelope reads the result's top level; only encoding
+            // reaches the nested value.
+            { result: formattingFailureValue() }
+          : await oversizedFailure();
+      const previousExitCode = process.exitCode;
+      try {
+        expect(await output.write(value, metadata)).toBe(true);
+      } finally {
+        process.exitCode = previousExitCode;
+      }
+      expect(output.failed).toBe(false);
+      expect(output.error).toMatchObject({
+        code: "resource_constraint",
+        retryable: false,
+        details: {
+          resource: "memory",
+          reported_limits: {
+            format: options.format,
+            formatted_characters: null,
+            ...(outcome === "failure"
+              ? {
+                  original_failure: {
+                    code: "target_unavailable",
+                    category: "unavailable",
+                  },
+                }
+              : {}),
+          },
+        },
+      });
+      const text = Buffer.concat(chunks).toString("utf8");
+      expect(text).toContain("resource_constraint");
+      expect(text).toContain("--format json");
+      expect(text).toContain("formatted_characters");
+      expect(text).not.toContain("[truncated:");
+      if (outcome === "failure") expect(text).toContain("target_unavailable");
+      // Only the full-output envelope carries the invocation's meta.duration.
+      if (options.fullOutput) expect(text).toContain(metadata.duration);
+      else expect(text).not.toContain(metadata.duration);
+      if (options.format === "yaml") {
+        const document: unknown = parseYaml(text);
+        const recovered = options.fullOutput
+          ? (document as { error: unknown }).error
+          : document;
+        expect(analysisErrorProjectionSchema.parse(recovered)).toMatchObject({
+          code: "resource_constraint",
+          details: { reported_limits: { formatted_characters: null } },
+        });
+        if (options.fullOutput)
+          expect(document).toMatchObject({
+            ok: false,
+            meta: { command: "fixture" },
+          });
+      }
+      if (options.format === "md" && options.fullOutput) {
+        expect(text).toMatch(/^## ok\n\nfalse$/m);
+        expect(text).toMatch(/^## error\.code\n\nresource_constraint$/m);
+      }
+    },
+  );
 });

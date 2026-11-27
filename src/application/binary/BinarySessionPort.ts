@@ -2,11 +2,8 @@ import type { EspFlashSelection } from "../../domain/firmware/espFlashLocation.j
 import type { InvestigationRecordPort } from "../investigation/InvestigationRecordPort.js";
 import type { RecoveryAdmission } from "../investigation/InvestigationRetention.js";
 import type { ResetInvestigationReceipt } from "../../domain/investigationLifecycle.js";
-import type { TargetFormatHint } from "../../domain/targetFormats.js";
-import type {
-  BinaryArchitecture,
-  BinaryTarget,
-} from "../../domain/binaryTargetTypes.js";
+import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
+import type { NativeLoadSelection } from "../../domain/rawBinary.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import type { AnalysisSnapshot } from "../../domain/analysisSnapshot.js";
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
@@ -29,7 +26,10 @@ import type {
   ProviderIdentity,
 } from "../../ports/AnalysisProvider.js";
 
-import type { SavedAnalysisSnapshot } from "../../domain/savedAnalysisSnapshot.js";
+import type {
+  ClosedWithSnapshot,
+  EngineCloseReport,
+} from "../../domain/engineCloseReport.js";
 
 /** Selection observed at the end of one serialized open attempt. */
 export type OpenSelectionReceipt =
@@ -94,9 +94,7 @@ export interface BinarySessionPort
     options?: {
       readonly signal?: AbortSignal;
       readonly targetKind?: BinaryTarget["kind"];
-      readonly formatHint?: TargetFormatHint;
-      readonly architecture?: BinaryArchitecture;
-      readonly entryPoint?: string;
+      readonly loadSelection?: NativeLoadSelection;
       readonly espFlash?: EspFlashSelection;
       readonly snapshot?: AnalysisSnapshot;
       readonly loadSnapshot?: AnalysisSnapshotLoader;
@@ -117,7 +115,7 @@ export interface BinarySessionPort
       readonly retainProviderDocuments?: boolean;
       readonly cleanupRetry?: AnalysisCleanupRetry;
     },
-  ): Promise<Result<null, AnalysisError>>;
+  ): Promise<Result<EngineCloseReport | null, AnalysisError>>;
   /** Seal runtime acquisition and release investigation state after successful cleanup. */
   dispose(
     options?: Pick<ExecutionOptions, "progress"> & {
@@ -141,7 +139,7 @@ export interface BinarySessionPort
     options?: Pick<ExecutionOptions, "progress"> & {
       readonly cleanupRetry?: AnalysisCleanupRetry;
     },
-  ): Promise<Result<SavedAnalysisSnapshot, AnalysisError>>;
+  ): Promise<Result<ClosedWithSnapshot, AnalysisError>>;
   /** Default complete detail; summary omits provider diagnostics and candidate capabilities. */
   status(options?: {
     readonly signal?: AbortSignal;

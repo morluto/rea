@@ -1,5 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { setImmediate } from "node:timers/promises";

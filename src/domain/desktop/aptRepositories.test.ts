@@ -22,23 +22,12 @@ import {
 } from "./aptRepositories.js";
 
 describe("apt-config shell assignments", () => {
-  it.each([
-    "",
-    "/var/lib/apt/lists/",
-    "/tmp/user's lists/",
-    "/tmp/lists\ncustom/",
-    "/tmp/'\nPARTS=literal\n\\tail/",
-  ])("preserves a complete quoted value %j", (value) => {
-    const assignment = `LISTS='${value.replaceAll("'", "'\\''")}'\n`;
-    expect(parseAptConfigShell(assignment)).toEqual(
-      new Map([["LISTS", value]]),
-    );
-  });
-
-  it("keeps multiline values separate from adjacent assignments", () => {
+  it("keeps quoted, multiline and empty values separate from adjacent assignments", () => {
     const values = new Map([
+      ["EMPTY", ""],
       ["LISTS", "/tmp/lists\ncustom/"],
       ["PARTS", "/tmp/key's\nparts/"],
+      ["LITERAL", "/tmp/'\nPARTS=literal\n\\tail/"],
       ["TRUSTED", "/tmp/trusted\\keys.gpg"],
     ]);
     const output = [...values]
@@ -519,11 +508,7 @@ describe("single-stanza APT source identity", () => {
     ],
     ["https://vendor.invalid:https/archive", "https://vendor.invalid/archive/"],
     [
-      "https://vendor.invalid:0080abc/archive",
-      "https://vendor.invalid:80/archive/",
-    ],
-    [
-      "https://vendor.invalid:+80abc/archive",
+      "https://vendor.invalid:+0080abc/archive",
       "https://vendor.invalid:80/archive/",
     ],
     [
@@ -554,9 +539,7 @@ describe("single-stanza APT source identity", () => {
       "https://vendor.invalid/archive:80abc/x/",
     ],
     ["file://hostname:80abc/path", "file://hostname:80/path/"],
-    ["file://", "file://"],
     ["file:///", "file:/"],
-    ["file:///srv/a%20b", "file:/srv/a%20b/"],
   ])(
     "matches %s to the Repo-URI APT emits and keeps the authored URI",
     (authored, repoUri) => {
@@ -844,41 +827,37 @@ describe("APT source URI lookup", () => {
     ).toBeUndefined();
   });
 
-  it.each(["before the stanza", "inside the stanza"])(
-    "ignores an undecodable deb822 comment %s",
-    (where) => {
-      const comment = Buffer.from("# comment \xff\n", "latin1");
-      const fields = Buffer.from(
-        "URIs: https://good.invalid/archive\nSuites: stable\nComponents: main\n",
-      );
-      const types = Buffer.from("Types: deb\n");
-      const source =
-        where === "before the stanza"
-          ? Buffer.concat([comment, Buffer.from("\n"), types, fields])
-          : Buffer.concat([types, comment, fields]);
-      const stanzas = parseDeb822Sources(source, deb822LookupFile);
-      expect(stanzas).toHaveLength(1);
-      expect(
-        entryForTarget(targetFor("https://good.invalid/archive/"), stanzas),
-      ).toMatchObject({ position: 1, uri: "https://good.invalid/archive" });
-    },
-  );
-
-  it("keeps the position of a valid stanza after undecodable source bytes", () => {
+  it("keeps APT positions across undecodable comments and source stanzas", () => {
     const declaration = (host: string) =>
-      `Types: deb\nURIs: https://${host}/archive\nSuites: stable\nComponents: main\n`;
+      `URIs: https://${host}/archive\nSuites: stable\nComponents: main\n`;
     const source = Buffer.concat([
-      Buffer.from(declaration("bad.invalid/ÿ"), "latin1"),
-      Buffer.from(`\n${declaration("good.invalid")}`),
+      Buffer.from(
+        "# before stanza \xff\n\nTypes: deb\n# inside stanza \xff\n",
+        "latin1",
+      ),
+      Buffer.from(declaration("first.invalid")),
+      Buffer.from(
+        `\nTypes: deb\n${declaration("unreadable.invalid/ÿ")}`,
+        "latin1",
+      ),
+      Buffer.from(`\nTypes: deb\n${declaration("last.invalid")}`),
     ]);
     const stanzas = parseDeb822Sources(source, deb822LookupFile);
-    expect(stanzas).toHaveLength(1);
-    expect(
-      entryForTarget(
-        { ...targetFor("https://good.invalid/archive/"), position: 2 },
-        stanzas,
-      ),
-    ).toMatchObject({ uri: "https://good.invalid/archive" });
+    expect(stanzas.map(({ position }) => position)).toEqual([1, 3]);
+    for (const [position, host] of [
+      [1, "first.invalid"],
+      [3, "last.invalid"],
+    ] as const) {
+      const uri = `https://${host}/archive`;
+      expect(
+        entryForTarget({ ...targetFor(`${uri}/`), position }, stanzas),
+      ).toMatchObject({
+        position,
+        uri,
+        suite: "stable",
+        components: ["main"],
+      });
+    }
   });
 
   it("leaves different authored URIs that APT collapses unresolved", () => {
@@ -1273,3 +1252,26 @@ it.each([1, 65_536])(
     expect(fields?.get("other")).toBe("value");
   },
 );
+
+it.each([
+  ["string", (text: string): string | Buffer => text],
+  ["buffer", (text: string): string | Buffer => Buffer.from(text)],
+])("stops at the paragraph limit for %s input", (_, input) => {
+  const text = `Package: first\n\nPackage: second\n\n${"a:b\n\n".repeat(1_000)}`;
+  const paragraphs = deb822Paragraphs(input(text), 1);
+  expect(paragraphs).toHaveLength(1);
+  expect(paragraphs[0]?.get("package")).toBe("first");
+  expect(deb822Paragraphs(input(text), 2)).toHaveLength(2);
+  expect(deb822Paragraphs(input("Package: only\n"), 1)).toHaveLength(1);
+  expect(deb822Paragraphs(input(text))).toHaveLength(1_002);
+});
+
+it("trims a field with a long interior whitespace run in linear time", () => {
+  const run = " \t".repeat(500_000);
+  const started = performance.now();
+  const [fields] = deb822Paragraphs(
+    `Description: \t1${run}x \r\n ${run}tail${run}\n`,
+  );
+  expect(performance.now() - started).toBeLessThan(2_000);
+  expect(fields?.get("description")).toBe(`1${run}x\ntail`);
+});

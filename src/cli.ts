@@ -32,7 +32,11 @@ import * as modelModule from "./cli/modelCommands.js";
 import * as gpuModule from "./cli/gpuCommands.js";
 import * as rustModule from "./cli/rustCommands.js";
 import * as pythonPycModule from "./cli/pythonPycCommands.js";
+import * as debPackageModule from "./cli/debPackageCommands.js";
 import * as nugetNupkgModule from "./cli/nugetNupkgCommands.js";
+import * as vsixPackageModule from "./cli/vsixPackageCommands.js";
+import * as ociImageLayoutModule from "./cli/ociImageLayoutCommands.js";
+import * as yaraModule from "./cli/yaraCommands.js";
 import * as erlangModule from "./cli/erlangCommands.js";
 import * as v8CodeCacheModule from "./cli/v8CodeCacheCommands.js";
 import * as mavenGradleMetadataModule from "./cli/mavenGradleMetadataCommands.js";
@@ -52,7 +56,7 @@ import * as browserModule from "./cli/browserCommands.js";
 import * as webRuntimeModule from "./cli/webRuntimeCommands.js";
 import * as webNetworkCaptureModule from "./cli/webNetworkCaptureCommands.js";
 import * as advancedBrowserModule from "./cli/browserAdvancedCommands.js";
-import * as browserScenarioModule from "./cliBrowserScenarioCommands.js";
+import * as browserScenarioModule from "./cli/browserScenarioCommands.js";
 import * as electronModule from "./cli/electronCommands.js";
 import * as javaScriptRuntimeObservationModule from "./cli/javascriptRuntimeCommands.js";
 import * as guidanceModule from "./cli/guidanceCommands.js";
@@ -60,7 +64,7 @@ import * as guidedWorkflowModule from "./cli/guidedWorkflowCommands.js";
 import * as sourceToBundleModule from "./cli/sourceToBundleCommand.js";
 import * as staticObservedEndpointsModule from "./cli/staticObservedEndpointsCommand.js";
 import * as analysisViewModule from "./cli/analysisViewCommands.js";
-import * as evidenceModule from "./cliEvidenceCommands.js";
+import * as evidenceModule from "./cli/evidenceCommands.js";
 import * as environmentModule from "./cli/environmentCommands.js";
 import * as processModule from "./cli/processCommands.js";
 import * as desktopCaptureModule from "./cli/desktopCaptureCommands.js";
@@ -94,7 +98,11 @@ const CLI_COMMAND_MODULES: CliCommandModules = {
   gpu: gpuModule,
   rust: rustModule,
   pythonPyc: pythonPycModule,
+  debPackage: debPackageModule,
   nugetNupkg: nugetNupkgModule,
+  vsixPackage: vsixPackageModule,
+  ociImageLayout: ociImageLayoutModule,
+  yara: yaraModule,
   erlang: erlangModule,
   v8CodeCache: v8CodeCacheModule,
   mavenGradleMetadata: mavenGradleMetadataModule,
@@ -138,7 +146,7 @@ const CLI_COMMAND_MODULES: CliCommandModules = {
  * Build the complete one-shot Incur CLI without starting Hopper at import time.
  * Analysis commands acquire and close their own sessions; bare `mcp` and
  * `--mcp` are intercepted by the executable dispatcher before this module loads.
- * One-shot commands load only their own registrars; see `cli/cliLoader.ts`.
+ * One-shot commands load only their own registrars; see `cliLoader.ts`.
  */
 export const createCli = (
   selectedEnvironment: Readonly<

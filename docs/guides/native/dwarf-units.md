@@ -19,9 +19,14 @@ requires an absolute filesystem path:
 }
 ```
 
-A universal Mach-O needs `architecture` (`x86`, `x86_64`, `arm`, or `arm64`).
-The same value is rejected for every other image. A `.dSYM` bundle is not
-opened. Pass the DWARF file inside the bundle.
+A universal Mach-O needs `architecture` (`x86`, `x86_64`, `arm`, `arm64`,
+`arm64e`, or `arm64e.x1`). A CPU family with one slice is selected by its family
+name; `arm64e` and `arm64e.x1` each read only a slice of that subtype, as
+`lipo -thin` does. When several slices share the family, `arm64` reads the
+`arm64` (or `arm64v8`) slice and `x86_64` the canonical `x86_64` slice, and a
+value that matches no slice or several is refused. The same value is rejected
+for every other image. A `.dSYM` bundle is not opened. Pass the DWARF file
+inside the bundle.
 
 ## Observations
 
@@ -31,8 +36,12 @@ Each call returns the artifact path, SHA-256, and byte length, the container
 file-backed. Section rows keep the stored name, file offset, stored size, and
 `compression` (`none`, `zlib`, or `zstd`). ELF `SHF_COMPRESSED` zlib and zstd
 payloads, and legacy GNU `.zdebug_*` and Mach-O `__zdebug_*` zlib payloads, are
-decompressed within a fixed allowance. A declared size above that allowance
-fails the call. Mach-O sections are read only from the `__DWARF` segment.
+decompressed within `max_decompressed_bytes` (default 256 MiB, at most 1 GiB, CLI
+`--max-decompressed-bytes`), which budgets decompression across every compressed
+section of the image, charging the larger of each section's declared
+uncompressed size and compressed payload length (including failed attempts). A
+declared size or cumulative charge above it fails the call with `details.limit`; because
+sections decompress in turn, the refusal reports no `required_value`. Mach-O sections are read only from the `__DWARF` segment.
 `omissions` gives one row per section name and reason, with a count when
 several sections share it.
 
