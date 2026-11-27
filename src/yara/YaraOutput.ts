@@ -294,7 +294,11 @@ export type YaraCompileErrorKind =
 /** One rule compile error; `source` is the file yara named, which may be an included file. */
 export interface YaraCompileError {
   readonly kind: YaraCompileErrorKind;
-  readonly source: string;
+  /**
+   * The file yara named, or `null` with `line: null` when the text cannot be
+   * split into a file and line unambiguously; `message` then keeps it whole.
+   */
+  readonly source: string | null;
   readonly line: number | null;
   /** The rule yara named, when the error belongs to one. */
   readonly rule: string | null;
@@ -318,34 +322,39 @@ export interface YaraDiagnostics {
 //   FILE(LINE): LEVEL: MESSAGE                  (it does not, e.g. includes)
 // cli/common.c writes `error: could not open file: FILE` for a rule file it
 // cannot open. FILE is the path passed to yara, after any NAMESPACE: prefix.
-// A file name or a message may itself contain `(N): `, so a FILE yara was
-// given is matched exactly; any other FILE, such as an included file, ends at
-// the first `(N): ` (the shortest file name), never the last.
+// A file name and a message can both contain `(N): `. A FILE yara was given
+// is matched exactly. Any other FILE, such as an included file, is split at
+// every `(N): ` that leaves a complete diagnostic; one such split is the
+// location, and several leave the location unknown.
 const RULE_DIAGNOSTIC_PREFIX = /^(error|warning): rule "([^"]*)" in /u;
 const LEVELS = ["error", "warning"] as const;
-const LOCATION = /^\((\d+)\): /u;
+type YaraLevel = (typeof LEVELS)[number];
+const LOCATION = /\((\d+)\): /gu;
 const OPEN_ERROR = /^error: could not open file: (.+)$/u;
 const BARE_WARNING = /^warning: .+$/u;
 
-/** Split `FILE(LINE): REST`, preferring a FILE yara was given. */
-const splitLocation = (
+interface Located {
+  readonly source: string;
+  readonly line: number;
+  readonly rest: string;
+}
+
+/** Every `FILE(LINE): REST` split of `text`; a FILE yara was given wins. */
+const locations = (
   text: string,
   sources: readonly string[],
-): { source: string; line: number; rest: string } | undefined => {
-  for (const source of sources) {
-    if (!text.startsWith(source)) continue;
-    const location = LOCATION.exec(text.slice(source.length));
-    if (location !== null)
-      return {
-        source,
-        line: Number(location[1]),
-        rest: text.slice(source.length + location[0].length),
-      };
+): readonly Located[] => {
+  const all: Located[] = [];
+  for (const match of text.matchAll(LOCATION)) {
+    if (match.index === 0) continue;
+    all.push({
+      source: text.slice(0, match.index),
+      line: Number(match[1]),
+      rest: text.slice(match.index + match[0].length),
+    });
   }
-  const shortest = /^(.+?)\((\d+)\): (.*)$/su.exec(text);
-  return shortest === null
-    ? undefined
-    : { source: shortest[1]!, line: Number(shortest[2]), rest: shortest[3]! };
+  const given = all.filter((candidate) => sources.includes(candidate.source));
+  return given.length > 0 ? given.slice(0, 1) : all;
 };
 
 const INCLUDE_MESSAGE =
@@ -377,51 +386,69 @@ export const parseYaraDiagnostics = (
   const compileErrors: YaraCompileError[] = [];
   const scanErrors: YaraDiagnostics["scanErrors"][number][] = [];
   const unrecognized: string[] = [];
-  const diagnostic = (
-    level: (typeof LEVELS)[number],
-    located: { source: string; line: number },
+  const record = (
+    level: YaraLevel,
     rule: string | null,
-    message: string,
+    candidates: readonly {
+      readonly located: Located;
+      readonly message: string;
+    }[],
+    whole: string,
     raw: string,
   ): void => {
-    if (level === "warning") warnings.push(raw);
-    else
-      compileErrors.push({
-        kind: yaraCompileErrorKind(message),
-        source: located.source,
-        line: located.line,
-        rule,
-        message,
-      });
+    if (level === "warning") {
+      warnings.push(raw);
+      return;
+    }
+    const only = candidates.length === 1 ? candidates[0] : undefined;
+    const kinds = new Set(
+      candidates.map(({ message }) => yaraCompileErrorKind(message)),
+    );
+    compileErrors.push(
+      only === undefined
+        ? {
+            kind: kinds.size === 1 ? [...kinds][0]! : "other",
+            source: null,
+            line: null,
+            rule,
+            message: whole,
+          }
+        : {
+            kind: yaraCompileErrorKind(only.message),
+            source: only.located.source,
+            line: only.located.line,
+            rule,
+            message: only.message,
+          },
+    );
   };
   const parse = (line: string): boolean => {
     const ruled = RULE_DIAGNOSTIC_PREFIX.exec(line);
     if (ruled !== null) {
-      const located = splitLocation(line.slice(ruled[0].length), ruleSources);
-      if (located === undefined || located.rest === "") return false;
-      diagnostic(
-        ruled[1] as (typeof LEVELS)[number],
-        located,
-        ruled[2]!,
-        located.rest,
-        line,
-      );
+      const text = line.slice(ruled[0].length);
+      const candidates = locations(text, ruleSources)
+        .filter(({ rest }) => rest !== "")
+        .map((located) => ({ located, message: located.rest }));
+      if (candidates.length === 0) return false;
+      record(ruled[1] as YaraLevel, ruled[2]!, candidates, text, line);
       return true;
     }
-    const located = splitLocation(line, ruleSources);
-    if (located === undefined) return false;
-    const level = LEVELS.find((candidate) =>
-      located.rest.startsWith(`${candidate}: `),
-    );
-    if (level === undefined || located.rest.length <= level.length + 2)
-      return false;
-    diagnostic(
-      level,
-      located,
-      null,
-      located.rest.slice(level.length + 2),
-      line,
-    );
+    const candidates = locations(line, ruleSources).flatMap((located) => {
+      const level = LEVELS.find((candidate) =>
+        located.rest.startsWith(`${candidate}: `),
+      );
+      const message =
+        level === undefined ? "" : located.rest.slice(level.length + 2);
+      return level === undefined || message === ""
+        ? []
+        : [{ located, level, message }];
+    });
+    if (candidates.length === 0) return false;
+    // A split that reads as an error keeps the line a compile error.
+    const level = candidates.some(({ level }) => level === "error")
+      ? "error"
+      : "warning";
+    record(level, null, candidates, line, line);
     return true;
   };
   for (const raw of stderr.split("\n")) {

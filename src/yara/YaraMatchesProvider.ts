@@ -295,7 +295,7 @@ const COMPILE_ERROR_REMEDIATION: Readonly<
   undefined:
     "Define the identifier or string, or import the module that provides it; rules that need external variables or module data cannot be compiled by this tool.",
   duplicate:
-    "Rule names must be unique across all selected files and their includes; rename a rule or remove one file from rule_paths.",
+    "Names must be unique in their scope: rule names across all selected files and their includes, and string, tag and metadata identifiers within their rule. Rename or remove the duplicated identifier at the reported source and line.",
   unreadable_file:
     "Select a rule file that exists and is readable, or remove it from rule_paths.",
   other: "Fix the reported rule source, or remove that file from rule_paths.",
@@ -332,11 +332,14 @@ const ruleCompileError = (
   details: AnalysisErrorOptions,
 ): AnalysisInputError => {
   const compileErrors = diagnostics.compileErrors.map((failure) => {
-    const index = ruleFileIndex(staged, failure.source);
+    const index =
+      failure.source === null ? -1 : ruleFileIndex(staged, failure.source);
     const source =
-      index === -1
-        ? restoreCallerPaths(failure.source, staged)
-        : staged.rules[index]!.callerPath;
+      failure.source === null
+        ? null
+        : index === -1
+          ? restoreCallerPaths(failure.source, staged)
+          : staged.rules[index]!.callerPath;
     return {
       index,
       failure: {
@@ -349,7 +352,7 @@ const ruleCompileError = (
   const issues = compileErrors.map(({ index, failure }) => ({
     path: index === -1 ? ["rule_paths"] : ["rule_paths", index],
     reason: "invalid_value" as const,
-    message: `${failure.source}${failure.line === null ? "" : `(${String(failure.line)})`}: ${failure.rule === null ? "" : `rule "${failure.rule}": `}${failure.message}`,
+    message: `${failure.source === null ? "" : `${failure.source}${failure.line === null ? "" : `(${String(failure.line)})`}: `}${failure.rule === null ? "" : `rule "${failure.rule}": `}${failure.message}`,
   }));
   return new AnalysisInputError(
     OPERATION,

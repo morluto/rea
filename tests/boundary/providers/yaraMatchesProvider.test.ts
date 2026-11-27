@@ -649,6 +649,26 @@ describe("inspect_yara_matches with a yara stand-in", () => {
     });
   });
 
+  it("gives a duplicated string the scope-aware duplicate repair", async () => {
+    const { sample, rule, service } = await fixture("duplicate-string");
+    const result = await service.inspect({ path: sample, rule_paths: [rule] });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [
+        {
+          path: ["rule_paths", 0],
+          message: `${rule}(4): rule "Dup": duplicated string identifier "$a"`,
+        },
+      ],
+      remediationAction: expect.stringContaining(
+        "string, tag and metadata identifiers within their rule",
+      ),
+      diagnostics: { compile_errors: [{ kind: "duplicate", rule: "Dup" }] },
+    });
+  });
+
   it("retains completed Evidence and retries failed snapshot directory cleanup before the next scan", async () => {
     const { command, sample, rule } = await fixture("match");
     let firstRootPath: string | undefined;

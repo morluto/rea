@@ -76,6 +76,9 @@ switch (process.env.YARA_STUB_MODE) {
   case "compile":
     process.stderr.write('error: rule "Bad" in ' + rules[0] + '(3): undefined identifier "nope"\n');
     process.exit(1);
+  case "duplicate-string":
+    process.stderr.write('error: rule "Dup" in ' + rules[0] + '(4): duplicated string identifier "$a"\n');
+    process.exit(1);
   case "scan-error":
     process.stderr.write("error scanning " + target + ": could not map file\n");
     process.exit(1);

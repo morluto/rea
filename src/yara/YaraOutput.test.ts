@@ -306,48 +306,71 @@ describe("parseYaraDiagnostics", () => {
     });
   });
 
-  it("ends a FILE yara was given exactly, and any other FILE at the first location", () => {
+  it("matches a FILE yara was given exactly and splits any other FILE only where one complete diagnostic remains", () => {
     const odd = "/r/odd(2): x.yar";
     expect(
       parseYaraDiagnostics(
         [
           `${odd}(4): error: syntax error, unexpected "(9): error: "`,
           '/inc/a.yar(3): error: undefined identifier "b(1): c"',
-          'error: rule "R" in /inc/a.yar(5): duplicated string identifier "$a(2): "',
           `error: rule "S" in ${odd}(6): undefined string "$x"`,
+          // An included file whose name contains "(N): ".
+          "/rules/odd(2): x.yar(4): error: syntax error",
+          // Two splits each leave a complete diagnostic: the location is unknown.
+          'error: rule "T" in /rules/odd(2): x.yar(7): undefined identifier "q"',
+          "/a(1): error: b.yar(2): error: syntax error",
         ].join("\n"),
         SCANNED,
         [odd],
-      ).compileErrors,
-    ).toEqual([
-      {
-        kind: "syntax",
-        source: odd,
-        line: 4,
-        rule: null,
-        message: 'syntax error, unexpected "(9): error: "',
-      },
-      {
-        kind: "undefined",
-        source: "/inc/a.yar",
-        line: 3,
-        rule: null,
-        message: 'undefined identifier "b(1): c"',
-      },
-      {
-        kind: "duplicate",
-        source: "/inc/a.yar",
-        line: 5,
-        rule: "R",
-        message: 'duplicated string identifier "$a(2): "',
-      },
-      {
-        kind: "undefined",
-        source: odd,
-        line: 6,
-        rule: "S",
-        message: 'undefined string "$x"',
-      },
-    ]);
+      ),
+    ).toEqual({
+      warnings: [],
+      compileErrors: [
+        {
+          kind: "syntax",
+          source: odd,
+          line: 4,
+          rule: null,
+          message: 'syntax error, unexpected "(9): error: "',
+        },
+        {
+          kind: "undefined",
+          source: "/inc/a.yar",
+          line: 3,
+          rule: null,
+          message: 'undefined identifier "b(1): c"',
+        },
+        {
+          kind: "undefined",
+          source: odd,
+          line: 6,
+          rule: "S",
+          message: 'undefined string "$x"',
+        },
+        {
+          kind: "syntax",
+          source: "/rules/odd(2): x.yar",
+          line: 4,
+          rule: null,
+          message: "syntax error",
+        },
+        {
+          kind: "other",
+          source: null,
+          line: null,
+          rule: "T",
+          message: '/rules/odd(2): x.yar(7): undefined identifier "q"',
+        },
+        {
+          kind: "other",
+          source: null,
+          line: null,
+          rule: null,
+          message: "/a(1): error: b.yar(2): error: syntax error",
+        },
+      ],
+      scanErrors: [],
+      unrecognized: [],
+    });
   });
 });

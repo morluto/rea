@@ -137,8 +137,10 @@ string; string match counts are then lower bounds.
   be opened, a circular include, or too many include levels), `syntax`,
   `undefined` (an undefined identifier or string, or an unknown module),
   `duplicate` (a duplicated rule, string, tag, or metadata identifier),
-  `unreadable_file`, or `other`. The remediation gives one repair per kind
-  present. Rules that need external variables (`-d`) or module data cannot be
+  `unreadable_file`, or `other`. When a file name or message itself contains
+  `(N): ` and yara's text cannot be split into one file and line, `source` and
+  `line` are `null` and `message` keeps the whole text. The remediation gives
+  one repair per kind present. Rules that need external variables (`-d`) or module data cannot be
   compiled by this tool. Stderr lines that match no documented form are kept
   in `diagnostics.unrecognized_stderr_lines`.
 - A missing or unreadable rule file is refused before yara starts.
