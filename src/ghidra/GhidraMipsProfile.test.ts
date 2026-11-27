@@ -154,6 +154,23 @@ describe("bounded Ghidra MIPS admission", () => {
       ).toBe("unsupported");
     },
   );
+  it("keeps an uninspected ABI flags record unknown for declared-o32 MIPS32", () => {
+    const ghidra = new GhidraProvider(config, silentLogger, {}, host);
+    const uninspected = target({ flags: 0x50001007 });
+    if (
+      uninspected.kind !== "executable" ||
+      uninspected.architecture !== "mips"
+    )
+      throw new Error("expected a MIPS fixture target");
+    const { abiFlags: _omitted, ...metadata } = uninspected.mips!;
+    const support = ghidra.inspectTargetSupport({
+      ...uninspected,
+      mips: metadata,
+    });
+    expect(support.status).toBe("unsupported");
+    expect(JSON.stringify(support)).toContain("its absence is unknown");
+    expect(JSON.stringify(support)).not.toContain("record-bearing");
+  });
   it("binds a saved project's MIPS metadata without claiming a fresh-import lane", () => {
     const little = target();
     const big = target({ byteOrder: "big" });

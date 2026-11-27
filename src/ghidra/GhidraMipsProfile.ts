@@ -244,7 +244,9 @@ export const ghidraMipsUnsupportedReason = (
   if (declaredMips32Exec)
     return abi === null
       ? null
-      : "The declared-o32 MIPS32 release 1 lane requires an inspected absence of the ABI flags record; record-bearing images need separate verification.";
+      : abi === undefined
+        ? "The declared-o32 MIPS32 release 1 lane requires an inspected absence of the ABI flags record; the record has not been inspected, so its absence is unknown."
+        : "The declared-o32 MIPS32 release 1 lane requires an inspected absence of the ABI flags record; record-bearing images need separate verification.";
   if (shared && abi === null) return null;
   if (abi === undefined || abi === null)
     return [
