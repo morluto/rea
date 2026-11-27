@@ -140,16 +140,27 @@ interface OggPageCutOff {
   readonly requiredEnd: number;
 }
 
-/** One examined Ogg page's framing metadata and payload range. */
+/**
+ * One examined Ogg page's framing metadata and the extent of the first packet
+ * (or packet continuation) it carries. RFC 3533 lacing: a packet's segments
+ * run until the first lacing value below 255, so one page can end one packet
+ * and start others. Header reads stay inside `packetLength`, never the whole
+ * page payload.
+ */
 interface OggPageRecord {
   readonly sequence: number;
   readonly serial: number;
   readonly headerType: number;
   readonly offset: number;
   readonly length: number;
+  /** Start of the page payload, which is the start of its first packet. */
   readonly packetOffset: number;
+  /** Bytes of the first packet (or continuation) on this page. */
   readonly packetLength: number;
+  /** The first packet does not end on this page: every lacing value is 255. */
   readonly continues: boolean;
+  /** Payload bytes after the first packet ends: further packets on the page. */
+  readonly bytesAfterFirstPacket: number;
 }
 
 type ReadBoundedRange = (
@@ -176,11 +187,19 @@ const readOggPage = async (
   const segmentTable = await readRange(at + 27, segments);
   if (segmentTable === "truncated")
     return { kind: "truncated", requiredEnd: at + 27 + segments };
-  let packetBytes = 0;
-  for (let index = 0; index < segments; index++)
-    packetBytes += segmentTable[index]!;
+  let payloadBytes = 0;
+  let firstPacketBytes = 0;
+  let firstPacketEnded = false;
+  for (let index = 0; index < segments; index++) {
+    const lacing = segmentTable[index]!;
+    payloadBytes += lacing;
+    if (!firstPacketEnded) {
+      firstPacketBytes += lacing;
+      if (lacing < 255) firstPacketEnded = true;
+    }
+  }
   const headerLength = 27 + segments;
-  const length = headerLength + packetBytes;
+  const length = headerLength + payloadBytes;
   if (at + length > fileSize)
     return { kind: "truncated", requiredEnd: at + length };
   return {
@@ -190,8 +209,9 @@ const readOggPage = async (
     offset: at,
     length,
     packetOffset: at + headerLength,
-    packetLength: packetBytes,
-    continues: segments > 0 && segmentTable[segments - 1] === 255,
+    packetLength: firstPacketBytes,
+    continues: !firstPacketEnded,
+    bytesAfterFirstPacket: payloadBytes - firstPacketBytes,
   };
 };
 
@@ -337,6 +357,19 @@ export const oggOpusLayout = async (
     throw malformed("ogg-opus", "no Ogg pages were read", 0);
   }
   let truncated = cutOff !== undefined;
+  // RFC 7845 section 3: OpusHead is alone on its page, and the audio data
+  // begins on a fresh page after OpusTags. Bytes that break this are not read
+  // as header fields; they are named here.
+  const headPageRecord = pages[0]!;
+  if (headPageRecord.continues || headPageRecord.bytesAfterFirstPacket > 0)
+    limitations.push(
+      "The OpusHead page carries more than the single OpusHead packet RFC 7845 allows; only the OpusHead packet was read.",
+    );
+  const lastTagsPage = tagsComplete ? tagsPages.at(-1) : undefined;
+  if (lastTagsPage !== undefined && lastTagsPage.bytesAfterFirstPacket > 0)
+    limitations.push(
+      `The page at offset ${String(lastTagsPage.offset)} that ends OpusTags also starts another packet; RFC 7845 requires audio to begin on a fresh page.`,
+    );
   if ((pages[0]!.headerType & OGG_BEGINNING_OF_STREAM) === 0)
     limitations.push(
       "The OpusHead page does not set the beginning-of-stream flag that RFC 7845 requires.",

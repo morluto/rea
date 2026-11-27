@@ -33,8 +33,11 @@ recognized, and inspection refuses it as truncated with the bytes it needs.
   continued comment bytes are never folded into `audio.bin`. Pages of other
   logical streams between the Opus header pages are listed and named in a
   limitation; OpusTags is read only from the OpusHead stream's serial, as
-  opusfile does. A vendor that is not UTF-8, or an OpusHead page without the
-  beginning-of-stream flag, is reported as a limitation.
+  opusfile does. Header fields are read only inside their own packet,
+  as the page's lacing table delimits it, never from a later packet on the
+  same page. A vendor that is not UTF-8, an OpusHead page without the
+  beginning-of-stream flag or carrying another packet, and a page that ends
+  OpusTags and starts another packet are reported as limitations.
 - **RIFF/XMA2**: the RIFF declared size, each chunk id/offset/length inside
   the form, and the `fmt ` tag 0x166 fields (channels, rate, block align,
   bits). The fmt chunk is the first chunk, which recognition requires; a

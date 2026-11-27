@@ -821,3 +821,50 @@ describe("incomplete media asset headers", () => {
     },
   );
 });
+
+describe("Ogg packet boundaries", () => {
+  it("does not read OpusHead fields from the next packet on the page", async () => {
+    // Lacing [8, 11]: the first packet is only the 8-byte signature; the
+    // version, channel and rate bytes belong to a second packet.
+    const fields = opusHeadPacket().subarray(8);
+    const page = oggPage(
+      0,
+      0n,
+      Buffer.concat([Buffer.from("OpusHead", "latin1"), fields]),
+      2,
+      { segmentSizes: [8, fields.length] },
+    );
+    const bytes = Buffer.concat([
+      page,
+      oggPage(1, 0n, opusTagsPacket(Buffer.from("enc")), 0),
+    ]);
+    expect(
+      recognizeArtifactFormat({ prefix: bytes, fileSize: bytes.length }),
+    ).toMatchObject({ state: "recognized", format: "ogg-opus" });
+    await expect(read("ogg-opus", bytes)).rejects.toMatchObject({
+      parseFailure: { kind: "malformed", format: "ogg-opus", offset: 0 },
+    });
+  });
+
+  it("does not read the OpusTags vendor from the next packet on the page", async () => {
+    // A 12-byte OpusTags packet declares a 4-byte vendor, but the next bytes
+    // on its page are a separate packet.
+    const short = opusTagsPacket(Buffer.from("enc!")).subarray(0, 12);
+    const other = Buffer.from("enc!\0\0\0\0", "latin1");
+    const bytes = Buffer.concat([
+      oggPage(0, 0n, opusHeadPacket(), 2),
+      oggPage(1, 0n, Buffer.concat([short, other]), 0, {
+        segmentSizes: [short.length, other.length],
+      }),
+    ]);
+    const result = await read("ogg-opus", bytes);
+    expect(result.metadata).toMatchObject({ vendor: null });
+    const limitations = result.coverage[0]?.limitations ?? [];
+    expect(
+      limitations.some((line) => line.includes("only 0 were examined")),
+    ).toBe(true);
+    expect(
+      limitations.some((line) => line.includes("also starts another packet")),
+    ).toBe(true);
+  });
+});
