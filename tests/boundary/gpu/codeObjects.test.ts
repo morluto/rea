@@ -15,6 +15,7 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import {
   gpuCodeObjectsPartialSchema,
   gpuCodeObjectsSchema,
+  type GpuCodeObjectsInput,
 } from "../../../src/domain/gpu/gpuCodeObjects.js";
 import { GpuCodeObjectsProvider } from "../../../src/gpu/GpuCodeObjectsProvider.js";
 import { GpuInventory } from "../../../src/gpu/GpuInventory.js";
@@ -37,12 +38,7 @@ import {
 } from "../../fixtures/gpu/codeObjects.js";
 const inspect = async (
   bytes: Buffer,
-  options: {
-    analysis?: "inventory" | "kernels";
-    targets?: string[];
-    object_ids?: string[];
-    expected_sha256?: string;
-  } = {},
+  options: Partial<Omit<GpuCodeObjectsInput, "path">> = {},
 ) => {
   const root = await createTestTempDirectory("rea-gpu-"),
     path = join(root, "no-format-extension");
@@ -2081,6 +2077,437 @@ it("reports aggregate Clang directory capacity when every ID fits", async () => 
         boundary: "hip-bundle-directory-bytes",
         maximum: 16_777_216,
       },
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_report_bytes",
+        effective_value: 16_777_216,
+      },
+      refusal: {
+        kind: "adjustable_budget",
+        control: "max_report_bytes",
+      },
     },
   });
+});
+
+it("enforces per-call GPU budgets and recovers when raised", async () => {
+  const limitedReport = await inspect(Buffer.from(ptxFixture), {
+    analysis: "kernels",
+    max_report_bytes: 64,
+  });
+  if (limitedReport.ok) throw new Error("Expected max_report_bytes refusal");
+  expect(projectAnalysisError(limitedReport.error)).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    details: {
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_report_bytes",
+        effective_value: 64,
+        unit: "bytes",
+        maximum: 16 * 1024 * 1024,
+        default_value: 16 * 1024 * 1024,
+      },
+      refusal: {
+        kind: "adjustable_budget",
+        operation: "inspect_gpu_code_objects",
+        control: "max_report_bytes",
+      },
+    },
+  });
+
+  // Exercise max_report_bytes past constructor overhead (after initial facts are retained).
+  const paddedPtx = Buffer.from(ptxFixture + "\n//" + "a".repeat(4096));
+  const limitedReportRetention = await inspect(paddedPtx, {
+    analysis: "kernels",
+    max_report_bytes: 2048,
+  });
+  if (limitedReportRetention.ok)
+    throw new Error("Expected post-constructor max_report_bytes refusal");
+  expect(projectAnalysisError(limitedReportRetention.error)).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_report_bytes",
+        effective_value: 2048,
+      },
+      refusal: {
+        kind: "adjustable_budget",
+        control: "max_report_bytes",
+      },
+    },
+  });
+
+  const raisedReport = await inspect(paddedPtx, {
+    analysis: "kernels",
+    max_report_bytes: 1024 * 1024,
+  });
+  expect(raisedReport.ok).toBe(true);
+
+  const limitedToken = await inspect(hipFixture(), {
+    analysis: "inventory",
+    max_token_bytes: 4,
+  });
+  if (limitedToken.ok) throw new Error("Expected max_token_bytes refusal");
+  expect(projectAnalysisError(limitedToken.error)).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_token_bytes",
+        effective_value: 4,
+        maximum: 65_536,
+        unit: "bytes",
+      },
+      refusal: {
+        kind: "adjustable_budget",
+        control: "max_token_bytes",
+      },
+    },
+  });
+
+  const limitedEntries = await inspect(hipFixture(), {
+    analysis: "inventory",
+    max_parser_entries: 1,
+  });
+  if (limitedEntries.ok) throw new Error("Expected max_parser_entries refusal");
+  expect(projectAnalysisError(limitedEntries.error)).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_parser_entries",
+        effective_value: 1,
+        maximum: 65_536,
+        unit: "count",
+      },
+      refusal: {
+        kind: "adjustable_budget",
+        control: "max_parser_entries",
+      },
+    },
+  });
+
+  const recoveredHip = await inspect(hipFixture(), {
+    analysis: "inventory",
+    max_parser_entries: 16,
+    max_token_bytes: 128,
+  });
+  expect(recoveredHip.ok).toBe(true);
+
+  // max_object_bytes: standalone PTX refusal & recovery.
+  const limitedObject = await inspect(Buffer.from(ptxFixture), {
+    analysis: "kernels",
+    max_object_bytes: 64,
+  });
+  if (limitedObject.ok) throw new Error("Expected max_object_bytes refusal");
+  expect(projectAnalysisError(limitedObject.error)).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_object_bytes",
+        effective_value: 64,
+        maximum: 128 * 1024 * 1024,
+        unit: "bytes",
+      },
+      refusal: {
+        kind: "adjustable_budget",
+        control: "max_object_bytes",
+      },
+    },
+  });
+  const recoveredObject = await inspect(Buffer.from(ptxFixture), {
+    analysis: "kernels",
+    max_object_bytes: 4096,
+  });
+  expect(recoveredObject.ok).toBe(true);
+
+  // max_work_bytes: per-object capacity limitation names max_work_bytes and recovers when raised.
+  const limitedWork = await inspect(cudaFixture("none"), {
+    analysis: "kernels",
+    max_work_bytes: 32,
+  });
+  if (!limitedWork.ok) throw limitedWork.error;
+  expect(limitedWork.value.coverage.payloads).toBe("partial");
+  expect(
+    limitedWork.value.objects.some(
+      (row) =>
+        row.inspection === "capacity" &&
+        row.limitations.some((note) =>
+          note.includes("(parameter: max_work_bytes)"),
+        ),
+    ),
+  ).toBe(true);
+  const recoveredWork = await inspect(cudaFixture("none"), {
+    analysis: "kernels",
+    max_work_bytes: 1024 * 1024,
+  });
+  if (!recoveredWork.ok) throw recoveredWork.error;
+  expect(recoveredWork.value.coverage.payloads).toBe("complete");
+
+  // max_structure_bytes: ELF section directory refusal & recovery.
+  const amdBytes = amdFixture();
+  const limitedStructure = await inspect(amdBytes, {
+    analysis: "inventory",
+    max_structure_bytes: 64,
+  });
+  if (limitedStructure.ok)
+    throw new Error("Expected max_structure_bytes refusal");
+  expect(projectAnalysisError(limitedStructure.error)).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_structure_bytes",
+        effective_value: 64,
+        maximum: 512 * 1024 * 1024,
+        unit: "bytes",
+      },
+      refusal: {
+        kind: "adjustable_budget",
+        control: "max_structure_bytes",
+      },
+    },
+  });
+  const recoveredStructure = await inspect(amdBytes, {
+    analysis: "inventory",
+    max_structure_bytes: 65_536,
+  });
+  expect(recoveredStructure.ok).toBe(true);
+
+  // max_metadata_bytes & max_parser_visits on AMDGPU metadata note.
+  const limitedMetadata = await inspect(amdBytes, {
+    analysis: "kernels",
+    max_metadata_bytes: 16,
+  });
+  if (!limitedMetadata.ok) throw limitedMetadata.error;
+  expect(limitedMetadata.value.objects[0]).toMatchObject({
+    inspection: "capacity",
+    limitations: expect.arrayContaining([
+      expect.stringContaining("(parameter: max_metadata_bytes)"),
+    ]),
+  });
+
+  const limitedVisits = await inspect(amdBytes, {
+    analysis: "kernels",
+    max_parser_visits: 2,
+  });
+  if (!limitedVisits.ok) throw limitedVisits.error;
+  expect(limitedVisits.value.objects[0]).toMatchObject({
+    inspection: "capacity",
+    limitations: expect.arrayContaining([
+      expect.stringContaining("(parameter: max_parser_visits)"),
+    ]),
+  });
+
+  const recoveredAmd = await inspect(amdBytes, {
+    analysis: "kernels",
+    max_metadata_bytes: 65_536,
+    max_parser_visits: 4096,
+  });
+  if (!recoveredAmd.ok) throw recoveredAmd.error;
+  expect(recoveredAmd.value.objects[0]?.inspection).toBe("complete");
+  expect(recoveredAmd.value.kernels.length).toBeGreaterThan(0);
+});
+
+it("respects max_object_bytes during container scanning and full-file digesting", async () => {
+  // Trailing NUL bytes past a HIP bundle exceed max_object_bytes when scanned in 64 KiB chunks.
+  const smallBundle = hipFixture(Buffer.from("x"), "host-x86_64");
+  const paddedBundle = Buffer.concat([smallBundle, Buffer.alloc(2048)]);
+  const scanned = await inspect(paddedBundle, {
+    analysis: "inventory",
+    max_object_bytes: 512,
+  });
+  if (!scanned.ok) throw scanned.error;
+  expect(scanned.value.format).toBe("hip-bundle");
+  expect(scanned.value.coverage.discovery).toBe("complete");
+
+  // Full-file SHA-256 digest streams independently of max_object_bytes instead of issuing 1-byte reads.
+  const largePtx = Buffer.concat([
+    Buffer.from(ptxFixture),
+    Buffer.from("\n//" + "z".repeat(32 * 1024)),
+  ]);
+  const refused = await inspect(largePtx, {
+    analysis: "kernels",
+    max_object_bytes: 1,
+  });
+  if (refused.ok) throw new Error("Expected max_object_bytes refusal");
+  expect(projectAnalysisError(refused.error)).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      limit: {
+        parameter: "max_object_bytes",
+        effective_value: 1,
+      },
+      refusal: {
+        kind: "adjustable_budget",
+        control: "max_object_bytes",
+      },
+    },
+  });
+});
+
+it("honors max_parser_entries for PTX parameter token lists above 128 tokens", async () => {
+  const manyDimensions = "[1]".repeat(45);
+  const widePtx = Buffer.from(
+    `.version 8.8\n.target sm_80\n.address_size 64\n.visible .entry wide_param(.param .u32 p${manyDimensions}) {\nret;\n}\n`,
+  );
+  const refused = await inspect(widePtx, {
+    analysis: "kernels",
+    max_parser_entries: 8,
+  });
+  if (!refused.ok) throw refused.error;
+  expect(refused.value.objects[0]).toMatchObject({
+    inspection: "capacity",
+    limitations: expect.arrayContaining([
+      expect.stringContaining("(parameter: max_parser_entries)"),
+    ]),
+  });
+
+  const admitted = await inspect(widePtx, {
+    analysis: "kernels",
+    max_parser_entries: 256,
+  });
+  if (!admitted.ok) throw admitted.error;
+  expect(admitted.value.objects[0]?.inspection).toBe("partial");
+  expect(admitted.value.kernels).toHaveLength(1);
+  expect(admitted.value.kernels[0]?.name).toBe("wide_param");
+
+  // Lowering max_parser_entries below 128 does not reject a single normal parameter declaration.
+  const singleParamPtx = Buffer.from(
+    ".version 8.8\n.target sm_80\n.address_size 64\n.visible .entry add_one(.param .align 8 .u32 x[4]) {\nret;\n}\n",
+  );
+  const singleParam = await inspect(singleParamPtx, {
+    analysis: "kernels",
+    max_parser_entries: 4,
+  });
+  if (!singleParam.ok) throw singleParam.error;
+  expect(singleParam.value.objects[0]?.inspection).toBe("complete");
+  expect(singleParam.value.kernels.map((k) => k.name)).toEqual(["add_one"]);
+});
+
+it("keeps corrupt CCOB v1 recovery distinct from max_object_bytes window truncation", async () => {
+  // Corrupt CCOB v1 bytes inside a container larger than max_object_bytes must stay
+  // malformed and still recover a later valid CCOB v2 sibling.
+  const smallBundle = hipFixture(Buffer.from("x"), "host-x86_64");
+  const corruptV1 = Buffer.from(ccobFixture(1, "zlib", smallBundle));
+  corruptV1.fill(0xff, 20);
+  const siblingV2 = ccobFixture(2, "zlib", smallBundle);
+  const combined = Buffer.concat([corruptV1, siblingV2, Buffer.alloc(600)]);
+  const recovered = await inspect(combined, {
+    analysis: "inventory",
+    max_object_bytes: 512,
+  });
+  if (!recovered.ok) throw recovered.error;
+  const bundles = recovered.value.objects.filter(
+    (o) => o.kind === "hip-bundle",
+  );
+  expect(bundles.map((b) => b.inspection)).toEqual(["malformed", "complete"]);
+  expect(recovered.value.objects.length).toBe(4);
+
+  // A valid CCOB v1 stream whose compressed extent exceeds max_object_bytes
+  // while its declared decoded size fits triggers Z_BUF_ERROR -> capacity (max_object_bytes)
+  // and recovers once raised.
+  const storedCompressed = deflateSync(smallBundle, { level: 0 });
+  const header = Buffer.from(
+    ccobFixture(1, "zlib", smallBundle).subarray(0, 20),
+  );
+  const validV1 = Buffer.concat([header, storedCompressed]);
+  expect(storedCompressed.length).toBeGreaterThan(smallBundle.length);
+  const truncatedByBudget = await inspect(validV1, {
+    analysis: "inventory",
+    max_object_bytes: smallBundle.length,
+  });
+  if (!truncatedByBudget.ok) throw truncatedByBudget.error;
+  expect(truncatedByBudget.value.objects[0]).toMatchObject({
+    kind: "hip-bundle",
+    inspection: "capacity",
+    limitations: expect.arrayContaining([
+      expect.stringContaining("(parameter: max_object_bytes)"),
+    ]),
+  });
+  const raisedV1 = await inspect(validV1, {
+    analysis: "inventory",
+    max_object_bytes: validV1.length + 64,
+  });
+  if (!raisedV1.ok) throw raisedV1.error;
+  expect(raisedV1.value.objects[0]?.inspection).toBe("complete");
+});
+
+it("applies max_structure_bytes independently of max_object_bytes and covers PE, CUBIN, and report baseline", async () => {
+  // ELF section table (8 sections = 512 bytes) succeeds when max_structure_bytes admits it
+  // even if max_object_bytes is smaller (256 bytes).
+  const emptyElf = elfFixture(
+    62,
+    Array.from({ length: 6 }, (_, i) => ({
+      name: `.s${String(i)}`,
+      type: 1,
+      bytes: Buffer.alloc(8),
+    })),
+  );
+  const elfOk = await inspect(emptyElf, {
+    analysis: "inventory",
+    max_object_bytes: 256,
+    max_structure_bytes: 65_536,
+  });
+  if (!elfOk.ok) throw elfOk.error;
+  expect(elfOk.value.format).toBe("elf");
+  expect(elfOk.value.coverage.discovery).toBe("complete");
+
+  // Baseline report reservation is enforced even when no GPU sections are present.
+  const baselineRefused = await inspect(emptyElf, {
+    analysis: "inventory",
+    max_report_bytes: 500,
+  });
+  if (baselineRefused.ok)
+    throw new Error("Expected baseline max_report_bytes refusal");
+  expect(projectAnalysisError(baselineRefused.error)).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      limit: { parameter: "max_report_bytes", effective_value: 500 },
+      refusal: { kind: "adjustable_budget", control: "max_report_bytes" },
+    },
+  });
+
+  // PE section directory enforces max_structure_bytes and recovers when raised.
+  const peBytes = peGpuFixture();
+  const peRefused = await inspect(peBytes, {
+    analysis: "inventory",
+    max_structure_bytes: 64,
+  });
+  if (peRefused.ok) throw new Error("Expected PE max_structure_bytes refusal");
+  expect(projectAnalysisError(peRefused.error)).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      limit: { parameter: "max_structure_bytes", effective_value: 64 },
+      refusal: { kind: "adjustable_budget", control: "max_structure_bytes" },
+    },
+  });
+  const peRecovered = await inspect(peBytes, {
+    analysis: "inventory",
+    max_structure_bytes: 65_536,
+  });
+  expect(peRecovered.ok).toBe(true);
+
+  // CUBIN CudaMetadataBudget respects max_parser_visits and recovers when raised.
+  const cubinBytes = cubinFixture();
+  const cubinLimited = await inspect(cubinBytes, {
+    analysis: "kernels",
+    max_parser_visits: 1,
+  });
+  if (!cubinLimited.ok) throw cubinLimited.error;
+  expect(cubinLimited.value.objects[0]).toMatchObject({
+    inspection: "capacity",
+    limitations: expect.arrayContaining([
+      expect.stringContaining("(parameter: max_parser_visits)"),
+    ]),
+  });
+  const cubinRecovered = await inspect(cubinBytes, {
+    analysis: "kernels",
+    max_parser_visits: 4096,
+  });
+  if (!cubinRecovered.ok) throw cubinRecovered.error;
+  expect(cubinRecovered.value.objects[0]?.inspection).toBe("complete");
 });

@@ -3,7 +3,15 @@ import {
   BinaryResourceFailure,
 } from "../domain/binaryContainer.js";
 import type { GpuKernel } from "../domain/gpu/gpuCodeObjects.js";
-import { GPU_REPORT_BYTES, rejectGpu } from "./GpuSource.js";
+import {
+  DEFAULT_GPU_PARSER_ENTRIES,
+  DEFAULT_GPU_REPORT_BYTES,
+  DEFAULT_GPU_TOKEN_BYTES,
+  GPU_PARSER_ENTRIES_LIMIT,
+  GPU_TOKEN_BYTES_LIMIT,
+  type GpuCodeObjectsBudgets,
+} from "../domain/gpu/gpuCodeObjectsBudgets.js";
+import { rejectGpu } from "./GpuSource.js";
 interface Token {
   readonly value: string;
   readonly start: number;
@@ -25,7 +33,10 @@ const isWhitespaceAt = (text: string, at: number, code: number): boolean =>
     : /\s/u.test(text[at]!);
 
 /** Byte coordinates are accumulated once, including non-ASCII comments and quoted strings. */
-function* tokens(text: string): Generator<Token> {
+function* tokens(
+  text: string,
+  maxTokenBytes: number = DEFAULT_GPU_TOKEN_BYTES,
+): Generator<Token> {
   const len = text.length;
   let at = 0,
     byte = 0;
@@ -103,11 +114,13 @@ function* tokens(text: string): Generator<Token> {
         byte += 1;
       }
     } else advance();
-    if (at - position > 65536)
+    if (byte - start > maxTokenBytes)
       throw new BinaryResourceFailure(
         "structure",
-        65536,
+        maxTokenBytes,
         "PTX token exceeds the string budget",
+        GPU_TOKEN_BYTES_LIMIT,
+        "bytes",
       );
     yield { value: text.slice(position, at), start, end: byte };
   }
@@ -298,14 +311,24 @@ export function* readPtxKernels(
   text: string,
   objectId: string,
   targetTracker?: PtxTargetTracker,
+  budgets?: Pick<
+    GpuCodeObjectsBudgets,
+    "maxReportBytes" | "maxParserEntries" | "maxTokenBytes"
+  >,
 ): Generator<{ kernel: GpuKernel; coverage: "complete" | "partial" }> {
-  if (Buffer.byteLength(text) > GPU_REPORT_BYTES)
+  const maxReportBytes = budgets?.maxReportBytes ?? DEFAULT_GPU_REPORT_BYTES;
+  const maxParserEntries =
+    budgets?.maxParserEntries ?? DEFAULT_GPU_PARSER_ENTRIES;
+  const maxTokenBytes = budgets?.maxTokenBytes ?? DEFAULT_GPU_TOKEN_BYTES;
+  if (Buffer.byteLength(text) > maxReportBytes)
     throw new BinaryResourceFailure(
       "structure",
-      GPU_REPORT_BYTES,
-      "PTX text exceeds the 16 MiB retained report budget",
+      maxReportBytes,
+      `PTX text exceeds the ${String(maxReportBytes)}-byte retained report budget`,
+      "gpu-retained-report-bytes",
+      "bytes",
     );
-  const iterator = tokens(text);
+  const iterator = tokens(text, maxTokenBytes);
   const next = (): Token => {
     const value = iterator.next();
     if (value.done) return rejectGpu("Truncated PTX entry declaration");
@@ -355,11 +378,13 @@ export function* readPtxKernels(
     const flush = (): void => {
       if (part.length === 0) return;
       if (part[0] !== ".param") rejectGpu("Unknown PTX parameter declaration");
-      if (parameters.length >= 65536)
+      if (parameters.length >= maxParserEntries)
         throw new BinaryResourceFailure(
           "structure",
-          65536,
+          maxParserEntries,
           "PTX parameter declarations exceed the facts budget",
+          GPU_PARSER_ENTRIES_LIMIT,
+          "entries",
         );
       const value = declaration(part);
       let offset: number | null = null;
@@ -401,11 +426,13 @@ export function* readPtxKernels(
         }
         if (t.value === "," && parentheses === 0 && brackets === 0) flush();
         else part.push(t.value);
-        if (part.length > 128)
+        if (part.length > Math.max(128, maxParserEntries))
           throw new BinaryResourceFailure(
             "structure",
-            65536,
+            maxParserEntries,
             "PTX parameter declarations exceed the facts budget",
+            GPU_PARSER_ENTRIES_LIMIT,
+            "entries",
           );
       }
       flush();
@@ -460,11 +487,13 @@ export function* readPtxKernels(
           for (t = next(); t.value !== ";"; t = next()) {
             if (t.value === "}")
               rejectGpu("Malformed PTX parameter declaration");
-            if (bodyParameter.length >= 128)
+            if (bodyParameter.length >= Math.max(128, maxParserEntries))
               throw new BinaryResourceFailure(
                 "structure",
-                65536,
+                maxParserEntries,
                 "PTX parameter declarations exceed the facts budget",
+                GPU_PARSER_ENTRIES_LIMIT,
+                "entries",
               );
             bodyParameter.push(t.value);
           }
@@ -571,11 +600,13 @@ export function* readPtxKernels(
         "Unsupported PTX register declarations or overflowing totals leave the affected virtual register count unknown.",
       );
     }
-    if (++kernelCount > 65536)
+    if (++kernelCount > maxParserEntries)
       throw new BinaryResourceFailure(
         "structure",
-        65536,
+        maxParserEntries,
         "PTX kernel count exceeds the facts budget",
+        GPU_PARSER_ENTRIES_LIMIT,
+        "entries",
       );
     yield { kernel, coverage };
   }
@@ -659,8 +690,11 @@ export const ptxTargetIdentity = (target: string): string =>
   target.replace(/^compute_(\d+[a-z]?)$/u, "sm_$1");
 
 /** Resolve all module-scope targets through the highest numbered architecture. */
-export const readPtxTarget = (text: string): PtxTargetFacts => {
-  const stream = tokens(text);
+export const readPtxTarget = (
+  text: string,
+  maxTokenBytes: number = DEFAULT_GPU_TOKEN_BYTES,
+): PtxTargetFacts => {
+  const stream = tokens(text, maxTokenBytes);
   const tracker = createPtxTargetTracker();
   let depth = 0;
   try {

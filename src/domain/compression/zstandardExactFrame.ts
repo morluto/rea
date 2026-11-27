@@ -18,9 +18,11 @@ import {
 } from "./zstandardFrameAllowance.js";
 import {
   ZSTANDARD_MAGIC_BYTES,
+  ZSTANDARD_TRUNCATION_REASONS,
   zstandardFrameKind,
   zstandardFrameReads,
   type ZstandardFrameKind,
+  type ZstandardTruncationReason,
 } from "./zstandardFrameWire.js";
 
 /** Zstandard's default maximum decoder window, 2^27 bytes (128 MiB). */
@@ -31,9 +33,7 @@ export const ZSTANDARD_WINDOW_LOG_MAX = 27;
  * evidence that the bytes are malformed.
  */
 export const ZSTANDARD_FRAME_REASONS = [
-  "truncated_frame_header",
-  "truncated_block",
-  "truncated_checksum",
+  ...ZSTANDARD_TRUNCATION_REASONS,
   "trailing_bytes",
   "work_limit",
   "malformed",
@@ -42,6 +42,15 @@ export const ZSTANDARD_FRAME_REASONS = [
 ] as const;
 
 export type ZstandardFrameReason = (typeof ZSTANDARD_FRAME_REASONS)[number];
+
+const ZSTANDARD_TRUNCATION_REASON_SET: ReadonlySet<ZstandardFrameReason> =
+  new Set(ZSTANDARD_TRUNCATION_REASONS);
+
+/** True when framing ended before the end of the Zstandard frame rather than on corrupt bytes. */
+export const isZstandardTruncationReason = (
+  reason: ZstandardFrameReason,
+): reason is ZstandardTruncationReason =>
+  ZSTANDARD_TRUNCATION_REASON_SET.has(reason);
 
 export type ZstandardFrameMode = "exact" | "prefix";
 

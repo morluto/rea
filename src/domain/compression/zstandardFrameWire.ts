@@ -5,15 +5,19 @@ export const ZSTANDARD_MAGIC_BYTES = 4;
 
 export type ZstandardFrameKind = "zstd" | "skippable";
 
-type Truncation =
-  | "truncated_frame_header"
-  | "truncated_block"
-  | "truncated_checksum";
+export const ZSTANDARD_TRUNCATION_REASONS = [
+  "truncated_frame_header",
+  "truncated_block",
+  "truncated_checksum",
+] as const;
+
+export type ZstandardTruncationReason =
+  (typeof ZSTANDARD_TRUNCATION_REASONS)[number];
 
 export interface ZstandardFrameRead {
   readonly length: number;
   readonly inspect: boolean;
-  readonly eof: Truncation;
+  readonly eof: ZstandardTruncationReason;
   readonly failureOffset: number;
 }
 
