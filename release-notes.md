@@ -166,6 +166,7 @@
 * **native:** give the Go and Rust readers max_structure_bytes and Rust max_wasm_sections ([#14661](https://github.com/morluto/rea/issues/14661)) ([4c9dca6](https://github.com/morluto/rea/commit/4c9dca63a0e8bc08030a703565f26e1df49a2c94))
 * **native:** give the native structural decoding allowance a per-call max_structure_bytes ([#14626](https://github.com/morluto/rea/issues/14626)) ([e540cbd](https://github.com/morluto/rea/commit/e540cbdafd8170701b07b4735f8a5da40e47e10e))
 * **native:** give the PE readers per-call text, entry and metadata budgets ([#14659](https://github.com/morluto/rea/issues/14659)) ([0aca049](https://github.com/morluto/rea/commit/0aca049128687828bddc32e8c4c0a39d7544c1ff))
+* **native:** list Mach-O function starts and data-in-code entries offline ([#14897](https://github.com/morluto/rea/issues/14897)) ([61fb6cf](https://github.com/morluto/rea/commit/61fb6cf68adf47396e4b5b43cf4ccb032c7b8ffd))
 * **native:** report the stored RVA of PE exports ([bf8448c](https://github.com/morluto/rea/commit/bf8448cdfc90c4c077f03b877cf09ea150509092))
 * **native:** retain Apple bundle executable provenance ([b8995f8](https://github.com/morluto/rea/commit/b8995f81489dda3e7f8be61317f366b7fabd97c7))
 * **pe:** inspect x64 exception-directory function ranges ([#14254](https://github.com/morluto/rea/issues/14254)) ([a85859e](https://github.com/morluto/rea/commit/a85859e14790795f6d13000b173cb32c82c49813))
