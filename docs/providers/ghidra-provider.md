@@ -220,6 +220,47 @@ If the function resolves but the backend fails or cancels decompilation, the
 failure retains the selector, mapped address and procedure entry without
 changing the backend failure code.
 
+### Active request cancellation
+
+Cancelling a request that is still queued removes it without touching the
+session. Cancelling the request Ghidra is working on depends on the operation:
+
+| Active operation                                                             | Cancellation                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Reads: every operation except the edits below                                | REA sends the bridge a `cancel` frame naming the request and waits up to the cancel grace (2,000 ms by default) for that request's reply. A decompilation (`procedure_pseudo_code`, `analyze_function`) stops its native decompiler and answers at once; other reads answer when they reach a cancellation check or finish. Once the reply arrives the call returns a cancellation, and the session, its annotations and the requests queued behind it stay. |
+| Edits: `annotate_native_function`, `set_address_name`, `set_addresses_names` | Not interrupted. REA closes the session, so a reply that raced the cancel cannot leave a committed edit behind a cancelled call.                                                                                                                                                                                                                                                                                                                             |
+
+The bridge reads the connection on one extra thread, which only cancels the
+named request's Ghidra `TaskMonitor`; requests still run one at a time on the
+script thread, and a `cancel` frame has no reply of its own. The reply to the
+cancelled request is the confirmation. If none arrives within the cancel grace,
+or the request fails without a bridge reply, REA closes the session exactly as it
+does for an edit: the Ghidra process is stopped, queued requests fail, session
+annotations are discarded, and the next provider query starts a new session
+(restoring the last checkpoint when one is configured). A result that raced the
+cancel is discarded and the call still returns a cancellation; a bridge failure
+other than the cancellation that raced it stays the reported failure, with the
+session kept.
+
+The cancel grace is 2,000 ms by default. Set `REA_GHIDRA_CANCEL_GRACE_MS` to
+an integer from 100 to 60,000 milliseconds in the environment that starts REA
+to change it. The floor is about five times the slowest acknowledgement
+measured with real Ghidra 12.2 (19 ms); a shorter grace closes sessions that
+would have answered. The maximum is one minute, the pinned MCP client SDK's
+default tool-call deadline: while the grace runs, the cancelled call has not
+returned and the requests queued behind it wait, so a stuck bridge delays all
+of them by the whole grace. REA reads the value when it starts and each session
+keeps the grace it opened with, so a change needs a restart;
+`update_analysis_settings` does not change it and `inspect_analysis_settings`
+does not list it. A fresh-import session's cancellation limitation states the
+value applied and whether it is the default or was set at launch. When the
+grace expires, the requests queued behind the cancelled one fail with a message
+naming the control, the value applied, its source and the range. An empty,
+malformed or out-of-range value does not fall back to the default:
+`rea doctor` and registration validation report it, REA still starts, and a
+Ghidra session refuses to open with `configuration_invalid` until it is
+corrected.
+
 Both mapping directions require a complete original `FileBytes` source whose
 SHA-256 matches the admitted target. Auxiliary files and partial source objects
 remain visible in the load-image inventory but do not establish offsets in the
@@ -325,7 +366,7 @@ profile stages before retrying their retained descriptors.
 | Concern                 | Ghidra contract                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Decompiler lifetime     | One persistent `DecompInterface` is opened for the imported Program and disposed during bridge shutdown. Native decompilation has no fixed per-function deadline unless the launch setting `REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS` or runtime override `ghidra.decompile_timeout_seconds` sets one; a decompile that reaches it fails only that request with `remote_code` `decompile_timed_out`, the Program and session stay open, and the next decompile uses a fresh decompiler process. External functions or functions without bodies return `null`; cancellation and native failure remain distinct.                 |
-| Serialization           | A FIFO sends one Program request at a time. Caller cancellation removes queued work promptly and is passed to active socket waits. This is an adapter safety commitment, not a claim that every Ghidra API is thread-safe.                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Serialization           | A FIFO sends one Program request at a time. Caller cancellation removes queued work promptly. Cancelling the active request follows [active request cancellation](#active-request-cancellation). This is an adapter safety commitment, not a claim that every Ghidra API is thread-safe.                                                                                                                                                                                                                                                                                                                                   |
 | Function identity       | Every function result carries the entry address and Ghidra FunctionManager classification for external, thunk, and resolved thunk target. These are observations, not proof that unresolved targetless calls have been recovered.                                                                                                                                                                                                                                                                                                                                                                                          |
 | Assembly and pseudocode | Assembly is complete Ghidra Listing text; pseudocode is Ghidra decompiler output. Neither is original source, and cross-provider comparison never treats Hopper and Ghidra text as equal or unequal semantic facts.                                                                                                                                                                                                                                                                                                                                                                                                        |
 | Instruction fast path   | `read_function_instructions` returns every raw Listing instruction for the requested function without invoking the decompiler or whole-program name/string inventories.                                                                                                                                                                                                                                                                                                                                                                                                                                                    |

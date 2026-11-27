@@ -10,6 +10,7 @@ import {
   GHIDRA_LITERAL_CANDIDATES_LIMITATION,
 } from "./GhidraLiteralSearch.js";
 import { ghidraCheckpointSelectionSchema } from "./GhidraCheckpoint.js";
+import { DEFAULT_GHIDRA_CANCEL_GRACE } from "../config/ghidraCancelGrace.js";
 import { ghidraProjectHistoryEvidence } from "./GhidraProjectHistory.js";
 import type { Evidence, EvidenceLocation } from "../domain/evidence.js";
 import { ghidraProjectCommitmentSchema } from "./GhidraProjectSnapshot.js";
@@ -677,6 +678,12 @@ export const createGhidraProviderClient = (input: {
     () => config.ghidraStartupTimeoutMs,
   );
   if (!startupTimeout.ok) return startupTimeout;
+  // Every session applies the cancel grace, so an invalid launch value
+  // refuses the session instead of running on the default.
+  const cancelGraceSetting = config.ghidraCancelGrace;
+  if (cancelGraceSetting !== undefined && !cancelGraceSetting.ok)
+    return cancelGraceSetting;
+  const cancelGrace = cancelGraceSetting?.value ?? DEFAULT_GHIDRA_CANCEL_GRACE;
   // Only a checkpointed session applies the save wait, so only it refuses an
   // invalid launch value.
   const checkpointSaveWait = config.ghidraCheckpointSaveWait;
@@ -687,6 +694,7 @@ export const createGhidraProviderClient = (input: {
   )
     return checkpointSaveWait;
   const client = clientFactory({
+    cancelGrace,
     ...(checkpoint.data === undefined
       ? {}
       : {
@@ -1074,7 +1082,7 @@ export const createGhidraProviderClient = (input: {
           }),
       analysisProfile: committedProfile,
       ...sessionScopedLimitations(
-        ghidraSessionCommonLimitations(projection.source),
+        ghidraSessionCommonLimitations(projection.source, cancelGrace),
         [
           ...ghidraOperationLimitations(operation, projection.source),
           ...(observation.limitations ?? []),
@@ -1175,7 +1183,7 @@ export const createGhidraProviderClient = (input: {
           createAnalysisExecution(started.value, committedProfile.provider, {
             analysisProfile: committedProfile,
             ...sessionScopedLimitations(
-              ghidraHealthLimitations(projection.source),
+              ghidraHealthLimitations(projection.source, cancelGrace),
               [],
               sessionLimitations(operation),
             ),

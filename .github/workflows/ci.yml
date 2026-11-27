@@ -1081,6 +1081,7 @@ jobs:
           key: rea-windows-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', '.npmrc', 'package-lock.json') }}-${{ github.sha }}
           restore-keys: rea-windows-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', '.npmrc', 'package-lock.json') }}-
       - name: Typecheck with the official Windows compiler
+        if: matrix.suite == 'capabilities'
         env:
           GOMAXPROCS: "2"
           GOMEMLIMIT: "3GiB"

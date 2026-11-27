@@ -18,6 +18,10 @@ import {
 import { DEFAULT_BRIDGE_MAX_REQUEST } from "./bridgeMaxRequestBytes.js";
 import { DEFAULT_BRIDGE_MAX_REPLY } from "./bridgeMaxReplyBytes.js";
 import {
+  inspectGhidraCancelGrace,
+  parseGhidraCancelGrace,
+} from "./ghidraCancelGrace.js";
+import {
   inspectGhidraCheckpointSaveWait,
   parseGhidraCheckpointSaveWait,
 } from "./ghidraCheckpointSaveWait.js";
@@ -56,6 +60,7 @@ export const inspectNativeAnalysisConfiguration = (
   const issues = [
     ...(parsed.ok ? [] : parsed.error.settings),
     ...inspectAnalysisSettingSeeds(nativeAnalysisEnvironment(environment)),
+    ...inspectGhidraCancelGrace(environment),
     ...inspectGhidraCheckpointSaveWait(environment),
   ];
   const configuredTimeout = environment.REA_HOPPER_STARTUP_TIMEOUT_MS;
@@ -166,6 +171,9 @@ export const parseConfig = (
     ),
     ghidraJavaHome: env.JAVA_HOME,
     ghidraStartupTimeoutMs: ghidraStartup ?? DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
+    ghidraCancelGrace: parseGhidraCancelGrace(
+      environment.REA_GHIDRA_CANCEL_GRACE_MS,
+    ),
     ...(decompilePayload === undefined || decompilePayload === null
       ? {}
       : { ghidraDecompileMaxPayloadMiB: decompilePayload }),

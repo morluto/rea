@@ -26,7 +26,20 @@ import {
   isGhidraFunctionOperation,
   type GhidraFunctionOperation,
 } from "../../../src/ghidra/GhidraFunctionValues.js";
-import { limitationsFor } from "../../../src/ghidra/GhidraProviderCapabilities.js";
+import { DEFAULT_GHIDRA_CANCEL_GRACE } from "../../../src/config/ghidraCancelGrace.js";
+import {
+  ghidraOperationLimitations,
+  ghidraSessionCommonLimitations,
+} from "../../../src/ghidra/GhidraProviderCapabilities.js";
+
+/** The limitations a session states, with the default cancel grace this harness applies. */
+const sessionLimitationsFor = (operation: string): readonly string[] => [
+  ...ghidraSessionCommonLimitations(
+    "fresh-import",
+    DEFAULT_GHIDRA_CANCEL_GRACE,
+  ),
+  ...ghidraOperationLimitations(operation),
+];
 
 it.each([
   { pseudocodeAvailable: true, reportsCoverage: true },
@@ -755,7 +768,7 @@ describe("Ghidra MCP evidence parity", () => {
       });
       // Every source-declared limitation must survive the MCP projection;
       // pinning a literal here re-copies prose the provider owns.
-      for (const limitation of limitationsFor("analyze_function")) {
+      for (const limitation of sessionLimitationsFor("analyze_function")) {
         expect(analyzed.limitations).toContain(limitation);
       }
       expect(

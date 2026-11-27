@@ -1,3 +1,4 @@
+import { posix } from "node:path";
 import { accountZipMemberRegion } from "../domain/zip/zipMemberRegion.js";
 import {
   decodeLimit,
@@ -173,25 +174,12 @@ const readMemberBytes = async (
   }
 };
 
-const splitCsv = (value: string | null): string[] => {
-  if (value === null) return [];
-  const seen = new Set<string>();
-  const ids: string[] = [];
-  for (const part of value.split(",")) {
-    const id = part.trim();
-    if (id === "" || seen.has(id)) continue;
-    seen.add(id);
-    ids.push(id);
-  }
-  return ids;
-};
-
-const asStringArray = (value: unknown): string[] => {
-  if (typeof value === "string") return splitCsv(value);
-  if (!Array.isArray(value)) return [];
+const parseExtensionList = (value: unknown): string[] => {
+  const items = typeof value === "string" ? value.split(",") : value;
+  if (!Array.isArray(items)) return [];
   const ids: string[] = [];
   const seen = new Set<string>();
-  for (const item of value) {
+  for (const item of items) {
     if (typeof item !== "string") continue;
     const id = item.trim();
     if (id === "" || seen.has(id)) continue;
@@ -311,8 +299,7 @@ const packageJsonEntryDirectoryOnly = (value: unknown): boolean => {
 
 /**
  * Suffixes tried after the declared path, in order. VS Code loads `main`
- * through Node's CommonJS file and directory lookup, and the web extension
- * host adds `.js` to a `browser` entry that lacks it.
+ * through Node's CommonJS file and directory lookup.
  */
 const NODE_FILE_CANDIDATES = ["", ".js", ".json", ".node"] as const;
 const NODE_INDEX_CANDIDATES = [
@@ -320,7 +307,6 @@ const NODE_INDEX_CANDIDATES = [
   "/index.json",
   "/index.node",
 ] as const;
-const BROWSER_ENTRY_CANDIDATES = ["", ".js"] as const;
 
 /**
  * The member an entry point resolves to, or the declared path when none.
@@ -607,15 +593,14 @@ const parseVsixManifestDocument = (
             description: metadataText("Description"),
           },
     engine: propertyById.get("Microsoft.VisualStudio.Code.Engine") ?? null,
-    extensionDependencies: splitCsv(
-      propertyById.get("Microsoft.VisualStudio.Code.ExtensionDependencies") ??
-        null,
+    extensionDependencies: parseExtensionList(
+      propertyById.get("Microsoft.VisualStudio.Code.ExtensionDependencies"),
     ),
-    extensionPack: splitCsv(
-      propertyById.get("Microsoft.VisualStudio.Code.ExtensionPack") ?? null,
+    extensionPack: parseExtensionList(
+      propertyById.get("Microsoft.VisualStudio.Code.ExtensionPack"),
     ),
-    extensionKind: splitCsv(
-      propertyById.get("Microsoft.VisualStudio.Code.ExtensionKind") ?? null,
+    extensionKind: parseExtensionList(
+      propertyById.get("Microsoft.VisualStudio.Code.ExtensionKind"),
     ),
     assets,
   };
@@ -745,9 +730,9 @@ const parsePackageJsonDocument = (
       commands_total: commandRows.length,
       commands_omitted: listedCommands.omitted,
     },
-    extensionDependencies: asStringArray(record.extensionDependencies),
-    extensionPack: asStringArray(record.extensionPack),
-    extensionKind: asStringArray(record.extensionKind),
+    extensionDependencies: parseExtensionList(record.extensionDependencies),
+    extensionPack: parseExtensionList(record.extensionPack),
+    extensionKind: parseExtensionList(record.extensionKind),
     capabilities: {
       untrusted_workspaces: capabilityValue(
         record.capabilities !== null &&
@@ -1281,16 +1266,16 @@ export const parseVsixPackage = async (
               mainDirectoryMain,
               mainDirectoryOnly,
             );
+    // The web host fetches one URI, adding .js only when its path lacks
+    // an extension. The same candidate owns exact and case-only matching.
+    const browserSuffix =
+      browserPath !== null && posix.extname(browserPath) === "" ? ".js" : "";
     const browserEntry =
       browserDeclared === null
         ? null
         : browserPath === null
           ? { path: browserDeclared.path, present: false }
-          : resolveEntryPoint(
-              browserPath,
-              BROWSER_ENTRY_CANDIDATES,
-              memberPaths,
-            );
+          : resolveEntryPoint(browserPath, [browserSuffix], memberPaths);
     const foldedMemberPaths = new Map(
       files.map((file) => [file.path.toLowerCase(), file.path]),
     );
@@ -1309,11 +1294,7 @@ export const parseVsixPackage = async (
             : NODE_INDEX_CANDIDATES),
         ],
       ],
-      [
-        browserPath === null ? null : browserEntry,
-        undefined,
-        BROWSER_ENTRY_CANDIDATES,
-      ],
+      [browserPath === null ? null : browserEntry, undefined, [browserSuffix]],
     ] as const) {
       if (entry === null || entry.present) continue;
       const backslashPath = entry.path.includes("\\")

@@ -300,6 +300,18 @@ const handleRequest = (socket, server, request, state) => {
   if (request.method !== "shutdown" && handleOutputFailure(socket, state))
     return;
   if (state.mode === "hang_tools" && request.method !== "shutdown") return;
+  if (request.method === "cancel") {
+    handleCancel(socket, request, state);
+    return;
+  }
+  // A decompile that answers only once a cancel names it.
+  if (
+    state.mode.startsWith("interruptible_tools") &&
+    request.method === "procedure_pseudo_code"
+  ) {
+    state.heldRequest = request.id;
+    return;
+  }
   if (
     state.mode === "unicode_search" &&
     ["search_procedures", "search_strings"].includes(request.method)
@@ -470,6 +482,30 @@ const handleRequest = (socket, server, request, state) => {
     server.close(() => process.exit(0));
   }
 };
+
+/** A cancel has no reply of its own; the request it names answers. */
+function handleCancel(socket, request, state) {
+  if (
+    state.heldRequest === undefined ||
+    request.params.request_id !== state.heldRequest
+  )
+    return;
+  const reply = `${JSON.stringify(
+    state.mode === "interruptible_tools_reply_success"
+      ? { id: state.heldRequest, ok: true, result: {} }
+      : {
+          id: state.heldRequest,
+          ok: false,
+          error: {
+            code: "decompile_cancelled",
+            message: "Ghidra decompilation was cancelled",
+          },
+        },
+  )}\n`;
+  state.heldRequest = undefined;
+  // The second copy is a late reply for a request that already settled.
+  socket.write(reply + reply);
+}
 
 async function handleCheckpoint(socket, request, state) {
   const { path, force } = request.params;
