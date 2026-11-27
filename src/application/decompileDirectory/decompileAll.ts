@@ -574,6 +574,23 @@ const decompileReadAhead = async (
   return { procedures, until: index };
 };
 
+/**
+ * The planned window from the function this decompile request carries,
+ * which a provider reads as its own. A function the window named earlier
+ * may send no decompile request, for example when procedure_info classifies
+ * it as external, so the window is rebased here rather than when planned.
+ */
+const takeReadAhead = (
+  state: PublishState,
+  address: string,
+): readonly string[] | undefined => {
+  const window = state.readAhead;
+  state.readAhead = undefined;
+  const from = window?.indexOf(address) ?? -1;
+  const carried = from < 0 ? [] : window!.slice(from);
+  return carried.length > 1 ? carried : undefined;
+};
+
 /** One function this call takes on: report a file problem or decompile it. */
 const attemptOne = async (
   input: PublishInput,
@@ -661,8 +678,7 @@ const publishOne = async (input: {
     };
   }
   let attemptedIndependent = false;
-  const readAhead = input.state.readAhead;
-  input.state.readAhead = undefined;
+  const readAhead = takeReadAhead(input.state, input.procedure.address);
   let decompiled = await input.analysis.execute(
     "procedure_pseudo_code",
     { procedure: input.procedure.address },

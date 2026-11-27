@@ -964,13 +964,13 @@ describe("decompile_all filters and layout", () => {
     ]);
 
     // A function found to be external sends no decompile request, so the
-    // next request carries the window that named it.
+    // next request carries the rest of its window, naming itself first.
     const external = harness({ procedures, external: [addresses[0]!] });
     expect((await run(external.tools, `${directory()}-external`)).ok).toBe(
       true,
     );
     expect(windows(external.calls)).toEqual([
-      [addresses[1], addresses.slice(0, 32)],
+      [addresses[1], addresses.slice(1, 32)],
       [addresses[32], addresses.slice(32)],
     ]);
   });
