@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { androidSuperFixture } from "../../../tests/fixtures/androidSuperImage.js";
 import { computeBlockEntropy } from "../../domain/native/byteEntropy.js";
 import {
   computePeOverlay,
@@ -98,6 +99,32 @@ describe("parsePeOverlay ranges", () => {
       },
     ]);
   });
+
+  it.each([
+    { name: "raw", backupOnly: false },
+    { name: "backup-only", backupOnly: true },
+  ])(
+    "recognizes a $name Android super overlay with fixed measurements",
+    ({ backupOnly }) => {
+      const trailing = androidSuperFixture("raw");
+      if (backupOnly) trailing.fill(0, 4096, 8192);
+      const report = parse(peOverlayImage({ trailing }));
+      expect(report.ranges).toMatchObject([
+        {
+          role: "other",
+          offset: 0x400,
+          size: trailing.length,
+          leading_format: "android-super-image",
+          prefix_hex: "00".repeat(16),
+          entropy: {
+            window_bytes: 4096,
+            sampled_bytes: 4096,
+            shannon_bits: 0,
+          },
+        },
+      ]);
+    },
+  );
 
   it("keeps a short prefix and samples only the fixed entropy window", () => {
     const tiny = Buffer.from([0x01, 0x02, 0x03, 0x04]);

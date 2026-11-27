@@ -5,6 +5,7 @@ import {
   esp8266Image,
   espImage,
 } from "../../tests/fixtures/espImage.js";
+import { androidSuperFixture } from "../../tests/fixtures/androidSuperImage.js";
 import { buildFv } from "../../tests/fixtures/uefiImage.js";
 import { DEB_AR_HEADER_BYTES, DEB_AR_MAGIC } from "./deb/debPackage.js";
 import {
@@ -268,6 +269,41 @@ it("recognizes an Android sparse image by its 0xED26FF3A magic", () => {
     state: "recognized",
     format: "android-sparse-image",
   });
+});
+
+it("recognizes Android super geometry in raw images and templates", () => {
+  for (const bytes of [
+    androidSuperFixture("raw"),
+    androidSuperFixture("template"),
+  ])
+    expect(recognize(bytes)).toMatchObject({
+      state: "recognized",
+      format: "android-super-image",
+    });
+});
+
+it("requires more than an isolated Android super magic at a raw geometry offset", () => {
+  const bytes = Buffer.alloc(12288);
+  bytes.writeUInt32LE(0x616c4467, 4096);
+  expect(recognize(bytes)).toBeUndefined();
+});
+
+it("leaves an ISO 9660 image with super geometry bytes in its system area alone", () => {
+  const { bytes } = buildIso9660Image();
+  androidSuperFixture("raw").copy(bytes, 4096, 4096, 4148);
+  expect(recognize(bytes)).toMatchObject({
+    state: "recognized",
+    format: "iso9660",
+  });
+});
+
+it("leaves a native DOS MZ executable with interior super geometry alone", () => {
+  const bytes = Buffer.alloc(12288);
+  bytes.set([0x4d, 0x5a]);
+  bytes.writeUInt16LE(24, 4);
+  bytes.writeUInt16LE(4, 8);
+  androidSuperFixture("raw").copy(bytes, 4096, 4096, 4148);
+  expect(recognize(bytes)).toBeUndefined();
 });
 
 it.each([16, 17])(

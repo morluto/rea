@@ -124,6 +124,20 @@ export const androidSparseImageReaderLimitsSchema = z.strictObject({
 export type AndroidSparseImageReaderLimits = z.output<
   typeof androidSparseImageReaderLimitsSchema
 >;
+export const DEFAULT_ANDROID_SUPER_IMAGE_READER_LIMITS = {
+  slot_count: 4,
+  metadata_bytes: 2 * 1024 * 1024,
+  record_count: 8192,
+};
+const androidSuperImageReaderLimitsSchema = z.strictObject({
+  slot_count: count.max(8),
+  metadata_bytes: bytes.max(8 * 1024 * 1024),
+  record_count: count.max(32_768),
+});
+export type AndroidSuperImageReaderLimits = z.output<
+  typeof androidSuperImageReaderLimitsSchema
+>;
+
 export const DEFAULT_ISO9660_READER_LIMITS = {
   descriptor_count: 64,
   directory_depth: 64,
@@ -297,6 +311,19 @@ export const artifactReaderLimitsInputSchema = z.strictObject({
     .describe(
       `Android sparse image admission; omitted fields use ${JSON.stringify(DEFAULT_ANDROID_SPARSE_IMAGE_READER_LIMITS)}. The declared total_chunks is admitted before the chunk walk; it bounds walked chunk headers and the retained expansion plan.`,
     ),
+  android_super_image: z
+    .strictObject({
+      slot_count:
+        androidSuperImageReaderLimitsSchema.shape.slot_count.exactOptional(),
+      metadata_bytes:
+        androidSuperImageReaderLimitsSchema.shape.metadata_bytes.exactOptional(),
+      record_count:
+        androidSuperImageReaderLimitsSchema.shape.record_count.exactOptional(),
+    })
+    .exactOptional()
+    .describe(
+      `Android super image admission; omitted fields use ${JSON.stringify(DEFAULT_ANDROID_SUPER_IMAGE_READER_LIMITS)}. Metadata bytes bound the declared reservation, including raw backup slots. Record count bounds total table records examined across copies.`,
+    ),
   iso9660: z
     .strictObject({
       descriptor_count:
@@ -384,6 +411,7 @@ const readerLimitGroups = {
   godot: godotReaderLimitsSchema,
   android_vbmeta: androidVbmetaReaderLimitsSchema,
   android_sparse_image: androidSparseImageReaderLimitsSchema,
+  android_super_image: androidSuperImageReaderLimitsSchema,
   iso9660: iso9660ReaderLimitsSchema,
   android_dtbo: androidDtboReaderLimitsSchema,
   deno: denoReaderLimitsSchema,
@@ -399,11 +427,12 @@ export type ArtifactReaderLimits = z.output<
   typeof resolvedArtifactReaderLimitsSchema
 >;
 
-// Earlier Evidence may omit the later vbmeta, sparse-image and DTBO policies.
+// Earlier Evidence may omit later Android image policies.
 export const artifactReaderLimitsSchema =
   resolvedArtifactReaderLimitsSchema.extend({
     android_vbmeta: androidVbmetaReaderLimitsSchema.exactOptional(),
     android_sparse_image: androidSparseImageReaderLimitsSchema.exactOptional(),
+    android_super_image: androidSuperImageReaderLimitsSchema.exactOptional(),
     android_dtbo: androidDtboReaderLimitsSchema.exactOptional(),
   });
 
@@ -445,6 +474,10 @@ export const resolveArtifactReaderLimits = (
   android_sparse_image: {
     ...DEFAULT_ANDROID_SPARSE_IMAGE_READER_LIMITS,
     ...selected?.android_sparse_image,
+  },
+  android_super_image: {
+    ...DEFAULT_ANDROID_SUPER_IMAGE_READER_LIMITS,
+    ...selected?.android_super_image,
   },
   iso9660: { ...DEFAULT_ISO9660_READER_LIMITS, ...selected?.iso9660 },
   android_dtbo: {

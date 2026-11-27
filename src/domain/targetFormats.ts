@@ -37,6 +37,7 @@ export const BINARY_TARGET_FORMAT_KINDS = {
   "android-ota-payload": "archive",
   "android-vbmeta": "archive",
   "android-sparse-image": "archive",
+  "android-super-image": "archive",
   "ubi-image": "archive",
   iso9660: "archive",
   "qualcomm-mbn": "archive",

@@ -86,6 +86,7 @@ export const PE_OVERLAY_LEADING_FORMATS = [
   "android-vbmeta",
   "android-dtbo",
   "android-sparse-image",
+  "android-super-image",
   "ubi-image",
   "intel-hex",
   "srec",

@@ -1,5 +1,9 @@
 import { z } from "zod";
 import {
+  androidSuperImageMetadataSchema,
+  androidSuperPartitionMetadataSchema,
+} from "./formatMetadata/androidSuperImageMetadata.js";
+import {
   macosPkgEntryMetadataSchema,
   macosPkgMetadataSchema,
 } from "./formatMetadata/macosPkgMetadata.js";
@@ -102,6 +106,8 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   macosPkgMetadataSchema,
   macosPkgEntryMetadataSchema,
   androidSparseImageMetadataSchema,
+  androidSuperImageMetadataSchema,
+  androidSuperPartitionMetadataSchema,
   ubiImageMetadataSchema,
   ubiVolumeMetadataSchema,
   espImageMetadataSchema,
@@ -335,6 +341,14 @@ const declarationsByKind: {
   "android-sparse-image": {
     notCompared:
       "Its header and chunk facts come from the image's own bytes, which content comparison covers. Checksums are recorded, not verified.",
+  },
+  "android-super-image": {
+    notCompared:
+      "Its geometry and metadata copy facts come from the image's own bytes, which content comparison covers.",
+  },
+  "android-super-partition": {
+    notCompared:
+      "Partition and extent declarations come from the checksummed metadata. Partition payloads have no independent content comparison.",
   },
   "ubi-image": {
     notCompared:

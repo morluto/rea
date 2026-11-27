@@ -18,6 +18,7 @@ import {
 } from "./iso9660/iso9660Structures.js";
 import { recognizeAndroidOtaPayload } from "./firmware/androidOtaPayload.js";
 import { hasAndroidVbmetaMagic } from "./firmware/androidVbmeta.js";
+import { hasAndroidSuperGeometry } from "./firmware/androidSuperImage.js";
 import { recognizeAndroidSparseImage } from "./firmware/androidSparseImage.js";
 import { recognizeUbiImage } from "./firmware/ubiImage.js";
 import { claimsExecutableHeader } from "./binaryTarget.js";
@@ -70,6 +71,7 @@ export type RecognizedArtifactFormat = Extract<
   | "android-ota-payload"
   | "android-vbmeta"
   | "android-sparse-image"
+  | "android-super-image"
   | "ubi-image"
   | "iso9660"
   | "intel-hex"
@@ -310,6 +312,13 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     },
     // Binary plists, including keyed archives, often use other extensions.
     when("plist", hasBinaryPlistSignature),
+    // The leading area of a raw super image is reserved, and interior
+    // geometry signatures are weaker than established native headers.
+    ({ prefix, fileSize }) =>
+      hasAndroidSuperGeometry(prefix) &&
+      !claimsExecutableHeader(prefix, fileSize)
+        ? { state: "recognized", format: "android-super-image" }
+        : undefined,
     // No magic: the stored logo CRC and a matching checksum claim it, after
     // every format with a leading signature.
     when("nds", hasNdsHeader),
