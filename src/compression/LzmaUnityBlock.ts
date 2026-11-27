@@ -1,7 +1,6 @@
 import { createRequire } from "node:module";
 import { Worker } from "node:worker_threads";
 import {
-  ArtifactReaderFailure,
   assertArtifactReadActive,
   yieldArtifactRead,
 } from "../resources/index.js";
@@ -16,6 +15,13 @@ const LZMA_ALONE_SIZE_BYTES = 8;
 const LZMA_DICTIONARY_OFFSET = 1;
 const LZMA_MIN_DICTIONARY_BYTES = 0x1000;
 const LZMA_RANGE_CODER_INIT_BYTES = 5;
+/**
+ * The properties byte is `(pb * 5 + lp) * 9 + lc` with lc 0-8, lp 0-4 and
+ * pb 0-4 (LZMA SDK lzma-specification.txt, "if (d >= (9 * 5 * 5)) throw").
+ * The tighter lc + lp <= 4 belongs to LZMA2 and to liblzma's encoder, not
+ * to LZMA1, which Unity writes through the LZMA SDK.
+ */
+const LZMA_PROPERTIES_LIMIT = 9 * 5 * 5;
 
 type WorkerReply =
   | { readonly ok: true; readonly buffer: ArrayBuffer }
@@ -36,7 +42,8 @@ const lzma = require(workerData.lzmaPath);
 const expected = workerData.expected;
 const alone = Buffer.from(workerData.alone);
 const UNKNOWN_SIZE = 0xffffffffffffffffn;
-const SIZE_OFFSET = 5;
+// The LZMA-Alone size field follows the properties; the host names its offset.
+const SIZE_OFFSET = workerData.sizeOffset;
 
 const decode = (sizeField) => {
   alone.writeBigUInt64LE(sizeField, SIZE_OFFSET);
@@ -104,6 +111,19 @@ try {
 }
 `;
 
+/**
+ * lzma-purejs allocates its whole window from the declared dictionary. A valid
+ * match distance is always below the bytes already produced, so a window of
+ * the declared output length decodes every valid stream exactly as the
+ * declared dictionary would, and still refuses a distance beyond either. The
+ * LZMA SDK promotes dictionaries below 4 KiB, and so does this window.
+ */
+const decoderWindowBytes = (
+  dictionaryBytes: number,
+  expected: number,
+): number =>
+  Math.max(LZMA_MIN_DICTIONARY_BYTES, Math.min(dictionaryBytes, expected));
+
 const synthesizeAloneHeader = (
   input: Buffer,
   expected: number,
@@ -115,12 +135,46 @@ const synthesizeAloneHeader = (
   input.copy(alone, 0, 0, LZMA_PROPS_BYTES);
   alone.writeBigUInt64LE(BigInt(expected), LZMA_PROPS_BYTES);
   input.copy(alone, LZMA_PROPS_BYTES + LZMA_ALONE_SIZE_BYTES, LZMA_PROPS_BYTES);
-  // lzma-purejs allocates its window from the declared dictionary; EDK II and
-  // Unity both promote values below 4 KiB, so normalize the private copy.
-  if (dictionaryBytes < LZMA_MIN_DICTIONARY_BYTES)
-    alone.writeUInt32LE(LZMA_MIN_DICTIONARY_BYTES, LZMA_DICTIONARY_OFFSET);
+  alone.writeUInt32LE(
+    decoderWindowBytes(dictionaryBytes, expected),
+    LZMA_DICTIONARY_OFFSET,
+  );
   return alone;
 };
+
+type DecodeOutcome =
+  | { readonly ok: true; readonly value: Buffer }
+  | { readonly ok: false; readonly cause: unknown };
+
+/** The decoder's own verdict about the block, as the worker reported it. */
+const replyOutcome = (message: WorkerReply, expected: number): DecodeOutcome =>
+  message.ok
+    ? { ok: true, value: Buffer.from(message.buffer) }
+    : {
+        ok: false,
+        cause:
+          message.kind === "structure"
+            ? new BinaryResourceFailure("structure", expected, message.message)
+            : new BinaryFormatFailure("malformed", message.message),
+      };
+
+/**
+ * The worker reports decoder outcomes as messages. An error event is a
+ * runtime failure, not a fact about the block, so only memory exhaustion is
+ * translated (into the resource failure it is); anything else stays as Node
+ * reported it rather than becoming "malformed".
+ */
+const workerRuntimeFailure = (
+  cause: Error & { readonly code?: unknown },
+  expected: number,
+): unknown =>
+  cause.code === "ERR_WORKER_OUT_OF_MEMORY"
+    ? new BinaryResourceFailure(
+        "structure",
+        expected,
+        "Unity LZMA worker exhausted its memory",
+      )
+    : cause;
 
 const decodeAloneInWorker = async (
   alone: Buffer,
@@ -141,6 +195,7 @@ const decodeAloneInWorker = async (
         lzmaPath,
         alone: transferable,
         expected,
+        sizeOffset: LZMA_PROPS_BYTES,
       },
       transferList: [transferable],
     });
@@ -149,12 +204,7 @@ const decodeAloneInWorker = async (
       termination ??= worker.terminate();
       return termination;
     };
-    const finish = (
-      outcome:
-        | { readonly ok: true; readonly value: Buffer }
-        | { readonly ok: false; readonly cause: unknown },
-      waitForExit: boolean,
-    ): void => {
+    const finish = (outcome: DecodeOutcome, waitForExit: boolean): void => {
       if (finishing) return;
       finishing = true;
       signal?.removeEventListener("abort", onAbort);
@@ -202,18 +252,10 @@ const decodeAloneInWorker = async (
       return;
     }
     worker.on("message", (message: WorkerReply) => {
-      if (message.ok) {
-        finish({ ok: true, value: Buffer.from(message.buffer) }, true);
-        return;
-      }
-      const cause =
-        message.kind === "structure"
-          ? new BinaryResourceFailure("structure", expected, message.message)
-          : new BinaryFormatFailure("malformed", message.message);
-      finish({ ok: false, cause }, true);
+      finish(replyOutcome(message, expected), true);
     });
-    worker.on("error", (cause: Error) => {
-      finish({ ok: false, cause }, true);
+    worker.on("error", (cause: Error & { readonly code?: unknown }) => {
+      finish({ ok: false, cause: workerRuntimeFailure(cause, expected) }, true);
     });
     worker.on("exit", (code: number) => {
       exited = true;
@@ -221,9 +263,9 @@ const decodeAloneInWorker = async (
       let cause: unknown;
       try {
         assertArtifactReadActive(signal);
-        if (code !== 0)
-          rejectLzma("Unity LZMA worker exited before completing");
-        rejectLzma("Unity LZMA worker exited without returning a result");
+        throw new Error(
+          `Unity LZMA worker exited with code ${String(code)} without returning a result`,
+        );
       } catch (caught: unknown) {
         cause = caught;
       }
@@ -257,41 +299,17 @@ export const decodeUnityLzmaBlock = async (
   assertArtifactReadActive(signal);
   if (input.length < LZMA_PROPS_BYTES + LZMA_RANGE_CODER_INIT_BYTES)
     return rejectLzma("Truncated Unity LZMA block");
-  const props = input[0]!;
-  const lc = props % 9;
-  const remainder = (props / 9) | 0;
-  const lp = remainder % 5;
-  const pb = (remainder / 5) | 0;
-  if (pb > 4 || lc + lp > 4)
+  if (input[0]! >= LZMA_PROPERTIES_LIMIT)
     return rejectLzma("Unity LZMA properties are out of range");
+  // The dictionary only sizes the decoder window, which is bounded by the
+  // declared output; a large dictionary on a small block is valid LZMA.
   const dictionaryBytes = new BinaryReader(input, true, "Unity LZMA").u32(
     LZMA_DICTIONARY_OFFSET,
   );
-  if (dictionaryBytes > maximumBytes)
-    throw new BinaryResourceFailure(
-      "structure",
-      maximumBytes,
-      "LZMA dictionary exceeds the object budget",
-    );
   // Range coder state starts with a mandatory zero byte after the properties.
   if (input[LZMA_PROPS_BYTES]! !== 0)
     return rejectLzma("Unity LZMA range coder header is invalid");
 
   const alone = synthesizeAloneHeader(input, expected, dictionaryBytes);
-  try {
-    return await decodeAloneInWorker(alone, expected, signal);
-  } catch (cause: unknown) {
-    if (
-      cause instanceof ArtifactReaderFailure ||
-      cause instanceof BinaryFormatFailure ||
-      cause instanceof BinaryResourceFailure
-    )
-      throw cause;
-    throw new BinaryFormatFailure(
-      "malformed",
-      cause instanceof Error
-        ? cause.message
-        : "Unity LZMA block does not decode",
-    );
-  }
+  return await decodeAloneInWorker(alone, expected, signal);
 };

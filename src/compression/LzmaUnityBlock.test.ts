@@ -1,44 +1,12 @@
-import { createRequire } from "node:module";
-import { expect, it } from "vitest";
+import { Worker } from "node:worker_threads";
+import { expect, it, vi } from "vitest";
+import {
+  encodeUnityLzma,
+  encodeUnityLzmaWithEndMarker,
+  LIBLZMA_UNITY_BLOCK,
+  LIBLZMA_UNITY_PLAIN,
+} from "../../tests/fixtures/unityfs.js";
 import { decodeUnityLzmaBlock } from "./LzmaUnityBlock.js";
-
-const encodeUnityLzma = (data: Buffer): Buffer => {
-  const require = createRequire(import.meta.url);
-  const lzma = require("lzma-purejs") as {
-    compressFile(input: Buffer): Buffer | Uint8Array;
-  };
-  const alone = Buffer.from(lzma.compressFile(data));
-  return Buffer.concat([alone.subarray(0, 5), alone.subarray(13)]);
-};
-
-const encodeUnityLzmaWithEndMarker = (data: Buffer): Buffer => {
-  const require = createRequire(import.meta.url);
-  const lzma = require("lzma-purejs") as {
-    compressFile(input: {
-      readByte(): number;
-      read?(buffer: number[], offset: number, length: number): number;
-      eof?(): boolean;
-    }): Buffer | Uint8Array;
-  };
-  let position = 0;
-  const alone = Buffer.from(
-    lzma.compressFile({
-      readByte() {
-        return position < data.length ? data[position++]! : -1;
-      },
-      read(buffer: number[], offset: number, length: number) {
-        let count = 0;
-        while (count < length && position < data.length)
-          buffer[offset + count++] = data[position++]!;
-        return count;
-      },
-      eof() {
-        return position >= data.length;
-      },
-    }),
-  );
-  return Buffer.concat([alone.subarray(0, 5), alone.subarray(13)]);
-};
 
 it("decodes a Unity LZMA block to its declared size", async () => {
   const plain = Buffer.from("unityfs lzma member bytes ".repeat(8));
@@ -64,6 +32,44 @@ it("accepts a Unity LZMA block that still carries an end marker", async () => {
   ).toBe(true);
 });
 
+it("decodes a stream from an independent encoder that ends in a marker", async () => {
+  // liblzma, not lzma-purejs, produced these bytes, so a shared encoder bug
+  // cannot make this round-trip pass.
+  const decoded = await decodeUnityLzmaBlock(
+    LIBLZMA_UNITY_BLOCK,
+    LIBLZMA_UNITY_PLAIN.length,
+    64 * 1024 * 1024,
+  );
+  expect(decoded.equals(LIBLZMA_UNITY_PLAIN)).toBe(true);
+});
+
+it("decodes a small block whose dictionary exceeds the output budget", async () => {
+  // A dictionary sizes the decoder window, not the output. 256 MiB on a
+  // 64-byte block is valid LZMA and needs no more than a 4 KiB window.
+  const plain = Buffer.from("small block, large dictionary ".repeat(2));
+  const encoded = Buffer.from(encodeUnityLzma(plain));
+  encoded.writeUInt32LE(256 * 1024 * 1024, 1);
+  const decoded = await decodeUnityLzmaBlock(encoded, plain.length, 1024);
+  expect(decoded.equals(plain)).toBe(true);
+});
+
+it.each([
+  { lc: 4, lp: 1, pb: 2 },
+  { lc: 8, lp: 4, pb: 4 },
+])(
+  "decodes LZMA1 literal bits beyond the LZMA2 lc + lp limit (%o)",
+  async (bits) => {
+    // The LZMA specification admits lc 0-8, lp 0-4 and pb 0-4 for LZMA1.
+    const plain = Buffer.from("literal context bits ".repeat(12));
+    const decoded = await decodeUnityLzmaBlock(
+      encodeUnityLzma(plain, bits),
+      plain.length,
+      64 * 1024 * 1024,
+    );
+    expect(decoded.equals(plain)).toBe(true);
+  },
+);
+
 it("refuses trailing bytes that are not an end marker", async () => {
   const plain = Buffer.from("unityfs lzma trailing");
   const budget = 64 * 1024 * 1024;
@@ -87,7 +93,8 @@ it("refuses a truncated Unity LZMA header", async () => {
 it("refuses Unity LZMA properties outside the decoder range", async () => {
   await expect(
     decodeUnityLzmaBlock(
-      Buffer.from([0xff, 0, 0, 0x80, 0, 0, 1, 2, 3, 4]),
+      // 225 is the first value past (pb * 5 + lp) * 9 + lc with all maxima.
+      Buffer.from([225, 0, 0, 0x80, 0, 0, 1, 2, 3, 4]),
       1,
       1,
     ),
@@ -126,3 +133,48 @@ it("preserves timer-driven cancellation during Unity LZMA decode", async () => {
     cause: reason,
   });
 });
+
+it.each(["cancellation", "completion"] as const)(
+  "settles a decode only after its worker has exited (%s)",
+  async (ending) => {
+    // The decode owns the worker and its memory until termination completes.
+    let exited = false;
+    const terminate = Worker.prototype.terminate;
+    const spy = vi
+      .spyOn(Worker.prototype, "terminate")
+      .mockImplementation(function (this: Worker) {
+        return terminate.call(this).then((code) => {
+          exited = true;
+          return code;
+        });
+      });
+    try {
+      const plain =
+        ending === "completion"
+          ? Buffer.from("settles after worker exit ".repeat(4))
+          : Buffer.alloc(2 * 1024 * 1024, 0x61);
+      const controller = new AbortController();
+      let exitedAtSettle: boolean | undefined;
+      const pending = decodeUnityLzmaBlock(
+        encodeUnityLzma(plain),
+        plain.length,
+        64 * 1024 * 1024,
+        controller.signal,
+      ).finally(() => {
+        exitedAtSettle = exited;
+      });
+      if (ending === "cancellation")
+        globalThis.setImmediate(() => {
+          controller.abort(new Error("cancel before exit"));
+        });
+      await pending.then(
+        () => undefined,
+        () => undefined,
+      );
+      expect(spy).toHaveBeenCalled();
+      expect(exitedAtSettle).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+  },
+);

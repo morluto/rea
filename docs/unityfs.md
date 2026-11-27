@@ -34,6 +34,14 @@ Data blocks and blocks-info tables compressed with none, LZMA, LZ4 or LZ4HC are
 supported. Other compression values keep the directory when possible and report
 unsupported coverage or an `unavailable` member read.
 
+UnityFS writers emit one LZMA block for a whole data stream, so a large LZMA
+bundle is often one block. A block above the per-decode budget below keeps the
+directory: only members inside that block report an `unavailable` read naming
+the budget, which this release cannot raise. An LZMA dictionary sizes only
+the decoder window, which is bounded by the block's declared output, so a large
+dictionary on a small block decodes. A stream may end at its declared size or
+with an end marker; any other trailing bytes are malformed.
+
 Bundles declaring asset-bundle encryption keep their header facts but report
 unknown directory coverage; no decryption is attempted. The reused 0x200
 encryption/padding flag is interpreted by producer revision, and ambiguous
@@ -54,7 +62,7 @@ These are resource policies, not format maxima.
 | ----------------------------------------------- | -------------------------------------------------------------------------------------- |
 | Encoded and decoded directory buffers           | 16 MiB each                                                                            |
 | Buffers, parsed rows, entries, path projections | 64 MiB shared admission, reserved before allocation                                    |
-| One LZ4 or LZMA decode                          | 64 MiB output plus its bounded encoded input; plain blocks stream without it           |
+| One LZ4 or LZMA decode                          | 64 MiB output and LZMA window, plus its bounded encoded input; plain blocks stream     |
 | Active member streams per reader                | 4                                                                                      |
 | Archive plaintext work                          | Larger of 256 MiB and 500 × declared bundle size                                       |
 | Member I/O operations                           | 4 × the larger of 1,024 and nonempty blocks + directory nodes + readable 64 KiB chunks |

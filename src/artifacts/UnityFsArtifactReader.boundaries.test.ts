@@ -148,25 +148,40 @@ describe("UnityFS declared container bounds", () => {
       await reader.close();
     }
   });
-  it.each([false, true])(
-    "validates the encoded block range before its decoded budget (footer: %s)",
-    async (blocksInfoAtEnd) => {
+});
+
+describe("UnityFS per-block decode budget", () => {
+  it.each([
+    { blocksInfoAtEnd: false, blockCompression: 2 },
+    { blocksInfoAtEnd: true, blockCompression: 2 },
+    { blocksInfoAtEnd: false, blockCompression: 1 },
+    { blocksInfoAtEnd: true, blockCompression: 1 },
+  ])(
+    "keeps the directory and refuses only members of an over-budget block, then validates its encoded range ($blockCompression, footer: $blocksInfoAtEnd)",
+    async ({ blocksInfoAtEnd, blockCompression }) => {
       const bytes = buildUnityFs([{ path: "data", data: "abc" }], {
         blocksInfoAtEnd,
         blocksInfoCompression: 0,
-        blockCompression: 2,
+        blockCompression,
       });
       const tableOffset = blocksInfoAtEnd
         ? bytes.length - bytes.readUInt32BE(40)
         : 64;
       // Keep the produced encoded bytes, then declare a decoded size that
-      // exceeds the decoder allowance.
+      // exceeds the decoder allowance. Writers emit one LZMA block for a whole
+      // bundle, so this budget must not erase the directory.
       bytes.writeUInt32BE(64 * 1024 * 1024 + 1, tableOffset + 20);
       const control = new UnityFsArtifactReader(await fixture(bytes));
       try {
-        await expect(collectEntries(control)).rejects.toMatchObject({
-          reason: "limit",
-          boundary: "memory",
+        const [entry, ...rest] = await collectEntries(control);
+        expect(rest).toEqual([]);
+        if (entry === undefined)
+          throw new Error("expected the directory entry");
+        expect(entry.path).toBe("data");
+        await expect(control.open(entry)).rejects.toMatchObject({
+          reason: "unavailable",
+          message: expect.stringContaining("per-block decode budget"),
+          limitation: expect.stringContaining("this release has no override"),
         });
       } finally {
         await control.close();

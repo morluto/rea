@@ -79,7 +79,12 @@ export interface UnityFsBlock {
   readonly compressedSize: number;
   readonly flags: number;
   readonly compression: number;
-  /** Prefix count lets range consumers identify unsupported content in O(1). */
+  /**
+   * Why this block's content cannot be read, when it cannot. A block above the
+   * per-decode budget keeps the directory: only members inside it are refused.
+   */
+  readonly unavailable: "unsupported-compression" | "decode-budget" | undefined;
+  /** Prefix count lets range consumers identify unavailable content in O(1). */
   readonly unavailableCount: number;
   /** Cumulative compressed byte offset inside the data area. */
   readonly compressedStart: number;
@@ -113,6 +118,28 @@ const unityFsBlockNeedsDecode = (compression: number): boolean =>
   compression === UNITYFS_COMPRESSION_LZMA ||
   compression === UNITYFS_COMPRESSION_LZ4 ||
   compression === UNITYFS_COMPRESSION_LZ4HC;
+
+/**
+ * Whether a block's content can be decoded within this reader's per-decode
+ * budget. UnityFS writers emit one LZMA block for a whole data stream, so an
+ * over-budget block must not erase the directory that describes it.
+ */
+const blockUnavailability = (
+  compression: number,
+  uncompressedSize: number,
+  compressedSize: number,
+): UnityFsBlock["unavailable"] => {
+  if (uncompressedSize === 0 || compression === UNITYFS_COMPRESSION_NONE)
+    return undefined;
+  if (!unityFsBlockNeedsDecode(compression)) return "unsupported-compression";
+  return uncompressedSize > MAX_BLOCK_UNCOMPRESSED_BYTES ||
+    compressedSize > MAX_BLOCK_ENCODED_BYTES
+    ? "decode-budget"
+    : undefined;
+};
+
+/** The per-block decode budget, for reporting a refused member read. */
+export const UNITYFS_BLOCK_DECODE_BUDGET_BYTES = MAX_BLOCK_UNCOMPRESSED_BYTES;
 
 /** Decode header fields once; unsupported content does not erase observed headers. */
 export const readUnityFsHeader = async (
@@ -332,17 +359,6 @@ const parseBlocks = async (
       );
     const compression = flags & UNITYFS_FLAG_COMPRESSION_MASK;
     cursor += 10;
-    const decodable = unityFsBlockNeedsDecode(compression);
-    if (
-      decodable &&
-      (uncompressedSize > MAX_BLOCK_UNCOMPRESSED_BYTES ||
-        compressedSize > MAX_BLOCK_ENCODED_BYTES)
-    )
-      throw new ArtifactReaderFailure(
-        "limit",
-        "UnityFS compressed block exceeds its 64 MiB decoded or bounded encoded buffer budget",
-        { boundary: "memory" },
-      );
     if (
       compression === UNITYFS_COMPRESSION_NONE &&
       compressedSize !== uncompressedSize
@@ -350,19 +366,20 @@ const parseBlocks = async (
       throw unityFsFormatFailure(
         "plain block size disagrees with its declaration",
       );
-    if (
-      uncompressedSize > 0 &&
-      compression !== UNITYFS_COMPRESSION_NONE &&
-      !decodable
-    )
-      unavailableCount++;
     if (compression !== UNITYFS_COMPRESSION_NONE && compressedSize === 0)
       throw unityFsFormatFailure("compressed block declares no bytes");
+    const unavailable = blockUnavailability(
+      compression,
+      uncompressedSize,
+      compressedSize,
+    );
+    if (unavailable !== undefined) unavailableCount++;
     blocks.push({
       uncompressedSize,
       compressedSize,
       flags,
       compression,
+      unavailable,
       unavailableCount,
       compressedStart,
       streamStart,

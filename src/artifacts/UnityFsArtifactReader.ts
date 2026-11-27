@@ -30,6 +30,7 @@ import {
   decodeUnityFsLzma,
   readUnityFsBlocksInfo,
   readUnityFsHeader,
+  UNITYFS_BLOCK_DECODE_BUDGET_BYTES,
   unityFsFormatFailure,
   type UnityFsBlock,
   type UnityFsNode,
@@ -48,7 +49,8 @@ interface UnityFsEntryState {
   readonly entry: UnityFsEntry;
   readonly firstBlock: number;
   readonly lastBlock: number;
-  readonly unavailableCompression: number | undefined;
+  /** The first block that keeps this member's content unreadable, if any. */
+  readonly unavailableBlock: UnityFsBlock | undefined;
 }
 
 /** One descriptor, one admitted directory and one completed decoded-block cache. */
@@ -145,15 +147,8 @@ export class UnityFsArtifactReader implements ArtifactReader {
           "unavailable",
           "UnityFS directory entries have no file contents",
         );
-      if (state.unavailableCompression !== undefined) {
-        const compression = String(state.unavailableCompression);
-        const limitation = `UnityFS member compression ${compression} is unsupported; no content hash or child artifact was produced.`;
-        throw new ArtifactEntryContentUnavailable(
-          `UnityFS directory entry ${String(state.entry.formatMetadata.index)} requires unsupported compression ${compression}`,
-          limitation,
-          { traversal: { status: "unknown", limitations: [limitation] } },
-        );
-      }
+      if (state.unavailableBlock !== undefined)
+        throw unavailableMember(state.entry, state.unavailableBlock);
       return this.#streams.open(signal, (active) =>
         this.#memberChunks(handle, state, active),
       );
@@ -310,7 +305,7 @@ export class UnityFsArtifactReader implements ArtifactReader {
         entry,
         firstBlock,
         lastBlock,
-        unavailableCompression: unavailable?.compression,
+        unavailableBlock: unavailable,
       });
     }
     // Four ordinary passes over admitted blocks, nodes and plaintext chunks,
@@ -444,6 +439,28 @@ const blockEndingAfter = (
     else high = middle;
   }
   return low < blocks.length ? low : -1;
+};
+
+/** Explain, once, why a member's content was not read. */
+const unavailableMember = (
+  entry: UnityFsEntry,
+  block: UnityFsBlock,
+): ArtifactEntryContentUnavailable => {
+  const index = String(entry.formatMetadata.index);
+  const compression = String(block.compression);
+  const [message, limitation] =
+    block.unavailable === "decode-budget"
+      ? [
+          `UnityFS directory entry ${index} lies in a compressed block of ${String(block.uncompressedSize)} decoded bytes, above the ${String(UNITYFS_BLOCK_DECODE_BUDGET_BYTES)}-byte per-block decode budget`,
+          `UnityFS member lies in a compression ${compression} block above the ${String(UNITYFS_BLOCK_DECODE_BUDGET_BYTES)}-byte per-block decode budget; this release has no override, and no content hash or child artifact was produced.`,
+        ]
+      : [
+          `UnityFS directory entry ${index} requires unsupported compression ${compression}`,
+          `UnityFS member compression ${compression} is unsupported; no content hash or child artifact was produced.`,
+        ];
+  return new ArtifactEntryContentUnavailable(message, limitation, {
+    traversal: { status: "unknown", limitations: [limitation] },
+  });
 };
 
 /** Prefix counts avoid scanning every block for every small or overlapping node. */
