@@ -24,6 +24,8 @@ export interface GhidraRequestOptions {
    * selects the installed Ghidra default.
    */
   readonly decompileMaxPayloadMiB?: number | null;
+  /** Procedures the bridge may decompile together before this request. */
+  readonly decompileReadAhead?: readonly string[];
   readonly valueFlowLimits?: NativeValueFlowLimits;
   readonly signal?: AbortSignal;
   /**

@@ -75,6 +75,7 @@ interface RecordedCall {
   readonly operation: AnalysisOperation;
   readonly procedure: unknown;
   readonly origin: unknown;
+  readonly upcoming?: readonly string[];
 }
 
 const subject = {
@@ -174,6 +175,9 @@ const harness = (options?: {
         operation,
         procedure: parameters.procedure,
         origin: execution?.selectorOrigin,
+        ...(execution?.upcomingDecompiles === undefined
+          ? {}
+          : { upcoming: execution.upcomingDecompiles }),
       });
       if (operation === "list_procedures")
         return Promise.resolve(
@@ -886,6 +890,97 @@ describe("decompile_all filters and layout", () => {
     expect(
       await readFile(join(directory(), "functions/0x2000.c"), "utf8"),
     ).toContain("Foo::helper");
+  });
+
+  it("names the functions it will decompile next on the first request of a window", async () => {
+    const first = harness();
+    expect((await run(first.tools, directory(), { limit: 1 })).ok).toBe(true);
+    // One function is not a batch, so the limit leaves nothing to prepare.
+    expect(
+      of(first.calls, "procedure_pseudo_code").map((call) => call.upcoming),
+    ).toEqual([undefined]);
+
+    const second = harness();
+    expect((await run(second.tools, directory(), { resume: true })).ok).toBe(
+      true,
+    );
+    // The verified file is skipped; the remaining functions form one window,
+    // named once, in the order they will be requested.
+    expect(
+      of(second.calls, "procedure_pseudo_code").map((call) => [
+        call.procedure,
+        call.upcoming,
+      ]),
+    ).toEqual([
+      ["0x2000", ["0x2000", "0x3000"]],
+      ["0x3000", undefined],
+    ]);
+  });
+
+  it("names only the functions a resume will request, including deleted files", async () => {
+    const procedures = ["0x1000", "0x2000", "0x3000", "0x4000"].map(
+      (address, index) => ({ address, name: `fn_${index}` }),
+    );
+    const first = harness({ procedures });
+    expect((await run(first.tools, directory(), { limit: 2 })).ok).toBe(true);
+    // Both journaled writes lose their files, so the resume requests them
+    // again and its limit is spent before the unwritten functions.
+    await rm(join(directory(), "functions/0x1000.c"));
+    await rm(join(directory(), "functions/0x2000.c"));
+
+    const resumed = harness({ procedures });
+    expect(
+      (await run(resumed.tools, directory(), { resume: true, limit: 2 })).ok,
+    ).toBe(true);
+    expect(
+      of(resumed.calls, "procedure_pseudo_code").map((call) => [
+        call.procedure,
+        call.upcoming,
+      ]),
+    ).toEqual([
+      ["0x1000", ["0x1000", "0x2000"]],
+      ["0x2000", undefined],
+    ]);
+  });
+
+  it("names consecutive windows that cover every requested function once", async () => {
+    const procedures = Array.from({ length: 40 }, (_, index) => ({
+      address: `0x${(0x1000 + index * 0x10).toString(16)}`,
+      name: `fn_${index}`,
+    }));
+    const addresses = procedures.map((procedure) => procedure.address);
+    const windows = (calls: readonly RecordedCall[]) =>
+      of(calls, "procedure_pseudo_code").flatMap((call) =>
+        call.upcoming === undefined ? [] : [[call.procedure, call.upcoming]],
+      );
+
+    const whole = harness({ procedures });
+    expect((await run(whole.tools, directory())).ok).toBe(true);
+    expect(windows(whole.calls)).toEqual([
+      [addresses[0], addresses.slice(0, 32)],
+      [addresses[32], addresses.slice(32)],
+    ]);
+
+    // The caller's limit ends the second window, not a full window size.
+    const limited = harness({ procedures });
+    expect(
+      (await run(limited.tools, `${directory()}-limited`, { limit: 34 })).ok,
+    ).toBe(true);
+    expect(windows(limited.calls)).toEqual([
+      [addresses[0], addresses.slice(0, 32)],
+      [addresses[32], addresses.slice(32, 34)],
+    ]);
+
+    // A function found to be external sends no decompile request, so the
+    // next request carries the rest of its window, naming itself first.
+    const external = harness({ procedures, external: [addresses[0]!] });
+    expect((await run(external.tools, `${directory()}-external`)).ok).toBe(
+      true,
+    );
+    expect(windows(external.calls)).toEqual([
+      [addresses[1], addresses.slice(1, 32)],
+      [addresses[32], addresses.slice(32)],
+    ]);
   });
 
   it("stops at a limit and continues in address order on resume", async () => {

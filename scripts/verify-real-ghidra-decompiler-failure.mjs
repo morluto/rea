@@ -175,6 +175,12 @@ await withVerifierFixture(workspaceFixture, async () => {
       "timed_out_listing_unchanged",
       "timed_out_pseudocode_request_names_limit",
       "session_recovers_after_failure",
+      "read_ahead_foreground_timeout_reported",
+      "read_ahead_foreground_not_decompiled_again",
+      "read_ahead_window_within_foreground_deadline",
+      "read_ahead_cancelled_sibling_uncached",
+      "read_ahead_private_thread_pool",
+      "read_ahead_hint_clamped_to_window",
     ])
       assert.ok(probe.checks.includes(check), check);
   } finally {
@@ -195,10 +201,12 @@ await withVerifierFixture(workspaceFixture, async () => {
   if (!degraded.ok) throw degraded.error;
   assert.equal(degraded.value.cachePolicy, "live");
   const dossier = degraded.value.value;
-  assert.deepEqual(dossier.facet_availability.pseudocode, {
-    available: false,
-    reason: injected,
-  });
+  assert.equal(dossier.facet_availability.pseudocode.available, false);
+  // The reason goes on to name the payload allowance and its recovery.
+  assert.ok(
+    dossier.facet_availability.pseudocode.reason.startsWith(`${injected}. `),
+    dossier.facet_availability.pseudocode.reason,
+  );
   assert.equal(dossier.pseudocode, "");
   assert.equal(dossier.native_api.available, false);
   assert.equal(dossier.native_value_flow.available, false);
