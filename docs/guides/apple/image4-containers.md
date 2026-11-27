@@ -20,17 +20,17 @@ rea extract-artifact ./kernelcache.im4p --json
 Root `format_metadata` has kind `apple-img4`. For an IM4P, `magic` is `IM4P`
 and `payload` records:
 
-| Field               | Meaning                                                                        |
-| ------------------- | ------------------------------------------------------------------------------ |
-| `type`              | Four-character payload type, such as `krnl`, `ibot` or `sepi`                  |
-| `description`       | Description string, or null when absent or not decodable as its string type    |
-| `offset`, `length`  | Stored payload bytes inside the file                                           |
-| `compression`       | `none`, an LZFSE block magic (`bvx2`, `bvx1`, `bvxn`, `bvx-`), or `complzss`   |
-| `uncompressed_size` | Declared size, or the `complzss` header's big-endian size at offset 12         |
-| `payload_magic`     | LZFSE block magic or `complzss` sniffed from the stored bytes, otherwise null  |
-| `encrypted`         | True when the payload carries a keybag, decoded or not                         |
-| `keybag_count`      | Number of keybag entries; 0 with no keybag, null when the keybag isn't decoded |
-| `keybag_types`      | Entry types that fit in 32 bits; null when the keybag isn't decoded            |
+| Field               | Meaning                                                                                 |
+| ------------------- | --------------------------------------------------------------------------------------- |
+| `type`              | Four-character payload type, such as `krnl`, `ibot` or `sepi`                           |
+| `description`       | Description string, or null when absent or not decodable as its string type             |
+| `offset`, `length`  | Stored payload bytes inside the file                                                    |
+| `compression`       | `none`, `unknown`, an LZFSE block magic (`bvx2`, `bvx1`, `bvxn`, `bvx-`), or `complzss` |
+| `uncompressed_size` | Declared size, or the `complzss` header's big-endian size at offset 12                  |
+| `payload_magic`     | LZFSE block magic or `complzss` sniffed from the stored bytes, otherwise null           |
+| `encrypted`         | True when the payload carries a keybag, decoded or not                                  |
+| `keybag_count`      | Number of keybag entries; 0 with no keybag, null when the keybag isn't decoded          |
+| `keybag_types`      | Entry types that fit in 32 bits; null when the keybag isn't decoded                     |
 
 Fields are read by position. After the type, description and payload, an
 optional keybag OCTET STRING comes first, then an optional compression
@@ -49,7 +49,10 @@ with the declared size. Payload magics `bvx2`, `bvx1`, `bvxn` and `bvx-`
 agree with that algorithm. Another algorithm is a limitation and
 `compression` follows `payload_magic`. A payload magic other than those
 four, such as `complzss`, disagrees with algorithm 1: that is a limitation
-and the declared algorithm is kept. LZFSE and `complzss` payloads are marked
+and the declared algorithm is kept. An encrypted payload without a compression
+field, or a declared algorithm other than 1 with no recognizable magic, has
+compression `unknown`: encrypted bytes carry no readable magic, so REA does
+not report them as uncompressed. LZFSE and `complzss` payloads are marked
 compressed and returned as stored. REA does not expand them. A `complzss`
 header stores a big-endian adler32 at offset 8 and the big-endian
 uncompressed size at offset 12.
@@ -58,13 +61,13 @@ uncompressed size at offset 12.
 
 An IM4M file, or the manifest embedded in an IMG4, sets `manifest`:
 
-| Field                    | Meaning                                                              |
-| ------------------------ | -------------------------------------------------------------------- |
-| `version`                | Unsigned decimal string, or null when absent or not that form        |
-| `properties`             | Body properties such as `CHIP`, `BORD`, `ECID`, `CPRO` and `SDOM`    |
-| `objects`                | Per-object names, `DGST` digests as hex, and other scalar properties |
-| `signature_size`         | Octet length of the signature                                        |
-| `certificate_chain_size` | Content length of the certificate-chain element                      |
+| Field                    | Meaning                                                                                               |
+| ------------------------ | ----------------------------------------------------------------------------------------------------- |
+| `version`                | Unsigned decimal string, or null when absent or not that form. A version other than 0 is a limitation |
+| `properties`             | Body properties such as `CHIP`, `BORD`, `ECID`, `CPRO` and `SDOM`                                     |
+| `objects`                | Per-object names, `DGST` digests as hex, and other scalar properties                                  |
+| `signature_size`         | Octet length of the signature                                                                         |
+| `certificate_chain_size` | Content length of the certificate-chain element                                                       |
 
 Integer properties are decimal strings. Booleans stay booleans. An octet
 string of at most 64 bytes is lowercase hex. A longer octet string is

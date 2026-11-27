@@ -679,7 +679,10 @@ it("decodes an unsigned 32-bit keybag type that DER sign-pads to five octets", a
     keybag_count: 1,
     keybag_types: [0xffffffff],
   });
-  expect(result.limitations).toEqual([]);
+  // The only limitation is the unknown compression of an encrypted payload.
+  expect(result.limitations).toEqual([
+    "Image4 payload is encrypted and has no compression field; its compression is unknown.",
+  ]);
 });
 
 it("decodes UTF8String text as UTF-8 and refuses to alter invalid text", async () => {
@@ -855,4 +858,72 @@ it("reads IMG4 slots by position instead of searching for a matching tag", async
   );
   expect(doubled.facts.manifest).not.toBeNull();
   expect(doubled.limitations.join("\n")).toContain("Unknown Image4 tag 0x02");
+});
+
+it("decodes a hand-encoded IM4P laid out as img4lib, img4tool and pyimg4 describe", async () => {
+  // Written byte by byte, not with the fixture builders, so the expected
+  // layout is independent of the code under test.
+  const iv = "11".repeat(16);
+  const key = "22".repeat(32);
+  const bytes = Buffer.from(
+    [
+      "305c", // SEQUENCE, 92 content bytes
+      "1604494d3450", // IA5String "IM4P"
+      "16046b726e6c", // IA5String "krnl" (type)
+      "1603616263", // IA5String "abc" (description)
+      "040444415441", // OCTET STRING "DATA" (payload)
+      "043b", // OCTET STRING keybag, 59 bytes
+      "3039", //   SEQUENCE OF keybag, 57 bytes
+      "3037", //     SEQUENCE keybag, 55 bytes
+      "020101", //       INTEGER 1 (type)
+      `0410${iv}`, //    OCTET STRING iv
+      `0420${key}`, //   OCTET STRING key
+      "3006020101020140", // SEQUENCE { INTEGER 1 (LZFSE), INTEGER 64 }
+    ].join(""),
+    "hex",
+  );
+  const result = await image4(bytes);
+  expect(result.facts.payload).toEqual({
+    type: "krnl",
+    description: "abc",
+    offset: 21,
+    length: 4,
+    compression: "bvx2",
+    uncompressed_size: 64,
+    payload_magic: null,
+    encrypted: true,
+    keybag_count: 1,
+    keybag_types: [1],
+  });
+  expect(result.limitations).toEqual([]);
+  expect(JSON.stringify(result)).not.toContain(iv);
+});
+
+it("keeps the compression of an encrypted payload without a compression field unknown", async () => {
+  const bag = keybag([{ type: 1, iv: SAMPLE_IV, key: SAMPLE_KEY }]);
+  const result = await image4(
+    im4p({ payload: complzssPayload(4096), keybag: bag }),
+  );
+  expect(result.facts.payload).toMatchObject({
+    encrypted: true,
+    compression: "unknown",
+    uncompressed_size: null,
+  });
+  expect(result.limitations.join("\n")).toContain("compression is unknown");
+
+  const unnamed = await image4(
+    im4p({ payload: Buffer.from("plain"), compression: compressionInfo(7, 9) }),
+  );
+  expect(unnamed.facts.payload?.compression).toBe("unknown");
+});
+
+it("notes a manifest version the references do not describe", async () => {
+  const manifest = Buffer.from(im4m());
+  const version = manifest.indexOf(Buffer.from([0x02, 0x01, 0x00]));
+  manifest[version + 2] = 1;
+  const result = await image4(manifest);
+  expect(result.facts.manifest?.version).toBe("1");
+  expect(result.limitations.join("\n")).toContain(
+    "manifest version 1 is not 0",
+  );
 });

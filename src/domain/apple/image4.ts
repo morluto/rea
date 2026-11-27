@@ -53,6 +53,8 @@ export const IMAGE4_LZFSE_MAGICS = ["bvx2", "bvx1", "bvxn", "bvx-"] as const;
 export type Image4LzfseMagic = (typeof IMAGE4_LZFSE_MAGICS)[number];
 export const IMAGE4_COMPRESSIONS = [
   "none",
+  /** Neither a known compression field nor readable stored bytes decide it. */
+  "unknown",
   ...IMAGE4_LZFSE_MAGICS,
   "complzss",
 ] as const;
@@ -519,14 +521,6 @@ class Walk {
       this.notes.add(
         `Image4 value at offset ${offset} uses a non-minimal length.`,
       );
-    const contentLength = header.contentEnd - header.contentStart;
-    if (
-      !header.constructed &&
-      header.tagClass === "universal" &&
-      STRING_TAGS.has(header.tagNumber) &&
-      contentLength > IMAGE4_MAX_STRING_BYTES
-    )
-      stringLimit(header.contentStart, contentLength);
     const encoded = header.end - header.start;
     if (encoded <= IMAGE4_MAX_NESTED_BYTES)
       return this.adopt(
@@ -759,16 +753,16 @@ const ia5Text = (
   value: DerValue | undefined,
   notes?: Notes,
 ): string | undefined => {
-  if (value === undefined || value.kind !== "node") return undefined;
-  const { node, base } = value;
-  if (
-    node.tagClass !== "universal" ||
-    !STRING_TAGS.has(node.tagNumber) ||
-    node.constructed
-  )
+  if (value === undefined || value.kind === "stopped") return undefined;
+  if (!STRING_TAGS.has(universalTag(value) ?? -1) || isConstructed(value))
     return undefined;
-  if (node.content.length > IMAGE4_MAX_STRING_BYTES)
-    stringLimit(base + node.contentStart, node.content.length);
+  // This is the one owner of the retained-text allowance. A string too large
+  // to be tree-parsed is refused here rather than reported as absent.
+  const range = contentRange(value);
+  if (range !== undefined && range.length > IMAGE4_MAX_STRING_BYTES)
+    stringLimit(range.offset, range.length);
+  if (value.kind !== "node") return undefined;
+  const { node, base } = value;
   const offset = base + node.start;
   if (node.tagNumber === UNIVERSAL.utf8String) {
     // A BOM is part of the field's value, not an encoding signature.
@@ -875,11 +869,8 @@ const decodeBoolean = (value: DerValue, notes: Notes): Image4PropertyValue => {
       byte_length: contentRange(value)?.length ?? 0,
     };
   }
+  // noteStructure owns the canonical-encoding check for every BOOLEAN.
   const byte = value.node.content[0] ?? 0;
-  if (byte !== 0x00 && byte !== 0xff)
-    notes.add(
-      `Image4 boolean at offset ${fileOffset(value)} is not canonical.`,
-    );
   return { type: "boolean", value: byte !== 0 };
 };
 
@@ -1058,12 +1049,6 @@ const asKeybag = async (
     return "unrecognized";
   }
   const { node, base } = value;
-  if (node.content[0] !== 0x30) {
-    notes.add(
-      `Image4 keybag at offset ${offset} does not hold a DER SEQUENCE.`,
-    );
-    return "unrecognized";
-  }
   let inner: DerValue;
   try {
     inner = walk.adopt(node.content, base + node.contentStart, depth + 1);
@@ -1071,6 +1056,12 @@ const asKeybag = async (
     if (!(cause instanceof ParseFailureError) || cause.kind === "limit")
       throw cause;
     notes.add(`Image4 keybag at offset ${offset} is not valid DER.`);
+    return "unrecognized";
+  }
+  if (!isSequence(inner)) {
+    notes.add(
+      `Image4 keybag at offset ${offset} does not hold a DER SEQUENCE.`,
+    );
     return "unrecognized";
   }
   if (endOf(inner) !== base + node.contentEnd)
@@ -1096,7 +1087,13 @@ const printable = (text: string): string | undefined => {
   return text;
 };
 
-/** IM4P compression algorithm 1 is LZFSE ({@link IMAGE4_LZFSE_MAGICS}). */
+/** IM4M version img4tool's `isIM4M` accepts; no other version is described. */
+const IMAGE4_MANIFEST_VERSION = "0";
+
+/**
+ * IM4P compression algorithm 1 is LZFSE ({@link IMAGE4_LZFSE_MAGICS}): the
+ * only number img4lib, img4tool and pyimg4 decode in the compression field.
+ */
 const IMAGE4_COMPRESSION_LZFSE = 1;
 /**
  * `complzss` layout: magic, big-endian adler32 at offset 8, big-endian
@@ -1274,17 +1271,28 @@ const buildPayload = async (
     notes.add("Image4 payload octet string is absent.");
     return { payload: null, entry: null };
   }
+  // Any value in the keybag slot means the payload may be encrypted, even
+  // when the keybag is empty or its layout is not recognized.
+  const encrypted = keybag !== undefined;
   const sniffed = await sniffPayload(source, range.offset, range.length, notes);
-  let algorithm: Image4Compression = sniffed.magic ?? "none";
-  let uncompressed = sniffed.magic === "complzss" ? sniffed.uncompressed : null;
+  // Encrypted bytes carry no readable magic, so only the compression field
+  // can describe them; without it the compression is unknown, not "none".
+  let algorithm: Image4Compression = encrypted
+    ? "unknown"
+    : (sniffed.magic ?? "none");
+  let uncompressed =
+    !encrypted && sniffed.magic === "complzss" ? sniffed.uncompressed : null;
   if (compression !== undefined) {
-    if (compression.algorithm !== IMAGE4_COMPRESSION_LZFSE)
+    if (compression.algorithm !== IMAGE4_COMPRESSION_LZFSE) {
       notes.add(
         compression.algorithm === undefined
           ? "Image4 compression algorithm does not fit in an unsigned 32-bit integer."
           : `Image4 compression algorithm ${compression.algorithm} is not LZFSE (1).`,
       );
-    else {
+      // A declared algorithm REA cannot name leaves the compression unknown
+      // unless the stored bytes show a known magic.
+      if (encrypted || sniffed.magic === null) algorithm = "unknown";
+    } else {
       if (sniffed.magic !== null && !isLzfseMagic(sniffed.magic))
         notes.add(
           `Image4 compression bvx2 disagrees with payload magic ${sniffed.magic}.`,
@@ -1293,9 +1301,10 @@ const buildPayload = async (
       uncompressed = compression.size;
     }
   }
-  // Any value in the keybag slot means the payload may be encrypted, even
-  // when the keybag is empty or its layout is not recognized.
-  const encrypted = keybag !== undefined;
+  if (encrypted && compression === undefined)
+    notes.add(
+      "Image4 payload is encrypted and has no compression field; its compression is unknown.",
+    );
   const bag = keybag === "unrecognized" ? undefined : keybag;
   return {
     payload: {
@@ -1336,9 +1345,13 @@ const parseManifestKids = async (
     notes.add("Image4 manifest version is absent.");
   else {
     const decoded = decodeInteger(versionValue, notes);
-    if (decoded.type === "integer" && UNSIGNED_DECIMAL.test(decoded.decimal))
+    if (decoded.type === "integer" && UNSIGNED_DECIMAL.test(decoded.decimal)) {
       version = decoded.decimal;
-    else notes.add("Image4 manifest version is not an unsigned decimal.");
+      if (version !== IMAGE4_MANIFEST_VERSION)
+        notes.add(
+          `Image4 manifest version ${version} is not ${IMAGE4_MANIFEST_VERSION}, the only version the reference implementations describe; its layout is assumed unchanged.`,
+        );
+    } else notes.add("Image4 manifest version is not an unsigned decimal.");
   }
   const properties: Image4Property[] = [];
   const objects: Image4ObjectFacts[] = [];
