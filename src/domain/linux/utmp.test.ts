@@ -252,10 +252,21 @@ describe("utmp diagnostics and bounds", () => {
     );
     const result = parseUtmpFile(bytes, { source: "wtmp", profile: glibc32 });
     if (!result.ok) throw new Error("expected a parsed file");
+    // The 17-byte tail holds `ut_type` and `ut_pid` whole, so it is a record
+    // with those members and every later one named as missing, not dropped.
     expect(result.value.records.map(({ user }) => user)).toEqual([
       "analyst",
       "second",
+      null,
     ]);
+    expect(result.value.records[2]).toMatchObject({
+      fileOffset: 768,
+      type: 0,
+      pid: 0,
+      line: null,
+      coverage: { complete: false },
+    });
+    expect(result.value.records[2]?.coverage.missing[0]).toBe("ut_line");
     expect(result.value.issues).toEqual([
       { kind: "truncated_trailing_bytes", fileOffset: 768, bytes: 17 },
     ]);
@@ -634,15 +645,49 @@ describe("utmp truncated tails", () => {
     ]);
   });
 
-  it("still drops a tail that stops before the timestamps", () => {
-    // 351 bytes ends inside the first time word, so the record has no identifying facts.
-    const truncated = recordBytes(glibc64, login()).subarray(0, 351);
+  it("keeps the complete members of a tail that stops before the timestamps", () => {
+    // 344 bytes holds `ut_type` through `ut_session` of a glibc-time64 record but
+    // neither time word: those members are kept, the rest are null and named.
+    const truncated = recordBytes(glibc64, login()).subarray(0, 344);
     const result = parseUtmpFile(truncated, {
       source: "wtmp",
       profile: glibc64,
     });
-    if (!result.ok) throw new Error("expected a parsed, empty result");
+    if (!result.ok) throw new Error("expected a parsed result");
+    expect(result.value.records).toHaveLength(1);
+    expect(result.value.records[0]).toMatchObject({
+      type: 7,
+      pid: 4242,
+      line: "pts/0",
+      id: "ts0",
+      user: "analyst",
+      host: "10.0.0.7",
+      session: 12,
+      timestampSeconds: null,
+      timestampMicroseconds: null,
+      addressV6: [],
+    });
+    expect(result.value.records[0]?.coverage.missing).toEqual([
+      "ut_tv.tv_sec",
+      "ut_tv.tv_usec",
+      "ut_addr_v6[0]",
+      "ut_addr_v6[1]",
+      "ut_addr_v6[2]",
+      "ut_addr_v6[3]",
+      "__glibc_reserved",
+    ]);
+  });
+
+  it("drops only a tail too short to hold ut_type", () => {
+    const result = parseUtmpFile(recordBytes(glibc64, login()).subarray(0, 1), {
+      source: "wtmp",
+      profile: glibc64,
+    });
+    if (!result.ok) throw new Error("expected a parsed result");
     expect(result.value.records).toEqual([]);
+    expect(result.value.issues).toEqual([
+      { kind: "truncated_trailing_bytes", fileOffset: 0, bytes: 1 },
+    ]);
   });
 });
 
@@ -678,4 +723,15 @@ it("names the missing reserved member with the profile's own spelling", () => {
   const result = parseUtmpFile(trimmed, { source: "wtmp", profile: mu });
   if (!result.ok) throw new Error("expected the tail to decode");
   expect(result.value.records[0]?.coverage.missing).toEqual(["__unused"]);
+});
+
+it("keeps the published profiles immutable", () => {
+  // A caller mutating the authoritative layout must not change later parses.
+  expect(Object.isFrozen(UTMP_FORMAT_PROFILES)).toBe(true);
+  for (const candidate of UTMP_FORMAT_PROFILES)
+    expect(Object.isFrozen(candidate), candidate.name).toBe(true);
+  expect(() => {
+    (glibc64 as { recordBytes: number }).recordBytes = 0;
+  }).toThrow(TypeError);
+  expect(glibc64.recordBytes).toBe(400);
 });

@@ -95,74 +95,76 @@ export interface UtmpFormatProfile {
  * (`s390x`, big-endian `ppc64`). The `-time64` family is the `long`-typed shape,
  * which glibc's aarch64 port carries in both byte orders.
  */
-export const UTMP_FORMAT_PROFILES: readonly UtmpFormatProfile[] = [
-  {
-    name: "glibc-time32",
-    recordBytes: 384,
-    byteOrder: "little",
-    sessionBytes: 4,
-    sessionPadBytes: 0,
-    sessionPadBefore: false,
-    timeBytes: 4,
-    addressSigned: true,
-    reservedMemberName: "__glibc_reserved",
-  },
-  {
-    name: "glibc-time32-be",
-    recordBytes: 384,
-    byteOrder: "big",
-    sessionBytes: 4,
-    sessionPadBytes: 0,
-    sessionPadBefore: false,
-    timeBytes: 4,
-    addressSigned: true,
-    reservedMemberName: "__glibc_reserved",
-  },
-  {
-    name: "glibc-time64",
-    recordBytes: 400,
-    byteOrder: "little",
-    sessionBytes: 8,
-    sessionPadBytes: 0,
-    sessionPadBefore: false,
-    timeBytes: 8,
-    addressSigned: true,
-    reservedMemberName: "__glibc_reserved",
-  },
-  {
-    name: "glibc-time64-be",
-    recordBytes: 400,
-    byteOrder: "big",
-    sessionBytes: 8,
-    sessionPadBytes: 0,
-    sessionPadBefore: false,
-    timeBytes: 8,
-    addressSigned: true,
-    reservedMemberName: "__glibc_reserved",
-  },
-  {
-    name: "musl-time64",
-    recordBytes: 400,
-    byteOrder: "little",
-    sessionBytes: 4,
-    sessionPadBytes: 4,
-    sessionPadBefore: false,
-    timeBytes: 8,
-    addressSigned: false,
-    reservedMemberName: "__unused",
-  },
-  {
-    name: "musl-time64-be",
-    recordBytes: 400,
-    byteOrder: "big",
-    sessionBytes: 4,
-    sessionPadBytes: 4,
-    sessionPadBefore: true,
-    timeBytes: 8,
-    addressSigned: false,
-    reservedMemberName: "__unused",
-  },
-];
+export const UTMP_FORMAT_PROFILES: readonly UtmpFormatProfile[] = Object.freeze(
+  [
+    {
+      name: "glibc-time32",
+      recordBytes: 384,
+      byteOrder: "little",
+      sessionBytes: 4,
+      sessionPadBytes: 0,
+      sessionPadBefore: false,
+      timeBytes: 4,
+      addressSigned: true,
+      reservedMemberName: "__glibc_reserved",
+    },
+    {
+      name: "glibc-time32-be",
+      recordBytes: 384,
+      byteOrder: "big",
+      sessionBytes: 4,
+      sessionPadBytes: 0,
+      sessionPadBefore: false,
+      timeBytes: 4,
+      addressSigned: true,
+      reservedMemberName: "__glibc_reserved",
+    },
+    {
+      name: "glibc-time64",
+      recordBytes: 400,
+      byteOrder: "little",
+      sessionBytes: 8,
+      sessionPadBytes: 0,
+      sessionPadBefore: false,
+      timeBytes: 8,
+      addressSigned: true,
+      reservedMemberName: "__glibc_reserved",
+    },
+    {
+      name: "glibc-time64-be",
+      recordBytes: 400,
+      byteOrder: "big",
+      sessionBytes: 8,
+      sessionPadBytes: 0,
+      sessionPadBefore: false,
+      timeBytes: 8,
+      addressSigned: true,
+      reservedMemberName: "__glibc_reserved",
+    },
+    {
+      name: "musl-time64",
+      recordBytes: 400,
+      byteOrder: "little",
+      sessionBytes: 4,
+      sessionPadBytes: 4,
+      sessionPadBefore: false,
+      timeBytes: 8,
+      addressSigned: false,
+      reservedMemberName: "__unused",
+    },
+    {
+      name: "musl-time64-be",
+      recordBytes: 400,
+      byteOrder: "big",
+      sessionBytes: 4,
+      sessionPadBytes: 4,
+      sessionPadBefore: true,
+      timeBytes: 8,
+      addressSigned: false,
+      reservedMemberName: "__unused",
+    },
+  ].map((candidate) => Object.freeze(candidate) as UtmpFormatProfile),
+);
 
 export interface UtmpRecord {
   /** Byte offset of this record from the start of the supplied file. */
@@ -170,16 +172,20 @@ export interface UtmpRecord {
   readonly type: number;
   /** Name of `type` when glibc defines one, so an unknown value stays readable. */
   readonly typeName: string | null;
-  readonly pid: number;
-  readonly line: string;
-  readonly id: string;
-  readonly user: string;
-  readonly host: string;
-  readonly exitTermination: number;
-  readonly exitCode: number;
-  readonly session: number;
-  readonly timestampSeconds: number;
-  readonly timestampMicroseconds: number;
+  /**
+   * Members after `ut_type` are `null` when a truncated tail does not hold them
+   * whole; `coverage.missing` names them, so an absent member is never a zero.
+   */
+  readonly pid: number | null;
+  readonly line: string | null;
+  readonly id: string | null;
+  readonly user: string | null;
+  readonly host: string | null;
+  readonly exitTermination: number | null;
+  readonly exitCode: number | null;
+  readonly session: number | null;
+  readonly timestampSeconds: number | null;
+  readonly timestampMicroseconds: number | null;
   /**
    * `ut_addr_v6` as four words, in the record's own encoding.
    *
@@ -190,11 +196,8 @@ export interface UtmpRecord {
   /** Fixed-width fields whose bytes were not well-formed UTF-8. */
   readonly undecodedFields: readonly UndecodedField[];
   /**
-   * Which members the record's bytes actually held.
-   *
-   * A tail shorter than the record still carries every member up to the timestamps, so the
-   * login is recoverable; the members after it are named here rather than left as zeros a
-   * consumer would read as data.
+   * Which declared members the record's bytes held whole. A truncated tail keeps
+   * every member it reaches; the rest are named here and reported as `null`.
    */
   readonly coverage: UtmpCoverage;
 }
@@ -337,13 +340,7 @@ export interface UndecodedField {
   readonly hex: string;
 }
 
-const decodeFixedWidth = (
-  bytes: Buffer,
-  base: number,
-  offset: number,
-  width: number,
-): DecodedField => {
-  const raw = bytes.subarray(base + offset, base + offset + width);
+const decodeFixedWidth = (raw: Buffer): DecodedField => {
   const end = raw.indexOf(0);
   // glibc marks these members `__attribute_nonstring__`, so a field that fills
   // its whole width is well formed without a terminator; only malformed UTF-8
@@ -367,119 +364,166 @@ const decodeFixedWidth = (
   };
 };
 
+/** One declared member of `struct utmp`: its name, offset and width. */
+interface UtmpMember {
+  readonly name: string;
+  readonly offset: number;
+  readonly bytes: number;
+}
+
 /**
- * Decode `examined` records starting at the profile's first record.
- *
- * Kept separate from the file-level handling so a single record's field work does
- * not bury the budget, tail and profile logic.
+ * Every declared member in record order, from the profile's own layout. This is
+ * the single description of where each member sits; decoding, coverage and the
+ * tail rule all read it, so none of them carries its own offset arithmetic.
+ * Struct padding after the reserved member is not a member.
+ */
+export const utmpMembers = (
+  profile: UtmpFormatProfile,
+): readonly UtmpMember[] => {
+  const layout = utmpFieldLayout(profile);
+  return [
+    { name: "ut_type", offset: TYPE_OFFSET, bytes: 2 },
+    { name: "ut_pid", offset: PID_OFFSET, bytes: 4 },
+    { name: "ut_line", offset: LINE_OFFSET, bytes: LINE_BYTES },
+    { name: "ut_id", offset: ID_OFFSET, bytes: ID_BYTES },
+    { name: "ut_user", offset: USER_OFFSET, bytes: USER_BYTES },
+    { name: "ut_host", offset: HOST_OFFSET, bytes: HOST_BYTES },
+    {
+      name: "ut_exit.e_termination",
+      offset: EXIT_TERMINATION_OFFSET,
+      bytes: 2,
+    },
+    { name: "ut_exit.e_exit", offset: EXIT_CODE_OFFSET, bytes: 2 },
+    {
+      name: "ut_session",
+      offset: layout.sessionOffset,
+      bytes: profile.sessionBytes,
+    },
+    {
+      name: "ut_tv.tv_sec",
+      offset: layout.secondsOffset,
+      bytes: profile.timeBytes,
+    },
+    {
+      name: "ut_tv.tv_usec",
+      offset: layout.microsecondsOffset,
+      bytes: profile.timeBytes,
+    },
+    ...Array.from({ length: ADDRESS_V6_FIELDS }, (_, slot) => ({
+      name: `ut_addr_v6[${String(slot)}]`,
+      offset: layout.addressOffset + slot * 4,
+      bytes: 4,
+    })),
+    {
+      name: profile.reservedMemberName,
+      offset: layout.addressOffset + ADDRESS_V6_FIELDS * 4,
+      bytes: RESERVED_BYTES,
+    },
+  ];
+};
+
+/**
+ * Decode `examined` records starting at the profile's first record. A record
+ * whose bytes end early keeps every member it holds whole and names the rest.
  */
 const decodeRecords = (
   bytes: Buffer,
   reader: BinaryReader,
   profile: UtmpFormatProfile,
-  layout: FieldLayout,
   examined: number,
   issues: UtmpIssue[],
 ): UtmpRecord[] => {
-  const totalBytes = bytes.length;
+  const members = utmpMembers(profile);
+  const memberAt = new Map(members.map((member) => [member.name, member]));
   const records: UtmpRecord[] = [];
 
   for (let index = 0; index < examined; index += 1) {
     const base = index * profile.recordBytes;
-    const line = decodeFixedWidth(bytes, base, LINE_OFFSET, LINE_BYTES);
-    const id = decodeFixedWidth(bytes, base, ID_OFFSET, ID_BYTES);
-    const user = decodeFixedWidth(bytes, base, USER_OFFSET, USER_BYTES);
-    const host = decodeFixedWidth(bytes, base, HOST_OFFSET, HOST_BYTES);
-    const fields = [
-      ["line", line],
-      ["id", id],
-      ["user", user],
-      ["host", host],
-    ] as const;
-    for (const [field, decoded] of fields) {
-      if (decoded.decoded) continue;
-      issues.push({ kind: "undecoded_field", fileOffset: base, field });
-    }
-    const availableBytes = Math.min(profile.recordBytes, totalBytes - base);
-    const availableAddressWords = Math.max(
-      0,
-      Math.min(
-        ADDRESS_V6_FIELDS,
-        Math.floor((availableBytes - layout.addressOffset) / 4),
-      ),
-    );
-    // The reserved member ends before the record does: `struct timeval`'s 8-byte
-    // alignment pads the struct, and that padding carries no member. Coverage therefore
-    // ends at the last declared member, not at `recordBytes`, or a 396-byte `glibc-time64`
-    // tail would report a missing member it fully holds.
-    const reservedEnd =
-      layout.addressOffset + ADDRESS_V6_FIELDS * 4 + RESERVED_BYTES;
-    const missing = [
-      ...Array.from(
-        { length: ADDRESS_V6_FIELDS - availableAddressWords },
-        (_, slot) => `ut_addr_v6[${String(availableAddressWords + slot)}]`,
-      ),
-      ...(availableBytes < reservedEnd ? [profile.reservedMemberName] : []),
-    ];
-    const coverage: UtmpCoverage = {
-      complete: missing.length === 0,
-      missing,
+    const available = Math.min(profile.recordBytes, bytes.length - base);
+    const holds = (member: UtmpMember): boolean =>
+      member.offset + member.bytes <= available;
+    const present = (name: string): UtmpMember | undefined => {
+      const member = memberAt.get(name)!;
+      return holds(member) ? member : undefined;
     };
+    const missing = members
+      .filter((member) => !holds(member))
+      .map(({ name }) => name);
+
+    const text = (name: string, field: string): string | null => {
+      const member = present(name);
+      if (member === undefined) return null;
+      const decoded = decodeFixedWidth(
+        bytes.subarray(
+          base + member.offset,
+          base + member.offset + member.bytes,
+        ),
+      );
+      if (!decoded.decoded) {
+        issues.push({ kind: "undecoded_field", fileOffset: base, field });
+        undecodedFields.push({ field, hex: decoded.hex });
+      }
+      return decoded.text;
+    };
+    const integer = (name: string, bits: 16 | 32): number | null => {
+      const member = present(name);
+      if (member === undefined) return null;
+      const word =
+        bits === 16
+          ? reader.u16(base + member.offset)
+          : reader.u32(base + member.offset);
+      return signed(word, bits);
+    };
+    // `ut_session` and `ut_tv` take the ABI's width; a 64-bit value Number cannot
+    // hold exactly is reported beside the rounded one.
+    const wide = (name: string): number | null => {
+      const member = present(name);
+      if (member === undefined) return null;
+      const bits = member.bytes === 4 ? 32 : 64;
+      return exactSigned(
+        reader.word(base + member.offset, bits),
+        bits,
+        name,
+        base,
+        issues,
+      );
+    };
+
+    const undecodedFields: UndecodedField[] = [];
     const type = signed(reader.u16(base + TYPE_OFFSET), 16);
     const typeName = UTMP_TYPE_NAMES.get(type) ?? null;
     if (typeName === null)
       issues.push({ kind: "unknown_type", fileOffset: base, type });
+    const line = text("ut_line", "line");
+    const id = text("ut_id", "id");
+    const user = text("ut_user", "user");
+    const host = text("ut_host", "host");
     records.push({
       fileOffset: base,
       type,
       typeName,
-      pid: signed(reader.u32(base + PID_OFFSET), 32),
-      line: line.text,
-      id: id.text,
-      user: user.text,
-      host: host.text,
-      exitTermination: signed(reader.u16(base + EXIT_TERMINATION_OFFSET), 16),
-      exitCode: signed(reader.u16(base + EXIT_CODE_OFFSET), 16),
-      session: exactSigned(
-        reader.word(
-          base + layout.sessionOffset,
-          profile.sessionBytes === 4 ? 32 : 64,
-        ),
-        profile.sessionBytes === 4 ? 32 : 64,
-        "ut_session",
-        base,
-        issues,
-      ),
+      pid: integer("ut_pid", 32),
+      line,
+      id,
+      user,
+      host,
+      exitTermination: integer("ut_exit.e_termination", 16),
+      exitCode: integer("ut_exit.e_exit", 16),
+      session: wide("ut_session"),
       // `tv_sec` is a signed `time_t`, so a pre-epoch or clock-change value stays
       // negative instead of becoming a large positive one.
-      timestampSeconds: exactSigned(
-        reader.word(
-          base + layout.secondsOffset,
-          profile.timeBytes === 4 ? 32 : 64,
-        ),
-        profile.timeBytes === 4 ? 32 : 64,
-        "ut_tv.tv_sec",
-        base,
-        issues,
-      ),
-      timestampMicroseconds: exactSigned(
-        reader.word(
-          base + layout.microsecondsOffset,
-          profile.timeBytes === 4 ? 32 : 64,
-        ),
-        profile.timeBytes === 4 ? 32 : 64,
-        "ut_tv.tv_usec",
-        base,
-        issues,
-      ),
-      addressV6: Array.from({ length: availableAddressWords }, (_, slot) => {
-        const word = reader.u32(base + layout.addressOffset + slot * 4);
-        return profile.addressSigned ? signed(word, 32) : word;
-      }),
-      coverage,
-      undecodedFields: fields.flatMap(([field, decoded]) =>
-        decoded.decoded ? [] : [{ field, hex: decoded.hex }],
-      ),
+      timestampSeconds: wide("ut_tv.tv_sec"),
+      timestampMicroseconds: wide("ut_tv.tv_usec"),
+      addressV6: members
+        .filter(
+          (member) => member.name.startsWith("ut_addr_v6[") && holds(member),
+        )
+        .map((member) => {
+          const word = reader.u32(base + member.offset);
+          return profile.addressSigned ? signed(word, 32) : word;
+        }),
+      coverage: { complete: missing.length === 0, missing },
+      undecodedFields,
     });
   }
 
@@ -554,30 +598,17 @@ export const parseUtmpFile = (
   const little = profile.byteOrder === "little";
   const bytes = Buffer.from(input.buffer, input.byteOffset, input.byteLength);
   const reader = new BinaryReader(bytes, little, UTMP_FORMAT);
-  const layout = utmpFieldLayout(profile);
   const whole = Math.floor(input.byteLength / profile.recordBytes);
   const remainder = input.byteLength - whole * profile.recordBytes;
-  // A truncated tail can still carry every modeled field: the reserved words and
-  // the struct padding sit at the end. Decoding it keeps the final login instead of
-  // dropping it over bytes `UtmpRecord` never exposes.
-  const modeledExtent = layout.addressOffset + ADDRESS_V6_FIELDS * 4;
-  // A tail reaches `UtmpRecord`'s identifying members well before the modeled extent: the
-  // session and both time words end at `microsecondsOffset + timeBytes`, and everything
-  // after that is the address words and the reserved region, which `coverage` names.
-  const identifyingExtent = layout.microsecondsOffset + profile.timeBytes;
-  const tailDecodable =
-    remainder >= modeledExtent || remainder >= identifyingExtent;
+  // A truncated tail is a record as soon as it holds `ut_type` whole: every
+  // later member it reaches is decoded and the rest are named in its coverage,
+  // so complete members are never dropped for the ones that are missing.
+  const typeMember = utmpMembers(profile)[0]!;
+  const tailDecodable = remainder >= typeMember.offset + typeMember.bytes;
   const decodable = tailDecodable ? whole + 1 : whole;
   const limit = options.maxRecords ?? UTMP_RECORD_LIMIT;
   const examined = Math.min(decodable, limit);
-  const records = decodeRecords(
-    bytes,
-    reader,
-    profile,
-    layout,
-    examined,
-    issues,
-  );
+  const records = decodeRecords(bytes, reader, profile, examined, issues);
 
   if (decodable > examined)
     issues.push({
