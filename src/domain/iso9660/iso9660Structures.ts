@@ -331,6 +331,11 @@ export interface Iso9660DirectoryLinks {
   readonly self: Iso9660DirectoryLink;
   /** The record that admitted the parent directory; the root's parent is the root. */
   readonly parent: Iso9660DirectoryLink;
+  /**
+   * Also accept a `..` record that describes the directory itself. libisofs
+   * (xorriso, mkisofs emulation) writes every Joliet `..` record that way.
+   */
+  readonly parentMayBeSelf?: boolean;
 }
 
 const assertMandatoryLink = (
@@ -339,7 +344,12 @@ const assertMandatoryLink = (
   links: Iso9660DirectoryLinks,
 ): void => {
   const role = index === 0 ? "self (.)" : "parent (..)";
-  const expected = index === 0 ? links.self : links.parent;
+  const expected =
+    index === 0 ||
+    (links.parentMayBeSelf === true &&
+      record.extentLocation === links.self.extentLocation)
+      ? links.self
+      : links.parent;
   if (iso9660DirectoryIsInterleaved(record))
     throw iso9660Malformed(
       `the ${role} record declares interleaving for a contiguous directory`,

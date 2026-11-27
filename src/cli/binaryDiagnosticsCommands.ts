@@ -20,6 +20,7 @@ import {
   inspectWithService,
 } from "./contractCommandRunners.js";
 import { PRODUCER_LIMITS_HELP } from "./producerLimitsOption.js";
+import { UNIVERSAL_SLICE_ARCHITECTURE_HELP } from "./universalSliceOption.js";
 
 type BinaryDiagnosticsOperation =
   (typeof BINARY_DIAGNOSTICS_TOOL_CONTRACTS)[number]["name"];
@@ -66,8 +67,7 @@ export const registerBinaryDiagnosticsCommands = (
             "Local ELF, Mach-O, or PE image, or a DWARF file inside a .dSYM bundle",
         },
         architecture: {
-          description:
-            "Slice to read from a universal Mach-O, by CPU family; arm64e and arm64e.x1 read only a slice of that subtype, as lipo -thin does; required for universal files",
+          description: UNIVERSAL_SLICE_ARCHITECTURE_HELP,
         },
       },
     },
@@ -118,8 +118,7 @@ export const registerBinaryDiagnosticsCommands = (
             "Local ELF32/ELF64, thin Mach-O or universal Mach-O image",
         },
         architecture: {
-          description:
-            "Slice to read from a universal Mach-O, by CPU family; arm64e and arm64e.x1 read only a slice of that subtype, as lipo -thin does; when several slices share a family, arm64 (arm64 or arm64v8) or x86_64 names the subtype, and a value matching several slices is refused; required for universal files",
+          description: UNIVERSAL_SLICE_ARCHITECTURE_HELP,
         },
       },
     },
