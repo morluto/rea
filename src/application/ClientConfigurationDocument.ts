@@ -436,7 +436,13 @@ const readClientDocument = (
       native !== null &&
       "type" in native &&
       typeof native.type === "string")
-  )
+  ) {
+    // A removal must see a row that lives only in the other table, so a preserved
+    // Muse document exposes the legacy rows too.
+    const legacyRows =
+      format === "muse" && ambiguity === "preserve"
+        ? document.mcp_servers
+        : undefined;
     return {
       document,
       ...(requiresRewrite === undefined ? {} : { requiresRewrite }),
@@ -444,8 +450,12 @@ const readClientDocument = (
       serversPath: [serversKey],
       dialect: format,
       environmentKey,
-      legacyServers: {},
+      legacyServers:
+        legacyRows === undefined
+          ? {}
+          : requireObject(legacyRows, '"mcp_servers"'),
     };
+  }
   return {
     document,
     servers: requireObject(native, `"${serversKey}.servers"`),

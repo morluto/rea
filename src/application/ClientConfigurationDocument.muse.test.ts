@@ -118,3 +118,18 @@ describe("Muse Code dual-table documents", () => {
     expect(preserved.value.document.mcp_servers).toEqual({});
   });
 });
+
+/**
+ * A removal must see the row wherever it is stored, so a preserved dual-table
+ * document exposes the legacy rows beside the canonical ones.
+ */
+it("exposes a legacy-only row to a removal read", () => {
+  const preserved = parseClientConfiguration(
+    '{"schema_version":1,"mcpServers":{},"mcp_servers":{"rea":{"type":"stdio","command":"rea"}}}',
+    "muse",
+    "preserve",
+  );
+  expect(preserved.ok).toBe(true);
+  if (!preserved.ok) return;
+  expect(Object.keys(preserved.value.legacyServers)).toEqual(["rea"]);
+});

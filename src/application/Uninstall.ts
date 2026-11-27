@@ -1593,7 +1593,10 @@ const removeClient = async (
     try {
       const text = await fileSystem.readText(publication.path);
       await publication.assertCurrent(text);
-      const parsed = parseClientConfiguration(text, client.format);
+      // Readback uses the removal policy: a Muse document that keeps both tables
+      // after the owned row is gone must not be refused here, or a completed
+      // removal would be rolled back.
+      const parsed = parseClientConfiguration(text, client.format, "preserve");
       if (parsed.ok) {
         const readback = parsed.value;
         if (
