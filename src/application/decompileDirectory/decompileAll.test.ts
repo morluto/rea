@@ -909,6 +909,46 @@ describe("decompile_all filters and layout", () => {
     ]);
   });
 
+  it("names consecutive windows that cover every requested function once", async () => {
+    const procedures = Array.from({ length: 40 }, (_, index) => ({
+      address: `0x${(0x1000 + index * 0x10).toString(16)}`,
+      name: `fn_${index}`,
+    }));
+    const addresses = procedures.map((procedure) => procedure.address);
+    const windows = (calls: readonly RecordedCall[]) =>
+      of(calls, "procedure_pseudo_code").flatMap((call) =>
+        call.upcoming === undefined ? [] : [[call.procedure, call.upcoming]],
+      );
+
+    const whole = harness({ procedures });
+    expect((await run(whole.tools, directory())).ok).toBe(true);
+    expect(windows(whole.calls)).toEqual([
+      [addresses[0], addresses.slice(0, 32)],
+      [addresses[32], addresses.slice(32)],
+    ]);
+
+    // The caller's limit ends the second window, not a full window size.
+    const limited = harness({ procedures });
+    expect(
+      (await run(limited.tools, `${directory()}-limited`, { limit: 34 })).ok,
+    ).toBe(true);
+    expect(windows(limited.calls)).toEqual([
+      [addresses[0], addresses.slice(0, 32)],
+      [addresses[32], addresses.slice(32, 34)],
+    ]);
+
+    // A function found to be external sends no decompile request, so the
+    // next request carries the window that named it.
+    const external = harness({ procedures, external: [addresses[0]!] });
+    expect((await run(external.tools, `${directory()}-external`)).ok).toBe(
+      true,
+    );
+    expect(windows(external.calls)).toEqual([
+      [addresses[1], addresses.slice(0, 32)],
+      [addresses[32], addresses.slice(32)],
+    ]);
+  });
+
   it("stops at a limit and continues in address order on resume", async () => {
     const first = harness();
     const limited = await run(first.tools, directory(), { limit: 1 });

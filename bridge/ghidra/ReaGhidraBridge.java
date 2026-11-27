@@ -59,6 +59,8 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.stream.JsonWriter;
 
+import generic.concurrent.GThreadPool;
+
 import ghidra.app.util.headless.HeadlessScript;
 import ghidra.app.decompiler.DecompInterface;
 import ghidra.app.decompiler.DecompileOptions;
@@ -66,6 +68,8 @@ import ghidra.app.decompiler.DecompileResults;
 import ghidra.app.decompiler.DecompiledFunction;
 import ghidra.app.decompiler.ClangCaseToken;
 import ghidra.app.decompiler.ClangNode;
+import ghidra.app.decompiler.parallel.DecompilerCallback;
+import ghidra.app.decompiler.parallel.ParallelDecompiler;
 import ghidra.framework.Application;
 import ghidra.app.util.bin.format.pdb.PdbParserConstants;
 import ghidra.app.util.opinion.ElfLoader;
@@ -230,6 +234,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
     // observe. A miss only repeats a decompile, and soft references release
     // entries under heap pressure. Ghidra's own panel keeps 10 by default.
     private static final int DECOMPILE_RESULT_ENTRIES = 32;
+    /** Decompiler processes kept between read-ahead windows of one workflow. */
+    private DecompilerCallback<DecompileResults> decompileAheadWorkers;
+    private static final int DECOMPILE_AHEAD_WORKERS = 8;
     private boolean existingProject;
     // A refused Program may only report its admission failure to the client.
     private String identityAdmissionFailure;
@@ -499,7 +506,6 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     ? descriptor.decompileTimeoutSeconds() : request.decompileTimeoutSeconds();
                 valueFlowLimits = request.valueFlowLimits();
                 applyDecompilePayloadLimit(request.decompileMaxPayloadMiB());
-                decompileAhead(request.decompileReadAhead());
                 dispatchAndWrite(writer, request, descriptor);
             }
             catch (RequestFailure failure) {
@@ -560,7 +566,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
             case "procedure_callees" -> procedureCalls(request.params, false);
             case "procedure_callers" -> procedureCalls(request.params, true);
             case "procedure_info" -> procedureInfo(request.params);
-            case "procedure_pseudo_code" -> procedurePseudocode(request.params);
+            case "procedure_pseudo_code" -> {
+                decompileAhead(request.decompileReadAhead());
+                yield procedurePseudocode(request.params);
+            }
             case "read_function_instructions" -> readFunctionInstructions(request.params);
             case "procedure_references" -> procedureReferences(request.params);
             case "resolve_containing_procedure" -> containingProcedure(request.params);
@@ -4723,21 +4732,21 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 continue;
             }
             if (function.isExternal() || function.getBody().isEmpty() || !seen.add(function.getEntryPoint())) continue;
-            java.lang.ref.SoftReference<DecompileResults> retained = decompileResults.get(
+            SoftReference<DecompileResults> retained = decompileResults.get(
                 new DecompileCacheKey(function.getEntryPoint(), false, modification, decompileMaxPayloadMiB));
             if (retained == null || retained.get() == null) pending.add(function);
         }
         if (pending.size() < 2) return;
         Integer payloadMiB = decompileMaxPayloadMiB;
         if (decompileAheadWorkers == null) {
-            decompileAheadWorkers = new ghidra.app.decompiler.parallel.DecompilerCallback<>(currentProgram, prepared -> {
+            decompileAheadWorkers = new DecompilerCallback<>(currentProgram, prepared -> {
                 prepared.setOptions(decompileOptions(payloadMiB));
                 prepared.toggleCCode(true);
                 prepared.toggleSyntaxTree(true);
                 prepared.toggleJumpLoads(true);
             }) {
                 @Override
-                public DecompileResults process(DecompileResults results, ghidra.util.task.TaskMonitor taskMonitor) {
+                public DecompileResults process(DecompileResults results, TaskMonitor taskMonitor) {
                     return results;
                 }
             };
@@ -4745,17 +4754,17 @@ public final class ReaGhidraBridge extends HeadlessScript {
             // the Program, so the worker count bounds memory as well as CPU.
             // Fixed: it shapes how the same results are produced, never what
             // a caller observes, and the host's processor count already caps it.
-            generic.concurrent.GThreadPool.getSharedThreadPool("Parallel Decompiler").setMaxThreadCount(
+            GThreadPool.getSharedThreadPool("Parallel Decompiler").setMaxThreadCount(
                 Math.max(1, Math.min(Runtime.getRuntime().availableProcessors(), DECOMPILE_AHEAD_WORKERS)));
         }
         decompileAheadWorkers.setTimeout(decompileTimeoutSeconds);
-        for (DecompileResults results : ghidra.app.decompiler.parallel.ParallelDecompiler.decompileFunctions(
+        for (DecompileResults results : ParallelDecompiler.decompileFunctions(
                 decompileAheadWorkers, pending, monitor)) {
             if (results == null || results.isCancelled() || results.isTimedOut() ||
                 !results.decompileCompleted() || results.getFunction() == null) continue;
             decompileResults.put(
                 new DecompileCacheKey(results.getFunction().getEntryPoint(), false, modification, payloadMiB),
-                new java.lang.ref.SoftReference<>(results));
+                new SoftReference<>(results));
         }
         monitor.checkCancelled();
     }
@@ -4769,11 +4778,6 @@ public final class ReaGhidraBridge extends HeadlessScript {
         decompileAheadWorkers.dispose();
         decompileAheadWorkers = null;
     }
-
-    /** Decompiler processes kept between read-ahead windows of one workflow. */
-    private ghidra.app.decompiler.parallel.DecompilerCallback<DecompileResults> decompileAheadWorkers;
-
-    private static final int DECOMPILE_AHEAD_WORKERS = 8;
 
     /** Every input a completed decompilation of one Program state depends on. */
     private record DecompileCacheKey(
