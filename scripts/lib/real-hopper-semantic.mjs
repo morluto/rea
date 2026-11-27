@@ -148,7 +148,11 @@ export async function verifyRealHopperFixture({
     await client.callTool(
       {
         name: "procedure_references",
-        arguments: { procedure: entry.address, direction: "outgoing" },
+        arguments: {
+          detail: "complete",
+          procedure: entry.address,
+          direction: "outgoing",
+        },
       },
       options,
     ),
@@ -282,6 +286,7 @@ export async function resolveFixtureProcedure(
       {
         name: "search_procedures",
         arguments: {
+          detail: "complete",
           pattern: expectedName,
           mode: "literal",
           case_sensitive: true,

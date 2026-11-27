@@ -1,7 +1,8 @@
-import { selectIndexedViewRows, selectViewRows } from "./selectViewRows.js";
+import { filterSet, selectViewRows } from "./selectViewRows.js";
 import { z } from "zod";
 import {
   analysisViewInputError,
+  invalidAnalysisViewSubject,
   invalidAnalysisView,
 } from "./analysisViewErrors.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
@@ -532,15 +533,8 @@ export const projectIl2cppMetadataView = (
     subject != null &&
     (subject.format !== "file" || subject.sha256 !== report.artifact.sha256)
   )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message:
-            "IL2CPP metadata artifact identity does not match its parent subject.",
-        },
-      ]),
+    return invalidAnalysisViewSubject(
+      "IL2CPP metadata artifact identity does not match its parent subject.",
     );
   const {
     sections,
@@ -686,20 +680,16 @@ export const projectIl2cppMetadataView = (
       ]),
     );
   const matches = selection(view, report);
-  const selectedFields =
-    view.fields === undefined ? undefined : new Set<string>(view.fields);
+  const selectedFields = filterSet<string>(view.fields);
   const project = (row: Row, index: number) =>
     selectFields(row, index, selectedFields);
-  const { rows: items, total } =
-    view.indices === undefined
-      ? selectViewRows(rows, view, matches, project)
-      : selectIndexedViewRows(
-          rows,
-          new Set(view.indices),
-          view,
-          matches,
-          project,
-        );
+  const { rows: items, total } = selectViewRows(
+    rows,
+    view,
+    matches,
+    project,
+    filterSet(view.indices),
+  );
   return ok({
     kind: "il2cpp-metadata" as const,
     view,

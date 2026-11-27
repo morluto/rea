@@ -1,18 +1,12 @@
+import {
+  uint32LE as u32,
+  int32LE as i32,
+} from "../native/BinaryInteger.fixture.js";
 import type { PythonPycCodeLayout } from "../domain/python/pythonPyc.js";
 
 const FLAG_REF = 0x80;
 
 const u8 = (value: number): Buffer => Buffer.from([value]);
-const u32 = (value: number): Buffer => {
-  const bytes = Buffer.alloc(4);
-  bytes.writeUInt32LE(value);
-  return bytes;
-};
-const i32 = (value: number): Buffer => {
-  const bytes = Buffer.alloc(4);
-  bytes.writeInt32LE(value);
-  return bytes;
-};
 const concat = (...parts: Buffer[]): Buffer => Buffer.concat(parts);
 
 /** 16-byte CPython 3.7+ pyc header. Hash-based pycs store an 8-byte source hash. */

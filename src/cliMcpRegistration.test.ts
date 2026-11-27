@@ -11,6 +11,7 @@ import {
   createTestWorkspace,
   removeTestWorkspace,
 } from "../tests/support/workspace/workspaceFixture.js";
+import { registrationChildEnvironment } from "../tests/support/cli/registrationEnvironment.js";
 import { createTestProcessRegistry } from "../tests/support/process/processFixture.js";
 
 const require = createRequire(import.meta.url);
@@ -85,7 +86,7 @@ const CHILD_PROGRAM = `
       await symlink(process.execPath, join(sessionBin, 'node'));
       await symlink(runtimeDirectory, runtimeAlias, 'dir');
       await symlink(sessionBin, outsideBin, 'dir');
-      defaultsEnvironment.PATH = outsideBin + delimiter + defaultsEnvironment.PATH;
+      defaultsEnvironment.PATH = outsideBin + delimiter + bin;
       defaultsEnvironment.XDG_RUNTIME_DIR = runtimeAlias;
     }
     const schema = await serve(defaultsEnvironment, ['mcp','add','--schema','--json']);
@@ -199,20 +200,8 @@ const captureRegistration = async () => {
       {
         timeoutMs: 20_000,
         env: {
+          ...registrationChildEnvironment(home),
           PATH: join(root, "bin") + delimiter + process.env.PATH,
-          SystemRoot: process.env.SystemRoot,
-          WINDIR: process.env.WINDIR,
-          TMPDIR: process.env.TMPDIR,
-          TMP: process.env.TMP,
-          TEMP: process.env.TEMP,
-          HOME: home,
-          USERPROFILE: home,
-          XDG_CONFIG_HOME: join(home, "config"),
-          XDG_DATA_HOME: join(home, "data"),
-          XDG_CACHE_HOME: join(home, "cache"),
-          XDG_STATE_HOME: join(home, "state"),
-          APPDATA: join(home, "appdata"),
-          LOCALAPPDATA: join(home, "localappdata"),
           REA_REGISTRATION_FIXTURE_ROOT: root,
           REA_LOG_LEVEL: "silent",
         },

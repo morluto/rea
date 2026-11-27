@@ -4,7 +4,10 @@ import {
 } from "./javascript/javascriptSemanticWorkAllowance.js";
 import type { File, Node } from "@babel/types";
 import { traverseJavaScriptAst } from "./javascript/javascriptSemanticTraversal.js";
-import { readExactJavaScriptLiteral } from "./javascript/javascriptAstValues.js";
+import {
+  readExactJavaScriptLiteral,
+  stringValue,
+} from "./javascript/javascriptAstValues.js";
 import {
   parseRecoveredJavaScript,
   JavaScriptLoaderSyntaxError,
@@ -77,16 +80,6 @@ export const PARSEABLE_REFERENCE_SOURCE_LANGUAGES: ReadonlySet<string> =
 const safeModuleName = (node: Node | null | undefined): string | undefined => {
   if (isStringLiteral(node)) return node.value;
   return undefined;
-};
-
-const exactStringModuleName = (
-  node: Node | null | undefined,
-): string | undefined => {
-  if (node === null || node === undefined) return undefined;
-  const literal = readExactJavaScriptLiteral(node);
-  return literal.found && typeof literal.value === "string"
-    ? literal.value
-    : undefined;
 };
 
 const resolveSpecifier = (
@@ -189,7 +182,7 @@ const extractImports = (
             resolution: "unknown",
           });
       } else if (isImportExpression(node) || isTSImportType(node)) {
-        const specifier = exactStringModuleName(node.source);
+        const specifier = stringValue(node.source);
         appendRelationship(relationships, limitations, {
           fromPath: from_path,
           to: specifier ?? "<dynamic-import>",

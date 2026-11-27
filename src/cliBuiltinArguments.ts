@@ -19,6 +19,8 @@ export const OUTPUT_SWITCHES: ReadonlySet<string> = new Set([
   "--full-output",
   "--token-count",
   "--timings",
+  // Keeps an over-budget result out of the private retained-Evidence cache.
+  "--no-retain",
 ]);
 
 /** Valueless global flags taken out of every position before command parsing. */
@@ -36,6 +38,7 @@ export const CLI_BUILTIN_FLAGS: ReadonlySet<string> = new Set([
   "--json",
   "--token-count",
   "--timings",
+  "--no-retain",
 ]);
 
 /** The timing global's spellings: `--timings`, `--no-timings`, `--timings=<text>`. */

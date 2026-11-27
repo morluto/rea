@@ -10,12 +10,12 @@ import {
 import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
   pageViewCoverage,
   unavailableViewCoverage,
 } from "./analysisViewCoverage.js";
-import { selectIndexedViewRows, selectViewRows } from "./selectViewRows.js";
+import { filterSet, selectViewRows } from "./selectViewRows.js";
 
 const atom = erlangBeamSchema.shape.atoms.unwrap().element;
 const exported = erlangBeamSchema.shape.exports.unwrap().element;
@@ -118,15 +118,13 @@ type BeamView = z.infer<typeof erlangBeamViewRequestSchema>;
 
 /** Select already parsed rows; original atom/lambda indexes are never repurposed. */
 const selectRows = (source: readonly Row[], view: BeamView) => {
-  const names = view.names === undefined ? undefined : new Set(view.names);
-  const indices =
-    view.indices === undefined ? undefined : new Set(view.indices);
+  const names = filterSet(view.names);
+  const indices = filterSet(view.indices);
   const modules =
     view.collection === "imports" && view.modules !== undefined
       ? new Set(view.modules)
       : undefined;
-  const fields =
-    view.fields === undefined ? undefined : new Set<string>(view.fields);
+  const fields = filterSet<string>(view.fields);
   const project = (row: Row, source_index: number) => ({
     ...Object.fromEntries(
       Object.entries(row).filter(
@@ -135,24 +133,20 @@ const selectRows = (source: readonly Row[], view: BeamView) => {
     ),
     source_index,
   });
-  if (names === undefined && indices === undefined && modules === undefined)
-    return {
-      rows: source
-        .slice(view.offset, view.offset + view.limit)
-        .map((row, i) => project(row, view.offset + i)),
-      total: source.length,
-    };
-  const matches = (row: Row) => {
-    const name = "name" in row ? row.name : row.function;
-    return (
-      (names === undefined || (name !== null && names.has(name))) &&
-      (modules === undefined ||
-        ("module" in row && row.module !== null && modules.has(row.module)))
-    );
-  };
-  return indices !== undefined
-    ? selectIndexedViewRows(source, indices, view, matches, project)
-    : selectViewRows(source, view, matches, project);
+  const matches =
+    names === undefined && modules === undefined
+      ? undefined
+      : (row: Row) => {
+          const name = "name" in row ? row.name : row.function;
+          return (
+            (names === undefined || (name !== null && names.has(name))) &&
+            (modules === undefined ||
+              ("module" in row &&
+                row.module !== null &&
+                modules.has(row.module)))
+          );
+        };
+  return selectViewRows(source, view, matches, project, indices);
 };
 
 /** Project retained BEAM facts without reopening files or reinterpreting chunks. */
@@ -190,11 +184,7 @@ export const projectErlangBeamView = (
       path: identity.artifact.path,
       sha256: identity.artifact.sha256,
     },
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, limitations),
     unknowns: (["atoms", "exports", "imports", "lambdas"] as const)
       .filter((key) => summary.counts[key] === null)
       .map(

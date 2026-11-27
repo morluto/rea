@@ -6,6 +6,12 @@ import { absoluteLocalPathStringSchema } from "../localPath.js";
 import { canonicalBase64Schema } from "../stringPatterns.js";
 import { peHeaderAnomaliesSchema } from "./peHeaderAnomalies.js";
 import { peImageBaseSchema } from "./peAddressSpace.js";
+import {
+  parameterBudgetLimitFor,
+  parameterBudgetSchema,
+  type ParameterBudget,
+} from "../parameterBudget.js";
+import { maxStructureBytesSchema } from "./nativeStructureBudget.js";
 
 /** ELF strings declare bytes rather than an encoding; Latin-1 is only a lossless display fallback. */
 export const decodeElfExportName = (bytes: Buffer) => {
@@ -29,13 +35,47 @@ const MAX_PE_EXPORT_ORDINAL = 0xffffffff + 0xfffffffe;
 export const MAX_INSPECT_NATIVE_EXPORTS_FILE_BYTES = 536870912;
 /** Default allowance for the bytes the export reader reads. */
 export const DEFAULT_NATIVE_EXPORTS_READ_BYTES = 268435456;
-/** Fixed bound on reported export rows, so one library cannot flood a reply. */
-export const MAX_NATIVE_EXPORT_ROWS = 262144;
+/** `max_entries` when omitted: export rows and declared symbol counts. */
+export const DEFAULT_NATIVE_EXPORT_ROWS = 262144;
+/** `max_text_bytes` when omitted: export names and versions retained across rows. */
+export const DEFAULT_NATIVE_EXPORT_TEXT_BYTES = 16 * 1024 * 1024;
+
+/** The per-call inventory budgets of `inspect_native_exports`. */
+export const NATIVE_EXPORT_BUDGETS = {
+  max_entries: {
+    minimum: 1,
+    maximum: 4_194_304,
+    default_value: DEFAULT_NATIVE_EXPORT_ROWS,
+    unit: "count",
+  },
+  max_text_bytes: {
+    minimum: 1,
+    maximum: 256 * 1024 * 1024,
+    default_value: DEFAULT_NATIVE_EXPORT_TEXT_BYTES,
+    unit: "bytes",
+  },
+} as const satisfies Record<string, ParameterBudget>;
+export type NativeExportBudget = keyof typeof NATIVE_EXPORT_BUDGETS;
+
+/** The per-call budget that stopped an export inventory. */
+export const nativeExportBudgetLimit =
+  parameterBudgetLimitFor<NativeExportBudget>(NATIVE_EXPORT_BUDGETS);
 
 /** One explicitly selected PE or ELF library or executable. */
 export const inspectNativeExportsInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to a PE or ELF image",
+  ),
+  max_structure_bytes: maxStructureBytesSchema,
+  max_entries: parameterBudgetSchema(
+    NATIVE_EXPORT_BUDGETS.max_entries,
+  ).describe(
+    "Maximum export rows, and declared dynamic symbols, to decode (default 262144); exceeding it fails without partial success",
+  ),
+  max_text_bytes: parameterBudgetSchema(
+    NATIVE_EXPORT_BUDGETS.max_text_bytes,
+  ).describe(
+    "Maximum export name and version text retained across rows (default 16 MiB)",
   ),
   max_file_bytes: z
     .number()
@@ -147,7 +187,9 @@ export const peNativeExportsSchema = z.strictObject({
       timestamp: uint,
     })
     .nullable(),
-  exports: z.array(peExportSchema).max(MAX_NATIVE_EXPORT_ROWS),
+  exports: z
+    .array(peExportSchema)
+    .max(NATIVE_EXPORT_BUDGETS.max_entries.maximum),
   coverage: coverageSchema,
   issues: z.array(nativeExportIssueSchema),
   /** Evidence saved before this field existed omits it. */
@@ -161,7 +203,9 @@ export const elfNativeExportsSchema = z.strictObject({
   architecture: z.string().min(1),
   bits: z.union([z.literal(32), z.literal(64)]),
   byte_order: z.enum(["little", "big"]),
-  exports: z.array(elfExportSchema).max(MAX_NATIVE_EXPORT_ROWS),
+  exports: z
+    .array(elfExportSchema)
+    .max(NATIVE_EXPORT_BUDGETS.max_entries.maximum),
   coverage: coverageSchema,
   issues: z.array(nativeExportIssueSchema),
   limitations: z.array(z.string().min(1)),

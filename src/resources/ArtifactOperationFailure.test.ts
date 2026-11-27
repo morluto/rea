@@ -542,9 +542,12 @@ it("keeps the named integrity check through descriptor cleanup", async () => {
   await scope.close();
 });
 
-it("keeps a reader's named check when a provider supplies its own cause and options", () => {
-  const failure = new ArtifactReaderFailure("integrity", "region changed", {
-    integrityCheck: "reconstruction",
+// A changed check is retryable after backoff; any other check, such as a
+// session target that no longer matches its admitted digest, fails the same
+// way on an unchanged retry and keeps the reader's reopen recovery.
+it("reports a reader integrity failure as changed only for a changed check", () => {
+  const failure = new ArtifactReaderFailure("integrity", "container moved", {
+    integrityCheck: "container-identity",
   });
   const wrapper = new Error("cleanup wrapper", { cause: failure });
   const capturedOutput = { stdout: "out", stderr: "", truncated: false };
@@ -552,16 +555,46 @@ it("keeps a reader's named check when a provider supplies its own cause and opti
     cause: wrapper,
     capturedOutput,
   });
-  expect(changed).toMatchObject({
-    cause: wrapper,
-    capturedOutput,
-    reason: "region changed",
-    integrityCheck: "reconstruction",
-  });
+  expect(changed).toMatchObject({ cause: wrapper, capturedOutput });
   expect(projectAnalysisError(changed)).toMatchObject({
     code: "artifact_changed",
-    details: { integrity_check: "reconstruction" },
+    retryable: true,
+    retry: "backoff",
+    message: expect.stringContaining("changed during acquisition"),
+    details: {
+      path: "/target",
+      boundary: "stable-artifact-read",
+      integrity_check: "container-identity",
+    },
   });
+
+  const stale = projectAnalysisError(
+    readerIntegrityFailure(
+      "inspect_plist",
+      "/bundle/Info.plist",
+      targetDigestChangedFailure("target", "a".repeat(64), "b".repeat(64)),
+      { capturedOutput },
+    ),
+  );
+  expect(stale).toMatchObject({
+    code: "artifact_operation_failed",
+    category: "integrity_mismatch",
+    retryable: false,
+    message: expect.stringContaining(
+      "Reopen the selected artifact, then retry.",
+    ),
+    remediation: {
+      action: expect.stringContaining(
+        "Reopen the selected artifact, then retry.",
+      ),
+    },
+    details: {
+      operation: "inspect_plist",
+      reason: "integrity",
+      integrity_check: "admitted-identity",
+    },
+  });
+  expect(stale.retry).toBeUndefined();
 });
 
 // A reader's target reasons mean the bytes; only `path` names the

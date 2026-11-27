@@ -659,7 +659,7 @@ const encryptionCoverage = ({
       limitations: [
         encryption.status === "not-mach-o"
           ? "Encryption load commands were not read: the structural reader did not recognize a Mach-O image."
-          : `Encryption load commands were not read: ${encryption.reason}`,
+          : `Encryption load commands were not read: ${encryption.status === "failed" ? encryption.failure.detail : encryption.reason}`,
       ],
     };
   const items = encryption.slices.map((slice) => {

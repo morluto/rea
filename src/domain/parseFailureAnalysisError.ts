@@ -54,6 +54,44 @@ export const parseLimitConstraint = (
 };
 
 /**
+ * The public refusal for a tools/list page that one advertised tool exceeds.
+ * Unlike parseLimitConstraint, the cause is a page budget, not a parse limit:
+ * the reason and the reported limit come from the page-budget facts the
+ * producer supplies, and the producer still supplies the recovery, which
+ * names a budget only it knows. The budget facts are structural on purpose:
+ * domain may not import the config layer that owns the budget type.
+ */
+export const toolsListPageBudgetConstraint = (
+  budget: {
+    readonly setting: string;
+    readonly bytes: number;
+    readonly source: string;
+    readonly defaultBytes: number;
+    readonly floorBytes: number;
+    readonly maximumBytes: number;
+  },
+  toolName: string,
+  options: Omit<AnalysisErrorOptions, "cause"> &
+    ResourceConstraintRecovery & { readonly requestSent?: boolean },
+): AnalysisResourceConstraintError => {
+  return new AnalysisResourceConstraintError(
+    "tools/list",
+    "transport",
+    `Advertised tool ${toolName} is larger than the tools/list page budget.`,
+    {
+      setting: budget.setting,
+      effective_bytes: budget.bytes,
+      source: budget.source,
+      default_bytes: budget.defaultBytes,
+      floor_bytes: budget.floorBytes,
+      maximum_bytes: budget.maximumBytes,
+      tool_name: toolName,
+    },
+    options,
+  );
+};
+
+/**
  * The public refusal for a parser's format failure on the selected artifact.
  *
  * The parser reads the target's bytes, not the request, so every format
@@ -66,6 +104,7 @@ export const parseFailureAnalysisError = (
   operation: string,
   path: string,
   cause: unknown,
+  options?: Omit<AnalysisErrorOptions, "cause">,
 ): AnalysisTargetFailureError | undefined => {
   if (!(cause instanceof ParseFailureError)) return undefined;
   const { failure } = cause;
@@ -76,6 +115,7 @@ export const parseFailureAnalysisError = (
     case "malformed":
     case "truncated":
       return new AnalysisTargetFailureError(operation, path, failure, {
+        ...options,
         cause,
       });
   }

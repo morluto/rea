@@ -11,10 +11,7 @@ import {
 } from "./ClientConfigurationFiles.js";
 
 export type { ClientRegistrationScope };
-import {
-  effectiveClientServer,
-  type ClientConfigurationDocument,
-} from "./ClientConfigurationDocument.js";
+import { effectiveClientServer } from "./ClientConfigurationDocument.js";
 import { lstat, stat } from "node:fs/promises";
 import { err, ok, type Result } from "../domain/result.js";
 
@@ -65,7 +62,7 @@ import {
 import { admitClientStdioConnection } from "./ClientRegistrationConnection.js";
 import type { ConfigurationError } from "../domain/configurationErrors.js";
 import { errorMessage } from "../kernel/errorMessage.js";
-import { isAbsentClientConfigPath } from "./ClientConfigPath.js";
+import { isAbsentClientConfigPath, isEnoentError } from "./ClientConfigPath.js";
 
 interface ClientRegistrationStatusBase {
   readonly client: string;
@@ -115,11 +112,6 @@ export type ClientRegistrationStatus = ClientRegistrationStatusBase &
         readonly remediation: string;
       }
   );
-
-export type UnhealthyClientRegistrationStatus = Exclude<
-  ClientRegistrationStatus,
-  { readonly state: "aligned" }
->;
 
 interface ClientRegistrationReadOptions {
   readonly platform: NodeJS.Platform;
@@ -571,7 +563,7 @@ export const readClientRegistrationInspections = async (
       record(
         unavailableStatus(
           client,
-          isMissing(cause) ? "missing" : "invalid",
+          isEnoentError(cause) ? "missing" : "invalid",
           selectedConfigPath,
           selectedScope,
         ),
@@ -703,7 +695,7 @@ const missingTransientLauncherRemediation = async (
     try {
       await stat(path);
     } catch (cause) {
-      if (isMissing(cause)) {
+      if (isEnoentError(cause)) {
         const detail = `The saved session launcher path ${path} is missing.`;
         return client.format === "dsh"
           ? `${detail} Run rea setup --client dsh to review and refresh the installed REA registration, then restart the client.`
@@ -944,6 +936,3 @@ const clientEvidencePresent = async (
   }
   return unavailable === undefined ? ok(false) : err(unavailable);
 };
-
-const isMissing = (cause: unknown): boolean =>
-  cause instanceof Error && "code" in cause && cause.code === "ENOENT";
