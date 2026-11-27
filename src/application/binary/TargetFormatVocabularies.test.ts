@@ -133,6 +133,10 @@ const TARGETS: TargetFixtures = {
   glb: { ...archive, format: "glb" },
   ktx: { ...archive, format: "ktx" },
   ktx2: { ...archive, format: "ktx2" },
+  "ogg-opus": { ...archive, format: "ogg-opus" },
+  "riff-xma2": { ...archive, format: "riff-xma2" },
+  bink2: { ...archive, format: "bink2" },
+  "vulkan-pipeline-cache": { ...archive, format: "vulkan-pipeline-cache" },
   uimage: { ...archive, format: "uimage" },
   nso: { ...archive, format: "nso" },
   nro: { ...archive, format: "nro" },
@@ -160,6 +164,7 @@ const TARGETS: TargetFixtures = {
   },
   fit: { ...archive, format: "fit" },
   "ntfs-mft": { ...archive, format: "ntfs-mft" },
+  "systemd-journal": { ...archive, format: "systemd-journal" },
   "auditd-log": { ...archive, format: "auditd-log" },
   plist: { ...artifact, format: "plist" },
   javascript: { ...artifact, format: "javascript" },
@@ -169,6 +174,7 @@ const TARGETS: TargetFixtures = {
   "windows-shortcut": { ...artifact, format: "windows-shortcut" },
   "python-pyc": { ...artifact, format: "python-pyc" },
   devicetree: { ...artifact, format: "devicetree" },
+  "esp-nvs": { ...artifact, format: "esp-nvs" },
   deb: { ...artifact, format: "deb" },
 };
 
