@@ -10,6 +10,7 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import type { AnalysisCleanupRetry } from "../domain/analysisErrorRecovery.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { processCaptureFailureForClose } from "../process/capture/ProcessCaptureError.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import {
   ArtifactReaderFailure,
@@ -99,8 +100,13 @@ export const closeWithProcessResources =
     }
     if (resources.ok) return closed;
     // The session closed: its snapshot and released-engine facts stay true.
+    // Those facts are this close's. The cleanup error is shared with any
+    // other close awaiting the same retry, so they are attached to a follower.
     return err(
-      retainCloseOutcome(retainedProcessCleanup(resources.error), closed),
+      retainCloseOutcome(
+        retainedProcessCleanup(processCaptureFailureForClose(resources.error)),
+        closed,
+      ),
     );
   };
 
