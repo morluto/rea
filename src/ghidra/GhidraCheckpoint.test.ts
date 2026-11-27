@@ -1075,3 +1075,36 @@ it.skipIf(process.platform === "win32")(
     expect(performance.now() - started).toBeLessThan(220);
   },
 );
+
+it.skipIf(process.platform === "win32")(
+  "keeps a directory-close failure when cancellation arrives during lease acquisition",
+  async () => {
+    const f = await fixture();
+    const session = new GhidraCheckpoint(f.selection, f.resources, {
+      waitMs: 50,
+      source: "setting",
+    });
+    owners.push(session);
+    await session.admit("waiter");
+    const controller = new AbortController();
+    vi.mocked(acquireOwnedLease).mockImplementation(async (input) => {
+      controller.abort({ caller: "close failed" });
+      throw input.failure(
+        { kind: "directory_close" },
+        new Error("directory handle close failed"),
+      );
+    });
+    const rejected = await session
+      .publish(f.packed, controller.signal)
+      .catch((cause: unknown) => cause);
+    expect(rejected).toMatchObject({
+      settings: [
+        {
+          setting: "REA_GHIDRA_CHECKPOINT_DIR",
+          constraint: expect.stringContaining("lease directory_close"),
+        },
+      ],
+      secondaryFailures: [{ cause: { caller: "close failed" } }],
+    });
+  },
+);

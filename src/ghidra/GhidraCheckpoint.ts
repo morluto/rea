@@ -1,4 +1,6 @@
 import { appendCallerPath } from "../filesystem/callerPath.js";
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
+import { cancelledBy, isAborted } from "../domain/analysisErrorCore.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, open, realpath, rename, rm } from "node:fs/promises";
@@ -6,7 +8,7 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { Deadline } from "../domain/deadline.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -26,6 +28,7 @@ import {
 } from "../filesystem/RegularFile.js";
 import {
   acquireOwnedLease,
+  LEASE_OWNER_PROBE_ABORTED,
   LEASE_OWNER_RESPONSE_TIMEOUT_MS,
   LEASE_OWNER_RESPONSE_TIMED_OUT,
   type LeaseAcquisition,
@@ -444,6 +447,7 @@ export class GhidraCheckpoint {
     // refusal: the socket was accepted and no identity arrived in time.
     const handoff = new WeakSet<Error>();
     const probeTimedOut = new WeakSet<Error>();
+    const probeAborted = new WeakSet<Error>();
     for (;;) {
       assertArtifactReadActive(signal);
       let acquired: LeaseAcquisition | undefined;
@@ -482,11 +486,28 @@ export class GhidraCheckpoint {
               reason.reason === LEASE_OWNER_RESPONSE_TIMED_OUT
             )
               probeTimedOut.add(error);
+            if (
+              reason.kind === "owner_unverified" &&
+              reason.reason === LEASE_OWNER_PROBE_ABORTED
+            )
+              probeAborted.add(error);
             return error;
           },
         });
       } catch (cause: unknown) {
-        assertArtifactReadActive(signal);
+        // A probe this wait aborted has no cleanup of its own. Any other
+        // acquisition failure, including a directory handle whose close
+        // failed, stays primary and keeps the cancellation beside it.
+        if (
+          isAborted(signal) &&
+          !(cause instanceof Error && probeAborted.has(cause)) &&
+          cause instanceof AnalysisError
+        )
+          throw analysisErrorWithCancellation(
+            cause,
+            cancelledBy("checkpoint_program", signal),
+          );
+        if (isAborted(signal)) assertArtifactReadActive(signal);
         if (
           cause instanceof Error &&
           probeTimedOut.has(cause) &&

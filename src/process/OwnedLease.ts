@@ -61,6 +61,9 @@ export const LEASE_OWNER_RESPONSE_TIMEOUT_MS = 250;
 /** Reason on `owner_unverified` when that probe budget elapses with no identity. */
 export const LEASE_OWNER_RESPONSE_TIMED_OUT = "owner response timed out";
 
+/** Reason on `owner_unverified` when the caller's signal stops the probe. */
+export const LEASE_OWNER_PROBE_ABORTED = "owner probe aborted";
+
 /**
  * A caller's bound on the owner-identity probe. The probe never waits longer
  * than `LEASE_OWNER_RESPONSE_TIMEOUT_MS`; a shorter `timeoutMs` is that
@@ -434,10 +437,10 @@ const readOwner = (
       rejectOwner(fail({ kind: "owner_unverified", reason }, cause));
     };
     const onAbort = (): void => {
-      reject("owner probe aborted", probe?.signal?.reason);
+      reject(LEASE_OWNER_PROBE_ABORTED, probe?.signal?.reason);
     };
     if (probe?.signal?.aborted === true) {
-      reject("owner probe aborted", probe.signal.reason);
+      reject(LEASE_OWNER_PROBE_ABORTED, probe.signal.reason);
       return;
     }
     timer = setTimeout(() => reject(LEASE_OWNER_RESPONSE_TIMED_OUT), timeoutMs);
