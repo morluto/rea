@@ -78,6 +78,72 @@ const compoundFile = (options: {
   return file;
 };
 
+/**
+ * A version-3 container sized for a large directory: the directory chain, the
+ * FAT sectors that describe it, and the sector count all grow with `entries`.
+ * `compoundFile` fixes those at the one-sector layout its small fixtures need.
+ * A sector's offset is `512 * (id + 1)`; the header occupies the first 512 bytes.
+ */
+const sprawlingCompoundFile = (entries: readonly Entry[]): Buffer => {
+  const directorySectors = Math.max(
+    1,
+    Math.ceil((entries.length * 128) / SECTOR),
+  );
+  // Each FAT sector describes 128 sectors, and the FAT itself is part of what
+  // must be described, so the count is the least one that covers both.
+  let fatSectors = 1;
+  while (fatSectors * 128 < directorySectors + fatSectors) fatSectors += 1;
+  if (fatSectors > 109)
+    throw new Error("sprawling fixture needs a DIFAT chain");
+  const firstDirectorySector = fatSectors;
+  const totalSectors = fatSectors + directorySectors;
+  const file = Buffer.alloc((totalSectors + 1) * SECTOR);
+  MAGIC.copy(file, 0);
+  file.writeUInt16LE(0x003e, 0x18);
+  file.writeUInt16LE(3, 0x1a);
+  file.writeUInt16LE(0xfffe, 0x1c);
+  file.writeUInt16LE(9, 0x1e);
+  file.writeUInt16LE(6, 0x20);
+  file.writeUInt32LE(fatSectors, 0x2c);
+  file.writeUInt32LE(firstDirectorySector, 0x30);
+  file.writeUInt32LE(4096, 0x38);
+  file.writeUInt32LE(END, 0x3c);
+  file.writeUInt32LE(0, 0x40);
+  file.writeUInt32LE(END, 0x44);
+  file.writeUInt32LE(0, 0x48);
+  for (let index = 0; index < 109; index += 1)
+    file.writeUInt32LE(index < fatSectors ? index : FREE, 0x4c + index * 4);
+  // The directory sectors form one contiguous chain after the FAT sectors.
+  const cells: number[] = [];
+  for (let sector = 0; sector < totalSectors; sector += 1)
+    cells.push(
+      sector < firstDirectorySector
+        ? FREE
+        : sector + 1 < totalSectors
+          ? sector + 1
+          : END,
+    );
+  for (let sector = 0; sector < fatSectors; sector += 1)
+    for (let index = 0; index < 128; index += 1)
+      file.writeUInt32LE(
+        cells[sector * 128 + index] ?? FREE,
+        (1 + sector) * SECTOR + index * 4,
+      );
+  entries.forEach((entry, index) => {
+    const base = (1 + firstDirectorySector) * SECTOR + index * 128;
+    const name = Buffer.from(`${entry.name}\0`, "utf16le");
+    name.copy(file, base);
+    file.writeUInt16LE(name.length, base + 0x40);
+    file.writeUInt8(entry.type, base + 0x42);
+    file.writeUInt32LE(entry.left ?? FREE, base + 0x44);
+    file.writeUInt32LE(entry.right ?? FREE, base + 0x48);
+    file.writeUInt32LE(entry.child ?? FREE, base + 0x4c);
+    file.writeUInt32LE(entry.start, base + 0x74);
+    file.writeBigUInt64LE(BigInt(entry.size), base + 0x78);
+  });
+  return file;
+};
+
 const root = (
   child: number | undefined,
   extra: readonly Entry[],
@@ -628,4 +694,53 @@ it("reports an unrepresentable mini sector shift as unknown, not zero", () => {
   expect(image.limitations).toContainEqual(
     expect.stringMatching(/mini sector size is unknown/u),
   );
+});
+
+it("leaves paths past the cumulative allowance unnamed instead of retaining them", () => {
+  // Deep nesting alone is capped at 64 levels, but every descendant path repeats
+  // its ancestors: 64 levels of maximum-length names describe about 2 KiB per
+  // leaf, so a wide leaf set retains gigabytes of strings the metadata is not
+  // worth. The allowance must be charged as each path is built, so the text
+  // held never exceeds it, and an entry past it must keep its facts without a
+  // path rather than carrying the oversized string.
+  const DEPTH = 64;
+  const NAME = "s".repeat(31);
+  const LEAVES = 16_385;
+  // Storage i owns storage i+1; the last storage owns the sibling stream chain.
+  const chain: Entry[] = [];
+  for (let level = 0; level < DEPTH; level += 1)
+    chain.push({
+      name: NAME,
+      type: 1,
+      start: 0,
+      size: 0,
+      child: level === DEPTH - 1 ? 1 + DEPTH : 2 + level,
+    });
+  const leaves: Entry[] = [];
+  for (let leaf = 0; leaf < LEAVES; leaf += 1)
+    leaves.push({
+      name: NAME,
+      type: 2,
+      start: END,
+      size: 0,
+      ...(leaf === LEAVES - 1 ? {} : { right: 2 + DEPTH + leaf }),
+    });
+  const image = parse(sprawlingCompoundFile(root(1, [...chain, ...leaves])));
+  // The allowance bounds what is retained: every named path together stays at
+  // or under it, and some entries past it are unnamed rather than oversized.
+  const retained = image.entries.reduce(
+    (total, entry) => total + (entry.path?.length ?? 0),
+    0,
+  );
+  expect(retained).toBeLessThanOrEqual(32 * 1024 * 1024);
+  expect(image.entries.some((entry) => entry.path === null)).toBe(true);
+  expect(image.limitations).toContainEqual(
+    expect.stringMatching(/exceeded the 33554432-character allowance/u),
+  );
+  // An entry past the allowance is not silently dropped: it keeps the name and
+  // facts it declares, only its logical path is withheld.
+  const unnamed = image.entries.find(
+    (entry) => entry.path === null && entry.type === "stream",
+  );
+  expect(unnamed?.name).toBe(NAME);
 });
