@@ -10,6 +10,7 @@ import {
   truncate,
   writeFile,
 } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, onTestFinished, test, vi } from "vitest";
 
@@ -71,7 +72,7 @@ const DE_STRINGS = [
 const writeApktoolStub = async (
   body: (root: string) => string,
 ): Promise<{ readonly command: string; readonly root: string }> => {
-  const root = await mkdtemp(join("/tmp", "rea-apktool-stub-"));
+  const root = await mkdtemp(join(tmpdir(), "rea-apktool-stub-"));
   onTestFinished(() => rm(root, { recursive: true, force: true }));
   const command = join(root, "apktool");
   await writeFile(command, `#!/bin/sh\n${body(root)}\n`, { mode: 0o755 });
@@ -1151,6 +1152,74 @@ it("marks an oversized strings document partial without claiming it is missing",
       },
     ],
   });
+});
+
+describe("decoded manifest package fallback", () => {
+  it.each([
+    [
+      "Apktool 2 current name",
+      "<manifest/>",
+      "version: 2.7.0\npackageInfo: {cur_package: com.rea.current, orig_package: com.rea.original}\n",
+      "com.rea.current",
+    ],
+    [
+      "Apktool 2 original name",
+      "<manifest/>",
+      "version: 2.7.0\npackageInfo: {cur_package: null, orig_package: com.rea.original}\n",
+      "com.rea.original",
+    ],
+    [
+      "Apktool 2 quoted string",
+      "<manifest/>",
+      "version: 2.7.0\npackageInfo: {cur_package: 'null', orig_package: com.rea.original}\n",
+      "null",
+    ],
+    [
+      "Apktool 3 resource metadata",
+      "<manifest/>",
+      "version: 3.0.3\nresourcesInfo:\n  packageName: com.rea.resources\n",
+      "com.rea.resources",
+    ],
+    [
+      "manifest precedence",
+      '<manifest package="com.rea.manifest"/>',
+      "version: 3.0.3\nresourcesInfo:\n  packageName: com.rea.resources\n",
+      "com.rea.manifest",
+    ],
+    [
+      "explicitly empty manifest package",
+      '<manifest package=""/>',
+      "version: 3.0.3\nresourcesInfo:\n  packageName: com.rea.resources\n",
+      null,
+    ],
+    [
+      "truncated manifest",
+      "<manifest/>" + " ".repeat(512 * 1024),
+      "version: 3.0.3\nresourcesInfo:\n  packageName: com.rea.resources\n",
+      null,
+    ],
+  ] as const)(
+    "resolves package identity from %s",
+    async (_name, manifest, yml, expected) => {
+      const { command, root } = await writeApktoolStub((root) =>
+        decodeStub({
+          manifestFile: join(root, "fallback-manifest.xml"),
+          ymlFile: join(root, "fallback-apktool.yml"),
+        })(root),
+      );
+      await writeFile(join(root, "fallback-manifest.xml"), manifest);
+      await writeFile(join(root, "fallback-apktool.yml"), yml);
+      const apk = await apkFixture(root);
+      const result = await providerOver(command).execute({
+        operation: "decode_android_resources",
+        input: { path: apk.path, include_strings: false },
+      });
+      if (!result.ok) throw result.error;
+      expect(result.value.result).toMatchObject({
+        metadata: { package_name: expected },
+      });
+    },
+  );
 });
 
 describe("truncated manifest prefixes", () => {

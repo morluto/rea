@@ -45,18 +45,8 @@ import {
   buildManagedPeFixture,
   managedPeFixtureTarget,
 } from "./ManagedPe.fixture.js";
-import { readManagedMetadataLayout } from "../domain/managed/managedMetadataLayout.js";
+import { readManagedFixtureMetadataLayout } from "./ManagedPeMetadata.fixture.js";
 import { readManagedPeLayout } from "../domain/managed/managedPeReader.js";
-
-const metadataLayoutFor = (bytes: Buffer) => {
-  const pe = readManagedPeLayout(bytes);
-  if (pe.cli === null) throw new Error("fixture omitted CLI metadata");
-  return readManagedMetadataLayout(
-    bytes,
-    pe.rvaToOffset(pe.cli.metadata.rva, pe.cli.metadata.size, "cli.metadata"),
-    pe.cli.metadata.size,
-  );
-};
 
 const resizedOptionalHeader = (
   size: number,
@@ -522,7 +512,7 @@ describe("managed artifact coded indexes", () => {
         }),
       ],
     });
-    const layout = metadataLayoutFor(bytes);
+    const layout = readManagedFixtureMetadataLayout(bytes);
     expect(result.coverage.issues[0]?.offset).toBe(
       (result.resources[0]?.row_offset ?? 0) + 8 + layout.stringIndexSize,
     );
@@ -595,7 +585,7 @@ describe("managed artifact coded indexes", () => {
       extendsRaw: 9,
       customAttributeTypeRaw: 0,
     });
-    const layout = metadataLayoutFor(bytes);
+    const layout = readManagedFixtureMetadataLayout(bytes);
     const artifact = inspectManagedArtifactBytes(
       bytes,
       managedPeFixtureTarget(bytes),
@@ -658,7 +648,7 @@ it.each([false, true])(
   "resolves an attribute type without reading malformed constructor heaps (bad name %s)",
   (badName) => {
     const bytes = buildManagedPeFixture();
-    const layout = metadataLayoutFor(bytes);
+    const layout = readManagedFixtureMetadataLayout(bytes);
     const row = layout.table(10)!;
     const nameColumn = row.offset + layout.codedIndexSize("MemberRefParent");
     const signatureColumn = nameColumn + layout.stringIndexSize;

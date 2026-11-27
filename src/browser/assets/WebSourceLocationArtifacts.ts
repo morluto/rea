@@ -1,5 +1,6 @@
 import {
   selectedSourceMapLimits,
+  sourceMapBudgetLimit,
   sourceMapLimitRecovery,
 } from "../../domain/sourceMapLimits.js";
 import type { WebSourceLocationArtifactPort } from "../../ports/WebSourceLocationPorts.js";
@@ -64,6 +65,17 @@ export class LocalWebSourceLocationArtifacts implements WebSourceLocationArtifac
                 "map_bytes",
                 selectedSourceMapLimits(input.source_map_limits).mapBytes,
               ),
+              limit: (failure) =>
+                failure.boundary === "file-size"
+                  ? sourceMapBudgetLimit(
+                      "map_bytes",
+                      selectedSourceMapLimits(input.source_map_limits).mapBytes,
+                      failure.observedBytes !== undefined &&
+                        failure.observedBytes <= BigInt(Number.MAX_SAFE_INTEGER)
+                        ? Number(failure.observedBytes)
+                        : undefined,
+                    )
+                  : undefined,
             },
             options?.signal,
           ),

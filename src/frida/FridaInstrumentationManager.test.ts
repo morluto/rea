@@ -931,6 +931,45 @@ describe("FridaInstrumentationManager", () => {
     expect(manager.status(started.value.sessionId)).toBeUndefined();
   });
 
+  it("resumes a spawn on retry when detach succeeded but a script stayed retained", async () => {
+    const bindings = new FakeDeviceManager();
+    const manager = new FridaInstrumentationManager({
+      deviceManager: bindings,
+    });
+    const started = await manager.startSession({
+      mode: "spawn",
+      deviceId: "local",
+      program: "/tmp/fixture",
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+    const loaded = await manager.loadScript(started.value.sessionId, {
+      sourceKind: "inline",
+      source: "send('ready');",
+    });
+    expect(loaded.ok).toBe(true);
+    expect(bindings.device.session.scripts).toHaveLength(1);
+    const script = bindings.device.session.scripts.at(-1);
+    if (script === undefined) throw new Error("missing fixture script");
+    // Both release passes of the first close fail to disconnect, so the script stays
+    // retained after the session itself detached.
+    const disconnect = script.message.disconnect;
+    let disconnectFailures = 2;
+    script.message.disconnect = (handler) => {
+      if (disconnectFailures-- > 0) throw new Error("disconnect failed");
+      disconnect(handler);
+    };
+
+    const firstClose = await manager.closeSession(started.value.sessionId);
+    expect(firstClose.ok).toBe(false);
+    expect(bindings.device.session.isDetached()).toBe(true);
+    expect(bindings.device.resumed).toEqual([]);
+
+    const retry = await manager.closeSession(started.value.sessionId);
+    expect(retry.ok).toBe(true);
+    expect(bindings.device.resumed).toEqual([512]);
+  });
+
   it("keeps a remote device while a spawned target resume is pending", async () => {
     const bindings = new FakeDeviceManager();
     const manager = new FridaInstrumentationManager({

@@ -1526,7 +1526,13 @@ export class BinarySession
       unboundOperationError: (operation, route) =>
         this.#providerRouter.unboundOperationError(operation, route),
       lookupSnapshot: (target, profile, operation, parameters) =>
-        this.lookupSnapshot(target, profile, operation, parameters),
+        this.lookupSnapshot(
+          target,
+          profile,
+          operation,
+          parameters,
+          options?.snapshotContext,
+        ),
     });
     if (!prepared.ok) return prepared;
     const { active, capability, profile, cacheable, cached } = prepared.value;
@@ -1728,7 +1734,13 @@ export class BinarySession
         !active.nativeSourceAdmitted)
     )
       return undefined;
-    return this.lookupSnapshot(active.target, profile, name, arguments_);
+    return this.lookupSnapshot(
+      active.target,
+      profile,
+      name,
+      arguments_,
+      options?.snapshotContext,
+    );
   }
 
   /**

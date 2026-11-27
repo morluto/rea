@@ -130,7 +130,7 @@ interface Source {
 }
 
 interface ElfScan {
-  /** `max_structure_bytes` for the dynamic directory. */
+  /** `max_structure_bytes` for the dynamic directory and Android packed relocation tables. */
   readonly structureBytes: number;
   readonly reader: BinaryReader;
   readonly bytes: Buffer;
@@ -676,8 +676,9 @@ const loadWrites = async (
     }
     return { writes, clobbered, trustRaw: true };
   } catch (cause) {
-    // A budget stop is not a malformed table; the provider reports it with
-    // the maximum the failing index declared.
+    // A budget stop (`BinaryResourceFailure` for `max_structure_bytes`, or a
+    // limit `ElfPointerRelocationFailure`) is not a malformed table; rethrow it
+    // for the provider to project as a resource constraint.
     if (
       !(cause instanceof ElfPointerRelocationFailure) ||
       cause.kind === "limit"
