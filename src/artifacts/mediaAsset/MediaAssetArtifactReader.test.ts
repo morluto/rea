@@ -18,6 +18,7 @@ import {
   oggPage,
   opusHeadPacket,
   opusTagsPacket,
+  oggOpusManyTagsPagesFixture,
   oggOpusSpannedTagsFixture,
   riffXma2Fixture,
   vulkanPipelineCacheFixture,
@@ -157,6 +158,24 @@ describe("Ogg Opus headers", () => {
     );
     expect(result.contents.get("audio.bin")?.includes(0xab)).toBe(true);
     expect(result.contents.get("audio.bin")?.includes(0x41)).toBe(false);
+  });
+
+  it("inventories many OpusTags continuation pages without retaining packet copies", async () => {
+    const tagPages = 48;
+    const bytes = oggOpusManyTagsPagesFixture(tagPages);
+    const result = await read("ogg-opus", bytes, {
+      region_count: tagPages + 4,
+    });
+    expect(result.metadata).toMatchObject({
+      kind: "ogg-opus",
+      vendor: "short",
+      pages_read: tagPages + 2,
+      extent_check: "consistent",
+    });
+    expect(result.entries).toHaveLength(tagPages + 3);
+    const audio = result.contents.get("audio.bin");
+    expect(audio?.includes(0xab)).toBe(true);
+    expect(audio?.includes(0x5a)).toBe(false);
   });
 
   it("reports truncated when the first Ogg page payload is cut off", async () => {

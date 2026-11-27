@@ -156,31 +156,30 @@ interface OggPageCutOff {
   readonly requiredEnd: number;
 }
 
+/** One examined Ogg page: ranges only, so growing the read buffer can drop prior copies. */
+interface OggPageRecord {
+  readonly sequence: number;
+  readonly serial: number;
+  readonly headerType: number;
+  readonly offset: number;
+  readonly length: number;
+  readonly packetOffset: number;
+  readonly packetLength: number;
+  readonly continues: boolean;
+}
+
 /** One Ogg page's capture header and segment payload extent. */
 const readOggPage = (
   bytes: Buffer,
   at: number,
   fileSize: number,
-):
-  | {
-      readonly sequence: number;
-      readonly serial: number;
-      readonly granule: bigint;
-      readonly headerType: number;
-      readonly offset: number;
-      readonly length: number;
-      readonly packet: Buffer;
-      readonly continues: boolean;
-    }
-  | OggPageCutOff
-  | "malformed" => {
+): OggPageRecord | OggPageCutOff | "malformed" => {
   const available = Math.min(bytes.length, fileSize);
   if (at + 27 > available) return { kind: "truncated", requiredEnd: at + 27 };
   if (bytes.toString("latin1", at, at + 4) !== "OggS") return "malformed";
   if (bytes[at + 4] !== 0) return "malformed";
   const headerType = bytes[at + 5]!;
   const fields = new BinaryReader(bytes, true, "ogg-opus");
-  const granule = fields.word(at + 6, 64);
   const serial = fields.u32(at + 14);
   const sequence = fields.u32(at + 18);
   const segments = bytes[at + 26]!;
@@ -196,11 +195,11 @@ const readOggPage = (
   return {
     sequence,
     serial,
-    granule,
     headerType,
     offset: at,
     length,
-    packet: bytes.subarray(at + headerLength, at + length),
+    packetOffset: at + headerLength,
+    packetLength: packetBytes,
     continues: pagePacketContinues(bytes, at),
   };
 };
@@ -223,17 +222,9 @@ export const oggOpusLayout = async (
     return buffer;
   };
 
-  const pages: {
-    sequence: number;
-    serial: number;
-    headerType: number;
-    offset: number;
-    length: number;
-    packet: Buffer;
-    continues: boolean;
-  }[] = [];
+  const pages: OggPageRecord[] = [];
   /** Pages of the Opus stream that carry the OpusTags packet, in order. */
-  const tagsPages: (typeof pages)[number][] = [];
+  const tagsPages: OggPageRecord[] = [];
   const limitations: string[] = [];
   let at = 0;
   let cutOff: OggPageCutOff | undefined;
@@ -275,9 +266,13 @@ export const oggOpusLayout = async (
     }
 
     if (!tagsPacketOpen) {
+      const packet = buffer.subarray(
+        page.packetOffset,
+        page.packetOffset + page.packetLength,
+      );
       if (
-        page.packet.length >= OPUS_TAGS.length &&
-        page.packet.subarray(0, 8).equals(OPUS_TAGS)
+        packet.length >= OPUS_TAGS.length &&
+        packet.subarray(0, 8).equals(OPUS_TAGS)
       ) {
         tagsPacketOpen = true;
         pages.push(page);
@@ -332,18 +327,22 @@ export const oggOpusLayout = async (
     // A finished page still declared packet continuation past EOF.
     truncated = true;
 
-  const headPacket = pages[0]!.packet;
+  const headPage = pages[0]!;
+  const headPacket = buffer.subarray(
+    headPage.packetOffset,
+    headPage.packetOffset + headPage.packetLength,
+  );
   if (headPacket.length < 19 || !headPacket.subarray(0, 8).equals(OPUS_HEAD))
     throw malformed(
       "ogg-opus",
       "the first Ogg packet is not OpusHead",
-      pages[0]!.offset,
+      headPage.offset,
     );
   if (headPacket[8] !== 1)
     throw malformed(
       "ogg-opus",
       "OpusHead version is not 1",
-      pages[0]!.offset + 8,
+      headPage.offset + 8,
     );
 
   const head = new BinaryReader(headPacket, true, "ogg-opus");
@@ -358,7 +357,12 @@ export const oggOpusLayout = async (
     // Only the packet prefix that holds the vendor is assembled; comment
     // payloads, which may be large pictures, stay in their page regions.
     const tagsPrefix = packetPrefix(
-      tagsPages.map((page) => page.packet),
+      tagsPages.map((page) =>
+        buffer.subarray(
+          page.packetOffset,
+          page.packetOffset + page.packetLength,
+        ),
+      ),
       12 + MAX_VENDOR_BYTES,
     );
     if (tagsPrefix.length < 12)

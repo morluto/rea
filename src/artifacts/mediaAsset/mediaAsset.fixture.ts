@@ -144,6 +144,37 @@ export const oggOpusSpannedTagsFixture = (): Buffer => {
   ]);
 };
 
+/**
+ * OpusTags packet split across many full-sized pages. Page records must keep
+ * ranges only; retaining each growing Buffer.concat copy would pin O(n²) bytes.
+ */
+export const oggOpusManyTagsPagesFixture = (tagPages = 48): Buffer => {
+  const vendor = Buffer.from("short", "utf8");
+  // Enough payload that every tags page but the last carries a 255-byte segment.
+  const tags = Buffer.concat([
+    Buffer.from("OpusTags", "latin1"),
+    u32(vendor.length),
+    vendor,
+    u32(0),
+    Buffer.alloc(tagPages * 255, 0x5a),
+  ]);
+  const pages: Buffer[] = [oggPage(0, 0n, opusHeadPacket(), 2)];
+  let sequence = 1;
+  for (let offset = 0; offset < tags.length;) {
+    const take = Math.min(255, tags.length - offset);
+    const continued = offset > 0 ? 0x01 : 0;
+    pages.push(
+      oggPage(sequence, 0n, tags.subarray(offset, offset + take), continued, {
+        segmentSizes: [take],
+      }),
+    );
+    sequence += 1;
+    offset += take;
+  }
+  pages.push(oggPage(sequence, 960n, Buffer.from([0xab]), 4));
+  return Buffer.concat(pages);
+};
+
 /** RIFF WAVE with fmt tag 0x166 (XMA2WAVEFORMATEX, 52-byte fmt). */
 export const riffXma2Fixture = (dataBytes = 4096): Buffer => {
   const fmt = Buffer.concat([
