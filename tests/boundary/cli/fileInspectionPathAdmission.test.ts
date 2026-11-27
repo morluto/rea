@@ -37,13 +37,10 @@ const fileInspectionCommands = [
 /** The advertised local-path grammar spells NUL as `\x00`. */
 const nulFreePattern = "^[^\\x00]*$";
 
-let sharedCli: ReturnType<typeof createCli> | undefined;
-
 const serveJson = async (
   argv: readonly string[],
 ): Promise<{ exitCode: number; json: Record<string, unknown> }> => {
-  sharedCli ??= createCli({});
-  const result = await serveInProcessCli(sharedCli, [...argv, "--json"]);
+  const result = await serveInProcessCli(createCli({}), [...argv, "--json"]);
   return {
     exitCode: result.exitCode,
     json: JSON.parse(result.stdout) as Record<string, unknown>,
@@ -60,12 +57,8 @@ it.each(fileInspectionCommands)(
     expect(path, `${command} --schema`).toMatchObject({
       type: "string",
       minLength: 1,
+      pattern: nulFreePattern,
     });
-    expect(path.allOf, `${command} --schema`).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ pattern: nulFreePattern }),
-      ]),
-    );
 
     const rejected = await serveJson([command, "sample\x00.bin"]);
     expect(rejected.exitCode, command).toBe(1);
