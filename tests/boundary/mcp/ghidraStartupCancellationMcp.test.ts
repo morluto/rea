@@ -133,7 +133,9 @@ it.each([0, 1])(
       expect(staying.value.isError).not.toBe(true);
       expect(startResults[1 - cancelledIndex]).toMatchObject({ ok: true });
       expect(controllers[1 - cancelledIndex]?.signal.aborted).toBe(false);
-      const warm = await mcp.callTool({ name: "list_strings", arguments: {} });
+      // A repeat of list_strings would replay; a new read shows the engine
+      // is warm: it joins the completed startup and runs one query.
+      const warm = await mcp.callTool({ name: "list_names", arguments: {} });
       expect(warm.isError).not.toBe(true);
       expect(startCount).toBe(3);
       expect(queryCount).toBe(2);

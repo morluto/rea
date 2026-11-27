@@ -12,7 +12,10 @@ import {
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
+import {
+  jsonObjectSchema,
+  jsonValueSchema,
+} from "../../../src/domain/jsonValue.js";
 import { nativeLoadImageSchema } from "../../../src/domain/native/nativeLoadImage.js";
 import { nativeApiInspectionResultSchema } from "../../../src/domain/native/nativeApiBoundary.js";
 import type { NativePrototypeConflict } from "../../../src/domain/native/nativeApiBoundary.js";
@@ -71,8 +74,16 @@ it("retains complete load-image facts and pages selected relocations through the
     const summary = await call("inspect_native_load_image", {
       detail: "summary",
     });
+    // The summary request replays the retained observation; its parent is
+    // that replay record, which links the first complete observation.
+    const summaryParent = jsonObjectSchema.parse(
+      summary.normalized_result,
+    ).parent_evidence_id;
+    if (typeof summaryParent !== "string") throw new Error("Missing parent");
+    expect(harness.session.evidenceById(summaryParent)?.evidence_links).toEqual(
+      [complete.evidence_id],
+    );
     expect(summary.normalized_result).toMatchObject({
-      parent_evidence_id: complete.evidence_id,
       source_provider: complete.provider,
       source_analysis_profile_digest: complete.analysis_profile?.digest,
       source_parameters: complete.parameters,

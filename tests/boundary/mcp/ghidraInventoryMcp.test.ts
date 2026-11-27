@@ -481,9 +481,10 @@ it("retains defined-string coverage in empty and matching search Evidence", asyn
         },
       },
     ]);
+    // An unchanged query replays its retained answer, so ask a new one.
     const matched = await harness.mcp.callTool({
       name: "search_strings",
-      arguments: { pattern: "projection" },
+      arguments: { pattern: "projection cache" },
     });
     const evidence = sessionEvidence(
       harness.session,
@@ -728,7 +729,8 @@ it("returns a procedure once with the exact-entry names its search matched", asy
       row("0x1012a0", "SOURCE_ITEM_alias", ["source_item_primary"]),
       row("0x101380", "ſource_item_plain"),
     ]);
-    const unnarrowed = await search({ pattern: "source_item" });
+    // An unchanged query replays its retained answer; this prefix folds the same.
+    const unnarrowed = await search({ pattern: "source_ite" });
     expect(unnarrowed.normalized_result).toEqual(output);
     expect(unnarrowed.raw_result).toBeNull();
     expect(unnarrowed.limitations).not.toContain(
@@ -744,7 +746,8 @@ it("returns a procedure once with the exact-entry names its search matched", asy
       ]),
       row("0x101380", "ſource_item_plain"),
     ]);
-    const aliasNarrowed = await search({ pattern: "source_item" });
+    // Another prefix that folds the same, so this query is not a replay.
+    const aliasNarrowed = await search({ pattern: "source_it" });
     expect(aliasNarrowed.normalized_result).toEqual([
       row("0x1012a0", "source_item_alias", ["source_item_primary"]),
       row("0x101380", "ſource_item_plain"),
@@ -771,7 +774,8 @@ it("returns a procedure once with the exact-entry names its search matched", asy
         value: row("0x1012a0", "source_item_alias", []),
       },
       {
-        arguments: { pattern: "source_item" },
+        // A query this session has not answered, so it reaches the bridge.
+        arguments: { pattern: "source_i" },
         value: {
           ...row("0x101440", "unrelated"),
           procedure: { external: null },

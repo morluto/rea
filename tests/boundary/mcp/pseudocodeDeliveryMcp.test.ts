@@ -122,7 +122,16 @@ it("retains a complete pseudocode observation once and pages its exact text thro
     expect(
       contract.outputSchema.safeParse(complete.structuredContent).success,
     ).toBe(true);
-    expect(parseEvidence(complete.structuredContent)).toEqual(parent);
+    // The provider is not asked again: the repeat is a replay record that
+    // links the retained observation and says so.
+    const replayed = parseEvidence(complete.structuredContent);
+    expect(replayed.normalized_result).toEqual(parent.normalized_result);
+    expect(replayed.evidence_links).toEqual([parent.evidence_id]);
+    expect(replayed.limitations).toEqual([
+      ...parent.limitations,
+      "Loaded from a local REA analysis snapshot; this call did not re-run the provider.",
+    ]);
+    expect(calls).toEqual(executions);
   }
 });
 
