@@ -956,6 +956,7 @@
 * **cli:** extract contractCommandRunners from contractCommand ([#13869](https://github.com/morluto/rea/issues/13869)) ([39ddf00](https://github.com/morluto/rea/commit/39ddf00236d0eecb452647a654db623a4f057c83))
 * **cli:** extract contractDocumentCommand from contractCommand ([#13782](https://github.com/morluto/rea/issues/13782)) ([3c5c652](https://github.com/morluto/rea/commit/3c5c6522b5d24aefd5fa3ba67c64adc2c18c2e63))
 * **cli:** extract routedContractCommand from contractCommand ([#13837](https://github.com/morluto/rea/issues/13837)) ([4707f45](https://github.com/morluto/rea/commit/4707f45ac240313e928c0ac304edcb33885c0ff2)), refs [#13836](https://github.com/morluto/rea/issues/13836)
+* **cli:** share cleanup for retained resource scopes ([#14811](https://github.com/morluto/rea/issues/14811)) ([5fc98e7](https://github.com/morluto/rea/commit/5fc98e7e1853ec121d8db37cef306f6f3ec8ffd3))
 * **cli:** share CLI-only option projection ([#14528](https://github.com/morluto/rea/issues/14528)) ([7b0e633](https://github.com/morluto/rea/commit/7b0e633bc430860f52444b5f41404639ab30daed))
 * **cli:** share common command registrar calls ([#14493](https://github.com/morluto/rea/issues/14493)) ([9b86dc2](https://github.com/morluto/rea/commit/9b86dc2fa8e0b53244a51df867b896f19e06c86f))
 * **cli:** share compiled runtime checks with the session worker ([#14557](https://github.com/morluto/rea/issues/14557)) ([0bbdbea](https://github.com/morluto/rea/commit/0bbdbeaedf3d73bd9dba2d2e4801c68725e3aa1e))
