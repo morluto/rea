@@ -4,8 +4,8 @@ import {
   webPageInspectionSchema,
   type WebPageInspection,
 } from "../browserObservationSchemas.js";
-import { err, ok } from "../result.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { ok } from "../result.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import {
   createAnalysisViewResultReader,
   type AnalysisViewParent,
@@ -317,15 +317,7 @@ export const projectWebPageView = (
   selected: AdmittedView,
 ) => {
   if (selected.kind !== "web-page" && selected.kind !== "summary")
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view", "kind"],
-          reason: "invalid_value",
-          message: "Select a web-page or summary view.",
-        },
-      ]),
-    );
+    return invalidAnalysisView("Select a web-page or summary view.", "kind");
   assertOwnedView<SummaryAnalysisView | WebPageView>(
     selected,
     "summary",
@@ -362,17 +354,11 @@ export const projectWebPageView = (
     );
     const source = script?.source;
     if (source?.included !== true)
-      return err(
-        analysisViewInputError([
-          {
-            path: ["view", "script_key"],
-            reason: "invalid_value",
-            message:
-              source === undefined
-                ? "No script with this script_key was captured; list scripts first."
-                : `Script source was not captured: ${source.reason}`,
-          },
-        ]),
+      return invalidAnalysisView(
+        source === undefined
+          ? "No script with this script_key was captured; list scripts first."
+          : `Script source was not captured: ${source.reason}`,
+        "script_key",
       );
     const text = analysisTextPage(
       source.artifact.text,

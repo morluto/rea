@@ -101,14 +101,10 @@ const selectNamed = <Row extends { readonly name: LayoutName }>(
     if (selected !== undefined) return ok(selected.row);
   }
   if (matches.length === 0)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view", "selector", "name"],
-          reason: "invalid_value",
-          message: `No ${collection} named ${JSON.stringify(name)}. Collection has ${String(rows.length)} entries; page it to inspect exact indexes and names.`,
-        },
-      ]),
+    return invalidAnalysisView(
+      `No ${collection} named ${JSON.stringify(name)}. Collection has ${String(rows.length)} entries; page it to inspect exact indexes and names.`,
+      "selector",
+      "name",
     );
   return err(
     analysisViewInputError([
@@ -130,14 +126,10 @@ const selectIndexed = <Row>(
   const row = rows[index];
   if (row !== undefined) return ok(row);
   if (rows.length === 0)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view", "selector", "index"],
-          reason: "invalid_value",
-          message: `No retained ${collection} entries can be selected by index.`,
-        },
-      ]),
+    return invalidAnalysisView(
+      `No retained ${collection} entries can be selected by index.`,
+      "selector",
+      "index",
     );
   return err(
     analysisViewInputError([

@@ -1,7 +1,6 @@
 import { filterSet, selectViewRows } from "./selectViewRows.js";
 import { z } from "zod";
 import {
-  analysisViewInputError,
   invalidAnalysisViewSubject,
   invalidAnalysisView,
 } from "./analysisViewErrors.js";
@@ -28,7 +27,7 @@ import {
   il2cppMetadataBinaryCollections,
   il2cppMetadataTypeSchema,
 } from "../il2cpp/il2cppMetadata.js";
-import { err, ok, type Result } from "../result.js";
+import { ok, type Result } from "../result.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
@@ -659,25 +658,14 @@ export const projectIl2cppMetadataView = (
     ].includes(view.collection);
   const rows = nativeUnavailable ? undefined : allRows[view.collection];
   if (rows === null)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view", "collection"],
-          reason: "invalid_value",
-          message:
-            "Generic method instances were not requested for this Evidence, so they are unknown; inspect again with generic_instances and binary_path.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Generic method instances were not requested for this Evidence, so they are unknown; inspect again with generic_instances and binary_path.",
+      "collection",
     );
   if (rows === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view", "collection"],
-          reason: "invalid_value",
-          message: `Retained Evidence did not collect ${view.collection}; inspect the metadata again to acquire these facts.`,
-        },
-      ]),
+    return invalidAnalysisView(
+      `Retained Evidence did not collect ${view.collection}; inspect the metadata again to acquire these facts.`,
+      "collection",
     );
   const matches = selection(view, report);
   const selectedFields = filterSet<string>(view.fields);
