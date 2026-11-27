@@ -1,3 +1,4 @@
+import { posix } from "node:path";
 import { accountZipMemberRegion } from "../domain/zip/zipMemberRegion.js";
 import {
   decodeLimit,
@@ -311,8 +312,7 @@ const packageJsonEntryDirectoryOnly = (value: unknown): boolean => {
 
 /**
  * Suffixes tried after the declared path, in order. VS Code loads `main`
- * through Node's CommonJS file and directory lookup, and the web extension
- * host adds `.js` to a `browser` entry that lacks it.
+ * through Node's CommonJS file and directory lookup.
  */
 const NODE_FILE_CANDIDATES = ["", ".js", ".json", ".node"] as const;
 const NODE_INDEX_CANDIDATES = [
@@ -320,7 +320,6 @@ const NODE_INDEX_CANDIDATES = [
   "/index.json",
   "/index.node",
 ] as const;
-const BROWSER_ENTRY_CANDIDATES = ["", ".js"] as const;
 
 /**
  * The member an entry point resolves to, or the declared path when none.
@@ -1281,16 +1280,16 @@ export const parseVsixPackage = async (
               mainDirectoryMain,
               mainDirectoryOnly,
             );
+    // The web host fetches one URI, adding .js only when its path lacks
+    // an extension. The same candidate owns exact and case-only matching.
+    const browserSuffix =
+      browserPath !== null && posix.extname(browserPath) === "" ? ".js" : "";
     const browserEntry =
       browserDeclared === null
         ? null
         : browserPath === null
           ? { path: browserDeclared.path, present: false }
-          : resolveEntryPoint(
-              browserPath,
-              BROWSER_ENTRY_CANDIDATES,
-              memberPaths,
-            );
+          : resolveEntryPoint(browserPath, [browserSuffix], memberPaths);
     const foldedMemberPaths = new Map(
       files.map((file) => [file.path.toLowerCase(), file.path]),
     );
@@ -1309,11 +1308,7 @@ export const parseVsixPackage = async (
             : NODE_INDEX_CANDIDATES),
         ],
       ],
-      [
-        browserPath === null ? null : browserEntry,
-        undefined,
-        BROWSER_ENTRY_CANDIDATES,
-      ],
+      [browserPath === null ? null : browserEntry, undefined, [browserSuffix]],
     ] as const) {
       if (entry === null || entry.present) continue;
       const backslashPath = entry.path.includes("\\")
