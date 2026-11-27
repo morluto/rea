@@ -8,20 +8,57 @@ import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
+  EVTX_ARCHIVE_MAX_FILE_BYTES,
   EVTX_ARCHIVE_OPERATION as operation,
   EVTX_ARCHIVE_PROVIDER,
   type EvtxArchive,
   type EvtxArchiveArtifact,
 } from "../../domain/evtxArchive/evtxArchive.js";
 import {
+  evtxArchiveBudgetLimit,
   inspectEvtxArchiveInputSchema,
   type InspectEvtxArchiveInput,
 } from "../../domain/evtxArchive/evtxArchiveQuery.js";
 import { parseEvtxArchive } from "../../domain/evtxArchive/parseEvtxArchive.js";
+import type { AnalysisParameterLimit } from "../../domain/analysisSettings.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+
+/**
+ * The `max_file_bytes` control that refused the read, carrying the size the
+ * caller would have needed so recovery can name a sufficient value.
+ */
+const fileSizeBudgetLimit = (
+  input: InspectEvtxArchiveInput,
+  observedBytes: bigint | undefined,
+): AnalysisParameterLimit => ({
+  ...evtxArchiveBudgetLimit("max_file_bytes", input.max_file_bytes),
+  ...(observedBytes === undefined ||
+  observedBytes > BigInt(Number.MAX_SAFE_INTEGER)
+    ? {}
+    : { required_value: Number(observedBytes) }),
+});
+
+const fileSizeRecovery = (
+  input: InspectEvtxArchiveInput,
+  observedBytes: bigint | undefined,
+): string => {
+  const ceiling = EVTX_ARCHIVE_MAX_FILE_BYTES;
+  if (input.max_file_bytes >= ceiling)
+    return `max_file_bytes is already at its ${String(ceiling)}-byte ceiling; select a log no larger than that. Reply paging does not change this file admission.`;
+  const needed =
+    observedBytes === undefined ||
+    observedBytes > BigInt(Number.MAX_SAFE_INTEGER)
+      ? undefined
+      : Number(observedBytes);
+  const raise =
+    needed !== undefined && needed <= ceiling
+      ? `Raise max_file_bytes to at least ${String(needed)} (up to ${String(ceiling)})`
+      : `Raise max_file_bytes above ${String(input.max_file_bytes)} (up to ${String(ceiling)})`;
+  return `${raise}, or select a smaller log. The change applies on the next call; repeating the unchanged request does not raise it.`;
+};
 
 /**
  * The shared owner classifies the file read's typed reasons; this dialect only
@@ -34,17 +71,23 @@ const readFailure = (failure: unknown, input: InspectEvtxArchiveInput) =>
     file: {
       path: input.path,
       description: "event log",
-      fileSize: (limit, details) =>
+      fileSize: (refusal, details) =>
         new AnalysisResourceConstraintError(
           operation,
           "file-size",
-          limit.message,
-          { max_file_bytes: input.max_file_bytes },
+          refusal.message,
+          {
+            max_file_bytes: input.max_file_bytes,
+            ...(refusal.observedBytes === undefined ||
+            refusal.observedBytes > BigInt(Number.MAX_SAFE_INTEGER)
+              ? {}
+              : { observed_file_bytes: Number(refusal.observedBytes) }),
+          },
           {
             ...details,
             retryable: false,
-            remediationAction:
-              "Select a log within max_file_bytes; reply paging does not change this file admission.",
+            limit: fileSizeBudgetLimit(input, refusal.observedBytes),
+            remediationAction: fileSizeRecovery(input, refusal.observedBytes),
           },
         ),
     },
