@@ -24,7 +24,9 @@ paths must be absolute.
   `vmaddr` of the first declared `__TEXT` segment, which need not have file
   bytes, as `llvm-objdump --function-starts` does. A zero delta ends the list.
   Zero bytes after that terminator are padding. A sum past the image's 32- or
-  64-bit address space is a wrapped start.
+  64-bit address space is a wrapped start. dyld adds the deltas to the
+  `mach_header` address instead. The two agree when `__TEXT` maps file offset 0. When it doesn't, `coverage.text_not_at_header` is 1 and coverage is
+  `partial`, because the base is disputed.
 - On 32-bit ARM, ld64 sets bit 0 of a Thumb start and takes the next delta
   from that tagged value. `vmaddr` clears that bit, as LLDB does, and `thumb`
   records whether it was set. Other architectures omit `thumb`.
@@ -43,7 +45,8 @@ paths must be absolute.
   counts duplicate commands, commands whose `cmdsize` is not 16, tables outside
   `__LINKEDIT`, commands that extend past the file, truncated or overflowing
   ULEB128, wrapped addresses, addresses outside every executable segment, a
-  missing `__TEXT` anchor, nonzero bytes after the terminator, a data tail
+  missing `__TEXT` anchor, a `__TEXT` that does not map the `mach_header` at
+  file offset 0, nonzero bytes after the terminator, a data tail
   shorter than 8 bytes, entries that leave their section, offsets that are not
   strictly increasing, offsets outside every segment, and zero lengths. Any of
   those counters makes `coverage.status` `partial`.

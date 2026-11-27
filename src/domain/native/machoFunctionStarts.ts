@@ -54,6 +54,8 @@ export const MACHO_FUNCTION_STARTS_LIMITATIONS = {
   outOfText:
     "A function start is outside every executable segment; later deltas were not decoded.",
   missingText: "LC_FUNCTION_STARTS has no __TEXT segment to anchor its deltas.",
+  textNotAtHeader:
+    "__TEXT does not map the mach_header at file offset 0. Starts are anchored on its vmaddr, as llvm-objdump does; dyld adds the deltas to the mach_header address, which may differ here.",
   trailing: "Bytes after the LC_FUNCTION_STARTS terminator are not zero.",
   startsPastFile:
     "LC_FUNCTION_STARTS extends past the file; only in-file bytes were decoded.",
@@ -133,13 +135,29 @@ export type InspectMachoFunctionStartsInput = z.infer<
   typeof inspectMachoFunctionStartsInputSchema
 >;
 
-const DICE_KINDS = [
-  "DICE_KIND_DATA",
-  "JUMP_TABLE8",
-  "JUMP_TABLE16",
-  "JUMP_TABLE32",
-  "ABS_JUMP_TABLE32",
-] as const;
+/**
+ * `data_in_code_entry.kind` values named in <mach-o/loader.h>
+ * (`DICE_KIND_DATA` through `DICE_KIND_ABS_JUMP_TABLE32`), the same five that
+ * dyld's `mach_o::DataInCode` accepts. Any other value is reported as its
+ * number. The reader, the schema and the report check share this table.
+ */
+export const MACHO_DICE_KIND_NAMES = {
+  1: "DICE_KIND_DATA",
+  2: "JUMP_TABLE8",
+  3: "JUMP_TABLE16",
+  4: "JUMP_TABLE32",
+  5: "ABS_JUMP_TABLE32",
+} as const;
+const DICE_KINDS = Object.values(MACHO_DICE_KIND_NAMES) as [
+  (typeof MACHO_DICE_KIND_NAMES)[keyof typeof MACHO_DICE_KIND_NAMES],
+  ...(typeof MACHO_DICE_KIND_NAMES)[keyof typeof MACHO_DICE_KIND_NAMES][],
+];
+
+/** The reported `kind` of one raw `data_in_code_entry.kind`. */
+export const machoDataInCodeKind = (raw: number): MachoDataInCode["kind"] =>
+  Object.hasOwn(MACHO_DICE_KIND_NAMES, raw)
+    ? MACHO_DICE_KIND_NAMES[raw as keyof typeof MACHO_DICE_KIND_NAMES]
+    : raw;
 
 const startIssueSchema = z.enum(["wrapped", "out_of_text"]);
 const dataIssueSchema = z.enum([
@@ -218,6 +236,8 @@ export const machoFunctionStartsSchema = z.strictObject({
     non_monotonic: uint,
     out_of_text: uint,
     missing_text_anchor: uint,
+    /** 1 when __TEXT does not map file offset 0, so the delta base is disputed. */
+    text_not_at_header: uint,
     trailing_nonzero: uint,
     data_trailing_bytes: uint,
     section_crossings: uint,
@@ -255,6 +275,7 @@ export const machoFunctionStartsHasIssues = (
     coverage.non_monotonic +
     coverage.out_of_text +
     coverage.missing_text_anchor +
+    coverage.text_not_at_header +
     coverage.trailing_nonzero +
     coverage.data_trailing_bytes +
     coverage.section_crossings +

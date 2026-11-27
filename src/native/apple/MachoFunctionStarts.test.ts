@@ -29,6 +29,13 @@ const hex = (value: bigint): string => `0x${value.toString(16)}`;
 const ARM = functionStartAddresses(ARM64_DELTAS).map(hex);
 const X64 = functionStartAddresses(X64_DELTAS).map(hex);
 
+it("pins the fixture's expected starts to literal addresses", () => {
+  // The decoder and `functionStartAddresses` both accumulate deltas, so the
+  // shared expectation is checked once against hand-computed values.
+  expect(ARM).toEqual(["0x100001000", "0x100001100", "0x100001200"]);
+  expect(X64).toEqual(["0x100001000", "0x100001200"]);
+});
+
 const parse = (
   bytes: Buffer,
   raw: Readonly<Record<string, unknown>> = {},
@@ -63,6 +70,7 @@ const quiet = {
   non_monotonic: 0,
   out_of_text: 0,
   missing_text_anchor: 0,
+  text_not_at_header: 0,
   trailing_nonzero: 0,
   data_trailing_bytes: 0,
   section_crossings: 0,
@@ -816,16 +824,24 @@ it("anchors deltas on a declared __TEXT with no file bytes", async () => {
       starts: { deltas: [0x10000n, 0x40n] },
     }),
   );
+  // dyld would add the deltas to the mach_header address instead, and this
+  // __TEXT does not map it, so the base is reported as disputed.
   expect(report.coverage).toMatchObject({
-    status: "complete",
+    status: "partial",
     total_starts: 2,
     missing_text_anchor: 0,
+    text_not_at_header: 1,
     out_of_text: 0,
   });
+  expect(report.limitations).toContain(TEXT.textNotAtHeader);
   expect(report.starts.map((start) => start.vmaddr)).toEqual([
     hex(exec),
     hex(exec + 0x40n),
   ]);
+  // The usual layout, __TEXT mapping file offset 0, is not disputed.
+  const usual = await parse(arm64FunctionStartsImage());
+  expect(usual.coverage.text_not_at_header).toBe(0);
+  expect(usual.limitations).not.toContain(TEXT.textNotAtHeader);
 });
 
 it("builds only the requested page and still resolves owners on later pages", async () => {

@@ -5,6 +5,7 @@ import type { Evidence } from "../../domain/evidence.js";
 import {
   MACHO_FUNCTION_STARTS_LIMITATIONS,
   inspectMachoFunctionStartsInputSchema,
+  machoDataInCodeKind,
   machoFunctionStartsHasIssues,
   machoFunctionStartsSchema,
   type InspectMachoFunctionStartsInput,
@@ -17,7 +18,6 @@ import type { Result } from "../../domain/result.js";
 import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
 
 const OPERATION = "inspect_macho_function_starts";
-const NAMED_KINDS = new Set([1, 2, 3, 4, 5]);
 
 /** Shared caller validation, output parsing and Evidence provenance for CLI/MCP. */
 export class MachoFunctionStartsService {
@@ -111,9 +111,9 @@ const commandAgrees = (
     : (command.dataoff === null) === (command.datasize === null) &&
       (command.dataoff === null || typeof command.in_linkedit === "boolean");
 
+/** A numeric kind must be one the shared table leaves unnamed. */
 const kindAgrees = (kind: MachoDataInCode["kind"]): boolean =>
-  typeof kind === "string" ||
-  (typeof kind === "number" && !NAMED_KINDS.has(kind));
+  typeof kind === "string" || machoDataInCodeKind(kind) === kind;
 
 /** The counts and page the reader reports must agree with each other. */
 const validReport = (

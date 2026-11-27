@@ -20,6 +20,7 @@ import type { MachoSegmentDeclaration } from "../../domain/binaryContainer.js";
 import { readLeb128, ULEB64 } from "../../domain/leb128.js";
 import {
   MACHO_FUNCTION_STARTS_LIMITATIONS as TEXT,
+  machoDataInCodeKind,
   machoFunctionStartsHasIssues,
   type InspectMachoFunctionStartsInput,
   type MachoDataInCode,
@@ -48,17 +49,11 @@ const DATA_ENTRY_BYTES = 8;
 const YIELD_EVERY = 4096;
 /** Largest address a 32- or 64-bit image can name; a larger sum wrapped. */
 const addressMask = (bits: 32 | 64): bigint => (1n << BigInt(bits)) - 1n;
-/** CPU_TYPE_ARM. Its function starts tag Thumb code with bit 0. */
+/** CPU_TYPE_ARM (<mach/machine.h>). Its function starts tag Thumb code with bit 0. */
 const CPU_TYPE_ARM = 12;
+/** VM_PROT_EXECUTE (<mach/vm_prot.h>). */
+const VM_PROT_EXECUTE = 4;
 const NO_ISSUES: MachoFunctionStart["issues"] = Object.freeze([]) as never;
-
-const DICE_KIND_NAMES = {
-  1: "DICE_KIND_DATA",
-  2: "JUMP_TABLE8",
-  3: "JUMP_TABLE16",
-  4: "JUMP_TABLE32",
-  5: "ABS_JUMP_TABLE32",
-} as const;
 
 const hex = (value: bigint): string => `0x${value.toString(16)}`;
 
@@ -106,40 +101,59 @@ const smallestSection = (
   address: bigint,
 ): SectionSpan | null => lookupInterval(index, address) ?? null;
 
-const insideLinkedit = (
-  linkedit: LinkeditRange | undefined,
-  dataoff: number,
-  datasize: number,
-): boolean => {
-  if (linkedit === undefined) return false;
-  if (datasize > 0 && dataoff > 0xffffffff - datasize) return false;
-  const start = BigInt(dataoff);
-  const end = start + BigInt(datasize);
-  return (
-    start >= linkedit.fileOffset &&
-    end <= linkedit.fileOffset + linkedit.fileSize
-  );
-};
+/**
+ * `linkedit_data_command.dataoff` and `datasize` are `uint32_t`
+ * (<mach-o/loader.h>), and so is a FAT32 slice offset, so an end or
+ * container offset above this does not name a byte of a 32-bit file.
+ */
+const UINT32_MAX = 0xffffffff;
 
-const blobPastFile = (
+/** One command's declared blob, normalized once against the selected slice. */
+interface DeclaredBlob {
+  readonly dataoff: number;
+  readonly datasize: number;
+  readonly end: number;
+  /** `dataoff + datasize` fits the 32-bit field width. */
+  readonly endFits: boolean;
+  /** Declared bytes that lie inside the slice. */
+  readonly available: number;
+}
+
+const declaredBlob = (
   sliceSize: number,
   dataoff: number,
   datasize: number,
-): boolean =>
-  (datasize > 0 && dataoff > 0xffffffff - datasize) ||
-  dataoff > sliceSize ||
-  dataoff + datasize > sliceSize;
-
-const readDeclaredBlob = async (
-  source: ByteSource,
-  dataoff: number,
-  datasize: number,
-): Promise<Buffer> => {
-  if (datasize === 0 || dataoff >= source.size) return Buffer.alloc(0);
-  const available = Math.min(datasize, source.size - dataoff);
-  const bytes = await readByteSourceSlice(source, dataoff, available);
-  return bytes;
+): DeclaredBlob => {
+  const end = dataoff + datasize;
+  return {
+    dataoff,
+    datasize,
+    end,
+    endFits: end <= UINT32_MAX,
+    available:
+      dataoff >= sliceSize ? 0 : Math.min(datasize, sliceSize - dataoff),
+  };
 };
+
+const insideLinkedit = (
+  linkedit: LinkeditRange | undefined,
+  blob: DeclaredBlob,
+): boolean =>
+  linkedit !== undefined &&
+  blob.endFits &&
+  BigInt(blob.dataoff) >= linkedit.fileOffset &&
+  BigInt(blob.end) <= linkedit.fileOffset + linkedit.fileSize;
+
+const blobPastSlice = (sliceSize: number, blob: DeclaredBlob): boolean =>
+  !blob.endFits || blob.end > sliceSize;
+
+const readDeclaredBlob = (
+  source: ByteSource,
+  blob: DeclaredBlob,
+): Promise<Buffer> =>
+  blob.available === 0
+    ? Promise.resolve(Buffer.alloc(0))
+    : readByteSourceSlice(source, blob.dataoff, blob.available);
 
 interface LoadedTable {
   readonly record: MachoFunctionStarts["function_starts"];
@@ -177,10 +191,9 @@ const loadTable = async (
   for (const match of matches) {
     if (match.size !== LINKEDIT_COMMAND_BYTES) misSized += 1;
     if (match.dataOffset === null || match.dataSize === null) continue;
-    if (!insideLinkedit(linkedit, match.dataOffset, match.dataSize))
-      outside += 1;
-    if (blobPastFile(source.size, match.dataOffset, match.dataSize))
-      pastFile += 1;
+    const blob = declaredBlob(source.size, match.dataOffset, match.dataSize);
+    if (!insideLinkedit(linkedit, blob)) outside += 1;
+    if (blobPastSlice(source.size, blob)) pastFile += 1;
   }
   if (first.dataOffset === null || first.dataSize === null)
     return {
@@ -192,29 +205,26 @@ const loadTable = async (
       bytes: Buffer.alloc(0),
       declared: 0,
     };
-  const { dataOffset, dataSize } = first;
-  const declaredPastFile = blobPastFile(source.size, dataOffset, dataSize);
-  const bytes = await readDeclaredBlob(source, dataOffset, dataSize);
-  const available =
-    dataOffset >= source.size
-      ? 0
-      : Math.min(dataSize, source.size - dataOffset);
-  if (!declaredPastFile && bytes.length < available) pastFile += 1;
-  const container = sliceFileOffset + dataOffset;
+  const blob = declaredBlob(source.size, first.dataOffset, first.dataSize);
+  const bytes = await readDeclaredBlob(source, blob);
+  // A short read of bytes the slice declares is also a truncated table.
+  if (!blobPastSlice(source.size, blob) && bytes.length < blob.available)
+    pastFile += 1;
+  const container = sliceFileOffset + blob.dataoff;
   return {
     record: {
       status: "present",
-      dataoff: dataOffset,
-      datasize: dataSize,
-      file_offset: container <= 0xffffffff ? container : null,
-      in_linkedit: insideLinkedit(linkedit, dataOffset, dataSize),
+      dataoff: blob.dataoff,
+      datasize: blob.datasize,
+      file_offset: container <= UINT32_MAX ? container : null,
+      in_linkedit: insideLinkedit(linkedit, blob),
     },
     misSized,
     duplicate,
     outside,
     pastFile,
     bytes,
-    declared: dataSize,
+    declared: blob.datasize,
   };
 };
 
@@ -314,9 +324,6 @@ const fileOffsetAddress = (
   return delta === undefined || delta === null ? null : BigInt(offset) + delta;
 };
 
-const kindOf = (kind: number): MachoDataInCode["kind"] =>
-  DICE_KIND_NAMES[kind as keyof typeof DICE_KIND_NAMES] ?? kind;
-
 /** A data-in-code entry on the returned page, before its owner is resolved. */
 type PagedDataInCode = Omit<MachoDataInCode, "owner"> & {
   readonly address: bigint | null;
@@ -381,7 +388,7 @@ const decodeData = async (
       vmaddr: vmaddr === null ? null : hex(vmaddr),
       address: vmaddr,
       length,
-      kind: kindOf(reader.u16(at + 6)),
+      kind: machoDataInCodeKind(reader.u16(at + 6)),
       section: span?.name ?? null,
       issues,
     });
@@ -435,9 +442,12 @@ class OwnerResolver {
   }
 }
 
-/** A segment the loader maps executable, by its initial protection. */
+/**
+ * A segment the loader maps executable, by its initial protection. The shared
+ * reader never makes __PAGEZERO a load region, and neither does this check.
+ */
 const executableSegment = (segment: MachoSegmentDeclaration): boolean =>
-  (segment.protection & 4) !== 0 && segment.name !== "__PAGEZERO";
+  (segment.protection & VM_PROT_EXECUTE) !== 0 && segment.name !== "__PAGEZERO";
 
 /** Indexes `[from, to)` of one table that the caller's page selects. */
 const pageRange = (
@@ -562,6 +572,16 @@ export const parseMachoFunctionStartsFromHandle = async (
     text === undefined
       ? 1
       : 0;
+  // ld64 and llvm-objdump take the deltas from the __TEXT vmaddr, and dyld
+  // from the mach_header address. They agree only when __TEXT maps file
+  // offset 0, so otherwise the base is reported as disputed.
+  const textNotAtHeader =
+    missingText === 0 &&
+    text !== undefined &&
+    startsTable.declared > 0 &&
+    (text.file_offset !== 0n || text.file_size === 0n)
+      ? 1
+      : 0;
   const includeStarts = input.kind !== "data";
   const includeData = input.kind !== "starts";
   const sectionIndex = indexSmallestSections(sections);
@@ -633,6 +653,7 @@ export const parseMachoFunctionStartsFromHandle = async (
     non_monotonic: decoded.wrapped ? 1 : 0,
     out_of_text: decoded.outOfText ? 1 : 0,
     missing_text_anchor: missingText,
+    text_not_at_header: textNotAtHeader,
     trailing_nonzero: decoded.trailingNonzero ? 1 : 0,
     data_trailing_bytes: dataTable.bytes.length % DATA_ENTRY_BYTES,
     section_crossings: data.crossings,
@@ -656,6 +677,7 @@ export const parseMachoFunctionStartsFromHandle = async (
     ...(decoded.wrapped ? [TEXT.wrapped] : []),
     ...(decoded.outOfText ? [TEXT.outOfText] : []),
     ...(missingText === 1 ? [TEXT.missingText] : []),
+    ...(textNotAtHeader === 1 ? [TEXT.textNotAtHeader] : []),
     ...(decoded.trailingNonzero ? [TEXT.trailing] : []),
     ...(startsTable.pastFile > 0 ? [TEXT.startsPastFile] : []),
     ...(dataTable.pastFile > 0 ? [TEXT.dataPastFile] : []),
