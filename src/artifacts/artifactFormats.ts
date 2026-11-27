@@ -73,6 +73,10 @@ import {
   GpuAssetArtifactReader,
   type GpuAssetFormat,
 } from "./gpuAsset/GpuAssetArtifactReader.js";
+import {
+  MediaAssetArtifactReader,
+  type MediaAssetFormat,
+} from "./mediaAsset/MediaAssetArtifactReader.js";
 
 /** How inventory describes a format when no reader was constructed. */
 export type AbsentInventory = "platform" | "universal" | "unavailable" | "root";
@@ -284,6 +288,24 @@ const gpuAsset = <Id extends GpuAssetFormat>(id: Id) =>
       new GpuAssetArtifactReader(path, id, sourceOf(options)),
   });
 
+/** Media asset containers: declared header facts and stored regions, nothing decoded. */
+const mediaAsset = <Id extends MediaAssetFormat>(id: Id) =>
+  container(id, {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "Media asset inventory reports declared header fields and the byte regions they name. Audio, video and pipeline-cache payloads are not decoded.",
+    createReader: (path, options) =>
+      new MediaAssetArtifactReader(
+        path,
+        id,
+        sourceOf(options),
+        options.readerLimits?.media_asset,
+      ),
+  });
+
 const switchExecutable = <Id extends "nso" | "nro">(id: Id) =>
   container(id, {
     roleContainer: true,
@@ -490,6 +512,10 @@ const NON_ZIP_FORMATS = {
   glb: gpuAsset("glb"),
   ktx: gpuAsset("ktx"),
   ktx2: gpuAsset("ktx2"),
+  "ogg-opus": mediaAsset("ogg-opus"),
+  "riff-xma2": mediaAsset("riff-xma2"),
+  bink2: mediaAsset("bink2"),
+  "vulkan-pipeline-cache": mediaAsset("vulkan-pipeline-cache"),
   uimage: container("uimage", {
     roleContainer: true,
     retainClassifiedSource: true,
