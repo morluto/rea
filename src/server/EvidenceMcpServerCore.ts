@@ -581,9 +581,9 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     return {
       tools,
       discoveryAvailable,
-      canDiscoverTool: (name) =>
-        discoveryAvailable &&
-        this.progressiveCatalog?.canDiscoverTool(name) === true,
+      ...(discoveryAvailable && this.progressiveCatalog !== undefined
+        ? { unloadedTools: this.progressiveCatalog.unloadedTools() }
+        : {}),
     };
   }
 

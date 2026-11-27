@@ -18,10 +18,10 @@ import {
 import { unknownTarget } from "../domain/targetIdentity.js";
 import { analysisErrorProjectionSchema } from "../domain/analysisErrorProjectionSchema.js";
 import { transportClosedByOwner } from "./transportOwnerClose.js";
-import { DISCOVERY_REFRESH_GUIDANCE } from "../contracts/catalog/catalogDiscovery.js";
 import { ForwardingTransport } from "./ForwardingTransport.js";
 import {
   formatUnknownMcpToolMessage,
+  formatUnloadedMcpToolMessage,
   type AdvertisedToolCatalog,
 } from "./toolCatalogSearch.js";
 import {
@@ -905,15 +905,30 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
       recovered.error.code !== -32602
     )
       return recovered;
-    const messageText = recovered.error.message;
-    const disabled = messageText === `Tool ${tool} disabled`;
-    if (!disabled && messageText !== `Tool ${tool} not found`) return recovered;
-    const catalog = this.currentAdvertisedTools();
-    if (disabled && !catalog.canDiscoverTool?.(tool)) return recovered;
-    const hint = disabled
-      ? `The MCP tool ${tool} is in scope but was not loaded. Call discover_tools with ${JSON.stringify({ names: [tool] })}, then retry. ${DISCOVERY_REFRESH_GUIDANCE}`
-      : formatUnknownMcpToolMessage(tool, catalog);
-    return { ...recovered, error: { ...recovered.error, message: hint } };
+    // The SDK rejects a disabled registration before any handler runs. In a
+    // dynamic catalog that is an in-scope tool the caller has not loaded yet.
+    if (
+      recovered.error.message === `Tool ${tool} disabled` &&
+      this.currentAdvertisedTools().unloadedTools?.has(tool) === true
+    )
+      return {
+        ...recovered,
+        error: {
+          ...recovered.error,
+          message: formatUnloadedMcpToolMessage(tool),
+        },
+      };
+    if (recovered.error.message !== `Tool ${tool} not found`) return recovered;
+    return {
+      ...recovered,
+      error: {
+        ...recovered.error,
+        message: formatUnknownMcpToolMessage(
+          tool,
+          this.currentAdvertisedTools(),
+        ),
+      },
+    };
   }
 }
 

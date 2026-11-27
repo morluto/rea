@@ -217,6 +217,10 @@ it("accepts its own advertised name like an already-loaded tool", async () => {
   );
   const self = await f.discover({ names: ["discover_tools"] });
   expect(self.isError).not.toBe(true);
+  expect(advertised?.description).toContain(DISCOVERY_REFRESH_GUIDANCE);
+  expect(
+    DISCOVER_TOOLS.outputSchema.parse(self.structuredContent).next_step,
+  ).toContain(DISCOVERY_REFRESH_GUIDANCE);
   expect(self.structuredContent).toMatchObject({
     inventory_count: 4,
     loaded_count: 2,
@@ -326,6 +330,11 @@ it("points unknown tool calls to discover_tools and only suggests currently adve
   expect(loadedQuery).not.toContain("beta_sqlite");
   expect(loadedQuery).not.toContain("excluded_sqlite");
 
+  // Calling an unloaded tool directly names the discover_tools call that loads it.
+  await expect(
+    f.client.callTool({ name: "beta_sqlite", arguments: {} }),
+  ).rejects.toThrow("not loaded on this connection");
+
   // Reconnecting the server resets cold visibility, so a later session does
   // not receive suggestions for tools loaded only in the previous session.
   await f.client.close();
@@ -348,6 +357,33 @@ it("points unknown tool calls to discover_tools and only suggests currently adve
   }
   expect(reconnectMessage).toContain("call discover_tools");
   expect(reconnectMessage).not.toContain("alpha_sqlite");
+});
+
+it("tells a caller that names an unloaded in-scope tool the one call that loads it", async () => {
+  const f = await connect();
+  const fail = async (name: string): Promise<string> => {
+    try {
+      await f.client.callTool({ name, arguments: {} });
+    } catch (error) {
+      expect(error).toMatchObject({ code: -32602 });
+      return error instanceof Error ? error.message : String(error);
+    }
+    throw new Error(`expected ${name} to fail`);
+  };
+
+  const unloaded = await fail("alpha_sqlite");
+  expect(unloaded).toContain(
+    'MCP tool alpha_sqlite is in scope but not loaded on this connection. Call discover_tools with names: ["alpha_sqlite"] to load it',
+  );
+  // A tool the caller excluded from this server stays the SDK's refusal.
+  const excluded = await fail("excluded_sqlite");
+  expect(excluded).toContain("disabled");
+  expect(excluded).not.toContain("discover_tools");
+
+  await f.discover({ names: ["alpha_sqlite"] });
+  await expect(
+    f.client.callTool({ name: "alpha_sqlite", arguments: {} }),
+  ).resolves.toBeDefined();
 });
 
 it("returns ranked matches for multi-word task queries when not every word appears (#11707)", async () => {
@@ -391,32 +427,4 @@ it("returns ranked matches for multi-word task queries when not every word appea
   );
   expect(unmatched.total_matches).toBe(0);
   expect(unmatched.tools).toEqual([]);
-});
-
-it("recovers an exact cold tool call through discovery without an SDK list refresh", async () => {
-  const f = await connect();
-  const call = (name: string) => f.client.callTool({ name, arguments: {} });
-  await expect(call("alpha_sqlite")).rejects.toMatchObject({
-    code: -32602,
-    message: expect.stringContaining(
-      'discover_tools with {"names":["alpha_sqlite"]}',
-    ),
-  });
-  expect(f.changed).not.toHaveBeenCalled();
-  await expect(call("excluded_sqlite")).rejects.toMatchObject({
-    code: -32602,
-    message: expect.stringContaining("Tool excluded_sqlite disabled"),
-  });
-  expect(f.forbidden).not.toHaveBeenCalled();
-  const discovery = await f.discover({ names: ["alpha_sqlite"] });
-  expect(discovery.isError).not.toBe(true);
-  expect((await call("alpha_sqlite")).isError).not.toBe(true);
-  const description = (await f.client.listTools()).tools.find(
-    ({ name }) => name === "discover_tools",
-  )?.description;
-  expect(description).toContain(DISCOVERY_REFRESH_GUIDANCE);
-  expect(
-    DISCOVER_TOOLS.outputSchema.parse(discovery.structuredContent).next_step,
-  ).toContain(DISCOVERY_REFRESH_GUIDANCE);
-  expect(f.changed).toHaveBeenCalledOnce();
 });
