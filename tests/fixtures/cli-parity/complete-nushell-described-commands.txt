@@ -1,6 +1,6 @@
 $ COMPLETE=nushell rea -- rea inspect-pe-
 exit: 0
 --- stdout
-[{"value":"inspect-pe-unwind-ranges","description":"Inspect x64 PE exception-directory function ranges without executing the image"},{"value":"inspect-pe-load-config","description":"Inspect PE TLS callbacks and load configuration without executing the image"},{"value":"inspect-pe-certificates","description":"Inspect PE Authenticode certificate table identities without verifying signatures"},{"value":"inspect-pe-imports","description":"Inspect PE import and delay-load table identities without executing the image"},{"value":"inspect-pe-resources","description":"Inspect PE resource identities, payload ranges, hashes and icon-group relationships"}]<end>
+[{"value":"inspect-pe-unwind-ranges","description":"Inspect x64 PE exception-directory function ranges without executing the image"},{"value":"inspect-pe-load-config","description":"Inspect PE TLS callbacks and load configuration without executing the image"},{"value":"inspect-pe-overlay","description":"Report bytes appended after a PE image, including a certificate-table split"},{"value":"inspect-pe-certificates","description":"Inspect PE Authenticode certificate table identities without verifying signatures"},{"value":"inspect-pe-imports","description":"Inspect PE import and delay-load table identities without executing the image"},{"value":"inspect-pe-resources","description":"Inspect PE resource identities, payload ranges, hashes and icon-group relationships"}]<end>
 --- stderr
 <end>

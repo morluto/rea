@@ -3,6 +3,7 @@ import type { ClientRegistrationCommand } from "../domain/clientRegistrationComm
 import { errorMessage } from "../kernel/errorMessage.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { isEnoentError } from "./ClientConfigPath.js";
 import {
   clientServerPath,
   clientServerForEdit,
@@ -30,9 +31,6 @@ import { readClientPolicyBlock } from "./GeminiClientSettings.js";
 import { admitClientStdioConnection } from "./ClientRegistrationConnection.js";
 import type { McpRegistrationClient } from "./McpRegistrationCatalog.js";
 import { readRegularFileTextSnapshot } from "../process/RegularFileRead.js";
-
-const isMissing = (cause: unknown): boolean =>
-  cause instanceof Error && "code" in cause && cause.code === "ENOENT";
 
 const registrationLocation = (client: McpRegistrationClient) => ({
   ...client.setupClient,
@@ -85,7 +83,7 @@ export const prepareRegistration = async (
   const snapshot = await readRegularFileTextSnapshot(path, {
     symlinks: "reject",
   }).catch((cause: unknown) => {
-    if (isMissing(cause)) return undefined;
+    if (isEnoentError(cause)) return undefined;
     throw cause;
   });
   const original = snapshot?.text;

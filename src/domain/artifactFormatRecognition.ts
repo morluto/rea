@@ -17,6 +17,9 @@ import {
 import { recognizeAndroidOtaPayload } from "./firmware/androidOtaPayload.js";
 import { hasAndroidVbmetaMagic } from "./firmware/androidVbmeta.js";
 import { recognizeAndroidSparseImage } from "./firmware/androidSparseImage.js";
+import { recognizeUbiImage } from "./firmware/ubiImage.js";
+import { claimsExecutableHeader } from "./binaryTarget.js";
+import { hasQualcommMbnHeader } from "./qualcommMbnImage.js";
 import { hasUImageMagic } from "./uimageFormat.js";
 import { hasBfltMagic } from "./bfltExecutable.js";
 import { hasNroMagic, hasNsoMagic } from "./switchExecutable.js";
@@ -29,6 +32,7 @@ import {
   hasDevicetreeMagic,
   readDevicetreeHeader,
 } from "./firmware/devicetreeHeader.js";
+import { hasDebPackageHeader } from "./deb/debPackage.js";
 import { observePythonBytecodePrefix } from "./python/pythonBytecodeIdentity.js";
 import { hasSqliteHeader } from "./sqliteFormat.js";
 import { recognizeTarPrefix, tarHeaderRefusal } from "./tarFormat.js";
@@ -62,6 +66,7 @@ export type RecognizedArtifactFormat = Extract<
   | "android-ota-payload"
   | "android-vbmeta"
   | "android-sparse-image"
+  | "ubi-image"
   | "iso9660"
   | "intel-hex"
   | "srec"
@@ -71,6 +76,7 @@ export type RecognizedArtifactFormat = Extract<
   | "esp-flash-image"
   | "esp-image"
   | "fit"
+  | "qualcomm-mbn"
   | "ntfs-mft"
   | "systemd-journal"
   | "plist"
@@ -86,6 +92,7 @@ export const STANDALONE_ARTIFACT_FORMATS = [
   "windows-shortcut",
   "python-pyc",
   "devicetree",
+  "deb",
 ] as const;
 
 export type StandaloneArtifactFormat =
@@ -198,6 +205,13 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
             reason: ota.reason,
           };
     },
+    ({ prefix, fileSize }) => {
+      const ubi = recognizeUbiImage(prefix, fileSize);
+      if (ubi === undefined) return undefined;
+      return ubi.state === "recognized"
+        ? { state: "recognized", format: "ubi-image" }
+        : { state: "refused", format: "ubi-image", reason: ubi.reason };
+    },
     ({ prefix }) => {
       const sparse = recognizeAndroidSparseImage(prefix);
       if (sparse === undefined) return undefined;
@@ -259,6 +273,7 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     when("systemd-journal", hasSystemdJournalHeader),
     when("sqlite", hasSqliteHeader),
     when("windows-shortcut", hasWindowsShortcutHeader),
+    when("deb", hasDebPackageHeader),
     // Only a pinned CPython magic claims the format; a CR LF trailer alone
     // is too weak a signature for arbitrary bytes.
     when("python-pyc", (prefix) => {
@@ -286,6 +301,15 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     // No magic: the stored logo CRC and a matching checksum claim it, after
     // every format with a leading signature.
     when("nds", hasNdsHeader),
+    // A legacy MBN header has no magic; the version word, sizes and pointer
+    // arithmetic must agree, so it runs after every signature format and yields
+    // to native executable headers (ELF, PE/DOS MZ, Mach-O, FAT). An ELF MBN is
+    // ELF here; root inventory reads it as MBN for its hash segment.
+    ({ prefix, fileSize }) =>
+      !claimsExecutableHeader(prefix, fileSize) &&
+      hasQualcommMbnHeader(prefix, fileSize)
+        ? { state: "recognized", format: "qualcomm-mbn" }
+        : undefined,
   ];
 
 /**
@@ -301,6 +325,33 @@ export const recognizeArtifactFormat = (
     if (recognition !== undefined) return { ...recognition, index };
   }
   return undefined;
+};
+
+/**
+ * Recognize content from a bounded prefix and optional suffix without extra
+ * reads. A refused claim falls through: a header-only iNES region, for
+ * example, has the signature but not the declared cartridge extent. A claim
+ * that needs more bytes falls through too: a bounded prefix and trailer
+ * cannot locate an ESP flash partition table. The caller's bounded XML
+ * signature probe decides plist last.
+ */
+export const recognizeBoundedArtifactFormat = (
+  input: Omit<ArtifactRecognitionInput, "espFlashLayout"> & {
+    readonly xmlPlistSignature: boolean;
+  },
+): Exclude<RecognizedArtifactFormat, "esp-flash-image"> | undefined => {
+  for (
+    let recognition = recognizeArtifactFormat(input);
+    recognition !== undefined;
+    recognition = recognizeArtifactFormat(input, recognition.index + 1)
+  ) {
+    if (
+      recognition.state === "recognized" &&
+      recognition.format !== "esp-flash-image"
+    )
+      return recognition.format;
+  }
+  return input.xmlPlistSignature ? "plist" : undefined;
 };
 
 /**

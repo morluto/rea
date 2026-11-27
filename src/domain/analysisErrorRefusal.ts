@@ -5,6 +5,7 @@ import {
 import type { AnalysisError } from "./analysisErrorBase.js";
 import type { AnalysisRefusal } from "./analysisRefusal.js";
 import { ArtifactOperationError } from "./artifactOperationError.js";
+import { BrowserObservationError } from "./browserObservationError.js";
 
 /**
  * The typed refusal an error carries, attributed to the error's operation so
@@ -53,6 +54,18 @@ export const analysisErrorRefusal = (
   if (
     error instanceof ArtifactOperationError &&
     error.readerLimit !== undefined &&
+    error.limit !== undefined &&
+    !("control_kind" in error.limit)
+  )
+    return {
+      kind: "adjustable_budget",
+      operation: error.operation,
+      budget: error.limit,
+    };
+  // Armed timeline retention is a browser observation failure, not a
+  // resource-constraint error. A bound setting is still an adjustable budget.
+  if (
+    error instanceof BrowserObservationError &&
     error.limit !== undefined &&
     !("control_kind" in error.limit)
   )

@@ -6,6 +6,7 @@ import {
   espImage,
 } from "../../tests/fixtures/espImage.js";
 import { buildFv } from "../../tests/fixtures/uefiImage.js";
+import { DEB_AR_HEADER_BYTES, DEB_AR_MAGIC } from "./deb/debPackage.js";
 import {
   recognizeArtifactFormat,
   recognizesArtifactPrefix,
@@ -24,6 +25,7 @@ import { devicetreeFixture } from "./firmware/devicetree.fixture.js";
 import { dfuseFile } from "./firmware/dfuse.fixture.js";
 import { DFUSE_SUFFIX_BYTES } from "./firmware/dfuse.js";
 import { ESP8266_REFUSAL } from "./firmware/espImage.js";
+import { twoVolumeUbiImage } from "./firmware/ubiImage.fixture.js";
 import { buildIso9660Image } from "./iso9660/iso9660.fixture.js";
 import { ISO9660_DESCRIPTOR_OFFSET } from "./iso9660/iso9660Structures.js";
 
@@ -68,6 +70,22 @@ it.each([
     bytes: buildAndroidSparseImage({ majorVersion: 2 }),
     format: "android-sparse-image",
     reason: androidSparseUnsupportedMajor(2),
+  },
+  {
+    label: "a UBI image with a bad erase-counter header CRC",
+    bytes: (() => {
+      const bytes = twoVolumeUbiImage();
+      bytes.writeUInt32BE(0, 60);
+      return bytes;
+    })(),
+    format: "ubi-image",
+    reason: expect.stringContaining("erase-counter header CRC mismatch"),
+  },
+  {
+    label: "a UBI# file shorter than its erase-counter header",
+    bytes: twoVolumeUbiImage().subarray(0, 32),
+    format: "ubi-image",
+    reason: expect.stringContaining("erase-counter header is truncated"),
   },
 ])("refuses $label in one place", (row) => {
   expect(recognize(row.bytes)).toEqual({
@@ -114,6 +132,19 @@ it("decides an ESP flash layout before the bootloader image it begins with", () 
 it("leaves bytes no recognizer claims to the native and named-format routes", () => {
   expect(recognize(Buffer.from("plain text content\n"))).toBeUndefined();
   expect(recognize(Buffer.from("ANDROID"))).toBeUndefined();
+});
+
+it("yields the no-magic Qualcomm MBN check to native DOS MZ executables", () => {
+  // Valid 1,536-byte DOS MZ executable whose header words also satisfy MBN v3:
+  // e_cp=3, e_crlc=0 -> u32(4)=3; e_cparhdr=4 -> 64-byte header; e_sp=256 and
+  // e_ip=256 -> u32(16)=u32(20)=256; remaining header words zero.
+  const dosMz = Buffer.alloc(1536);
+  dosMz.set([0x4d, 0x5a], 0);
+  dosMz.writeUInt16LE(3, 4);
+  dosMz.writeUInt16LE(4, 8);
+  dosMz.writeUInt16LE(256, 16);
+  dosMz.writeUInt16LE(256, 20);
+  expect(recognize(dosMz)).toBeUndefined();
 });
 
 it("recognizes Android boot and vendor boot image prefixes", () => {
@@ -217,6 +248,13 @@ it.each([8, 12, 19])(
   },
 );
 
+it("recognizes a UBI image by its erase-counter header", () => {
+  expect(recognize(twoVolumeUbiImage())).toMatchObject({
+    state: "recognized",
+    format: "ubi-image",
+  });
+});
+
 it("recognizes the descriptor signature at sector 16 or asks for it", () => {
   const { bytes } = buildIso9660Image();
   expect(
@@ -301,4 +339,63 @@ it("lets a prefix the table recognizes outrank whole-file firmware probes", () =
     false,
   );
   expect(recognizesArtifactPrefix(volume, volume.length)).toBe(false);
+});
+
+/** Minimal Unix ar archive with the given members (SysV trailing `/` or BSD `#1/N`). */
+const minimalAr = (
+  members: readonly {
+    readonly name: string;
+    readonly data: string;
+    readonly bsdName?: boolean;
+  }[],
+): Buffer => {
+  const parts: Buffer[] = [DEB_AR_MAGIC];
+  for (const member of members) {
+    const payload =
+      member.bsdName === true
+        ? Buffer.from(`${member.name}${member.data}`, "ascii")
+        : Buffer.from(member.data, "ascii");
+    const header = Buffer.alloc(DEB_AR_HEADER_BYTES, 0x20);
+    const label =
+      member.bsdName === true
+        ? `#1/${String(member.name.length)}`
+        : `${member.name}/`;
+    header.write(label.slice(0, 16), 0, "ascii");
+    header.write("0", 16, "ascii");
+    header.write("0", 28, "ascii");
+    header.write("0", 34, "ascii");
+    header.write("100644", 40, "ascii");
+    header.write(String(payload.length), 48, "ascii");
+    header[58] = 0x60;
+    header[59] = 0x0a;
+    parts.push(header, payload);
+    if (payload.length % 2 === 1) parts.push(Buffer.from("\n", "ascii"));
+  }
+  return Buffer.concat(parts);
+};
+
+it("recognizes a Debian package ar archive whose first member is debian-binary", () => {
+  const deb = minimalAr([{ name: "debian-binary", data: "2.0\n" }]);
+  expect(recognize(deb)).toMatchObject({
+    state: "recognized",
+    format: "deb",
+  });
+  const bsdDeb = minimalAr([
+    { name: "debian-binary", data: "2.0\n", bsdName: true },
+  ]);
+  expect(recognize(bsdDeb)).toMatchObject({
+    state: "recognized",
+    format: "deb",
+  });
+});
+
+it("does not recognize a plain ar archive that is not a Debian package", () => {
+  const plainAr = minimalAr([{ name: "hello.o", data: "object" }]);
+  expect(recognize(plainAr)).toBeUndefined();
+  const lateDebianBinary = minimalAr([
+    { name: "hello.o", data: "object" },
+    { name: "debian-binary", data: "2.0\n" },
+  ]);
+  expect(recognize(lateDebianBinary)).toBeUndefined();
+  expect(recognize(Buffer.from("!<arch>\n", "ascii"))).toBeUndefined();
 });

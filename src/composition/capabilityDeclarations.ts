@@ -51,6 +51,7 @@ import {
   PE_IMPORTS_PROVIDER,
   PE_LOAD_CONFIG_PROVIDER,
   PE_UNWIND_RANGES_PROVIDER,
+  PE_OVERLAY_PROVIDER,
   PE_RESOURCES_PROVIDER,
   RELEASE_EXPOSURE_PROVIDER,
   WEB_SCRIPT_EXPORT_PROVIDER,
@@ -101,8 +102,10 @@ import { PWNTOOLS_PROVIDER_IDENTITY } from "../native/pwntools/PwntoolsProviderI
 import { OBJDUMP_PROVIDER_IDENTITY } from "../objdump/ObjdumpProviderIdentity.js";
 import { PCAP_PROVIDER_IDENTITY } from "../pcap/PcapProviderIdentity.js";
 import { NUGET_NUPKG_PROVIDER_IDENTITY } from "../nuget/NugetNupkgProviderIdentity.js";
+import { VSIX_PACKAGE_PROVIDER_IDENTITY } from "../vsix/VsixPackageProviderIdentity.js";
 import { OCI_IMAGE_LAYOUT_PROVIDER_IDENTITY } from "../oci/OciImageLayoutProviderIdentity.js";
 import { PYTHON_PYC_PROVIDER_IDENTITY } from "../python/PythonPycProviderIdentity.js";
+import { DEB_PACKAGE_PROVIDER_IDENTITY } from "../deb/DebPackageProviderIdentity.js";
 import { RIZIN_DEBUGGER_PROVIDER_IDENTITY } from "../rizin/RizinDebuggerProviderIdentity.js";
 import { RIZIN_PROVIDER_IDENTITY } from "../rizin/RizinProviderIdentity.js";
 import { RUST_BINARY_PROVIDER_IDENTITY } from "../rust/RustBinaryProviderIdentity.js";
@@ -491,6 +494,9 @@ export const CAPABILITY_DECLARATIONS = {
       providerBinding(PE_UNWIND_RANGES_PROVIDER, ["inspect_pe_unwind_ranges"]),
     ],
   },
+  peOverlay: {
+    providers: [providerBinding(PE_OVERLAY_PROVIDER, ["inspect_pe_overlay"])],
+  },
   binaryHardening: {
     providers: [
       providerBinding(BINARY_HARDENING_PROVIDER, ["inspect_binary_hardening"]),
@@ -513,10 +519,24 @@ export const CAPABILITY_DECLARATIONS = {
       }),
     ],
   },
+  debPackage: {
+    providers: [
+      providerBinding(DEB_PACKAGE_PROVIDER_IDENTITY, {
+        group: "DEB_PACKAGE_TOOL_CONTRACTS",
+      }),
+    ],
+  },
   nugetNupkg: {
     providers: [
       providerBinding(NUGET_NUPKG_PROVIDER_IDENTITY, {
         group: "NUGET_NUPKG_TOOL_CONTRACTS",
+      }),
+    ],
+  },
+  vsixPackage: {
+    providers: [
+      providerBinding(VSIX_PACKAGE_PROVIDER_IDENTITY, {
+        group: "VSIX_PACKAGE_TOOL_CONTRACTS",
       }),
     ],
   },

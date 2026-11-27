@@ -496,13 +496,13 @@ it("holds broad PR shards and native checks behind static validation", async () 
   expect(
     staticRuns.some(
       (step) =>
-        step.run === "npm run check:ci:deep" ||
+        step.run?.startsWith("npm run check:ci:deep") ||
         step.run === "npm run test:python",
     ),
   ).toBe(false);
-  expect(deepRuns.some((step) => step.run === "npm run check:ci:deep")).toBe(
-    true,
-  );
+  expect(
+    deepRuns.some((step) => step.run === "npm run check:ci:deep:job"),
+  ).toBe(true);
   for (const [name, job] of Object.entries(jobs)) {
     if (
       name === "required" ||

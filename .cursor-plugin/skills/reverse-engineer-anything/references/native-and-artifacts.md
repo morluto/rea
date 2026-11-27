@@ -220,6 +220,26 @@ separate functions. Leaf functions have no entry, so a missing entry is not
 absence. Compare provider addresses minus `image_base` with the RVAs. See
 [PE x64 exception-directory function ranges](https://github.com/morluto/rea/blob/main/docs/guides/native/pe-unwind-ranges.md).
 
+## PE overlay
+
+Use `inspect_pe_overlay` for an explicit local PE32/PE32+ image when the
+question concerns bytes appended after the image: where the image ends on
+disk, whether an overlay is present, and how much of that span is the
+Authenticode certificate table. No `open_binary`, Windows SDK, or target
+execution is required. The CLI equivalent is `inspect-pe-overlay PATH`.
+Preserve artifact SHA-256, image end, and each range's file offset and size.
+`certificate_table` is the security directory when it lies entirely in the
+overlay. A security directory that fails certificate-table checks, such as an
+unaligned offset, or that starts inside the image and ends in the overlay,
+stays in other ranges and adds a limitation. Each other range includes SHA-256, a fixed 4096-byte Shannon entropy
+sample, the first 16 bytes, and a leading format only when an existing
+recognizer names one. Packers are not identified. Signatures, chains, and
+digest coverage are not verified. Section slack inside the image is not
+reported as overlay. Image end uses each section's declared PointerToRawData
+plus SizeOfRawData; the loader's 512-byte rounded pointer is recorded per
+section and does not shorten that end. See
+[PE overlay](https://github.com/morluto/rea/blob/main/docs/guides/native/pe-overlay.md).
+
 ## Binary hardening
 
 Use `inspect_binary_hardening` for an explicit local ELF, PE, or Mach-O file
@@ -384,6 +404,20 @@ Preserve artifact SHA-256, the 16-byte header fields, nested code names, and
 bytecode SHA-256. Bytecode is not decompiled. A decoded header does not prove
 the matching `.py` is present. See [CPython pyc inspection](https://github.com/morluto/rea/blob/main/docs/python-pyc.md).
 
+## Debian packages
+
+Use `inspect_deb_package` for an explicit local `.deb` when the question
+concerns ar members, control identity, relationship alternatives, maintainer
+script presence, or the data.tar inventory. No `dpkg`, package installation,
+or target execution is required. The CLI equivalent is
+`inspect-deb-package PATH`. Preserve artifact SHA-256, the debian-binary
+version, parsed relationship operators and architecture qualifiers, script
+interpreter lines and byte lengths, and md5sums path presence. Script text is
+not returned and is never executed. gzip, zstd, xz, and uncompressed members are
+decoded; bzip2 and lzma members are unsupported. Package signatures are
+not verified. Missing optional fields stay null. See
+[Debian package inspection](https://github.com/morluto/rea/blob/main/docs/deb-package.md).
+
 ## Erlang BEAM files
 
 Use `inspect_erlang_beam` for an explicit local `FOR1`/`BEAM` file when the
@@ -410,6 +444,21 @@ conventions). Missing, ambiguous, or malformed `.nuspec` members succeed with
 inventory and limitations. Encrypted members are listed and not extracted.
 Roles are folder conventions, not restore-time asset selection. See
 [NuGet packages](https://github.com/morluto/rea/blob/main/docs/guides/managed/nuget-nupkg.md).
+
+## VS Code extension packages
+
+Use `inspect_vsix_package` for an explicit local `.vsix` when the question
+concerns package identity from `extension.vsixmanifest` and
+`extension/package.json`, engine range, activation events, contributes,
+declared dependencies, native/wasm/executable members, or signature-file
+presence. No `open_binary`, install, marketplace access, or target execution
+is required. The CLI equivalent is `inspect-vsix-package PATH`. Preserve
+artifact SHA-256, both manifests as present, identity disagreements, and
+hashed interesting members with observed vs inferred classification. Missing
+or malformed manifests succeed with inventory and limitations. Encrypted
+members are listed and not extracted. Signature files are reported present or
+absent and are not verified. See
+[VS Code extension packages](https://github.com/morluto/rea/blob/main/docs/guides/managed/vsix-package.md).
 
 ## OCI image layouts
 
@@ -973,6 +1022,16 @@ status with unknown coverage and are refused on extraction; no decryption is
 attempted. See
 [wxapkg](https://github.com/morluto/rea/blob/main/docs/wxapkg.md).
 
+macOS flat installer packages (`.pkg` files beginning with `xar!`) use the
+same inspection/extraction workflows on every host. Prefer a retained summary
+for XAR header/TOC facts, Distribution `pkg-ref` and choices, PackageInfo
+identity, Scripts `preinstall`/`postinstall` presence, and gzip cpio Payload
+paths, including each component's Scripts/Payload until the expansion budget
+is exhausted. XAR signatures are named and not verified. `pbzx` payloads keep
+the stored member with an unsupported-compression refusal; Bom is presence
+and size only; installer JavaScript is never executed. See
+[macOS flat installer packages](https://github.com/morluto/rea/blob/main/docs/macos-pkg.md).
+
 U-Boot legacy uImages use the same inspection/extraction workflows. Prefer a
 retained summary and selected inventory views for header facts or component
 IDs. Header addresses/CPU/OS are declarations; payloads remain as stored.
@@ -1019,6 +1078,18 @@ the file end leaves coverage `unknown`. Secure-area encryption, compressed
 overlays, and NitroARC archives are not decoded. See
 [Nintendo DS ROMs](https://github.com/morluto/rea/blob/main/docs/guides/firmware/nds-roms.md).
 
+Legacy Qualcomm MBN boot images (`sbl1.mbn`, `aboot.mbn`, `tz.mbn`) use the
+same inspection and extraction workflows. The header has no magic; REA claims
+it only when version 3, 5 or 6 sizes and pointers are self-consistent.
+MBN headers are 40 bytes for v3 and v5, and 48 for v6. Inventory lists stored
+code, signature, certificate-chain and v6 metadata regions;
+ranges past the file end are limitations with `unknown` coverage. ELF images
+with a Qualcomm hash segment inventory as `qualcomm-mbn` (hash table and per
+program header hash offsets) but still resolve as ELF for native analysis.
+Signatures and certificates are located, not verified; hashes are not
+recomputed. See
+[Qualcomm MBN images](https://github.com/morluto/rea/blob/main/docs/guides/firmware/qualcomm-mbn-images.md).
+
 Android A/B OTA `payload.bin` files (CrAU v2) use the same
 inspection/extraction workflows. Prefer a retained summary for header,
 partition table, dynamic groups and signature counts. Signatures are not
@@ -1043,6 +1114,14 @@ chunk counts and stored checksums are root facts; checksums are not verified
 and DONT_CARE blocks are written as zeros. The expanded child is classified
 again. See
 [Android sparse images](https://github.com/morluto/rea/blob/main/docs/guides/firmware/android-sparse-image.md).
+
+UBI images (`UBI#` at offset 0, from `ubinize` or a NAND dump) use the same
+inspection/extraction workflows. Prefer a retained summary for eraseblock
+layout, PEB counts and volume counts. Each volume is `volumes/<name>`,
+reassembled from its LEBs by highest sqnum. A volume with a missing LEB
+stays inventoried with unavailable content. UBIFS inside a volume is not
+decoded. See
+[UBI images](https://github.com/morluto/rea/blob/main/docs/guides/firmware/ubi-images.md).
 
 Nintendo Switch NSO modules (`NSO0`) and NRO executables (`NRO0` at `0x10`)
 use the same inspection and extraction workflows, without running or
