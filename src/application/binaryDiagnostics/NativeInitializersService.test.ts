@@ -233,22 +233,29 @@ it("refuses a slice architecture label that disagrees with the selected image", 
   });
 });
 
-it("accepts an arm64e request only for a report of an arm64e slice", async () => {
+it("accepts an arm64e or arm64e.x1 request only for a report of that subtype", async () => {
   const selected = await selectedArm64Report();
-  const inspect = (cpuSubtype: number) =>
+  const inspect = (
+    cpuSubtype: number,
+    architecture: "arm64e" | "arm64e.x1" = "arm64e",
+  ) =>
     serviceFor({
       ...selected,
       slice: { ...selected.slice, cpu_subtype: cpuSubtype },
-    }).inspect({ path: report.artifact.path, architecture: "arm64e" });
-  // arm64 (0x0) and arm64v8 (0x1) are not what arm64e names.
-  for (const cpuSubtype of [0, 1])
+    }).inspect({ path: report.artifact.path, architecture });
+  // arm64 (0x0), arm64v8 (0x1) and arm64e.x1 (0xc) are not what arm64e names.
+  for (const cpuSubtype of [0, 1, 0x8000000c])
     expect(await inspect(cpuSubtype)).toMatchObject({
       ok: false,
       error: { _tag: "AnalysisOutputError" },
     });
-  // arm64e with capability bits, and arm64e.x1.
-  for (const cpuSubtype of [0x80000002, 12])
-    expect((await inspect(cpuSubtype)).ok).toBe(true);
+  // arm64e with capability bits.
+  expect((await inspect(0x80000002)).ok).toBe(true);
+  expect((await inspect(0x8000000c, "arm64e.x1")).ok).toBe(true);
+  expect(await inspect(0x80000002, "arm64e.x1")).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
+  });
   // A family name may read the family's only slice, such as /bin/ls's arm64e.
   const lone = await serviceFor({
     ...selected,

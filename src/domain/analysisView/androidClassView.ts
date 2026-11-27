@@ -4,7 +4,8 @@ import { androidResultSchemas } from "../android/androidAnalysis.js";
 import { androidClassViewRequestSchema } from "../android/androidClassQuery.js";
 import { evidenceSubjectTarget } from "../evidence.js";
 import { boundedList } from "../boundedList.js";
-import { err, ok } from "../result.js";
+import { err, ok, type Result } from "../result.js";
+import { filterSet } from "./selectViewRows.js";
 import {
   analysisViewInputError,
   invalidAnalysisViewSubject,
@@ -14,7 +15,7 @@ import {
   type AnalysisViewParent,
 } from "./analysisViewParent.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
@@ -28,6 +29,7 @@ import {
   PLACEHOLDER_COVERAGE,
   selectByteBoundedViewRows,
   type ByteBoundedPageOwner,
+  type ByteBoundedRows,
 } from "./byteBoundedViewRows.js";
 
 export const INSPECT_ANDROID_CLASS_OPERATION = "inspect_android_class" as const;
@@ -83,13 +85,6 @@ export const androidClassFieldRowSchema = shape.fields.element.extend({
 export const androidClassMappingSymbolRowSchema =
   mappingSchema.shape.symbols.element;
 
-export const androidClassViewItemsSchema = z.union([
-  z.array(androidClassMethodRowSchema),
-  z.array(androidClassFieldRowSchema),
-  z.array(z.string()),
-  z.array(androidClassMappingSymbolRowSchema),
-]);
-
 const readClass = createAnalysisViewResultReader(classSchema);
 
 const compare = ([a, x]: [string, number], [b, y]: [string, number]) =>
@@ -142,7 +137,7 @@ const nameFilter = (
   prefixes: readonly string[] | undefined,
 ) => {
   if (names === undefined && prefixes === undefined) return undefined;
-  const exact = names === undefined ? undefined : new Set(names);
+  const exact = filterSet(names);
   return (name: string) =>
     (exact === undefined || exact.has(name)) &&
     (prefixes === undefined ||
@@ -159,6 +154,20 @@ const both = <Row>(
       ? first
       : (row: Row) => first(row) && second(row);
 
+const memberPage = <View extends ClassView, Row, E>(
+  view: View,
+  selected: Result<ByteBoundedRows<Row>, E>,
+) => {
+  if (!selected.ok) return selected;
+  const { rows, total, byte_limited } = selected.value;
+  return ok({
+    view,
+    items: rows,
+    byte_limited,
+    coverage: pageViewCoverage(view.offset, rows.length, total),
+  });
+};
+
 /** One page of the selected member facet, with the total that match. */
 const selectMembers = (
   value: AndroidClass,
@@ -169,7 +178,7 @@ const selectMembers = (
     case "methods": {
       const name = nameFilter(view.names, view.name_prefixes);
       const constructors = view.constructors;
-      return selectByteBoundedViewRows<
+      const rows = selectByteBoundedViewRows<
         AndroidClass["methods"][number],
         z.output<typeof androidClassMethodRowSchema>
       >(
@@ -186,11 +195,12 @@ const selectMembers = (
         },
         owner,
       );
+      return memberPage(view, rows);
     }
     case "fields": {
       const name = nameFilter(view.names, view.name_prefixes);
       const statics = view.static_values;
-      return selectByteBoundedViewRows<
+      const rows = selectByteBoundedViewRows<
         AndroidClass["fields"][number],
         z.output<typeof androidClassFieldRowSchema>
       >(
@@ -207,15 +217,18 @@ const selectMembers = (
         },
         owner,
       );
+      return memberPage(view, rows);
     }
-    case "inner-classes":
-      return selectByteBoundedViewRows(
+    case "inner-classes": {
+      const rows = selectByteBoundedViewRows(
         value.inner_classes,
         view,
         { matches: undefined, project: (row) => row },
         owner,
       );
-    case "mapping-symbols":
+      return memberPage(view, rows);
+    }
+    case "mapping-symbols": {
       if (value.mapping === undefined)
         return err(
           analysisViewInputError([
@@ -227,12 +240,14 @@ const selectMembers = (
             },
           ]),
         );
-      return selectByteBoundedViewRows(
+      const rows = selectByteBoundedViewRows(
         value.mapping.symbols,
         view,
         { matches: undefined, project: (row) => row },
         owner,
       );
+      return memberPage(view, rows);
+    }
   }
 };
 
@@ -270,11 +285,7 @@ export const projectAndroidClassView = (
     parent_operation: INSPECT_ANDROID_CLASS_OPERATION,
     parent_digest: parent.evidenceId.slice(3),
     artifact: { path: subject.path, sha256: subject.sha256 },
-    limitations: boundedViewMessages(
-      parent.limitations,
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent),
     unknowns: [
       "Static class and method analysis does not establish runtime behavior or APK authenticity.",
     ],
@@ -294,7 +305,7 @@ export const projectAndroidClassView = (
     view,
     class_name: value.class_name,
   };
-  const rows = selectMembers(value, view, {
+  const page = selectMembers(value, view, {
     parentEvidenceId: parent.evidenceId,
     envelope: {
       ...context,
@@ -304,15 +315,5 @@ export const projectAndroidClassView = (
     } as unknown as JsonValue,
     facet: view.facet,
   });
-  if (!rows.ok) return rows;
-  return ok({
-    ...context,
-    items: rows.value.rows,
-    byte_limited: rows.value.byte_limited,
-    coverage: pageViewCoverage(
-      view.offset,
-      rows.value.rows.length,
-      rows.value.total,
-    ),
-  });
+  return page.ok ? ok({ ...context, ...page.value }) : page;
 };

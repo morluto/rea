@@ -171,7 +171,7 @@ artifact names end in `-attempt-N`, where `N` is the workflow run attempt.
 Task-graph recording runs `check:ci:fast:tasks` and `check:ci:deep:tasks`
 without the artifacts lock, so it can record hashes while `check:pr` or
 `check:test` already holds that lock. The CI jobs still run the locked
-`check:ci:fast` and `check:ci:deep` commands.
+`check:ci:fast` and `check:ci:deep:job` commands.
 Use `npm run lint:details` or `npm run jscpd:details` for all console diagnostics.
 Both duplicate commands scan production and test code using the limit in
 [`.jscpd.json`](https://github.com/morluto/rea/blob/main/.jscpd.json).
@@ -275,6 +275,8 @@ Routine iterations and rebases need focused regressions and relevant checks.
 Follow the [contributor checks](https://github.com/morluto/rea/blob/main/CONTRIBUTING.md#development-feedback-and-pr-verification)
 before handing off a PR. Use `check:pr` for broad changes or CI diagnosis.
 Architecture guards run in `check`, `check:fast`, and `check:ci:deep`.
+In CI, the required fast static job runs the guards before installing
+dependencies, including on full runs.
 The standalone test-discovery check runs in `check:ci:deep`.
 
 Vitest projects use up to two workers, bounded by host parallelism. GitHub
@@ -1258,19 +1260,21 @@ Required CI retains fresh reverse-tools coverage and preflights both canonical
 Stryker configurations with `--dryRunOnly`. These preflights resolve the owned
 targets, instrument the source, and execute the real initial tests. Invalid
 configuration, target resolution, and initial test failures still fail the job.
+Before the dry runs, the mutation project guard checks that each suite’s resolved
+targets are root files in its configured TypeScript project.
 Preflights execute no mutants and produce no mutation-outcome report. Both fast
 feedback and full qualification, including exact-revision release qualification,
 require coverage and both preflights. A failed, canceled, skipped or missing
 selected quality job still fails the required gate.
 
 The separate **Mutation sweep** workflow runs both complete configurations daily
-and on manual dispatch, in two isolated jobs. It is a maintenance check outside
-the PR and release publication gates. `ci:full` requests full regression,
+and on manual dispatch. Each isolated job has a 90-minute budget. The sweep runs
+outside the PR and release publication gates. `ci:full` requests full regression,
 coverage and provider qualification; it does not request a complete mutation
-sweep. Use the Mutation sweep workflow to request that result. Targets,
-checkers, concurrency, deadlines and the existing non-blocking mutation-score
-threshold are unchanged. `npm run test:mutation:reverse-tools` also retains both
-complete passes for local callers.
+sweep. Use the Mutation sweep workflow to request that result. Both jobs use the
+canonical configurations, including their per-mutant timeouts and non-blocking
+mutation-score thresholds. `npm run test:mutation:reverse-tools` runs both
+complete passes locally.
 
 The two passes write separate JSON and HTML reports under `reports/mutation/`:
 `reverse-tools` and `reverse-tools-semantics`. Required CI retains focused

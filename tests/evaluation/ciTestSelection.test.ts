@@ -606,6 +606,31 @@ it("traces shared script modules to their tests and falls back for other consume
   });
 });
 
+it("requires the complete fixture path on direct and transitive consumer edges", () => {
+  const fixture = "tests/fixtures/card.json";
+  const helper = "tests/fixtures/loadCard.ts";
+  const direct = "tests/boundary/filesystem/card.test.ts";
+  const indirect = "tests/boundary/filesystem/helper.test.ts";
+  const reference = (path: string) => `readFileSync(${JSON.stringify(path)});`;
+  const sources = {
+    [fixture]: "{}",
+    [direct]: reference(`${fixture}.txt`),
+    [helper]: reference(`${fixture} (v2).json`),
+    [indirect]: 'import "../../fixtures/loadCard.js";',
+  };
+  expect(plan([fixture], sources)).toMatchObject({
+    mode: "full",
+    reason: `Input is not traced to tests: ${fixture}`,
+  });
+  for (const consumer of [direct, helper]) {
+    expect(
+      selectedFiles(
+        plan([fixture], { ...sources, [consumer]: reference(fixture) }),
+      ),
+    ).toEqual([direct, indirect]);
+  }
+});
+
 it("traces JavaScript fixture modules transitively through JS and TS helpers", () => {
   const sources = {
     "tests/fixtures/fakeHopperReplies.mjs":

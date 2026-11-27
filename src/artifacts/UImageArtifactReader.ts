@@ -133,20 +133,9 @@ export class UImageArtifactReader extends PositionalArtifactReader<UImageMetadat
       }),
       ...subImages.map((sub) => entryFor("sub-image", sub.index, sub)),
     ];
-    const limitations: string[] = [];
-    if (sizeTableLimitation !== undefined) {
-      limitations.push(sizeTableLimitation);
-    } else if (hasUImageSizeTable(header.type)) {
-      limitations.push(
-        "Multi-image sub-images are split from the stored size table; the payload entry retains the full stored bytes.",
-      );
-    }
     return {
       entries,
-      coverage: {
-        status: sizeTableLimitation === undefined ? "complete" : "unknown",
-        limitations,
-      },
+      coverage: uImageCoverage(header, initial.size, sizeTableLimitation),
       formatMetadata: toMetadata(header, subImages.length, crcVerified),
       containerIntegrity: {
         algorithm: "crc32",
@@ -156,6 +145,37 @@ export class UImageArtifactReader extends PositionalArtifactReader<UImageMetadat
     };
   }
 }
+
+/**
+ * Coverage is complete only when the entries account for every file byte and
+ * any size table split them. U-Boot does not pad a legacy image, so bytes past
+ * the declared payload belong to no entry.
+ */
+const uImageCoverage = (
+  header: UImageHeaderFields,
+  fileBytes: number,
+  sizeTableLimitation: string | undefined,
+): PositionalArtifactEntries<UImageMetadata>["coverage"] => {
+  const limitations: string[] = [];
+  if (sizeTableLimitation !== undefined) limitations.push(sizeTableLimitation);
+  else if (hasUImageSizeTable(header.type))
+    limitations.push(
+      "Multi-image sub-images are split from the stored size table; the payload entry retains the full stored bytes.",
+    );
+  const imageEnd = UIMAGE_HEADER_SIZE + header.payloadSize;
+  const trailingBytes = fileBytes - imageEnd;
+  if (trailingBytes > 0)
+    limitations.push(
+      `${String(trailingBytes)} byte(s) after the uImage payload, starting at offset ${String(imageEnd)}, were not exposed as entries.`,
+    );
+  return {
+    status:
+      sizeTableLimitation === undefined && trailingBytes === 0
+        ? "complete"
+        : "unknown",
+    limitations,
+  };
+};
 
 const formatFailure = (
   detail: string,

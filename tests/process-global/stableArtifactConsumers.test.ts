@@ -4,10 +4,12 @@ import { inspectMavenGradleMetadataInputSchema } from "../../src/domain/java/mav
 import { mavenPomFixture } from "../../src/java/MavenGradleMetadata.fixture.js";
 import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import { PeLoadConfigProvider } from "../../src/native/pe/PeLoadConfigProvider.js";
+import { PeOverlayProvider } from "../../src/native/pe/PeOverlayProvider.js";
 import { createArtifactAnalysisResources } from "../../src/providers/artifactResourceFailure.js";
 import { ReleaseExposureReader } from "../../src/artifacts/ReleaseExposureReader.js";
 import { BinaryHardeningProvider } from "../../src/native/hardening/BinaryHardeningProvider.js";
 import { inspectPeLoadConfigInputSchema } from "../../src/domain/native/peLoadConfig.js";
+import { inspectPeOverlayInputSchema } from "../../src/domain/native/peOverlay.js";
 import { inspectBinaryHardeningInputSchema } from "../../src/domain/native/binaryHardening.js";
 import { open, writeFile, type FileHandle } from "node:fs/promises";
 import { createHash } from "node:crypto";
@@ -122,6 +124,10 @@ import { NugetNupkgProvider } from "../../src/nuget/NugetNupkgProvider.js";
 import { NugetNupkgService } from "../../src/application/nuget/NugetNupkgService.js";
 import { nugetNupkgFixture } from "../../src/nuget/NugetNupkg.fixture.js";
 import { inspectNugetNupkgInputSchema } from "../../src/domain/nuget/nupkg.js";
+import { VsixPackageProvider } from "../../src/vsix/VsixPackageProvider.js";
+import { VsixPackageService } from "../../src/application/vsix/VsixPackageService.js";
+import { vsixPackageFixture } from "../../src/vsix/VsixPackage.fixture.js";
+import { inspectVsixPackageInputSchema } from "../../src/domain/vsix/vsixPackage.js";
 import { PeResourcesProvider } from "../../src/native/pe/PeResourcesProvider.js";
 import { Il2cppMetadataProvider } from "../../src/il2cpp/Il2cppMetadataProvider.js";
 import { ElfNotesProvider } from "../../src/native/elf/ElfNotesProvider.js";
@@ -185,6 +191,40 @@ const staticProviders = [
   ["PE", () => new PeResourcesProvider()],
   ["IL2CPP metadata", () => new Il2cppMetadataProvider()],
 ] as const;
+
+it("preserves opaque VS Code vsix decoder failures and the completed file identity", async () => {
+  const path = await selectedImage();
+  const bytes = await vsixPackageFixture();
+  await writeFile(path, bytes);
+  fault.blockNew = false;
+  const cause = new Error("controlled decoder runtime failure");
+  const enumeration = vi
+    .spyOn(ZipReader.prototype, "getEntriesGenerator")
+    .mockImplementation(async function* () {
+      throw cause;
+    });
+  const provider = new VsixPackageProvider();
+  try {
+    const result = await provider.inspect(
+      inspectVsixPackageInputSchema.parse({ path }),
+    );
+    if (result.ok) throw new Error("Expected opaque decoder failure");
+    expect(result.error._tag).toBe("ArtifactOperationError");
+    expect(result.error.cause).toBe(cause);
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(result.error.partialObservation).toEqual({
+      kind: "file-snapshot-hash",
+      path,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      bytes: bytes.length,
+    });
+    expect(fault.handles).toHaveLength(1);
+    expect(fault.handles[0]?.fd).toBe(-1);
+  } finally {
+    enumeration.mockRestore();
+    await provider.close();
+  }
+});
 
 it("preserves opaque NuGet decoder failures and the completed file identity", async () => {
   const path = await selectedImage();
@@ -252,7 +292,10 @@ it("reports a NuGet package changed after hashing when its ZIP decode fails", as
 
 it.each(
   ["close failure", "close cancellation"].flatMap((outcome) =>
-    ["NuGet", "Maven/Gradle"].map((kind) => ({ outcome, kind })),
+    ["NuGet", "Maven/Gradle", "VS Code vsix"].map((kind) => ({
+      outcome,
+      kind,
+    })),
   ),
 )(
   "retains only the completed $kind file snapshot through $outcome and cleanup retry",
@@ -261,7 +304,9 @@ it.each(
     const bytes =
       kind === "NuGet"
         ? await nugetNupkgFixture()
-        : Buffer.from(mavenPomFixture);
+        : kind === "VS Code vsix"
+          ? await vsixPackageFixture()
+          : Buffer.from(mavenPomFixture);
     await writeFile(path, bytes);
     const controller = new AbortController();
     const reason = { source: `${kind} file finalization` };
@@ -270,7 +315,9 @@ it.each(
     const service =
       kind === "NuGet"
         ? new NugetNupkgService(new NugetNupkgProvider())
-        : new MavenGradleMetadataService(new MavenGradleMetadataProvider());
+        : kind === "VS Code vsix"
+          ? new VsixPackageService(new VsixPackageProvider())
+          : new MavenGradleMetadataService(new MavenGradleMetadataProvider());
     try {
       const result = await service.inspect(
         { path },
@@ -1331,6 +1378,7 @@ const stableArtifactProviders = [
   ["kernel build config", () => new KernelBuildConfigProvider()],
   ["PE certificates", () => new PeCertificatesProvider()],
   ["PE load configuration", () => new PeLoadConfigProvider()],
+  ["PE overlay", () => new PeOverlayProvider()],
   ["release exposure", () => new ReleaseExposureReader()],
   ["binary hardening", () => new BinaryHardeningProvider()],
   ["PE imports", () => new PeImportsProvider()],
@@ -1420,6 +1468,11 @@ const inspectFileFailure = (
   if (provider instanceof PeLoadConfigProvider)
     return provider.inspect(
       inspectPeLoadConfigInputSchema.parse({ path }),
+      options,
+    );
+  if (provider instanceof PeOverlayProvider)
+    return provider.inspect(
+      inspectPeOverlayInputSchema.parse({ path }),
       options,
     );
   if (provider instanceof BinaryHardeningProvider)

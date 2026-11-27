@@ -24,10 +24,7 @@ jobs:
   mutation:
     name: Mutation sweep (${{ matrix.suite }})
     runs-on: ubuntu-latest
-    # The reverse-tools suite reached 805/1008 mutants at 57 minutes of
-    # mutation testing on 2026-11-26 and was killed by the previous 60-minute
-    # budget before it could report. 90 minutes leaves room for the ~70
-    # minutes the suite needs plus the setup it runs before it.
+    # The complete reverse-tools sweep hit the previous 60-minute job limit.
     timeout-minutes: 90
     strategy:
       fail-fast: false
@@ -47,11 +44,11 @@ jobs:
       - name: Cache npm package downloads
         uses: ./.github/actions/npm-cache
       - run: npm ci
+      - name: Require mutation targets in the checker projects
+        run: npm run verify:mutation-targets
       - name: Reuse portable build outputs across runs
         uses: ./.github/actions/portable-build-cache
       - run: npm run test:prepare
-      - name: Require the mutation project to cover every mutated file
-        run: npm run verify:mutation-targets
       - name: Run the complete configuration
         env:
           MUTATION_CONFIG: ${{ matrix.config }}

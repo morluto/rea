@@ -4,11 +4,13 @@ import { Budget } from "../../domain/budget.js";
 import { malformedInput } from "../../domain/parseFailure.js";
 import { isStrictUtf8 } from "../../domain/strictUtf8.js";
 import {
+  isTarDirectoryHeader,
   parsePaxRecords,
   parseTarHeaderBlock,
   TAR_BLOCK_BYTES,
   TAR_TYPEFLAGS,
   tarPaddedSize,
+  tarStoredDataBytes,
   type TarHeaderDialect,
   type TarPaxRecords,
 } from "../../domain/tarFormat.js";
@@ -18,6 +20,8 @@ import {
   artifactReaderLimitFailure,
   artifactParseFailure,
   assertArtifactReadActive,
+  currentDirectoryPrefixLimitation,
+  withoutCurrentDirectoryPrefix,
 } from "../../resources/index.js";
 import { TarStreamEnded, type TarByteStream } from "./TarByteStream.js";
 
@@ -245,6 +249,7 @@ export const walkTar = async (
   const members: TarMember[] = [];
   const omissions: { path: string; kind: ArtifactTraversalOmissionKind }[] = [];
   const limitations: string[] = [];
+  let prefixedMembers = 0;
   const dialects = new Set<TarHeaderDialect>();
   let paxHeaders = 0;
   const retained = new Budget(limits.metadata_bytes);
@@ -297,9 +302,28 @@ export const walkTar = async (
       }
       const parsed = parseTarHeaderBlock(block);
       if (parsed.state === "zero") {
-        endOffset = headerOffset;
-        endState = "end-marker";
-        const tarTrailing = await countTrailingNonZero(stream, signal);
+        const secondBlock = await stream.read(TAR_BLOCK_BYTES, signal);
+        const secondBlockNonZero = secondBlock.reduce(
+          (count, byte) => count + Number(byte !== 0),
+          0,
+        );
+        if (secondBlock.length < TAR_BLOCK_BYTES) {
+          stop(
+            "truncated",
+            headerOffset,
+            `Tar end-of-archive marker at offset ${String(headerOffset)} has only ${String(secondBlock.length)} byte(s) in its second zero block.`,
+          );
+        } else if (secondBlockNonZero > 0) {
+          stop(
+            "malformed",
+            headerOffset,
+            `Tar end-of-archive marker at offset ${String(headerOffset)} has a non-zero second block.`,
+          );
+        } else {
+          stop("end-marker", headerOffset);
+        }
+        const tarTrailing =
+          secondBlockNonZero + (await countTrailingNonZero(stream, signal));
         if (tarTrailing > 0) {
           trailingNonZeroBytes += tarTrailing;
           limitations.push(
@@ -457,7 +481,7 @@ export const walkTar = async (
           break;
         }
       }
-      const stored = storedDataBytes(typeflag, name, size);
+      const stored = tarStoredDataBytes(typeflag, name, size);
       const skipped = await stream.skip(stored, signal);
       if (skipped < stored) {
         stop(
@@ -468,7 +492,7 @@ export const walkTar = async (
         break;
       }
       const sourcePath = name;
-      const path = name.replace(/^(?:\.\/)+/u, "");
+      const path = withoutCurrentDirectoryPrefix(name);
       const role = memberRole(typeflag, name, records);
       // Only an inventoried member keeps its pax warnings.
       if ("omit" in role || role.member === "root")
@@ -483,10 +507,7 @@ export const walkTar = async (
       if ("omit" in role)
         omissions.push({ path: path.replace(/\/+$/u, ""), kind: role.omit });
       else if (role.member !== "root") {
-        if (path !== sourcePath)
-          memberLimitations.push(
-            `tar member name ${JSON.stringify(sourcePath)} has a leading current-directory prefix omitted from its logical path.`,
-          );
+        if (path !== sourcePath) prefixedMembers += 1;
         members.push({
           kind: role.member,
           path,
@@ -540,6 +561,8 @@ export const walkTar = async (
     )
       members.pop();
   }
+  if (prefixedMembers > 0)
+    limitations.push(currentDirectoryPrefixLimitation("tar", prefixedMembers));
   return {
     members,
     omissions,
@@ -553,27 +576,6 @@ export const walkTar = async (
   };
 };
 
-/** A directory header, including an old regular header whose name ends in `/`. */
-const isDirectoryHeader = (flag: number, name: string): boolean =>
-  flag === TAR_TYPEFLAGS.directory || (flag === 0 && name.endsWith("/"));
-
-/** Typeflags POSIX ustar records without data blocks, besides directories. */
-const HEADER_ONLY_TYPEFLAGS: ReadonlySet<number> = new Set([
-  TAR_TYPEFLAGS.symlink,
-  TAR_TYPEFLAGS.characterDevice,
-  TAR_TYPEFLAGS.blockDevice,
-  TAR_TYPEFLAGS.fifo,
-]);
-
-/**
- * Data bytes stored after a member header. POSIX ustar stores none for
- * symbolic links, devices, directories and FIFOs, whose size field may still
- * be nonzero, so the next header follows at once. Hard links keep their size:
- * pax interchange archives may store a body for them.
- */
-const storedDataBytes = (flag: number, name: string, size: number): number =>
-  isDirectoryHeader(flag, name) || HEADER_ONLY_TYPEFLAGS.has(flag) ? 0 : size;
-
 /**
  * What a header contributes: an inventory member, an omission, or nothing
  * for the archive's own `./` root and a GNU volume label.
@@ -585,7 +587,7 @@ const memberRole = (
 ):
   | { readonly member: TarMember["kind"] | "root" }
   | { readonly omit: ArtifactTraversalOmissionKind } => {
-  const directory = isDirectoryHeader(flag, name);
+  const directory = isTarDirectoryHeader(flag, name);
   if (flag === TAR_TYPEFLAGS.gnuVolumeLabel) return { member: "root" };
   if (directory && /^(?:\.\/?)?$/u.test(name)) return { member: "root" };
   if ([...records.keys()].some((key) => key.startsWith("GNU.sparse.")))

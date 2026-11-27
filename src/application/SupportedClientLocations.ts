@@ -1,3 +1,4 @@
+import { isEnoentError } from "./ClientConfigPath.js";
 import type {
   ClientRegistrationConnectionProfile,
   NativeStdioIncompatibility,
@@ -222,11 +223,7 @@ export const existingOpenCodeConfigPath = (
         lstatSync(path);
         return true;
       } catch (cause: unknown) {
-        return !(
-          cause instanceof Error &&
-          "code" in cause &&
-          cause.code === "ENOENT"
-        );
+        return !isEnoentError(cause);
       }
     }) ??
     resolve(
@@ -299,8 +296,7 @@ const directoryPresent = (path: string): Result<boolean, ClientPathFailure> => {
     lstatSync(path);
     return ok(true);
   } catch (cause: unknown) {
-    if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
-      return ok(false);
+    if (isEnoentError(cause)) return ok(false);
     return err({
       path,
       message: `Cannot determine whether ${path} exists: ${errorMessage(cause)}. Repair its access before configuring Zed.`,
@@ -387,8 +383,7 @@ const regularPathPresent = (
     lstatSync(path);
     return ok(true);
   } catch (cause: unknown) {
-    if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
-      return ok(false);
+    if (isEnoentError(cause)) return ok(false);
     return err({
       path,
       message: `Cannot determine whether ${path} exists: ${errorMessage(cause)}. Repair its access before configuring MCPorter.`,
@@ -498,9 +493,7 @@ export const ampLocation = ({
       lstatSync(candidate);
       present.push(candidate);
     } catch (cause: unknown) {
-      if (
-        !(cause instanceof Error && "code" in cause && cause.code === "ENOENT")
-      )
+      if (!isEnoentError(cause))
         return err({
           path: candidate,
           message: `Cannot determine whether ${candidate} exists: ${errorMessage(cause)}. Repair its access before configuring Amp.`,
