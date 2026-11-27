@@ -1,7 +1,8 @@
+import { setImmediate as yieldTurn } from "node:timers/promises";
 import { describe, expect, it } from "vitest";
 import { espNvsReportSchema } from "./espNvs.js";
 import { computeNvsItemHeaderCrc, espIdfCrc32 } from "./espNvsItemDecoder.js";
-import { parseEspNvsPartition } from "./espNvsParser.js";
+import { hasEspNvsHeader, parseEspNvsPartition } from "./espNvsParser.js";
 
 const initActivePage = (seqNo: number, versionByte = 0xfe): Buffer => {
   const page = Buffer.alloc(4096, 0xff);
@@ -98,7 +99,7 @@ const writeVarSlot = (options: {
 };
 
 describe("parseEspNvsPartition", () => {
-  it("decodes namespaces, primitives, UTF-8 strings, and multi-chunk v2 blobs across pages", () => {
+  it("decodes namespaces, primitives, UTF-8 strings, and multi-chunk v2 blobs across pages", async () => {
     const p0 = initActivePage(1, 0xfe);
     writeNamespaceSlot(p0, 0, "wifi", 1);
     writeU32Slot({ page: p0, slotIdx: 1, nsId: 1, key: "channel", val: 6 });
@@ -152,7 +153,7 @@ describe("parseEspNvsPartition", () => {
     const p2 = Buffer.alloc(4096, 0xff); // EMPTY page
     const image = Buffer.concat([p0, p1, p2]);
 
-    const res = parseEspNvsPartition({
+    const res = await parseEspNvsPartition({
       artifact: {
         path: "/tmp/nvs.bin",
         sha256: "a".repeat(64),
@@ -194,12 +195,12 @@ describe("parseEspNvsPartition", () => {
     });
   });
 
-  it("does not decode a page whose header fails CRC32, as whole-flash encryption produces", () => {
+  it("does not decode a page whose header fails CRC32, as whole-flash encryption produces", async () => {
     const encrypted = Buffer.alloc(4096);
     for (let i = 0; i < encrypted.length; i += 1) {
       encrypted[i] = (i * 73 + 19) & 0xff;
     }
-    const res = parseEspNvsPartition({
+    const res = await parseEspNvsPartition({
       artifact: {
         path: "/tmp/enc_nvs.bin",
         sha256: "b".repeat(64),
@@ -219,7 +220,7 @@ describe("parseEspNvsPartition", () => {
     expect(res.value.coverage.status).toBe("partial");
   });
 
-  it("recovers intact keys following an item header whose span byte was corrupted", () => {
+  it("recovers intact keys following an item header whose span byte was corrupted", async () => {
     const page = initActivePage(1, 0xfe);
     writeNamespaceSlot(page, 0, "wifi", 1);
     // Slot 1..2: 2-slot string "ssid" ("Hello\0", where 'H' = 0x48 at payload[0]!)
@@ -241,7 +242,7 @@ describe("parseEspNvsPartition", () => {
     const damagedHeaderOffset = 64 + 1 * 32;
     page[damagedHeaderOffset + 2] = 66;
 
-    const res = parseEspNvsPartition({
+    const res = await parseEspNvsPartition({
       artifact: {
         path: "/tmp/damaged_span.bin",
         sha256: "d".repeat(64),
@@ -270,7 +271,7 @@ describe("parseEspNvsPartition", () => {
     expect(res.value.coverage.status).toBe("partial");
   });
 
-  it("reassembles thousands of BLOB_IDX records declaring chunkCount = 255 in linear time", () => {
+  it("reassembles thousands of BLOB_IDX records declaring chunkCount = 255 in linear time", async () => {
     const pages: Buffer[] = [];
     const p0 = initActivePage(1, 0xfe);
     writeNamespaceSlot(p0, 0, "blobns", 1);
@@ -321,7 +322,7 @@ describe("parseEspNvsPartition", () => {
 
     const image = Buffer.concat(pages);
     const started = performance.now();
-    const res = parseEspNvsPartition({
+    const res = await parseEspNvsPartition({
       artifact: {
         path: "/tmp/crafted_blobs.bin",
         sha256: "e".repeat(64),
@@ -336,12 +337,13 @@ describe("parseEspNvsPartition", () => {
     if (!res.ok) return;
     // All 7,812 BLOB_IDX entries are retained without an 8,192 or 1,024 parser truncation, in linear time.
     expect(res.value.entries).toHaveLength(62 * 126);
+    expect(res.value.coverage.status).toBe("partial");
     expect(elapsedMs).toBeLessThan(2000);
   });
 
-  it("rejects an explicit partitionBytes selection that extends past the provided slice", () => {
+  it("rejects an explicit partitionBytes selection that extends past the provided slice", async () => {
     const image = Buffer.concat([initActivePage(1), initActivePage(2)]);
-    const res = parseEspNvsPartition({
+    const res = await parseEspNvsPartition({
       artifact: {
         path: "/tmp/short_nvs.bin",
         sha256: "f".repeat(64),
@@ -357,8 +359,8 @@ describe("parseEspNvsPartition", () => {
     expect(res.error.message).toContain("partition_bytes (12288)");
   });
 
-  const parse = (image: Buffer) => {
-    const res = parseEspNvsPartition({
+  const parse = async (image: Buffer) => {
+    const res = await parseEspNvsPartition({
       artifact: {
         path: "/tmp/nvs.bin",
         sha256: "c".repeat(64),
@@ -397,7 +399,7 @@ describe("parseEspNvsPartition", () => {
     setBitmapWritten(page, slotIdx, fields.span ?? 1);
   };
 
-  it("decodes float and double items, which ESP-IDF stores as 0x24 and 0x28", () => {
+  it("decodes float and double items, which ESP-IDF stores as 0x24 and 0x28", async () => {
     const page = initActivePage(1);
     writeNamespaceSlot(page, 0, "cal", 1);
     const f = Buffer.alloc(8, 0xff);
@@ -406,7 +408,18 @@ describe("parseEspNvsPartition", () => {
     const d = Buffer.alloc(8);
     d.writeDoubleLE(-0.1, 0);
     writeRawSlot(page, 2, { nsId: 1, typeCode: 0x28, key: "offset", data: d });
-    const report = parse(page);
+    const u64 = Buffer.alloc(8);
+    u64.writeBigUInt64LE(0xfedc_ba98_7654_3210n, 0);
+    writeRawSlot(page, 3, {
+      nsId: 1,
+      typeCode: 0x08,
+      key: "serial",
+      data: u64,
+    });
+    const i64 = Buffer.alloc(8);
+    i64.writeBigInt64LE(-9_007_199_254_740_993n, 0);
+    writeRawSlot(page, 4, { nsId: 1, typeCode: 0x18, key: "delta", data: i64 });
+    const report = await parse(page);
     expect(report.entries).toEqual([
       expect.objectContaining({
         key: "gain",
@@ -419,17 +432,27 @@ describe("parseEspNvsPartition", () => {
         data_type: "double",
         value_float: "-0.1",
       }),
+      expect.objectContaining({
+        key: "serial",
+        data_type: "u64",
+        value_integer: String(0xfedc_ba98_7654_3210n),
+      }),
+      expect.objectContaining({
+        key: "delta",
+        data_type: "i64",
+        value_integer: "-9007199254740993",
+      }),
     ]);
     expect(report.coverage.status).toBe("complete");
   });
 
-  it("distinguishes ESP-IDF page states and does not decode a page firmware marked CORRUPT", () => {
+  it("distinguishes ESP-IDF page states and does not decode a page firmware marked CORRUPT", async () => {
     const corrupt = initActivePage(3);
     writeNamespaceSlot(corrupt, 0, "wifi", 1);
     corrupt.writeUInt32LE(0xffff_fff0, 0); // CORRUPT; the header CRC excludes the state
     const freeing = initActivePage(4);
     freeing.writeUInt32LE(0xffff_fff8, 0);
-    const report = parse(Buffer.concat([corrupt, freeing]));
+    const report = await parse(Buffer.concat([corrupt, freeing]));
     expect(
       report.pages.map((page) => [page.state, page.entries_decoded]),
     ).toEqual([
@@ -441,12 +464,12 @@ describe("parseEspNvsPartition", () => {
     expect(report.anomalies.join("\n")).toContain("firmware marked it CORRUPT");
   });
 
-  it("reports a valid page whose every item header is unreadable as consistent with NVS encryption", () => {
+  it("reports a valid page whose every item header is unreadable as consistent with NVS encryption", async () => {
     const page = initActivePage(1);
     // NVS encryption keeps the header and bitmap in plaintext and encrypts entries.
     for (let i = 64; i < 64 + 3 * 32; i += 1) page[i] = (i * 151 + 7) & 0xff;
     setBitmapWritten(page, 0, 3);
-    const report = parse(page);
+    const report = await parse(page);
     expect(report.pages[0]).toMatchObject({
       state: "active",
       header_crc_valid: true,
@@ -460,7 +483,7 @@ describe("parseEspNvsPartition", () => {
     expect(report.coverage.status).toBe("partial");
   });
 
-  it("does not trust a CRC-valid header that breaks ESP-IDF's consistency rules", () => {
+  it("does not trust a CRC-valid header that breaks ESP-IDF's consistency rules", async () => {
     const page = initActivePage(1);
     writeNamespaceSlot(page, 0, "app", 1);
     // A string whose span (5) disagrees with its 10 data bytes (expected 2).
@@ -481,7 +504,7 @@ describe("parseEspNvsPartition", () => {
       key: "odd",
       data: Buffer.alloc(8),
     });
-    const report = parse(page);
+    const report = await parse(page);
     expect(report.entries.map((entry) => entry.key)).toEqual(["after"]);
     // Slot 1, its three unwritten "payload" slots 3..5 marked written by the
     // bitmap, and slot 6 are all untrusted; slot 2 is still recovered.
@@ -494,7 +517,7 @@ describe("parseEspNvsPartition", () => {
     );
   });
 
-  it("marks older copies of a key superseded by a newer page or a later slot", () => {
+  it("marks older copies of a key superseded by a newer page or a later slot", async () => {
     const older = initActivePage(7);
     older.writeUInt32LE(0xffff_fff8, 0); // FREEING: its items were copied forward
     writeNamespaceSlot(older, 0, "wifi", 1);
@@ -503,7 +526,7 @@ describe("parseEspNvsPartition", () => {
     writeU32Slot({ page: newer, slotIdx: 0, nsId: 1, key: "channel", val: 6 });
     writeU32Slot({ page: newer, slotIdx: 1, nsId: 1, key: "power", val: 10 });
     writeU32Slot({ page: newer, slotIdx: 2, nsId: 1, key: "power", val: 20 });
-    const report = parse(Buffer.concat([older, newer]));
+    const report = await parse(Buffer.concat([older, newer]));
     expect(
       report.entries.map((entry) => [
         entry.key,
@@ -518,7 +541,7 @@ describe("parseEspNvsPartition", () => {
     ]);
   });
 
-  it("keeps the bytes of a non-UTF-8 string and key instead of replacing them", () => {
+  it("keeps the bytes of a non-UTF-8 string and key instead of replacing them", async () => {
     const page = initActivePage(1);
     writeNamespaceSlot(page, 0, "raw", 1);
     writeVarSlot({
@@ -530,7 +553,7 @@ describe("parseEspNvsPartition", () => {
       key: "bin",
       payload: Buffer.from([0xc3, 0x28, 0x00]),
     });
-    const report = parse(page);
+    const report = await parse(page);
     expect(report.entries[0]).toMatchObject({
       data_type: "sz",
       value_text: null,
@@ -538,5 +561,258 @@ describe("parseEspNvsPartition", () => {
       blob_preview_hex: "c32800",
     });
     expect(report.anomalies.join("\n")).toContain("not valid UTF-8");
+  });
+
+  it("keeps UTF-8 and Latin-1 keys with identical display text separate in superseding and v2 blob reassembly", async () => {
+    const page = initActivePage(1);
+    writeNamespaceSlot(page, 0, "i18n", 1);
+
+    const writeKeyBytesSlot = (
+      slotIdx: number,
+      fields: {
+        readonly typeCode: number;
+        readonly span: number;
+        readonly chunkIndex: number;
+        readonly keyBytes: readonly number[];
+        readonly data8: Buffer;
+        readonly payload?: Buffer;
+      },
+    ): void => {
+      const off = 64 + slotIdx * 32;
+      const s = page.subarray(off, off + 32);
+      s.fill(0xff);
+      s[0] = 1;
+      s[1] = fields.typeCode;
+      s[2] = fields.span;
+      s[3] = fields.chunkIndex;
+      s.fill(0, 8, 24);
+      Buffer.from(fields.keyBytes).copy(s, 8);
+      fields.data8.copy(s, 24, 0, 8);
+      s.writeUInt32LE(computeNvsItemHeaderCrc(s), 4);
+      if (fields.payload !== undefined) fields.payload.copy(page, off + 32);
+      setBitmapWritten(page, slotIdx, fields.span);
+    };
+
+    // Stored key bytes [0xc3, 0xa9, 0x00] (UTF-8 "é") vs [0xe9, 0x00] (Latin-1 "é").
+    const utf8Key = [0xc3, 0xa9, 0x00];
+    const latin1Key = [0xe9, 0x00];
+
+    const u32A = Buffer.alloc(8, 0xff);
+    u32A.writeUInt32LE(100, 0);
+    writeKeyBytesSlot(1, {
+      typeCode: 0x04,
+      span: 1,
+      chunkIndex: 0xff,
+      keyBytes: utf8Key,
+      data8: u32A,
+    });
+    const u32B = Buffer.alloc(8, 0xff);
+    u32B.writeUInt32LE(200, 0);
+    writeKeyBytesSlot(2, {
+      typeCode: 0x04,
+      span: 1,
+      chunkIndex: 0xff,
+      keyBytes: latin1Key,
+      data8: u32B,
+    });
+
+    // Two distinct v2 blobs in the same namespace with chunkIndex 0 under the two byte keys.
+    const utf8Chunk = Buffer.from("utf8-blob", "utf8");
+    const utf8ChunkData8 = Buffer.alloc(8, 0xff);
+    utf8ChunkData8.writeUInt16LE(utf8Chunk.length, 0);
+    utf8ChunkData8.writeUInt32LE(espIdfCrc32(utf8Chunk), 4);
+    writeKeyBytesSlot(3, {
+      typeCode: 0x42,
+      span: 2,
+      chunkIndex: 0,
+      keyBytes: utf8Key,
+      data8: utf8ChunkData8,
+      payload: utf8Chunk,
+    });
+
+    const latin1Chunk = Buffer.from("latin1-blob", "utf8");
+    const latin1ChunkData8 = Buffer.alloc(8, 0xff);
+    latin1ChunkData8.writeUInt16LE(latin1Chunk.length, 0);
+    latin1ChunkData8.writeUInt32LE(espIdfCrc32(latin1Chunk), 4);
+    writeKeyBytesSlot(5, {
+      typeCode: 0x42,
+      span: 2,
+      chunkIndex: 0,
+      keyBytes: latin1Key,
+      data8: latin1ChunkData8,
+      payload: latin1Chunk,
+    });
+
+    const utf8Idx = Buffer.alloc(8, 0xff);
+    utf8Idx.writeUInt32LE(utf8Chunk.length, 0);
+    utf8Idx[4] = 1;
+    utf8Idx[5] = 0;
+    writeKeyBytesSlot(7, {
+      typeCode: 0x48,
+      span: 1,
+      chunkIndex: 0xff,
+      keyBytes: utf8Key,
+      data8: utf8Idx,
+    });
+
+    const latin1Idx = Buffer.alloc(8, 0xff);
+    latin1Idx.writeUInt32LE(latin1Chunk.length, 0);
+    latin1Idx[4] = 1;
+    latin1Idx[5] = 0;
+    writeKeyBytesSlot(8, {
+      typeCode: 0x48,
+      span: 1,
+      chunkIndex: 0xff,
+      keyBytes: latin1Key,
+      data8: latin1Idx,
+    });
+
+    const report = await parse(page);
+    expect(report.entries).toEqual([
+      expect.objectContaining({
+        entry_index: 1,
+        key: "é",
+        data_type: "u32",
+        value_integer: "100",
+        superseded: false,
+      }),
+      expect.objectContaining({
+        entry_index: 2,
+        key: "é",
+        data_type: "u32",
+        value_integer: "200",
+        superseded: false,
+      }),
+      expect.objectContaining({
+        entry_index: 7,
+        key: "é",
+        data_type: "blob_v2",
+        blob_preview_hex: utf8Chunk.toString("hex"),
+        completeness: "complete",
+        superseded: false,
+      }),
+      expect.objectContaining({
+        entry_index: 8,
+        key: "é",
+        data_type: "blob_v2",
+        blob_preview_hex: latin1Chunk.toString("hex"),
+        completeness: "complete",
+        superseded: false,
+      }),
+    ]);
+  });
+
+  it("rejects a multi-slot item whose continuation slot is not marked written and recovers later slots", async () => {
+    const page = initActivePage(1);
+    writeNamespaceSlot(page, 0, "wifi", 1);
+    // 3-slot string at slots 1..3 (>32 payload bytes) whose payload CRC32 is valid.
+    const payload = Buffer.from(`${"A".repeat(40)}\0`, "utf8");
+    const span = writeVarSlot({
+      page,
+      slotIdx: 1,
+      nsId: 1,
+      typeCode: 0x21,
+      chunkIndex: 0xff,
+      key: "unfinished",
+      payload,
+    });
+    expect(span).toBe(3);
+
+    // Leave continuation slot 2 in EMPTY (0b11) state while placing a valid u32 item at slot 3.
+    const slot2Byte = 32 + (2 >>> 2);
+    const slot2Shift = (2 & 3) * 2;
+    page[slot2Byte] = page[slot2Byte]! | (3 << slot2Shift);
+    writeU32Slot({ page, slotIdx: 3, nsId: 1, key: "intact", val: 42 });
+
+    const report = await parse(page);
+    expect(report.entries).toEqual([
+      expect.objectContaining({
+        namespace: "wifi",
+        key: "intact",
+        entry_index: 3,
+        data_type: "u32",
+        value_integer: "42",
+      }),
+    ]);
+    expect(report.corrupt_entry_count).toBe(1);
+    expect(report.coverage.status).toBe("partial");
+    expect(report.anomalies.join("\n")).toContain(
+      "continuation slot 2 has bitmap state empty instead of written",
+    );
+  });
+
+  it("marks coverage partial when v2 blob chunks are missing or bitmap slots are illegal", async () => {
+    const missingBlobPage = initActivePage(1);
+    writeNamespaceSlot(missingBlobPage, 0, "cfg", 1);
+    const idxData = Buffer.alloc(8, 0xff);
+    idxData.writeUInt32LE(16, 0);
+    idxData[4] = 1; // chunkCount = 1, with no BLOB_DATA present
+    idxData[5] = 0;
+    writeRawSlot(missingBlobPage, 1, {
+      nsId: 1,
+      typeCode: 0x48,
+      key: "cert",
+      data: idxData,
+    });
+    const missingBlobReport = await parse(missingBlobPage);
+    expect(missingBlobReport.entries[0]?.completeness).toBe("missing_chunks");
+    expect(missingBlobReport.coverage.status).toBe("partial");
+
+    const illegalSlotPage = initActivePage(1);
+    writeNamespaceSlot(illegalSlotPage, 0, "cfg", 1);
+    writeU32Slot({
+      page: illegalSlotPage,
+      slotIdx: 1,
+      nsId: 1,
+      key: "ok",
+      val: 1,
+    });
+    // Set slot 2 bitmap bits to 0b01 (ILLEGAL): clear bit 1 from 0b11.
+    const shift = (2 & 3) * 2;
+    illegalSlotPage[32] = illegalSlotPage[32]! & ~(2 << shift);
+    const illegalReport = await parse(illegalSlotPage);
+    expect(illegalReport.pages[0]?.illegal_slot_count).toBe(1);
+    expect(illegalReport.coverage.status).toBe("partial");
+  });
+
+  it("yields cooperatively between page batches so scheduled cancellation aborts mid-decode", async () => {
+    const pages = Array.from({ length: 48 }, (_, idx) =>
+      initActivePage(idx + 1),
+    );
+    const image = Buffer.concat(pages);
+    let aborted = false;
+    let checkpoints = 0;
+    void yieldTurn().then(() => {
+      aborted = true;
+    });
+
+    await expect(
+      parseEspNvsPartition({
+        artifact: {
+          path: "/tmp/large_nvs.bin",
+          sha256: "9".repeat(64),
+          bytes: image.length,
+        },
+        partitionOffset: 0,
+        sliceBytes: image,
+        onCheckpoint: () => {
+          checkpoints += 1;
+          if (aborted) throw new Error("cancelled-mid-decode");
+        },
+      }),
+    ).rejects.toThrow("cancelled-mid-decode");
+    expect(checkpoints).toBeGreaterThan(16);
+    expect(checkpoints).toBeLessThan(48);
+  });
+
+  it("recognizes only page-aligned partitions with a valid ESP-IDF NVS page header", () => {
+    const valid = initActivePage(1, 0xfe);
+    expect(hasEspNvsHeader(valid, valid.length)).toBe(true);
+    expect(hasEspNvsHeader(valid, valid.length + 16)).toBe(false);
+    expect(hasEspNvsHeader(Buffer.alloc(4096, 0xff), 4096)).toBe(false);
+    const badReserved = Buffer.from(valid);
+    badReserved[12] = 0;
+    badReserved.writeUInt32LE(espIdfCrc32(badReserved.subarray(4, 28)), 28);
+    expect(hasEspNvsHeader(badReserved, 4096)).toBe(false);
   });
 });

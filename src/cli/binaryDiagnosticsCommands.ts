@@ -9,6 +9,7 @@ import { BYTE_ENTROPY_PROVIDER } from "../domain/investigationProviders.js";
 import { ok } from "../domain/result.js";
 import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../contracts/native/binaryDiagnosticsToolContracts.js";
 import { deliverCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
+import { cliPublicationInvocation } from "./cliEvidencePublication.js";
 import { contractNamed } from "./contractCliDescription.js";
 import {
   callerTargetPath,
@@ -575,8 +576,9 @@ export const registerBinaryDiagnosticsCommands = (
       const service = createEspNvsService();
       const retainedSources: Evidence[] = [];
       const retention =
-        context.delivery?.detail !== "summary" &&
-        context.delivery?.evidenceOutput !== undefined
+        context.delivery?.evidenceOutput !== undefined ||
+        (context.delivery?.detail === undefined &&
+          cliPublicationInvocation().retention !== undefined)
           ? {
               recordEvidence: (evidence: Evidence) => {
                 retainedSources.push(evidence);
@@ -588,8 +590,23 @@ export const registerBinaryDiagnosticsCommands = (
           : undefined;
       return deliverCliAnalysisEvidence({
         callerInputPath: callerTargetPath(context),
-        run: () =>
-          service.inspect(input, { signal: context.signal }, retention),
+        run: async () => {
+          const result = await service.inspect(
+            input,
+            { signal: context.signal },
+            retention,
+          );
+          // Summary delivery returns no inline entries; project the summary and
+          // publish its bundle from the uncapped parent Evidence.
+          if (
+            result.ok &&
+            context.delivery?.detail === "summary" &&
+            retainedSources.length > 0
+          ) {
+            return ok(retainedSources.pop()!);
+          }
+          return result;
+        },
         service,
         providerId: "rea-esp-nvs",
         operation: context.operation,

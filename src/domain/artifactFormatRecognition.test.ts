@@ -25,6 +25,7 @@ import { devicetreeFixture } from "./firmware/devicetree.fixture.js";
 import { dfuseFile } from "./firmware/dfuse.fixture.js";
 import { DFUSE_SUFFIX_BYTES } from "./firmware/dfuse.js";
 import { ESP8266_REFUSAL } from "./firmware/espImage.js";
+import { espIdfCrc32 } from "./firmware/espNvsItemDecoder.js";
 import { twoVolumeUbiImage } from "./firmware/ubiImage.fixture.js";
 import { buildIso9660Image } from "./iso9660/iso9660.fixture.js";
 import { ISO9660_DESCRIPTOR_OFFSET } from "./iso9660/iso9660Structures.js";
@@ -398,4 +399,24 @@ it("does not recognize a plain ar archive that is not a Debian package", () => {
   ]);
   expect(recognize(lateDebianBinary)).toBeUndefined();
   expect(recognize(Buffer.from("!<arch>\n", "ascii"))).toBeUndefined();
+});
+
+it("recognizes a standalone ESP-IDF NVS partition and ignores erased or unaligned files", () => {
+  const nvs = Buffer.alloc(4096, 0xff);
+  nvs.writeUInt32LE(0xffff_fffe, 0);
+  nvs.writeUInt32LE(1, 4);
+  nvs[8] = 0xfe;
+  nvs.writeUInt32LE(espIdfCrc32(nvs.subarray(4, 28)), 28);
+  expect(recognize(nvs)).toMatchObject({
+    state: "recognized",
+    format: "esp-nvs",
+  });
+  expect(recognize(Buffer.alloc(4096, 0xff))).toBeUndefined();
+  expect(
+    recognizeArtifactFormat({
+      prefix: nvs,
+      fileSize: 4100,
+      espFlashLayout: false,
+    }),
+  ).toBeUndefined();
 });

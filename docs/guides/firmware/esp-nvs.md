@@ -7,9 +7,10 @@ target code.
 
 ## When to use it
 
-When `inspect_artifact` on an `esp-flash-image` dump reports a `data/nvs`
-partition (typically at `0x9000`), use `inspect_esp_nvs` to inspect its
-persisted configuration state:
+When `inspect_artifact` classifies a standalone carved partition as `esp-nvs`
+or reports a populated `data/nvs` partition inside an `esp-flash-image` dump
+(typically at `0x9000`), use `inspect_esp_nvs` to inspect its persisted
+configuration state:
 
 - Verify 4096-byte NVS page headers, sequence numbers, v1/v2 format markers,
   and 2-bit slot state bitmaps (`empty`, `written`, `erased`, plus a count of

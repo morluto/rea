@@ -1,8 +1,9 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { describe, expect, it, onTestFinished } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { createCli } from "../../../src/cli.js";
+import * as espNvsItemDecoder from "../../../src/domain/firmware/espNvsItemDecoder.js";
 import {
   computeNvsItemHeaderCrc,
   espIdfCrc32,
@@ -325,7 +326,104 @@ describe("inspect_esp_nvs CLI and MCP parity", () => {
       exportedComplete?.normalized_result.entries.map((e) => e.key),
     ).toEqual(["k0", "k1", "k2", "k3", "k4"]);
 
-    // 4. Explicit partition_bytes extending past EOF fails closed instead of silently clamping to complete.
+    // 4. CLI --detail summary --max-entries 2 --evidence_output keeps all 5 entries in both summary and bundle.
+    const summaryBundlePath = join(dir, "settings-summary.evidence.json");
+    let summaryCliStdout = "";
+    let summaryCliExitCode = 0;
+    await createCli({}).serve(
+      [
+        "inspect-esp-nvs",
+        nvsPath,
+        "--detail",
+        "summary",
+        "--max-entries",
+        "2",
+        "--evidence_output",
+        summaryBundlePath,
+        "--format",
+        "json",
+      ],
+      {
+        env: {},
+        exit: (code) => {
+          summaryCliExitCode = code;
+        },
+        stdout: (chunk) => {
+          summaryCliStdout += chunk;
+        },
+      },
+    );
+    expect(summaryCliExitCode).toBe(0);
+    const summaryCliParsed = JSON.parse(summaryCliStdout) as {
+      summary: {
+        normalized_result: {
+          kind: string;
+          parent_evidence_id: string;
+          summary: { entry_count: number };
+        };
+      };
+    };
+    expect(summaryCliParsed.summary.normalized_result).toMatchObject({
+      kind: "summary",
+      parent_evidence_id: parentId,
+      summary: { entry_count: 5 },
+    });
+    const exportedSummaryBundle = JSON.parse(
+      await readFile(summaryBundlePath, "utf8"),
+    ) as {
+      records: {
+        evidence_id: string;
+        normalized_result: { entries: { key: string }[] };
+      }[];
+    };
+    expect(
+      exportedSummaryBundle.records
+        .find((r) => r.evidence_id === parentId)
+        ?.normalized_result.entries.map((e) => e.key),
+    ).toEqual(["k0", "k1", "k2", "k3", "k4"]);
+
+    // 5. Mid-decode AbortSignal cancellation interrupts a multi-page partition before later batches run.
+    const largePath = join(dir, "many-pages.bin");
+    await writeFile(
+      largePath,
+      Buffer.concat(
+        Array.from({ length: 32 }, () =>
+          buildActiveNvsPage("sys", [{ key: "k0", value: 1 }]),
+        ),
+      ),
+    );
+    const { createEspNvsService } =
+      await import("../../../src/composition/binaryDiagnostics/espNvs.js");
+    const abortService = createEspNvsService();
+    onTestFinished(() => abortService.close());
+    const midAbort = new AbortController();
+    let decodedSlots = 0;
+    const realDecode = espNvsItemDecoder.decodeWrittenNvsSlot;
+    const decodeSpy = vi
+      .spyOn(espNvsItemDecoder, "decodeWrittenNvsSlot")
+      .mockImplementation((ctx) => {
+        decodedSlots += 1;
+        if (decodedSlots === 1) {
+          setImmediate(() => midAbort.abort("cancel-mid-decode"));
+        }
+        return realDecode(ctx);
+      });
+    onTestFinished(() => decodeSpy.mockRestore());
+
+    const cancelledRes = await abortService.inspect(
+      { path: largePath },
+      { signal: midAbort.signal },
+    );
+    decodeSpy.mockRestore();
+    expect(cancelledRes.ok).toBe(false);
+    if (!cancelledRes.ok) {
+      expect(cancelledRes.error._tag).toBe("AnalysisCancelledError");
+    }
+    // 32 pages * 2 written slots/page = 64 slots total; cooperative yield after
+    // 16 pages (32 slots) lets setImmediate abort before pages 16..31 decode.
+    expect(decodedSlots).toBe(32);
+
+    // 6. Explicit partition_bytes extending past EOF fails closed instead of silently clamping to complete.
     const shortSelectionRes = await client.callTool({
       name: "inspect_esp_nvs",
       arguments: {

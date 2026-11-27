@@ -124,6 +124,7 @@ export const ARTIFACT_FORMAT_IDS = [
   "windows-shortcut",
   "python-pyc",
   "devicetree",
+  "esp-nvs",
   "deb",
   "unknown",
 ] as const;
@@ -174,6 +175,7 @@ const artifactContentFormatSchema = artifactFormatSchema.extract([
   "windows-shortcut",
   "python-pyc",
   "devicetree",
+  "esp-nvs",
   "deb",
   "directory",
   "file",

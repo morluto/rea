@@ -90,7 +90,7 @@ export class EspNvsProvider implements EspNvsPort {
             : input.partition_offset + input.partition_bytes;
         const slice = snapshot.bytes.subarray(input.partition_offset, sliceEnd);
 
-        const parsed = parseEspNvsPartition({
+        const parsed = await parseEspNvsPartition({
           artifact: {
             path: input.path,
             sha256: snapshot.sha256,

@@ -6,7 +6,6 @@ import {
   BinaryReader,
   readUint16At,
   readUint32At,
-  readUint64At,
 } from "../binaryContainer.js";
 import {
   ESP_NVS_ENTRY_BYTES,
@@ -17,8 +16,10 @@ import {
 } from "./espNvs.js";
 
 const CRC_SEED = 0xffff_ffff;
+const ITEM_DATA_OFFSET = 24;
 export const MAX_BLOB_PREVIEW_BYTES = 128;
 export const EMPTY_SHA256 = sha256Hex(Buffer.alloc(0));
+const itemHeaderCrcScratch = Buffer.allocUnsafe(28);
 
 /** Compute ESP-IDF `esp_rom_crc32_le(0xffffffff, buf, len)`. */
 export const espIdfCrc32 = (bytes: Uint8Array): number =>
@@ -26,35 +27,58 @@ export const espIdfCrc32 = (bytes: Uint8Array): number =>
 
 /** Compute ESP-IDF NVS 32-byte item header CRC over `[0..4) || [8..32)`. */
 export const computeNvsItemHeaderCrc = (slot32: Uint8Array): number => {
-  const packed = Buffer.allocUnsafe(28);
-  packed.set(slot32.subarray(0, 4), 0);
-  packed.set(slot32.subarray(8, 32), 4);
-  return espIdfCrc32(packed);
+  itemHeaderCrcScratch.set(slot32.subarray(0, 4), 0);
+  itemHeaderCrcScratch.set(slot32.subarray(8, 32), 4);
+  return espIdfCrc32(itemHeaderCrcScratch);
+};
+
+export const readBitmapSlotState = (
+  bitmap32: Uint8Array,
+  slotIndex: number,
+): "empty" | "written" | "erased" | "illegal" => {
+  const byteIdx = slotIndex >>> 2;
+  const shift = (slotIndex & 3) * 2;
+  const bits = (bitmap32[byteIdx]! >>> shift) & 3;
+  if (bits === 3) return "empty";
+  if (bits === 2) return "written";
+  if (bits === 0) return "erased";
+  return "illegal";
 };
 
 /** Decode bytes as UTF-8, keeping a leading U+FEFF as stored, or null when malformed. */
 const utf8OrNull = (bytes: Uint8Array): string | null =>
   isStrictUtf8(bytes) ? decodeStrictUtf8(bytes, "preserve") : null;
 
+export interface DecodedNvsKey {
+  readonly key: string;
+  /** Canonical byte-exact lookup identity so distinct byte encodings never merge. */
+  readonly keyId: string;
+  readonly problem?: string;
+}
+
 /**
  * Decode a 16-byte NVS key. ESP-IDF writes at most 15 bytes and a NUL, so a
- * key without a NUL or with invalid UTF-8 is reported; its bytes are kept
- * one-to-one as Latin-1 so the stored identity is not altered.
+ * key without a NUL or with invalid UTF-8 is reported; its display text falls
+ * back to Latin-1 while lookup keeps the exact stored byte sequence before NUL.
  */
-export const decodeNvsKey = (
-  bytes16: Uint8Array,
-): { readonly key: string; readonly problem?: string } => {
+export const decodeNvsKey = (bytes16: Uint8Array): DecodedNvsKey => {
   const nul = bytes16.indexOf(0);
   const slice = nul === -1 ? bytes16 : bytes16.subarray(0, nul);
+  const keyId = `${nul === -1 ? "raw" : "nul"}:${Buffer.from(slice).toString("hex")}`;
   const text = utf8OrNull(slice);
-  if (nul !== -1 && text !== null) return { key: text };
+  if (nul !== -1 && text !== null) return { key: text, keyId };
   return {
     key: Buffer.from(slice).toString("latin1"),
+    keyId,
     problem:
       nul === -1
         ? "key has no NUL terminator within its 16 bytes"
         : "key is not valid UTF-8 and is shown byte-for-byte as Latin-1",
   };
+};
+
+export type PendingNvsEntry = Omit<EspNvsEntry, "namespace"> & {
+  readonly keyId: string;
 };
 
 export interface RawBlobChunk {
@@ -64,6 +88,7 @@ export interface RawBlobChunk {
   readonly fileOffset: number;
   readonly nsIndex: number;
   readonly key: string;
+  readonly keyId: string;
   readonly chunkIndex: number;
   readonly span: number;
   readonly payload: Buffer;
@@ -77,6 +102,7 @@ export interface RawBlobIndex {
   readonly fileOffset: number;
   readonly nsIndex: number;
   readonly key: string;
+  readonly keyId: string;
   readonly totalSize: number;
   readonly chunkCount: number;
   readonly chunkStart: number;
@@ -102,22 +128,22 @@ type PrimitiveValue =
 
 const integer = (
   dataType: EspNvsDataType,
-  read: (value: BinaryReader) => bigint | number,
+  read: (reader: BinaryReader, offset: number) => bigint | number,
 ) => ({
   dataType,
-  read: (value: BinaryReader): PrimitiveValue => ({
+  read: (reader: BinaryReader, offset: number): PrimitiveValue => ({
     dataType,
-    integerText: String(read(value)),
+    integerText: String(read(reader, offset)),
   }),
 });
 const float = (
   dataType: EspNvsDataType,
-  read: (value: BinaryReader) => number,
+  read: (reader: BinaryReader, offset: number) => number,
 ) => ({
   dataType,
-  read: (value: BinaryReader): PrimitiveValue => ({
+  read: (reader: BinaryReader, offset: number): PrimitiveValue => ({
     dataType,
-    floatText: String(read(value)),
+    floatText: String(read(reader, offset)),
   }),
 });
 
@@ -126,19 +152,19 @@ const PRIMITIVE_TYPES: ReadonlyMap<
   number,
   {
     readonly dataType: EspNvsDataType;
-    readonly read: (value: BinaryReader) => PrimitiveValue;
+    readonly read: (reader: BinaryReader, offset: number) => PrimitiveValue;
   }
 > = new Map([
-  [0x01, integer("u8", (v) => v.u8(0))],
-  [0x11, integer("i8", (v) => v.i8(0))],
-  [0x02, integer("u16", (v) => v.u16(0))],
-  [0x12, integer("i16", (v) => v.i16(0))],
-  [0x04, integer("u32", (v) => v.u32(0))],
-  [0x14, integer("i32", (v) => v.i32(0))],
-  [0x08, integer("u64", (v) => readUint64At(v.bytes, 0, true))],
-  [0x18, integer("i64", (v) => v.i64(0))],
-  [0x24, float("float", (v) => v.f32(0))],
-  [0x28, float("double", (v) => v.f64(0))],
+  [0x01, integer("u8", (r, o) => r.u8(o))],
+  [0x11, integer("i8", (r, o) => r.i8(o))],
+  [0x02, integer("u16", (r, o) => r.u16(o))],
+  [0x12, integer("i16", (r, o) => r.i16(o))],
+  [0x04, integer("u32", (r, o) => r.u32(o))],
+  [0x14, integer("i32", (r, o) => r.i32(o))],
+  [0x08, integer("u64", (r, o) => r.word(o, 64))],
+  [0x18, integer("i64", (r, o) => r.i64(o))],
+  [0x24, float("float", (r, o) => r.f32(o))],
+  [0x28, float("double", (r, o) => r.f64(o))],
 ]);
 
 export interface DecodedSingleSlotResult {
@@ -149,7 +175,7 @@ export interface DecodedSingleSlotResult {
     readonly pageIndex: number;
     readonly entryIndex: number;
   };
-  readonly immediateEntry?: Omit<EspNvsEntry, "namespace">;
+  readonly immediateEntry?: PendingNvsEntry;
   readonly blobChunk?: RawBlobChunk;
   readonly blobIndex?: RawBlobIndex;
   /** The item header failed CRC32 or ESP-IDF's consistency rules, so none of its fields were trusted. */
@@ -227,6 +253,8 @@ export const entryCompleteness = (
 
 interface SlotContext {
   readonly pageBytes: Buffer;
+  readonly pageReader: BinaryReader;
+  readonly bitmap: Uint8Array;
   readonly pageIndex: number;
   readonly pageSeqNo: number;
   readonly pageFileOffset: number;
@@ -266,11 +294,12 @@ const decodeVariableSpanItem = (
     readonly span: number;
     readonly chunkIndex: number;
     readonly key: string;
+    readonly keyId: string;
     readonly data8: Uint8Array;
   },
   anomalies: string[],
 ): DecodedSingleSlotResult => {
-  const { nsIndex, typeCode, span, chunkIndex, key, data8 } = header;
+  const { nsIndex, typeCode, span, chunkIndex, key, keyId, data8 } = header;
   const { pageBytes, pageIndex, pageSeqNo, pageFileOffset, entryIndex } =
     context;
   // The consistency check bounds the declared size by the page.
@@ -299,6 +328,7 @@ const decodeVariableSpanItem = (
         fileOffset,
         nsIndex,
         key,
+        keyId,
         chunkIndex,
         span,
         payload,
@@ -314,6 +344,7 @@ const decodeVariableSpanItem = (
     file_offset: fileOffset,
     namespace_id: nsIndex,
     key,
+    keyId,
     raw_type_code: typeCode,
     span,
     crc_valid: crcValid,
@@ -356,8 +387,15 @@ const decodeVariableSpanItem = (
 export const decodeWrittenNvsSlot = (
   context: SlotContext,
 ): DecodedSingleSlotResult => {
-  const { pageBytes, pageIndex, pageSeqNo, pageFileOffset, entryIndex } =
-    context;
+  const {
+    pageBytes,
+    pageReader,
+    bitmap,
+    pageIndex,
+    pageSeqNo,
+    pageFileOffset,
+    entryIndex,
+  } = context;
   const slotOffset = ESP_NVS_ENTRY_DATA_OFFSET + entryIndex * ENTRY_BYTES;
   const slotFileOffset = pageFileOffset + slotOffset;
   const slot = pageBytes.subarray(slotOffset, slotOffset + ENTRY_BYTES);
@@ -384,11 +422,30 @@ export const decodeWrittenNvsSlot = (
   const span = slot[2]!;
   const chunkIndex = slot[3]!;
   const decodedKey = decodeNvsKey(slot.subarray(8, 24));
-  const key = decodedKey.key;
-  const data8 = slot.subarray(24, 32);
+  const { key, keyId } = decodedKey;
+  const data8 = slot.subarray(ITEM_DATA_OFFSET, ENTRY_BYTES);
   const anomalies: string[] = [];
   if (decodedKey.problem !== undefined)
     anomalies.push(`${slotLabel(context, key)} ${decodedKey.problem}.`);
+
+  // Every continuation slot of a multi-slot item must also be marked WRITTEN in
+  // the page's 2-bit entry-state bitmap; otherwise the write or erase was torn.
+  if (span > 1) {
+    for (let offset = 1; offset < span; offset += 1) {
+      const continuationSlot = entryIndex + offset;
+      const slotState = readBitmapSlotState(bitmap, continuationSlot);
+      if (slotState !== "written") {
+        anomalies.push(
+          `${slotLabel(context, key)} declares span ${String(span)} (slots ${String(entryIndex)}..${String(entryIndex + span - 1)}), but continuation slot ${String(continuationSlot)} has bitmap state ${slotState} instead of written; the unfinished item was skipped.`,
+        );
+        return {
+          consumedSlots: offset + 1,
+          damagedItem: true,
+          anomalies,
+        };
+      }
+    }
+  }
 
   if (nsIndex === NAMESPACE_INDEX) {
     const nsId = data8[0]!;
@@ -417,6 +474,7 @@ export const decodeWrittenNvsSlot = (
         fileOffset: slotFileOffset,
         nsIndex,
         key,
+        keyId,
         totalSize: readUint32At(data8, 0, true),
         chunkCount: data8[4]!,
         chunkStart: data8[5]!,
@@ -429,14 +487,15 @@ export const decodeWrittenNvsSlot = (
   if (isVariableLengthType(typeCode)) {
     return decodeVariableSpanItem(
       context,
-      { nsIndex, typeCode, span, chunkIndex, key, data8 },
+      { nsIndex, typeCode, span, chunkIndex, key, keyId, data8 },
       anomalies,
     );
   }
 
   // The consistency check admits only one-entry primitive types here.
   const prim = PRIMITIVE_TYPES.get(typeCode)!.read(
-    new BinaryReader(Buffer.from(data8), true, "esp-nvs"),
+    pageReader,
+    slotOffset + ITEM_DATA_OFFSET,
   );
   return {
     consumedSlots: 1,
@@ -446,6 +505,7 @@ export const decodeWrittenNvsSlot = (
       file_offset: slotFileOffset,
       namespace_id: nsIndex,
       key,
+      keyId,
       data_type: prim.dataType,
       raw_type_code: typeCode,
       span: 1,

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { EspNvsEntry } from "./espNvs.js";
+import { setImmediate } from "node:timers/promises";
 import {
   EMPTY_SHA256,
   ITEM_TYPE,
@@ -7,6 +7,7 @@ import {
   blobValues,
   emptyValues,
   entryCompleteness,
+  type PendingNvsEntry,
   type RawBlobChunk,
   type RawBlobIndex,
 } from "./espNvsItemDecoder.js";
@@ -20,29 +21,37 @@ interface ReassembledBlobSummary {
 }
 
 /** Reassemble v2 multi-chunk `BLOB_IDX` + `BLOB_DATA` items and surface orphan chunks. */
-export const reassembleNvsV2Blobs = (
+export const reassembleNvsV2Blobs = async (
   indices: readonly RawBlobIndex[],
   chunks: readonly RawBlobChunk[],
   onCheckpoint?: () => void,
-): Omit<EspNvsEntry, "namespace">[] => {
-  // Index stored chunks once by namespace -> key -> chunkIndex, keeping the
-  // newest page sequence number for any overwritten chunk index.
+): Promise<PendingNvsEntry[]> => {
+  // Index stored chunks once by namespace -> canonical key bytes -> chunkIndex,
+  // keeping the newest page sequence number for any overwritten chunk index.
   const bestByNsKey = new Map<number, Map<string, Map<number, RawBlobChunk>>>();
   for (let i = 0; i < chunks.length; i += 1) {
-    if ((i & 255) === 0) onCheckpoint?.();
+    if ((i & 255) === 0) {
+      if (i > 0) await setImmediate();
+      onCheckpoint?.();
+    }
     const ch = chunks[i]!;
     let byKey = bestByNsKey.get(ch.nsIndex);
     if (byKey === undefined) {
       byKey = new Map<string, Map<number, RawBlobChunk>>();
       bestByNsKey.set(ch.nsIndex, byKey);
     }
-    let byChunkIndex = byKey.get(ch.key);
+    let byChunkIndex = byKey.get(ch.keyId);
     if (byChunkIndex === undefined) {
       byChunkIndex = new Map<number, RawBlobChunk>();
-      byKey.set(ch.key, byChunkIndex);
+      byKey.set(ch.keyId, byChunkIndex);
     }
     const existing = byChunkIndex.get(ch.chunkIndex);
-    if (existing === undefined || ch.pageSeqNo > existing.pageSeqNo) {
+    if (
+      existing === undefined ||
+      ch.pageSeqNo > existing.pageSeqNo ||
+      (ch.pageSeqNo === existing.pageSeqNo &&
+        ch.entryIndex > existing.entryIndex)
+    ) {
       byChunkIndex.set(ch.chunkIndex, ch);
     }
   }
@@ -50,9 +59,9 @@ export const reassembleNvsV2Blobs = (
   const sortedByNsKey = new Map<number, Map<string, readonly RawBlobChunk[]>>();
   for (const [nsIndex, byKey] of bestByNsKey) {
     const sortedByKey = new Map<string, readonly RawBlobChunk[]>();
-    for (const [key, byChunkIndex] of byKey) {
+    for (const [keyId, byChunkIndex] of byKey) {
       sortedByKey.set(
-        key,
+        keyId,
         [...byChunkIndex.values()].sort((a, b) => a.chunkIndex - b.chunkIndex),
       );
     }
@@ -64,10 +73,13 @@ export const reassembleNvsV2Blobs = (
     number,
     Map<string, Map<number, ReassembledBlobSummary>>
   >();
-  const out: Omit<EspNvsEntry, "namespace">[] = [];
+  const out: PendingNvsEntry[] = [];
 
   for (let i = 0; i < indices.length; i += 1) {
-    if ((i & 255) === 0) onCheckpoint?.();
+    if ((i & 255) === 0) {
+      if (i > 0) await setImmediate();
+      onCheckpoint?.();
+    }
     const idx = indices[i]!;
     const rangeKey = ((idx.chunkStart & 0xff) << 8) | (idx.chunkCount & 0xff);
     let cacheByKey = reassemblyCache.get(idx.nsIndex);
@@ -75,14 +87,14 @@ export const reassembleNvsV2Blobs = (
       cacheByKey = new Map<string, Map<number, ReassembledBlobSummary>>();
       reassemblyCache.set(idx.nsIndex, cacheByKey);
     }
-    let cacheByRange = cacheByKey.get(idx.key);
+    let cacheByRange = cacheByKey.get(idx.keyId);
     if (cacheByRange === undefined) {
       cacheByRange = new Map<number, ReassembledBlobSummary>();
-      cacheByKey.set(idx.key, cacheByRange);
+      cacheByKey.set(idx.keyId, cacheByRange);
     }
     let summary = cacheByRange.get(rangeKey);
     if (summary === undefined) {
-      const seriesChunks = sortedByNsKey.get(idx.nsIndex)?.get(idx.key);
+      const seriesChunks = sortedByNsKey.get(idx.nsIndex)?.get(idx.keyId);
       if (seriesChunks === undefined || idx.chunkCount === 0) {
         summary = {
           joinedLength: 0,
@@ -141,6 +153,7 @@ export const reassembleNvsV2Blobs = (
       file_offset: idx.fileOffset,
       namespace_id: idx.nsIndex,
       key: idx.key,
+      keyId: idx.keyId,
       data_type: "blob_v2",
       raw_type_code: ITEM_TYPE.BLOB_IDX,
       span: 1,
@@ -157,7 +170,10 @@ export const reassembleNvsV2Blobs = (
   }
 
   for (let i = 0; i < chunks.length; i += 1) {
-    if ((i & 255) === 0) onCheckpoint?.();
+    if ((i & 255) === 0) {
+      if (i > 0) await setImmediate();
+      onCheckpoint?.();
+    }
     const ch = chunks[i]!;
     if (usedChunkRefs.has(ch)) continue;
     out.push({
@@ -166,6 +182,7 @@ export const reassembleNvsV2Blobs = (
       file_offset: ch.fileOffset,
       namespace_id: ch.nsIndex,
       key: ch.key,
+      keyId: ch.keyId,
       data_type: "blob_data_orphan",
       raw_type_code: ITEM_TYPE.BLOB_DATA,
       span: ch.span,

@@ -1,4 +1,5 @@
-import { readUint32At } from "../binaryContainer.js";
+import { setImmediate } from "node:timers/promises";
+import { BinaryReader, readUint32At } from "../binaryContainer.js";
 import { CoverageAccumulator } from "../coverageAccumulator.js";
 import { malformedInput, type ParseFailureError } from "../parseFailure.js";
 import { err, ok, type Result } from "../result.js";
@@ -16,6 +17,8 @@ import {
 import {
   decodeWrittenNvsSlot,
   espIdfCrc32,
+  readBitmapSlotState,
+  type PendingNvsEntry,
   type RawBlobChunk,
   type RawBlobIndex,
 } from "./espNvsItemDecoder.js";
@@ -40,25 +43,47 @@ const READABLE_PAGE_STATES: ReadonlySet<EspNvsPageState> = new Set([
   "freeing",
 ]);
 
-const ENTRIES_PER_PAGE = ESP_NVS_ENTRY_COUNT;
+/** Initialized ESP-IDF page states whose 32-byte header carries version and CRC32. */
+const INITIALIZED_PAGE_STATES: ReadonlySet<EspNvsPageState> = new Set([
+  "active",
+  "full",
+  "freeing",
+  "corrupt",
+]);
 
-const readBitmapSlotState = (
-  bitmap32: Uint8Array,
-  slotIndex: number,
-): "empty" | "written" | "erased" | "illegal" => {
-  const byteIdx = slotIndex >>> 2;
-  const shift = (slotIndex & 3) * 2;
-  const bits = (bitmap32[byteIdx]! >>> shift) & 3;
-  if (bits === 3) return "empty";
-  if (bits === 2) return "written";
-  if (bits === 0) return "erased";
-  return "illegal";
+const ENTRIES_PER_PAGE = ESP_NVS_ENTRY_COUNT;
+const PAGES_PER_YIELD = 16;
+
+/**
+ * Whether `prefix` begins a standalone 4096-byte-multiple ESP-IDF v1/v2 NVS
+ * partition: an initialized page state, v1/v2 format byte (`0xff`/`0xfe`),
+ * ESP-IDF's 19 `0xff` reserved header bytes, and a matching header CRC32.
+ */
+export const hasEspNvsHeader = (
+  prefix: Uint8Array,
+  fileSize: number,
+): boolean => {
+  if (
+    fileSize < ESP_NVS_PAGE_BYTES ||
+    fileSize % ESP_NVS_PAGE_BYTES !== 0 ||
+    prefix.length < ESP_NVS_ENTRY_TABLE_OFFSET
+  ) {
+    return false;
+  }
+  const state = PAGE_STATES.get(readUint32At(prefix, 0, true));
+  if (state === undefined || !INITIALIZED_PAGE_STATES.has(state)) return false;
+  const versionByte = prefix[8]!;
+  if (versionByte !== 0xfe && versionByte !== 0xff) return false;
+  for (let i = 9; i < 28; i += 1) {
+    if (prefix[i] !== 0xff) return false;
+  }
+  return espIdfCrc32(prefix.subarray(4, 28)) === readUint32At(prefix, 28, true);
 };
 
 interface PageWalkAccumulator {
   readonly pages: EspNvsPageSummary[];
   readonly namespacesById: Map<number, EspNvsNamespace>;
-  readonly rawEntries: Omit<EspNvsEntry, "namespace">[];
+  readonly rawEntries: PendingNvsEntry[];
   readonly blobIndices: RawBlobIndex[];
   readonly blobChunks: RawBlobChunk[];
   readonly anomalies: string[];
@@ -91,6 +116,7 @@ const walkPageEntries = (
   acc: PageWalkAccumulator,
 ): { readonly inconsistentItems: number; readonly consistentItems: number } => {
   const { pageBytes, bitmap, pageIndex, seqNo, pageFileOffset } = page;
+  const pageReader = new BinaryReader(pageBytes, true, "esp-nvs");
   // not-an-allowance: written slots whose header could not be trusted
   let inconsistentItems = 0;
   // not-an-allowance: written slots whose header was trusted
@@ -102,6 +128,8 @@ const walkPageEntries = (
     }
     const decoded = decodeWrittenNvsSlot({
       pageBytes,
+      pageReader,
+      bitmap,
       pageIndex,
       pageSeqNo: seqNo,
       pageFileOffset,
@@ -220,7 +248,7 @@ const decodeSinglePage = (
 };
 
 /** The type class under which ESP-IDF looks an item up; both blob forms share one. */
-const lookupClass = (entry: Omit<EspNvsEntry, "namespace">): string =>
+const lookupClass = (entry: PendingNvsEntry): string =>
   entry.data_type === "blob_v1" || entry.data_type === "blob_v2"
     ? "blob"
     : String(entry.raw_type_code);
@@ -233,16 +261,16 @@ const lookupClass = (entry: Omit<EspNvsEntry, "namespace">): string =>
  * slot on the same page. Orphan blob chunks are not lookup targets.
  */
 const markSuperseded = (
-  entries: Omit<EspNvsEntry, "namespace">[],
+  entries: PendingNvsEntry[],
   seqByPage: ReadonlyMap<number, number>,
-): Omit<EspNvsEntry, "namespace">[] => {
-  const newest = new Map<string, Omit<EspNvsEntry, "namespace">>();
-  const order = (entry: Omit<EspNvsEntry, "namespace">): [number, number] => [
+): PendingNvsEntry[] => {
+  const newest = new Map<string, PendingNvsEntry>();
+  const order = (entry: PendingNvsEntry): [number, number] => [
     seqByPage.get(entry.page_index) ?? -1,
     entry.entry_index,
   ];
-  const identity = (entry: Omit<EspNvsEntry, "namespace">): string =>
-    `${String(entry.namespace_id)}\u0000${entry.key}\u0000${lookupClass(entry)}`;
+  const identity = (entry: PendingNvsEntry): string =>
+    `${String(entry.namespace_id)}\u0000${entry.keyId}\u0000${lookupClass(entry)}`;
   for (const entry of entries) {
     if (entry.data_type === "blob_data_orphan") continue;
     const id = identity(entry);
@@ -277,9 +305,9 @@ export interface ParseEspNvsOptions {
 }
 
 /** Decode a complete ESP-IDF v1/v2 Non-Volatile Storage partition slice. */
-export const parseEspNvsPartition = (
+export const parseEspNvsPartition = async (
   options: ParseEspNvsOptions,
-): Result<EspNvsReport, ParseFailureError<"malformed">> => {
+): Promise<Result<EspNvsReport, ParseFailureError<"malformed">>> => {
   const {
     artifact,
     partitionOffset,
@@ -325,6 +353,7 @@ export const parseEspNvsPartition = (
   };
 
   for (let p = 0; p < pageCount; p += 1) {
+    if (p > 0 && p % PAGES_PER_YIELD === 0) await setImmediate();
     onCheckpoint?.();
     const start = p * ESP_NVS_PAGE_BYTES;
     decodeSinglePage(
@@ -335,7 +364,7 @@ export const parseEspNvsPartition = (
     );
   }
 
-  const v2Blobs = reassembleNvsV2Blobs(
+  const v2Blobs = await reassembleNvsV2Blobs(
     acc.blobIndices,
     acc.blobChunks,
     onCheckpoint,
@@ -352,10 +381,12 @@ export const parseEspNvsPartition = (
       : a.entry_index - b.entry_index,
   );
 
-  const entries: EspNvsEntry[] = allUnresolved.map((item) => ({
-    ...item,
-    namespace: acc.namespacesById.get(item.namespace_id)?.name ?? null,
-  }));
+  const entries: EspNvsEntry[] = allUnresolved.map(
+    ({ keyId: _keyId, ...item }) => ({
+      ...item,
+      namespace: acc.namespacesById.get(item.namespace_id)?.name ?? null,
+    }),
+  );
 
   const limitations: string[] = [
     "Encrypted NVS partitions (XTS-AES with nvs_keys) are not decrypted. NVS encryption keeps page headers and entry-state bitmaps in plaintext, so an encrypted page decodes as a valid page whose item headers all fail; whole-flash encryption makes the page header fail CRC32 instead.",
@@ -373,6 +404,21 @@ export const parseEspNvsPartition = (
   if (trailingBytes > 0) coverage.recordOmission("trailing unaligned bytes");
   if (acc.undecodedPageCount > 0) coverage.recordOmission("undecoded pages");
   if (acc.corruptEntryCount > 0) coverage.recordOmission("corrupt NVS entries");
+  if (acc.pages.some((page) => page.illegal_slot_count > 0))
+    coverage.recordOmission("illegal NVS bitmap slots");
+  if (
+    acc.pages.some(
+      (page) =>
+        page.state === "empty" && page.empty_slot_count !== ENTRIES_PER_PAGE,
+    )
+  )
+    coverage.recordOmission("uninitialized pages with non-empty slot bitmaps");
+  if (entries.some((entry) => entry.completeness === "missing_chunks"))
+    coverage.recordOmission("missing NVS blob chunks");
+  if (entries.some((entry) => entry.completeness === "crc_mismatch"))
+    coverage.recordOmission("NVS entry CRC mismatch");
+  if (entries.some((entry) => entry.namespace === null))
+    coverage.recordOmission("unresolved NVS namespace definitions");
 
   return ok({
     artifact,

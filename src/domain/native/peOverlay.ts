@@ -104,6 +104,7 @@ export const PE_OVERLAY_LEADING_FORMATS = [
   "windows-shortcut",
   "python-pyc",
   "devicetree",
+  "esp-nvs",
   "deb",
 ] as const;
 export type PeOverlayLeadingFormat =
