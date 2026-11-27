@@ -248,6 +248,28 @@ it("keeps an unsafe name as a source path instead of aborting the inventory", as
   expect(listed?.source_path).toBe("../escape");
 });
 
+it("keeps a descendant of an unusable name under its storage", async () => {
+  // The storage's own name cannot name a path, so the parser leaves it and its
+  // child unnamed. The child is still listed under the storage rather than at
+  // the root, which would claim a member the directory never declared there.
+  const path = await write(
+    "unsafe-parent.automaticDestinations-ms",
+    compoundFile({
+      entries: rootWith(1, [
+        { name: "bad/name", type: 1, start: 0, size: 0, child: 2 },
+        { name: "payload", type: 2, start: 2, size: 512 },
+      ]),
+    }),
+  );
+  const inventory = await scanCanonicalArtifactInventory(path);
+  const paths = inventory.occurrences
+    .map((row) => row.logical_path)
+    .filter((row) => row !== ".");
+  expect(paths).toContain("entry-1");
+  expect(paths).toContain("entry-1/payload");
+  expect(paths).not.toContain("payload");
+});
+
 it("keeps an entry that declares no usable name", async () => {
   const bytes = compoundFile({
     entries: rootWith(1, [

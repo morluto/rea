@@ -296,13 +296,16 @@ export class CompoundFileArtifactReader implements ArtifactReader {
               0,
               Math.max(0, entry.path.length - entry.name.length - 1),
             );
+      // The parser leaves an entry unnamed when an ancestor's name cannot name
+      // a path, so its parent is known but its own path is not. Projecting it
+      // onto the placed parent keeps it under that storage instead of
+      // inventing a root-level member the directory never declared.
       const projected =
-        placedParent !== undefined &&
-        declaredPrefix !== undefined &&
-        entry.name !== null &&
-        placedParent !== declaredPrefix
-          ? { ...artifact, path: `${placedParent}/${entry.name}` }
-          : artifact;
+        placedParent === undefined ||
+        entry.name === null ||
+        placedParent === declaredPrefix
+          ? artifact
+          : { ...artifact, path: `${placedParent}/${entry.name}` };
       const placed = claimPath(
         projected,
         claimed,
