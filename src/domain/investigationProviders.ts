@@ -233,6 +233,12 @@ export const PE_UNWIND_RANGES_PROVIDER = Object.freeze({
   version: "1",
 } as const);
 
+export const MACHO_FUNCTION_STARTS_PROVIDER = Object.freeze({
+  id: "rea-macho-function-starts",
+  name: "REA Mach-O function-start parser",
+  version: "1",
+} as const);
+
 export const PE_LOAD_CONFIG_PROVIDER = Object.freeze({
   id: "rea-pe-load-config",
   name: "REA PE TLS/load-config parser",
@@ -257,5 +263,11 @@ export const RELEASE_EXPOSURE_PROVIDER = Object.freeze({
 export const BINARY_HARDENING_PROVIDER = Object.freeze({
   id: "rea-binary-hardening",
   name: "REA binary hardening parser",
+  version: "1",
+} as const);
+
+export const ESP_NVS_PROVIDER = Object.freeze({
+  id: "rea-esp-nvs",
+  name: "REA ESP-IDF NVS partition decoder",
   version: "1",
 } as const);

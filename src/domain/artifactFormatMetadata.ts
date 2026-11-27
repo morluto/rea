@@ -65,6 +65,7 @@ import {
   iso9660EntryMetadataSchema,
   iso9660MetadataSchema,
   ntfsMftMetadataSchema,
+  systemdJournalMetadataSchema,
 } from "./formatMetadata/androidAndSystemMetadata.js";
 import {
   ddsMetadataSchema,
@@ -73,6 +74,13 @@ import {
   ktx2MetadataSchema,
   ktxMetadataSchema,
 } from "./formatMetadata/gpuAssetMetadata.js";
+import {
+  bink2MetadataSchema,
+  mediaAssetRegionMetadataSchema,
+  oggOpusMetadataSchema,
+  riffXma2MetadataSchema,
+  vulkanPipelineCacheMetadataSchema,
+} from "./formatMetadata/mediaAssetMetadata.js";
 import { ndsEntryMetadataSchema, ndsMetadataSchema } from "./ndsRom.js";
 
 export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
@@ -112,6 +120,7 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   uf2MetadataSchema,
   uf2RegionMetadataSchema,
   ntfsMftMetadataSchema,
+  systemdJournalMetadataSchema,
   auditdLogMetadataSchema,
   dfuSeMetadataSchema,
   dfuSeElementMetadataSchema,
@@ -136,6 +145,11 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   ktxMetadataSchema,
   ktx2MetadataSchema,
   gpuAssetRegionMetadataSchema,
+  oggOpusMetadataSchema,
+  riffXma2MetadataSchema,
+  bink2MetadataSchema,
+  vulkanPipelineCacheMetadataSchema,
+  mediaAssetRegionMetadataSchema,
   ndsMetadataSchema,
   ndsEntryMetadataSchema,
   megaDriveRomMetadataSchema,
@@ -390,6 +404,10 @@ const declarationsByKind: {
     notCompared:
       "Its fields come from the file's own FILE record headers and resident file-name attributes, which content comparison covers.",
   },
+  "systemd-journal": {
+    notCompared:
+      "Its fields come from the file's own header and object headers, which content comparison covers.",
+  },
   "auditd-log": {
     notCompared:
       "Its fields come from the file's own record headers, which content comparison covers.",
@@ -451,6 +469,26 @@ const declarationsByKind: {
       "Its header and index facts come from the texture's own bytes, which content comparison covers.",
   },
   "gpu-asset-region": {
+    notCompared:
+      "role and index restate the region's path; its stored bytes are compared by content.",
+  },
+  "ogg-opus": {
+    notCompared:
+      "Its header facts come from the stream's own bytes, which content comparison covers.",
+  },
+  "riff-xma2": {
+    notCompared:
+      "Its chunk and fmt facts come from the WAVE's own bytes, which content comparison covers.",
+  },
+  bink2: {
+    notCompared:
+      "Its header facts come from the video's own bytes, which content comparison covers.",
+  },
+  "vulkan-pipeline-cache": {
+    notCompared:
+      "Its header facts come from the cache's own bytes, which content comparison covers.",
+  },
+  "media-asset-region": {
     notCompared:
       "role and index restate the region's path; its stored bytes are compared by content.",
   },
