@@ -17,6 +17,7 @@ import { err, ok, type Result } from "../domain/result.js";
 import { ghidraDisabledAnalyzerPreset } from "./GhidraDisabledAnalyzers.js";
 import { ghidraProducerIdentity } from "./GhidraProducerIdentity.js";
 import type { GhidraInstallationInspection } from "./GhidraInstallation.js";
+import type { GhidraTransportKind } from "./GhidraTransport.js";
 import {
   isLegacyMipsAdmission,
   ghidraMipsProfileParameters,
@@ -134,6 +135,7 @@ export const resolveGhidraAnalysisProfile = async (
   signal?: AbortSignal,
   languageOverride?: GhidraLanguageOverride,
   disabledAnalyzers?: readonly string[],
+  transport: GhidraTransportKind = "unix-socket",
 ): Promise<Result<AnalysisProfileResolution, AnalysisError>> => {
   if (signal?.aborted === true)
     return Promise.resolve(err(cancelledBy("open_binary", signal)));
@@ -338,11 +340,13 @@ export const resolveGhidraAnalysisProfile = async (
             }
           : {}),
         ...sharedAnalysisSemantics(),
-        // Windows P0 has no database-mutation authority: limitations only.
+        // The bridge marks unapplied-relocation destinations volatile only over
+        // the Unix socket; Windows P0 and POSIX loopback keep the limitation
+        // without marking, so the digest must distinguish the two outcomes.
         loader_relocation_semantics:
-          installation.platform === "win32"
-            ? readOnlyLoaderRelocationSemantics
-            : loaderRelocationSemantics,
+          transport === "unix-socket"
+            ? loaderRelocationSemantics
+            : readOnlyLoaderRelocationSemantics,
         no_return_repair:
           installation.platform === "win32"
             ? "disabled-windows-p0"

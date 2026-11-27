@@ -4,6 +4,7 @@ import type { LogLevel } from "./processStart.js";
 import type { ReferenceSourcePolicy } from "../domain/referenceSourcePolicy.js";
 import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
 
+import type { GhidraBridgeTransport } from "./ghidraBridgeTransport.js";
 import type { GhidraLanguageOverride } from "./ghidraLanguageOverride.js";
 import type { McpToolCatalogProfile } from "./mcpToolCatalogProfile.js";
 import type { McpToolsListPageBudget } from "./mcpToolsListPageBudget.js";
@@ -37,6 +38,7 @@ export interface AppConfig {
   readonly ghidraValueFlowMaxEdges?: number;
   readonly ghidraLanguageOverride?: GhidraLanguageOverride;
   readonly ghidraDisabledAnalyzers?: readonly string[];
+  readonly ghidraBridgeTransport?: GhidraBridgeTransport;
   readonly ghidraSeedFile?: string;
   readonly ghidraExistingProject?: GhidraProjectSelection;
   /** Opt-in storage for checkpoints of REA-owned Ghidra Programs. */

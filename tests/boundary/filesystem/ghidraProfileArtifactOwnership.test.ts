@@ -145,6 +145,7 @@ it.each(
               target,
               "linux",
               resources,
+              "unix-socket",
               controller.signal,
             );
       if (result.ok) throw new Error("Expected profile read failure");
@@ -169,6 +170,7 @@ it.each(
               target,
               "linux",
               resources,
+              "unix-socket",
             );
       expect(refused).toMatchObject({
         ok: false,
@@ -259,6 +261,7 @@ it.each(["seed", "extension"] as const)(
               target,
               "linux",
               resources,
+              "unix-socket",
               controller.signal,
             );
       expect(result).toMatchObject({
@@ -303,6 +306,7 @@ it.each(["seed", "extension"] as const)(
             target,
             "linux",
             resources,
+            "unix-socket",
           )
         : ({ ok: true, value: [] } as const);
     if (!seeds.ok || !extensions.ok)
@@ -451,6 +455,7 @@ it.each(["seed", "extension"] as const)(
             target,
             "linux",
             scope,
+            "unix-socket",
           )
         : ({ ok: true, value: [] } as const);
     if (!seeds.ok || !extensions.ok)
@@ -589,6 +594,7 @@ it.each(["seed", "extension"] as const)(
               target,
               "linux",
               scope,
+              "unix-socket",
               controller.signal,
             );
       if (result.ok) throw new Error("Malformed artifact admitted");
