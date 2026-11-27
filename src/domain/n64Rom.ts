@@ -265,8 +265,25 @@ const rol32 = (value: number, bits: number): number => {
 };
 
 /**
+ * The bytes the checksum routine reads: the image through
+ * {@link N64_CHECKSUM_END}, with every byte past the end of a shorter image
+ * taken as zero. Only missing bytes are filled, so a final word the file ends
+ * inside keeps its present bytes. The references define no value for bytes a
+ * cartridge does not hold (Project64 reads the window unbounded; libdragon's
+ * n64tool zero-pads the images it writes), so zero is an assumption the
+ * parser reports as a limitation.
+ */
+export const n64ChecksumWindow = (normalized: Uint8Array): Uint8Array => {
+  if (normalized.length >= N64_CHECKSUM_END) return normalized;
+  const window = new Uint8Array(N64_CHECKSUM_END);
+  window.set(normalized);
+  return window;
+};
+
+/**
  * Cartridge CRC pair over the 1 MiB window, as the IPL3 checksum routine and
- * the public n64crc reference compute it. Words past `normalized` are zero.
+ * the public n64crc reference compute it, read through
+ * {@link n64ChecksumWindow}.
  * Every CIC runs the same six accumulators. Only 6105/7105 replaces the t1
  * step with a word from its boot-code table at 0x750. 6103 and 6106 combine
  * the accumulators with an add or a multiply; the rest XOR them.
@@ -275,6 +292,7 @@ export const n64CartridgeCrc = (
   normalized: Uint8Array,
   variant: N64CicVariant,
 ): { readonly crc1: number; readonly crc2: number } => {
+  const window = n64ChecksumWindow(normalized);
   let t1 = variant.seed >>> 0;
   let t2 = t1;
   let t3 = t1;
@@ -282,7 +300,7 @@ export const n64CartridgeCrc = (
   let t5 = t1;
   let t6 = t1;
   for (let offset = N64_IPL3_END; offset < N64_CHECKSUM_END; offset += 4) {
-    const data = readBe(normalized, offset);
+    const data = readBe(window, offset);
     const sum = (t6 + data) >>> 0;
     if (sum < t6) t4 = (t4 + 1) >>> 0;
     t6 = sum;
@@ -291,7 +309,7 @@ export const n64CartridgeCrc = (
     t5 = (t5 + rotated) >>> 0;
     t2 = t2 > data ? (t2 ^ rotated) >>> 0 : (t2 ^ t6 ^ data) >>> 0;
     const mix = variant.usesLut
-      ? readBe(normalized, N64_CIC_6105_TABLE_OFFSET + (offset & 0xff))
+      ? readBe(window, N64_CIC_6105_TABLE_OFFSET + (offset & 0xff))
       : t5;
     t1 = (t1 + ((mix ^ data) >>> 0)) >>> 0;
   }
@@ -584,7 +602,7 @@ export const parseN64Rom = (
   if (variant !== undefined) {
     if (fileSize < N64_CHECKSUM_END)
       limitations.push(
-        `The checksum window is ${String(N64_CHECKSUM_LENGTH)} bytes starting at 0x1000. The file has ${String(fileSize)} bytes, so bytes past the file were taken as zero.`,
+        `The checksum window is ${String(N64_CHECKSUM_LENGTH)} bytes starting at 0x1000. The file has ${String(fileSize)} bytes, so the ${String(N64_CHECKSUM_END - fileSize)} bytes past the file were taken as zero.`,
       );
     const computed = n64CartridgeCrc(normalized, variant);
     const matches =

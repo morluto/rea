@@ -264,6 +264,40 @@ describe("Nintendo 64 ROM domain", () => {
     }
   });
 
+  it("keeps the present bytes of a final partial word in a short checksum window", () => {
+    const base = n64RomImage();
+    const variant = N64_CIC_VARIANTS.find((row) => row.id === "6102/7101");
+    if (variant === undefined) throw new Error("missing 6102 row");
+    const baseCrc = parseN64Rom(base.encoded, base.encoded.length).metadata.crc;
+    for (const [order, tail] of [
+      ["z64", [0x5a]],
+      ["z64", [0x5a, 0x5b]],
+      ["z64", [0x5a, 0x5b, 0x5c]],
+      ["v64", [0x5a, 0x5b]],
+    ] as const) {
+      // Big-endian content, then stored in the dump's own order.
+      const content = Buffer.concat([base.normalized, Buffer.from(tail)]);
+      const encoded = Buffer.from(swapN64Bytes(content, order));
+      const { metadata, limitations } = parseN64Rom(encoded, encoded.length);
+      // The same bytes padded explicitly with zeros to the window end.
+      const padded = Buffer.alloc(N64_CHECKSUM_END);
+      content.copy(padded);
+      const expected = n64CartridgeCrc(padded, variant);
+      const label = `${order} + ${String(tail.length)} bytes`;
+      expect(metadata.crc.computed_crc1, label).toBe(expected.crc1);
+      expect(metadata.crc.computed_crc2, label).toBe(expected.crc2);
+      // The tail bytes change the result, so they were not dropped.
+      expect(
+        [metadata.crc.computed_crc1, metadata.crc.computed_crc2],
+        label,
+      ).not.toEqual([baseCrc.computed_crc1, baseCrc.computed_crc2]);
+      expect(metadata.crc.status, label).toBe("mismatch");
+      expect(limitations.join("\n"), label).toContain(
+        `${String(N64_CHECKSUM_END - encoded.length)} bytes past the file were taken as zero`,
+      );
+    }
+  });
+
   it("checks a full checksum window and reports a CRC mismatch", () => {
     const match = parsed({ fullWindow: true });
     expect(match.metadata.crc.status).toBe("match");

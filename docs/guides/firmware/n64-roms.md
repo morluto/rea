@@ -59,8 +59,11 @@ with the same byte-order swap. The source order stays on the entry.
 IPL3 is named by the IEEE CRC32 of bytes `0x40..0x1000`. A hash in the known
 table selects that variant's checksum routine. 6101 has its own boot image
 and the same checksum seed as 6102/7101. For a known variant the reader
-recomputes the CRC pair over the 1 MiB window at `0x1000..0x101000`. Words
-past the end of a shorter file are read as zero, and a limitation says so.
+recomputes the CRC pair over the 1 MiB window at `0x1000..0x101000`. Bytes
+past the end of a shorter file are read as zero, and a limitation says how
+many. A file that ends inside a word keeps that word's present bytes. The
+reference implementations define no value for bytes a cartridge does not hold,
+so zero is an assumption: libdragon's `n64tool` zero-pads the images it writes.
 A mismatch names both pairs and the CIC. The file is not corrected.
 
 An IPL3 hash outside the table, or a file that ends before `0x1000`, leaves
