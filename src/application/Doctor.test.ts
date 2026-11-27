@@ -173,6 +173,8 @@ describe("doctor native analysis configuration", () => {
     ["REA_MCP_FIRST_CATALOG_BUDGET_MS", "0"],
     ["REA_MCP_DOCTOR_DEADLINE_MS", "0"],
     ["REA_GHIDRA_STARTUP_TIMEOUT_MS", "abc"],
+    ["REA_GHIDRA_CANCEL_GRACE_MS", "99"],
+    ["REA_GHIDRA_CHECKPOINT_SAVE_WAIT_MS", "49"],
     ["REA_SWIFTC_COMPILE_TIMEOUT_MS", "0"],
     ["REA_LOG_LEVEL", "verbose"],
     ["REA_GHIDRA_COMPILER_SPEC_ID", "gcc"],

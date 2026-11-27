@@ -15,7 +15,7 @@ import type { PlaywrightTrace } from "./playwrightTrace/playwrightTrace.js";
 import type { ErlangBeam } from "./erlang/beam.js";
 import type { ApiContract } from "./apiContract/apiContract.js";
 import type { GraphqlContract } from "./apiContract/graphqlContract.js";
-import type { SavedAnalysisSnapshotPartialObservation } from "./savedAnalysisSnapshot.js";
+import type { CloseOutcomePartialObservation } from "./engineCloseReport.js";
 import type { AnalysisLimit } from "./analysisSettings.js";
 import type { JsonValue } from "./jsonValue.js";
 import type { AnalysisCleanupRetry } from "./analysisErrorRecovery.js";
@@ -726,6 +726,7 @@ import type { CutterBridgeDiscovery } from "./cutterDiscovery.js";
 
 import type { WebTraceObservation } from "./webTraceObservation.js";
 import type { WebArtifactAcquisition } from "./webArtifactAcquisition.js";
+import type { YaraMatches } from "./yara/yaraMatches.js";
 
 /** Provider-neutral evidence collected before a typed analysis failure. */
 export type AnalysisPartialObservation =
@@ -753,7 +754,7 @@ export type AnalysisPartialObservation =
   | ApiContract
   | GraphqlContract
   | PlaywrightTrace
-  | SavedAnalysisSnapshotPartialObservation
+  | CloseOutcomePartialObservation
   | WebArtifactAcquisition
   | WebTraceObservation
   | CutterBridgeDiscovery
@@ -802,4 +803,5 @@ export type AnalysisPartialObservation =
   | AdbActivityStartPartialObservation
   | AdbAcquiredFilePartialObservation
   | AdbPackagePullPartialObservation
-  | AdbDisplayPartialObservation;
+  | AdbDisplayPartialObservation
+  | YaraMatches;

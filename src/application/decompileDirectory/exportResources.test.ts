@@ -106,3 +106,44 @@ it("retains the source failure's parsed facts and cancellation identity", () => 
   expect(published.details).toEqual(details);
   expect(published.cause).toBe(original);
 });
+
+it("stages without publishing, discards unpublished bytes, and reports a staging failure at publication", async () => {
+  const root = await createTestTempDirectory("rea-export-staging-");
+  const lease = { release: vi.fn(async () => undefined) };
+  const identity = await lstat(root, { bigint: true });
+  const resources = new ExportResources(root, identity, lease, undefined);
+  // A staging directory cannot be created inside a missing root.
+  const missing = new ExportResources(
+    join(root, "absent"),
+    identity,
+    lease,
+    undefined,
+  );
+  try {
+    const [kept, dropped] = await Promise.all([
+      resources.stage("kept"),
+      resources.stage("dropped"),
+    ]);
+    // Staged bytes have no final name yet.
+    const staged = await readdir(root);
+    expect(staged).toHaveLength(2);
+    expect(staged.every((name) => name.startsWith(".decompile-stage-"))).toBe(
+      true,
+    );
+    await resources.discardStaged(dropped);
+    await resources.publishStaged(kept, join(root, "published"), "link");
+    expect(await readdir(root)).toEqual(["published"]);
+    expect(await readFile(join(root, "published"), "utf8")).toBe("kept");
+
+    const failed = await missing.stage("unstaged");
+    expect(failed.owner).toBeUndefined();
+    await expect(
+      missing.publishStaged(failed, join(root, "never"), "link"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await missing.discardStaged(failed);
+    expect(await readdir(root)).toEqual(["published"]);
+  } finally {
+    await resources.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});

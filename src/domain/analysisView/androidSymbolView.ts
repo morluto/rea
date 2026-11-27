@@ -9,7 +9,7 @@ import {
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
 } from "./analysisViewCoverage.js";
 import {
@@ -75,11 +75,7 @@ export const projectAndroidSymbolSummary = (
     parent_digest: parent.evidenceId.slice(3),
     artifact: { path: subject.path, sha256: subject.sha256 },
     coverage: completeWithinViewCoverage(1),
-    limitations: boundedViewMessages(
-      parent.limitations,
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent),
     unknowns: [
       "Static class and method analysis does not establish runtime behavior or APK authenticity.",
     ],

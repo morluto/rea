@@ -2,7 +2,7 @@ REA npm dependency inventory
 Prepared from the root package-lock.json; refresh this inventory when locked dependencies change.
 License identifiers are upstream lockfile declarations, not a legal assessment.
 Runtime includes transitive and optional platform packages; development includes build, test and website tooling.
-Locked package entries: 955; runtime: 191.
+Locked package entries: 956; runtime: 192.
 Full runtime copyright/license/NOTICE texts: npm-runtime-notices.txt.
 
 @algolia/abtesting@1.25.0 | development | MIT
@@ -2550,6 +2550,11 @@ dunder-proto@1.0.1 | runtime | MIT
   Package: https://www.npmjs.com/package/dunder-proto/v/1.0.1
   Archive: https://registry.npmjs.org/dunder-proto/-/dunder-proto-1.0.1.tgz
   Integrity: sha512-KIN/nDJBQRcXw0MLVhZE9iQHmG68qAVIBg9CqmUYjmQIhgij9U5MFvrqkUL5FbtyyzZuOeOt0zdeRe4UY7ct+A==
+eckey-utils@0.7.14 | runtime | ISC
+  Lockfile path: node_modules/eckey-utils
+  Package: https://www.npmjs.com/package/eckey-utils/v/0.7.14
+  Archive: https://registry.npmjs.org/eckey-utils/-/eckey-utils-0.7.14.tgz
+  Integrity: sha512-s/mENS+mMnJjDSydy0muBQQHMTWJ1nPe8EiphANZrf+lv/1u35aP9WvWHTWqCBJ21blNIurGF7UoLjtaOpoCFw==
 electron-to-chromium@1.5.487 | development | ISC
   Lockfile path: node_modules/electron-to-chromium
   Package: https://www.npmjs.com/package/electron-to-chromium/v/1.5.487
@@ -3120,11 +3125,11 @@ kind-of@6.0.3 | development | MIT
   Package: https://www.npmjs.com/package/kind-of/v/6.0.3
   Archive: https://registry.npmjs.org/kind-of/-/kind-of-6.0.3.tgz
   Integrity: sha512-dcS1ul+9tmeD95T+x28/ehLgd9mENa3LsvDTtzm3vyBEO7RPptvAD+t44WVXaUjTBRcrpFeFlC8WCruUR456hw==
-knip@6.46.1 | development | ISC
+knip@6.47.0 | development | ISC
   Lockfile path: node_modules/knip
-  Package: https://www.npmjs.com/package/knip/v/6.46.1
-  Archive: https://registry.npmjs.org/knip/-/knip-6.46.1.tgz
-  Integrity: sha512-5/ajqjZfmuv8O74+McrKBOSArKG6tsUgy6yJird36VZh9HiUq75qY4U39uqf9wjchEUOLrStuOZpFP057CZFRw==
+  Package: https://www.npmjs.com/package/knip/v/6.47.0
+  Archive: https://registry.npmjs.org/knip/-/knip-6.47.0.tgz
+  Integrity: sha512-nYmQnk0YqDXIJrYViJz88c8xw3tBDkpuAmofo58EkVPnKr6DnRKYtf6oIqcGVHZvXDE+gtmFuYx277/QsWng+A==
 lightningcss@1.33.0 | development | MPL-2.0
   Lockfile path: node_modules/lightningcss
   Package: https://www.npmjs.com/package/lightningcss/v/1.33.0
@@ -3515,11 +3520,11 @@ oniguruma-to-es@3.1.1 | development | MIT
   Package: https://www.npmjs.com/package/oniguruma-to-es/v/3.1.1
   Archive: https://registry.npmjs.org/oniguruma-to-es/-/oniguruma-to-es-3.1.1.tgz
   Integrity: sha512-bUH8SDvPkH3ho3dvwJwfonjlQ4R80vjyvrU8YpxuROddv55vAEJrTuCuCVUhhsHbtlD9tGGbaNApGQckXhS8iQ==
-openpgp@6.3.2 | runtime | LGPL-3.0+
+openpgp@6.3.3 | runtime | LGPL-3.0+
   Lockfile path: node_modules/openpgp
-  Package: https://www.npmjs.com/package/openpgp/v/6.3.2
-  Archive: https://registry.npmjs.org/openpgp/-/openpgp-6.3.2.tgz
-  Integrity: sha512-wcZTzHz41LV8Y48zH/JlD1JT8YdNmpWOuMAjQ/podvvCwsjBEU37K3znJh4UQcj3hksE5z9TzvhbUbwzsGvlLQ==
+  Package: https://www.npmjs.com/package/openpgp/v/6.3.3
+  Archive: https://registry.npmjs.org/openpgp/-/openpgp-6.3.3.tgz
+  Integrity: sha512-W0foQI+Zb7/TCy7Z50gqZejYe3oJkiZJ9OSV4ImuRT8MmoKOJhtAMvRm6w9STlyYluLiuezG7+0Qdqbcmmx7ig==
 oxc-parser@0.156.0 | development | MIT
   Lockfile path: node_modules/oxc-parser
   Package: https://www.npmjs.com/package/oxc-parser/v/0.156.0

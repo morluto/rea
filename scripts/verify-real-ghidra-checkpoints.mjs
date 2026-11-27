@@ -283,7 +283,7 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
     },
   );
   await phase(
-    "MCP preserves a live run, refuses a concurrent writer, and saves edits",
+    "MCP preserves a live run, shares the target with a second session, and refuses its later save",
     async () => {
       const active = await connect();
       try {
@@ -302,29 +302,54 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
             path: target,
             provider_id: "ghidra",
           });
-          const error = requireMcpToolError(await other.raw("list_documents"));
-          assert.equal(error.code, "configuration_invalid");
-          assert.match(error.message, /another REA session/);
+          // Both sessions restore the same generation into private
+          // projects and answer queries while the other is live.
+          const shared = await other.call("procedure_pseudo_code", {
+            detail: "complete",
+            procedure: "rea_checkpoint_leaf",
+          });
+          assert.match(JSON.stringify(shared), /value/);
+          await other.call("annotate_native_function", {
+            procedure: "rea_checkpoint_leaf",
+            comment: "REA checkpoint comment from the later session",
+          });
+          await active.call("open_binary", {
+            path: target,
+            provider_id: "ghidra",
+          });
+          assert.equal(
+            (await active.call("binary_session")).analysis_run.run_id,
+            id,
+          );
+          await active.call("annotate_native_function", {
+            procedure: "rea_checkpoint_leaf",
+            name: "rea_checkpoint_retained",
+            comment: "REA checkpoint first comment",
+          });
+          await active.call("close_binary");
+          const published = await manifest();
+          assert.notDeepEqual(published, initialManifest);
+          // The later session started from the superseded generation: its
+          // save is refused rather than overwriting the first session's.
+          const refused = requireMcpToolError(await other.raw("close_binary"));
+          assert.equal(refused.code, "cleanup_incomplete");
+          assert.deepEqual(refused.recovery, {
+            kind: "retry_cleanup",
+            operation: "close_binary",
+          });
+          assert.match(refused.remediation.action, /edits were not saved/);
+          assert.deepEqual(await manifest(), published);
+          // The refusal is permanent, so the next close discards and releases.
           await other.call("close_binary");
+          assert.deepEqual(await manifest(), published);
         } finally {
           await other.close();
         }
-        await active.call("open_binary", {
-          path: target,
-          provider_id: "ghidra",
-        });
-        assert.equal(
-          (await active.call("binary_session")).analysis_run.run_id,
-          id,
-        );
-        await active.call("annotate_native_function", {
-          procedure: "rea_checkpoint_leaf",
-          name: "rea_checkpoint_retained",
-          comment: "REA checkpoint first comment",
-        });
-        await active.call("close_binary");
-        assert.notDeepEqual(await manifest(), initialManifest);
-        return { same_live_run: true, concurrent_owner_refused: true };
+        return {
+          same_live_run: true,
+          concurrent_session_answered: true,
+          later_save_refused: true,
+        };
       } finally {
         await active.close();
       }

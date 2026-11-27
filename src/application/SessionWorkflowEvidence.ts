@@ -96,7 +96,8 @@ export const executeSessionWorkflowEvidence = async (
   const { EnhancedTools } = await import("./EnhancedTools.js");
   const executed = await executeComposedWorkflow(
     analysis,
-    (observed) => new EnhancedTools(observed).executeValidated(call, signal),
+    (observed) =>
+      new EnhancedTools(observed).executeValidated(call, signal, progress),
     composedLimitationBudget(name),
   );
   retainPartialWorkflowEvidence(executed, evidenceInput);

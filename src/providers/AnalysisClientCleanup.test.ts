@@ -222,3 +222,36 @@ it("retains the latest close options across concurrent close() calls", async () 
   await Promise.all([acquiring, close1, close2]);
   expect(seenOptions).toEqual([options2]);
 });
+
+it("keeps the client's own close advice and limit on the retained close failure", async () => {
+  const advice = "Close again to discard the unsaved edits.";
+  const limit = {
+    control_kind: "environment",
+    environment: "REA_FIXTURE_WAIT_MS",
+    effective_value: 100,
+    unit: "ms",
+    minimum: 50,
+    maximum: 1_000,
+    default_value: 500,
+    applies_at: "next_startup",
+  } as const;
+  const refused = new ProviderCleanupError(
+    "fixture",
+    ["client"],
+    {},
+    { remediationAction: advice, limit },
+  );
+  let closes = 0;
+  const creation = new AnalysisClientCreation("fixture", async () => ({
+    execute: clientClosingWith(refused).execute,
+    close: async () => ((closes += 1) === 1 ? err(refused) : ok(null)),
+  }));
+  expect((await creation.acquire("open")).ok).toBe(true);
+  const closed = await creation.close();
+  if (closed.ok) throw new Error("the refused close unexpectedly succeeded");
+  expect(closed.error).toMatchObject({ remediationAction: advice });
+  const projected = projectAnalysisError(closed.error);
+  expect(projected.remediation.action).toContain(advice);
+  expect(projected.details?.limit).toEqual(limit);
+  expect(await creation.close()).toEqual(ok(null));
+});

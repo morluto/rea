@@ -308,6 +308,7 @@ describe("Ghidra disabled analyzer report", () => {
 
 const databaseEdits = [
   "annotate_native_function",
+  "define_native_data_types",
   "set_address_name",
   "set_addresses_names",
 ] as const;

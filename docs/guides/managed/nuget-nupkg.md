@@ -38,10 +38,12 @@ the `.nuspec` metadata. Authors and description follow NuGet's first eligible
 leaf rule with case-insensitive local names. Empty leaves and ordinary
 whitespace-only leaves are skipped. Whitespace preserved by CDATA or
 `xml:space` can occupy the first slot and yield `null` even when a later leaf
-has text. The package ID and version use their case-sensitive names in the
-metadata namespace. Missing fields are `null`. In the `.nuspec` and OPC
-relationships, XML end-of-line handling maps CRLF and lone CR to LF. When no `.nuspec` can be
-selected, `identity` is `null`.
+has text. For nonblank authors and descriptions, `xml:space="preserve"` keeps
+leading and trailing whitespace. Descendants inherit this setting until
+`xml:space="default"` resets it. The package ID and version use their
+case-sensitive names in the metadata namespace. Missing fields are `null`. In
+the `.nuspec` and OPC relationships, XML end-of-line handling maps CRLF and
+lone CR to LF. When no `.nuspec` can be selected, `identity` is `null`.
 
 `license` reports the `.nuspec` license element. `type` is `expression` or
 `file` after a case-insensitive match, and `null` for missing or unrecognized

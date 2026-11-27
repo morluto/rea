@@ -7,6 +7,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.Writer;
+import java.lang.ref.SoftReference;
 import java.math.BigInteger;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -30,6 +31,8 @@ import java.security.MessageDigest;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -44,7 +47,15 @@ import java.util.NavigableMap;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
@@ -58,6 +69,9 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.stream.JsonWriter;
 
+import ghidra.app.cmd.function.ApplyFunctionSignatureCmd;
+import ghidra.app.cmd.function.FunctionRenameOption;
+import ghidra.app.util.cparser.C.CParser;
 import ghidra.app.util.headless.HeadlessScript;
 import ghidra.app.decompiler.DecompInterface;
 import ghidra.app.decompiler.DecompileOptions;
@@ -83,7 +97,12 @@ import ghidra.program.model.block.CodeBlockIterator;
 import ghidra.program.model.block.CodeBlockReference;
 import ghidra.program.model.block.CodeBlockReferenceIterator;
 import ghidra.program.model.data.StringDataInstance;
+import ghidra.program.model.data.CategoryPath;
 import ghidra.program.model.data.DataType;
+import ghidra.program.model.data.DataTypeConflictHandler;
+import ghidra.program.model.data.DataTypeManager;
+import ghidra.program.model.data.FunctionDefinitionDataType;
+import ghidra.program.model.data.ParameterDefinition;
 import ghidra.program.model.data.MutabilitySettingsDefinition;
 import ghidra.program.model.data.Undefined;
 import ghidra.program.model.lang.OperandType;
@@ -97,6 +116,7 @@ import ghidra.program.model.listing.DataIterator;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.FunctionIterator;
 import ghidra.program.model.listing.FunctionManager;
+import ghidra.program.model.listing.FunctionSignature;
 import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.listing.InstructionIterator;
 import ghidra.program.model.listing.Listing;
@@ -132,7 +152,10 @@ import ghidra.program.model.pcode.VarnodeAST;
 import ghidra.program.util.ContextEvaluatorAdapter;
 import ghidra.program.util.SymbolicPropogator;
 import ghidra.program.util.VarnodeContext;
+import ghidra.util.UndefinedFunction;
+import ghidra.util.exception.CancelledException;
 import ghidra.util.task.TaskMonitor;
+import ghidra.util.task.TaskMonitorAdapter;
 
 public final class ReaGhidraBridge extends HeadlessScript {
     // At most 24 KiB after worst-case JSON escaping (six bytes per UTF-16 unit).
@@ -171,6 +194,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private static final String[] CAPABILITIES = {
         "read_binary_inventory_summary",
         "annotate_native_function",
+        "define_native_data_types",
         "set_address_name",
         "set_addresses_names",
         "inspect_native_load_image",
@@ -209,6 +233,62 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private List<StringEntry> stringInventory;
     private Boolean swiftProgramCached;
     private DecompInterface decompiler;
+    /**
+     * Completed decompilations of the current Program state, least recently
+     * used first. DecompInterface keeps no results, so a repeated request would
+     * otherwise run the native decompiler again. The key carries every input a
+     * result depends on; soft references let the heap reclaim large results.
+     */
+    private final LinkedHashMap<DecompileCacheKey, SoftReference<DecompileResults>> decompileResults =
+        new LinkedHashMap<>(16, 0.75f, true) {
+            @Override
+            protected boolean removeEldestEntry(
+                Map.Entry<DecompileCacheKey, SoftReference<DecompileResults>> eldest
+            ) {
+                return size() > DECOMPILE_RESULT_ENTRIES;
+            }
+        };
+    // Fixed: this bounds retained Java objects, not analysis the caller can
+    // observe. A miss only repeats a decompile, and soft references release
+    // entries under heap pressure. Ghidra's own panel keeps 10 by default.
+    private static final int DECOMPILE_RESULT_ENTRIES = 32;
+    /**
+     * Read-ahead: functions a workflow will request next, decompiled in the
+     * background by REA's own worker threads, each with its own decompiler
+     * process. The carrying request never waits for them; it decompiles its own
+     * function on the session decompiler. A later request takes a finished
+     * result, waits for one that is running, or decompiles a queued one itself.
+     * Guarded by decompileAheadLock.
+     */
+    private final ArrayDeque<AheadTask> decompileAheadQueue = new ArrayDeque<>();
+    private final LinkedHashMap<DecompileCacheKey, AheadTask> decompileAheadTasks = new LinkedHashMap<>();
+    /**
+     * Tasks a worker has started, including one a request has removed from
+     * the map while it waits. Disposal must still cancel that monitor.
+     */
+    private final Set<AheadTask> decompileAheadActive =
+        Collections.newSetFromMap(new IdentityHashMap<>());
+    private int decompileAheadLiveWorkers;
+    // Advanced by disposal: workers of an older generation stop, and their
+    // results are never served, so an edit or option change cannot reuse them.
+    private long decompileAheadGeneration;
+    private static final int DECOMPILE_AHEAD_WORKERS = 8;
+    // A hint beyond the retained results would evict the window's own first
+    // results before their requests arrive, so later selectors are ignored.
+    private static final int DECOMPILE_AHEAD_WINDOW = DECOMPILE_RESULT_ENTRIES;
+    // Fixed: read-ahead serves consecutive requests of one workflow, which
+    // arrive milliseconds apart. A worker idle this long closes its native
+    // decompiler process and exits; a later window starts workers again.
+    private static final long DECOMPILE_AHEAD_IDLE_MILLIS = 30_000;
+    // Disposal cancels running decompiles, which end promptly; this bounds the
+    // wait for their workers before an edit or shutdown continues.
+    private static final long DECOMPILE_AHEAD_STOP_MILLIS = 10_000;
+    private final Object decompileAheadLock = new Object();
+    private final ExecutorService decompileAheadThreads = Executors.newCachedThreadPool(task -> {
+        Thread thread = new Thread(task, "REA decompile read-ahead");
+        thread.setDaemon(true);
+        return thread;
+    });
     private boolean existingProject;
     // A refused Program may only report its admission failure to the client.
     private String identityAdmissionFailure;
@@ -303,6 +383,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
             serve(descriptor);
         }
         finally {
+            disposeDecompileAhead();
+            decompileAheadThreads.shutdownNow();
             if (decompiler != null) {
                 decompiler.dispose();
                 decompiler = null;
@@ -435,27 +517,126 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
     }
 
+    /**
+     * One frame handed from the connection reader to the request handler: a
+     * request with its cancellation monitor, an unusable frame, a read
+     * failure, or the end of the connection when every field is unset.
+     */
+    private record Inbound(Request request, TaskMonitor monitor, boolean invalid, IOException failure) {}
+
+    // A full queue only delays the reader; REA writes one Program request at a
+    // time, plus lifecycle requests beside it.
+    private static final int INBOUND_REQUEST_CAPACITY = 8;
+
+    /** Monitors of requests that were read and have not been answered. */
+    private final Map<Integer, TaskMonitor> requestMonitors = new ConcurrentHashMap<>();
+
+    private Inbound admitRequest(Request request) {
+        // Registered before the handler can see the request, so a cancel read
+        // right behind it finds the monitor even while the request still waits.
+        TaskMonitor requestMonitor = new TaskMonitorAdapter(true);
+        requestMonitors.put(request.id, requestMonitor);
+        return new Inbound(request, requestMonitor, false, null);
+    }
+
+    /**
+     * Read frames while the handler works. This is the bridge's only second
+     * thread: it never touches the Program or the writer. It cancels the
+     * monitor of the request a `cancel` frame names, cancels read-ahead for
+     * an `abandon_decompile_read_ahead` frame without waiting for workers,
+     * and queues every other frame in arrival order, so requests still run
+     * one at a time.
+     */
+    private void readRequests(
+            SessionDescriptor descriptor,
+            BufferedReader reader,
+            BlockingQueue<Inbound> inbound) {
+        try {
+            while (true) {
+                String line;
+                try {
+                    line = reader.readLine();
+                }
+                catch (IOException exception) {
+                    inbound.put(new Inbound(null, null, false, exception));
+                    return;
+                }
+                if (line == null) {
+                    inbound.put(new Inbound(null, null, false, null));
+                    return;
+                }
+                Request request;
+                try {
+                    request = parseRequest(line, descriptor.token);
+                    if (request.method.equals("cancel")) {
+                        requireKeys(request.params, Set.of("request_id"));
+                        // A request that already answered has no monitor left.
+                        TaskMonitor active = requestMonitors.get(requireInteger(request.params, "request_id"));
+                        if (active != null) active.cancel();
+                        continue;
+                    }
+                    if (request.method.equals("abandon_decompile_read_ahead")) {
+                        requireKeys(request.params, Set.of());
+                        // Not queued behind the handler, and not waited on
+                        // here: the cancel frame for the request that is
+                        // waiting on a taken task must still be read inside
+                        // the client's cancel grace.
+                        cancelDecompileAhead();
+                        continue;
+                    }
+                }
+                catch (RuntimeException exception) {
+                    inbound.put(new Inbound(null, null, true, null));
+                    return;
+                }
+                inbound.put(admitRequest(request));
+            }
+        }
+        catch (InterruptedException exception) {
+            // The handler finished with this connection.
+        }
+    }
+
     private void serveClient(
             SessionDescriptor descriptor,
             BufferedReader reader,
             BufferedWriter writer,
             Request first) throws Exception {
+        TaskMonitor scriptMonitor = monitor;
+        BlockingQueue<Inbound> inbound = new ArrayBlockingQueue<>(INBOUND_REQUEST_CAPACITY);
+        if (first != null) inbound.put(admitRequest(first));
+        Thread requestReader = new Thread(
+            () -> readRequests(descriptor, reader, inbound), "rea-bridge-request-reader");
+        requestReader.setDaemon(true);
+        requestReader.start();
+        try {
+            serveRequests(descriptor, writer, inbound);
+        }
+        finally {
+            monitor = scriptMonitor;
+            requestMonitors.clear();
+            // Interrupting a blocked channel read closes the connection, which
+            // the caller is about to do anyway.
+            requestReader.interrupt();
+        }
+    }
+
+    private void serveRequests(
+            SessionDescriptor descriptor,
+            BufferedWriter writer,
+            BlockingQueue<Inbound> inbound) throws Exception {
         while (true) {
-            Request request = first;
-            first = null;
-            if (request == null) {
-                String line = reader.readLine();
-                if (line == null) return;
-                try {
-                    request = parseRequest(line, descriptor.token);
-                }
-                catch (RuntimeException exception) {
-                    // The request id may not have parsed, so the connection-level
-                    // failure uses id 0, which no client request uses.
-                    writeFailure(writer, CONNECTION_FAILURE_ID, "invalid_request", "Bridge request is invalid");
-                    return;
-                }
+            Inbound next = inbound.take();
+            if (next.failure() != null) throw next.failure();
+            if (next.invalid()) {
+                // The request id may not have parsed, so the connection-level
+                // failure uses id 0, which no client request uses.
+                writeFailure(writer, CONNECTION_FAILURE_ID, "invalid_request", "Bridge request is invalid");
+                return;
             }
+            Request request = next.request();
+            if (request == null) return;
+            monitor = next.monitor();
             try {
                 if (request.method.equals("shutdown")) {
                     requireKeys(request.params, Set.of());
@@ -476,11 +657,25 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 decompileTimeoutSeconds = request.decompileTimeoutSeconds() == null
                     ? descriptor.decompileTimeoutSeconds() : request.decompileTimeoutSeconds();
                 valueFlowLimits = request.valueFlowLimits();
-                applyDecompilePayloadLimit(request.decompileMaxPayloadMiB());
+                applyRequestDecompilerOptions(request);
+                monitor.checkCancelled();
                 dispatchAndWrite(writer, request, descriptor);
             }
             catch (RequestFailure failure) {
-                writeFailure(writer, request.id, failure.code, failure.getMessage(), failure.candidates);
+                writeFailure(writer, request.id, failure);
+            }
+            catch (StackOverflowError exhausted) {
+                // Ghidra's data-type code can overflow while holding its database
+                // lock, which then stays held: the Program can no longer be saved
+                // or trusted. Admission bounds caller types (MAX_C_TYPE_DEPTH) so
+                // this is not reachable from caller text; if it happens anyway,
+                // say why and end the session rather than keep serving it.
+                writeFailure(writer, request.id, "bridge_exception",
+                    "StackOverflowError: Ghidra exhausted its stack and may hold its database lock; this Ghidra session cannot continue");
+                throw exhausted;
+            }
+            catch (CancelledException exception) {
+                writeFailure(writer, request.id, "request_cancelled", "Ghidra request was cancelled");
             }
             catch (Exception exception) {
                 writeFailure(
@@ -489,6 +684,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     "bridge_exception",
                     exception.getClass().getSimpleName() + ": " + safeMessage(exception)
                 );
+            }
+            finally {
+                requestMonitors.remove(request.id);
             }
         }
     }
@@ -537,7 +735,19 @@ public final class ReaGhidraBridge extends HeadlessScript {
             case "procedure_callees" -> procedureCalls(request.params, false);
             case "procedure_callers" -> procedureCalls(request.params, true);
             case "procedure_info" -> procedureInfo(request.params);
-            case "procedure_pseudo_code" -> procedurePseudocode(request.params);
+            case "procedure_pseudo_code" -> {
+                try {
+                    decompileAhead(request.decompileReadAhead());
+                    yield procedurePseudocode(request.params);
+                }
+                finally {
+                    // Read-ahead is speculative work for this workflow; a
+                    // cancelled request abandons it rather than leaving it running.
+                    // After this reply, the client sends abandon_decompile_read_ahead
+                    // if the same workflow stops before its next request.
+                    if (monitor.isCancelled()) disposeDecompileAhead();
+                }
+            }
             case "read_function_instructions" -> readFunctionInstructions(request.params);
             case "procedure_references" -> procedureReferences(request.params);
             case "resolve_containing_procedure" -> containingProcedure(request.params);
@@ -563,6 +773,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     throw new RequestFailure("method_unavailable", "Windows P0 does not admit database mutation");
                 yield annotateNativeFunction(request.params);
             }
+            case "define_native_data_types" -> {
+                if (!descriptor.transport.equals("unix-socket"))
+                    throw new RequestFailure("method_unavailable", "Windows P0 does not admit database mutation");
+                yield defineNativeDataTypes(request.params);
+            }
             default -> throw new RequestFailure(
                 "method_unavailable",
                 "Bridge method is unavailable"
@@ -571,7 +786,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     private static boolean isMutatingOperation(String method) {
-        return method.equals("annotate_native_function") || method.equals("set_address_name") || method.equals("set_addresses_names");
+        return method.equals("annotate_native_function") || method.equals("define_native_data_types") ||
+            method.equals("set_address_name") || method.equals("set_addresses_names");
     }
 
     /** Internal lifecycle request: the destination is inside this owned runtime. */
@@ -1250,6 +1466,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return options;
     }
 
+    /**
+     * Only a request that carries decompiler options changes them. Another
+     * read leaves the session's payload limit, and the decompiles completed
+     * under it, in place.
+     */
+    private void applyRequestDecompilerOptions(Request request) {
+        if (request.decompilePayload() != null)
+            applyDecompilePayloadLimit(request.decompilePayload().mebibytes());
+    }
+
     private void applyDecompilePayloadLimit(Integer payloadMiB) {
         if (java.util.Objects.equals(decompileMaxPayloadMiB, payloadMiB)) return;
         // DecompInterface supports live setOptions: it updates the existing
@@ -1257,6 +1483,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (!decompiler.setOptions(decompileOptions(payloadMiB)))
             throw new RequestFailure("decompile_options_failed", "Ghidra could not apply the selected native decompiler payload limit");
         decompiler.flushCache();
+        decompileResults.clear();
+        disposeDecompileAhead();
         decompileMaxPayloadMiB = payloadMiB;
     }
 
@@ -1278,24 +1506,35 @@ public final class ReaGhidraBridge extends HeadlessScript {
         JsonObject selection = new JsonObject();
         Function function = resolveDecompileProcedure(selector, selection);
         try {
-            String value = decompiledText(decompile(function));
+            DecompileResults results = decompile(function);
+            String value = decompiledText(results);
+            Function decompiled = decompiledFunction(function, results);
+            List<String> limitations = new ArrayList<>(functionBoundaryLimitations(
+                decompiled,
+                currentProgram.getListing().getInstructions(decompiled.getBody(), true)
+            ));
+            if (selection.has("undefined_function_entry"))
+                limitations.add(0, undefinedFunctionLimitation(selection));
             JsonObject result = functionObservation(
                 value == null ? JsonNull.INSTANCE : GSON.toJsonTree(value),
-                functionBoundaryLimitations(
-                    function,
-                    currentProgram.getListing().getInstructions(function.getBody(), true)
-                )
+                limitations
             );
-            if (selection.size() > 0) result.add("selection", selection);
+            // The file-offset selection is a contract field; an undefined
+            // function's inferred entry is carried by its limitation.
+            if (selection.has("file_offset")) {
+                JsonObject fileOffsetSelection = new JsonObject();
+                for (String key : List.of("file_offset", "mapped_address", "procedure_address"))
+                    fileOffsetSelection.add(key, selection.get(key));
+                result.add("selection", fileOffsetSelection);
+            }
             return result;
         } catch (RequestFailure failure) {
-            if (selection.size() == 0) throw failure;
+            if (!selection.has("mapped_address")) throw failure;
             // Preserve completed resolution facts without changing the backend's
             // failure code or suggesting that the successful mapping was invalid.
-            throw new RequestFailure(failure.code, "Selector " + selector +
+            throw failure.prefixed("Selector " + selector +
                 " mapped to analysis address " + selection.get("mapped_address").getAsString() +
-                " and procedure " + canonicalAddress(function.getEntryPoint()) +
-                "; " + failure.getMessage(), failure.candidates);
+                " and procedure " + canonicalAddress(function.getEntryPoint()) + "; ");
         }
     }
 
@@ -1308,8 +1547,13 @@ public final class ReaGhidraBridge extends HeadlessScript {
             } catch (RequestFailure failure) {
                 // Existing names/addresses win. Only an unresolved numeric input
                 // can fall back to source coordinates; ambiguity never falls back.
-                if (!failure.code.equals("procedure_not_found") || !selector.matches("0x[0-9a-fA-F]+"))
-                    throw failure;
+                if (!failure.code.equals("procedure_not_found")) throw failure;
+                // Analyzed code outside every function is still an analysis
+                // address, so it wins over a file-offset reading of the number.
+                Address requested = isExplicitReaAddress(selector) ? parseReaAddress(selector) : tryParseAddress(selector);
+                Function undefined = requested == null ? null : undefinedFunctionAt(requested, selection);
+                if (undefined != null) return undefined;
+                if (!selector.matches("0x[0-9a-fA-F]+")) throw failure;
             }
         }
         String coordinate = explicitOffset ? selector.substring(prefix.length()) : selector;
@@ -1339,11 +1583,18 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 " has multiple loaded mappings: " + candidates.stream().map(ReaGhidraBridge::canonicalAddress).toList() +
                 "; select an explicit analysis address");
         if (candidates.isEmpty())
-            throw new RequestFailure("file_offset_unmapped", "File offset " + coordinate +
+            throw new RequestFailure("file_offset_unmapped",
+                (explicitOffset || !isMappedAnalysisAddress(selector) ? "" :
+                    coordinate + " is a mapped analysis address that holds no disassembled code and no procedure. Read as a file offset instead: ") +
+                "File offset " + coordinate +
                 " has no loaded source mapping for the admitted target file; Ghidra image base: " + canonicalAddress(currentProgram.getImageBase()) +
                 ". Inspect mappings with rea inspect-native-load-image <path> --provider ghidra --json or MCP inspect_native_load_image.");
         Address mapped = candidates.get(0);
+        // A file offset names the same location as its mapped analysis
+        // address, so it resolves the way that address does, including code
+        // outside every function.
         Function function = functionAtOrContaining(mapped);
+        if (function == null) function = undefinedFunctionAt(mapped, selection);
         if (function == null)
             throw new RequestFailure("procedure_not_found", "File offset " + coordinate +
                 " maps to analysis address " + canonicalAddress(mapped) +
@@ -1353,6 +1604,47 @@ public final class ReaGhidraBridge extends HeadlessScript {
         selection.addProperty("mapped_address", canonicalAddress(mapped));
         selection.addProperty("procedure_address", canonicalAddress(function.getEntryPoint()));
         return function;
+    }
+
+    /**
+     * Ghidra can disassemble code without creating a function for it, for
+     * example a range named only by an exception-frame entry and reached
+     * through a data reference, as `main` is in a stripped ELF. The decompiler
+     * panel reads such code through an on-the-fly UndefinedFunction, which
+     * leaves the Program unchanged; this does the same and records that the
+     * entry is inferred from control flow and absent from the inventory.
+     */
+    private Function undefinedFunctionAt(Address address, JsonObject selection) throws Exception {
+        if (!isCodeOutsideFunctions(address)) return null;
+        UndefinedFunction undefined =
+            UndefinedFunction.findFunction(currentProgram, address, monitor);
+        if (undefined == null) return null;
+        selection.addProperty("requested_address", canonicalAddress(address));
+        selection.addProperty("undefined_function_entry", canonicalAddress(undefined.getEntryPoint()));
+        return undefined;
+    }
+
+    private static final String CODE_OUTSIDE_FUNCTIONS =
+        "Ghidra disassembled code there without creating a function, so it is absent from the procedure inventory";
+
+    private boolean isCodeOutsideFunctions(Address address) {
+        return address.isMemoryAddress() &&
+            currentProgram.getListing().getInstructionContaining(address) != null &&
+            functionAtOrContaining(address) == null;
+    }
+
+    private boolean isMappedAnalysisAddress(String selector) {
+        Address address = tryParseAddress(selector);
+        return address != null && address.isMemoryAddress() && currentProgram.getMemory().contains(address);
+    }
+
+    private static String undefinedFunctionLimitation(JsonObject selection) {
+        return "No Ghidra function contains " + selection.get("requested_address").getAsString() +
+            ": Ghidra disassembled this code without creating a function, so it is absent from the procedure inventory. " +
+            "This pseudocode is Ghidra's on-the-fly decompilation from " +
+            selection.get("undefined_function_entry").getAsString() +
+            ", an entry inferred by following control flow back from the requested address. " +
+            "The entry and extent are not an analyzed function boundary, and the Program is unchanged.";
     }
 
     private boolean isTargetSource(FileBytes source) throws Exception {
@@ -1505,6 +1797,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return functionObservation(result, limitations);
     }
 
+    /** Fields, enum members or function parameters serialized per inspected type; the rest are counted. */
+    private static final int MAX_INSPECTED_TYPE_ENTRIES = 20_000;
+
     private JsonObject inspectNativeDataType(JsonObject params) throws Exception {
         requireKeys(params, Set.of("document", "type", "address"));
         requireDocument(params);
@@ -1535,13 +1830,13 @@ public final class ReaGhidraBridge extends HeadlessScript {
             if (type.getSourceArchive() != null) result.addProperty("source_archive", type.getSourceArchive().getName());
             if (type.getLength() >= 0) result.addProperty("size_bytes", type.getLength());
             if (type.getAlignment() > 0) result.addProperty("alignment_bytes", type.getAlignment());
-            String kind = type instanceof ghidra.program.model.data.Structure ? "struct" : type instanceof ghidra.program.model.data.Union ? "union" : type instanceof ghidra.program.model.data.Enum ? "enum" : type instanceof ghidra.program.model.data.Pointer ? "pointer" : type instanceof ghidra.program.model.data.Array ? "array" : type instanceof ghidra.program.model.data.TypeDef ? "typedef" : type instanceof ghidra.program.model.data.BuiltInDataType ? "scalar" : "unsupported";
-            result.addProperty("kind", kind);
+            result.addProperty("kind", dataTypeKind(type));
+            if (isCallerDefinedType(type)) result.addProperty("source", "caller-defined");
             if (type instanceof ghidra.program.model.data.Composite composite) {
                 result.addProperty("packing_enabled", composite.isPackingEnabled());
                 ghidra.program.model.data.DataTypeComponent[] components = composite.getComponents();
                 totalFields = components.length;
-                for (int index = 0; index < Math.min(components.length, 20_000); index++) {
+                for (int index = 0; index < Math.min(components.length, MAX_INSPECTED_TYPE_ENTRIES); index++) {
                     monitor.checkCancelled();
                     ghidra.program.model.data.DataTypeComponent component = components[index];
                     JsonObject field = new JsonObject();
@@ -1570,7 +1865,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 String[] names = enumeration.getNames();
                 totalFields = names.length;
                 java.util.Arrays.sort(names);
-                for (int index = 0; index < Math.min(names.length, 20_000); index++) {
+                for (int index = 0; index < Math.min(names.length, MAX_INSPECTED_TYPE_ENTRIES); index++) {
                     monitor.checkCancelled();
                     JsonObject member = new JsonObject();
                     member.addProperty("name", names[index]);
@@ -1585,18 +1880,43 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 result.addProperty("array_stride_bytes", array.getElementLength());
             } else if (type instanceof ghidra.program.model.data.TypeDef alias) {
                 result.addProperty("referenced_type", alias.getDataType().getPathName());
+            } else if (type instanceof ghidra.program.model.data.FunctionDefinition function) {
+                JsonObject prototype = new JsonObject();
+                prototype.addProperty("return_type", function.getReturnType().getPathName());
+                JsonArray parameters = new JsonArray();
+                // An existing project type can hold any number of parameters; bound them like fields.
+                ghidra.program.model.data.ParameterDefinition[] arguments = function.getArguments();
+                for (int index = 0; index < Math.min(arguments.length, MAX_INSPECTED_TYPE_ENTRIES); index++) {
+                    monitor.checkCancelled();
+                    ghidra.program.model.data.ParameterDefinition parameter = arguments[index];
+                    JsonObject item = new JsonObject();
+                    String name = parameter.getName();
+                    item.add("name", name == null || name.isEmpty() ? JsonNull.INSTANCE : GSON.toJsonTree(name));
+                    item.addProperty("type", parameter.getDataType().getPathName());
+                    parameters.add(item);
+                }
+                prototype.add("parameters", parameters);
+                prototype.addProperty("total_parameters", arguments.length);
+                prototype.addProperty("parameters_truncated", arguments.length > MAX_INSPECTED_TYPE_ENTRIES);
+                prototype.addProperty("varargs", function.hasVarArgs());
+                prototype.addProperty("calling_convention", function.getCallingConventionName());
+                result.add("function_definition", prototype);
             }
         }
         result.add("fields", fields);
         result.add("members", members);
         result.addProperty("total_fields", totalFields);
-        result.addProperty("truncated", totalFields > 20_000);
-        result.add("limitations", GSON.toJsonTree(List.of("Layouts are Ghidra data-type database observations; original debug/source authority and flexible-tail semantics are not inferred. Component type paths do not necessarily identify separately registered types; bit-field lookups report whether the manager resolves equivalent types.", "At most 20000 fields or enum members are serialized per type to bound provider output. total_fields and truncated report omissions. Enum values preserve Ghidra's signed long representation.")));
+        result.addProperty("truncated", totalFields > MAX_INSPECTED_TYPE_ENTRIES);
+        result.add("limitations", GSON.toJsonTree(List.of("Layouts are Ghidra data-type database observations; original debug/source authority and flexible-tail semantics are not inferred. Component type paths do not necessarily identify separately registered types; bit-field lookups report whether the manager resolves equivalent types.", "At most 20000 fields, enum members or function parameters are serialized per type to bound provider output. total_fields and truncated report omitted fields and members; function_definition.total_parameters and parameters_truncated report omitted parameters. Enum values preserve Ghidra's signed long representation.")));
         if (type != null) {
             JsonObject metadata = analysisExtensions.inspectDataType(currentProgram, type, address, monitor);
             if (metadata != null) result.add("metadata_recovery", metadata);
         }
         return result;
+    }
+
+    private static String dataTypeKind(DataType type) {
+        return type instanceof ghidra.program.model.data.Structure ? "struct" : type instanceof ghidra.program.model.data.Union ? "union" : type instanceof ghidra.program.model.data.Enum ? "enum" : type instanceof ghidra.program.model.data.Pointer ? "pointer" : type instanceof ghidra.program.model.data.Array ? "array" : type instanceof ghidra.program.model.data.TypeDef ? "typedef" : type instanceof ghidra.program.model.data.FunctionDefinition ? "function" : type instanceof ghidra.program.model.data.BuiltInDataType ? "scalar" : "unsupported";
     }
 
     private String typeLookupResult(DataType type) {
@@ -1806,6 +2126,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         nameInventory = null;
         procedureInventory = null;
         procedureNameIndex = null;
+        decompileResults.clear();
+        disposeDecompileAhead();
         if (decompiler != null) decompiler.flushCache();
     }
 
@@ -1816,13 +2138,20 @@ public final class ReaGhidraBridge extends HeadlessScript {
         value.addProperty("name", procedureName(function));
         value.addProperty("comment", currentProgram.getListing().getComment(CommentType.PRE, entry));
         value.addProperty("inline_comment", currentProgram.getListing().getComment(CommentType.EOL, entry));
+        // The formal prototype omits storage-derived parameters. It reparses as a
+        // signature edit when its function and type names are C identifiers.
+        value.addProperty("signature", function.getSignature(true).getPrototypeString(false));
+        value.addProperty("signature_source", normalizedSource(function.getSignatureSource()));
+        value.addProperty("calling_convention", function.getCallingConventionName());
         return value;
     }
 
     private JsonObject annotateNativeFunction(JsonObject params) throws Exception {
-        if (!Set.of("procedure", "name", "comment", "inline_comment").containsAll(params.keySet()))
+        if (!Set.of("procedure", "name", "comment", "inline_comment", "signature", "signature_max_utf16",
+                    "parenthesis_max_depth")
+                .containsAll(params.keySet()))
             throw new RequestFailure("invalid_request", "Unknown function annotation field");
-        if (!params.has("name") && !params.has("comment") && !params.has("inline_comment"))
+        if (!params.has("name") && !params.has("comment") && !params.has("inline_comment") && !params.has("signature"))
             throw new RequestFailure("invalid_request", "Supply at least one annotation change");
         Function function = resolveProcedure(requireString(params, "procedure"));
         Address entry = function.getEntryPoint();
@@ -1831,9 +2160,17 @@ public final class ReaGhidraBridge extends HeadlessScript {
         for (String field : List.of("name", "comment", "inline_comment")) {
             if (params.has(field)) validateAnnotationText(requireText(params, field), field);
         }
+        int signatureBound = callerCTextBound(
+            params, "signature_max_utf16", DEFAULT_FUNCTION_SIGNATURE_UTF16, MAX_FUNCTION_SIGNATURE_UTF16);
+        int parenthesisBound = callerParenthesisBound(params);
         int transaction = currentProgram.startTransaction("REA function annotations");
         boolean commit = false;
         try {
+            // Ghidra's parser writes the database (see parseCallerC), so it runs inside this rollback.
+            SignatureEdit signature = params.has("signature")
+                ? parseFunctionSignature(function, requireText(params, "signature"), signatureBound, parenthesisBound)
+                : null;
+            FunctionDefinitionDataType prototype = signature == null ? null : signature.prototype();
             String leafName = params.has("name")
                 ? symbolLeafName(function.getSymbol(), requireString(params, "name")) : null;
             // Validate edits through Ghidra's own setters, including name rules.
@@ -1847,6 +2184,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             }
             if (params.has("name"))
                 function.setName(leafName, SourceType.USER_DEFINED);
+            if (prototype != null) applyFunctionSignature(function, prototype);
             monitor.checkCancelled();
             invalidateSymbolAndDecompilerCaches();
             JsonObject readback = annotationReadback(function);
@@ -1865,6 +2203,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
             JsonObject result = new JsonObject();
             result.add("annotations", readback);
             result.add("dossier", analyzeFunction(query));
+            if (signature != null && !signature.droppedQualifiers().isEmpty())
+                result.add("dropped_qualifiers", signature.droppedQualifiers());
             JsonObject effects = new JsonObject();
             effects.addProperty("scope", "session-analysis-database");
             effects.addProperty("source_bytes_modified", false);
@@ -1881,6 +2221,1214 @@ public final class ReaGhidraBridge extends HeadlessScript {
             currentProgram.endTransaction(transaction, commit);
             // Rollback also invalidates inventory and decompiler views.
             invalidateSymbolAndDecompilerCaches();
+        }
+    }
+
+    // Ghidra's C parser cannot be cancelled, so REA bounds the text it parses.
+    // Measured on Ghidra 12.2 (arm64 macOS): the slowest shape per character is one
+    // chain of pointer declarators, cubic in its length: 0.3 s at 2048 UTF-16 units,
+    // 0.8 s at 4096, 6.8 s at 8192 and 100 s at 16384. The per-call length controls
+    // (signature_max_utf16, declarations_max_utf16) stop at those maxima, keeping
+    // the slowest admitted text under about 7 s; the TypeScript contract owns the
+    // same defaults and ranges. Each level of nested parentheses in an expression
+    // doubles parse time and the cost repeats per occurrence (8192 units filled at
+    // depth 8 take 0.2 s, at depth 12 2.2 s), so parenthesis_max_depth stops at 12.
+    private static final int MIN_C_TEXT_UTF16 = 16;
+    private static final int DEFAULT_FUNCTION_SIGNATURE_UTF16 = 2048;
+    private static final int MAX_FUNCTION_SIGNATURE_UTF16 = 4096;
+    private static final int DEFAULT_TYPE_DECLARATIONS_UTF16 = 4096;
+    private static final int MAX_TYPE_DECLARATIONS_UTF16 = 8192;
+    private static final int MIN_C_PARENTHESIS_DEPTH = 1;
+    private static final int DEFAULT_C_PARENTHESIS_DEPTH = 8;
+    private static final int MAX_C_PARENTHESIS_DEPTH = 12;
+    /** Accepted caller C and the qualifiers Ghidra's types cannot record. */
+    /**
+     * soleParameterIdentifiers: identifiers that are a whole parameter slot,
+     * such as a and b in f(a, b). Ghidra types such a name undefined when it
+     * names no type, as in a K&R identifier list, which no parsed fact records.
+     */
+    private record ParsedCallerC(CParser parser, JsonArray droppedQualifiers, Set<String> soleParameterIdentifiers) {}
+    // Data types carry no SourceType; this category is the persisted mark of caller authorship.
+    private static final CategoryPath CALLER_DEFINED_TYPES = new CategoryPath("/rea_caller_defined");
+    /** A token Ghidra's C parser consumes without applying, and what REA does with it. */
+    private record UnappliedCToken(Pattern spelling, String construct, String droppedQualifier) {
+        boolean refused() { return droppedQualifier == null; }
+    }
+
+    private static UnappliedCToken refusedC(String spelling, String construct) {
+        return new UnappliedCToken(Pattern.compile(spelling), construct, null);
+    }
+
+    private static UnappliedCToken droppedC(String spelling, String qualifier) {
+        return new UnappliedCToken(Pattern.compile(spelling), null, qualifier);
+    }
+
+    /**
+     * Every token Ghidra 12.2's C.jj grammar accepts and then ignores, in that
+     * grammar's own spellings (its token regular expressions). REA refuses a
+     * token whose meaning would be lost, such as a pointer width, an attribute
+     * or a storage class, and reports a pure qualifier that changes neither
+     * layout nor storage as dropped. Every other C.jj keyword is applied: base
+     * types (including __int8..__int64, _Bool and _*signed), struct, union,
+     * enum and typedef, calling conventions, _Noreturn, _Alignof and sizeof.
+     * Types the parser invents for an undefined name are a parse result, not a
+     * token; requireNoInventedTypes refuses those.
+     */
+    private static final List<UnappliedCToken> UNAPPLIED_C_TOKENS = List.of(
+        // TypeQualifier: consumed without a Ghidra representation.
+        droppedC("_*const", "const"),
+        droppedC("_*volatile_*", "volatile"),
+        droppedC("_+restrict", "restrict"),
+        droppedC("__unaligned", "__unaligned"),
+        droppedC("__w64", "__w64"),
+        refusedC("__ptr32|__ptr64", "the pointer-width qualifier %s (Ghidra stores a native-width pointer)"),
+        refusedC("__near|__far", "the pointer qualifier %s (Ghidra ignores it)"),
+        // AttributeSpec, DeclSpec and AlignmentSpecifier: parsed and discarded.
+        refusedC("__attribute_*|__declspec|__readableTo|_Alignas|alignas|__packed|__packed__|packed|_*asm_*|_+extension_*",
+            "the attribute or extension %s"),
+        refusedC("\\[\\[", "a [[...]] attribute"),
+        // StorageClassSpecifier and function specifiers: no storage or linkage in a type.
+        refusedC("static|extern|register|auto|_Thread_local|thread_local|_*(?:inline|forceinline)_*", "the specifier %s"),
+        // Pragma operators, assertions and lexer states whose text is skipped.
+        // Ghidra applies a pack through the operator but skips any other pragma; REA admits one spelling.
+        refusedC("__pragma|_Pragma", "the pragma operator %s (write #pragma pack instead)"),
+        refusedC("_Static_assert|static_assert", "the static assertion %s (Ghidra does not store it)"),
+        refusedC("@", "an Objective-C @ directive (Ghidra skips its text)"),
+        refusedC("\\\\", "a backslash (Ghidra's parser skips it)"));
+
+    private static UnappliedCToken unappliedC(String token) {
+        for (UnappliedCToken rule : UNAPPLIED_C_TOKENS)
+            if (rule.spelling().matcher(token).matches()) return rule;
+        return null;
+    }
+
+    private static boolean isCallerDefinedType(DataType type) {
+        CategoryPath category = type.getCategoryPath();
+        return category != null && category.isAncestorOrSelf(CALLER_DEFINED_TYPES);
+    }
+
+    private static RequestFailure refusedConstruct(String code, String field, String construct, int line, int column) {
+        return new RequestFailure(code, field + " contains " + construct + " at line " + line + ", column " + column +
+            "; Ghidra's C parser would not apply it as written, so nothing was changed");
+    }
+
+    /** One token of caller C text and where it starts in the caller's own lines. */
+    private record CToken(String text, int line, int column) {
+        boolean is(String expected) { return text.equals(expected); }
+        boolean isIdentifier() { return isCIdentifierStart(text.charAt(0)); }
+    }
+
+    // C.jj's LETTER: identifiers may hold $, as in its IDENTIFIER token.
+    private static boolean isCIdentifierStart(char character) {
+        return Character.isLetter(character) || character == '_' || character == '$';
+    }
+
+    /**
+     * The one reader of caller C text. Tokens are identifiers, numbers or
+     * single characters; comments, and the byte-order mark C.jj skips, read as
+     * whitespace. CR, LF and CRLF each
+     * end one line, as in Ghidra's own C parser, so positions name the
+     * caller's text. A string or character literal is refused here, so no
+     * later check can mistake its contents for code.
+     */
+    private static final class CTokenizer {
+        private final String text;
+        private final String field;
+        private final String code;
+        private int index;
+        private int line = 1;
+        private int lineStart;
+        /** The text ends inside a line comment, which would swallow anything appended on its line. */
+        private boolean endsInLineComment;
+
+        CTokenizer(String text, String field, String code) {
+            this.text = text;
+            this.field = field;
+            this.code = code;
+        }
+
+        private static boolean isLineBreak(char character) {
+            return character == '\n' || character == '\r';
+        }
+
+        /** Step over one UTF-16 unit, or one CRLF pair, counting line breaks. */
+        private void advance() {
+            char character = text.charAt(index++);
+            if (character == '\r' && index < text.length() && text.charAt(index) == '\n') index++;
+            if (isLineBreak(character)) {
+                line++;
+                lineStart = index;
+            }
+        }
+
+        /**
+         * Skip whitespace and comments up to the next token. Returns false at
+         * the end of the text or, within a directive (lineEnds), at a line
+         * break; a block comment that crosses one there is refused, since it
+         * would carry the directive onto another line.
+         */
+        private boolean skipToToken(boolean lineEnds) {
+            while (index < text.length()) {
+                char character = text.charAt(index);
+                int startLine = line, column = index - lineStart + 1;
+                if (lineEnds && isLineBreak(character)) return false;
+                if (Character.isWhitespace(character) || character == '\ufeff') {
+                    advance();
+                    continue;
+                }
+                if (text.startsWith("//", index)) {
+                    while (index < text.length() && !isLineBreak(text.charAt(index))) index++;
+                    endsInLineComment = index == text.length();
+                    continue;
+                }
+                if (text.startsWith("/*", index)) {
+                    int close = text.indexOf("*/", index + 2);
+                    int stop = close < 0 ? text.length() : close + 2;
+                    while (index < stop) advance();
+                    if (lineEnds && line != startLine)
+                        throw refusedConstruct(code, field,
+                            "a block comment that continues a directive onto another line", startLine, column);
+                    continue;
+                }
+                return true;
+            }
+            return false;
+        }
+
+        /**
+         * The next token, or null at the end of the text or a directive's line.
+         * Iterative throughout: caller text cannot deepen the stack.
+         */
+        CToken next(boolean lineEnds) {
+            if (!skipToToken(lineEnds)) return null;
+            char character = text.charAt(index);
+            int tokenLine = line, column = index - lineStart + 1;
+            if (character == '"' || character == '\'')
+                throw refusedConstruct(code, field, "a string or character literal", tokenLine, column);
+            int stop = index + 1;
+            if (isCIdentifierStart(character) || Character.isDigit(character))
+                while (stop < text.length() &&
+                        (isCIdentifierStart(text.charAt(stop)) || Character.isDigit(text.charAt(stop)))) stop++;
+            String token = text.substring(index, stop);
+            index = stop;
+            // C.jj reads "[" "[" as an attribute, with anything skippable between.
+            if (token.equals("[")) {
+                int savedIndex = index, savedLine = line, savedLineStart = lineStart;
+                boolean savedEnds = endsInLineComment;
+                if (skipToToken(lineEnds) && text.charAt(index) == '[') {
+                    index++;
+                    return new CToken("[[", tokenLine, column);
+                }
+                index = savedIndex;
+                line = savedLine;
+                lineStart = savedLineStart;
+                endsInLineComment = savedEnds;
+            }
+            return new CToken(token, tokenLine, column);
+        }
+    }
+
+    /** What the tokenizer observed in admitted caller C. */
+    private record AdmittedCallerC(JsonArray droppedQualifiers, boolean terminated, boolean endsInLineComment,
+        Set<String> soleParameterIdentifiers) {}
+
+    // Ghidra reads a pack value with Integer.parseInt and, on overflow, keeps the
+    // packing already in effect. A decimal literal is admitted only when that parse accepts it.
+    private static final Pattern PACK_VALUE = Pattern.compile("0|[1-9][0-9]*");
+
+    private static boolean ghidraPackDecimal(String text) {
+        if (!PACK_VALUE.matcher(text).matches()) return false;
+        try {
+            Integer.parseInt(text);
+            return true;
+        } catch (NumberFormatException overflow) {
+            return false;
+        }
+    }
+
+    /**
+     * Whether Ghidra 12.2's PragmaSpecifier applies these #pragma pack operands
+     * as C does, tracking the labels pushed so far. It ignores a bare (push),
+     * so its pop would restore nothing; a pop with nothing pushed keeps the
+     * current packing; and a plain pop keeps popping past labelled entries
+     * until it finds an unlabelled one. Admitted: (), (n), (push, n),
+     * (push, id), (push, id, n), (pop) over an unlabelled push and
+     * (pop, id) over a push of id.
+     */
+    private static boolean appliedPackOperands(List<CToken> operands, ArrayDeque<String> labels) {
+        List<String> texts = operands.stream().map(CToken::text).toList();
+        java.util.function.Predicate<String> value = ReaGhidraBridge::ghidraPackDecimal;
+        java.util.function.Predicate<String> label = text -> isCIdentifierStart(text.charAt(0)) &&
+            !text.equals("push") && !text.equals("pop");
+        boolean push = !texts.isEmpty() && texts.get(0).equals("push");
+        boolean pop = !texts.isEmpty() && texts.get(0).equals("pop");
+        switch (texts.size()) {
+            case 0:
+                return true;
+            case 1:
+                if (value.test(texts.get(0))) return true;
+                if (!pop || !"".equals(labels.peek())) return false;
+                labels.pop();
+                return true;
+            case 3:
+                if (!texts.get(1).equals(",")) return false;
+                if (push && (value.test(texts.get(2)) || label.test(texts.get(2)))) {
+                    labels.push(value.test(texts.get(2)) ? "" : texts.get(2));
+                    return true;
+                }
+                if (!pop || !label.test(texts.get(2)) || !labels.contains(texts.get(2))) return false;
+                while (!labels.pop().equals(texts.get(2))) { }
+                return true;
+            case 5:
+                if (!push || !texts.get(1).equals(",") || !label.test(texts.get(2)) ||
+                        !texts.get(3).equals(",") || !value.test(texts.get(4))) return false;
+                labels.push(texts.get(2));
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /**
+     * Admit one directive from the tokens after its #. Only a declarations
+     * text's #pragma pack in a form Ghidra applies is admitted. C.jj reads
+     * "#pragma" as one token and "#" followed by a space as a line marker
+     * whose text it skips, so the name must follow # directly.
+     */
+    private static void admitCallerCDirective(
+            CTokenizer tokens, CToken hash, String field, boolean declarations, String code, ArrayDeque<String> packLabels) {
+        CToken first = tokens.next(true);
+        String name = first == null ? "" : first.text();
+        boolean adjacent = first != null && first.line() == hash.line() && first.column() == hash.column() + 1;
+        // Any other directive is refused by its name, before its operands are read.
+        List<CToken> directive = new ArrayList<>();
+        if (declarations && adjacent && name.equals("pragma"))
+            for (CToken token = tokens.next(true); token != null; token = tokens.next(true)) directive.add(token);
+        boolean pack = directive.size() >= 3 && directive.get(0).is("pack") && directive.get(1).is("(") &&
+            directive.get(directive.size() - 1).is(")") &&
+            appliedPackOperands(directive.subList(2, directive.size() - 1), packLabels);
+        if (!adjacent && first != null)
+            throw refusedConstruct(code, field, "# separated from its directive name (Ghidra reads it as a line marker)",
+                hash.line(), hash.column());
+        if (!pack && !directive.isEmpty() && directive.get(0).is("pack"))
+            throw refusedConstruct(code, field, "#pragma pack with operands Ghidra ignores or reads differently " +
+                "(it applies (), (n), (push, n), (push, id), (push, id, n) with a decimal n from 0 through 2147483647, (pop) over an unlabelled push and (pop, id) over a push of id)",
+                hash.line(), hash.column());
+        if (!pack)
+            throw refusedConstruct(code, field, "the directive #" + name +
+                (name.equals("pragma") ? " (only #pragma pack is applied)" : ""), hash.line(), hash.column());
+    }
+
+    // One decimal or hex integer literal with no suffix, read the same way by C and by Ghidra.
+    private static final Pattern C_PLAIN_INTEGER = Pattern.compile("0|[1-9][0-9]*|0[xX][0-9a-fA-F]+");
+
+    /**
+     * The value of one constant expression (an enum value, array size or
+     * bit-field width), admitted only as a single decimal or hex integer
+     * literal within int, optionally negated. Ghidra 12.2 evaluates C constant
+     * expressions with its own rules: names, casts and sizeof stay unevaluated
+     * and default, values outside int are truncated, and comparisons and
+     * unsigned arithmetic differ from C (~0U >> 1 is -1). Emulating C against
+     * that evaluator is an open-ended set of mismatches, so anything but one
+     * literal is refused at its position and the caller writes the value.
+     */
+    /** Admit the next token of a constant expression as it is read, so a refusal names the first token that leaves the form. */
+    private static void admitConstantToken(List<CToken> expression, CToken token, String field, String code) {
+        boolean admitted = expression.isEmpty()
+            ? token.is("-") || C_PLAIN_INTEGER.matcher(token.text()).matches()
+            : expression.size() == 1 && expression.get(0).is("-") && C_PLAIN_INTEGER.matcher(token.text()).matches();
+        if (!admitted)
+            throw refusedConstruct(code, field, "the constant expression token " + token.text() +
+                " (Ghidra evaluates C constant expressions differently from C; write the computed value as one " +
+                "decimal or hex integer literal, optionally negated, without suffixes)", token.line(), token.column());
+    }
+
+    /** The value of an admitted constant expression; a value outside int, which Ghidra would truncate, is refused. */
+    private static long admitConstantExpression(List<CToken> tokens, String field, String code) {
+        CToken literal = tokens.get(tokens.size() - 1);
+        if (literal.is("-"))
+            throw refusedConstruct(code, field, "a lone - as a constant expression", literal.line(), literal.column());
+        boolean negative = tokens.size() == 2;
+        String digits = literal.text();
+        java.math.BigInteger value = digits.startsWith("0x") || digits.startsWith("0X")
+            ? new java.math.BigInteger(digits.substring(2), 16) : new java.math.BigInteger(digits);
+        if (negative) value = value.negate();
+        if (value.compareTo(java.math.BigInteger.valueOf(Integer.MIN_VALUE)) < 0 ||
+                value.compareTo(java.math.BigInteger.valueOf(Integer.MAX_VALUE)) > 0)
+            throw refusedConstruct(code, field, "the literal " + (negative ? "-" : "") + digits +
+                ", outside int (Ghidra truncates it; write a value within int)", literal.line(), literal.column());
+        return value.longValue();
+    }
+
+    private static void endParameterSlot(List<CToken> slot, Set<String> soleParameters) {
+        if (slot.size() == 1 && slot.get(0).isIdentifier()) soleParameters.add(slot.get(0).text());
+        slot.clear();
+    }
+
+    // A definition's ret (*name)(parameters) declarator, read one token at a time.
+    private static final int FN_NONE = 0, FN_POINTER = 1, FN_NAME = 2, FN_AFTER_NAME = 3,
+        FN_OPEN_PARAMETERS = 4, FN_PARAMETERS = 5;
+    // C.jj's calling-convention tokens. Ghidra applies one before the declarator's
+    // parenthesis and drops one inside it (Ghidra 12.2, probed).
+    private static final Pattern C_CALLING_CONVENTION =
+        Pattern.compile("_+(?:cdecl|stdcall|fastcall|vectorcall|rustcall|pascal)");
+
+    /**
+     * The next position in a function-pointer declarator. Ghidra 12.2 stores
+     * ret (*name)(parameters), its pointer-to-pointer and array forms, with
+     * the return type, parameters and varargs as written. It drops a calling
+     * convention inside the parenthesis, and a parameter that is itself a
+     * function declarator gets a function type named after the parameter, so
+     * both are refused; a typedef of the inner function pointer is admitted.
+     */
+    private static int nextFunctionDeclarator(int position, CToken token, CToken opening, String field, String code) {
+        String text = token.text();
+        int line = token.line(), column = token.column();
+        if ((position == FN_POINTER || position == FN_NAME) && C_CALLING_CONVENTION.matcher(text).matches())
+            throw refusedConstruct(code, field, "the calling convention " + text + " inside a function-pointer " +
+                "declarator (Ghidra drops it there; write it before the parenthesis, as in int " + text + " (*name)(int))",
+                line, column);
+        return switch (position) {
+            case FN_NONE -> FN_POINTER;
+            case FN_POINTER -> {
+                // Reported at the parenthesis itself, the construct that is not admitted.
+                if (!text.equals("*"))
+                    throw refusedConstruct(code, field, "a parenthesis that does not open a function pointer (*name) " +
+                        "(grouped declarators and function types are not admitted; a definition admits only " +
+                        "ret (*name)(parameters))", opening.line(), opening.column());
+                yield FN_NAME;
+            }
+            case FN_NAME -> {
+                // Further stars and the dropped qualifiers reported above keep the declarator open.
+                if (text.equals("*") || unappliedC(text) != null) yield FN_NAME;
+                if (!token.isIdentifier())
+                    throw refusedConstruct(code, field, "a function-pointer declarator without a member or typedef name",
+                        line, column);
+                yield FN_AFTER_NAME;
+            }
+            case FN_AFTER_NAME -> {
+                if (text.equals("[")) yield FN_AFTER_NAME;
+                if (!text.equals(")"))
+                    throw refusedConstruct(code, field, "a function-pointer declarator that is not (*name) or (*name[N])",
+                        line, column);
+                yield FN_OPEN_PARAMETERS;
+            }
+            case FN_OPEN_PARAMETERS -> {
+                if (!text.equals("("))
+                    throw refusedConstruct(code, field, "a function-pointer declarator without a parameter list",
+                        line, column);
+                yield FN_PARAMETERS;
+            }
+            default -> {
+                if (text.equals(")")) yield FN_NONE;
+                if (text.equals("("))
+                    throw refusedConstruct(code, field, "a parenthesis in a function-pointer parameter list (one function-" +
+                        "pointer level is admitted; typedef the inner function pointer and use its name)", line, column);
+                if (Set.of("{", "}", ";", "=", ":").contains(text))
+                    throw refusedConstruct(code, field, "'" + text + "' in a function-pointer parameter list", line, column);
+                yield FN_PARAMETERS;
+            }
+        };
+    }
+
+    /**
+     * Tokenize caller C once, before the parser sees it: bound parenthesis
+     * nesting and refuse every construct Ghidra's parser accepts and drops.
+     * A declarations text may hold only struct, union, enum and typedef
+     * definitions and #pragma pack, with parentheses only in a member's or
+     * typedef's function-pointer declarator; a signature holds one prototype.
+     */
+    private static AdmittedCallerC admitCallerC(
+            String text, String field, boolean declarations, String code, int maxParenthesisDepth) {
+        final int start = 0, tag = 1, named = 2, body = 3, afterBody = 4, typedef = 5;
+        int state = start;
+        int parentheses = 0, braces = 0;
+        // The deepest nesting in the whole text, so a refusal reports the depth to admit.
+        int deepest = 0, beyondLine = 0, beyondColumn = 0;
+        // A signature's parameter index: -1 before its parameter list opens, the return type.
+        int parameter = -1;
+        boolean parametersClosed = false;
+        JsonArray dropped = new JsonArray();
+        String previous = "";
+        String definition = "";
+        boolean ended = false;
+        CTokenizer tokens = new CTokenizer(text, field, code);
+        // Labels of the #pragma pack pushes admitted so far, innermost first.
+        ArrayDeque<String> packLabels = new ArrayDeque<>();
+        // Declarations: whether each open brace is an enum body, the constant
+        // expression being read, and the next implicit enumerator value.
+        ArrayDeque<Boolean> enumBodies = new ArrayDeque<>();
+        boolean enumPending = false;
+        List<CToken> expression = null;
+        Set<String> expressionEnds = Set.of();
+        boolean enumExpression = false;
+        Long explicitEnumValue = null;
+        CToken enumerator = null;
+        long nextEnumValue = 0;
+        // Declarations: position within a ret (*name)(parameters) declarator.
+        int declarator = FN_NONE;
+        CToken declaratorOpening = null;
+        boolean functionParameters = false;
+        // The tokens of the parameter slot being read, of a signature or a function pointer.
+        List<CToken> slot = new ArrayList<>();
+        Set<String> soleParameters = new HashSet<>();
+        for (CToken next = tokens.next(false); next != null; next = tokens.next(false)) {
+            String token = next.text();
+            int line = next.line(), column = next.column();
+            if (next.is("#")) {
+                admitCallerCDirective(tokens, next, field, declarations, code, packLabels);
+                continue;
+            }
+            if (!declarations && token.equals("typedef"))
+                throw refusedConstruct(code, field, "the specifier typedef", line, column);
+            if (declarations && token.equals("_Noreturn"))
+                throw refusedConstruct(code, field, "_Noreturn (Ghidra does not store it on a function-pointer type)", line, column);
+            UnappliedCToken unapplied = unappliedC(token);
+            if (unapplied != null && unapplied.refused())
+                throw refusedConstruct(code, field, String.format(unapplied.construct(), token) +
+                    (declarations && unapplied.construct().startsWith("the attribute") ? " (use #pragma pack for packing)" : ""),
+                    line, column);
+            if (unapplied != null) {
+                JsonObject qualifier = new JsonObject();
+                qualifier.addProperty("qualifier", unapplied.droppedQualifier());
+                qualifier.addProperty("line", line);
+                qualifier.addProperty("column", column);
+                if (!declarations)
+                    qualifier.add("parameter_index", parameter < 0 || parametersClosed
+                        ? JsonNull.INSTANCE : GSON.toJsonTree(parameter));
+                dropped.add(qualifier);
+            }
+            if (ended && !token.equals(";"))
+                throw refusedConstruct(code, field, "a second declaration", line, column);
+            if (next.is("(") && ++parentheses > deepest) {
+                deepest = parentheses;
+                if (deepest == maxParenthesisDepth + 1) {
+                    beyondLine = line;
+                    beyondColumn = column;
+                }
+            }
+            boolean slotOpen = !declarations && parameter >= 0 && !parametersClosed;
+            if (!declarations && parentheses == 1 && !parametersClosed) {
+                if (token.equals("(") && parameter < 0) parameter = 0;
+                else if (token.equals(",")) {
+                    parameter++;
+                    endParameterSlot(slot, soleParameters);
+                } else if (slotOpen && !token.equals(")")) slot.add(next);
+            } else if (slotOpen && !token.equals(")")) slot.add(next);
+            if (token.equals(")")) {
+                if (!declarations && parentheses == 1 && parameter >= 0) {
+                    parametersClosed = true;
+                    endParameterSlot(slot, soleParameters);
+                }
+                parentheses = Math.max(0, parentheses - 1);
+            }
+            if (previous.equals("enum") && token.equals("{"))
+                throw refusedConstruct(code, field, "an unnamed enum, which Ghidra would store under a generated name", line, column);
+            if (!declarations) {
+                if (token.equals("{"))
+                    throw refusedConstruct(code, field, "a function body", line, column);
+                if (token.equals("="))
+                    throw refusedConstruct(code, field, "a default argument or initializer", line, column);
+                if (previous.equals("(") && token.equals("*"))
+                    throw refusedConstruct(code, field, "a function-pointer declarator", line, column);
+                if (token.equals(";")) ended = true;
+                previous = token;
+                continue;
+            }
+            boolean top = braces == 0 && parentheses == 0;
+            // Enum values, array sizes and bit-field widths are constant expressions
+            // Ghidra evaluates itself; admitConstantExpression owns which ones it gets right.
+            if (expression != null) {
+                if (!expressionEnds.contains(token)) {
+                    admitConstantToken(expression, next, field, code);
+                    expression.add(next);
+                } else {
+                    Long value = expression.isEmpty() ? null : admitConstantExpression(expression, field, code);
+                    if (enumExpression) explicitEnumValue = value;
+                    expression = null;
+                }
+            } else if (declarator != FN_NONE || token.equals("(")) {
+                boolean member = braces > 0 && Boolean.FALSE.equals(enumBodies.peek());
+                boolean alias = state == typedef && braces == 0;
+                if (declarator == FN_NONE && !(member || alias) ||
+                        declarator == FN_NONE && !(previous.equals("*") || previous.equals(",") ||
+                            isCIdentifierStart(previous.isEmpty() ? ' ' : previous.charAt(0))))
+                    throw refusedConstruct(code, field, "a parenthesis outside a function-pointer declarator (a definition " +
+                        "admits parentheses only in a member or typedef of the form ret (*name)(parameters))", line, column);
+                if (declarator == FN_PARAMETERS && !token.equals(")") && !token.equals("(")) functionParameters = true;
+                if (declarator == FN_PARAMETERS && token.equals(")") && !functionParameters)
+                    throw refusedConstruct(code, field, "an empty parameter list (Ghidra stores () as (void); write " +
+                        "(void) for a function without parameters)", line, column);
+                if (declarator == FN_OPEN_PARAMETERS) functionParameters = false;
+                if (declarator == FN_PARAMETERS) {
+                    if (token.equals(",") || token.equals(")")) endParameterSlot(slot, soleParameters);
+                    else slot.add(next);
+                }
+                if (declarator == FN_NONE) declaratorOpening = next;
+                declarator = nextFunctionDeclarator(declarator, next, declaratorOpening, field, code);
+                // Array sizes after the name and in parameters are the literal-only constants below.
+                if (token.equals("[")) {
+                    expression = new ArrayList<>();
+                    enumExpression = false;
+                    expressionEnds = Set.of("]");
+                }
+            } else if (token.equals("[") || (token.equals("=") && Boolean.TRUE.equals(enumBodies.peek())) ||
+                    (token.equals(":") && Boolean.FALSE.equals(enumBodies.peek()) && !enumPending)) {
+                expression = new ArrayList<>();
+                enumExpression = token.equals("=");
+                expressionEnds = token.equals("[") ? Set.of("]") : enumExpression ? Set.of(",", "}") : Set.of(";", ",");
+            }
+            boolean inEnum = Boolean.TRUE.equals(enumBodies.peek());
+            if (inEnum && expression == null && next.isIdentifier() && (previous.equals("{") || previous.equals(",")))
+                enumerator = next;
+            // Ghidra numbers an enumerator without a value one past the previous, in int.
+            if (inEnum && expression == null && enumerator != null && (token.equals(",") || token.equals("}"))) {
+                long value = explicitEnumValue != null ? explicitEnumValue : nextEnumValue;
+                if (value > Integer.MAX_VALUE)
+                    throw refusedConstruct(code, field, "the enumerator " + enumerator.text() +
+                        ", whose implicit value leaves int (Ghidra truncates it)", enumerator.line(), enumerator.column());
+                nextEnumValue = value + 1;
+                explicitEnumValue = null;
+                enumerator = null;
+            }
+            if (token.equals("enum")) enumPending = true;
+            if (token.equals(";")) enumPending = false;
+            if (token.equals("{")) {
+                enumBodies.push(enumPending);
+                if (enumPending) nextEnumValue = 0;
+                enumPending = false;
+            }
+            if (token.equals("}") && !enumBodies.isEmpty()) enumBodies.pop();
+            if (token.equals("{")) braces++;
+            if (token.equals("}")) braces = Math.max(0, braces - 1);
+            switch (state) {
+                case start -> {
+                    if (token.equals("typedef")) state = typedef;
+                    else if (token.equals("struct") || token.equals("union") || token.equals("enum")) state = tag;
+                    else if (!token.equals(";"))
+                        throw refusedConstruct(code, field,
+                            "a declaration that is not a struct, union, enum or typedef definition (" + token + ")", line, column);
+                }
+                case tag -> {
+                    if (!next.isIdentifier())
+                        throw refusedConstruct(code, field, "an unnamed struct or union definition", line, column);
+                    definition = token;
+                    state = named;
+                }
+                case named -> {
+                    if (token.equals("{")) state = body;
+                    else if (token.equals(";")) state = start;
+                    else throw refusedConstruct(code, field, "a variable declaration (" + token + ")", line, column);
+                }
+                case body -> {
+                    if (braces == 0) state = afterBody;
+                }
+                case afterBody -> {
+                    if (!token.equals(";"))
+                        throw refusedConstruct(code, field,
+                            "a variable or declarator (" + token + ") after the definition of " + definition, line, column);
+                    state = start;
+                }
+                default -> {
+                    if (top && token.equals(";")) state = start;
+                    if (top && token.equals("="))
+                        throw refusedConstruct(code, field, "an initializer", line, column);
+                }
+            }
+            previous = token;
+        }
+        // Measured over the whole text, so the refusal names the depth that admits it.
+        if (deepest > maxParenthesisDepth)
+            throw new RequestFailure("parenthesis_depth_limit", field + " nests parentheses " + deepest +
+                " levels deep, first beyond " + maxParenthesisDepth + " at line " + beyondLine + ", column " + beyondColumn,
+                null, deepest);
+        return new AdmittedCallerC(dropped, ended, tokens.endsInLineComment, soleParameters);
+    }
+
+    /**
+     * Ghidra 12.2 stores, names and compares a data type recursively through
+     * its pointer, array, typedef and member chain. Measured on Ghidra 12.2
+     * (macOS arm64): 1024 levels resolve, 2048 exhaust the stack inside
+     * addDataType while its database lock is held, which leaves that lock held
+     * and the Program unusable. REA refuses a type deeper than this, a
+     * quarter of the last measured safe depth, before Ghidra walks it.
+     */
+    private static final int MAX_C_TYPE_DEPTH = 256;
+
+    /**
+     * Refuse a parsed type whose longest pointer, array, typedef, bit-field
+     * or member chain, including chains through existing database types,
+     * exceeds MAX_C_TYPE_DEPTH. Iterative with memoized depths; a chain back
+     * into a type still being walked (a self-referential pointer) adds no
+     * depth, because Ghidra resolves that reference without recursing.
+     */
+    private static void requireBoundedTypeDepth(DataType root, String name, String field) {
+        Map<DataType, Integer> depths = new IdentityHashMap<>();
+        Set<DataType> open = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+        ArrayDeque<DataType> stack = new ArrayDeque<>();
+        stack.push(root);
+        while (!stack.isEmpty()) {
+            DataType type = stack.peek();
+            if (depths.containsKey(type)) {
+                stack.pop();
+                continue;
+            }
+            List<DataType> children = cTypeChildren(type);
+            boolean ready = true;
+            if (open.add(type)) {
+                for (DataType child : children)
+                    if (child != null && !depths.containsKey(child) && !open.contains(child)) {
+                        stack.push(child);
+                        ready = false;
+                    }
+                if (!ready) continue;
+            }
+            int depth = 1;
+            for (DataType child : children)
+                if (child != null && depths.containsKey(child)) depth = Math.max(depth, depths.get(child) + 1);
+            depths.put(type, depth);
+            open.remove(type);
+            stack.pop();
+        }
+        // The whole chain is measured, so the reported depth is the one compared with the limit.
+        int depth = depths.get(root);
+        if (depth > MAX_C_TYPE_DEPTH)
+            throw new RequestFailure("type_depth_limit", field + " defines " + name + ", chained " + depth +
+                " levels deep through pointers, arrays, typedefs, members or existing database types");
+    }
+
+    private static List<DataType> cTypeChildren(DataType type) {
+        if (type instanceof ghidra.program.model.data.Pointer pointer) return java.util.Collections.singletonList(pointer.getDataType());
+        if (type instanceof ghidra.program.model.data.Array array) return List.of(array.getDataType());
+        if (type instanceof ghidra.program.model.data.BitFieldDataType bitField) return List.of(bitField.getBaseDataType());
+        if (type instanceof ghidra.program.model.data.TypeDef alias) return List.of(alias.getDataType());
+        if (type instanceof ghidra.program.model.data.FunctionDefinition function) {
+            List<DataType> children = new ArrayList<>();
+            children.add(function.getReturnType());
+            for (ghidra.program.model.data.ParameterDefinition argument : function.getArguments())
+                children.add(argument.getDataType());
+            return children;
+        }
+        if (type instanceof ghidra.program.model.data.Composite composite) {
+            List<DataType> children = new ArrayList<>();
+            for (ghidra.program.model.data.DataTypeComponent component : composite.getComponents())
+                children.add(component.getDataType());
+            return children;
+        }
+        return List.of();
+    }
+
+    /** The caller's per-call bound, or its default; the contract owns the range. */
+    private static int callerBound(JsonObject params, String name, int minimum, int defaultValue, int maximum) {
+        if (!params.has(name)) return defaultValue;
+        int bound = requireInteger(params, name);
+        if (bound < minimum || bound > maximum)
+            throw new RequestFailure("invalid_request", name + " must be from " + minimum + " to " + maximum);
+        return bound;
+    }
+
+    private static int callerCTextBound(JsonObject params, String name, int defaultValue, int maximum) {
+        return callerBound(params, name, MIN_C_TEXT_UTF16, defaultValue, maximum);
+    }
+
+    private static int callerParenthesisBound(JsonObject params) {
+        return callerBound(params, "parenthesis_max_depth",
+            MIN_C_PARENTHESIS_DEPTH, DEFAULT_C_PARENTHESIS_DEPTH, MAX_C_PARENTHESIS_DEPTH);
+    }
+
+    /**
+     * Parse caller C text against the type database. Even with storeDataType
+     * false, Ghidra's parser writes the database: a definition whose name
+     * matches an existing empty composite fills that type in place, in the
+     * parser's own nested transaction. The caller's open transaction is
+     * therefore the only rollback for a refused or failed edit.
+     */
+    private ParsedCallerC parseCallerC(
+            String text, String field, boolean declarations, String code, int maximum, int maxParenthesisDepth) {
+        if (currentProgram.getCurrentTransactionInfo() == null)
+            throw new IllegalStateException("Caller C must be parsed inside the edit's transaction");
+        validateAnnotationText(text, field);
+        if (text.length() > maximum)
+            throw new RequestFailure(declarations ? "declarations_length_limit" : "signature_length_limit",
+                field + " has " + text.length() + " UTF-16 code units", null, text.length());
+        AdmittedCallerC admitted = admitCallerC(text, field, declarations, code, maxParenthesisDepth);
+        DataTypeManager types = currentProgram.getDataTypeManager();
+        CParser parser = new CParser(types, false, new DataTypeManager[] { types });
+        try {
+            // The parser needs a terminated prototype, and its // skip token
+            // requires a line break. Nothing precedes the caller's text, so the
+            // parser's positions name the caller's own lines. A line comment at
+            // the end gets a newline first, so a semicolon added for an
+            // unterminated prototype is not swallowed.
+            String source = admitted.endsInLineComment() ? text + "\n" : text;
+            parser.parse(declarations || admitted.terminated() ? source : source + ";");
+        }
+        catch (ghidra.app.util.cparser.C.ParseException | ghidra.app.util.cparser.C.TokenMgrError rejected) {
+            throw new RequestFailure(code, "Ghidra's C parser rejected " + field + ": " + cParserReason(rejected.getMessage()));
+        }
+        if (!parser.didParseSucceed())
+            throw new RequestFailure(code, "Ghidra's C parser rejected " + field + ": " + cParserReason(parser.getParseMessages()));
+        // The parser records what it could not apply, such as a repeated
+        // enumerator it drops, and still reports success.
+        String diagnostics = cParserDiagnostics(parser.getParseMessages());
+        if (!diagnostics.isEmpty())
+            throw new RequestFailure(code, "Ghidra's C parser reported " + field + ": " + diagnostics +
+                "; it would not apply the text as written, so nothing was changed");
+        // Before anything walks the parsed types recursively (naming, comparing, storing).
+        for (Map<String, DataType> parsedTypes : List.of(
+                parser.getComposites(), parser.getEnums(), parser.getTypes(), parser.getFunctions()))
+            for (Map.Entry<String, DataType> parsedType : parsedTypes.entrySet())
+                requireBoundedTypeDepth(parsedType.getValue(), parsedType.getKey(), field);
+        return new ParsedCallerC(parser, admitted.droppedQualifiers(), admitted.soleParameterIdentifiers());
+    }
+
+    /**
+     * The parser picks one type for a name. When the database holds another,
+     * different type under the same name, the caller cannot select between them.
+     */
+    private void requireUnambiguousType(DataType type) {
+        DataType named = type;
+        while (named instanceof ghidra.program.model.data.Pointer || named instanceof ghidra.program.model.data.Array)
+            named = named instanceof ghidra.program.model.data.Pointer pointer
+                ? pointer.getDataType() : ((ghidra.program.model.data.Array) named).getDataType();
+        if (named == null || named instanceof ghidra.program.model.data.BuiltInDataType) return;
+        List<DataType> sameName = new ArrayList<>();
+        currentProgram.getDataTypeManager().findDataTypes(named.getName(), sameName);
+        Set<String> candidates = new TreeSet<>();
+        for (DataType other : sameName)
+            if (!other.getPathName().equals(named.getPathName()) && !other.isEquivalent(named))
+                candidates.add(other.getPathName());
+        if (candidates.isEmpty()) return;
+        candidates.add(named.getPathName());
+        throw new RequestFailure("ambiguous_data_type", "The type name " + named.getName() +
+            " names different types in the database: " + String.join(", ", candidates));
+    }
+
+
+    /** Keep the location and offending token; drop the generated expected-token list. */
+    /**
+     * Ghidra's own diagnostic lines. Without a header file the parser has no
+     * position to give; it names the nearest type when it has one.
+     */
+    private static String cParserDiagnostics(String messages) {
+        if (messages == null) return "";
+        List<String> lines = new ArrayList<>();
+        for (String line : messages.split("\\R")) {
+            String stripped = line.strip();
+            if (stripped.isEmpty() || stripped.startsWith("In file ") ||
+                    stripped.equals("Near datatype: undefined") || stripped.equals("Near datatype: - none -")) continue;
+            lines.add(stripped);
+        }
+        return lines.isEmpty() ? "" : cParserReason(String.join("; ", lines));
+    }
+
+    private static String cParserReason(String message) {
+        if (message == null || message.isBlank()) return "no reason reported";
+        int expected = message.indexOf("Was expecting");
+        String reason = WHITESPACE_RUN.matcher(expected < 0 ? message : message.substring(0, expected)).replaceAll(" ").strip();
+        return reason.length() > 240 ? reason.substring(0, 240) : reason;
+    }
+
+    /** A parsed prototype and the qualifiers in its text that Ghidra does not record. */
+    private record SignatureEdit(FunctionDefinitionDataType prototype, JsonArray droppedQualifiers) {}
+
+    private SignatureEdit parseFunctionSignature(Function function, String text, int maximum, int maxParenthesisDepth) {
+        String code = "invalid_function_signature";
+        String entry = canonicalAddress(function.getEntryPoint());
+        // Ghidra redirects a thunk's prototype to the thunked function, which may be external.
+        if (function.isThunk())
+            throw new RequestFailure(code, "Function at " + entry + " is a thunk; its prototype belongs to the function it forwards to");
+        ParsedCallerC parsed = parseCallerC(text, "signature", false, code, maximum, maxParenthesisDepth);
+        CParser parser = parsed.parser();
+        // The parser invents an empty composite or enum for an undefined tag, and a
+        // prototype defines no types, so every type it reports was invented.
+        Set<String> undefined = new TreeSet<>(parser.getComposites().keySet());
+        undefined.addAll(parser.getEnums().keySet());
+        undefined.addAll(parser.getTypes().keySet());
+        if (!undefined.isEmpty())
+            throw new RequestFailure("unknown_data_type", "signature uses types the database does not define: " +
+                String.join(", ", undefined));
+        Map<String, DataType> functions = parser.getFunctions();
+        if (functions.size() != 1 ||
+            !(functions.values().iterator().next() instanceof FunctionDefinitionDataType prototype))
+            throw new RequestFailure(code, "signature must be one C function prototype without function-pointer parameters; found " +
+                functions.size() + " function declarators");
+        requireCallerParameters(prototype, parsed.soleParameterIdentifiers(), "signature", code);
+        for (ParameterDefinition parameter : prototype.getArguments())
+            requireUnambiguousType(parameter.getDataType());
+        requireUnambiguousType(prototype.getReturnType());
+        return new SignatureEdit(prototype, parsed.droppedQualifiers());
+    }
+
+    private void applyFunctionSignature(Function function, FunctionDefinitionDataType prototype) throws Exception {
+        String code = "invalid_function_signature";
+        String entry = canonicalAddress(function.getEntryPoint());
+        // Ghidra assigns the locked parameter storage with the compiler specification's
+        // default convention when the function has none. Recording that convention keeps
+        // the decompiler from reporting locked storage under an unknown convention.
+        if (function.getCallingConvention() == null && prototype.hasUnknownCallingConventionName())
+            prototype.setCallingConvention(currentProgram.getCompilerSpec().getDefaultCallingConvention().getName());
+        // The prototype's own name is never applied; the name field owns renames.
+        ApplyFunctionSignatureCmd command = new ApplyFunctionSignatureCmd(
+            function.getEntryPoint(), prototype, SourceType.USER_DEFINED, false, false,
+            DataTypeConflictHandler.DEFAULT_HANDLER, FunctionRenameOption.NO_CHANGE);
+        if (!command.applyTo(currentProgram, monitor))
+            throw new RequestFailure(code, "Ghidra refused the signature at " + entry + ": " +
+                (command.getStatusMsg() == null ? "no reason reported" : command.getStatusMsg()));
+        FunctionSignature applied = function.getSignature(true);
+        ParameterDefinition[] requested = prototype.getArguments();
+        ParameterDefinition[] observed = applied.getArguments();
+        boolean matches = function.getSignatureSource() == SourceType.USER_DEFINED &&
+            applied.getReturnType().isEquivalent(prototype.getReturnType()) &&
+            applied.hasVarArgs() == prototype.hasVarArgs() &&
+            (!prototype.hasNoReturn() || function.hasNoReturn()) &&
+            observed.length == requested.length &&
+            (prototype.hasUnknownCallingConventionName() ||
+                prototype.getCallingConventionName().equals(function.getCallingConventionName()));
+        for (int index = 0; matches && index < requested.length; index++) {
+            String name = requested[index].getName();
+            matches = observed[index].getDataType().isEquivalent(requested[index].getDataType()) &&
+                (name == null || name.isEmpty() || name.equals(observed[index].getName()));
+        }
+        // Ghidra settles array parameters, renames parameters that collide with
+        // other symbols and ignores conventions the compiler specification lacks.
+        if (!matches)
+            throw new RequestFailure(code, "Ghidra applied a different prototype at " + entry + " than requested: " +
+                applied.getPrototypeString(false) + "; requested " + prototype.getPrototypeString(false));
+    }
+
+    /**
+     * Ghidra keeps typedefs, enum tags and struct or union tags in separate
+     * maps and stores one type per name. A typedef of its own struct or enum
+     * (`typedef struct s { ... } s`) is that tag, recorded once. Overlapping
+     * names stay one stored type only when the definitions are equivalent;
+     * any other overlap is refused so the call stores every definition or none.
+     */
+    private static Map<String, DataType> mergeCallerTypeMaps(
+            Map<String, DataType> typedefs,
+            Map<String, DataType> enumerations,
+            Map<String, DataType> composites) {
+        Map<String, DataType> defined = new TreeMap<>();
+        Set<String> collisions = new TreeSet<>();
+        absorbCallerTypes(defined, collisions, typedefs);
+        absorbCallerTypes(defined, collisions, enumerations);
+        absorbCallerTypes(defined, collisions, composites);
+        if (!collisions.isEmpty())
+            throw new RequestFailure("conflicting_type_definitions",
+                "declarations define different types under one name: " + String.join(", ", collisions) +
+                "; nothing was changed");
+        return defined;
+    }
+
+    private static void absorbCallerTypes(
+            Map<String, DataType> defined, Set<String> collisions, Map<String, DataType> incoming) {
+        for (Map.Entry<String, DataType> entry : incoming.entrySet()) {
+            String name = entry.getKey();
+            DataType type = entry.getValue();
+            DataType existing = defined.get(name);
+            if (existing == null) {
+                defined.put(name, type);
+                continue;
+            }
+            if (!sameCallerType(existing, type)) {
+                collisions.add(name);
+                continue;
+            }
+            // The tag is the type a matching typedef names.
+            if (callerTag(type) && !callerTag(existing)) defined.put(name, type);
+        }
+    }
+
+    private static boolean sameCallerType(DataType left, DataType right) {
+        return left == right || left.isEquivalent(right) || right.isEquivalent(left);
+    }
+
+    private static boolean callerTag(DataType type) {
+        return type instanceof ghidra.program.model.data.Composite ||
+            type instanceof ghidra.program.model.data.Enum;
+    }
+
+    /**
+     * Composites with no defined components, keyed by identity to the length
+     * they had before parsing. Ghidra's parser fills such a composite in place
+     * when storeDataType is false, and that object is the definition it returns.
+     */
+    private Map<DataType, Integer> emptyCompositeLengths() {
+        Map<DataType, Integer> lengths = new IdentityHashMap<>();
+        Iterator<DataType> all = currentProgram.getDataTypeManager().getAllDataTypes();
+        while (all.hasNext()) {
+            DataType type = all.next();
+            if (type instanceof ghidra.program.model.data.Composite composite &&
+                    composite.getNumDefinedComponents() == 0)
+                lengths.put(type, composite.getLength());
+        }
+        return lengths;
+    }
+
+    /** A filled empty composite is a replacement of a database type, so the call stores nothing. */
+    private void requireUnfilledComposites(Map<DataType, Integer> before) {
+        DataTypeManager types = currentProgram.getDataTypeManager();
+        Set<String> replaced = new TreeSet<>();
+        for (Map.Entry<DataType, Integer> entry : before.entrySet()) {
+            DataType type = entry.getKey();
+            if (!(type instanceof ghidra.program.model.data.Composite composite) || !types.contains(type)) {
+                replaced.add(type.getPathName());
+                continue;
+            }
+            if (composite.getNumDefinedComponents() != 0 || composite.getLength() != entry.getValue())
+                replaced.add(composite.getPathName());
+        }
+        if (replaced.isEmpty()) return;
+        throw new RequestFailure("data_type_conflict",
+            "Parsing would replace an empty type already in the database: " + String.join(", ", replaced) +
+            "; nothing was changed");
+    }
+
+    private JsonObject defineNativeDataTypes(JsonObject params) throws Exception {
+        if (!Set.of("declarations", "declarations_max_utf16").containsAll(params.keySet()) || !params.has("declarations"))
+            throw new RequestFailure("invalid_request", "Bridge request fields are invalid");
+        String code = "invalid_type_declarations";
+        String declarations = requireText(params, "declarations");
+        int lengthBound = callerCTextBound(
+            params, "declarations_max_utf16", DEFAULT_TYPE_DECLARATIONS_UTF16, MAX_TYPE_DECLARATIONS_UTF16);
+        // Ghidra's parser writes the database (see parseCallerC), so parsing,
+        // validation and storage share one rollback: a refusal changes nothing.
+        int transaction = currentProgram.startTransaction("REA data type definitions");
+        boolean commit = false;
+        try {
+            // An empty composite is filled in place by the parser. Remember those
+            // shapes so a fill is not later mistaken for an unchanged definition.
+            Map<DataType, Integer> emptyComposites = emptyCompositeLengths();
+            ParsedCallerC parsedDeclarations =
+                // Declarations admit only one-level function-pointer parentheses (see admitCallerC), so no nesting bound applies.
+                parseCallerC(declarations, "declarations", true, code, lengthBound, MAX_C_PARENTHESIS_DEPTH);
+            requireUnfilledComposites(emptyComposites);
+            CParser parser = parsedDeclarations.parser();
+            Map<String, DataType> defined = mergeCallerTypeMaps(
+                parser.getTypes(), parser.getEnums(), parser.getComposites());
+            if (defined.isEmpty())
+                throw new RequestFailure(code, "declarations define no struct, union, enum or typedef");
+            Map<String, FunctionDefinitionDataType> functionTypes = callerFunctionTypes(
+                defined, parser, parsedDeclarations.soleParameterIdentifiers(), code);
+            DataTypeManager types = currentProgram.getDataTypeManager();
+            Set<DataType> parsed = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+            parsed.addAll(defined.values());
+            parsed.addAll(functionTypes.values());
+            List<String> conflicts = new ArrayList<>();
+            Set<String> existing = new HashSet<>();
+            for (Map.Entry<String, DataType> entry : defined.entrySet()) {
+                monitor.checkCancelled();
+                String name = entry.getKey();
+                DataType type = entry.getValue();
+                // Ghidra's parser invents an empty type for a struct, union or enum
+                // tag that neither the text nor the database defines, and reports nothing.
+                if (type instanceof ghidra.program.model.data.Enum enumeration && enumeration.getCount() == 0)
+                    throw new RequestFailure(code, "declarations leave enum " + name + " without members; define every enum they use");
+                if (type instanceof ghidra.program.model.data.Composite composite) {
+                    if (composite.getNumComponents() == 0)
+                        throw new RequestFailure(code, "declarations leave " + name + " without members; define every struct or union they use");
+                    Set<String> members = new HashSet<>();
+                    for (ghidra.program.model.data.DataTypeComponent component : composite.getComponents())
+                        if (component.getFieldName() != null && !members.add(component.getFieldName()))
+                            throw new RequestFailure(code, name + " repeats member name " + component.getFieldName());
+                }
+                requireStoredDependencies(name, type, parsed, types,
+                    java.util.Collections.newSetFromMap(new IdentityHashMap<>()));
+                String path = CALLER_DEFINED_TYPES.getPath() + "/" + name;
+                List<DataType> sameName = new ArrayList<>();
+                types.findDataTypes(name, sameName);
+                for (DataType other : sameName) {
+                    if (other.getPathName().equals(path)) existing.add(name);
+                    else conflicts.add(name + " (existing " + other.getPathName() + ")");
+                }
+            }
+            for (Map.Entry<String, FunctionDefinitionDataType> entry : functionTypes.entrySet()) {
+                List<DataType> sameName = new ArrayList<>();
+                types.findDataTypes(entry.getKey(), sameName);
+                for (DataType other : sameName)
+                    if (!other.getPathName().equals(CALLER_DEFINED_TYPES.getPath() + "/" + entry.getKey()))
+                        conflicts.add(entry.getKey() + " (existing " + other.getPathName() + ")");
+            }
+            if (!conflicts.isEmpty())
+                throw new RequestFailure("data_type_conflict", "The database already holds types with these names: " + String.join(", ", conflicts));
+            for (DataType type : defined.values()) type.setCategoryPath(CALLER_DEFINED_TYPES);
+            // Function types first, so the members and typedefs that point to them resolve to the stored ones.
+            for (Map.Entry<String, FunctionDefinitionDataType> entry : functionTypes.entrySet()) {
+                monitor.checkCancelled();
+                String path = CALLER_DEFINED_TYPES.getPath() + "/" + entry.getKey();
+                DataType stored = types.addDataType(entry.getValue(), DataTypeConflictHandler.DEFAULT_HANDLER);
+                if (!stored.getPathName().equals(path))
+                    throw new RequestFailure("data_type_conflict", "The function-pointer type " + entry.getKey() +
+                        " is already defined differently as " + path + "; its member or typedef changed its prototype");
+            }
+            JsonArray rows = new JsonArray();
+            for (Map.Entry<String, DataType> entry : defined.entrySet()) {
+                monitor.checkCancelled();
+                String name = entry.getKey();
+                String path = CALLER_DEFINED_TYPES.getPath() + "/" + name;
+                DataType stored = types.addDataType(entry.getValue(), DataTypeConflictHandler.DEFAULT_HANDLER);
+                // The default handler keeps a differing existing type and stores the new one under a conflict name.
+                if (!stored.getPathName().equals(path))
+                    throw new RequestFailure("data_type_conflict", name + " is already defined differently as " + path);
+                DataType readback = types.getDataType(path);
+                if (readback == null || !readback.isEquivalent(entry.getValue()))
+                    throw new RequestFailure("data_type_readback_mismatch", "Data type readback differs for " + path);
+                JsonObject row = new JsonObject();
+                row.addProperty("id", path);
+                row.addProperty("name", name);
+                row.addProperty("kind", dataTypeKind(readback));
+                row.add("size_bytes", readback.getLength() < 0 ? JsonNull.INSTANCE : GSON.toJsonTree(readback.getLength()));
+                row.addProperty("status", existing.contains(name) ? "unchanged" : "defined");
+                rows.add(row);
+            }
+            JsonObject result = new JsonObject();
+            result.add("types", rows);
+            if (!parsedDeclarations.droppedQualifiers().isEmpty())
+                result.add("dropped_qualifiers", parsedDeclarations.droppedQualifiers());
+            JsonObject effects = new JsonObject();
+            effects.addProperty("scope", "session-analysis-database");
+            effects.addProperty("source_bytes_modified", false);
+            result.add("effects", effects);
+            monitor.checkCancelled();
+            commit = true;
+            return result;
+        }
+        catch (ghidra.util.exception.DuplicateNameException | IllegalArgumentException exception) {
+            throw new RequestFailure(code, "Ghidra refused the declarations: " + safeMessage(exception));
+        }
+        finally {
+            currentProgram.endTransaction(transaction, commit);
+        }
+    }
+
+    /**
+     * The function types of the function-pointer members and typedefs the
+     * declarations define, each under a name derived from its declarator:
+     * owner.member for a member, typedef.target for a typedef. Ghidra's parser
+     * names them by a per-parse counter, which would collide across calls and
+     * break idempotency. A K&R identifier list or an unknown parameter type
+     * leaves Ghidra's undefined placeholder as the parameter type; refuse it.
+     */
+    private static Map<String, FunctionDefinitionDataType> callerFunctionTypes(
+            Map<String, DataType> defined, CParser parser, Set<String> soleParameterIdentifiers, String code) {
+        Map<String, FunctionDefinitionDataType> named = new TreeMap<>();
+        Set<DataType> reached = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+        for (Map.Entry<String, DataType> entry : defined.entrySet()) {
+            DataType type = entry.getValue();
+            if (type instanceof ghidra.program.model.data.Composite composite) {
+                for (ghidra.program.model.data.DataTypeComponent component : composite.getComponents()) {
+                    DataType member = component.getDataType();
+                    FunctionDefinitionDataType function = pointedFunction(member);
+                    if (function == null) continue;
+                    nameCallerFunction(named, reached, entry.getKey() + "." + component.getFieldName(), function,
+                        soleParameterIdentifiers, code);
+                    DataType renamed = withCurrentArrayNames(member);
+                    if (renamed != member) composite.dataTypeReplaced(member, renamed);
+                }
+            } else if (type instanceof ghidra.program.model.data.TypeDef alias) {
+                DataType target = alias.getDataType();
+                FunctionDefinitionDataType function = pointedFunction(target);
+                if (function == null) continue;
+                nameCallerFunction(named, reached, entry.getKey() + ".target", function, soleParameterIdentifiers, code);
+                DataType renamed = withCurrentArrayNames(target);
+                if (renamed != target) alias.dataTypeReplaced(target, renamed);
+            }
+        }
+        for (Map.Entry<String, DataType> entry : parser.getFunctions().entrySet())
+            if (!reached.contains(entry.getValue()))
+                throw new RequestFailure(code, "declarations declare the function " + entry.getKey() +
+                    "; define functions with annotate_native_function, and function pointers as members or typedefs");
+        return named;
+    }
+
+    /**
+     * An array keeps the element name it was built with, so after its function
+     * type is renamed it would be stored under the parser's counter name (and
+     * Ghidra 12.2 then fails resolving it). Rebuild each array level around the
+     * renamed element; a pointer derives its name from its target and needs none.
+     */
+    private static DataType withCurrentArrayNames(DataType type) {
+        if (!(type instanceof ghidra.program.model.data.Array array)) return type;
+        return new ghidra.program.model.data.ArrayDataType(withCurrentArrayNames(array.getDataType()),
+            array.getNumElements(), array.getElementLength(), array.getDataTypeManager());
+    }
+
+    /**
+     * The parameter list of a prototype the caller wrote, a signature or a
+     * function-pointer member or typedef. Ghidra's parser keeps a repeated
+     * parameter name, and leaves its undefined placeholder as the type of a
+     * K&R identifier or an unknown type name, without a diagnostic.
+     */
+    private static void requireCallerParameters(ghidra.program.model.data.FunctionDefinition prototype,
+            Set<String> soleParameterIdentifiers, String subject, String code) {
+        Set<String> names = new HashSet<>();
+        for (ghidra.program.model.data.ParameterDefinition parameter : prototype.getArguments()) {
+            String name = parameter.getName();
+            if (name != null && !name.isEmpty() && !names.add(name))
+                throw new RequestFailure(code, subject + " repeats parameter name " + name);
+            // An explicit undefined x keeps both tokens; a bare name that is not a type becomes undefined.
+            if (parameter.getDataType() == DataType.DEFAULT && name != null && soleParameterIdentifiers.contains(name))
+                throw new RequestFailure(code, subject + " names parameter " + name + " without a type (a K&R " +
+                    "identifier list or an undeclared type name), which Ghidra stores as undefined; write each parameter's type");
+        }
+    }
+
+    /** The function type a pointer, or an array of pointers, refers to; null for any other type. */
+    private static FunctionDefinitionDataType pointedFunction(DataType type) {
+        boolean pointer = false;
+        while (type instanceof ghidra.program.model.data.Pointer || type instanceof ghidra.program.model.data.Array) {
+            if (type instanceof ghidra.program.model.data.Pointer reference) {
+                pointer = true;
+                type = reference.getDataType();
+            } else type = ((ghidra.program.model.data.Array) type).getDataType();
+        }
+        return pointer && type instanceof FunctionDefinitionDataType function ? function : null;
+    }
+
+    private static void nameCallerFunction(Map<String, FunctionDefinitionDataType> named, Set<DataType> reached,
+            String name, FunctionDefinitionDataType function, Set<String> soleParameterIdentifiers, String code) {
+        if (!reached.add(function)) return;
+        if (named.containsKey(name))
+            throw new RequestFailure(code, "declarations name two function-pointer types " + name +
+                "; rename the member or typedef");
+        requireCallerParameters(function, soleParameterIdentifiers, "the function pointer " + name, code);
+        try {
+            function.setNameAndCategory(CALLER_DEFINED_TYPES, name);
+        }
+        catch (ghidra.util.InvalidNameException exception) {
+            throw new RequestFailure(code, "Ghidra refused the function-pointer type name " + name + ": " + safeMessage(exception));
+        }
+        named.put(name, function);
+    }
+
+    /** Every named type a definition reaches must be defined here or already stored. */
+    private void requireStoredDependencies(
+            String owner, DataType root, Set<DataType> parsed, DataTypeManager types, Set<DataType> visited) {
+        // A worklist, not recursion: caller text sets how deep pointer, array and member chains go.
+        // ArrayDeque admits no null, and a generic pointer has no pointed-to type.
+        ArrayDeque<DataType> pending = new ArrayDeque<>();
+        pending.push(root);
+        while (!pending.isEmpty()) {
+            DataType type = pending.pop();
+            if (!visited.add(type)) continue;
+            // Pointer, array and bit-field types are built-in classes; look through them first.
+            if (type instanceof ghidra.program.model.data.Pointer || type instanceof ghidra.program.model.data.Array ||
+                    type instanceof ghidra.program.model.data.BitFieldDataType) {
+                for (DataType child : cTypeChildren(type)) if (child != null) pending.push(child);
+                continue;
+            }
+            if (type instanceof ghidra.program.model.data.BuiltInDataType) continue;
+            if (!parsed.contains(type)) {
+                if (types.contains(type)) {
+                    requireUnambiguousType(type);
+                    continue;
+                }
+                throw new RequestFailure("invalid_type_declarations", owner +
+                    " embeds an unnamed or undeclared type (" + type.getName() + "); declare it by name in the same declarations");
+            }
+            if (type instanceof ghidra.program.model.data.TypeDef || type instanceof ghidra.program.model.data.Composite ||
+                    type instanceof ghidra.program.model.data.FunctionDefinition)
+                for (DataType child : cTypeChildren(type)) if (child != null) pending.push(child);
         }
     }
 
@@ -3158,6 +4706,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (function == null)
             // Other procedure operations retain their analysis-address semantics.
             throw new RequestFailure("procedure_not_found", "No procedure exists at the requested address: " + value +
+                (isCodeOutsideFunctions(address) ? ". " + CODE_OUTSIDE_FUNCTIONS +
+                    "; procedure_pseudo_code can decompile it on the fly, and inspect_native_instruction reads its instructions" : "") +
                 "; Ghidra image base: " + canonicalAddress(currentProgram.getImageBase()) +
                 ". Choose an observed analysis address. CLI: rea search <path> . --kind procedures --mode regex --provider ghidra --json; " +
                 "MCP: list_procedures. Inspect the loaded base and source mappings with CLI rea analyze <path> --provider ghidra --json " +
@@ -4576,7 +6126,21 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (function.isExternal() || function.getBody().isEmpty()) {
             return null;
         }
-        DecompileResults results = decompiler.decompileFunction(
+        // The modification number changes with every committed Program edit,
+        // so an edit that skipped the explicit invalidation still misses.
+        DecompileCacheKey key = new DecompileCacheKey(
+            function.getEntryPoint(),
+            function instanceof UndefinedFunction,
+            currentProgram.getModificationNumber(),
+            decompileMaxPayloadMiB
+        );
+        SoftReference<DecompileResults> retained = decompileResults.get(key);
+        DecompileResults reused = retained == null ? null : retained.get();
+        if (reused != null) return reused;
+        DecompileResults results = takeDecompileAhead(key, decompileTimeoutSeconds);
+        // A failure or timeout read ahead for this request already spent its
+        // deadline, so it is reported rather than started again.
+        if (results == null) results = decompiler.decompileFunction(
             function,
             decompileTimeoutSeconds,
             monitor
@@ -4603,8 +6167,307 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 " MiB. " + decompilePayloadRecovery()
             );
         }
+        // Only a completed decompilation is reusable; failures stay retryable.
+        decompileResults.put(key, new SoftReference<>(results));
         return results;
     }
+
+    /** One function read ahead: queued, running on a worker, or finished. */
+    private static final class AheadTask {
+        final Function function;
+        final DecompileCacheKey key;
+        final int timeoutSeconds;
+        final TaskMonitor monitor = new TaskMonitorAdapter(true);
+        final CompletableFuture<DecompileResults> done = new CompletableFuture<>();
+        boolean started;
+
+        AheadTask(Function function, DecompileCacheKey key, int timeoutSeconds) {
+            this.function = function;
+            this.key = key;
+            this.timeoutSeconds = timeoutSeconds;
+        }
+    }
+
+    /**
+     * Queue the functions after the carrying request's own one for background
+     * decompilation and return at once: the carrying request decompiles its own
+     * function on the session decompiler without waiting. Workers start only
+     * for the queued work, at most one per queued function.
+     */
+    private void decompileAhead(List<String> selectors) throws Exception {
+        if (selectors.size() < 2) return;
+        long modification = currentProgram.getModificationNumber();
+        Integer payloadMiB = decompileMaxPayloadMiB;
+        Address own;
+        try {
+            own = resolveProcedure(selectors.get(0)).getEntryPoint();
+        } catch (RequestFailure unresolved) {
+            own = null;
+        }
+        List<AheadTask> pending = new ArrayList<>();
+        Set<Address> seen = new HashSet<>();
+        if (own != null) seen.add(own);
+        for (int index = 1; index < selectors.size(); index++) {
+            Function function;
+            try {
+                function = resolveProcedure(selectors.get(index));
+            } catch (RequestFailure unresolved) {
+                continue;
+            }
+            if (function instanceof UndefinedFunction || function.isExternal() ||
+                    function.getBody().isEmpty() || !seen.add(function.getEntryPoint())) continue;
+            DecompileCacheKey key = new DecompileCacheKey(function.getEntryPoint(), false, modification, payloadMiB);
+            SoftReference<DecompileResults> retained = decompileResults.get(key);
+            if (retained != null && retained.get() != null) continue;
+            pending.add(new AheadTask(function, key, decompileTimeoutSeconds));
+        }
+        synchronized (decompileAheadLock) {
+            for (AheadTask task : pending) {
+                if (decompileAheadTasks.containsKey(task.key)) continue;
+                decompileAheadTasks.put(task.key, task);
+                decompileAheadQueue.add(task);
+            }
+            // Tasks nobody took are dropped oldest first beyond two windows:
+            // finished results, and queued work no worker has started. A
+            // running decompile stays until it finishes; the worker cap
+            // bounds how many of those can be in progress.
+            trimDecompileAhead();
+            // A single queued function is cheaper to decompile when its own
+            // request arrives than to start a decompiler process for it.
+            if (decompileAheadQueue.size() < 2 && decompileAheadLiveWorkers == 0) return;
+            // Each worker is a native decompiler process with its own view of
+            // the Program, so the worker count bounds memory as well as CPU.
+            int limit = Math.max(1, Math.min(Runtime.getRuntime().availableProcessors(), DECOMPILE_AHEAD_WORKERS));
+            int wanted = Math.min(limit, decompileAheadQueue.size()) - decompileAheadLiveWorkers;
+            long generation = decompileAheadGeneration;
+            for (int started = 0; started < wanted; started++) {
+                decompileAheadLiveWorkers++;
+                try {
+                    decompileAheadThreads.execute(() -> runDecompileAheadWorker(generation, payloadMiB));
+                } catch (RuntimeException rejected) {
+                    decompileAheadLiveWorkers--;
+                    break;
+                }
+            }
+            decompileAheadLock.notifyAll();
+        }
+    }
+
+    /**
+     * Publish one worker outcome, then drop unrequested tasks beyond two
+     * windows. A result that completes after the last hint is trimmed here,
+     * and so is queued work no worker has started.
+     */
+    private void completeDecompileAhead(AheadTask task, DecompileResults results) {
+        task.done.complete(results);
+        synchronized (decompileAheadLock) {
+            decompileAheadActive.remove(task);
+            trimDecompileAhead();
+        }
+    }
+
+    /**
+     * Caller holds decompileAheadLock. Drops the oldest tasks beyond two
+     * windows. A task a worker has started but not finished stays: at most
+     * one such task exists per live worker. Queued tasks are removed from
+     * the queue as well, so a later window cannot leave an unbounded backlog.
+     */
+    private void trimDecompileAhead() {
+        int excess = decompileAheadTasks.size() - 2 * DECOMPILE_AHEAD_WINDOW;
+        if (excess <= 0) return;
+        Iterator<AheadTask> retained = decompileAheadTasks.values().iterator();
+        while (excess > 0 && retained.hasNext()) {
+            AheadTask task = retained.next();
+            if (task.started && !task.done.isDone()) continue;
+            if (!task.started) {
+                decompileAheadQueue.remove(task);
+                task.monitor.cancel();
+            }
+            retained.remove();
+            excess--;
+        }
+    }
+
+    /**
+     * Open a decompiler, then take queued functions until the queue stays
+     * empty for the idle time or disposal advances the generation. Opening
+     * runs on the worker's own thread, so workers become ready independently
+     * while the session decompiler serves requests.
+     */
+    private void runDecompileAheadWorker(long generation, Integer payloadMiB) {
+        DecompInterface worker = null;
+        AheadTask task = null;
+        try {
+            worker = decompileAheadOpener.apply(payloadMiB);
+            if (worker == null) return;
+            while (true) {
+                synchronized (decompileAheadLock) {
+                    long idleUntil = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(DECOMPILE_AHEAD_IDLE_MILLIS);
+                    while (generation == decompileAheadGeneration && decompileAheadQueue.isEmpty()) {
+                        long remaining = idleUntil - System.nanoTime();
+                        if (remaining <= 0) return;
+                        decompileAheadLock.wait(Math.max(1, TimeUnit.NANOSECONDS.toMillis(remaining)));
+                    }
+                    if (generation != decompileAheadGeneration) return;
+                    task = decompileAheadQueue.poll();
+                    task.started = true;
+                    decompileAheadActive.add(task);
+                }
+                DecompileResults results;
+                try {
+                    results = worker.decompileFunction(task.function, task.timeoutSeconds, task.monitor);
+                } catch (RuntimeException failure) {
+                    results = null;
+                }
+                completeDecompileAhead(task, results);
+                task = null;
+            }
+        } catch (InterruptedException stopped) {
+            Thread.currentThread().interrupt();
+        } catch (RuntimeException failure) {
+            // A worker that cannot open or run leaves its functions to their requests.
+        } finally {
+            if (task != null) completeDecompileAhead(task, null);
+            if (worker != null) worker.dispose();
+            synchronized (decompileAheadLock) {
+                decompileAheadLiveWorkers--;
+                decompileAheadLock.notifyAll();
+            }
+        }
+    }
+
+    /** Opens a worker's decompiler; a field so the conformance probe can inject one. */
+    private java.util.function.Function<Integer, DecompInterface> decompileAheadOpener =
+        this::openDecompileAheadDecompiler;
+
+    /**
+     * A worker's own decompiler process, configured as the session decompiler.
+     * Each opens the Program independently, so workers open concurrently.
+     */
+    private DecompInterface openDecompileAheadDecompiler(Integer payloadMiB) {
+        DecompInterface worker = new DecompInterface();
+        worker.setOptions(decompileOptions(payloadMiB));
+        worker.toggleCCode(true);
+        worker.toggleSyntaxTree(true);
+        worker.toggleJumpLoads(true);
+        if (worker.openProgram(currentProgram)) return worker;
+        worker.dispose();
+        return null;
+    }
+
+    /**
+     * The read-ahead result for this request's function, or null when it
+     * should decompile it itself. A finished or running result is used
+     * whatever its outcome, including a timeout, so the function is never
+     * decompiled twice; a running one is waited for, and its worker's own
+     * native deadline, which started earlier, bounds that wait. A queued one
+     * that no worker has started is taken back and decompiled here at once.
+     *
+     * The deadline matters only where the cache policy says it does: a
+     * completed decompilation is reusable under any deadline, as cached ones
+     * are, but a failure, a timeout or unfinished work under a different
+     * deadline than this request's is cancelled and decompiled again, so a
+     * changed ghidra.decompile_timeout_seconds applies and the reported limit
+     * is the one used.
+     */
+    private DecompileResults takeDecompileAhead(DecompileCacheKey key, int timeoutSeconds) {
+        AheadTask task;
+        synchronized (decompileAheadLock) {
+            task = decompileAheadTasks.remove(key);
+            if (task == null) return null;
+            if (!task.started) {
+                decompileAheadQueue.remove(task);
+                return null;
+            }
+        }
+        if (task.timeoutSeconds != timeoutSeconds) {
+            DecompileResults finished = task.done.getNow(null);
+            if (finished != null && finished.decompileCompleted() && !finished.isCancelled() &&
+                    !finished.isTimedOut()) return finished;
+            task.monitor.cancel();
+            return null;
+        }
+        while (true) {
+            // Cancelling the waiting request cancels the decompile it waits
+            // for, as a cancelled foreground decompile would be.
+            if (monitor.isCancelled()) {
+                task.monitor.cancel();
+                throw new RequestFailure("decompile_cancelled", "Ghidra decompilation was cancelled");
+            }
+            try {
+                DecompileResults results = task.done.get(50, TimeUnit.MILLISECONDS);
+                // A cancelled read-ahead was abandoned, not decompiled.
+                return results == null || results.isCancelled() ? null : results;
+            } catch (TimeoutException running) {
+                continue;
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                task.monitor.cancel();
+                throw new RequestFailure("decompile_cancelled", "Ghidra decompilation was cancelled");
+            } catch (ExecutionException unavailable) {
+                return null;
+            }
+        }
+    }
+
+    /**
+     * Cancel read-ahead without waiting. The socket reader uses this so a
+     * following cancel frame is not stuck behind the worker stop bound.
+     * A task already taken by a waiting request is still cancelled.
+     */
+    private void cancelDecompileAhead() {
+        synchronized (decompileAheadLock) {
+            decompileAheadGeneration++;
+            for (AheadTask task : decompileAheadTasks.values()) task.monitor.cancel();
+            for (AheadTask task : decompileAheadActive) task.monitor.cancel();
+            decompileAheadTasks.clear();
+            decompileAheadQueue.clear();
+            decompileAheadLock.notifyAll();
+        }
+    }
+
+    /**
+     * Stop read-ahead and wait for its workers to exit: pooled decompilers
+     * hold native state for the Program and options they opened with, so an
+     * edit, an option change, a cancelled workflow or shutdown releases them.
+     * Workers still opening see the new generation and close without work.
+     */
+    private void disposeDecompileAhead() {
+        cancelDecompileAhead();
+        synchronized (decompileAheadLock) {
+            long stopUntil = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(DECOMPILE_AHEAD_STOP_MILLIS);
+            boolean interrupted = false;
+            while (decompileAheadLiveWorkers > 0) {
+                long remaining = stopUntil - System.nanoTime();
+                if (remaining <= 0) break;
+                try {
+                    decompileAheadLock.wait(Math.max(1, TimeUnit.NANOSECONDS.toMillis(remaining)));
+                } catch (InterruptedException stop) {
+                    interrupted = true;
+                    break;
+                }
+            }
+            if (interrupted) Thread.currentThread().interrupt();
+        }
+    }
+
+    /**
+     * The function whose body the decompilation covers. Ghidra's decompile
+     * callback widens an UndefinedFunction's body to the code it followed, so
+     * a reused result keeps the widened function; a fresh lookup of the same
+     * entry covers only that entry.
+     */
+    private static Function decompiledFunction(Function requested, DecompileResults results) {
+        return results == null || results.getFunction() == null ? requested : results.getFunction();
+    }
+
+    /** Every input a completed decompilation of one Program state depends on. */
+    private record DecompileCacheKey(
+        Address entry,
+        boolean undefinedFunction,
+        long programModification,
+        Integer maxPayloadMiB
+    ) {}
 
     private String decompilePayloadRecovery() {
         int effective = decompiler.getOptions().getMaxPayloadMBytes();
@@ -6421,12 +8284,18 @@ public final class ReaGhidraBridge extends HeadlessScript {
             keys.add("value_flow_limits");
         if (parsed.isJsonObject() && parsed.getAsJsonObject().has("decompile_max_payload_mib"))
             keys.add("decompile_max_payload_mib");
+        if (parsed.isJsonObject() && parsed.getAsJsonObject().has("decompile_read_ahead"))
+            keys.add("decompile_read_ahead");
         JsonObject object = requireObject(parsed, keys);
-        Integer payloadMiB = null;
-        if (object.has("decompile_max_payload_mib") && !object.get("decompile_max_payload_mib").isJsonNull()) {
-            payloadMiB = requireInteger(object, "decompile_max_payload_mib");
-            if (payloadMiB < 1 || payloadMiB > MAX_DECOMPILE_PAYLOAD_MIB)
-                throw new IllegalArgumentException("Invalid per-request native decompiler payload limit");
+        DecompilePayload payload = null;
+        if (object.has("decompile_max_payload_mib")) {
+            Integer payloadMiB = null;
+            if (!object.get("decompile_max_payload_mib").isJsonNull()) {
+                payloadMiB = requireInteger(object, "decompile_max_payload_mib");
+                if (payloadMiB < 1 || payloadMiB > MAX_DECOMPILE_PAYLOAD_MIB)
+                    throw new IllegalArgumentException("Invalid per-request native decompiler payload limit");
+            }
+            payload = new DecompilePayload(payloadMiB);
         }
         ValueFlowLimits flowLimits = defaultValueFlowLimits();
         if (object.has("value_flow_limits")) {
@@ -6454,7 +8323,20 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (params == null || !params.isJsonObject()) {
             throw new IllegalArgumentException("Bridge request parameters are invalid");
         }
-        return new Request(id, requireString(object, "method"), params.getAsJsonObject(), timeout, payloadMiB, flowLimits);
+        List<String> readAhead = new ArrayList<>();
+        if (object.has("decompile_read_ahead")) {
+            JsonElement selectors = object.get("decompile_read_ahead");
+            if (!selectors.isJsonArray())
+                throw new IllegalArgumentException("Invalid decompile read-ahead");
+            for (JsonElement selector : selectors.getAsJsonArray()) {
+                if (!selector.isJsonPrimitive() || !selector.getAsJsonPrimitive().isString())
+                    throw new IllegalArgumentException("Invalid decompile read-ahead");
+                // The hint is advisory: selectors past one window are ignored.
+                if (readAhead.size() < DECOMPILE_AHEAD_WINDOW) readAhead.add(selector.getAsString());
+            }
+        }
+        return new Request(id, requireString(object, "method"), params.getAsJsonObject(), timeout, payload, flowLimits,
+            List.copyOf(readAhead));
     }
 
     private static JsonObject requireObject(JsonElement element, Set<String> keys) {
@@ -6595,19 +8477,15 @@ public final class ReaGhidraBridge extends HeadlessScript {
             int id,
             String code,
             String message) throws IOException {
-        writeFailure(writer, id, code, message, null);
+        writeFailure(writer, id, new RequestFailure(code, message));
     }
 
-    private static void writeFailure(
-            BufferedWriter writer,
-            int id,
-            String code,
-            String message,
-            JsonArray candidates) throws IOException {
+    private static void writeFailure(BufferedWriter writer, int id, RequestFailure failure) throws IOException {
         JsonObject error = new JsonObject();
-        error.addProperty("code", code);
-        error.addProperty("message", message);
-        if (candidates != null) error.add("candidates", candidates);
+        error.addProperty("code", failure.code);
+        error.addProperty("message", failure.getMessage());
+        if (failure.candidates != null) error.add("candidates", failure.candidates);
+        if (failure.requiredValue != null) error.addProperty("required_value", failure.requiredValue);
         JsonObject response = new JsonObject();
         response.addProperty("id", id);
         response.addProperty("ok", false);
@@ -6959,7 +8837,15 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return new ValueFlowLimits(DEFAULT_HIGH_PCODE_OPS, DEFAULT_HIGH_PCODE_INPUTS_PER_OP, DEFAULT_HIGH_PCODE_DEF_USE_EDGES);
     }
     private record ValueFlowLimits(int maxOperations, int maxInputsPerOperation, int maxEdges) {}
-    private record Request(int id, String method, JsonObject params, Integer decompileTimeoutSeconds, Integer decompileMaxPayloadMiB, ValueFlowLimits valueFlowLimits) {}
+    /**
+     * A request's decompiler payload selection. A null selection means the
+     * request carried no decompiler options; a null limit inside one selects
+     * the installed Ghidra default.
+     */
+    private record DecompilePayload(Integer mebibytes) {}
+
+    private record Request(int id, String method, JsonObject params, Integer decompileTimeoutSeconds, DecompilePayload decompilePayload, ValueFlowLimits valueFlowLimits,
+        List<String> decompileReadAhead) {}
 
     private static final class RequestFailure extends RuntimeException {
         private final String code;
@@ -6970,10 +8856,23 @@ public final class ReaGhidraBridge extends HeadlessScript {
             this(code, message, null);
         }
 
+        /** The measured value a per-call control must admit, for a bounded refusal only. */
+        private final Integer requiredValue;
+
         RequestFailure(String code, String message, JsonArray candidates) {
+            this(code, message, candidates, null);
+        }
+
+        RequestFailure(String code, String message, JsonArray candidates, Integer requiredValue) {
             super(message);
             this.code = code;
             this.candidates = candidates;
+            this.requiredValue = requiredValue;
+        }
+
+        /** The same failure, its facts kept, with context before its message. */
+        RequestFailure prefixed(String context) {
+            return new RequestFailure(code, context + getMessage(), candidates, requiredValue);
         }
     }
 

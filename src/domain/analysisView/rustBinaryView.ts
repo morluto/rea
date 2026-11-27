@@ -20,13 +20,14 @@ import {
 } from "./analysisViewShape.js";
 import { rustBinaryViewRequestSchema } from "../rust/rustBinaryQuery.js";
 import {
+  boundedViewLimitations,
   boundedViewMessages,
   completeWithinViewCoverage,
   pageViewCoverage,
   unavailableViewCoverage,
 } from "./analysisViewCoverage.js";
 import { invalidAnalysisView } from "./analysisViewErrors.js";
-import { selectIndexedViewRows, selectViewRows } from "./selectViewRows.js";
+import { filterSet, selectViewRows } from "./selectViewRows.js";
 
 const count = z.number().int().nonnegative();
 
@@ -173,11 +174,7 @@ export const projectRustBinaryView = (
         metadata === null ? ("unknown" as const) : ("complete" as const),
       runtime_dependencies: "unknown" as const,
     },
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...report.limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, report.limitations),
     unknowns: boundedViewMessages(
       unknowns.values,
       parent.evidenceId,
@@ -203,14 +200,11 @@ export const projectRustBinaryView = (
       page: { collection: view.collection, rows: [] },
       coverage: unavailableViewCoverage(),
     });
-  const indices =
-    view.indices === undefined ? undefined : new Set(view.indices);
-  const fields =
-    view.fields === undefined ? undefined : new Set<string>(view.fields);
+  const indices = filterSet(view.indices);
+  const fields = filterSet<string>(view.fields);
   if (view.collection === "packages") {
-    const names = view.names === undefined ? undefined : new Set(view.names);
-    const versions =
-      view.versions === undefined ? undefined : new Set(view.versions);
+    const names = filterSet(view.names);
+    const versions = filterSet(view.versions);
     const matchPackage =
       names === undefined && versions === undefined
         ? undefined
@@ -234,16 +228,13 @@ export const projectRustBinaryView = (
         features: row.features,
       }),
     });
-    const selected =
-      indices !== undefined
-        ? selectIndexedViewRows(
-            metadata.packages,
-            indices,
-            view,
-            matchPackage,
-            projectPackage,
-          )
-        : selectViewRows(metadata.packages, view, matchPackage, projectPackage);
+    const selected = selectViewRows(
+      metadata.packages,
+      view,
+      matchPackage,
+      projectPackage,
+      indices,
+    );
     return ok({
       kind: "rust" as const,
       view,
@@ -257,10 +248,8 @@ export const projectRustBinaryView = (
       ),
     });
   }
-  const from =
-    view.from_indices === undefined ? undefined : new Set(view.from_indices);
-  const to =
-    view.to_indices === undefined ? undefined : new Set(view.to_indices);
+  const from = filterSet(view.from_indices);
+  const to = filterSet(view.to_indices);
   const matchEdge =
     from === undefined && to === undefined
       ? undefined
@@ -277,16 +266,13 @@ export const projectRustBinaryView = (
     }),
     ...((fields?.has("to_index") ?? true) && { to_index: row.to_index }),
   });
-  const selected =
-    indices !== undefined
-      ? selectIndexedViewRows(
-          metadata.dependency_edges,
-          indices,
-          view,
-          matchEdge,
-          projectEdge,
-        )
-      : selectViewRows(metadata.dependency_edges, view, matchEdge, projectEdge);
+  const selected = selectViewRows(
+    metadata.dependency_edges,
+    view,
+    matchEdge,
+    projectEdge,
+    indices,
+  );
   return ok({
     kind: "rust" as const,
     view,

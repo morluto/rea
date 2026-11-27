@@ -103,6 +103,26 @@ it("fetches historical durations when portable tests can use them", async () => 
   }
 });
 
+it("uploads the test runtime when portable tests or SQLite need it", async () => {
+  const steps = (await workflow()).build!.steps!;
+  const condition = z
+    .string()
+    .parse(steps.find((step) => step.with?.name === "rea-test-runtime")?.if);
+  for (const [tier, code, sqlite, expected] of [
+    ["fast", "false", "false", false],
+    ["fast", "true", "false", true],
+    ["fast", "false", "true", true],
+    ["warm", "true", "false", false],
+    ["full", "true", "true", true],
+  ] as const) {
+    expect(
+      evaluateCondition(condition, {
+        needs: { changes: { outputs: { tier, code, sqlite } } },
+      }),
+    ).toBe(expected);
+  }
+});
+
 it("looks up a baseline only when main selection can use it", async () => {
   const steps = (await workflow()).changes!.steps!;
   const qualification = steps.findIndex((step) => step.id === "qualification");

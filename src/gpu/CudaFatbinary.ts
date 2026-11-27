@@ -94,6 +94,6 @@ export async function* readCudaFatbinary(
       yield { row, declaredDecodedSize };
       position += width + padded;
     }
-    base = await nextGpuContainerOffset(source, end);
+    base = await nextGpuContainerOffset(source, end, signal);
   }
 }

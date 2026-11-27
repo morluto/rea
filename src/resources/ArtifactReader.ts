@@ -252,6 +252,7 @@ export interface ArtifactReader {
     | "asar"
     | "ines"
     | "nds"
+    | "n64-rom"
     | "godot-pck"
     | "unityfs"
     | "wxapkg"
@@ -285,6 +286,7 @@ export interface ArtifactReader {
     | "fit"
     | "qualcomm-mbn"
     | "ntfs-mft"
+    | "auditd-log"
     | "pkg"
     | "file";
   entries(

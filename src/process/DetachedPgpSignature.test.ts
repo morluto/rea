@@ -14,7 +14,7 @@ beforeAll(async () => {
     type: "ecc",
     curve: "curve25519Legacy",
     userIDs: [{ name: "Fixture publisher" }],
-    subkeys: [{ sign: true }, { sign: true }],
+    subkeys: [{ sign: true }, { sign: true, curve: "brainpoolP256r1" }],
     format: "armored",
   });
   const privateKey = await readPrivateKey({ armoredKey: generated.privateKey });
@@ -51,7 +51,7 @@ const verify = ({
 } = {}) => verifyDetachedPgpSignature(payload, signature, key, pin, signal);
 
 describe("detached binary PGP publisher verification", () => {
-  it("accepts independently selected signing subkeys through one pinned primary", async () => {
+  it("accepts Ed25519 and Brainpool signing subkeys through one pinned primary", async () => {
     expect(signatures).toHaveLength(2);
     for (const [index, signature] of signatures.entries())
       expect(await verify({ signature })).toEqual({

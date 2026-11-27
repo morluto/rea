@@ -8,6 +8,7 @@ import { detectHexRecordEncoding } from "./firmware/hexRecords.js";
 import { hasUf2Block } from "./firmware/uf2.js";
 import { hasGodotPckHeader } from "./godotPckFormat.js";
 import { nesContainerFormat, parseInesLayout } from "./inesContainer.js";
+import { n64RomRecognition } from "./n64Rom.js";
 import { hasNdsHeader } from "./ndsRom.js";
 import {
   hasIso9660Signature,
@@ -25,6 +26,7 @@ import { hasBfltMagic } from "./bfltExecutable.js";
 import { hasNroMagic, hasNsoMagic } from "./switchExecutable.js";
 import { hasUnityFsHeader } from "./unityfsFormat.js";
 import { hasMftFileRecordHeader } from "./windows/ntfsMft.js";
+import { hasAuditdLogRecord } from "./linux/auditdLog.js";
 import { hasWindowsShortcutHeader } from "./windows/windowsShortcutHeader.js";
 import { BinaryFormatFailure } from "./binaryContainer.js";
 import {
@@ -49,6 +51,7 @@ export type RecognizedArtifactFormat = Extract<
   ArtifactFormatId,
   | "ines"
   | "nds"
+  | "n64-rom"
   | "zip"
   | "godot-pck"
   | "unityfs"
@@ -77,6 +80,7 @@ export type RecognizedArtifactFormat = Extract<
   | "fit"
   | "qualcomm-mbn"
   | "ntfs-mft"
+  | "auditd-log"
   | "plist"
   | StandaloneArtifactFormat
 >;
@@ -166,6 +170,13 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
       return layout.ok
         ? { state: "recognized", format: "ines" }
         : { state: "refused", format: "ines", reason: layout.error.detail };
+    },
+    ({ prefix, fileSize }) => {
+      const claim = n64RomRecognition(prefix, fileSize);
+      if (claim === undefined) return undefined;
+      return claim.state === "recognized"
+        ? { state: "recognized", format: "n64-rom" }
+        : { state: "refused", format: "n64-rom", reason: claim.reason };
     },
     when("zip", hasZipSignature),
     when("godot-pck", hasGodotPckHeader),
@@ -268,6 +279,7 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     },
     when("fit", hasFitImagesNode),
     when("ntfs-mft", hasMftFileRecordHeader),
+    when("auditd-log", hasAuditdLogRecord),
     when("sqlite", hasSqliteHeader),
     when("windows-shortcut", hasWindowsShortcutHeader),
     when("deb", hasDebPackageHeader),
