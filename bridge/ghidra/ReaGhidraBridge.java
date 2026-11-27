@@ -58,6 +58,9 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.stream.JsonWriter;
 
+import ghidra.app.cmd.function.ApplyFunctionSignatureCmd;
+import ghidra.app.cmd.function.FunctionRenameOption;
+import ghidra.app.util.cparser.C.CParser;
 import ghidra.app.util.headless.HeadlessScript;
 import ghidra.app.decompiler.DecompInterface;
 import ghidra.app.decompiler.DecompileOptions;
@@ -83,7 +86,12 @@ import ghidra.program.model.block.CodeBlockIterator;
 import ghidra.program.model.block.CodeBlockReference;
 import ghidra.program.model.block.CodeBlockReferenceIterator;
 import ghidra.program.model.data.StringDataInstance;
+import ghidra.program.model.data.CategoryPath;
 import ghidra.program.model.data.DataType;
+import ghidra.program.model.data.DataTypeConflictHandler;
+import ghidra.program.model.data.DataTypeManager;
+import ghidra.program.model.data.FunctionDefinitionDataType;
+import ghidra.program.model.data.ParameterDefinition;
 import ghidra.program.model.data.MutabilitySettingsDefinition;
 import ghidra.program.model.data.Undefined;
 import ghidra.program.model.lang.OperandType;
@@ -97,6 +105,7 @@ import ghidra.program.model.listing.DataIterator;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.FunctionIterator;
 import ghidra.program.model.listing.FunctionManager;
+import ghidra.program.model.listing.FunctionSignature;
 import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.listing.InstructionIterator;
 import ghidra.program.model.listing.Listing;
@@ -171,6 +180,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private static final String[] CAPABILITIES = {
         "read_binary_inventory_summary",
         "annotate_native_function",
+        "define_native_data_types",
         "set_address_name",
         "set_addresses_names",
         "inspect_native_load_image",
@@ -563,6 +573,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     throw new RequestFailure("method_unavailable", "Windows P0 does not admit database mutation");
                 yield annotateNativeFunction(request.params);
             }
+            case "define_native_data_types" -> {
+                if (!descriptor.transport.equals("unix-socket"))
+                    throw new RequestFailure("method_unavailable", "Windows P0 does not admit database mutation");
+                yield defineNativeDataTypes(request.params);
+            }
             default -> throw new RequestFailure(
                 "method_unavailable",
                 "Bridge method is unavailable"
@@ -571,7 +586,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     private static boolean isMutatingOperation(String method) {
-        return method.equals("annotate_native_function") || method.equals("set_address_name") || method.equals("set_addresses_names");
+        return method.equals("annotate_native_function") || method.equals("define_native_data_types") ||
+            method.equals("set_address_name") || method.equals("set_addresses_names");
     }
 
     /** Internal lifecycle request: the destination is inside this owned runtime. */
@@ -1535,8 +1551,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
             if (type.getSourceArchive() != null) result.addProperty("source_archive", type.getSourceArchive().getName());
             if (type.getLength() >= 0) result.addProperty("size_bytes", type.getLength());
             if (type.getAlignment() > 0) result.addProperty("alignment_bytes", type.getAlignment());
-            String kind = type instanceof ghidra.program.model.data.Structure ? "struct" : type instanceof ghidra.program.model.data.Union ? "union" : type instanceof ghidra.program.model.data.Enum ? "enum" : type instanceof ghidra.program.model.data.Pointer ? "pointer" : type instanceof ghidra.program.model.data.Array ? "array" : type instanceof ghidra.program.model.data.TypeDef ? "typedef" : type instanceof ghidra.program.model.data.BuiltInDataType ? "scalar" : "unsupported";
-            result.addProperty("kind", kind);
+            result.addProperty("kind", dataTypeKind(type));
+            if (isCallerDefinedType(type)) result.addProperty("source", "caller-defined");
             if (type instanceof ghidra.program.model.data.Composite composite) {
                 result.addProperty("packing_enabled", composite.isPackingEnabled());
                 ghidra.program.model.data.DataTypeComponent[] components = composite.getComponents();
@@ -1597,6 +1613,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
             if (metadata != null) result.add("metadata_recovery", metadata);
         }
         return result;
+    }
+
+    private static String dataTypeKind(DataType type) {
+        return type instanceof ghidra.program.model.data.Structure ? "struct" : type instanceof ghidra.program.model.data.Union ? "union" : type instanceof ghidra.program.model.data.Enum ? "enum" : type instanceof ghidra.program.model.data.Pointer ? "pointer" : type instanceof ghidra.program.model.data.Array ? "array" : type instanceof ghidra.program.model.data.TypeDef ? "typedef" : type instanceof ghidra.program.model.data.BuiltInDataType ? "scalar" : "unsupported";
     }
 
     private String typeLookupResult(DataType type) {
@@ -1816,13 +1836,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
         value.addProperty("name", procedureName(function));
         value.addProperty("comment", currentProgram.getListing().getComment(CommentType.PRE, entry));
         value.addProperty("inline_comment", currentProgram.getListing().getComment(CommentType.EOL, entry));
+        // The formal prototype omits storage-derived parameters and reparses as a signature edit.
+        value.addProperty("signature", function.getSignature(true).getPrototypeString(false));
+        value.addProperty("signature_source", normalizedSource(function.getSignatureSource()));
         return value;
     }
 
     private JsonObject annotateNativeFunction(JsonObject params) throws Exception {
-        if (!Set.of("procedure", "name", "comment", "inline_comment").containsAll(params.keySet()))
+        if (!Set.of("procedure", "name", "comment", "inline_comment", "signature").containsAll(params.keySet()))
             throw new RequestFailure("invalid_request", "Unknown function annotation field");
-        if (!params.has("name") && !params.has("comment") && !params.has("inline_comment"))
+        if (!params.has("name") && !params.has("comment") && !params.has("inline_comment") && !params.has("signature"))
             throw new RequestFailure("invalid_request", "Supply at least one annotation change");
         Function function = resolveProcedure(requireString(params, "procedure"));
         Address entry = function.getEntryPoint();
@@ -1831,6 +1854,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
         for (String field : List.of("name", "comment", "inline_comment")) {
             if (params.has(field)) validateAnnotationText(requireText(params, field), field);
         }
+        // Parsing reads the type database without writing it, so a refused prototype needs no rollback.
+        FunctionDefinitionDataType prototype = params.has("signature")
+            ? parseFunctionSignature(function, requireText(params, "signature")) : null;
         int transaction = currentProgram.startTransaction("REA function annotations");
         boolean commit = false;
         try {
@@ -1847,6 +1873,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             }
             if (params.has("name"))
                 function.setName(leafName, SourceType.USER_DEFINED);
+            if (prototype != null) applyFunctionSignature(function, prototype);
             monitor.checkCancelled();
             invalidateSymbolAndDecompilerCaches();
             JsonObject readback = annotationReadback(function);
@@ -1882,6 +1909,227 @@ public final class ReaGhidraBridge extends HeadlessScript {
             // Rollback also invalidates inventory and decompiler views.
             invalidateSymbolAndDecompilerCaches();
         }
+    }
+
+    // Ghidra's C parser cannot be cancelled. Measured on Ghidra 12.2, a chain of
+    // pointer or array declarators costs about 1 s at 4096 UTF-16 units and grows
+    // cubically, and each level of nested parentheses in an expression doubles
+    // the parse time (3 s at 20 levels). These ceilings bound both.
+    private static final int MAX_FUNCTION_SIGNATURE_UTF16 = 4096;
+    private static final int MAX_TYPE_DECLARATIONS_UTF16 = 16384;
+    private static final int MAX_C_PARENTHESIS_DEPTH = 8;
+    // Data types carry no SourceType; this category is the persisted mark of caller authorship.
+    private static final CategoryPath CALLER_DEFINED_TYPES = new CategoryPath("/rea_caller_defined");
+
+    private static boolean isCallerDefinedType(DataType type) {
+        CategoryPath category = type.getCategoryPath();
+        return category != null && category.isAncestorOrSelf(CALLER_DEFINED_TYPES);
+    }
+
+    /** Parse caller C text against the type database without storing anything in it. */
+    private CParser parseCallerC(String text, String field, int maximumUtf16, String code) {
+        validateAnnotationText(text, field);
+        if (text.length() > maximumUtf16)
+            throw new RequestFailure(code, field + " has " + text.length() + " UTF-16 code units; at most " +
+                maximumUtf16 + " are admitted. This release has no runtime override.");
+        int depth = 0;
+        for (int index = 0; index < text.length(); index++) {
+            char character = text.charAt(index);
+            if (character == ')') depth = Math.max(0, depth - 1);
+            if (character == '(' && ++depth > MAX_C_PARENTHESIS_DEPTH)
+                throw new RequestFailure(code, field + " nests parentheses deeper than " + MAX_C_PARENTHESIS_DEPTH +
+                    " levels at UTF-16 index " + index + ". This release has no runtime override.");
+        }
+        DataTypeManager types = currentProgram.getDataTypeManager();
+        CParser parser = new CParser(types, false, new DataTypeManager[] { types });
+        try {
+            parser.parse(text);
+        }
+        catch (ghidra.app.util.cparser.C.ParseException | ghidra.app.util.cparser.C.TokenMgrError rejected) {
+            throw new RequestFailure(code, "Ghidra's C parser rejected " + field + ": " + cParserReason(rejected.getMessage()));
+        }
+        catch (StackOverflowError exhausted) {
+            throw new RequestFailure(code, field + " nests declarators or members deeper than Ghidra's C parser admits");
+        }
+        if (!parser.didParseSucceed())
+            throw new RequestFailure(code, "Ghidra's C parser rejected " + field + ": " + cParserReason(parser.getParseMessages()));
+        return parser;
+    }
+
+    /** Keep the location and offending token; drop the generated expected-token list. */
+    private static String cParserReason(String message) {
+        if (message == null || message.isBlank()) return "no reason reported";
+        int expected = message.indexOf("Was expecting");
+        String reason = WHITESPACE_RUN.matcher(expected < 0 ? message : message.substring(0, expected)).replaceAll(" ").strip();
+        return reason.length() > 240 ? reason.substring(0, 240) : reason;
+    }
+
+    private FunctionDefinitionDataType parseFunctionSignature(Function function, String text) {
+        String code = "invalid_function_signature";
+        String entry = canonicalAddress(function.getEntryPoint());
+        // Ghidra redirects a thunk's prototype to the thunked function, which may be external.
+        if (function.isThunk())
+            throw new RequestFailure(code, "Function at " + entry + " is a thunk; its prototype belongs to the function it forwards to");
+        String stripped = text.strip();
+        CParser parser = parseCallerC(stripped.endsWith(";") ? stripped : stripped + ";", "signature",
+            MAX_FUNCTION_SIGNATURE_UTF16, code);
+        // The parser invents an empty composite for an undefined struct, union or enum tag.
+        Set<String> undefined = new TreeSet<>(parser.getComposites().keySet());
+        undefined.addAll(parser.getEnums().keySet());
+        undefined.addAll(parser.getTypes().keySet());
+        if (!undefined.isEmpty())
+            throw new RequestFailure("unknown_data_type", "signature uses types the database does not define: " +
+                String.join(", ", undefined));
+        Map<String, DataType> functions = parser.getFunctions();
+        if (functions.size() != 1 ||
+            !(functions.values().iterator().next() instanceof FunctionDefinitionDataType prototype))
+            throw new RequestFailure(code, "signature must be one C function prototype without function-pointer parameters; found " +
+                functions.size() + " function declarators");
+        Set<String> names = new HashSet<>();
+        for (ParameterDefinition parameter : prototype.getArguments()) {
+            String name = parameter.getName();
+            if (name != null && !name.isEmpty() && !names.add(name))
+                throw new RequestFailure(code, "signature repeats parameter name " + name);
+        }
+        return prototype;
+    }
+
+    private void applyFunctionSignature(Function function, FunctionDefinitionDataType prototype) throws Exception {
+        String code = "invalid_function_signature";
+        String entry = canonicalAddress(function.getEntryPoint());
+        // The prototype's own name is never applied; the name field owns renames.
+        ApplyFunctionSignatureCmd command = new ApplyFunctionSignatureCmd(
+            function.getEntryPoint(), prototype, SourceType.USER_DEFINED, false, false,
+            DataTypeConflictHandler.DEFAULT_HANDLER, FunctionRenameOption.NO_CHANGE);
+        if (!command.applyTo(currentProgram, monitor))
+            throw new RequestFailure(code, "Ghidra refused the signature at " + entry + ": " +
+                (command.getStatusMsg() == null ? "no reason reported" : command.getStatusMsg()));
+        FunctionSignature applied = function.getSignature(true);
+        ParameterDefinition[] requested = prototype.getArguments();
+        ParameterDefinition[] observed = applied.getArguments();
+        boolean matches = function.getSignatureSource() == SourceType.USER_DEFINED &&
+            applied.getReturnType().isEquivalent(prototype.getReturnType()) &&
+            applied.hasVarArgs() == prototype.hasVarArgs() &&
+            observed.length == requested.length &&
+            (prototype.hasUnknownCallingConventionName() ||
+                prototype.getCallingConventionName().equals(function.getCallingConventionName()));
+        for (int index = 0; matches && index < requested.length; index++) {
+            String name = requested[index].getName();
+            matches = observed[index].getDataType().isEquivalent(requested[index].getDataType()) &&
+                (name == null || name.isEmpty() || name.equals(observed[index].getName()));
+        }
+        // Ghidra settles array parameters, renames parameters that collide with
+        // other symbols and ignores conventions the compiler specification lacks.
+        if (!matches)
+            throw new RequestFailure(code, "Ghidra applied a different prototype at " + entry + " than requested: " +
+                applied.getPrototypeString(false) + "; requested " + prototype.getPrototypeString(false));
+    }
+
+    private JsonObject defineNativeDataTypes(JsonObject params) throws Exception {
+        requireKeys(params, Set.of("declarations"));
+        String code = "invalid_type_declarations";
+        CParser parser = parseCallerC(requireText(params, "declarations"), "declarations",
+            MAX_TYPE_DECLARATIONS_UTF16, code);
+        if (!parser.getFunctions().isEmpty())
+            throw new RequestFailure(code, "declarations must not declare functions or function-pointer members: " +
+                String.join(", ", new TreeSet<>(parser.getFunctions().keySet())));
+        // `typedef struct s {...} s;` names one Ghidra type; the composite stands for both.
+        Map<String, DataType> defined = new TreeMap<>(parser.getTypes());
+        defined.putAll(parser.getEnums());
+        defined.putAll(parser.getComposites());
+        if (defined.isEmpty())
+            throw new RequestFailure(code, "declarations define no struct, union, enum or typedef");
+        DataTypeManager types = currentProgram.getDataTypeManager();
+        Set<DataType> parsed = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+        parsed.addAll(defined.values());
+        List<String> conflicts = new ArrayList<>();
+        Set<String> existing = new HashSet<>();
+        for (Map.Entry<String, DataType> entry : defined.entrySet()) {
+            monitor.checkCancelled();
+            String name = entry.getKey();
+            DataType type = entry.getValue();
+            if (type instanceof ghidra.program.model.data.Composite composite && composite.getNumComponents() == 0)
+                throw new RequestFailure(code, "declarations leave " + name + " without members; define every struct or union they use");
+            requireStoredDependencies(name, type, parsed, types,
+                java.util.Collections.newSetFromMap(new IdentityHashMap<>()));
+            String path = CALLER_DEFINED_TYPES.getPath() + "/" + name;
+            List<DataType> sameName = new ArrayList<>();
+            types.findDataTypes(name, sameName);
+            for (DataType other : sameName) {
+                if (other.getPathName().equals(path)) existing.add(name);
+                else conflicts.add(name + " (existing " + other.getPathName() + ")");
+            }
+        }
+        if (!conflicts.isEmpty())
+            throw new RequestFailure("data_type_conflict", "The database already holds types with these names: " + String.join(", ", conflicts));
+        int transaction = currentProgram.startTransaction("REA data type definitions");
+        boolean commit = false;
+        try {
+            for (DataType type : defined.values()) type.setCategoryPath(CALLER_DEFINED_TYPES);
+            JsonArray rows = new JsonArray();
+            for (Map.Entry<String, DataType> entry : defined.entrySet()) {
+                monitor.checkCancelled();
+                String name = entry.getKey();
+                String path = CALLER_DEFINED_TYPES.getPath() + "/" + name;
+                DataType stored = types.addDataType(entry.getValue(), DataTypeConflictHandler.DEFAULT_HANDLER);
+                // The default handler keeps a differing existing type and stores the new one under a conflict name.
+                if (!stored.getPathName().equals(path))
+                    throw new RequestFailure("data_type_conflict", name + " is already defined differently as " + path);
+                DataType readback = types.getDataType(path);
+                if (readback == null || !readback.isEquivalent(entry.getValue()))
+                    throw new RequestFailure("data_type_readback_mismatch", "Data type readback differs for " + path);
+                JsonObject row = new JsonObject();
+                row.addProperty("id", path);
+                row.addProperty("name", name);
+                row.addProperty("kind", dataTypeKind(readback));
+                row.add("size_bytes", readback.getLength() < 0 ? JsonNull.INSTANCE : GSON.toJsonTree(readback.getLength()));
+                row.addProperty("status", existing.contains(name) ? "unchanged" : "defined");
+                rows.add(row);
+            }
+            JsonObject result = new JsonObject();
+            result.add("types", rows);
+            JsonObject effects = new JsonObject();
+            effects.addProperty("scope", "session-analysis-database");
+            effects.addProperty("source_bytes_modified", false);
+            result.add("effects", effects);
+            monitor.checkCancelled();
+            commit = true;
+            return result;
+        }
+        catch (ghidra.util.exception.DuplicateNameException | IllegalArgumentException exception) {
+            throw new RequestFailure(code, "Ghidra refused the declarations: " + safeMessage(exception));
+        }
+        finally {
+            currentProgram.endTransaction(transaction, commit);
+        }
+    }
+
+    /** Every named type a definition reaches must be defined here or already stored. */
+    private void requireStoredDependencies(
+            String owner, DataType type, Set<DataType> parsed, DataTypeManager types, Set<DataType> visited) {
+        if (type == null || type instanceof ghidra.program.model.data.BuiltInDataType || !visited.add(type)) return;
+        if (type instanceof ghidra.program.model.data.Pointer pointer) {
+            requireStoredDependencies(owner, pointer.getDataType(), parsed, types, visited);
+            return;
+        }
+        if (type instanceof ghidra.program.model.data.Array array) {
+            requireStoredDependencies(owner, array.getDataType(), parsed, types, visited);
+            return;
+        }
+        if (type instanceof ghidra.program.model.data.BitFieldDataType bitField) {
+            requireStoredDependencies(owner, bitField.getBaseDataType(), parsed, types, visited);
+            return;
+        }
+        if (!parsed.contains(type)) {
+            if (types.contains(type)) return;
+            throw new RequestFailure("invalid_type_declarations", owner +
+                " embeds an unnamed or undeclared type (" + type.getName() + "); declare it by name in the same declarations");
+        }
+        if (type instanceof ghidra.program.model.data.TypeDef alias)
+            requireStoredDependencies(owner, alias.getDataType(), parsed, types, visited);
+        if (type instanceof ghidra.program.model.data.Composite composite)
+            for (ghidra.program.model.data.DataTypeComponent component : composite.getComponents())
+                requireStoredDependencies(owner, component.getDataType(), parsed, types, visited);
     }
 
     private String symbolLeafName(Symbol symbol, String requested) throws ghidra.util.exception.InvalidInputException {

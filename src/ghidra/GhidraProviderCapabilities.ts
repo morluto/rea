@@ -167,10 +167,19 @@ export const ghidraOperationLimitations = (
     case "annotate_native_function":
       return [
         "Names use Ghidra USER_DEFINED source. Name writes accept a leaf name or a fully qualified name within the existing namespace; readback uses the fully qualified name and can be reused without adding namespace prefixes. Edits retain the current namespace; other namespace-like text remains literal leaf-name text. Regular comments map to PRE and inline comments to EOL at the exact function entry. Changes commit together after readback and refreshed analysis; failure rolls them all back.",
+        "A signature is parsed by Ghidra's C parser against the database's types and applied with USER_DEFINED source and Ghidra-assigned parameter storage; annotations.signature_source reports that source. The prototype's function name is not applied. A thunk, an undefined type, a function-pointer parameter, a repeated parameter name and a prototype Ghidra would apply differently (an array parameter, a parameter name another symbol holds, an unknown calling convention) are refused. An undefined type name without struct, union or enum is reported as a syntax error at the next token. The text is limited to 4096 UTF-16 code units and 8 levels of nested parentheses.",
         "Annotation text rejects NUL and unpaired Unicode surrogates before mutation, with the field and UTF-16 index in the error. Supported Unicode and line endings are preserved.",
         source === "owned-checkpoint"
           ? "Metadata edits invalidate immutable analysis snapshots. Normal close saves edits to the owned checkpoint; cancellation or process failure can lose edits after the last successful save. CLI returns the updated dossier before cleanup."
           : "Metadata edits invalidate immutable analysis snapshots and are discarded on close. CLI returns the updated dossier before session cleanup; this is not a saved Ghidra project.",
+      ];
+    case "define_native_data_types":
+      return [
+        "Definitions are parsed by Ghidra's C parser and stored in category /rea_caller_defined; inspect_native_data_type reports them with source caller-defined. They are the caller's assertions about layout, not observations of the target. Layout follows the program's data organization; #pragma pack is honored and __attribute__ packing is ignored, so check size_bytes. Variable declarations in the text are ignored.",
+        "A type name the database already holds in any category is refused unless it is an equivalent caller-defined type, which reports unchanged. Function declarations, function-pointer members, structs or unions without members, and unnamed nested struct, union or enum members are refused. The text is limited to 16384 UTF-16 code units and 8 levels of nested parentheses; split larger sets across calls.",
+        source === "owned-checkpoint"
+          ? "Metadata edits invalidate immutable analysis snapshots. Normal close saves edits to the owned checkpoint; cancellation or process failure can lose edits after the last successful save."
+          : "Metadata edits invalidate immutable analysis snapshots and are discarded on close; this is not a saved Ghidra project.",
       ];
     case "set_address_name":
     case "set_addresses_names":

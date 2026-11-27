@@ -39,6 +39,8 @@ import type { GhidraSessionSource } from "./GhidraProviderCapabilities.js";
 import {
   GHIDRA_STARTUP_DEADLINE_ELAPSED,
   isGhidraInputFailureCode,
+  isGhidraTypeEditRefusalCode,
+  type GhidraTypeEditRefusalCode,
   type GhidraSessionError,
 } from "./GhidraSessionError.js";
 import {
@@ -231,6 +233,31 @@ const projectPrimarySessionError = (
     return new AnalysisInputError(operation, context, [
       { path: ["name"], reason: "invalid_value", message: failure.message },
     ]);
+  const typeEdit =
+    failure.kind === "remote"
+      ? ghidraTypeEditRefusal(operation, failure.remoteCode)
+      : undefined;
+  if (typeEdit !== undefined)
+    return new AnalysisInputError(
+      operation,
+      {
+        ...context,
+        ...(typeEdit.recovery === undefined
+          ? {}
+          : {
+              remediationAction: typeEdit.recovery.action,
+              conformsToInputContract: true,
+              related: { operations: typeEdit.recovery.operations },
+            }),
+      },
+      [
+        {
+          path: [typeEdit.field],
+          reason: "invalid_value",
+          message: failure.message,
+        },
+      ],
+    );
   if (
     failure.kind === "remote" &&
     (failure.remoteCode === "procedure_not_found" ||
@@ -666,6 +693,57 @@ const projectObservedJvmMemoryFailure = (
 
 /** Outcome addition that only a caller keeping the Ghidra session receives. */
 const GHIDRA_SESSION_RETAINED = "The Ghidra session remains usable.";
+
+interface GhidraTypeEditRefusal {
+  readonly operation: "annotate_native_function" | "define_native_data_types";
+  readonly field: "signature" | "declarations";
+  /** Present when the text is well formed and the database state refuses it. */
+  readonly recovery?: {
+    readonly action: string;
+    readonly operations: readonly string[];
+  };
+}
+
+/** The operation and argument each refused prototype or type definition is attributed to. */
+const GHIDRA_TYPE_EDIT_REFUSALS: Readonly<
+  Record<GhidraTypeEditRefusalCode, GhidraTypeEditRefusal>
+> = {
+  invalid_function_signature: {
+    operation: "annotate_native_function",
+    field: "signature",
+  },
+  unknown_data_type: {
+    operation: "annotate_native_function",
+    field: "signature",
+    recovery: {
+      action:
+        "Define the named types first (MCP define_native_data_types; CLI rea define-native-data-types), then repeat this call. Nothing in this call was applied.",
+      operations: ["define_native_data_types"],
+    },
+  },
+  invalid_type_declarations: {
+    operation: "define_native_data_types",
+    field: "declarations",
+  },
+  data_type_conflict: {
+    operation: "define_native_data_types",
+    field: "declarations",
+    recovery: {
+      action:
+        "Use another type name, or inspect the existing type (MCP inspect_native_data_type; CLI rea inspect-native-data-type) and use it unchanged. REA does not replace an existing type; nothing in this call was stored.",
+      operations: ["inspect_native_data_type"],
+    },
+  },
+};
+
+const ghidraTypeEditRefusal = (
+  operation: string,
+  remoteCode: string | undefined,
+): GhidraTypeEditRefusal | undefined => {
+  if (!isGhidraTypeEditRefusalCode(remoteCode)) return undefined;
+  const refusal = GHIDRA_TYPE_EDIT_REFUSALS[remoteCode];
+  return refusal.operation === operation ? refusal : undefined;
+};
 
 /** The same addition when a failed search leaves session annotations intact. */
 const GHIDRA_ANNOTATIONS_RETAINED =

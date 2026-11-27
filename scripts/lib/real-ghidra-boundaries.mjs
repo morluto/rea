@@ -564,12 +564,16 @@ export async function verifyGhidraBoundaries(
     inline_comment: "Inline\n註記",
   };
   const updated = await call("annotate_native_function", changes);
-  assert.deepEqual(updated.annotations, {
+  // The prototype is not edited here, so its readback is not caller-authored.
+  const { signature, signature_source, ...edited } = updated.annotations;
+  assert.deepEqual(edited, {
     address,
     name: changes.name,
     comment: changes.comment,
     inline_comment: changes.inline_comment,
   });
+  assert.ok(signature.includes(`${changes.name}(`));
+  assert.notEqual(signature_source, "user_defined");
   const traceAfter = await evidence("trace_native_values", traceInput);
   const sourceAfter = traceAfter.normalized_result.procedures[0].evidence_id;
   assert.notEqual(sourceBefore, sourceAfter);

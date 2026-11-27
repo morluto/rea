@@ -197,6 +197,8 @@ describe("official operation arguments", () => {
       name: dossier.procedure.name,
       comment: "existing finding",
       inline_comment: "existing inline finding",
+      signature: "undefined fixture_main()",
+      signature_source: "default",
     };
     const parameters: Readonly<Record<string, JsonValue>>[] = [];
     const client = await connect({

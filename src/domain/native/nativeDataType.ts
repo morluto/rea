@@ -12,6 +12,50 @@ export const nativeDataTypeInputSchema = z
     (value) => (value.type === undefined) !== (value.address === undefined),
     "Supply exactly one of type or address",
   );
+/**
+ * Ghidra's C parser cannot be cancelled; this length keeps a realistic set of
+ * definitions (several hundred members) while bounding its cubic cost on
+ * declarator chains. The Java bridge enforces the same ceiling.
+ */
+export const MAX_NATIVE_TYPE_DECLARATIONS_LENGTH = 16384;
+
+/** C definitions of the types a caller adds to the analysis database. */
+export const nativeDataTypeDefinitionsInputSchema = z.strictObject({
+  declarations: z
+    .string()
+    .min(1)
+    .max(MAX_NATIVE_TYPE_DECLARATIONS_LENGTH)
+    .describe(
+      "C struct, union, enum and typedef definitions, e.g. `struct session { int id; char name[32]; struct session *next; };`. Members may use earlier definitions and existing database types.",
+    ),
+});
+
+/** Readback of each type one atomic definition call stored or found unchanged. */
+export const nativeDataTypeDefinitionsSchema = z.strictObject({
+  types: z
+    .array(
+      z.strictObject({
+        id: z
+          .string()
+          .min(1)
+          .describe("Category path for inspect_native_data_type"),
+        name: z.string().min(1),
+        kind: z.enum(["struct", "union", "enum", "typedef"]),
+        size_bytes: z.int().nonnegative().nullable(),
+        status: z
+          .enum(["defined", "unchanged"])
+          .describe(
+            "unchanged: an equivalent caller-defined type already existed",
+          ),
+      }),
+    )
+    .min(1),
+  effects: z.strictObject({
+    scope: z.literal("session-analysis-database"),
+    source_bytes_modified: z.literal(false),
+  }),
+});
+
 /** Types and component identities remain analysis database observations. */
 export const nativeDataTypeSchema = z.strictObject({
   status: z.enum(["available", "unavailable"]),
@@ -29,7 +73,11 @@ export const nativeDataTypeSchema = z.strictObject({
     "unsupported",
     "unavailable",
   ]),
-  source: z.literal("analysis-database"),
+  source: z
+    .enum(["analysis-database", "caller-defined"])
+    .describe(
+      "caller-defined: stored by define_native_data_types under /rea_caller_defined, not recovered by analysis. analysis-database: every other origin.",
+    ),
   source_archive: z.string().nullable(),
   address: z.string().nullable(),
   size_bytes: z.int().nonnegative().nullable(),

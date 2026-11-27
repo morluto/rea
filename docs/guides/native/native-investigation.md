@@ -1475,6 +1475,53 @@ unpaired Unicode surrogate; a rejection identifies the field and UTF-16 index
 and leaves every annotation unchanged. CRLF, supplementary Unicode characters,
 and combining characters are preserved. Windows P0 remains read-only. Ghidra has no
 GUI authority, and REA never falls back automatically to Hopper.
+
+For a target without debug information, set a function's prototype and the
+types it needs so later pseudocode uses field and parameter names instead of
+offsets. Define the types, then pass `signature` to
+`annotate_native_function`:
+
+```javascript
+await call("define_native_data_types", {
+  declarations:
+    "struct session { int id; char name[32]; unsigned flags; double score; struct session *next; };",
+});
+await call("annotate_native_function", {
+  procedure: "0x1001800",
+  name: "session_total",
+  signature: "double total(const struct session *s, unsigned mask)",
+});
+```
+
+`signature` is a C prototype over types the database already holds. Its
+function name is a placeholder; `name` renames the function. The prototype is
+applied in the same transaction as the name and comments with Ghidra's
+`USER_DEFINED` source and Ghidra-assigned parameter storage. A parse failure,
+an undefined type, or a prototype Ghidra would apply differently (an array
+parameter, a parameter name another symbol holds, a calling convention the
+compiler specification lacks) rolls the whole call back and names
+`signature` in the error. Thunks and function-pointer parameters are refused.
+`annotations.signature` is the applied prototype in a form `signature` accepts,
+and `annotations.signature_source` is `user_defined` for a caller-authored
+prototype rather than `default`, `analysis` or `imported`.
+
+`define_native_data_types` accepts C struct, union, enum and typedef
+definitions and stores all of them or none in the category
+`/rea_caller_defined`. `inspect_native_data_type` reports those types with
+`source: "caller-defined"`; they are the caller's assertions about layout, not
+observations of the target. A name the database already holds in any category
+is refused and never replaced; repeating an equivalent caller definition
+reports `unchanged`. Function declarations, function-pointer members, structs
+without members and unnamed nested struct, union or enum members are refused.
+`#pragma pack` is honored; `__attribute__` packing and variable declarations
+are ignored by Ghidra's parser, so check the returned `size_bytes`.
+
+Ghidra's C parser cannot be cancelled, so both inputs have fixed ceilings
+without a runtime override: `signature` admits 4096 UTF-16 code units,
+`declarations` 16384, and each at most 8 levels of nested parentheses. Split
+a larger set of definitions across calls. Both edits invalidate immutable
+analysis snapshots and persist exactly as names and comments do: saved on
+normal close in checkpoint mode, discarded otherwise.
 For a before-and-after `compare_functions` in MCP, call `analyze_function`
 before and after the edit while the session remains open; the annotation Evidence
 itself is not an `analyze_function` input. If comparing after close, export the
