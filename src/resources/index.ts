@@ -172,6 +172,11 @@ export {
   withArtifactTargetIdentity,
 } from "./withArtifactTargetIdentity.js";
 export {
+  isZipFileEntry,
+  readBoundedZipMember,
+  zipMemberSize,
+} from "./boundedZipMember.js";
+export {
   ZIP_READER_OPTIONS,
   ZipArtifactReader,
   decodeZipEntryText,
