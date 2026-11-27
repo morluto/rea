@@ -85,15 +85,15 @@ export const registerIl2cppCommands = (
         },
         max_file_bytes: {
           description:
-            "Maximum bytes read from global-metadata.dat (default 268435456, up to 1073741824)",
+            "Maximum bytes read from global-metadata.dat (default and maximum 268435456)",
         },
         max_output_bytes: {
           description:
-            "Maximum encoded UTF-8 bytes for the retained complete IL2CPP metadata report (default 67108864, up to 536870912)",
+            "Maximum encoded UTF-8 bytes for the retained complete IL2CPP metadata report (default and maximum 67108864)",
         },
         max_binary_bytes: {
           description:
-            "Maximum bytes read from --binary (default 1073741824, up to 2147483648); needs --binary",
+            "Maximum bytes read from --binary (default and maximum 1073741824); needs --binary",
         },
         max_structure_bytes: {
           description:
@@ -105,15 +105,15 @@ export const registerIl2cppCommands = (
         },
         max_native_type_text_bytes: {
           description:
-            "Maximum UTF-8 bytes in the native type-name rendering cache workspace (default 67108864, up to 536870912); needs --binary",
+            "Maximum UTF-8 bytes in the native type-name rendering cache workspace (default and maximum 67108864); needs --binary",
         },
         max_native_candidates: {
           description:
-            "Maximum entries in the native module-name trie and name-address index (default 65536, up to 1048576); needs --binary",
+            "Maximum entries in the native module-name trie, name-address index, and ELF unresolved/zero-fill overlay (default and maximum 65536); needs --binary",
         },
         max_module_array_candidates: {
           description:
-            "Maximum candidate module pointer arrays in the executable-reference fallback search (default 64, up to 65536); needs --binary",
+            "Maximum candidate module pointer arrays in the executable-reference fallback search (default 64, up to 4096); needs --binary",
         },
       },
       cliOptions: {

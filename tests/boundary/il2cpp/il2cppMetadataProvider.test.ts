@@ -440,7 +440,7 @@ it("keeps observed source facts with a complete-report refusal", async () => {
       effective_value: 256,
       unit: "bytes",
       minimum: 1,
-      maximum: 512 * 1024 * 1024,
+      maximum: 64 * 1024 * 1024,
       default_value: 64 * 1024 * 1024,
       applies_at: "next_call",
     },
@@ -1351,7 +1351,7 @@ it("reports the exceeded native-link maximum in the public refusal", async () =>
         effective_value: 64,
         unit: "count",
         minimum: 1,
-        maximum: 65_536,
+        maximum: 4_096,
         default_value: 64,
         applies_at: "next_call",
       },
@@ -1641,6 +1641,170 @@ it("applies max_structure_bytes to ELF PT_DYNAMIC and max_native_candidates to E
         AnalysisResourceConstraintError,
       );
     }
+  } finally {
+    await provider.close();
+  }
+});
+
+it("reports max_native_candidates when unresolvedPointerMatcher exhausts its budget on Mach-O partial binds", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-partial-bind-budget-");
+  const path = join(root, "global-metadata.dat");
+  const binaryPath = join(root, "GameAssembly.dylib");
+  const metadata = createLinkedIl2cppMetadataFixture();
+  await writeFile(path, metadata.bytes);
+
+  // Append 50 extra copies of "Assembly-CSharp.dll\0" (52 total name addresses
+  // including original Assembly-CSharp.dll + mscorlib.dll) spaced by 273 (0x111)
+  // bytes so every byte lane varies, plus 5 aligned partial-bind slots at
+  // distinct byte overlaps (-3, +1, +2, +3, +4) without touching +8 (methodCount = 3).
+  // Setting raw slot bytes to 0xffffffffffffffff avoids accidental matches when raised.
+  const base = createIl2cppBinaryFixture();
+  const stride = 273;
+  const extraNamesLen = Math.ceil((50 * stride) / 8) * 8;
+  const extraNames = Buffer.alloc(extraNamesLen);
+  for (let i = 0; i < 50; i++)
+    extraNames.write("Assembly-CSharp.dll\0", i * stride, "utf8");
+  const partialSlots = Buffer.alloc(5 * 32);
+  const slotOffsets: number[] = [];
+  const baseSlotsStart = base.length + extraNamesLen + 8;
+  const relativeOverlaps = [-3, 1, 2, 3, 4];
+  for (let i = 0; i < relativeOverlaps.length; i++) {
+    partialSlots.writeBigUInt64LE(0xffff_ffff_ffff_ffffn, i * 32);
+    partialSlots.writeUInt32LE(3, i * 32 + 8);
+    slotOffsets.push(baseSlotsStart + i * 32 + relativeOverlaps[i]!);
+  }
+  const uleb = (value: number): number[] => {
+    const out: number[] = [];
+    let remaining = value;
+    do {
+      const byte = remaining & 0x7f;
+      remaining >>>= 7;
+      out.push(byte | (remaining === 0 ? 0 : 0x80));
+    } while (remaining !== 0);
+    return out;
+  };
+  const streamParts: Buffer[] = [
+    Buffer.from([0x3e, 0x40]),
+    Buffer.from("_FixtureMethod\0", "utf8"),
+    Buffer.from([0x52]), // BIND_TYPE_TEXT_ABSOLUTE32 (4-byte partial slot overlap)
+  ];
+  for (const offset of slotOffsets) {
+    streamParts.push(Buffer.from([0x70, ...uleb(offset), 0x90]));
+  }
+  streamParts.push(Buffer.from([0x00]));
+  const stream = Buffer.concat(streamParts);
+  const crafted = Buffer.concat([
+    base,
+    extraNames,
+    Buffer.alloc(8),
+    partialSlots,
+    stream,
+  ]);
+  const streamOffset = baseSlotsStart + partialSlots.length;
+  // Widen segment vmsize/filesize and attach LC_DYLD_INFO_ONLY at offset 104.
+  crafted.writeBigUInt64LE(BigInt(crafted.length), 64);
+  crafted.writeBigUInt64LE(BigInt(crafted.length), 80);
+  crafted.writeUInt32LE(2, 16);
+  crafted.writeUInt32LE(120, 20);
+  crafted.writeUInt32LE(0x80000022, 104);
+  crafted.writeUInt32LE(48, 108);
+  crafted.writeUInt32LE(streamOffset, 120);
+  crafted.writeUInt32LE(stream.length, 124);
+  crafted.writeUInt32LE(7, 88);
+  crafted.writeUInt32LE(7, 92);
+  await writeFile(binaryPath, crafted);
+
+  const provider = new Il2cppMetadataProvider();
+  try {
+    // 51 name addresses pass nameAddresses (<= 55), giving matcher cap 8 * 55 = 440 entries.
+    // 5 distinct masks * (51 keys + 51 counts) = 510 entries > 440 -> typed max_native_candidates refusal.
+    const refused = await provider.inspect({
+      path,
+      binary_path: binaryPath,
+      max_native_candidates: 55,
+    });
+    if (refused.ok)
+      throw new Error(
+        "Expected unresolvedPointerMatcher max_native_candidates refusal",
+      );
+    expect(refused.error).toBeInstanceOf(AnalysisResourceConstraintError);
+    expect(refused.error).toMatchObject({
+      resource: "capacity",
+      fixedAllowance: undefined,
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_native_candidates",
+        effective_value: 55,
+        unit: "count",
+      },
+    });
+    const raised = await provider.inspect({
+      path,
+      binary_path: binaryPath,
+      max_native_candidates: 256,
+    });
+    expect(raised.ok).toBe(true);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("applies max_native_type_text_bytes to generic method instance naming", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-generic-text-budget-");
+  const path = join(root, "global-metadata.dat");
+  const binaryPath = join(root, "GameAssembly.dylib");
+  await writeFile(
+    path,
+    createIl2cppMetadataFixture({ version: 31, genericOwners: true }).bytes,
+  );
+  await writeFile(
+    binaryPath,
+    createIl2cppBinaryFixture({ genericMethods: {} }),
+  );
+  const provider = new Il2cppMetadataProvider();
+  try {
+    // Plain linking fits within 48 UTF-8 bytes of rendered type text, while
+    // generic method instance naming exceeds it and recovers once raised.
+    const plain = await provider.inspect({
+      path,
+      binary_path: binaryPath,
+      max_native_type_text_bytes: 48,
+    });
+    expect(plain.ok).toBe(true);
+
+    const genericRefused = await provider.inspect({
+      path,
+      binary_path: binaryPath,
+      generic_instances: true,
+      max_native_type_text_bytes: 48,
+    });
+    if (genericRefused.ok)
+      throw new Error(
+        "Expected generic method naming max_native_type_text_bytes refusal",
+      );
+    expect(genericRefused.error).toBeInstanceOf(
+      AnalysisResourceConstraintError,
+    );
+    expect(genericRefused.error).toMatchObject({
+      resource: "memory",
+      fixedAllowance: undefined,
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_native_type_text_bytes",
+        effective_value: 48,
+        unit: "bytes",
+        maximum: 64 * 1024 * 1024,
+        default_value: 64 * 1024 * 1024,
+      },
+    });
+
+    const genericRecovered = await provider.inspect({
+      path,
+      binary_path: binaryPath,
+      generic_instances: true,
+      max_native_type_text_bytes: 4096,
+    });
+    expect(genericRecovered.ok).toBe(true);
   } finally {
     await provider.close();
   }

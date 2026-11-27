@@ -97,13 +97,13 @@ Graph tools accept per-call traversal bounds (`max_depth` and `max_nodes` on
 `max_file_bytes`, a decoded section-name table above it, or more notes than
 `max_entries` with `details.limit` naming that field
 (`control_kind: "parameter"`), its effective value, default and range. `inspect_il2cpp_metadata`
-accepts `max_file_bytes` (default 256 MiB, up to 1 GiB), `max_output_bytes`
-(default 64 MiB, up to 512 MiB), and with `binary_path`: `max_binary_bytes`
-(default 1 GiB, up to 2 GiB), `max_structure_bytes` (default 16
+accepts `max_file_bytes` (default and maximum 256 MiB), `max_output_bytes`
+(default and maximum 64 MiB), and with `binary_path`: `max_binary_bytes`
+(default and maximum 1 GiB), `max_structure_bytes` (default 16
 MiB, up to 512 MiB), `max_native_index_bytes` (default 1 GiB),
-`max_native_type_text_bytes` (default 64 MiB, up to 512 MiB),
-`max_native_candidates` (default 65,536, up to 1,048,576), and
-`max_module_array_candidates` (default 64, up to 65,536); each refusal reports
+`max_native_type_text_bytes` (default and maximum 64 MiB),
+`max_native_candidates` (default and maximum 65,536), and
+`max_module_array_candidates` (default 64, up to 4,096); each refusal reports
 the same kind of limit. See
 [IL2CPP metadata](../il2cpp-metadata.md#native-method-addresses).
 

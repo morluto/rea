@@ -42,47 +42,46 @@ export const DEFAULT_IL2CPP_NATIVE_CANDIDATES = 65_536;
 export const DEFAULT_IL2CPP_MODULE_ARRAY_CANDIDATES = 64;
 
 /** Per-call resource budgets owned by `inspect_il2cpp_metadata`. */
-export const IL2CPP_METADATA_BUDGETS = {
+const IL2CPP_METADATA_BUDGETS = {
   max_file_bytes: {
     minimum: 1,
-    maximum: 1024 * 1024 * 1024,
+    maximum: DEFAULT_IL2CPP_FILE_BYTES,
     default_value: DEFAULT_IL2CPP_FILE_BYTES,
     unit: "bytes",
   },
   max_output_bytes: {
     minimum: 1,
-    maximum: 512 * 1024 * 1024,
+    maximum: DEFAULT_IL2CPP_OUTPUT_BYTES,
     default_value: DEFAULT_IL2CPP_OUTPUT_BYTES,
     unit: "bytes",
   },
   max_binary_bytes: {
     minimum: 1,
-    maximum: 2 * 1024 * 1024 * 1024,
+    maximum: DEFAULT_IL2CPP_BINARY_BYTES,
     default_value: DEFAULT_IL2CPP_BINARY_BYTES,
     unit: "bytes",
   },
   max_native_type_text_bytes: {
     minimum: 1,
-    maximum: 512 * 1024 * 1024,
+    maximum: DEFAULT_IL2CPP_NATIVE_TYPE_TEXT_BYTES,
     default_value: DEFAULT_IL2CPP_NATIVE_TYPE_TEXT_BYTES,
     unit: "bytes",
   },
   max_native_candidates: {
     minimum: 1,
-    maximum: 1_048_576,
+    maximum: DEFAULT_IL2CPP_NATIVE_CANDIDATES,
     default_value: DEFAULT_IL2CPP_NATIVE_CANDIDATES,
     unit: "count",
   },
   max_module_array_candidates: {
     minimum: 1,
-    maximum: 65_536,
+    maximum: 4_096,
     default_value: DEFAULT_IL2CPP_MODULE_ARRAY_CANDIDATES,
     unit: "count",
   },
 } as const;
 
-export type Il2cppMetadataBudgetParameter =
-  keyof typeof IL2CPP_METADATA_BUDGETS;
+type Il2cppMetadataBudgetParameter = keyof typeof IL2CPP_METADATA_BUDGETS;
 
 export const il2cppBudgetLimit = (
   parameter: Il2cppMetadataBudgetParameter,

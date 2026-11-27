@@ -229,12 +229,6 @@ These parameters report that limit:
 | `inspect_il2cpp_metadata`                     | `max_native_index_bytes`          | 1073741824 |     1 |            `Number.MAX_SAFE_INTEGER` | `src/domain/il2cpp/il2cppMetadata.ts`     |
 | `inspect_elf_notes`, `inspect_elf_debug_link` | `max_file_bytes`                  | 67108864   |    64 |                            536870912 | `src/domain/native/elfReadBudgets.ts`     |
 | `inspect_elf_notes`, `inspect_elf_debug_link` | `max_entries`                     | 128        |     1 |                                  256 | `src/domain/native/elfReadBudgets.ts`     |
-| `inspect_il2cpp_metadata`                     | `max_file_bytes`                  | 268435456  |     1 |                           1073741824 | `src/domain/il2cpp/il2cppMetadata.ts`     |
-| `inspect_il2cpp_metadata`                     | `max_output_bytes`                | 67108864   |     1 |                            536870912 | `src/domain/il2cpp/il2cppMetadata.ts`     |
-| `inspect_il2cpp_metadata`                     | `max_binary_bytes`                | 1073741824 |     1 |                           2147483648 | `src/domain/il2cpp/il2cppMetadata.ts`     |
-| `inspect_il2cpp_metadata`                     | `max_native_type_text_bytes`      | 67108864   |     1 |                            536870912 | `src/domain/il2cpp/il2cppMetadata.ts`     |
-| `inspect_il2cpp_metadata`                     | `max_native_candidates`           | 65536      |     1 |                              1048576 | `src/domain/il2cpp/il2cppMetadata.ts`     |
-| `inspect_il2cpp_metadata`                     | `max_module_array_candidates`     | 64         |     1 |                                65536 | `src/domain/il2cpp/il2cppMetadata.ts`     |
 | `inspect_rust_binary`                         | `max_compressed_dependency_bytes` | 1048576    |     1 |        `buffer.constants.MAX_LENGTH` | `src/domain/rust/rustDependencyBudget.ts` |
 | `inspect_rust_binary`                         | `max_inflated_dependency_bytes`   | 8388608    |     1 | `buffer.constants.MAX_STRING_LENGTH` | `src/domain/rust/rustDependencyBudget.ts` |
 | `inspect_rust_binary`                         | `max_dependency_inflate_ratio`    | 64         |     1 |            `Number.MAX_SAFE_INTEGER` | `src/domain/rust/rustDependencyBudget.ts` |
@@ -243,6 +237,17 @@ Refusals that still name a per-call control only in prose are counted by
 `scripts/verify/fixed-ceilings.mjs` against
 `scripts/verify/untyped-budget-refusal-baseline.json` and tracked in
 [#14234](https://github.com/morluto/rea/issues/14234).
+
+Additional `inspect_il2cpp_metadata` per-call parameters (heap-bound allowances keep their existing ceilings):
+
+| Operation                 | Parameter                     |    Default | Floor |    Maximum | Owner                                 |
+| ------------------------- | ----------------------------- | ---------: | ----: | ---------: | ------------------------------------- |
+| `inspect_il2cpp_metadata` | `max_file_bytes`              |  268435456 |     1 |  268435456 | `src/domain/il2cpp/il2cppMetadata.ts` |
+| `inspect_il2cpp_metadata` | `max_output_bytes`            |   67108864 |     1 |   67108864 | `src/domain/il2cpp/il2cppMetadata.ts` |
+| `inspect_il2cpp_metadata` | `max_binary_bytes`            | 1073741824 |     1 | 1073741824 | `src/domain/il2cpp/il2cppMetadata.ts` |
+| `inspect_il2cpp_metadata` | `max_native_type_text_bytes`  |   67108864 |     1 |   67108864 | `src/domain/il2cpp/il2cppMetadata.ts` |
+| `inspect_il2cpp_metadata` | `max_native_candidates`       |      65536 |     1 |      65536 | `src/domain/il2cpp/il2cppMetadata.ts` |
+| `inspect_il2cpp_metadata` | `max_module_array_candidates` |         64 |     1 |       4096 | `src/domain/il2cpp/il2cppMetadata.ts` |
 
 Fixed ceilings are listed with their class and reason in
 `scripts/verify/fixed-ceiling-registry.json`, which `npm run lint` checks with

@@ -112,7 +112,7 @@ const matchesAddressLane = (
   return filter.lo32.has(rawUInt32LE(bytes, offset));
 };
 
-/** Index candidates by untouched bytes, retaining bounded representation space. */
+/** Index candidates by untouched bytes; exceeding the budget throws a typed capacity refusal. */
 const unresolvedPointerMatcher = (
   image: NativeImage,
   candidates: Iterable<bigint>,
@@ -128,7 +128,7 @@ const unresolvedPointerMatcher = (
   const values = [...candidates];
   const masks = new Map<
     bigint,
-    Map<bigint, { counts: Set<number>; minimum: number }> | null
+    Map<bigint, { counts: Set<number>; minimum: number }>
   >();
   const maximumEntries = Math.min(8 * maxNativeCandidates, 524_288);
   let indexedEntries = 0;
@@ -140,7 +140,6 @@ const unresolvedPointerMatcher = (
         knownMask |= 0xffn << BigInt(byte * 8);
     let matches = masks.get(knownMask);
     if (matches === undefined) {
-      // Beyond the retained index budget applicability remains unknown.
       const index = new Map<bigint, { counts: Set<number>; minimum: number }>();
       let entries = 0;
       for (const candidate of values) {
@@ -160,16 +159,19 @@ const unresolvedPointerMatcher = (
             candidateSet.minimum = Math.min(candidateSet.minimum, value);
             entries++;
           }
-        if (entries > maximumEntries - indexedEntries) {
-          masks.set(knownMask, null);
-          return null;
-        }
+        if (entries > maximumEntries - indexedEntries)
+          throw new Il2cppBinaryFormatFailure(
+            "native-index-capacity",
+            `unresolved pointer candidate matcher exceeds ${String(maximumEntries)} entries`,
+            maxNativeCandidates,
+            "entries",
+            IL2CPP_NATIVE_CANDIDATES_LIMIT,
+          );
       }
       matches = index;
       indexedEntries += entries;
       masks.set(knownMask, matches);
     }
-    if (matches === null) return null;
     const candidateSet = matches.get(raw & knownMask);
     if (candidateSet === undefined) return undefined;
     if (candidateCounts === undefined) return null;
