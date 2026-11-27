@@ -329,6 +329,7 @@ export const parseLabviewRsrc = (bytes: Buffer): LabviewParseResult => {
         { offset: blockInfo },
       );
     const blockHeadersAt = blockInfo + 4;
+    const headersEnd = blockHeadersAt + blockCount * BLOCK_HEADER_BYTES;
     if (!inside(blockHeadersAt, blockCount * BLOCK_HEADER_BYTES, listEnd))
       throw truncatedInput(FORMAT, "truncated RSRC block headers", {
         offset: blockHeadersAt,
@@ -377,6 +378,14 @@ export const parseLabviewRsrc = (bytes: Buffer): LabviewParseResult => {
           { offset: headerAt + 4, field: identifier },
         );
       const startsAt = blockInfo + reader.u32(headerAt + 8);
+      // Section-start tables follow the count word and every block header;
+      // blocks may share one later table, but none may reuse header rows.
+      if (startsAt < headersEnd)
+        throw malformedInput(
+          FORMAT,
+          "RSRC section-start table overlaps the block headers",
+          { offset: headerAt + 8, field: identifier },
+        );
       if (!inside(startsAt, sectionCount * SECTION_START_BYTES, listEnd))
         throw truncatedInput(FORMAT, "truncated RSRC section starts", {
           offset: startsAt,

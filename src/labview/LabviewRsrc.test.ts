@@ -434,34 +434,69 @@ describe("LabviewArtifactProvider", () => {
     await provider.close();
   });
 
-  it("does not call a non-PE file a malformed PE", async () => {
-    const root = await createTestTempDirectory("rea-labview-notpe-");
-    const path = join(root, "notes.txt");
-    await writeFile(path, Buffer.from("just some text, not an artifact"));
+  /** Inspect bytes and return the input refusal message, failing on any other outcome. */
+  const refusalMessage = async (name: string, bytes: Buffer) => {
+    const root = await createTestTempDirectory("rea-labview-refusal-");
+    const path = join(root, name);
+    await writeFile(path, bytes);
     const provider = new LabviewArtifactProvider();
-    const result = await provider.inspect({ path });
-    expect(result.ok).toBe(false);
-    if (!result.ok && result.error instanceof AnalysisInputError) {
-      expect(result.error.issues[0]?.message).toContain(
-        "not a LabVIEW RSRC container",
-      );
-      expect(result.error.issues[0]?.message).not.toContain(
-        "could not be examined",
-      );
+    try {
+      const result = await provider.inspect({ path });
+      if (result.ok) throw new Error("expected a refusal");
+      expect(result.error).toBeInstanceOf(AnalysisInputError);
+      if (!(result.error instanceof AnalysisInputError)) throw result.error;
+      return result.error.issues[0]?.message ?? "";
+    } finally {
+      await provider.close();
     }
-    await provider.close();
+  };
+
+  /** A 64-byte DOS header whose e_lfanew points at `signature`. */
+  const mzWith = (signature: string, trailing = 0): Buffer => {
+    const header = Buffer.alloc(64);
+    header.write("MZ", 0, "latin1");
+    header.writeUInt32LE(signature === "" ? 0 : 64, 60);
+    return Buffer.concat([
+      header,
+      Buffer.from(signature, "latin1"),
+      Buffer.alloc(trailing),
+    ]);
+  };
+
+  it.each([
+    ["text", Buffer.from("just some text, not an artifact")],
+    ["a DOS MZ image without a Windows header", mzWith("")],
+    ["an NE image", mzWith("NE", 60)],
+    [
+      "an MZ prefix too short to declare anything",
+      Buffer.concat([Buffer.from("MZ"), Buffer.alloc(30)]),
+    ],
+  ])("refuses %s as not LabVIEW, not as an unreadable PE", async (_, bytes) => {
+    const message = await refusalMessage("input.bin", bytes);
+    expect(message).toContain("not a LabVIEW RSRC container");
+    expect(message).not.toContain("could not be read");
   });
 
-  it("reports a PE that cannot be admitted as unexamined", async () => {
-    const root = await createTestTempDirectory("rea-labview-badpe-");
-    const path = join(root, "broken.exe");
-    await writeFile(path, Buffer.concat([Buffer.from("MZ"), Buffer.alloc(30)]));
-    const provider = new LabviewArtifactProvider();
-    const result = await provider.inspect({ path });
-    expect(result.ok).toBe(false);
-    if (!result.ok && result.error instanceof AnalysisInputError)
-      expect(result.error.issues[0]?.message).toContain("could not be read");
-    await provider.close();
+  it("reports a declared PE that cannot be admitted as unexamined", async () => {
+    // "PE\0\0" at e_lfanew followed by a truncated COFF header.
+    const message = await refusalMessage("broken.exe", mzWith("PE\0\0", 4));
+    expect(message).toContain("could not be read");
+  });
+
+  it("rejects a section-start table that overlaps the block headers", () => {
+    const container = buildLabviewRsrc([
+      { ident: "vers", sections: [labviewVersionSection()] },
+    ]);
+    // RSRC header +16 locates the info section; info +44 holds the
+    // block-info offset, and its first block header's +8 the table offset.
+    const info = container.readUInt32BE(16);
+    const blockInfo = info + container.readUInt32BE(info + 44);
+    container.writeUInt32BE(0, blockInfo + 4 + 8);
+    const parsed = parseLabviewRsrc(container);
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) return;
+    expect(parsed.failure.failure.kind).toBe("malformed");
+    expect(parsed.failure.message).toContain("overlaps the block headers");
   });
 
   it("keeps the completed file identity on a later parse failure", async () => {

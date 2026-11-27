@@ -10,6 +10,7 @@ import {
 } from "../domain/pe/peResourceTreeFacts.js";
 import { readPeResourceLayout } from "../domain/pe/peResourceLayout.js";
 import { BinaryReader } from "../domain/binaryContainer.js";
+import { observeMzWindowsHeader } from "../domain/dosMz.js";
 import { RSRC_MAGIC } from "./LabviewRsrc.js";
 import { decodeLimit, ParseFailureError } from "../domain/parseFailure.js";
 
@@ -32,8 +33,6 @@ export type EmbeddedRsrcScan =
   | {
       readonly ok: true;
       readonly containers: readonly EmbeddedRsrc[];
-      /** Whether this file declares a PE image at all. */
-      readonly admitted: boolean;
       /** Whether every resource branch this walk reached was examined. */
       readonly complete: boolean;
     }
@@ -47,25 +46,22 @@ export type EmbeddedRsrcScan =
  * executes or extracts anything.
  */
 export const findEmbeddedRsrcContainers = (bytes: Buffer): EmbeddedRsrcScan => {
-  // A file that does not even declare `MZ` is simply not a PE; a file that
-  // does but cannot be admitted has an unreadable structure.
+  // The shared MZ owner decides PE identity: only a "PE\0\0" signature at
+  // e_lfanew declares a PE. A plain DOS MZ, NE, LE or LX image is simply not
+  // a PE, while a declared PE that cannot be admitted has an unreadable tree.
+  const windowsHeader = observeMzWindowsHeader(bytes);
   const declaresPe =
-    bytes.length >= 2 && bytes[0] === 0x4d && bytes[1] === 0x5a;
+    windowsHeader.state === "declared" && windowsHeader.signature === "PE";
   let layout: ReturnType<typeof readPeResourceLayout>;
   try {
     layout = readPeResourceLayout(bytes);
   } catch (cause) {
     if (cause instanceof ParseFailureError)
-      return {
-        ok: true,
-        containers: [],
-        admitted: declaresPe,
-        complete: !declaresPe,
-      };
+      return { ok: true, containers: [], complete: !declaresPe };
     throw cause;
   }
   if (layout.rva === 0 || layout.size < PE_RESOURCE_DIRECTORY_BYTES)
-    return { ok: true, containers: [], admitted: true, complete: true };
+    return { ok: true, containers: [], complete: true };
 
   const reader = new BinaryReader(bytes, true, "pe");
   const root = layout.rva;
@@ -239,5 +235,5 @@ export const findEmbeddedRsrcContainers = (bytes: Buffer): EmbeddedRsrcScan => {
       return { ok: false, failure: cause as ParseFailureError<"limit"> };
     throw cause;
   }
-  return { ok: true, containers: found, admitted: true, complete };
+  return { ok: true, containers: found, complete };
 };
