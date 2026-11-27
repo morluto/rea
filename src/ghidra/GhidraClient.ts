@@ -89,6 +89,7 @@ import { GhidraLaunchError, type GhidraLaunch } from "./GhidraLauncher.js";
 import { GhidraRequestQueue } from "./GhidraRequestQueue.js";
 import {
   bindGhidraSessionFailure,
+  isGhidraCleanupCarrier,
   GHIDRA_STARTUP_DEADLINE_ELAPSED,
   GhidraSessionError,
 } from "./GhidraSessionError.js";
@@ -198,7 +199,10 @@ export class GhidraClient {
     | { readonly path: string; readonly disposition: "publish" | "discard" }
     | undefined;
   #checkpointRestore: GhidraPackedProgram | undefined;
-  /** A refused save can never succeed later, so the next close discards the edits. */
+  /**
+   * This session holds Program edits whose save was refused; it can never
+   * succeed later, so the next close discards and reports them.
+   */
   #checkpointSaveRefused = false;
   /**
    * Set when the JVM holding edits whose save was refused has stopped, until
@@ -1013,6 +1017,9 @@ export class GhidraClient {
   #cleanupError(cause: unknown): AnalysisError {
     if (cause instanceof AnalysisError && cause.cleanupIncomplete)
       return this.#retainCleanupFailure(cause);
+    const carried = isGhidraCleanupCarrier(cause)
+      ? cause.cleanupFailure
+      : undefined;
     const failure = new ProviderCleanupError(
       "ghidra",
       [
@@ -1029,17 +1036,11 @@ export class GhidraClient {
       {
         reason: errorMessage(cause),
         diagnostics: this.#diagnostics(),
-        // A checkpoint refusal stays primary; cleanup that also failed after
-        // it is reported beside it, and its resources are retained above.
-        ...((cause instanceof GhidraCheckpointSupersededError ||
-          cause instanceof GhidraCheckpointBusyError) &&
-        cause.cleanupFailure !== undefined
-          ? {
-              checkpoint_cleanup_failure: projectAnalysisError(
-                cause.cleanupFailure,
-              ),
-            }
-          : {}),
+        // A cause such as a checkpoint refusal stays primary; cleanup that
+        // also failed after it is reported beside it, its resources above.
+        ...(carried === undefined
+          ? {}
+          : { carried_cleanup_failure: projectAnalysisError(carried) }),
       },
       {
         cause,
@@ -1541,12 +1542,14 @@ export class GhidraClient {
       try {
         await this.#checkpoint.publish(staged.path, signal, leaseSignal);
       } catch (cause: unknown) {
+        // Any refusal is permanent for this generation, so the staged file is
+        // discarded; only refused edits are reported as released unsaved.
         if (cause instanceof GhidraCheckpointSupersededError) {
           this.#checkpointStaging = {
             path: staged.path,
             disposition: "discard",
           };
-          this.#checkpointSaveRefused = true;
+          if (cause.refusesEdits) this.#checkpointSaveRefused = true;
         }
         throw cause;
       }

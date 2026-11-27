@@ -11,6 +11,10 @@ import type { GhidraDiagnosticsScope } from "./GhidraDiagnostics.js";
 import { isGhidraByteSearchCursorMismatch } from "./GhidraByteSearchCursorFailure.js";
 import { ghidraFileOffsetOutcome } from "./GhidraFileOffsetFailure.js";
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
+import {
+  GhidraCheckpointBusyError,
+  GhidraCheckpointSupersededError,
+} from "./GhidraCheckpoint.js";
 import { GhidraLaunchSupportError } from "./GhidraJavaLaunch.js";
 import {
   GhidraLaunchError,
@@ -209,6 +213,27 @@ export const isGhidraInputFailureCode = (code: string | undefined): boolean =>
   code === "ambiguous";
 
 /** Bind session-failure construction to its causal diagnostic scope. */
+/**
+ * Ghidra lifecycle errors that carry a cleanup failure beside their own
+ * outcome. Every consumer of a raw cause recognizes carriers here, so one
+ * carrier type cannot be read by one consumer and missed by another.
+ */
+const GHIDRA_CLEANUP_CARRIERS = [
+  DarwinProcessOwnershipInspectionError,
+  GhidraLaunchError,
+  GhidraCheckpointSupersededError,
+  GhidraCheckpointBusyError,
+] as const;
+
+export type GhidraCleanupCarrier = InstanceType<
+  (typeof GHIDRA_CLEANUP_CARRIERS)[number]
+>;
+
+export const isGhidraCleanupCarrier = (
+  cause: unknown,
+): cause is GhidraCleanupCarrier =>
+  GHIDRA_CLEANUP_CARRIERS.some((carrier) => cause instanceof carrier);
+
 export const bindGhidraSessionFailure =
   (
     diagnostics: (
@@ -246,13 +271,11 @@ export const bindGhidraSessionFailure =
       ...(cause === undefined ? {} : { cause }),
       ...options,
     });
-    const cleanup =
-      cause instanceof DarwinProcessOwnershipInspectionError ||
-      cause instanceof GhidraLaunchError
-        ? cause.cleanupFailure
-        : cause instanceof AnalysisError && cause.cleanupIncomplete
-          ? cause
-          : undefined;
+    const cleanup = isGhidraCleanupCarrier(cause)
+      ? cause.cleanupFailure
+      : cause instanceof AnalysisError && cause.cleanupIncomplete
+        ? cause
+        : undefined;
     return cleanup === undefined
       ? failure
       : failure.withCleanupFailure(cleanup);

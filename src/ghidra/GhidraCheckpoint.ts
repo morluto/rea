@@ -134,6 +134,12 @@ export class GhidraCheckpointBusyError extends Error {
 export class GhidraCheckpointSupersededError extends Error {
   /** Cleanup that also failed after the refusal; the refusal stays primary. */
   cleanupFailure: AnalysisError | undefined;
+  /**
+   * Whether the session holds Program edits this refusal kept from being
+   * saved. Only a save refuses edits: a restore, including a session whose
+   * initial analysis was overtaken, has none and simply reopens.
+   */
+  readonly refusesEdits: boolean;
   constructor(
     readonly directory: string,
     readonly stage: "restore" | "save",
@@ -144,6 +150,7 @@ export class GhidraCheckpointSupersededError extends Error {
         : `Ghidra checkpoint at ${JSON.stringify(directory)} changed after this session restored it, normally because another REA session saved Program edits first; this session's Program edits were not saved and the current checkpoint is unchanged. Closing the target again discards them; reopen the target and reapply them to the current checkpoint`,
     );
     this.name = "GhidraCheckpointSupersededError";
+    this.refusesEdits = stage === "save";
   }
 }
 

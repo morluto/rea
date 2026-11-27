@@ -450,7 +450,7 @@ it.skipIf(process.platform === "win32")(
     expect(refused.error).toMatchObject({
       remediationAction: expect.stringMatching(/edits were not saved/),
       diagnostics: {
-        checkpoint_cleanup_failure: expect.objectContaining({
+        carried_cleanup_failure: expect.objectContaining({
           code: expect.any(String),
         }),
       },
@@ -557,11 +557,69 @@ it.skipIf(process.platform === "win32")(
     expect(projected.message).not.toMatch(
       /edits were not saved|again discards/,
     );
+    // It holds no caller edits, so nothing is reported as released unsaved
+    // and nothing blocks the reopen the refusal asks for.
+    expect(late.client.unsavedCloseReport()).toBeNull();
+    expect(await late.client.close()).toEqual({ ok: true, value: null });
     const reopened = await peer(f);
     expect((await reopened.client.start()).ok).toBe(true);
     expect(reopened.client.checkpointRestore()?.sha256).toBe(
       createHash("sha256").update("edited by another session").digest("hex"),
     );
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "keeps a startup lease-release failure visible beside a superseded initial analysis",
+  async () => {
+    const f = await fixture();
+    const analyzing = fixtureLauncher();
+    const launcher: GhidraLauncher = {
+      launch: async (session) => {
+        const writer = new GhidraCheckpoint(
+          f.selection,
+          new ArtifactResourceScope(),
+        );
+        await writer.admit("writer");
+        await writer.publish(
+          await packed(f.root, "initial by another session"),
+        );
+        await writer.publish(await packed(f.root, "edited by another session"));
+        // The late session's own publication lease then fails to release once.
+        const leases = await vi.importActual<
+          typeof import("../../../../src/process/OwnedLease.js")
+        >("../../../../src/process/OwnedLease.js");
+        vi.mocked(acquireOwnedLease).mockImplementationOnce(async (input) => {
+          const result = await leases.acquireOwnedLease(input);
+          if (!result.acquired) return result;
+          let failed = false;
+          return {
+            acquired: true,
+            lease: {
+              ...result.lease,
+              release: async () => {
+                if (!failed) {
+                  failed = true;
+                  throw new Error("controlled lease release failure");
+                }
+                await result.lease.release();
+              },
+            },
+          };
+        });
+        return analyzing.launch(session);
+      },
+    };
+    const late = await peer(f, launcher);
+    const started = await late.client.start();
+    if (started.ok) throw new Error("the superseded initial save succeeded");
+    expect(started.error.cause).toBeInstanceOf(GhidraCheckpointSupersededError);
+    // The release failure stays on the startup failure, through the one
+    // accessor every consumer uses, rather than being dropped.
+    expect(started.error.cleanupFailure?.cause).toMatchObject({
+      message: "controlled lease release failure",
+    });
+    expect((await late.client.close()).ok).toBe(true);
   },
 );
 
