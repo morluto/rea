@@ -1154,3 +1154,28 @@ it.skipIf(process.platform === "win32")(
     expect(session.observation.source).toBeNull();
   },
 );
+
+it.skipIf(process.platform === "win32")(
+  "publishes when the first uncontended acquire finishes after the save wait",
+  async () => {
+    const f = await fixture();
+    const session = new GhidraCheckpoint(f.selection, f.resources, {
+      waitMs: 50,
+      source: "setting",
+    });
+    owners.push(session);
+    await session.admit("writer");
+    vi.mocked(acquireOwnedLease).mockImplementation(async () => ({
+      acquired: true,
+      lease: { release: async () => undefined },
+    }));
+    const now = vi.spyOn(performance, "now");
+    now.mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValue(50);
+    await session.publish(f.packed);
+    now.mockRestore();
+    expect(session.observation.source).toMatchObject({
+      kind: "initial-analysis",
+    });
+    expect(vi.mocked(acquireOwnedLease)).toHaveBeenCalledTimes(1);
+  },
+);

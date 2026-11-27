@@ -528,10 +528,11 @@ export class GhidraCheckpoint {
           throw cause;
       }
       if (acquired?.acquired === true) {
-        // A probe that started in time can finish after the wait, once the
-        // event loop runs it. The lease is kept for this session's cleanup
-        // and the wait is still the busy refusal: publication does not start.
-        if (deadline.expired()) {
+        // The wait bounds contention with a holder already observed. An
+        // uncontended acquire that finishes late is this session's own
+        // overhead, so publication still proceeds. A late acquire after a
+        // holder was seen keeps the lease for cleanup and does not publish.
+        if (heldBy !== undefined && deadline.expired()) {
           this.#lease = acquired.lease;
           throw new GhidraCheckpointBusyError(
             admission.directory,
