@@ -32,6 +32,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -261,6 +262,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
      */
     private final ArrayDeque<AheadTask> decompileAheadQueue = new ArrayDeque<>();
     private final LinkedHashMap<DecompileCacheKey, AheadTask> decompileAheadTasks = new LinkedHashMap<>();
+    /**
+     * Tasks a worker has started, including one a request has removed from
+     * the map while it waits. Disposal must still cancel that monitor.
+     */
+    private final Set<AheadTask> decompileAheadActive =
+        Collections.newSetFromMap(new IdentityHashMap<>());
     private int decompileAheadLiveWorkers;
     // Advanced by disposal: workers of an older generation stop, and their
     // results are never served, so an edit or option change cannot reuse them.
@@ -535,9 +542,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
     /**
      * Read frames while the handler works. This is the bridge's only second
      * thread: it never touches the Program or the writer. It cancels the
-     * monitor of the request a `cancel` frame names, disposes read-ahead for
-     * an `abandon_decompile_read_ahead` frame, and queues every other frame
-     * in arrival order, so requests still run one at a time.
+     * monitor of the request a `cancel` frame names, cancels read-ahead for
+     * an `abandon_decompile_read_ahead` frame without waiting for workers,
+     * and queues every other frame in arrival order, so requests still run
+     * one at a time.
      */
     private void readRequests(
             SessionDescriptor descriptor,
@@ -569,11 +577,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     }
                     if (request.method.equals("abandon_decompile_read_ahead")) {
                         requireKeys(request.params, Set.of());
-                        // Not queued behind the handler: a slow analysis
-                        // request must not keep a cancelled workflow's
-                        // workers running. This waits for those workers and
-                        // does not call Program APIs.
-                        disposeDecompileAhead();
+                        // Not queued behind the handler, and not waited on
+                        // here: the cancel frame for the request that is
+                        // waiting on a taken task must still be read inside
+                        // the client's cancel grace.
+                        cancelDecompileAhead();
                         continue;
                     }
                 }
@@ -6004,6 +6012,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private void completeDecompileAhead(AheadTask task, DecompileResults results) {
         task.done.complete(results);
         synchronized (decompileAheadLock) {
+            decompileAheadActive.remove(task);
             trimDecompileAhead();
         }
     }
@@ -6053,6 +6062,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     if (generation != decompileAheadGeneration) return;
                     task = decompileAheadQueue.poll();
                     task.started = true;
+                    decompileAheadActive.add(task);
                 }
                 DecompileResults results;
                 try {
@@ -6152,18 +6162,30 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     /**
+     * Cancel read-ahead without waiting. The socket reader uses this so a
+     * following cancel frame is not stuck behind the worker stop bound.
+     * A task already taken by a waiting request is still cancelled.
+     */
+    private void cancelDecompileAhead() {
+        synchronized (decompileAheadLock) {
+            decompileAheadGeneration++;
+            for (AheadTask task : decompileAheadTasks.values()) task.monitor.cancel();
+            for (AheadTask task : decompileAheadActive) task.monitor.cancel();
+            decompileAheadTasks.clear();
+            decompileAheadQueue.clear();
+            decompileAheadLock.notifyAll();
+        }
+    }
+
+    /**
      * Stop read-ahead and wait for its workers to exit: pooled decompilers
      * hold native state for the Program and options they opened with, so an
      * edit, an option change, a cancelled workflow or shutdown releases them.
      * Workers still opening see the new generation and close without work.
      */
     private void disposeDecompileAhead() {
+        cancelDecompileAhead();
         synchronized (decompileAheadLock) {
-            decompileAheadGeneration++;
-            for (AheadTask task : decompileAheadTasks.values()) task.monitor.cancel();
-            decompileAheadTasks.clear();
-            decompileAheadQueue.clear();
-            decompileAheadLock.notifyAll();
             long stopUntil = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(DECOMPILE_AHEAD_STOP_MILLIS);
             boolean interrupted = false;
             while (decompileAheadLiveWorkers > 0) {
