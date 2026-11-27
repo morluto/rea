@@ -313,6 +313,36 @@ describe("HopperClient response lifecycle", () => {
       message: "safe fake failure",
     });
   });
+
+  it("carries an out-of-segment RVA hint from the bridge into the projection", async () => {
+    const client = await startClient();
+
+    const result = await client.callTool("rva_hint_invalid_request");
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatchObject({
+      _tag: "HopperRemoteError",
+      diagnosticType: "invalid_request",
+      addressHint: {
+        rejected: "0xb000",
+        image_base: "0x140000000",
+        rva_candidate: "0x14000b000",
+      },
+    });
+    const projected = projectAnalysisError(result.error);
+    expect(projected).toMatchObject({
+      code: "invalid_request",
+      details: {
+        address_hint: {
+          rejected: "0xb000",
+          image_base: "0x140000000",
+          rva_candidate: "0x14000b000",
+        },
+      },
+      remediation: { action: expect.stringContaining("hint, not a rewrite") },
+    });
+  });
 });
 
 describe("HopperClient reply framing", () => {

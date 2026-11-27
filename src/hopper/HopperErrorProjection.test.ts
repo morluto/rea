@@ -151,6 +151,56 @@ describe("analysis error projection: Hopper provider failures", () => {
       message: expect.stringContaining("Hopper analysis failed"),
     });
   });
+
+  it("offers the bridge RVA reading as a labeled hint on an invalid_request", () => {
+    const projected = projectAnalysisError(
+      new HopperRemoteError(
+        -32000,
+        "Address is outside every segment; image base is 0x140000000; if this is an RVA, use 0x14000b000",
+        {
+          diagnosticType: "invalid_request",
+          operation: "xrefs",
+          addressHint: {
+            rejected: "0xb000",
+            image_base: "0x140000000",
+            rva_candidate: "0x14000b000",
+          },
+        },
+      ),
+    );
+
+    expect(projected).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+      details: {
+        address_hint: {
+          rejected: "0xb000",
+          image_base: "0x140000000",
+          rva_candidate: "0x14000b000",
+        },
+      },
+      remediation: { action: expect.stringContaining("hint, not a rewrite") },
+    });
+    expect(projected.message).toContain("if this is an RVA, use 0x14000b000");
+  });
+
+  it("keeps the plain invalid_request remediation when no RVA reading exists", () => {
+    const projected = projectAnalysisError(
+      new HopperRemoteError(-32000, "Address is outside every segment", {
+        diagnosticType: "invalid_request",
+        operation: "xrefs",
+      }),
+    );
+
+    expect(projected).toMatchObject({
+      code: "invalid_request",
+      remediation: {
+        action:
+          "Correct the reported address, document, or arguments and retry.",
+      },
+    });
+    expect(projected.details).not.toHaveProperty("address_hint");
+  });
 });
 
 describe("analysis error projection: Hopper startup failures", () => {

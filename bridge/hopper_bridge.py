@@ -216,7 +216,16 @@ class CapabilityUnavailableError(Exception):
 
 
 class InvalidRequestError(Exception):
-    """Caller input failed bridge request or operation validation."""
+    """Caller input failed bridge request or operation validation.
+
+    ``address_hint`` records an RVA reading of a rejected address that
+    would land inside a segment when relocated by the image base. It is
+    a fact for the caller to confirm, never a rewritten request.
+    """
+
+    def __init__(self, message, address_hint=None):
+        super().__init__(message)
+        self.address_hint = address_hint
 
 
 class SelectorNotFoundError(InvalidRequestError):
@@ -483,10 +492,44 @@ def _address(document, value=None):
     return _address_selection(document, value)[0]
 
 
+def _rva_address_hint(document, address):
+    """Offer an RVA reading of an address that no segment contains.
+
+    A caller passing an RVA (an IAT slot RVA from ``inspect_pe_imports``,
+    for example) lands below the image base and outside every segment.
+    When relocating it by the lowest segment start would place it inside
+    a segment, report the facts so the caller can confirm whether the
+    request meant an RVA; the request itself is never rewritten.
+    """
+    segments = document.getSegmentsList()
+    if not segments:
+        return None
+    image_base = min(_int_address(segment.getStartingAddress()) for segment in segments)
+    if image_base <= address:
+        return None
+    candidate = image_base + address
+    for segment in segments:
+        start = _int_address(segment.getStartingAddress())
+        if start <= candidate < start + _int_address(segment.getLength()):
+            return {
+                "rejected": _hex(address),
+                "image_base": _hex(image_base),
+                "rva_candidate": _hex(candidate),
+            }
+    return None
+
+
 def _segment(document, address):
     result = document.getSegmentAtAddress(address)
     if result is None:
-        raise InvalidRequestError("Address is outside every segment")
+        hint = _rva_address_hint(document, address)
+        if hint is None:
+            raise InvalidRequestError("Address is outside every segment")
+        raise InvalidRequestError(
+            "Address is outside every segment; image base is %s; if this is an RVA, use %s"
+            % (hint["image_base"], hint["rva_candidate"]),
+            hint,
+        )
     return result
 
 
@@ -1797,6 +1840,9 @@ def _safe_diagnostic(error):
     selector = getattr(error, "selector", None)
     if diagnostic_type == "selector_not_found" and selector is not None:
         diagnostic["selector"] = selector
+    address_hint = getattr(error, "address_hint", None)
+    if diagnostic_type == "invalid_request" and address_hint is not None:
+        diagnostic["address_hint"] = address_hint
     return diagnostic
 
 

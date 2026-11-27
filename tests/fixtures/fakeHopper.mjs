@@ -249,6 +249,23 @@ const server = createServer((socket) => {
             message: "Invalid bridge request JSON",
           },
         });
+      } else if (request.method === "rva_hint_invalid_request") {
+        // The real bridge rejects an out-of-segment address that relocates
+        // into a segment as an RVA with a structured hint beside the message.
+        send({
+          id: request.id,
+          error: {
+            code: -32000,
+            type: "invalid_request",
+            message:
+              "Address is outside every segment; image base is 0x140000000; if this is an RVA, use 0x14000b000",
+            address_hint: {
+              rejected: "0xb000",
+              image_base: "0x140000000",
+              rva_candidate: "0x14000b000",
+            },
+          },
+        });
       } else if (request.method === "unterminated_reply") {
         socket.write(
           `{"id":${request.id},"result":"${"x".repeat(request.params.bytes)}`,
