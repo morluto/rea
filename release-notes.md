@@ -141,6 +141,7 @@
 * **flutter:** give Flutter APK admission per-call apk_limits ([#14623](https://github.com/morluto/rea/issues/14623)) ([49e2eca](https://github.com/morluto/rea/commit/49e2eca4f971bc154badfae47ac80c7edcf97018))
 * **frida:** add optional limit and offset paging to list_frida_processes ([#13854](https://github.com/morluto/rea/issues/13854)) ([9ec23ad](https://github.com/morluto/rea/commit/9ec23ad03bb6feef0ad208170652858eabcb3e4a))
 * **ghidra:** admit RISC-V ilp32f ELF with a derived calling convention ([#8401](https://github.com/morluto/rea/issues/8401)) ([d8aadcc](https://github.com/morluto/rea/commit/d8aadcc69bc65412e1e1545e25f23256f6ab5d8b))
+* **ghidra:** define function-pointer members and typedefs ([#14889](https://github.com/morluto/rea/issues/14889)) ([8ff311b](https://github.com/morluto/rea/commit/8ff311b4ca0c67bfe45d811aecb6a68483a649af)), refs [#14887](https://github.com/morluto/rea/issues/14887)
 * **ghidra:** open M-profile raw images at a separate load base ([#7951](https://github.com/morluto/rea/issues/7951)) ([0b51ca0](https://github.com/morluto/rea/commit/0b51ca03de173fcf22059b5512647bc1461022df))
 * **ghidra:** set function signatures and define the types they use ([#14859](https://github.com/morluto/rea/issues/14859)) ([3a8a717](https://github.com/morluto/rea/commit/3a8a717b02edcd41b9dfbf64e82e5f7a761dfd8e))
 * **ida:** support the official Hex-Rays IDA MCP headlessly ([#4813](https://github.com/morluto/rea/issues/4813)) ([6822ebe](https://github.com/morluto/rea/commit/6822ebe1f3a4caec007fcd046754d66317d3349f))
