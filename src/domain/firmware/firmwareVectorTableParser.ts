@@ -17,6 +17,8 @@ import {
   type SharedHandlerGroup,
 } from "./firmwareVectorTable.js";
 
+/** InitialSP and Reset: the two words every ARM M-profile table begins with. */
+const ARM_REQUIRED_LEADING_SLOTS = 2;
 /** Number of architectural exception slots before external interrupt 0. */
 const ARM_EXTERNAL_IRQ_BASE = 16;
 const WORD_BYTES = 4;
@@ -454,14 +456,18 @@ export const parseFirmwareVectorTable = (
     options;
   const baseAddress =
     Number.parseInt(options.baseAddressHex.slice(2), 16) >>> 0;
+  // An ARM table starts with the initial stack pointer and Reset; a RISC-V
+  // Direct-mode table can be a single instruction.
+  const minimumBytes =
+    (architecture === "riscv" ? 1 : ARM_REQUIRED_LEADING_SLOTS) * WORD_BYTES;
   if (
     vectorTableOffset >= artifact.bytes ||
-    artifact.bytes - vectorTableOffset < 8
+    artifact.bytes - vectorTableOffset < minimumBytes
   ) {
     return err(
       malformedInput(
         "firmware-vector-table",
-        `vector_table_offset ${String(vectorTableOffset)} leaves fewer than 8 bytes in the ${String(artifact.bytes)}-byte image.`,
+        `vector_table_offset ${String(vectorTableOffset)} leaves fewer than ${String(minimumBytes)} bytes in the ${String(artifact.bytes)}-byte image.`,
       ),
     );
   }

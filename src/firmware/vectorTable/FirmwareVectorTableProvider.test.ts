@@ -106,7 +106,7 @@ describe("FirmwareVectorTableProvider", () => {
     expect(tooSmall.error.remediationAction).toBeUndefined();
     const projectedTooSmall = projectAnalysisError(tooSmall.error);
     expect(projectedTooSmall.remediation.action).toBe(
-      "inspect_firmware_vector_table reached its max_file_bytes budget of 32 bytes. Pass a larger max_file_bytes on the next inspect_firmware_vector_table call (at least 128 bytes; range 8..67108864 bytes), then retry.",
+      "inspect_firmware_vector_table reached its max_file_bytes budget of 32 bytes. Pass a larger max_file_bytes on the next inspect_firmware_vector_table call (at least 128 bytes; range 4..67108864 bytes), then retry.",
     );
     expect(projectedTooSmall.details).toMatchObject({
       limit: {

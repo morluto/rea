@@ -69,14 +69,7 @@ const parseIrqNumber = (raw: string): number | null => {
 
 interface IrqCandidateAccumulator {
   readonly items: SvdInterruptCandidate[];
-  readonly seenKeys: Set<string>;
 }
-
-const candidateIdentityKey = (
-  peripheralName: string,
-  interruptName: string,
-): string =>
-  `${String(peripheralName.length)}:${peripheralName}:${interruptName}`;
 
 /** Parse CMSIS-SVD `<peripheral><interrupt>` bindings without external DTDs. */
 export const parseSvdInterruptMap = (
@@ -119,6 +112,11 @@ export const parseSvdInterruptMap = (
   }
 
   const rawByIrq = new Map<number, IrqCandidateAccumulator>();
+  // Interrupt names already bound, per peripheral name and IRQ. A peripheral
+  // name is looked up once per <peripheral>, not once per <interrupt>, so a
+  // long name repeated by many duplicate declarations costs work linear in
+  // the document rather than name length times declaration count.
+  const boundByPeripheral = new Map<string, Map<number, Set<string>>>();
   const expandedBudget = new Budget(maxExpandedChars);
 
   const chargeExpandedChars = (
@@ -168,6 +166,11 @@ export const parseSvdInterruptMap = (
         if (skippedError !== null) return err(skippedError);
       }
       continue;
+    }
+    let boundByIrq = boundByPeripheral.get(periphName);
+    if (boundByIrq === undefined) {
+      boundByIrq = new Map();
+      boundByPeripheral.set(periphName, boundByIrq);
     }
     for (const intEl of interrupts) {
       const intName = trimmedText(xmlFirstChildNamed(intEl, "name"));
@@ -222,9 +225,8 @@ export const parseSvdInterruptMap = (
         continue;
       }
 
-      const key = candidateIdentityKey(periphName, intName);
-      let acc = rawByIrq.get(irqNumber);
-      if (acc?.seenKeys.has(key)) continue;
+      let boundNames = boundByIrq.get(irqNumber);
+      if (boundNames?.has(intName) === true) continue;
 
       // The `peripheral:interrupt` text an ambiguous binding reports; a
       // single binding reports less, so this bounds every emitted name.
@@ -232,6 +234,12 @@ export const parseSvdInterruptMap = (
       const limitError = chargeExpandedChars(entryChars);
       if (limitError !== null) return err(limitError);
 
+      if (boundNames === undefined) {
+        boundNames = new Set();
+        boundByIrq.set(irqNumber, boundNames);
+      }
+      boundNames.add(intName);
+      let acc = rawByIrq.get(irqNumber);
       if (acc === undefined) {
         acc = {
           items: [
@@ -241,11 +249,9 @@ export const parseSvdInterruptMap = (
               peripheralName: periphName,
             },
           ],
-          seenKeys: new Set([key]),
         };
         rawByIrq.set(irqNumber, acc);
       } else {
-        acc.seenKeys.add(key);
         acc.items.push({
           irqNumber,
           interruptName: intName,

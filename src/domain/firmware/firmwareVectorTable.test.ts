@@ -529,3 +529,46 @@ describe("parseFirmwareVectorTable variant rules", () => {
     expect(limitations).toContain("mcause codes 16 and up");
   });
 });
+
+describe("vector table size and SVD duplicate rules", () => {
+  it("decodes a single-instruction RISC-V table and still requires InitialSP and Reset on ARM", () => {
+    const jal = Buffer.alloc(4);
+    jal.writeUInt32LE(0x0080_006f, 0); // jal x0, +8
+    const options = {
+      artifact: { path: "/tmp/one.bin", sha256: "c".repeat(64), bytes: 4 },
+      baseAddressHex: "0x40000000",
+      vectorTableOffset: 0,
+      maxEntries: 1,
+      tableBytes: jal,
+      svdSupplied: false,
+      svdMap: new Map(),
+      svdSkipped: [],
+    } as const;
+    const riscv = parseFirmwareVectorTable({
+      ...options,
+      architecture: "riscv",
+    });
+    expect(riscv.ok && riscv.value.trap_entry_address).toBe("0x40000008");
+    const arm = parseFirmwareVectorTable({
+      ...options,
+      architecture: "armv7-m",
+    });
+    expect(arm.ok).toBe(false);
+    if (!arm.ok) expect(arm.error.message).toContain("fewer than 8 bytes");
+  });
+
+  it("binds repeated declarations once, including across <peripheral> elements with one name", () => {
+    const repeats =
+      "<interrupt><name>IRQ</name><value>3</value></interrupt>".repeat(3);
+    const svd = `<device><peripherals>
+      <peripheral><name>UART</name>${repeats}</peripheral>
+      <peripheral><name>UART</name>${repeats}<interrupt><name>ERR</name><value>3</value></interrupt></peripheral>
+    </peripherals></device>`;
+    const parsed = parseSvdInterruptMap(svd);
+    if (!parsed.ok) throw new Error(parsed.error.message);
+    expect(parsed.value.byIrq.get(3)?.ambiguousNames).toEqual([
+      "UART:IRQ",
+      "UART:ERR",
+    ]);
+  });
+});

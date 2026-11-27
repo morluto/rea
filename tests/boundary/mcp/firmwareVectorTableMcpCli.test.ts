@@ -105,7 +105,7 @@ describe("inspect_firmware_vector_table CLI and MCP parity", () => {
       error: {
         remediation: {
           action:
-            "inspect_firmware_vector_table reached its max_file_bytes budget of 16 bytes. Pass a larger max_file_bytes on the next inspect_firmware_vector_table call (at least 128 bytes; range 8..67108864 bytes), then retry.",
+            "inspect_firmware_vector_table reached its max_file_bytes budget of 16 bytes. Pass a larger max_file_bytes on the next inspect_firmware_vector_table call (at least 128 bytes; range 4..67108864 bytes), then retry.",
         },
         details: {
           refusal: {

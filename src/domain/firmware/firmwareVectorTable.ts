@@ -42,13 +42,13 @@ export const MAX_SVD_EXPANDED_CHARS = 8 * 1024 * 1024;
 
 export const FIRMWARE_VECTOR_TABLE_BUDGETS = {
   max_entries: {
-    minimum: 2,
+    minimum: 1,
     maximum: MAX_VECTOR_TABLE_ENTRIES,
     default_value: DEFAULT_VECTOR_TABLE_MAX_ENTRIES,
     unit: "count",
   },
   max_file_bytes: {
-    minimum: 8,
+    minimum: 4,
     maximum: MAX_VECTOR_TABLE_FILE_BYTES,
     default_value: DEFAULT_VECTOR_TABLE_MAX_FILE_BYTES,
     unit: "bytes",
