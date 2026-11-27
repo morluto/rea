@@ -102,6 +102,7 @@ export const macosPkgMetadataSchema = z.strictObject({
           path: z.string().nullable(),
           cf_bundle_identifier: z.string().nullable(),
           cf_bundle_version: z.string().nullable(),
+          cf_bundle_short_version: z.string().exactOptional(),
         }),
       ),
       preinstall: z.string().nullable(),

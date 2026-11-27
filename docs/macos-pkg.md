@@ -21,7 +21,9 @@ identifiers, versions and `installKBytes`, the choices outline,
 scripts are present. Script bodies are reported by byte length only and are
 never executed. Each `PackageInfo` contributes identifier, version,
 install-location, auth, `postinstall-action`, bundle entries, and declared
-preinstall/postinstall names.
+preinstall/postinstall names. A bundle with a declared `CFBundleShortVersionString`
+reports it as `cf_bundle_short_version` alongside the build version in
+`cf_bundle_version`.
 
 `Scripts` and `Payload` members that are gzip-compressed odc cpio (`070707`)
 are expanded into nested occurrences (path, mode, uid/gid, size, symlink

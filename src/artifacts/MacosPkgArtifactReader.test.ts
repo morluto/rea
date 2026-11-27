@@ -12,6 +12,7 @@ import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInv
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../contracts/artifactComparisonExample.js";
 import { compareArtifacts } from "../domain/artifactComparison.js";
 import { createEvidence } from "../domain/evidence.js";
+import { macosPkgMetadataSchema } from "../domain/formatMetadata/macosPkgMetadata.js";
 import {
   MACOS_PKG_MAX_CPIO_MEMBERS,
   MACOS_PKG_MAX_METADATA_RECORDS,
@@ -108,6 +109,42 @@ it("round-trips odc cpio members including a symlink", () => {
       symlinkTarget: "hello.txt",
     },
   ]);
+});
+
+it("reports an Apple bundle's release version separately from its build version", async () => {
+  const { reader } = await entriesOf(
+    buildXar({
+      files: [
+        {
+          path: "PackageInfo",
+          bytes: Buffer.from(`<pkg-info identifier="org.example.installer">
+  <bundle id="org.example.app" path="./App.app" CFBundleShortVersionString="1.2.3" CFBundleVersion="7"/>
+  <bundle id="org.example.helper" path="./Helper.app" CFBundleVersion="14"/>
+</pkg-info>`),
+        },
+      ],
+    }),
+  );
+  try {
+    const metadata = macosPkgMetadataSchema.parse(reader.formatMetadata());
+    expect(metadata.packages[0]?.bundles).toEqual([
+      {
+        id: "org.example.app",
+        path: "./App.app",
+        cf_bundle_identifier: null,
+        cf_bundle_version: "7",
+        cf_bundle_short_version: "1.2.3",
+      },
+      {
+        id: "org.example.helper",
+        path: "./Helper.app",
+        cf_bundle_identifier: null,
+        cf_bundle_version: "14",
+      },
+    ]);
+  } finally {
+    await reader.close();
+  }
 });
 
 it("inventories a product archive's Distribution, scripts and payload", async () => {
