@@ -550,6 +550,7 @@ it("indexes 25,000 Mach-O load regions and sections without quadratic stalls and
   const container: BinaryContainer = {
     format: "macho",
     macho_cpu_type: 0x0100000c,
+    macho_segments: [],
     architecture: "arm64",
     bits: 64,
     byte_order: "little",
@@ -712,6 +713,7 @@ it.each([
     const container: BinaryContainer = {
       format: "macho",
       macho_cpu_type: 0x0100000c,
+      macho_segments: [],
       architecture: "arm64",
       bits: 64,
       byte_order: "little",

@@ -13,8 +13,10 @@ import {
   ARM64_DELTAS,
   MACHO_TEXT_BASE,
   X64_DELTAS,
+  MACHO_ARM32_TEXT_BASE,
   arm64FunctionStartsImage,
   functionStartAddresses,
+  machoArm32FunctionStartsImage,
   machoFunctionStartsImage,
   machoFunctionStartsUniversal,
   x64FunctionStartsImage,
@@ -766,5 +768,149 @@ it("stops decoding data-in-code entries when the read is cancelled", async () =>
   });
   await expect(parse(bytes)).resolves.toMatchObject({
     coverage: { total_data_in_code: 5000 },
+  });
+});
+
+it("clears the Thumb tag from armv7 starts and reports it separately", async () => {
+  // ld64 encodes Thumb starts with bit 0 set and takes each delta from the
+  // tagged value: 0x2001, 0x2021, then the ARM start 0x2040. LLDB reports the
+  // code addresses 0x2000, 0x2020 and 0x2040.
+  const base = BigInt(MACHO_ARM32_TEXT_BASE);
+  const report = machoFunctionStartsSchema.parse(
+    await parse(machoArm32FunctionStartsImage([0x2001n - base, 0x20n, 0x1fn])),
+  );
+  expect(report).toMatchObject({ architecture: "arm", bits: 32 });
+  expect(report.coverage).toEqual({
+    status: "complete",
+    total_starts: 3,
+    total_data_in_code: 0,
+    ...quiet,
+  });
+  expect(report.starts).toEqual([
+    { index: 0, vmaddr: "0x2000", thumb: true, section: null, issues: [] },
+    { index: 1, vmaddr: "0x2020", thumb: true, section: null, issues: [] },
+    { index: 2, vmaddr: "0x2040", thumb: false, section: null, issues: [] },
+  ]);
+  // Other architectures carry no ISA tag, so they omit the field.
+  const arm64 = await parse(arm64FunctionStartsImage());
+  expect(arm64.starts.every((start) => !("thumb" in start))).toBe(true);
+});
+
+it("anchors deltas on a declared __TEXT with no file bytes", async () => {
+  // llvm-objdump takes the first __TEXT segment command's vmaddr whether or
+  // not it maps file bytes. Code lives in a file-backed __TEXT_EXEC.
+  const exec = MACHO_TEXT_BASE + 0x10000n;
+  const report = await parse(
+    machoFunctionStartsImage({
+      textFileSize: 0,
+      extraSegments: [
+        {
+          name: "__TEXT_EXEC",
+          address: exec,
+          memorySize: 0x1000,
+          fileOffset: 0x1000,
+          fileSize: 0x1000,
+          protection: 5,
+        },
+      ],
+      starts: { deltas: [0x10000n, 0x40n] },
+    }),
+  );
+  expect(report.coverage).toMatchObject({
+    status: "complete",
+    total_starts: 2,
+    missing_text_anchor: 0,
+    out_of_text: 0,
+  });
+  expect(report.starts.map((start) => start.vmaddr)).toEqual([
+    hex(exec),
+    hex(exec + 0x40n),
+  ]);
+});
+
+it("builds only the requested page and still resolves owners on later pages", async () => {
+  const deltas = [0x1000n, ...Array.from({ length: 299 }, () => 4n)];
+  const entries = Array.from({ length: 50 }, (_, index) => ({
+    offset: 0x1000 + index * 24 + 2,
+    length: 2,
+    kind: 1,
+  }));
+  const image = machoFunctionStartsImage({
+    starts: { deltas },
+    data: { entries },
+  });
+  const counts = await parse(image, { limit: 0 });
+  expect(counts.starts).toEqual([]);
+  expect(counts.data_in_code_entries).toEqual([]);
+  expect(counts.coverage).toMatchObject({
+    total_starts: 300,
+    total_data_in_code: 50,
+  });
+  const page = await parse(image, { offset: 40, limit: 5 });
+  expect(page.starts.map((start) => start.index)).toEqual([40, 41, 42, 43, 44]);
+  expect(page.starts[0]!.vmaddr).toBe(hex(MACHO_TEXT_BASE + 0x1000n + 160n));
+  // Entry k sits at 0x1000 + 24k + 2, so its owner is start 6k.
+  expect(
+    page.data_in_code_entries.map((entry) => [entry.index, entry.owner]),
+  ).toEqual(
+    [40, 41, 42, 43, 44].map((index) => [
+      index,
+      {
+        index: index * 6,
+        vmaddr: hex(MACHO_TEXT_BASE + 0x1000n + BigInt(index * 24)),
+      },
+    ]),
+  );
+  // The same entries are found whatever the page size.
+  const whole = await parse(image, { limit: 4096 });
+  expect(whole.data_in_code_entries.slice(40, 45)).toEqual(
+    page.data_in_code_entries,
+  );
+  expect(whole.starts.slice(40, 45)).toEqual(page.starts);
+});
+
+it("checks starts against many executable segments with one index lookup each", async () => {
+  // Segments are disjoint and only the last covers the starts, which a
+  // per-start scan of every segment would reach last.
+  const segments = Array.from({ length: 150 }, (_, index) => ({
+    name: `__X${String(index)}`,
+    address: MACHO_TEXT_BASE + 0x100000n + BigInt(index) * 0x1000n,
+    memorySize: 0x1000,
+    fileOffset: 0x1000,
+    fileSize: 0x100,
+    protection: 5,
+  }));
+  const last = segments.at(-1)!.address;
+  const report = await parse(
+    machoFunctionStartsImage({
+      extraSegments: segments,
+      starts: {
+        deltas: [
+          last - MACHO_TEXT_BASE,
+          ...Array.from({ length: 63 }, () => 8n),
+        ],
+      },
+    }),
+  );
+  expect(report.coverage).toMatchObject({
+    status: "complete",
+    total_starts: 64,
+    out_of_text: 0,
+  });
+  expect(report.starts.at(-1)!.vmaddr).toBe(hex(last + 63n * 8n));
+});
+
+it("wraps a 32-bit image's starts at 2^32, not 2^64", async () => {
+  const base = BigInt(MACHO_ARM32_TEXT_BASE);
+  const report = await parse(
+    machoArm32FunctionStartsImage([0x1000n, (1n << 32n) - base - 0x1000n]),
+  );
+  expect(report.starts).toMatchObject([
+    { index: 0, vmaddr: "0x2000", issues: [] },
+    { index: 1, vmaddr: "0x0", issues: ["wrapped", "out_of_text"] },
+  ]);
+  expect(report.coverage).toMatchObject({
+    status: "partial",
+    non_monotonic: 1,
   });
 });

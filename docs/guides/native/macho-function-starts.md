@@ -21,8 +21,13 @@ paths must be absolute.
   `datasize`, container `file_offset`, and whether that range sits in
   `__LINKEDIT`. `status` is `present` or `absent`.
 - Start addresses are absolute VM addresses. The first delta is added to the
-  `__TEXT` segment `vmaddr`. A zero delta ends the list. Zero bytes after that
-  terminator are padding.
+  `vmaddr` of the first declared `__TEXT` segment, which need not have file
+  bytes, as `llvm-objdump --function-starts` does. A zero delta ends the list.
+  Zero bytes after that terminator are padding. A sum past the image's 32- or
+  64-bit address space is a wrapped start.
+- On 32-bit ARM, ld64 sets bit 0 of a Thumb start and takes the next delta
+  from that tagged value. `vmaddr` clears that bit, as LLDB does, and `thumb`
+  records whether it was set. Other architectures omit `thumb`.
 - Each start names the section that contains it, such as `__text`.
 - Each data-in-code entry has the `data_in_code_entry` file `offset` from the
   slice `mach_header`, its VM address, `length`, and `kind`:
@@ -44,7 +49,12 @@ paths must be absolute.
   those counters makes `coverage.status` `partial`.
 - `page` records `kind` (`all`, `starts`, or `data`), `offset`, `limit`, and
   the next offset of each selected table. The same offset and limit apply to
-  each selected table. `limit: 0` returns counts only.
+  each selected table. `limit: 0` returns counts only. Every entry is checked
+  and counted, but only the returned page is built, so a small page of a large
+  table stays small in memory.
+- The Evidence file ranges of the two tables stay inside the selected slice.
+  A table declared past the slice's end keeps its declared `dataoff` and
+  `file_offset`, but contributes no range in another slice's bytes.
 
 ## Reading the result
 

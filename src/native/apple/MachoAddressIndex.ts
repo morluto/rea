@@ -155,3 +155,35 @@ export const indexFileOffsets = (
   }
   return { bounds, values };
 };
+
+/**
+ * Index which addresses at least one of `ranges` covers. Overlaps and
+ * adjacent ranges merge, and a lookup is one binary search, so a caller
+ * checking many addresses does not scan every range for each one.
+ */
+export const indexCoveredRanges = (
+  ranges: readonly { readonly address: bigint; readonly size: bigint }[],
+): IntervalIndex<boolean> => {
+  const events = ranges
+    .filter((range) => range.size > 0n)
+    .flatMap((range) => [
+      { point: range.address, step: 1 },
+      { point: range.address + range.size, step: -1 },
+    ])
+    .sort((left, right) =>
+      left.point < right.point ? -1 : left.point > right.point ? 1 : 0,
+    );
+  const bounds = uniqueSorted(events.map((event) => event.point));
+  const values: boolean[] = [];
+  let depth = 0;
+  let next = 0;
+  for (let index = 0; index + 1 < bounds.length; index += 1) {
+    const point = bounds[index] as bigint;
+    while (next < events.length && events[next]!.point === point) {
+      depth += events[next]!.step;
+      next += 1;
+    }
+    values.push(depth > 0);
+  }
+  return { bounds, values };
+};

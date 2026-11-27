@@ -151,7 +151,13 @@ const dataIssueSchema = z.enum([
 
 export const machoFunctionStartSchema = z.strictObject({
   index: uint,
+  /** Code address. On 32-bit ARM the Thumb tag in bit 0 is cleared here. */
   vmaddr: hexAddress,
+  /**
+   * 32-bit ARM only: bit 0 of the encoded start was set, marking Thumb code.
+   * Other architectures omit it, because their starts carry no ISA tag.
+   */
+  thumb: z.boolean().optional(),
   section: z.string().min(1).nullable(),
   issues: z.array(startIssueSchema),
 });

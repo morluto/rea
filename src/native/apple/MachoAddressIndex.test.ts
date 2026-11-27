@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  indexCoveredRanges,
   indexFileOffsets,
   indexSmallestSections,
   lookupInterval,
@@ -78,5 +79,28 @@ describe("indexFileOffsets", () => {
       { address: 0x1080n, offset: 0x80, size: 0x100 },
     ]);
     expect(lookupInterval(index, 0x90n)).toBe(0x1000n);
+  });
+});
+
+describe("indexCoveredRanges", () => {
+  it("matches a linear scan over overlapping, adjacent, empty and disjoint ranges", () => {
+    const ranges = [
+      { address: 0x1000n, size: 0x100n },
+      { address: 0x1080n, size: 0x100n },
+      { address: 0x1180n, size: 0x80n },
+      { address: 0x2000n, size: 0n },
+      { address: 0x3000n, size: 0x10n },
+    ];
+    const index = indexCoveredRanges(ranges);
+    for (let point = 0xf00n; point < 0x3100n; point += 0x8n) {
+      const scanned = ranges.some(
+        (range) => point >= range.address && point < range.address + range.size,
+      );
+      expect(
+        lookupInterval(index, point) === true,
+        `0x${point.toString(16)}`,
+      ).toBe(scanned);
+    }
+    expect(indexCoveredRanges([])).toEqual({ bounds: [], values: [] });
   });
 });

@@ -201,11 +201,6 @@ export interface LoadRegion {
     readonly current: number;
     readonly maximum: number;
   };
-  /** Mach-O segment name and declared vmaddr; other formats omit it. */
-  readonly macho_segment?: {
-    readonly name: string;
-    readonly address: bigint;
-  };
 }
 
 /** Parsed section facts; consumer metadata validity is separate from native structure. */
@@ -302,8 +297,28 @@ export type BinaryContainer = BinaryContainerFacts &
         };
       }
     | { readonly format: "pe" }
-    | { readonly format: "macho"; readonly macho_cpu_type: number }
+    | {
+        readonly format: "macho";
+        readonly macho_cpu_type: number;
+        /**
+         * Every LC_SEGMENT/LC_SEGMENT_64 in declaration order, including
+         * segments with no file bytes. `load_regions` holds only the
+         * file-backed ones, so whether a segment was declared is read here.
+         */
+        readonly macho_segments: readonly MachoSegmentDeclaration[];
+      }
   );
+
+/** One declared Mach-O segment command, whether or not it has file bytes. */
+export interface MachoSegmentDeclaration {
+  readonly name: string;
+  readonly address: bigint;
+  readonly memory_size: bigint;
+  readonly file_offset: bigint;
+  readonly file_size: bigint;
+  /** Initial VM protection (`initprot`). */
+  readonly protection: number;
+}
 
 /** All declared file-backed image memory, including PE headers at the image base. */
 export const imageFileMappings = (

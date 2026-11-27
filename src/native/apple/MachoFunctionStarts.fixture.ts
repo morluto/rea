@@ -391,3 +391,68 @@ export const x64FunctionStartsImage = (): Buffer =>
       ],
     },
   });
+
+/** __TEXT vmaddr of the 32-bit ARM image. */
+export const MACHO_ARM32_TEXT_BASE = 0x1000;
+
+const segment32 = (
+  name: string,
+  address: number,
+  memorySize: number,
+  fileOffset: number,
+  fileSize: number,
+  protection: number,
+): Buffer => {
+  const bytes = Buffer.alloc(56);
+  bytes.writeUInt32LE(0x1, 0);
+  bytes.writeUInt32LE(56, 4);
+  name16(name).copy(bytes, 8);
+  bytes.writeUInt32LE(address, 24);
+  bytes.writeUInt32LE(memorySize, 28);
+  bytes.writeUInt32LE(fileOffset, 32);
+  bytes.writeUInt32LE(fileSize, 36);
+  bytes.writeUInt32LE(protection, 40);
+  bytes.writeUInt32LE(protection, 44);
+  return bytes;
+};
+
+/**
+ * Thin armv7 executable whose LC_FUNCTION_STARTS holds `deltas`. ld64 sets
+ * bit 0 of a Thumb start before taking the next delta, so callers pass the
+ * deltas between those tagged values.
+ */
+export const machoArm32FunctionStartsImage = (
+  deltas: readonly bigint[],
+): Buffer => {
+  const file = Buffer.alloc(MACHO_FUNCTION_STARTS_FILE_BYTES);
+  const payload = encodeStarts({ deltas });
+  place(file, LINKEDIT_OFFSET, payload);
+  const commands = [
+    segment32(
+      "__TEXT",
+      MACHO_ARM32_TEXT_BASE,
+      TEXT_VM_SIZE,
+      0,
+      TEXT_VM_SIZE,
+      5,
+    ),
+    segment32(
+      "__LINKEDIT",
+      MACHO_ARM32_TEXT_BASE + LINKEDIT_OFFSET,
+      0x1000,
+      LINKEDIT_OFFSET,
+      0x1000,
+      1,
+    ),
+    linkeditCommand(0x26, LINKEDIT_OFFSET, payload.length, 16),
+  ];
+  const commandBytes = Buffer.concat(commands);
+  file.writeUInt32LE(0xfeedface, 0);
+  file.writeUInt32LE(12, 4);
+  file.writeUInt32LE(9, 8);
+  file.writeUInt32LE(2, 12);
+  file.writeUInt32LE(commands.length, 16);
+  file.writeUInt32LE(commandBytes.length, 20);
+  commandBytes.copy(file, 28);
+  return file;
+};

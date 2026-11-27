@@ -70,24 +70,27 @@ export class MachoFunctionStartsService {
   }
 }
 
+/**
+ * Observed file ranges of the two LINKEDIT tables, intersected with the
+ * selected slice. A table that a malformed slice declares past its own end is
+ * not evidence in the next slice's bytes; the command fields keep the declared
+ * offsets.
+ */
 const locations = (report: MachoFunctionStarts) => {
+  const sliceStart = report.selected_slice?.offset ?? 0;
+  const sliceEnd = Math.min(
+    report.artifact.bytes,
+    report.selected_slice === undefined
+      ? report.artifact.bytes
+      : report.selected_slice.offset + report.selected_slice.byte_length,
+  );
   const ranges = [];
   for (const command of [report.function_starts, report.data_in_code]) {
-    if (
-      command.file_offset === null ||
-      command.datasize === null ||
-      command.datasize === 0 ||
-      command.file_offset >= report.artifact.bytes
-    )
-      continue;
-    ranges.push({
-      kind: "file-offset-range" as const,
-      start: command.file_offset,
-      end: Math.min(
-        report.artifact.bytes,
-        command.file_offset + command.datasize,
-      ),
-    });
+    if (command.file_offset === null || command.datasize === null) continue;
+    const start = Math.max(command.file_offset, sliceStart);
+    const end = Math.min(sliceEnd, command.file_offset + command.datasize);
+    if (start >= end) continue;
+    ranges.push({ kind: "file-offset-range" as const, start, end });
   }
   return ranges;
 };

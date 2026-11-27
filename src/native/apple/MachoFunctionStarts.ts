@@ -16,6 +16,7 @@ import {
   BinaryResourceFailure,
 } from "../../domain/binaryContainer.js";
 import { firstKeyed, keyedBy } from "../../domain/keyedCollection.js";
+import type { MachoSegmentDeclaration } from "../../domain/binaryContainer.js";
 import { readLeb128, ULEB64 } from "../../domain/leb128.js";
 import {
   MACHO_FUNCTION_STARTS_LIMITATIONS as TEXT,
@@ -25,8 +26,8 @@ import {
   type MachoFunctionStart,
   type MachoFunctionStarts,
 } from "../../domain/native/machoFunctionStarts.js";
-import { lastAtOrBelow } from "../../domain/virtualFileMapping.js";
 import {
+  indexCoveredRanges,
   indexFileOffsets,
   indexSmallestSections,
   lookupInterval,
@@ -45,7 +46,11 @@ export const MACHO_FUNCTION_STARTS_ENTRY_LIMIT = "entries";
 const LINKEDIT_COMMAND_BYTES = 16;
 const DATA_ENTRY_BYTES = 8;
 const YIELD_EVERY = 4096;
-const ADDRESS_MASK = (1n << 64n) - 1n;
+/** Largest address a 32- or 64-bit image can name; a larger sum wrapped. */
+const addressMask = (bits: 32 | 64): bigint => (1n << BigInt(bits)) - 1n;
+/** CPU_TYPE_ARM. Its function starts tag Thumb code with bit 0. */
+const CPU_TYPE_ARM = 12;
+const NO_ISSUES: MachoFunctionStart["issues"] = Object.freeze([]) as never;
 
 const DICE_KIND_NAMES = {
   1: "DICE_KIND_DATA",
@@ -56,12 +61,6 @@ const DICE_KIND_NAMES = {
 } as const;
 
 const hex = (value: bigint): string => `0x${value.toString(16)}`;
-
-/** Declared VM range of one executable segment. */
-interface ExecutableRange {
-  readonly address: bigint;
-  readonly memorySize: bigint;
-}
 
 /** File range of the __LINKEDIT segment within the selected slice. */
 interface LinkeditRange {
@@ -76,8 +75,12 @@ interface LinkeditCommand {
   readonly dataSize: number | null;
 }
 
-interface StartFact {
+/** One decoded start, handed to a walk visitor without being retained. */
+interface StartVisit {
+  readonly index: number;
+  /** Code address: the accumulated value with any Thumb tag cleared. */
   readonly address: bigint;
+  readonly thumb: boolean;
   readonly issues: MachoFunctionStart["issues"];
 }
 
@@ -97,12 +100,6 @@ const absentCommand = {
   file_offset: null,
   in_linkedit: null,
 };
-
-const containsAddress = (
-  start: bigint,
-  size: bigint,
-  address: bigint,
-): boolean => address >= start && address < start + size;
 
 const smallestSection = (
   index: IntervalIndex<SectionSpan | null>,
@@ -221,24 +218,28 @@ const loadTable = async (
   };
 };
 
-const executableAddress = (
-  segments: readonly ExecutableRange[],
-  address: bigint,
-): boolean =>
-  segments.some((segment) =>
-    containsAddress(segment.address, segment.memorySize, address),
-  );
-
+/**
+ * Walk the ULEB128 deltas once. Each delta is added to the previous
+ * accumulated value, the first to the __TEXT vmaddr, as ld64 encodes it and
+ * llvm-objdump decodes it. On 32-bit ARM, ld64 sets bit 0 for a Thumb start
+ * before taking the next delta, so the accumulator keeps that bit and only the
+ * reported address clears it, as LLDB does. `visit` sees every start, and
+ * the walk retains none, so its memory does not grow with the table.
+ */
 const walkStarts = async (
-  bytes: Uint8Array,
-  textBase: bigint,
-  segments: readonly ExecutableRange[],
-  collect: boolean,
+  table: {
+    readonly bytes: Uint8Array;
+    readonly textBase: bigint;
+    readonly executable: IntervalIndex<boolean>;
+    readonly thumbTagged: boolean;
+    readonly addressLimit: bigint;
+  },
   signal: AbortSignal | undefined,
-): Promise<WalkResult & { readonly starts: readonly StartFact[] }> => {
-  const starts: StartFact[] = [];
+  visit: (start: StartVisit) => void,
+): Promise<WalkResult> => {
+  const { bytes, textBase, executable, thumbTagged, addressLimit } = table;
   let offset = 0;
-  let previous: bigint | null = null;
+  let previous: bigint = textBase;
   let count = 0;
   let truncated = false;
   let overflow = false;
@@ -266,24 +267,28 @@ const walkStarts = async (
       }
       break;
     }
-    const base: bigint = previous ?? textBase;
-    const sum: bigint = base + read.value;
-    const address: bigint = sum & ADDRESS_MASK;
-    const didWrap = sum > ADDRESS_MASK;
-    const outside = !executableAddress(segments, address);
-    const issues: MachoFunctionStart["issues"] = [];
-    if (didWrap) {
-      wrapped = true;
-      issues.push("wrapped");
+    const sum: bigint = previous + read.value;
+    const tagged: bigint = sum & addressLimit;
+    const thumb = thumbTagged && (tagged & 1n) === 1n;
+    const address = thumb ? tagged & ~1n : tagged;
+    const didWrap = sum > addressLimit;
+    const outside = lookupInterval(executable, address) !== true;
+    let issues = NO_ISSUES;
+    if (didWrap || outside) {
+      issues = [];
+      if (didWrap) {
+        wrapped = true;
+        issues.push("wrapped");
+      }
+      if (outside) {
+        outOfText = true;
+        issues.push("out_of_text");
+      }
     }
-    if (outside) {
-      outOfText = true;
-      issues.push("out_of_text");
-    }
+    visit({ index: count, address, thumb, issues });
     count += 1;
-    if (collect) starts.push({ address, issues });
     if (didWrap || outside) break;
-    previous = address;
+    previous = tagged;
   }
   return {
     count,
@@ -292,7 +297,6 @@ const walkStarts = async (
     wrapped,
     outOfText,
     trailingNonzero,
-    starts,
   };
 };
 
@@ -310,52 +314,28 @@ const fileOffsetAddress = (
   return delta === undefined || delta === null ? null : BigInt(offset) + delta;
 };
 
-/**
- * Addresses `ownerOf` may search. Decoding records a wrapped start and then
- * stops, so that address stays in the list and the list is no longer strictly
- * increasing. The prefix before the wrapped start keeps its original indexes.
- */
-const ownerSearchAddresses = (
-  starts: readonly {
-    readonly vmaddr: bigint;
-    readonly issues: MachoFunctionStart["issues"];
-  }[],
-): readonly bigint[] => {
-  const wrappedAt = starts.findIndex((start) =>
-    start.issues.includes("wrapped"),
-  );
-  const prefix = wrappedAt < 0 ? starts : starts.slice(0, wrappedAt);
-  return prefix.map((start) => start.vmaddr);
-};
-
-/**
- * Greatest start at or before `vmaddr`. `startAddresses` is the strictly
- * increasing prefix from `ownerSearchAddresses`: a wrapped start is omitted.
- * Leaving it in the list makes this binary search return that low address as
- * the owner of later entries.
- */
-const ownerOf = (
-  startAddresses: readonly bigint[],
-  vmaddr: bigint,
-): MachoDataInCode["owner"] => {
-  const index = lastAtOrBelow(startAddresses, vmaddr);
-  return index < 0
-    ? null
-    : { index, vmaddr: hex(startAddresses[index] as bigint) };
-};
-
 const kindOf = (kind: number): MachoDataInCode["kind"] =>
   DICE_KIND_NAMES[kind as keyof typeof DICE_KIND_NAMES] ?? kind;
 
+/** A data-in-code entry on the returned page, before its owner is resolved. */
+type PagedDataInCode = Omit<MachoDataInCode, "owner"> & {
+  readonly address: bigint | null;
+};
+
+/**
+ * Check every data-in-code entry once, counting its issues, and build result
+ * objects only for entries on the requested page.
+ */
 const decodeData = async (
   bytes: Buffer,
   littleEndian: boolean,
   mappings: IntervalIndex<bigint | null>,
   sections: IntervalIndex<SectionSpan | null>,
-  startAddresses: readonly bigint[],
+  page: { readonly from: number; readonly to: number },
   signal: AbortSignal | undefined,
 ): Promise<{
-  readonly entries: MachoDataInCode[];
+  readonly count: number;
+  readonly page: readonly PagedDataInCode[];
   readonly crossings: number;
   readonly unsorted: number;
   readonly unmapped: number;
@@ -363,7 +343,7 @@ const decodeData = async (
 }> => {
   const reader = new BinaryReader(bytes, littleEndian, "macho");
   const count = Math.floor(bytes.length / DATA_ENTRY_BYTES);
-  const entries: MachoDataInCode[] = [];
+  const entries: PagedDataInCode[] = [];
   let crossings = 0;
   let unsorted = 0;
   let unmapped = 0;
@@ -377,54 +357,95 @@ const decodeData = async (
     const at = index * DATA_ENTRY_BYTES;
     const offset = reader.u32(at);
     const length = reader.u16(at + 4);
-    const kind = reader.u16(at + 6);
     const vmaddr = fileOffsetAddress(mappings, offset);
-    const issues: MachoDataInCode["issues"] = [];
-    if (previous !== null && offset <= previous) {
-      unsorted += 1;
-      issues.push("out_of_order");
-    }
+    const outOfOrder = previous !== null && offset <= previous;
     previous = offset;
-    if (length === 0) {
-      zeroLength += 1;
-      issues.push("zero_length");
-    }
-    let section: string | null = null;
-    if (vmaddr === null) {
-      unmapped += 1;
-      issues.push("unmapped");
-    } else {
-      const span = smallestSection(sections, vmaddr);
-      section = span?.name ?? null;
-      const contained =
-        length === 0 ||
-        (span !== null && vmaddr + BigInt(length) <= span.address + span.size);
-      if (!contained) {
-        crossings += 1;
-        issues.push("crosses_section");
-      }
-    }
-    const owner = vmaddr === null ? null : ownerOf(startAddresses, vmaddr);
+    const span = vmaddr === null ? null : smallestSection(sections, vmaddr);
+    const crosses =
+      vmaddr !== null &&
+      length !== 0 &&
+      (span === null || vmaddr + BigInt(length) > span.address + span.size);
+    if (outOfOrder) unsorted += 1;
+    if (length === 0) zeroLength += 1;
+    if (vmaddr === null) unmapped += 1;
+    if (crosses) crossings += 1;
+    if (index < page.from || index >= page.to) continue;
+    const issues: MachoDataInCode["issues"] = [];
+    if (outOfOrder) issues.push("out_of_order");
+    if (length === 0) issues.push("zero_length");
+    if (vmaddr === null) issues.push("unmapped");
+    if (crosses) issues.push("crosses_section");
     entries.push({
       index,
       offset,
       vmaddr: vmaddr === null ? null : hex(vmaddr),
+      address: vmaddr,
       length,
-      kind: kindOf(kind),
-      section,
-      owner,
+      kind: kindOf(reader.u16(at + 6)),
+      section: span?.name ?? null,
       issues,
     });
   }
-  return { entries, crossings, unsorted, unmapped, zeroLength };
+  return { count, page: entries, crossings, unsorted, unmapped, zeroLength };
 };
 
-const pageOf = <Item>(
-  items: readonly Item[],
+/**
+ * Resolve each paged entry's owner, the greatest decoded start at or before
+ * its address, during the one start walk. Starts increase strictly until a
+ * wrapped start ends the walk, and that start is never an owner. Targets are
+ * sorted once, so the work is linear in starts plus the page.
+ */
+class OwnerResolver {
+  readonly #targets: { readonly address: bigint; readonly slot: number }[];
+  readonly #owners: MachoDataInCode["owner"][];
+  #next = 0;
+  #best: MachoDataInCode["owner"] = null;
+
+  constructor(entries: readonly PagedDataInCode[]) {
+    this.#owners = entries.map(() => null);
+    this.#targets = entries
+      .flatMap((entry, slot) =>
+        entry.address === null ? [] : [{ address: entry.address, slot }],
+      )
+      .sort((left, right) =>
+        left.address < right.address
+          ? -1
+          : left.address > right.address
+            ? 1
+            : 0,
+      );
+  }
+
+  visit(start: StartVisit): void {
+    if (start.issues.includes("wrapped")) return;
+    while (
+      this.#next < this.#targets.length &&
+      this.#targets[this.#next]!.address < start.address
+    ) {
+      this.#owners[this.#targets[this.#next]!.slot] = this.#best;
+      this.#next += 1;
+    }
+    this.#best = { index: start.index, vmaddr: hex(start.address) };
+  }
+
+  finish(): readonly MachoDataInCode["owner"][] {
+    for (; this.#next < this.#targets.length; this.#next += 1)
+      this.#owners[this.#targets[this.#next]!.slot] = this.#best;
+    return this.#owners;
+  }
+}
+
+/** A segment the loader maps executable, by its initial protection. */
+const executableSegment = (segment: MachoSegmentDeclaration): boolean =>
+  (segment.protection & 4) !== 0 && segment.name !== "__PAGEZERO";
+
+/** Indexes `[from, to)` of one table that the caller's page selects. */
+const pageRange = (
   included: boolean,
   offset: number,
   limit: number,
-): readonly Item[] => (included ? items.slice(offset, offset + limit) : []);
+): { readonly from: number; readonly to: number } =>
+  included ? { from: offset, to: offset + limit } : { from: 0, to: 0 };
 
 const nextOffset = (
   included: boolean,
@@ -485,32 +506,33 @@ export const parseMachoFunctionStartsFromHandle = async (
       dataSize: fields?.dataSize ?? null,
     };
   });
-  const regions = image.load_regions ?? [];
-  const segments = keyedBy(regions, (region) => region.macho_segment?.name);
+  // Declared segments, file-backed or not: llvm-objdump anchors the deltas on
+  // the first __TEXT segment command's vmaddr, which needs no file bytes.
+  const segments = keyedBy(image.macho_segments, (segment) => segment.name);
   // Mach-O names one __TEXT and one __LINKEDIT; a repeat keeps the first.
-  const linkeditRegion = firstKeyed(
+  const linkeditSegment = firstKeyed(
     segments,
     "__LINKEDIT",
     "The first __LINKEDIT segment contains LC_FUNCTION_STARTS and LC_DATA_IN_CODE.",
   );
   const linkedit =
-    linkeditRegion === undefined
+    linkeditSegment === undefined
       ? undefined
       : {
-          fileOffset: BigInt(linkeditRegion.mapping.offset),
-          fileSize: BigInt(linkeditRegion.mapping.size),
+          fileOffset: linkeditSegment.file_offset,
+          fileSize: linkeditSegment.file_size,
         };
   const text = firstKeyed(
     segments,
     "__TEXT",
     "The first __TEXT segment anchors LC_FUNCTION_STARTS deltas.",
-  )?.macho_segment;
-  const executable: ExecutableRange[] = regions
-    .filter((region) => region.execute)
-    .map((region) => ({
-      address: region.macho_segment?.address ?? region.mapping.address,
-      memorySize: region.memory_size,
-    }));
+  );
+  const executable = indexCoveredRanges(
+    image.macho_segments.filter(executableSegment).map((segment) => ({
+      address: segment.address,
+      size: segment.memory_size,
+    })),
+  );
   const startsTable = await loadTable(
     source,
     commands,
@@ -540,7 +562,24 @@ export const parseMachoFunctionStartsFromHandle = async (
     text === undefined
       ? 1
       : 0;
-  const counted =
+  const includeStarts = input.kind !== "data";
+  const includeData = input.kind !== "starts";
+  const sectionIndex = indexSmallestSections(sections);
+  // Every entry is checked and counted, but result objects are built only for
+  // the requested page of each table.
+  const data = await decodeData(
+    dataTable.bytes,
+    littleEndian,
+    indexFileOffsets(image.mappings),
+    sectionIndex,
+    pageRange(includeData, input.offset, input.limit),
+    signal,
+  );
+  const startRange = pageRange(includeStarts, input.offset, input.limit);
+  const startPage: MachoFunctionStart[] = [];
+  const owners = new OwnerResolver(data.page);
+  const thumbTagged = image.macho_cpu_type === CPU_TYPE_ARM;
+  const decoded =
     missingText === 1
       ? {
           count: 0,
@@ -549,54 +588,42 @@ export const parseMachoFunctionStartsFromHandle = async (
           wrapped: false,
           outOfText: false,
           trailingNonzero: false,
-          starts: [],
         }
       : await walkStarts(
-          startsTable.bytes,
-          text?.address ?? 0n,
-          executable,
-          false,
+          {
+            bytes: startsTable.bytes,
+            textBase: text?.address ?? 0n,
+            executable,
+            thumbTagged,
+            addressLimit: addressMask(image.bits),
+          },
           signal,
+          (start) => {
+            owners.visit(start);
+            if (start.index < startRange.from || start.index >= startRange.to)
+              return;
+            startPage.push({
+              index: start.index,
+              vmaddr: hex(start.address),
+              ...(thumbTagged ? { thumb: start.thumb } : {}),
+              section:
+                smallestSection(sectionIndex, start.address)?.name ?? null,
+              issues: [...start.issues],
+            });
+          },
         );
-  const dataCount = Math.floor(dataTable.bytes.length / DATA_ENTRY_BYTES);
-  requireEntryBudget(counted.count + dataCount, input.max_entries);
-  const decoded =
-    missingText === 1
-      ? counted
-      : await walkStarts(
-          startsTable.bytes,
-          text?.address ?? 0n,
-          executable,
-          true,
-          signal,
-        );
-  const sectionIndex = indexSmallestSections(sections);
-  const startFacts = decoded.starts.map((start, index) => ({
-    index,
-    vmaddr: start.address,
-    issues: start.issues,
-  }));
-  const data = await decodeData(
-    dataTable.bytes,
-    littleEndian,
-    indexFileOffsets(image.mappings),
-    sectionIndex,
-    ownerSearchAddresses(startFacts),
-    signal,
+  requireEntryBudget(decoded.count + data.count, input.max_entries);
+  const resolvedOwners = owners.finish();
+  const dataPage: MachoDataInCode[] = data.page.map(
+    ({ address: _address, ...entry }, slot) => ({
+      ...entry,
+      owner: resolvedOwners[slot] ?? null,
+    }),
   );
-  const includeStarts = input.kind !== "data";
-  const includeData = input.kind !== "starts";
-  const startPage = pageOf(
-    startFacts,
-    includeStarts,
-    input.offset,
-    input.limit,
-  );
-  const dataPage = pageOf(data.entries, includeData, input.offset, input.limit);
   const coverage = {
     status: "complete" as const,
-    total_starts: startFacts.length,
-    total_data_in_code: data.entries.length,
+    total_starts: decoded.count,
+    total_data_in_code: data.count,
     duplicate_commands: startsTable.duplicate + dataTable.duplicate,
     mis_sized_commands: startsTable.misSized + dataTable.misSized,
     outside_linkedit: startsTable.outside + dataTable.outside,
@@ -657,29 +684,24 @@ export const parseMachoFunctionStartsFromHandle = async (
       offset: input.offset,
       limit: input.limit,
       returned_starts: startPage.length,
-      total_starts: startFacts.length,
+      total_starts: decoded.count,
       next_starts_offset: nextOffset(
         includeStarts,
         input.offset,
         startPage.length,
-        startFacts.length,
+        decoded.count,
       ),
       returned_data: dataPage.length,
-      total_data: data.entries.length,
+      total_data: data.count,
       next_data_offset: nextOffset(
         includeData,
         input.offset,
         dataPage.length,
-        data.entries.length,
+        data.count,
       ),
     },
-    starts: startPage.map((start) => ({
-      index: start.index,
-      vmaddr: hex(start.vmaddr),
-      section: smallestSection(sectionIndex, start.vmaddr)?.name ?? null,
-      issues: start.issues,
-    })),
-    data_in_code_entries: [...dataPage],
+    starts: startPage,
+    data_in_code_entries: dataPage,
     limitations,
   };
 };

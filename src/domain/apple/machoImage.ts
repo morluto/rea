@@ -20,6 +20,7 @@ import {
   type BinaryContainer,
   type ImageSection,
   type LoadRegion,
+  type MachoSegmentDeclaration,
 } from "../binaryContainer.js";
 import {
   MachoLoadCommandCursor,
@@ -124,6 +125,7 @@ const readMachoImageCore = (
   const executableMappings: FileMapping[] = [];
   const zeroFills: ZeroFillMapping[] = [];
   const sections: ImageSection[] = [];
+  const segmentDeclarations: MachoSegmentDeclaration[] = [];
   let chainedFixups = false;
   const commands = new MachoLoadCommandCursor(table);
   while (commands.nextOffset !== null) {
@@ -182,6 +184,14 @@ const readMachoImageCore = (
           ? undefined
           : { ...fileRange, address: fileAddress };
       const name = decodeMachoFixedName(nameBytes);
+      segmentDeclarations.push({
+        name,
+        address: parsedSegment.value.address,
+        memory_size: memorySize,
+        file_offset: fileOffset,
+        file_size: fileSize,
+        protection,
+      });
       if (mapping !== undefined && name !== "__PAGEZERO") {
         mappings.push(mapping);
         loadRegions.push({
@@ -194,7 +204,6 @@ const readMachoImageCore = (
             current: protection,
             maximum: maxProtection,
           },
-          macho_segment: { name, address: parsedSegment.value.address },
         });
         if ((protection & 4) !== 0) executableMappings.push(mapping);
       }
@@ -240,6 +249,7 @@ const readMachoImageCore = (
   return {
     format: "macho",
     macho_cpu_type: table.identity.cpuType,
+    macho_segments: segmentDeclarations,
     macho_chained_fixups: chainedFixups,
     architecture: names.get(cpu) ?? `macho-cpu-${cpu}`,
     bits,
