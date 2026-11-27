@@ -180,7 +180,7 @@ describe("UnityFS per-block decode budget", () => {
         expect(entry.path).toBe("data");
         await expect(control.open(entry)).rejects.toMatchObject({
           reason: "unavailable",
-          message: expect.stringContaining("per-block decode budget"),
+          message: expect.stringContaining("per-block decoded budget"),
           limitation: expect.stringContaining("this release has no override"),
         });
       } finally {
@@ -203,6 +203,39 @@ describe("UnityFS per-block decode budget", () => {
       }
     },
   );
+});
+
+describe("UnityFS per-block encoded budget", () => {
+  it("names the encoded bound when only the encoded size exceeds it", async () => {
+    const bytes = buildUnityFs([{ path: "data", data: "abc" }], {
+      blocksInfoCompression: 0,
+      blockCompression: 2,
+    });
+    // One byte above the encoded allowance (64 MiB + 64 MiB / 255 + 16),
+    // with the decoded size untouched; a sparse carrier keeps it in range.
+    const encoded =
+      64 * 1024 * 1024 + Math.floor((64 * 1024 * 1024) / 255) + 17;
+    bytes.writeUInt32BE(encoded, 64 + 24);
+    const path = await fixture(bytes);
+    const length = bytes.length + encoded;
+    const file = Buffer.from(bytes);
+    file.writeBigUInt64BE(BigInt(length), 32);
+    await writeFile(path, file);
+    await truncate(path, length);
+    const reader = new UnityFsArtifactReader(path);
+    try {
+      const [entry] = await collectEntries(reader);
+      if (entry === undefined) throw new Error("expected the directory entry");
+      await expect(reader.open(entry)).rejects.toMatchObject({
+        reason: "unavailable",
+        message: expect.stringContaining(
+          `${String(encoded)} encoded bytes, above the ${String(encoded - 1)}-byte per-block encoded budget`,
+        ),
+      });
+    } finally {
+      await reader.close();
+    }
+  });
 });
 
 describe("UnityFS allocation and malformed-input boundaries", () => {

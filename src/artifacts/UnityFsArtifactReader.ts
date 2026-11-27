@@ -30,7 +30,8 @@ import {
   decodeUnityFsLzma,
   readUnityFsBlocksInfo,
   readUnityFsHeader,
-  UNITYFS_BLOCK_DECODE_BUDGET_BYTES,
+  UNITYFS_BLOCK_DECODED_BUDGET_BYTES,
+  UNITYFS_BLOCK_ENCODED_BUDGET_BYTES,
   unityFsFormatFailure,
   type UnityFsBlock,
   type UnityFsNode,
@@ -441,6 +442,22 @@ const blockEndingAfter = (
   return low < blocks.length ? low : -1;
 };
 
+/** Name the per-block bound that refused a member, with both sizes. */
+const budgetRefusal = (
+  index: string,
+  compression: string,
+  block: UnityFsBlock,
+): readonly [string, string] => {
+  const [side, declared, budget] =
+    block.unavailable === "encoded-budget"
+      ? ["encoded", block.compressedSize, UNITYFS_BLOCK_ENCODED_BUDGET_BYTES]
+      : ["decoded", block.uncompressedSize, UNITYFS_BLOCK_DECODED_BUDGET_BYTES];
+  return [
+    `UnityFS directory entry ${index} lies in a compressed block of ${String(declared)} ${side} bytes, above the ${String(budget)}-byte per-block ${side} budget`,
+    `UnityFS member lies in a compression ${compression} block above the ${String(budget)}-byte per-block ${side} budget; this release has no override, and no content hash or child artifact was produced.`,
+  ];
+};
+
 /** Explain, once, why a member's content was not read. */
 const unavailableMember = (
   entry: UnityFsEntry,
@@ -449,15 +466,12 @@ const unavailableMember = (
   const index = String(entry.formatMetadata.index);
   const compression = String(block.compression);
   const [message, limitation] =
-    block.unavailable === "decode-budget"
+    block.unavailable === "unsupported-compression"
       ? [
-          `UnityFS directory entry ${index} lies in a compressed block of ${String(block.uncompressedSize)} decoded bytes, above the ${String(UNITYFS_BLOCK_DECODE_BUDGET_BYTES)}-byte per-block decode budget`,
-          `UnityFS member lies in a compression ${compression} block above the ${String(UNITYFS_BLOCK_DECODE_BUDGET_BYTES)}-byte per-block decode budget; this release has no override, and no content hash or child artifact was produced.`,
-        ]
-      : [
           `UnityFS directory entry ${index} requires unsupported compression ${compression}`,
           `UnityFS member compression ${compression} is unsupported; no content hash or child artifact was produced.`,
-        ];
+        ]
+      : budgetRefusal(index, compression, block);
   return new ArtifactEntryContentUnavailable(message, limitation, {
     traversal: { status: "unknown", limitations: [limitation] },
   });

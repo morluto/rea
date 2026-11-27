@@ -83,7 +83,11 @@ export interface UnityFsBlock {
    * Why this block's content cannot be read, when it cannot. A block above the
    * per-decode budget keeps the directory: only members inside it are refused.
    */
-  readonly unavailable: "unsupported-compression" | "decode-budget" | undefined;
+  readonly unavailable:
+    | "unsupported-compression"
+    | "decoded-budget"
+    | "encoded-budget"
+    | undefined;
   /** Prefix count lets range consumers identify unavailable content in O(1). */
   readonly unavailableCount: number;
   /** Cumulative compressed byte offset inside the data area. */
@@ -132,14 +136,15 @@ const blockUnavailability = (
   if (uncompressedSize === 0 || compression === UNITYFS_COMPRESSION_NONE)
     return undefined;
   if (!unityFsBlockNeedsDecode(compression)) return "unsupported-compression";
-  return uncompressedSize > MAX_BLOCK_UNCOMPRESSED_BYTES ||
-    compressedSize > MAX_BLOCK_ENCODED_BYTES
-    ? "decode-budget"
-    : undefined;
+  // Name the bound that refused the block, decoded first.
+  if (uncompressedSize > MAX_BLOCK_UNCOMPRESSED_BYTES) return "decoded-budget";
+  if (compressedSize > MAX_BLOCK_ENCODED_BYTES) return "encoded-budget";
+  return undefined;
 };
 
-/** The per-block decode budget, for reporting a refused member read. */
-export const UNITYFS_BLOCK_DECODE_BUDGET_BYTES = MAX_BLOCK_UNCOMPRESSED_BYTES;
+/** The per-block decode budgets, for reporting a refused member read. */
+export const UNITYFS_BLOCK_DECODED_BUDGET_BYTES = MAX_BLOCK_UNCOMPRESSED_BYTES;
+export const UNITYFS_BLOCK_ENCODED_BUDGET_BYTES = MAX_BLOCK_ENCODED_BYTES;
 
 /** Decode header fields once; unsupported content does not erase observed headers. */
 export const readUnityFsHeader = async (
