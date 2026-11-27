@@ -86,6 +86,36 @@ posixCliTest(
 );
 
 posixCliTest(
+  "refuses a rule file with an include directive before yara starts",
+  async ({ cli }) => {
+    const { root, command } = await workspace();
+    await writeFile(
+      join(root, "including.yar"),
+      'rule Main { strings: $s = "include \\"no.yar\\"" condition: $s }\ninclude "packers.yar"\n',
+    );
+    const output = await cli.run({
+      arguments: [
+        "inspect-yara-matches",
+        "./sample.bin",
+        "--rule_paths",
+        "./including.yar",
+        "--format",
+        "json",
+      ],
+      cwd: root,
+      environment: { REA_YARA_COMMAND: command, YARA_STUB_MODE: "match" },
+    });
+    expect(output.exitCode).toBe(1);
+    const error = analysisErrorProjectionSchema.parse(output.json);
+    expect(error.code).toBe("invalid_request");
+    expect(error.message).toMatch(
+      /including\.yar\(2:1\): include "packers\.yar"/u,
+    );
+    expect(error.message).not.toContain("no.yar");
+  },
+);
+
+posixCliTest(
   "reports the scanned snapshot when a rule fails its final identity check",
   async ({ cli }) => {
     const { root, command } = await workspace();
