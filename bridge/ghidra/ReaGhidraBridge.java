@@ -322,6 +322,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             serve(descriptor);
         }
         finally {
+            disposeDecompileAhead();
             if (decompiler != null) {
                 decompiler.dispose();
                 decompiler = null;
@@ -496,6 +497,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     ? descriptor.decompileTimeoutSeconds() : request.decompileTimeoutSeconds();
                 valueFlowLimits = request.valueFlowLimits();
                 applyDecompilePayloadLimit(request.decompileMaxPayloadMiB());
+                decompileAhead(request.decompileReadAhead());
                 dispatchAndWrite(writer, request, descriptor);
             }
             catch (RequestFailure failure) {
@@ -1277,6 +1279,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             throw new RequestFailure("decompile_options_failed", "Ghidra could not apply the selected native decompiler payload limit");
         decompiler.flushCache();
         decompileResults.clear();
+        disposeDecompileAhead();
         decompileMaxPayloadMiB = payloadMiB;
     }
 
@@ -1874,6 +1877,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         procedureInventory = null;
         procedureNameIndex = null;
         decompileResults.clear();
+        disposeDecompileAhead();
         if (decompiler != null) decompiler.flushCache();
     }
 
@@ -4690,6 +4694,77 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return results;
     }
 
+    /**
+     * Decompile the functions a workflow will ask for next with several
+     * decompiler processes and keep the completed results for those requests.
+     * This only saves work: an unresolved selector, a failure or a timeout is
+     * left for the function's own request, which reports it as before.
+     */
+    private void decompileAhead(List<String> selectors) throws Exception {
+        if (selectors.size() < 2) return;
+        long modification = currentProgram.getModificationNumber();
+        List<Function> pending = new ArrayList<>();
+        Set<Address> seen = new HashSet<>();
+        for (String selector : selectors) {
+            Function function;
+            try {
+                function = resolveProcedure(selector);
+            } catch (RequestFailure unresolved) {
+                continue;
+            }
+            if (function.isExternal() || function.getBody().isEmpty() || !seen.add(function.getEntryPoint())) continue;
+            java.lang.ref.SoftReference<DecompileResults> retained = decompileResults.get(
+                new DecompileCacheKey(function.getEntryPoint(), false, modification, decompileMaxPayloadMiB));
+            if (retained == null || retained.get() == null) pending.add(function);
+        }
+        if (pending.size() < 2) return;
+        Integer payloadMiB = decompileMaxPayloadMiB;
+        if (decompileAheadWorkers == null) {
+            decompileAheadWorkers = new ghidra.app.decompiler.parallel.DecompilerCallback<>(currentProgram, prepared -> {
+                prepared.setOptions(decompileOptions(payloadMiB));
+                prepared.toggleCCode(true);
+                prepared.toggleSyntaxTree(true);
+                prepared.toggleJumpLoads(true);
+            }) {
+                @Override
+                public DecompileResults process(DecompileResults results, ghidra.util.task.TaskMonitor taskMonitor) {
+                    return results;
+                }
+            };
+            // Each worker is a native decompiler process with its own view of
+            // the Program, so the worker count bounds memory as well as CPU.
+            // Fixed: it shapes how the same results are produced, never what
+            // a caller observes, and the host's processor count already caps it.
+            generic.concurrent.GThreadPool.getSharedThreadPool("Parallel Decompiler").setMaxThreadCount(
+                Math.max(1, Math.min(Runtime.getRuntime().availableProcessors(), DECOMPILE_AHEAD_WORKERS)));
+        }
+        decompileAheadWorkers.setTimeout(decompileTimeoutSeconds);
+        for (DecompileResults results : ghidra.app.decompiler.parallel.ParallelDecompiler.decompileFunctions(
+                decompileAheadWorkers, pending, monitor)) {
+            if (results == null || results.isCancelled() || results.isTimedOut() ||
+                !results.decompileCompleted() || results.getFunction() == null) continue;
+            decompileResults.put(
+                new DecompileCacheKey(results.getFunction().getEntryPoint(), false, modification, payloadMiB),
+                new java.lang.ref.SoftReference<>(results));
+        }
+        monitor.checkCancelled();
+    }
+
+    /**
+     * Pooled decompilers hold native state for the Program and options they
+     * opened with, so an edit, an option change or shutdown releases them.
+     */
+    private void disposeDecompileAhead() {
+        if (decompileAheadWorkers == null) return;
+        decompileAheadWorkers.dispose();
+        decompileAheadWorkers = null;
+    }
+
+    /** Decompiler processes kept between read-ahead windows of one workflow. */
+    private ghidra.app.decompiler.parallel.DecompilerCallback<DecompileResults> decompileAheadWorkers;
+
+    private static final int DECOMPILE_AHEAD_WORKERS = 8;
+
     /** Every input a completed decompilation of one Program state depends on. */
     private record DecompileCacheKey(
         Address entry,
@@ -6513,6 +6588,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
             keys.add("value_flow_limits");
         if (parsed.isJsonObject() && parsed.getAsJsonObject().has("decompile_max_payload_mib"))
             keys.add("decompile_max_payload_mib");
+        if (parsed.isJsonObject() && parsed.getAsJsonObject().has("decompile_read_ahead"))
+            keys.add("decompile_read_ahead");
         JsonObject object = requireObject(parsed, keys);
         Integer payloadMiB = null;
         if (object.has("decompile_max_payload_mib") && !object.get("decompile_max_payload_mib").isJsonNull()) {
@@ -6546,7 +6623,19 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (params == null || !params.isJsonObject()) {
             throw new IllegalArgumentException("Bridge request parameters are invalid");
         }
-        return new Request(id, requireString(object, "method"), params.getAsJsonObject(), timeout, payloadMiB, flowLimits);
+        List<String> readAhead = new ArrayList<>();
+        if (object.has("decompile_read_ahead")) {
+            JsonElement selectors = object.get("decompile_read_ahead");
+            if (!selectors.isJsonArray() || selectors.getAsJsonArray().size() > DECOMPILE_RESULT_ENTRIES)
+                throw new IllegalArgumentException("Invalid decompile read-ahead");
+            for (JsonElement selector : selectors.getAsJsonArray()) {
+                if (!selector.isJsonPrimitive() || !selector.getAsJsonPrimitive().isString())
+                    throw new IllegalArgumentException("Invalid decompile read-ahead");
+                readAhead.add(selector.getAsString());
+            }
+        }
+        return new Request(id, requireString(object, "method"), params.getAsJsonObject(), timeout, payloadMiB, flowLimits,
+            List.copyOf(readAhead));
     }
 
     private static JsonObject requireObject(JsonElement element, Set<String> keys) {
@@ -7051,7 +7140,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return new ValueFlowLimits(DEFAULT_HIGH_PCODE_OPS, DEFAULT_HIGH_PCODE_INPUTS_PER_OP, DEFAULT_HIGH_PCODE_DEF_USE_EDGES);
     }
     private record ValueFlowLimits(int maxOperations, int maxInputsPerOperation, int maxEdges) {}
-    private record Request(int id, String method, JsonObject params, Integer decompileTimeoutSeconds, Integer decompileMaxPayloadMiB, ValueFlowLimits valueFlowLimits) {}
+    private record Request(int id, String method, JsonObject params, Integer decompileTimeoutSeconds, Integer decompileMaxPayloadMiB, ValueFlowLimits valueFlowLimits,
+        List<String> decompileReadAhead) {}
 
     private static final class RequestFailure extends RuntimeException {
         private final String code;

@@ -148,6 +148,9 @@ export class GhidraWire {
       ...(options.decompileMaxPayloadMiB === undefined
         ? {}
         : { decompile_max_payload_mib: options.decompileMaxPayloadMiB }),
+      ...(options.decompileReadAhead === undefined
+        ? {}
+        : { decompile_read_ahead: [...options.decompileReadAhead] }),
     };
     const limits =
       options.limits === undefined ? this.admitLimits() : ok(options.limits);

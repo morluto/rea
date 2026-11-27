@@ -46,6 +46,12 @@ export interface ExecutionOptions {
   /** A single CLI answer bound to its isolated target, not a persistent default document. */
   readonly snapshotContext?: "one-shot-target";
   readonly signal?: AbortSignal;
+  /**
+   * Procedures a composed workflow will decompile next, this request's own
+   * first. Advisory: a provider may prepare them together, and every later
+   * request still returns its own result or failure.
+   */
+  readonly upcomingDecompiles?: readonly string[];
   /** Bundle facts from the current target admission, even when a client is reused. */
   readonly bundleExecutableProvenance?: BundleExecutableProvenance | null;
   readonly progress?: ProgressReporter;

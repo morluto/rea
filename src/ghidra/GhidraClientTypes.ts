@@ -18,6 +18,8 @@ export type GhidraStartResult = Result<GhidraSessionInfo, GhidraSessionError>;
 export interface GhidraRequestOptions {
   readonly decompileTimeoutSeconds?: number | null;
   readonly decompileMaxPayloadMiB?: number | null;
+  /** Procedures the bridge may decompile together before this request. */
+  readonly decompileReadAhead?: readonly string[];
   readonly valueFlowLimits?: NativeValueFlowLimits;
   readonly signal?: AbortSignal;
   /** Internal startup/shutdown deadline; analysis calls have no fixed deadline. */

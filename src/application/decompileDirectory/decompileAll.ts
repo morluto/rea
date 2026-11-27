@@ -101,6 +101,11 @@ interface PublishState {
   /** Failure code of the function being attempted, if it failed. */
   lastFailureCode: string | undefined;
   /**
+   * Functions the next decompile request names as upcoming, itself first. The
+   * request that carries them clears it.
+   */
+  readAhead: readonly string[] | undefined;
+  /**
    * Consecutive output_io failures. A verified file, a write, or any other
    * outcome ends the run of failures; a recorded external function does not.
    */
@@ -176,6 +181,7 @@ export const decompileAll = async (
     inlineFailureBytes: 2,
     recentFailures: [],
     lastFailureCode: undefined,
+    readAhead: undefined,
     outputIoStreak: 0,
   };
   let published: Result<void, AnalysisError> | undefined;
@@ -421,7 +427,9 @@ const publishSelected = async (
   input: PublishInput,
 ): Promise<Result<void, AnalysisError>> => {
   let bodySupport: "unknown" | "unavailable" = "unknown";
-  for (const procedure of input.procedures) {
+  // Index after the last function a read-ahead window already named.
+  let preparedUntil = 0;
+  for (const [index, procedure] of input.procedures.entries()) {
     if (isAborted(input.signal))
       return err(cancelledBy("decompile_all", input.signal));
     const existing = await existingFile(
@@ -463,6 +471,12 @@ const publishSelected = async (
     }
     if (input.limit !== undefined && input.state.attempted >= input.limit)
       continue;
+    if (index >= preparedUntil) {
+      const window = decompileReadAhead(input, index);
+      preparedUntil = window.until;
+      input.state.readAhead =
+        window.procedures.length > 1 ? window.procedures : undefined;
+    }
     input.state.attempted += 1;
     input.state.lastFailureCode = undefined;
     const externalBefore = input.state.external;
@@ -482,6 +496,42 @@ const publishSelected = async (
       return err(outputStoppedAccepting(input.state));
   }
   return ok(undefined);
+};
+
+/**
+ * How many upcoming functions one decompile request names. A provider that
+ * prepares them together retains that many results at most, so a larger
+ * window would only discard work; this is a batching size, not an analysis
+ * limit, and a provider is free to ignore it.
+ */
+const DECOMPILE_READ_AHEAD = 32;
+
+/**
+ * The next functions this call will decompile, starting at `from`. A verified
+ * file or a recorded external function is skipped the same way the loop skips
+ * it, and the caller's limit bounds the window.
+ */
+const decompileReadAhead = (
+  input: PublishInput,
+  from: number,
+): { readonly procedures: readonly string[]; readonly until: number } => {
+  const remaining =
+    input.limit === undefined
+      ? DECOMPILE_READ_AHEAD
+      : Math.min(DECOMPILE_READ_AHEAD, input.limit - input.state.attempted);
+  const procedures: string[] = [];
+  let index = from;
+  for (; index < input.procedures.length; index++) {
+    if (procedures.length >= remaining) break;
+    const address = input.procedures[index]!.address;
+    if (
+      input.session.lastWritten(address) !== undefined ||
+      input.session.record(address)?.status === "external"
+    )
+      continue;
+    procedures.push(address);
+  }
+  return { procedures, until: Math.max(index, from + 1) };
 };
 
 /** One function this call takes on: report a file problem or decompile it. */
@@ -571,10 +621,15 @@ const publishOne = async (input: {
     };
   }
   let attemptedIndependent = false;
+  const readAhead = input.state.readAhead;
+  input.state.readAhead = undefined;
   let decompiled = await input.analysis.execute(
     "procedure_pseudo_code",
     { procedure: input.procedure.address },
-    executionOptions(input.signal),
+    {
+      ...executionOptions(input.signal),
+      ...(readAhead === undefined ? {} : { upcomingDecompiles: readAhead }),
+    },
   );
   // A provider still owns cleanup even if the caller aborted meanwhile.
   if (!decompiled.ok && decompiled.error.cleanupIncomplete)

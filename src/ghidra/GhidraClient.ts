@@ -506,6 +506,7 @@ export class GhidraClient {
       readonly progress?: ProgressReporter;
       readonly decompileTimeoutSeconds?: number | null;
       readonly decompileMaxPayloadMiB?: number | null;
+      readonly decompileReadAhead?: readonly string[];
       readonly valueFlowLimits?: NativeValueFlowLimits;
     } = {},
   ): Promise<Result<JsonValue, GhidraSessionError>> {
@@ -549,6 +550,7 @@ export class GhidraClient {
       readonly progress?: ProgressReporter;
       readonly decompileTimeoutSeconds?: number | null;
       readonly decompileMaxPayloadMiB?: number | null;
+      readonly decompileReadAhead?: readonly string[];
       readonly valueFlowLimits?: NativeValueFlowLimits;
     },
   ): Promise<Result<JsonValue, GhidraSessionError>> {
@@ -587,6 +589,9 @@ export class GhidraClient {
         ...(options.decompileMaxPayloadMiB === undefined
           ? {}
           : { decompileMaxPayloadMiB: options.decompileMaxPayloadMiB }),
+        ...(options.decompileReadAhead === undefined
+          ? {}
+          : { decompileReadAhead: options.decompileReadAhead }),
       },
     );
     if (options.progress === undefined) return pending;

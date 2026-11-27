@@ -251,6 +251,7 @@ it("preserves distinct decompile and value-flow options on the wire", async () =
     const second = wire.request(method, params, {
       decompileTimeoutSeconds: null,
       decompileMaxPayloadMiB: 31,
+      decompileReadAhead: ["0x1000", "0x2000"],
     });
     expect(JSON.parse(writes[1]!)).toEqual({
       id: 2,
@@ -259,6 +260,7 @@ it("preserves distinct decompile and value-flow options on the wire", async () =
       params,
       decompile_timeout_seconds: null,
       decompile_max_payload_mib: 31,
+      decompile_read_ahead: ["0x1000", "0x2000"],
     });
     expect(pending.settle(2, ok("second"))).toBe(true);
     await expect(second).resolves.toEqual(ok("second"));

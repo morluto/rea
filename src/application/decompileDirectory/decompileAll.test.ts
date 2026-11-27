@@ -67,6 +67,7 @@ interface RecordedCall {
   readonly operation: AnalysisOperation;
   readonly procedure: unknown;
   readonly origin: unknown;
+  readonly upcoming?: readonly string[];
 }
 
 const subject = {
@@ -166,6 +167,9 @@ const harness = (options?: {
         operation,
         procedure: parameters.procedure,
         origin: execution?.selectorOrigin,
+        ...(execution?.upcomingDecompiles === undefined
+          ? {}
+          : { upcoming: execution.upcomingDecompiles }),
       });
       if (operation === "list_procedures")
         return Promise.resolve(
@@ -878,6 +882,31 @@ describe("decompile_all filters and layout", () => {
     expect(
       await readFile(join(directory(), "functions/0x2000.c"), "utf8"),
     ).toContain("Foo::helper");
+  });
+
+  it("names the functions it will decompile next on the first request of a window", async () => {
+    const first = harness();
+    expect((await run(first.tools, directory(), { limit: 1 })).ok).toBe(true);
+    // One function is not a batch, so the limit leaves nothing to prepare.
+    expect(
+      of(first.calls, "procedure_pseudo_code").map((call) => call.upcoming),
+    ).toEqual([undefined]);
+
+    const second = harness();
+    expect((await run(second.tools, directory(), { resume: true })).ok).toBe(
+      true,
+    );
+    // The verified file is skipped; the remaining functions form one window,
+    // named once, in the order they will be requested.
+    expect(
+      of(second.calls, "procedure_pseudo_code").map((call) => [
+        call.procedure,
+        call.upcoming,
+      ]),
+    ).toEqual([
+      ["0x2000", ["0x2000", "0x3000"]],
+      ["0x3000", undefined],
+    ]);
   });
 
   it("stops at a limit and continues in address order on resume", async () => {

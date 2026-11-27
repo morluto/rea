@@ -210,6 +210,12 @@ repeating `procedure_pseudo_code` or `analyze_function` for one function does
 not run the native decompiler again. A rename, comment or payload-limit change
 discards them.
 
+`decompile-all` names the next functions it will request, up to 32 at a time,
+and the bridge decompiles each such window with up to eight native decompiler
+processes before answering them one by one. Results, per-function failures,
+the journal and file order are the same as a serial export. The gain depends on
+the target: one very large function still bounds its window.
+
 If an offset maps to loaded target bytes but no procedure starts at or contains
 the mapped address, the failure preserves both the original file offset and
 analysis address. This differs from an unmapped offset and does not recommend

@@ -1211,6 +1211,10 @@ export const createGhidraProviderClient = (input: {
       if (!started.ok) return started;
       const called = await client.callTool(operation, input.value, {
         ...operationLimits,
+        ...(operation === "procedure_pseudo_code" &&
+        options?.upcomingDecompiles !== undefined
+          ? { decompileReadAhead: options.upcomingDecompiles }
+          : {}),
         ...(options?.signal === undefined ? {} : { signal: options.signal }),
         ...(options?.progress === undefined
           ? {}
