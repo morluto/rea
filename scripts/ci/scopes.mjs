@@ -97,6 +97,7 @@ const PATH_SCOPES = {
     "src/application/reverse/**",
     "src/application/binary/BinarySession.ts",
     "src/cutter/**",
+    "src/domain/analysisResourceLimits.ts",
     "src/gdb/**",
     "src/frida/frida-bindings.d.ts",
     "src/objdump/**",
