@@ -243,8 +243,8 @@ const retainedArguments = (
 ): JavaScriptSemanticCallSite["arguments"] => {
   const retained: JavaScriptSemanticCallSite["arguments"][number][] = [];
   for (const [index, node] of nodes.entries()) {
-    // Omitted slots have no expression or source range.
-    if (node == null) continue;
+    // Babel recovery can leave null slots; retain the other argument positions.
+    if (node === null) continue;
     const valueNode =
       t.isExpression(node) && !t.isSpreadElement(node)
         ? unwrapPureSemanticSequenceExpression(node, state)

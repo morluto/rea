@@ -39,19 +39,16 @@ it("keeps omitted call arguments with their own list", () => {
     )
       throw new Error("Expected the outer call");
     const outer = statement.expression;
-    expect(Array.from(outer.arguments, (arg) => arg?.type)).toEqual([
-      undefined,
+    expect(outer.arguments.map((arg) => arg?.type ?? null)).toStrictEqual([
+      null,
       "CallExpression",
-      undefined,
+      null,
       "SequenceExpression",
-      undefined,
+      null,
     ]);
     const inner = outer.arguments[1];
     if (!t.isCallExpression(inner)) throw new Error("Expected the inner call");
-    expect(Array.from(inner.arguments, (arg) => arg?.type)).toEqual([
-      undefined,
-      "StringLiteral",
-    ]);
+    expect(inner.arguments).toMatchObject([null, { type: "StringLiteral" }]);
   }
 });
 

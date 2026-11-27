@@ -283,6 +283,10 @@ const restoreOmittedArguments = (
     }
     return low;
   };
+  // Recovery in Babel 8.1.2 represented each omission with an explicit null.
+  const appendOmissions = (slots: (t.Node | null)[], count: number): void => {
+    for (let i = 0; i < count; i++) slots.push(null);
+  };
   traverseJavaScriptAst(program, {
     enter(node) {
       if (
@@ -302,11 +306,11 @@ const restoreOmittedArguments = (
       const slots: typeof node.arguments = [];
       for (const argument of node.arguments) {
         if (argument.start == null || argument.end == null) return;
-        slots.length += countBefore(argument.start) - cursor;
+        appendOmissions(slots, countBefore(argument.start) - cursor);
         slots.push(argument);
         cursor = countBefore(argument.end);
       }
-      slots.length += end - cursor;
+      appendOmissions(slots, end - cursor);
       if (slots.length !== node.arguments.length) node.arguments = slots;
     },
   });
