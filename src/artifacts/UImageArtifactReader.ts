@@ -74,7 +74,8 @@ export class UImageArtifactReader extends PositionalArtifactReader<UImageMetadat
     const fields = parseUImageHeaderFields(headerBytes);
     if (!fields.ok) throw parseFailure(fields.error);
     const header = fields.value;
-    if (initial.size < UIMAGE_HEADER_SIZE + header.payloadSize)
+    const payloadEnd = UIMAGE_HEADER_SIZE + header.payloadSize;
+    if (initial.size < payloadEnd)
       throw truncatedArtifact(
         "uimage",
         `uImage is malformed: uImage payload is truncated: header declares ${header.payloadSize} payload bytes but only ${initial.size - UIMAGE_HEADER_SIZE} follow the header`,
@@ -141,10 +142,19 @@ export class UImageArtifactReader extends PositionalArtifactReader<UImageMetadat
         "Multi-image sub-images are split from the stored size table; the payload entry retains the full stored bytes.",
       );
     }
+    const trailingBytes = initial.size - payloadEnd;
+    if (trailingBytes > 0) {
+      limitations.push(
+        `${String(trailingBytes)} bytes after the uImage payload, starting at offset ${String(payloadEnd)}, were not exposed as entries.`,
+      );
+    }
     return {
       entries,
       coverage: {
-        status: sizeTableLimitation === undefined ? "complete" : "unknown",
+        status:
+          sizeTableLimitation === undefined && trailingBytes === 0
+            ? "complete"
+            : "unknown",
         limitations,
       },
       formatMetadata: toMetadata(header, subImages.length, crcVerified),

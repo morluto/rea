@@ -22,7 +22,9 @@ padding after every nonfinal component. Script images (`boot.scr`) carry the
 same table, so their script text is `image-0.bin`. Component physical source
 ranges and content hashes retain precise provenance. Extraction writes the complete
 payload and every component, so multi-file output can approach twice the input
-size. Compressed payloads remain compressed.
+size. Compressed payloads remain compressed. Bytes after the declared payload
+are not exposed as entries or included in its CRC. If present, their offset and
+length are reported as an inventory limitation, and coverage is unknown.
 
 The fixed 32-byte name field is retained as `name_bytes_hex`. `name` contains
 the UTF-8 bytes before the first NUL, or null when those bytes cannot be decoded

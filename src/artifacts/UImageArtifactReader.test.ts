@@ -197,6 +197,28 @@ it("inventories a kernel image with its stored payload", async () => {
   }
 });
 
+it("reports bytes outside the declared payload without inventing a member", async () => {
+  const payload = Buffer.from("kernel-bytes");
+  const image = buildUImage({ payload });
+  const path = await writeCarrier(
+    "uimage-trailing",
+    Buffer.concat([image, Buffer.alloc(16)]),
+  );
+  const snapshot = await scanCanonicalArtifactInventory(path);
+  expect(snapshot.coverage.status).toBe("unknown");
+  expect(snapshot.limitations).toContain(
+    `16 bytes after the uImage payload, starting at offset ${String(image.length)}, were not exposed as entries.`,
+  );
+  expect(snapshot.occurrences.map((row) => row.logical_path)).toEqual([
+    ".",
+    "payload.bin",
+  ]);
+  expect(snapshot.occurrences[0]?.format_metadata).toMatchObject({
+    crc_verified: true,
+  });
+  expect(snapshot.occurrences[1]?.declared_size).toBe(payload.length);
+});
+
 it("splits multi images and keeps compressed payloads as stored", async () => {
   const partA = Buffer.from("first-part");
   const partB = Buffer.from("second-part-longer");
