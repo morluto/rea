@@ -1,6 +1,6 @@
 /**
  * Help for the `--architecture` option of commands that read one slice of a
- * universal Mach-O through `selectMachoTarget`. One description, so every
+ * universal Mach-O through `machoSliceSelection.ts`. One description, so every
  * command states the same selection rule.
  *
  * It names lipo without a single-dash spelling: help never shows a
