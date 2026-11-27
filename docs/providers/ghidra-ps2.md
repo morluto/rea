@@ -18,6 +18,11 @@ record and no GNU MIPS attributes; a producer that writes either needs its
 own verification. Other hosts and flag combinations are refused, not
 inferred. File names do not identify a PlayStation 2 target.
 
+When the ABI field is absent, the profile commits
+`mips_abi_basis: inferred-eabi64-r5900-assumption-v1` instead of
+`declared-eabi64-r5900-extension-v1`, and every result states that EABI64 is
+an assumption the header does not establish.
+
 IRX modules, relocatable or shared images, ISO containers, overlays and
 emulation are outside this first profile.
 

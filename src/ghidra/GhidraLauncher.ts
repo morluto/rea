@@ -24,7 +24,7 @@ import type {
   GhidraRiscvLoadPreparation,
 } from "./GhidraRiscvProfile.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
-import { mkdir, realpath } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { basename, dirname, join, posix, win32 } from "node:path";
 
 import { writeGhidraRuntimeFile } from "./GhidraRuntimeFile.js";
@@ -78,13 +78,17 @@ import {
 } from "./extensions/GhidraExtensions.js";
 
 import {
-  inspectGhidraPspExtension,
+  GHIDRA_PSP_EXTENSION,
   type GhidraPspExtension,
 } from "./GhidraPspExtension.js";
 import {
-  inspectGhidraEeExtension,
+  GHIDRA_EE_EXTENSION,
   type GhidraEeExtension,
 } from "./GhidraEeExtension.js";
+import {
+  revalidateGhidraProcessorExtension,
+  type GhidraProcessorExtensionRevalidation,
+} from "./GhidraProcessorExtension.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
 export interface GhidraLaunchSession {
@@ -337,57 +341,41 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         platform,
         ...(psp === undefined ? {} : { psp: true as const }),
       });
-      if (psp !== undefined) {
-        const installedRoot = await realpath(
-          join(
-            dirname(this.options.analyzeHeadlessPath),
-            "..",
-            "Ghidra",
-            "Extensions",
-            "ghidra-allegrex",
+      const revalidate = async (
+        state: Promise<GhidraProcessorExtensionRevalidation>,
+        foreign: string,
+        changed: string,
+      ): Promise<void> => {
+        const outcome = await state;
+        if (outcome === "foreign_installation")
+          throw new GhidraLaunchError(foreign);
+        if (outcome === "content_changed") throw new GhidraLaunchError(changed);
+      };
+      if (psp !== undefined)
+        await revalidate(
+          revalidateGhidraProcessorExtension(
+            GHIDRA_PSP_EXTENSION,
+            this.options.analyzeHeadlessPath,
+            psp,
+            options.resourceScope,
+            options.signal,
           ),
+          "Allegrex profile does not belong to the selected Ghidra installation.",
+          "Installed Allegrex content changed since profile resolution; reopen the target to resolve a fresh profile.",
         );
-        if (installedRoot !== psp.root)
-          throw new GhidraLaunchError(
-            "Allegrex profile does not belong to the selected Ghidra installation.",
-          );
-        const inspected = await inspectGhidraPspExtension(
-          psp.root,
-          psp.ghidra_version,
-          options.resourceScope,
-          options.signal,
-        );
-        if (inspected.sha256 !== psp.sha256)
-          throw new GhidraLaunchError(
-            "Installed Allegrex content changed since profile resolution; reopen the target to resolve a fresh profile.",
-          );
-      }
       const ee = this.options.eeExtension;
-      if (ee !== undefined) {
-        const installedRoot = await realpath(
-          join(
-            dirname(this.options.analyzeHeadlessPath),
-            "..",
-            "Ghidra",
-            "Extensions",
-            "ghidra-emotionengine-reloaded",
+      if (ee !== undefined)
+        await revalidate(
+          revalidateGhidraProcessorExtension(
+            GHIDRA_EE_EXTENSION,
+            this.options.analyzeHeadlessPath,
+            ee,
+            options.resourceScope,
+            options.signal,
           ),
+          "PlayStation 2 EE profile does not belong to the selected Ghidra installation.",
+          "Installed EE extension content changed since profile resolution; reopen the target to resolve a fresh profile.",
         );
-        if (installedRoot !== ee.root)
-          throw new GhidraLaunchError(
-            "PlayStation 2 EE profile does not belong to the selected Ghidra installation.",
-          );
-        const inspected = await inspectGhidraEeExtension(
-          ee.root,
-          ee.ghidra_version,
-          options.resourceScope,
-          options.signal,
-        );
-        if (inspected.sha256 !== ee.sha256)
-          throw new GhidraLaunchError(
-            "Installed EE extension content changed since profile resolution; reopen the target to resolve a fresh profile.",
-          );
-      }
       await createGhidraRuntimeDirectories(
         paths,
         platform,

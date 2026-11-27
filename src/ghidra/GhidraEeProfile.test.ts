@@ -5,9 +5,12 @@ import type {
 } from "../domain/binaryTargetTypes.js";
 import { ghidraPinnedLanguage } from "./GhidraAnalysisProfile.js";
 import {
+  GHIDRA_EE_INFERRED_ABI_LIMITATION,
   GHIDRA_EE_LANGUAGE_ID,
+  GHIDRA_EE_LIMITATIONS,
   GHIDRA_EE_SUPPORT_LANE,
   ghidraEeLanguageOverride,
+  ghidraEeLimitations,
   ghidraEeProfileParameters,
   ghidraEeUnsupportedReason,
   isGhidraEeTarget,
@@ -145,6 +148,31 @@ describe("PlayStation 2 EE profile", () => {
     const facts = { ...value.mips };
     delete facts.gnuAttributes;
     expect(ghidraEeUnsupportedReason({ ...value, mips: facts })).not.toBeNull();
+  });
+
+  it("records an absent ABI field as an inferred EABI64 assumption", () => {
+    const declared = target();
+    expect(ghidraEeProfileParameters(declared)).toMatchObject({
+      mips_abi_basis: "declared-eabi64-r5900-extension-v1",
+    });
+    expect(ghidraEeLimitations(declared)).toEqual(GHIDRA_EE_LIMITATIONS);
+    const absent = target({ flags: EE_FLAGS & ~0x00004000 });
+    expect(ghidraEeProfileParameters(absent)).toMatchObject({
+      mips_abi_basis: "inferred-eabi64-r5900-assumption-v1",
+    });
+    expect(ghidraEeLimitations(absent)).toEqual([
+      ...GHIDRA_EE_LIMITATIONS,
+      GHIDRA_EE_INFERRED_ABI_LIMITATION,
+    ]);
+    const lane = ghidraEeProfileParameters(absent);
+    expect(
+      ghidraMipsProfileMismatchReason(
+        absent,
+        { ...ghidraMipsProfileParameters(absent), ...lane },
+        false,
+        lane,
+      ),
+    ).toBeNull();
   });
 
   it("binds the committed EE lane, not the generic MIPS lane, at open", () => {

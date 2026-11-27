@@ -1,5 +1,6 @@
 import {
   lstat,
+  rename,
   mkdir,
   readFile,
   readdir,
@@ -387,6 +388,46 @@ describe.skipIf(process.platform === "win32")(
       expect(String(launched.error.cause)).toContain("compiled_language_stale");
       expect(spawn).not.toHaveBeenCalled();
       expect(await snapshot(root)).toEqual(before);
+    });
+
+    it("classifies an extension that vanished after resolution before starting a provider", async () => {
+      const { directory, root } = await installation();
+      const extension = await inspect(root);
+      await rename(root, `${root}-removed`);
+      const spawn = vi.fn();
+      const launcher = new GhidraHeadlessLauncher({
+        environment: {},
+        analyzeHeadlessPath: join(directory, "support/analyzeHeadless"),
+        configurationDirectoryName: `ghidra_${INSTALL_VERSION}_PUBLIC`,
+        javaHome: "/jdk-25",
+        bridgeScriptPath: "/packaged/ReaGhidraBridge.java",
+        eeExtension: extension,
+        spawnProcess: spawn,
+      });
+      const launched = await launcher.launch(
+        {
+          runtimeRoot: join(directory, "runtime"),
+          transport: "unix-socket",
+          endpointPath: join(directory, "socket"),
+          token: "test-only-token",
+          runId: "00000000-0000-4000-8000-000000000001",
+          targetPath: target.path,
+          targetSha256: target.sha256,
+          providerVersion: INSTALL_VERSION,
+          profileDigest: "b".repeat(64),
+        },
+        { resourceScope: new ArtifactResourceScope() },
+      );
+      expect(launched.ok).toBe(false);
+      if (launched.ok)
+        throw new Error("Vanished extension reached provider startup");
+      expect(launched.error.cause).toMatchObject({
+        _tag: "AnalysisCapabilityUnavailableError",
+      });
+      expect(String(launched.error.cause)).toContain(
+        "EE_EXTENSION_UNAVAILABLE",
+      );
+      expect(spawn).not.toHaveBeenCalled();
     });
   },
 );

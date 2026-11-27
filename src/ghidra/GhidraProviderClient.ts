@@ -101,7 +101,7 @@ import { ghidraPspExtensionSchema } from "./GhidraPspExtension.js";
 import { ghidraEeExtensionSchema } from "./GhidraEeExtension.js";
 import {
   GHIDRA_EE_LANGUAGE_ID,
-  GHIDRA_EE_LIMITATIONS,
+  ghidraEeLimitations,
   ghidraEeProfileParameters,
   isGhidraEeTarget,
 } from "./GhidraEeProfile.js";
@@ -1041,7 +1041,7 @@ export const createGhidraProviderClient = (input: {
       ...providerLimitations,
       ...targetLimitations,
       ...(psp ? GHIDRA_PSP_LIMITATIONS : []),
-      ...(ee ? GHIDRA_EE_LIMITATIONS : []),
+      ...(ee ? ghidraEeLimitations(target) : []),
       ...softFloatLimitations,
       ...riscvPolicyLimitations,
       ...ghidraExtensionLimitations(extensions),

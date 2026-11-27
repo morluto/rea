@@ -1,7 +1,7 @@
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { createHash } from "node:crypto";
 import { lstat, opendir, realpath } from "node:fs/promises";
-import { isAbsolute, join, posix } from "node:path";
+import { dirname, isAbsolute, join, posix } from "node:path";
 import { z } from "zod";
 import { sameRegularFileState } from "../filesystem/RegularFile.js";
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
@@ -332,6 +332,42 @@ const sleighSourceClosure = (
   };
   visit(source);
   return [...closure];
+};
+
+/** Pre-launch state of an extension resolved into the analysis profile. */
+export type GhidraProcessorExtensionRevalidation =
+  | "current"
+  | "foreign_installation"
+  | "content_changed";
+
+/**
+ * Re-establish a resolved extension in the selected installation before launch.
+ * A vanished or unreadable extension is classified like any failed inspection.
+ */
+export const revalidateGhidraProcessorExtension = async <Id extends string>(
+  spec: GhidraProcessorExtensionSpec<Id>,
+  analyzeHeadlessPath: string,
+  resolved: GhidraProcessorExtension<Id>,
+  resources: ArtifactResourceScope,
+  signal?: AbortSignal,
+): Promise<GhidraProcessorExtensionRevalidation> => {
+  let installedRoot: string;
+  try {
+    installedRoot = await realpath(
+      join(dirname(analyzeHeadlessPath), "..", "Ghidra", "Extensions", spec.id),
+    );
+  } catch (cause: unknown) {
+    throw classifyProviderFailure(cause, inspectionDialect(spec));
+  }
+  if (installedRoot !== resolved.root) return "foreign_installation";
+  const inspected = await inspectGhidraProcessorExtension(
+    spec,
+    resolved.root,
+    resolved.ghidra_version,
+    resources,
+    signal,
+  );
+  return inspected.sha256 === resolved.sha256 ? "current" : "content_changed";
 };
 
 /** Resolve prerequisites before opening or admitting cached extension-lane analysis. */

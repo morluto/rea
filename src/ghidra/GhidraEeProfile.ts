@@ -76,6 +76,12 @@ export const ghidraEeLanguageOverride = (
     ? { languageId: GHIDRA_EE_LANGUAGE_ID, compilerSpecId: "default" }
     : undefined;
 
+/** Whether the header declares EABI64 rather than leaving the ABI field absent. */
+const eeAbiDeclared = (target: BinaryTarget): boolean =>
+  target.architecture === "mips" &&
+  target.mips !== undefined &&
+  (target.mips.flags & 0x0000f000) === EF_MIPS_ABI_EABI64;
+
 /** Commit the EE lane over the generic MIPS header commitment. */
 export const ghidraEeProfileParameters = (
   target: BinaryTarget,
@@ -84,7 +90,9 @@ export const ghidraEeProfileParameters = (
   if (language === undefined) return {};
   return {
     mips_support_lane: GHIDRA_EE_SUPPORT_LANE,
-    mips_abi_basis: "declared-eabi64-r5900-extension-v1",
+    mips_abi_basis: eeAbiDeclared(target)
+      ? "declared-eabi64-r5900-extension-v1"
+      : "inferred-eabi64-r5900-assumption-v1",
     language_id: language.languageId,
     compiler_spec_id: language.compilerSpecId ?? "default",
     language_selection: "provider-pinned",
@@ -97,3 +105,13 @@ export const GHIDRA_EE_LIMITATIONS = [
   "The 128-bit multimedia instructions, VU0 macro mode and COP2 transfers follow the extension's definitions; decompiled output for them is an approximation, not an execution oracle.",
   "This EE profile covers static ELF32 ET_EXEC only. IRX modules, ISO containers, overlays and emulation are outside this verified lane.",
 ] as const;
+
+/** Stated when the EE profile assumes EABI64 for a header without an ABI field. */
+export const GHIDRA_EE_INFERRED_ABI_LIMITATION =
+  "The executable declares no MIPS ABI field; the EE profile assumes the EABI64 convention ee-gcc uses, which the header does not establish.";
+
+/** Limitations for an admitted EE target, including an inferred ABI. */
+export const ghidraEeLimitations = (target: BinaryTarget): readonly string[] =>
+  eeAbiDeclared(target)
+    ? GHIDRA_EE_LIMITATIONS
+    : [...GHIDRA_EE_LIMITATIONS, GHIDRA_EE_INFERRED_ABI_LIMITATION];
