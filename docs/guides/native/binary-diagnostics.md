@@ -424,10 +424,16 @@ the file:
 ```
 
 `collection` is `blocks` or `runs`; `limit` defaults to 256. Continue with
-`coverage.next_offset`. Blocks are contiguous from the window start, so the
-block at file offset `x` has index `(x - window.offset) / block_size`; run
-boundaries are always block boundaries. On the CLI, add `--evidence_output
-PATH` to keep the complete record and page it with an `evidence-file` source.
+`coverage.next_offset`. On `blocks`, optional `min_entropy`, `max_entropy` (0 to
+8 bits per byte, inclusive), and `run_boundaries_only: true` (blocks whose start
+or end offset is a boundary of a recorded `high` or `low` run) filter blocks in
+window order before paging. Filtered block pages keep the full parent series
+context (`entropy`) and standard `coverage.next_offset` paging over matching
+blocks while reporting `coverage.examined_blocks` and `coverage.matched_blocks`.
+Blocks are contiguous from the window start, so the block at file offset `x` has
+index `(x - window.offset) / block_size`; run boundaries are always block
+boundaries. On the CLI, add `--evidence_output PATH` to keep the complete record
+and page it with an `evidence-file` source.
 
 Reads use one block-sized buffer and a 256-entry histogram. Complete Evidence
 can become very large because it includes one row per selected block, and

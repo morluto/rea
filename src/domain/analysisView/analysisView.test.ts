@@ -1996,6 +1996,307 @@ it("pages retained byte entropy blocks and runs by index with a cursor", () => {
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
 });
 
+const entropySeriesParent = (
+  entropies: readonly number[],
+  options: {
+    blockSize?: number;
+    windowOffset?: number;
+    lastLength?: number;
+  } = {},
+): AnalysisViewParent => {
+  const blockSize = options.blockSize ?? 256;
+  const windowOffset = options.windowOffset ?? 16;
+  const lastLength = options.lastLength ?? blockSize;
+  const thresholds = { high: 7.2, low: 1 };
+  const blocks = entropies.map((entropy, index) => ({
+    offset: windowOffset + index * blockSize,
+    length: index === entropies.length - 1 ? lastLength : blockSize,
+    entropy,
+  }));
+  const runs: {
+    offset: number;
+    length: number;
+    classification: "high" | "low";
+  }[] = [];
+  for (const b of blocks) {
+    const classification =
+      b.entropy >= thresholds.high
+        ? "high"
+        : b.entropy <= thresholds.low
+          ? "low"
+          : undefined;
+    if (classification === undefined) continue;
+    const prev = runs[runs.length - 1];
+    if (
+      prev !== undefined &&
+      prev.classification === classification &&
+      prev.offset + prev.length === b.offset
+    ) {
+      prev.length += b.length;
+    } else {
+      runs.push({ offset: b.offset, length: b.length, classification });
+    }
+  }
+  const lastBlock = blocks[blocks.length - 1];
+  const windowLength =
+    lastBlock === undefined
+      ? 0
+      : lastBlock.offset + lastBlock.length - windowOffset;
+  return {
+    predicateType: "rea.byte-entropy",
+    evidenceId: `ev_${"5".repeat(64)}`,
+    operation: "inspect_byte_entropy",
+    limitations: [],
+    normalizedResult: {
+      artifact: {
+        path: "/tmp/sparse-fixture",
+        bytes: windowOffset + windowLength,
+        sha256: "6".repeat(64),
+      },
+      block_size: blockSize,
+      window: { offset: windowOffset, length: windowLength },
+      file_entropy: 0.5,
+      thresholds,
+      blocks,
+      runs,
+      limitations: [],
+    },
+  };
+};
+
+it("filters byte entropy blocks by inclusive thresholds and pages with filter coverage", () => {
+  const parent = entropySeriesParent([0, 1, 1.0001, 4.5, 7.1999, 7.2, 8]);
+  const high = projectAnalysisView(parent, {
+    kind: "byte-entropy",
+    collection: "blocks",
+    min_entropy: 7.2,
+    offset: 0,
+    limit: 1,
+  });
+  if (!high.ok) throw high.error;
+  expect(high.value).toMatchObject({
+    kind: "byte-entropy",
+    entropy: { block_count: 7, run_count: 2 },
+    items: [{ offset: 16 + 5 * 256, length: 256, entropy: 7.2 }],
+    coverage: {
+      status: "page",
+      examined: 1,
+      total: 2,
+      next_offset: 1,
+      exhausted: false,
+      examined_blocks: 7,
+      matched_blocks: 2,
+    },
+  });
+  const second = projectAnalysisView(parent, {
+    kind: "byte-entropy",
+    collection: "blocks",
+    min_entropy: 7.2,
+    offset: 1,
+    limit: 4,
+  });
+  if (!second.ok) throw second.error;
+  expect(second.value).toMatchObject({
+    items: [{ offset: 16 + 6 * 256, length: 256, entropy: 8 }],
+    coverage: {
+      status: "page",
+      examined: 1,
+      total: 2,
+      next_offset: null,
+      exhausted: true,
+      examined_blocks: 7,
+      matched_blocks: 2,
+    },
+  });
+  const band = projectAnalysisView(parent, {
+    kind: "byte-entropy",
+    collection: "blocks",
+    min_entropy: 1,
+    max_entropy: 7.1999,
+    offset: 0,
+    limit: 16,
+  });
+  if (!band.ok) throw band.error;
+  expect(band.value).toMatchObject({
+    items: [
+      { offset: 16 + 256, entropy: 1 },
+      { offset: 16 + 2 * 256, entropy: 1.0001 },
+      { offset: 16 + 3 * 256, entropy: 4.5 },
+      { offset: 16 + 4 * 256, entropy: 7.1999 },
+    ],
+    coverage: { examined: 4, total: 4, examined_blocks: 7, matched_blocks: 4 },
+  });
+});
+
+it("filters byte entropy blocks at run boundaries including unclassified transitions and partial final blocks", () => {
+  const series = [0, 0, 0, 4.5, 4.5, 4.5, 8, 8, 8, 0.2];
+  const parent = entropySeriesParent(series, { lastLength: 33 });
+  const boundaries = projectAnalysisView(parent, {
+    kind: "byte-entropy",
+    collection: "blocks",
+    run_boundaries_only: true,
+    offset: 0,
+    limit: 32,
+  });
+  if (!boundaries.ok) throw boundaries.error;
+  expect(boundaries.value).toMatchObject({
+    entropy: { block_count: 10, run_count: 3 },
+    items: [
+      { offset: 16, entropy: 0 },
+      { offset: 16 + 2 * 256, entropy: 0 },
+      { offset: 16 + 3 * 256, entropy: 4.5 },
+      { offset: 16 + 5 * 256, entropy: 4.5 },
+      { offset: 16 + 6 * 256, entropy: 8 },
+      { offset: 16 + 8 * 256, entropy: 8 },
+      { offset: 16 + 9 * 256, length: 33, entropy: 0.2 },
+    ],
+    coverage: {
+      status: "page",
+      examined: 7,
+      total: 7,
+      next_offset: null,
+      exhausted: true,
+      examined_blocks: 10,
+      matched_blocks: 7,
+    },
+  });
+  const highBoundaries = projectAnalysisView(parent, {
+    kind: "byte-entropy",
+    collection: "blocks",
+    run_boundaries_only: true,
+    min_entropy: 7.2,
+    offset: 0,
+    limit: 32,
+  });
+  if (!highBoundaries.ok) throw highBoundaries.error;
+  expect(highBoundaries.value).toMatchObject({
+    items: [
+      { offset: 16 + 6 * 256, entropy: 8 },
+      { offset: 16 + 8 * 256, entropy: 8 },
+    ],
+    coverage: {
+      status: "page",
+      examined: 2,
+      total: 2,
+      examined_blocks: 10,
+      matched_blocks: 2,
+    },
+  });
+});
+
+it("handles empty filtered matches, out-of-range offsets, invalid thresholds and run filter rejections", () => {
+  const parent = entropySeriesParent([0, 0, 7.9, 0]);
+  const none = projectAnalysisView(parent, {
+    kind: "byte-entropy",
+    collection: "blocks",
+    min_entropy: 8,
+    offset: 0,
+    limit: 10,
+  });
+  if (!none.ok) throw none.error;
+  expect(none.value).toMatchObject({
+    items: [],
+    coverage: {
+      status: "empty",
+      examined: 0,
+      total: 0,
+      next_offset: null,
+      exhausted: true,
+      examined_blocks: 4,
+      matched_blocks: 0,
+    },
+  });
+  const pastEnd = projectAnalysisView(parent, {
+    kind: "byte-entropy",
+    collection: "blocks",
+    max_entropy: 1,
+    offset: 10,
+    limit: 10,
+  });
+  if (!pastEnd.ok) throw pastEnd.error;
+  expect(pastEnd.value).toMatchObject({
+    items: [],
+    coverage: {
+      status: "empty",
+      examined: 0,
+      total: 3,
+      next_offset: null,
+      exhausted: true,
+      examined_blocks: 4,
+      matched_blocks: 3,
+    },
+  });
+  const inverted = projectAnalysisView(parent, {
+    kind: "byte-entropy",
+    collection: "blocks",
+    min_entropy: 7.2,
+    max_entropy: 1,
+    offset: 0,
+    limit: 10,
+  });
+  expect(inverted).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisInputError" },
+  });
+  const id = `ev_${"a".repeat(64)}`;
+  const ev = { kind: "retained-evidence", evidence_id: id };
+  for (const invalidView of [
+    { kind: "byte-entropy", collection: "runs", min_entropy: 7.2 },
+    { kind: "byte-entropy", collection: "runs", run_boundaries_only: true },
+    { kind: "byte-entropy", collection: "blocks", min_entropy: -0.1 },
+    { kind: "byte-entropy", collection: "blocks", max_entropy: 8.1 },
+  ]) {
+    expect(
+      inspectAnalysisViewInputSchema.safeParse({
+        source: ev,
+        view: invalidView,
+      }).success,
+    ).toBe(false);
+  }
+});
+
+it("returns boundary blocks for a 2 GiB 32768-block sparse window in one filtered call", () => {
+  const entropies = new Array<number>(32_768).fill(0);
+  entropies[16_384] = 8;
+  const parent = entropySeriesParent(entropies, {
+    blockSize: 65_536,
+    windowOffset: 0,
+  });
+  const result = projectAnalysisView(parent, {
+    kind: "byte-entropy",
+    collection: "blocks",
+    run_boundaries_only: true,
+    offset: 0,
+    limit: 256,
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value).toMatchObject({
+    kind: "byte-entropy",
+    entropy: {
+      block_size: 65_536,
+      window: { offset: 0, length: 2 * 1024 ** 3 },
+      block_count: 32_768,
+      run_count: 3,
+    },
+    items: [
+      { offset: 0, length: 65_536, entropy: 0 },
+      { offset: 16_383 * 65_536, length: 65_536, entropy: 0 },
+      { offset: 16_384 * 65_536, length: 65_536, entropy: 8 },
+      { offset: 16_385 * 65_536, length: 65_536, entropy: 0 },
+      { offset: 32_767 * 65_536, length: 65_536, entropy: 0 },
+    ],
+    coverage: {
+      status: "page",
+      examined: 5,
+      total: 5,
+      next_offset: null,
+      exhausted: true,
+      examined_blocks: 32_768,
+      matched_blocks: 5,
+    },
+  });
+});
+
 const multiModuleJavaScriptAnalysis = () => {
   const base = analysisViewJavaScriptAnalysis();
   const baseObs = base.graph.nodes[0]!.observations[0]!;

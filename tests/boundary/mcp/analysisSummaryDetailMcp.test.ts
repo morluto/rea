@@ -1,7 +1,11 @@
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { parseEvidence } from "../../../src/domain/evidence.js";
+import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
+import { BYTE_ENTROPY_PROVIDER } from "../../../src/domain/investigationProviders.js";
 import { byteEntropySchema } from "../../../src/domain/native/byteEntropy.js";
-import { byteEntropySummaryViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
+import {
+  byteEntropyPageViewResultSchema,
+  byteEntropySummaryViewResultSchema,
+} from "../../../src/domain/analysisView/analysisViewResult.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -319,3 +323,216 @@ cliTest(
     ).toBe(true);
   },
 );
+
+it("filters retained byte entropy blocks by threshold and run boundaries across MCP", async () => {
+  const root = await createTestTempDirectory("rea-entropy-filter-mcp-");
+  const path = join(root, "multi-run.bin");
+  const bytes = Buffer.alloc(38 * 256);
+  const highBlock = Buffer.from(Array.from({ length: 256 }, (_, b) => b));
+  for (let index = 16; index < 22; index += 1)
+    highBlock.copy(bytes, index * 256);
+  await writeFile(path, bytes);
+  const client = await connect(true);
+  const summaryCall = await client.callTool({
+    name: "inspect_byte_entropy",
+    arguments: { path, block_size: 256, detail: "summary" },
+  });
+  expect(summaryCall.isError).not.toBe(true);
+  const summary = byteEntropySummaryViewResultSchema.parse(
+    parseEvidence(summaryCall.structuredContent).normalized_result,
+  );
+  const boundariesCall = await client.callTool({
+    name: "inspect_analysis_view",
+    arguments: {
+      source: {
+        kind: "retained-evidence",
+        evidence_id: summary.parent_evidence_id,
+      },
+      view: {
+        kind: "byte-entropy",
+        collection: "blocks",
+        run_boundaries_only: true,
+      },
+    },
+  });
+  expect(boundariesCall.isError).not.toBe(true);
+  const boundaries = byteEntropyPageViewResultSchema.parse(
+    parseEvidence(boundariesCall.structuredContent).normalized_result,
+  );
+  expect(boundaries).toMatchObject({
+    entropy: { block_count: 38, run_count: 3 },
+    items: [
+      { offset: 0, length: 256, entropy: 0 },
+      { offset: 15 * 256, length: 256, entropy: 0 },
+      { offset: 16 * 256, length: 256, entropy: 8 },
+      { offset: 21 * 256, length: 256, entropy: 8 },
+      { offset: 22 * 256, length: 256, entropy: 0 },
+      { offset: 37 * 256, length: 256, entropy: 0 },
+    ],
+    coverage: {
+      status: "page",
+      examined: 6,
+      total: 6,
+      next_offset: null,
+      exhausted: true,
+      examined_blocks: 38,
+      matched_blocks: 6,
+    },
+  });
+  const firstHigh = byteEntropyPageViewResultSchema.parse(
+    parseEvidence(
+      (
+        await client.callTool({
+          name: "inspect_analysis_view",
+          arguments: {
+            source: {
+              kind: "retained-evidence",
+              evidence_id: summary.parent_evidence_id,
+            },
+            view: {
+              kind: "byte-entropy",
+              collection: "blocks",
+              min_entropy: 7.2,
+              offset: 0,
+              limit: 4,
+            },
+          },
+        })
+      ).structuredContent,
+    ).normalized_result,
+  );
+  expect(firstHigh.coverage).toEqual({
+    status: "page",
+    examined: 4,
+    total: 6,
+    next_offset: 4,
+    exhausted: false,
+    examined_blocks: 38,
+    matched_blocks: 6,
+  });
+  const nextHigh = byteEntropyPageViewResultSchema.parse(
+    parseEvidence(
+      (
+        await client.callTool({
+          name: "inspect_analysis_view",
+          arguments: {
+            source: {
+              kind: "retained-evidence",
+              evidence_id: summary.parent_evidence_id,
+            },
+            view: {
+              kind: "byte-entropy",
+              collection: "blocks",
+              min_entropy: 7.2,
+              offset: firstHigh.coverage.next_offset!,
+              limit: 4,
+            },
+          },
+        })
+      ).structuredContent,
+    ).normalized_result,
+  );
+  expect(nextHigh.items).toHaveLength(2);
+  expect(nextHigh.coverage).toEqual({
+    status: "page",
+    examined: 2,
+    total: 6,
+    next_offset: null,
+    exhausted: true,
+    examined_blocks: 38,
+    matched_blocks: 6,
+  });
+});
+
+it("returns boundary blocks of a 2 GiB 32768-block sparse window in one MCP call", async () => {
+  const root = await createTestTempDirectory("rea-entropy-sparse-mcp-");
+  const evidencePath = join(root, "sparse-2g.json");
+  const artifactPath = join(root, "sparse-3g.bin");
+  const blockSize = 65_536;
+  const windowLength = 2 * 1024 ** 3;
+  const highBlockIndex = 16_384;
+  const blocks = Array.from({ length: 32_768 }, (_, index) => ({
+    offset: index * blockSize,
+    length: blockSize,
+    entropy: index === highBlockIndex ? 8 : 0,
+  }));
+  const report = byteEntropySchema.parse({
+    artifact: {
+      path: artifactPath,
+      bytes: 3 * 1024 ** 3,
+      sha256: "a".repeat(64),
+    },
+    block_size: blockSize,
+    window: { offset: 0, length: windowLength },
+    file_entropy: 0.0005,
+    thresholds: { high: 7.2, low: 1 },
+    blocks,
+    runs: [
+      { offset: 0, length: highBlockIndex * blockSize, classification: "low" },
+      {
+        offset: highBlockIndex * blockSize,
+        length: blockSize,
+        classification: "high",
+      },
+      {
+        offset: (highBlockIndex + 1) * blockSize,
+        length: (32_768 - highBlockIndex - 1) * blockSize,
+        classification: "low",
+      },
+    ],
+    limitations: [],
+  });
+  const evidence = createEvidence(
+    { path: artifactPath, format: "file", sha256: report.artifact.sha256 },
+    BYTE_ENTROPY_PROVIDER,
+    {
+      operation: "inspect_byte_entropy",
+      parameters: {
+        path: artifactPath,
+        block_size: blockSize,
+        offset: 0,
+        length: windowLength,
+      },
+      result: report,
+      rawResult: null,
+      confidence: "observed",
+      limitations: [],
+      locations: [{ kind: "artifact-path", path: artifactPath }],
+    },
+  );
+  await writeFile(evidencePath, JSON.stringify(evidence));
+  const client = await connect(true);
+  const response = await client.callTool({
+    name: "inspect_analysis_view",
+    arguments: {
+      source: { kind: "evidence-file", path: evidencePath },
+      view: {
+        kind: "byte-entropy",
+        collection: "blocks",
+        run_boundaries_only: true,
+      },
+    },
+  });
+  expect(response.isError).not.toBe(true);
+  const page = byteEntropyPageViewResultSchema.parse(
+    parseEvidence(response.structuredContent).normalized_result,
+  );
+  expect(page.entropy.block_count).toBe(32_768);
+  expect(page.items).toEqual([
+    { offset: 0, length: blockSize, entropy: 0 },
+    { offset: 16_383 * blockSize, length: blockSize, entropy: 0 },
+    { offset: 16_384 * blockSize, length: blockSize, entropy: 8 },
+    { offset: 16_385 * blockSize, length: blockSize, entropy: 0 },
+    { offset: 32_767 * blockSize, length: blockSize, entropy: 0 },
+  ]);
+  expect(page.coverage).toEqual({
+    status: "page",
+    examined: 5,
+    total: 5,
+    next_offset: null,
+    exhausted: true,
+    examined_blocks: 32_768,
+    matched_blocks: 5,
+  });
+  expect(textBytes(response.content)).toBeLessThan(4096);
+});
