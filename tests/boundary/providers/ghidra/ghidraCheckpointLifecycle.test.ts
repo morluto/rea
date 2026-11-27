@@ -718,6 +718,39 @@ it.skipIf(process.platform === "win32").each([false, true])(
 );
 
 it.skipIf(process.platform === "win32")(
+  "keeps a failed manifest read beside the launch error it was explaining",
+  async () => {
+    const f = await fixture();
+    expect((await f.client.start()).ok).toBe(true);
+    expect((await f.client.close()).ok).toBe(true);
+    const manifestClose = new ProviderCleanupError("ghidra", ["current.json"], {
+      reason: "manifest descriptor close failed",
+    });
+    const explain = vi
+      .spyOn(GhidraCheckpoint.prototype, "supersededRestore")
+      .mockRejectedValueOnce(manifestClose);
+    const launcher: GhidraLauncher = {
+      launch: async () =>
+        err(
+          new GhidraLaunchError(
+            "Ghidra checkpoint changed before its private import; reopen the target.",
+            { checkpointRestoreFailed: true },
+          ),
+        ),
+    };
+    const stale = await peer(f, launcher);
+    const started = await stale.client.start();
+    explain.mockRestore();
+    if (started.ok) throw new Error("the restore explanation succeeded");
+    expect(started.error.kind).toBe("start");
+    expect(started.error.cleanupFailure).toBe(manifestClose);
+    expect(started.error.cause).not.toBeInstanceOf(
+      GhidraCheckpointSupersededError,
+    );
+  },
+);
+
+it.skipIf(process.platform === "win32")(
   "keeps a launch failure after a restored copy even when another session saved meanwhile",
   async () => {
     const f = await fixture();

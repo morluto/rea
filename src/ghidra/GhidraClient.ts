@@ -1396,6 +1396,11 @@ export class GhidraClient {
       // this launch was restoring; report that instead of the missing file.
       // Only a failed restore can be explained that way: any other launch
       // failure keeps its own cause, output and diagnostics.
+      // A failed manifest read is not an explanation. Keep the launch error
+      // primary and retain that read, including a descriptor close that
+      // failed after the bytes were read, so a later cleanup retry cannot
+      // drop the reason.
+      let manifestReadFailure: unknown;
       const superseded =
         packedProgram === undefined ||
         producerFailure instanceof AnalysisCancelledError ||
@@ -1406,7 +1411,10 @@ export class GhidraClient {
           ? undefined
           : await this.#checkpoint
               ?.supersededRestore(deadline.signal)
-              .catch(() => undefined);
+              .catch((cause: unknown) => {
+                manifestReadFailure = cause;
+                return undefined;
+              });
       // The explanation replaces the launch outcome, not its cleanup: the
       // launcher's retained restore cleanup failure travels on the refusal.
       if (superseded !== undefined && isGhidraCleanupCarrier(launched.error))
@@ -1421,7 +1429,15 @@ export class GhidraClient {
             : launched.error instanceof GhidraSessionError
               ? launched.error
               : this.#failure("start", launched.error.message, launched.error);
-      return this.#startupFailure(failure, deadline);
+      const reported =
+        manifestReadFailure === undefined
+          ? failure
+          : failure.withCleanupFailure(
+              manifestReadFailure instanceof AnalysisError
+                ? manifestReadFailure
+                : this.#cleanupError(manifestReadFailure),
+            );
+      return this.#startupFailure(reported, deadline);
     }
     this.#launch = launched.value;
     this.#process = new ProviderProcessSupervisor(launched.value, {
