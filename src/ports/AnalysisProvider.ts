@@ -408,6 +408,11 @@ export type CapabilityDescriptor = CapabilityAvailability & {
 
 /** Factory and capability declaration for an analysis implementation. */
 export interface AnalysisProvider {
+  /**
+   * The provider's clients implement `prepare`, so a session may create one
+   * before the first query. Absent, a client is created only by a request.
+   */
+  readonly startsBeforeFirstQuery?: true;
   identity(): ProviderIdentity;
   capabilities(): readonly CapabilityDescriptor[];
   resolveAnalysisProfile?(

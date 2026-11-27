@@ -440,6 +440,7 @@ it("prepares only the profiled provider and nothing after close", async () => {
   ): AnalysisProvider => {
     const providerIdentity = identity(id);
     return {
+      startsBeforeFirstQuery: true,
       identity: () => providerIdentity,
       capabilities: () => [operationCapability(providerIdentity, operation)],
       createClient: (): AnalysisClient => ({
@@ -471,4 +472,15 @@ it("prepares only the profiled provider and nothing after close", async () => {
   await client.close();
   client.prepare?.();
   expect(prepared).toEqual(["engine"]);
+
+  // A provider that does not ask for an early start gets no client at all.
+  const lazy = failingProvider("lazy", "list_procedures", "lazy-db");
+  const create = vi.spyOn(lazy.provider, "createClient");
+  new CompositeProvider([lazy.provider])
+    .createClient(
+      executableTarget,
+      createAnalysisProfile({ id: "lazy", name: "lazy", version: "1" }, {}),
+    )
+    .prepare?.();
+  expect(create).not.toHaveBeenCalled();
 });

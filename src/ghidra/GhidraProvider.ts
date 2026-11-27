@@ -128,6 +128,7 @@ const admittedArchitecturesText = (): string => {
 
 /** Ghidra candidate backed by an isolated ephemeral headless Program session. */
 export class GhidraProvider implements AnalysisProviderCandidate {
+  readonly startsBeforeFirstQuery = true;
   readonly #inspectionResources = new ArtifactResourceScope();
   readonly #inspectionWork = new Set<Promise<unknown>>();
   #lifetime = new AbortController();

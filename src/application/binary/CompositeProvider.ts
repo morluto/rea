@@ -230,8 +230,13 @@ export class CompositeProvider implements AnalysisProvider {
         // The profiled provider is the engine the caller's queries will
         // start; auxiliary providers stay lazy.
         if (closed || profile === undefined) return;
+        // Creating a client is itself engine creation for some providers, so
+        // only a provider that asks for an early start gets one here.
         for (const provider of new Set(this.#providerByOperation.values()))
-          if (provider.identity().id === profile.provider.id)
+          if (
+            provider.startsBeforeFirstQuery === true &&
+            provider.identity().id === profile.provider.id
+          )
             clientFor(provider).prepare?.();
       },
       executeIfReady: (operation, parameters, options) => {
