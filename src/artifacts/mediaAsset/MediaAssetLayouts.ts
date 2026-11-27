@@ -55,12 +55,14 @@ type Extent = "consistent" | "truncated" | "trailing-bytes";
 export const admitMediaAssetRegions = (
   count: number,
   limits: MediaAssetReaderLimits,
+  requiredValue?: number,
 ): void => {
   if (count > limits.region_count)
     throw artifactReaderLimitFailure(
       "artifact_limits.media_asset.region_count",
       limits.region_count,
       "count",
+      requiredValue,
     );
 };
 /**
@@ -125,26 +127,8 @@ const malformed = (
 ): ParseFailureError<"malformed"> => malformedInput(format, detail, { offset });
 
 const OPUS_TAGS = Buffer.from("OpusTags", "latin1");
-
-/** The first `limit` bytes of a packet split across page payloads. */
-const packetPrefix = (parts: readonly Buffer[], limit: number): Buffer => {
-  const kept: Buffer[] = [];
-  let length = 0;
-  for (const part of parts) {
-    if (length >= limit) break;
-    const take = part.subarray(0, limit - length);
-    kept.push(take);
-    length += take.length;
-  }
-  return Buffer.concat(kept, length);
-};
-
-/** True when the page's last lacing value is 255, so its packet continues. */
-const pagePacketContinues = (bytes: Buffer, at: number): boolean => {
-  const segments = bytes[at + 26]!;
-  if (segments === 0) return false;
-  return bytes[at + 27 + segments - 1] === 255;
-};
+const OPUS_HEAD_BYTES = 19;
+const TAGS_PREFIX_LIMIT = 12 + MAX_VENDOR_BYTES;
 
 /** RFC 3533 header_type bits. */
 const OGG_CONTINUED_PACKET = 0x01;
@@ -156,7 +140,7 @@ interface OggPageCutOff {
   readonly requiredEnd: number;
 }
 
-/** One examined Ogg page: ranges only, so growing the read buffer can drop prior copies. */
+/** One examined Ogg page's framing metadata and payload range. */
 interface OggPageRecord {
   readonly sequence: number;
   readonly serial: number;
@@ -168,29 +152,36 @@ interface OggPageRecord {
   readonly continues: boolean;
 }
 
-/** One Ogg page's capture header and segment payload extent. */
-const readOggPage = (
-  bytes: Buffer,
+type ReadBoundedRange = (
+  offset: number,
+  length: number,
+) => Promise<Buffer | "truncated">;
+
+/** One Ogg page's capture header and segment payload extent, read by position. */
+const readOggPage = async (
+  readRange: ReadBoundedRange,
   at: number,
   fileSize: number,
-): OggPageRecord | OggPageCutOff | "malformed" => {
-  const available = Math.min(bytes.length, fileSize);
-  if (at + 27 > available) return { kind: "truncated", requiredEnd: at + 27 };
-  if (bytes.toString("latin1", at, at + 4) !== "OggS") return "malformed";
-  if (bytes[at + 4] !== 0) return "malformed";
-  const headerType = bytes[at + 5]!;
-  const fields = new BinaryReader(bytes, true, "ogg-opus");
-  const serial = fields.u32(at + 14);
-  const sequence = fields.u32(at + 18);
-  const segments = bytes[at + 26]!;
-  if (at + 27 + segments > available)
+): Promise<OggPageRecord | OggPageCutOff | "malformed"> => {
+  const pageHead = await readRange(at, 27);
+  if (pageHead === "truncated")
+    return { kind: "truncated", requiredEnd: at + 27 };
+  if (pageHead.toString("latin1", 0, 4) !== "OggS") return "malformed";
+  if (pageHead[4] !== 0) return "malformed";
+  const headerType = pageHead[5]!;
+  const fields = new BinaryReader(pageHead, true, "ogg-opus");
+  const serial = fields.u32(14);
+  const sequence = fields.u32(18);
+  const segments = pageHead[26]!;
+  const segmentTable = await readRange(at + 27, segments);
+  if (segmentTable === "truncated")
     return { kind: "truncated", requiredEnd: at + 27 + segments };
   let packetBytes = 0;
   for (let index = 0; index < segments; index++)
-    packetBytes += bytes[at + 27 + index]!;
+    packetBytes += segmentTable[index]!;
   const headerLength = 27 + segments;
   const length = headerLength + packetBytes;
-  if (at + length > available)
+  if (at + length > fileSize)
     return { kind: "truncated", requiredEnd: at + length };
   return {
     sequence,
@@ -200,7 +191,7 @@ const readOggPage = (
     length,
     packetOffset: at + headerLength,
     packetLength: packetBytes,
-    continues: pagePacketContinues(bytes, at),
+    continues: segments > 0 && segmentTable[segments - 1] === 255,
   };
 };
 
@@ -211,20 +202,22 @@ export const oggOpusLayout = async (
   read: MediaAssetRead,
   limits: MediaAssetReaderLimits,
 ): Promise<MediaAssetLayout<OggOpusMetadata>> => {
-  let buffer = header;
-  const ensure = async (end: number): Promise<Buffer> => {
-    if (buffer.length >= end || buffer.length >= fileSize) return buffer;
-    const more = await read(
-      buffer.length,
-      Math.min(end, fileSize) - buffer.length,
-    );
-    buffer = Buffer.concat([buffer, more]);
-    return buffer;
+  /** Read a bounded range by position without growing a prefix buffer across pages. */
+  const readRange: ReadBoundedRange = async (offset, length) => {
+    if (length <= 0) return Buffer.alloc(0);
+    if (offset + length > fileSize) return "truncated";
+    if (offset + length <= header.length)
+      return header.subarray(offset, offset + length);
+    const bytes = await read(offset, length);
+    return bytes.length < length ? "truncated" : bytes;
   };
 
   const pages: OggPageRecord[] = [];
   /** Pages of the Opus stream that carry the OpusTags packet, in order. */
   const tagsPages: OggPageRecord[] = [];
+  const tagsPrefixChunks: Buffer[] = [];
+  let tagsPrefixBytes = 0;
+  let headPacket: Buffer | undefined;
   const limitations: string[] = [];
   let at = 0;
   let cutOff: OggPageCutOff | undefined;
@@ -234,8 +227,7 @@ export const oggOpusLayout = async (
   let secondPacketNotTags = false;
   while (at < fileSize) {
     admitMediaAssetRegions(pages.length + 1, limits);
-    await ensure(Math.min(at + 27 + 255 + 65_536, fileSize));
-    const page = readOggPage(buffer, at, fileSize);
+    const page = await readOggPage(readRange, at, fileSize);
     if (page === "malformed")
       throw malformed(
         "ogg-opus",
@@ -250,6 +242,15 @@ export const oggOpusLayout = async (
     }
 
     if (pages.length === 0) {
+      const headBytes = await readRange(
+        page.packetOffset,
+        Math.min(page.packetLength, OPUS_HEAD_BYTES),
+      );
+      if (headBytes === "truncated") {
+        cutOff = { kind: "truncated", requiredEnd: page.offset + page.length };
+        break;
+      }
+      headPacket = headBytes;
       pages.push(page);
       at = page.offset + page.length;
       continue;
@@ -266,17 +267,27 @@ export const oggOpusLayout = async (
     }
 
     if (!tagsPacketOpen) {
-      const packet = buffer.subarray(
-        page.packetOffset,
-        page.packetOffset + page.packetLength,
-      );
+      const probeLength =
+        page.packetLength >= OPUS_TAGS.length
+          ? Math.min(page.packetLength, TAGS_PREFIX_LIMIT)
+          : 0;
+      const probe =
+        probeLength > 0
+          ? await readRange(page.packetOffset, probeLength)
+          : Buffer.alloc(0);
+      if (probe === "truncated") {
+        cutOff = { kind: "truncated", requiredEnd: page.offset + page.length };
+        break;
+      }
       if (
-        packet.length >= OPUS_TAGS.length &&
-        packet.subarray(0, 8).equals(OPUS_TAGS)
+        probe.length >= OPUS_TAGS.length &&
+        probe.subarray(0, OPUS_TAGS.length).equals(OPUS_TAGS)
       ) {
         tagsPacketOpen = true;
         pages.push(page);
         tagsPages.push(page);
+        tagsPrefixChunks.push(probe);
+        tagsPrefixBytes += probe.length;
         at = page.offset + page.length;
         if (!page.continues) {
           tagsComplete = true;
@@ -292,6 +303,18 @@ export const oggOpusLayout = async (
       break;
     }
 
+    if (tagsPrefixBytes < TAGS_PREFIX_LIMIT && page.packetLength > 0) {
+      const chunk = await readRange(
+        page.packetOffset,
+        Math.min(page.packetLength, TAGS_PREFIX_LIMIT - tagsPrefixBytes),
+      );
+      if (chunk === "truncated") {
+        cutOff = { kind: "truncated", requiredEnd: page.offset + page.length };
+        break;
+      }
+      tagsPrefixChunks.push(chunk);
+      tagsPrefixBytes += chunk.length;
+    }
     if ((page.headerType & OGG_CONTINUED_PACKET) === 0)
       limitations.push(
         `The OpusTags packet continues onto the page at offset ${String(page.offset)}, but that page does not set the continued-packet flag.`,
@@ -328,11 +351,11 @@ export const oggOpusLayout = async (
     truncated = true;
 
   const headPage = pages[0]!;
-  const headPacket = buffer.subarray(
-    headPage.packetOffset,
-    headPage.packetOffset + headPage.packetLength,
-  );
-  if (headPacket.length < 19 || !headPacket.subarray(0, 8).equals(OPUS_HEAD))
+  if (
+    headPacket === undefined ||
+    headPacket.length < OPUS_HEAD_BYTES ||
+    !headPacket.subarray(0, 8).equals(OPUS_HEAD)
+  )
     throw malformed(
       "ogg-opus",
       "the first Ogg packet is not OpusHead",
@@ -356,15 +379,7 @@ export const oggOpusLayout = async (
   if (tagsPages.length > 0) {
     // Only the packet prefix that holds the vendor is assembled; comment
     // payloads, which may be large pictures, stay in their page regions.
-    const tagsPrefix = packetPrefix(
-      tagsPages.map((page) =>
-        buffer.subarray(
-          page.packetOffset,
-          page.packetOffset + page.packetLength,
-        ),
-      ),
-      12 + MAX_VENDOR_BYTES,
-    );
+    const tagsPrefix = Buffer.concat(tagsPrefixChunks, tagsPrefixBytes);
     if (tagsPrefix.length < 12)
       limitations.push(
         "The OpusTags packet ends before its vendor length; the vendor was not read.",

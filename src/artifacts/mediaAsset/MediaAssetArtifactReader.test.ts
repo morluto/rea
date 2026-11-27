@@ -12,6 +12,7 @@ import {
   MediaAssetArtifactReader,
   type MediaAssetFormat,
 } from "./MediaAssetArtifactReader.js";
+import { oggOpusLayout } from "./MediaAssetLayouts.js";
 import {
   bink2Fixture,
   oggOpusFixture,
@@ -160,9 +161,10 @@ describe("Ogg Opus headers", () => {
     expect(result.contents.get("audio.bin")?.includes(0x41)).toBe(false);
   });
 
-  it("inventories many OpusTags continuation pages without retaining packet copies", async () => {
+  it("inventories many OpusTags continuation pages by position without reading comment payloads", async () => {
     const tagPages = 48;
     const bytes = oggOpusManyTagsPagesFixture(tagPages);
+    expect(bytes.length).toBeGreaterThan(190_000);
     const result = await read("ogg-opus", bytes, {
       region_count: tagPages + 4,
     });
@@ -176,6 +178,24 @@ describe("Ogg Opus headers", () => {
     const audio = result.contents.get("audio.bin");
     expect(audio?.includes(0xab)).toBe(true);
     expect(audio?.includes(0x5a)).toBe(false);
+
+    let totalReadBytes = 0;
+    let maxReadLength = 0;
+    const layout = await oggOpusLayout(
+      bytes.subarray(0, 64),
+      bytes.length,
+      async (offset, length) => {
+        const chunk = bytes.subarray(offset, offset + length);
+        totalReadBytes += chunk.length;
+        maxReadLength = Math.max(maxReadLength, chunk.length);
+        return chunk;
+      },
+      { region_count: tagPages + 4 },
+    );
+    expect(layout.metadata.vendor).toBe("short");
+    expect(layout.regions).toHaveLength(tagPages + 3);
+    expect(maxReadLength).toBeLessThanOrEqual(12 + 4096);
+    expect(totalReadBytes).toBeLessThan(16_384);
   });
 
   it("reports truncated when the first Ogg page payload is cut off", async () => {
@@ -730,7 +750,10 @@ describe("media asset region admission", () => {
         region_count: 1,
       }),
     ).rejects.toMatchObject({
-      readerLimit: { parameter: "artifact_limits.media_asset.region_count" },
+      readerLimit: {
+        parameter: "artifact_limits.media_asset.region_count",
+        required_value: 2,
+      },
     });
   });
 });

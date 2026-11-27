@@ -145,27 +145,34 @@ export const oggOpusSpannedTagsFixture = (): Buffer => {
 };
 
 /**
- * OpusTags packet split across many full-sized pages. Page records must keep
- * ranges only; retaining each growing Buffer.concat copy would pin O(n²) bytes.
+ * OpusTags packet split across many multi-segment pages exceeding the initial
+ * header prefix. The layout walk must read pages by position and keep only
+ * ranges plus the bounded vendor prefix.
  */
 export const oggOpusManyTagsPagesFixture = (tagPages = 48): Buffer => {
   const vendor = Buffer.from("short", "utf8");
-  // Enough payload that every tags page but the last carries a 255-byte segment.
+  const pagePayload = 16 * 255;
   const tags = Buffer.concat([
     Buffer.from("OpusTags", "latin1"),
     u32(vendor.length),
     vendor,
     u32(0),
-    Buffer.alloc(tagPages * 255, 0x5a),
+    Buffer.alloc(tagPages * pagePayload, 0x5a),
   ]);
   const pages: Buffer[] = [oggPage(0, 0n, opusHeadPacket(), 2)];
   let sequence = 1;
   for (let offset = 0; offset < tags.length;) {
-    const take = Math.min(255, tags.length - offset);
+    const take = Math.min(pagePayload, tags.length - offset);
+    const segmentSizes: number[] = [];
+    for (let remaining = take; remaining > 0;) {
+      const seg = Math.min(255, remaining);
+      segmentSizes.push(seg);
+      remaining -= seg;
+    }
     const continued = offset > 0 ? 0x01 : 0;
     pages.push(
       oggPage(sequence, 0n, tags.subarray(offset, offset + take), continued, {
-        segmentSizes: [take],
+        segmentSizes,
       }),
     );
     sequence += 1;

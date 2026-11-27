@@ -117,7 +117,11 @@ export class MediaAssetArtifactReader extends PositionalArtifactReader<MediaAsse
     }
     // Every listed region, including the trailing audio and fixed-layout
     // regions, counts against the same admission as the walks.
-    admitMediaAssetRegions(layout.regions.length, this.#limits);
+    admitMediaAssetRegions(
+      layout.regions.length,
+      this.#limits,
+      layout.regions.length,
+    );
     const entries = layout.regions.map((region): PositionalArtifactEntry => ({
       path: region.path,
       kind: "file",
