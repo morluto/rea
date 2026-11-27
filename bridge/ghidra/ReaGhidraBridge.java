@@ -2940,14 +2940,17 @@ public final class ReaGhidraBridge extends HeadlessScript {
      * chains through database types a definition fills in place.
      */
     private void requireBoundedCallerCTypeDepth(AdmittedCallerC admitted, String field, boolean declarations) {
+        CallerCTypeDepths depths =
+            new CallerCTypeDepths(admitted.tokens(), field, currentProgram.getDataTypeManager());
         try {
-            CallerCTypeDepths depths =
-                new CallerCTypeDepths(admitted.tokens(), field, currentProgram.getDataTypeManager());
             if (declarations) depths.measureDefinitions();
             else depths.measureSignature();
         } catch (CallerCTypeDepths.Unmeasured unmeasured) {
-            // Admission admitted a shape this pass does not measure; the
-            // post-parse walk in requireBoundedTypeDepth remains the bound.
+            // An incomplete shape may already have measured an over-deep
+            // chain; that count still refuses before the parser walks it.
+            depths.refuseIfOverDeep();
+            // Otherwise admission admitted a shape this pass does not
+            // measure; the post-parse walk remains the bound.
         }
     }
 
@@ -2974,6 +2977,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         private String specifierTag;
         /** Whether the last specifiers defined an anonymous composite body. */
         private boolean specifierAnonymousComposite;
+        /** The deepest chain measured so far, including partial declarators. */
+        private int deepestMeasured;
         private int index;
 
         CallerCTypeDepths(List<CToken> tokens, String field, DataTypeManager types) {
@@ -3008,10 +3013,23 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     " levels deep through pointers, arrays, typedefs, members or existing database types");
         }
 
+        private void observe(int depth) {
+            deepestMeasured = Math.max(deepestMeasured, depth);
+        }
+
+        void refuseIfOverDeep() {
+            if (deepestMeasured > MAX_C_TYPE_DEPTH)
+                throw new RequestFailure("type_depth_limit", field + " defines a caller type, chained at least " +
+                    deepestMeasured + " levels deep through pointers, arrays, typedefs, members or existing " +
+                    "database types");
+        }
+
         private void recordTag(String name, int depth) {
             if (name == null) return;
             refuse(name, depth);
-            tagDepths.put(name, depth);
+            // A redundant forward declaration does not erase a completed
+            // tag Ghidra retains, so a tag depth never falls.
+            tagDepths.merge(name, depth, Math::max);
         }
 
         private void recordTypedef(String name, int depth) {
@@ -3103,7 +3121,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
         private int measureCompositeBody(String name) {
             if (name != null) measuring.add(name);
             int deepest = 0;
-            while (!at("}")) deepest = Math.max(deepest, measureMember());
+            while (!at("}")) {
+                deepest = Math.max(deepest, measureMember());
+                observe(1 + deepest);
+            }
             if (name != null) measuring.remove(name);
             return 1 + deepest;
         }
@@ -3112,6 +3133,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             int base = measureSpecifiers();
             if (at(":")) {
                 index++;
+                observe(1 + base);
                 skipBitFieldWidth();
                 expect(";");
                 return 1 + base;
@@ -3184,6 +3206,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         private Declarator measureDeclarator(int base) {
             int stars = measureStars();
             while (skipCallingConventions()) stars += measureStars();
+            observe(base + stars);
             if (at("(")) {
                 // Parentheses either group the declarator or open a function
                 // pointer; stars inside make it the pointer form.
@@ -3197,42 +3220,54 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     skipCallingConventions();
                     innerStars = measureStars();
                     skipCallingConventions();
+                    observe(base + stars + innerStars);
                     if (innerStars > 0) break;
                 }
                 String name = identifier();
-                int arrays = measureArrays();
+                int arrays = measureArrays(base + stars + innerStars);
                 for (int group = 0; group < groups; group++) expect(")");
                 if (innerStars > 0) {
                     expect("(");
                     int parameters = measureParameters();
-                    return new Declarator(name, innerStars + arrays + 1 + Math.max(stars + base, parameters));
+                    int depth = innerStars + arrays + 1 + Math.max(stars + base, parameters);
+                    observe(depth);
+                    return new Declarator(name, depth);
                 }
-                int depth = stars + arrays + base + measureArrays();
+                int depth = stars + arrays + base + measureArrays(stars + arrays + base);
+                observe(depth);
                 if (at("(")) {
                     index++;
                     int parameters = measureParameters();
-                    return new Declarator(name, 1 + Math.max(depth, parameters));
+                    depth = 1 + Math.max(depth, parameters);
+                    observe(depth);
+                    return new Declarator(name, depth);
                 }
                 if (at(":")) {
                     index++;
+                    observe(1 + base);
                     skipBitFieldWidth();
                     return new Declarator(name, 1 + base);
                 }
                 return new Declarator(name, depth);
             }
             String name = index < tokens.size() && tokens.get(index).isIdentifier() ? identifier() : null;
-            int arrays = measureArrays();
+            int arrays = measureArrays(base + stars);
+            int depth = stars + arrays + base;
+            observe(depth);
             if (at("(")) {
                 index++;
                 int parameters = measureParameters();
-                return new Declarator(name, 1 + Math.max(stars + arrays + base, parameters));
+                depth = 1 + Math.max(depth, parameters);
+                observe(depth);
+                return new Declarator(name, depth);
             }
             if (at(":")) {
                 index++;
+                observe(1 + base);
                 skipBitFieldWidth();
                 return new Declarator(name, 1 + base);
             }
-            return new Declarator(name, stars + arrays + base);
+            return new Declarator(name, depth);
         }
 
         private int measureStars() {
@@ -3264,10 +3299,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
             return skipped;
         }
 
-        private int measureArrays() {
+        private int measureArrays(int lowerBound) {
             int arrays = 0;
             while (at("[")) {
                 arrays++;
+                observe(lowerBound + arrays);
                 int nesting = 0;
                 do {
                     String text = next().text();
@@ -3295,6 +3331,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 } else {
                     int base = measureSpecifiers();
                     deepest = Math.max(deepest, measureDeclarator(base).depth());
+                    observe(1 + deepest);
                 }
                 if (at(",")) {
                     index++;
@@ -3317,7 +3354,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 skipCallingConventions();
                 stars += measureStars();
                 skipCallingConventions();
+                observe(base + stars);
             }
+            observe(base + stars);
             String name = identifier();
             for (int group = 0; group < groups; group++) expect(")");
             expect("(");

@@ -1517,6 +1517,18 @@ struct rea_after { char c; int i; };`;
           ).code,
           "resource_constraint",
         );
+        // A missing closing parenthesis does not discard the over-deep
+        // parameter measured before it.
+        assert.equal(
+          requireMcpToolError(
+            await flood.raw("annotate_native_function", {
+              procedure,
+              signature: `int total(int ${"*".repeat(4000)} p`,
+              signature_max_utf16: 4096,
+            }),
+          ).code,
+          "resource_constraint",
+        );
         // A tag and an unrelated typedef share a Ghidra name only when they
         // are one type, so this text conflicts and stores nothing; the
         // chained case below still measures the tag chain on its own.
@@ -1539,6 +1551,22 @@ struct rea_after { char c; int i; };`;
                 .map(
                   (index) =>
                     `struct rea_chain${String(index)} { ${index === 0 ? "int" : `struct rea_chain${String(index - 1)}`} ${"*".repeat(250)} x; }; typedef int rea_chain${String(index)};`,
+                )
+                .join(""),
+              declarations_max_utf16: max,
+            }),
+          ).code,
+          "resource_constraint",
+        );
+        // A redundant forward declaration after a definition does not erase
+        // the completed tag depth the next definition chains through.
+        assert.equal(
+          requireMcpToolError(
+            await flood.raw("define_native_data_types", {
+              declarations: [0, 1, 2]
+                .map(
+                  (index) =>
+                    `struct rea_forward${String(index)} { ${index === 0 ? "int" : `struct rea_forward${String(index - 1)}`} ${"*".repeat(250)} x; }; struct rea_forward${String(index)};`,
                 )
                 .join(""),
               declarations_max_utf16: max,
