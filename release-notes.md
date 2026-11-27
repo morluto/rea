@@ -677,6 +677,7 @@
 * **windows:** accept a private DACL when the user is SYSTEM ([#14769](https://github.com/morluto/rea/issues/14769)) ([62a4bee](https://github.com/morluto/rea/commit/62a4bee42cabefe8979d82229c67e266c79e784d))
 * **windows:** keep N-API failures inside the callback ([#13193](https://github.com/morluto/rea/issues/13193)) ([5c9d0aa](https://github.com/morluto/rea/commit/5c9d0aa0b31e56bc9c3798945b185ab428239d63))
 * **windows:** recover from a corrupt Node header cache ([#14259](https://github.com/morluto/rea/issues/14259)) ([a19b3db](https://github.com/morluto/rea/commit/a19b3dbaab323be37bb8e20bde833f064d3957d7))
+* **yara:** refuse rule files with include directives before yara starts ([#14937](https://github.com/morluto/rea/issues/14937)) ([72c0f5c](https://github.com/morluto/rea/commit/72c0f5caf2b3c19144c6bc8c50a7361a76f2c103))
 * **zip:** account apksigner alignment padding before the APK Signing Block ([#14232](https://github.com/morluto/rea/issues/14232)) ([6d408c0](https://github.com/morluto/rea/commit/6d408c048006c54f7e4ca371e78caee3f0d6c43a))
 
 
