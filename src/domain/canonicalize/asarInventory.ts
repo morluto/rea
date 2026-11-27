@@ -12,6 +12,7 @@ import {
 } from "./normalizer.js";
 import { ellipsisExcerpt } from "../excerpt.js";
 import { resolveNodeFileEntry } from "../nodePackageEntry.js";
+import { decodeStrictUtf8 } from "../strictUtf8.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 /** Path length beyond which an inventory entry reads as inflation, not a real module. */
@@ -163,10 +164,21 @@ export const reachableAsarPaths = (
     };
   let parsed: unknown;
   try {
-    parsed = JSON.parse(manifest.toString("utf8"));
+    // Decode through the strict UTF-8 owner so a leading BOM is dropped as an
+    // encoding signature (Node loads a BOM-prefixed package.json fine) and
+    // invalid UTF-8 fails closed instead of being masked with replacement
+    // characters. A plain `toString("utf8")` kept the BOM — making a valid
+    // manifest throw below — and silently substituted U+FFFD for bad bytes.
+    parsed = JSON.parse(decodeStrictUtf8(manifest, "strip-signature"));
   } catch {
-    // A malformed manifest leaves reachability unproven, never confabulated.
-    return { reachable };
+    // An undecodable or malformed manifest leaves the declared entrypoints
+    // unproven: disclose the gap rather than silently dropping them (which would
+    // let fillers outrank the real startup file) or confabulating reachability.
+    return {
+      reachable,
+      limitation:
+        "The archive's package.json is not decodable UTF-8 or not valid JSON; entrypoints it declares are unverified.",
+    };
   }
   if (parsed === null || typeof parsed !== "object") return { reachable };
   const record = parsed as Record<string, unknown>;

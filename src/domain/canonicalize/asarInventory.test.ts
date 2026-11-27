@@ -348,10 +348,42 @@ describe("reachableAsarPaths", () => {
     expect(pastLimit.has("package.json")).toBe(true);
   });
 
-  it("leaves reachability unproven on a malformed manifest", () => {
-    const { reachable } = reachableAsarPaths(Buffer.from("{ not json", "utf8"));
+  it("leaves reachability unproven on a malformed manifest and discloses the gap", () => {
+    const { reachable, limitation } = reachableAsarPaths(
+      Buffer.from("{ not json", "utf8"),
+    );
     expect(reachable.has("package.json")).toBe(true);
     expect(reachable.size).toBe(1);
+    expect(limitation).toMatch(/not valid JSON/u);
+  });
+
+  it("decodes a BOM-prefixed package.json so its startup facts survive", () => {
+    // Node loads a package.json that carries a leading UTF-8 BOM; decoding must
+    // drop the signature rather than let it throw and silently erase every
+    // declared entrypoint, which would let fillers outrank the real startup file.
+    const { reachable, limitation } = reachableAsarPaths(
+      Buffer.concat([
+        Buffer.from([0xef, 0xbb, 0xbf]),
+        Buffer.from(
+          JSON.stringify({ main: "./dist/app.js", exports: "./index.js" }),
+          "utf8",
+        ),
+      ]),
+    );
+    expect(reachable.has("dist/app.js")).toBe(true);
+    expect(reachable.has("index.js")).toBe(true);
+    expect(limitation).toBeUndefined();
+  });
+
+  it("discloses a gap when the manifest is not decodable UTF-8", () => {
+    // A lone continuation byte is invalid UTF-8; fail closed with a disclosed
+    // limitation instead of masking it with U+FFFD and parsing garbage.
+    const { reachable, limitation } = reachableAsarPaths(
+      Buffer.from([0x7b, 0x80, 0x7d]),
+    );
+    expect(reachable.has("package.json")).toBe(true);
+    expect(reachable.size).toBe(1);
+    expect(limitation).toMatch(/not decodable UTF-8/u);
   });
 
   it("does not parse a manifest beyond the fixed budget and reports it", () => {
