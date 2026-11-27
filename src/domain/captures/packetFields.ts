@@ -85,7 +85,10 @@ export const packetFieldsCatalogSchema = z
       record_budget_reached: z.boolean(),
     }),
     diagnostics: z.string(),
-    tool: packetCaptureSchema.shape.tool,
+    tool: packetCaptureSchema.shape.tool.extend({
+      /** Stderr of the `tshark -G plugins` probe that keys the glossary cache. */
+      plugins_diagnostics: z.string(),
+    }),
     resource_limiter: packetCaptureSchema.shape.resource_limiter,
     limits: packetCaptureSchema.shape.limits.extend({
       record_budget_bytes: z.literal(8388608),
