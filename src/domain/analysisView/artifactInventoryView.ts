@@ -412,6 +412,7 @@ export const projectArtifactInventoryView = (
     inventory.manifest.root_format === "esp-flash-image" ||
     inventory.manifest.root_format === "fit" ||
     inventory.manifest.root_format === "nds" ||
+    inventory.manifest.root_format === "mega-drive-rom" ||
     inventory.manifest.root_format === "n64-rom" ||
     inventory.manifest.root_format === "qualcomm-mbn" ||
     inventory.manifest.root_format === "android-ota-payload" ||

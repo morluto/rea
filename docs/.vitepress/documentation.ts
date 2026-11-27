@@ -209,6 +209,11 @@ export const documentationSections = [
         route: "/rust-binaries",
       },
       {
+        text: "LabVIEW RSRC containers",
+        source: "guides/native/labview-analysis.md",
+        route: "/labview-analysis",
+      },
+      {
         text: "Static CUDA and HIP code objects",
         source: "gpu-code-objects.md",
         route: "/gpu-code-objects",
@@ -587,6 +592,11 @@ export const documentationSections = [
         text: "Nintendo DS ROMs",
         source: "guides/firmware/nds-roms.md",
         route: "/nds-roms",
+      },
+      {
+        text: "Sega Mega Drive ROMs",
+        source: "guides/firmware/mega-drive-roms.md",
+        route: "/mega-drive-roms",
       },
       {
         text: "Nintendo 64 ROMs",

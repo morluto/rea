@@ -252,6 +252,7 @@ export interface ArtifactReader {
     | "asar"
     | "ines"
     | "nds"
+    | "mega-drive-rom"
     | "n64-rom"
     | "godot-pck"
     | "unityfs"

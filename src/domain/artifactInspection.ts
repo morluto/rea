@@ -785,6 +785,11 @@ const STANDALONE_FORMAT_READERS = {
     rationale:
       "Read the ar container, control metadata, maintainer scripts and data.tar inventory without installing or executing the package.",
   },
+  "labview-rsrc": {
+    operation: "inspect_labview_artifact",
+    rationale:
+      "Inventory RSRC blocks, section codings and heap presence without executing the artifact.",
+  },
 } as const satisfies Record<
   "uefi" | StandaloneArtifactFormat,
   { readonly operation: string; readonly rationale: string }

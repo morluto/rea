@@ -259,7 +259,7 @@ describe("parseYaraDiagnostics", () => {
           message: 'duplicated identifier "A"',
         },
         {
-          kind: "include",
+          kind: "other",
           source: "/rules/main.yar",
           line: 1,
           rule: null,
@@ -280,7 +280,7 @@ describe("parseYaraDiagnostics", () => {
           message: 'unknown module "nope"',
         },
         {
-          kind: "include",
+          kind: "other",
           source: "/r/c.yar",
           line: 3,
           rule: null,
@@ -314,7 +314,7 @@ describe("parseYaraDiagnostics", () => {
           `${odd}(4): error: syntax error, unexpected "(9): error: "`,
           '/inc/a.yar(3): error: undefined identifier "b(1): c"',
           `error: rule "S" in ${odd}(6): undefined string "$x"`,
-          // An included file whose name contains "(N): ".
+          // A file yara names that was not given, whose name contains "(N): ".
           "/rules/odd(2): x.yar(4): error: syntax error",
           // Two splits each leave a complete diagnostic: the location is unknown.
           'error: rule "T" in /rules/odd(2): x.yar(7): undefined identifier "q"',

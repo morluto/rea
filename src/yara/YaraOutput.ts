@@ -280,18 +280,18 @@ export const yaraMatchOutputSink = (parser: YaraMatchOutputParser): Writable =>
 
 /**
  * What a rule compile error means for the caller's repair. The kinds follow
- * libyara 4.x message text (`yr_compiler_get_error_message` and the lexer's
- * include errors); any other message is `other` and keeps its text.
+ * libyara 4.x message text (`yr_compiler_get_error_message`); any other
+ * message is `other` and keeps its text. Include errors cannot arise: rule
+ * files with include directives are refused before yara starts.
  */
 export type YaraCompileErrorKind =
-  | "include"
   | "syntax"
   | "undefined"
   | "duplicate"
   | "unreadable_file"
   | "other";
 
-/** One rule compile error; `source` is the file yara named, which may be an included file. */
+/** One rule compile error; `source` is the file yara named. */
 export interface YaraCompileError {
   readonly kind: YaraCompileErrorKind;
   /**
@@ -319,11 +319,12 @@ export interface YaraDiagnostics {
 
 // yara 4.x cli/yara.c print_compiler_error writes exactly two forms:
 //   LEVEL: rule "RULE" in FILE(LINE): MESSAGE   (the error belongs to a rule)
-//   FILE(LINE): LEVEL: MESSAGE                  (it does not, e.g. includes)
+//   FILE(LINE): LEVEL: MESSAGE                  (it does not)
 // cli/common.c writes `error: could not open file: FILE` for a rule file it
 // cannot open. FILE is the path passed to yara, after any NAMESPACE: prefix.
 // A file name and a message can both contain `(N): `. A FILE yara was given
-// is matched exactly. Any other FILE, such as an included file, is split at
+// is matched exactly. Any other FILE (yara names only files it was given, as
+// rule files with includes are refused, so this is defensive) is split at
 // every `(N): ` that leaves a complete diagnostic; one such split is the
 // location, and several leave the location unknown.
 const RULE_DIAGNOSTIC_PREFIX = /^(error|warning): rule "([^"]*)" in /u;
@@ -357,20 +358,15 @@ const locations = (
   return given.length > 0 ? given.slice(0, 1) : all;
 };
 
-const INCLUDE_MESSAGE =
-  /^(?:can't open include file: |callback failed to provide include resource: |includes? circular reference$|too many levels of included rules$|includes depth exceeded$|includes are disabled$)/u;
-
 /** Classify one compiler message by the libyara text that produced it. */
 export const yaraCompileErrorKind = (message: string): YaraCompileErrorKind =>
-  INCLUDE_MESSAGE.test(message)
-    ? "include"
-    : message.startsWith("syntax error")
-      ? "syntax"
-      : /^(?:undefined (?:identifier|string) |unknown module )/u.test(message)
-        ? "undefined"
-        : message.startsWith("duplicated ")
-          ? "duplicate"
-          : "other";
+  message.startsWith("syntax error")
+    ? "syntax"
+    : /^(?:undefined (?:identifier|string) |unknown module )/u.test(message)
+      ? "undefined"
+      : message.startsWith("duplicated ")
+        ? "duplicate"
+        : "other";
 
 /**
  * Classify yara stderr by line; scan errors must name the scanned path.

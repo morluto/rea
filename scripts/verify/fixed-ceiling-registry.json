@@ -84,6 +84,16 @@
       "reason": "Projects the compound-file parser's own named ceiling (`ceiling.name` from COMPOUND_FILE_FIXED_LIMITS); the value is declared by the parser in src/domain/windows/compoundFile.ts."
     }
   },
+  "src/artifacts/MegaDriveRomArtifactReader.ts": {
+    "\"The Mega Drive ROM byte ceiling\"": {
+      "class": "format",
+      "reason": "The linear cartridge window this reader admits is 8 MiB. A larger file needs a mapper this reader does not decode."
+    },
+    "\"The Mega Drive SMD block ceiling\"": {
+      "class": "format",
+      "reason": "An SMD dump is the same program image in 16 KiB blocks after a 512-byte copier header, so 512 blocks is that 8 MiB ceiling."
+    }
+  },
   "src/artifacts/N64RomArtifactReader.ts": {
     "\"The Nintendo 64 ROM size allowance\"": {
       "class": "format",
@@ -264,6 +274,18 @@
       "class": "pending",
       "issue": 14237,
       "reason": "Kuna's buffered function-text allowance is a resource policy."
+    }
+  },
+  "src/labview/LabviewArtifactProvider.ts": {
+    "INPUT_ALLOWANCE": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "The selected-artifact input ceiling for this native format reader is a resource policy; no per-call control exists yet."
+    },
+    "allowanceName(limit.name)": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "The RSRC block, total-section, directory-walk, directory-entry and embedded-container allowances are structural resource policies of one read; no per-call control exists yet."
     }
   },
   "src/native/LldbCallTracer.ts": {
