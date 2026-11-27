@@ -8,6 +8,7 @@ import { detectHexRecordEncoding } from "./firmware/hexRecords.js";
 import { hasUf2Block } from "./firmware/uf2.js";
 import { hasGodotPckHeader } from "./godotPckFormat.js";
 import { nesContainerFormat, parseInesLayout } from "./inesContainer.js";
+import { n64RomRecognition } from "./n64Rom.js";
 import { hasNdsHeader } from "./ndsRom.js";
 import {
   hasIso9660Signature,
@@ -49,6 +50,7 @@ export type RecognizedArtifactFormat = Extract<
   ArtifactFormatId,
   | "ines"
   | "nds"
+  | "n64-rom"
   | "zip"
   | "godot-pck"
   | "unityfs"
@@ -166,6 +168,13 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
       return layout.ok
         ? { state: "recognized", format: "ines" }
         : { state: "refused", format: "ines", reason: layout.error.detail };
+    },
+    ({ prefix, fileSize }) => {
+      const claim = n64RomRecognition(prefix, fileSize);
+      if (claim === undefined) return undefined;
+      return claim.state === "recognized"
+        ? { state: "recognized", format: "n64-rom" }
+        : { state: "refused", format: "n64-rom", reason: claim.reason };
     },
     when("zip", hasZipSignature),
     when("godot-pck", hasGodotPckHeader),

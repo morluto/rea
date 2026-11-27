@@ -20,6 +20,7 @@ export const BINARY_TARGET_FORMAT_KINDS = {
   asar: "archive",
   ines: "archive",
   nds: "archive",
+  "n64-rom": "archive",
   "godot-pck": "archive",
   unityfs: "archive",
   wxapkg: "archive",

@@ -28,6 +28,8 @@ import { ESP8266_REFUSAL } from "./firmware/espImage.js";
 import { twoVolumeUbiImage } from "./firmware/ubiImage.fixture.js";
 import { buildIso9660Image } from "./iso9660/iso9660.fixture.js";
 import { ISO9660_DESCRIPTOR_OFFSET } from "./iso9660/iso9660Structures.js";
+import { N64_MAX_ROM_BYTES } from "./n64Rom.js";
+import { n64RomImage } from "./n64Rom.fixture.js";
 
 /** A classic iNES header declaring one 16 KiB PRG bank, with no bank bytes. */
 const headerOnlyInes = (): Buffer => {
@@ -94,6 +96,40 @@ it.each([
     reason: row.reason,
     index: expect.any(Number),
   });
+});
+
+it("recognizes a Nintendo 64 ROM in every byte order", () => {
+  for (const order of ["z64", "v64", "n64"] as const) {
+    const encoded = n64RomImage({ order }).encoded;
+    expect(recognize(encoded)).toMatchObject({
+      state: "recognized",
+      format: "n64-rom",
+    });
+  }
+});
+
+it("refuses an odd or implausible Nintendo 64 image and still names an oversized one", () => {
+  const encoded = n64RomImage().encoded;
+  const odd = Buffer.concat([encoded, Buffer.from([0])]);
+  expect(recognize(odd)).toMatchObject({
+    state: "refused",
+    format: "n64-rom",
+    reason: expect.stringMatching(/multiple of 4.*normalized$/u),
+  });
+  const badBoot = n64RomImage({ bootAddress: 0 }).encoded;
+  expect(recognize(badBoot)).toMatchObject({
+    state: "refused",
+    format: "n64-rom",
+    reason: expect.stringContaining("Boot address"),
+  });
+  expect(recognize(encoded.subarray(0, 32))).toBeUndefined();
+  expect(
+    recognizeArtifactFormat({
+      prefix: encoded,
+      fileSize: N64_MAX_ROM_BYTES + 4,
+      espFlashLayout: false,
+    }),
+  ).toMatchObject({ state: "recognized", format: "n64-rom" });
 });
 
 it("asks for the DFU trailer only when the prefix claims DfuSe", () => {

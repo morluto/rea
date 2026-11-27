@@ -141,6 +141,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [UnityFS AssetBundle archives](unityfs.md)
 - [iNES containers](ines-containers.md)
 - [Nintendo DS ROMs](guides/firmware/nds-roms.md)
+- [Nintendo 64 ROMs](guides/firmware/n64-roms.md)
 - [WeChat mini-program wxapkg archives](wxapkg.md)
 - [macOS flat installer packages](macos-pkg.md)
 - [ISO 9660 disc images](guides/firmware/iso9660-images.md)
