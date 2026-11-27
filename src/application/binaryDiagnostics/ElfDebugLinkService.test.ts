@@ -6,12 +6,12 @@ import { expect, it } from "vitest";
 import { ElfDebugLinkService } from "./ElfDebugLinkService.js";
 import { ELF_DEBUG_LINK_PROVIDER } from "../../domain/investigationProviders.js";
 import {
+  DEFAULT_ELF_DEBUG_CANDIDATE_BYTES,
   DEFAULT_INSPECT_ELF_DEBUG_LINK_ENTRIES,
   deriveDebugFileLookupPaths,
   ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
   ELF_DEBUG_LINK_CANDIDATE_COMPARISON_INCOMPLETE_LIMITATION,
   ELF_DEBUG_LINK_CANDIDATE_UNREADABLE_LIMITATION,
-  MAX_ELF_DEBUG_CANDIDATE_BYTES,
   ELF_DEBUG_LINK_CANNOT_VERIFY_LIMITATION,
   ELF_DEBUG_LINK_LIMITATIONS,
   type ElfDebugLink,
@@ -229,7 +229,7 @@ it("rejects a report whose type name, lookup paths, or verification disagree", a
       ...interrupted,
       candidate: {
         ...interruptedCandidate,
-        bytes: MAX_ELF_DEBUG_CANDIDATE_BYTES + 1,
+        bytes: DEFAULT_ELF_DEBUG_CANDIDATE_BYTES + 1,
       },
     },
     {
@@ -397,4 +397,93 @@ it("keeps caller Evidence after retained cleanup releases and reveals the primar
   expect(after).toEqual(before);
   expect(after.parameters).toEqual(parameters);
   expect(after.normalized_result).toEqual(partial);
+});
+
+it("enforces max_candidate_bytes bounds and accepts candidates above 4 GiB when raised", async () => {
+  const withoutCandidate = await new ElfDebugLinkService({
+    identity,
+    inspect: () => Promise.resolve(ok(report)),
+  }).inspect({ path: report.artifact.path, max_candidate_bytes: 1024 });
+  if (withoutCandidate.ok)
+    throw new Error(
+      "Expected max_candidate_bytes without candidate_path to fail",
+    );
+  expect(withoutCandidate.error).toBeInstanceOf(AnalysisInputError);
+
+  const largeBytes = DEFAULT_ELF_DEBUG_CANDIDATE_BYTES + 1;
+  const largeCandidate: ElfDebugLink = {
+    ...report,
+    candidate: {
+      path: "/artifacts/prog.debug",
+      sha256: "b".repeat(64),
+      bytes: largeBytes,
+      format: "elf64",
+      byte_order: "little",
+      debug_info: "unknown",
+      symtab: "unknown",
+    },
+    verification: {
+      status: "cannot_verify",
+      reason: "no_comparable_identity",
+      crc32: {
+        status: "unavailable",
+        expected_hex: null,
+        observed_hex: null,
+        reason: "debuglink_crc_absent",
+      },
+      build_id: {
+        status: "unavailable",
+        binary_hex: null,
+        candidate_hex: null,
+        reason: "binary_build_id_absent",
+      },
+    },
+    limitation_codes: [
+      ...report.limitation_codes,
+      "candidate_prefix_only",
+      "cannot_verify",
+    ],
+    limitations: [...report.limitations, "streamed"],
+  };
+  const service = new ElfDebugLinkService({
+    identity,
+    inspect: () => Promise.resolve(ok(largeCandidate)),
+  });
+  const rejected = await service.inspect({
+    path: report.artifact.path,
+    candidate_path: "/artifacts/prog.debug",
+  });
+  if (rejected.ok)
+    throw new Error("Expected >4 GiB candidate rejected at default budget");
+  expect(rejected.error).toBeInstanceOf(AnalysisOutputError);
+
+  const smallerCandidate: ElfDebugLink = {
+    ...largeCandidate,
+    candidate: { ...largeCandidate.candidate!, bytes: 32 },
+  };
+  const rejectedLowerBudget = await new ElfDebugLinkService({
+    identity,
+    inspect: () => Promise.resolve(ok(smallerCandidate)),
+  }).inspect({
+    path: report.artifact.path,
+    candidate_path: "/artifacts/prog.debug",
+    max_candidate_bytes: 16,
+  });
+  if (rejectedLowerBudget.ok)
+    throw new Error(
+      "Expected candidate exceeding explicit lower max_candidate_bytes to be rejected",
+    );
+  expect(rejectedLowerBudget.error).toBeInstanceOf(AnalysisOutputError);
+
+  const accepted = await service.inspect({
+    path: report.artifact.path,
+    candidate_path: "/artifacts/prog.debug",
+    max_candidate_bytes: largeBytes,
+  });
+  if (!accepted.ok) throw accepted.error;
+  expect(accepted.value.parameters).toEqual({
+    path: report.artifact.path,
+    candidate_path: "/artifacts/prog.debug",
+    max_candidate_bytes: largeBytes,
+  });
 });

@@ -2,10 +2,14 @@ import { primaryAnalysisError } from "../../domain/analysisErrorBase.js";
 import { expect, it, vi } from "vitest";
 
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import {
+  AnalysisCancelledError,
+  AnalysisResourceConstraintError,
+} from "../../domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import {
+  DEFAULT_ELF_DEBUG_CANDIDATE_BYTES,
   ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
-  MAX_ELF_DEBUG_CANDIDATE_BYTES,
   inspectElfDebugLinkInputSchema,
   elfDebugLinkSchema,
 } from "../../domain/native/elfDebugLink.js";
@@ -97,18 +101,25 @@ it.each([
     refusal: new ArtifactReaderFailure(
       "limit",
       "Candidate exceeded its read budget",
+      { observedBytes: BigInt(DEFAULT_ELF_DEBUG_CANDIDATE_BYTES) + 1n },
     ),
     primary: {
       _tag: "AnalysisResourceConstraintError",
       resource: "file-size",
       reportedLimits: {
-        boundary: "candidate_bytes",
-        maximum: MAX_ELF_DEBUG_CANDIDATE_BYTES,
+        boundary: "max_candidate_bytes",
+        maximum: DEFAULT_ELF_DEBUG_CANDIDATE_BYTES,
       },
-      fixedAllowance: {
-        kind: "input",
-        limit: MAX_ELF_DEBUG_CANDIDATE_BYTES,
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_candidate_bytes",
+        effective_value: DEFAULT_ELF_DEBUG_CANDIDATE_BYTES,
         unit: "bytes",
+        minimum: 1,
+        maximum: Number.MAX_SAFE_INTEGER,
+        default_value: DEFAULT_ELF_DEBUG_CANDIDATE_BYTES,
+        applies_at: "next_call",
+        required_value: DEFAULT_ELF_DEBUG_CANDIDATE_BYTES + 1,
       },
     },
   },
@@ -166,6 +177,104 @@ it("retains the decoded image report when the candidate read is cancelled", asyn
     ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
   );
 });
+
+it("refuses a candidate exceeding max_candidate_bytes with details.limit and retains image linkage", async () => {
+  candidateFailure.current = new ArtifactReaderFailure(
+    "limit",
+    "Candidate exceeded its read budget",
+    { observedBytes: 512n },
+  );
+  const result = await new ElfDebugLinkProvider().inspect(
+    inspectElfDebugLinkInputSchema.parse({
+      path: "/artifacts/prog",
+      candidate_path: "/artifacts/prog.debug",
+      max_candidate_bytes: 256,
+    }),
+  );
+  if (result.ok) throw new Error("Expected max_candidate_bytes refusal");
+  if (!(result.error instanceof AnalysisResourceConstraintError))
+    throw new Error("Expected AnalysisResourceConstraintError");
+  const projected = projectAnalysisError(result.error);
+  expect(projected).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    details: {
+      reported_limits: {
+        boundary: "max_candidate_bytes",
+        maximum: 256,
+        required: "512",
+      },
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_candidate_bytes",
+        effective_value: 256,
+        unit: "bytes",
+        minimum: 1,
+        maximum: Number.MAX_SAFE_INTEGER,
+        default_value: DEFAULT_ELF_DEBUG_CANDIDATE_BYTES,
+        applies_at: "next_call",
+        required_value: 512,
+      },
+      refusal: {
+        kind: "adjustable_budget",
+        operation: "inspect_elf_debug_link",
+        control: "max_candidate_bytes",
+      },
+    },
+  });
+  const report = retainedReport(result.error);
+  expect(report?.artifact).toEqual({
+    path: "/artifacts/prog",
+    sha256: "ab".repeat(32),
+    bytes: image.length,
+  });
+  expect(report?.candidate).toBeNull();
+  expect(report?.verification).toBeNull();
+  expect(report?.limitations).toContain(
+    ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
+  );
+});
+
+it.each([
+  { label: "omitted observedBytes", observedBytes: undefined },
+  {
+    label: "observedBytes above MAX_SAFE_INTEGER",
+    observedBytes: BigInt(Number.MAX_SAFE_INTEGER) + 1n,
+  },
+])(
+  "omits required_value on max_candidate_bytes refusal when $label",
+  async ({ observedBytes }) => {
+    candidateFailure.current = new ArtifactReaderFailure(
+      "limit",
+      "Candidate exceeded its read budget",
+      observedBytes === undefined ? {} : { observedBytes },
+    );
+    const result = await new ElfDebugLinkProvider().inspect(
+      inspectElfDebugLinkInputSchema.parse({
+        path: "/artifacts/prog",
+        candidate_path: "/artifacts/prog.debug",
+        max_candidate_bytes: 256,
+      }),
+    );
+    if (result.ok) throw new Error("Expected max_candidate_bytes refusal");
+    if (!(result.error instanceof AnalysisResourceConstraintError))
+      throw new Error("Expected AnalysisResourceConstraintError");
+    const projected = projectAnalysisError(result.error);
+    expect(projected.code).toBe("resource_constraint");
+    const details = projected.details as {
+      limit?: Record<string, unknown>;
+      refusal?: Record<string, unknown>;
+      reported_limits?: Record<string, unknown>;
+    };
+    expect(details.limit).not.toHaveProperty("required_value");
+    expect(details.refusal).not.toHaveProperty("required_value");
+    if (observedBytes === undefined) {
+      expect(details.reported_limits).not.toHaveProperty("required");
+    } else {
+      expect(details.reported_limits?.required).toBe(String(observedBytes));
+    }
+  },
+);
 
 it("retains the completed image snapshot when ELF decoding fails", async () => {
   const garbage = Buffer.alloc(128, 0x41);

@@ -94,7 +94,9 @@ Graph tools accept per-call traversal bounds (`max_depth` and `max_nodes` on
 `get_call_graph` and `trace_call_path`).
 
 `inspect_elf_notes` and `inspect_elf_debug_link` refuse a file above
-`max_file_bytes`, a decoded section-name table above it, or more notes than
+`max_file_bytes`, a decoded section-name table above it, a streamed
+`candidate_path` above `max_candidate_bytes` (default 4 GiB minus 1 byte, up to
+`Number.MAX_SAFE_INTEGER`, retaining image linkage on refusal), or more notes than
 `max_entries` with `details.limit` naming that field
 (`control_kind: "parameter"`), its effective value, default and range. `inspect_il2cpp_metadata`
 accepts `max_native_index_bytes` (default 1 GiB) for the estimated ELF pointer

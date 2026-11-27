@@ -5,6 +5,7 @@ import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { elfObjectTypeName } from "../../domain/native/elfNotes.js";
 import {
+  DEFAULT_ELF_DEBUG_CANDIDATE_BYTES,
   debugFileNameIsSingleSegment,
   deriveDebugFileLookupPaths,
   elfDebugLinkSchema,
@@ -535,7 +536,12 @@ const validReport = (
       !readIncomplete &&
       !comparisonIncomplete
     );
-  if (candidate !== null && candidate.path !== input.candidate_path)
+  if (
+    candidate !== null &&
+    (candidate.path !== input.candidate_path ||
+      candidate.bytes >
+        (input.max_candidate_bytes ?? DEFAULT_ELF_DEBUG_CANDIDATE_BYTES))
+  )
     return false;
   if (verification === null) {
     if (outcome === "complete") return false;

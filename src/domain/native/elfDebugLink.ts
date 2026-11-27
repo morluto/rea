@@ -1,7 +1,13 @@
 import { z } from "zod";
 
+import type { AnalysisParameterLimit } from "../analysisSettings.js";
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
+import {
+  parameterBudgetLimit,
+  type ParameterBudget,
+} from "../parameterBudget.js";
+import { requirePresence } from "../schemaConstraints.js";
 import { ELF_OBJECT_TYPE_NAMES } from "./elfNotes.js";
 import { coverageStatusSchema } from "../coverage.js";
 import {
@@ -88,10 +94,32 @@ export const ELF_DEBUG_LINK_CANDIDATE_COMPARISON_INCOMPLETE_LIMITATION =
   "The candidate read completed. Its ELF comparison did not complete.";
 
 /**
- * Whole-file ceiling for a streamed candidate. Only `max_file_bytes` of it is
- * retained for ELF decoding; the rest is hashed in bounded chunks.
+ * Default whole-file ceiling for a streamed candidate when `max_candidate_bytes`
+ * is omitted. Only `max_file_bytes` of it is retained for ELF decoding; the
+ * rest is hashed in bounded chunks.
  */
-export const MAX_ELF_DEBUG_CANDIDATE_BYTES = 0xffffffff;
+export const DEFAULT_ELF_DEBUG_CANDIDATE_BYTES = 0xffffffff;
+
+/** Per-call candidate whole-file streaming budget shared by schema and refusals. */
+export const ELF_DEBUG_LINK_CANDIDATE_BUDGET: ParameterBudget = {
+  minimum: 1,
+  maximum: Number.MAX_SAFE_INTEGER,
+  default_value: DEFAULT_ELF_DEBUG_CANDIDATE_BYTES,
+  unit: "bytes",
+};
+
+/** Structured refusal limit for `max_candidate_bytes`. */
+export const elfDebugCandidateBudgetLimit = (
+  effectiveValue: number,
+  requiredValue?: number,
+): AnalysisParameterLimit => ({
+  ...parameterBudgetLimit(
+    "max_candidate_bytes",
+    ELF_DEBUG_LINK_CANDIDATE_BUDGET,
+    effectiveValue,
+  ),
+  ...(requiredValue === undefined ? {} : { required_value: requiredValue }),
+});
 
 /** Distinct GNU build-ids were observed and none is selected. */
 export const ELF_DEBUG_LINK_MULTIPLE_BUILD_IDS_LIMITATION =
@@ -211,33 +239,51 @@ const VERIFICATION_REASONS = [
 ] as const;
 
 /** Complete bounded inspection of separate debug-file linkage for one ELF. */
-export const inspectElfDebugLinkInputSchema = z.strictObject({
-  path: absoluteLocalPathStringSchema.describe(
-    "Absolute filesystem path to an ELF32/ELF64 image",
-  ),
-  candidate_path: absoluteLocalPathStringSchema
-    .optional()
-    .describe(
-      "Optional absolute path of one caller-selected file to verify against the debuglink CRC32 and GNU build-id",
+export const inspectElfDebugLinkInputSchema = requirePresence(
+  z.strictObject({
+    path: absoluteLocalPathStringSchema.describe(
+      "Absolute filesystem path to an ELF32/ELF64 image",
     ),
-  max_structure_bytes: maxStructureBytesSchema,
-  max_file_bytes: z
-    .number()
-    .int()
-    .min(ELF_DEBUG_LINK_READ_BUDGETS.max_file_bytes.minimum)
-    .max(ELF_DEBUG_LINK_READ_BUDGETS.max_file_bytes.maximum)
-    .default(ELF_DEBUG_LINK_READ_BUDGETS.max_file_bytes.default_value)
-    .describe("Maximum stable artifact bytes to read (default 64 MiB)"),
-  max_entries: z
-    .number()
-    .int()
-    .min(ELF_DEBUG_LINK_READ_BUDGETS.max_entries.minimum)
-    .max(ELF_DEBUG_LINK_READ_BUDGETS.max_entries.maximum)
-    .default(ELF_DEBUG_LINK_READ_BUDGETS.max_entries.default_value)
-    .describe(
-      "Maximum note entries to examine while reading GNU build-ids; an image exceeding the budget fails without partial success, and a candidate exceeding it leaves its build-id check unavailable",
-    ),
-});
+    candidate_path: absoluteLocalPathStringSchema
+      .optional()
+      .describe(
+        "Optional absolute path of one caller-selected file to verify against the debuglink CRC32 and GNU build-id",
+      ),
+    max_candidate_bytes: z
+      .number()
+      .int()
+      .min(ELF_DEBUG_LINK_CANDIDATE_BUDGET.minimum)
+      .max(ELF_DEBUG_LINK_CANDIDATE_BUDGET.maximum)
+      .optional()
+      .describe(
+        "Maximum bytes to stream and hash from candidate_path (default 4 GiB minus 1 byte); requires candidate_path",
+      ),
+    max_structure_bytes: maxStructureBytesSchema,
+    max_file_bytes: z
+      .number()
+      .int()
+      .min(ELF_DEBUG_LINK_READ_BUDGETS.max_file_bytes.minimum)
+      .max(ELF_DEBUG_LINK_READ_BUDGETS.max_file_bytes.maximum)
+      .default(ELF_DEBUG_LINK_READ_BUDGETS.max_file_bytes.default_value)
+      .describe("Maximum stable artifact bytes to read (default 64 MiB)"),
+    max_entries: z
+      .number()
+      .int()
+      .min(ELF_DEBUG_LINK_READ_BUDGETS.max_entries.minimum)
+      .max(ELF_DEBUG_LINK_READ_BUDGETS.max_entries.maximum)
+      .default(ELF_DEBUG_LINK_READ_BUDGETS.max_entries.default_value)
+      .describe(
+        "Maximum note entries to examine while reading GNU build-ids; an image exceeding the budget fails without partial success, and a candidate exceeding it leaves its build-id check unavailable",
+      ),
+  }),
+  [
+    {
+      when: "max_candidate_bytes",
+      requires: "candidate_path",
+      message: "max_candidate_bytes bounds the streamed candidate_path file.",
+    },
+  ],
+);
 
 const debuglinkSchema = z.strictObject({
   status: sectionStatus,
@@ -288,7 +334,7 @@ const lookupPathSchema = z.strictObject({
 const candidateSchema = z.strictObject({
   path: z.string().min(1),
   sha256: digestSchema,
-  bytes: uint,
+  bytes: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   format: z.enum(["elf32", "elf64"]).nullable(),
   byte_order: z.enum(["little", "big"]).nullable(),
   debug_info: z.enum(CANDIDATE_SECTION_STATUSES),

@@ -79,9 +79,13 @@ The candidate is streamed in bounded chunks, so its size is not limited by
 sections and GNU build-id. A larger candidate is still checked by CRC32 and
 SHA-256 over the whole file, but only its ELF header is decoded: its sections
 are `unknown` and the build-id check is `unavailable`. A candidate that is
-missing, unreadable, changed while it was read, or 4 GiB or larger returns
+missing, unreadable, or changed while it was read returns
 `cannot_verify` with reason `candidate_unreadable` and `candidate: null`; the
-image linkage is still reported. A candidate is decoded with the same
+image linkage is still reported. A candidate larger than `max_candidate_bytes`
+(CLI `--max-candidate-bytes`, default 4 GiB minus 1 byte, up to
+`Number.MAX_SAFE_INTEGER`) fails with a `resource_constraint` refusal carrying
+`details.limit` while retaining the decoded image linkage in
+`partial_observation`. A candidate is decoded with the same
 `max_entries` and ELF decoding budgets as the image. When it exceeds one, the
 image linkage is still reported, the build-id check is `unavailable` with
 reason `candidate_build_id_unknown`, sections that were not decoded are
@@ -103,8 +107,10 @@ followed by raw build-id bytes.
 ## Limits and failures
 
 The image is limited to 64 MiB by default (512 MiB maximum). The same
-`max_file_bytes` bounds how much of a candidate is decoded, not how much is
-hashed. At most
+`max_file_bytes` bounds how much of a candidate is decoded, while
+`max_candidate_bytes` (default 4 GiB minus 1 byte, up to
+`Number.MAX_SAFE_INTEGER`; requires `candidate_path`) bounds how many candidate
+bytes are streamed and hashed. At most
 128 note entries are examined by default while reading build-ids (256 maximum),
 which admits distribution glibc builds and their SystemTap probe notes. The scan
 checks the framing of each entry and decodes GNU build-id payloads. A debuglink
