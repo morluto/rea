@@ -1,3 +1,4 @@
+import { openProcDescriptorFixture } from "./procDescriptor.fixture.js";
 // Regression for a child moving groups during the production probe cleanup.
 import { afterEach, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
@@ -17,26 +18,8 @@ const state = vi.hoisted(() => ({
 }));
 vi.mock("node:fs/promises", async (original) => ({
   ...(await original<typeof import("node:fs/promises")>()),
-  open: async (path: unknown) => {
-    if (!String(path).startsWith("/proc/"))
-      throw new Error(`Unexpected descriptor open: ${String(path)}`);
-    let bytes: Buffer | undefined;
-    return {
-      fd: 42,
-      close: async () => {},
-      read: async (
-        buffer: Buffer,
-        offset: number,
-        length: number,
-        position: bigint,
-      ) => {
-        bytes ??= Buffer.from(await state.readFile(path));
-        const start = Number(position);
-        const count = bytes.copy(buffer, offset, start, start + length);
-        return { bytesRead: count, buffer };
-      },
-    };
-  },
+  open: (path: unknown) =>
+    openProcDescriptorFixture(path, () => state.readFile(path)),
 }));
 vi.mock("node:child_process", async (original) => ({
   ...(await original<typeof import("node:child_process")>()),

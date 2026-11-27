@@ -17,6 +17,7 @@ import {
   recordedCrashFixture,
   RECORDED_CRASH_TEST_PROVIDER,
 } from "../../fixtures/binaryDiagnostics/recordedCrash.js";
+import { inspectionTestProvider } from "../../fixtures/binaryDiagnostics/inspectionProvider.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it("records inline recorded-core evidence with compact schemas and canonical path checks", async () => {
@@ -24,14 +25,10 @@ it("records inline recorded-core evidence with compact schemas and canonical pat
   let providerClosed = false;
   let providerCalls = 0;
   const service = new RecordedCrashService({
-    inspectAndClose(input, options) {
-      return this.inspect(input, options);
-    },
-    identity: RECORDED_CRASH_TEST_PROVIDER,
-    inspect: () => {
+    ...inspectionTestProvider(RECORDED_CRASH_TEST_PROVIDER, () => {
       providerCalls++;
       return Promise.resolve(ok(value));
-    },
+    }),
     close: async () => {
       providerClosed = true;
     },

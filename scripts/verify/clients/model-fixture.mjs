@@ -1,7 +1,22 @@
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { createModelFixtureServer } from "./model-fixture-server.mjs";
+import {
+  createModelFixtureServer,
+  readModelFixtureBody,
+} from "./model-fixture-server.mjs";
+
+export const toolCallMessage = (id, name, args) => ({
+  role: "assistant",
+  content: null,
+  tool_calls: [
+    {
+      id,
+      type: "function",
+      function: { name, arguments: JSON.stringify(args) },
+    },
+  ],
+});
 
 /** A loopback model fixture exercises real clients without claiming live-provider compatibility. */
 export const createOpenAiModelFixture = async ({
@@ -32,18 +47,10 @@ export const createOpenAiModelFixture = async ({
           );
           return;
         }
-        const chunks = [];
-        let bytes = 0;
-        for await (const chunk of request) {
-          bytes += chunk.length;
-          assert(
-            bytes <= 10 * 1024 * 1024,
-            "Local model fixture exceeded its 10 MiB request resource budget",
-          );
-          chunks.push(chunk);
-        }
-        const rawBody = Buffer.concat(chunks).toString("utf8");
-        const body = rawBody.length === 0 ? null : JSON.parse(rawBody);
+        const body = await readModelFixtureBody(
+          request,
+          "Local model fixture exceeded its 10 MiB request resource budget",
+        );
         await writeFile(
           join(directory, `${prefix}-incoming-${++incoming}.json`),
           JSON.stringify({ method: request.method, path: request.url, body }),

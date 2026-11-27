@@ -1,9 +1,11 @@
 import { completeOrUnknownCoverageSchema } from "./coverage.js";
 import {
+  artifactCrc32PairSchema,
   artifactDfuCrc32PairSchema,
   artifactIntegrityClaimSchema,
   artifactSha256PairSchema,
   artifactMd5PairSchema,
+  signedAfterPackingExplanationSchema,
 } from "./artifactIntegrity.js";
 import { artifactFormatMetadataSchema } from "./artifactFormatMetadata.js";
 import { z } from "zod";
@@ -11,6 +13,7 @@ import { artifactReaderLimitsSchema } from "./artifactReaderLimits.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 import { inesInventorySchema } from "./inesContainer.js";
 import { ZIP_APPLICATION_PACKAGE_FORMATS } from "./zipPackageFormat.js";
+import { directoryRootDigestSchema } from "./directoryTreeDigest.js";
 
 /** Entry kinds or subtrees deliberately excluded by an artifact traversal. */
 export const artifactTraversalOmissionKindSchema = z.enum([
@@ -69,12 +72,24 @@ export const ARTIFACT_FORMAT_IDS = [
   "pkg",
   "asar",
   "ines",
+  "nds",
   "godot-pck",
   "unityfs",
   "wxapkg",
+  "tar",
+  "dds",
+  "glb",
+  "ktx",
+  "ktx2",
   "uimage",
+  "nso",
+  "nro",
   "android-boot-image",
   "android-ota-payload",
+  "android-vbmeta",
+  "android-sparse-image",
+  "ubi-image",
+  "iso9660",
   "uefi",
   "javascript-bundle",
   "source-map",
@@ -100,9 +115,16 @@ export const ARTIFACT_FORMAT_IDS = [
   "esp-image",
   "uf2",
   "dfuse",
+  "bflt",
   "esp-flash-image",
   "fit",
+  "qualcomm-mbn",
   "ntfs-mft",
+  "sqlite",
+  "windows-shortcut",
+  "python-pyc",
+  "devicetree",
+  "deb",
   "unknown",
 ] as const;
 
@@ -113,20 +135,34 @@ const artifactFormatSchema = z.enum(ARTIFACT_FORMAT_IDS);
 /** Formats established from bytes or a virtual directory tree, independent of path roles. */
 const artifactContentFormatSchema = artifactFormatSchema.extract([
   "ines",
+  "nds",
   "zip",
   "godot-pck",
   "unityfs",
   "wxapkg",
+  "tar",
+  "dds",
+  "glb",
+  "ktx",
+  "ktx2",
   "uimage",
+  "nso",
+  "nro",
   "android-boot-image",
   "android-ota-payload",
+  "android-vbmeta",
+  "android-sparse-image",
+  "ubi-image",
+  "iso9660",
   "uefi",
   "intel-hex",
   "srec",
   "esp-image",
   "uf2",
   "dfuse",
+  "bflt",
   "fit",
+  "qualcomm-mbn",
   "ntfs-mft",
   "mach-o-universal",
   "mach-o",
@@ -134,6 +170,11 @@ const artifactContentFormatSchema = artifactFormatSchema.extract([
   "pe",
   "dos-mz",
   "plist",
+  "sqlite",
+  "windows-shortcut",
+  "python-pyc",
+  "devicetree",
+  "deb",
   "directory",
   "file",
   "unknown",
@@ -170,6 +211,13 @@ export const artifactNodeSchema = z.object({
   limitations: z.array(z.string()),
 });
 
+/** A symlink's stored target bytes, with their UTF-8 text when they decode strictly. */
+export const artifactLinkTargetSchema = z.strictObject({
+  text: z.string().nullable(),
+  hex: z.string().regex(/^(?:[a-f0-9]{2})*$/u),
+});
+export type ArtifactLinkTarget = z.infer<typeof artifactLinkTargetSchema>;
+
 /** One path or virtual location where an artifact occurs in its parent. */
 export const artifactOccurrenceSchema = z.object({
   occurrence_id: occurrenceIdSchema,
@@ -193,6 +241,8 @@ export const artifactOccurrenceSchema = z.object({
   source_path: z.string().exactOptional(),
   declared_integrity: artifactIntegrityClaimSchema.exactOptional(),
   format_metadata: artifactFormatMetadataSchema.exactOptional(),
+  /** A symlink's stored target, when the reader read it; never followed. */
+  link_target: artifactLinkTargetSchema.exactOptional(),
   limitations: z.array(z.string()),
 });
 
@@ -211,9 +261,14 @@ const integrityContradictionBaseSchema = z.object({
 });
 
 export const integrityContradictionSchema = z.union([
-  integrityContradictionBaseSchema.extend(artifactSha256PairSchema.shape),
+  integrityContradictionBaseSchema.extend({
+    ...artifactSha256PairSchema.shape,
+    /** Present when PE Authenticode stripping restores the declared SHA-256. */
+    signing_explanation: signedAfterPackingExplanationSchema.exactOptional(),
+  }),
   integrityContradictionBaseSchema.extend(artifactMd5PairSchema.shape),
   integrityContradictionBaseSchema.extend(artifactDfuCrc32PairSchema.shape),
+  integrityContradictionBaseSchema.extend(artifactCrc32PairSchema.shape),
 ]);
 
 /**
@@ -266,6 +321,11 @@ export const artifactInventoryResultSchema = z.strictObject({
       "Accepted resource policy when selected; each format group applies only if that format is encountered. Not measured process memory or confirmation every reader ran.",
     ),
   manifest: artifactGraphManifestSchema,
+  root_digest: directoryRootDigestSchema
+    .exactOptional()
+    .describe(
+      "A directory root's content-addressed tree digest. Complete only when every member was examined; partial names why and has no digest.",
+    ),
   nodes: z.array(artifactNodeSchema),
   occurrences: z.array(artifactOccurrenceSchema),
   edges: z.array(artifactEdgeSchema),
@@ -283,6 +343,13 @@ const extractedArtifactSchema = z.object({
   sha256: sha256Schema,
   bytes_written: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
   created: z.boolean(),
+  limitations: z
+    .array(z.string())
+    .min(1)
+    .exactOptional()
+    .describe(
+      "The inventory occurrence's own limitations, such as a case-folding collision or a normalized member name; absent when it has none",
+    ),
 });
 
 /** Path-independent commitment to one selected extraction operation. */

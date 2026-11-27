@@ -4,6 +4,9 @@ async function initializeWebsite() {
   function initializeCopyButtons() {
     document.querySelectorAll("[data-copy]").forEach((button) => {
       const label = button.textContent;
+      // Each click restarts the label's lifetime; an earlier timer must not
+      // reset the label of a later click.
+      let restoreLabel;
       button.addEventListener("click", async () => {
         const target = document.getElementById(
           button.getAttribute("data-copy"),
@@ -36,7 +39,8 @@ async function initializeWebsite() {
             );
         }
 
-        window.setTimeout(() => {
+        window.clearTimeout(restoreLabel);
+        restoreLabel = window.setTimeout(() => {
           button.textContent = label;
         }, 2000);
       });

@@ -372,7 +372,7 @@ export class DesktopBuildCapture {
       started.error.answer !== undefined &&
       started.error.answer.timed_out !== true;
     if (released) run.status = "released";
-    else if (!(await this.#release(run, signal)))
+    else if (!(await this.#release(run)))
       return err(unreleasedError(START, run, started.error.failure));
     return err(started.error.failure);
   }
@@ -429,7 +429,9 @@ export class DesktopBuildCapture {
         failure:
           cause instanceof AnalysisError
             ? cause
-            : adapterError(START, errorMessage(cause), cause),
+            : signal.aborted
+              ? cancelledBy(START, signal)
+              : adapterError(START, errorMessage(cause), cause),
       });
     }
     if (answer.refused !== undefined)
@@ -461,13 +463,15 @@ export class DesktopBuildCapture {
   }
 
   /** Stop a capture whose start failed; true once the computer confirms it ended or never launched. */
-  async #release(run: CaptureRun, signal: AbortSignal): Promise<boolean> {
+  async #release(run: CaptureRun, signal?: AbortSignal): Promise<boolean> {
     try {
       const answer = await controller(
         this.computer,
         "stop",
         { capture: run.folder, timeout_s: 120 },
-        { timeoutS: 120, signal },
+        // Rollback after a cancelled start must still reach the computer; its
+        // own timeout bounds it when the caller's signal no longer applies.
+        { timeoutS: 120, signal: signal ?? new AbortController().signal },
       );
       const confirmed =
         answer.absent === true || typeof answer.exit_code === "number";

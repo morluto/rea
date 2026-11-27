@@ -178,7 +178,7 @@ it.skipIf(process.platform === "win32")(
         throw new Error("Retargeted archive was unexpectedly admitted");
       expect(result.error).toMatchObject({
         reason: "integrity",
-        integrityCheck: "container-identity",
+        integrityCheck: "admitted-identity",
       });
     });
   },

@@ -14,6 +14,7 @@ import {
   inspectWithService,
 } from "./contractCommandRunners.js";
 import { PRODUCER_LIMITS_HELP } from "./producerLimitsOption.js";
+import { UNIVERSAL_SLICE_ARCHITECTURE_HELP } from "./universalSliceOption.js";
 
 type BinaryDiagnosticsOperation =
   (typeof BINARY_DIAGNOSTICS_TOOL_CONTRACTS)[number]["name"];
@@ -60,8 +61,7 @@ export const registerBinaryDiagnosticsCommands = (
             "Local ELF, Mach-O, or PE image, or a DWARF file inside a .dSYM bundle",
         },
         architecture: {
-          description:
-            "CPU family of the slice to read from a universal Mach-O; required for universal files",
+          description: UNIVERSAL_SLICE_ARCHITECTURE_HELP,
         },
       },
     },
@@ -112,8 +112,7 @@ export const registerBinaryDiagnosticsCommands = (
             "Local ELF32/ELF64, thin Mach-O or universal Mach-O image",
         },
         architecture: {
-          description:
-            "Slice to read from a universal Mach-O, by CPU family; when several slices share a family, arm64 (arm64 or arm64v8), arm64e (arm64e or arm64e.x1) or x86_64 names the subtype, and a value matching several slices is refused; required for universal files",
+          description: UNIVERSAL_SLICE_ARCHITECTURE_HELP,
         },
       },
     },
@@ -142,6 +141,25 @@ export const registerBinaryDiagnosticsCommands = (
           await import("../composition/binaryDiagnostics/elfUnwindRanges.js")
         ).createElfUnwindRangesService(),
       "rea-elf-unwind-ranges",
+    ),
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_pe_unwind_ranges"),
+    {
+      description:
+        "Inspect x64 PE exception-directory function ranges without executing the image",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      fields: { path: { description: "Local PE32+ image" } },
+    },
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/peUnwindRanges.js")
+        ).createPeUnwindRangesService(),
+      "rea-pe-unwind-ranges",
     ),
   );
   registerContractCommand(
@@ -239,6 +257,25 @@ export const registerBinaryDiagnosticsCommands = (
   registerContractCommand(
     cli,
     logger,
+    contract("inspect_pe_overlay"),
+    {
+      description:
+        "Report bytes appended after a PE image, including a certificate-table split",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      fields: { path: { description: "Local PE32/PE32+ image" } },
+    },
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/peOverlay.js")
+        ).createPeOverlayService(),
+      "rea-pe-overlay",
+    ),
+  );
+  registerContractCommand(
+    cli,
+    logger,
     contract("inspect_binary_hardening"),
     {
       description:
@@ -264,6 +301,7 @@ export const registerBinaryDiagnosticsCommands = (
         "Inspect file-wide and block byte entropy without executing the file",
       positionals: ["path"],
       callerPaths: ["path"],
+      evidenceDelivery: true,
       fields: {
         path: { description: "Local file" },
         block_size: {
@@ -274,12 +312,8 @@ export const registerBinaryDiagnosticsCommands = (
           description: "Window length in bytes; omit to extend through EOF",
         },
       },
-      omit: {
-        detail:
-          "One-shot output is complete Evidence; this command has no summary delivery",
-      },
     },
-    inspectWithService(
+    deliverWithService(
       async () =>
         (
           await import("../composition/binaryDiagnostics/byteEntropy.js")
@@ -382,6 +416,10 @@ export const registerBinaryDiagnosticsCommands = (
           description: "Maximum number of device-tree properties",
         },
         max_depth: { description: "Maximum device-tree nesting depth" },
+        max_decoded_bytes: {
+          description:
+            "Maximum estimated bytes of the decoded report, charged before allocation",
+        },
       },
     },
     deliverWithService(
@@ -440,7 +478,7 @@ export const registerBinaryDiagnosticsCommands = (
     contract("inspect_binary_layout"),
     {
       description:
-        "Inspect binary file/linked layout without executing the selected object",
+        "Inspect ELF file/linked layout without executing the selected object; Linux x64 with caller-supplied pwntools only",
       positionals: ["path"],
       callerPaths: ["path"],
       jsonText: ["producer_limits"],

@@ -220,7 +220,16 @@ class InvalidRequestError(Exception):
 
 
 class SelectorNotFoundError(InvalidRequestError):
-    """A valid selector did not resolve in the current Hopper document."""
+    """A valid selector did not resolve in the current Hopper document.
+
+    ``selector`` records how the selector resolved: its caller value, whether
+    Hopper matched it as a symbol, an address, or the cursor, and the resolved
+    address. An unresolved name has no address.
+    """
+
+    def __init__(self, message, selector=None):
+        super().__init__(message)
+        self.selector = selector
 
 
 EXHAUSTIVE_ANALYSIS_METHODS = frozenset(
@@ -461,7 +470,10 @@ def _address_selection(document, value=None):
             try:
                 address = int(value, 16)
             except ValueError as error:
-                raise SelectorNotFoundError("Unknown Hopper address or name: %s" % value) from error
+                raise SelectorNotFoundError(
+                    "Unknown Hopper address or name: %s" % value,
+                    {"value": value, "source": "unresolved"},
+                ) from error
     if not 0 <= address < 0xFFFFFFFFFFFFFFFF:
         raise InvalidRequestError("Address is outside Hopper's usable unsigned 64-bit range: %s" % value)
     return address, source
@@ -482,7 +494,13 @@ def _procedure(document, value=None):
     address, source = _address_selection(document, value)
     result = _segment(document, address).getProcedureAtAddress(address)
     if result is None:
-        raise SelectorNotFoundError("No procedure exists at the requested address")
+        selector = {"value": value, "source": source, "address": _hex(address)}
+        if source == "symbol":
+            raise SelectorNotFoundError(
+                "Name %s resolves to %s, which is not inside a Hopper procedure" % (value, _hex(address)),
+                selector,
+            )
+        raise SelectorNotFoundError("No procedure exists at %s" % _hex(address), selector)
     if source == "symbol" and address != result.getEntryPoint():
         raise InvalidRequestError(
             "Symbol %s at %s is inside procedure %s at %s; select its entry name/address or use resolve_containing_procedure for explicit containment"
@@ -634,11 +652,78 @@ def _resolve_procedure_identity(document, address, containing, identities):
     return identity
 
 
+NON_PROCEDURE_BODY = {
+    "available": False,
+    "reason": "The address is outside every Hopper procedure, such as an import address-table slot, an imported name or a data label; it has no procedure body",
+}
+
+
+def _incoming_target(document, value):
+    """Select a procedure, or an address outside every procedure, for incoming references.
+
+    Only an explicit address selects a non-procedure target. A name outside
+    every procedure still fails as a procedure selector: REA's shared selector
+    owner resolves names and asks again by address, so each provider resolves
+    one name the same way.
+    """
+    try:
+        return _procedure(document, value), None
+    except SelectorNotFoundError as error:
+        selector = error.selector
+        if selector is None or selector.get("source") != "address":
+            raise
+        return None, int(selector["address"], 16)
+
+
+def _address_identity(document, address):
+    return {
+        "address": _hex(address),
+        "name": _name_at_address(document, address) or _hex(address),
+        "symbol": None,
+        "classification": None,
+        "body": dict(NON_PROCEDURE_BODY),
+    }
+
+
+def _address_reference_sources(document, address):
+    """Hopper's recorded references to one address, in address order."""
+    return sorted(
+        {source for source in _segment(document, address).getReferencesOfAddress(address) if source not in BAD_ADDRESSES}
+    )
+
+
+def _address_references(document, address):
+    target = _address_identity(document, address)
+    containing = {}
+    identities = {}
+    items = []
+    for source in _address_reference_sources(document, address):
+        items.append({
+            "source_address": _hex(source),
+            "target_address": _hex(address),
+            "source_procedure": _resolve_procedure_identity(document, source, containing, identities),
+            "target_procedure": None,
+            "kind": _unavailable("Hopper reports reference sources, but not detailed reference flags"),
+        })
+    return {
+        "procedure": target, "direction": "incoming",
+        "reference_kinds_available": False,
+        "unresolved_calls": [],
+        "references": items,
+        "target_kind": "address",
+    }
+
+
 def _procedure_references(document, params):
-    procedure = _procedure(document, params.get("procedure"))
     direction = params.get("direction", "outgoing")
     if direction not in ("incoming", "outgoing"):
         raise InvalidRequestError("direction must be incoming or outgoing")
+    if direction == "incoming":
+        procedure, address = _incoming_target(document, params.get("procedure"))
+        if procedure is None:
+            return _address_references(document, address)
+    else:
+        procedure = _procedure(document, params.get("procedure"))
     addresses = _instruction_addresses(procedure)
     segment = procedure.getSegment()
     edges = set()
@@ -703,7 +788,9 @@ def _caller_scan_target(document, params):
 
 
 def _caller_base(document, params):
-    procedure = _procedure(document, params.get("procedure"))
+    procedure, address = _incoming_target(document, params.get("procedure"))
+    if procedure is None:
+        return _address_caller_base(document, address)
     callers = []
     size = 0
     complete = True
@@ -718,6 +805,32 @@ def _caller_base(document, params):
         **_caller_target_data(procedure),
         "callers": sorted(callers, key=lambda value: int(value, 16)),
         "callers_complete": complete,
+    }
+
+
+def _address_caller_base(document, address):
+    """Callers of an address outside every procedure: the procedures containing its references."""
+    entries = set()
+    size = 0
+    complete = True
+    containing = {}
+    identities = {}
+    for source in _address_reference_sources(document, address):
+        identity = _resolve_procedure_identity(document, source, containing, identities)
+        if identity is None or identity["address"] in entries:
+            continue
+        size += len(identity["address"]) + 4
+        if size > CALLER_SCAN_ALLOWANCE_BYTES:
+            complete = False
+            break
+        entries.add(identity["address"])
+    return {
+        "target": _address_identity(document, address),
+        "instructions": [],
+        "instructions_complete": True,
+        "callers": sorted(entries, key=lambda value: int(value, 16)),
+        "callers_complete": complete,
+        "target_kind": "address",
     }
 
 
@@ -1680,7 +1793,11 @@ def _safe_diagnostic(error):
         message = str(error)
     else:
         message = "%s: Hopper bridge operation failed" % type(error).__name__
-    return {"code": -32000, "message": message, "type": diagnostic_type}
+    diagnostic = {"code": -32000, "message": message, "type": diagnostic_type}
+    selector = getattr(error, "selector", None)
+    if diagnostic_type == "selector_not_found" and selector is not None:
+        diagnostic["selector"] = selector
+    return diagnostic
 
 
 def _run():

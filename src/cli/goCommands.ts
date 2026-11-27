@@ -6,6 +6,7 @@ import { contractNamed } from "./contractCliDescription.js";
 import { registerContractCommand } from "./contractCommand.js";
 import { deliverWithService } from "./contractCommandRunners.js";
 import type { CliInstance } from "./types.js";
+import { UNIVERSAL_SLICE_ARCHITECTURE_HELP } from "./universalSliceOption.js";
 
 /** Resolve caller paths and inspect static build metadata through the shared workflow. */
 export const registerGoCommands = (cli: CliInstance, logger: Logger): void => {
@@ -25,8 +26,7 @@ export const registerGoCommands = (cli: CliInstance, logger: Logger): void => {
           description: "Local ELF, PE, thin Mach-O or universal Mach-O image",
         },
         architecture: {
-          description:
-            "Slice to read from a universal Mach-O, by CPU family; when several slices share a family, arm64 (arm64 or arm64v8), arm64e (arm64e or arm64e.x1) or x86_64 names the subtype, and a value matching several slices is refused; required for universal files",
+          description: UNIVERSAL_SLICE_ARCHITECTURE_HELP,
         },
         include_string_literals: {
           description:

@@ -86,6 +86,11 @@ vi.mock("./PlaywrightScenarioEvents.js", () => ({
       return mocks.finishEvents();
     }
 
+    // This stub does not prove selected event content and privacy have settled.
+    captureFinalized() {
+      return false;
+    }
+
     result() {
       return {
         retained: 0,
@@ -894,6 +899,72 @@ it.each(["unprotected live realm", "failed auto-attach"])(
     expect(cleanup.close).toHaveBeenCalledOnce();
   },
 );
+
+it("stops navigation through the page when a cancelled capture's main session is gone", async () => {
+  const { cleanup, page } = fixture();
+  mocks.storage = undefined;
+  const cancellation = new AbortController();
+  const session = await PlaywrightScenarioSession.open(
+    browserScenarioSchema.parse({
+      ...connectedScenario("block"),
+      storage: {},
+    }),
+    {},
+    { signal: cancellation.signal },
+  );
+  // Every command on the main session reports it missing, including the
+  // navigation stop that cancellation requests before restoration.
+  mocks.policySend.mockImplementation(
+    async (method: string, _params: unknown, target: string) => {
+      if (target === "policy-session" && method !== "Target.detachFromTarget")
+        throw new CdpCommandRejection(
+          "capture_browser_scenario",
+          method,
+          -32_001,
+          "Session with given id not found.",
+        );
+      return policyResponse(method);
+    },
+  );
+  cancellation.abort();
+  await expect(session.close()).resolves.toBe("disconnected-external");
+  expect(page.evaluate).toHaveBeenCalledWith("globalThis.stop()");
+  expect(mocks.policyTransportClose).toHaveBeenCalledOnce();
+  expect(cleanup.close).toHaveBeenCalledOnce();
+});
+
+it("retires the main policy session when CDP reports it gone during cleanup", async () => {
+  const { cleanup } = fixture();
+  const session = await PlaywrightScenarioSession.open(
+    connectedScenario("block"),
+    {},
+    {},
+  );
+  // The main session detached while event delivery was stopped, so its
+  // detach notice never arrived; CDP now reports the session missing.
+  mocks.policySend.mockImplementation(
+    async (method: string, _params: unknown, target: string) => {
+      if (
+        target === "policy-session" &&
+        method === "Page.removeScriptToEvaluateOnNewDocument"
+      )
+        throw new CdpCommandRejection(
+          "capture_browser_scenario",
+          method,
+          -32_001,
+          "Session with given id not found.",
+        );
+      return policyResponse(method);
+    },
+  );
+  await expect(session.close()).resolves.toBe("disconnected-external");
+  expect(mocks.policySend).not.toHaveBeenCalledWith(
+    "Target.detachFromTarget",
+    expect.anything(),
+  );
+  expect(mocks.policyTransportClose).toHaveBeenCalledOnce();
+  expect(cleanup.close).toHaveBeenCalledOnce();
+});
 
 it.each(["detach notice", "missing-session rejection"])(
   "releases the parent policy when the child is retired by %s",

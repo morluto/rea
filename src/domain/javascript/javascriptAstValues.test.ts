@@ -2,12 +2,15 @@ import * as t from "@babel/types";
 import { expect, it } from "vitest";
 
 import {
+  isPureJavaScriptLiteralExpression,
   semanticMemberChain,
   semanticStaticPropertyKey,
+  staticObjectOwnMethodReader,
   staticObjectProperty,
   staticObjectPropertyReader,
   staticObjectCopyPropertyReader,
   staticObjectPropertyNames,
+  unwrapPureJavaScriptSequenceExpression,
 } from "./javascriptAstValues.js";
 
 it("keeps string spread indices separate from named descriptor fields", () => {
@@ -126,6 +129,195 @@ it("preserves ordinary method data values without executing getter effects", () 
       t.spreadElement(t.objectExpression([member])),
     ]);
     expect(staticObjectProperty(object, "stdio").status).toBe(status);
+  }
+});
+
+it("leaves only the keys a conditional literal spread can copy unresolved", () => {
+  const preload = t.objectProperty(
+    t.identifier("preload"),
+    t.stringLiteral("./preload.js"),
+  );
+  const frame = () =>
+    t.objectExpression([
+      t.objectProperty(t.identifier("frame"), t.booleanLiteral(false)),
+    ]);
+  const flag = t.identifier("flag");
+  // A falsy comparison copies no keys; a string branch copies its indices.
+  const comparison = t.binaryExpression("===", flag, t.stringLiteral("darwin"));
+  for (const [argument, first, third] of [
+    [t.logicalExpression("&&", comparison, frame()), "missing", "missing"],
+    [
+      t.conditionalExpression(flag, frame(), t.nullLiteral()),
+      "missing",
+      "missing",
+    ],
+    [
+      t.conditionalExpression(flag, t.stringLiteral("ab"), frame()),
+      "dynamic",
+      "missing",
+    ],
+  ] as const) {
+    const object = t.objectExpression([preload, t.spreadElement(argument)]);
+    const read = staticObjectPropertyReader(object);
+    for (const lookup of [
+      read,
+      (name: string) => staticObjectProperty(object, name),
+    ]) {
+      expect(lookup("preload")).toEqual({
+        status: "explicit",
+        property: preload,
+        value: preload.value,
+      });
+      expect(lookup("frame")).toEqual({ status: "dynamic" });
+      expect(lookup("sandbox")).toEqual({ status: "missing" });
+      expect(lookup("0").status).toBe(first);
+      expect(lookup("2").status).toBe(third);
+    }
+    expect(staticObjectPropertyNames(object)).toEqual({
+      status: "partial",
+      names: ["preload"],
+    });
+  }
+  const override = t.spreadElement(
+    t.logicalExpression(
+      "&&",
+      comparison,
+      t.objectExpression([
+        t.objectProperty(t.identifier("preload"), t.identifier("runtimePath")),
+      ]),
+    ),
+  );
+  expect(
+    staticObjectProperty(t.objectExpression([preload, override]), "preload"),
+  ).toEqual({
+    status: "dynamic",
+  });
+  expect(
+    staticObjectProperty(t.objectExpression([override, preload]), "preload"),
+  ).toEqual({
+    status: "explicit",
+    property: preload,
+    value: preload.value,
+  });
+  const method = t.objectMethod(
+    "method",
+    t.identifier("run"),
+    [],
+    t.blockStatement([]),
+  );
+  const branch = (name: string) =>
+    t.spreadElement(
+      t.logicalExpression(
+        "&&",
+        comparison,
+        t.objectExpression([
+          t.objectProperty(t.identifier(name), t.numericLiteral(1)),
+        ]),
+      ),
+    );
+  expect(
+    staticObjectOwnMethodReader(t.objectExpression([method, branch("other")]))(
+      "run",
+    ),
+  ).toBe(true);
+  expect(
+    staticObjectOwnMethodReader(t.objectExpression([method, branch("run")]))(
+      "run",
+    ),
+  ).toBe(false);
+});
+
+it("keeps fallback and unresolved conditional spreads unknown", () => {
+  const preload = t.objectProperty(
+    t.identifier("preload"),
+    t.stringLiteral("./preload.js"),
+  );
+  const flag = t.identifier("flag");
+  const comparison = t.binaryExpression("===", flag, t.stringLiteral("darwin"));
+  const frame = t.objectExpression([
+    t.objectProperty(t.identifier("frame"), t.booleanLiteral(false)),
+  ]);
+  for (const argument of [
+    t.logicalExpression("||", flag, frame),
+    t.logicalExpression("??", flag, frame),
+    t.conditionalExpression(flag, t.identifier("input"), frame),
+    // A falsy `&&` operand is copied itself, and document.all, the only
+    // falsy object, can carry an expando with any key.
+    t.logicalExpression("&&", flag, frame),
+    t.logicalExpression(
+      "&&",
+      comparison,
+      t.objectExpression([
+        t.objectMethod("get", t.identifier("frame"), [], t.blockStatement([])),
+      ]),
+    ),
+    t.logicalExpression(
+      "&&",
+      comparison,
+      t.objectExpression([
+        t.objectProperty(t.identifier("key"), t.booleanLiteral(true), true),
+      ]),
+    ),
+    t.logicalExpression(
+      "&&",
+      comparison,
+      t.objectExpression([t.spreadElement(t.identifier("input"))]),
+    ),
+  ]) {
+    const object = t.objectExpression([preload, t.spreadElement(argument)]);
+    expect(staticObjectProperty(object, "preload")).toEqual({
+      status: "dynamic",
+    });
+    expect(staticObjectPropertyReader(object)("sandbox")).toEqual({
+      status: "dynamic",
+    });
+    expect(staticObjectPropertyNames(object)).toEqual({
+      status: "partial",
+      names: ["preload"],
+    });
+  }
+});
+
+it("reads nested conditional spreads beyond the former evaluator depth cap", () => {
+  const preload = t.objectProperty(
+    t.identifier("preload"),
+    t.stringLiteral("./preload.js"),
+  );
+  const negation = () => t.unaryExpression("!", t.identifier("flag"));
+  const frame = () =>
+    t.objectExpression([
+      t.objectProperty(t.identifier("frame"), t.booleanLiteral(false)),
+    ]);
+  const wrapped = (
+    wrap: (inner: t.Expression) => t.Expression,
+    levels: number,
+  ): t.Expression => {
+    let argument: t.Expression = frame();
+    for (let level = 0; level < levels; level++) argument = wrap(argument);
+    return argument;
+  };
+  // A left-deep chain nests one level per operand; a recursive reader
+  // overflows the stack at this length.
+  let chain: t.Expression = negation();
+  for (let operand = 0; operand < 20_000; operand++)
+    chain = t.logicalExpression("&&", chain, negation());
+  for (const argument of [
+    wrapped((inner) => t.logicalExpression("&&", negation(), inner), 1_024),
+    wrapped(
+      (inner) => t.conditionalExpression(negation(), inner, t.nullLiteral()),
+      1_024,
+    ),
+    t.logicalExpression("&&", chain, frame()),
+  ]) {
+    const object = t.objectExpression([preload, t.spreadElement(argument)]);
+    expect(staticObjectProperty(object, "preload").status).toBe("explicit");
+    expect(staticObjectProperty(object, "frame")).toEqual({
+      status: "dynamic",
+    });
+    expect(staticObjectPropertyNames(object)).toEqual({
+      status: "partial",
+      names: ["preload"],
+    });
   }
 });
 
@@ -464,4 +656,74 @@ it("ignores null and propertyless copy sources without erasing indexed strings",
   const read = staticObjectCopyPropertyReader(t.stringLiteral("abc"));
   expect(read("0").status).toBe("dynamic");
   expect(read("minVersion").status).toBe("missing");
+});
+
+it("classifies pure literal leading expressions and unwraps pure sequences conservatively", () => {
+  const target = t.identifier("localFn");
+  const unshadowed = (id: t.Identifier) => id.name === "undefined";
+  for (const pure of [
+    t.numericLiteral(0),
+    t.stringLiteral("ok"),
+    t.booleanLiteral(true),
+    t.nullLiteral(),
+    t.bigIntLiteral(1n),
+    t.templateLiteral(
+      [t.templateElement({ raw: "raw", cooked: "raw" }, true)],
+      [],
+    ),
+    t.unaryExpression("void", t.numericLiteral(0)),
+    t.unaryExpression("!", t.numericLiteral(0)),
+    t.unaryExpression("-", t.numericLiteral(1)),
+    t.unaryExpression("-", t.bigIntLiteral(1n)),
+    t.tsAsExpression(t.numericLiteral(0), t.tsAnyKeyword()),
+    t.sequenceExpression([t.numericLiteral(0), t.nullLiteral()]),
+    t.identifier("undefined"),
+  ]) {
+    expect(isPureJavaScriptLiteralExpression(pure, unshadowed)).toBe(true);
+    const wrapped = t.sequenceExpression([pure, target]);
+    expect(unwrapPureJavaScriptSequenceExpression(wrapped, unshadowed)).toBe(
+      target,
+    );
+  }
+  const impureCases: t.Expression[] = [
+    t.callExpression(t.identifier("sideEffect"), []),
+    t.unaryExpression("void", t.callExpression(t.identifier("sideEffect"), [])),
+    t.unaryExpression("+", t.identifier("obj")),
+    t.identifier("other"),
+    t.identifier("undefined"),
+  ];
+  for (const [index, impure] of impureCases.entries()) {
+    const checker = index === impureCases.length - 1 ? () => false : unshadowed;
+    expect(isPureJavaScriptLiteralExpression(impure, checker)).toBe(false);
+    const seq = t.sequenceExpression([impure, target]);
+    expect(unwrapPureJavaScriptSequenceExpression(seq, checker)).toBe(seq);
+  }
+  const singleElement = t.sequenceExpression([target]);
+  expect(unwrapPureJavaScriptSequenceExpression(singleElement)).toBe(
+    singleElement,
+  );
+});
+
+it("bounds conditional copy sources by the keys their branches may copy", () => {
+  const flag = t.identifier("flag");
+  const comparison = t.binaryExpression("===", flag, t.stringLiteral("darwin"));
+  const version = () =>
+    t.objectExpression([
+      t.objectProperty(t.identifier("minVersion"), t.stringLiteral("TLSv1.2")),
+    ]);
+  for (const source of [
+    t.conditionalExpression(flag, version(), t.nullLiteral()),
+    t.logicalExpression("&&", comparison, version()),
+  ]) {
+    const read = staticObjectCopyPropertyReader(source);
+    // A possibly copied key is unresolved; every other key is not copied.
+    expect(read("minVersion")).toEqual({ status: "dynamic" });
+    expect(read("maxVersion")).toEqual({ status: "missing" });
+  }
+  // An unresolved `&&` operand is copied itself, so no key is bounded.
+  const unresolved = staticObjectCopyPropertyReader(
+    t.logicalExpression("&&", flag, version()),
+  );
+  expect(unresolved("minVersion")).toEqual({ status: "dynamic" });
+  expect(unresolved("maxVersion")).toEqual({ status: "dynamic" });
 });

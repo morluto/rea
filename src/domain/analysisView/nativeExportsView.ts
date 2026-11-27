@@ -1,3 +1,4 @@
+import { analysisViewPageFields } from "./analysisViewPageFields.js";
 import { z } from "zod";
 import {
   nativeExportsSchema,
@@ -5,36 +6,28 @@ import {
   elfNativeExportsSchema as elf,
   type NativeExports,
 } from "../native/nativeExports.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   assertOwnedView,
   type AdmittedView,
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { namePrefixesSchema, startsWithAny } from "./namePrefixFilter.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
-import {
-  pickFields,
-  selectIndexedViewRows,
-  selectViewRows,
-} from "./selectViewRows.js";
+import { filterSet, pickFields, selectViewRows } from "./selectViewRows.js";
 
 const peRow = pe.shape.exports.element;
 const elfRow = elf.shape.exports.element;
 const issue = pe.shape.issues.element;
 const sourceIndex = { source_index: z.int().nonnegative() };
-const page = {
-  kind: z.literal("native-exports"),
-  offset: z.int().nonnegative().default(0),
-  limit: z.int().positive().default(64),
-};
+const page = analysisViewPageFields("native-exports");
 
 /** Exact names preserve all versions/aliases; indices are scoped to the complete parent. */
 export const nativeExportsViewRequestSchema = z.discriminatedUnion(
@@ -94,8 +87,7 @@ const exportNameMatcher = (
   prefixes: readonly string[] | undefined,
 ): ((row: ExportRow) => boolean) | undefined => {
   if (selectedNames === undefined && prefixes === undefined) return undefined;
-  const names =
-    selectedNames === undefined ? undefined : new Set(selectedNames);
+  const names = filterSet(selectedNames);
   const encodedNames =
     names === undefined
       ? undefined
@@ -143,14 +135,8 @@ export const projectNativeExportsView = (
   parent: AnalysisViewParent,
   view: AdmittedView,
 ) => {
-  const invalid = (message: string) =>
-    err(
-      analysisViewInputError([
-        { path: ["view"], reason: "invalid_value", message },
-      ]),
-    );
   if (view.kind !== "summary" && view.kind !== "native-exports")
-    return invalid(
+    return invalidAnalysisView(
       "Native export Evidence supports summary and native-exports views.",
     );
   assertOwnedView<
@@ -171,11 +157,7 @@ export const projectNativeExportsView = (
     parent_operation: "inspect_native_exports" as const,
     parent_digest: parent.evidenceId.slice(3),
     artifact: { path: report.artifact.path, sha256: report.artifact.sha256 },
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, limitations),
     unknowns:
       report.coverage.status === "complete"
         ? []
@@ -192,22 +174,18 @@ export const projectNativeExportsView = (
       summary,
       coverage: completeWithinViewCoverage(exports.length),
     });
-  const indices =
-    view.indices === undefined ? undefined : new Set(view.indices);
+  const indices = filterSet(view.indices);
   if (view.collection === "issues") {
-    const selected =
-      indices === undefined
-        ? selectViewRows(issues, view, undefined, (row, source_index) => ({
-            ...row,
-            source_index,
-          }))
-        : selectIndexedViewRows(
-            issues,
-            indices,
-            view,
-            undefined,
-            (row, source_index) => ({ ...row, source_index }),
-          );
+    const selected = selectViewRows(
+      issues,
+      view,
+      undefined,
+      (row, source_index) => ({
+        ...row,
+        source_index,
+      }),
+      indices,
+    );
     return ok({
       ...shared,
       kind: "native-exports" as const,
@@ -227,7 +205,7 @@ export const projectNativeExportsView = (
     view.fields === undefined ? allowed : [...new Set(view.fields)];
   const allowedFields: readonly string[] = allowed;
   if (fields.some((field) => !allowedFields.includes(field)))
-    return invalid(
+    return invalidAnalysisView(
       `Selected export fields do not belong to ${report.format}; available fields: ${allowed.join(", ")}.`,
     );
   // A projected decoded name still carries its exact bytes and encoding qualification.
@@ -245,10 +223,7 @@ export const projectNativeExportsView = (
     source_index,
   });
   const matchesName = exportNameMatcher(view.names, view.name_prefixes);
-  const selected =
-    indices !== undefined
-      ? selectIndexedViewRows(rows, indices, view, matchesName, projectRow)
-      : selectViewRows(rows, view, matchesName, projectRow);
+  const selected = selectViewRows(rows, view, matchesName, projectRow, indices);
   return ok({
     ...shared,
     kind: "native-exports" as const,

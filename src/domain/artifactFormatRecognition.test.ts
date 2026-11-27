@@ -5,15 +5,29 @@ import {
   esp8266Image,
   espImage,
 } from "../../tests/fixtures/espImage.js";
-import { recognizeArtifactFormat } from "./artifactFormatRecognition.js";
+import { buildFv } from "../../tests/fixtures/uefiImage.js";
+import { DEB_AR_HEADER_BYTES, DEB_AR_MAGIC } from "./deb/debPackage.js";
+import {
+  recognizeArtifactFormat,
+  recognizesArtifactPrefix,
+} from "./artifactFormatRecognition.js";
 import {
   fullAndroidOtaPayload,
   v1AndroidOtaPayload,
 } from "./firmware/androidOtaPayload.fixture.js";
+import { sampleAndroidVbmeta } from "./firmware/androidVbmeta.fixture.js";
+import {
+  buildAndroidSparseImage,
+  mixedAndroidSparseImage,
+} from "./firmware/androidSparseImage.fixture.js";
+import { androidSparseUnsupportedMajor } from "./firmware/androidSparseImage.js";
 import { devicetreeFixture } from "./firmware/devicetree.fixture.js";
 import { dfuseFile } from "./firmware/dfuse.fixture.js";
 import { DFUSE_SUFFIX_BYTES } from "./firmware/dfuse.js";
 import { ESP8266_REFUSAL } from "./firmware/espImage.js";
+import { twoVolumeUbiImage } from "./firmware/ubiImage.fixture.js";
+import { buildIso9660Image } from "./iso9660/iso9660.fixture.js";
+import { ISO9660_DESCRIPTOR_OFFSET } from "./iso9660/iso9660Structures.js";
 
 /** A classic iNES header declaring one 16 KiB PRG bank, with no bank bytes. */
 const headerOnlyInes = (): Buffer => {
@@ -50,6 +64,28 @@ it.each([
     bytes: v1AndroidOtaPayload(),
     format: "android-ota-payload",
     reason: expect.stringContaining("major version 1"),
+  },
+  {
+    label: "an Android sparse image major version 2 header",
+    bytes: buildAndroidSparseImage({ majorVersion: 2 }),
+    format: "android-sparse-image",
+    reason: androidSparseUnsupportedMajor(2),
+  },
+  {
+    label: "a UBI image with a bad erase-counter header CRC",
+    bytes: (() => {
+      const bytes = twoVolumeUbiImage();
+      bytes.writeUInt32BE(0, 60);
+      return bytes;
+    })(),
+    format: "ubi-image",
+    reason: expect.stringContaining("erase-counter header CRC mismatch"),
+  },
+  {
+    label: "a UBI# file shorter than its erase-counter header",
+    bytes: twoVolumeUbiImage().subarray(0, 32),
+    format: "ubi-image",
+    reason: expect.stringContaining("erase-counter header is truncated"),
   },
 ])("refuses $label in one place", (row) => {
   expect(recognize(row.bytes)).toEqual({
@@ -98,6 +134,19 @@ it("leaves bytes no recognizer claims to the native and named-format routes", ()
   expect(recognize(Buffer.from("ANDROID"))).toBeUndefined();
 });
 
+it("yields the no-magic Qualcomm MBN check to native DOS MZ executables", () => {
+  // Valid 1,536-byte DOS MZ executable whose header words also satisfy MBN v3:
+  // e_cp=3, e_crlc=0 -> u32(4)=3; e_cparhdr=4 -> 64-byte header; e_sp=256 and
+  // e_ip=256 -> u32(16)=u32(20)=256; remaining header words zero.
+  const dosMz = Buffer.alloc(1536);
+  dosMz.set([0x4d, 0x5a], 0);
+  dosMz.writeUInt16LE(3, 4);
+  dosMz.writeUInt16LE(4, 8);
+  dosMz.writeUInt16LE(256, 16);
+  dosMz.writeUInt16LE(256, 20);
+  expect(recognize(dosMz)).toBeUndefined();
+});
+
 it("recognizes Android boot and vendor boot image prefixes", () => {
   for (const magic of ["ANDROID!", "VNDRBOOT"])
     expect(recognize(Buffer.from(magic))).toMatchObject({
@@ -106,10 +155,29 @@ it("recognizes Android boot and vendor boot image prefixes", () => {
     });
 });
 
+it("recognizes a standalone AVB0 vbmeta image and leaves an AVBf footer", () => {
+  expect(recognize(sampleAndroidVbmeta())).toMatchObject({
+    state: "recognized",
+    format: "android-vbmeta",
+  });
+  expect(recognize(Buffer.from("AVB0"))).toMatchObject({
+    state: "recognized",
+    format: "android-vbmeta",
+  });
+  expect(recognize(Buffer.from("AVBf"))).toBeUndefined();
+});
+
 it("recognizes a CrAU v2 payload after the uImage magic check", () => {
   expect(recognize(fullAndroidOtaPayload())).toMatchObject({
     state: "recognized",
     format: "android-ota-payload",
+  });
+});
+
+it("recognizes an Android sparse image by its 0xED26FF3A magic", () => {
+  expect(recognize(mixedAndroidSparseImage())).toMatchObject({
+    state: "recognized",
+    format: "android-sparse-image",
   });
 });
 
@@ -140,11 +208,15 @@ it("keeps FIT recognition within the v16 structure block before the strings bloc
   const strings = bytes.readUInt32BE(8) + 8;
   bytes.writeUInt32BE(strings, 12);
   bytes.writeUInt32BE(bytes.length - strings, 32);
-  expect(recognize(bytes)).toBeUndefined();
+  // The /images node lies outside the structure block, so this is a plain DTB.
+  expect(recognize(bytes)).toMatchObject({
+    state: "recognized",
+    format: "devicetree",
+  });
 });
 
 it.each([16, 17])(
-  "leaves an overlapping v%s structure and strings declaration unclaimed",
+  "refuses an overlapping v%s structure and strings declaration as a devicetree",
   (version) => {
     const bytes = devicetreeFixture(
       { name: "", children: [{ name: "images" }] },
@@ -153,7 +225,11 @@ it.each([16, 17])(
     const structure = bytes.readUInt32BE(8);
     bytes.writeUInt32BE(structure - 8, 12);
     bytes.writeUInt32BE(16, 32);
-    expect(recognize(bytes)).toBeUndefined();
+    expect(recognize(bytes)).toMatchObject({
+      state: "refused",
+      format: "devicetree",
+      reason: "Overlapping FDT blocks",
+    });
   },
 );
 
@@ -165,6 +241,161 @@ it.each([8, 12, 19])(
       children: [{ name: "images" }],
     });
     bytes.writeUInt32BE(structureSize, 36);
-    expect(recognize(bytes)).toBeUndefined();
+    expect(recognize(bytes)).toMatchObject({
+      state: "recognized",
+      format: "devicetree",
+    });
   },
 );
+
+it("recognizes a UBI image by its erase-counter header", () => {
+  expect(recognize(twoVolumeUbiImage())).toMatchObject({
+    state: "recognized",
+    format: "ubi-image",
+  });
+});
+
+it("recognizes the descriptor signature at sector 16 or asks for it", () => {
+  const { bytes } = buildIso9660Image();
+  expect(
+    recognizeArtifactFormat({
+      prefix: bytes,
+      fileSize: bytes.length,
+      espFlashLayout: false,
+    }),
+  ).toMatchObject({ state: "recognized", format: "iso9660" });
+  const prefix = bytes.subarray(0, 4096);
+  const pending = recognizeArtifactFormat({
+    prefix,
+    fileSize: bytes.length,
+    espFlashLayout: false,
+  });
+  expect(pending).toMatchObject({ state: "needs-input", format: "iso9660" });
+  expect(
+    recognizeArtifactFormat(
+      {
+        prefix,
+        fileSize: bytes.length,
+        espFlashLayout: false,
+        iso9660Descriptor: bytes.subarray(
+          ISO9660_DESCRIPTOR_OFFSET,
+          ISO9660_DESCRIPTOR_OFFSET + 7,
+        ),
+      },
+      pending?.index,
+    ),
+  ).toMatchObject({ state: "recognized", format: "iso9660" });
+  expect(
+    recognizeArtifactFormat({
+      prefix: Buffer.alloc(40_000),
+      fileSize: 40_000,
+      espFlashLayout: false,
+    }),
+  ).toBeUndefined();
+});
+
+it("leaves descriptor version support to the ISO 9660 parser", () => {
+  const { bytes } = buildIso9660Image();
+  bytes[ISO9660_DESCRIPTOR_OFFSET + 6] = 3;
+  expect(
+    recognizeArtifactFormat({
+      prefix: bytes,
+      fileSize: bytes.length,
+      espFlashLayout: false,
+    }),
+  ).toMatchObject({ state: "recognized", format: "iso9660" });
+});
+
+it("recognizes an image that ends inside its first descriptor sector", () => {
+  const { bytes } = buildIso9660Image();
+  const truncated = bytes.subarray(0, ISO9660_DESCRIPTOR_OFFSET + 7);
+  expect(
+    recognizeArtifactFormat({
+      prefix: truncated,
+      fileSize: truncated.length,
+      espFlashLayout: false,
+    }),
+  ).toMatchObject({ state: "recognized", format: "iso9660" });
+  expect(
+    recognizeArtifactFormat({
+      prefix: truncated.subarray(0, -1),
+      fileSize: truncated.length - 1,
+      espFlashLayout: false,
+    }),
+  ).toBeUndefined();
+});
+
+it("lets a prefix the table recognizes outrank whole-file firmware probes", () => {
+  // A sector-aligned file extent can hold a complete firmware volume.
+  const volume = buildFv({ files: [] }).buffer;
+  const { bytes } = buildIso9660Image({
+    files: [{ path: "bios.fd", bytes: volume }],
+  });
+  expect(bytes.includes("_FVH", 0, "ascii")).toBe(true);
+  expect(recognizesArtifactPrefix(bytes, bytes.length)).toBe(true);
+  // Claims that wait on more input do not count, and a bare volume claims
+  // nothing the table recognizes.
+  expect(recognizesArtifactPrefix(bytes.subarray(0, 4096), bytes.length)).toBe(
+    false,
+  );
+  expect(recognizesArtifactPrefix(volume, volume.length)).toBe(false);
+});
+
+/** Minimal Unix ar archive with the given members (SysV trailing `/` or BSD `#1/N`). */
+const minimalAr = (
+  members: readonly {
+    readonly name: string;
+    readonly data: string;
+    readonly bsdName?: boolean;
+  }[],
+): Buffer => {
+  const parts: Buffer[] = [DEB_AR_MAGIC];
+  for (const member of members) {
+    const payload =
+      member.bsdName === true
+        ? Buffer.from(`${member.name}${member.data}`, "ascii")
+        : Buffer.from(member.data, "ascii");
+    const header = Buffer.alloc(DEB_AR_HEADER_BYTES, 0x20);
+    const label =
+      member.bsdName === true
+        ? `#1/${String(member.name.length)}`
+        : `${member.name}/`;
+    header.write(label.slice(0, 16), 0, "ascii");
+    header.write("0", 16, "ascii");
+    header.write("0", 28, "ascii");
+    header.write("0", 34, "ascii");
+    header.write("100644", 40, "ascii");
+    header.write(String(payload.length), 48, "ascii");
+    header[58] = 0x60;
+    header[59] = 0x0a;
+    parts.push(header, payload);
+    if (payload.length % 2 === 1) parts.push(Buffer.from("\n", "ascii"));
+  }
+  return Buffer.concat(parts);
+};
+
+it("recognizes a Debian package ar archive whose first member is debian-binary", () => {
+  const deb = minimalAr([{ name: "debian-binary", data: "2.0\n" }]);
+  expect(recognize(deb)).toMatchObject({
+    state: "recognized",
+    format: "deb",
+  });
+  const bsdDeb = minimalAr([
+    { name: "debian-binary", data: "2.0\n", bsdName: true },
+  ]);
+  expect(recognize(bsdDeb)).toMatchObject({
+    state: "recognized",
+    format: "deb",
+  });
+});
+
+it("does not recognize a plain ar archive that is not a Debian package", () => {
+  const plainAr = minimalAr([{ name: "hello.o", data: "object" }]);
+  expect(recognize(plainAr)).toBeUndefined();
+  const lateDebianBinary = minimalAr([
+    { name: "hello.o", data: "object" },
+    { name: "debian-binary", data: "2.0\n" },
+  ]);
+  expect(recognize(lateDebianBinary)).toBeUndefined();
+  expect(recognize(Buffer.from("!<arch>\n", "ascii"))).toBeUndefined();
+});

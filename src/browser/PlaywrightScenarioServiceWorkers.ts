@@ -289,14 +289,24 @@ export class PlaywrightScenarioServiceWorkers {
     }
   }
 
-  private send<M extends CdpCommand>(
+  private async send<M extends CdpCommand>(
     id: string,
     method: M,
     params: CdpCommandParams<M> = {} as CdpCommandParams<M>,
   ): Promise<CdpCommandResult<M>> {
-    if (this.#session === undefined)
+    const session = this.#session;
+    if (session === undefined)
       throw new BrowserObservationError(OPERATION, "disconnected");
-    return this.#session.connection.send(method, params, id);
+    try {
+      return await session.connection.send(method, params, id);
+    } catch (cause: unknown) {
+      // The main session can detach while event delivery is stopped by a
+      // listener failure, so its detach notice never arrives. CDP confirming
+      // it is gone is the same fact, for every command on that session.
+      if (id === session.sessionId && isCdpSessionGoneRejection(cause))
+        this.#detached = true;
+      throw cause;
+    }
   }
 
   private async settle(): Promise<void> {
@@ -453,7 +463,13 @@ export class PlaywrightScenarioServiceWorkers {
         !this.#detached &&
         session?.sessionId !== undefined
       ) {
-        await this.send(session.sessionId, "Page.stopLoading");
+        try {
+          await this.send(session.sessionId, "Page.stopLoading");
+        } catch (cause: unknown) {
+          // A session confirmed gone stops through the Playwright frame.
+          if (!this.#detached) throw cause;
+          await this.stopMainFrame(this.page.mainFrame());
+        }
       } else {
         await this.stopMainFrame(this.page.mainFrame());
       }
@@ -499,14 +515,13 @@ export class PlaywrightScenarioServiceWorkers {
               { identifier: target.identifier },
             );
           } catch (cause: unknown) {
-            // A child target can detach while event delivery is stopped by a
-            // listener failure, so its detach notice never retires it. CDP
-            // confirming the session is gone retires it here instead.
-            const gone =
-              target.id !== session.sessionId &&
-              isCdpSessionGoneRejection(cause);
+            // A child target can detach while event delivery is stopped by
+            // a listener failure, so its detach notice never retires it. CDP
+            // confirming the session is gone retires it here instead; send()
+            // already marked a gone main session detached.
+            const gone = isCdpSessionGoneRejection(cause);
             if (!gone && this.#targets.get(target.id) === target) throw cause;
-            if (gone) {
+            if (gone && target.id !== session.sessionId) {
               target.markDetached();
               this.#targets.delete(target.id);
             }

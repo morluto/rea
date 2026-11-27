@@ -121,7 +121,9 @@ export const hasTrailingZipArchive = async (
  * Classify a ZIP-backed package by its complete lower-cased path suffix.
  *
  * This is deliberately extension-only. Callers must separately verify ZIP
- * magic before trusting the classification for a root input. HarmonyOS `.har`
+ * magic before trusting the classification for a root input. A generic ZIP
+ * root can still be admitted as an APK from its central directory; that
+ * probe does not change this suffix result or nested members. HarmonyOS `.har`
  * is intentionally absent: the suffix also names HTTP Archive JSON, so a
  * Harmony shared archive is only established from verified ZIP bytes. The
  * HarmonyOS App Pack suffix `.app` is also absent here: it applies only to
@@ -135,6 +137,7 @@ export const zipPackageFormatForPath = (
   if (lower.endsWith(".zip")) return "zip";
   if (lower.endsWith(".ipa")) return "ipa";
   // An Android App Bundle is a ZIP archive, not a standalone APK.
+  if (lower.endsWith(".aab")) return "zip";
   if (lower.endsWith(".apk")) return "apk";
   if (lower.endsWith(".msix") || lower.endsWith(".msixbundle")) return "msix";
   if (lower.endsWith(".appx") || lower.endsWith(".appxbundle")) return "appx";

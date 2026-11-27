@@ -272,6 +272,14 @@ child output. Child output remains in the capture Evidence on stdout.
 }
 ```
 
+`executable` is resolved through the scenario's `PATH` with the lookup that
+`execute_rizin_command` uses (see
+[reverse-engineering-tools.md](../../reverse-engineering-tools.md)). Capture
+verifies the file it launches, so it needs the resolved path. Where the lookup
+stops because a native search can stop there, as at a stale network file
+handle or a symbolic link loop in an earlier `PATH` entry, the scenario is
+rejected with the candidates checked instead of launched by name.
+
 `executable` is required. `arguments`, `working_directory`, `environment`,
 `filesystem_observation_paths`, terminal settings, timed `events`, timeouts,
 resource limits, and normalization settings have defaults; see
@@ -694,10 +702,9 @@ observations and explicit unavailable fields. Older records may omit this option
 array. No intervention entry is added without an observed signaling fact; absence
 does not prove that cleanup sent no signals.
 
-Readers that previously accepted only `not_required` for a quiesced settlement
-must refresh the advertised MCP schema or update their saved-capture reader to
-accept `cleaned` as well. Existing saved captures remain valid and keep their
-recorded outcome; missing historical signal facts are not reconstructed.
+A quiesced settlement can report `cleaned` as well as `not_required`. Saved
+captures keep their recorded outcome; missing historical signal facts are not
+reconstructed.
 
 When the host withholds an unrelated process's ownership token, REA leaves that
 process untouched and records its PID and reason in `cleanup.unverified_processes`

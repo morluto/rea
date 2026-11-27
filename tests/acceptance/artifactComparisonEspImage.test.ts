@@ -3,12 +3,13 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 
 import { ESP32C3_APP_SEGMENTS, espImage } from "../fixtures/espImage.js";
-import { artifactInventorySummaryViewResultSchema } from "../../src/domain/analysisView/analysisViewResult.js";
-import { artifactComparisonResultSchema } from "../../src/domain/artifactComparison.js";
 import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
 import { artifactInventoryResultSchema } from "../../src/domain/artifactGraph.js";
 import { parseEvidence, type Evidence } from "../../src/domain/evidence.js";
-import { historicalInventoryEvidence } from "../fixtures/artifactEvidence.js";
+import {
+  historicalInventoryEvidence,
+  occurrenceAt,
+} from "../fixtures/artifactEvidence.js";
 import { connectArtifactComparisonMcp } from "../fixtures/artifactComparisonMcp.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
@@ -25,13 +26,6 @@ it("reports an ESP segment whose load address alone changed", async () => {
     await writeFile(path, espImage({ segments }));
     return inspectFile(path);
   };
-  const segment = (evidence: Evidence, path: string) => {
-    const occurrence = artifactInventoryResultSchema
-      .parse(evidence.normalized_result)
-      .occurrences.find(({ logical_path }) => logical_path === path);
-    if (occurrence === undefined) throw new Error(`Missing ${path}`);
-    return occurrence;
-  };
 
   // The same bytes, with the DRAM segment loading 8 KiB higher.
   const moved = ESP32C3_APP_SEGMENTS.map((item, index) =>
@@ -39,8 +33,8 @@ it("reports an ESP segment whose load address alone changed", async () => {
   );
   const left = await inspect("app.bin", ESP32C3_APP_SEGMENTS);
   const right = await inspect("moved.bin", moved);
-  const leftSegment = segment(left, "segment-01.bin");
-  const rightSegment = segment(right, "segment-01.bin");
+  const leftSegment = occurrenceAt(left, "segment-01.bin");
+  const rightSegment = occurrenceAt(right, "segment-01.bin");
   expect(rightSegment.artifact_id).toBe(leftSegment.artifact_id);
   expect(leftSegment.format_metadata).toMatchObject({ load_addr: 0x3fc8_8000 });
   expect(rightSegment.format_metadata).toMatchObject({

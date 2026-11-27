@@ -266,6 +266,17 @@ export const requireMcpOperationResult = (
   );
 
 /**
+ * Return session operations as projected results and analysis calls as their full Evidence.
+ * @template {ToolName} N
+ * @param {CallToolResult} result
+ * @param {N} operation
+ */
+export const requireMcpAnalysisEvidenceOrSessionResult = (result, operation) =>
+  ["open_binary", "binary_session", "close_binary"].includes(operation)
+    ? requireMcpOperationResult(result, operation)
+    : requireMcpOutput(result, operation);
+
+/**
  * Read the member that operationResultKey selected from the contract.
  * @template {PublicToolContract} C
  * @param {ToolOutput<C>} output

@@ -9,10 +9,16 @@ import { encodeToolResult } from "./toolResultEncoding.js";
 import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 import {
   DISCOVER_TOOLS,
+  DISCOVERY_REFRESH_GUIDANCE,
   HOT_TOOL_NAMES,
   progressiveCatalogIdentity,
   type CatalogIdentity,
 } from "../contracts/catalog/catalogDiscovery.js";
+import {
+  createSearchableCatalogTool,
+  rankCatalogToolMatches,
+  type SearchableCatalogTool,
+} from "./toolCatalogSearch.js";
 
 type CatalogListing = {
   registered: RegisteredTool;
@@ -34,7 +40,7 @@ export class ProgressiveToolCatalog {
   /** In-scope domain tools; the adapter is never a search result or reset. */
   private readonly tools: ReadonlyMap<
     string,
-    CatalogListing & { search: string }
+    CatalogListing & SearchableCatalogTool
   >;
   /** Exact names and counts also cover the always-advertised adapter. */
   private readonly inventory: ReadonlyMap<string, CatalogListing>;
@@ -60,8 +66,7 @@ export class ProgressiveToolCatalog {
           name,
           {
             ...catalogListing(registered),
-            search:
-              `${name} ${name.replaceAll("_", " ")} ${registered.description ?? ""}`.toLowerCase(),
+            ...createSearchableCatalogTool(name, registered.description),
           },
         ]),
     );
@@ -82,6 +87,14 @@ export class ProgressiveToolCatalog {
     });
   }
 
+  /** In-scope tools this connection could load through discovery. */
+  unloadedTools(): ReadonlySet<string> {
+    const unloaded = new Set<string>();
+    for (const [name, { registered }] of this.tools)
+      if (!registered.enabled) unloaded.add(name);
+    return unloaded;
+  }
+
   private inputSchemaFor(registered: RegisteredTool): Record<string, unknown> {
     let schema = this.inputSchemas.get(registered);
     if (schema === undefined) {
@@ -94,29 +107,16 @@ export class ProgressiveToolCatalog {
   }
 
   private rankMatches(query: string | undefined): readonly string[] {
-    const words = (query ?? "").toLowerCase().split(/\s+/u).filter(Boolean);
-    const ranked: { readonly name: string; readonly score: number }[] = [];
-    for (const [name, tool] of this.tools) {
-      let matchesAll = true;
-      for (let i = 0; i < words.length; i++) {
-        if (!tool.search.includes(words[i]!)) {
-          matchesAll = false;
-          break;
-        }
-      }
-      if (!matchesAll) continue;
-      let score = 0;
-      for (let i = 0; i < words.length; i++) {
-        if (name.includes(words[i]!)) score += 1;
-      }
-      ranked.push({ name, score });
-    }
-    ranked.sort(
-      (left, right) =>
-        right.score - left.score ||
-        (left.name < right.name ? -1 : left.name > right.name ? 1 : 0),
+    const words = [
+      ...new Set(
+        (query ?? "").trim().toLowerCase().split(/\s+/u).filter(Boolean),
+      ),
+    ];
+    return rankCatalogToolMatches(
+      this.tools.values(),
+      words,
+      words.length === 0 ? "all" : "any",
     );
-    return ranked.map((entry) => entry.name);
   }
 
   discover(input: z.infer<typeof DISCOVER_TOOLS.inputSchema>) {
@@ -177,7 +177,7 @@ export class ProgressiveToolCatalog {
           ? matches.length === 0
             ? "No matches. Try fewer or different task keywords, or browse without query."
             : "No remaining matches at this offset. Use offset 0 to restart this query, or select an earlier offset."
-          : "Call the returned tool by its original name using input_schema. Your client must refresh tools/list first; if it cannot, reconnect with REA_MCP_TOOL_CATALOG_PROFILE=full.",
+          : `Call the returned tool by its original name using input_schema. ${DISCOVERY_REFRESH_GUIDANCE}`,
     };
     // This reply borrows read-only SDK schema projections for synchronous
     // encoding; validate the new reply without copying their complete trees.

@@ -164,7 +164,7 @@ describe("exact Zstandard frames", () => {
     ).toMatchObject({ ok: false, reason: "truncated_frame_header" });
   });
 
-  it("stops a prefix at the first non-frame byte", async () => {
+  it("stops a prefix at the first non-frame byte and reports inputExhausted", async () => {
     const frame = rawFrame(0x61);
     const suffix = Buffer.from("CCOB");
     const input = Buffer.concat([frame, suffix]);
@@ -174,11 +174,81 @@ describe("exact Zstandard frames", () => {
       bytes: Buffer.from("a"),
       consumedBytes: frame.length,
       frames: 1,
+      inputExhausted: false,
     };
     expect(decodeZstandardFrames(input, options)).toMatchObject(expected);
     await expect(
       decodeZstandardFramesCooperative(input, options, async () => {}),
     ).resolves.toMatchObject(expected);
+
+    // Frame-boundary EOF and 1-3 byte magic prefixes report inputExhausted: true;
+    // definite 1-3 byte non-magic suffixes report inputExhausted: false.
+    for (const tail of [
+      Buffer.alloc(0),
+      Buffer.of(0x28),
+      Buffer.of(0x28, 0xb5),
+      Buffer.of(0x28, 0xb5, 0x2f),
+      Buffer.of(0x50),
+      Buffer.of(0x5f, 0x2a),
+      Buffer.of(0x50, 0x2a, 0x4d),
+    ]) {
+      const sample = Buffer.concat([frame, tail]);
+      const expectedExhausted = {
+        ok: true,
+        consumedBytes: frame.length,
+        inputExhausted: true,
+      };
+      expect(decodeZstandardFrames(sample, options)).toMatchObject(
+        expectedExhausted,
+      );
+      await expect(
+        decodeZstandardFramesCooperative(sample, options, async () => {}),
+      ).resolves.toMatchObject(expectedExhausted);
+    }
+    for (const nonMagic of [
+      Buffer.of(0x00),
+      Buffer.of(0x43, 0x43),
+      Buffer.of(0x28, 0xb5, 0x00),
+      Buffer.of(0x50, 0x2a, 0x00),
+    ]) {
+      const sample = Buffer.concat([frame, nonMagic]);
+      const expectedComplete = {
+        ok: true,
+        consumedBytes: frame.length,
+        inputExhausted: false,
+      };
+      expect(decodeZstandardFrames(sample, options)).toMatchObject(
+        expectedComplete,
+      );
+      await expect(
+        decodeZstandardFramesCooperative(sample, options, async () => {}),
+      ).resolves.toMatchObject(expectedComplete);
+    }
+    // At the maxFrames cap in prefix mode, distinguish a partial magic prefix from non-magic trailing bytes.
+    const oneFrameOptions = {
+      mode: "prefix",
+      allowance: allowance(1, "runtime"),
+    } as const;
+    expect(
+      decodeZstandardFrames(
+        Buffer.concat([frame, Buffer.of(0x28, 0xb5)]),
+        oneFrameOptions,
+      ),
+    ).toMatchObject({
+      ok: true,
+      consumedBytes: frame.length,
+      inputExhausted: true,
+    });
+    expect(
+      decodeZstandardFrames(
+        Buffer.concat([frame, Buffer.of(0x43, 0x43)]),
+        oneFrameOptions,
+      ),
+    ).toMatchObject({
+      ok: true,
+      consumedBytes: frame.length,
+      inputExhausted: false,
+    });
   });
 
   it("refuses 65536 productive frames on the work allowance", () => {

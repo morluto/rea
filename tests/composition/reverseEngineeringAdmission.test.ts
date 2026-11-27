@@ -1,6 +1,5 @@
 import { spawnFailure } from "../support/process/spawnFailure.js";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it } from "vitest";
@@ -107,6 +106,55 @@ it.each([
   },
 );
 
+it("gives a call's place back at its deadline while a file stat it gave up on has not returned", async () => {
+  const directory = await createTestTempDirectory("rea-reverse-abandoned-");
+  const paths = Array.from({ length: 8 }, (_, index) =>
+    join(directory, `fixture-${String(index)}.bin`),
+  );
+  await Promise.all(paths.map((path) => writeFile(path, "fixture")));
+  let answer!: () => void;
+  const answered = new Promise<void>((resolve) => {
+    answer = resolve;
+  });
+  let stalling = true;
+  // As an unresponsive mount, the stat holds each file until the test answers it.
+  const held: Promise<unknown>[] = [];
+  const service = new TestReverseEngineeringService({
+    run: async () => ({ stdout: "", stderr: "" }),
+    stat: (path) => {
+      if (!stalling) return stat(path);
+      const work = answered.then(() => stat(path));
+      held.push(work);
+      return work;
+    },
+  });
+  try {
+    for (const path of paths)
+      await expect(
+        service.inspectWithObjdump({
+          path,
+          operation: "file_headers",
+          command_timeout_ms: 50,
+        }),
+      ).resolves.toMatchObject({
+        ok: false,
+        error: { _tag: "AnalysisTimeoutError" },
+      });
+    // The stalled stats still run, but none of the eight calls keeps its place.
+    stalling = false;
+    await expect(
+      service.inspectWithObjdump({
+        path: paths[0]!,
+        operation: "file_headers",
+      }),
+    ).resolves.toMatchObject({ ok: true });
+  } finally {
+    answer();
+    await Promise.allSettled(held);
+    await service.close();
+  }
+});
+
 it("preserves the exact caller reason when objdump admission is already aborted", async () => {
   const directory = await createTestTempDirectory("rea-reverse-preabort-");
   const path = join(directory, "fixture.bin");
@@ -158,7 +206,8 @@ it("preserves the caller reason when cancellation arrives after provider output"
     expect(result.error._tag).toBe("AnalysisCancelledError");
     expect(result.error.cause).toBe(reason);
     expect(result.error.partialObservation).toMatchObject({
-      raw_result: { stdout: "symbols" },
+      normalized_result: { stdout: "symbols" },
+      raw_result: null,
     });
   } finally {
     await service.close();
@@ -335,7 +384,8 @@ it.each([
           stderr: "partial stderr",
         });
         expect(result.error.partialObservation).toMatchObject({
-          raw_result: { stdout: "partial stdout" },
+          normalized_result: { stdout: "partial stdout" },
+          raw_result: null,
         });
       }
     } finally {

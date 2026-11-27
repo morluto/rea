@@ -1,9 +1,12 @@
 import type { RequestAnalysisPort } from "../ports/AnalysisProvider.js";
-import type { ApktoolRequest } from "../domain/apktool/apktoolResourceAnalysis.js";
+import type {
+  ApktoolRequest,
+  ApktoolOperation,
+} from "../domain/apktool/apktoolResourceAnalysis.js";
+import { PRODUCER_LIMITS_HELP } from "./producerLimitsOption.js";
 import { createApktoolResourceAnalysisService } from "../application/ProviderOperationServices.js";
 import { createApktoolResourceAnalysisProvider } from "../composition/apktool.js";
 import { APKTOOL_TOOL_CONTRACTS } from "../contracts/apktool/apktoolToolContracts.js";
-import type { ApktoolOperation } from "../domain/apktool/apktoolResourceAnalysis.js";
 import type { Logger } from "pino";
 import { contractNamed } from "./contractCliDescription.js";
 import { registerContractCommand } from "./contractCommand.js";
@@ -13,6 +16,7 @@ import {
 } from "./contractCommandRunners.js";
 import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
+import { deliverCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
 import type { CliInstance } from "./types.js";
 
 /** Expose the same explicit Apktool requests through one-shot CLI commands. */
@@ -52,7 +56,9 @@ export const registerApktoolCommands = (
       // The contract admits a relative path, resolved by the provider from
       // the working directory, so the CLI passes it on as spelled.
       positionals: ["path"],
+      jsonText: ["producer_limits"],
       fields: {
+        producer_limits: { description: PRODUCER_LIMITS_HELP },
         include_strings: {
           name: "strings",
           description:
@@ -62,18 +68,39 @@ export const registerApktoolCommands = (
           description:
             "Repeat to project multiple localized string tables, e.g. --locales de --locales pt-BR",
         },
+        view: {
+          description:
+            "JSON android-resources strings or manifest view; requires --detail summary and --evidence_output",
+        },
       },
+      evidenceDelivery: true,
+      viewDelivery: { invalidJson: "view must be valid JSON" },
     },
-    (input, { operation, signal }) => {
+    (input, { operation, signal, delivery }) => {
+      // Delivery fields select the reply; the decode takes the rest.
       const owned = run("decode_android_resources")();
-      return finishCliEvidenceCommand(
-        input.path,
-        () => owned.inspect(input, { signal }),
-        owned,
-        "apktool",
+      const analyze = () => owned.inspect(input, { signal });
+      if (delivery === undefined)
+        return finishCliEvidenceCommand(
+          input.path,
+          analyze,
+          owned,
+          "apktool",
+          operation,
+          signal,
+        ).then(projectCliAnalysisResult);
+      return deliverCliAnalysisEvidence({
+        callerInputPath: input.path,
+        run: analyze,
+        service: owned,
+        providerId: "apktool",
         operation,
         signal,
-      ).then(projectCliAnalysisResult);
+        detail: delivery.detail,
+        evidenceOutput: delivery.evidenceOutput,
+        rerunRecoversResult: delivery.rerunRecoversResult,
+        ...(delivery.view === undefined ? {} : { view: delivery.view }),
+      });
     },
   );
 };

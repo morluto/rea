@@ -1,4 +1,3 @@
-import { indexPeSectionRvas } from "./peSectionRvaIndex.js";
 import {
   PE_RESOURCE_DATA_ENTRY_BYTES,
   PE_RESOURCE_DIRECTORY_BYTES,
@@ -12,154 +11,134 @@ import {
   readPeResourceNameFacts,
 } from "./peResourceTreeFacts.js";
 import { err, ok, type Result } from "../result.js";
-import { BinaryFormatFailure } from "../binaryContainer.js";
+import {
+  BinaryFormatFailure,
+  BinaryMappingFailure,
+  createFileMappingIndex,
+} from "../binaryContainer.js";
 import { decodeLimit, ParseFailureError } from "../parseFailure.js";
 import {
-  PE_SECTION_HEADER_BYTES,
-  readPeSectionHeader,
-} from "../peSectionHeader.js";
+  peDeclaredFileMappings,
+  readPeImage,
+  readPeImageFromReader,
+  type PeImage,
+} from "../native/peImage.js";
+import type { PeHeaderAnomaly } from "../native/peHeaderAnomalies.js";
+import { peImageBaseHex } from "../native/peAddressSpace.js";
 import {
   peFailure,
-  readPeImageHeaders,
-  readPeImageHeadersAt,
   type PeRangeReader,
   requirePeExtent,
 } from "./peImageHeaders.js";
 
-interface Section {
-  readonly rva: number;
-  readonly virtualSize: number;
-  readonly offset: number;
-  readonly size: number;
-}
+const PE_RESOURCE_DIRECTORY = 2;
+const RVA_SPACE = 0x100000000;
 
-// RVA ownership follows the declared virtual extent. Raw size describes
-// initialized file bytes and can include file-alignment padding; loaders may
-// map page-rounded tails, but those bytes are outside the declared section.
-const virtualExtent = (section: Section): number =>
-  section.virtualSize === 0 ? section.size : section.virtualSize;
-
-/** Header admission and unambiguous file-backed RVA mapping, independent of section names. */
+/** Shared PE image admission and file-backed RVA mapping, independent of section names. */
 export const readPeResourceLayout = (bytes: Buffer) =>
-  mapPeResourceLayout(readPeImageHeaders(bytes), bytes.length);
+  mapPeResourceLayout(readPeImage(bytes), bytes.length);
 
-/** Header admission and unambiguous file-backed RVA mapping from bounded positional reads. */
+/** The same admission and mapping from bounded positional reads. */
 export const readPeResourceLayoutAt = async (
   prefix: Buffer,
   fileSize: number,
   read: PeRangeReader,
 ) =>
   mapPeResourceLayout(
-    await readPeImageHeadersAt(prefix, fileSize, read),
+    await readPeImageFromReader({
+      size: fileSize,
+      prefix,
+      readRange: async (offset, length) => {
+        const bytes = await read(offset, length);
+        if (bytes === undefined || bytes.length !== length)
+          return peFailure(`Truncated PE header range at ${String(offset)}.`);
+        return bytes;
+      },
+    }),
     fileSize,
   );
 
-const mapPeResourceLayout = (
-  headers: ReturnType<typeof readPeImageHeaders>,
-  fileSize: number,
-) => {
-  const {
-    machine,
-    format,
-    sectionCount,
-    optionalHeaderOffset,
-    directoryOffset,
-    dataDirectories,
-    headerSize,
-    sectionTable,
-  } = headers;
-  const sections: Section[] = [];
-  for (let index = 0; index < sectionCount; index++) {
-    const at = index * PE_SECTION_HEADER_BYTES;
-    const parsed = readPeSectionHeader(
-      sectionTable.subarray(at, at + PE_SECTION_HEADER_BYTES),
-    );
-    if (!parsed.ok) return peFailure(parsed.error.message);
-    const row = parsed.value;
-    const section = {
-      rva: row.virtual_address,
-      virtualSize: row.virtual_size,
-      offset: row.offset,
-      size: row.raw_size,
-    };
-    if (section.rva + virtualExtent(section) > 0x100000000)
-      peFailure("PE section RVA range overflows.");
-    if (section.size > 0) {
-      requirePeExtent(fileSize, section.offset, section.size);
-      if (section.offset < headerSize)
-        peFailure("PE section raw bytes overlap headers.");
+/**
+ * Map resource RVAs through the image's declared file-backed content, the
+ * same mapping every static PE reader uses. Section layout is the image
+ * owner's fact; only a resource range that is unmapped, ambiguous or leaves
+ * the file is refused.
+ */
+const mapPeResourceLayout = (image: PeImage, fileSize: number) => {
+  const index = createFileMappingIndex(
+    peDeclaredFileMappings(image),
+    image.zero_fills,
+  );
+  const base = image.image_base;
+  /** File offset of a mapped span; undefined when unmapped, refused when ambiguous. */
+  const tryMap = (rva: number, size: number): number | undefined => {
+    if (rva + size > RVA_SPACE) peFailure("Resource RVA range overflows.");
+    const address = base + BigInt(rva);
+    let offset: number | undefined;
+    try {
+      // An empty range belongs to the section starting at its RVA, else to
+      // the one ending there.
+      if (size !== 0) offset = index.tryOffset(address, size);
+      else {
+        offset = index.tryOffset(address, 1);
+        if (offset === undefined && rva !== 0) {
+          const before = index.tryOffset(address - 1n, 1);
+          offset = before === undefined ? undefined : before + 1;
+        }
+      }
+    } catch (cause) {
+      if (cause instanceof BinaryMappingFailure)
+        return peFailure(
+          `Resource range at RVA 0x${rva.toString(16)} (${String(size)} bytes) is ambiguously file-backed.`,
+        );
+      throw cause;
     }
-    sections.push(section);
-  }
-  const backed = sections
-    .filter(({ size }) => size > 0)
-    .sort((left, right) => left.offset - right.offset);
-  for (let index = 1; index < backed.length; index++) {
-    const previous = backed[index - 1];
-    const current = backed[index];
-    if (
-      previous !== undefined &&
-      current !== undefined &&
-      current.offset < previous.offset + previous.size
-    )
-      peFailure("PE sections have overlapping raw file ranges.");
-  }
-  const ranges = sections.map((section) => ({
-    start: section.rva,
-    end: section.rva + virtualExtent(section),
-    section,
-  }));
-  const lookup = indexPeSectionRvas(ranges);
-  const sectionEnds = new Map<number, Section | null>();
-  for (const { start, end, section } of ranges) {
-    if (start < end)
-      sectionEnds.set(end, sectionEnds.has(end) ? null : section);
-  }
-  const map = (rva: number, size: number): number => {
-    if (rva + size > 0x100000000) peFailure("Resource RVA range overflows.");
-    const { section: owned, overlaps, nextStart } = lookup(rva);
-    if (rva < headerSize) {
-      if (
-        owned !== undefined ||
-        nextStart < rva + size ||
-        size > headerSize - rva
-      )
-        peFailure("Ambiguous resource header RVA mapping.");
-      requirePeExtent(fileSize, rva, size);
-      return rva;
-    }
-    // An empty resource can start exactly at a unique section end, provided
-    // no nonempty section owns that point.
-    const section =
-      owned?.section ?? (size === 0 ? sectionEnds.get(rva) : undefined);
-    if (section === undefined || section === null || overlaps)
-      return peFailure(
-        "Resource RVA has missing or overlapping section mappings.",
-      );
-    const within = rva - section.rva;
-    if (size > virtualExtent(section) - within)
-      peFailure("Resource range leaves its section's virtual size.");
-    if (within > section.size || size > section.size - within)
-      peFailure("Resource range is not entirely file-backed in one section.");
-    if (nextStart < rva + size)
-      peFailure("Resource interval intersects overlapping virtual sections.");
-    const offset = section.offset + within;
-    requirePeExtent(fileSize, offset, size);
+    if (offset !== undefined) requirePeExtent(fileSize, offset, size);
     return offset;
   };
-  const resource = dataDirectories[2];
-  const directoryAt =
-    optionalHeaderOffset + (resource?.offset ?? directoryOffset + 2 * 8);
+  const map = (rva: number, size: number): number =>
+    tryMap(rva, size) ??
+    peFailure(
+      `Resource range at RVA 0x${rva.toString(16)} (${String(size)} bytes) is not file-backed.`,
+    );
+  const resource = image.pe_data_directories[PE_RESOURCE_DIRECTORY];
   const rva = resource?.address ?? 0;
-  const size = resource?.size ?? 0;
-  if ((rva === 0) !== (size === 0))
-    peFailure("Inconsistent PE resource directory RVA/size.");
+  const declaredSize = resource?.size ?? 0;
+  const headerAnomalies: PeHeaderAnomaly[] = [...image.pe_header_anomalies];
+  // The loader locates the tree by RVA alone and walks it within the
+  // section's file-backed bytes, so Size bounds nothing it reads; a missing
+  // directory has a zero RVA. The walk records how far it read, and the
+  // inventory reports a Size that ends before that point. An ambiguous or
+  // unmapped root is still refused through `map`.
+  let size = 0;
+  if (rva !== 0) {
+    const run =
+      index.prefix(base + BigInt(rva), RVA_SPACE - rva)?.size ??
+      map(rva, PE_RESOURCE_DIRECTORY_BYTES);
+    // Bytes past the run are unused by the walk, so an oversized Size needs
+    // no mapping there; it is reported, not checked.
+    if (declaredSize > run)
+      headerAnomalies.push({
+        code: "directory_size_past_file_backed_bytes",
+        message: `Data directory 2 (resource) declares Size ${String(declaredSize)}, but only ${String(run)} bytes from its RVA are file-backed with one translation; the tree was read within those bytes.`,
+      });
+    size = run;
+  }
   return {
-    format,
-    machine,
-    directoryAt,
+    format: image.bits === 64 ? ("pe32-plus" as const) : ("pe32" as const),
+    machine: image.pe_machine,
+    imageBase: peImageBaseHex(image.image_base),
+    /** File offset of the resource data-directory entry, when the image declares it. */
+    directoryAt:
+      resource === undefined
+        ? null
+        : image.pe_optional_header_file_offset + resource.offset,
     rva,
+    /** Bytes from the RVA the tree may be read within: the file-backed run. */
     size,
+    /** The directory's Size as stored. */
+    declaredSize,
+    headerAnomalies,
     map,
   };
 };
@@ -222,8 +201,7 @@ const openPeResourceTree = async (
   maxEntries: number,
 ): Promise<PeResourceTree | undefined> => {
   try {
-    const headers = await readPeImageHeadersAt(prefix, fileSize, read);
-    const layout = mapPeResourceLayout(headers, fileSize);
+    const layout = await readPeResourceLayoutAt(prefix, fileSize, read);
     if (layout.size < PE_RESOURCE_DIRECTORY_BYTES) return undefined;
     return new PeResourceTree(
       layout,
@@ -232,8 +210,11 @@ const openPeResourceTree = async (
       maxEntries,
     );
   } catch (cause) {
+    // The shared image owner also refuses headers as truncated; an image
+    // this probe cannot admit carries no named resource.
     if (
-      (cause instanceof ParseFailureError && cause.kind === "malformed") ||
+      (cause instanceof ParseFailureError &&
+        (cause.kind === "malformed" || cause.kind === "truncated")) ||
       (cause instanceof BinaryFormatFailure && cause.kind === "unsupported")
     )
       return undefined;

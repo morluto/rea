@@ -31,6 +31,10 @@ import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { sectionNameFixtures } from "./lib/elf-section-name-fixtures.mjs";
 import { withLargeResultMcp } from "./lib/large-result-mcp.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./lib/complete-evidence.mjs";
 
 const verifyLargeMcp = process.env.REA_VERIFY_LARGE_ELF_MCP === "1";
 const python = process.env.REA_PWNTOOLS_PYTHON;
@@ -68,7 +72,9 @@ const limitedEnvironment = (option) => ({
   REA_VERIFY_LIMITED_PYTHON: python,
   REA_VERIFY_LIMIT_OPTION: option,
 });
-const client = new Client({ name: "binary-layout-verifier", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "binary-layout-verifier", version: "1" }),
+);
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
@@ -576,13 +582,14 @@ try {
   const overflowingTablePath = join(root.path, "overflowing-program-table");
   await writeFile(overflowingTablePath, overflowingTable);
   for (const mode of ["cli", "mcp"]) {
-    const error = await inspect(mode, overflowingTablePath, "invalid_input");
-    assert.equal(error.code, "invalid_request");
-    assert.ok(
-      error.details.issues.some(
-        ({ path, reason }) => path[0] === "path" && reason === "invalid_format",
-      ),
+    const error = await inspect(
+      mode,
+      overflowingTablePath,
+      "unsupported_target",
     );
+    assert.equal(error.code, "unsupported_target");
+    assert.equal(error.details.failure_kind, "malformed");
+    assert.equal(error.details.format, "elf");
     cases++;
   }
   assert.deepEqual(await readFile(overflowingTablePath), overflowingTable);
@@ -771,8 +778,8 @@ try {
           : await inspect(
               mode,
               path,
-              fixture.expectation === "invalid_input"
-                ? "invalid_input"
+              fixture.expectation === "malformed"
+                ? "unsupported_target"
                 : undefined,
             );
       if (fixture.expectation === "absent") {
@@ -837,7 +844,7 @@ try {
       const path = join(root.path, `invalid-dependency-${profile}-${problem}`);
       await writeFile(path, bytes);
       for (const mode of ["cli", "mcp"]) {
-        await inspect(mode, path, "invalid_input");
+        await inspect(mode, path, "unsupported_target");
         cases++;
       }
       assert.deepEqual(await readFile(path), bytes);
@@ -884,7 +891,7 @@ try {
       const path = join(root.path, `invalid-symbol-link-${type}-${problem}`);
       await writeFile(path, bytes);
       for (const mode of ["cli", "mcp"]) {
-        await inspect(mode, path, "invalid_input");
+        await inspect(mode, path, "unsupported_target");
         cases++;
       }
       assert.deepEqual(await readFile(path), bytes);
@@ -939,7 +946,7 @@ try {
       0n,
       Number(BigInt(section.header_location.offset)) + 56,
     );
-    return [`zero-entry-${type}`, bytes, "invalid_input"];
+    return [`zero-entry-${type}`, bytes, "unsupported_target"];
   });
   const undersizedSymbolEntries = ["SHT_SYMTAB", "SHT_DYNSYM"].map((type) => {
     const section = protectedReport.sections.find((item) => item.type === type);
@@ -948,7 +955,7 @@ try {
     const header = Number(BigInt(section.header_location.offset));
     bytes.writeBigUInt64LE(8n, header + 32);
     bytes.writeBigUInt64LE(8n, header + 56);
-    return [`undersized-entry-${type}`, bytes, "invalid_input"];
+    return [`undersized-entry-${type}`, bytes, "unsupported_target"];
   });
   const nonintegralSymbolEntries = ["SHT_SYMTAB", "SHT_DYNSYM"].map((type) => {
     const section = protectedReport.sections.find((item) => item.type === type);
@@ -958,7 +965,7 @@ try {
     const size = bytes.readBigUInt64LE(header + 32);
     assert.ok(size + 1n <= BigInt(bytes.length) - BigInt(section.offset));
     bytes.writeBigUInt64LE(size + 1n, header + 32);
-    return [`nonintegral-entry-count-${type}`, bytes, "invalid_input"];
+    return [`nonintegral-entry-count-${type}`, bytes, "unsupported_target"];
   });
   const relocationSection = relocatable.sections.find(
     (item) => item.type === "SHT_RELA",
@@ -973,7 +980,7 @@ try {
     bytes.writeUInt32LE(sectionType, header + 4);
     bytes.writeBigUInt64LE(8n, header + 32);
     bytes.writeBigUInt64LE(8n, header + 56);
-    return [`undersized-entry-${type}`, bytes, "invalid_input"];
+    return [`undersized-entry-${type}`, bytes, "unsupported_target"];
   });
   const nonintegralRelocationEntries = [
     ["RELA", 4, 24],
@@ -984,7 +991,7 @@ try {
     bytes.writeUInt32LE(sectionType, header + 4);
     bytes.writeBigUInt64LE(BigInt(entrySize + 1), header + 32);
     bytes.writeBigUInt64LE(BigInt(entrySize), header + 56);
-    return [`nonintegral-entry-count-${type}`, bytes, "invalid_input"];
+    return [`nonintegral-entry-count-${type}`, bytes, "unsupported_target"];
   });
   const invalidRelocationReferences = [
     ["missing-symbol-table", relocatable.sections.length + 100],
@@ -999,7 +1006,7 @@ try {
       const type = bytes.readBigUInt64LE(offset) & 0xffffffffn;
       bytes.writeBigUInt64LE((0xffffffffn << 32n) | type, offset);
     } else bytes.writeUInt32LE(link, header + 40);
-    return [name, bytes, "invalid_input"];
+    return [name, bytes, "unsupported_target"];
   });
   const inactiveTarget = relocatable.sections.find(
     (section) => section.name.display === ".comment",
@@ -1162,10 +1169,12 @@ try {
     ["--fsize=33554432", '"file_size_bytes": 33554432'],
   ]) {
     const selectedEnvironment = limitedEnvironment(option);
-    const limitedClient = new Client({
-      name: "limited-layout-verifier",
-      version: "1",
-    });
+    const limitedClient = completeEvidenceClient(
+      new Client({
+        name: "limited-layout-verifier",
+        version: "1",
+      }),
+    );
     const limitedTransport = new StdioClientTransport({
       command: process.execPath,
       args: [entrypoint, "mcp"],
@@ -1241,10 +1250,12 @@ try {
   // Resource limits are result-affecting inputs: upstream PLT emulation may be
   // incomplete under this address-space budget. Compare adapters at that budget.
   const memoryEnvironment = limitedEnvironment("--as=100663296");
-  const memoryClient = new Client({
-    name: "memory-layout-verifier",
-    version: "1",
-  });
+  const memoryClient = completeEvidenceClient(
+    new Client({
+      name: "memory-layout-verifier",
+      version: "1",
+    }),
+  );
   const memoryTransport = new StdioClientTransport({
     command: process.execPath,
     args: [entrypoint, "mcp"],
@@ -1310,7 +1321,9 @@ try {
   const cpuHeavyPath = join(root.path, "cpu-section-heavy.o");
   await writeFile(cpuHeavyPath, cpuHeavy);
   const cpuEnvironment = limitedEnvironment("--cpu=1:");
-  const cpuClient = new Client({ name: "cpu-layout-verifier", version: "1" });
+  const cpuClient = completeEvidenceClient(
+    new Client({ name: "cpu-layout-verifier", version: "1" }),
+  );
   const cpuTransport = new StdioClientTransport({
     command: process.execPath,
     args: [entrypoint, "mcp"],
@@ -1343,10 +1356,12 @@ try {
   }
   for (const limit of [1024, 1]) {
     const fileEnvironment = limitedEnvironment(`--fsize=${limit}:`);
-    const fileClient = new Client({
-      name: "file-size-layout-verifier",
-      version: "1",
-    });
+    const fileClient = completeEvidenceClient(
+      new Client({
+        name: "file-size-layout-verifier",
+        version: "1",
+      }),
+    );
     const fileTransport = new StdioClientTransport({
       command: process.execPath,
       args: [entrypoint, "mcp"],
@@ -1387,12 +1402,12 @@ try {
   const core = Buffer.from(object);
   core.writeUInt16LE(4, 16);
   for (const [name, bytes, category] of [
-    ["not-elf", Buffer.from("ordinary local text"), "invalid_input"],
-    ["truncated", object.subarray(0, 32), "invalid_input"],
+    ["not-elf", Buffer.from("ordinary local text"), "unsupported_target"],
+    ["truncated", object.subarray(0, 32), "unsupported_target"],
     [
       "truncated-tables",
       object.subarray(0, object.length - 1),
-      "invalid_input",
+      "unsupported_target",
     ],
     ...zeroSymbolEntries,
     ...undersizedSymbolEntries,
@@ -1400,14 +1415,18 @@ try {
     ...undersizedRelocationEntries,
     ...nonintegralRelocationEntries,
     ...invalidRelocationReferences,
-    ["unterminated-dynamic-segment", shortDynamic, "invalid_input"],
-    ["unterminated-interpreter", unterminatedInterpreter, "invalid_input"],
+    ["unterminated-dynamic-segment", shortDynamic, "unsupported_target"],
+    ["unterminated-interpreter", unterminatedInterpreter, "unsupported_target"],
     [
       "missing-relocation-target-section",
       missingTargetSection,
-      "invalid_input",
+      "unsupported_target",
     ],
-    ["undersized-program-header", undersizedProgramHeader, "invalid_input"],
+    [
+      "undersized-program-header",
+      undersizedProgramHeader,
+      "unsupported_target",
+    ],
     ["riscv64", unsupported, "unsupported_target"],
     ["core", core, "unsupported_target"],
   ]) {
@@ -1427,7 +1446,7 @@ try {
   const badPackedPath = join(root.path, "relr-bitmap-without-anchor");
   await writeFile(badPackedPath, packedFile);
   for (const mode of ["cli", "mcp"]) {
-    await inspect(mode, badPackedPath, "invalid_input");
+    await inspect(mode, badPackedPath, "unsupported_target");
     assert.deepEqual(await readFile(badPackedPath), packedFile);
     cases++;
   }
@@ -1456,10 +1475,12 @@ try {
       ...environment,
       REA_PWNTOOLS_PYTHON: configuredPython,
     };
-    const selectedClient = new Client({
-      name: "unavailable-layout-verifier",
-      version: "1",
-    });
+    const selectedClient = completeEvidenceClient(
+      new Client({
+        name: "unavailable-layout-verifier",
+        version: "1",
+      }),
+    );
     const selectedTransport = new StdioClientTransport({
       command: process.execPath,
       args: [entrypoint, "mcp"],
@@ -1515,9 +1536,11 @@ try {
         trace,
         process.execPath,
         entrypoint,
-        "inspect-binary-layout",
-        join(root.path, name),
-        "--json",
+        ...(await completeEvidenceCliArguments([
+          "inspect-binary-layout",
+          join(root.path, name),
+          "--json",
+        ])),
       ],
       {
         env: { ...environment, PATH: "/usr/bin:/bin" },
@@ -1634,7 +1657,7 @@ async function inspect(
     const response = await selectedClient.callTool(
       {
         name: "inspect_binary_layout",
-        arguments: { path },
+        arguments: { detail: "complete", path },
       },
       { timeout: 300_000 },
     );
@@ -1649,7 +1672,14 @@ async function inspect(
     try {
       response = await commands.exec(
         process.execPath,
-        [entrypoint, "inspect-binary-layout", path, "--json"],
+        [
+          entrypoint,
+          ...(await completeEvidenceCliArguments([
+            "inspect-binary-layout",
+            path,
+            "--json",
+          ])),
+        ],
         {
           env: selectedEnvironment,
           timeout: 40_000,

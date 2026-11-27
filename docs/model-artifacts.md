@@ -5,10 +5,11 @@ GGUF v2/v3 or safetensors file. Detection uses content, including GGUF byte
 order, rather than its extension. REA does not load a model, interpret weights,
 run inference, import Python, open external-data references or use the network.
 
-Unsupported GGUF versions remain refused. Their diagnostic preserves the four
-version bytes and both UINT32 interpretations with byte order unknown, rather
-than inferring big-endian from an unrecognized little-endian value. Little-endian
-v2/v3 and big-endian v3 remain supported; big-endian v2 remains refused.
+Little-endian GGUF v2/v3 and big-endian v3 are supported. Big-endian v2 is
+refused as "Big-endian GGUF requires version 3". Other versions are refused
+with the four version bytes and both UINT32 interpretations, byte order
+unknown, rather than inferring big-endian from an unrecognized little-endian
+value.
 
 ```bash
 rea inspect-model-artifact /absolute/path/model.gguf --json
@@ -58,20 +59,21 @@ byte length. Alignment accepts every positive UINT32 multiple of eight, includin
 non-powers of two. Partial Evidence retains explicit alignment once validated;
 the default alignment becomes known after metadata completes. Cancellation
 retains completed declarations with unknown digests and unverified final file
-identity. Metadata keys preserve their spelling and use lowercase
-ASCII alphanumeric components separated by dots, underscores or hyphens;
-standard numeric components such as `general.base_model.0.name` are preserved.
-Hyphenated components are retained for compatibility with the published
-llama.cpp v0.7.0 writer, which emits keys such as
-`gpt-oss.context_length` and `wavtokenizer-dec.context_length`; the current
+identity.
+
+Metadata keys preserve their spelling and use lowercase ASCII alphanumeric
+components separated by dots, underscores or hyphens, including numeric
+components such as `general.base_model.0.name`. Hyphens are accepted because
+the published llama.cpp v0.7.0 writer emits keys such as
+`gpt-oss.context_length` and `wavtokenizer-dec.context_length`, even though the
+current
 [GGUF specification](https://github.com/ggml-org/ggml/blob/master/docs/gguf.md#standardized-key-value-pairs)
-restricts `general.architecture` values to letters and digits.
-This documents producer output that conflicts with that written restriction,
-not a claim that the specification permits hyphens. See the pinned
+restricts `general.architecture` values to letters and digits. See the pinned
 [WAVTOKENIZER_DEC](https://github.com/ggml-org/llama.cpp/blob/620d2225cc436ab0b001e3200e590e3b286ef9ab/gguf-py/gguf/constants.py#L1447)
 and [GPT_OSS](https://github.com/ggml-org/llama.cpp/blob/620d2225cc436ab0b001e3200e590e3b286ef9ab/gguf-py/gguf/constants.py#L1466)
 architecture names, [context-length key template](https://github.com/ggml-org/llama.cpp/blob/620d2225cc436ab0b001e3200e590e3b286ef9ab/gguf-py/gguf/constants.py#L110),
 and [writer method](https://github.com/ggml-org/llama.cpp/blob/620d2225cc436ab0b001e3200e590e3b286ef9ab/gguf-py/gguf/gguf_writer.py#L698-L699).
+
 Scalar metadata is complete. Arrays have declared element types,
 counts and at most eight preview elements per array, with an explicit
 `preview_complete` flag. This includes tokenizer vocabularies: omitted values
@@ -123,7 +125,7 @@ to the default 32-byte alignment; the final column shows why even the same file
 extents need not distinguish these layouts.
 REA preserves each K type's name and enforces the common 64-element row
 multiple, which does not establish a storage block size. Nonempty K tensor
-lengths and affected totals are now unknown, including common modern files.
+lengths and affected totals are unknown, including common modern files.
 Empty K tensors still have derived zero-byte storage.
 
 Integer IDs also shifted each time IQ types were added. These released
@@ -149,7 +151,7 @@ multiple released meanings. REA keeps its numeric `type_id`, uses
 limitation. Nonempty byte lengths are unknown. Empty declarations still derive
 zero-byte storage, while their textual identity remains ambiguous. Type filters
 match the reported `AMBIGUOUS_<id>` label. ID 26 remains I32 across these
-snapshots; later stable entries retain their existing interpretation. This audit
+snapshots; later stable entries retain their existing interpretation. This
 does not establish compatibility with every producer fork or future revision.
 
 The inventory does not select a historical layout from model names, global
@@ -228,7 +230,7 @@ complete detail and a selection are rejected as conflicting choices.
 CLI uses `--view '{"collection":"tensors","names":["token_embd.weight"]}'`
 with `--detail summary --evidence_output FILE`.
 
-Call `inspect_analysis_view` with the historical query object above for further pages. `collection: "metadata"` accepts
+Call `inspect_analysis_view` with the query object above for further pages. `collection: "metadata"` accepts
 exact `keys`, indices, fields and paging; use it for `tokenizer.chat_template`
 or tokenizer array previews. `collection: "types"` pages derived storage and
 parameter totals and accepts exact `types`. Tensor pages also accept `types`.
