@@ -11,6 +11,7 @@ import {
   analysisRefusalRemediation,
   type AnalysisRefusal,
 } from "./analysisRefusal.js";
+import { runWithAnalysisRefusalSpelling } from "./analysisRefusalSpelling.js";
 import { analysisErrorProjectionSchema } from "./analysisErrorProjectionSchema.js";
 import type { AnalysisParameterLimit } from "./analysisSettings.js";
 
@@ -416,6 +417,32 @@ describe("per-call parameter budgets", () => {
       "The request requires 8192 bytes, above the max_file_bytes maximum (64..4096 bytes)",
     );
     for (const action of [atMaximum, aboveMaximum])
+      expect(action).not.toContain("Pass a larger");
+
+    const cliSpelling = {
+      callerLifetime: "invocation" as const,
+      control: (parameter: string) =>
+        parameter === "max_file_bytes" ? "--max-file-bytes" : parameter,
+      call: (operation: string) => `the next rea ${operation} run`,
+    };
+    const cliAtMaximum = runWithAnalysisRefusalSpelling(
+      cliSpelling,
+      () =>
+        projectAnalysisError(refusal(parameterLimit(4096))).remediation.action,
+    );
+    const cliAboveMaximum = runWithAnalysisRefusalSpelling(
+      cliSpelling,
+      () =>
+        projectAnalysisError(refusal(parameterLimit(1024, 8192))).remediation
+          .action,
+    );
+    expect(cliAtMaximum).toContain(
+      "--max-file-bytes is already at its maximum (64..4096 bytes)",
+    );
+    expect(cliAboveMaximum).toContain(
+      "The request requires 8192 bytes, above the --max-file-bytes maximum (64..4096 bytes)",
+    );
+    for (const action of [cliAtMaximum, cliAboveMaximum])
       expect(action).not.toContain("Pass a larger");
   });
 

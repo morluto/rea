@@ -179,6 +179,98 @@ it("renders a generated per-call budget recovery in the command's spelling and k
   const authored =
     "Producer note. Pass a larger max_file_bytes on the next inspect_pe_resources call.";
   expect(action(refusal(authored))).toBe(authored);
+
+  // At-maximum and above-maximum recoveries also use the CLI flag spelling.
+  const atMax = new AnalysisResourceConstraintError(
+    "inspect_pe_resources",
+    "capacity",
+    "Reads exceed max_file_bytes.",
+    null,
+    {
+      retryable: false,
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_file_bytes",
+        effective_value: 8192,
+        unit: "bytes",
+        minimum: 64,
+        maximum: 8192,
+        default_value: 8192,
+        applies_at: "next_call",
+      },
+    },
+  );
+  expect(action(atMax)).toBe(
+    "inspect_pe_resources reached its max_file_bytes budget of 8192 bytes. --max-file-bytes is already at its maximum (64..8192 bytes); narrow the request or select a smaller input. Repeating the unchanged request is not expected to succeed.",
+  );
+  expect(projectAnalysisError(atMax).remediation.action).toContain(
+    "max_file_bytes is already at its maximum",
+  );
+
+  const aboveMax = new AnalysisResourceConstraintError(
+    "inspect_pe_resources",
+    "capacity",
+    "Reads exceed max_file_bytes.",
+    null,
+    {
+      retryable: false,
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_file_bytes",
+        effective_value: 4096,
+        unit: "bytes",
+        minimum: 64,
+        maximum: 8192,
+        default_value: 4096,
+        applies_at: "next_call",
+        required_value: 16384,
+      },
+    },
+  );
+  expect(action(aboveMax)).toBe(
+    "inspect_pe_resources reached its max_file_bytes budget of 4096 bytes. The request requires 16384 bytes, above the --max-file-bytes maximum (64..8192 bytes); narrow the request or select a smaller input. Repeating the unchanged request is not expected to succeed.",
+  );
+  expect(projectAnalysisError(aboveMax).remediation.action).toContain(
+    "above the max_file_bytes maximum",
+  );
+
+  // Verify inspect-plist CLI spelling at its 64 MiB default/maximum for both budgets.
+  const plistEntry = cliCommand(cli, "inspect-plist");
+  if (plistEntry === undefined) throw new Error("Expected inspect-plist");
+  const plistSpelling = cliRefusalSpelling({
+    operations: plistEntry.operations,
+    commands: cliCommands(cli),
+  });
+  for (const [parameter, flag] of [
+    ["max_file_bytes", "--max-file-bytes"],
+    ["max_decoded_bytes", "--max-decoded-bytes"],
+  ] as const) {
+    const plistAtMax = new AnalysisResourceConstraintError(
+      "inspect_plist",
+      parameter === "max_file_bytes" ? "file-size" : "memory",
+      "Budget reached.",
+      null,
+      {
+        retryable: false,
+        limit: {
+          control_kind: "parameter",
+          parameter,
+          effective_value: 64 * 1024 * 1024,
+          unit: "bytes",
+          minimum: 1,
+          maximum: 64 * 1024 * 1024,
+          default_value: 64 * 1024 * 1024,
+          applies_at: "next_call",
+        },
+      },
+    );
+    expect(
+      runWithAnalysisRefusalSpelling(
+        plistSpelling,
+        () => projectAnalysisError(plistAtMax).remediation.action,
+      ),
+    ).toContain(`${flag} is already at its maximum`);
+  }
 });
 
 it("spells an input refusal with the CLI command and drops the MCP catalog clause", () => {
