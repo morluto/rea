@@ -1,3 +1,4 @@
+import { LABVIEW_RSRC_MAGIC } from "./labview/labviewArtifact.js";
 import type { ArtifactFormatId } from "./artifactGraph.js";
 import { hasAndroidBootImageMagic } from "./androidBootImageFormat.js";
 import { hasAndroidDtboMagic } from "./firmware/androidDtboFormat.js";
@@ -181,7 +182,9 @@ const when =
  */
 /** A LabVIEW RSRC container starts with its own six-byte magic. */
 const hasLabviewRsrcHeader = (prefix: Buffer): boolean =>
-  prefix.length >= 6 && prefix.subarray(0, 6).toString("latin1") === "RSRC\r\n";
+  prefix.length >= LABVIEW_RSRC_MAGIC.length &&
+  prefix.subarray(0, LABVIEW_RSRC_MAGIC.length).toString("latin1") ===
+    LABVIEW_RSRC_MAGIC;
 
 export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
   [

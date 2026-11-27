@@ -92,3 +92,6 @@ export type InspectLabviewArtifactInput = z.infer<
   typeof inspectLabviewArtifactInputSchema
 >;
 export type LabviewArtifact = z.infer<typeof labviewArtifactSchema>;
+
+/** The six-byte magic that opens every LabVIEW RSRC container (pylabview `RSRCHeader`). */
+export const LABVIEW_RSRC_MAGIC = "RSRC\r\n";

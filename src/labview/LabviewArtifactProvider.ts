@@ -29,6 +29,7 @@ import {
   classifyProviderFailure,
   type ProviderFailureDialect,
 } from "../providers/classifyProviderFailure.js";
+import { LABVIEW_RSRC_MAGIC } from "../domain/labview/labviewArtifact.js";
 import { LABVIEW_PROVIDER_IDENTITY } from "./LabviewProviderIdentity.js";
 import {
   findEmbeddedRsrcContainers,
@@ -39,7 +40,6 @@ import {
   type LabviewDecodeOmission,
   type LabviewPresence,
   parseLabviewRsrc,
-  RSRC_MAGIC,
 } from "./LabviewRsrc.js";
 
 const OPERATION = "inspect_labview_artifact";
@@ -49,7 +49,7 @@ const MAX_BYTES = 256 * 1024 * 1024;
  * One limitation per reason a recognized zlib section stayed undecoded, so a
  * capacity omission is distinguishable from damaged or unsupported bytes.
  */
-const decodeOmissionLimitations = (
+export const decodeOmissionLimitations = (
   omissions: Readonly<Partial<Record<LabviewDecodeOmission, number>>>,
 ): string[] =>
   (Object.entries(omissions) as [LabviewDecodeOmission, number][]).map(
@@ -228,7 +228,8 @@ export class LabviewArtifactProvider implements LabviewArtifactPort {
     let containers: readonly EmbeddedRsrc[];
     let coverage = true;
     if (
-      bytes.subarray(0, RSRC_MAGIC.length).toString("latin1") === RSRC_MAGIC
+      bytes.subarray(0, LABVIEW_RSRC_MAGIC.length).toString("latin1") ===
+      LABVIEW_RSRC_MAGIC
     ) {
       containers = [{ offset: 0, bytes }];
     } else {

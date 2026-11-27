@@ -1,6 +1,6 @@
 import { AnalysisTargetFailureError } from "../domain/analysisErrorCore.js";
 import { deflateSync } from "node:zlib";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -8,10 +8,11 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { peResourceFixture } from "../domain/pe/peResources.fixture.js";
 import { findEmbeddedRsrcContainers } from "./LabviewPeContainer.js";
-import { parseLabviewRsrc } from "./LabviewRsrc.js";
+import { LABVIEW_DECODE_ALLOWANCES, parseLabviewRsrc } from "./LabviewRsrc.js";
 import {
   LabviewArtifactProvider,
   labviewReadDialect,
+  decodeOmissionLimitations,
 } from "./LabviewArtifactProvider.js";
 import { ArtifactReaderFailure } from "../resources/index.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
@@ -124,9 +125,16 @@ describe("parseLabviewRsrc", () => {
     const result = await provider.inspect({ path });
     await provider.close();
     if (!result.ok) throw result.error;
-    expect(result.value.limitations).toContain(
-      "1 zlib section was not decoded because the container reached its fixed 67108864-byte decoded-output allowance. This release has no override; the stored bytes are inventoried but not decoded.",
+    // The parser owns which allowance stopped the section; the delivered
+    // guidance is the provider formatter's output for exactly that fact.
+    const parsed = parseLabviewRsrc(await readFile(path));
+    if (!parsed.ok) throw parsed.failure;
+    expect(parsed.value.decodeOmissions).toEqual({ decoded_allowance: 1 });
+    const [guidance] = decodeOmissionLimitations(parsed.value.decodeOmissions);
+    expect(guidance).toContain(
+      String(LABVIEW_DECODE_ALLOWANCES.decoded_allowance),
     );
+    expect(result.value.limitations).toContain(guidance);
   });
 
   it("does not call an unreadable RCDATA branch an absent container", async () => {

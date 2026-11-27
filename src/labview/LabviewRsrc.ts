@@ -1,5 +1,6 @@
 import { inflateSync } from "node:zlib";
 import { BinaryReader } from "../domain/binaryContainer.js";
+import { LABVIEW_RSRC_MAGIC } from "../domain/labview/labviewArtifact.js";
 import {
   decodeLimit,
   malformedInput,
@@ -9,8 +10,6 @@ import {
 } from "../domain/parseFailure.js";
 
 const FORMAT = "labview-rsrc";
-/** The six-byte RSRC container magic (pylabview `RSRCHeader`). */
-export const RSRC_MAGIC = "RSRC\r\n";
 const HEADER_BYTES = 32;
 const LIST_HEADER_BYTES = 20;
 const BLOCK_HEADER_BYTES = 12;
@@ -272,8 +271,9 @@ export const parseLabviewRsrc = (
   try {
     if (
       bytes.length < HEADER_BYTES ||
-      reader.range(0, RSRC_MAGIC.length, "RSRC magic").toString("latin1") !==
-        RSRC_MAGIC
+      reader
+        .range(0, LABVIEW_RSRC_MAGIC.length, "RSRC magic")
+        .toString("latin1") !== LABVIEW_RSRC_MAGIC
     )
       throw malformedInput(FORMAT, "not an RSRC container", { offset: 0 });
     const formatVersion = reader.u16(6);

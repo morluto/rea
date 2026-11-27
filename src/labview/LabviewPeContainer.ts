@@ -11,7 +11,7 @@ import {
 import { readPeResourceLayout } from "../domain/pe/peResourceLayout.js";
 import { BinaryReader } from "../domain/binaryContainer.js";
 import { observeMzWindowsHeader } from "../domain/dosMz.js";
-import { RSRC_MAGIC } from "./LabviewRsrc.js";
+import { LABVIEW_RSRC_MAGIC } from "../domain/labview/labviewArtifact.js";
 import { decodeLimit, ParseFailureError } from "../domain/parseFailure.js";
 
 const FORMAT = "pe-rsrc";
@@ -197,7 +197,7 @@ export const findEmbeddedRsrcContainers = (bytes: Buffer): EmbeddedRsrcScan => {
           "resource data entry",
         ),
       );
-      if (size < RSRC_MAGIC.length) continue;
+      if (size < LABVIEW_RSRC_MAGIC.length) continue;
       const dataOffset = payloadOffset(rva, size);
       if (dataOffset === undefined) {
         complete = false;
@@ -205,8 +205,8 @@ export const findEmbeddedRsrcContainers = (bytes: Buffer): EmbeddedRsrcScan => {
       }
       if (
         reader
-          .range(dataOffset, RSRC_MAGIC.length, "resource payload")
-          .toString("latin1") !== RSRC_MAGIC
+          .range(dataOffset, LABVIEW_RSRC_MAGIC.length, "resource payload")
+          .toString("latin1") !== LABVIEW_RSRC_MAGIC
       )
         continue;
       const payloadKey = `${String(dataOffset)}:${String(size)}`;
