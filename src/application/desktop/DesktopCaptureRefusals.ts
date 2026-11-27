@@ -3,7 +3,7 @@ import { isAbsolute } from "node:path";
 
 import {
   ArtifactReaderFailure,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   bindArtifactFileCleanup,
 } from "../../resources/index.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -257,10 +257,7 @@ export const desktopOperationFailure = (
   ) {
     const primary =
       cause.reason === "cancelled"
-        ? cancelledBy(
-            operation,
-            carriedReason(artifactFileCancellationCause(cause)),
-          )
+        ? artifactFileCancellationError(operation, cause)
         : undefined;
     const error = new ProviderAdapterError(DESKTOP_PROVIDER.id, operation, {
       cause,
@@ -275,10 +272,7 @@ export const desktopOperationFailure = (
     cause instanceof ArtifactReaderFailure &&
     cause.reason === "cancelled"
   ) {
-    failure = cancelledBy(
-      operation,
-      carriedReason(artifactFileCancellationCause(cause)),
-    );
+    failure = artifactFileCancellationError(operation, cause);
   } else
     failure = new ProviderAdapterError(DESKTOP_PROVIDER.id, operation, {
       cause,

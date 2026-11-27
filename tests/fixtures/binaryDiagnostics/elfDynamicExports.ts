@@ -3,6 +3,7 @@ export const elfDynamicExportsImage = (
   options: {
     readonly bits?: 32 | 64;
     readonly little?: boolean;
+    readonly machine?: number;
     readonly hash?: "sysv" | "gnu" | "both" | "none";
     readonly versions?: readonly number[];
     readonly emptyGnuBuckets?: boolean;
@@ -33,7 +34,7 @@ export const elfDynamicExportsImage = (
   };
   bytes.set([0x7f, 0x45, 0x4c, 0x46, wide ? 2 : 1, little ? 1 : 2, 1]);
   u16(16, 3);
-  u16(18, wide ? (little ? 62 : 21) : 40);
+  u16(18, options.machine ?? (wide ? (little ? 62 : 21) : 40));
   u32(20, 1);
   word(wide ? 32 : 28, headerBytes);
   u16(wide ? 52 : 40, headerBytes);
@@ -79,10 +80,14 @@ export const elfDynamicExportsImage = (
     nameOffset += Buffer.byteLength(name) + 1;
   }
   // One SysV bucket and three chains, including STN_UNDEF at index zero.
-  u32(sysv, 1);
-  u32(sysv + 4, 3);
-  u32(sysv + 8, 1);
-  u32(sysv + 16, 2);
+  // 64-bit s390x and Alpha store each entry in eight bytes.
+  const sysvBytes =
+    wide && (options.machine === 22 || options.machine === 0x9026) ? 8 : 4;
+  const sysvEntry = sysvBytes === 8 ? word : u32;
+  sysvEntry(sysv, 1);
+  sysvEntry(sysv + sysvBytes, 3);
+  sysvEntry(sysv + 2 * sysvBytes, 1);
+  sysvEntry(sysv + 4 * sysvBytes, 2);
   // One GNU bucket with the two exported symbols in its contiguous chain.
   u32(gnu, 1);
   u32(gnu + 4, 1);

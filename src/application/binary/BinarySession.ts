@@ -1,5 +1,11 @@
 import { finalizedResult, runOwned } from "../../providers/runOwned.js";
-import { bindSessionEvidenceExecution } from "./SessionEvidenceReuse.js";
+import {
+  bindSessionEvidenceExecution,
+  bindFreshNativeExecution,
+  carrySessionExecutionProvenance,
+  withSessionExecutionProvenance,
+  sessionExecutionEvidenceMetadata,
+} from "./SessionEvidenceReuse.js";
 import { admitCompletedAnalysis } from "../investigation/admitCompletedAnalysis.js";
 import { randomUUID } from "node:crypto";
 import {
@@ -843,8 +849,10 @@ export class BinarySession
       // A protocol reply does not prove that background writers have stopped.
       // Retire the old analysis and require an explicit fresh open rather than
       // silently binding a snapshot while an unrestricted command can still write.
+      // Without a bound engine there is no analysis to retire; a staged
+      // snapshot stays bound to its target digest and profile instead.
       const retireTarget = activeAtDispatch !== undefined;
-      this.invalidateSnapshot();
+      if (retireTarget) this.invalidateSnapshot();
       const value = await operation();
       this.#externalMutationCleanupFailure =
         !value.ok && value.error.cleanupIncomplete ? value.error : undefined;
@@ -1518,7 +1526,13 @@ export class BinarySession
       unboundOperationError: (operation, route) =>
         this.#providerRouter.unboundOperationError(operation, route),
       lookupSnapshot: (target, profile, operation, parameters) =>
-        this.lookupSnapshot(target, profile, operation, parameters),
+        this.lookupSnapshot(
+          target,
+          profile,
+          operation,
+          parameters,
+          options?.snapshotContext,
+        ),
     });
     if (!prepared.ok) return prepared;
     const { active, capability, profile, cacheable, cached } = prepared.value;
@@ -1563,15 +1577,35 @@ export class BinarySession
             },
           })
         : profiled;
-    const observed = covered.ok
-      ? ok(
-          deliverSessionLimitations(
-            covered.value,
-            covered.value.subject ?? active.target,
-            this.#sessionLimitations,
-          ),
-        )
+    const captured = covered.ok
+      ? ok(bindFreshNativeExecution(covered.value, active.route))
       : covered;
+    const observed = captured.ok
+      ? deliverSessionLimitations(
+          captured.value,
+          captured.value.subject ?? active.target,
+          this.#sessionLimitations,
+          (input, _contextOperation, additional) =>
+            this.admitRecoveryObservation(input, name, additional),
+        )
+      : captured;
+    if (captured.ok && !observed.ok) {
+      recoverProviderSourceFailure({
+        error: observed.error,
+        operation: name,
+        parameters: recoveryParameters ?? arguments_,
+        execution: carrySessionExecutionProvenance(captured.value, {
+          ...captured.value,
+          sourceEvidence: captured.value.sourceEvidence ?? [],
+          subject:
+            captured.value.subject === undefined
+              ? active.target
+              : captured.value.subject,
+        }),
+        admit: this.admitRecoveryObservation.bind(this),
+        evidenceForAnalysis: this.evidenceForAnalysis.bind(this),
+      });
+    }
     // A caller who asked for a one-shot snapshot learns when it cannot replay.
     const recordingRefusal = (
       execution: AnalysisExecution,
@@ -1604,10 +1638,12 @@ export class BinarySession
     const execution =
       refusal === undefined || !observed.ok
         ? observed
-        : ok({
-            ...observed.value,
-            limitations: [...observed.value.limitations, refusal],
-          });
+        : ok(
+            carrySessionExecutionProvenance(observed.value, {
+              ...observed.value,
+              limitations: [...observed.value.limitations, refusal],
+            }),
+          );
     // A successful Ghidra operation proves this client's native source snapshot
     // was admitted; a composite health response and parsed path do not.
     const currentBinding = this.#active;
@@ -1639,14 +1675,14 @@ export class BinarySession
           error: sourcesRecorded.error,
           operation: name,
           parameters: recoveryParameters ?? arguments_,
-          execution: {
+          execution: carrySessionExecutionProvenance(execution.value, {
             ...execution.value,
             sourceEvidence: execution.value.sourceEvidence,
             subject:
               execution.value.subject === undefined
                 ? active.target
                 : execution.value.subject,
-          },
+          }),
           admit: this.admitRecoveryObservation.bind(this),
           evidenceForAnalysis: this.evidenceForAnalysis.bind(this),
         });
@@ -1698,7 +1734,13 @@ export class BinarySession
         !active.nativeSourceAdmitted)
     )
       return undefined;
-    return this.lookupSnapshot(active.target, profile, name, arguments_);
+    return this.lookupSnapshot(
+      active.target,
+      profile,
+      name,
+      arguments_,
+      options?.snapshotContext,
+    );
   }
 
   /**
@@ -1759,7 +1801,7 @@ export class BinarySession
       profile,
       operation,
       parameters,
-      execution: observed,
+      execution: carrySessionExecutionProvenance(execution, observed),
       cacheable,
       ...(options?.snapshotContext === undefined
         ? {}
@@ -1807,16 +1849,20 @@ export class BinarySession
       evidenceExecution,
       {
         callerTarget: active.target,
+        metadata: sessionExecutionEvidenceMetadata(execution),
         admit: this.admitRecoveryObservation.bind(this),
       },
     );
     if (!admitted.ok) return admitted;
-    const evidence = createAnalysisExecutionEvidence(
-      operation,
-      parameters,
-      evidenceExecution,
-      "observed",
-      { callerTarget: active.target, immutable: true },
+    const evidence = withSessionExecutionProvenance(
+      execution,
+      createAnalysisExecutionEvidence(
+        operation,
+        parameters,
+        evidenceExecution,
+        "observed",
+        { callerTarget: active.target, immutable: true },
+      ),
     );
     const recorded = this.recordEvidence(evidence);
     if (!recorded.ok) {
@@ -1825,11 +1871,15 @@ export class BinarySession
       return recorded;
     }
     const authenticated = this.evidenceForAnalysis(evidence.evidence_id);
+    const identified = carrySessionExecutionProvenance(execution, {
+      ...execution,
+      evidenceId: evidence.evidence_id,
+    });
     const retained =
       authenticated === undefined
-        ? { ...execution, evidenceId: evidence.evidence_id }
+        ? identified
         : bindSessionEvidenceExecution(
-            { ...execution, evidenceId: evidence.evidence_id },
+            identified,
             authenticated,
             active.target.callerInputPath,
           );

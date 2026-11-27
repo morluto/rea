@@ -113,6 +113,31 @@ it("validates source-location delivery and retains Evidence without a binary tar
     expect(parseMcpToolError(result).error.code).toBe("invalid_request");
   }
   expect(load).toHaveBeenCalledTimes(1);
+  // A valid page request traces again before refusing its page.
+  const oversized = await client.callTool({
+    name: "trace_web_source_location",
+    arguments: {
+      ...args,
+      detail: "summary",
+      view: { kind: "source-location", collection: "matches", max_bytes: 1 },
+    },
+  });
+  expect(parseMcpToolError(oversized).error).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    details: {
+      limit: {
+        control_kind: "parameter",
+        parameter: "view.max_bytes",
+        effective_value: 1,
+        unit: "bytes",
+        minimum: 1,
+        default_value: 1024 * 1024,
+        applies_at: "next_call",
+      },
+    },
+  });
+  expect(load).toHaveBeenCalledTimes(2);
 });
 
 it("preserves missing Linux ps capability and recovery through source-map tracing", async () => {
@@ -167,4 +192,45 @@ it("preserves missing Linux ps capability and recovery through source-map tracin
   await harness.client.ping();
   expect(createRuntime).not.toHaveBeenCalled();
   expect(launcher).not.toHaveBeenCalled();
+});
+
+it("reports details.limit without cli_flag for MCP source_map_limits refusals", async () => {
+  const data = webSourceLocationFixture();
+  const decoder = new SourceMapDecoder();
+  const harness = await createApplicationMcpHarness({
+    serverOptions: {
+      webSourceLocation: new WebSourceLocationService(
+        { load: async () => ok(data) },
+        decoder,
+      ),
+    },
+  });
+  onTestFinished(async () => {
+    await harness.close();
+    await decoder.close();
+  });
+  const response = await harness.client.callTool({
+    name: "trace_web_source_location",
+    arguments: { ...args, source_map_limits: { output_bytes: 16 } },
+  });
+  const { error } = parseMcpToolError(response);
+  expect(error).toMatchObject({
+    code: "partial",
+    retryable: false,
+    details: {
+      limit: {
+        control_kind: "parameter",
+        parameter: "source_map_limits.output_bytes",
+        effective_value: 16,
+        unit: "bytes",
+        minimum: 1,
+        maximum: 536_870_887,
+        default_value: 33_554_432,
+        applies_at: "next_call",
+      },
+    },
+  });
+  expect(
+    (error.details as { limit?: Record<string, unknown> } | undefined)?.limit,
+  ).not.toHaveProperty("cli_flag");
 });

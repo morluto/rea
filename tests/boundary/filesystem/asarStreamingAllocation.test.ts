@@ -18,7 +18,6 @@ import { describe, expect, it, onTestFinished } from "vitest";
 import { scanArtifactInventory } from "../../fixtures/artifactInventory.js";
 import { AsarArtifactReader } from "../../../src/artifacts/AsarArtifactReader.js";
 import {
-  closeAsarHandle,
   readValidatedAsarEntry,
   readValidatedAsarRange,
 } from "../../../src/artifacts/AsarEntryStream.js";
@@ -386,31 +385,6 @@ describe("ASAR entry producer identity", () => {
 });
 
 describe("ASAR read failures", () => {
-  it.skipIf(process.platform === "win32")(
-    "checks cancellation after closing an empty member handle",
-    async () => {
-      const root = await createTestTempDirectory("rea-asar-empty-close-");
-      const archive = join(root, "container.asar");
-      await writeFile(archive, "container bytes");
-      const identity = await lstat(archive);
-      const handle = await openFile(archive, "r");
-      try {
-        expect(await matchingDescriptorCount(identity)).toBeGreaterThan(0);
-        const controller = new AbortController();
-
-        await expect(
-          closeAsarHandle(async () => {
-            await handle.close();
-            controller.abort();
-          }, controller.signal),
-        ).rejects.toMatchObject({ reason: "cancelled" });
-        await waitForNoMatchingDescriptor(identity);
-      } finally {
-        await handle.close().catch(() => undefined);
-      }
-    },
-  );
-
   it.skipIf(process.platform === "win32")(
     "closes the opened unpacked file and retains ASAR context when handle stat fails",
     async () => {

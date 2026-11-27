@@ -375,7 +375,10 @@ const contradictions = (
       statement:
         value.logical_path === "."
           ? "The container's declared integrity contradicts its observed bytes."
-          : `Declared integrity for ${value.logical_path} contradicts observed bytes.`,
+          : "signing_explanation" in value &&
+              value.signing_explanation !== undefined
+            ? `Declared integrity for ${value.logical_path} contradicts observed bytes; removing the Authenticode certificate table restores the declared SHA-256.`
+            : `Declared integrity for ${value.logical_path} contradicts observed bytes.`,
       occurrence_id: value.occurrence_id,
       ...artifactIntegrityPairOf(value),
       evidence_id: evidenceId,
@@ -463,13 +466,60 @@ const formatProbes = (
           },
         ]
       : [];
+  if (format === "bflt") return bfltProbes(inventory);
   if (format === "esp-image") return espFlashDumpProbes(inventory);
+  if (format === "zip") return zipPackageProbes(inventory);
   if (format === "fit") return fitProbes(inventory);
   if (format === "directory") return directoryProbes(inventory);
   if (format === "pe")
     return nativeImageProbes({ format, managed: rootImage?.managed });
   return probesForFormat(format);
 };
+
+// text.bin starts with the 64-byte bFLT header at file offset 0 and the
+// header names no CPU. Only ARM M-profile (with architecture_variant)
+// accepts a separate base_address; other raw-binary loads map offset 0 and
+// start analysis at entry_point, in the header rather than at base + entry.
+const bfltProbes = (
+  inventory: ArtifactInventoryResult,
+): ArtifactInspectionResult["next_probes"] => {
+  const root = inventory.occurrences.find(
+    ({ logical_path }) => logical_path === ".",
+  )?.format_metadata;
+  const text = inventory.occurrences.some(
+    (row) =>
+      row.format_metadata?.kind === "bflt-segment" &&
+      row.format_metadata.segment === "text",
+  );
+  if (root?.kind !== "bflt" || !text) return [];
+  const entryOffset = offsetText(root.entry);
+  return [
+    {
+      operation: "open_binary",
+      rationale: `Extract text.bin with extract_artifact (the bFLT header names no CPU; relocations are not applied). For ARM M-profile (Cortex-M) targets, open it with format raw-binary, architecture arm, an architecture_variant, base_address set to a chosen load base and entry_point set to that base plus ${entryOffset}. For other CPUs, raw-binary maps file offset 0 at entry_point and starts analysis there, which is the bFLT header, not code; the program entry is the chosen base plus ${entryOffset}, so code starts there.`,
+      authority: "native-analysis-provider",
+    },
+  ];
+};
+
+// A ZIP whose root holds `extension.vsixmanifest` is a VS Code extension
+// package; the VSIX reader decodes its manifests without installing it.
+const zipPackageProbes = (
+  inventory: ArtifactInventoryResult,
+): ArtifactInspectionResult["next_probes"] =>
+  inventory.occurrences.some(
+    ({ logical_path, entry_kind }) =>
+      logical_path === "extension.vsixmanifest" && entry_kind === "file",
+  )
+    ? [
+        {
+          operation: "inspect_vsix_package",
+          rationale:
+            "Decode the VS Code extension manifests, activation events and native members without installing or running the extension.",
+          authority: "artifact-bytes",
+        },
+      ]
+    : [];
 
 // An ESP image that its reader found at the start of a flash dump read from
 // a later address is better read as that dump.
@@ -661,6 +711,11 @@ const STANDALONE_FORMAT_READERS = {
     operation: "inspect_devicetree",
     rationale:
       "Decode the flattened devicetree header, reservations and node tree.",
+  },
+  deb: {
+    operation: "inspect_deb_package",
+    rationale:
+      "Read the ar container, control metadata, maintainer scripts and data.tar inventory without installing or executing the package.",
   },
 } as const satisfies Record<
   "uefi" | StandaloneArtifactFormat,

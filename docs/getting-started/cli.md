@@ -387,6 +387,19 @@ rea extract-artifact ./firmware.bin --json
 See [U-Boot uImage](../uimage.md) for verified CRCs, physical component ranges,
 unknown names, resource limits and retained views. Compressed bytes stay stored.
 
+Inspect a macOS flat installer package without `pkgutil` or installer
+execution:
+
+```sh
+rea inspect-artifact installer.pkg --detail summary --evidence_output evidence.json --json
+rea extract-artifact installer.pkg --json
+```
+
+The portable XAR reader reports header and TOC facts, Distribution/PackageInfo
+fields, gzip cpio Scripts and Payload members, and named refusals for pbzx
+payloads or truncated archives. XAR signatures are not verified. See
+[macOS flat installer packages](../macos-pkg.md).
+
 Inspect an Android A/B OTA `payload.bin` (CrAU v2) without applying the update:
 
 ```sh
@@ -396,6 +409,27 @@ rea extract-artifact ./payload.bin --json
 
 See [Android OTA update payloads](../guides/firmware/android-ota-payload.md) for manifest
 facts, signature counting, REPLACE/ZERO reconstruction and delta limits.
+
+Inventory an Android sparse image and expand it to one raw partition image
+without `simg2img`:
+
+```sh
+rea inspect-artifact ./system.img --json
+rea extract-artifact ./system.img --json
+```
+
+See [Android sparse images](../guides/firmware/android-sparse-image.md) for chunk
+facts, DONT_CARE handling, unverified checksums and the expansion allowance.
+
+Inventory the volumes of a UBI image or NAND dump and reassemble each one:
+
+```sh
+rea inspect-artifact ./nand.ubi --detail summary --evidence_output nand.json --json
+rea extract-artifact ./nand.ubi --json
+```
+
+See [UBI images](../guides/firmware/ubi-images.md) for eraseblock layout, the volume
+table, LEB reassembly and missing-LEB refusals.
 
 `inspect-artifact` and `extract-artifact` also read ZIP members compressed with
 Zstandard (standard method 93). They retain the shared ZIP CRC, declared-size,
@@ -444,6 +478,17 @@ See [Android boot images](../android-boot-image.md) for header versions 0 throug
 4, vendor ramdisk table entries, stored compression, and the unverified AVB
 footer. `ANDROID!` does not record boot versus init_boot versus recovery.
 
+Inspect a standalone Android Verified Boot vbmeta image:
+
+```sh
+rea inspect-artifact ./vbmeta.img --json
+rea extract-artifact ./vbmeta.img --json
+```
+
+See [Android Verified Boot vbmeta images](../guides/firmware/android-vbmeta.md)
+for the header, descriptors, stored public key, and the fact that nothing is
+verified.
+
 Inventory and extract an ISO 9660 disc image without mounting it:
 
 ```sh
@@ -453,6 +498,46 @@ rea extract-artifact ./installer.iso --json
 
 See [ISO 9660 disc images](../guides/firmware/iso9660-images.md) for volume facts, Joliet
 names, multi-extent and interleaved files, and what is not decoded.
+
+Inventory and extract a Nintendo Switch NSO module or NRO executable:
+
+```sh
+rea inspect-artifact ./main.nso --json
+rea extract-artifact ./main.nso --json
+```
+
+See [Switch executables](../guides/firmware/switch-executables.md) for header facts, segment
+hashes, LZ4 decompression limits and NRO assets.
+
+Inventory and extract a uClinux bFLT flat executable:
+
+```sh
+rea inspect-artifact ./busybox.bflt --detail summary --evidence_output busybox.json --json
+rea extract-artifact ./busybox.bflt --json
+```
+
+See [uClinux bFLT flat executables](../bflt-executables.md) for header facts,
+segments, gzip and gzdata bodies, and the limitations kept beside the facts.
+
+Inventory and extract a Nintendo DS ROM's CPU binaries, overlays, and files:
+
+```sh
+rea inspect-artifact ./game.nds --detail summary --json
+rea extract-artifact ./game.nds --json
+```
+
+See [Nintendo DS ROMs](../guides/firmware/nds-roms.md) for header detection, member paths,
+checksum and range limitations, and what is not decoded.
+
+Inventory and extract a Qualcomm MBN boot image or an ELF image with a hash segment:
+
+```sh
+rea inspect-artifact ./sbl1.mbn --json
+rea extract-artifact ./sbl1.mbn --json
+```
+
+See [Qualcomm MBN images](../guides/firmware/qualcomm-mbn-images.md) for header
+recognition, regions, hash segments and what is not verified.
 
 Inspect local model declarations without loading weights:
 
@@ -660,6 +745,18 @@ The workflow reports the pinned CPython version for the magic, PEP 552 hash or
 mtime/size fields, nested function names, and bytecode SHA-256. Bytecode is
 not decompiled. See [CPython pyc inspection](../python-pyc.md).
 
+Inspect a local Debian `.deb` without installing it or running maintainer
+scripts:
+
+```bash
+rea inspect-deb-package /absolute/path/to/hello_2.03-1_all.deb --json
+```
+
+The workflow reports the ar members, control identity and parsed
+relationships, which maintainer scripts are present, and a bounded data.tar
+inventory. gzip, zstd, xz, and uncompressed members are decoded; bzip2 and
+lzma are unsupported. See [Debian package inspection](../deb-package.md).
+
 Inspect an Erlang BEAM file without executing bytecode:
 
 ```bash
@@ -693,6 +790,32 @@ The workflow reports package identity, license and repository fields as present,
 dependency groups with version ranges, and a ZIP contents inventory with
 path-derived folder roles. Missing or malformed `.nuspec` members still return
 the inventory with limitations. See [NuGet packages](../guides/managed/nuget-nupkg.md).
+
+Inspect a VS Code `.vsix` without installing the extension or contacting a
+marketplace:
+
+```bash
+rea inspect-vsix-package /absolute/path/to/demo.hello-1.2.3.vsix --json
+```
+
+The workflow reports identity from `extension.vsixmanifest` and
+`extension/package.json`, engine range, activation events, a contributes
+summary, hashed native/wasm/executable members, and a ZIP contents inventory.
+Missing or malformed manifests still return the inventory with limitations.
+See [VS Code extension packages](../guides/managed/vsix-package.md).
+
+Inspect an OCI image-layout directory without unpacking a tar, decompressing
+layers, or contacting a registry:
+
+```bash
+rea inspect-oci-image-layout /absolute/path/to/busybox.oci --json
+```
+
+The workflow reports layout version, index entries, image config facts, layers,
+and streamed digest verification of present referenced blobs. Missing blobs,
+digest mismatches, and similar defects are findings. Env values are kept
+unless `--no-include-env-values` is selected. Directory form only. See
+[OCI image layouts](../guides/artifacts/oci-image-layout.md).
 
 Complete `rea decompile --json` Evidence can be saved and inspected through
 `inspect-analysis-view` with an inline source and
@@ -963,6 +1086,23 @@ the observed artifact kind. Restoring the snapshot validates its contents and
 checks its binding to the target, provider and profile.
 
 ## Import, export and compare Evidence
+
+Evidence `provider` identifies the producer of the observation. Optional
+`provider_selection` records the captured selection of a fresh Hopper, Ghidra,
+IDA, or Kuna execution, including candidate availability, target support, and
+rejection codes. The execution must match the selected native provider and its
+known profile facts. Unknown version or profile facts remain unknown.
+
+Generic retention, imports, and snapshot replay preserve supplied metadata,
+including its absence; opening another provider does not rewrite history.
+Artifact, browser, managed, and capture output does not acquire native selection
+metadata. REA-derived summaries and views cite their attributed native sources
+without claiming to be native observations themselves.
+
+Selection metadata on an Evidence envelope does not change its `evidence_id`.
+A nested Evidence value remains the exact input captured by its parent: later
+admission metadata on the separately retained source does not rewrite that
+embedded value or the parent's commitment.
 
 Evidence records retain artifact identity, source locations, observations,
 inferences and unresolved findings. Validate an existing bundle, export its
@@ -1768,6 +1908,16 @@ rea inspect-pe-load-config /absolute/path/to/application.exe --json
 Reports TLS callbacks and size-covered load-config fields without execution.
 Use `--max-callbacks` and `--max-file-bytes` to set read budgets. See
 [PE TLS and load configuration](../pe-load-config.md).
+
+### PE overlay
+
+```sh
+rea inspect-pe-overlay /absolute/path/to/application.exe --json
+```
+
+Reports where the PE image ends on disk and the bytes appended after it. A
+certificate table inside that span is split from the other ranges. Use
+`--max-file-bytes` to set the read budget. See [PE overlay](../guides/native/pe-overlay.md).
 
 ### Binary hardening
 

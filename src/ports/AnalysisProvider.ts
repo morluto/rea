@@ -1,3 +1,4 @@
+import type { RetainedResourceScope } from "../resources/index.js";
 import type { AnalysisWorkScope } from "./AnalysisWorkScope.js";
 import type { AnalysisObservation } from "../domain/analysisObservation.js";
 import type { ProviderInspectionScope } from "./ProviderInspectionScope.js";
@@ -42,8 +43,13 @@ import {
 export interface ExecutionOptions {
   /** Ephemeral state shared only by one composed workflow. */
   readonly workScope?: AnalysisWorkScope;
-  /** A single CLI answer bound to its isolated target, not a persistent default document. */
-  readonly snapshotContext?: "one-shot-target";
+  /**
+   * A caller's own read of the bound target, not a workflow-internal read:
+   * `one-shot-target` is a single CLI answer bound to its isolated target, and
+   * `session-target` is a direct tool call on the session's active target.
+   * Neither names a persistent default document.
+   */
+  readonly snapshotContext?: "one-shot-target" | "session-target";
   readonly signal?: AbortSignal;
   /** Bundle facts from the current target admission, even when a client is reused. */
   readonly bundleExecutableProvenance?: BundleExecutableProvenance | null;
@@ -308,18 +314,7 @@ export interface AnalysisClientContext {
   readonly runId: string;
 }
 
-/** One lifecycle owner for retained resources and abortable inspection work. */
-export interface RetainedResourceScope {
-  retain(
-    owner: {
-      close(): Promise<void>;
-      /** Complete labels authored by this exact owner; the display label is only a fallback. */
-      readonly cleanupResources?: readonly string[] | undefined;
-    },
-    resource: string,
-  ): void;
-  run<T>(operation: () => Promise<T>): Promise<T>;
-}
+export type { RetainedResourceScope };
 
 export interface ProviderIdentity {
   readonly id: string;

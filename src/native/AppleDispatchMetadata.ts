@@ -2,17 +2,17 @@ import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import {
   readerIntegrityFailure,
   ArtifactFileCleanupFailure,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   bindArtifactFileCleanup,
   withArtifactRegularFile,
   ArtifactReaderFailure,
   type ArtifactResourceScope,
+  readFailureError,
 } from "../resources/index.js";
 import {
   malformedInput,
-  ParseFailureError,
   parseFailureFromCause,
 } from "../domain/parseFailure.js";
 import { setImmediate as immediate } from "node:timers/promises";
@@ -92,8 +92,8 @@ export function* decodeAppleDispatchMetadataSteps(
     slice: admittedSlice,
   });
   if (!selected.ok) {
-    if (selected.error.kind === "format")
-      throw new ParseFailureError(selected.error.failure);
+    if (selected.error.kind === "target")
+      throw readFailureError(selected.error.failure);
     // Admission bound this architecture and slice to these exact bytes, so a
     // refusal is an inconsistency inside REA, not the caller's selection.
     throw new ProviderAdapterError(IDENTITY.id, OPERATION, {
@@ -535,10 +535,7 @@ const appleDispatchMetadataPrimaryFailure = (
         cause,
       });
     if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-      return cancelledBy(
-        OPERATION,
-        carriedReason(artifactFileCancellationCause(cause)),
-      );
+      return artifactFileCancellationError(OPERATION, cause);
     if (
       cause instanceof ArtifactReaderFailure &&
       cause.reason === "unavailable"

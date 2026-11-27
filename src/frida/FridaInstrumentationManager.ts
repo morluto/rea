@@ -827,6 +827,10 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
         else scriptFailures.set(entry.id, failure);
       }
     }
+    // Resume waits for every script to be released. A retry may find the
+    // session already detached, so record the owed resume rather than lose it.
+    if (shouldResumePausedSpawn && managed.scripts.size > 0)
+      managed.resumeAfterDetachPending = true;
     if (shouldResumePausedSpawn && managed.scripts.size === 0) {
       try {
         await managed.device.resume(managed.pid);

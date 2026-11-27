@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import type { StateRecordChronology } from "./StateRecordChronology.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { identifierWords } from "./environmentStateWords.js";
@@ -493,9 +494,7 @@ const changesInStretch = (
     )
       continue;
     const line = `${record.path}${record.query ?? ""}`;
-    const reads = lines.get(line);
-    if (reads === undefined) lines.set(line, [record]);
-    else reads.push(record);
+    appendToMapList(lines, line, record);
   }
   // A line whose reads all show one thing cannot change across any call.
   const changing = [...lines.values()].filter((reads) => {

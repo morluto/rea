@@ -171,7 +171,7 @@ artifact names end in `-attempt-N`, where `N` is the workflow run attempt.
 Task-graph recording runs `check:ci:fast:tasks` and `check:ci:deep:tasks`
 without the artifacts lock, so it can record hashes while `check:pr` or
 `check:test` already holds that lock. The CI jobs still run the locked
-`check:ci:fast` and `check:ci:deep` commands.
+`check:ci:fast` and `check:ci:deep:job` commands.
 Use `npm run lint:details` or `npm run jscpd:details` for all console diagnostics.
 Both duplicate commands scan production and test code using the limit in
 [`.jscpd.json`](https://github.com/morluto/rea/blob/main/.jscpd.json).
@@ -275,6 +275,8 @@ Routine iterations and rebases need focused regressions and relevant checks.
 Follow the [contributor checks](https://github.com/morluto/rea/blob/main/CONTRIBUTING.md#development-feedback-and-pr-verification)
 before handing off a PR. Use `check:pr` for broad changes or CI diagnosis.
 Architecture guards run in `check`, `check:fast`, and `check:ci:deep`.
+In CI, the required fast static job runs the guards before installing
+dependencies, including on full runs.
 The standalone test-discovery check runs in `check:ci:deep`.
 
 Vitest projects use up to two workers, bounded by host parallelism. GitHub
@@ -1461,11 +1463,13 @@ public registry, and checks both the primary failure and live descendant absence
 ## Pull-request test selection
 
 CI on a pull request runs static checks, the build and the portable tests the
-change affects. The complete portable suite runs on every push to `main`, on
-the scheduled and manual qualification runs, in release qualification, and on a
-PR labelled `ci:full`. Those complete runs catch a consumer that selection
-missed, after it has merged. Add `ci:full` to a PR when its effect reaches
-further than its imports show, such as runtime registration, generated files,
+change affects. By default, a push to `main` warms the shared static and build
+caches. Scheduled fast sweeps run the complete portable suite to catch
+consumers that PR selection missed. Full qualification also runs the suite on
+manual dispatch, for release qualification, and on a PR labelled `ci:full`.
+See [the CI schedule](../testing-lanes.md#native-platform-baseline-in-ci) for
+when a scheduled run can reuse an earlier result. Add `ci:full` to a PR when its
+effect reaches further than its imports show, such as runtime registration, generated files,
 subprocesses or bridges. Adding the label starts full qualification at once,
 and later pushes stay on the full tier while the label remains.
 

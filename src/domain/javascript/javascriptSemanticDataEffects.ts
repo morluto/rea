@@ -1,4 +1,5 @@
 import * as t from "@babel/types";
+import { knownCoverage } from "../coverageAccumulator.js";
 import {
   bindingAssignmentMayPrecede,
   bindingInitializersMayPrecede,
@@ -187,8 +188,10 @@ const configurationDetails = (
         "candidate"
           ? { builtinAuthority: "candidate" as const }
           : {}),
-        resolution:
-          literalString(node.arguments[0]) === null ? "partial" : "complete",
+        resolution: knownCoverage(
+          literalString(node.arguments[0]) !== null,
+          "non-literal argument",
+        ),
       }
     : null;
 };
@@ -223,7 +226,7 @@ const processConfigurationMember = (
     ...(processIdentity.builtinAuthority === undefined
       ? {}
       : { builtinAuthority: processIdentity.builtinAuthority }),
-    resolution: key === null ? "partial" : "complete",
+    resolution: knownCoverage(key !== null, "dynamic configuration key"),
   };
 };
 
@@ -270,7 +273,10 @@ const collectDefaults = (
       ...(value.status === "unknown" && value.resourceLimit !== undefined
         ? { valueResourceLimit: value.resourceLimit }
         : {}),
-      resolution: value.status === "literal" ? "complete" : "partial",
+      resolution: knownCoverage(
+        value.status === "literal",
+        "non-literal value",
+      ),
     });
   };
   return { output, visit };
@@ -408,7 +414,10 @@ const collectRequests = (
         linkedRequestIds: [],
         endpoint,
         fields: requestFields(node, method, context.state),
-        resolution: endpoint === null ? "partial" : "complete",
+        resolution: knownCoverage(
+          endpoint !== null,
+          "dynamic request endpoint",
+        ),
       },
     });
   };
@@ -551,7 +560,10 @@ const collectResponseConsumers = (
         .sort(compareUnicodeCodePoints),
       endpoint: soleWrite ? (uniqueRequest?.operation.endpoint ?? null) : null,
       fields: [],
-      resolution: !soleWrite || otherKinds ? "partial" : "complete",
+      resolution: knownCoverage(
+        soleWrite && !otherKinds,
+        "ambiguous or multi-kind request write",
+      ),
     });
   };
   return { output, visit };

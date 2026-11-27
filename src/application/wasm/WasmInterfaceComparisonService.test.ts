@@ -1,3 +1,4 @@
+import { constants as bufferConstants } from "node:buffer";
 import { expect, it, vi } from "vitest";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { createEvidence, parseEvidence } from "../../domain/evidence.js";
@@ -268,8 +269,30 @@ it("admits each selected inventory independently and recovers a combined compari
   expect(projected).toMatchObject({
     code: "resource_constraint",
     retryable: false,
-    details: { reported_limits: { maximum_bytes: 2048, source: "request" } },
+    details: {
+      reported_limits: { maximum_bytes: 2048, source: "request" },
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_interface_bytes",
+        effective_value: 2048,
+        unit: "bytes",
+        minimum: 1,
+        maximum: bufferConstants.MAX_STRING_LENGTH,
+        default_value: 33_554_432,
+        applies_at: "next_call",
+      },
+      refusal: {
+        kind: "adjustable_budget",
+        operation: "compare_wasm_interfaces",
+        control: "max_interface_bytes",
+        effective_value: 2048,
+        unit: "bytes",
+        range: { minimum: 1, maximum: bufferConstants.MAX_STRING_LENGTH },
+        default_value: 33_554_432,
+      },
+    },
   });
+  expect(projected.details?.limit).not.toHaveProperty("required_value");
   expect(projected.remediation.action).toContain("max_interface_bytes");
   const recovered = await compareWasmInterfaces({
     ...selected,

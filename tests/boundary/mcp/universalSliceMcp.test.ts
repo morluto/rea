@@ -1,5 +1,5 @@
 import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
-import { createHash } from "node:crypto";
+import { sha256 } from "../../support/sha256.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -54,9 +54,6 @@ const sliceTest = mcpTest.extend<{
     }
   },
 });
-
-const sha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 const goSlices = () => {
   const intel = createGoBinaryFixture({
@@ -270,7 +267,7 @@ sliceTest(
         code: "unsupported_target",
         details: {
           path: damaged,
-          failure_kind: "malformed",
+          failure_kind: "truncated",
           format: "macho",
           reason: "FAT architecture 0 slice range extends beyond the file",
         },

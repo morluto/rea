@@ -7,11 +7,7 @@ import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js
 import { createInspectionResources } from "../../../fixtures/inspectionResources.js";
 
 import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
-import {
-  elf,
-  fat,
-  thinMach,
-} from "../../../../src/domain/binaryTarget.fixture.js";
+import { fat, thinMach } from "../../../../src/domain/binaryTarget.fixture.js";
 import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
 import {
   hopperLoaderArgsForTarget,

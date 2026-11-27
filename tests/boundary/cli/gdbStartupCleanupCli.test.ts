@@ -39,7 +39,7 @@ it.each([
   } as unknown as GdbSessionManager;
   const command = registerGdbCommand(() => manager);
   const result = await command.run({
-    formatExplicit: false,
+    structuredOutput: false,
     args: { command: inputCommand },
     options: { inferiorTty: "/dev/pts/42" },
   });
@@ -70,7 +70,7 @@ it("retries retained GDB cleanup when CLI session startup fails", async () => {
 
   try {
     const result = await command.run({
-      formatExplicit: false,
+      structuredOutput: false,
       args: { command: "info files" },
       options: { inferiorTty: "/dev/pts/42" },
     });
@@ -99,7 +99,7 @@ it("marks the CLI failed when retained GDB cleanup remains incomplete", async ()
 
   try {
     const result = await command.run({
-      formatExplicit: false,
+      structuredOutput: false,
       args: { command: "info files" },
       options: { inferiorTty: "/dev/pts/42" },
     });
@@ -133,7 +133,7 @@ it.each(["ENOENT", "EACCES", "EPERM"] as const)(
     const previousExitCode = process.exitCode;
     try {
       const result = await command.run({
-        formatExplicit: false,
+        structuredOutput: false,
         args: { command: "show version" },
         options: { inferiorTty: "/dev/pts/42" },
       });
@@ -269,7 +269,7 @@ it.each(["incomplete", "interrupt", "control"] as const)(
     try {
       process.exitCode = 0;
       const result = await command.run({
-        formatExplicit: false,
+        structuredOutput: false,
         args: { command: "info files" },
         options: { inferiorTty: "/dev/pts/7" },
       });

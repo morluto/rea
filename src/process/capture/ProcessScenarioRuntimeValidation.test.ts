@@ -17,6 +17,7 @@ import {
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { resolveProcessScenarioRuntimePaths } from "./ProcessScenarioRuntimeValidation.js";
 import { processScenarioSchema } from "../../domain/process/processScenario.js";
+import { withoutSearchPermission } from "../../../tests/fixtures/permissionDenial.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 
 it.skipIf(process.platform === "win32")(
@@ -188,19 +189,6 @@ it.skipIf(process.platform === "win32")(
 
 const SKIP_PERMISSIONS =
   process.platform === "win32" || process.getuid?.() === 0;
-
-/** Remove search permission from `directory` for the duration of `run`. */
-const withoutSearchPermission = async <T>(
-  directory: string,
-  run: () => Promise<T>,
-): Promise<T> => {
-  await chmod(directory, 0o000);
-  try {
-    return await run();
-  } finally {
-    await chmod(directory, 0o700);
-  }
-};
 
 const deniedFixture = async () => {
   const root = await createTestTempDirectory("rea-process-denied-");

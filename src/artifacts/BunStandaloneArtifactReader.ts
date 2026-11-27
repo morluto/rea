@@ -146,15 +146,9 @@ export class BunStandaloneArtifactReader extends PositionalArtifactReader<
         artifactExpansionBudgetBytes(located.graph.payloadLength),
     );
     const paths = new ArtifactPathRegistry({
+      group: "bun",
       maxParts: this.limits.path_parts,
       maxNodes: this.limits.path_nodes,
-      limitFailure: (field, maximum, required) =>
-        artifactReaderLimitFailure(
-          `artifact_limits.bun.${field}`,
-          maximum,
-          "count",
-          required,
-        ),
     });
     for (const module of decoded.modules) {
       assertArtifactReadActive(signal);

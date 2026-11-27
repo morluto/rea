@@ -1,6 +1,5 @@
 import { ProviderInspectionScope } from "../../ports/ProviderInspectionScope.js";
 import {
-  AnalysisCleanupLease,
   ArtifactResourceScope,
   ArtifactReaderFailure,
   bindArtifactFileCleanup,
@@ -146,15 +145,7 @@ export class AnalysisProviderRegistry {
     AnalysisCleanupRelease
   >();
   readonly #profileResources = new ArtifactResourceScope();
-  readonly #profileOwner: RetainedResourceScope = {
-    retain: (owner, resource) =>
-      this.#profileResources.retain({
-        kind: "lease",
-        resource,
-        lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
-      }),
-    run: (operation) => this.#profileResources.run(operation),
-  };
+  readonly #profileOwner = this.#profileResources.forCloseOwners();
   #closing: Promise<Result<null, AnalysisError>> | undefined;
 
   constructor(
@@ -229,6 +220,15 @@ export class AnalysisProviderRegistry {
         (provider) => provider.hasPendingOwnedResources?.() === true,
       )
     );
+  }
+
+  /** Wait until no close is in progress, including closes that start meanwhile. */
+  async #settleClosing(): Promise<Result<null, AnalysisError>> {
+    while (this.#closing !== undefined) {
+      const closed = await this.#closing;
+      if (!closed.ok) return closed;
+    }
+    return ok(null);
   }
 
   /** Close candidate-owned resources even when no target client was opened. */
@@ -459,8 +459,8 @@ export class AnalysisProviderRegistry {
     if (isAborted(options.signal))
       return err(cancelledBy("open_binary", options.signal));
     if (this.#closing !== undefined) {
-      const closed = await this.#closing;
-      if (!closed.ok) return closed;
+      const settled = await this.#settleClosing();
+      if (!settled.ok) return settled;
     }
     for (const failure of this.#selectionCleanup)
       if (!failure.cleanupIncomplete) this.#selectionCleanup.delete(failure);
@@ -480,6 +480,14 @@ export class AnalysisProviderRegistry {
     }
     if (isAborted(options.signal))
       return err(cancelledBy("open_binary", options.signal));
+    // Admission must follow the last close synchronously: a close that began
+    // while this caller awaited cleanup would not see this selection.
+    if (this.#closing !== undefined) {
+      const admitted = await this.#settleClosing();
+      if (!admitted.ok) return admitted;
+      if (isAborted(options.signal))
+        return err(cancelledBy("open_binary", options.signal));
+    }
     const selection = new SharedStartupAttempt<SelectionResult>(
       (signal) =>
         Promise.resolve().then(() =>
