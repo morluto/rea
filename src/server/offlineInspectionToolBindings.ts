@@ -5,6 +5,7 @@ import type { AppleIpsService } from "../application/binaryDiagnostics/AppleIpsS
 import type { BinaryHardeningService } from "../application/binaryDiagnostics/BinaryHardeningService.js";
 import type { ByteEntropyService } from "../application/binaryDiagnostics/ByteEntropyService.js";
 import type { DevicetreeService } from "../application/binaryDiagnostics/DevicetreeService.js";
+import type { EspNvsService } from "../application/binaryDiagnostics/EspNvsService.js";
 import type { DwarfUnitsService } from "../application/binaryDiagnostics/DwarfUnitsService.js";
 import type { ElfDebugLinkService } from "../application/binaryDiagnostics/ElfDebugLinkService.js";
 import type { ElfDependenciesService } from "../application/binaryDiagnostics/ElfDependenciesService.js";
@@ -18,6 +19,7 @@ import type { NativeInitializersService } from "../application/binaryDiagnostics
 import type { PeCertificatesService } from "../application/binaryDiagnostics/PeCertificatesService.js";
 import type { PeImportsService } from "../application/binaryDiagnostics/PeImportsService.js";
 import type { PeLoadConfigService } from "../application/binaryDiagnostics/PeLoadConfigService.js";
+import type { MachoFunctionStartsService } from "../application/binaryDiagnostics/MachoFunctionStartsService.js";
 import type { PeUnwindRangesService } from "../application/binaryDiagnostics/PeUnwindRangesService.js";
 import type { PeOverlayService } from "../application/binaryDiagnostics/PeOverlayService.js";
 import type { PeResourcesService } from "../application/binaryDiagnostics/PeResourcesService.js";
@@ -140,6 +142,12 @@ export const OFFLINE_INSPECTION_TOOL_BINDINGS = {
       run: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<PeUnwindRangesService>,
+  machoFunctionStarts: ((service) => ({
+    inspect_macho_function_starts: {
+      admission: "sdk",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<MachoFunctionStartsService>,
   peOverlay: ((service) => ({
     inspect_pe_overlay: {
       admission: "application",
@@ -324,4 +332,10 @@ export const OFFLINE_INSPECTION_TOOL_BINDINGS = {
       summary: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<ElfDependenciesService>,
+  espNvs: ((service, retention) => ({
+    inspect_esp_nvs: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options, retention),
+    },
+  })) satisfies Bind<EspNvsService>,
 } as const;

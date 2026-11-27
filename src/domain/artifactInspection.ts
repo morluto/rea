@@ -468,6 +468,7 @@ const formatProbes = (
       : [];
   if (format === "bflt") return bfltProbes(inventory);
   if (format === "esp-image") return espFlashDumpProbes(inventory);
+  if (format === "esp-flash-image") return espFlashImageProbes(inventory);
   if (format === "zip") return zipPackageProbes(inventory);
   if (format === "fit") return fitProbes(inventory);
   if (format === "android-dtbo") return androidDtboProbes(inventory);
@@ -538,6 +539,39 @@ const espFlashDumpProbes = (
     {
       operation: "open_binary",
       rationale: `Reopen the file with format esp-flash-image and flash_offset ${offset}, then inspect_artifact: it is a flash dump read from flash ${offset}, with a partition table at file offset ${offsetText(dump.table_file_offset)}.`,
+      authority: "artifact-bytes",
+    },
+  ];
+};
+
+// A flash dump holding a non-erased NVS partition can be decoded directly in
+// place at its 4096-byte aligned file offset, or from its extracted slice.
+const espFlashImageProbes = (
+  inventory: ArtifactInventoryResult,
+): ArtifactInspectionResult["next_probes"] => {
+  const nvs = inventory.occurrences.find(
+    (row) =>
+      row.artifact_format === "esp-nvs" ||
+      (row.format_metadata?.kind === "esp-flash-partition" &&
+        row.format_metadata.type_name === "data" &&
+        row.format_metadata.subtype_name === "nvs" &&
+        (row.format_metadata.written_bytes ?? 0) > 0 &&
+        row.source_location !== null &&
+        row.source_location.length >= 4096),
+  );
+  if (nvs === undefined) return [];
+  const loc = nvs.source_location;
+  const rationale =
+    loc !== null &&
+    loc.offset % 4096 === 0 &&
+    loc.length >= 4096 &&
+    loc.length % 4096 === 0
+      ? `Decode ${JSON.stringify(nvs.logical_path)} with inspect_esp_nvs using partition_offset ${String(loc.offset)} and partition_bytes ${String(loc.length)}, or extract_artifact first.`
+      : `Extract ${JSON.stringify(nvs.logical_path)} with extract_artifact, then decode it with inspect_esp_nvs.`;
+  return [
+    {
+      operation: "inspect_esp_nvs",
+      rationale,
       authority: "artifact-bytes",
     },
   ];
@@ -741,7 +775,11 @@ const STANDALONE_FORMAT_READERS = {
     rationale:
       "Decode the flattened devicetree header, reservations and node tree.",
   },
-
+  "esp-nvs": {
+    operation: "inspect_esp_nvs",
+    rationale:
+      "Decode ESP-IDF Non-Volatile Storage pages, CRC32 checksums, namespaces, keys and values without executing code.",
+  },
   deb: {
     operation: "inspect_deb_package",
     rationale:

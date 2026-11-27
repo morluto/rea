@@ -36,6 +36,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [ELF separate debug files](guides/native/elf-debug-link.md)
 - [ELF and Mach-O initializer functions](guides/native/native-initializers.md)
 - [ELF unwind function ranges](guides/native/elf-unwind-ranges.md)
+- [Mach-O function starts and data in code](guides/native/macho-function-starts.md)
 - [Linux kernel build config](guides/native/kernel-build-config.md)
 - [Recorded crash evidence](guides/native/recorded-crashes.md)
 - [Windows Shell Link shortcuts](guides/native/windows-shortcut.md)
@@ -114,6 +115,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [UBI images](guides/firmware/ubi-images.md)
 - [Flattened devicetree inspection](devicetree.md)
 - [ESP flash images](esp-flash-image.md)
+- [ESP-IDF NVS partitions](guides/firmware/esp-nvs.md)
 - [ESP images](esp-image.md)
 - [U-Boot FIT images](fit-images.md)
 - [Qualcomm MBN images](guides/firmware/qualcomm-mbn-images.md)
@@ -151,6 +153,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [tar and gzip-compressed tar archives](tar-archives.md)
 - [Nintendo Switch NSO and NRO executables](guides/firmware/switch-executables.md)
 - [GPU asset headers: DDS, GLB, KTX and KTX2](gpu-asset-headers.md)
+- [Media asset headers: Ogg Opus, RIFF/XMA2, Bink 2 and Vulkan pipeline cache](media-asset-headers.md)
 
 ## WebAssembly
 

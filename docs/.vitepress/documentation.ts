@@ -129,6 +129,11 @@ export const documentationSections = [
         route: "/elf-unwind-ranges",
       },
       {
+        text: "Mach-O function starts",
+        source: "guides/native/macho-function-starts.md",
+        route: "/macho-function-starts",
+      },
+      {
         text: "Linux kernel build config",
         source: "guides/native/kernel-build-config.md",
         route: "/kernel-build-config",
@@ -459,6 +464,11 @@ export const documentationSections = [
         route: "/esp-flash-image",
       },
       {
+        text: "ESP-IDF NVS partitions",
+        source: "guides/firmware/esp-nvs.md",
+        route: "/esp-nvs",
+      },
+      {
         text: "ESP images",
         source: "esp-image.md",
         route: "/esp-image",
@@ -617,6 +627,11 @@ export const documentationSections = [
         text: "GPU asset headers: DDS, GLB, KTX and KTX2",
         source: "gpu-asset-headers.md",
         route: "/gpu-asset-headers",
+      },
+      {
+        text: "Media and cache asset headers: Ogg Opus, RIFF/XMA2, Bink 2 and Vulkan pipeline caches",
+        source: "media-asset-headers.md",
+        route: "/media-asset-headers",
       },
     ],
   },

@@ -86,4 +86,5 @@ all `consistent`:
 - `kodim23.ktx2`: BasisLZ, with DFD, KVD, SGD and one level.
 - ImHex-Patterns `dds.hexpat.dds`: DXT1 64x64, 2,048 payload bytes.
 
-Ogg Opus, RIFF/XMA2, Bink 2 and Vulkan pipeline caches are not covered yet.
+Ogg Opus, RIFF/XMA2, Bink 2 and Vulkan pipeline caches are covered by the
+[media asset headers](media-asset-headers.md) guide.

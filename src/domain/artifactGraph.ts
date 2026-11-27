@@ -82,6 +82,10 @@ export const ARTIFACT_FORMAT_IDS = [
   "glb",
   "ktx",
   "ktx2",
+  "ogg-opus",
+  "riff-xma2",
+  "bink2",
+  "vulkan-pipeline-cache",
   "uimage",
   "nso",
   "nro",
@@ -122,16 +126,15 @@ export const ARTIFACT_FORMAT_IDS = [
   "fit",
   "qualcomm-mbn",
   "ntfs-mft",
+  "systemd-journal",
   "auditd-log",
   "sqlite",
   "windows-shortcut",
   "python-pyc",
   "devicetree",
-
+  "esp-nvs",
   "deb",
-
   "labview-rsrc",
-
   "unknown",
 ] as const;
 
@@ -153,6 +156,10 @@ const artifactContentFormatSchema = artifactFormatSchema.extract([
   "glb",
   "ktx",
   "ktx2",
+  "ogg-opus",
+  "riff-xma2",
+  "bink2",
+  "vulkan-pipeline-cache",
   "uimage",
   "nso",
   "nro",
@@ -173,6 +180,7 @@ const artifactContentFormatSchema = artifactFormatSchema.extract([
   "fit",
   "qualcomm-mbn",
   "ntfs-mft",
+  "systemd-journal",
   "auditd-log",
   "mach-o-universal",
   "mach-o",
@@ -184,11 +192,9 @@ const artifactContentFormatSchema = artifactFormatSchema.extract([
   "windows-shortcut",
   "python-pyc",
   "devicetree",
-
+  "esp-nvs",
   "deb",
-
   "labview-rsrc",
-
   "directory",
   "file",
   "unknown",

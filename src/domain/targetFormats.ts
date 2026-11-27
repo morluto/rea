@@ -29,6 +29,10 @@ export const BINARY_TARGET_FORMAT_KINDS = {
   glb: "archive",
   ktx: "archive",
   ktx2: "archive",
+  "ogg-opus": "archive",
+  "riff-xma2": "archive",
+  bink2: "archive",
+  "vulkan-pipeline-cache": "archive",
   uimage: "archive",
   nso: "archive",
   nro: "archive",
@@ -51,6 +55,7 @@ export const BINARY_TARGET_FORMAT_KINDS = {
   "esp-flash-image": "archive",
   fit: "archive",
   "ntfs-mft": "archive",
+  "systemd-journal": "archive",
   "auditd-log": "archive",
   plist: "artifact",
   javascript: "artifact",
@@ -59,11 +64,9 @@ export const BINARY_TARGET_FORMAT_KINDS = {
   "windows-shortcut": "artifact",
   "python-pyc": "artifact",
   devicetree: "artifact",
-
+  "esp-nvs": "artifact",
   deb: "artifact",
-
   "labview-rsrc": "artifact",
-
   "source-map": "artifact",
 } as const;
 
