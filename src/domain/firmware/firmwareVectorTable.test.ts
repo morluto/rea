@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { parseSvdInterruptMap } from "./firmwareSvdInterrupts.js";
+import {
+  parseSvdInterruptMap,
+  type SvdInterruptMap,
+} from "./firmwareSvdInterrupts.js";
 import { firmwareVectorTableSchema } from "./firmwareVectorTable.js";
 import { parseFirmwareVectorTable } from "./firmwareVectorTableParser.js";
 
@@ -27,7 +30,7 @@ const SAMPLE_SVD = `<?xml version="1.0" encoding="utf-8"?>
 </device>`;
 
 describe("parseFirmwareVectorTable ARM M-profile", () => {
-  it("decodes ARMv8-M exceptions, Thumb bit-0 violations, shared stubs, and CMSIS-SVD IRQs", () => {
+  it("decodes ARMv8-M Mainline exceptions, Thumb bit-0 violations, shared stubs, and CMSIS-SVD IRQs", () => {
     const svd = parseSvdInterruptMap(SAMPLE_SVD);
     expect(svd.ok).toBe(true);
     if (!svd.ok) return;
@@ -38,7 +41,7 @@ describe("parseFirmwareVectorTable ARM M-profile", () => {
     buf.writeUInt32LE(0x08000201, 4); // Reset (Thumb)
     buf.writeUInt32LE(0x08000301, 8); // NMI -> Default_Handler
     buf.writeUInt32LE(0x08000301, 12); // HardFault -> Default_Handler
-    buf.writeUInt32LE(0x08000401, 28); // Slot 7 = SecureFault on armv8-m
+    buf.writeUInt32LE(0x08000401, 28); // Slot 7 = SecureFault on armv8-m.main
     buf.writeUInt32LE(0xdeadbeef, 32); // Slot 8 = Reserved non-zero anomaly
     buf.writeUInt32LE(0x08000500, 15 * 4); // SysTick even address (Thumb bit 0 clear!)
     buf.writeUInt32LE(0x08000601, (16 + 28) * 4); // IRQ 28 -> TIM2_IRQ
@@ -51,13 +54,14 @@ describe("parseFirmwareVectorTable ARM M-profile", () => {
         sha256: "a".repeat(64),
         bytes: buf.length,
       },
-      architecture: "armv8-m",
+      architecture: "armv8-m.main",
       baseAddressHex: "0x08000000",
       vectorTableOffset: 0,
       maxEntries: 64,
       tableBytes: buf,
       svdSupplied: true,
-      svdMap: svd.value,
+      svdMap: svd.value.byIrq,
+      svdSkipped: svd.value.skipped,
     });
 
     expect(parsed.ok).toBe(true);
@@ -69,7 +73,7 @@ describe("parseFirmwareVectorTable ARM M-profile", () => {
     expect(report.trap_entry_address).toBeNull();
     expect(report.vtor_aligned).toBe(true);
 
-    // Slot 7 on armv8-m is SecureFault
+    // Slot 7 on armv8-m.main is SecureFault
     expect(report.arm_entries[7]).toMatchObject({
       kind: "system_exception",
       name: "SecureFault",
@@ -108,7 +112,6 @@ describe("parseFirmwareVectorTable ARM M-profile", () => {
       target_code_address: "0x8000300",
       slot_count: 3,
       slot_indices: [2, 3, 21],
-      likely_default_stub: true,
     });
     expect(report.svd_interrupts).toEqual({
       supplied: true,
@@ -143,6 +146,7 @@ describe("parseFirmwareVectorTable ARM M-profile", () => {
       tableBytes: buf,
       svdSupplied: false,
       svdMap: new Map(),
+      svdSkipped: [],
     });
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
@@ -186,6 +190,7 @@ describe("parseFirmwareVectorTable ARM M-profile", () => {
       tableBytes: buf.subarray(0x20),
       svdSupplied: false,
       svdMap: new Map(),
+      svdSkipped: [],
     });
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
@@ -206,7 +211,7 @@ describe("parseFirmwareVectorTable ARM M-profile", () => {
     const deduped = parseSvdInterruptMap(manyConflictsSvd);
     expect(deduped.ok).toBe(true);
     if (!deduped.ok) return;
-    const irq0 = deduped.value.get(0);
+    const irq0 = deduped.value.byIrq.get(0);
     expect(irq0?.primaryName).toBeNull();
     expect(irq0?.ambiguousNames).toHaveLength(1250);
     expect(irq0?.ambiguousNames[0]).toBe("MUX:IRQ0_ALT_0");
@@ -267,6 +272,7 @@ describe("parseFirmwareVectorTable RISC-V mtvec", () => {
       tableBytes: buf,
       svdSupplied: false,
       svdMap: new Map(),
+      svdSkipped: [],
     });
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
@@ -300,5 +306,120 @@ describe("parseFirmwareVectorTable RISC-V mtvec", () => {
       target_code_address: "0x80001140",
     });
     expect(report.svd_interrupts.unmapped_active_irq_count).toBe(1);
+  });
+});
+
+describe("parseFirmwareVectorTable variant rules", () => {
+  const parse = (
+    tableBytes: Buffer,
+    architecture: Parameters<
+      typeof parseFirmwareVectorTable
+    >[0]["architecture"],
+    baseAddressHex = "0x08000000",
+    svd?: SvdInterruptMap,
+  ) => {
+    const parsed = parseFirmwareVectorTable({
+      artifact: {
+        path: "/tmp/fw.bin",
+        sha256: "b".repeat(64),
+        bytes: tableBytes.length,
+      },
+      architecture,
+      baseAddressHex,
+      vectorTableOffset: 0,
+      maxEntries: 256,
+      tableBytes,
+      svdSupplied: svd !== undefined,
+      svdMap: svd?.byIrq ?? new Map(),
+      svdSkipped: svd?.skipped ?? [],
+    });
+    if (!parsed.ok) throw new Error(parsed.error.message);
+    expect(firmwareVectorTableSchema.safeParse(parsed.value).success).toBe(
+      true,
+    );
+    return parsed.value;
+  };
+
+  it("names only ARMv6-M's exceptions on ARMv8-M Baseline", () => {
+    const table = Buffer.alloc(16 * 4);
+    table.writeUInt32LE(0x2000_8000, 0);
+    const report = parse(table, "armv8-m.base");
+    expect(
+      [4, 5, 6, 7, 12].map((slot) => report.arm_entries[slot]?.kind),
+    ).toEqual(["reserved", "reserved", "reserved", "reserved", "reserved"]);
+    const mainline = parse(table, "armv8-m.main");
+    expect(
+      [4, 5, 6, 7, 12].map((slot) => mainline.arm_entries[slot]?.name),
+    ).toEqual([
+      "MemManage",
+      "BusFault",
+      "UsageFault",
+      "SecureFault",
+      "DebugMonitor",
+    ]);
+  });
+
+  it("reports ARMv6-M VTOR alignment as unknown and checks the 128-byte minimum elsewhere", () => {
+    const table = Buffer.alloc(16 * 4);
+    table.writeUInt32LE(0x2000_8000, 0);
+    expect(parse(table, "armv6-m", "0x08000040").vtor_aligned).toBeNull();
+    expect(parse(table, "armv7-m", "0x08000040").vtor_aligned).toBe(false);
+    expect(parse(table, "armv7-m", "0x08000080").vtor_aligned).toBe(true);
+  });
+
+  it("stops at the end of the 32-bit address space instead of wrapping slot addresses", () => {
+    const table = Buffer.alloc(256 * 4);
+    table.writeUInt32LE(0x2000_8000, 0);
+    const report = parse(table, "armv7-m", "0xffffff00");
+    expect(report.examined_entries).toBe(64);
+    expect(report.arm_entries.at(-1)?.slot_address).toBe("0xfffffffc");
+    expect(report.coverage.status).toBe("partial");
+    expect(report.limitations.join("\n")).toContain(
+      "past the end of the 32-bit address space",
+    );
+  });
+
+  it("flags an initial stack pointer whose low two bits the processor ignores", () => {
+    const table = Buffer.alloc(16 * 4);
+    table.writeUInt32LE(0x2000_8002, 0);
+    expect(parse(table, "armv7-m").anomalies.join("\n")).toContain(
+      "not word-aligned",
+    );
+  });
+
+  it("reports CMSIS-SVD interrupts it cannot bind instead of dropping them", () => {
+    const svd = parseSvdInterruptMap(`<device><peripherals>
+      <peripheral><name>UART0</name>
+        <interrupt><name>UART0_IRQ</name><value>0X1F</value></interrupt>
+        <interrupt><name>UART0_ERR</name><value>-3</value></interrupt>
+        <interrupt><name>UART0_WAKE</name></interrupt>
+      </peripheral>
+      <peripheral><interrupt><name>ORPHAN</name><value>4</value></interrupt></peripheral>
+    </peripherals></device>`);
+    if (!svd.ok) throw new Error(svd.error.message);
+    expect([...svd.value.byIrq.keys()]).toEqual([31]);
+    expect(svd.value.skipped).toHaveLength(3);
+    const table = Buffer.alloc(48 * 4);
+    table.writeUInt32LE(0x2000_8000, 0);
+    const report = parse(table, "armv7-m", "0x08000000", svd.value);
+    expect(
+      report.anomalies.filter(
+        (item) =>
+          item.includes("was not bound") || item.includes("were not bound"),
+      ),
+    ).toHaveLength(3);
+  });
+
+  it("states RISC-V dispatch, CLIC and SVD numbering assumptions", () => {
+    const table = Buffer.alloc(32 * 4);
+    const limitations = parse(table, "riscv", "0x40000000", {
+      byIrq: new Map(),
+      skipped: [],
+    }).limitations.join("\n");
+    expect(limitations).toContain(
+      "slot 0 also receives every synchronous exception",
+    );
+    expect(limitations).toContain("CLIC table");
+    expect(limitations).toContain("mcause codes 16 and up");
   });
 });

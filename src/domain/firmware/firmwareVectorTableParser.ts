@@ -1,52 +1,27 @@
 import { readUint32At } from "../binaryContainer.js";
 import { CoverageAccumulator } from "../coverageAccumulator.js";
-import {
-  decodeLimit,
-  malformedInput,
-  type ParseFailureError,
-} from "../parseFailure.js";
+import type { ArchitectureVariant } from "../architectureVariant.js";
+import { malformedInput, type ParseFailureError } from "../parseFailure.js";
 import { err, ok, type Result } from "../result.js";
+import {
+  ARM_MIN_VTOR_ALIGNMENT_BYTES,
+  ARM_SYSTEM_EXCEPTIONS,
+} from "./firmwareArmExceptions.js";
 import { decodeRiscvVectorSlots } from "./firmwareRiscvTrapVector.js";
 import type { SvdIrqLookupEntry } from "./firmwareSvdInterrupts.js";
 import {
-  DEFAULT_SVD_EXPANDED_CHARS,
+  hex32,
   type ArmVectorEntry,
   type FirmwareVectorArchitecture,
   type FirmwareVectorTable,
   type SharedHandlerGroup,
 } from "./firmwareVectorTable.js";
 
-const hex32 = (value: number): string => `0x${(value >>> 0).toString(16)}`;
-
-const ARMV6M_SYSTEM_EXCEPTIONS: Readonly<Record<number, string>> = {
-  1: "Reset",
-  2: "NMI",
-  3: "HardFault",
-  11: "SVCall",
-  14: "PendSV",
-  15: "SysTick",
-};
-
-const ARMV7M_SYSTEM_EXCEPTIONS: Readonly<Record<number, string>> = {
-  ...ARMV6M_SYSTEM_EXCEPTIONS,
-  4: "MemManage",
-  5: "BusFault",
-  6: "UsageFault",
-  12: "DebugMonitor",
-};
-
-const ARMV8M_SYSTEM_EXCEPTIONS: Readonly<Record<number, string>> = {
-  ...ARMV7M_SYSTEM_EXCEPTIONS,
-  7: "SecureFault",
-};
-
-const armSystemExceptionsFor = (
-  architecture: Exclude<FirmwareVectorArchitecture, "riscv">,
-): Readonly<Record<number, string>> => {
-  if (architecture === "armv6-m") return ARMV6M_SYSTEM_EXCEPTIONS;
-  if (architecture === "armv7-m") return ARMV7M_SYSTEM_EXCEPTIONS;
-  return ARMV8M_SYSTEM_EXCEPTIONS;
-};
+/** Number of architectural exception slots before external interrupt 0. */
+const ARM_EXTERNAL_IRQ_BASE = 16;
+const WORD_BYTES = 4;
+/** Words left after the 32-bit address space ends. */
+const ADDRESS_SPACE_END = 0x1_0000_0000;
 
 type ArmSlotIdentity = Pick<
   ArmVectorEntry,
@@ -59,87 +34,66 @@ type ArmSlotIdentity = Pick<
   | "ambiguous_profile_names"
 >;
 
-const svdEntryChars = (svd: SvdIrqLookupEntry): number =>
-  svd.expandedChars ??
-  (svd.primaryName !== null
-    ? svd.primaryName.length + (svd.primaryPeripheral?.length ?? 0)
-    : svd.ambiguousNames.reduce((sum, item) => sum + item.length, 0));
-
 const decodeArmSlotIdentity = (
   slotIndex: number,
-  architecture: Exclude<FirmwareVectorArchitecture, "riscv">,
+  architecture: ArchitectureVariant,
   svdMap: ReadonlyMap<number, SvdIrqLookupEntry>,
-): { readonly identity: ArmSlotIdentity; readonly svdChars: number } => {
+): ArmSlotIdentity => {
   if (slotIndex === 0) {
     return {
-      svdChars: 0,
-      identity: {
-        kind: "initial_stack_pointer",
-        exception_number: null,
+      kind: "initial_stack_pointer",
+      exception_number: null,
+      irq_number: null,
+      name: "InitialSP",
+      name_basis: "architecture_manual",
+      peripheral_name: null,
+      ambiguous_profile_names: [],
+    };
+  }
+  if (slotIndex < ARM_EXTERNAL_IRQ_BASE) {
+    const manualName = ARM_SYSTEM_EXCEPTIONS[architecture][slotIndex];
+    if (manualName !== undefined) {
+      return {
+        kind: "system_exception",
+        exception_number: slotIndex,
         irq_number: null,
-        name: "InitialSP",
+        name: manualName,
         name_basis: "architecture_manual",
         peripheral_name: null,
         ambiguous_profile_names: [],
-      },
-    };
-  }
-  if (slotIndex < 16) {
-    const manualName = armSystemExceptionsFor(architecture)[slotIndex];
-    if (manualName !== undefined) {
-      return {
-        svdChars: 0,
-        identity: {
-          kind: "system_exception",
-          exception_number: slotIndex,
-          irq_number: null,
-          name: manualName,
-          name_basis: "architecture_manual",
-          peripheral_name: null,
-          ambiguous_profile_names: [],
-        },
       };
     }
     return {
-      svdChars: 0,
-      identity: {
-        kind: "reserved",
-        exception_number: slotIndex,
-        irq_number: null,
-        name: null,
-        name_basis: "architecture_manual",
-        peripheral_name: null,
-        ambiguous_profile_names: [],
-      },
+      kind: "reserved",
+      exception_number: slotIndex,
+      irq_number: null,
+      name: null,
+      name_basis: "architecture_manual",
+      peripheral_name: null,
+      ambiguous_profile_names: [],
     };
   }
-  const irqNumber = slotIndex - 16;
+  const irqNumber = slotIndex - ARM_EXTERNAL_IRQ_BASE;
   const svd = svdMap.get(irqNumber);
   if (svd !== undefined && svd.primaryName !== null) {
     return {
-      svdChars: svdEntryChars(svd),
-      identity: {
-        kind: "external_irq",
-        exception_number: slotIndex,
-        irq_number: irqNumber,
-        name: svd.primaryName,
-        name_basis: "explicit_profile",
-        peripheral_name: svd.primaryPeripheral,
-        ambiguous_profile_names: [],
-      },
-    };
-  }
-  return {
-    svdChars: svd === undefined ? 0 : svdEntryChars(svd),
-    identity: {
       kind: "external_irq",
       exception_number: slotIndex,
       irq_number: irqNumber,
-      name: null,
-      name_basis: "observed_slot",
-      peripheral_name: null,
-      ambiguous_profile_names: svd ? [...svd.ambiguousNames] : [],
-    },
+      name: svd.primaryName,
+      name_basis: "explicit_profile",
+      peripheral_name: svd.primaryPeripheral,
+      ambiguous_profile_names: [],
+    };
+  }
+  return {
+    kind: "external_irq",
+    exception_number: slotIndex,
+    irq_number: irqNumber,
+    name: null,
+    name_basis: "observed_slot",
+    peripheral_name: null,
+    ambiguous_profile_names: svd ? [...svd.ambiguousNames] : [],
   };
 };
 
@@ -206,7 +160,6 @@ const collectSharedHandlers = (
       target_code_address,
       slot_count: slot_indices.length,
       slot_indices,
-      likely_default_stub: slot_indices.length >= 2,
     }));
 };
 
@@ -257,60 +210,34 @@ export interface ParseFirmwareVectorTableOptions {
   readonly tableBytes: Buffer;
   readonly svdSupplied: boolean;
   readonly svdMap: ReadonlyMap<number, SvdIrqLookupEntry>;
-  readonly maxSvdExpandedChars?: number;
+  /** CMSIS-SVD declarations the profile parser could not bind. */
+  readonly svdSkipped: readonly string[];
 }
 
 const decodeArmVectorEntries = (
   options: ParseFirmwareVectorTableOptions,
-  architecture: Exclude<FirmwareVectorArchitecture, "riscv">,
+  architecture: ArchitectureVariant,
   vtorAddress: number,
   entryCount: number,
   anomalies: string[],
-): Result<
-  {
-    readonly entries: ArmVectorEntry[];
-    readonly activeTargets: readonly {
-      readonly slotIndex: number;
-      readonly address: string;
-    }[];
-    readonly activeIrqs: readonly number[];
-  },
-  ParseFailureError<"limit">
-> => {
-  const maxSvdExpandedChars =
-    options.maxSvdExpandedChars ?? DEFAULT_SVD_EXPANDED_CHARS;
+): {
+  readonly entries: ArmVectorEntry[];
+  readonly activeTargets: readonly {
+    readonly slotIndex: number;
+    readonly address: string;
+  }[];
+  readonly activeIrqs: readonly number[];
+} => {
   const entries: ArmVectorEntry[] = [];
   const activeTargets: { slotIndex: number; address: string }[] = [];
   const activeIrqs: number[] = [];
-  let emittedSvdChars = 0;
 
   for (let i = 0; i < entryCount; i += 1) {
-    const rel = i * 4;
+    const rel = i * WORD_BYTES;
     const rawWord = readUint32At(options.tableBytes, rel, true);
-    const { identity, svdChars } = decodeArmSlotIdentity(
-      i,
-      architecture,
-      options.svdMap,
-    );
-    if (svdChars > 0) {
-      const nextEmitted = emittedSvdChars + svdChars;
-      if (nextEmitted > maxSvdExpandedChars) {
-        return err(
-          decodeLimit(
-            "cmsis-svd",
-            `Expanded CMSIS-SVD slot metadata exceeded ${String(maxSvdExpandedChars)} characters`,
-            {
-              name: "max_svd_expanded_chars",
-              maximum: maxSvdExpandedChars,
-              required: nextEmitted,
-            },
-          ),
-        );
-      }
-      emittedSvdChars = nextEmitted;
-    }
+    const identity = decodeArmSlotIdentity(i, architecture, options.svdMap);
     const wordStatus = decodeArmWordStatus(identity.kind, rawWord);
-    const slotAddress = hex32((vtorAddress + rel) >>> 0);
+    const slotAddress = hex32(vtorAddress + rel);
     if (wordStatus.status === "invalid_even_thumb_address") {
       anomalies.push(
         `Slot ${String(i)} (${identity.name ?? `IRQ ${String(identity.irq_number)}`}) holds even address ${hex32(rawWord)} without Thumb bit 0 set.`,
@@ -339,7 +266,7 @@ const decodeArmVectorEntries = (
       ...wordStatus,
     });
   }
-  return ok({ entries, activeTargets, activeIrqs });
+  return { entries, activeTargets, activeIrqs };
 };
 
 interface ReportContext {
@@ -352,33 +279,31 @@ interface ReportContext {
   readonly anomalies: string[];
 }
 
-const buildRiscvVectorReport = (
-  ctx: ReportContext,
-): Result<FirmwareVectorTable, ParseFailureError<"limit">> => {
+const buildRiscvVectorReport = (ctx: ReportContext): FirmwareVectorTable => {
   const { options, baseAddress, vtorUnsigned, entryCount, limitations } = ctx;
   const availableFromOffset =
     options.artifact.bytes - options.vectorTableOffset;
-  const examinedBytes = entryCount * 4;
+  const examinedBytes = entryCount * WORD_BYTES;
   if ((vtorUnsigned & 0x3) !== 0) {
     ctx.anomalies.push(
       `Trap table address ${hex32(vtorUnsigned)} is not 4-byte aligned as required by RISC-V mtvec.BASE.`,
     );
   }
   limitations.push(
-    "RISC-V mtvec Direct vs Vectored dispatch is controlled at runtime by mtvec.MODE; static slot decoding reports jump-stub structure without proving runtime CSR state.",
+    "RISC-V mtvec Direct vs Vectored dispatch is controlled at runtime by mtvec.MODE; static slot decoding reports jump-stub structure without proving runtime CSR state. In vectored mode slot 0 also receives every synchronous exception.",
+    "A CLIC table (mtvec.MODE 0b11 with mtvt) holds handler addresses, not jump instructions, so its slots decode as unrecognized.",
   );
-  const decoded = decodeRiscvVectorSlots({
+  if (options.svdSupplied)
+    limitations.push(
+      "CMSIS-SVD interrupt values are bound to RISC-V slots as mcause codes 16 and up; a platform whose SVD numbers its interrupts differently binds the wrong names.",
+    );
+  const { slots, activeTargets, activeIrqs } = decodeRiscvVectorSlots({
     tableBytes: options.tableBytes,
     vectorTableOffset: options.vectorTableOffset,
     vtorAddress: vtorUnsigned,
     entryCount,
     svdMap: options.svdMap,
-    ...(options.maxSvdExpandedChars === undefined
-      ? {}
-      : { maxSvdExpandedChars: options.maxSvdExpandedChars }),
   });
-  if (!decoded.ok) return decoded;
-  const { slots, activeTargets, activeIrqs } = decoded.value;
   const jumpSlots = slots.filter(
     (s) =>
       s.encoding === "jal" ||
@@ -393,7 +318,7 @@ const buildRiscvVectorReport = (
         ? "single_entry_or_inline"
         : "empty_or_unrecognized";
 
-  return ok({
+  return {
     artifact: options.artifact,
     architecture: options.architecture,
     base_address: hex32(baseAddress),
@@ -425,48 +350,60 @@ const buildRiscvVectorReport = (
     }),
     anomalies: ctx.anomalies,
     limitations,
-  });
+  };
 };
 
 const buildArmVectorReport = (
   ctx: ReportContext,
-  architecture: Exclude<FirmwareVectorArchitecture, "riscv">,
-): Result<FirmwareVectorTable, ParseFailureError<"limit">> => {
+  architecture: ArchitectureVariant,
+): FirmwareVectorTable => {
   const { options, baseAddress, vtorUnsigned, entryCount, anomalies } = ctx;
   const availableFromOffset =
     options.artifact.bytes - options.vectorTableOffset;
-  const examinedBytes = entryCount * 4;
-  const vtorAligned = (vtorUnsigned & 0x7f) === 0;
-  if (!vtorAligned) {
+  const examinedBytes = entryCount * WORD_BYTES;
+  const minimumAlignment = ARM_MIN_VTOR_ALIGNMENT_BYTES[architecture];
+  const vtorAligned =
+    minimumAlignment === null ? null : vtorUnsigned % minimumAlignment === 0;
+  if (vtorAligned === false) {
     anomalies.push(
-      `Vector table address ${hex32(vtorUnsigned)} is not 128-byte aligned as required by ARM M-profile VTOR.`,
+      `Vector table address ${hex32(vtorUnsigned)} is not ${String(minimumAlignment)}-byte aligned, the minimum ${architecture} VTOR alignment.`,
     );
   }
+  ctx.limitations.push(
+    minimumAlignment === null
+      ? "ARMv6-M VTOR is optional and its alignment is implementation-defined, so vtor_aligned is unknown; without VTOR the table must be at address 0."
+      : "VTOR also requires alignment to the next power of two of the implemented exception count, which the image does not record; vtor_aligned checks only the 128-byte minimum.",
+  );
+  if (architecture === "armv8-m.main" || architecture === "armv8.1-m.main")
+    ctx.limitations.push(
+      "Slot 7 is named SecureFault, which exists only when the Security Extension is implemented; otherwise it is reserved.",
+    );
   if (!options.svdSupplied) {
     ctx.limitations.push(
       "No svd_xml profile was supplied; external IRQ slots (index >= 16) preserve observed handler addresses with name: null.",
     );
   }
-  const decoded = decodeArmVectorEntries(
+  const { entries, activeTargets, activeIrqs } = decodeArmVectorEntries(
     options,
     architecture,
     vtorUnsigned,
     entryCount,
     anomalies,
   );
-  if (!decoded.ok) return decoded;
-  const { entries, activeTargets, activeIrqs } = decoded.value;
-  const initialSp = entries[0]?.raw_word ?? null;
+  const initialSpWord =
+    entryCount > 0 ? readUint32At(options.tableBytes, 0, true) : null;
   const resetEntry = entries[1];
-  if (
-    initialSp !== null &&
-    (initialSp === "0x0" || initialSp === "0xffffffff")
-  ) {
+  if (initialSpWord === 0 || initialSpWord === 0xffff_ffff) {
     anomalies.push(
-      `Slot 0 InitialSP is ${initialSp}, which is not an initialized SRAM stack pointer.`,
+      `Slot 0 InitialSP is ${hex32(initialSpWord)}, which is not an initialized stack pointer.`,
+    );
+  } else if (initialSpWord !== null && (initialSpWord & 0x3) !== 0) {
+    // SP_main bits [1:0] are RAZ/WI, so the processor would start with a different stack pointer.
+    anomalies.push(
+      `Slot 0 InitialSP ${hex32(initialSpWord)} is not word-aligned; the processor ignores its low two bits.`,
     );
   }
-  return ok({
+  return {
     artifact: options.artifact,
     architecture: options.architecture,
     base_address: hex32(baseAddress),
@@ -483,7 +420,7 @@ const buildArmVectorReport = (
       examined_bytes: examinedBytes,
       available_from_offset_bytes: availableFromOffset,
     },
-    initial_stack_pointer: initialSp,
+    initial_stack_pointer: initialSpWord === null ? null : hex32(initialSpWord),
     reset_code_address:
       resetEntry?.status === "active" ? resetEntry.target_code_address : null,
     trap_entry_address: null,
@@ -498,16 +435,13 @@ const buildArmVectorReport = (
     }),
     anomalies,
     limitations: ctx.limitations,
-  });
+  };
 };
 
 /** Decode ARM M-profile or RISC-V interrupt/trap vector slots from `tableBytes`. */
 export const parseFirmwareVectorTable = (
   options: ParseFirmwareVectorTableOptions,
-): Result<
-  FirmwareVectorTable,
-  ParseFailureError<"malformed"> | ParseFailureError<"limit">
-> => {
+): Result<FirmwareVectorTable, ParseFailureError<"malformed">> => {
   const { artifact, architecture, vectorTableOffset, maxEntries, tableBytes } =
     options;
   const baseAddress =
@@ -534,13 +468,25 @@ export const parseFirmwareVectorTable = (
   }
 
   const availableFromOffset = artifact.bytes - vectorTableOffset;
-  const entryCount = Math.min(maxEntries, Math.floor(tableBytes.length / 4));
-  const examinedBytes = entryCount * 4;
-  const anomalies: string[] = [];
+  // Slots past the end of the 32-bit address space have no address; they are
+  // not decoded rather than wrapped to low memory.
+  const addressableEntries = Math.floor(
+    (ADDRESS_SPACE_END - vtorUnsigned) / WORD_BYTES,
+  );
+  const entryCount = Math.min(
+    maxEntries,
+    Math.floor(tableBytes.length / WORD_BYTES),
+    addressableEntries,
+  );
+  const examinedBytes = entryCount * WORD_BYTES;
+  const anomalies = [...options.svdSkipped];
   const limitations: string[] = [];
   const coverageAcc = new CoverageAccumulator().recordComplete();
   if (examinedBytes < availableFromOffset) {
-    const omission = `Decoded ${String(entryCount)} slots (${String(examinedBytes)} bytes) up to max_entries; bytes past offset ${String(vectorTableOffset + examinedBytes)} were not interpreted as vector slots.`;
+    const omission =
+      entryCount === addressableEntries && entryCount < maxEntries
+        ? `Decoded ${String(entryCount)} slots (${String(examinedBytes)} bytes); later slots would lie past the end of the 32-bit address space and were not interpreted.`
+        : `Decoded ${String(entryCount)} slots (${String(examinedBytes)} bytes) up to max_entries; bytes past offset ${String(vectorTableOffset + examinedBytes)} were not interpreted as vector slots.`;
     coverageAcc.recordOmission(omission);
     limitations.push(omission);
   }
@@ -554,7 +500,9 @@ export const parseFirmwareVectorTable = (
     limitations,
     anomalies,
   };
-  return architecture === "riscv"
-    ? buildRiscvVectorReport(ctx)
-    : buildArmVectorReport(ctx, architecture);
+  return ok(
+    architecture === "riscv"
+      ? buildRiscvVectorReport(ctx)
+      : buildArmVectorReport(ctx, architecture),
+  );
 };

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { AnalysisParameterLimit } from "../analysisSettings.js";
+import { ARCHITECTURE_VARIANT_NAMES } from "../architectureVariant.js";
 import { knownCoverageStatusSchema } from "../coverage.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 import {
@@ -8,10 +9,13 @@ import {
   type ParameterBudget,
 } from "../parameterBudget.js";
 
+/**
+ * The ARM M-profile variants REA names elsewhere (`architectureVariant.ts`),
+ * plus RISC-V. The variant decides which system exceptions exist: ARMv8-M
+ * Baseline has ARMv6-M's set, and Mainline adds the ARMv7-M faults.
+ */
 export const FIRMWARE_VECTOR_ARCHITECTURES = [
-  "armv6-m",
-  "armv7-m",
-  "armv8-m",
+  ...ARCHITECTURE_VARIANT_NAMES,
   "riscv",
 ] as const;
 
@@ -21,6 +25,10 @@ export const firmwareVectorArchitectureSchema = z.enum(
 export type FirmwareVectorArchitecture = z.infer<
   typeof firmwareVectorArchitectureSchema
 >;
+
+/** The spelling every address and word in this report uses: lowercase hex of the unsigned 32-bit value. */
+export const hex32 = (value: number): string =>
+  `0x${(value >>> 0).toString(16)}`;
 
 export const DEFAULT_VECTOR_TABLE_MAX_FILE_BYTES = 32 * 1024 * 1024;
 export const MAX_VECTOR_TABLE_FILE_BYTES = 64 * 1024 * 1024;
@@ -74,7 +82,7 @@ export const inspectFirmwareVectorTableInputSchema = z.strictObject({
     "Local firmware binary or flash dump path to inspect without executing it.",
   ),
   architecture: firmwareVectorArchitectureSchema.describe(
-    "Explicit target architecture profile for vector-slot decoding (armv6-m, armv7-m, armv8-m, or riscv).",
+    "Explicit target profile for vector-slot decoding: an ARM M-profile variant (armv6-m, armv7-m, armv7e-m, armv8-m.base, armv8-m.main or armv8.1-m.main) or riscv.",
   ),
   base_address: z
     .string()
@@ -188,7 +196,6 @@ export const sharedHandlerGroupSchema = z.strictObject({
   target_code_address: z.string(),
   slot_count: z.number().int().min(2),
   slot_indices: z.array(z.number().int().min(0)),
-  likely_default_stub: z.boolean(),
 });
 export type SharedHandlerGroup = z.infer<typeof sharedHandlerGroupSchema>;
 
@@ -209,6 +216,11 @@ export const firmwareVectorTableSchema = z.strictObject({
   base_address: z.string(),
   vector_table_offset: z.number().int().min(0),
   vector_table_address: z.string(),
+  /**
+   * Whether the table address meets the architecture's minimum VTOR alignment
+   * (128 bytes on ARMv7-M and ARMv8-M). Null for RISC-V and for ARMv6-M, where
+   * VTOR is optional and its alignment is implementation-defined.
+   */
   vtor_aligned: z.boolean().nullable(),
   examined_entries: z.number().int().min(0),
   table_file_range: z.strictObject({

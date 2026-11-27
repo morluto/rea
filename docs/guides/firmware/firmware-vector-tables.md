@@ -1,7 +1,9 @@
 # Firmware interrupt and trap vector tables
 
 `inspect_firmware_vector_table` (`rea inspect-firmware-vector-table`) decodes
-ARM M-profile (`armv6-m`, `armv7-m`, `armv8-m`) exception/IRQ vector tables and
+ARM M-profile exception/IRQ vector tables (`armv6-m`, `armv7-m`, `armv7e-m`,
+`armv8-m.base`, `armv8-m.main`, `armv8.1-m.main`, the same variant names
+`open_binary` accepts for raw images) and
 RISC-V `mtvec` trap tables directly from a local firmware image without opening
 an analysis session or executing target code.
 
@@ -12,13 +14,17 @@ reset, fault, timer, and peripheral interrupt vectors rather than a hosted
 `main` symbol. Use `inspect_firmware_vector_table` to:
 
 - Inventory `InitialSP`, `Reset`, `NMI`, `HardFault`, `MemManage` / `BusFault` /
-  `UsageFault` / `DebugMonitor` (`armv7-m` and `armv8-m`; architecturally
-  reserved on `armv6-m`), `SecureFault` (`armv8-m`), `SVCall`, `PendSV`,
-  `SysTick`, and external `IRQ 0..N` handler entry points before disassembling
-  individual ISRs with `open_binary` or Rizin.
+  `UsageFault` / `DebugMonitor` (ARMv7-M and ARMv8-M Mainline; reserved on
+  ARMv6-M and ARMv8-M Baseline), `SecureFault` (ARMv8-M Mainline, present only
+  with the Security Extension), `SVCall`, `PendSV`, `SysTick`, and external
+  `IRQ 0..N` handler entry points before disassembling individual ISRs with
+  `open_binary` or Rizin.
 - Detect Thumb bit-0 clear violations (`invalid_even_thumb_address`), non-zero
-  reserved slots (`nonzero_reserved`), VTOR 128-byte alignment mismatches, and
-  shared default/infinite-loop stubs (`shared_handler_groups`).
+  reserved slots (`nonzero_reserved`), an initial stack pointer that is not
+  word-aligned, VTOR alignment below the 128-byte ARMv7-M/ARMv8-M minimum, and
+  handlers shared by several slots (`shared_handler_groups`, most-shared first),
+  which is how a default handler usually appears. `vtor_aligned` is `null` on
+  ARMv6-M, whose VTOR is optional and implementation-defined.
 - Decode RISC-V `mtvec` `JAL`, compressed `C.J`, and `AUIPC`+`JALR` jump slots
   (clearing `JALR` bit 0 and reporting slot 0's target in `trap_entry_address`
   while leaving `reset_code_address` `null`) across standard cause codes
@@ -53,3 +59,23 @@ In MCP, call `inspect_firmware_vector_table` with `path`, `architecture`, and
 - Unmapped external IRQs keep `name: null` (`name_basis: "observed_slot"`).
 - On RISC-V, whether the CPU uses `mtvec` in `DIRECT` or `VECTORED` mode at
   runtime is determined by `csrw mtvec` code rather than the table bytes alone.
+  In vectored mode slot 0 also receives every synchronous exception. A CLIC
+  table (`mtvt`) holds handler addresses rather than jumps, so its slots decode
+  as `unrecognized`.
+- CMSIS-SVD `<interrupt>` values are bound as ARM IRQ numbers, or as RISC-V
+  `mcause` codes 16 and up. A declaration without a name or with a value that
+  is not a non-negative integer is reported in `anomalies` rather than dropped.
+- Slots that would lie past the end of the 32-bit address space are not
+  decoded, and coverage is `partial`.
+
+## Sources
+
+Exception numbers follow the Armv6-M, Armv7-M and Armv8-M Architecture
+Reference Manuals and CMSIS-Core `IRQn_Type` (`core_cm0plus.h`, `core_cm3.h`,
+`core_cm23.h`, `core_cm33.h`). VTOR alignment follows the manuals' TBLOFF
+field; CMSIS places it at bit 7 on Cortex-M3/M4/M7/M23/M33 and at bit 8 on
+Cortex-M0+, so ARMv6-M alignment is reported as unknown. RISC-V causes, `mtvec`
+modes and alignment follow the RISC-V Privileged Architecture; CLIC follows the
+RISC-V CLIC specification. The `<interrupt><value>` type is `xs:integer` in
+`CMSIS-SVD.xsd`; hexadecimal values are also accepted because vendor files use
+them.

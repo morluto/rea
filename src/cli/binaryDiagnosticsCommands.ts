@@ -552,7 +552,8 @@ export const registerBinaryDiagnosticsCommands = (
       fields: {
         path: { description: "Local firmware binary or flash dump" },
         architecture: {
-          description: "Target profile (armv6-m, armv7-m, armv8-m, or riscv)",
+          description:
+            "Target profile: an ARM M-profile variant (armv6-m, armv7-m, armv7e-m, armv8-m.base, armv8-m.main, armv8.1-m.main) or riscv",
         },
         base_address: {
           description: "32-bit load base address for file offset 0",

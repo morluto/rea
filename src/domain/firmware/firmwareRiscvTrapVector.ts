@@ -1,14 +1,8 @@
 import { readUint16At, readUint32At } from "../binaryContainer.js";
-import { decodeLimit, type ParseFailureError } from "../parseFailure.js";
-import { err, ok, type Result } from "../result.js";
 import type { SvdIrqLookupEntry } from "./firmwareSvdInterrupts.js";
-import {
-  DEFAULT_SVD_EXPANDED_CHARS,
-  type RiscvTrapSlot,
-} from "./firmwareVectorTable.js";
+import { hex32, type RiscvTrapSlot } from "./firmwareVectorTable.js";
 
-const hex32 = (value: number): string => `0x${(value >>> 0).toString(16)}`;
-
+/** Interrupt `mcause` codes of the RISC-V Privileged Architecture (mcause table, Interrupt = 1). */
 const RISCV_STANDARD_INTERRUPTS: Readonly<Record<number, string>> = {
   1: "SupervisorSoftwareInterrupt",
   3: "MachineSoftwareInterrupt",
@@ -18,6 +12,7 @@ const RISCV_STANDARD_INTERRUPTS: Readonly<Record<number, string>> = {
   11: "MachineExternalInterrupt",
 };
 
+/** Causes 16 and up are designated for platform use. */
 const RISCV_LOCAL_INTERRUPT_CAUSE_BASE = 16;
 
 const signExtend = (value: number, bits: number): number => {
@@ -112,7 +107,7 @@ const decodeRiscvSlotInstruction = (
     const target = (slotAddress + imm) >>> 0;
     return {
       encoding: "c_j",
-      raw_words: [`0x${hw.toString(16)}`],
+      raw_words: [hex32(hw)],
       decoded_mnemonic: `c.j ${hex32(target)}`,
       target_code_address: hex32(target),
     };
@@ -140,20 +135,12 @@ export const decodeRiscvVectorSlots = (options: {
   readonly vtorAddress: number;
   readonly entryCount: number;
   readonly svdMap: ReadonlyMap<number, SvdIrqLookupEntry>;
-  readonly maxSvdExpandedChars?: number;
-}): Result<DecodedRiscvVectorSlots, ParseFailureError<"limit">> => {
-  const {
-    tableBytes,
-    vectorTableOffset,
-    vtorAddress,
-    entryCount,
-    svdMap,
-    maxSvdExpandedChars = DEFAULT_SVD_EXPANDED_CHARS,
-  } = options;
+}): DecodedRiscvVectorSlots => {
+  const { tableBytes, vectorTableOffset, vtorAddress, entryCount, svdMap } =
+    options;
   const slots: RiscvTrapSlot[] = [];
   const activeTargets: { slotIndex: number; address: string }[] = [];
   const activeIrqs: number[] = [];
-  let emittedSvdChars = 0;
 
   for (let i = 0; i < entryCount; i += 1) {
     const rel = i * 4;
@@ -169,26 +156,6 @@ export const decodeRiscvVectorSlots = (options: {
       name = manualName;
       nameBasis = "architecture_manual";
     } else if (svd !== undefined) {
-      const slotChars =
-        svd.expandedChars ??
-        (svd.primaryName !== null
-          ? svd.primaryName.length + (svd.primaryPeripheral?.length ?? 0)
-          : svd.ambiguousNames.reduce((sum, item) => sum + item.length, 0));
-      const nextEmitted = emittedSvdChars + slotChars;
-      if (nextEmitted > maxSvdExpandedChars) {
-        return err(
-          decodeLimit(
-            "cmsis-svd",
-            `Expanded CMSIS-SVD slot metadata exceeded ${String(maxSvdExpandedChars)} characters`,
-            {
-              name: "max_svd_expanded_chars",
-              maximum: maxSvdExpandedChars,
-              required: nextEmitted,
-            },
-          ),
-        );
-      }
-      emittedSvdChars = nextEmitted;
       if (svd.primaryName !== null) {
         name = svd.primaryName;
         nameBasis = "explicit_profile";
@@ -218,5 +185,5 @@ export const decodeRiscvVectorSlots = (options: {
       ...decoded,
     });
   }
-  return ok({ slots, activeTargets, activeIrqs });
+  return { slots, activeTargets, activeIrqs };
 };

@@ -26,7 +26,13 @@ export interface SvdIrqLookupEntry {
   readonly primaryName: string | null;
   readonly primaryPeripheral: string | null;
   readonly ambiguousNames: readonly string[];
-  readonly expandedChars: number;
+}
+
+/** IRQ bindings declared by a CMSIS-SVD document, and the declarations that could not be bound. */
+export interface SvdInterruptMap {
+  readonly byIrq: ReadonlyMap<number, SvdIrqLookupEntry>;
+  /** One message per `<interrupt>` or `<peripheral>` skipped for a missing or invalid field. */
+  readonly skipped: readonly string[];
 }
 
 export interface ParseSvdInterruptOptions {
@@ -45,23 +51,24 @@ const trimmedText = (element: Element | undefined): string | null => {
   return text.length > 0 ? `${text}` : null;
 };
 
-const parseNonNegativeInt = (raw: string): number | null => {
+/**
+ * An `<interrupt><value>`: CMSIS-SVD declares it `xs:integer`, so decimal with
+ * an optional `+`. Hexadecimal `0x`/`0X` is also accepted because vendor files
+ * use it. A negative or other value is not an IRQ number.
+ */
+const parseIrqNumber = (raw: string): number | null => {
   const normalized = raw.trim();
-  if (/^0x[0-9a-fA-F]+$/u.test(normalized)) {
-    const parsed = Number.parseInt(normalized.slice(2), 16);
-    return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
-  }
-  if (/^[0-9]+$/u.test(normalized)) {
-    const parsed = Number.parseInt(normalized, 10);
-    return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
-  }
-  return null;
+  const parsed = /^0[xX][0-9a-fA-F]+$/u.test(normalized)
+    ? Number.parseInt(normalized.slice(2), 16)
+    : /^\+?[0-9]+$/u.test(normalized)
+      ? Number.parseInt(normalized, 10)
+      : Number.NaN;
+  return Number.isSafeInteger(parsed) ? parsed : null;
 };
 
 interface IrqCandidateAccumulator {
   readonly items: SvdInterruptCandidate[];
   readonly seenKeys: Set<string>;
-  expandedChars: number;
 }
 
 const candidateIdentityKey = (
@@ -74,7 +81,7 @@ const candidateIdentityKey = (
 export const parseSvdInterruptMap = (
   svdXml: string,
   options?: ParseSvdInterruptOptions,
-): Result<ReadonlyMap<number, SvdIrqLookupEntry>, SvdInterruptParseError> => {
+): Result<SvdInterruptMap, SvdInterruptParseError> => {
   const maxXmlNodes = options?.maxXmlNodes ?? DEFAULT_SVD_XML_NODES;
   const maxExpandedChars =
     options?.maxExpandedChars ?? DEFAULT_SVD_EXPANDED_CHARS;
@@ -105,27 +112,44 @@ export const parseSvdInterruptMap = (
   }
 
   const peripheralsEl = xmlFirstChildNamed(root, "peripherals");
+  const skipped: string[] = [];
   if (peripheralsEl === undefined) {
-    return ok(new Map());
+    return ok({ byIrq: new Map(), skipped });
   }
 
   const rawByIrq = new Map<number, IrqCandidateAccumulator>();
   let totalExpandedChars = 0;
 
-  for (const periphEl of xmlChildrenNamed(peripheralsEl, "peripheral")) {
+  for (const [periphIndex, periphEl] of xmlChildrenNamed(
+    peripheralsEl,
+    "peripheral",
+  ).entries()) {
     const periphName = trimmedText(xmlFirstChildNamed(periphEl, "name"));
-    if (periphName === null) continue;
-    for (const intEl of xmlChildrenNamed(periphEl, "interrupt")) {
+    const interrupts = xmlChildrenNamed(periphEl, "interrupt");
+    if (periphName === null) {
+      if (interrupts.length > 0)
+        skipped.push(
+          `CMSIS-SVD peripheral ${String(periphIndex)} has no <name>; its ${String(interrupts.length)} interrupt declaration(s) were not bound.`,
+        );
+      continue;
+    }
+    for (const intEl of interrupts) {
       const intName = trimmedText(xmlFirstChildNamed(intEl, "name"));
       const valueText = trimmedText(xmlFirstChildNamed(intEl, "value"));
-      if (intName === null || valueText === null) continue;
-      const irqNumber = parseNonNegativeInt(valueText);
-      if (irqNumber === null) continue;
+      const irqNumber = valueText === null ? null : parseIrqNumber(valueText);
+      if (intName === null || irqNumber === null) {
+        skipped.push(
+          `CMSIS-SVD interrupt ${intName ?? "(no <name>)"} of peripheral ${periphName} has ${valueText === null ? "no <value>" : `value "${valueText}", which is not a non-negative integer`}; it was not bound.`,
+        );
+        continue;
+      }
 
       const key = candidateIdentityKey(periphName, intName);
       let acc = rawByIrq.get(irqNumber);
       if (acc?.seenKeys.has(key)) continue;
 
+      // The `peripheral:interrupt` text an ambiguous binding reports; a
+      // single binding reports less, so this bounds every emitted name.
       const entryChars = periphName.length + 1 + intName.length;
       const nextExpandedChars = totalExpandedChars + entryChars;
       if (nextExpandedChars > maxExpandedChars) {
@@ -153,7 +177,6 @@ export const parseSvdInterruptMap = (
             },
           ],
           seenKeys: new Set([key]),
-          expandedChars: entryChars,
         };
         rawByIrq.set(irqNumber, acc);
       } else {
@@ -163,7 +186,6 @@ export const parseSvdInterruptMap = (
           interruptName: intName,
           peripheralName: periphName,
         });
-        acc.expandedChars += entryChars;
       }
     }
   }
@@ -177,7 +199,6 @@ export const parseSvdInterruptMap = (
         primaryName: only.interruptName,
         primaryPeripheral: only.peripheralName,
         ambiguousNames: [],
-        expandedChars: only.peripheralName.length + only.interruptName.length,
       });
     } else {
       lookup.set(irqNumber, {
@@ -187,9 +208,8 @@ export const parseSvdInterruptMap = (
         ambiguousNames: acc.items.map(
           (c) => `${c.peripheralName}:${c.interruptName}`,
         ),
-        expandedChars: acc.expandedChars,
       });
     }
   }
-  return ok(lookup);
+  return ok({ byIrq: lookup, skipped });
 };

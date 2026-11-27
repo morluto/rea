@@ -64,7 +64,7 @@ export class FirmwareVectorTableProvider implements FirmwareVectorTablePort {
         assertArtifactReadActive(options?.signal);
         const svdResult =
           input.svd_xml === undefined
-            ? ok(new Map())
+            ? ok({ byIrq: new Map(), skipped: [] })
             : parseSvdInterruptMap(input.svd_xml, {
                 maxXmlNodes: input.max_svd_xml_nodes,
                 maxExpandedChars: input.max_svd_expanded_chars,
@@ -123,8 +123,8 @@ export class FirmwareVectorTableProvider implements FirmwareVectorTablePort {
               maxEntries: input.max_entries,
               tableBytes: tableSlice,
               svdSupplied: input.svd_xml !== undefined,
-              svdMap: svdResult.value,
-              maxSvdExpandedChars: input.max_svd_expanded_chars,
+              svdMap: svdResult.value.byIrq,
+              svdSkipped: svdResult.value.skipped,
             });
             if (!parsed.ok) throw parsed.error;
             return parsed.value;
