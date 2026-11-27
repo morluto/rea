@@ -226,6 +226,29 @@ describe("JSON client configuration transaction: writing configuration through s
     },
   );
 
+  it.skipIf(typeof process.getuid === "function")(
+    "resolves a config file symlink when POSIX UID checks are unavailable",
+    async () => {
+      let statCalls = 0;
+      expect(
+        await resolveClientConfigTransactionPath(
+          "C:\\Users\\test\\config.json",
+          {
+            lstat: () => {
+              statCalls += 1;
+              return Promise.resolve({
+                isFile: () => statCalls > 1,
+                isSymbolicLink: () => statCalls === 1,
+              });
+            },
+            realpath: () =>
+              Promise.resolve("C:\\Users\\test\\dotfiles\\config.json"),
+          },
+        ),
+      ).toBe("C:\\Users\\test\\dotfiles\\config.json");
+    },
+  );
+
   it.skipIf(process.platform === "win32")(
     "resolves a directory symlink and its real directory to one transaction path",
     async () => {
