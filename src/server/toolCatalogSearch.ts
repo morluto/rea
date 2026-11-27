@@ -132,7 +132,8 @@ export const suggestAdvertisedTools = (
   if (allMatches.length > 0) return allMatches.slice(0, limit);
   if (words.length <= 1) {
     // Single-word fallback: Levenshtein distance against each word in tool names
-    const levMatches = suggestByLevenshtein(trimmed, candidates, limit);
+    // Use the cleaned word and deduplicated catalog for consistent results
+    const levMatches = suggestByLevenshtein(words[0]!, searchable, limit);
     if (levMatches.length > 0) return levMatches;
     return [];
   }
@@ -198,7 +199,7 @@ const levenshteinDistance = (
  */
 const suggestByLevenshtein = (
   requested: string,
-  candidates: readonly AdvertisedToolDescriptor[],
+  candidates: readonly SearchableCatalogTool[],
   limit: number,
   maxDistance = MAX_LEVENSHTEIN_DISTANCE,
 ): readonly string[] => {

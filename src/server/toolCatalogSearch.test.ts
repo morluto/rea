@@ -151,6 +151,19 @@ describe("suggestAdvertisedTools", () => {
     expect(suggestAdvertisedTools("zzzzzz", SAMPLE_CATALOG)).toEqual([]);
   });
 
+  it("ranks Levenshtein suggestions by closest distance first", () => {
+    // Create a catalog where "closer" tool sorts after "zebra_tool" alphabetically
+    // We need to test that distance ranking comes before alphabetical
+    // when two tools have different distances to the typo
+    const catalog: readonly AdvertisedToolDescriptor[] = [
+      { name: "zebra_tool", description: "A zebra tool" },
+      { name: "abc_tool", description: "An ABC tool - closer to xyztool" },
+    ];
+    // "xyztool" is distance 3 from "abc_tool" but distance 5 from "zebra_tool"
+    // So with max distance 3, only "abc_tool" matches
+    expect(suggestAdvertisedTools("xyztool", catalog, 1)).toEqual(["abc_tool"]);
+  });
+
   it("enforces bounds, deduplication, and deterministic slicing", () => {
     expect(suggestAdvertisedTools("", SAMPLE_CATALOG)).toEqual([]);
     expect(suggestAdvertisedTools("___---", SAMPLE_CATALOG)).toEqual([]);
