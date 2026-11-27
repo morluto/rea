@@ -153,6 +153,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [tar and gzip-compressed tar archives](tar-archives.md)
 - [Nintendo Switch NSO and NRO executables](guides/firmware/switch-executables.md)
 - [GPU asset headers: DDS, GLB, KTX and KTX2](gpu-asset-headers.md)
+- [Media asset headers: Ogg Opus, RIFF/XMA2, Bink 2 and Vulkan pipeline cache](media-asset-headers.md)
 
 ## WebAssembly
 

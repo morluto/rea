@@ -777,7 +777,8 @@ editable setting or active worker telemetry.
 
 `inspect_artifact` and `extract_artifact` accept `bun`, `dotnet_bundle`,
 `node_sea`, `godot`, `iso9660`, `deno`, `wxapkg`, `tar` and
-`android_sparse_image`, `android_vbmeta` and `android_dtbo` groups in `artifact_limits`. Their controls apply when
+`android_sparse_image`, `android_vbmeta`, `media_asset` and `android_dtbo`
+groups in `artifact_limits`. Their controls apply when
 recognition or inventory encounters that format. Supplying a policy does not
 assert the format is present. Unsupported keys are rejected. Each group follows
 one domain-owned default policy. See [.NET bundles](../dotnet-bundles.md),
@@ -785,7 +786,8 @@ one domain-owned default policy. See [.NET bundles](../dotnet-bundles.md),
 [Bun standalone](../bun-standalone.md), [Deno compile](../deno-standalone.md),
 [wxapkg](../wxapkg.md), [tar](../tar-archives.md),
 [Android sparse images](../guides/firmware/android-sparse-image.md),
-[Android vbmeta](../guides/firmware/android-vbmeta.md) and
+[Android vbmeta](../guides/firmware/android-vbmeta.md),
+[media asset headers](../media-asset-headers.md) and
 [Android DTBO partition images](../android-dtbo.md) for format semantics.
 
 `artifact_limits.expanded_bytes` selects aggregate plaintext work for ZIP, Bun,

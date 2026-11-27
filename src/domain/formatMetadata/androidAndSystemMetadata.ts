@@ -7,6 +7,7 @@ import {
   ntfsAttributeListResolutionSchema,
 } from "../windows/ntfsMftAttributes.js";
 import { MFT_INLINE_HEADER_LIMIT } from "../windows/ntfsMft.js";
+import { JOURNAL_INLINE_OBJECT_LIMIT } from "../linux/systemdJournal.js";
 import {
   PREFETCH_RUN_COUNT_BYTES,
   PREFETCH_RUN_TIME_BYTES,
@@ -326,6 +327,82 @@ export const androidBootImageEntryMetadataSchema = z.strictObject({
 export type AndroidBootImageEntryMetadata = z.infer<
   typeof androidBootImageEntryMetadataSchema
 >;
+
+/** systemd journal header and object-table facts. */
+export const systemdJournalHeaderSchema = z.strictObject({
+  compatible_flags: uint32,
+  compatible_flag_names: z.array(z.string()),
+  incompatible_flags: uint32,
+  incompatible_flag_names: z.array(z.string()),
+  state: z.string(),
+  file_id: z.string(),
+  machine_id: z.string(),
+  // Null when the compatible `tail-entry-boot-id` flag is clear, so the bytes
+  // hold the legacy boot id rather than a tail-entry identity.
+  tail_entry_boot_id: z.string().nullable(),
+  // The legacy boot id at the same offset; exactly one of the two is non-null.
+  boot_id: z.string().nullable(),
+  seqnum_id: z.string(),
+  header_size: offset,
+  arena_size: offset,
+  data_hash_table_offset: offset,
+  data_hash_table_size: offset,
+  field_hash_table_offset: offset,
+  field_hash_table_size: offset,
+  tail_object_offset: offset,
+  n_objects: offset,
+  n_entries: offset,
+  tail_entry_seqnum: offset,
+  head_entry_seqnum: offset,
+  entry_array_offset: offset,
+  head_entry_realtime: offset,
+  tail_entry_realtime: offset,
+  tail_entry_monotonic: offset,
+  // Null when the declared header predates the field's introduction.
+  n_data: offset.nullable(),
+  n_fields: offset.nullable(),
+  n_tags: offset.nullable(),
+  n_entry_arrays: offset.nullable(),
+  data_hash_chain_depth: offset.nullable(),
+  field_hash_chain_depth: offset.nullable(),
+  tail_entry_array_offset: uint32.nullable(),
+  tail_entry_array_n_entries: uint32.nullable(),
+  tail_entry_offset: offset.nullable(),
+  // Fields whose declared value exceeded 2^53-1 and report that ceiling.
+  overflowed_fields: z.array(z.string()),
+  // Fields left unread because the declared header could not be anchored; their
+  // reported zeros are not observations.
+  unread_fields: z.array(z.string()),
+});
+
+export const systemdJournalObjectHeaderSchema = z.strictObject({
+  offset: offset,
+  type: z.string(),
+  raw_type: uint32,
+  flags: uint32,
+  flag_names: z.array(z.string()),
+  size: offset,
+  // True when the declared size exceeded 2^53-1 and `size` is that ceiling.
+  size_overflowed: z.boolean(),
+  compressed: z.boolean(),
+});
+
+export const systemdJournalMetadataSchema = z.strictObject({
+  kind: z.literal("systemd-journal"),
+  header: systemdJournalHeaderSchema,
+  object_count: offset,
+  valid_object_count: offset,
+  truncated_object_count: offset,
+  unknown_type_object_count: offset,
+  object_type_counts: z.array(
+    z.strictObject({ type: z.string(), count: offset }),
+  ),
+  object_headers: z
+    .array(systemdJournalObjectHeaderSchema)
+    .max(JOURNAL_INLINE_OBJECT_LIMIT),
+  omitted_object_headers: offset,
+  trailing_bytes: offset,
+});
 
 export const ANDROID_DTBO_COMPRESSION_MODES = [
   "none",

@@ -261,6 +261,10 @@ export interface ArtifactReader {
     | "glb"
     | "ktx"
     | "ktx2"
+    | "ogg-opus"
+    | "riff-xma2"
+    | "bink2"
+    | "vulkan-pipeline-cache"
     | "uimage"
     | "nso"
     | "nro"
@@ -288,6 +292,7 @@ export interface ArtifactReader {
     | "windows-prefetch"
     | "qualcomm-mbn"
     | "ntfs-mft"
+    | "systemd-journal"
     | "auditd-log"
     | "pkg"
     | "file";

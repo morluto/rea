@@ -40,6 +40,10 @@ import {
   type InspectAnalysisViewInput,
 } from "../../domain/analysisView/analysisViewRequest.js";
 import { prepareAnalysisViewProjection } from "../../domain/analysisView/analysisView.js";
+import { formatRecordPageSource } from "../../domain/analysisView/artifactInventoryView.js";
+import type { AnalysisViewParent } from "../../domain/analysisView/analysisViewParent.js";
+import { readFormatRecordHeaderPage } from "../../artifacts/formatRecordHeaderPage.js";
+import { translateArtifactFailure } from "../../resources/index.js";
 import type { AnalysisViewResult } from "../../domain/analysisView/analysisViewResult.js";
 import {
   immutableJsonSnapshotMember,
@@ -87,7 +91,85 @@ export const inspectAnalysisView = async (
   const source = parsed.value.source;
   if (source.kind === "evidence-file")
     return inspectFileView({ ...parsed.value, source }, lookup, options);
+  if (pagesFormatRecords(parsed.value.view))
+    return inspectFormatRecordPage(
+      { ...parsed.value, source },
+      lookup,
+      options,
+    );
   return inspectAnalysisViewValidated({ ...parsed.value, source }, lookup);
+};
+
+const pagesFormatRecords = (view: AnalysisViewRequest): boolean =>
+  view.kind === "inventory" && view.collection === "format_record_headers";
+
+/**
+ * Project a `format_record_headers` page. Unlike every other view, the page is
+ * not in the parent Evidence: the root file is re-read through its format's
+ * reader with the window at the page offset, bound to the inventory's digest,
+ * so retained state stays one window however many records the file holds.
+ */
+const inspectFormatRecordPage = async (
+  input: ReadyAnalysisViewInput,
+  lookup: EvidenceLookup | undefined,
+  { signal, resources }: AnalysisViewReadOptions,
+): Promise<Result<Evidence, AnalysisError>> => {
+  const projection = prepareAnalysisViewProjection(input.view);
+  if (input.source.kind === "inline") {
+    const admitted = projection.admitInlineEvidence(input.source.evidence);
+    if (!admitted.ok) return admitted;
+  }
+  const resolved = resolveAnalysisViewSource(input.source, lookup);
+  if (!resolved.ok) return resolved;
+  const parent = resolved.value;
+  const target = formatRecordPageSource(analysisViewParentOf(parent));
+  if (!target.ok) return target;
+  const view = input.view;
+  if (view.kind !== "inventory" || view.collection !== "format_record_headers")
+    return projectResolvedAnalysisView(input, projection, parent);
+  // The caller names the file; Evidence's subject path is display metadata
+  // and never selects what is opened. The digest binds the two.
+  const project = (
+    items: Awaited<ReturnType<typeof readFormatRecordHeaderPage>>,
+  ) =>
+    projectResolvedAnalysisView(input, projection, parent, undefined, {
+      items,
+      total: target.value.total,
+    });
+  let projected: Result<Evidence, AnalysisError> | undefined;
+  try {
+    const items = await readFormatRecordHeaderPage(
+      {
+        path: view.artifact_path,
+        format: target.value.format,
+        sha256: target.value.sha256,
+        start: view.offset,
+        limit: view.limit,
+        signal,
+        resources,
+      },
+      (completed) => {
+        projected = project(completed);
+        return projected.ok ? projected.value : undefined;
+      },
+    );
+    projected = project(items);
+  } catch (cause: unknown) {
+    return err(
+      translateArtifactFailure(
+        INSPECT_ANALYSIS_VIEW_OPERATION,
+        view.artifact_path,
+        cause,
+      ),
+    );
+  }
+  if (!projected.ok || !signal?.aborted) return projected;
+  // Cancellation after the page completed keeps that page.
+  return err(
+    cancelledBy(INSPECT_ANALYSIS_VIEW_OPERATION, signal, {
+      partialObservation: projected.value,
+    }),
+  );
 };
 
 /**
@@ -121,10 +203,15 @@ const inspectFileView = async (
   );
   if (!admitted.ok) return admitted;
   const id = admitted.value.evidence_id;
-  const projected = inspectAnalysisViewValidated(
-    { ...input, source: { kind: "retained-evidence", evidence_id: id } },
-    (evidenceId) => (evidenceId === id ? admitted.value : lookup?.(evidenceId)),
-  );
+  const retained = {
+    ...input,
+    source: { kind: "retained-evidence", evidence_id: id },
+  } as const;
+  const fileLookup: EvidenceLookup = (evidenceId) =>
+    evidenceId === id ? admitted.value : lookup?.(evidenceId);
+  const projected = pagesFormatRecords(input.view)
+    ? await inspectFormatRecordPage(retained, fileLookup, options)
+    : inspectAnalysisViewValidated(retained, fileLookup);
   await dispatchQueuedInterrupts();
   if (!projected.ok) return projected;
   return cancelledFileViewResult(projected, options.signal, projected.value);
@@ -228,30 +315,15 @@ const projectResolvedAnalysisView = (
   projection: ReturnType<typeof prepareAnalysisViewProjection>,
   parent: Evidence,
   selectedTarget?: EvidenceSubjectTarget,
+  formatRecordPage?: AnalysisViewParent["formatRecordPage"],
 ): Result<Evidence, AnalysisError> => {
   const presentation =
     selectedTarget === undefined
       ? parent
       : rebindEvidenceToTargetPath(parent, selectedTarget);
   const projected = projection.project({
-    evidenceId: parent.evidence_id,
-    operation: parent.operation,
-    predicateType: parent.predicate_type,
-    provider: parent.provider,
-    analysisProfile: parent.analysis_profile,
-    authority: parent.authority,
-    environment: parent.environment,
-    rawResult: parent.raw_result,
-    normalizedResult:
-      immutableJsonSnapshotMember(parent, "normalized_result") ??
-      parent.normalized_result,
-    // Sealing an Evidence root deep-freezes it; only the root is registered.
-    sealedResult: isImmutableJsonSnapshot(parent),
-    subject: presentation.subject,
-    limitations: parent.limitations,
-    parameters: parent.parameters,
-    artifact: viewArtifact(presentation),
-    evidence: parent,
+    ...analysisViewParentOf(parent, presentation),
+    ...(formatRecordPage === undefined ? {} : { formatRecordPage }),
   });
   if (!projected.ok) return projected;
   const identity = validateAnalysisViewSubject(
@@ -261,6 +333,31 @@ const projectResolvedAnalysisView = (
   if (!identity.ok) return identity;
   return ok(createAnalysisViewEvidence(input, presentation, projected.value));
 };
+
+/** The projection's view of one parent Evidence, with this delivery's subject. */
+const analysisViewParentOf = (
+  parent: Evidence,
+  presentation: Evidence = parent,
+): AnalysisViewParent => ({
+  evidenceId: parent.evidence_id,
+  operation: parent.operation,
+  predicateType: parent.predicate_type,
+  provider: parent.provider,
+  analysisProfile: parent.analysis_profile,
+  authority: parent.authority,
+  environment: parent.environment,
+  rawResult: parent.raw_result,
+  normalizedResult:
+    immutableJsonSnapshotMember(parent, "normalized_result") ??
+    parent.normalized_result,
+  // Sealing an Evidence root deep-freezes it; only the root is registered.
+  sealedResult: isImmutableJsonSnapshot(parent),
+  subject: presentation.subject,
+  limitations: parent.limitations,
+  parameters: parent.parameters,
+  artifact: viewArtifact(presentation),
+  evidence: parent,
+});
 
 /**
  * The summary an over-budget delivery returns in place of complete Evidence
