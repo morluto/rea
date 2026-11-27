@@ -348,6 +348,40 @@ it("compares the reset PC with the ROM range on the 68000's 24-bit bus", () => {
   ).toContain("outside the declared ROM range");
 });
 
+it("reads the ROM range and checksum window on the 68000's 24-bit bus", () => {
+  // 0xFF000000-0xFF0002FF is bus 0x0-0x2FF, so the checksum stops at image
+  // offset 0x2FF, exactly as with the zero-top-byte form.
+  const highEnd = decoded(
+    megaDriveRom({
+      romStart: 0xff00_0000,
+      romEnd: 0xff00_02ff,
+      checksum: 0xc000,
+    }),
+  );
+  expect(highEnd.metadata.checksum.computed).toBe(0xc000);
+  expect(highEnd.metadata.checksum.matches).toBe(true);
+  expect(highEnd.metadata.checksum.summed_bytes).toBe(0x100);
+  expect(highEnd.metadata.rom).toEqual({
+    start: 0xff00_0000,
+    end: 0xff00_02ff,
+  });
+  const highEndText = highEnd.limitations.join("\n");
+  expect(highEndText).toContain("stay in program.bin");
+  expect(highEndText).not.toContain("past the image");
+  expect(highEndText).not.toContain("file offset 0 is mapped");
+
+  const fullAlias = decoded(
+    megaDriveRom({ romStart: 0xff00_0000, romEnd: 0xff00_03ff }),
+  );
+  expect(fullAlias.limitations).toEqual([]);
+  expect(fullAlias.complete).toBe(true);
+  expect(fullAlias.metadata.checksum.summed_bytes).toBe(0x200);
+
+  expect(
+    decoded(megaDriveRom({ romStart: 0xff00_0200 })).limitations.join("\n"),
+  ).toContain("file offset 0 is mapped");
+});
+
 it("flags an odd reset PC and a reset PC outside the ROM range", () => {
   expect(
     decoded(megaDriveRom({ resetPc: 0x201 })).limitations.join("\n"),

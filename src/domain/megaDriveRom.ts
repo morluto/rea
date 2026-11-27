@@ -386,7 +386,8 @@ export interface MegaDriveWordSum {
 
 /**
  * 16-bit sum of big-endian words from image offset 0x200 through `romEnd`
- * inclusive. A word counts only when both of its bytes are inside that
+ * inclusive. `romEnd` is a 24-bit bus address, which is also the image
+ * offset. A word counts only when both of its bytes are inside that
  * window and inside the image. The loop never follows a ROM end past the
  * image.
  */
@@ -585,13 +586,17 @@ const parseMegaDriveImage = (
   const romEnd = u32(image, ROM_END_OFFSET);
   const ramStart = u32(image, RAM_START_OFFSET);
   const ramEnd = u32(image, RAM_END_OFFSET);
-  const romOrdered = romEnd >= romStart;
+  // The 68000 drives 24 address lines, so ordering, extent and the checksum
+  // window use the bus addresses; metadata keeps the declared values.
+  const romBusStart = busAddress(romStart);
+  const romBusEnd = busAddress(romEnd);
+  const romOrdered = romBusEnd >= romBusStart;
   if (!romOrdered)
     note(
       `Declared ROM end 0x${romEnd.toString(16)} is before ROM start 0x${romStart.toString(16)}.`,
     );
   else {
-    const declared = BigInt(romEnd) - BigInt(romStart) + 1n;
+    const declared = BigInt(romBusEnd) - BigInt(romBusStart) + 1n;
     const imageBytes = BigInt(image.length);
     if (declared > imageBytes)
       note(
@@ -602,7 +607,7 @@ const parseMegaDriveImage = (
         `The image is ${imageBytes.toString()} bytes and the declared ROM range covers ${declared.toString()} bytes; bytes after that range stay in program.bin.`,
       );
   }
-  if (romStart !== 0)
+  if (romBusStart !== 0)
     note(
       `Declared ROM start is 0x${romStart.toString(16)}; file offset 0 is mapped at that address, and the checksum still sums image offset 0x200.`,
     );
@@ -635,7 +640,7 @@ const parseMegaDriveImage = (
       `External RAM end 0x${externalEnd.toString(16)} is before its start 0x${externalStart.toString(16)}.`,
     );
 
-  const summed = megaDriveWordSum(image, romEnd);
+  const summed = megaDriveWordSum(image, romBusEnd);
   if (summed.empty)
     note(
       `Declared ROM end 0x${romEnd.toString(16)} is below 0x200, so the checksum window is empty and the computed sum is 0.`,

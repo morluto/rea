@@ -75,7 +75,8 @@ export const megaDriveRom = (build: MegaDriveRomBuild = {}): Buffer => {
   for (let offset = 0x200; offset < image.length; offset += 1)
     image[offset] = offset & 0xff;
   image.writeUInt16BE(
-    build.checksum ?? megaDriveWordSum(image, romEnd).computed,
+    build.checksum ??
+      megaDriveWordSum(image, (romEnd & 0x00ff_ffff) >>> 0).computed,
     0x18e,
   );
   return image;
