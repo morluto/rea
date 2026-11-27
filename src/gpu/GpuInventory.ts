@@ -1039,18 +1039,20 @@ export class GpuInventory {
                 completed = undefined;
                 refilled = true;
                 completed = await decodeRefilledWindow();
-              }
-              if (
-                completed.inputExhausted &&
-                (await hasFollowingZstandardFrame(completed.consumedBytes))
-              ) {
-                if (completed.frameAllowanceReached !== undefined)
-                  throw new ZstandardFrameAllowanceError(
-                    completed.frameAllowanceReached,
-                    completed.consumedBytes,
-                  );
-                if (total - width > this.#budgets.maxObjectBytes)
-                  throw ccobWindowLimit();
+                if (
+                  completed.inputExhausted &&
+                  (await hasFollowingZstandardFrame(completed.consumedBytes))
+                ) {
+                  if (completed.frameAllowanceReached !== undefined)
+                    throw new ZstandardFrameAllowanceError(
+                      completed.frameAllowanceReached,
+                      completed.consumedBytes,
+                    );
+                  if (total - width > this.#budgets.maxObjectBytes)
+                    throw ccobWindowLimit();
+                }
+              } else if (total - width > this.#budgets.maxObjectBytes) {
+                throw ccobWindowLimit();
               }
             }
             total = width + completed.consumedBytes;

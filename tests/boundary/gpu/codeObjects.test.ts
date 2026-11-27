@@ -2778,7 +2778,9 @@ it("does not double-charge work on CCOB v1 refill, bounds aliased sections, keep
   ).toEqual(["complete", "complete"]);
 
   // 2. Second hasFollowingZstandardFrame check after refill prevents false capacity
-  // when a refilled multi-frame Zstd stream fits max_object_bytes exactly and is followed by NUL.
+  // when cached window ends on sibling 2's exact frame boundary (triggering the
+  // inputExhausted refill path), refill completes sibling 2 at max_object_bytes,
+  // and 16 NUL bytes follow.
   const small1 = hipFixture(Buffer.from("x"), "host-x86_64");
   const stored1 = deflateSync(small1, { level: 0 });
   const stored1V1 = Buffer.concat([
@@ -2797,8 +2799,17 @@ it("does not double-charge work on CCOB v1 refill, bounds aliased sections, keep
     Buffer.from(ccobFixture(1, "zstd", small2).subarray(0, 20)),
     manyEncoded,
   ]);
-  const refillThenNul = Buffer.concat([stored1V1, manyV1, Buffer.alloc(16)]);
-  expect(stored1.length + 20).toBeLessThan(manyEncoded.length);
+  // Align sibling 2 so window 1 (length === manyEncoded.length, starting at offset 20)
+  // ends on the exact boundary of sibling 2's first frame (available === firstFrameLen).
+  const firstFrameLen = manySmallFrames[0]!.length;
+  const alignPad = manyEncoded.length - stored1V1.length - firstFrameLen;
+  expect(alignPad).toBeGreaterThan(0);
+  const refillThenNul = Buffer.concat([
+    stored1V1,
+    Buffer.alloc(alignPad),
+    manyV1,
+    Buffer.alloc(16),
+  ]);
   const afterRefillNul = await inspect(refillThenNul, {
     analysis: "inventory",
     max_object_bytes: manyEncoded.length,
@@ -2813,11 +2824,12 @@ it("does not double-charge work on CCOB v1 refill, bounds aliased sections, keep
   ]);
   expect(refillNulBundles[1]?.encoded_size).toBe(manyEncoded.length);
 
-  // 3. 40 aliased .hip_fatbin sections pointing to a 4.8 KiB PTX payload must be
-  // bounded by max_work_bytes rather than reading ~198 KiB unchecked.
+  // 3. 40 aliased .hip_fatbin sections pointing to a <= 4 KiB PTX payload (all
+  // bytes read via sectionSource.readBounded) must be bounded by max_work_bytes.
   const aliasedPtx = Buffer.from(
-    `.version 8.8\n.target sm_80\n// ${"x".repeat(4800)}\n.visible .entry k() { ret; }\n`,
+    `.version 8.8\n.target sm_80\n// ${"x".repeat(3800)}\n.visible .entry k() { ret; }\n`,
   );
+  expect(aliasedPtx.length).toBeLessThanOrEqual(4096);
   const secCount = 40;
   const totalSections = 2 + secCount;
   const shstrtab = Buffer.from("\0.shstrtab\0.hip_fatbin\0");
