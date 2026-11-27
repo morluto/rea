@@ -114,6 +114,12 @@ export const nativeDataTypeSchema = z.strictObject({
       parameters: z.array(
         z.strictObject({ name: z.string().nullable(), type: z.string() }),
       ),
+      total_parameters: z.int().nonnegative(),
+      parameters_truncated: z
+        .boolean()
+        .describe(
+          "At most 20000 parameters are serialized; total_parameters counts all of them",
+        ),
       varargs: z.boolean(),
       calling_convention: z.string(),
     })

@@ -1578,7 +1578,8 @@ changes nothing:
 | `_Noreturn`, a calling convention the compiler specification defines                                                                                                           | applied            | not applicable                                                                                                                                                          |
 | `const`, `volatile`, `restrict`, `__unaligned`, `__w64`                                                                                                                        | accepted, reported | accepted, reported                                                                                                                                                      |
 
-A function-pointer member or typedef is stored as a pointer to a function
+A function-pointer member or typedef, including one after a comma as in
+`int (*open)(int), (*close)(int);`, is stored as a pointer to a function
 type in `/rea_caller_defined`, named `owner.member` for a member (for example
 `/rea_caller_defined/ops.open`) and `typedef.target` for a typedef. Ghidra's
 parser names these types by a counter that restarts with every call, so REA
@@ -1592,7 +1593,10 @@ program's compiler specification defines it; inside the parenthesis Ghidra
 drops it, so REA refuses that spelling. `()` is refused because Ghidra stores
 it as `(void)`; write `(void)`. A parameter that is itself a function pointer
 gets a function type named after the parameter, so REA refuses it: define a
-typedef for the inner function pointer and use its name.
+typedef for the inner function pointer and use its name. In a signature or
+a function pointer, a repeated parameter name is refused, and so is a
+parameter written as a bare name that is not a type, such as a K&R identifier
+list, which Ghidra would store as `undefined`.
 
 These qualifiers have no representation in Ghidra's type system and no
 effect on layout or storage, so the stored type and the readback omit them.

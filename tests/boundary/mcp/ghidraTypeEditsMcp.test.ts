@@ -785,6 +785,8 @@ it("reports the prototype of a function-pointer member's function type", async (
       { name: "path", type: "/char *" },
       { name: null, type: "/int" },
     ],
+    total_parameters: 2,
+    parameters_truncated: false,
     varargs: true,
     calling_convention: "__cdecl",
   };

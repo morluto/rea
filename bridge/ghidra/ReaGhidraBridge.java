@@ -1775,6 +1775,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return functionObservation(result, limitations);
     }
 
+    /** Fields, enum members or function parameters serialized per inspected type; the rest are counted. */
+    private static final int MAX_INSPECTED_TYPE_ENTRIES = 20_000;
+
     private JsonObject inspectNativeDataType(JsonObject params) throws Exception {
         requireKeys(params, Set.of("document", "type", "address"));
         requireDocument(params);
@@ -1811,7 +1814,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 result.addProperty("packing_enabled", composite.isPackingEnabled());
                 ghidra.program.model.data.DataTypeComponent[] components = composite.getComponents();
                 totalFields = components.length;
-                for (int index = 0; index < Math.min(components.length, 20_000); index++) {
+                for (int index = 0; index < Math.min(components.length, MAX_INSPECTED_TYPE_ENTRIES); index++) {
                     monitor.checkCancelled();
                     ghidra.program.model.data.DataTypeComponent component = components[index];
                     JsonObject field = new JsonObject();
@@ -1840,7 +1843,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 String[] names = enumeration.getNames();
                 totalFields = names.length;
                 java.util.Arrays.sort(names);
-                for (int index = 0; index < Math.min(names.length, 20_000); index++) {
+                for (int index = 0; index < Math.min(names.length, MAX_INSPECTED_TYPE_ENTRIES); index++) {
                     monitor.checkCancelled();
                     JsonObject member = new JsonObject();
                     member.addProperty("name", names[index]);
@@ -1859,7 +1862,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 JsonObject prototype = new JsonObject();
                 prototype.addProperty("return_type", function.getReturnType().getPathName());
                 JsonArray parameters = new JsonArray();
-                for (ghidra.program.model.data.ParameterDefinition parameter : function.getArguments()) {
+                // An existing project type can hold any number of parameters; bound them like fields.
+                ghidra.program.model.data.ParameterDefinition[] arguments = function.getArguments();
+                for (int index = 0; index < Math.min(arguments.length, MAX_INSPECTED_TYPE_ENTRIES); index++) {
+                    monitor.checkCancelled();
+                    ghidra.program.model.data.ParameterDefinition parameter = arguments[index];
                     JsonObject item = new JsonObject();
                     String name = parameter.getName();
                     item.add("name", name == null || name.isEmpty() ? JsonNull.INSTANCE : GSON.toJsonTree(name));
@@ -1867,6 +1874,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     parameters.add(item);
                 }
                 prototype.add("parameters", parameters);
+                prototype.addProperty("total_parameters", arguments.length);
+                prototype.addProperty("parameters_truncated", arguments.length > MAX_INSPECTED_TYPE_ENTRIES);
                 prototype.addProperty("varargs", function.hasVarArgs());
                 prototype.addProperty("calling_convention", function.getCallingConventionName());
                 result.add("function_definition", prototype);
@@ -1875,8 +1884,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.add("fields", fields);
         result.add("members", members);
         result.addProperty("total_fields", totalFields);
-        result.addProperty("truncated", totalFields > 20_000);
-        result.add("limitations", GSON.toJsonTree(List.of("Layouts are Ghidra data-type database observations; original debug/source authority and flexible-tail semantics are not inferred. Component type paths do not necessarily identify separately registered types; bit-field lookups report whether the manager resolves equivalent types.", "At most 20000 fields or enum members are serialized per type to bound provider output. total_fields and truncated report omissions. Enum values preserve Ghidra's signed long representation.")));
+        result.addProperty("truncated", totalFields > MAX_INSPECTED_TYPE_ENTRIES);
+        result.add("limitations", GSON.toJsonTree(List.of("Layouts are Ghidra data-type database observations; original debug/source authority and flexible-tail semantics are not inferred. Component type paths do not necessarily identify separately registered types; bit-field lookups report whether the manager resolves equivalent types.", "At most 20000 fields, enum members or function parameters are serialized per type to bound provider output. total_fields and truncated report omitted fields and members; function_definition.total_parameters and parameters_truncated report omitted parameters. Enum values preserve Ghidra's signed long representation.")));
         if (type != null) {
             JsonObject metadata = analysisExtensions.inspectDataType(currentProgram, type, address, monitor);
             if (metadata != null) result.add("metadata_recovery", metadata);
@@ -2211,7 +2220,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private static final int DEFAULT_C_PARENTHESIS_DEPTH = 8;
     private static final int MAX_C_PARENTHESIS_DEPTH = 12;
     /** Accepted caller C and the qualifiers Ghidra's types cannot record. */
-    private record ParsedCallerC(CParser parser, JsonArray droppedQualifiers) {}
+    /**
+     * soleParameterIdentifiers: identifiers that are a whole parameter slot,
+     * such as a and b in f(a, b). Ghidra types such a name undefined when it
+     * names no type, as in a K&R identifier list, which no parsed fact records.
+     */
+    private record ParsedCallerC(CParser parser, JsonArray droppedQualifiers, Set<String> soleParameterIdentifiers) {}
     // Data types carry no SourceType; this category is the persisted mark of caller authorship.
     private static final CategoryPath CALLER_DEFINED_TYPES = new CategoryPath("/rea_caller_defined");
     /** A token Ghidra's C parser consumes without applying, and what REA does with it. */
@@ -2393,7 +2407,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     /** What the tokenizer observed in admitted caller C. */
-    private record AdmittedCallerC(JsonArray droppedQualifiers, boolean terminated, boolean endsInLineComment) {}
+    private record AdmittedCallerC(JsonArray droppedQualifiers, boolean terminated, boolean endsInLineComment,
+        Set<String> soleParameterIdentifiers) {}
 
     // Ghidra reads a pack value with Integer.parseInt and, on overflow, keeps the
     // packing already in effect. A decimal literal is admitted only when that parse accepts it.
@@ -2523,6 +2538,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return value.longValue();
     }
 
+    private static void endParameterSlot(List<CToken> slot, Set<String> soleParameters) {
+        if (slot.size() == 1 && slot.get(0).isIdentifier()) soleParameters.add(slot.get(0).text());
+        slot.clear();
+    }
+
     // A definition's ret (*name)(parameters) declarator, read one token at a time.
     private static final int FN_NONE = 0, FN_POINTER = 1, FN_NAME = 2, FN_AFTER_NAME = 3,
         FN_OPEN_PARAMETERS = 4, FN_PARAMETERS = 5;
@@ -2627,6 +2647,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
         int declarator = FN_NONE;
         CToken declaratorOpening = null;
         boolean functionParameters = false;
+        // The tokens of the parameter slot being read, of a signature or a function pointer.
+        List<CToken> slot = new ArrayList<>();
+        Set<String> soleParameters = new HashSet<>();
         for (CToken next = tokens.next(false); next != null; next = tokens.next(false)) {
             String token = next.text();
             int line = next.line(), column = next.column();
@@ -2662,12 +2685,19 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     beyondColumn = column;
                 }
             }
+            boolean slotOpen = !declarations && parameter >= 0 && !parametersClosed;
             if (!declarations && parentheses == 1 && !parametersClosed) {
                 if (token.equals("(") && parameter < 0) parameter = 0;
-                else if (token.equals(",")) parameter++;
-            }
+                else if (token.equals(",")) {
+                    parameter++;
+                    endParameterSlot(slot, soleParameters);
+                } else if (slotOpen && !token.equals(")")) slot.add(next);
+            } else if (slotOpen && !token.equals(")")) slot.add(next);
             if (token.equals(")")) {
-                if (!declarations && parentheses == 1 && parameter >= 0) parametersClosed = true;
+                if (!declarations && parentheses == 1 && parameter >= 0) {
+                    parametersClosed = true;
+                    endParameterSlot(slot, soleParameters);
+                }
                 parentheses = Math.max(0, parentheses - 1);
             }
             if (previous.equals("enum") && token.equals("{"))
@@ -2699,7 +2729,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 boolean member = braces > 0 && Boolean.FALSE.equals(enumBodies.peek());
                 boolean alias = state == typedef && braces == 0;
                 if (declarator == FN_NONE && !(member || alias) ||
-                        declarator == FN_NONE && !(previous.equals("*") || isCIdentifierStart(previous.isEmpty() ? ' ' : previous.charAt(0))))
+                        declarator == FN_NONE && !(previous.equals("*") || previous.equals(",") ||
+                            isCIdentifierStart(previous.isEmpty() ? ' ' : previous.charAt(0))))
                     throw refusedConstruct(code, field, "a parenthesis outside a function-pointer declarator (a definition " +
                         "admits parentheses only in a member or typedef of the form ret (*name)(parameters))", line, column);
                 if (declarator == FN_PARAMETERS && !token.equals(")") && !token.equals("(")) functionParameters = true;
@@ -2707,6 +2738,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     throw refusedConstruct(code, field, "an empty parameter list (Ghidra stores () as (void); write " +
                         "(void) for a function without parameters)", line, column);
                 if (declarator == FN_OPEN_PARAMETERS) functionParameters = false;
+                if (declarator == FN_PARAMETERS) {
+                    if (token.equals(",") || token.equals(")")) endParameterSlot(slot, soleParameters);
+                    else slot.add(next);
+                }
                 if (declarator == FN_NONE) declaratorOpening = next;
                 declarator = nextFunctionDeclarator(declarator, next, declaratorOpening, field, code);
                 // Array sizes after the name and in parameters are the literal-only constants below.
@@ -2785,7 +2820,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             throw new RequestFailure("parenthesis_depth_limit", field + " nests parentheses " + deepest +
                 " levels deep, first beyond " + maxParenthesisDepth + " at line " + beyondLine + ", column " + beyondColumn,
                 null, deepest);
-        return new AdmittedCallerC(dropped, ended, tokens.endsInLineComment);
+        return new AdmittedCallerC(dropped, ended, tokens.endsInLineComment, soleParameters);
     }
 
     /**
@@ -2922,7 +2957,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 parser.getComposites(), parser.getEnums(), parser.getTypes(), parser.getFunctions()))
             for (Map.Entry<String, DataType> parsedType : parsedTypes.entrySet())
                 requireBoundedTypeDepth(parsedType.getValue(), parsedType.getKey(), field);
-        return new ParsedCallerC(parser, admitted.droppedQualifiers());
+        return new ParsedCallerC(parser, admitted.droppedQualifiers(), admitted.soleParameterIdentifiers());
     }
 
     /**
@@ -2996,13 +3031,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
             !(functions.values().iterator().next() instanceof FunctionDefinitionDataType prototype))
             throw new RequestFailure(code, "signature must be one C function prototype without function-pointer parameters; found " +
                 functions.size() + " function declarators");
-        Set<String> names = new HashSet<>();
-        for (ParameterDefinition parameter : prototype.getArguments()) {
-            String name = parameter.getName();
-            if (name != null && !name.isEmpty() && !names.add(name))
-                throw new RequestFailure(code, "signature repeats parameter name " + name);
+        requireCallerParameters(prototype, parsed.soleParameterIdentifiers(), "signature", code);
+        for (ParameterDefinition parameter : prototype.getArguments())
             requireUnambiguousType(parameter.getDataType());
-        }
         requireUnambiguousType(prototype.getReturnType());
         return new SignatureEdit(prototype, parsed.droppedQualifiers());
     }
@@ -3155,7 +3186,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 parser.getTypes(), parser.getEnums(), parser.getComposites());
             if (defined.isEmpty())
                 throw new RequestFailure(code, "declarations define no struct, union, enum or typedef");
-            Map<String, FunctionDefinitionDataType> functionTypes = callerFunctionTypes(defined, parser, code);
+            Map<String, FunctionDefinitionDataType> functionTypes = callerFunctionTypes(
+                defined, parser, parsedDeclarations.soleParameterIdentifiers(), code);
             DataTypeManager types = currentProgram.getDataTypeManager();
             Set<DataType> parsed = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
             parsed.addAll(defined.values());
@@ -3256,7 +3288,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
      * leaves Ghidra's undefined placeholder as the parameter type; refuse it.
      */
     private static Map<String, FunctionDefinitionDataType> callerFunctionTypes(
-            Map<String, DataType> defined, CParser parser, String code) {
+            Map<String, DataType> defined, CParser parser, Set<String> soleParameterIdentifiers, String code) {
         Map<String, FunctionDefinitionDataType> named = new TreeMap<>();
         Set<DataType> reached = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
         for (Map.Entry<String, DataType> entry : defined.entrySet()) {
@@ -3266,7 +3298,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     DataType member = component.getDataType();
                     FunctionDefinitionDataType function = pointedFunction(member);
                     if (function == null) continue;
-                    nameCallerFunction(named, reached, entry.getKey() + "." + component.getFieldName(), function, code);
+                    nameCallerFunction(named, reached, entry.getKey() + "." + component.getFieldName(), function,
+                        soleParameterIdentifiers, code);
                     DataType renamed = withCurrentArrayNames(member);
                     if (renamed != member) composite.dataTypeReplaced(member, renamed);
                 }
@@ -3274,7 +3307,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 DataType target = alias.getDataType();
                 FunctionDefinitionDataType function = pointedFunction(target);
                 if (function == null) continue;
-                nameCallerFunction(named, reached, entry.getKey() + ".target", function, code);
+                nameCallerFunction(named, reached, entry.getKey() + ".target", function, soleParameterIdentifiers, code);
                 DataType renamed = withCurrentArrayNames(target);
                 if (renamed != target) alias.dataTypeReplaced(target, renamed);
             }
@@ -3298,6 +3331,26 @@ public final class ReaGhidraBridge extends HeadlessScript {
             array.getNumElements(), array.getElementLength(), array.getDataTypeManager());
     }
 
+    /**
+     * The parameter list of a prototype the caller wrote, a signature or a
+     * function-pointer member or typedef. Ghidra's parser keeps a repeated
+     * parameter name, and leaves its undefined placeholder as the type of a
+     * K&R identifier or an unknown type name, without a diagnostic.
+     */
+    private static void requireCallerParameters(ghidra.program.model.data.FunctionDefinition prototype,
+            Set<String> soleParameterIdentifiers, String subject, String code) {
+        Set<String> names = new HashSet<>();
+        for (ghidra.program.model.data.ParameterDefinition parameter : prototype.getArguments()) {
+            String name = parameter.getName();
+            if (name != null && !name.isEmpty() && !names.add(name))
+                throw new RequestFailure(code, subject + " repeats parameter name " + name);
+            // An explicit undefined x keeps both tokens; a bare name that is not a type becomes undefined.
+            if (parameter.getDataType() == DataType.DEFAULT && name != null && soleParameterIdentifiers.contains(name))
+                throw new RequestFailure(code, subject + " names parameter " + name + " without a type (a K&R " +
+                    "identifier list or an undeclared type name), which Ghidra stores as undefined; write each parameter's type");
+        }
+    }
+
     /** The function type a pointer, or an array of pointers, refers to; null for any other type. */
     private static FunctionDefinitionDataType pointedFunction(DataType type) {
         boolean pointer = false;
@@ -3311,19 +3364,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     private static void nameCallerFunction(Map<String, FunctionDefinitionDataType> named, Set<DataType> reached,
-            String name, FunctionDefinitionDataType function, String code) {
+            String name, FunctionDefinitionDataType function, Set<String> soleParameterIdentifiers, String code) {
         if (!reached.add(function)) return;
         if (named.containsKey(name))
             throw new RequestFailure(code, "declarations name two function-pointer types " + name +
                 "; rename the member or typedef");
-        List<DataType> signature = new ArrayList<>();
-        signature.add(function.getReturnType());
-        for (ghidra.program.model.data.ParameterDefinition parameter : function.getArguments())
-            signature.add(parameter.getDataType());
-        for (DataType part : signature)
-            if (part == DataType.DEFAULT)
-                throw new RequestFailure(code, "the function pointer " + name + " has a parameter or return without a " +
-                    "known type (an identifier list or an undeclared type name); write each parameter's type");
+        requireCallerParameters(function, soleParameterIdentifiers, "the function pointer " + name, code);
         try {
             function.setNameAndCategory(CALLER_DEFINED_TYPES, name);
         }

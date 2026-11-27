@@ -306,6 +306,11 @@ int main(void) { struct session one = { 1, "one", 16, 1.5, 0 }; return (int)rea_
         // Each is accepted by Ghidra's parser and applied differently or not at all.
         for (const [refusedSignature, reason] of [
           ["double total(int a, int a)", /repeats parameter name a/u],
+          // A K&R identifier list: Ghidra types each name undefined.
+          [
+            "double total(s, mask)",
+            /signature names parameter s without a type/u,
+          ],
           [
             "double total(int (*callback)(int))",
             /function-pointer declarator at line 1, column 19/u,
@@ -724,7 +729,15 @@ struct rea_after { char c; int i; };`;
           ],
           [
             "struct rea_callbacks { int (*fn)(a, b); };",
-            /rea_callbacks\.fn has a parameter or return without a known type/u,
+            /rea_callbacks\.fn names parameter a without a type/u,
+          ],
+          [
+            "struct rea_callbacks { int (*fn)(int fd, int fd); };",
+            /the function pointer rea_callbacks\.fn repeats parameter name fd/u,
+          ],
+          [
+            "typedef int (*rea_callback)(long value, char value);",
+            /the function pointer rea_callback\.target repeats parameter name value/u,
           ],
           [
             "struct rea_callbacks { _Noreturn void (*fn)(int); };",
@@ -1203,7 +1216,11 @@ struct rea_after { char c; int i; };`;
           const inspected = await inspect(type);
           assert.equal(inspected.kind, "function");
           assert.equal(inspected.source, "caller-defined");
-          return inspected.function_definition;
+          const { total_parameters, parameters_truncated, ...definition } =
+            inspected.function_definition;
+          assert.equal(total_parameters, definition.parameters.length);
+          assert.equal(parameters_truncated, false);
+          return definition;
         };
         const unnamed = (type) => ({ name: null, type });
         assert.deepEqual(await prototype("/rea_caller_defined/rea_ops.open"), {
@@ -1286,6 +1303,55 @@ struct rea_after { char c; int i; };`;
         assert.equal(
           (await prototype("/rea_caller_defined/rea_ops.open")).return_type,
           "/int",
+        );
+        // Comma-separated function-pointer declarators share the return type
+        // and a calling convention written before the first one.
+        const separated = await callbacks.call("define_native_data_types", {
+          declarations:
+            "struct rea_pair { int __cdecl (*open)(int), (*close)(long fd), count; };\n" +
+            "typedef char (*rea_read_cb)(int), (*rea_write_cb)(short);",
+        });
+        assert.deepEqual(
+          separated.types.map((type) => [type.id, type.status]),
+          [
+            ["/rea_caller_defined/rea_pair", "defined"],
+            ["/rea_caller_defined/rea_read_cb", "defined"],
+            ["/rea_caller_defined/rea_write_cb", "defined"],
+          ],
+        );
+        assert.deepEqual(
+          (await inspect("/rea_caller_defined/rea_pair")).fields.map(
+            (field) => [field.name, field.offset_bytes, field.type_id],
+          ),
+          [
+            ["open", 0, "/rea_caller_defined/rea_pair.open *"],
+            ["close", 8, "/rea_caller_defined/rea_pair.close *"],
+            ["count", 16, "/int"],
+          ],
+        );
+        assert.deepEqual(await prototype("/rea_caller_defined/rea_pair.open"), {
+          return_type: "/int",
+          parameters: [unnamed("/int")],
+          varargs: false,
+          calling_convention: "__cdecl",
+        });
+        assert.deepEqual(
+          await prototype("/rea_caller_defined/rea_pair.close"),
+          {
+            return_type: "/int",
+            parameters: [{ name: "fd", type: "/long" }],
+            varargs: false,
+            calling_convention: "__cdecl",
+          },
+        );
+        assert.deepEqual(
+          await prototype("/rea_caller_defined/rea_write_cb.target"),
+          {
+            return_type: "/char",
+            parameters: [unnamed("/short")],
+            varargs: false,
+            calling_convention: "unknown",
+          },
         );
         await callbacks.call("close_binary");
         return { function_pointer_members: ops.fields.length };
