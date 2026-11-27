@@ -125,8 +125,45 @@ export interface AsarReachability {
   readonly limitation?: string;
 }
 
+/**
+ * CommonJS `main`-field resolution siblings, in Node's search order: an
+ * extensionless `main` resolves to the file itself, then to one of these
+ * siblings, then to an `index` file of that extension under the directory.
+ */
+const MAIN_RESOLUTION_EXTENSIONS = [".js", ".json", ".node"] as const;
+
+/** Shared empty inventory for callers resolving without a validated listing. */
+const EMPTY_LOADABLE_SET: ReadonlySet<string> = new Set();
+
+/**
+ * This pass owns ASAR `main`-entry resolution. Node resolves a package.json
+ * `main` of "./lib" to the file `lib`, else `lib.js`/`lib.json`/`lib.node`, else
+ * the directory index `lib/index.js`/`.json`/`.node`. Resolving against the
+ * validated inventory (`files`, the archive's loadable entries) gives the real
+ * startup file reachable priority instead of a bare `lib` directory, which an
+ * unverified filler listed earlier could otherwise outrank for the fact budget.
+ * With no inventory the specifier is returned normalized but unresolved, so
+ * reachability degrades to a best-effort literal rather than a false negative.
+ */
+export const resolveMainEntry = (
+  specifier: string,
+  files: ReadonlySet<string>,
+): string => {
+  const base = specifier.replace(/^\.?\//u, "").replace(/\/+$/u, "");
+  if (files.size === 0 || files.has(base)) return base;
+  for (const extension of MAIN_RESOLUTION_EXTENSIONS)
+    if (files.has(`${base}${extension}`)) return `${base}${extension}`;
+  for (const extension of MAIN_RESOLUTION_EXTENSIONS)
+    if (files.has(`${base}/index${extension}`))
+      return `${base}/index${extension}`;
+  return base;
+};
+
 /** Best-effort reachable module paths from an archive's own package.json bytes. */
-export const reachableAsarPaths = (manifest: Buffer): AsarReachability => {
+export const reachableAsarPaths = (
+  manifest: Buffer,
+  files: ReadonlySet<string> = EMPTY_LOADABLE_SET,
+): AsarReachability => {
   const reachable = new Set<string>(["package.json"]);
   // Bound the parsed manifest before allocation: an inflated package.json must
   // not exhaust the pass that normalizes an inflated artifact.
@@ -145,13 +182,18 @@ export const reachableAsarPaths = (manifest: Buffer): AsarReachability => {
   if (parsed === null || typeof parsed !== "object") return { reachable };
   const record = parsed as Record<string, unknown>;
   let capped = false;
-  const normalize = (value: unknown): void => {
-    if (typeof value !== "string") return;
+  const add = (path: string): void => {
     if (reachable.size >= MAX_REACHABLE_PATHS) {
       capped = true;
       return;
     }
-    reachable.add(value.replace(/^\.?\//u, ""));
+    reachable.add(path);
+  };
+  // `exports` targets are exact, fully specified paths — Node applies no
+  // extension or directory-index fallback to them — so they are added verbatim.
+  const normalize = (value: unknown): void => {
+    if (typeof value !== "string") return;
+    add(value.replace(/^\.?\//u, ""));
   };
   // `exports` may be a bare string, a conditional/subpath object, an array
   // fallback, or any nesting of these (e.g. an `{ import, require }` pair). Walk
@@ -180,7 +222,12 @@ export const reachableAsarPaths = (manifest: Buffer): AsarReachability => {
       }
     }
   };
-  normalize(record["main"]);
+  // `main`, unlike `exports`, resolves against the validated inventory with
+  // Node's CommonJS extension and directory-index fallback, so a `main` of
+  // "./lib" proves the real startup file (`lib/index.js`) reachable rather than
+  // the bare `lib` directory an earlier filler entry could outrank.
+  const main = record["main"];
+  if (typeof main === "string") add(resolveMainEntry(main, files));
   addExportPaths(record["exports"], 0);
   return capped
     ? {

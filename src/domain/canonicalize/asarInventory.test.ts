@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   classifyAsarInventory,
   reachableAsarPaths,
+  resolveMainEntry,
   MAX_ASAR_MANIFEST_BYTES,
   MAX_REACHABLE_PATHS,
   type AsarInventoryEntry,
@@ -372,5 +373,72 @@ describe("reachableAsarPaths", () => {
     );
     expect(reachable.size).toBeLessThanOrEqual(MAX_REACHABLE_PATHS);
     expect(limitation).toMatch(/reachability is partial/u);
+  });
+
+  it("resolves a directory main to its index file against the inventory", () => {
+    // Node loads `lib/index.js` for a `main` of "./lib"; the bare directory must
+    // not take reachable priority over the real startup file.
+    const { reachable } = reachableAsarPaths(
+      Buffer.from(JSON.stringify({ main: "./lib" }), "utf8"),
+      new Set(["lib/index.js", "lib/helper.js"]),
+    );
+    expect(reachable.has("lib/index.js")).toBe(true);
+    expect(reachable.has("lib")).toBe(false);
+  });
+
+  it("resolves an extensionless main to its file against the inventory", () => {
+    const { reachable } = reachableAsarPaths(
+      Buffer.from(JSON.stringify({ main: "./app" }), "utf8"),
+      new Set(["app.js"]),
+    );
+    expect(reachable.has("app.js")).toBe(true);
+    expect(reachable.has("app")).toBe(false);
+  });
+
+  it("keeps the literal main when the inventory resolves nothing", () => {
+    // An unresolvable main still records a best-effort literal rather than a
+    // false negative; it simply matches no real entry.
+    const { reachable } = reachableAsarPaths(
+      Buffer.from(JSON.stringify({ main: "./lib" }), "utf8"),
+      new Set(["unrelated.js"]),
+    );
+    expect(reachable.has("lib")).toBe(true);
+  });
+
+  it("does not apply main's fallback to exact exports targets", () => {
+    // `exports` targets are fully specified; even with an inventory, an exports
+    // string is added verbatim, never index- or extension-resolved.
+    const { reachable } = reachableAsarPaths(
+      Buffer.from(JSON.stringify({ exports: { ".": "./feature" } }), "utf8"),
+      new Set(["feature/index.js"]),
+    );
+    expect(reachable.has("feature")).toBe(true);
+    expect(reachable.has("feature/index.js")).toBe(false);
+  });
+});
+
+describe("resolveMainEntry", () => {
+  it("prefers an exact file over extension and index fallbacks", () => {
+    const files = new Set(["lib", "lib.js", "lib/index.js"]);
+    expect(resolveMainEntry("./lib", files)).toBe("lib");
+  });
+
+  it("tries sibling extensions before a directory index", () => {
+    expect(resolveMainEntry("./app", new Set(["app.js", "app/index.js"]))).toBe(
+      "app.js",
+    );
+    expect(resolveMainEntry("./app", new Set(["app/index.js"]))).toBe(
+      "app/index.js",
+    );
+  });
+
+  it("strips a trailing slash so a directory main resolves to its index", () => {
+    expect(resolveMainEntry("./lib/", new Set(["lib/index.json"]))).toBe(
+      "lib/index.json",
+    );
+  });
+
+  it("returns the normalized literal when no inventory is supplied", () => {
+    expect(resolveMainEntry("./dist/app.js", new Set())).toBe("dist/app.js");
   });
 });

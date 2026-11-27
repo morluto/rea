@@ -97,7 +97,15 @@ const resolveReachable = (
   const end = start + manifest.size;
   if (!Number.isSafeInteger(start) || start < 0 || end > bytes.length)
     return unreadable;
-  return reachableAsarPaths(bytes.subarray(start, end));
+  // The archive's loadable entries, against which a package.json `main` is
+  // resolved with Node's extension and directory-index fallback. Directories are
+  // excluded so a `main` naming a directory resolves to its index file rather
+  // than matching the directory entry itself.
+  const loadable = new Set<string>();
+  for (const entry of entries)
+    if (entry.kind === "file" || entry.kind === "symlink")
+      loadable.add(entry.path);
+  return reachableAsarPaths(bytes.subarray(start, end), loadable);
 };
 
 /**

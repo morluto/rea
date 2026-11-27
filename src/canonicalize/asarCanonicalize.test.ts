@@ -101,6 +101,47 @@ describe("canonicalizeAsarBytes reachable retention priority", () => {
       ),
     ).toBe(true);
   });
+
+  it("gives a directory main's real index file priority over fillers", async () => {
+    // package.json names "./lib", a directory. Node loads lib/index.js, but that
+    // file is listed after fillers. The pass must resolve main to lib/index.js
+    // and retain it ahead of the unverified fillers — the bare lib directory
+    // never stands in for the startup file.
+    const manifest = Buffer.from(JSON.stringify({ main: "./lib" }), "utf8");
+    const bytes = asarArchiveRaw(
+      Buffer.from(
+        JSON.stringify({
+          files: {
+            "package.json": { size: manifest.length, offset: "0" },
+            "filler0.js": { size: 1, unpacked: true },
+            "filler1.js": { size: 1, unpacked: true },
+            lib: { files: { "index.js": { size: 2, unpacked: true } } },
+          },
+        }),
+        "utf8",
+      ),
+      manifest,
+    );
+
+    const facts = await canonicalizeAsarBytes(bytes, { ...budget, maxFacts: 2 });
+
+    const indexFact = facts.core.find((fact) => fact.name === "lib/index.js");
+    expect(indexFact?.classification).toBe("behavior-relevant");
+    expect(indexFact?.detail).toMatch(/reachable from package\.json/iu);
+    // The bare directory never takes the entrypoint's reachable priority.
+    expect(
+      facts.core.some(
+        (fact) =>
+          fact.name === "lib" && fact.classification === "behavior-relevant",
+      ),
+    ).toBe(false);
+    // The fillers, not the real entrypoint, are what overflowed the budget.
+    expect(
+      facts.reductions.some(
+        (reduction) => reduction.collection === "asar-entry",
+      ),
+    ).toBe(true);
+  });
 });
 
 describe("canonicalizeAsarBytes source facts", () => {
