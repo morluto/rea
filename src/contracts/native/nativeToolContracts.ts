@@ -9,6 +9,7 @@ import {
 import type { ToolContract } from "../toolContractTypes.js";
 import { nativeOutputSchemas } from "../toolOutputSchemaGroups.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
+import { nativePlistBudgetFields } from "../../domain/apple/nativePlistBudgets.js";
 import { localPathStringSchema } from "../../domain/localPath.js";
 import type { EffectAudit } from "../toolEffects.js";
 import {
@@ -164,6 +165,7 @@ export const NATIVE_TOOL_CONTRACTS = [
         .describe(
           "Optional plist selection for an already open binary or bundle-resource session; this does not open a session.",
         ),
+      ...nativePlistBudgetFields,
       native_command_timeout_ms: nativeCommandTimeoutField,
     }),
   ),

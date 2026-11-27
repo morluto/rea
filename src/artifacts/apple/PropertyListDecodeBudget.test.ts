@@ -1,7 +1,11 @@
 import { expect, it } from "vitest";
 
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
-import { parsePlistXmlSource } from "../../native/parsers/plist.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import {
+  parsePlistXml,
+  parsePlistXmlSource,
+} from "../../native/parsers/plist.js";
 import { preflightPropertyListDecode } from "../../domain/apple/propertyListDecodeBudget.js";
 
 const xmlPlist = (body: string): Buffer =>
@@ -9,14 +13,119 @@ const xmlPlist = (body: string): Buffer =>
     `<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0">\n${body}</plist>\n`,
   );
 
-it("refuses an XML plist whose DOM exceeds the native decode budget", () => {
+it("refuses an XML plist whose DOM exceeds the native decode budget and honors custom max_decoded_bytes", () => {
   // Real decode peaks near 110 MiB: about 1,100 bytes per element and text node.
   const parsed = parsePlistXmlSource(
     xmlPlist(`<array>\n${"<true/>\n".repeat(100_000)}</array>\n`),
   );
   if (parsed.ok) throw new Error("Expected a decode budget refusal");
-  expect(parsed.error).toBeInstanceOf(AnalysisResourceConstraintError);
+  if (!(parsed.error instanceof AnalysisResourceConstraintError))
+    throw new Error("Expected AnalysisResourceConstraintError");
   expect(parsed.error.message).toContain("native plist decode budget");
+  expect(projectAnalysisError(parsed.error)).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_decoded_bytes",
+        effective_value: 64 * 1024 * 1024,
+        unit: "bytes",
+        minimum: 1,
+        maximum: 64 * 1024 * 1024,
+        default_value: 64 * 1024 * 1024,
+        applies_at: "next_call",
+      },
+      refusal: {
+        kind: "adjustable_budget",
+        operation: "inspect_plist",
+        control: "max_decoded_bytes",
+      },
+    },
+  });
+
+  const small = xmlPlist(`<array>${"<true/>".repeat(20)}</array>`);
+  const refusedSmall = parsePlistXmlSource(small, 1024);
+  if (refusedSmall.ok) throw new Error("Expected custom decode budget refusal");
+  if (!(refusedSmall.error instanceof AnalysisResourceConstraintError))
+    throw new Error("Expected AnalysisResourceConstraintError");
+  expect(projectAnalysisError(refusedSmall.error).details?.limit).toMatchObject(
+    {
+      parameter: "max_decoded_bytes",
+      effective_value: 1024,
+    },
+  );
+  expect(parsePlistXmlSource(small, 128 * 1024).ok).toBe(true);
+
+  const dtd = Buffer.from(
+    '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist [ <!ENTITY x "a"> ]>\n<plist version="1.0"><string>&x;</string></plist>\n',
+  );
+  for (const budget of [256, 64 * 1024 * 1024]) {
+    const dtdRefused = parsePlistXmlSource(dtd, budget);
+    if (dtdRefused.ok) throw new Error("Expected XML internal DTD refusal");
+    if (!(dtdRefused.error instanceof AnalysisResourceConstraintError))
+      throw new Error("Expected AnalysisResourceConstraintError");
+    expect(dtdRefused.error.message).not.toContain("decode budget");
+    const dtdProjected = projectAnalysisError(dtdRefused.error);
+    expect(dtdProjected).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        reported_limits: {
+          boundary: "plist-internal-dtd",
+          maximum: 0,
+        },
+        refusal: {
+          kind: "fixed_ceiling",
+          operation: "inspect_plist",
+        },
+      },
+    });
+    expect(dtdProjected.details).not.toHaveProperty("limit");
+  }
+
+  // Unsupported XML encodings must fail encoding detection before byte-budget preflight.
+  const latin1 = Buffer.from(
+    `<?xml version="1.0" encoding="ISO-8859-1"?><plist version="1.0"><string>${"a".repeat(2048)}</string></plist>`,
+    "latin1",
+  );
+  const latin1Result = parsePlistXmlSource(latin1, 64);
+  expect(latin1Result.ok).toBe(false);
+  if (!latin1Result.ok) {
+    expect(latin1Result.error.name).toBe("XmlPlistTextDecodeError");
+  }
+
+  // Pre-decode lower bound refuses oversized UTF-8 XML before string allocation and reports required_value.
+  const largeUtf8 = xmlPlist(`<string>${"a".repeat(4096)}</string>`);
+  const preDecodeRefused = parsePlistXmlSource(largeUtf8, 64);
+  if (preDecodeRefused.ok)
+    throw new Error("Expected pre-decode byte budget refusal");
+  if (!(preDecodeRefused.error instanceof AnalysisResourceConstraintError))
+    throw new Error("Expected AnalysisResourceConstraintError");
+  expect(
+    projectAnalysisError(preDecodeRefused.error).details?.limit,
+  ).toMatchObject({
+    parameter: "max_decoded_bytes",
+    effective_value: 64,
+    required_value: expect.any(Number),
+  });
+
+  // OpenStep payloads passed to parsePlistXml bypass XML-only preflight.
+  expect(
+    parsePlistXml('{ "doc" = "<!DOCTYPE foo [ <!ENTITY x \\"y\\"> ]>"; }', 1024)
+      .ok,
+  ).toBe(true);
+
+  const convertedRefused = parsePlistXml(small.toString("utf8"), 1024);
+  if (convertedRefused.ok)
+    throw new Error("Expected converted XML decode budget refusal");
+  if (!(convertedRefused.error instanceof AnalysisResourceConstraintError))
+    throw new Error("Expected AnalysisResourceConstraintError");
+  expect(
+    projectAnalysisError(convertedRefused.error).details?.limit,
+  ).toMatchObject({
+    parameter: "max_decoded_bytes",
+    effective_value: 1024,
+  });
+  expect(parsePlistXml(small.toString("utf8"), 128 * 1024).ok).toBe(true);
 });
 
 // Saxes accepts any XML NameStartChar, and the DOM holds every element

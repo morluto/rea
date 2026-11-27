@@ -42,8 +42,15 @@ const XML_PLIST_DECODERS = {
   "utf-16be": new TextDecoder("utf-16be", { fatal: true }),
 } as const;
 
-/** Decode BOM-aware XML plist text and verify any declaration against its bytes. */
-export const decodeXmlPlistText = (bytes: Uint8Array): string => {
+export type SupportedXmlPlistEncoding = "utf-8" | "utf-16le" | "utf-16be";
+
+/** Inspect XML plist BOM and ASCII prolog encoding before allocating a JS string. */
+export const inspectXmlPlistTextEncoding = (
+  bytes: Uint8Array,
+): {
+  readonly encoding: SupportedXmlPlistEncoding;
+  readonly prolog: string | undefined;
+} => {
   const marked = byteOrderMarkEncoding(bytes);
   if (marked === "utf-32")
     throw new XmlPlistTextDecodeError(
@@ -58,6 +65,26 @@ export const decodeXmlPlistText = (bytes: Uint8Array): string => {
   const declaration =
     prolog === undefined ? undefined : declaredEncoding(prolog);
   if (prolog !== undefined) verifyEncodingDeclaration(declaration, encoding);
+  return { encoding, prolog };
+};
+
+/** Mathematically guaranteed lower bound on decoded UTF-16 code units. */
+export const minimumXmlPlistCodeUnits = (
+  encoding: SupportedXmlPlistEncoding,
+  bytes: Uint8Array,
+): number => {
+  if (encoding === "utf-8") {
+    const bom =
+      bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf ? 3 : 0;
+    // 1..3 UTF-8 bytes yield 1 UTF-16 code unit; 4 UTF-8 bytes yield 2 (ratio 1/2 > 1/3).
+    return Math.floor(Math.max(0, bytes.length - bom) / 3);
+  }
+  return Math.floor(Math.max(0, bytes.length - 2) / 2);
+};
+
+/** Decode BOM-aware XML plist text and verify any declaration against its bytes. */
+export const decodeXmlPlistText = (bytes: Uint8Array): string => {
+  const { encoding, prolog } = inspectXmlPlistTextEncoding(bytes);
   let text: string;
   try {
     text = XML_PLIST_DECODERS[encoding].decode(bytes);

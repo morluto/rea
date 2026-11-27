@@ -3,7 +3,11 @@ import {
   readBinaryPlistLayout,
   readBinaryPlistUnsigned64,
 } from "./binaryPlistLayout.js";
-import { decodeXmlPlistText } from "../propertyListXmlText.js";
+import {
+  decodeXmlPlistText,
+  inspectXmlPlistTextEncoding,
+  minimumXmlPlistCodeUnits,
+} from "../propertyListXmlText.js";
 import { hasBinaryPlistSignature } from "./appleArchiveFormat.js";
 import { PlistNestingLimitError } from "./plistValue.js";
 import {
@@ -62,6 +66,35 @@ export const preflightPropertyListDecode = (
   };
 };
 
+/** Check encoding and pre-decode lower bound before allocating XML text, then preflight DOM expansion. */
+export const preflightXmlPlistBytes = (
+  bytes: Uint8Array,
+  maxBytes: number,
+  {
+    numberProjection = false,
+    budget = DEFAULT_PLIST_DECODE_BUDGET,
+    dtdMessage,
+  }: Pick<BinaryPlistExpansionOptions, "numberProjection" | "budget"> & {
+    readonly dtdMessage?: string | undefined;
+  } = {},
+): { readonly text: string; readonly estimatedBytes: number } => {
+  const { encoding } = inspectXmlPlistTextEncoding(bytes);
+  const minimumEstimate = minimumXmlPlistCodeUnits(encoding, bytes) * 4;
+  if (minimumEstimate > maxBytes)
+    throw decodeLimit("plist", `plist representation exceeds ${budget}`, {
+      name: PLIST_DECODE_BYTES_LIMIT,
+      maximum: maxBytes,
+      required: minimumEstimate,
+    });
+  const text = decodeXmlPlistText(bytes);
+  const estimatedBytes = preflightXmlPropertyListDecode(text, maxBytes, {
+    numberProjection,
+    budget,
+    dtdMessage,
+  });
+  return { text, estimatedBytes };
+};
+
 /** Refuse an XML plist whose decoded representation exceeds the byte allowance. */
 export const preflightXmlPropertyListDecode = (
   xml: string,
@@ -69,13 +102,17 @@ export const preflightXmlPropertyListDecode = (
   {
     numberProjection = false,
     budget = DEFAULT_PLIST_DECODE_BUDGET,
-  }: Pick<BinaryPlistExpansionOptions, "numberProjection" | "budget"> = {},
+    dtdMessage,
+  }: Pick<BinaryPlistExpansionOptions, "numberProjection" | "budget"> & {
+    readonly dtdMessage?: string | undefined;
+  } = {},
 ): number => {
   const estimatedBytes = estimateXmlPlistExpansion(
     xml,
     maxBytes,
     numberProjection,
     budget,
+    dtdMessage,
   );
   if (estimatedBytes > maxBytes)
     throw decodeBudgetExceeded(
@@ -101,6 +138,7 @@ const estimateXmlPlistExpansion = (
   maxBytes: number,
   numberProjection: boolean,
   budget: string,
+  dtdMessage?: string,
 ): number => {
   // The decoded text and the DOM's copies of its character data.
   let estimate = xml.length * 4;
@@ -109,20 +147,23 @@ const estimateXmlPlistExpansion = (
     (numberProjection ? XML_NUMBER_PROJECTION_ELEMENT_BYTES : 0);
   // Value nesting is bounded by the shared plist parser, which counts plist
   // value depth; raw element depth would also count the envelope and keys.
+  let seenElement = false;
   for (const token of xmlPreflightTokens(xml)) {
     if (token.internalSubset)
       // Only a declaration outside opaque text can introduce an internal
       // subset. Brackets in quoted external identifiers are literal text.
-      throw decodeBudgetExceeded(
-        `XML plist internal entity expansion exceeds ${budget}`,
-        maxBytes,
+      throw decodeLimit(
+        "plist",
+        dtdMessage ?? `XML plist internal entity expansion exceeds ${budget}`,
+        { name: PLIST_INTERNAL_DTD_LIMIT, maximum: 0 },
       );
     if (token.text) estimate += XML_NODE_BYTES;
     estimate += token.references * XML_REFERENCE_BYTES;
-    if (token.kind === "element")
+    if (token.kind === "element") {
+      seenElement = true;
       estimate += elementBytes + token.attributes * XML_NODE_BYTES;
-    else if (token.kind === "node") estimate += XML_NODE_BYTES;
-    if (estimate > maxBytes) return maxBytes + 1;
+    } else if (token.kind === "node") estimate += XML_NODE_BYTES;
+    if (seenElement && estimate > maxBytes) return maxBytes + 1;
   }
   return estimate;
 };
@@ -244,6 +285,9 @@ export const MAX_BINARY_PLIST_NESTING_DEPTH = 128;
 /** Limit name of the decoded-representation budget a plist preflight enforces. */
 export const PLIST_DECODE_BYTES_LIMIT = "plist-decode-bytes";
 
+/** Limit name for an XML DOCTYPE internal subset refused unconditionally to prevent entity expansion. */
+export const PLIST_INTERNAL_DTD_LIMIT = "plist-internal-dtd";
+
 /** The decoded representation would exceed the caller's byte budget. */
 const decodeBudgetExceeded = (
   detail: string,
@@ -251,13 +295,22 @@ const decodeBudgetExceeded = (
 ): ParseFailureError<"limit"> =>
   decodeLimit("plist", detail, { name: PLIST_DECODE_BYTES_LIMIT, maximum });
 
-/** Whether a plist preflight refused the decode for its byte budget. */
+/** Whether a plist preflight refused an XML internal DTD subset. */
+export const isPlistInternalDtdFailure = (
+  cause: unknown,
+): cause is ParseFailureError<"limit"> =>
+  cause instanceof ParseFailureError &&
+  cause.failure.kind === "limit" &&
+  cause.failure.limit.name === PLIST_INTERNAL_DTD_LIMIT;
+
+/** Whether a plist preflight refused the decode for its byte budget or internal DTD subset. */
 export const isPlistDecodeBudgetFailure = (
   cause: unknown,
 ): cause is ParseFailureError<"limit"> =>
   cause instanceof ParseFailureError &&
   cause.failure.kind === "limit" &&
-  cause.failure.limit.name === PLIST_DECODE_BYTES_LIMIT;
+  (cause.failure.limit.name === PLIST_DECODE_BYTES_LIMIT ||
+    cause.failure.limit.name === PLIST_INTERNAL_DTD_LIMIT);
 
 /** How a caller names its budget and selects binary plist projection. */
 export interface BinaryPlistExpansionOptions {

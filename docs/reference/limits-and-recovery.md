@@ -93,6 +93,11 @@ page runs a fresh discovery on that device.
 Graph tools accept per-call traversal bounds (`max_depth` and `max_nodes` on
 `get_call_graph` and `trace_call_path`).
 
+`inspect_plist` accepts `max_file_bytes` and `max_decoded_bytes` (each default
+64 MiB, maximum 64 MiB) and reports `details.limit` (`control_kind: "parameter"`)
+when either budget refuses a file or its estimated XML/binary decode
+representation.
+
 `inspect_elf_notes` and `inspect_elf_debug_link` refuse a file above
 `max_file_bytes`, a decoded section-name table above it, or more notes than
 `max_entries` with `details.limit` naming that field
