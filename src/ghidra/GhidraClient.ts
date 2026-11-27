@@ -26,6 +26,7 @@ import {
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { NativeValueFlowLimits } from "../domain/native/nativeValueFlow.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import {
@@ -1429,14 +1430,31 @@ export class GhidraClient {
             : launched.error instanceof GhidraSessionError
               ? launched.error
               : this.#failure("start", launched.error.message, launched.error);
+      const readError =
+        manifestReadFailure instanceof AnalysisError
+          ? manifestReadFailure
+          : manifestReadFailure === undefined
+            ? undefined
+            : new ProviderAdapterError("ghidra", "resolve_analysis_profile", {
+                ...(manifestReadFailure instanceof Error
+                  ? { cause: manifestReadFailure }
+                  : {}),
+                diagnostics: {
+                  reason:
+                    manifestReadFailure instanceof Error
+                      ? manifestReadFailure.message
+                      : "Ghidra checkpoint manifest read failed",
+                },
+              });
+      // Cleanup ownership caches the startup attempt until close. A read
+      // that failed without owning a handle is only a secondary fact, so
+      // the next start can try again.
       const reported =
-        manifestReadFailure === undefined
+        readError === undefined
           ? failure
-          : failure.withCleanupFailure(
-              manifestReadFailure instanceof AnalysisError
-                ? manifestReadFailure
-                : this.#cleanupError(manifestReadFailure),
-            );
+          : readError.cleanupIncomplete
+            ? failure.withCleanupFailure(readError)
+            : failure.retainSecondaryFailure(readError);
       return this.#startupFailure(reported, deadline);
     }
     this.#launch = launched.value;

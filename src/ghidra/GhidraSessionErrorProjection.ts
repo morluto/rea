@@ -114,13 +114,17 @@ export const projectSessionError = (
     request,
     entryHint,
   );
-  return failure.cleanupFailure === undefined
-    ? primary
-    : analysisErrorWithCleanupDependencies(
-        primary,
-        failure.cleanupFailure,
-        operation,
-      );
+  const projected =
+    failure.cleanupFailure === undefined
+      ? primary
+      : analysisErrorWithCleanupDependencies(
+          primary,
+          failure.cleanupFailure,
+          operation,
+        );
+  for (const secondary of failure.secondaryFailures)
+    projected.retainSecondaryFailure(secondary);
+  return projected;
 };
 
 const projectPrimarySessionError = (

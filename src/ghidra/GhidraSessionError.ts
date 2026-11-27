@@ -77,6 +77,8 @@ export class GhidraSessionError extends Error {
   readonly configurationFailure: ConfigurationError | undefined;
   readonly partialObservation: AnalysisPartialObservation | undefined;
   readonly concurrentCancellation: { readonly reason: unknown } | undefined;
+  /** Read failures that do not own cleanup, kept beside the primary outcome. */
+  #secondaryFailures: AnalysisError[] = [];
 
   constructor(
     readonly kind: GhidraSessionFailureKind,
@@ -94,6 +96,17 @@ export class GhidraSessionError extends Error {
     this.configurationFailure = options.configurationFailure;
     this.partialObservation = options.partialObservation;
     this.concurrentCancellation = options.concurrentCancellation;
+  }
+
+  /** Failures recorded beside this outcome that do not own its cleanup. */
+  get secondaryFailures(): readonly AnalysisError[] {
+    return [...this.#secondaryFailures];
+  }
+
+  /** Keep a non-cleanup fact, such as a manifest read that opened no handle. */
+  retainSecondaryFailure(failure: AnalysisError): this {
+    this.#secondaryFailures.push(failure);
+    return this;
   }
 
   /** Refresh diagnostics without discarding owned failure or cleanup facts. */
@@ -151,7 +164,7 @@ export class GhidraSessionError extends Error {
     partialObservation = this.partialObservation,
     concurrentCancellation = this.concurrentCancellation,
   ): GhidraSessionError {
-    return new GhidraSessionError(this.kind, message, diagnostics, {
+    const copied = new GhidraSessionError(this.kind, message, diagnostics, {
       ...(Object.hasOwn(this, "cause") ? { cause: this.cause } : {}),
       ...(this.cancellation === undefined
         ? {}
@@ -167,6 +180,12 @@ export class GhidraSessionError extends Error {
         ? {}
         : { concurrentCancellation }),
     });
+    // A diagnostic refresh is not a new failure. Secondary facts recorded
+    // on this error, such as a manifest read that failed without owning
+    // cleanup, stay with the copy.
+    for (const secondary of this.secondaryFailures)
+      copied.retainSecondaryFailure(secondary);
+    return copied;
   }
 }
 

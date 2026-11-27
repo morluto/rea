@@ -751,6 +751,52 @@ it.skipIf(process.platform === "win32")(
 );
 
 it.skipIf(process.platform === "win32")(
+  "retries startup after a manifest read that owns no cleanup",
+  async () => {
+    const f = await fixture();
+    expect((await f.client.start()).ok).toBe(true);
+    expect((await f.client.close()).ok).toBe(true);
+    const unreadable = new ConfigurationError(
+      "checkpoint directory unreadable",
+      {
+        settings: [
+          {
+            setting: "REA_GHIDRA_CHECKPOINT_DIR",
+            constraint: "directory unreadable",
+          },
+        ],
+      },
+    );
+    const explain = vi
+      .spyOn(GhidraCheckpoint.prototype, "supersededRestore")
+      .mockRejectedValue(unreadable);
+    let launches = 0;
+    const launcher: GhidraLauncher = {
+      launch: async () => {
+        launches += 1;
+        return err(
+          new GhidraLaunchError(
+            "Ghidra checkpoint changed before its private import; reopen the target.",
+            { checkpointRestoreFailed: true },
+          ),
+        );
+      },
+    };
+    const stale = await peer(f, launcher);
+    const first = await stale.client.start();
+    const second = await stale.client.start();
+    explain.mockRestore();
+    if (first.ok || second.ok)
+      throw new Error("the manifest read was treated as a successful start");
+    expect(first.error.kind).toBe("start");
+    expect(first.error.cleanupFailure).toBeUndefined();
+    expect(first.error.secondaryFailures).toContain(unreadable);
+    expect(second.error.secondaryFailures).toContain(unreadable);
+    expect(launches).toBe(2);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
   "keeps a launch failure after a restored copy even when another session saved meanwhile",
   async () => {
     const f = await fixture();
