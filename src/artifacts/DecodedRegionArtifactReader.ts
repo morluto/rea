@@ -51,6 +51,13 @@ export interface RegionDecoding<Image> {
     fileBytes: number,
   ): Result<RegionDecoder<Image>, RegionDecodeFailure>;
   describe(image: Image): DecodedRegions;
+  /**
+   * Map a limit refusal onto a typed fixed allowance. When this is absent,
+   * or returns undefined, the reader reports a generic fixed-limit failure.
+   */
+  limitFailure?(
+    failure: RegionDecodeFailure,
+  ): ArtifactReaderFailure | undefined;
 }
 
 const addressText = (address: number): string =>
@@ -80,7 +87,13 @@ export class DecodedRegionArtifactReader<Image> implements ArtifactReader {
 
   constructor(
     path: string,
-    readonly format: "intel-hex" | "srec" | "uf2" | "dfuse" | "bflt",
+    readonly format:
+      | "intel-hex"
+      | "srec"
+      | "uf2"
+      | "dfuse"
+      | "bflt"
+      | "mega-drive-rom",
     decoding: RegionDecoding<Image>,
     admitted?: StableRegularFileDescriptor,
   ) {
@@ -291,15 +304,17 @@ export class DecodedRegionArtifactReader<Image> implements ArtifactReader {
   }
 
   #failure(failure: RegionDecodeFailure): ArtifactReaderFailure {
-    return failure.kind === "malformed"
-      ? malformedArtifact(
-          this.format,
-          `${this.#decoding.label} is malformed: ${failure.message}`,
-        )
-      : new ArtifactReaderFailure(
-          "limit",
-          `${this.#decoding.label} exceeds a fixed limit: ${failure.message}`,
-          failure.boundary === undefined ? {} : { boundary: failure.boundary },
-        );
+    if (failure.kind === "malformed")
+      return malformedArtifact(
+        this.format,
+        `${this.#decoding.label} is malformed: ${failure.message}`,
+      );
+    const mapped = this.#decoding.limitFailure?.(failure);
+    if (mapped !== undefined) return mapped;
+    return new ArtifactReaderFailure(
+      "limit",
+      `${this.#decoding.label} exceeds a fixed limit: ${failure.message}`,
+      failure.boundary === undefined ? {} : { boundary: failure.boundary },
+    );
   }
 }

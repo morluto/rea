@@ -73,6 +73,7 @@ export const PE_OVERLAY_LEADING_FORMATS = [
   "unrecognized",
   "ines",
   "nds",
+  "mega-drive-rom",
   "zip",
   "godot-pck",
   "unityfs",

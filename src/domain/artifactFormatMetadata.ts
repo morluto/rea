@@ -23,6 +23,8 @@ import {
   tarEntryMetadataSchema,
   switchExecutableMetadataSchema,
   switchExecutableEntryMetadataSchema,
+  megaDriveRomMetadataSchema,
+  megaDriveRomEntryMetadataSchema,
 } from "./formatMetadata/packageAndGameMetadata.js";
 import {
   bfltMetadataSchema,
@@ -128,6 +130,8 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   gpuAssetRegionMetadataSchema,
   ndsMetadataSchema,
   ndsEntryMetadataSchema,
+  megaDriveRomMetadataSchema,
+  megaDriveRomEntryMetadataSchema,
 ]);
 export type ArtifactFormatMetadata = z.infer<
   typeof artifactFormatMetadataSchema
@@ -458,6 +462,14 @@ const declarationsByKind: {
                     flags: overlay.flags,
                   },
           },
+  },
+  "mega-drive-rom": {
+    notCompared:
+      "Its header and vector facts come from the ROM's own bytes, which content comparison covers.",
+  },
+  "mega-drive-rom-entry": {
+    notCompared:
+      "Its role is in its path and its image offset is layout; content comparison covers its bytes.",
   },
   fit: {
     notCompared:

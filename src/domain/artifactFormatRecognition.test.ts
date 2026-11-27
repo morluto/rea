@@ -28,6 +28,10 @@ import { ESP8266_REFUSAL } from "./firmware/espImage.js";
 import { twoVolumeUbiImage } from "./firmware/ubiImage.fixture.js";
 import { buildIso9660Image } from "./iso9660/iso9660.fixture.js";
 import { ISO9660_DESCRIPTOR_OFFSET } from "./iso9660/iso9660Structures.js";
+import {
+  interleaveMegaDriveSmd,
+  megaDriveRom,
+} from "./megaDriveRom.fixture.js";
 
 /** A classic iNES header declaring one 16 KiB PRG bank, with no bank bytes. */
 const headerOnlyInes = (): Buffer => {
@@ -387,6 +391,36 @@ it("recognizes a Debian package ar archive whose first member is debian-binary",
     state: "recognized",
     format: "deb",
   });
+});
+
+it("recognizes a Mega Drive image and an SMD dump, and yields to ELF", () => {
+  const plain = megaDriveRom();
+  expect(recognize(plain)).toMatchObject({
+    state: "recognized",
+    format: "mega-drive-rom",
+  });
+  const smd = interleaveMegaDriveSmd(megaDriveRom({ imageBytes: 16 * 1024 }));
+  expect(recognize(smd)).toMatchObject({
+    state: "recognized",
+    format: "mega-drive-rom",
+  });
+  expect(
+    recognizeArtifactFormat({
+      prefix: smd.subarray(0, 4096),
+      fileSize: smd.length,
+      espFlashLayout: false,
+    }),
+  ).toMatchObject({ state: "recognized", format: "mega-drive-rom" });
+  const elf = megaDriveRom();
+  elf[0] = 0x7f;
+  elf[1] = 0x45;
+  elf[2] = 0x4c;
+  elf[3] = 0x46;
+  expect(recognize(elf)?.format).not.toBe("mega-drive-rom");
+  const mz = megaDriveRom();
+  mz[0] = 0x4d;
+  mz[1] = 0x5a;
+  expect(recognize(mz)?.format).not.toBe("mega-drive-rom");
 });
 
 it("does not recognize a plain ar archive that is not a Debian package", () => {

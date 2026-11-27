@@ -8,6 +8,7 @@ import { detectHexRecordEncoding } from "./firmware/hexRecords.js";
 import { hasUf2Block } from "./firmware/uf2.js";
 import { hasGodotPckHeader } from "./godotPckFormat.js";
 import { nesContainerFormat, parseInesLayout } from "./inesContainer.js";
+import { recognizeMegaDriveRom } from "./megaDriveRom.js";
 import { hasNdsHeader } from "./ndsRom.js";
 import {
   hasIso9660Signature,
@@ -49,6 +50,7 @@ export type RecognizedArtifactFormat = Extract<
   ArtifactFormatId,
   | "ines"
   | "nds"
+  | "mega-drive-rom"
   | "zip"
   | "godot-pck"
   | "unityfs"
@@ -295,6 +297,15 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     },
     // Binary plists, including keyed archives, often use other extensions.
     when("plist", hasBinaryPlistSignature),
+    // SEGA at 0x100, or an SMD copier header whose de-interleaved bytes carry
+    // it. Yields to ELF, Mach-O, DOS MZ and FAT so a native header is not
+    // claimed because those bytes also appear at 0x100.
+    ({ prefix, fileSize }) =>
+      claimsExecutableHeader(prefix, fileSize)
+        ? undefined
+        : recognizeMegaDriveRom(prefix, fileSize) === undefined
+          ? undefined
+          : { state: "recognized", format: "mega-drive-rom" },
     // No magic: the stored logo CRC and a matching checksum claim it, after
     // every format with a leading signature.
     when("nds", hasNdsHeader),

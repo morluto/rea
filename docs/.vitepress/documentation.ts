@@ -569,6 +569,11 @@ export const documentationSections = [
         route: "/nds-roms",
       },
       {
+        text: "Sega Mega Drive ROMs",
+        source: "guides/firmware/mega-drive-roms.md",
+        route: "/mega-drive-roms",
+      },
+      {
         text: "WeChat mini-program wxapkg archives",
         source: "wxapkg.md",
         route: "/wxapkg",
