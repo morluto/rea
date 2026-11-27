@@ -24,6 +24,7 @@ import {
   resolveGhidraCheckpoint,
 } from "../../../../src/ghidra/GhidraCheckpoint.js";
 import { err } from "../../../../src/domain/result.js";
+import { ProviderCleanupError } from "../../../../src/domain/providerCleanupError.js";
 import {
   GhidraLaunchError,
   type GhidraLauncher,
@@ -661,9 +662,15 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
-it.skipIf(process.platform === "win32")(
-  "reports a restore whose packed Program was superseded during launch as a reopen",
-  async () => {
+it.skipIf(process.platform === "win32").each([false, true])(
+  "reports a restore whose packed Program was superseded during launch as a reopen (restore cleanup failed=%s)",
+  async (cleanupFailed) => {
+    // The private copy's descriptor close also failed; a later retry released it.
+    const restoreCleanup = new ProviderCleanupError(
+      "ghidra",
+      ["restored-program.gzf"],
+      { reason: "controlled descriptor close failure" },
+    ).bindCleanupReleaseClaim({ cleanupReleased: true });
     const f = await fixture();
     expect((await f.client.start()).ok).toBe(true);
     expect((await f.client.close()).ok).toBe(true);
@@ -683,7 +690,10 @@ it.skipIf(process.platform === "win32")(
         return err(
           new GhidraLaunchError(
             "Ghidra checkpoint changed before its private import; reopen the target.",
-            { checkpointRestoreFailed: true },
+            {
+              checkpointRestoreFailed: true,
+              ...(cleanupFailed ? { cleanupFailure: restoreCleanup } : {}),
+            },
           ),
         );
       },
@@ -694,6 +704,10 @@ it.skipIf(process.platform === "win32")(
     expect(started.error.kind).toBe("checkpoint");
     expect(started.error.cause).toBeInstanceOf(GhidraCheckpointSupersededError);
     expect(started.error.cause).toMatchObject({ stage: "restore" });
+    // The reopen explanation keeps the launcher's restore cleanup failure.
+    if (cleanupFailed)
+      expect(started.error.cleanupFailure).toBe(restoreCleanup);
+    else expect(started.error.cleanupFailure).toBeUndefined();
     expect((await stale.client.close()).ok).toBe(true);
     const reopened = await peer(f);
     expect((await reopened.client.start()).ok).toBe(true);
@@ -811,9 +825,14 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
-it.skipIf(process.platform === "win32")(
-  "ends a graceful close's wait for another session's lease when a cancellation forces a stop",
-  async () => {
+it
+  .skipIf(process.platform === "win32")
+  .each([
+    "while the save polls the lease",
+    "as soon as the close starts",
+  ] as const)(
+  "ends a graceful close's wait for another session's lease when a cancellation forces a stop %s",
+  async (timing) => {
     const f = await fixture("checkpoint_hang_tool");
     // The wait would otherwise outlast this test by minutes.
     const waiting = await peer(f, f.launcher, {
@@ -838,10 +857,14 @@ it.skipIf(process.platform === "win32")(
         owner: { runId: "publisher", processId: 4242 },
       });
     const closing = waiting.client.close();
-    // The export finished and the save is polling the publisher's lease.
-    await waitFor(() =>
-      expect(vi.mocked(acquireOwnedLease).mock.calls.length).toBeGreaterThan(1),
-    );
+    // Either the export finished and the save is polling the publisher's
+    // lease, or the forced stop arrives before the save has started at all.
+    if (timing === "while the save polls the lease")
+      await waitFor(() =>
+        expect(vi.mocked(acquireOwnedLease).mock.calls.length).toBeGreaterThan(
+          1,
+        ),
+      );
     const started = Date.now();
     controller.abort(new Error("caller stopped waiting"));
     const [cancelled, closed] = await Promise.all([active, closing]);

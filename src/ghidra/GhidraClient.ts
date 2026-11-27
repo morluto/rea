@@ -238,10 +238,11 @@ export class GhidraClient {
   #closePromise: Promise<void> | undefined;
   #closeForced = false;
   /**
-   * Aborts a graceful close's final checkpoint save, including its wait for
-   * another session's publication lease, when a forced stop escalates it.
+   * Owned by the queued graceful close from the moment it is requested, so a
+   * forced stop that escalates it aborts its final checkpoint save's wait for
+   * another session's publication lease whenever that save starts.
    */
-  #gracefulCloseSave: AbortController | undefined;
+  #closeEscalation: AbortController | undefined;
   readonly #failure = bindGhidraSessionFailure(
     (scope) => this.#diagnostics(scope),
     (value, incomplete) => this.#redactAuthentication(value, incomplete),
@@ -1110,14 +1111,18 @@ export class GhidraClient {
         "process",
         "Ghidra close escalated to a forced stop",
       );
-      this.#gracefulCloseSave?.abort(escalation);
+      this.#closeEscalation?.abort(escalation);
       this.#failAll(escalation);
     }
     this.#closeForced = forceStop;
+    const escalation = forceStop ? undefined : new AbortController();
+    if (escalation !== undefined) this.#closeEscalation = escalation;
     const attempt: Promise<void> = (previous ?? Promise.resolve())
       .catch(() => undefined)
-      .then(() => this.#close(starting, forceStop))
+      .then(() => this.#close(starting, forceStop, escalation?.signal))
       .finally(() => {
+        if (this.#closeEscalation === escalation)
+          this.#closeEscalation = undefined;
         if (this.#closePromise === attempt) {
           this.#closePromise = undefined;
           this.#closeForced = false;
@@ -1391,6 +1396,10 @@ export class GhidraClient {
           : await this.#checkpoint
               ?.supersededRestore(deadline.signal)
               .catch(() => undefined);
+      // The explanation replaces the launch outcome, not its cleanup: the
+      // launcher's retained restore cleanup failure travels on the refusal.
+      if (superseded !== undefined && isGhidraCleanupCarrier(launched.error))
+        superseded.cleanupFailure ??= launched.error.cleanupFailure;
       const failure =
         producerFailure instanceof AnalysisCancelledError
           ? this.#interruptionFailure(deadline, launched.error, {
@@ -1653,10 +1662,11 @@ export class GhidraClient {
   async #close(
     starting: GhidraStartupAttempt | undefined,
     forceStop: boolean,
+    escalation?: AbortSignal,
   ): Promise<void> {
     try {
       await starting?.promise.catch(() => undefined);
-      await this.#cleanup(forceStop);
+      await this.#cleanup(forceStop, escalation);
     } finally {
       if (
         this.#startupAttempt === starting &&
@@ -1666,7 +1676,8 @@ export class GhidraClient {
     }
   }
 
-  async #cleanup(forceStop = false): Promise<void> {
+  /** `escalation` aborts a graceful close's lease wait when a forced stop follows. */
+  async #cleanup(forceStop = false, escalation?: AbortSignal): Promise<void> {
     this.#closing = true;
     let forcedStopFailure: { readonly cause: unknown } | undefined;
     try {
@@ -1681,15 +1692,11 @@ export class GhidraClient {
         this.#socket !== undefined &&
         !this.#socket.destroyed
       ) {
-        const save = new AbortController();
-        this.#gracefulCloseSave = save;
         try {
-          await this.#saveCheckpoint(false, undefined, save.signal);
+          await this.#saveCheckpoint(false, undefined, escalation);
         } catch (cause: unknown) {
           this.#requestQueue.reopen();
           throw cause;
-        } finally {
-          this.#gracefulCloseSave = undefined;
         }
       }
       const socket = this.#socket;
