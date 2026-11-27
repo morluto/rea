@@ -2972,7 +2972,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         private final Map<String, Integer> tagDepths = new HashMap<>();
         private final Map<String, Integer> typedefDepths = new HashMap<>();
         private final Map<DataType, Integer> databaseDepths = new IdentityHashMap<>();
-        private final Set<String> measuring = new HashSet<>();
+        /** Tags whose bodies are being measured; ordinary names resolve apart. */
+        private final Set<String> measuringTags = new HashSet<>();
         /** The tag the last specifiers defined with a body, if any. */
         private String specifierTag;
         /** Whether the last specifiers defined an anonymous composite body. */
@@ -3040,7 +3041,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
         /** The depth of a struct, union or enum tag: this text's definition, else the database composite. */
         private int resolveTag(String name) {
-            if (measuring.contains(name)) return 0;
+            if (measuringTags.contains(name)) return 0;
             Integer depth = tagDepths.get(name);
             if (depth != null) return depth;
             List<DataType> found = new ArrayList<>();
@@ -3055,7 +3056,6 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
         /** The depth of an ordinary type name: this text's typedef, else the database typedef it names. */
         private int resolveTypedef(String name) {
-            if (measuring.contains(name)) return 0;
             Integer depth = typedefDepths.get(name);
             if (depth != null) return depth;
             List<DataType> found = new ArrayList<>();
@@ -3119,13 +3119,13 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
 
         private int measureCompositeBody(String name) {
-            if (name != null) measuring.add(name);
+            if (name != null) measuringTags.add(name);
             int deepest = 0;
             while (!at("}")) {
                 deepest = Math.max(deepest, measureMember());
                 observe(1 + deepest);
             }
-            if (name != null) measuring.remove(name);
+            if (name != null) measuringTags.remove(name);
             return 1 + deepest;
         }
 
@@ -3358,10 +3358,14 @@ public final class ReaGhidraBridge extends HeadlessScript {
             }
             observe(base + stars);
             String name = identifier();
+            // Array suffixes bind to the grouped name before its closing
+            // parenthesis, so count them before expecting the parameter list.
+            int arrays = measureArrays(base + stars);
             for (int group = 0; group < groups; group++) expect(")");
+            arrays += measureArrays(base + stars + arrays);
             expect("(");
             int parameters = measureParameters();
-            refuse(name, 1 + Math.max(stars + base, parameters));
+            refuse(name, 1 + Math.max(stars + arrays + base, parameters));
         }
 
         private void skipBody() {

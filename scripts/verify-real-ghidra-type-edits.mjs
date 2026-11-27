@@ -1517,6 +1517,17 @@ struct rea_after { char c; int i; };`;
           ).code,
           "resource_constraint",
         );
+        // Array suffixes on a grouped signature name count toward its chain.
+        assert.equal(
+          requireMcpToolError(
+            await flood.raw("annotate_native_function", {
+              procedure,
+              signature: `int (__stdcall ${"*".repeat(255)}f${"[]".repeat(1900)})(void)`,
+              signature_max_utf16: 4096,
+            }),
+          ).code,
+          "resource_constraint",
+        );
         // A missing closing parenthesis does not discard the over-deep
         // parameter measured before it.
         assert.equal(
@@ -1553,6 +1564,17 @@ struct rea_after { char c; int i; };`;
                     `struct rea_chain${String(index)} { ${index === 0 ? "int" : `struct rea_chain${String(index - 1)}`} ${"*".repeat(250)} x; }; typedef int rea_chain${String(index)};`,
                 )
                 .join(""),
+              declarations_max_utf16: max,
+            }),
+          ).code,
+          "resource_constraint",
+        );
+        // Measuring a tag body does not make a same-named typedef recursive:
+        // its recorded depth still chains through the member.
+        assert.equal(
+          requireMcpToolError(
+            await flood.raw("define_native_data_types", {
+              declarations: `typedef int ${"*".repeat(250)} rea_in_progress; struct rea_in_progress { rea_in_progress ${"*".repeat(250)} x; };`,
               declarations_max_utf16: max,
             }),
           ).code,
