@@ -115,7 +115,9 @@ export const artifactInventoryViewRequestSchema = z.discriminatedUnion(
         .describe(
           "Per-record headers of the root artifact past its inline window (systemd journal object headers).",
         ),
-      path: absoluteLocalPathStringSchema.describe(
+      // Its own name: other views' `path` is a semantic selector, such as a
+      // devicetree node, that a caller-path rewrite must never touch.
+      artifact_path: absoluteLocalPathStringSchema.describe(
         "Absolute local path of the inventoried root file to re-read for this page; it must still match the inventory's root digest. Evidence never selects the file.",
       ),
     }),

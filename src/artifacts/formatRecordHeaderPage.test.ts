@@ -115,6 +115,34 @@ it("keeps a completed page when its reader fails to close", async () => {
   }
 });
 
+it("retries a reader an earlier page failed to close before reading again", async () => {
+  const { path, sha256 } = await journal();
+  const close = vi
+    .spyOn(SystemdJournalArtifactReader.prototype, "close")
+    .mockRejectedValueOnce(new Error("descriptor close failed"));
+  const resources = new ArtifactResourceScope();
+  const request = {
+    path,
+    format: "systemd-journal",
+    sha256,
+    start: 32,
+    limit: 8,
+    resources,
+  };
+  try {
+    await expect(readFormatRecordHeaderPage(request)).rejects.toMatchObject({
+      cleanup: { resources: [path] },
+    });
+    expect(resources.hasPending).toBe(true);
+    // The next page first retries the retained reader through the scope.
+    await expect(readFormatRecordHeaderPage(request)).resolves.toHaveLength(8);
+    expect(resources.hasPending).toBe(false);
+    expect(close).toHaveBeenCalledTimes(3);
+  } finally {
+    close.mockRestore();
+  }
+});
+
 it("refuses a format that declares no record window", async () => {
   const { path, sha256 } = await journal();
   await expect(

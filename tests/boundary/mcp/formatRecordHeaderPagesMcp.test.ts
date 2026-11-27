@@ -39,7 +39,7 @@ const readPage = async (
       view: {
         kind: "inventory",
         collection: "format_record_headers",
-        path,
+        artifact_path: path,
         offset,
         limit,
       },

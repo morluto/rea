@@ -140,7 +140,7 @@ const inspectFormatRecordPage = async (
   try {
     const items = await readFormatRecordHeaderPage(
       {
-        path: view.path,
+        path: view.artifact_path,
         format: target.value.format,
         sha256: target.value.sha256,
         start: view.offset,
@@ -158,7 +158,7 @@ const inspectFormatRecordPage = async (
     return err(
       translateArtifactFailure(
         INSPECT_ANALYSIS_VIEW_OPERATION,
-        view.path,
+        view.artifact_path,
         cause,
       ),
     );

@@ -71,40 +71,45 @@ export const readFormatRecordHeaderPage = async (
       `${request.format} declares no per-record header window to page`,
     );
   const resources = request.resources ?? new ArtifactResourceScope();
-  const owner: ArtifactResourceOwner = {
-    kind: "reader",
-    resource: request.path,
-    reader,
-  };
-  let outcome:
-    | {
-        readonly kind: "completed";
-        readonly value: readonly FormatRecordHeader[];
-      }
-    | { readonly kind: "failed"; readonly cause: unknown };
-  try {
-    await reader.prepareContainer?.(request.sha256, request.signal);
-    for await (const _entry of reader.entries(request.signal)) {
-      // Windowed formats declare no members; traversal builds the window.
-    }
-    const metadata = reader.formatMetadata?.();
-    outcome = {
-      kind: "completed",
-      value:
-        metadata === undefined
-          ? []
-          : window(metadata).slice(0, Math.max(0, request.limit)),
+  // Entering the scope retries any reader an earlier page failed to close, and
+  // refuses this page while that cleanup stays unresolved, so repeated close
+  // failures cannot accumulate open descriptors.
+  return resources.run(async () => {
+    const owner: ArtifactResourceOwner = {
+      kind: "reader",
+      resource: request.path,
+      reader,
     };
-  } catch (cause: unknown) {
-    outcome = { kind: "failed", cause };
-  }
-  const closed = await resources.release(owner);
-  if (closed.kind === "failed")
-    throw resources.cleanupFailure(
-      outcome.kind === "completed" ? { kind: "completed" } : outcome,
-      [closed],
-      outcome.kind === "completed" ? observe?.(outcome.value) : undefined,
-    );
-  if (outcome.kind === "failed") throw outcome.cause;
-  return outcome.value;
+    let outcome:
+      | {
+          readonly kind: "completed";
+          readonly value: readonly FormatRecordHeader[];
+        }
+      | { readonly kind: "failed"; readonly cause: unknown };
+    try {
+      await reader.prepareContainer?.(request.sha256, request.signal);
+      for await (const _entry of reader.entries(request.signal)) {
+        // Windowed formats declare no members; traversal builds the window.
+      }
+      const metadata = reader.formatMetadata?.();
+      outcome = {
+        kind: "completed",
+        value:
+          metadata === undefined
+            ? []
+            : window(metadata).slice(0, Math.max(0, request.limit)),
+      };
+    } catch (cause: unknown) {
+      outcome = { kind: "failed", cause };
+    }
+    const closed = await resources.release(owner);
+    if (closed.kind === "failed")
+      throw resources.cleanupFailure(
+        outcome.kind === "completed" ? { kind: "completed" } : outcome,
+        [closed],
+        outcome.kind === "completed" ? observe?.(outcome.value) : undefined,
+      );
+    if (outcome.kind === "failed") throw outcome.cause;
+    return outcome.value;
+  });
 };
