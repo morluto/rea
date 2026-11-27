@@ -44,6 +44,7 @@ import type { StableRegularFileDescriptor } from "../../filesystem/RegularFile.j
 import type { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 
 import { decodeNodeSeaBlob } from "../nodeSea/NodeSeaBlob.js";
+import { locatesQualcommMbnHashSegment } from "../QualcommMbnLocation.js";
 import { readNodeSeaBlob } from "../nodeSea/NodeSeaLocation.js";
 import { classifyArtifactContent } from "./ArtifactGraphConstruction.js";
 import {
@@ -128,7 +129,7 @@ export const classifyAndHashRootForInventory = async (
       "integrity",
       `Artifact root changed after target admission: expected an admitted file at ${path}, observed a directory`,
       {
-        integrityCheck: "container-identity",
+        integrityCheck: "admitted-identity",
         userMessage:
           "The opened file was replaced by a directory. Select the intended artifact and reopen it before retrying.",
       },
@@ -490,7 +491,8 @@ const classifyRootFormat = async (
       } catch (cause: unknown) {
         if (
           cause instanceof ArtifactReaderFailure &&
-          (cause.reason === "format" ||
+          (cause.reason === "malformed" ||
+            cause.reason === "truncated" ||
             (cause.reason === "limit" &&
               (cause.readerLimit?.parameter ===
                 "artifact_limits.node_sea.blob_bytes" ||
@@ -522,6 +524,12 @@ const classifyRootFormat = async (
         cookie: embedded.cookie,
         carrierPathDialect: format === "pe" ? "windows" : "posix",
       };
+    if (
+      format === "elf" &&
+      embedded === undefined &&
+      (await locatesQualcommMbnHashSegment(read, archiveBytes))
+    )
+      return "qualcomm-mbn";
   }
   if (
     format === "asar" &&
@@ -647,7 +655,7 @@ export const assertAdmittedRootDigest = (
       "integrity",
       `Artifact root changed after target admission at ${path}: expected ${expected}, observed ${observed}`,
       {
-        integrityCheck: "container-identity",
+        integrityCheck: "admitted-identity",
         userMessage:
           "The artifact changed after it was opened. Reopen the selected artifact, then retry.",
       },

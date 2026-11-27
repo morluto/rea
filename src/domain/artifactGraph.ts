@@ -5,10 +5,11 @@ import {
   artifactIntegrityClaimSchema,
   artifactSha256PairSchema,
   artifactMd5PairSchema,
+  signedAfterPackingExplanationSchema,
 } from "./artifactIntegrity.js";
 import { artifactFormatMetadataSchema } from "./artifactFormatMetadata.js";
 import { z } from "zod";
-import { recordedArtifactReaderLimitsSchema } from "./artifactReaderLimits.js";
+import { artifactReaderLimitsSchema } from "./artifactReaderLimits.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 import { inesInventorySchema } from "./inesContainer.js";
 import { ZIP_APPLICATION_PACKAGE_FORMATS } from "./zipPackageFormat.js";
@@ -71,6 +72,7 @@ export const ARTIFACT_FORMAT_IDS = [
   "pkg",
   "asar",
   "ines",
+  "nds",
   "godot-pck",
   "unityfs",
   "wxapkg",
@@ -80,9 +82,14 @@ export const ARTIFACT_FORMAT_IDS = [
   "ktx",
   "ktx2",
   "uimage",
+  "nso",
+  "nro",
   "android-boot-image",
   "android-dtbo",
   "android-ota-payload",
+  "android-vbmeta",
+  "android-sparse-image",
+  "ubi-image",
   "iso9660",
   "uefi",
   "javascript-bundle",
@@ -109,13 +116,16 @@ export const ARTIFACT_FORMAT_IDS = [
   "esp-image",
   "uf2",
   "dfuse",
+  "bflt",
   "esp-flash-image",
   "fit",
+  "qualcomm-mbn",
   "ntfs-mft",
   "sqlite",
   "windows-shortcut",
   "python-pyc",
   "devicetree",
+  "deb",
   "unknown",
 ] as const;
 
@@ -126,6 +136,7 @@ const artifactFormatSchema = z.enum(ARTIFACT_FORMAT_IDS);
 /** Formats established from bytes or a virtual directory tree, independent of path roles. */
 const artifactContentFormatSchema = artifactFormatSchema.extract([
   "ines",
+  "nds",
   "zip",
   "godot-pck",
   "unityfs",
@@ -136,9 +147,14 @@ const artifactContentFormatSchema = artifactFormatSchema.extract([
   "ktx",
   "ktx2",
   "uimage",
+  "nso",
+  "nro",
   "android-boot-image",
   "android-dtbo",
   "android-ota-payload",
+  "android-vbmeta",
+  "android-sparse-image",
+  "ubi-image",
   "iso9660",
   "uefi",
   "intel-hex",
@@ -146,7 +162,9 @@ const artifactContentFormatSchema = artifactFormatSchema.extract([
   "esp-image",
   "uf2",
   "dfuse",
+  "bflt",
   "fit",
+  "qualcomm-mbn",
   "ntfs-mft",
   "mach-o-universal",
   "mach-o",
@@ -158,6 +176,7 @@ const artifactContentFormatSchema = artifactFormatSchema.extract([
   "windows-shortcut",
   "python-pyc",
   "devicetree",
+  "deb",
   "directory",
   "file",
   "unknown",
@@ -244,7 +263,11 @@ const integrityContradictionBaseSchema = z.object({
 });
 
 export const integrityContradictionSchema = z.union([
-  integrityContradictionBaseSchema.extend(artifactSha256PairSchema.shape),
+  integrityContradictionBaseSchema.extend({
+    ...artifactSha256PairSchema.shape,
+    /** Present when PE Authenticode stripping restores the declared SHA-256. */
+    signing_explanation: signedAfterPackingExplanationSchema.exactOptional(),
+  }),
   integrityContradictionBaseSchema.extend(artifactMd5PairSchema.shape),
   integrityContradictionBaseSchema.extend(artifactDfuCrc32PairSchema.shape),
   integrityContradictionBaseSchema.extend(artifactCrc32PairSchema.shape),
@@ -294,7 +317,7 @@ export type ArtifactInventoryCoverage = z.infer<
 
 /** Current inventory observation containing the stable artifact graph. */
 export const artifactInventoryResultSchema = z.strictObject({
-  effective_limits: recordedArtifactReaderLimitsSchema
+  effective_limits: artifactReaderLimitsSchema
     .exactOptional()
     .describe(
       "Accepted resource policy when selected; each format group applies only if that format is encountered. Not measured process memory or confirmation every reader ran.",
@@ -322,6 +345,13 @@ const extractedArtifactSchema = z.object({
   sha256: sha256Schema,
   bytes_written: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
   created: z.boolean(),
+  limitations: z
+    .array(z.string())
+    .min(1)
+    .exactOptional()
+    .describe(
+      "The inventory occurrence's own limitations, such as a case-folding collision or a normalized member name; absent when it has none",
+    ),
 });
 
 /** Path-independent commitment to one selected extraction operation. */
@@ -335,7 +365,7 @@ const artifactExtractionManifestSchema = z.object({
 
 /** Safe extraction observation with containment and cleanup verification. */
 export const artifactExtractionResultSchema = z.object({
-  effective_limits: recordedArtifactReaderLimitsSchema.exactOptional(),
+  effective_limits: artifactReaderLimitsSchema.exactOptional(),
   manifest: artifactGraphManifestSchema,
   extraction_manifest: artifactExtractionManifestSchema,
   output_root: z.string().min(1),

@@ -25,6 +25,7 @@ import {
   primaryAnalysisError,
   type AnalysisErrorOptions,
 } from "../../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import type {
   PartialProcessCaptureObservation,
   ProcessCaptureCleanupReport,
@@ -121,6 +122,51 @@ export class ProcessCaptureError extends AnalysisError {
     return finalized;
   }
 }
+
+/**
+ * One `retryCleanup` promise rejects with one error, so overlapping closes
+ * observe that same instance. A close's completed facts have to live on a
+ * follower: writing them onto the shared error makes every close report them.
+ * The follower stays incomplete while this error's cleanup does.
+ */
+export const processCaptureFailureForClose = (
+  error: AnalysisError,
+): AnalysisError => {
+  if (!(error instanceof ProcessCaptureError)) return error;
+  const reported = new ProcessCaptureError(error.message, {
+    cleanupPrimary: error,
+    ...(error.cause === undefined ? {} : { cause: error.cause }),
+    ...(error.userMessage === undefined
+      ? {}
+      : { userMessage: error.userMessage }),
+    ...(error.userCategory === undefined
+      ? {}
+      : { userCategory: error.userCategory }),
+    reason: error.reason,
+    ...(error.executionFailure === undefined
+      ? {}
+      : { executionFailure: error.executionFailure }),
+    ...(error.cleanup === undefined ? {} : { cleanup: error.cleanup }),
+    ...(error.cleanupReport === undefined
+      ? {}
+      : { cleanupReport: error.cleanupReport }),
+    ...(error.partialObservation === undefined
+      ? {}
+      : { partialObservation: error.partialObservation }),
+    ...(error.capturedOutput === undefined
+      ? {}
+      : { capturedOutput: error.capturedOutput }),
+    ...(error.retryable ? { retryable: true } : {}),
+  });
+  // The follower completes when this cleanup does. It is not either source,
+  // so composition records that dependency on the follower.
+  return analysisErrorWithCleanupDependencies(
+    error,
+    error,
+    "close_binary",
+    () => reported,
+  );
+};
 
 /** Return one non-recursive, domain-neutral summary of an execution failure. */
 export const describeProcessCaptureExecutionFailure = (

@@ -1,6 +1,8 @@
+import { QueuedProviderClose } from "../../providers/QueuedProviderClose.js";
 import {
   selectedSourceMapLimits,
   localSourceMapLimitsSchema,
+  sourceMapBudgetLimit,
   sourceMapLimitRecovery,
 } from "../../domain/sourceMapLimits.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
@@ -35,8 +37,7 @@ const OPERATION = "trace_web_source_location";
 /** Integrate the pinned upstream codec through an independently bounded owned process. */
 export class SourceMapDecoder implements WebSourceMapPort {
   #tail: Promise<void> = Promise.resolve();
-  #closing = false;
-  #closePromise: Promise<void> | undefined;
+  readonly #closeState = new QueuedProviderClose();
   #pendingCleanup: SourceMapCleanupOwner | undefined;
 
   constructor(readonly dependencies: SourceMapDecoderDependencies = {}) {}
@@ -45,7 +46,7 @@ export class SourceMapDecoder implements WebSourceMapPort {
     input: Parameters<WebSourceMapPort["trace"]>[0],
     options?: ExecutionOptions,
   ): Promise<Result<WebSourceMapReport, AnalysisError>> {
-    if (this.#closing)
+    if (this.#closeState.requested)
       return err(
         new AnalysisCapabilityUnavailableError(
           "source-map-decoder",
@@ -66,7 +67,7 @@ export class SourceMapDecoder implements WebSourceMapPort {
       return err(cancelledBy(OPERATION, ready));
     }
     try {
-      return this.#closing
+      return this.#closeState.requested
         ? err(
             new AnalysisCapabilityUnavailableError(
               "source-map-decoder",
@@ -110,6 +111,7 @@ export class SourceMapDecoder implements WebSourceMapPort {
     const capacityFailure = (
       field: "map_bytes" | "output_bytes",
       value: number,
+      requiredValue?: number,
     ) => {
       const recovery = sourceMapLimitRecovery(field, value);
       return new ArtifactOperationError(
@@ -117,11 +119,15 @@ export class SourceMapDecoder implements WebSourceMapPort {
         "limit",
         undefined,
         `${input.path}: Source-map admission exhausted. ${recovery}`,
-        { remediationAction: recovery },
+        {
+          limit: sourceMapBudgetLimit(field, value, requiredValue),
+          remediationAction: recovery,
+        },
       );
     };
-    if (Buffer.byteLength(input.text) > limits.mapBytes)
-      return err(capacityFailure("map_bytes", limits.mapBytes));
+    const inputBytes = Buffer.byteLength(input.text);
+    if (inputBytes > limits.mapBytes)
+      return err(capacityFailure("map_bytes", limits.mapBytes, inputBytes));
     const encoded: string[] = [];
     let encodedBytes = 0;
     for (const part of jsonParts(request.data)) {
@@ -150,17 +156,7 @@ export class SourceMapDecoder implements WebSourceMapPort {
   }
 
   async close(): Promise<void> {
-    this.#closing = true;
-    this.#closePromise ??= this.#tail
-      .then(async () => {
-        const failure = await this.#retryCleanup();
-        if (failure !== undefined) throw failure;
-      })
-      .catch((cause: unknown) => {
-        this.#closePromise = undefined;
-        throw cause;
-      });
-    return this.#closePromise;
+    return this.#closeState.closeAfter(this.#tail, () => this.#retryCleanup());
   }
 
   async #retryCleanup(): Promise<AnalysisError | undefined> {

@@ -7,6 +7,8 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { phaseGate } from "../../support/lifecycleHarness.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { evidenceSchema } from "../../../src/domain/evidence.js";
 import { stopOwnedDebuggerProcess } from "../../../src/process/ownedDebuggerSession.js";
 import { rizinTestInferiorTty } from "./RizinTestInferiorTty.js";
 import {
@@ -161,6 +163,131 @@ it.skipIf(process.platform === "win32")(
     expect(result.ok).toBe(false);
     if (!result.ok)
       expect(result.error.message).toContain("Rizin stdin stream failed");
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "records the final cleanup outcome in saved partial evidence after a protocol failure",
+  async () => {
+    const injected = createInjectedProcess({
+      onWrite: (text, control) => {
+        if (!text.startsWith("dr\n")) return;
+        control.output("partial-output\0");
+        // The stdin failure lands after the partial frame, so the command
+        // fails with partial output and a protocol error already set.
+        setImmediate(() => control.stdinError());
+      },
+    });
+    const { manager, started } = await startInjected(injected.spawnProcess, {
+      // The real stop must run: the fake no-inferior stop never detaches,
+      // so it can never declare detach unavailable.
+      stopProcess: stopOwnedDebuggerProcess,
+    });
+    if (!started.ok) throw started.error;
+
+    const result = await manager.execute(started.value.session_id, "dr");
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.partialObservation).toMatchObject({
+        normalized_result: {
+          output: expect.stringContaining("partial-output"),
+        },
+      });
+      const partialEvidence = evidenceSchema.parse(
+        result.error.partialObservation,
+      );
+      // Cleanup cannot resynchronize (stdin failed), so the owned process
+      // is terminated without a verified detach. The saved Evidence must
+      // say so; before the fix it was built before cleanup and omitted this.
+      expect(partialEvidence.limitations.join(" ")).toMatch(
+        /terminated without a verified inferior detach.*resynchroniz/iu,
+      );
+    }
+    expect(manager.status(started.value.session_id)?.state).toBe("closed");
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "surfaces the unknown target state when startup fails with an unavailable detach",
+  async () => {
+    const injected = createInjectedProcess({
+      startup: (control) => {
+        control.output(Buffer.from([0]));
+        // The stdin failure lands after the startup frame, so startup
+        // fails with a protocol error already set.
+        setImmediate(() => control.stdinError());
+      },
+    });
+    const { manager, started } = await startInjected(injected.spawnProcess, {
+      // The real stop must run: the fake no-inferior stop never detaches,
+      // so it can never declare detach unavailable.
+      stopProcess: stopOwnedDebuggerProcess,
+    });
+
+    expect(started.ok).toBe(false);
+    if (!started.ok)
+      // The session is removed after the stop, so the caller only learns
+      // the target may still be running from this message.
+      expect(started.error.message).toMatch(
+        /terminated without a verified inferior detach.*resynchroniz/iu,
+      );
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "keeps the unknown target state when cancelled startup has an unavailable detach",
+  async () => {
+    const reason = { stage: "startup protocol failure" };
+    const controller = new AbortController();
+    const injected = createInjectedProcess({
+      startup: (control) => {
+        control.output(Buffer.from([0]));
+        // Both land after the startup frame, so cancellation takes
+        // precedence over a protocol error that is already set.
+        setImmediate(() => {
+          control.stdinError();
+          controller.abort(reason);
+        });
+      },
+    });
+    const manager = createManager(
+      { REA_RIZIN_COMMAND: "injected-rizin" },
+      {
+        spawnProcess: injected.spawnProcess,
+        // The fake no-inferior stop never declares detach unavailable.
+        stopProcess: stopOwnedDebuggerProcess,
+      },
+    );
+
+    const started = await manager.start(
+      { path: "/tmp/injected", inferior_tty: await rizinTestInferiorTty() },
+      controller.signal,
+    );
+
+    expect(started.ok).toBe(false);
+    if (started.ok) return;
+    expect(started.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(started.error.cause).toBe(reason);
+    expect(started.error.cleanupIncomplete).toBe(false);
+    // The registry rebinds the caller's reason over the provider's
+    // cancellation, so read the retained failure as a caller receives it.
+    expect(projectAnalysisError(started.error)).toMatchObject({
+      code: "cancelled",
+      details: {
+        secondary_failures: [
+          {
+            code: "capability_unavailable",
+            details: {
+              reason: expect.stringMatching(
+                /terminated without a verified inferior detach.*resynchroniz/iu,
+              ),
+              diagnostics: { session_stop: "input-stream-failure" },
+            },
+          },
+        ],
+      },
+    });
   },
 );
 
@@ -424,10 +551,9 @@ it
   },
 );
 
-it.skipIf(process.platform === "win32").each([false, true])(
-  "recovers output-limit cleanup only after a fresh marker and inferior readback (retry=%s)",
-  async (retry) => {
-    let synchronizationAllowed = !retry;
+it.skipIf(process.platform === "win32")(
+  "carries output-limit cleanup through a fresh marker and inferior readback",
+  async () => {
     const writes: string[] = [];
     const injected = createInjectedProcess({
       onWrite: (text, control) => {
@@ -436,10 +562,9 @@ it.skipIf(process.platform === "win32").each([false, true])(
         if (marker === undefined) return;
         if (text.startsWith("noisy\n"))
           control.output(`too much output\0${marker}\0`);
-        else if (text.startsWith("!echo __REA_CLEANUP_SYNC_")) {
-          if (synchronizationAllowed)
-            control.output(`stale frame\0${marker}\0`);
-        } else if (text.startsWith("olj\n")) control.output(`[]\0${marker}\0`);
+        else if (text.startsWith("!echo __REA_CLEANUP_SYNC_"))
+          control.output(`stale frame\0${marker}\0`);
+        else if (text.startsWith("olj\n")) control.output(`[]\0${marker}\0`);
         else throw new Error(`Unexpected cleanup command: ${text}`);
       },
     });
@@ -467,22 +592,44 @@ it.skipIf(process.platform === "win32").each([false, true])(
     );
     if (!started.ok) throw started.error;
     const result = await manager.execute(started.value.session_id, "noisy");
-    expect(result.ok).toBe(!retry);
-    expect(writes.some((text) => text.startsWith("olj\n"))).toBe(!retry);
-    if (retry) {
-      if (result.ok) throw new Error("Expected retained cleanup");
-      expect(result.error.cleanupIncomplete).toBe(true);
-      expect(manager.status(started.value.session_id)).toBeDefined();
-      expect(
-        (await manager.execute(started.value.session_id, "later")).ok,
-      ).toBe(false);
-      synchronizationAllowed = true;
-      expect((await manager.close(started.value.session_id)).ok).toBe(true);
-      expect(result.error.cleanupIncomplete).toBe(false);
-    }
+    if (!result.ok) throw result.error;
     expect(writes.some((text) => text.startsWith("olj\n"))).toBe(true);
-    if (!retry)
-      expect((await manager.close(started.value.session_id)).ok).toBe(true);
+    const closed = await manager.close(started.value.session_id);
+    if (!closed.ok) throw closed.error;
+    expect(manager.status(started.value.session_id)).toBeUndefined();
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "terminates output-limit cleanup when the transport cannot resynchronize",
+  async () => {
+    const writes: string[] = [];
+    const injected = createInjectedProcess({
+      onWrite: (text, control) => {
+        writes.push(text);
+        const marker = /!echo (.+)\n/u.exec(text)?.[1];
+        if (marker === undefined) return;
+        if (text.startsWith("noisy\n"))
+          control.output(`too much output\0${marker}\0`);
+        else if (text.startsWith("olj\n")) control.output(`[]\0${marker}\0`);
+      },
+    });
+    const { manager, started } = await startInjected(
+      injected.spawnProcess,
+      { stopProcess: stopOwnedDebuggerProcess },
+      { REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES: "8" },
+    );
+    if (!started.ok) throw started.error;
+    const result = await manager.execute(started.value.session_id, "noisy");
+    if (!result.ok) throw result.error;
+    expect(result.value.result.output_truncated).toBe(true);
+    expect(result.value.evidence.limitations).toContainEqual(
+      expect.stringMatching(/terminated without a verified inferior detach/iu),
+    );
+    expect(writes.some((text) => text.startsWith("olj\n"))).toBe(false);
+    expect(manager.status(started.value.session_id)?.state).toBe("closed");
+    const closed = await manager.close(started.value.session_id);
+    if (!closed.ok) throw closed.error;
     expect(manager.status(started.value.session_id)).toBeUndefined();
   },
 );

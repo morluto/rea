@@ -1,5 +1,11 @@
 import { execFile } from "node:child_process";
-import { appendFile, copyFile, mkdir, writeFile } from "node:fs/promises";
+import {
+  appendFile,
+  copyFile,
+  mkdir,
+  readFile,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -138,7 +144,7 @@ describe("macOS Hopper publisher verification", () => {
 
   it("discloses the exact code requirement the installer enforces", () => {
     expect(macHopperInstallDisclosure.commands).toContain(
-      `codesign --verify --strict '-R= identifier "${HOPPER_PUBLISHER.bundleIdentifier}" and anchor apple generic and certificate leaf[subject.OU] = "${HOPPER_PUBLISHER.teamIdentifier}"' <mounted-hopper.app>`,
+      `/usr/bin/codesign --verify --strict '-R= identifier "${HOPPER_PUBLISHER.bundleIdentifier}" and anchor apple generic and certificate leaf[subject.OU] = "${HOPPER_PUBLISHER.teamIdentifier}"' <mounted-hopper.app>`,
     );
   });
 
@@ -178,6 +184,44 @@ describe("macOS Hopper publisher verification", () => {
           process.env,
         ),
       ).resolves.toBe("verified");
+    },
+  );
+});
+
+describe("macOS Hopper installer tools", () => {
+  // POSIX shell stand-ins; Windows has no macOS installer path to exercise.
+  it.skipIf(process.platform === "win32")(
+    "never runs a codesign, hdiutil or open found on REA's PATH",
+    async () => {
+      const root = await createTestTempDirectory("rea-hopper-path-tools-");
+      const bin = join(root, "bin");
+      const ran = join(root, "ran");
+      await mkdir(bin);
+      for (const tool of ["codesign", "hdiutil", "open"])
+        await writeFile(
+          join(bin, tool),
+          `#!/bin/sh\necho ${tool} >> '${ran}'\n`,
+          { mode: 0o755 },
+        );
+      const installer = systemMacHopperInstallHost(
+        "/home/rea-test",
+        { ...process.env, PATH: bin },
+        () => Promise.resolve(undefined),
+      );
+      const app = join(root, "Hopper Disassembler.app");
+      const [verification] = await Promise.allSettled([
+        installer.validBundle(app),
+        installer.mount(join(root, "hopper.dmg"), join(root, "mount")),
+        installer.openApplication(app),
+      ]);
+      // A stand-in that exits 0 must not pass the publisher check.
+      expect(verification).not.toEqual({
+        status: "fulfilled",
+        value: "verified",
+      });
+      await expect(readFile(ran, "utf8")).rejects.toMatchObject({
+        code: "ENOENT",
+      });
     },
   );
 });

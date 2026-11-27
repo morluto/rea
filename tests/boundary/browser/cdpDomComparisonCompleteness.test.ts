@@ -1,12 +1,10 @@
+import { inspectFakePage } from "../../support/browser/inspectFakePage.js";
 import { describe, expect, it } from "vitest";
+import { compareInspections as compare } from "../../support/browser/webCaptureComparison.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
-import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
 import type { WebPageInspection } from "../../../src/domain/browserObservationSchemas.js";
-import { compareWebCaptures } from "../../../src/domain/webCaptureDiff.js";
-import { compareWebCapturesInputSchema } from "../../../src/domain/webCaptureDiffSchemas.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 import { trackBrowser } from "./cdpBrowserProvider.support.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
@@ -108,28 +106,12 @@ const startBrowser = async () => {
     },
   });
   trackBrowser(browser);
-  const inspect = async () => {
-    const result = await new CdpBrowserProvider().inspectPage(
-      inspectWebPageInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 0,
-      }),
-    );
-    if (!result.ok) throw result.error;
-    return result.value;
+  return {
+    state,
+    inspect: () => inspectFakePage(browser),
+    origin: browser.allowedOrigin,
   };
-  return { state, inspect, origin: browser.allowedOrigin };
 };
-
-const compare = (before: WebPageInspection, after: WebPageInspection) =>
-  compareWebCaptures(
-    compareWebCapturesInputSchema.parse({
-      before: { inspection: before },
-      after: { inspection: after },
-    }),
-  );
 
 const unknownDimension = { status: "unknown", total_changes: 0, changes: [] };
 

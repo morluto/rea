@@ -7,11 +7,6 @@ import {
 import {
   artifactReaderLimitsSchema,
   DEFAULT_ANDROID_DTBO_READER_LIMITS,
-  DEFAULT_BUN_READER_LIMITS,
-  DEFAULT_DOTNET_BUNDLE_READER_LIMITS,
-  DEFAULT_GODOT_READER_LIMITS,
-  DEFAULT_ISO9660_READER_LIMITS,
-  DEFAULT_NODE_SEA_READER_LIMITS,
   resolveArtifactReaderLimits,
 } from "./artifactReaderLimits.js";
 
@@ -126,13 +121,9 @@ describe("artifact graph path and provenance fields", () => {
   });
 
   it("reads historical effective_limits without fabricating android_dtbo while resolveArtifactReaderLimits populates it", () => {
-    const historicalLimits = {
-      bun: { ...DEFAULT_BUN_READER_LIMITS },
-      dotnet_bundle: { ...DEFAULT_DOTNET_BUNDLE_READER_LIMITS },
-      node_sea: { ...DEFAULT_NODE_SEA_READER_LIMITS },
-      godot: { ...DEFAULT_GODOT_READER_LIMITS },
-      iso9660: { ...DEFAULT_ISO9660_READER_LIMITS },
-    };
+    // Every current group except the later android_dtbo policy.
+    const { android_dtbo: _dtbo, ...historicalLimits } =
+      resolveArtifactReaderLimits();
     const manifest = {
       manifest_id: `agm_${"b".repeat(64)}`,
       root_artifact_id: `art_${"a".repeat(64)}`,
@@ -188,8 +179,9 @@ describe("artifact graph path and provenance fields", () => {
     expect(artifactReaderLimitsSchema.parse(resolved).android_dtbo).toEqual(
       DEFAULT_ANDROID_DTBO_READER_LIMITS,
     );
+    // The one recorded-limits schema keeps the later group optional.
     expect(artifactReaderLimitsSchema.safeParse(historicalLimits).success).toBe(
-      false,
+      true,
     );
   });
 });

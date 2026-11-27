@@ -1,6 +1,6 @@
 import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
+import { sha256 as digest } from "../support/sha256.js";
 import { lstat, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -183,7 +183,5 @@ it("publishes the same selected occurrences through CLI and MCP and rejects inva
       "other architecture",
     );
   }
-  const digest = (bytes: Uint8Array) =>
-    createHash("sha256").update(bytes).digest("hex");
   expect(digest(await readFile(data.path))).toBe(digest(data.bytes));
 });

@@ -164,9 +164,12 @@ rejects selected summary before analysis; complete delivery remains available.
 
 ### Member summary and retained member rows
 
-Complete `inspect_managed_members` delivery always includes the assembly-wide
-`member_refs` and `exported_types`, which `type_names` does not narrow, so even
-one selected or unmatched type can return megabytes. In MCP, select
+`type_names` narrows every collection: `member_refs` to the MemberRef rows the
+selected method bodies use, and `exported_types` to rows whose full name was
+selected. Complete delivery of a whole assembly can still be megabytes, so an
+omitted `detail` returns complete Evidence only within the
+[agent result budget](../../reference/limits-and-recovery.md#agent-result-budget)
+and otherwise the retained summary. In MCP, select
 `{"path":"/absolute/path/Assembly.dll","type_names":["Namespace.Type"],"detail":"summary"}`
 to keep the complete source in the session and receive identity, metadata
 status, the selection with its unmatched names, coverage/issues, the separate
@@ -242,8 +245,11 @@ prove absence among unresolved or unexamined source rows.
 
 #### CLI summary and saved member rows
 
-The CLI accepts the same `complete` and `summary` detail choices. Omitted or
-`--detail complete` returns complete Evidence. To receive a summary, choose a
+The CLI accepts the same `complete` and `summary` detail choices.
+`--detail complete` returns complete Evidence. Omitted, it returns complete
+Evidence within the agent result budget and the summary otherwise; with
+`--evidence_output` that summary comes with the saved bundle. To always receive
+a summary, choose a
 new Evidence bundle destination so its original complete parent remains
 available after the command exits:
 
@@ -422,8 +428,8 @@ The result preserves the requested names in `selection.type_names` and reports
 unmatched names separately. If metadata names are unreadable, limitations retain
 that uncertainty. With no selection, `selection` is null and whole-assembly
 inspection keeps its existing resource policy. Selection restricts types,
-fields, methods, call edges, field accesses and user strings; member references
-remain an assembly-wide inventory, so output size is not guaranteed to be small.
+fields, methods, member references, exported types, call edges, field accesses
+and user strings. Output size is still not guaranteed to be small.
 
 Coverage describes the selected members. Comparisons leave members outside the
 opposite observation's selection unknown, and application graphs report their
@@ -455,8 +461,8 @@ method absence; observed pairs and field inventory comparisons remain available.
 For MCP callers, request `detail: "summary"` and page the `types` collection
 using the returned parent Evidence ID. Select one or more returned full names
 in a subsequent `inspect_managed_members` request. Selection is a recovery path,
-not a guarantee: a single type or the assembly-wide member references can still
-exhaust the representation budget. A successful command exit means the Evidence
+not a guarantee: a single large type can still exhaust the representation
+budget. A successful command exit means the Evidence
 was returned; inspect `coverage.state` and `coverage.issues` before treating any
 collection as complete.
 
@@ -525,12 +531,13 @@ any completed hash retains the observed digest and byte count. Retry against a
 stable source. This differs from corrupted retained Evidence, which remains an
 Evidence-integrity failure. Malformed selected PE/CLI bytes are a target refusal,
 not an input error, in inspection and comparison: `unsupported_target` with
-`details.format` `pe-cli`, `details.format_failure` `malformed`, and
+`details.format` `pe-cli`, `details.failure_kind` `malformed`, and
 `details.path` naming the file whose bytes are at fault, so a comparison names
 the malformed side by its own path. `details.field` and `details.offset` give
 the reader's structure and byte offset when known. The arguments are not at
 fault, so no input recovery is offered. A metadata layout or signature form
-outside decoder coverage is `unsupported_target` without `format_failure`.
+outside decoder coverage is `unsupported_target` with `details.failure_kind`
+`unsupported`.
 Inventory status follows the same split: when a reader stops on such a form
 (`unsupported-metadata` or `unsupported-signature`), `metadata.status` is
 `partial` and an artifact's `classification.status` stays `managed`; only a

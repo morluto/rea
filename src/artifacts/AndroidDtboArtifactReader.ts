@@ -97,6 +97,7 @@ export class AndroidDtboArtifactReader extends PositionalArtifactReader<AndroidD
       ANDROID_DTBO_HEADER_MIN_SIZE,
     );
     const headerBytes = await readArtifactFileBytes(
+      ANDROID_DTBO_FORMAT,
       handle,
       0,
       headerSliceSize,
@@ -116,6 +117,7 @@ export class AndroidDtboArtifactReader extends PositionalArtifactReader<AndroidD
     const tableBuffer =
       header.dtEntryCount > 0
         ? await readArtifactFileBytes(
+            ANDROID_DTBO_FORMAT,
             handle,
             header.dtEntriesOffset,
             header.tableSize,
@@ -136,6 +138,7 @@ export class AndroidDtboArtifactReader extends PositionalArtifactReader<AndroidD
       this.assertOpen(signal);
       const magicProbeLength = Math.min(row.dtSize, FDT_MAGIC_PREFIX_BYTES);
       const magicBytes = await readArtifactFileBytes(
+        ANDROID_DTBO_FORMAT,
         handle,
         row.dtOffset,
         magicProbeLength,

@@ -5,10 +5,8 @@ import { expect, it, onTestFinished, vi } from "vitest";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
-import {
-  createJadxProtocolFixture,
-  verifyJadxFixtureCleanup,
-} from "../../fixtures/android/jadx.js";
+import { expectProviderLaunchCleanup } from "../../support/process/expectProviderLaunchCleanup.js";
+import { createJadxProtocolFixture } from "../../fixtures/android/jadx.js";
 
 it.each(
   (["caller", "deadline"] as const).flatMap((first) =>
@@ -158,7 +156,7 @@ it.each(
       try {
         await pending;
         await provider.close();
-        await verifyJadxFixtureCleanup(launches);
+        await expectProviderLaunchCleanup(launches);
       } finally {
         close.mockRestore();
         clock.mockRestore();

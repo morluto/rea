@@ -100,7 +100,11 @@ it("keeps the reader's raw EIO refusal an artifact failure", async () => {
     expect(rejected.reason).toBe("io");
     expect(
       projectAnalysisError(
-        translateArtifactFailure("inspect_keyed_archive", rejected),
+        translateArtifactFailure(
+          "inspect_keyed_archive",
+          "/selected/artifact",
+          rejected,
+        ),
       ),
     ).toMatchObject({
       code: "artifact_operation_failed",

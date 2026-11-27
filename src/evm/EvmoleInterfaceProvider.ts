@@ -1,3 +1,4 @@
+import { systemCodeFromError } from "../kernel/reportedSystemCode.js";
 import { finalizedResult, runOwned } from "../providers/runOwned.js";
 import {
   capturedProviderOutput,
@@ -33,7 +34,7 @@ import {
   readStableArtifact,
   ArtifactResourceScope,
   ArtifactReaderFailure,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   bindArtifactFileCleanup,
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
@@ -51,12 +52,11 @@ import {
 import {
   type AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
-  AnalysisUnsupportedTargetError,
-  AnalysisInputError,
+  AnalysisTargetFailureError,
   AnalysisOutputError,
   cancelledBy,
-  carriedReason,
   type AbortedSignal,
+  unsupportedTarget,
 } from "../domain/analysisErrorCore.js";
 import { isAbortOf } from "../process/SignalAbort.js";
 import {
@@ -194,12 +194,7 @@ const selectEvmLimiter = async (
         reason: `Set REA_EVM_PRLIMIT_COMMAND to an absolute executable regular file for caller-supplied util-linux prlimit. The selected path ${path} ${cause.code === "prlimit_not_absolute" ? "is not absolute" : "is not a regular file"}.`,
         cause,
       });
-    const systemCode =
-      cause instanceof Error &&
-      "code" in cause &&
-      typeof cause.code === "string"
-        ? cause.code
-        : undefined;
+    const systemCode = systemCodeFromError(cause);
     const permissionDenied = systemCode === "EACCES" || systemCode === "EPERM";
     const missing = systemCode === "ENOENT" || systemCode === "ENOTDIR";
     const recovery = permissionDenied
@@ -264,7 +259,7 @@ const replySchema = z.discriminatedUnion("ok", [
   }),
   z.strictObject({
     ok: z.literal(false),
-    reason: z.enum(["format", "decoder", "output-limit", "unsupported"]),
+    reason: z.enum(["malformed", "decoder", "output-limit", "unsupported"]),
     message: z.string(),
   }),
 ]);
@@ -406,11 +401,7 @@ const evmReplyCompletionFailure = (
 ): AnalysisError => {
   const cancellation =
     cause.reason === "cancelled"
-      ? cancelledBy(
-          OPERATION,
-          carriedReason(artifactFileCancellationCause(cause)),
-          { capturedOutput },
-        )
+      ? artifactFileCancellationError(OPERATION, cause, { capturedOutput })
       : undefined;
   if (cause.cleanup === undefined) {
     if (cancellation !== undefined) return cancellation;
@@ -721,11 +712,10 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
           cause instanceof ArtifactReaderFailure &&
           cause.reason === "cancelled"
         ) {
-          const failure = cancelledBy(
-            OPERATION,
-            carriedReason(artifactFileCancellationCause(cause)),
-            { capturedOutput, ...(cleanup === undefined ? {} : { cleanup }) },
-          );
+          const failure = artifactFileCancellationError(OPERATION, cause, {
+            capturedOutput,
+            ...(cleanup === undefined ? {} : { cleanup }),
+          });
           if (cause instanceof ArtifactReaderFailure)
             bindArtifactFileCleanup(cause, failure);
           throw failure;
@@ -758,20 +748,25 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
       }
       if (!reply.ok) {
         if (reply.reason === "unsupported")
-          throw new AnalysisUnsupportedTargetError(
+          throw unsupportedTarget(
             OPERATION,
             input.path,
+            "evm-bytecode",
             reply.message,
             { capturedOutput },
           );
-        if (reply.reason === "format")
-          throw new AnalysisInputError(OPERATION, { capturedOutput }, [
+        // The worker rejected the selected bytecode, not the request.
+        if (reply.reason === "malformed")
+          throw new AnalysisTargetFailureError(
+            OPERATION,
+            input.path,
             {
-              path: ["path"],
-              reason: "invalid_format",
-              message: reply.message,
+              kind: "malformed",
+              format: "evm-bytecode",
+              detail: reply.message,
             },
-          ]);
+            { capturedOutput },
+          );
         if (reply.reason === "output-limit")
           throw evmReplyBudgetFailure(
             reply.message,

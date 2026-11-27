@@ -1,6 +1,9 @@
+import { emptyCutterDiscovery } from "../../fixtures/cutterDiscovery.js";
 import {
   authenticatedServer,
   writeDescriptor,
+  listenCutterServer as listen,
+  windowsDescriptorReaderFixture,
 } from "../../fixtures/cutterBridgeProtocol.js";
 import { createServer } from "node:net";
 import { createHash } from "node:crypto";
@@ -24,16 +27,6 @@ import { CutterBridgeClient } from "../../../src/cutter/CutterBridgeClient.js";
 import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
 import { CutterBridgeService } from "../../../src/cutter/CutterBridgeService.js";
 import { cutterDiscoveryLimitations } from "../../../src/domain/cutterDiscovery.js";
-
-const listen = async (
-  server: ReturnType<typeof createServer>,
-): Promise<number> => {
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const address = server.address();
-  if (address === null || typeof address === "string")
-    throw new Error("Expected an ephemeral IPv4 listener");
-  return address.port;
-};
 
 const statusServer = (
   token: string,
@@ -97,15 +90,7 @@ const createClient = (
 ): CutterBridgeClient => {
   if (process.platform !== "win32") return new BridgeClient(environment);
   return new BridgeClient(environment, {
-    windowsPrivateReader: {
-      verifyDirectory: () => true,
-      readDescriptor: (root, name, maxBytes) => {
-        const bytes = readFileSync(join(root, name));
-        if (bytes.byteLength > maxBytes)
-          throw new Error("Descriptor too large");
-        return bytes;
-      },
-    },
+    windowsPrivateReader: windowsDescriptorReaderFixture(),
   });
 };
 
@@ -1676,13 +1661,7 @@ describe("CutterBridgeClient: scenario group 9", () => {
 
   it("records known completion and truncated command output", async () => {
     const service = new CutterBridgeService({
-      listSessions: async () => ({
-        sessions: [],
-        bridge_directory: "/private/bridge",
-        discovery_status: "no_live_bridge_found",
-        bridge_directory_security: "private_verified",
-        limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
-      }),
+      listSessions: async () => emptyCutterDiscovery(),
       execute: async () => ({
         requestId: "4b18ce4d-bf31-456e-ae31-e8c547b2f9db",
         output: "partial",

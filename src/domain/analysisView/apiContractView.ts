@@ -21,11 +21,11 @@ import {
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
-import { pickFields, selectViewRows } from "./selectViewRows.js";
+import { pickFields, selectViewRows, filterSet } from "./selectViewRows.js";
 import { invalidAnalysisView } from "./analysisViewErrors.js";
 
 export const apiContractViewContextSchema = apiContractSchema.omit({
@@ -61,8 +61,6 @@ export const apiContractViewItemsSchema = z.union([
 const readReport = createAnalysisViewResultReader(
   z.union([apiContractSchema, graphqlContractSchema]),
 );
-const values = (selected: readonly string[] | undefined) =>
-  selected === undefined ? undefined : new Set(selected);
 const admits = (selection: ReadonlySet<string> | undefined, value: string) =>
   selection === undefined || selection.has(value);
 const selectOperations = (
@@ -72,12 +70,12 @@ const selectOperations = (
     { collection: "operations" }
   >,
 ) => {
-  const ids = values(view.operation_ids),
-    keys = values(view.operation_keys),
-    methods = values(view.methods),
-    paths = values(view.paths),
-    declared = values(view.declared_ids),
-    states = values(view.states);
+  const ids = filterSet(view.operation_ids),
+    keys = filterSet(view.operation_keys),
+    methods = filterSet(view.methods),
+    paths = filterSet(view.paths),
+    declared = filterSet(view.declared_ids),
+    states = filterSet(view.states);
   const filtered =
     ids !== undefined ||
     keys !== undefined ||
@@ -116,7 +114,7 @@ const selectRows = (
 ) => {
   if (view.collection === "operations") return selectOperations(report, view);
   if (view.collection === "path-item-references") {
-    const ids = values(view.reference_ids);
+    const ids = filterSet(view.reference_ids);
     const fields = view.fields ?? ["path", "reference"];
     return selectViewRows(
       report.path_item_references,
@@ -131,7 +129,7 @@ const selectRows = (
       }),
     );
   }
-  const codes = values(view.codes);
+  const codes = filterSet(view.codes);
   const fields = view.fields ?? ["message"];
   return selectViewRows(
     report.diagnostics,
@@ -173,11 +171,7 @@ export const projectApiContractView = (
     parent_evidence_id: parent.evidenceId,
     parent_operation: API_CONTRACT_OPERATION,
     parent_digest: parent.evidenceId.slice(3),
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, limitations),
     unknowns:
       context.source_coverage.status === "partial"
         ? [

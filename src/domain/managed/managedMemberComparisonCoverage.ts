@@ -1,5 +1,6 @@
+import { appendToMapList } from "../appendToMapList.js";
 import { managedModuleRow } from "./managedModuleIdentity.js";
-import { joinCoverageStatus, type CoverageStatus } from "../coverage.js";
+import { joinCoverageStatus } from "../coverage.js";
 import type {
   ManagedMemberComparisonResult,
   ManagedMemberComparisonSide,
@@ -45,9 +46,7 @@ export const buildComparisonCoverage = ({
 };
 
 /** Full MethodDef coverage is required before inferring cross-build absence. */
-export const hasCompleteMethodRows = (
-  result: ManagedMemberInspection,
-): boolean =>
+const hasCompleteMethodRows = (result: ManagedMemberInspection): boolean =>
   result.method_rows !== null &&
   result.method_rows.offset === 0 &&
   result.method_rows.count === result.method_rows.total;
@@ -74,9 +73,7 @@ const unavailableTypeNames = (
   const children = new Map<string, string[]>();
   for (const { token, enclosing_type_token: enclosing } of types) {
     if (enclosing === null) continue;
-    const existing = children.get(enclosing);
-    if (existing === undefined) children.set(enclosing, [token]);
-    else existing.push(token);
+    appendToMapList(children, enclosing, token);
   }
   // A Set visits appended entries and prevents cyclic historical links from
   // revisiting a row. Follow only enclosing links retained in the report.
@@ -118,7 +115,10 @@ const comparisonSideScope = (result: ManagedMemberInspection) => {
     emptyMemberNames,
     emptyFieldTokens,
     hasEmptyDefinitionName,
-    metadataComplete,
+    inventoryComplete: {
+      field: metadataComplete,
+      method: metadataComplete && hasCompleteMethodRows(result),
+    },
     selected:
       result.selection === null
         ? null

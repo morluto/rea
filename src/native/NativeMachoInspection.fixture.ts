@@ -1,3 +1,5 @@
+import type { NativeCommandCapture } from "../providers/NativeCommandRunner.js";
+import type { NativeCommandInvocation } from "../domain/native/nativeInspection.js";
 import {
   buildVersionCommand,
   CPU,
@@ -14,6 +16,20 @@ import {
 } from "./NativeMachoSelectedSlice.js";
 import type { NativeMachoSource } from "./NativeMachoSource.js";
 import type { ResolvedMachoSlice } from "./NativeMachoSelectedSlice.js";
+
+/** Preserve raw command arguments in the inspection test's provenance. */
+export const inspectionInvocation = (
+  capture: NativeCommandCapture,
+): NativeCommandInvocation => ({
+  tool: capture.tool,
+  command: [capture.executable, ...capture.arguments],
+  tool_version: capture.toolVersion,
+  version_reason: capture.versionReason,
+  executable_sha256: capture.executableSha256,
+  exit: { code: capture.exitCode, signal: capture.signal },
+  stdout_bytes: capture.stdoutBytes,
+  stderr_bytes: capture.stderrBytes,
+});
 
 interface InspectionFatRow {
   readonly offset: number;

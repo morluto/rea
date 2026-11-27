@@ -1,6 +1,7 @@
 import {
   DEFAULT_ANDROID_DTBO_READER_LIMITS,
   type AndroidDtboReaderLimits,
+  type ArtifactReaderLimitParameter,
 } from "../artifactReaderLimits.js";
 import { BinaryReader } from "../binaryContainer.js";
 import type { AndroidDtboCompressionMode } from "../formatMetadata/androidAndSystemMetadata.js";
@@ -21,7 +22,7 @@ export const ANDROID_DTBO_ENTRY_MIN_SIZE = 32;
 
 export interface AndroidDtboLimitSpec {
   readonly name: string;
-  readonly parameter: string;
+  readonly parameter: ArtifactReaderLimitParameter;
   readonly maximum: number;
   readonly unit: "bytes" | "count";
 }

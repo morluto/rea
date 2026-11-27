@@ -18,25 +18,14 @@ import {
   AnalysisCleanupLeaseGroup,
   ArtifactResourceScope,
 } from "../resources/index.js";
-import { ownCliProcessResource } from "./cliResources.js";
+import { registerCliScopeCleanup } from "./cliResources.js";
 import { formatCliOutput } from "./cliOutputFormatter.js";
 import { writeOutputParts, writeOutputText } from "./jsonOutput.js";
 
-const retainedStages = new Set<ArtifactResourceScope>();
-ownCliProcessResource("toon-output", async () => {
-  const failures: unknown[] = [];
-  for (const resources of retainedStages) {
-    try {
-      await resources.close();
-      retainedStages.delete(resources);
-    } catch (cause: unknown) {
-      failures.push(cause);
-    }
-  }
-  if (failures.length === 1) throw failures[0];
-  if (failures.length > 1)
-    throw new AggregateError(failures, "TOON staging cleanup failed");
-});
+const retainStage = registerCliScopeCleanup(
+  "toon-output",
+  "TOON staging cleanup failed",
+);
 
 /** The stage owns both its original output failure and retryable cleanup. */
 export class ToonOutputCleanupFailure extends ProviderCleanupError {
@@ -205,7 +194,7 @@ export const writeToonOutput = async (
       if (failure === undefined && lateCancellation !== undefined)
         failure = { cause: lateCancellation };
       if (cleanup.kind === "failed") {
-        retainedStages.add(resources);
+        retainStage(resources);
         retained = true;
         const error = new ToonOutputCleanupFailure(
           failure,

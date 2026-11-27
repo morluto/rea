@@ -1,4 +1,5 @@
 import * as t from "@babel/types";
+import { knownCoverage } from "../coverageAccumulator.js";
 
 import { BUILTIN_RESOURCE_METHODS } from "./javascriptBuiltinResourceMethods.js";
 import { semanticBuiltinNamespacePath } from "./javascriptSemanticProvenance.js";
@@ -38,7 +39,7 @@ import {
 } from "./javascriptSemanticState.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import {
-  readExactJavaScriptLiteral,
+  stringValue,
   semanticMemberChain,
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
@@ -108,7 +109,7 @@ const projectedPatternBindings = (
           bindingId: binding.bindingId,
           identifier: current,
           projectionPath: path,
-          resolution: partial ? "partial" : "complete",
+          resolution: knownCoverage(!partial, "data-effect projection partial"),
         });
       return;
     }
@@ -877,6 +878,8 @@ export const requiredModuleChanged = (
   allowCandidate = false,
   ignoreCandidateEffects = false,
   snapshotObjectRoot?: "env" | "argv",
+  descendantsMatter = false,
+  ignoreRootSlotWrite = false,
 ): boolean => {
   const identity = semanticRequireExportsIdentity(specifier, selected);
   return builtinModuleEffects(identity.specifier, state, allowCandidate).some(
@@ -889,6 +892,12 @@ export const requiredModuleChanged = (
         path[0] === snapshotObjectRoot
       ) &&
       !(
+        ignoreRootSlotWrite &&
+        kind === "write" &&
+        path.length === 1 &&
+        path[0] === identity.path[0]
+      ) &&
+      !(
         savedObjectCapture !== undefined &&
         path.length < identity.path.length &&
         semanticTopLevelEffectFollowsCapture(
@@ -897,7 +906,12 @@ export const requiredModuleChanged = (
           state.parentsByNode,
         )
       ) &&
-      affectsBuiltinPath(path, identity.path) &&
+      (affectsBuiltinPath(path, identity.path) ||
+        (descendantsMatter &&
+          path.length > identity.path.length &&
+          identity.path.every((key, index) =>
+            semanticPropertyPathKeyMatches(path[index]!, key),
+          ))) &&
       !semanticTopLevelEffectFollowsCapture(
         capture,
         node,
@@ -908,6 +922,56 @@ export const requiredModuleChanged = (
         path.length < identity.path.length),
   );
 };
+
+/** Whether a built-in export can still be relied on at this use site. */
+export const builtinModuleSlotUnmodified = (
+  specifier: string,
+  path: readonly string[],
+  use: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  !requiredModuleChanged(specifier, path, use, state, false, undefined, true);
+
+/** Whether a built-in object and its descendants retain their known behavior. */
+export const builtinModuleSubtreeUnmodified = (
+  specifier: string,
+  path: readonly string[],
+  use: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  !requiredModuleChanged(
+    specifier,
+    path,
+    use,
+    state,
+    false,
+    undefined,
+    true,
+    false,
+    undefined,
+    true,
+  );
+
+/** A saved constructor's shared prototype survives reassignment of its export slot. */
+export const builtinSharedPrototypeUnmodified = (
+  specifier: string,
+  path: readonly string[],
+  use: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  !requiredModuleChanged(
+    specifier,
+    path,
+    use,
+    state,
+    false,
+    undefined,
+    true,
+    false,
+    undefined,
+    true,
+    true,
+  );
 
 /** Calling an unchanged built-in as a member is not an escape to unknown code. */
 const originalBuiltinReceiver = (
@@ -1221,13 +1285,7 @@ export const dataEffectLiteralString = (
     | t.JSXNamespacedName
     | t.ArgumentPlaceholder
     | undefined,
-): string | null => {
-  if (node === undefined) return null;
-  const literal = readExactJavaScriptLiteral(node);
-  return literal.found && typeof literal.value === "string"
-    ? literal.value
-    : null;
-};
+): string | null => stringValue(node) ?? null;
 
 /** Read a member callee from call or construction syntax. */
 export const dataEffectMemberCallee = (

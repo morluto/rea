@@ -13,8 +13,9 @@ import {
 } from "../apkSignature/apkSignatureQuery.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import type { JsonValue } from "../jsonValue.js";
-import { err, ok, type Result } from "../result.js";
+import { ok, type Result } from "../result.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
+import { filterSet } from "./selectViewRows.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   assertOwnedView,
@@ -23,10 +24,11 @@ import {
 } from "./analysisViewShape.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
-  analysisViewInputError,
+  invalidAnalysisViewSubject,
   invalidAnalysisView,
 } from "./analysisViewErrors.js";
 import {
+  boundedViewLimitations,
   boundedViewMessages,
   completeWithinViewCoverage,
   pageViewCoverage,
@@ -108,14 +110,8 @@ const read = (parent: AnalysisViewParent): Result<Checked, AnalysisError> => {
     subject !== undefined &&
     !apkSignatureMatchesSubject(report.artifact, subject)
   )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message: "APK subject does not match its recorded artifact",
-        },
-      ]),
+    return invalidAnalysisViewSubject(
+      "APK subject does not match its recorded artifact",
     );
   if (cached !== undefined) return ok(cached);
   const unknowns = [
@@ -197,8 +193,7 @@ function* records(
   report: ApkSignatureResult,
   selection: Selection,
 ): Generator<Record<string, JsonValue> & { id: string; signer_id?: string }> {
-  const wanted =
-    selection.schemes === undefined ? undefined : new Set(selection.schemes);
+  const wanted = filterSet(selection.schemes);
   for (const scheme of schemes) {
     if (wanted !== undefined && !wanted.has(scheme)) continue;
     for (const [signerIndex, signer] of report.schemes[
@@ -283,11 +278,7 @@ export const projectApkSignatureView = (
     parent_operation: "inspect_apk_signature" as const,
     parent_digest: parent.evidenceId.slice(3),
     artifact: { path: report.artifact.path, sha256: report.artifact.sha256 },
-    limitations: boundedViewMessages(
-      parent.limitations,
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent),
     unknowns: boundedViewMessages(
       parsed.value.unknowns,
       parent.evidenceId,
@@ -302,11 +293,9 @@ export const projectApkSignatureView = (
       summary,
       coverage: completeWithinViewCoverage(1),
     });
-  const ids = view.ids === undefined ? undefined : new Set(view.ids);
-  const signers =
-    view.signer_ids === undefined ? undefined : new Set(view.signer_ids);
-  const fields =
-    view.fields === undefined ? undefined : new Set<string>(view.fields);
+  const ids = filterSet(view.ids);
+  const signers = filterSet(view.signer_ids);
+  const fields = filterSet<string>(view.fields);
   const items: Record<string, JsonValue>[] = [];
   let total = 0;
   const rows =

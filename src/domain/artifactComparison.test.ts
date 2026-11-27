@@ -23,13 +23,7 @@ import {
   artifactInventorySummarySchema,
   projectArtifactInventoryView,
 } from "./analysisView/artifactInventoryView.js";
-import {
-  DEFAULT_BUN_READER_LIMITS,
-  DEFAULT_DOTNET_BUNDLE_READER_LIMITS,
-  DEFAULT_GODOT_READER_LIMITS,
-  DEFAULT_ISO9660_READER_LIMITS,
-  DEFAULT_NODE_SEA_READER_LIMITS,
-} from "./artifactReaderLimits.js";
+import { resolveArtifactReaderLimits } from "./artifactReaderLimits.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 
 const inventoryCarrier = (inventory: ArtifactInventoryResult) =>
@@ -596,6 +590,95 @@ const recordObservation = (
   return commit(inventory);
 };
 
+it("compares NDS CPU entry addresses with identical member content", () => {
+  const arm9 = {
+    kind: "nds-entry",
+    role: "arm9",
+    file_id: null,
+    ram_address: 0x0200_0000,
+    entry_address: 0x0200_0000,
+    overlay: null,
+  } as const satisfies FormatMetadata;
+  const content = { content: "1" };
+
+  expect(
+    compareArtifacts(
+      recordObservation(arm9, content),
+      recordObservation({ ...arm9, entry_address: 0x0200_0004 }, content),
+    ),
+  ).toMatchObject({
+    status: "changed",
+    changes: [{ classification: "changed", dimensions: ["metadata"] }],
+  });
+});
+
+it("compares NDS overlay RAM addresses with identical member content and ignores FAT IDs", () => {
+  const overlay = {
+    kind: "nds-entry",
+    role: "arm9-overlay",
+    file_id: 2,
+    ram_address: null,
+    entry_address: null,
+    overlay: {
+      overlay_id: 0,
+      ram_address: 0x0220_0000,
+      ram_size: 0x100,
+      bss_size: 0,
+      static_init_start: 0,
+      static_init_end: 0,
+      flags: 0,
+    },
+  } as const satisfies FormatMetadata;
+  const content = { content: "1" };
+  const left = recordObservation(overlay, content);
+
+  expect(
+    compareArtifacts(
+      left,
+      recordObservation(
+        {
+          ...overlay,
+          overlay: { ...overlay.overlay, ram_address: 0x0220_0100 },
+        },
+        content,
+      ),
+    ),
+  ).toMatchObject({
+    status: "changed",
+    changes: [{ classification: "changed", dimensions: ["metadata"] }],
+  });
+  expect(
+    compareArtifacts(
+      left,
+      recordObservation({ ...overlay, file_id: 3 }, content),
+    ),
+  ).toMatchObject({ status: "unchanged", changes: [] });
+});
+
+it("does not emit a declaration for NDS filesystem files compared against extracted files", () => {
+  const fileEntry = {
+    kind: "nds-entry",
+    role: "file",
+    file_id: 2,
+    ram_address: null,
+    entry_address: null,
+    overlay: null,
+  } as const satisfies FormatMetadata;
+  const extractedFile = observation({ hash_status: "verified" });
+
+  for (const [left, right] of [
+    [declared(fileEntry), extractedFile],
+    [extractedFile, declared(fileEntry)],
+    [declared(fileEntry), declared({ ...fileEntry, file_id: 5 })],
+  ] as const) {
+    expect(compareArtifacts(left, right)).toMatchObject({
+      status: "unchanged",
+      changes: [],
+      limitations: [],
+    });
+  }
+});
+
 const espImageSegment: FormatMetadata = {
   kind: "esp-image-segment",
   index: 1,
@@ -642,6 +725,48 @@ it("compares an ESP segment declaration without its layout or derived class", ()
   ).toMatchObject({ status: "unchanged", changes: [] });
   expect(
     compareArtifacts(declared(espImageSegment), declared(movedSegment)),
+  ).toMatchObject({
+    status: "changed",
+    changes: [{ classification: "changed", dimensions: ["metadata"] }],
+  });
+});
+
+const ubiVolume: FormatMetadata = {
+  kind: "ubi-volume",
+  id: 0,
+  name: "rootfs",
+  name_bytes_hex: null,
+  type: "dynamic",
+  reserved_pebs: 4,
+  alignment: 1,
+  data_pad: 0,
+  update_marker: false,
+  flags: 0,
+  autoresize: false,
+  usable_leb_size: 126_976,
+  used_ebs: null,
+  mapped_leb_count: 2,
+  stale_leb_copy_count: 0,
+  missing_leb_count: 0,
+  first_missing_leb: null,
+  data_bytes: 253_952,
+  extractable: true,
+  source_ranges: [],
+};
+
+it("compares a UBI volume declaration without its PEB placement", () => {
+  expect(
+    compareArtifacts(
+      declared(ubiVolume),
+      declared({
+        ...ubiVolume,
+        source_ranges: [{ lnum: 0, peb: 7, offset: 7 * 131_072, length: 64 }],
+      }),
+    ),
+  ).toMatchObject({ status: "unchanged", changes: [] });
+  // A renumbered volume keeps its path and bytes but not its lookup identity.
+  expect(
+    compareArtifacts(declared(ubiVolume), declared({ ...ubiVolume, id: 1 })),
   ).toMatchObject({
     status: "changed",
     changes: [{ classification: "changed", dimensions: ["metadata"] }],
@@ -1007,13 +1132,9 @@ it("reports stored directory filename spelling changes on symlinks and unavailab
 });
 
 it("reads, projects, and compares saved inventories whose effective_limits omit android_dtbo", () => {
-  const historicalLimits = {
-    bun: { ...DEFAULT_BUN_READER_LIMITS },
-    dotnet_bundle: { ...DEFAULT_DOTNET_BUNDLE_READER_LIMITS },
-    node_sea: { ...DEFAULT_NODE_SEA_READER_LIMITS },
-    godot: { ...DEFAULT_GODOT_READER_LIMITS },
-    iso9660: { ...DEFAULT_ISO9660_READER_LIMITS },
-  };
+  // Every current group except the later android_dtbo policy.
+  const { android_dtbo: _dtbo, ...historicalLimits } =
+    resolveArtifactReaderLimits();
   const makeHistoricalEvidence = (secondContent: string) => {
     const base = relationInventory(secondContent);
     const inventory = artifactInventoryResultSchema.parse({

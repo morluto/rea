@@ -145,6 +145,7 @@ const FLOW_INDEPENDENT_OPERATIONS: ReadonlySet<string> = new Set([
   "set_address_name",
   "set_addresses_names",
   "inspect_native_data_type",
+  "define_native_data_types",
 ]);
 
 /** The observed facts a defect record's declared scope is checked against. */

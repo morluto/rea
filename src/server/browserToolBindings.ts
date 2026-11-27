@@ -9,7 +9,10 @@ import { captureElectronScenario } from "../application/javascript/ElectronActiv
 import { analyzeJavaScriptApplicationValidated } from "../application/javascript/JavaScriptApplicationService.js";
 import { reconcileJavaScriptRuntimeEvidence } from "../application/javascript/JavaScriptRuntimeReconciliationService.js";
 import { javascriptSourceAnalysis } from "../composition/javascriptSourceAnalysis.js";
-import { projectRetainedAnalysis } from "../application/analysisView/AnalysisViewService.js";
+import {
+  projectRetainedAnalysis,
+  summarizeRetainedAnalysis,
+} from "../application/analysisView/AnalysisViewService.js";
 import {
   requireAnalysisViewRetention,
   type AnalysisViewRetention,
@@ -95,7 +98,21 @@ export const bindBrowserObservationTools = (
     inspect_web_page: {
       admission: "sdk",
       ...optional,
-      run: (input, options) => inspectWebPage(browser, input, options),
+      // Delivery detail never reaches the capture, so its Evidence identity
+      // is the same for every detail.
+      run: async ({ detail, ...request }, options) => {
+        if (detail === "summary") {
+          const ready = requireAnalysisViewRetention(
+            "inspect_web_page",
+            retention,
+          );
+          if (!ready.ok) return ready;
+        }
+        const inspected = await inspectWebPage(browser, request, options);
+        return inspected.ok && detail === "summary"
+          ? summarizeRetainedAnalysis(inspected.value, retention)
+          : inspected;
+      },
     },
     analyze_web_bundle: {
       admission: "sdk",
@@ -129,9 +146,12 @@ export const bindBrowserObservationTools = (
       run: (input, options) => discoverWebMcpTools(browser, input, options),
     },
     compare_web_captures: {
-      admission: "sdk",
+      // The comparison admits the raw request once: inline captures parse as
+      // the comparison input, and retained references resolve first.
+      admission: "application",
       ...optional,
-      run: (input) => compareWebCaptureEvidence(browser, input),
+      run: (input) =>
+        compareWebCaptureEvidence(browser, input, retention.evidenceById),
     },
     capture_web_screenshot: {
       admission: "sdk",

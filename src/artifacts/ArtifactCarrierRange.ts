@@ -1,7 +1,7 @@
 import type { FileHandle } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
-import { abortIfNeeded } from "../resources/index.js";
+import { abortIfNeeded, ArtifactReaderFailure } from "../resources/index.js";
 
 interface ArtifactRangeCarrier {
   readonly handle: FileHandle;
@@ -9,7 +9,32 @@ interface ArtifactRangeCarrier {
   readonly signal: AbortSignal | undefined;
 }
 
-/** Read exactly one bounded carrier range, returning undefined for a short read. */
+export interface ArtifactCarrierRange {
+  readonly offset: number;
+  readonly length: number;
+}
+
+/** Keep the first declaration of each byte range, including its format-specific metadata. */
+export const uniqueArtifactRanges = <Range extends ArtifactCarrierRange>(
+  ranges: readonly Range[],
+): Range[] => {
+  const unique: Range[] = [];
+  const seen = new Set<string>();
+  for (const range of ranges) {
+    const key = `${String(range.offset)}:${String(range.length)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(range);
+  }
+  return unique;
+};
+
+/**
+ * Read exactly one bounded carrier range. A range outside the measured file
+ * returns undefined: the format declared bytes the file does not have, so the
+ * caller reports a truncated target. A short read inside it means the file
+ * changed during the read, a read-coverage integrity failure.
+ */
 export const readArtifactRange = async (
   carrier: ArtifactRangeCarrier,
   offset: number,
@@ -31,10 +56,16 @@ export const readArtifactRange = async (
   // The shared reader reports EOF before a late cancellation. These carrier
   // readers have always observed cancellation after every read, including EOF.
   abortIfNeeded(carrier.signal);
-  return bytes.length === length ? bytes : undefined;
+  if (bytes.length !== length)
+    throw new ArtifactReaderFailure(
+      "integrity",
+      "Artifact carrier ended before its measured extent",
+      { integrityCheck: "read-coverage" },
+    );
+  return bytes;
 };
 
-/** Hash one carrier range in bounded chunks; undefined means it was truncated. */
+/** Hash one carrier range in bounded chunks; undefined means it lies outside the file. */
 export const hashArtifactRange = async (
   carrier: ArtifactRangeCarrier,
   offset: number,
