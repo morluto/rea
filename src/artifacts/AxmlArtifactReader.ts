@@ -1,17 +1,22 @@
 import {
   createAxmlDecoder,
+  DEFAULT_AXML_DECODE_LIMITS,
+  type AxmlDecodeLimits,
   type AxmlDocumentImage,
 } from "../domain/android/axmlDocument.js";
+import type { AxmlReaderLimits } from "../domain/artifactReaderLimits.js";
 import {
   DecodedRegionArtifactReader,
   type RegionDecoding,
 } from "./DecodedRegionArtifactReader.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 
-const axmlRegions: RegionDecoding<AxmlDocumentImage> = {
+const axmlRegions = (
+  limits: AxmlDecodeLimits,
+): RegionDecoding<AxmlDocumentImage> => ({
   label: "axml",
   keyPrefix: "axml",
-  createDecoder: (fileBytes) => createAxmlDecoder(fileBytes),
+  createDecoder: (fileBytes) => createAxmlDecoder(fileBytes, limits),
   describe: (image) => ({
     metadata: { kind: "axml", ...image.metadata },
     regions: [
@@ -36,11 +41,27 @@ const axmlRegions: RegionDecoding<AxmlDocumentImage> = {
       limitations: image.limitations,
     },
   }),
-};
+});
+
+/** Per-call artifact_limits fields map onto the decoder's own shape. */
+const decodeLimits = (selected?: AxmlReaderLimits): AxmlDecodeLimits => ({
+  fileBytes: selected?.file_bytes ?? DEFAULT_AXML_DECODE_LIMITS.fileBytes,
+  strings: selected?.strings ?? DEFAULT_AXML_DECODE_LIMITS.strings,
+  stringBytes: selected?.string_bytes ?? DEFAULT_AXML_DECODE_LIMITS.stringBytes,
+  elements: selected?.elements ?? DEFAULT_AXML_DECODE_LIMITS.elements,
+  attributes: selected?.attributes ?? DEFAULT_AXML_DECODE_LIMITS.attributes,
+  namespaces: selected?.namespaces ?? DEFAULT_AXML_DECODE_LIMITS.namespaces,
+  depth: selected?.depth ?? DEFAULT_AXML_DECODE_LIMITS.depth,
+  outputBytes: selected?.output_bytes ?? DEFAULT_AXML_DECODE_LIMITS.outputBytes,
+});
 
 /** Decode an Android binary XML document into its XML text region. */
 export class AxmlArtifactReader extends DecodedRegionArtifactReader<AxmlDocumentImage> {
-  constructor(path: string, admitted?: StableRegularFileDescriptor) {
-    super(path, "axml", axmlRegions, admitted);
+  constructor(
+    path: string,
+    admitted?: StableRegularFileDescriptor,
+    limits?: AxmlReaderLimits,
+  ) {
+    super(path, "axml", axmlRegions(decodeLimits(limits)), admitted);
   }
 }

@@ -48,6 +48,39 @@ const withReader = async <T>(
   }
 };
 
+describe("axml per-call artifact_limits", () => {
+  it("enforces a caller-selected output budget", async () => {
+    const bytes = buildAxml(AXML_MANIFEST_EVENTS);
+    const path = await writeDocument(bytes);
+    const reader = new AxmlArtifactReader(path, undefined, {
+      file_bytes: 64 * 1024 * 1024,
+      strings: 0x40000,
+      string_bytes: 16 * 1024 * 1024,
+      elements: 0x40000,
+      attributes: 0x100000,
+      namespaces: 0x8000,
+      depth: 4096,
+      output_bytes: 16,
+    });
+    try {
+      await expect(list(reader)).rejects.toMatchObject({
+        reason: "limit",
+        message: expect.stringContaining("artifact_limits.axml.output_bytes"),
+      });
+    } finally {
+      await reader.close();
+    }
+  });
+
+  it("admits the same document at the default budget", async () => {
+    const bytes = buildAxml(AXML_MANIFEST_EVENTS);
+    await withReader(bytes, async (reader) => {
+      const entries = await list(reader);
+      expect(entries.length).toBeGreaterThan(0);
+    });
+  });
+});
+
 describe("axml decoder limits", () => {
   it("fails closed on an over-limit string count", async () => {
     const bytes = buildAxml(AXML_MANIFEST_EVENTS);

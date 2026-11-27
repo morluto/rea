@@ -30,7 +30,8 @@ const CHUNK_CDATA = 0x0104;
 const STRING_POOL_UTF8 = 0x00000100;
 export const NO_INDEX = 0xffffffff;
 /** XML 1.0 forbids these characters anywhere in the projected text. */
-const FORBIDDEN_XML = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/;
+export const FORBIDDEN_XML =
+  /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/;
 /**
  * Element names, attribute names and declared prefixes must be XML NCNames;
  * a colon can never appear because prefixes are tracked separately.
@@ -68,6 +69,34 @@ const AXML_MAX_NAMESPACES = 0x8000;
 const AXML_MAX_DEPTH = 4096;
 const AXML_MAX_OUTPUT_BYTES = 32 * 1024 * 1024;
 
+/** Resource admission for one decode; every bound is caller-adjustable. */
+export interface AxmlDecodeLimits {
+  readonly fileBytes: number;
+  readonly strings: number;
+  readonly stringBytes: number;
+  readonly elements: number;
+  readonly attributes: number;
+  readonly namespaces: number;
+  readonly depth: number;
+  readonly outputBytes: number;
+}
+
+/** Built-in admission applied when neither caller nor configuration acts. */
+export const DEFAULT_AXML_DECODE_LIMITS: AxmlDecodeLimits = {
+  fileBytes: AXML_MAX_FILE_BYTES,
+  strings: AXML_MAX_STRINGS,
+  stringBytes: AXML_MAX_STRING_BYTES,
+  elements: AXML_MAX_ELEMENTS,
+  attributes: AXML_MAX_ATTRIBUTES,
+  namespaces: AXML_MAX_NAMESPACES,
+  depth: AXML_MAX_DEPTH,
+  outputBytes: AXML_MAX_OUTPUT_BYTES,
+};
+
+/** Recovery instructions naming the adjustable control for one limit. */
+const axmlRecovery = (parameter: string): string =>
+  `Raise it through artifact_limits.axml.${parameter} on the next call.`;
+
 const NODE_HEADER_BYTES = 16;
 /** Fixed attrExt fields after the node header: ns, name and the six u16s. */
 const ATTR_EXT_HEADER_BYTES = 20;
@@ -81,7 +110,7 @@ const RADIX_MULTS = [1, 1 / (1 << 7), 1 / (1 << 15), 1 / (1 << 23)];
 const DIMENSION_UNITS = ["px", "dip", "sp", "pt", "in", "mm"];
 const FRACTION_UNITS = ["%", "%p"];
 
-interface ChunkHeader {
+export interface ChunkHeader {
   readonly type: number;
   readonly headerSize: number;
   readonly size: number;
@@ -115,7 +144,7 @@ const limitFailure = (message: string): Result<never, RegionDecodeFailure> =>
 
 const NO_PREFIX = "";
 
-class StringPool {
+export class StringPool {
   readonly utf8: boolean;
   readonly styleCount: number;
   readonly #strings: string[];
@@ -220,7 +249,7 @@ class StringPool {
       if (units === undefined) return formatFailure(`string ${i} is truncated`);
       if (!retained.tryCharge(units * 2))
         return limitFailure(
-          `string data exceeds the ${AXML_MAX_STRING_BYTES}-byte bound`,
+          `string data exceeds the ${maxStringBytes}-byte bound`,
         );
       const decoded = utf8
         ? readUtf8String(reader.bytes, at, dataEnd)
@@ -327,14 +356,14 @@ const readUtf8String = (
   return decoded;
 };
 
-const escapeXml = (text: string): string =>
+export const escapeXml = (text: string): string =>
   text
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll("\r", "&#13;");
 
-const escapeAttr = (text: string): string =>
+export const escapeAttr = (text: string): string =>
   escapeXml(text)
     .replaceAll('"', "&quot;")
     .replaceAll("\t", "&#9;")
@@ -356,7 +385,7 @@ const escapedTextByteLength = (text: string): number => {
 };
 
 /** UTF-8 byte length of escapeAttr(text), without materializing it. */
-const escapedAttrByteLength = (text: string): number => {
+export const escapedAttrByteLength = (text: string): number => {
   let bytes = 0;
   for (const ch of text) {
     if (ch === "&") bytes += 5;
@@ -371,7 +400,7 @@ const escapedAttrByteLength = (text: string): number => {
   return bytes;
 };
 
-const hexRef = (data: number): string =>
+export const hexRef = (data: number): string =>
   `0x${(data >>> 0).toString(16).padStart(8, "0")}`;
 
 const complexToFloat = (data: number): number => {
@@ -380,7 +409,7 @@ const complexToFloat = (data: number): number => {
   return signed * (RADIX_MULTS[(data >> 4) & 0x3] ?? 0);
 };
 
-const renderTypedValue = (
+export const renderTypedValue = (
   type: number,
   data: number,
   pool: StringPool,
@@ -455,15 +484,22 @@ const formatError = (message: string): RegionDecodeFailure => ({
 
 class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
   #chunks: Uint8Array[] = [];
-  #inputBudget = new Budget(AXML_MAX_FILE_BYTES);
+  #inputBudget: Budget;
 
-  constructor(private readonly fileBytes: number) {}
+  constructor(
+    private readonly fileBytes: number,
+    private readonly limits: AxmlDecodeLimits,
+  ) {
+    this.#inputBudget = new Budget(limits.fileBytes);
+  }
 
   write(chunk: Uint8Array): Result<void, RegionDecodeFailure> {
     if (!this.#inputBudget.tryCharge(chunk.length))
       return err({
         kind: "limit",
-        message: `AXML input exceeds the ${AXML_MAX_FILE_BYTES}-byte bound`,
+        message:
+          `AXML input exceeds the ${this.limits.fileBytes}-byte bound. ` +
+          axmlRecovery("file_bytes"),
         boundary: "capacity",
       });
     this.#chunks.push(chunk.slice());
@@ -529,12 +565,17 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
       return formatFailure(
         `first chunk is 0x${first.value.type.toString(16)}, not the string pool`,
       );
+    const limits = this.limits;
     const poolResult = StringPool.parse(
       reader,
       AXML_HEADER_BYTES,
       first.value,
       documentEnd,
-      { requireXmlChars: true },
+      {
+        maxStrings: limits.strings,
+        maxStringBytes: limits.stringBytes,
+        requireXmlChars: true,
+      },
     );
     if (!poolResult.ok) return poolResult;
     const pool = poolResult.value;
@@ -582,14 +623,16 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
       decls: { prefix: string; prior: string | undefined }[];
     }[] = [];
     const out: Uint8Array[] = [];
-    const outputBudget = new Budget(AXML_MAX_OUTPUT_BYTES);
+    const outputBudget = new Budget(limits.outputBytes);
     const encoder = new TextEncoder();
     const emit = (text: string): Result<void, RegionDecodeFailure> => {
       const encoded = encoder.encode(text);
       if (!outputBudget.tryCharge(encoded.length))
         return err({
           kind: "limit",
-          message: `decoded XML exceeds the ${AXML_MAX_OUTPUT_BYTES}-byte bound`,
+          message:
+            `decoded XML exceeds the ${limits.outputBytes}-byte bound. ` +
+            axmlRecovery("output_bytes"),
           boundary: "capacity",
         });
       out.push(encoded);
@@ -864,9 +907,10 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
         const noted = emitNodeComment(base, stack.length);
         if (!noted.ok) return noted;
         nsCount++;
-        if (nsCount > AXML_MAX_NAMESPACES)
+        if (nsCount > limits.namespaces)
           return limitFailure(
-            `namespace count exceeds the ${AXML_MAX_NAMESPACES} bound`,
+            `namespace count exceeds the ${limits.namespaces} bound. ` +
+              axmlRecovery("namespaces"),
           );
         // A rebinding shadows the prefix's older URI; keep both indexes in
         // sync so URI lookups never return a shadowed prefix.
@@ -947,9 +991,10 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
           );
         if (base + NODE_HEADER_BYTES + attrStart + attrCount * attrSize > next)
           return formatFailure("attribute records extend past the chunk end");
-        if (stack.length >= AXML_MAX_DEPTH)
+        if (stack.length >= limits.depth)
           return limitFailure(
-            `element depth exceeds the ${AXML_MAX_DEPTH} bound`,
+            `element depth exceeds the ${limits.depth} bound. ` +
+              axmlRecovery("depth"),
           );
         if (stack.length === 0) {
           if (rootSeen)
@@ -957,9 +1002,10 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
           rootSeen = true;
         }
         elementCount++;
-        if (elementCount > AXML_MAX_ELEMENTS)
+        if (elementCount > limits.elements)
           return limitFailure(
-            `element count exceeds the ${AXML_MAX_ELEMENTS} bound`,
+            `element count exceeds the ${limits.elements} bound. ` +
+              axmlRecovery("elements"),
           );
         const flushed = flushOpen();
         if (!flushed.ok) return flushed;
@@ -1063,9 +1109,10 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
               `attribute ${aNameIndex} value cannot be rendered`,
             );
           attributeCount++;
-          if (attributeCount > AXML_MAX_ATTRIBUTES)
+          if (attributeCount > limits.attributes)
             return limitFailure(
-              `attribute count exceeds the ${AXML_MAX_ATTRIBUTES} bound`,
+              `attribute count exceeds the ${limits.attributes} bound. ` +
+                axmlRecovery("attributes"),
             );
           // Budget the expanded text before materializing it: a reused
           // pool value must fail here, not after escaping multiplies it.
@@ -1074,7 +1121,8 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
             encoder.encode(leader).length + escapedAttrByteLength(value) + 1;
           if (!outputBudget.tryCharge(nextBytes))
             return limitFailure(
-              `decoded XML exceeds the ${AXML_MAX_OUTPUT_BYTES}-byte bound`,
+              `decoded XML exceeds the ${limits.outputBytes}-byte bound. ` +
+                axmlRecovery("output_bytes"),
             );
           attrTexts.push(encoder.encode(`${leader}${escapeAttr(value)}"`));
         }
@@ -1095,7 +1143,8 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
             escapedAttrByteLength(uri);
           if (!outputBudget.tryCharge(nextBytes))
             return limitFailure(
-              `decoded XML exceeds the ${AXML_MAX_OUTPUT_BYTES}-byte bound`,
+              `decoded XML exceeds the ${limits.outputBytes}-byte bound. ` +
+                axmlRecovery("output_bytes"),
             );
           const attr =
             prefix === NO_PREFIX
@@ -1219,7 +1268,8 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
           const nextBytes = escapedTextByteLength(text);
           if (!outputBudget.tryCharge(nextBytes))
             return limitFailure(
-              `decoded XML exceeds the ${AXML_MAX_OUTPUT_BYTES}-byte bound`,
+              `decoded XML exceeds the ${limits.outputBytes}-byte bound. ` +
+                axmlRecovery("output_bytes"),
             );
           out.push(encoder.encode(escapeXml(text)));
         }
@@ -1288,14 +1338,17 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
  */
 export const createAxmlDecoder = (
   fileBytes: number,
+  limits: AxmlDecodeLimits = DEFAULT_AXML_DECODE_LIMITS,
 ): Result<RegionDecoder<AxmlDocumentImage>, RegionDecodeFailure> => {
   if (!Number.isSafeInteger(fileBytes) || fileBytes < 0)
     return err({ kind: "malformed", message: "invalid file size" });
-  if (fileBytes > AXML_MAX_FILE_BYTES)
+  if (fileBytes > limits.fileBytes)
     return err({
       kind: "limit",
-      message: `AXML file ${fileBytes} exceeds the ${AXML_MAX_FILE_BYTES}-byte bound`,
+      message:
+        `AXML file ${fileBytes} exceeds the ${limits.fileBytes}-byte bound. ` +
+        axmlRecovery("file_bytes"),
       boundary: "file-size",
     });
-  return ok(new BufferedAxmlDecoder(fileBytes));
+  return ok(new BufferedAxmlDecoder(fileBytes, limits));
 };

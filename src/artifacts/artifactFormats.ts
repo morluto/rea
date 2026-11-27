@@ -438,7 +438,11 @@ const NON_ZIP_FORMATS = {
     readerLimitation:
       "AXML inventory decodes the document chunk stream into XML text; resource table names, DEX references and runtime behavior are not resolved.",
     createReader: (path, options) =>
-      new AxmlArtifactReader(path, sourceOf(options)),
+      new AxmlArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.axml,
+      ),
   }),
   tar: container("tar", {
     roleContainer: true,
