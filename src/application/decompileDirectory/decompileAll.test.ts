@@ -1066,18 +1066,17 @@ describe("decompile_all partial results", () => {
       },
     };
     const commit = DecompileExport.prototype.commitFunctionFile;
-    vi.spyOn(
-      DecompileExport.prototype,
-      "commitFunctionFile",
-    ).mockImplementation(async function (
-      this: DecompileExport,
-      relativePath,
-      bytes,
-      ...rest
-    ) {
-      if (relativePath.includes("2000")) await committing.hold();
-      return commit.call(this, relativePath, bytes, ...rest);
-    });
+    const commitSpy = vi
+      .spyOn(DecompileExport.prototype, "commitFunctionFile")
+      .mockImplementation(async function (
+        this: DecompileExport,
+        relativePath,
+        bytes,
+        ...rest
+      ) {
+        if (relativePath.includes("2000")) await committing.hold();
+        return commit.call(this, relativePath, bytes, ...rest);
+      });
     const updates: unknown[] = [];
     const running = new EnhancedTools(port).execute(
       "decompile_all",
@@ -1128,6 +1127,7 @@ describe("decompile_all partial results", () => {
         },
       ]);
     } finally {
+      commitSpy.mockRestore();
       vi.useRealTimers();
     }
   });
