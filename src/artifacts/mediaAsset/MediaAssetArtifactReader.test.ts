@@ -549,6 +549,42 @@ describe("Bink 2 headers", () => {
     expect(result.coverage[0]?.status).toBe("unknown");
   });
 
+  it("does not claim trailing bytes beyond the declared end as frames", async () => {
+    const base = bink2Fixture(10);
+    const tableOffset = 48;
+    const tableBytes = 44;
+    const framesOffset = tableOffset + tableBytes;
+    const trailing = Buffer.alloc(128, 0xee);
+    const bytes = Buffer.concat([base, trailing]);
+    const result = await read("bink2", bytes);
+    expect(result.metadata).toMatchObject({
+      kind: "bink2",
+      extent_check: "trailing-bytes",
+      frame_offset_table_offset: tableOffset,
+      frame_offset_table_bytes: tableBytes,
+    });
+    expect(regions(result.entries)).toEqual([
+      {
+        path: "frame-offsets.bin",
+        byteOffset: tableOffset,
+        declaredSize: tableBytes,
+      },
+      {
+        path: "frames.bin",
+        byteOffset: framesOffset,
+        declaredSize: base.length - framesOffset,
+      },
+    ]);
+    expect(result.contents.get("frames.bin")).toEqual(
+      base.subarray(framesOffset),
+    );
+    expect(
+      result.coverage[0]?.limitations.some((line) =>
+        line.includes("follow the last declared"),
+      ),
+    ).toBe(true);
+  });
+
   it("reports a cut-off Bink 2 header as truncated rather than malformed", async () => {
     const cut = Buffer.from("KB2j\0\0\0\0", "latin1");
     expect(

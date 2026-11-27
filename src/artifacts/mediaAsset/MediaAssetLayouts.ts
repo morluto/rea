@@ -817,6 +817,26 @@ export const bink2Layout = (
   // frame_count + 1 offsets; a u32 count keeps this a safe integer.
   const tableBytes = (frameCount + 1) * 4;
   const framesOffset = tableOffset + tableBytes;
+  if (framesOffset > declaredEnd) {
+    const fitted = fitRegions("bink2", [], fileSize, declaredEnd);
+    return {
+      metadata: {
+        ...metadataBase,
+        audio_tracks: audioTracks,
+        frame_offset_table_offset: tableOffset,
+        frame_offset_table_bytes: tableBytes,
+        extent_check: fitted.extent,
+      },
+      regions: [],
+      limitations: [
+        `Bink 2 header tables end at offset ${String(framesOffset)} but the file declares only ${String(declaredEnd)} bytes; the frame-offset table and frames were not listed.`,
+        ...fitted.limitations.filter(
+          (line) => !line.includes("follow the last declared"),
+        ),
+      ],
+      regionsExamined: "unknown",
+    };
+  }
   const regions: MediaAssetRegion[] = [
     {
       path: "frame-offsets.bin",
@@ -826,13 +846,13 @@ export const bink2Layout = (
       length: tableBytes,
     },
   ];
-  if (framesOffset < fileSize)
+  if (framesOffset < declaredEnd)
     regions.push({
       path: "frames.bin",
       role: "frames",
       index: 0,
       offset: framesOffset,
-      length: fileSize - framesOffset,
+      length: declaredEnd - framesOffset,
     });
   const fitted = fitRegions("bink2", regions, fileSize, declaredEnd);
   return {
