@@ -190,6 +190,14 @@ const parseCpioOdcInto = (
       );
     }
     if (name === TRAILER) {
+      if (nul !== nameBytes.length - 1)
+        return err(
+          malformedInput(
+            MACOS_PKG_FORMAT,
+            "cpio odc trailer name is not exactly NUL-terminated",
+            { field: "name", offset: nameOffset },
+          ),
+        );
       if (filesize.value !== 0)
         return err(
           malformedInput(
