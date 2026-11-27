@@ -656,3 +656,33 @@ it("rejects diagnostics straddling the selected contract", () => {
   };
   expect(projectAnalysisView(parent, { kind: "summary" }).ok).toBe(false);
 });
+
+it("counts oversized carrier text in a summary instead of repeating it", () => {
+  const long = "s".repeat(300);
+  const errors = [{ severity: long }, { severity: "warning" }];
+  const parent = compilerParent("6001", {
+    errors,
+    bytecode: { linkReferences: { [long]: { L: [{ start: 0, length: 1 }] } } },
+  });
+  const result = projectAnalysisView(parent, { kind: "summary" });
+  if (!result.ok) throw result.error;
+  expect(JSON.stringify(result.value)).not.toContain(long);
+  expect(result.value).toMatchObject({
+    summary: {
+      compiler_artifact: {
+        diagnostics: {
+          preview: [
+            { severity: { omitted_code_units: 300 } },
+            { severity: "warning" },
+          ],
+        },
+        link_references: {
+          preview: [
+            { source_unit: { omitted_code_units: 300 }, library_name: "L" },
+          ],
+        },
+        metadata: { compiler_version: "0.8.30" },
+      },
+    },
+  });
+});

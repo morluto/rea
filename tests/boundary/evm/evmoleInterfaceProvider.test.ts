@@ -17,6 +17,7 @@ import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.
 import { waitForProviderProcessReady } from "../../fixtures/providerProcess.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { SOLC_JSON_LIMITS } from "../../../src/domain/evm/solcCompilerJson.js";
 import { EvmInterfaceService } from "../../../src/application/evm/EvmInterfaceService.js";
 import {
   createTestWorkspace,
@@ -1161,5 +1162,36 @@ it.runIf(!unsupportedHost)(
     });
     expect(requestBytes).toBeGreaterThan(64 * 1024);
     expect(requestBytes).toBeLessThanOrEqual(MAX_EVM_WORKER_REQUEST_BYTES);
+  },
+);
+
+it.runIf(!unsupportedHost)(
+  "bounds a solc-json read by the fixed parser ceiling despite a raised input budget",
+  async () => {
+    const { path } = await fixture();
+    await writeFile(path, " ".repeat(SOLC_JSON_LIMITS.inputBytes + 1));
+    let spawned = false;
+    const provider = new EvmoleInterfaceProvider({}, async () => {
+      spawned = true;
+      throw new Error("Worker must not start for an unparseable carrier");
+    });
+    const result = await provider.inspect({
+      path,
+      encoding: "solc-json",
+      compiler_selection: {
+        source_unit: "a.sol",
+        contract_name: "C",
+        bytecode_kind: "creation",
+      },
+      producer_limits: { input_bytes: SOLC_JSON_LIMITS.inputBytes * 4 },
+    });
+    if (result.ok) throw new Error("Expected a fixed ceiling refusal");
+    const projected = projectAnalysisError(result.error);
+    expect(projected).toMatchObject({
+      category: "resource_constraint",
+      retryable: false,
+    });
+    expect(projected.remediation.action).toContain("no runtime override");
+    expect(spawned).toBe(false);
   },
 );

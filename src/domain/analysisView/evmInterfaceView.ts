@@ -51,10 +51,22 @@ export const evmViewItemSchema = z.union([
 // A carrier within the node cap can hold tens of thousands of diagnostic rows.
 const DIAGNOSTIC_PREVIEW_ROWS = 16;
 const REFERENCE_PREVIEW_ROWS = 16;
+// Longest carrier-controlled string a summary repeats; longer ones are counted.
+const SUMMARY_TEXT_CODE_UNITS = 256;
+
+const summaryTextSchema = z.union([
+  z.string().max(SUMMARY_TEXT_CODE_UNITS),
+  z.strictObject({ omitted_code_units: z.number().int().positive() }),
+]);
+
+const summaryText = (value: string | null) =>
+  value === null || value.length <= SUMMARY_TEXT_CODE_UNITS
+    ? value
+    : { omitted_code_units: value.length };
 
 type PreviewRow = {
   json_pointer: string;
-  severity: string | null;
+  severity: ReturnType<typeof summaryText>;
   source_range: z.output<typeof solcSourceRangeSchema>;
 };
 
@@ -70,7 +82,11 @@ const diagnosticSummary = (
     if (isError) errorCount += 1;
     const kept = isError ? errors : others;
     if (kept.length < DIAGNOSTIC_PREVIEW_ROWS)
-      kept.push({ json_pointer, severity, source_range });
+      kept.push({
+        json_pointer,
+        severity: summaryText(severity),
+        source_range,
+      });
   }
   const { items: preview } = boundedList(
     [...errors, ...others],
@@ -97,6 +113,28 @@ const boundedRows = <T>(rows: readonly T[]) => {
   return { total: rows.length, preview: [...items], preview_omitted: omitted };
 };
 
+const referenceRowSchema = z.strictObject({
+  ...solcArtifactSchema.shape.link_references.unwrap().element.shape,
+  source_unit: summaryTextSchema.nullable(),
+  library_name: summaryTextSchema.nullable(),
+  immutable_id: summaryTextSchema.nullable(),
+});
+
+const boundedReferences = (
+  rows: NonNullable<SolcArtifact["link_references"]>,
+) => {
+  const bounded = boundedRows(rows);
+  return {
+    ...bounded,
+    preview: bounded.preview.map((row) => ({
+      ...row,
+      source_unit: summaryText(row.source_unit),
+      library_name: summaryText(row.library_name),
+      immutable_id: summaryText(row.immutable_id),
+    })),
+  };
+};
+
 /** Selected compiler facts without duplicate bytecode, raw metadata, settings or diagnostic JSON. */
 const {
   object: _objectSchema,
@@ -105,12 +143,8 @@ const {
 } = solcArtifactSchema.shape;
 const compilerArtifactSummarySchema = z.strictObject({
   ...compilerFactsShape,
-  link_references: boundedRowsSchema(
-    solcArtifactSchema.shape.link_references.unwrap().element,
-  ).nullable(),
-  immutable_references: boundedRowsSchema(
-    solcArtifactSchema.shape.immutable_references.unwrap().element,
-  ).nullable(),
+  link_references: boundedRowsSchema(referenceRowSchema).nullable(),
+  immutable_references: boundedRowsSchema(referenceRowSchema).nullable(),
   placeholders: boundedRowsSchema(
     solcArtifactSchema.shape.placeholders.element,
   ),
@@ -123,7 +157,7 @@ const compilerArtifactSummarySchema = z.strictObject({
         .array(
           z.strictObject({
             json_pointer: z.string(),
-            severity: z.string().nullable(),
+            severity: summaryTextSchema.nullable(),
             source_range: solcSourceRangeSchema,
           }),
         )
@@ -135,6 +169,7 @@ const compilerArtifactSummarySchema = z.strictObject({
   metadata: solcArtifactSchema.shape.metadata
     .omit({ raw: true, settings_json: true })
     .extend({
+      compiler_version: summaryTextSchema.nullable(),
       raw_code_units: z.number().int().nonnegative().nullable(),
       settings_code_units: z.number().int().nonnegative().nullable(),
     }),
@@ -154,14 +189,17 @@ const compilerArtifactSummary = (artifact: SolcArtifact) => {
   return {
     ...facts,
     link_references:
-      link_references === null ? null : boundedRows(link_references),
+      link_references === null ? null : boundedReferences(link_references),
     immutable_references:
-      immutable_references === null ? null : boundedRows(immutable_references),
+      immutable_references === null
+        ? null
+        : boundedReferences(immutable_references),
     placeholders: boundedRows(placeholders),
     diagnostics: diagnostics === null ? null : diagnosticSummary(diagnostics),
     object_code_units: object?.length ?? null,
     metadata: {
       ...metadataFacts,
+      compiler_version: summaryText(metadataFacts.compiler_version),
       raw_code_units: raw?.length ?? null,
       settings_code_units: settings?.length ?? null,
     },

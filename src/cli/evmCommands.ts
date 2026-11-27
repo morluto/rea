@@ -3,6 +3,8 @@ import { z } from "zod";
 import { evmInterfaceModule } from "../composition/evm.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { evmEncodingSchema } from "../domain/evm/evmInterface.js";
+import { compilerSelectionSchema } from "../domain/evm/solcArtifact.js";
 import { registerContractCommand } from "./contractCommand.js";
 import { inspectWithService } from "./contractCommandRunners.js";
 import { PRODUCER_LIMITS_HELP } from "./producerLimitsOption.js";
@@ -27,9 +29,7 @@ export const registerEvmCommands = (
       // The encoding positional is one CLI-only value the handler folds into
       // the contract's encoding and compiler_selection fields; argv never supplies them.
       cliOptions: {
-        encoding: z
-          .enum(["raw", "hex", "solc-json"])
-          .describe("Selected carrier representation"),
+        encoding: evmEncodingSchema.describe("Selected carrier representation"),
         sourceUnit: z
           .string()
           .optional()
@@ -38,8 +38,7 @@ export const registerEvmCommands = (
           .string()
           .optional()
           .describe("Exact compiler contract key for solc-json"),
-        bytecodeKind: z
-          .enum(["creation", "deployed"])
+        bytecodeKind: compilerSelectionSchema.shape.bytecode_kind
           .optional()
           .describe("Selected compiler bytecode object"),
       },

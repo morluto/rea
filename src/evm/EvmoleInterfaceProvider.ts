@@ -85,6 +85,7 @@ import {
 } from "../process/LinuxResourceLimits.js";
 import {
   evmFailureDialect,
+  compilerJsonLimitRefusal,
   evmReplyBudgetFailure,
   type EvmFileSizeFailureEvidence,
 } from "./EvmoleFailures.js";
@@ -97,14 +98,8 @@ import {
   MAX_EVM_WORKER_REQUEST_BYTES,
   evmWorkerReplySchema,
 } from "./EvmInterfaceWorkerContract.js";
-import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
-import { decodeLimit } from "../domain/parseFailure.js";
-import { parseLimitConstraint } from "../domain/parseFailureAnalysisError.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
-import {
-  SOLC_JSON_FORMAT,
-  SOLC_JSON_LIMITS,
-} from "../domain/evm/solcCompilerJson.js";
+import { SOLC_JSON_LIMITS } from "../domain/evm/solcCompilerJson.js";
 import {
   compilerDiagnosticsBindCarrier,
   compilerIdentityBytes,
@@ -554,6 +549,12 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
     let workerLimits: LinuxResourceLimits | undefined;
     let limiter =
       environment.REA_EVM_PRLIMIT_COMMAND ?? EVM_PRLIMIT_COMMAND_DEFAULT;
+    // A solc-json carrier above the fixed parser ceiling can never be parsed,
+    // so that ceiling also bounds what is read and copied.
+    const carrierBudget =
+      compilerSelection === undefined
+        ? producerLimits.input_bytes
+        : Math.min(producerLimits.input_bytes, SOLC_JSON_LIMITS.inputBytes);
     let result: Result<EvmInterfaceExecution, AnalysisError>;
     try {
       if (options?.signal?.aborted)
@@ -562,10 +563,6 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
         // The worker request carries these identities verbatim, so refuse
         // sizes no admitted carrier could contain before any process effect.
         const identityBytes = compilerIdentityBytes(compilerSelection);
-        const carrierBudget = Math.min(
-          producerLimits.input_bytes,
-          SOLC_JSON_LIMITS.inputBytes,
-        );
         if (identityBytes > carrierBudget)
           throw new AnalysisInputError(
             OPERATION,
@@ -636,7 +633,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
       phase = "artifact-read";
       const carrier = await readStableArtifact(
         input.path,
-        producerLimits.input_bytes,
+        carrierBudget,
         options?.signal,
         undefined,
         this.#resources,
@@ -831,24 +828,12 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
               "A compiler JSON resource refusal carries the parser ceiling that stopped it.",
             );
           const { name, maximum, required } = reply.limit;
-          throw parseLimitConstraint(
-            OPERATION,
-            "capacity",
-            decodeLimit(
-              SOLC_JSON_FORMAT,
-              reply.message,
-              required === undefined
-                ? { name, maximum }
-                : { name, maximum, required },
-            ),
-            {
-              capturedOutput,
-              diagnostics,
-              ...fixedAllowanceOptions(
-                `Compiler JSON limits of ${SOLC_JSON_LIMITS.inputBytes} input bytes, ${SOLC_JSON_LIMITS.depth} nesting levels and ${SOLC_JSON_LIMITS.nodes} AST nodes (no runtime override)`,
-                "parser",
-              ),
-            },
+          throw compilerJsonLimitRefusal(
+            reply.message,
+            required === undefined
+              ? { name, maximum }
+              : { name, maximum, required },
+            { capturedOutput, diagnostics },
           );
         }
         // The worker rejected the selected file's bytes, not the request.
@@ -1115,6 +1100,10 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
               fileFailure,
               timeoutMs,
               producerLimits,
+              fixedInputBytes:
+                carrierBudget < producerLimits.input_bytes
+                  ? carrierBudget
+                  : undefined,
             }),
           );
       if (markerCleanupFailure !== undefined) {

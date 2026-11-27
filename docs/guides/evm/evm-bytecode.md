@@ -158,6 +158,9 @@ most 16 rows (JSON pointer, severity and source range), with
 bytecode text, raw metadata text, settings JSON and diagnostic JSON, recording `object_code_units`, metadata `raw_code_units` and
 `settings_code_units` instead (null means absent). Parsed compiler version and
 metadata parse status remain visible; read settings from the parent Evidence.
+Summary severity, compiler version and reference source, library or immutable
+names longer than 256 UTF-16 code units are replaced by
+`{"omitted_code_units": n}`; the parent Evidence keeps the exact text.
 Access exact omitted source fields from the complete parent Evidence through the
 normal ledger/export workflow using `parent_evidence_id`; views do not reacquire
 or reinterpret the compiler output. When inference is unavailable, summary/function coverage is `unknown`,

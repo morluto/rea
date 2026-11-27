@@ -194,7 +194,7 @@
       "reason": "Electron fuse input bytes and sentinel inventory are resource policies."
     }
   },
-  "src/evm/EvmoleInterfaceProvider.ts": {
+  "src/evm/EvmoleFailures.ts": {
     "`Compiler JSON limits of ${SOLC_JSON_LIMITS.inputBytes} input bytes, ${SOLC_JSON_LIMITS.depth} nesting levels and ${SOLC_JSON_LIMITS.nodes} AST nodes (no runtime override)`": {
       "class": "pending",
       "issue": 14235,

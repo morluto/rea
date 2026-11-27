@@ -111,7 +111,7 @@ export const evmInterfaceSchema = z
       path: z.string().min(1),
       sha256,
       bytes: byteOffset,
-      encoding: z.enum(["raw", "hex", "solc-json"]),
+      encoding: evmEncodingSchema,
     }),
     bytecode: z.strictObject({
       sha256: sha256.nullable(),

@@ -3,6 +3,13 @@ import {
   MAX_NODE_TIMER_DELAY_MS,
 } from "../domain/analysisResourceLimits.js";
 import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
+import { decodeLimit } from "../domain/parseFailure.js";
+import { parseLimitConstraint } from "../domain/parseFailureAnalysisError.js";
+import {
+  SOLC_JSON_FORMAT,
+  SOLC_JSON_LIMITS,
+} from "../domain/evm/solcCompilerJson.js";
 import type { LinuxResourceLimits } from "../process/LinuxResourceLimits.js";
 import type { AnalysisErrorOptions } from "../domain/analysisErrorBase.js";
 import {
@@ -27,6 +34,25 @@ import { EVMOLE_PROVIDER_IDENTITY } from "./EvmoleProviderIdentity.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_evm_interface";
+
+/** The one refusal for a fixed compiler JSON ceiling, from the read or the parser. */
+export const compilerJsonLimitRefusal = (
+  reason: string,
+  limit: Parameters<typeof decodeLimit>[2],
+  options: AnalysisErrorOptions,
+) =>
+  parseLimitConstraint(
+    OPERATION,
+    "capacity",
+    decodeLimit(SOLC_JSON_FORMAT, reason, limit),
+    {
+      ...options,
+      ...fixedAllowanceOptions(
+        `Compiler JSON limits of ${SOLC_JSON_LIMITS.inputBytes} input bytes, ${SOLC_JSON_LIMITS.depth} nesting levels and ${SOLC_JSON_LIMITS.nodes} AST nodes (no runtime override)`,
+        "parser",
+      ),
+    },
+  );
 
 /** Both a structured worker refusal and reply-file admission name this allowance. */
 export const evmReplyBudgetFailure = (
@@ -80,6 +106,8 @@ interface EvmFailureContext {
   readonly fileFailure?: EvmFileSizeFailureEvidence | undefined;
   readonly timeoutMs?: number | undefined;
   readonly producerLimits?: EvmProducerLimits | undefined;
+  /** The compiler JSON ceiling, when it bounded the read below producer_limits. */
+  readonly fixedInputBytes?: number | undefined;
 }
 
 type ResolvedEvmFailureContext = Omit<
@@ -102,7 +130,7 @@ export const evmFailureDialect = (
     producerLimits:
       context.producerLimits ?? selectedEvmProducerLimits(undefined),
   };
-  const { phase, path, producerLimits } = resolved;
+  const { phase, path, producerLimits, fixedInputBytes } = resolved;
   return {
     providerId: EVMOLE_PROVIDER_IDENTITY.id,
     operation: OPERATION,
@@ -114,23 +142,32 @@ export const evmFailureDialect = (
             description: "bytecode carrier",
             retainCompletedIdentity: true,
             fileSize: (limit, details) =>
-              new AnalysisResourceConstraintError(
-                OPERATION,
-                "file-size",
-                `${limit.message} producer_limits.input_bytes is ${String(producerLimits.input_bytes)} bytes; timeout_ms does not raise it.`,
-                {
-                  maximum_input_bytes: producerLimits.input_bytes,
-                  parameter: "producer_limits.input_bytes",
-                },
-                {
-                  ...details,
-                  retryable: false,
-                  remediationAction: evmProducerLimitRecovery(
-                    producerLimits,
-                    "input_bytes",
+              fixedInputBytes !== undefined
+                ? compilerJsonLimitRefusal(
+                    `${limit.message} Compiler JSON input is limited to ${String(fixedInputBytes)} bytes; producer_limits.input_bytes does not raise it.`,
+                    {
+                      name: "compiler_json_input_bytes",
+                      maximum: fixedInputBytes,
+                    },
+                    details,
+                  )
+                : new AnalysisResourceConstraintError(
+                    OPERATION,
+                    "file-size",
+                    `${limit.message} producer_limits.input_bytes is ${String(producerLimits.input_bytes)} bytes; timeout_ms does not raise it.`,
+                    {
+                      maximum_input_bytes: producerLimits.input_bytes,
+                      parameter: "producer_limits.input_bytes",
+                    },
+                    {
+                      ...details,
+                      retryable: false,
+                      remediationAction: evmProducerLimitRecovery(
+                        producerLimits,
+                        "input_bytes",
+                      ),
+                    },
                   ),
-                },
-              ),
           },
         }
       : {}),
