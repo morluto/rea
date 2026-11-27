@@ -5,6 +5,7 @@ import type {
 import type { Logger } from "pino";
 
 import { completedOperationEvidence } from "../application/binary/SessionEvidenceReuse.js";
+import { executeWithNativeSymbolSelection } from "../application/NativeSymbolSelection.js";
 import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import {
@@ -112,16 +113,30 @@ export const createProviderOperationToolHandler =
           const executionParameters =
             options.parametersForExecution?.(operation, providerParameters) ??
             providerParameters;
+          const executionOptions = {
+            signal: context.mcpReq.signal,
+            progress,
+            // A direct tool call reads the session's own target, so a
+            // single-Program provider can replay it without a document.
+            snapshotContext: "session-target" as const,
+            isOperationAdvertised: (advertised: AnalysisOperation) =>
+              server.advertisesTool(advertised),
+          };
           const execution = await logToolExecution(
             dependencies.logger,
             contract.name,
             () =>
-              analysis.execute(operation, executionParameters, {
-                signal: context.mcpReq.signal,
-                progress,
-                isOperationAdvertised: (advertised) =>
-                  server.advertisesTool(advertised),
-              }),
+              executeWithNativeSymbolSelection(
+                analysis,
+                operation,
+                executionParameters,
+                (parameters) =>
+                  analysis.execute(operation, parameters, executionOptions),
+                {
+                  signal: context.mcpReq.signal,
+                  snapshotContext: executionOptions.snapshotContext,
+                },
+              ),
           );
           if (!execution.ok)
             return progress.complete(
@@ -167,6 +182,8 @@ export const createProviderOperationToolHandler =
               projected.value,
               contract,
               recorded,
+              undefined,
+              dependencies.recordEvidence,
             ),
           );
         },

@@ -40,7 +40,7 @@ it("rejects a symlink when O_NOFOLLOW is unavailable and still follows when requ
       }
     }).rejects.toMatchObject({
       name: "ArtifactReaderFailure",
-      reason: "format",
+      reason: "path",
     });
   } finally {
     await linkedReader.close();

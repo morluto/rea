@@ -2,8 +2,8 @@ $ rea inspect-byte-entropy <workspace>/sample.bin --filter-output normalized_res
 exit: 0
 --- stdout
 
-  blocks[1]{offset
-[truncated: showing tokens 5–10 of 42]
+  blocks[1]{
+[truncated: showing tokens 5–10 of 50]
 <end>
 --- stderr
 <end>

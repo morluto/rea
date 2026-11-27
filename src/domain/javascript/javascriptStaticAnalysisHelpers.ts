@@ -11,7 +11,7 @@ import type {
   JavaScriptStaticStorage,
 } from "./javascriptStaticAnalysisTypes.js";
 import {
-  readExactJavaScriptLiteral,
+  stringValue,
   semanticStaticPropertyKey,
   semanticStaticPropertyName,
   unwrapJavaScriptExpression,
@@ -545,6 +545,28 @@ export const FS_OPEN_FLAGS: ReadonlySet<string> = new Set([
   "xw+",
 ]);
 
+/**
+ * Encodings Node's `Buffer` accepts, so an `encoding` stream option can be decided.
+ *
+ * `Buffer.isEncoding` is the authority, but this module is the pure domain layer and
+ * does not reach for Node globals. The set is the documented list; a value outside it
+ * is one Node rejects at the call site.
+ */
+export const BUFFER_ENCODINGS: ReadonlySet<string> = new Set([
+  "ascii",
+  "base64",
+  "base64url",
+  "binary",
+  "hex",
+  "latin1",
+  "ucs-2",
+  "ucs2",
+  "utf-16le",
+  "utf8",
+  "utf-8",
+  "utf16le",
+]);
+
 /** Reserved browsing-context names (ASCII case-insensitive). */
 const BROWSING_CONTEXT_KEYWORDS = new Set([
   "_blank",
@@ -749,20 +771,6 @@ const memberPropertyName = (
 ): string =>
   semanticStaticPropertyKey(node.property, node.computed) ??
   (node.computed ? `[computed@${String(node.property.start ?? -1)}]` : "");
-
-/**
- * Return a string literal value without evaluating an expression. A template
- * literal without substitutions denotes the same exact string.
- */
-export const stringValue = (
-  node: t.Node | null | undefined,
-): string | undefined => {
-  if (node === null || node === undefined) return undefined;
-  const literal = readExactJavaScriptLiteral(node);
-  return literal.found && typeof literal.value === "string"
-    ? literal.value
-    : undefined;
-};
 
 /** Return a string or numeric argument literal. */
 export const argumentValue = (

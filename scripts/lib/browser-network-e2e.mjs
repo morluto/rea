@@ -16,6 +16,7 @@ import {
 import { assertBrowserNetworkEvidence } from "./browser-network-assertions.mjs";
 import { scenarioProfiles } from "./browser-scenario-verifier.mjs";
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
+import { completeEvidenceClient } from "./complete-evidence.mjs";
 
 /** Exercise selected network content through real CLI and stdio MCP, one browser at a time. */
 export async function verifyBrowserNetworkEvidence(
@@ -74,6 +75,8 @@ export async function verifyBrowserNetworkEvidence(
       [
         entrypoint,
         "capture-browser-scenario",
+        "--detail",
+        "complete",
         JSON.stringify(scenario),
         "--json",
       ],
@@ -109,11 +112,16 @@ export async function verifyBrowserNetworkEvidence(
       env,
       stderr: "pipe",
     });
-    client = new Client({ name: "network-real-e2e", version: "1" });
+    client = completeEvidenceClient(
+      new Client({ name: "network-real-e2e", version: "1" }),
+    );
     let mcpProof;
     await client.connect(transport);
     const result = await client.callTool(
-      { name: "capture_browser_scenario", arguments: scenario },
+      {
+        name: "capture_browser_scenario",
+        arguments: { ...scenario, detail: "complete" },
+      },
       { timeout: 60_000 },
     );
     assert.notEqual(result.isError, true, JSON.stringify(result));
@@ -131,7 +139,10 @@ export async function verifyBrowserNetworkEvidence(
         browser: { mode: "connect", ...attachment },
       });
       const connected = await client.callTool(
-        { name: "capture_browser_scenario", arguments: connectedScenario },
+        {
+          name: "capture_browser_scenario",
+          arguments: { ...connectedScenario, detail: "complete" },
+        },
         { timeout: 60_000 },
       );
       assert.notEqual(connected.isError, true, JSON.stringify(connected));

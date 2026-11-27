@@ -1,10 +1,6 @@
+import { systemCodeFromError } from "../kernel/reportedSystemCode.js";
 import { stat } from "node:fs/promises";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
-
-export const adbFilesystemErrorCode = (cause: unknown): string | undefined =>
-  cause instanceof Error && "code" in cause && typeof cause.code === "string"
-    ? cause.code
-    : undefined;
 
 /** Admit the caller's file once, retaining the selection and the host's reason. */
 export const adbInputFileError = async (
@@ -17,7 +13,7 @@ export const adbInputFileError = async (
   try {
     info = await stat(absolutePath);
   } catch (cause) {
-    const code = adbFilesystemErrorCode(cause);
+    const code = systemCodeFromError(cause);
     const message =
       code === "ENOENT" || code === "ENOTDIR"
         ? "The selected file does not exist or a parent is not a directory."

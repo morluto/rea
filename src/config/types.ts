@@ -6,8 +6,12 @@ import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
 
 import type { GhidraLanguageOverride } from "./ghidraLanguageOverride.js";
 import type { McpToolCatalogProfile } from "./mcpToolCatalogProfile.js";
+import type { McpToolsListPageBudget } from "./mcpToolsListPageBudget.js";
 import type { BridgeMaxRequestBytes } from "./bridgeMaxRequestBytes.js";
 import type { BridgeMaxReplyBytes } from "./bridgeMaxReplyBytes.js";
+import type { GhidraCancelGrace } from "./ghidraCancelGrace.js";
+import type { GhidraCheckpointSaveWait } from "./ghidraCheckpointSaveWait.js";
+import type { Result } from "../domain/result.js";
 import type { RegexMatchingDeadline } from "./regexMatchingDeadline.js";
 import type { RegexWorkerHeapRequest } from "./regexWorkerHeapRequest.js";
 import type { HopperCallerScanBudget } from "./hopperCallerScanBudget.js";
@@ -19,6 +23,8 @@ export interface AppConfig {
   readonly mcpToolFamilies?: readonly McpToolFamilies[number][];
   readonly mcpMaxResponseBytes?: number;
   readonly mcpMaxInputElements?: number;
+  /** Selected tools/list page budget; absent keeps the default page. */
+  readonly mcpToolsListPageBudget?: McpToolsListPageBudget;
   readonly mcpOutputSchemaProfile?: McpOutputSchemaProfile;
   readonly mcpToolCatalogProfile?: McpToolCatalogProfile;
   readonly analysisProvider: AnalysisProviderSelector;
@@ -26,6 +32,12 @@ export interface AppConfig {
   readonly ghidraInstallDir: string | undefined;
   readonly ghidraJavaHome: string | undefined;
   readonly ghidraStartupTimeoutMs: number;
+  /**
+   * Launch-only grace for a cancelled Ghidra read to answer before its
+   * session is closed; absent keeps the default. A refused launch value stays
+   * a failure for Ghidra sessions, never the default.
+   */
+  readonly ghidraCancelGrace?: Result<GhidraCancelGrace, ConfigurationError>;
   /** Per-function native decompiler limit; absent leaves decompiles unbounded. */
   readonly ghidraDecompileTimeoutSeconds?: number | undefined;
   readonly ghidraDecompileMaxPayloadMiB?: number | undefined;
@@ -38,6 +50,15 @@ export interface AppConfig {
   readonly ghidraExistingProject?: GhidraProjectSelection;
   /** Opt-in storage for checkpoints of REA-owned Ghidra Programs. */
   readonly ghidraCheckpointDirectory?: string;
+  /**
+   * Launch-only bound on a checkpoint save's wait for another session's
+   * publication; absent keeps the default. A refused launch value stays a
+   * failure for the sessions that would apply it, never the default.
+   */
+  readonly ghidraCheckpointSaveWait?: Result<
+    GhidraCheckpointSaveWait,
+    ConfigurationError
+  >;
   readonly ghidraNativeAotJar?: string;
   readonly ilspyCmdPath: string | undefined;
   /**

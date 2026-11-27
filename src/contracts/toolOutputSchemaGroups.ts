@@ -1,4 +1,5 @@
 import { coverageStatusSchema } from "../domain/coverage.js";
+import { discardedCheckpointEditsSchema } from "../domain/engineCloseReport.js";
 import { procedureReferencesSchema } from "../domain/native/procedureReferences.js";
 import {
   nativeAddressListSchema,
@@ -54,7 +55,10 @@ import { nativeLoadImageSchema } from "../domain/native/nativeLoadImage.js";
 import { nativeUiResultSchema } from "../domain/native/nativeUiObservation.js";
 import { nativeValueTraceSchema } from "../domain/native/nativeValueTrace.js";
 import { bundleResourceRootSchema } from "../domain/apple/bundleResourceRoot.js";
-import { nativeDataTypeSchema } from "../domain/native/nativeDataType.js";
+import {
+  nativeDataTypeDefinitionsSchema,
+  nativeDataTypeSchema,
+} from "../domain/native/nativeDataType.js";
 import { nativeCallObservationResultSchema } from "../domain/native/nativeCallObservation.js";
 import {
   nativeInstructionSchema,
@@ -74,6 +78,7 @@ import {
   listArchitecturesSchema,
 } from "../domain/native/nativeInspection.js";
 import { artifactExtractionResultSchema } from "../domain/artifactGraph.js";
+import { artifactExtractionSummaryViewResultSchema } from "../domain/analysisView/summarySchemas/artifactExtractionSummarySchemas.js";
 import { artifactInspectionResultSchema } from "../domain/artifactInspection.js";
 import { interfaceBuilderAnalysisSchema } from "../domain/apple/interfaceBuilderGraph.js";
 import { dylibResolutionResultSchema } from "../domain/apple/dylibResolution.js";
@@ -155,6 +160,7 @@ export const officialOutputSchemas = {
     nativeLoadImageSchema,
     nativeLoadImageSummaryViewResultSchema,
   ),
+  define_native_data_types: evidenceResultOf(nativeDataTypeDefinitionsSchema),
   inspect_native_data_type: evidenceResultOf(nativeDataTypeSchema),
   inspect_native_instruction: evidenceResultOf(nativeInstructionSchema),
   resolve_native_call_targets: evidenceResultOf(nativeCallTargetsSchema),
@@ -263,7 +269,10 @@ export const officialOutputSchemas = {
   set_comment: evidenceResultOf(z.boolean()),
   set_inline_comment: evidenceResultOf(z.boolean()),
   unset_bookmark: evidenceResultOf(z.boolean()),
-  xrefs: evidenceResultOf(nativeAddressListSchema),
+  xrefs: analysisDetailOutputSchemaOf(
+    nativeAddressListSchema,
+    nativeObservationSummaryViewResultSchemas.xrefs,
+  ),
 } as const satisfies Readonly<Record<string, z.ZodObject>>;
 
 const literalTraceOutput = analysisDetailOutputSchemaOf(
@@ -364,6 +373,12 @@ export const enhancedOutputSchemas = {
       z.object({
         status: z.literal("resolved"),
         name: z.string(),
+        resolved_name: z
+          .string()
+          .optional()
+          .describe(
+            "The provider's name for the resolved symbol when it differs from name, such as the library-qualified import KERNEL32.DLL::VirtualAlloc for VirtualAlloc.",
+          ),
         address: z.string(),
         xrefs: nativeAddressListSchema,
         observed_xrefs: z.int().nonnegative().optional(),
@@ -375,6 +390,12 @@ export const enhancedOutputSchemas = {
         status: z.literal("unresolved"),
         name: z.string(),
         reason: z.literal("name_not_found"),
+        candidates: z
+          .array(z.object({ address: z.string(), name: z.string() }))
+          .optional()
+          .describe(
+            "Observed names equal to the imported name of a library-qualified name whose library the provider does not report. None is selected.",
+          ),
       }),
     ]),
   ),
@@ -432,7 +453,12 @@ export const artifactOutputSchemas = {
       artifactInventorySummaryViewResultSchema,
     ]),
   ),
-  extract_artifact: evidenceResultOf(artifactExtractionResultSchema),
+  extract_artifact: evidenceResultOf(
+    z.union([
+      artifactExtractionResultSchema,
+      artifactExtractionSummaryViewResultSchema,
+    ]),
+  ),
   decode_interface_builder: evidenceResultOf(
     z.union([
       interfaceBuilderAnalysisSchema,
@@ -504,7 +530,9 @@ export const sessionOutputSchemas = {
           .describe(
             "All retained Evidence records, including observations without replay bindings.",
           ),
+        checkpoint: discardedCheckpointEditsSchema.optional(),
       }),
+      z.strictObject({ checkpoint: discardedCheckpointEditsSchema }),
     ]),
   ),
   // Every session kind crossed with every detail level, so `detail` fixes

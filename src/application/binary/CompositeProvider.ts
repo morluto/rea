@@ -19,6 +19,10 @@ import type {
   ProviderIdentity,
 } from "../../ports/AnalysisProvider.js";
 import { closeAnalysisClient } from "../../providers/AnalysisClientCleanup.js";
+import {
+  engineCloseReportOf,
+  retainCloseOutcome,
+} from "../../domain/engineCloseReport.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 
 /** Synthetic identity for a deterministic provider set. */
@@ -69,47 +73,50 @@ const closeCompositeClients = (
     const failures = outcomes.flatMap(({ providerId, release, result }) =>
       result.ok ? [] : [{ providerId, release, error: result.error }],
     );
-    if (failures.length === 0) return ok(null);
+    // A child that released its engine reports it now, even when a sibling
+    // fails: a retry skips that released child and could not report it.
+    const report = engineCloseReportOf(...outcomes.map(({ result }) => result));
+    if (failures.length === 0) return ok(report);
     if (failures.length === 1) {
       const failure = failures[0];
-      if (failure !== undefined) return err(failure.error);
+      if (failure !== undefined)
+        return err(retainCloseOutcome(failure.error, report));
     }
     const unknownReleases = failures.flatMap(({ error, release }) =>
       error.carriesCleanup ? [] : [release],
     );
-    return err(
-      new ProviderCleanupError(
-        identity.id,
-        [],
-        {
-          reason:
-            "Multiple composed provider clients could not be confirmed closed.",
-          failures: failures.map(({ providerId, error }) => ({
-            provider_id: providerId,
-            message: error.message,
-            resources: [...error.cleanupResources],
-            ...(error.diagnostics === undefined
-              ? {}
-              : { diagnostics: error.diagnostics }),
-          })),
-        },
-        {
-          remediationAction: [
-            ...new Set(
-              failures.map(
-                ({ error }) => projectAnalysisError(error).remediation.action,
-              ),
+    const aggregate = new ProviderCleanupError(
+      identity.id,
+      [],
+      {
+        reason:
+          "Multiple composed provider clients could not be confirmed closed.",
+        failures: failures.map(({ providerId, error }) => ({
+          provider_id: providerId,
+          message: error.message,
+          resources: [...error.cleanupResources],
+          ...(error.diagnostics === undefined
+            ? {}
+            : { diagnostics: error.diagnostics }),
+        })),
+      },
+      {
+        remediationAction: [
+          ...new Set(
+            failures.map(
+              ({ error }) => projectAnalysisError(error).remediation.action,
             ),
-          ].join("\n"),
-          cause: new AggregateError(
-            failures.map(({ error }) => error),
-            "Composed provider cleanup failed.",
           ),
-        },
-      )
-        .bindCleanupDependencies(failures.map(({ error }) => error))
-        .bindCleanupReleaseClaim(allClientsReleased(unknownReleases)),
-    );
+        ].join("\n"),
+        cause: new AggregateError(
+          failures.map(({ error }) => error),
+          "Composed provider cleanup failed.",
+        ),
+      },
+    )
+      .bindCleanupDependencies(failures.map(({ error }) => error))
+      .bindCleanupReleaseClaim(allClientsReleased(unknownReleases));
+    return err(retainCloseOutcome(aggregate, report));
   };
 };
 
@@ -275,6 +282,10 @@ export class CompositeProvider implements AnalysisProvider {
           ? "unknown"
           : "ready";
       },
+      unsavedCloseReport: () =>
+        [...clients.values()]
+          .map((client) => client.unsavedCloseReport?.() ?? null)
+          .find((report) => report !== null) ?? null,
       operationHealthSnapshot: () => {
         const snapshots = [...clients.values()].map((client) =>
           client.operationHealthSnapshot?.(),

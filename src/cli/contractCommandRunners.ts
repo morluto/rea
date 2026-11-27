@@ -1,3 +1,4 @@
+import { cliPublicationInvocation } from "./cliEvidencePublication.js";
 import type { Logger } from "pino";
 
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
@@ -22,6 +23,7 @@ import type {
   ContractCommandContext,
 } from "./contractCommand.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { cliProgressReporter } from "./cliProgress.js";
 import {
   projectCliAnalysisResult,
   projectCliInputFields,
@@ -126,6 +128,7 @@ export const runOnSessionTarget =
       signal,
       detail: delivery.detail,
       evidenceOutput: delivery.evidenceOutput,
+      rerunRecoversResult: delivery.rerunRecoversResult,
       ...(delivery.view === undefined ? {} : { view: delivery.view }),
     });
   };
@@ -184,10 +187,16 @@ export const runDirectOnTarget =
       {
         logger,
         signal,
+        progress: cliProgressReporter,
         ...directAnalysisOpening(opening),
-        ...(evidenceOutput === undefined
-          ? {}
-          : { includeEvidenceSources: true }),
+        // A bundle needs the sources its record cites: a requested one, or
+        // the retained-Evidence cache an over-budget result may go to.
+        ...(evidenceOutput !== undefined ||
+        (delivery !== undefined &&
+          delivery.detail === undefined &&
+          cliPublicationInvocation().retention !== undefined)
+          ? { includeEvidenceSources: true }
+          : {}),
       },
     );
     if (delivery === undefined) return projectCliAnalysisResult(result);
@@ -208,6 +217,7 @@ export const runDirectOnTarget =
       signal,
       detail: delivery.detail,
       evidenceOutput,
+      rerunRecoversResult: delivery.rerunRecoversResult,
     });
   };
 
@@ -348,6 +358,7 @@ export const deliverWithService =
       signal: context.signal,
       detail: delivery.detail,
       evidenceOutput: delivery.evidenceOutput,
+      rerunRecoversResult: delivery.rerunRecoversResult,
       ...(delivery.view === undefined ? {} : { view: delivery.view }),
     });
   };

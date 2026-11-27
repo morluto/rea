@@ -1,5 +1,6 @@
 import {
   WEB_SOURCE_MAP_LIMITS,
+  sourceMapBudgetLimit,
   sourceMapLimitSelection,
   sourceMapLimitRecovery,
   type SourceMapLimits,
@@ -559,6 +560,14 @@ class OwnedCodec implements SourceMapCleanupOwner {
         ? "Codec output exceeds its complete-evidence budget."
         : "Codec diagnostic output exceeds its 1048576-byte allowance.",
       {
+        ...(stream === "stdout"
+          ? {
+              limit: sourceMapBudgetLimit(
+                "output_bytes",
+                this.limits.outputBytes,
+              ),
+            }
+          : {}),
         remediationAction:
           stream === "stdout"
             ? sourceMapLimitRecovery("output_bytes", this.limits.outputBytes)
@@ -602,6 +611,7 @@ class OwnedCodec implements SourceMapCleanupOwner {
         ),
       },
       {
+        limit: sourceMapBudgetLimit("codec_heap_mib", this.limits.codecHeapMiB),
         capturedOutput: {
           stdout: "",
           stderr: snapshot.stderr.text,
@@ -609,10 +619,6 @@ class OwnedCodec implements SourceMapCleanupOwner {
             snapshot.diagnosticTruncated === true ||
             !(this.#supervisor?.observedOutputClose() ?? false),
         },
-        remediationAction: sourceMapLimitRecovery(
-          "codec_heap_mib",
-          this.limits.codecHeapMiB,
-        ),
       },
     );
   }

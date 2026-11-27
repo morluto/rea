@@ -100,9 +100,13 @@ it.skipIf(process.platform !== "darwin").each([false, true])(
         throw new Error("Expected cancellation");
       expect(failure.reason).toBe("cancelled");
       expect(failure.cancellation?.reason).toBe(reason);
-      expect(translateArtifactFailure("inspect_artifact", failure).cause).toBe(
-        reason,
-      );
+      expect(
+        translateArtifactFailure(
+          "inspect_artifact",
+          "/selected/artifact",
+          failure,
+        ).cause,
+      ).toBe(reason);
       expect(state.calls).toBe(preAborted ? 0 : 1);
       if (!preAborted) {
         expect(failure.cause).toBeInstanceOf(OwnedCommandFailure);

@@ -108,33 +108,6 @@ const comparisonUnknownInput = (
         (dimension === "calls" && discoveryUnresolved),
     )
     .map(({ dimension }) => dimension);
-  return functionUnknownInput({
-    status,
-    dimensions,
-    discoveryUnresolved,
-    leftIds,
-    rightIds,
-    comparisonEvidenceId,
-  });
-};
-
-const functionUnknownInput = ({
-  status,
-  dimensions,
-  discoveryUnresolved,
-  leftIds,
-  rightIds,
-  comparisonEvidenceId,
-}: {
-  status: ReturnType<typeof compareFunctions>["status"];
-  discoveryUnresolved: boolean;
-  dimensions: readonly ReturnType<
-    typeof compareFunctions
-  >["dimensions"][number]["dimension"][];
-  leftIds: readonly string[];
-  rightIds: readonly string[];
-  comparisonEvidenceId: string;
-}): RecordUnknownInput | undefined => {
   if (status === "unchanged") return undefined;
   const supportingIds = [
     ...new Set([...leftIds, ...rightIds, comparisonEvidenceId]),

@@ -11,26 +11,13 @@ import {
 import { memberDeclaringTypeRowLookup } from "../domain/managed/managedMemberOwnership.js";
 import { memberListIndexSize } from "../domain/managed/managedMemberPointers.js";
 import { readTypeMemberListFacts } from "../domain/managed/managedTypeMemberLists.js";
-import {
-  metadataRowOffset,
-  readManagedMetadataLayout,
-} from "../domain/managed/managedMetadataLayout.js";
+import { metadataRowOffset } from "../domain/managed/managedMetadataLayout.js";
 import {
   buildManagedMemberPointerFixture,
   buildManagedPeFixture,
   managedPeFixtureTarget,
 } from "./ManagedPe.fixture.js";
-import { readManagedPeLayout } from "../domain/managed/managedPeReader.js";
-
-const metadataLayout = (bytes: Buffer) => {
-  const pe = readManagedPeLayout(bytes);
-  if (pe.cli === null) throw new Error("Fixture omitted CLI metadata");
-  return readManagedMetadataLayout(
-    bytes,
-    pe.rvaToOffset(pe.cli.metadata.rva, pe.cli.metadata.size, "cli.metadata"),
-    pe.cli.metadata.size,
-  );
-};
+import { readManagedFixtureMetadataLayout } from "./ManagedPeMetadata.fixture.js";
 
 describe("managed declaring type ownership", () => {
   it.prop([
@@ -46,7 +33,7 @@ describe("managed declaring type ownership", () => {
     "matches literal ownership ranges for valid nondecreasing list starts",
     ([fields, methods]) => {
       const bytes = buildManagedMemberPointerFixture();
-      const layout = metadataLayout(bytes);
+      const layout = readManagedFixtureMetadataLayout(bytes);
       const types = layout.table(2);
       if (types === undefined) throw new Error("Fixture omitted TypeDef");
       for (let row = 0; row < 3; row++) {
@@ -101,7 +88,7 @@ describe("managed declaring type ownership", () => {
       additionalEmptyTypes: count - 3,
       methodRowCount: count,
     });
-    const layout = metadataLayout(bytes);
+    const layout = readManagedFixtureMetadataLayout(bytes);
     const types = layout.table(2);
     if (types === undefined) throw new Error("Fixture omitted TypeDef");
     const methodOffset =
@@ -127,7 +114,7 @@ describe("managed declaring type ownership", () => {
 
   it("admits ownership storage before allocation and retains failed admission", () => {
     const bytes = buildManagedPeFixture();
-    const layout = metadataLayout(bytes);
+    const layout = readManagedFixtureMetadataLayout(bytes);
     const facts = readTypeMemberListFacts(bytes, layout);
     attachManagedDecodeBudget(layout, new ManagedDecodeBudget(1));
     const lookup = () => memberDeclaringTypeRowLookup(bytes, layout, 6, facts);
@@ -202,7 +189,7 @@ describe("selected FieldList and MethodList interval iteration", () => {
       methodRowCount: 3,
       distinctMemberNames: true,
     });
-    const layout = metadataLayout(bytes);
+    const layout = readManagedFixtureMetadataLayout(bytes);
     const fieldColOffset =
       4 + 2 * layout.stringIndexSize + layout.codedIndexSize("TypeDefOrRef");
     const methodColOffset = fieldColOffset + memberListIndexSize(layout, 4);

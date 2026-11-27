@@ -48,10 +48,10 @@ export interface SnapshotHashScan {
  * Feed chunks in order; a trailing carry keeps a magic-to-hash span that a
  * chunk boundary would otherwise split.
  */
-/** Hard cap on distinct hashes retained before partial coverage reports. */
-export const MAX_SNAPSHOT_HASH_CANDIDATES = 64;
-
 export class SnapshotHashScanner {
+  /** Distinct hashes retained before the scan reports itself capped. */
+  constructor(private readonly maximumCandidates = 64) {}
+
   #sources = 0;
   #capped = false;
   private readonly candidates: string[] = [];
@@ -61,7 +61,7 @@ export class SnapshotHashScanner {
   #recordCandidate(candidate: string | null): void {
     if (candidate === null) return;
     if (!this.candidateSet.has(candidate)) {
-      if (this.candidates.length === MAX_SNAPSHOT_HASH_CANDIDATES)
+      if (this.candidates.length === this.maximumCandidates)
         this.#capped = true;
       else {
         this.candidateSet.add(candidate);

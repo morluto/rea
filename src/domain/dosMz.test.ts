@@ -179,10 +179,9 @@ describe("MZ Windows header observations", () => {
       offset: 4,
       signature: "PE",
     });
-    expect(parseExecutableHeader(bytes, "x64")).toEqual({
-      ok: false,
-      error:
-        "Unsupported overlapping PE header at file offset 4; this reader requires the Windows header outside the 64-byte DOS header",
+    expect(parseExecutableHeader(bytes, "x64")).toMatchObject({
+      ok: true,
+      value: { format: "pe", architecture: "x86" },
     });
   });
 
@@ -586,4 +585,22 @@ it("adds distant Windows signatures while retaining prior DOS observations", () 
   expect(completed).toEqual(
     parseMzHeaderEvidence(prefix, bytes.length, signature),
   );
+});
+
+it("declares a PE image when its signature sits at e_lfanew inside a DOS relocation table", () => {
+  // corkami dllnullep.dll and nullEP.exe: e_crlc 0xff01 from e_lfarlc 0
+  // claims e_lfanew, and the page fields are invalid. The loader reads
+  // e_lfanew alone.
+  const bytes = pe(0x14c);
+  bytes.writeUInt16LE(4200, 2);
+  bytes.writeUInt16LE(16, 4);
+  bytes.writeUInt16LE(0xff01, 6);
+  bytes.writeUInt16LE(0x6015, 8);
+  bytes.writeUInt16LE(0, 24);
+  expect(observeMzWindowsHeader(bytes)).toEqual({
+    state: "declared",
+    offset: 64,
+    signature: "PE",
+  });
+  expect(dosHeader(bytes).ok).toBe(false);
 });

@@ -39,9 +39,9 @@ const checkCliPublication = async (
   const args = [
     "inspect-api-contract",
     "./SDL 雪.graphql",
-    "--contractFormat",
+    "--contract-format",
     "graphql-sdl",
-    "--operationsPath",
+    "--operations-path",
     "./queries file.graphql",
   ];
   const cliComplete = await run({
@@ -345,9 +345,9 @@ cliTest(
       arguments: [
         "inspect-api-contract",
         path,
-        "--contractFormat",
+        "--contract-format",
         "graphql-sdl",
-        "--operationsPath",
+        "--operations-path",
         operations_path,
         "--json",
       ],
@@ -398,7 +398,7 @@ cliTest(
       arguments: [
         "inspect-api-contract",
         path,
-        "--contractFormat",
+        "--contract-format",
         "graphql-sdl",
         "--json",
       ],
@@ -412,5 +412,118 @@ cliTest(
         },
       },
     });
+  },
+);
+
+cliTest(
+  "reports details.limit with required_value and adapter-spelled recovery for max_file_bytes through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-public-api-limit-");
+    const path = join(root, "schema.graphql");
+    const text = "type Query { ping: String }\n";
+    const bytes = Buffer.byteLength(text);
+    await writeFile(path, text);
+
+    const cliRefused = await cli.run({
+      arguments: [
+        "inspect-api-contract",
+        path,
+        "--contract-format",
+        "graphql-sdl",
+        "--max-file-bytes",
+        "8",
+        "--json",
+      ],
+    });
+    expect(cliRefused.exitCode, cliRefused.stderr).toBe(1);
+    expect(cliRefused.json).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_file_bytes",
+          cli_flag: "--max-file-bytes",
+          effective_value: 8,
+          unit: "bytes",
+          minimum: 1,
+          maximum: 33_554_432,
+          default_value: 33_554_432,
+          applies_at: "next_call",
+          required_value: bytes,
+        },
+        refusal: {
+          kind: "adjustable_budget",
+          operation: "inspect_api_contract",
+          control: "max_file_bytes",
+          effective_value: 8,
+          unit: "bytes",
+          range: { minimum: 1, maximum: 33_554_432 },
+          default_value: 33_554_432,
+          required_value: bytes,
+        },
+      },
+    });
+    const cliRemediation = (
+      cliRefused.json as { remediation?: { action?: string } }
+    ).remediation?.action;
+    expect(cliRemediation).toContain("--max-file-bytes");
+    expect(cliRemediation).toContain("rea inspect-api-contract");
+
+    const cliAdmitted = await cli.run({
+      arguments: [
+        "inspect-api-contract",
+        path,
+        "--contract-format",
+        "graphql-sdl",
+        "--max-file-bytes",
+        String(bytes),
+        "--json",
+      ],
+    });
+    expect(cliAdmitted.exitCode, cliAdmitted.stderr).toBe(0);
+
+    const { call } = await connectLocalToolsMcp({
+      REA_MCP_TOOL_FAMILIES: "application,session",
+    });
+    const mcpRefused = await call("inspect_api_contract", {
+      path,
+      format: "graphql-sdl",
+      max_file_bytes: 8,
+    });
+    expect(mcpRefused.isError).toBe(true);
+    const mcpError = parseMcpToolError(mcpRefused).error;
+    expect(mcpError).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_file_bytes",
+          effective_value: 8,
+          unit: "bytes",
+          minimum: 1,
+          maximum: 33_554_432,
+          default_value: 33_554_432,
+          applies_at: "next_call",
+          required_value: bytes,
+        },
+        refusal: {
+          kind: "adjustable_budget",
+          operation: "inspect_api_contract",
+          control: "max_file_bytes",
+          effective_value: 8,
+          unit: "bytes",
+          range: { minimum: 1, maximum: 33_554_432 },
+          default_value: 33_554_432,
+          required_value: bytes,
+        },
+      },
+    });
+    expect(mcpError.details?.limit).not.toHaveProperty("cli_flag");
+    expect(mcpError.remediation?.action).toContain("max_file_bytes");
+    expect(mcpError.remediation?.action).toContain(
+      `at least ${String(bytes)} bytes`,
+    );
   },
 );

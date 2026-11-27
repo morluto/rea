@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createGhidraVerifierMcpOperations } from "./lib/ghidra-verifier-mcp.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
@@ -12,6 +13,7 @@ import { basename, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import {
   inspectMipsReadelf,
@@ -27,7 +29,7 @@ import {
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { parseAnalysisSnapshot } from "../dist/domain/analysisSnapshot.js";
 import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
-import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
+import { requireVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
 import { buildMipsFixture } from "../tests/conformance/ghidra/mips-fixture.mjs";
 import {
   buildPspFixture,
@@ -50,6 +52,10 @@ import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { runOwnedCommand } from "../dist/process/OwnedCommand.js";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import { requireLaneToolchain } from "../tests/conformance/ghidra/fixture-toolchain.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./lib/complete-evidence.mjs";
 
 // Optional cross-target lane. No tool acquisition and no target execution.
 const mode = process.argv[2];
@@ -64,19 +70,7 @@ if (!["linux", "darwin"].includes(process.platform))
   throw new Error(
     "MIPS verification requires a supported Linux/macOS Ghidra host",
   );
-if (process.env.GHIDRA_INSTALL_DIR === undefined)
-  throw new Error("Missing prerequisite: caller-supplied GHIDRA_INSTALL_DIR");
-const installation = await inspectVerifierGhidraInstallation({
-  environment: process.env,
-  installDir: process.env.GHIDRA_INSTALL_DIR,
-  ...(process.env.JAVA_HOME === undefined
-    ? {}
-    : { javaHome: process.env.JAVA_HOME }),
-});
-if (installation.status !== "available")
-  throw new Error(
-    `Ghidra prerequisite unavailable: ${JSON.stringify(installation)}`,
-  );
+const installation = await requireVerifierGhidraInstallation(process.env);
 const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const run = createVerifierRun();
 // Refuse a host without the fixture toolchain before allocating anything.
@@ -87,11 +81,6 @@ const workspaceFixture = await VerifierFixture.open({
   private: false,
 });
 const workspace = workspaceFixture.path;
-// A failed run keeps its workspace for diagnosis; the fixture records why.
-const retainWorkspace = (message, options) => {
-  workspaceFixture.retain(message);
-  return new Error(message, options);
-};
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const env = {
@@ -155,12 +144,12 @@ async function verifyExistingMipsProject(fixture, byteOrder) {
     };
     await walk(join(projectDir, "ExistingMips.rep"));
     return Promise.all(
-      paths.sort().map(async (path) => [
-        relative(projectDir, path),
-        createHash("sha256")
-          .update(await readFile(path))
-          .digest("hex"),
-      ]),
+      paths
+        .sort()
+        .map(async (path) => [
+          relative(projectDir, path),
+          await sha256File(path),
+        ]),
     );
   };
   const before = await digestTree();
@@ -174,7 +163,9 @@ async function verifyExistingMipsProject(fixture, byteOrder) {
     },
     stderr: "pipe",
   });
-  const client = new Client({ name: "rea-existing-mips-proof", version: "1" });
+  const client = completeEvidenceClient(
+    new Client({ name: "rea-existing-mips-proof", version: "1" }),
+  );
   try {
     await client.connect(transport);
     const opened = await client.callTool(
@@ -186,7 +177,7 @@ async function verifyExistingMipsProject(fixture, byteOrder) {
     );
     requireMcpOperationResult(opened, "open_binary");
     const result = await client.callTool(
-      { name: "list_procedures", arguments: {} },
+      { name: "list_procedures", arguments: { detail: "complete" } },
       { timeout: 180000 },
     );
     const observation = parseEvidence(
@@ -217,12 +208,7 @@ async function verifyExistingMipsProject(fixture, byteOrder) {
     before,
     "REA changed the source project",
   );
-  assert.equal(
-    createHash("sha256")
-      .update(await readFile(fixture.path))
-      .digest("hex"),
-    fixture.sha256,
-  );
+  assert.equal(await sha256File(fixture.path), fixture.sha256);
   return {
     byte_order: byteOrder,
     project_unchanged: true,
@@ -300,21 +286,19 @@ try {
         env,
         stderr: "pipe",
       });
-      const client = new Client({
-        name: "rea-real-mips-legacy-proof",
-        version: "1",
-      });
+      const client = completeEvidenceClient(
+        new Client({
+          name: "rea-real-mips-legacy-proof",
+          version: "1",
+        }),
+      );
       let stderr = "";
       transport.stderr?.on("data", (chunk) => {
         stderr = (stderr + chunk.toString()).slice(-65536);
       });
-      const call = async (name, args = {}) => {
-        const reply = await client.callTool(
-          { name, arguments: args },
-          { timeout: 180000 },
-        );
-        return requireMcpOperationResult(reply, name);
-      };
+      const call = createGhidraVerifierMcpOperations(client, {
+        timeout: 180000,
+      }).decodedCall(requireMcpOperationResult);
       try {
         await client.connect(transport);
         const selected = await call("open_binary", {
@@ -473,18 +457,16 @@ try {
       env,
       stderr: "pipe",
     });
-    const client = new Client({ name: "rea-real-mips-proof", version: "1" });
+    const client = completeEvidenceClient(
+      new Client({ name: "rea-real-mips-proof", version: "1" }),
+    );
     let stderr = "";
     transport.stderr?.on("data", (chunk) => {
       stderr = (stderr + chunk.toString()).slice(-65536);
     });
-    const call = async (name, args = {}) => {
-      const reply = await client.callTool(
-        { name, arguments: args },
-        { timeout: 180000 },
-      );
-      return requireMcpOperationResult(reply, name);
-    };
+    const call = createGhidraVerifierMcpOperations(client, {
+      timeout: 180000,
+    }).decodedCall(requireMcpOperationResult);
     try {
       await client.connect(transport);
       if (missingExtension) {
@@ -503,12 +485,14 @@ try {
             process.execPath,
             [
               entrypoint,
-              "function",
-              fixture.path,
-              `${prefix}_entry`,
-              "--provider",
-              "ghidra",
-              "--json",
+              ...(await completeEvidenceCliArguments([
+                "function",
+                fixture.path,
+                `${prefix}_entry`,
+                "--provider",
+                "ghidra",
+                "--json",
+              ])),
             ],
             { env, timeout: 60000, maxBuffer: 1024 * 1024 },
           );
@@ -634,6 +618,7 @@ try {
         ).toString("hex"),
       );
       const callees = await call("procedure_callees", {
+        detail: "complete",
         procedure: entry.address,
       });
       assert.ok(
@@ -776,12 +761,14 @@ try {
         process.execPath,
         [
           entrypoint,
-          "function",
-          fixture.path,
-          `${prefix}_entry`,
-          "--provider",
-          "ghidra",
-          "--json",
+          ...(await completeEvidenceCliArguments([
+            "function",
+            fixture.path,
+            `${prefix}_entry`,
+            "--provider",
+            "ghidra",
+            "--json",
+          ])),
         ],
         { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
       );
@@ -794,9 +781,7 @@ try {
       assert.equal(cliDossier.procedure.address, dossier.procedure.address);
       assert.ok(cliDossier.pseudocode.trim().length > 0);
       assert.equal(
-        createHash("sha256")
-          .update(await readFile(fixture.path))
-          .digest("hex"),
+        await sha256File(fixture.path),
         fixture.sha256,
         "Analysis modified the source executable",
       );
@@ -834,12 +819,14 @@ try {
             process.execPath,
             [
               entrypoint,
-              "function",
-              carvedPath,
-              independent.symbols.rea_mips_entry,
-              "--provider",
-              "ghidra",
-              "--json",
+              ...(await completeEvidenceCliArguments([
+                "function",
+                carvedPath,
+                independent.symbols.rea_mips_entry,
+                "--provider",
+                "ghidra",
+                "--json",
+              ])),
             ],
             { env, timeout: 60000, maxBuffer: 1024 * 1024 },
           );
@@ -926,7 +913,7 @@ try {
   cleanupFailure = cause;
 }
 if (cleanupFailure !== undefined)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `MIPS command cleanup failed; retained diagnostic workspace: ${workspace}`,
     {
       cause:
@@ -942,13 +929,13 @@ const completed = await completeVerifierRun(run);
 try {
   assertVerifierCleanupComplete(completed.process_lineage);
 } catch (cause) {
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `Cleanup unverified; retained diagnostic workspace: ${workspace}`,
     { cause: primaryFailure ?? cause },
   );
 }
 if (primaryFailure !== undefined)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `MIPS verification failed; retained workspace: ${workspace}`,
     {
       cause: primaryFailure,
