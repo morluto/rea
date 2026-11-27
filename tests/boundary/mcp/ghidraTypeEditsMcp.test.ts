@@ -777,3 +777,79 @@ it("refuses non-equivalent types that share one Ghidra name and stores nothing",
     await harness.close();
   }
 });
+
+it("reports the prototype of a function-pointer member's function type", async () => {
+  const prototype = {
+    return_type: "/int",
+    parameters: [
+      { name: "path", type: "/char *" },
+      { name: null, type: "/int" },
+    ],
+    total_parameters: 2,
+    parameters_truncated: false,
+    varargs: true,
+    calling_convention: "__cdecl",
+  };
+  let functionDefinition: JsonValue = prototype;
+  const harness = await connectGhidraMcp(
+    "ghidra-function-type",
+    (requested, input) =>
+      Promise.resolve(
+        requested === "inspect_native_data_type"
+          ? ok(
+              jsonValueSchema.parse({
+                status: "available",
+                reason: null,
+                id: "/rea_caller_defined/ops.open",
+                name: "ops.open",
+                kind: "function",
+                source: "caller-defined",
+                source_archive: null,
+                address: null,
+                size_bytes: null,
+                alignment_bytes: null,
+                packing_enabled: null,
+                referenced_type: null,
+                array_count: null,
+                array_stride_bytes: null,
+                function_definition: functionDefinition,
+                fields: [],
+                members: [],
+                total_fields: 0,
+                truncated: false,
+                limitations: [],
+              }),
+            )
+          : ok(ghidraFixtureResult(requested, input)),
+      ),
+  );
+  try {
+    const inspected = await harness.mcp.callTool({
+      name: "inspect_native_data_type",
+      arguments: { type: "/rea_caller_defined/ops.open" },
+    });
+    expect(inspected.isError, JSON.stringify(inspected.content)).not.toBe(true);
+    expect(inspected.structuredContent).toMatchObject({
+      normalized_result: {
+        kind: "function",
+        source: "caller-defined",
+        function_definition: prototype,
+      },
+    });
+    // A prototype outside the contract is not delivered as an observation.
+    functionDefinition = jsonValueSchema.parse({
+      ...prototype,
+      varargs: "yes",
+    });
+    expect(
+      parseMcpToolError(
+        await harness.mcp.callTool({
+          name: "inspect_native_data_type",
+          arguments: { type: "/rea_caller_defined/ops.open" },
+        }),
+      ),
+    ).toMatchObject({ error: { code: "unreadable_output" } });
+  } finally {
+    await harness.close();
+  }
+});
