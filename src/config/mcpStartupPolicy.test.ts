@@ -81,15 +81,18 @@ describe("MCP tool deadline allowance for a Ghidra decompile limit", () => {
       environment: Readonly<Record<string, string>>,
       platform: NodeJS.Platform,
     ) => {
+      // `parseClientConfiguration` now returns a `Result`, so the fixture unwraps it.
+      const parsed = parseClientConfiguration(
+        JSON.stringify({
+          mcpServers: {
+            rea: { command: "rea", args: ["mcp"], env: environment },
+          },
+        }),
+        "json",
+      );
+      if (!parsed.ok) throw parsed.error;
       const details = clientRegistrationEnvironmentDetails(
-        parseClientConfiguration(
-          JSON.stringify({
-            mcpServers: {
-              rea: { command: "rea", args: ["mcp"], env: environment },
-            },
-          }),
-          "json",
-        ),
+        parsed.value,
         undefined,
         platform,
         {},
