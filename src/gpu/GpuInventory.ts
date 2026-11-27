@@ -30,6 +30,10 @@ import {
   projectZstandardFrameAllowance,
   ZstandardFrameAllowanceError,
 } from "../domain/compression/zstandardFrameAllowance.js";
+import {
+  ZSTANDARD_MAGIC_BYTES,
+  zstandardFrameKind,
+} from "../domain/compression/zstandardFrameWire.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { createHash } from "node:crypto";
 import { scheduler } from "node:timers/promises";
@@ -164,19 +168,11 @@ export class GpuInventory {
     this.#retain(messages);
     row.limitations.push(...messages);
   }
-  /** Reserve input/output work atomically, before any payload allocation or read. */
-  #budgetWork(...sizes: (number | bigint)[]): void {
+  /** Reserve aggregate work bytes without enforcing max_object_bytes (used for structure reads bounded by max_structure_bytes). */
+  #reserveWork(...sizes: (number | bigint)[]): void {
     let workBytes = this.#workBytes;
-    const { maxObjectBytes, maxWorkBytes } = this.#budgets;
+    const { maxWorkBytes } = this.#budgets;
     for (const size of sizes) {
-      if (size > maxObjectBytes)
-        throw new BinaryResourceFailure(
-          "structure",
-          maxObjectBytes,
-          `GPU read/decoding buffer exceeds the ${String(maxObjectBytes)}-byte object budget`,
-          GPU_OBJECT_BYTES_LIMIT,
-          "bytes",
-        );
       if (size > maxWorkBytes - workBytes) {
         const workLabel =
           maxWorkBytes % (1024 * 1024) === 0
@@ -193,6 +189,21 @@ export class GpuInventory {
       workBytes += Number(size);
     }
     this.#workBytes = workBytes;
+  }
+  /** Reserve input/output work atomically, before any payload allocation or read. */
+  #budgetWork(...sizes: (number | bigint)[]): void {
+    const { maxObjectBytes } = this.#budgets;
+    for (const size of sizes) {
+      if (size > maxObjectBytes)
+        throw new BinaryResourceFailure(
+          "structure",
+          maxObjectBytes,
+          `GPU read/decoding buffer exceeds the ${String(maxObjectBytes)}-byte object budget`,
+          GPU_OBJECT_BYTES_LIMIT,
+          "bytes",
+        );
+    }
+    this.#reserveWork(...sizes);
   }
   #selected(row: GpuObject): boolean {
     return (
@@ -653,7 +664,8 @@ export class GpuInventory {
       },
       readBounded: (offset, size, maximumBytes, limitName) => {
         checkGpuRange(row.location.size, offset, size, maximumBytes, limitName);
-        if (limitName !== NATIVE_STRUCTURE_LIMIT) this.#budgetWork(size);
+        if (limitName === NATIVE_STRUCTURE_LIMIT) this.#reserveWork(size);
+        else this.#budgetWork(size);
         return source.readBounded !== undefined
           ? source.readBounded(
               row.location.offset + offset,
@@ -893,9 +905,24 @@ export class GpuInventory {
             });
             // When the decoder stopped because the supplied window ran out at a
             // frame boundary or partial next-frame magic (including before a
-            // trailing skippable or empty Zstandard frame), refill a short cached
-            // window or report capacity if max_object_bytes truncated the container.
-            if (completed.inputExhausted) {
+            // trailing skippable or empty Zstandard frame), peek 4 bytes past the
+            // consumed extent to confirm another Zstandard/skippable frame actually
+            // follows before refilling a cached window or reporting capacity.
+            const hasFollowingZstandardFrame = async (
+              consumedBytes: number,
+            ): Promise<boolean> => {
+              if (total - width - consumedBytes < ZSTANDARD_MAGIC_BYTES)
+                return false;
+              const peek = await source.read(
+                start + consumedBytes,
+                ZSTANDARD_MAGIC_BYTES,
+              );
+              return zstandardFrameKind(peek, 0) !== undefined;
+            };
+            if (
+              completed.inputExhausted &&
+              (await hasFollowingZstandardFrame(completed.consumedBytes))
+            ) {
               if (!refilled && cached && available < inputSize) {
                 // Release the partial decode output before allocating a refilled window.
                 completed = undefined;
@@ -904,7 +931,8 @@ export class GpuInventory {
               }
               if (
                 completed.inputExhausted &&
-                total - width > this.#budgets.maxObjectBytes
+                total - width > this.#budgets.maxObjectBytes &&
+                (await hasFollowingZstandardFrame(completed.consumedBytes))
               )
                 throw ccobWindowLimit();
             }

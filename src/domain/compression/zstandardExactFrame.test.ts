@@ -192,13 +192,18 @@ describe("exact Zstandard frames", () => {
       Buffer.of(0x5f, 0x2a),
       Buffer.of(0x50, 0x2a, 0x4d),
     ]) {
-      expect(
-        decodeZstandardFrames(Buffer.concat([frame, tail]), options),
-      ).toMatchObject({
+      const sample = Buffer.concat([frame, tail]);
+      const expectedExhausted = {
         ok: true,
         consumedBytes: frame.length,
         inputExhausted: true,
-      });
+      };
+      expect(decodeZstandardFrames(sample, options)).toMatchObject(
+        expectedExhausted,
+      );
+      await expect(
+        decodeZstandardFramesCooperative(sample, options, async () => {}),
+      ).resolves.toMatchObject(expectedExhausted);
     }
     for (const nonMagic of [
       Buffer.of(0x00),
@@ -206,14 +211,44 @@ describe("exact Zstandard frames", () => {
       Buffer.of(0x28, 0xb5, 0x00),
       Buffer.of(0x50, 0x2a, 0x00),
     ]) {
-      expect(
-        decodeZstandardFrames(Buffer.concat([frame, nonMagic]), options),
-      ).toMatchObject({
+      const sample = Buffer.concat([frame, nonMagic]);
+      const expectedComplete = {
         ok: true,
         consumedBytes: frame.length,
         inputExhausted: false,
-      });
+      };
+      expect(decodeZstandardFrames(sample, options)).toMatchObject(
+        expectedComplete,
+      );
+      await expect(
+        decodeZstandardFramesCooperative(sample, options, async () => {}),
+      ).resolves.toMatchObject(expectedComplete);
     }
+    // At the maxFrames cap in prefix mode, distinguish a partial magic prefix from non-magic trailing bytes.
+    const oneFrameOptions = {
+      mode: "prefix",
+      allowance: allowance(1, "runtime"),
+    } as const;
+    expect(
+      decodeZstandardFrames(
+        Buffer.concat([frame, Buffer.of(0x28, 0xb5)]),
+        oneFrameOptions,
+      ),
+    ).toMatchObject({
+      ok: true,
+      consumedBytes: frame.length,
+      inputExhausted: true,
+    });
+    expect(
+      decodeZstandardFrames(
+        Buffer.concat([frame, Buffer.of(0x43, 0x43)]),
+        oneFrameOptions,
+      ),
+    ).toMatchObject({
+      ok: true,
+      consumedBytes: frame.length,
+      inputExhausted: false,
+    });
   });
 
   it("refuses 65536 productive frames on the work allowance", () => {

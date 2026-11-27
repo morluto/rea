@@ -2379,31 +2379,46 @@ it("respects max_object_bytes during container scanning and full-file digesting"
   });
 });
 
-it("honors max_parser_entries for PTX parameter token lists above 128 tokens", async () => {
+it("keeps PTX single-parameter 128-token ceiling fixed independently of max_parser_entries", async () => {
   const manyDimensions = "[1]".repeat(45);
   const widePtx = Buffer.from(
     `.version 8.8\n.target sm_80\n.address_size 64\n.visible .entry wide_param(.param .u32 p${manyDimensions}) {\nret;\n}\n`,
   );
-  const refused = await inspect(widePtx, {
+  const defaultRefused = await inspect(widePtx, {
     analysis: "kernels",
-    max_parser_entries: 8,
   });
-  if (!refused.ok) throw refused.error;
-  expect(refused.value.objects[0]).toMatchObject({
+  if (!defaultRefused.ok) throw defaultRefused.error;
+  expect(defaultRefused.value.objects[0]).toMatchObject({
     inspection: "capacity",
     limitations: expect.arrayContaining([
-      expect.stringContaining("(parameter: max_parser_entries)"),
+      "PTX parameter declarations exceed the facts budget",
     ]),
   });
+  expect(
+    defaultRefused.value.objects[0]?.limitations.some((l) =>
+      l.includes("(parameter: max_parser_entries)"),
+    ),
+  ).toBe(false);
 
-  const admitted = await inspect(widePtx, {
+  // PTX 1.3 body .param declarations keep the same fixed 128-token limit under defaults.
+  const wideBodyParamPtx = Buffer.from(
+    `.version 1.3\n.target sm_10\n.entry wide_body() {\n.param .u32 p${manyDimensions};\nret;\n}\n`,
+  );
+  const bodyRefused = await inspect(wideBodyParamPtx, {
     analysis: "kernels",
-    max_parser_entries: 256,
   });
-  if (!admitted.ok) throw admitted.error;
-  expect(admitted.value.objects[0]?.inspection).toBe("partial");
-  expect(admitted.value.kernels).toHaveLength(1);
-  expect(admitted.value.kernels[0]?.name).toBe("wide_param");
+  if (!bodyRefused.ok) throw bodyRefused.error;
+  expect(bodyRefused.value.objects[0]).toMatchObject({
+    inspection: "capacity",
+    limitations: expect.arrayContaining([
+      "PTX parameter declarations exceed the facts budget",
+    ]),
+  });
+  expect(
+    bodyRefused.value.objects[0]?.limitations.some((l) =>
+      l.includes("(parameter: max_parser_entries)"),
+    ),
+  ).toBe(false);
 
   // Lowering max_parser_entries below 128 does not reject a single normal parameter declaration.
   const singleParamPtx = Buffer.from(
@@ -2468,7 +2483,7 @@ it("keeps corrupt CCOB v1 recovery distinct from max_object_bytes window truncat
   expect(raisedV1.value.objects[0]?.inspection).toBe("complete");
 
   // Multi-frame Zstandard CCOB v1 whose declared decoded size fits every cut
-  // budget (so #budgetWork admits it and execution reaches cutAtFrameBoundary):
+  // budget (so #budgetWork admits it and execution reaches inputExhausted):
   // cutting at the exact frame boundary or inside the next frame's 4-byte magic
   // must report ccobWindowLimit() capacity instead of publishing a short extent
   // as malformed corruption, and must refill a cached legacy window cleanly.
@@ -2614,6 +2629,108 @@ it("keeps corrupt CCOB v1 recovery distinct from max_object_bytes window truncat
       expect(tailBundles[1]?.encoded_size).toBe(withTailEncoded.length);
     }
   }
+
+  // Exact-fit single-frame Zstd CCOB v1 followed by non-frame containers (CCOB v2,
+  // NUL padding, or __CLANG_OFFLOAD_BUNDLE__ whose leading '_' = 0x5f overlaps
+  // skippable magic's first byte) must not be falsely refused or trigger redundant
+  // work-budget-charging refills.
+  const exactFrame = zstdCompressSync(smallBundle);
+  const exactZstdV1 = Buffer.concat([zstdHeader, exactFrame]);
+  const trailingClangBundle = hipFixture(Buffer.from("next"), "host-x86_64");
+  const exactWithNul = await inspect(
+    Buffer.concat([exactZstdV1, Buffer.alloc(4)]),
+    {
+      analysis: "inventory",
+      max_object_bytes: Math.max(smallBundle.length, exactFrame.length),
+    },
+  );
+  if (!exactWithNul.ok) throw exactWithNul.error;
+  expect(exactWithNul.value.coverage.discovery).toBe("complete");
+  expect(exactWithNul.value.objects[0]?.inspection).toBe("complete");
+
+  const exactWithClang = await inspect(
+    Buffer.concat([exactZstdV1, trailingClangBundle]),
+    {
+      analysis: "inventory",
+      max_object_bytes: Math.max(smallBundle.length, exactFrame.length + 1),
+    },
+  );
+  if (!exactWithClang.ok) throw exactWithClang.error;
+  expect(exactWithClang.value.coverage.discovery).toBe("complete");
+  expect(
+    exactWithClang.value.objects.every((o) => o.inspection === "complete"),
+  ).toBe(true);
+
+  // Cached sibling window ending right at a complete Zstd sibling or 1 byte into
+  // the following __CLANG_OFFLOAD_BUNDLE__ ('_') must not refill and double-charge
+  // max_work_bytes under a tight work budget.
+  const tightThree = Buffer.concat([
+    prefixV1,
+    exactZstdV1,
+    trailingClangBundle,
+  ]);
+  for (const extra of [0, 1]) {
+    const windowBudget = prefixStored.length + 20 + exactFrame.length + extra;
+    const tightWorkBudget =
+      windowBudget + prefixBundle.length + smallBundle.length;
+    const tightResult = await inspect(tightThree, {
+      analysis: "inventory",
+      max_object_bytes: windowBudget,
+      max_work_bytes: tightWorkBudget,
+    });
+    if (!tightResult.ok) throw tightResult.error;
+    expect(tightResult.value.coverage.discovery).toBe("complete");
+    expect(
+      tightResult.value.objects.every((o) => o.inspection === "complete"),
+    ).toBe(true);
+  }
+
+  // Aliased targetless AMDGPU entries in a Clang offload bundle must charge
+  // their native section-table structure reads against max_work_bytes.
+  const amdElf = elfFixture(
+    224,
+    Array.from({ length: 32 }, (_, index) => ({
+      name: `.s${String(index)}`,
+      type: 1,
+      bytes: Buffer.alloc(0),
+    })),
+  );
+  const aliasedCount = 40;
+  const aliasedId = Buffer.from("hipv4-amdgcn-amd-amdhsa--");
+  const aliasedEntrySize = 8 + 8 + 8 + aliasedId.length;
+  const aliasedHeaderLen = 24 + 8 + aliasedCount * aliasedEntrySize;
+  const aliasedBundle = Buffer.alloc(aliasedHeaderLen + amdElf.length);
+  Buffer.from("__CLANG_OFFLOAD_BUNDLE__").copy(aliasedBundle, 0);
+  aliasedBundle.writeBigUInt64LE(BigInt(aliasedCount), 24);
+  for (let i = 0; i < aliasedCount; i += 1) {
+    const at = 32 + i * aliasedEntrySize;
+    aliasedBundle.writeBigUInt64LE(BigInt(aliasedHeaderLen), at);
+    aliasedBundle.writeBigUInt64LE(BigInt(amdElf.length), at + 8);
+    aliasedBundle.writeBigUInt64LE(BigInt(aliasedId.length), at + 16);
+    aliasedId.copy(aliasedBundle, at + 24);
+  }
+  amdElf.copy(aliasedBundle, aliasedHeaderLen);
+
+  const amdWorkRefused = await inspect(aliasedBundle, {
+    analysis: "inventory",
+    max_work_bytes: 16_384,
+  });
+  if (!amdWorkRefused.ok) throw amdWorkRefused.error;
+  expect(
+    amdWorkRefused.value.objects.some(
+      (o) =>
+        o.inspection === "capacity" &&
+        o.limitations.some((l) => l.includes("(parameter: max_work_bytes)")),
+    ),
+  ).toBe(true);
+  const amdWorkRaised = await inspect(aliasedBundle, {
+    analysis: "inventory",
+    max_work_bytes: 512 * 1024,
+  });
+  if (!amdWorkRaised.ok) throw amdWorkRaised.error;
+  expect(
+    amdWorkRaised.value.objects.some((o) => o.inspection === "capacity"),
+  ).toBe(false);
 
   // max_work_bytes stays capped at main's 512 MiB heap ceiling.
   const overWorkMax = inspectGpuCodeObjectsInputSchema.safeParse({

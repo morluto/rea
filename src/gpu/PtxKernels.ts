@@ -426,13 +426,11 @@ export function* readPtxKernels(
         }
         if (t.value === "," && parentheses === 0 && brackets === 0) flush();
         else part.push(t.value);
-        if (part.length > Math.max(128, maxParserEntries))
+        if (part.length > 128)
           throw new BinaryResourceFailure(
             "structure",
-            maxParserEntries,
+            128,
             "PTX parameter declarations exceed the facts budget",
-            GPU_PARSER_ENTRIES_LIMIT,
-            "entries",
           );
       }
       flush();
@@ -487,13 +485,11 @@ export function* readPtxKernels(
           for (t = next(); t.value !== ";"; t = next()) {
             if (t.value === "}")
               rejectGpu("Malformed PTX parameter declaration");
-            if (bodyParameter.length >= Math.max(128, maxParserEntries))
+            if (bodyParameter.length >= 128)
               throw new BinaryResourceFailure(
                 "structure",
-                maxParserEntries,
+                128,
                 "PTX parameter declarations exceed the facts budget",
-                GPU_PARSER_ENTRIES_LIMIT,
-                "entries",
               );
             bodyParameter.push(t.value);
           }
