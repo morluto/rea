@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **gpu:** inspect_gpu_code_objects adds optional per-call budget parameters and reports details.limit with details.refusal.kind "adjustable_budget" instead of "fixed_ceiling" on top-level object, work, report, metadata, structure, and parser budget refusals.
 * **macho:** select arm64e.x1 slices of universal Mach-O files by exact subtype ([#14881](https://github.com/morluto/rea/issues/14881))
 * **elf:** an inspect_elf_unwind_ranges call that omits limit returns at most 64 ranges. Page with next_offset, or pass limit.
 * **android:** a search_android_classes call that omits limit returns at most 256 matches. Page with next_offset, or pass a larger limit.
@@ -145,6 +146,7 @@
 * **ghidra:** define function-pointer members and typedefs ([#14889](https://github.com/morluto/rea/issues/14889)) ([8ff311b](https://github.com/morluto/rea/commit/8ff311b4ca0c67bfe45d811aecb6a68483a649af)), refs [#14887](https://github.com/morluto/rea/issues/14887)
 * **ghidra:** open M-profile raw images at a separate load base ([#7951](https://github.com/morluto/rea/issues/7951)) ([0b51ca0](https://github.com/morluto/rea/commit/0b51ca03de173fcf22059b5512647bc1461022df))
 * **ghidra:** set function signatures and define the types they use ([#14859](https://github.com/morluto/rea/issues/14859)) ([3a8a717](https://github.com/morluto/rea/commit/3a8a717b02edcd41b9dfbf64e82e5f7a761dfd8e))
+* **gpu:** add per-call object, work, report, metadata, structure, and parser budgets to inspect_gpu_code_objects ([#14882](https://github.com/morluto/rea/issues/14882)) ([2e59f08](https://github.com/morluto/rea/commit/2e59f08992271b10bedfe92b1d39fdfa521d2d21))
 * **ida:** support the official Hex-Rays IDA MCP headlessly ([#4813](https://github.com/morluto/rea/issues/4813)) ([6822ebe](https://github.com/morluto/rea/commit/6822ebe1f3a4caec007fcd046754d66317d3349f))
 * **javascript:** add semantic_analysis structure-only mode to analyze_javascript_application ([#14117](https://github.com/morluto/rea/issues/14117)) ([eccd18a](https://github.com/morluto/rea/commit/eccd18a2cc325bb97f66f23a4216dfcacd9e1bca))
 * **javascript:** inventory Expo Router require.context route keys ([#10624](https://github.com/morluto/rea/issues/10624)) ([7b6e816](https://github.com/morluto/rea/commit/7b6e816b0b61d24d1a3b79106481f29db676ea65))
