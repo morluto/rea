@@ -20,6 +20,11 @@ const CAPTURE_SHARED_INPUTS = [
   "src/process/LinuxResourceLimits*",
   "scripts/ci/require-provider-tests.mjs",
 ];
+const GHIDRA_PROJECT_COVERAGE_INPUTS = [
+  "scripts/verify-real-ghidra-project-coverage.mjs",
+  "tests/conformance/ghidra/selected-project-coverage.c",
+  "tests/conformance/ghidra/ReaSelectedProjectSeeds.java",
+];
 const UBUNTU_ARCHIVE_ACTION =
   ".github/actions/ubuntu-archive/action.{yml,yaml}";
 
@@ -153,6 +158,8 @@ const PATH_SCOPES = {
     "tests/acceptance/inesContainer.test.ts",
     "tests/boundary/filesystem/inesArtifact.test.ts",
     "tests/boundary/filesystem/inesCancellation.test.ts",
+    "src/artifacts/NdsRomArtifactReader*.ts",
+    "src/domain/ndsRom*.ts",
     "src/hopper/BridgeLauncher.ts",
     "src/hopper/HopperErrors.ts",
     "tests/boundary/providers/hopper/hopperMacLaunchArguments.test.ts",
@@ -691,6 +698,7 @@ const PATH_SCOPES = {
     ".github/workflows/nativeaot-fixtures.yml",
   ],
   ghidra_bridge: [
+    ...GHIDRA_PROJECT_COVERAGE_INPUTS,
     "bridge/ghidra/**",
     "src/ghidra/GhidraBridgeSources.ts",
     "src/ghidra/GhidraJavaProperties.ts",
@@ -811,7 +819,9 @@ export const CI_LANES = {
   web_source_map: sameJobs(PATH_SCOPES.web_source_map, ["web_source_map"]),
   agentenv: sameJobs(PATH_SCOPES.agentenv, ["agentenv"]),
   nativeaot: sameJobs(PATH_SCOPES.nativeaot, ["nativeaot"]),
-  ghidra_bridge: sameJobs(PATH_SCOPES.ghidra_bridge, ["ghidra_bridge"]),
+  ghidra_bridge: sameJobs(PATH_SCOPES.ghidra_bridge, ["ghidra_bridge"], {
+    earlyInputs: GHIDRA_PROJECT_COVERAGE_INPUTS,
+  }),
   go_binary: sameJobs(PATH_SCOPES.go_binary, ["go_binary"]),
   android_metadata: sameJobs(
     PATH_SCOPES.android_metadata,
@@ -839,8 +849,8 @@ for (const [name, paths] of Object.entries(PATH_SCOPES))
 export const CI_FLAGS = Object.keys(CI_LANES);
 
 // Verifier entrypoints that only manual, licensed, or self-hosted workflows
-// run. No selected CI lane executes them, so their edits need only the static
-// checks and the source-test suite. Shared helpers under scripts/lib remain
+// run unless an explicit lane earlyInput owns one. Other edits need only the
+// static checks and the source-test suite. Shared helpers under scripts/lib remain
 // broad inputs.
 export const MANUAL_VERIFIERS = [
   "scripts/verify-real-electron.mjs",

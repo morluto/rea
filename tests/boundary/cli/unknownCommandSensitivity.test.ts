@@ -1,3 +1,4 @@
+import { decode } from "@toon-format/toon";
 import { expect } from "vitest";
 
 import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
@@ -134,5 +135,55 @@ cliTest(
     expect(unsafe.exitCode).toBe(1);
     expect(unsafe.stdout).not.toContain("rea inspect-web-network-capture ");
     expect(unsafe.stdout).toContain("rea --help");
+  },
+);
+
+cliTest(
+  "an unknown command's schema request answers in the selected format",
+  async ({ cli }) => {
+    const result = await cli.run({
+      arguments: ["inspect-nothing", "--schema", "--json"],
+    });
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      code: "COMMAND_NOT_FOUND",
+    });
+  },
+);
+
+cliTest.skipIf(HOST_PLATFORM.platform === "win32")(
+  "terminal argument errors honor a requested count or full document",
+  async ({ cli }) => {
+    const invalid = ["setup", "--dry-run", "--skill=maybe"];
+    const usage = await cli.run({ arguments: invalid, terminal: true });
+    expect(usage.exitCode).toBe(1);
+    expect(usage.stdout).toContain("See below for usage.");
+    const counted = await cli.run({
+      arguments: [...invalid, "--token-count"],
+      terminal: true,
+    });
+    expect(counted.exitCode).toBe(1);
+    expect(counted.stdout.trim()).toMatch(/^\d+$/u);
+    const skillError = {
+      ok: false,
+      error: {
+        code: "VALIDATION_ERROR",
+        fieldErrors: [
+          { path: "skill", code: "invalid_type", expected: "boolean" },
+        ],
+      },
+    };
+    const full = await cli.run({
+      arguments: [...invalid, "--full-output"],
+      terminal: true,
+    });
+    expect(full.exitCode).toBe(1);
+    expect(decode(full.stdout)).toMatchObject(skillError);
+    const jsonFull = await cli.run({
+      arguments: [...invalid, "--json", "--full-output"],
+      terminal: true,
+    });
+    expect(jsonFull.exitCode).toBe(1);
+    expect(JSON.parse(jsonFull.stdout)).toMatchObject(skillError);
   },
 );

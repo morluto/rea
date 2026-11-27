@@ -63,6 +63,12 @@ interface CliEvidencePublication {
   readonly sourceEvidence?: readonly Evidence[];
   /** Invocation exclusions cover final cleanup and publication paths/diagnostics. */
   readonly sensitiveValues?: readonly string[];
+  /**
+   * False when a rerun would not reproduce the result, as for a
+   * non-idempotent extraction: an over-budget result the cache cannot keep
+   * is then delivered complete instead of pointing at a rerun.
+   */
+  readonly rerunRecoversResult?: boolean;
 }
 
 /** A one-shot run whose provider cleanup the delivery finishes before publishing. */
@@ -238,7 +244,8 @@ export const publishCliAnalysisEvidence = async (
  * An over-budget result without --evidence_output: its summary, with the
  * complete Evidence kept in the private cache when that is on, and the
  * rerun arguments otherwise. An operation without a summary view keeps
- * complete delivery.
+ * complete delivery, as does one whose rerun would not reproduce it when
+ * the cache does not keep it.
  */
 const deliverRetainedSummary = async (
   complete: Evidence,
@@ -257,6 +264,8 @@ const deliverRetainedSummary = async (
   // stayed incomplete before commit: report that failure and cleanup owner.
   if (retained?.ok === false && retained.error.reportError !== undefined)
     return projectFailure(retained.error.reportError);
+  if (retained?.ok !== true && input.rerunRecoversResult === false)
+    return complete;
   return retained?.ok === true
     ? {
         summary,

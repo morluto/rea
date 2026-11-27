@@ -8,7 +8,6 @@ import {
   NO_RETAIN_FLAG,
   type CliEvidenceRetention,
 } from "./cliEvidenceRetention.js";
-import { Writable } from "node:stream";
 
 import {
   declaredSensitiveValues,
@@ -17,6 +16,7 @@ import {
 import {
   readCliOutputArguments,
   renderCliOutputArgumentError,
+  structuredOutputRequested,
 } from "./cliOutput.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { errorMessage } from "../kernel/errorMessage.js";
@@ -53,6 +53,7 @@ import {
   type UpdateEnvironment,
 } from "./updateNotice.js";
 import type { CliInstance, CliServeOptions } from "./types.js";
+import { cliResultDestination } from "./cliDestination.js";
 
 const writer = (options: CliServeOptions) =>
   options.stdout ??
@@ -62,25 +63,6 @@ const writer = (options: CliServeOptions) =>
 const exit = (options: CliServeOptions, code: number) => {
   if (options.exit !== undefined) options.exit(code);
   else process.exitCode = code;
-};
-
-/** A callback owns captured output; otherwise the process owns stdout directly. */
-const destinationFor = (options: CliServeOptions): Writable => {
-  if (options.stdout === undefined) return process.stdout;
-  const destination = new Writable({
-    write(chunk: Buffer, _encoding, done) {
-      try {
-        options.stdout!(chunk.toString("utf8"));
-        done();
-      } catch (cause) {
-        done(cause instanceof Error ? cause : new Error(String(cause)));
-      }
-    },
-  });
-  Object.defineProperty(destination, "isTTY", {
-    value: process.stdout.isTTY === true,
-  });
-  return destination;
 };
 
 /**
@@ -144,7 +126,8 @@ export const runCliCommand = async (
     return;
   }
   const output =
-    providedOutput ?? createCliResultOutput(controls, destinationFor(options));
+    providedOutput ??
+    createCliResultOutput(controls, cliResultDestination(options.stdout));
   if (output === undefined)
     throw new Error("Admitted CLI output has no output owner");
   output.begin(controls);
@@ -193,7 +176,7 @@ export const runCliCommand = async (
             () =>
               entry.definition.run({
                 ...parsed.value,
-                formatExplicit: controls.formatExplicit,
+                structuredOutput: structuredOutputRequested(controls),
               }),
           );
           const value = projectCliCommandOutput(rawValue, projection);

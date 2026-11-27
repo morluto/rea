@@ -16,6 +16,7 @@ import {
 
 /** Project only the Apktool metadata fields REA publishes. */
 export interface ApktoolMetadata {
+  readonly packageName: string | null;
   readonly versionName: string | null;
   readonly versionCode: string | null;
   readonly minSdkVersion: string | null;
@@ -42,7 +43,7 @@ export const parseApktoolYml = (yml: string): ApktoolMetadata => {
       header,
     )
   )
-    return parseApktool3Metadata(source);
+    return parseLineMetadata(source, header.startsWith("version: 3."));
   const document = parseDocument(yml, {
     schema: "core",
     customTags: [metaInfoTag],
@@ -56,6 +57,9 @@ export const parseApktoolYml = (yml: string): ApktoolMetadata => {
   if (!isMap(document.contents))
     throw new TypeError("apktool.yml root must be an Apktool metadata mapping");
   return {
+    packageName:
+      yamlPackageName(document, "cur_package") ??
+      yamlPackageName(document, "orig_package"),
     versionName: yamlScalar(document, ["versionInfo", "versionName"], yml),
     versionCode: yamlScalar(document, ["versionInfo", "versionCode"], yml),
     minSdkVersion: yamlScalar(document, ["sdkInfo", "minSdkVersion"], yml),
@@ -67,8 +71,9 @@ export const parseApktoolYml = (yml: string): ApktoolMetadata => {
   };
 };
 
-/** Fields written by VersionInfo.write and SdkInfo.write in Apktool 3. */
+/** Direct fields written by the line-oriented metadata producers. */
 const apktool3Fields = new Map<string, keyof ApktoolMetadata>([
+  ["resourcesInfo.packageName", "packageName"],
   ["versionInfo.versionName", "versionName"],
   ["versionInfo.versionCode", "versionCode"],
   ["sdkInfo.minSdkVersion", "minSdkVersion"],
@@ -81,7 +86,10 @@ const apktool3Fields = new Map<string, keyof ApktoolMetadata>([
  * records before a YAML parser can discard hashes, consume quotes, or
  * reinterpret an empty string or literal `null`.
  */
-const parseApktool3Metadata = (source: string): ApktoolMetadata => {
+const parseLineMetadata = (
+  source: string,
+  hasResourcesInfo: boolean,
+): ApktoolMetadata => {
   const values = new Map<keyof ApktoolMetadata, string>();
   const sections = new Set<string>();
   let section: string | undefined;
@@ -96,7 +104,12 @@ const parseApktool3Metadata = (source: string): ApktoolMetadata => {
         sections.add(section);
         continue;
       }
-      if (section !== "versionInfo" && section !== "sdkInfo") continue;
+      if (
+        section !== "versionInfo" &&
+        section !== "sdkInfo" &&
+        !(hasResourcesInfo && section === "resourcesInfo")
+      )
+        continue;
       if (line.slice(separator + 1).trim() !== "" || sections.has(section))
         throw new TypeError(`apktool.yml has an invalid ${section} mapping`);
       sections.add(section);
@@ -106,6 +119,7 @@ const parseApktool3Metadata = (source: string): ApktoolMetadata => {
     if (record === null) continue;
     const path = `${section ?? ""}.${record[1] ?? ""}`;
     const field = apktool3Fields.get(path);
+    if (field === "packageName" && !hasResourcesInfo) continue;
     if (field === undefined) continue;
     if (values.has(field))
       throw new TypeError(`apktool.yml has a duplicate ${path} field`);
@@ -113,6 +127,7 @@ const parseApktool3Metadata = (source: string): ApktoolMetadata => {
     values.set(field, field === "versionCode" ? value : apktool3String(value));
   }
   return {
+    packageName: values.get("packageName") || null,
     versionName: values.get("versionName") ?? null,
     versionCode: values.get("versionCode") ?? null,
     minSdkVersion: values.get("minSdkVersion") ?? null,
@@ -143,9 +158,15 @@ const apktool3String = (source: string): string => {
 };
 
 /** Read the package attribute from the decoded Android manifest root. */
-export const parseManifestPackage = (manifest: string): string | null => {
+export const parseManifestPackage = (
+  manifest: string,
+  packageNameWhenAbsent: string | null = null,
+): string | null => {
   const parsed = parseDecodedAndroidManifest(manifest, "allow");
-  if (parsed.ok) return parsed.value.packageName;
+  if (parsed.ok)
+    return parsed.value.hasPackageAttribute
+      ? parsed.value.packageName
+      : packageNameWhenAbsent;
   if (parsed.error.kind === "unexpected-root")
     throw new TypeError("AndroidManifest.xml root must be <manifest>");
   throw new TypeError(
@@ -228,6 +249,14 @@ export const parseDecodedStrings = (
     entries.push({ name, value: value.join("") });
   }
   return ok({ entries, unparsedCount });
+};
+
+const yamlPackageName = (
+  document: YamlDocument,
+  key: "cur_package" | "orig_package",
+): string | null => {
+  const value = document.getIn(["packageInfo", key]);
+  return typeof value === "string" && value !== "" ? value : null;
 };
 
 const yamlScalar = (
