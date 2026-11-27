@@ -21,7 +21,7 @@ import {
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
-import { pickFields, selectViewRows } from "./selectViewRows.js";
+import { pickFields, selectViewRows, filterSet } from "./selectViewRows.js";
 import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { ok } from "../result.js";
 
@@ -77,8 +77,6 @@ export const endpointComparisonViewContextSchema =
 const readReport = createAnalysisViewResultReader(
   staticObservedEndpointComparisonSchema,
 );
-const set = (values: readonly string[] | undefined) =>
-  values === undefined ? undefined : new Set(values);
 const selectComparisonRows = (
   report: StaticObservedEndpointComparison,
   view: z.output<typeof endpointComparisonViewRequestSchema>,
@@ -89,8 +87,8 @@ const selectComparisonRows = (
     total: number;
   };
   if (view.collection === "static-endpoints") {
-    const ids = set(view.endpoint_ids),
-      statuses = set(view.statuses);
+    const ids = filterSet(view.endpoint_ids),
+      statuses = filterSet(view.statuses);
     const fields = view.fields ?? [
       "method",
       "method_basis",
@@ -116,8 +114,8 @@ const selectComparisonRows = (
       }),
     );
   } else if (view.collection === "observed-groups") {
-    const ids = set(view.group_ids),
-      statuses = set(view.statuses);
+    const ids = filterSet(view.group_ids),
+      statuses = filterSet(view.statuses);
     const fields = view.fields ?? [
       "method",
       "origin",
@@ -139,8 +137,8 @@ const selectComparisonRows = (
       }),
     );
   } else {
-    const endpoints = set(view.endpoint_ids),
-      groups = set(view.group_ids);
+    const endpoints = filterSet(view.endpoint_ids),
+      groups = filterSet(view.group_ids);
     const fields = view.fields ?? ["basis", "supporting_record_ordinal"];
     selected = selectViewRows(
       matches,
