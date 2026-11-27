@@ -34,12 +34,23 @@ import {
 import type { JsonValue } from "../domain/jsonValue.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import type { AnalysisErrorOptions } from "../domain/analysisErrorBase.js";
+import { parseLimitConstraint } from "../domain/parseFailureAnalysisError.js";
+import { decodeLimit } from "../domain/parseFailure.js";
+import {
+  DEFAULT_GHIDRA_C_PARSER_LIMITS,
+  GHIDRA_C_PARSER_CONTROLS,
+  ghidraCParserControlLimit,
+  type GhidraCParserLimits,
+} from "../config/ghidraCParserLimits.js";
 import { GhidraLaunchError } from "./GhidraLauncher.js";
 import type { GhidraSessionSource } from "./GhidraProviderCapabilities.js";
 import {
   GHIDRA_STARTUP_DEADLINE_ELAPSED,
   isGhidraInputFailureCode,
   isGhidraTypeEditRefusalCode,
+  GHIDRA_C_PARSER_LIMIT_CODES,
+  isGhidraCParserLimitCode,
   type GhidraTypeEditRefusalCode,
   type GhidraSessionError,
 } from "./GhidraSessionError.js";
@@ -63,6 +74,7 @@ export type GhidraProjectionLimits = Pick<
   AppConfig,
   | "ghidraStartupTimeoutMs"
   | "ghidraDecompileTimeoutSeconds"
+  | "ghidraCParserLimits"
   | "ghidraExistingProject"
 >;
 
@@ -233,6 +245,13 @@ const projectPrimarySessionError = (
     return new AnalysisInputError(operation, context, [
       { path: ["name"], reason: "invalid_value", message: failure.message },
     ]);
+  const overLimit = ghidraCParserLimitRefusal(
+    operation,
+    failure,
+    limits.ghidraCParserLimits ?? DEFAULT_GHIDRA_C_PARSER_LIMITS,
+    context,
+  );
+  if (overLimit !== undefined) return overLimit;
   const typeEdit =
     failure.kind === "remote"
       ? ghidraTypeEditRefusal(operation, failure.remoteCode)
@@ -694,9 +713,15 @@ const projectObservedJvmMemoryFailure = (
 /** Outcome addition that only a caller keeping the Ghidra session receives. */
 const GHIDRA_SESSION_RETAINED = "The Ghidra session remains usable.";
 
+type GhidraTypeEditOperation =
+  | "annotate_native_function"
+  | "define_native_data_types";
+
 interface GhidraTypeEditRefusal {
-  readonly operation: "annotate_native_function" | "define_native_data_types";
-  readonly field: "signature" | "declarations";
+  /** The argument the refusal is attributed to, per operation that can raise it. */
+  readonly fields: Partial<
+    Record<GhidraTypeEditOperation, "signature" | "declarations">
+  >;
   /** Present when the text is well formed and the database state refuses it. */
   readonly recovery?: {
     readonly action: string;
@@ -709,25 +734,32 @@ const GHIDRA_TYPE_EDIT_REFUSALS: Readonly<
   Record<GhidraTypeEditRefusalCode, GhidraTypeEditRefusal>
 > = {
   invalid_function_signature: {
-    operation: "annotate_native_function",
-    field: "signature",
+    fields: { annotate_native_function: "signature" },
   },
   unknown_data_type: {
-    operation: "annotate_native_function",
-    field: "signature",
+    fields: { annotate_native_function: "signature" },
     recovery: {
       action:
         "Define the named types first (MCP define_native_data_types; CLI rea define-native-data-types), then repeat this call. Nothing in this call was applied.",
       operations: ["define_native_data_types"],
     },
   },
+  ambiguous_data_type: {
+    fields: {
+      annotate_native_function: "signature",
+      define_native_data_types: "declarations",
+    },
+    recovery: {
+      action:
+        "Use a type whose name is unique in the database: inspect the listed types (MCP inspect_native_data_type; CLI rea inspect-native-data-type) and define the intended layout under a new name. This release cannot select a type by category path in C text; nothing in this call was applied.",
+      operations: ["inspect_native_data_type", "define_native_data_types"],
+    },
+  },
   invalid_type_declarations: {
-    operation: "define_native_data_types",
-    field: "declarations",
+    fields: { define_native_data_types: "declarations" },
   },
   data_type_conflict: {
-    operation: "define_native_data_types",
-    field: "declarations",
+    fields: { define_native_data_types: "declarations" },
     recovery: {
       action:
         "Use another type name, or inspect the existing type (MCP inspect_native_data_type; CLI rea inspect-native-data-type) and use it unchanged. REA does not replace an existing type; nothing in this call was stored.",
@@ -739,10 +771,86 @@ const GHIDRA_TYPE_EDIT_REFUSALS: Readonly<
 const ghidraTypeEditRefusal = (
   operation: string,
   remoteCode: string | undefined,
-): GhidraTypeEditRefusal | undefined => {
-  if (!isGhidraTypeEditRefusalCode(remoteCode)) return undefined;
+):
+  | (Pick<GhidraTypeEditRefusal, "recovery"> & {
+      readonly field: "signature" | "declarations";
+    })
+  | undefined => {
+  if (
+    !isGhidraTypeEditRefusalCode(remoteCode) ||
+    (operation !== "annotate_native_function" &&
+      operation !== "define_native_data_types")
+  )
+    return undefined;
   const refusal = GHIDRA_TYPE_EDIT_REFUSALS[remoteCode];
-  return refusal.operation === operation ? refusal : undefined;
+  const field = refusal.fields[operation];
+  return field === undefined
+    ? undefined
+    : {
+        field,
+        ...(refusal.recovery === undefined
+          ? {}
+          : { recovery: refusal.recovery }),
+      };
+};
+
+/**
+ * A prototype or definition text over one of the C parser's launch controls.
+ * The bridge refused it before parsing, so the session is unaffected.
+ */
+const ghidraCParserLimitRefusal = (
+  operation: string,
+  failure: GhidraSessionError,
+  limits: GhidraCParserLimits,
+  context: AnalysisErrorOptions,
+): AnalysisResourceConstraintError | undefined => {
+  if (
+    failure.kind !== "remote" ||
+    !isGhidraCParserLimitCode(failure.remoteCode)
+  )
+    return undefined;
+  const control = GHIDRA_C_PARSER_LIMIT_CODES[failure.remoteCode];
+  const limit = limits[control];
+  const { environment, minimum, maximum, defaultValue } =
+    GHIDRA_C_PARSER_CONTROLS[control];
+  const unit =
+    control === "parenthesisDepth"
+      ? "levels of nested parentheses"
+      : "UTF-16 code units";
+  const bound = `${environment} admits at most ${String(limit.value)} ${unit} (source: ${limit.source}; range ${String(minimum)}..${String(maximum)}; default ${String(defaultValue)})`;
+  const { cause: _cause, ...options } = context;
+  return parseLimitConstraint(
+    operation,
+    "cpu",
+    decodeLimit(
+      "c-declarations",
+      `${failure.message}; ${bound}. Ghidra's C parser cannot be cancelled, so REA bounds the text it parses`,
+      { name: environment, maximum: limit.value },
+      { cause: failure },
+    ),
+    {
+      ...options,
+      reportedLimitContext: {
+        source: limit.source,
+        range_minimum: minimum,
+        range_maximum: maximum,
+        default_value: defaultValue,
+      },
+      limit: ghidraCParserControlLimit(control, limit),
+      retryable: false,
+      requestSent: true,
+      remediationAction:
+        (control === "declarationsMaxUtf16"
+          ? "Split the definitions across several calls, or shorten them. "
+          : control === "signatureMaxUtf16"
+            ? "Shorten the prototype. "
+            : "Simplify the nested expression. ") +
+        (limit.value < maximum
+          ? `To admit more, set ${environment} (${String(minimum)}..${String(maximum)}) in the environment that starts REA and start a new REA process; update_analysis_settings does not change it.`
+          : `${environment} is already at its maximum of ${String(maximum)}; this release admits no larger value.`) +
+        " Nothing in this call was applied.",
+    },
+  );
 };
 
 /** The same addition when a failed search leaves session annotations intact. */

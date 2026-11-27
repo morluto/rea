@@ -152,6 +152,7 @@ const fixture = (version = "12.2", coverage?: RelationshipCoverage) => {
               inline_comment: null,
               signature: `undefined ${name}()`,
               signature_source: "default",
+              calling_convention: "unknown",
             },
             dossier,
             effects: {

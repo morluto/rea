@@ -251,6 +251,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         existingProject = descriptor.existingProject;
         decompileTimeoutSeconds = descriptor.decompileTimeoutSeconds();
         entryContextRegisters = descriptor.entryContextRegisters();
+        cParserLimits = descriptor.cParserLimits();
         // Windows retains a native immutable bearer descriptor lease until
         // runtime_close; POSIX removes it after this read. Normal cleanup removes
         // the Windows file, while abrupt owner death can leave private residue.
@@ -1839,6 +1840,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         // The formal prototype omits storage-derived parameters and reparses as a signature edit.
         value.addProperty("signature", function.getSignature(true).getPrototypeString(false));
         value.addProperty("signature_source", normalizedSource(function.getSignatureSource()));
+        value.addProperty("calling_convention", function.getCallingConventionName());
         return value;
     }
 
@@ -1911,35 +1913,179 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
     }
 
-    // Ghidra's C parser cannot be cancelled. Measured on Ghidra 12.2, a chain of
-    // pointer or array declarators costs about 1 s at 4096 UTF-16 units and grows
-    // cubically, and each level of nested parentheses in an expression doubles
-    // the parse time (3 s at 20 levels). These ceilings bound both.
+    // Ghidra's C parser cannot be cancelled, so these launch controls bound its work.
+    // Measured on Ghidra 12.2 (arm64 macOS): the slowest shape per character is one
+    // chain of pointer declarators, cubic in its length: 0.3 s at 2048 UTF-16 units,
+    // 0.8 s at 4096, 6.8 s at 8192 and 100 s at 16384. Each level of nested
+    // parentheses in an expression doubles its parse time, and the cost repeats per
+    // occurrence: 8192 units filled at depth 8 take 0.2 s, at depth 12 2.2 s.
+    // The maxima keep the slowest admitted text under about 7 s.
+    private static final int MIN_C_TEXT_UTF16 = 16;
     private static final int MAX_FUNCTION_SIGNATURE_UTF16 = 4096;
-    private static final int MAX_TYPE_DECLARATIONS_UTF16 = 16384;
-    private static final int MAX_C_PARENTHESIS_DEPTH = 8;
+    private static final int MAX_TYPE_DECLARATIONS_UTF16 = 8192;
+    private static final int MIN_C_PARENTHESIS_DEPTH = 1;
+    private static final int MAX_C_PARENTHESIS_DEPTH = 12;
+    private record CParserLimits(int signatureUtf16, int declarationsUtf16, int parenthesisDepth) {}
+    private static final CParserLimits DEFAULT_C_PARSER_LIMITS = new CParserLimits(2048, 4096, 8);
+    private CParserLimits cParserLimits = DEFAULT_C_PARSER_LIMITS;
     // Data types carry no SourceType; this category is the persisted mark of caller authorship.
     private static final CategoryPath CALLER_DEFINED_TYPES = new CategoryPath("/rea_caller_defined");
+    // Ghidra's parser accepts these and records nothing for them.
+    private static final Set<String> UNAPPLIED_C_EXTENSIONS = Set.of(
+        "__attribute__", "__attribute", "__declspec", "_Alignas", "alignas", "__asm__", "__asm", "asm",
+        "__extension__", "__packed");
+    private static final Set<String> UNAPPLIED_C_SPECIFIERS = Set.of(
+        "static", "extern", "inline", "__inline", "__inline__", "register", "auto", "_Thread_local", "thread_local");
 
     private static boolean isCallerDefinedType(DataType type) {
         CategoryPath category = type.getCategoryPath();
         return category != null && category.isAncestorOrSelf(CALLER_DEFINED_TYPES);
     }
 
-    /** Parse caller C text against the type database without storing anything in it. */
-    private CParser parseCallerC(String text, String field, int maximumUtf16, String code) {
-        validateAnnotationText(text, field);
-        if (text.length() > maximumUtf16)
-            throw new RequestFailure(code, field + " has " + text.length() + " UTF-16 code units; at most " +
-                maximumUtf16 + " are admitted. This release has no runtime override.");
-        int depth = 0;
-        for (int index = 0; index < text.length(); index++) {
+    private static RequestFailure refusedConstruct(String code, String field, String construct, int line, int column) {
+        return new RequestFailure(code, field + " contains " + construct + " at line " + line + ", column " + column +
+            "; Ghidra's C parser would not apply it as written, so nothing was changed");
+    }
+
+    /**
+     * Tokenize caller C once, before the parser sees it: bound parenthesis
+     * nesting and refuse every construct Ghidra's parser accepts and drops.
+     * A declarations text may hold only struct, union, enum and typedef
+     * definitions and #pragma pack; a signature holds one prototype.
+     */
+    private void admitCallerC(String text, String field, boolean declarations, String code) {
+        final int start = 0, tag = 1, named = 2, body = 3, afterBody = 4, typedef = 5;
+        int state = start;
+        int line = 1, lineStart = 0, parentheses = 0, braces = 0;
+        String previous = "";
+        String definition = "";
+        boolean ended = false;
+        int index = 0;
+        while (index < text.length()) {
             char character = text.charAt(index);
-            if (character == ')') depth = Math.max(0, depth - 1);
-            if (character == '(' && ++depth > MAX_C_PARENTHESIS_DEPTH)
-                throw new RequestFailure(code, field + " nests parentheses deeper than " + MAX_C_PARENTHESIS_DEPTH +
-                    " levels at UTF-16 index " + index + ". This release has no runtime override.");
+            int column = index - lineStart + 1;
+            if (character == '\n') {
+                line++;
+                lineStart = ++index;
+                continue;
+            }
+            if (Character.isWhitespace(character)) {
+                index++;
+                continue;
+            }
+            if (text.startsWith("//", index)) {
+                int next = text.indexOf('\n', index);
+                index = next < 0 ? text.length() : next;
+                continue;
+            }
+            if (text.startsWith("/*", index)) {
+                int close = text.indexOf("*/", index + 2);
+                int stop = close < 0 ? text.length() : close + 2;
+                for (int cursor = index; cursor < stop; cursor++)
+                    if (text.charAt(cursor) == '\n') {
+                        line++;
+                        lineStart = cursor + 1;
+                    }
+                index = stop;
+                continue;
+            }
+            if (character == '#') {
+                int next = text.indexOf('\n', index);
+                String directive = text.substring(index, next < 0 ? text.length() : next).strip();
+                if (!declarations || !PRAGMA_PACK.matcher(directive).matches())
+                    throw refusedConstruct(code, field, "the directive " + directive.split("\\s+", 3)[0] +
+                        (directive.startsWith("#pragma") || directive.startsWith("# pragma") ? " (only #pragma pack is applied)" : ""),
+                        line, column);
+                index += directive.length();
+                continue;
+            }
+            if (character == '"' || character == '\'')
+                throw refusedConstruct(code, field, "a string or character literal", line, column);
+            String token;
+            if (Character.isLetter(character) || character == '_') {
+                int stop = index + 1;
+                while (stop < text.length() &&
+                        (Character.isLetterOrDigit(text.charAt(stop)) || text.charAt(stop) == '_')) stop++;
+                token = text.substring(index, stop);
+                if (UNAPPLIED_C_EXTENSIONS.contains(token))
+                    throw refusedConstruct(code, field, "the attribute or extension " + token +
+                        (declarations ? " (use #pragma pack for packing)" : ""), line, column);
+                if (UNAPPLIED_C_SPECIFIERS.contains(token) || (!declarations && token.equals("typedef")))
+                    throw refusedConstruct(code, field, "the specifier " + token, line, column);
+            } else {
+                token = String.valueOf(character);
+            }
+            index += token.length();
+            if (ended && !token.equals(";"))
+                throw refusedConstruct(code, field, "a second declaration", line, column);
+            if (token.equals("(") && ++parentheses > cParserLimits.parenthesisDepth())
+                throw new RequestFailure("parenthesis_depth_limit", field + " nests parentheses " + parentheses +
+                    " levels deep at line " + line + ", column " + column);
+            if (token.equals(")")) parentheses = Math.max(0, parentheses - 1);
+            if (previous.equals("enum") && token.equals("{"))
+                throw refusedConstruct(code, field, "an unnamed enum, which Ghidra would store under a generated name", line, column);
+            if (!declarations) {
+                if (token.equals("{"))
+                    throw refusedConstruct(code, field, "a function body", line, column);
+                if (token.equals("="))
+                    throw refusedConstruct(code, field, "a default argument or initializer", line, column);
+                if (previous.equals("(") && token.equals("*"))
+                    throw refusedConstruct(code, field, "a function-pointer declarator", line, column);
+                if (token.equals(";")) ended = true;
+                previous = token;
+                continue;
+            }
+            boolean top = braces == 0 && parentheses == 0;
+            if (token.equals("{")) braces++;
+            if (token.equals("}")) braces = Math.max(0, braces - 1);
+            switch (state) {
+                case start -> {
+                    if (token.equals("typedef")) state = typedef;
+                    else if (token.equals("struct") || token.equals("union") || token.equals("enum")) state = tag;
+                    else if (!token.equals(";"))
+                        throw refusedConstruct(code, field,
+                            "a declaration that is not a struct, union, enum or typedef definition (" + token + ")", line, column);
+                }
+                case tag -> {
+                    if (!Character.isLetter(token.charAt(0)) && token.charAt(0) != '_')
+                        throw refusedConstruct(code, field, "an unnamed struct or union definition", line, column);
+                    definition = token;
+                    state = named;
+                }
+                case named -> {
+                    if (token.equals("{")) state = body;
+                    else if (token.equals(";")) state = start;
+                    else throw refusedConstruct(code, field, "a variable declaration (" + token + ")", line, column);
+                }
+                case body -> {
+                    if (braces == 0) state = afterBody;
+                }
+                case afterBody -> {
+                    if (!token.equals(";"))
+                        throw refusedConstruct(code, field,
+                            "a variable or declarator (" + token + ") after the definition of " + definition, line, column);
+                    state = start;
+                }
+                default -> {
+                    if (top && token.equals(";")) state = start;
+                    if (top && token.equals("="))
+                        throw refusedConstruct(code, field, "an initializer", line, column);
+                }
+            }
+            previous = token;
         }
+    }
+
+    private static final Pattern PRAGMA_PACK = Pattern.compile("#\\s*pragma\\s+pack\\s*\\([^()]*\\)");
+
+    /** Parse caller C text against the type database without storing anything in it. */
+    private CParser parseCallerC(String text, String field, boolean declarations, String code) {
+        validateAnnotationText(text, field);
+        int maximum = declarations ? cParserLimits.declarationsUtf16() : cParserLimits.signatureUtf16();
+        if (text.length() > maximum)
+            throw new RequestFailure(declarations ? "declarations_length_limit" : "signature_length_limit",
+                field + " has " + text.length() + " UTF-16 code units");
+        admitCallerC(text, field, declarations, code);
         DataTypeManager types = currentProgram.getDataTypeManager();
         CParser parser = new CParser(types, false, new DataTypeManager[] { types });
         try {
@@ -1956,6 +2102,29 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return parser;
     }
 
+    /**
+     * The parser picks one type for a name. When the database holds another,
+     * different type under the same name, the caller cannot select between them.
+     */
+    private void requireUnambiguousType(DataType type) {
+        DataType named = type;
+        while (named instanceof ghidra.program.model.data.Pointer || named instanceof ghidra.program.model.data.Array)
+            named = named instanceof ghidra.program.model.data.Pointer pointer
+                ? pointer.getDataType() : ((ghidra.program.model.data.Array) named).getDataType();
+        if (named == null || named instanceof ghidra.program.model.data.BuiltInDataType) return;
+        List<DataType> sameName = new ArrayList<>();
+        currentProgram.getDataTypeManager().findDataTypes(named.getName(), sameName);
+        Set<String> candidates = new TreeSet<>();
+        for (DataType other : sameName)
+            if (!other.getPathName().equals(named.getPathName()) && !other.isEquivalent(named))
+                candidates.add(other.getPathName());
+        if (candidates.isEmpty()) return;
+        candidates.add(named.getPathName());
+        throw new RequestFailure("ambiguous_data_type", "The type name " + named.getName() +
+            " names different types in the database: " + String.join(", ", candidates));
+    }
+
+
     /** Keep the location and offending token; drop the generated expected-token list. */
     private static String cParserReason(String message) {
         if (message == null || message.isBlank()) return "no reason reported";
@@ -1971,8 +2140,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (function.isThunk())
             throw new RequestFailure(code, "Function at " + entry + " is a thunk; its prototype belongs to the function it forwards to");
         String stripped = text.strip();
-        CParser parser = parseCallerC(stripped.endsWith(";") ? stripped : stripped + ";", "signature",
-            MAX_FUNCTION_SIGNATURE_UTF16, code);
+        CParser parser = parseCallerC(stripped.endsWith(";") ? stripped : stripped + ";", "signature", false, code);
         // The parser invents an empty composite for an undefined struct, union or enum tag.
         Set<String> undefined = new TreeSet<>(parser.getComposites().keySet());
         undefined.addAll(parser.getEnums().keySet());
@@ -1990,13 +2158,20 @@ public final class ReaGhidraBridge extends HeadlessScript {
             String name = parameter.getName();
             if (name != null && !name.isEmpty() && !names.add(name))
                 throw new RequestFailure(code, "signature repeats parameter name " + name);
+            requireUnambiguousType(parameter.getDataType());
         }
+        requireUnambiguousType(prototype.getReturnType());
         return prototype;
     }
 
     private void applyFunctionSignature(Function function, FunctionDefinitionDataType prototype) throws Exception {
         String code = "invalid_function_signature";
         String entry = canonicalAddress(function.getEntryPoint());
+        // Ghidra assigns the locked parameter storage with the compiler specification's
+        // default convention when the function has none. Recording that convention keeps
+        // the decompiler from reporting locked storage under an unknown convention.
+        if (function.getCallingConvention() == null && prototype.hasUnknownCallingConventionName())
+            prototype.setCallingConvention(currentProgram.getCompilerSpec().getDefaultCallingConvention().getName());
         // The prototype's own name is never applied; the name field owns renames.
         ApplyFunctionSignatureCmd command = new ApplyFunctionSignatureCmd(
             function.getEntryPoint(), prototype, SourceType.USER_DEFINED, false, false,
@@ -2010,6 +2185,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         boolean matches = function.getSignatureSource() == SourceType.USER_DEFINED &&
             applied.getReturnType().isEquivalent(prototype.getReturnType()) &&
             applied.hasVarArgs() == prototype.hasVarArgs() &&
+            (!prototype.hasNoReturn() || function.hasNoReturn()) &&
             observed.length == requested.length &&
             (prototype.hasUnknownCallingConventionName() ||
                 prototype.getCallingConventionName().equals(function.getCallingConventionName()));
@@ -2028,8 +2204,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private JsonObject defineNativeDataTypes(JsonObject params) throws Exception {
         requireKeys(params, Set.of("declarations"));
         String code = "invalid_type_declarations";
-        CParser parser = parseCallerC(requireText(params, "declarations"), "declarations",
-            MAX_TYPE_DECLARATIONS_UTF16, code);
+        CParser parser = parseCallerC(requireText(params, "declarations"), "declarations", true, code);
         if (!parser.getFunctions().isEmpty())
             throw new RequestFailure(code, "declarations must not declare functions or function-pointer members: " +
                 String.join(", ", new TreeSet<>(parser.getFunctions().keySet())));
@@ -2048,8 +2223,14 @@ public final class ReaGhidraBridge extends HeadlessScript {
             monitor.checkCancelled();
             String name = entry.getKey();
             DataType type = entry.getValue();
-            if (type instanceof ghidra.program.model.data.Composite composite && composite.getNumComponents() == 0)
-                throw new RequestFailure(code, "declarations leave " + name + " without members; define every struct or union they use");
+            if (type instanceof ghidra.program.model.data.Composite composite) {
+                if (composite.getNumComponents() == 0)
+                    throw new RequestFailure(code, "declarations leave " + name + " without members; define every struct or union they use");
+                Set<String> members = new HashSet<>();
+                for (ghidra.program.model.data.DataTypeComponent component : composite.getComponents())
+                    if (component.getFieldName() != null && !members.add(component.getFieldName()))
+                        throw new RequestFailure(code, name + " repeats member name " + component.getFieldName());
+            }
             requireStoredDependencies(name, type, parsed, types,
                 java.util.Collections.newSetFromMap(new IdentityHashMap<>()));
             String path = CALLER_DEFINED_TYPES.getPath() + "/" + name;
@@ -2107,7 +2288,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
     /** Every named type a definition reaches must be defined here or already stored. */
     private void requireStoredDependencies(
             String owner, DataType type, Set<DataType> parsed, DataTypeManager types, Set<DataType> visited) {
-        if (type == null || type instanceof ghidra.program.model.data.BuiltInDataType || !visited.add(type)) return;
+        if (type == null || !visited.add(type)) return;
+        // Pointer and bit-field types are built-in classes; look through them first.
         if (type instanceof ghidra.program.model.data.Pointer pointer) {
             requireStoredDependencies(owner, pointer.getDataType(), parsed, types, visited);
             return;
@@ -2120,8 +2302,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
             requireStoredDependencies(owner, bitField.getBaseDataType(), parsed, types, visited);
             return;
         }
+        if (type instanceof ghidra.program.model.data.BuiltInDataType) return;
         if (!parsed.contains(type)) {
-            if (types.contains(type)) return;
+            if (types.contains(type)) {
+                requireUnambiguousType(type);
+                return;
+            }
             throw new RequestFailure("invalid_type_declarations", owner +
                 " embeds an unnamed or undeclared type (" + type.getName() + "); declare it by name in the same declarations");
         }
@@ -6631,7 +6817,25 @@ public final class ReaGhidraBridge extends HeadlessScript {
             keys.add("existing_project");
         if (parsed.isJsonObject() && parsed.getAsJsonObject().has("entry_context_register"))
             keys.add("entry_context_register");
+        if (parsed.isJsonObject() && parsed.getAsJsonObject().has("c_parser_limits"))
+            keys.add("c_parser_limits");
         JsonObject object = requireObject(parsed, keys);
+        CParserLimits cParserLimits = DEFAULT_C_PARSER_LIMITS;
+        if (object.has("c_parser_limits")) {
+            JsonObject limits = requireObject(object.get("c_parser_limits"),
+                Set.of("signature_max_utf16", "declarations_max_utf16", "max_parenthesis_depth"));
+            cParserLimits = new CParserLimits(
+                requireInteger(limits, "signature_max_utf16"),
+                requireInteger(limits, "declarations_max_utf16"),
+                requireInteger(limits, "max_parenthesis_depth"));
+            if (cParserLimits.signatureUtf16() < MIN_C_TEXT_UTF16 ||
+                cParserLimits.signatureUtf16() > MAX_FUNCTION_SIGNATURE_UTF16 ||
+                cParserLimits.declarationsUtf16() < MIN_C_TEXT_UTF16 ||
+                cParserLimits.declarationsUtf16() > MAX_TYPE_DECLARATIONS_UTF16 ||
+                cParserLimits.parenthesisDepth() < MIN_C_PARENTHESIS_DEPTH ||
+                cParserLimits.parenthesisDepth() > MAX_C_PARENTHESIS_DEPTH)
+                throw new IllegalArgumentException("REA session descriptor is invalid");
+        }
         List<String> entryContext = List.of();
         if (object.has("entry_context_register")) {
             String register = requireString(object, "entry_context_register");
@@ -6656,7 +6860,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
             object.has("analysis_extensions") ? object.getAsJsonArray("analysis_extensions") : new JsonArray(),
             decompileTimeout,
             object.has("existing_project") && requireBoolean(object, "existing_project"),
-            entryContext
+            entryContext,
+            cParserLimits
         );
     }
 
@@ -7201,7 +7406,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         JsonArray analysisExtensions,
         int decompileTimeoutSeconds,
         boolean existingProject,
-        List<String> entryContextRegisters
+        List<String> entryContextRegisters,
+        CParserLimits cParserLimits
     ) {}
     private static ValueFlowLimits defaultValueFlowLimits() {
         return new ValueFlowLimits(DEFAULT_HIGH_PCODE_OPS, DEFAULT_HIGH_PCODE_INPUTS_PER_OP, DEFAULT_HIGH_PCODE_DEF_USE_EDGES);

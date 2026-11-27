@@ -351,3 +351,70 @@ it.skipIf(process.platform === "win32")(
       await once(child, "exit");
   },
 );
+
+const typeEdits = [
+  [
+    "annotate_native_function",
+    { procedure: "0x1000", signature: "int f(struct session *s)" },
+  ],
+  ["define_native_data_types", { declarations: "struct session { int id; };" }],
+] as const;
+
+it.skipIf(process.platform === "win32").each(typeEdits)(
+  "reports a %s edit as not saved when the closing checkpoint fails, keeps it editable and saves it on retry",
+  async (operation, parameters) => {
+    const f = await fixture("checkpoint_fail_close");
+    expect((await f.client.start()).ok).toBe(true);
+    const path = join(f.selection.directory, "current.json"),
+      before = await readFile(path, "utf8");
+    expect((await f.client.callTool(operation, parameters)).ok).toBe(true);
+    // The save fails: close reports it and the previous checkpoint is intact.
+    expect((await f.client.close()).ok).toBe(false);
+    expect(await readFile(path, "utf8")).toEqual(before);
+    expect(
+      (await readdir(f.launcher.runtimeRoots[0]!)).filter((name) =>
+        name.startsWith("checkpoint-"),
+      ),
+    ).toEqual([]);
+    // The live Program still holds the edit and accepts further requests.
+    expect(f.client.isReady()).toBe(true);
+    expect((await f.client.callTool("list_documents", {})).ok).toBe(true);
+    expect(f.launcher.processes).toHaveLength(1);
+    expect((await f.client.close()).ok).toBe(true);
+    expect(await readFile(path, "utf8")).not.toEqual(before);
+  },
+);
+
+it.skipIf(process.platform === "win32").each(typeEdits)(
+  "cancelling an active %s edit stops the Program without saving and the next start restores the last checkpoint",
+  async (operation, parameters) => {
+    const f = await fixture("checkpoint_hang_edit");
+    expect((await f.client.start()).ok).toBe(true);
+    const path = join(f.selection.directory, "current.json"),
+      before = await readFile(path, "utf8");
+    const controller = new AbortController();
+    const active = f.client.callTool(operation, parameters, {
+      signal: controller.signal,
+    });
+    // The edit has crossed the socket and is in progress.
+    await waitFor(() => expect(f.launcher.requests).toContain(operation));
+    controller.abort(new Error("caller stopped waiting"));
+    expect(await active).toMatchObject({
+      ok: false,
+      error: { kind: "cancelled" },
+    });
+    const child = f.launcher.processes[0]!;
+    if (child.exitCode === null && child.signalCode === null)
+      await once(child, "exit");
+    // All or nothing: the interrupted Program was discarded, not checkpointed.
+    expect(f.client.isReady()).toBe(false);
+    expect(await readFile(path, "utf8")).toEqual(before);
+    expect(f.launcher.requests).not.toContain("shutdown");
+    // The next start is a new Program restored from the unchanged checkpoint.
+    expect((await f.client.start()).ok).toBe(true);
+    expect(f.launcher.processes).toHaveLength(2);
+    expect(f.client.checkpointRestore()).not.toBeNull();
+    expect((await f.client.close()).ok).toBe(true);
+    expect(await readFile(path, "utf8")).toEqual(before);
+  },
+);

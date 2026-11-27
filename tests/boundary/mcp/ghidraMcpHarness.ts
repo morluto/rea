@@ -44,6 +44,8 @@ export const connectGhidraMcp = async (
     /** "budgeted" leaves an omitted detail to the agent result budget. */
     readonly testDelivery?: TestDelivery;
     readonly environment?: Readonly<NodeJS.ProcessEnv>;
+    /** Launch configuration added to the provider's parsed environment. */
+    readonly configEnvironment?: Readonly<Record<string, string>>;
     readonly schemaValidator?: ReturnType<typeof createMcpSchemaValidation>;
   } = {},
 ) => {
@@ -69,7 +71,10 @@ export const connectGhidraMcp = async (
       ? {}
       : { attestDosTargetSnapshot: fixture.attestDosTargetSnapshot }),
   });
-  const config = parseConfig({ GHIDRA_INSTALL_DIR: INSTALL });
+  const config = parseConfig({
+    GHIDRA_INSTALL_DIR: INSTALL,
+    ...fixture.configEnvironment,
+  });
   if (!config.ok) throw config.error;
   const provider = new GhidraProvider(
     config.value,

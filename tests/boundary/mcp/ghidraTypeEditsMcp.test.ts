@@ -6,8 +6,6 @@ import {
   jsonValueSchema,
   type JsonValue,
 } from "../../../src/domain/jsonValue.js";
-import { MAX_NATIVE_TYPE_DECLARATIONS_LENGTH } from "../../../src/domain/native/nativeDataType.js";
-import { MAX_NATIVE_FUNCTION_SIGNATURE_LENGTH } from "../../../src/domain/native/nativeFunctionAnnotations.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { GhidraSessionError } from "../../../src/ghidra/GhidraSessionError.js";
 import { connectGhidraMcp, ghidraFixtureResult } from "./ghidraMcpHarness.js";
@@ -36,6 +34,7 @@ const annotationReply = (signature: string, source: string) => {
       inline_comment: null,
       signature,
       signature_source: source,
+      calling_convention: "__stdcall",
     },
     dossier,
     effects: {
@@ -122,6 +121,7 @@ it("reports the applied prototype and its source with the annotation readback", 
         annotations: {
           signature: "double fixture_main(session * s, uint mask)",
           signature_source: "user_defined",
+          calling_convention: "__stdcall",
         },
       },
     });
@@ -245,21 +245,18 @@ it.each([
   {
     operation: "annotate_native_function",
     field: "signature",
-    maximum: MAX_NATIVE_FUNCTION_SIGNATURE_LENGTH,
-    expected: 4096,
+    rangeMaximum: 4096,
   },
   {
     operation: "define_native_data_types",
     field: "declarations",
-    maximum: MAX_NATIVE_TYPE_DECLARATIONS_LENGTH,
-    expected: 16384,
+    rangeMaximum: 8192,
   },
 ] as const)(
-  "admits $field at its ceiling and refuses one more unit before the bridge, naming the limit",
-  async ({ operation, field, maximum, expected }) => {
-    expect(maximum).toBe(expected);
+  "refuses $field beyond its control's range maximum before the bridge",
+  async ({ operation, field, rangeMaximum }) => {
     const harness = await connectGhidraMcp(
-      `ghidra-${field}-ceiling`,
+      `ghidra-${field}-range`,
       (requested) =>
         Promise.resolve(
           ok(
@@ -281,14 +278,193 @@ it.each([
           },
         });
       const before = harness.calls.length;
-      const { error } = parseMcpToolError(await call(expected + 1));
+      const { error } = parseMcpToolError(await call(rangeMaximum + 1));
       expect(error).toMatchObject({
         code: "invalid_request",
-        details: { issues: [{ path: [field], maximum: expected }] },
+        details: { issues: [{ path: [field], maximum: rangeMaximum }] },
       });
       expect(harness.calls.length).toBe(before);
-      expect((await call(expected)).isError).not.toBe(true);
+      // Within the range the bridge, which holds the effective value, decides.
+      expect((await call(rangeMaximum)).isError).not.toBe(true);
       expect(harness.calls.slice(before)).toEqual([operation]);
+    } finally {
+      await harness.close();
+    }
+  },
+);
+
+it.each([
+  {
+    operation: "annotate_native_function",
+    remoteCode: "signature_length_limit",
+    message: "signature has 2049 UTF-16 code units",
+    environment: "REA_GHIDRA_SIGNATURE_MAX_UTF16",
+    configured: undefined,
+    limit: {
+      effective_value: 2048,
+      minimum: 16,
+      maximum: 4096,
+      default_value: 2048,
+    },
+    source: "default",
+    recovery:
+      /set REA_GHIDRA_SIGNATURE_MAX_UTF16 \(16\.\.4096\).*start a new REA process; update_analysis_settings does not change it/u,
+  },
+  {
+    operation: "define_native_data_types",
+    remoteCode: "declarations_length_limit",
+    message: "declarations has 300 UTF-16 code units",
+    environment: "REA_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16",
+    configured: "256",
+    limit: {
+      effective_value: 256,
+      minimum: 16,
+      maximum: 8192,
+      default_value: 4096,
+    },
+    source: "environment",
+    recovery:
+      /Split the definitions across several calls.*REA_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16 \(16\.\.8192\)/u,
+  },
+  {
+    operation: "define_native_data_types",
+    remoteCode: "parenthesis_depth_limit",
+    message:
+      "declarations nests parentheses 13 levels deep at line 1, column 30",
+    environment: "REA_GHIDRA_C_MAX_PARENTHESIS_DEPTH",
+    configured: "12",
+    limit: { effective_value: 12, minimum: 1, maximum: 12, default_value: 8 },
+    source: "environment",
+    recovery:
+      /REA_GHIDRA_C_MAX_PARENTHESIS_DEPTH is already at its maximum of 12/u,
+  },
+] as const)(
+  "names $environment, its effective value, source and range when the bridge refuses over it",
+  async ({
+    operation,
+    remoteCode,
+    message,
+    environment,
+    configured,
+    limit,
+    source,
+    recovery,
+  }) => {
+    const harness = await connectGhidraMcp(
+      `ghidra-${remoteCode}`,
+      (requested, input) =>
+        Promise.resolve(
+          requested === operation
+            ? err(new GhidraSessionError("remote", message, {}, { remoteCode }))
+            : ok(ghidraFixtureResult(requested, input)),
+        ),
+      configured === undefined
+        ? {}
+        : { configEnvironment: { [environment]: configured } },
+    );
+    try {
+      const reply = await harness.mcp.callTool({
+        name: operation,
+        arguments:
+          operation === "annotate_native_function"
+            ? { procedure: "0x401000", signature: SIGNATURE }
+            : { declarations: DECLARATIONS },
+      });
+      const { error } = parseMcpToolError(reply);
+      expect(error).toMatchObject({
+        code: "resource_constraint",
+        category: "resource_constraint",
+        retryable: false,
+        details: {
+          operation,
+          limit: {
+            control_kind: "environment",
+            environment,
+            unit: "count",
+            applies_at: "next_startup",
+            ...limit,
+          },
+          reported_limits: {
+            boundary: environment,
+            maximum: limit.effective_value,
+            source,
+            range_minimum: limit.minimum,
+            range_maximum: limit.maximum,
+            default_value: limit.default_value,
+          },
+        },
+      });
+      expect(error.message).toContain(message);
+      expect(error.message).toContain(
+        `${environment} admits at most ${String(limit.effective_value)}`,
+      );
+      expect(error.message).toContain(`source: ${source}`);
+      expect(error.remediation.action).toMatch(recovery);
+      expect(error.remediation.action).toContain(
+        "Nothing in this call was applied.",
+      );
+      const next = await harness.mcp.callTool({
+        name: "procedure_info",
+        arguments: { procedure: "0x401000" },
+      });
+      expect(next.isError).not.toBe(true);
+    } finally {
+      await harness.close();
+    }
+  },
+);
+
+it.each(["annotate_native_function", "define_native_data_types"] as const)(
+  "attributes an ambiguous type name in %s to its text and lists the recovery",
+  async (operation) => {
+    const message =
+      "The type name size_t names different types in the database: /DWARF/size_t, /stddef.h/size_t";
+    const harness = await connectGhidraMcp(
+      `ghidra-ambiguous-${operation}`,
+      (requested, input) =>
+        Promise.resolve(
+          requested === operation
+            ? err(
+                new GhidraSessionError(
+                  "remote",
+                  message,
+                  {},
+                  { remoteCode: "ambiguous_data_type" },
+                ),
+              )
+            : ok(ghidraFixtureResult(requested, input)),
+        ),
+    );
+    try {
+      const { error } = parseMcpToolError(
+        await harness.mcp.callTool({
+          name: operation,
+          arguments:
+            operation === "annotate_native_function"
+              ? { procedure: "0x401000", signature: SIGNATURE }
+              : { declarations: DECLARATIONS },
+        }),
+      );
+      expect(error).toMatchObject({
+        code: "invalid_request",
+        details: {
+          issues: [
+            {
+              path: [
+                operation === "annotate_native_function"
+                  ? "signature"
+                  : "declarations",
+              ],
+              message,
+            },
+          ],
+          related_operations: [
+            "inspect_native_data_type",
+            "define_native_data_types",
+          ],
+        },
+      });
+      expect(error.remediation.action).toMatch(/unique in the database/u);
     } finally {
       await harness.close();
     }

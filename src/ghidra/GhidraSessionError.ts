@@ -204,14 +204,28 @@ const createGhidraSessionError = (failure: {
 export type GhidraTypeEditRefusalCode =
   | "invalid_function_signature"
   | "unknown_data_type"
+  | "ambiguous_data_type"
   | "invalid_type_declarations"
   | "data_type_conflict";
+
+/** The launch control whose bound a refused prototype or definition text exceeded. */
+export const GHIDRA_C_PARSER_LIMIT_CODES = {
+  signature_length_limit: "signatureMaxUtf16",
+  declarations_length_limit: "declarationsMaxUtf16",
+  parenthesis_depth_limit: "parenthesisDepth",
+} as const;
+
+export const isGhidraCParserLimitCode = (
+  code: string | undefined,
+): code is keyof typeof GHIDRA_C_PARSER_LIMIT_CODES =>
+  code !== undefined && Object.hasOwn(GHIDRA_C_PARSER_LIMIT_CODES, code);
 
 export const isGhidraTypeEditRefusalCode = (
   code: string | undefined,
 ): code is GhidraTypeEditRefusalCode =>
   code === "invalid_function_signature" ||
   code === "unknown_data_type" ||
+  code === "ambiguous_data_type" ||
   code === "invalid_type_declarations" ||
   code === "data_type_conflict";
 
@@ -252,6 +266,7 @@ export const bindGhidraSessionFailure =
             (isGhidraInputFailureCode(options.remoteCode) ||
               options.remoteCode === "invalid_function_name" ||
               isGhidraTypeEditRefusalCode(options.remoteCode) ||
+              isGhidraCParserLimitCode(options.remoteCode) ||
               ghidraFileOffsetOutcome(options.remoteCode) !== undefined ||
               isGhidraByteSearchCursorMismatch(options.remoteCode))
             ? "request"

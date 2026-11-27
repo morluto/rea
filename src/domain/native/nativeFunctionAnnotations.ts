@@ -1,12 +1,6 @@
 import { z } from "zod";
 import { functionDossierSchema } from "../native/functionDossier.js";
-
-/**
- * Ghidra's C parser cannot be cancelled. A chain of pointer or array
- * declarators takes about one second to parse at this length and grows
- * cubically beyond it; the Java bridge enforces the same ceiling.
- */
-export const MAX_NATIVE_FUNCTION_SIGNATURE_LENGTH = 4096;
+import { MAXIMUM_GHIDRA_SIGNATURE_MAX_UTF16 } from "../analysisResourceLimits.js";
 
 /** One explicit function's analyst-authored metadata changes. */
 export const nativeFunctionAnnotationsInputSchema = z
@@ -29,7 +23,7 @@ export const nativeFunctionAnnotationsInputSchema = z
     signature: z
       .string()
       .min(1)
-      .max(MAX_NATIVE_FUNCTION_SIGNATURE_LENGTH)
+      .max(MAXIMUM_GHIDRA_SIGNATURE_MAX_UTF16)
       .optional()
       .describe(
         "C prototype using types the database already holds, e.g. `double f(struct session *s, unsigned mask)`. Its function name is a placeholder; rename with name. Add missing types with define_native_data_types first.",
@@ -63,6 +57,12 @@ export const nativeFunctionAnnotationsSchema = z
         .min(1)
         .describe(
           "Ghidra source of the prototype: user_defined is caller-authored; default, analysis and imported are not",
+        ),
+      calling_convention: z
+        .string()
+        .min(1)
+        .describe(
+          "Convention Ghidra assigns parameter storage with; unknown when the function has none recorded",
         ),
     }),
     dossier: functionDossierSchema,

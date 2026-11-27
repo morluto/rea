@@ -14,6 +14,7 @@ import type { RegexWorkerHeapRequest } from "./regexWorkerHeapRequest.js";
 import type { HopperCallerScanBudget } from "./hopperCallerScanBudget.js";
 import type { ConfigurationError } from "../domain/configurationErrors.js";
 import type { AnalysisSettingId } from "../domain/analysisSettings.js";
+import type { GhidraCParserLimits } from "./ghidraCParserLimits.js";
 import type { McpOutputSchemaProfile } from "../contracts/mcpSchemaPresentation.js";
 
 export interface AppConfig {
@@ -37,6 +38,8 @@ export interface AppConfig {
   readonly ghidraValueFlowMaxEdges?: number;
   readonly ghidraLanguageOverride?: GhidraLanguageOverride;
   readonly ghidraDisabledAnalyzers?: readonly string[];
+  /** Launch bounds on C text parsed by Ghidra; absent keeps the defaults. */
+  readonly ghidraCParserLimits?: GhidraCParserLimits;
   readonly ghidraSeedFile?: string;
   readonly ghidraExistingProject?: GhidraProjectSelection;
   /** Opt-in storage for checkpoints of REA-owned Ghidra Programs. */

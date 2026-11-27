@@ -58,6 +58,27 @@ export const MAXIMUM_NATIVE_MATCHING_REPRESENTATION_BYTES = 1024 * 1024 * 1024;
 /** Default absolute deadline for Ghidra import, analysis, bridge, and readiness. */
 export const DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS = 330_000;
 
+/**
+ * Bounds on the C text REA hands to Ghidra's parser, which cannot be
+ * cancelled. Measured on Ghidra 12.2: the slowest shape per character is one
+ * chain of pointer declarators, cubic in its length (0.3 s at 2048 UTF-16
+ * code units, 0.8 s at 4096, 6.8 s at 8192, 100 s at 16384). Each level of
+ * nested parentheses in an expression doubles its parse time and the cost
+ * repeats per occurrence (8192 units filled at depth 8: 0.2 s; at depth 12:
+ * 2.2 s). The maxima keep the slowest admitted text under about 7 s; the
+ * Java bridge refuses a descriptor outside these ranges.
+ */
+export const DEFAULT_GHIDRA_SIGNATURE_MAX_UTF16 = 2048;
+export const MAXIMUM_GHIDRA_SIGNATURE_MAX_UTF16 = 4096;
+export const DEFAULT_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16 = 4096;
+export const MAXIMUM_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16 = 8192;
+/** Shorter text cannot hold a prototype or a definition worth refusing by length. */
+export const MINIMUM_GHIDRA_C_TEXT_UTF16 = 16;
+export const DEFAULT_GHIDRA_C_PARENTHESIS_DEPTH = 8;
+/** A prototype's own parameter list is one level. */
+export const MINIMUM_GHIDRA_C_PARENTHESIS_DEPTH = 1;
+export const MAXIMUM_GHIDRA_C_PARENTHESIS_DEPTH = 12;
+
 /** Default absolute deadline for Hopper launch, analysis, bridge, and readiness. */
 export const DEFAULT_HOPPER_STARTUP_TIMEOUT_MS = 120_000;
 

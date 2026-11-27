@@ -1493,17 +1493,20 @@ await call("annotate_native_function", {
 });
 ```
 
-`signature` is a C prototype over types the database already holds. Its
+`signature` is one C prototype over types the database already holds. Its
 function name is a placeholder; `name` renames the function. The prototype is
 applied in the same transaction as the name and comments with Ghidra's
-`USER_DEFINED` source and Ghidra-assigned parameter storage. A parse failure,
-an undefined type, or a prototype Ghidra would apply differently (an array
-parameter, a parameter name another symbol holds, a calling convention the
-compiler specification lacks) rolls the whole call back and names
-`signature` in the error. Thunks and function-pointer parameters are refused.
+`USER_DEFINED` source and Ghidra-assigned parameter storage.
 `annotations.signature` is the applied prototype in a form `signature` accepts,
-and `annotations.signature_source` is `user_defined` for a caller-authored
-prototype rather than `default`, `analysis` or `imported`.
+`annotations.signature_source` is `user_defined` for a caller-authored
+prototype rather than `default`, `analysis` or `imported`, and
+`annotations.calling_convention` is the convention that storage follows. When
+the function has no calling convention and the prototype names none, REA
+records the compiler specification's default convention, which is the one
+Ghidra already uses to assign the storage; without it the decompiler prefixes
+the pseudocode with `Unknown calling convention -- yet parameter storage is
+locked`. Name a convention in the prototype (for example `__stdcall`) to
+assert another one.
 
 `define_native_data_types` accepts C struct, union, enum and typedef
 definitions and stores all of them or none in the category
@@ -1511,17 +1514,53 @@ definitions and stores all of them or none in the category
 `source: "caller-defined"`; they are the caller's assertions about layout, not
 observations of the target. A name the database already holds in any category
 is refused and never replaced; repeating an equivalent caller definition
-reports `unchanged`. Function declarations, function-pointer members, structs
-without members and unnamed nested struct, union or enum members are refused.
-`#pragma pack` is honored; `__attribute__` packing and variable declarations
-are ignored by Ghidra's parser, so check the returned `size_bytes`.
+reports `unchanged`.
 
-Ghidra's C parser cannot be cancelled, so both inputs have fixed ceilings
-without a runtime override: `signature` admits 4096 UTF-16 code units,
-`declarations` 16384, and each at most 8 levels of nested parentheses. Split
-a larger set of definitions across calls. Both edits invalidate immutable
-analysis snapshots and persist exactly as names and comments do: saved on
-normal close in checkpoint mode, discarded otherwise.
+Ghidra's C parser accepts several constructs and records nothing for them. REA
+refuses those before parsing, names the construct and its line and column, and
+changes nothing:
+
+| Construct                                                                                                           | `signature`            | `declarations`                        |
+| ------------------------------------------------------------------------------------------------------------------- | ---------------------- | ------------------------------------- |
+| `__attribute__`, `__declspec`, `_Alignas`, `__packed`, asm labels                                                   | refused                | refused; use `#pragma pack` to pack   |
+| `static`, `extern`, `inline`, `register`, `auto`, `_Thread_local`                                                   | refused                | refused                               |
+| Variable declarations and other non-type statements                                                                 | refused                | refused                               |
+| Preprocessor directives                                                                                             | refused                | refused except `#pragma pack`         |
+| String and character literals                                                                                       | refused                | refused                               |
+| Function body, default argument, second declaration                                                                 | refused                | not applicable                        |
+| Function pointers                                                                                                   | refused                | refused                               |
+| Unnamed enum; unnamed struct or union other than `typedef struct { } name`                                          | refused                | refused                               |
+| Repeated parameter or member name; struct or union without members                                                  | refused                | refused                               |
+| Array parameter (Ghidra stores a pointer)                                                                           | refused                | not applicable                        |
+| A type name the database holds as different types                                                                   | refused                | refused                               |
+| `#pragma pack`, bit-fields, flexible and zero-length arrays, enum constant expressions, several typedef declarators | not applicable         | applied; the stored layout shows them |
+| `_Noreturn`, a calling convention the compiler specification defines                                                | applied                | not applicable                        |
+| `const`, `volatile`                                                                                                 | accepted, not recorded | accepted, not recorded                |
+
+`const` and `volatile` have no representation in Ghidra's type system and no
+effect on layout or storage, so the stored type and the readback omit them. A
+type name that exists in several categories is accepted only when every type
+of that name is equivalent; otherwise the refusal lists their category paths,
+because C text cannot select one.
+
+Ghidra's C parser cannot be cancelled, so three launch controls bound the text
+it parses. They are read when REA starts, are not runtime analysis settings,
+and a refusal names the control, its effective value, source and range:
+
+| Environment                              | Default | Range    | Bounds                              |
+| ---------------------------------------- | ------: | -------- | ----------------------------------- |
+| `REA_GHIDRA_SIGNATURE_MAX_UTF16`         |    2048 | 16..4096 | UTF-16 code units of `signature`    |
+| `REA_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16` |    4096 | 16..8192 | UTF-16 code units of `declarations` |
+| `REA_GHIDRA_C_MAX_PARENTHESIS_DEPTH`     |       8 | 1..12    | nested parentheses in either text   |
+
+The maxima follow measured parse times on Ghidra 12.2: the slowest admitted
+text at the maxima took about 7 seconds (a single chain of 8192 pointer
+declarators), and 2.2 seconds at 12 levels of parentheses; twice the length
+took 100 seconds and each further level doubles the time. Split a larger set
+of definitions across calls. Both edits invalidate immutable analysis
+snapshots and persist exactly as names and comments do: saved on normal close
+in checkpoint mode, discarded otherwise. Cancelling an active edit stops the
+Ghidra process without saving it.
 For a before-and-after `compare_functions` in MCP, call `analyze_function`
 before and after the edit while the session remains open; the annotation Evidence
 itself is not an `analyze_function` input. If comparing after close, export the

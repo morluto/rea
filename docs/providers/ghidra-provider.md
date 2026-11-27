@@ -136,6 +136,31 @@ effective payload allowance; payload recovery applies only when that diagnostic
 identifies payload exhaustion. Raising these controls does not raise the MCP
 client's deadline or receive buffer.
 
+## C text for signatures and type definitions
+
+`annotate_native_function` `signature` and `define_native_data_types`
+`declarations` are parsed by Ghidra's C parser, which cannot be cancelled.
+Three launch-only controls bound that text. The Java bridge receives them in
+its session descriptor when it starts and keeps them for its lifetime; they
+are not `update_analysis_settings` entries.
+
+| Environment                              | Default | Floor | Maximum | Slowest measured parse at the maximum      |
+| ---------------------------------------- | ------: | ----: | ------: | ------------------------------------------ |
+| `REA_GHIDRA_SIGNATURE_MAX_UTF16`         |    2048 |    16 |    4096 | 0.8 s (one chain of pointer declarators)   |
+| `REA_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16` |    4096 |    16 |    8192 | 6.8 s (one chain of pointer declarators)   |
+| `REA_GHIDRA_C_MAX_PARENTHESIS_DEPTH`     |       8 |     1 |      12 | 2.2 s (8192 units of 12-level expressions) |
+
+Measured with Ghidra 12.2 on arm64 macOS; other hosts differ. Parse time is
+cubic in the length of a declarator chain (16384 units took 100 s) and doubles
+with each level of nested parentheses, so the maxima are fixed and an
+out-of-range value is a configuration error at launch. A text over a control
+is refused before parsing with `code: "resource_constraint"`; `details.limit`
+carries `control_kind: "environment"`, the control, its effective value,
+range and default, and `details.reported_limits.source` is `default` or
+`environment`. The bridge also refuses, with the construct's line and column,
+what its parser would accept without applying; see the
+[native guide](../guides/native/native-investigation.md).
+
 ## PE debug-symbol coverage
 
 The post-analysis handshake reports Ghidra's PDB Program Information attributes:

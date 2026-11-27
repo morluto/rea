@@ -199,6 +199,7 @@ describe("official operation arguments", () => {
       inline_comment: "existing inline finding",
       signature: "undefined fixture_main()",
       signature_source: "default",
+      calling_convention: "unknown",
     };
     const parameters: Readonly<Record<string, JsonValue>>[] = [];
     const client = await connect({

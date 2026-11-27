@@ -276,6 +276,7 @@ it("rejects contradictory annotation readback across the provider and MCP bounda
     inline_comment: "Finding",
     signature: "undefined fixture_main()",
     signature_source: "default",
+    calling_convention: "unknown",
   };
   const effects = {
     scope: "session-analysis-database",

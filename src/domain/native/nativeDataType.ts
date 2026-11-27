@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { nativeMetadataRecoverySchema } from "./nativeMetadataRecovery.js";
+import { MAXIMUM_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16 } from "../analysisResourceLimits.js";
 
 /** Select a database type by exact category path or a defined typed data address. */
 export const nativeDataTypeInputSchema = z
@@ -12,19 +13,12 @@ export const nativeDataTypeInputSchema = z
     (value) => (value.type === undefined) !== (value.address === undefined),
     "Supply exactly one of type or address",
   );
-/**
- * Ghidra's C parser cannot be cancelled; this length keeps a realistic set of
- * definitions (several hundred members) while bounding its cubic cost on
- * declarator chains. The Java bridge enforces the same ceiling.
- */
-export const MAX_NATIVE_TYPE_DECLARATIONS_LENGTH = 16384;
-
 /** C definitions of the types a caller adds to the analysis database. */
 export const nativeDataTypeDefinitionsInputSchema = z.strictObject({
   declarations: z
     .string()
     .min(1)
-    .max(MAX_NATIVE_TYPE_DECLARATIONS_LENGTH)
+    .max(MAXIMUM_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16)
     .describe(
       "C struct, union, enum and typedef definitions, e.g. `struct session { int id; char name[32]; struct session *next; };`. Members may use earlier definitions and existing database types.",
     ),

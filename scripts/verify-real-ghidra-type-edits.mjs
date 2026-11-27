@@ -82,7 +82,7 @@ async function phase(name, operation) {
     throw cause;
   }
 }
-async function connect() {
+async function connect(environment = {}) {
   const owner = createVerifierMcpOwner();
   const client = completeEvidenceClient(
     new Client({ name: "rea-ghidra-type-edit-verifier", version: "1" }),
@@ -90,7 +90,7 @@ async function connect() {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [entrypoint, "mcp"],
-    env,
+    env: { ...env, ...environment },
     stderr: "pipe",
   });
   transport.stderr?.on("data", () => {});
@@ -113,6 +113,23 @@ async function connect() {
         message: error.details.issues[0].message,
         action: error.remediation.action,
       };
+    },
+    /** The refusal bound to one launch control of Ghidra's C parser. */
+    overLimit: async (name, args, expected) => {
+      const error = requireMcpToolError(await raw(name, args));
+      assert.equal(error.code, "resource_constraint");
+      assert.deepEqual(error.details.limit, {
+        control_kind: "environment",
+        unit: "count",
+        applies_at: "next_startup",
+        ...expected.limit,
+      });
+      assert.equal(error.details.reported_limits.source, expected.source);
+      assert.ok(error.message.includes(expected.limit.environment));
+      assert.match(
+        error.remediation.action,
+        /Nothing in this call was applied/u,
+      );
     },
     close: () => owner.close(),
   };
@@ -202,25 +219,92 @@ int main(void) { struct session one = { 1, "one", 16, 1.5, 0 }; return (int)rea_
           "signature",
         );
         assert.match(syntax.message, /line 1, column/u);
-        const depth = await first.refused(
+        // The prototype's own parentheses are one level, so this reaches nine.
+        await first.overLimit(
           "annotate_native_function",
           {
             ...rejected,
-            signature: `int total(int a[${"(".repeat(9)}1${")".repeat(9)}])`,
+            signature: `int total(int a[${"(".repeat(8)}1${")".repeat(8)}])`,
           },
-          "signature",
+          {
+            source: "default",
+            limit: {
+              environment: "REA_GHIDRA_C_MAX_PARENTHESIS_DEPTH",
+              effective_value: 8,
+              minimum: 1,
+              maximum: 12,
+              default_value: 8,
+            },
+          },
         );
-        assert.match(depth.message, /deeper than 8 levels/u);
-        for (const refusedSignature of [
-          "double total(int a, int a)",
-          "double total(int (*callback)(int))",
-          "double total(int a[4])",
-        ])
-          await first.refused(
+        await first.overLimit(
+          "annotate_native_function",
+          {
+            ...rejected,
+            signature: `int total(int a /* ${"x".repeat(2040)} */)`,
+          },
+          {
+            source: "default",
+            limit: {
+              environment: "REA_GHIDRA_SIGNATURE_MAX_UTF16",
+              effective_value: 2048,
+              minimum: 16,
+              maximum: 4096,
+              default_value: 2048,
+            },
+          },
+        );
+        // Each is accepted by Ghidra's parser and applied differently or not at all.
+        for (const [refusedSignature, reason] of [
+          ["double total(int a, int a)", /repeats parameter name a/u],
+          [
+            "double total(int (*callback)(int))",
+            /function-pointer declarator at line 1, column 19/u,
+          ],
+          [
+            "double (*total)(int a)",
+            /function-pointer declarator at line 1, column 9/u,
+          ],
+          ["double total(int a[4])", /applied a different prototype/u],
+          [
+            "void total(int a) __attribute__((noreturn))",
+            /__attribute__ at line 1, column 19/u,
+          ],
+          [
+            "__declspec(noreturn) void total(int a)",
+            /__declspec at line 1, column 1/u,
+          ],
+          [
+            "static double total(int a)",
+            /specifier static at line 1, column 1/u,
+          ],
+          ["inline double total(int a)", /specifier inline/u],
+          [
+            "double total(register int a)",
+            /specifier register at line 1, column 14/u,
+          ],
+          [
+            "double total(int a) { return 1; }",
+            /function body at line 1, column 21/u,
+          ],
+          [
+            "double total(int a = 3)",
+            /default argument or initializer at line 1, column 20/u,
+          ],
+          [
+            "double total(int a); int y",
+            /second declaration at line 1, column 22/u,
+          ],
+          ['double total(int a) __asm__("g")', /__asm__ at line 1, column 21/u],
+          ["#pragma pack(1)\ndouble total(int a)", /directive #pragma/u],
+        ]) {
+          const refusal = await first.refused(
             "annotate_native_function",
             { ...rejected, signature: refusedSignature },
             "signature",
           );
+          assert.match(refusal.message, reason);
+        }
         assert.equal(await pseudocode(first), before);
         const info = await first.call("procedure_info", { procedure });
         assert.equal(info.name, baseline.name);
@@ -278,7 +362,88 @@ int main(void) { struct session one = { 1, "one", 16, 1.5, 0 }; return (int)rea_
           repeated.types.map(({ status }) => status),
           ["unchanged"],
         );
-        return { types: defined.types.length };
+        // Constructs the parser applies are proven by the stored layout.
+        const applied = await first.call("define_native_data_types", {
+          declarations: `/* comments are skipped */
+#pragma pack(push, 1)
+struct rea_packed { char a; int b; };
+#pragma pack(pop)
+struct rea_natural { char a; int b; }; // after pop
+struct rea_flexible { int n; char data[]; };
+struct rea_bits { unsigned low:3; unsigned high:5; };
+typedef struct rea_node { struct rea_node *next; const int v; } rea_node, *rea_node_ptr;
+enum rea_flags { REA_NONE, REA_EIGHT = 1 << 3, REA_NINE = REA_EIGHT + 1 };
+typedef struct { volatile int k; } rea_unnamed_t;`,
+        });
+        assert.deepEqual(
+          applied.types.map(({ name, kind, size_bytes }) => [
+            name,
+            kind,
+            size_bytes,
+          ]),
+          [
+            ["rea_bits", "struct", 4],
+            ["rea_flags", "enum", 4],
+            ["rea_flexible", "struct", 4],
+            ["rea_natural", "struct", 8],
+            ["rea_node", "struct", 16],
+            ["rea_node_ptr", "typedef", 8],
+            ["rea_packed", "struct", 5],
+            ["rea_unnamed_t", "struct", 4],
+          ],
+        );
+        const inspect = (name) =>
+          first.call("inspect_native_data_type", {
+            type: `/rea_caller_defined/${name}`,
+          });
+        const packed = await inspect("rea_packed");
+        assert.equal(packed.alignment_bytes, 1);
+        assert.deepEqual(
+          packed.fields.map(({ name, offset_bytes }) => [name, offset_bytes]),
+          [
+            ["a", 0],
+            ["b", 1],
+          ],
+        );
+        assert.deepEqual(
+          (await inspect("rea_natural")).fields.map(
+            ({ offset_bytes }) => offset_bytes,
+          ),
+          [0, 4],
+        );
+        assert.deepEqual(
+          (await inspect("rea_flexible")).fields.map(
+            ({ name, offset_bytes, size_bytes, type_id }) => [
+              name,
+              offset_bytes,
+              size_bytes,
+              type_id,
+            ],
+          ),
+          [
+            ["n", 0, 4, "/int"],
+            ["data", 4, 0, "/char[0]"],
+          ],
+        );
+        assert.deepEqual(
+          (await inspect("rea_bits")).fields.map(
+            ({ name, bit_size, bit_offset }) => [name, bit_size, bit_offset],
+          ),
+          [
+            ["low", 3, 0],
+            ["high", 5, 3],
+          ],
+        );
+        assert.deepEqual((await inspect("rea_flags")).members, [
+          { name: "REA_EIGHT", value: "8" },
+          { name: "REA_NINE", value: "9" },
+          { name: "REA_NONE", value: "0" },
+        ]);
+        assert.equal(
+          (await inspect("rea_node_ptr")).referenced_type,
+          "/rea_caller_defined/rea_node *",
+        );
+        return { types: defined.types.length + applied.types.length };
       },
     );
     await phase(
@@ -304,24 +469,121 @@ int main(void) { struct session one = { 1, "one", 16, 1.5, 0 }; return (int)rea_
           "declarations",
         );
         assert.match(builtin.message, /uint \(existing \/uint\)/u);
-        for (const declarations of [
-          "struct rea_user { struct rea_missing *p; };",
-          "struct rea_callbacks { int (*fn)(int); };",
-          "struct rea_nested { struct { int a; } inner; };",
-          "struct rea_broken { int a;",
-          "int rea_variable;",
-        ])
-          await first.refused(
+        // Each is accepted by Ghidra's parser and dropped or stored differently.
+        for (const [declarations, reason] of [
+          [
+            "struct rea_user { struct rea_missing *p; };",
+            /rea_missing without members/u,
+          ],
+          [
+            "struct rea_callbacks { int (*fn)(int); };",
+            /function-pointer members: fn/u,
+          ],
+          [
+            "struct rea_nested { struct { int a; } inner; };",
+            /unnamed or undeclared type/u,
+          ],
+          ["struct rea_broken { int a;", /C parser rejected declarations/u],
+          [
+            "int rea_variable;",
+            /not a struct, union, enum or typedef definition \(int\) at line 1, column 1/u,
+          ],
+          [
+            "struct rea_kept { int a; };\nint rea_tail = 5;",
+            /\(int\) at line 2, column 1/u,
+          ],
+          [
+            "struct rea_kept { int a; } rea_instance;",
+            /variable or declarator \(rea_instance\) after the definition of rea_kept at line 1, column 28/u,
+          ],
+          [
+            "struct rea_kept { int a; } *rea_pointer;",
+            /variable or declarator \(\*\) after the definition of rea_kept/u,
+          ],
+          [
+            "static struct rea_kept { int a; } rea_static;",
+            /specifier static at line 1, column 1/u,
+          ],
+          ["extern struct rea_kept rea_extern;", /specifier extern/u],
+          ["struct rea_kept rea_plain;", /variable declaration \(rea_plain\)/u],
+          [
+            "struct rea_kept { char a; int b; } __attribute__((packed));",
+            /__attribute__ \(use #pragma pack for packing\) at line 1, column 36/u,
+          ],
+          [
+            "struct __attribute__((packed)) rea_kept { char a; int b; };",
+            /__attribute__/u,
+          ],
+          [
+            "struct rea_kept { char a; int b __attribute__((aligned(16))); };",
+            /__attribute__/u,
+          ],
+          [
+            "struct rea_kept { char a; _Alignas(16) int b; };",
+            /_Alignas .* at line 1, column 27/u,
+          ],
+          [
+            "struct rea_kept { char a; __declspec(align(16)) int b; };",
+            /__declspec/u,
+          ],
+          ["struct rea_kept { char a; } __packed;", /__packed/u],
+          ["__extension__ struct rea_kept { int a; };", /__extension__/u],
+          [
+            "#pragma once\nstruct rea_kept { int a; };",
+            /directive #pragma \(only #pragma pack is applied\) at line 1, column 1/u,
+          ],
+          ['#line 5 "x.h"\nstruct rea_kept { int a; };', /directive #line/u],
+          ["enum { REA_A, REA_B };", /unnamed enum/u],
+          ["typedef enum { REA_A } rea_enum_t;", /unnamed enum/u],
+          [
+            "struct { int a; };",
+            /unnamed struct or union definition at line 1, column 8/u,
+          ],
+          [
+            "struct rea_kept { char a['b']; };",
+            /string or character literal at line 1, column 26/u,
+          ],
+          [
+            'struct rea_kept { char a[sizeof("abc")]; };',
+            /string or character literal/u,
+          ],
+          [
+            "struct rea_kept { int f; int f; };",
+            /rea_kept repeats member name f/u,
+          ],
+          ["struct rea_kept {};", /without members/u],
+        ]) {
+          const refusal = await first.refused(
             "define_native_data_types",
             { declarations },
             "declarations",
           );
+          assert.match(refusal.message, reason);
+        }
+        await first.overLimit(
+          "define_native_data_types",
+          {
+            declarations: `struct rea_kept { int a; /* ${"x".repeat(4096)} */ };`,
+          },
+          {
+            source: "default",
+            limit: {
+              environment: "REA_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16",
+              effective_value: 4096,
+              minimum: 16,
+              maximum: 8192,
+              default_value: 4096,
+            },
+          },
+        );
         for (const name of [
           "rea_other",
           "rea_user",
           "rea_missing",
           "rea_callbacks",
           "rea_nested",
+          "rea_kept",
+          "rea_enum_t",
         ])
           assert.equal(
             await typeStatus(first, `/rea_caller_defined/${name}`),
@@ -351,10 +613,37 @@ int main(void) { struct session one = { 1, "one", 16, 1.5, 0 }; return (int)rea_
           // The prototype's own name, total, is not applied.
           signature: `double ${baseline.name}(session * s, uint mask)`,
           signature_source: "user_defined",
+          calling_convention: updated.annotations.calling_convention,
         });
+        // The function had no calling convention. The locked storage is the
+        // default convention's, and that convention is recorded with it.
+        const api = updated.dossier.native_api;
+        assert.equal(api.signature_source, "user_defined");
+        assert.notEqual(updated.annotations.calling_convention, "unknown");
+        assert.equal(
+          api.calling_convention,
+          updated.annotations.calling_convention,
+        );
+        assert.deepEqual(
+          api.parameters.map(({ name, storage }) => [name, storage]),
+          process.arch === "arm64"
+            ? [
+                ["s", "x0:8"],
+                ["mask", "w1:4"],
+              ]
+            : [
+                ["s", "RDI:8"],
+                ["mask", "ESI:4"],
+              ],
+        );
+        assert.equal(
+          api.return_type.storage,
+          process.arch === "arm64" ? "d0:8" : "XMM0_Qa:8",
+        );
         const after = await pseudocode(first);
         for (const field of ["s->flags", "s->score", "s->next"])
           assert.ok(after.includes(field), `pseudocode must use ${field}`);
+        assert.doesNotMatch(after, /Unknown calling convention/u);
         assert.match(updated.dossier.pseudocode, /s->flags/u);
         // Readback is a valid signature edit and changes nothing.
         const replayed = await first.call("annotate_native_function", {
@@ -380,6 +669,7 @@ int main(void) { struct session one = { 1, "one", 16, 1.5, 0 }; return (int)rea_
           provider_id: "ghidra",
         });
         const restored = await pseudocode(second);
+        assert.doesNotMatch(restored, /Unknown calling convention/u);
         for (const field of ["s->flags", "s->score", "s->next"])
           assert.ok(
             restored.includes(field),
@@ -401,6 +691,75 @@ int main(void) { struct session one = { 1, "one", 16, 1.5, 0 }; return (int)rea_
         return {};
       } finally {
         await second.close();
+      }
+    },
+  );
+  await phase(
+    "launch controls reach the bridge and bound the parsed text",
+    async () => {
+      const bounded = await connect({
+        REA_GHIDRA_SIGNATURE_MAX_UTF16: "64",
+        REA_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16: "48",
+        REA_GHIDRA_C_MAX_PARENTHESIS_DEPTH: "2",
+      });
+      try {
+        await bounded.call("open_binary", {
+          path: target,
+          provider_id: "ghidra",
+        });
+        const control = (
+          environment,
+          effective_value,
+          minimum,
+          maximum,
+          default_value,
+        ) => ({
+          source: "environment",
+          limit: {
+            environment,
+            effective_value,
+            minimum,
+            maximum,
+            default_value,
+          },
+        });
+        await bounded.overLimit(
+          "annotate_native_function",
+          {
+            procedure,
+            signature: `double total(struct session *s, unsigned mask /* ${"x".repeat(20)} */)`,
+          },
+          control("REA_GHIDRA_SIGNATURE_MAX_UTF16", 64, 16, 4096, 2048),
+        );
+        await bounded.overLimit(
+          "annotate_native_function",
+          { procedure, signature: "double total(int a[((1))])" },
+          control("REA_GHIDRA_C_MAX_PARENTHESIS_DEPTH", 2, 1, 12, 8),
+        );
+        await bounded.overLimit(
+          "define_native_data_types",
+          {
+            declarations:
+              "struct rea_bounded { int first; int second; int third; };",
+          },
+          control("REA_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16", 48, 16, 8192, 4096),
+        );
+        assert.equal(
+          await typeStatus(bounded, "/rea_caller_defined/rea_bounded"),
+          "unavailable",
+        );
+        // Text within the lowered bounds is still applied.
+        const within = await bounded.call("define_native_data_types", {
+          declarations: "struct rea_small { int a[(2)]; };",
+        });
+        assert.deepEqual(
+          within.types.map(({ name, size_bytes }) => [name, size_bytes]),
+          [["rea_small", 8]],
+        );
+        await bounded.call("close_binary");
+        return {};
+      } finally {
+        await bounded.close();
       }
     },
   );

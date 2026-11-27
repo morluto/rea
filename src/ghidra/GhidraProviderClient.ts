@@ -758,6 +758,9 @@ export const createGhidraProviderClient = (input: {
       ...(launcherDecompileTimeout === undefined
         ? {}
         : { decompileTimeoutSeconds: launcherDecompileTimeout }),
+      ...(config.ghidraCParserLimits === undefined
+        ? {}
+        : { cParserLimits: config.ghidraCParserLimits }),
       ...(seeds === undefined ? {} : { analysisSeeds: seeds }),
       platform: installation.platform,
       ...(extensions.length === 0 ? {} : { analysisExtensions: extensions }),
