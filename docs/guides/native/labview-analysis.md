@@ -65,10 +65,12 @@ the inventory identifies a block.
   program semantics. A missing `BDH*` is reported as `absent` only when the
   whole artifact was examined. It is `unknown` when the inspected container
   carries an embedded program tree (`LVzp`), the file carries other RSRC
-  containers that were not inspected, the selected file is an `.llb` archive
-  whose member VIs are not opened, or a PE resource branch could not be read,
-  because any of them could still hold the heap. No diagram is reconstructed
-  from compiled code.
+  containers that were not inspected, the selected file is a direct RSRC
+  container whose content does not establish whether it is a VI, a control, or
+  an `.llb` archive whose member VIs were not opened, or a PE resource branch
+  could not be read, because any of them could still hold the heap. The file
+  name is not evidence of format. No diagram is reconstructed from compiled
+  code.
 - The LabVIEW version is the one recorded by the container's `vers` block. A
   LabVIEW-built executable's outer container typically records none, so the
   field is null there.

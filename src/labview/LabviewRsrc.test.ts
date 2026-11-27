@@ -84,6 +84,9 @@ describe("parseLabviewRsrc", () => {
     if (!result.ok) throw result.error;
     expect(result.value.container.kind).toBe("pe-rcdata-rsrc");
     expect(result.value.container.file_offset).toBeGreaterThan(0);
+    // The embedded application container is fully examined.
+    expect(result.value.block_diagram).toBe("absent");
+    expect(result.value.front_panel).toBe("absent");
     // The reported offset is where the container's own header starts.
     expect(
       bytes
@@ -234,17 +237,20 @@ describe("LabviewArtifactProvider", () => {
     await provider.close();
   });
 
-  it("keeps heap presence unknown for a .llb archive", async () => {
-    const root = await createTestTempDirectory("rea-labview-llb-");
-    const path = join(root, "fixture.llb");
+  it("keeps heap presence unknown for a direct RSRC container", async () => {
+    const root = await createTestTempDirectory("rea-labview-direct-");
+    // The name does not establish the format: a renamed archive must not
+    // become a proven absence.
+    const path = join(root, "fixture.vi");
     await writeFile(path, labviewContainer());
     const provider = new LabviewArtifactProvider();
     const result = await provider.inspect({ path });
     if (!result.ok) throw result.error;
-    // Member VIs inside the archive are not opened, so absence is not proven.
     expect(result.value.block_diagram).toBe("unknown");
     expect(result.value.front_panel).toBe("unknown");
-    expect(result.value.limitations.join(" ")).toContain("member VI contents");
+    expect(result.value.limitations.join(" ")).toContain(
+      "cannot establish from its content",
+    );
     await provider.close();
   });
 

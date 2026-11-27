@@ -211,23 +211,27 @@ export class LabviewArtifactProvider implements LabviewArtifactPort {
     }
     const value = parsed.value;
 
+    // Derive every block fact once: one container can carry thousands of blocks.
+    let hasBlockDiagram = false;
+    let hasFrontPanel = false;
+    let hasProgramTree = false;
+    for (const { identifier } of value.blocks) {
+      if (identifier.startsWith("BDH")) hasBlockDiagram = true;
+      else if (identifier.startsWith("FPH")) hasFrontPanel = true;
+      if (identifier === "LVzp") hasProgramTree = true;
+    }
     // A container that carries an embedded program tree, or a file whose other
     // containers were not examined, cannot establish that a heap is absent.
-    // Absence is claimed only for a fully examined artifact.
-    // A `.llb` holds member VIs this reader does not open, and a PE walk that
-    // stopped early leaves branches unexamined; neither can establish absence.
-    const memberArchive = input.path.toLowerCase().endsWith(".llb");
+    // A direct RSRC file's content does not say whether it is a VI, a control,
+    // or an archive whose member VIs were not opened, so absence is not claimed
+    // there either; the caller's spelling is not evidence of format.
+    const directContainer = chosen.offset === 0;
     const unexamined =
-      containers.length > 1 ||
-      memberArchive ||
-      !coverage ||
-      value.blocks.some(({ identifier }) => identifier === "LVzp");
-    const presence = (prefix: string): LabviewArtifactPresence =>
-      value.blocks.some(({ identifier }) => identifier.startsWith(prefix))
-        ? "present"
-        : unexamined
-          ? "unknown"
-          : "absent";
+      containers.length > 1 || directContainer || !coverage || hasProgramTree;
+    const presence = (present: boolean): LabviewArtifactPresence =>
+      present ? "present" : unexamined ? "unknown" : "absent";
+    const blockDiagram = presence(hasBlockDiagram);
+    const frontPanel = presence(hasFrontPanel);
 
     const limitations = [
       "Stored section bytes are inventoried; only zlib-coded sections are decoded, and no section payload is returned.",
@@ -236,9 +240,9 @@ export class LabviewArtifactProvider implements LabviewArtifactPort {
             `The file carries ${String(containers.length)} embedded RSRC containers; only the largest was inventoried, and the others were not examined.`,
           ]
         : []),
-      ...(memberArchive
+      ...(directContainer
         ? [
-            "The selected .llb is an archive: member VI contents are not inspected.",
+            "The selected file is a direct RSRC container: this reader cannot establish from its content whether it is a VI, a control, or an .llb archive whose member VIs were not opened.",
           ]
         : []),
       ...(coverage
@@ -246,25 +250,25 @@ export class LabviewArtifactProvider implements LabviewArtifactPort {
         : [
             "Part of the PE resource tree could not be examined, so heap presence is unknown for that content.",
           ]),
-      ...(value.blocks.some(({ identifier }) => identifier === "LVzp")
+      ...(hasProgramTree
         ? [
             "The inspected container carries an embedded program tree (LVzp) that this reader does not decode.",
           ]
         : []),
-      ...(presence("BDH") === "absent"
+      ...(blockDiagram === "absent"
         ? [
             "The inspected container has no block-diagram heap block (BDH*); source-level block diagrams are not present in that container.",
           ]
-        : presence("BDH") === "unknown"
+        : blockDiagram === "unknown"
           ? [
               "No block-diagram heap block (BDH*) was found in the inspected container, and unexamined content could still hold one, so diagram presence is unknown.",
             ]
           : []),
-      ...(presence("FPH") === "absent"
+      ...(frontPanel === "absent"
         ? [
             "The inspected container has no front-panel heap block (FPH*); front-panel object details are not present in that container.",
           ]
-        : presence("FPH") === "unknown"
+        : frontPanel === "unknown"
           ? [
               "No front-panel heap block (FPH*) was found in the inspected container, and unexamined content could still hold one, so front-panel presence is unknown.",
             ]
@@ -289,8 +293,8 @@ export class LabviewArtifactProvider implements LabviewArtifactPort {
         info_bytes: value.infoBytes,
       },
       labview_version: value.labviewVersion,
-      block_diagram: presence("BDH"),
-      front_panel: presence("FPH"),
+      block_diagram: blockDiagram,
+      front_panel: frontPanel,
       blocks: value.blocks.map((block) => ({
         identifier: block.identifier,
         sections: block.sections.map((section) => ({

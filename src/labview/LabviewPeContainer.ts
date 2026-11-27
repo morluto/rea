@@ -61,6 +61,8 @@ export const findEmbeddedRsrcContainers = (bytes: Buffer): EmbeddedRsrcScan => {
   const root = layout.rva;
   const found: EmbeddedRsrc[] = [];
   const visited = new Set<number>();
+  /** Payload ranges already recorded; language aliases can share one. */
+  const seenPayloads = new Set<string>();
   let visits = 0;
   let examinedEntries = 0;
   let complete = true;
@@ -93,6 +95,10 @@ export const findEmbeddedRsrcContainers = (bytes: Buffer): EmbeddedRsrcScan => {
       complete = false;
       return;
     }
+    // A repeated offset is a cycle or a shared directory: its subtree was
+    // already examined, so it adds neither work nor a visit.
+    if (visited.has(relativeOffset)) return;
+    visited.add(relativeOffset);
     visits += 1;
     if (visits > MAX_DIRECTORY_VISITS)
       throw decodeLimit(
@@ -104,10 +110,6 @@ export const findEmbeddedRsrcContainers = (bytes: Buffer): EmbeddedRsrcScan => {
           required: visits,
         },
       );
-    // A repeated offset is a cycle or a shared directory: its subtree was
-    // already examined, so following it again adds nothing.
-    if (visited.has(relativeOffset)) return;
-    visited.add(relativeOffset);
     const directory = metadataOffset(
       relativeOffset,
       PE_RESOURCE_DIRECTORY_BYTES,
@@ -187,6 +189,9 @@ export const findEmbeddedRsrcContainers = (bytes: Buffer): EmbeddedRsrcScan => {
         RSRC_MAGIC
       )
         continue;
+      const payloadKey = `${String(dataOffset)}:${String(size)}`;
+      if (seenPayloads.has(payloadKey)) continue;
+      seenPayloads.add(payloadKey);
       found.push({
         offset: dataOffset,
         bytes: bytes.subarray(dataOffset, dataOffset + size),
