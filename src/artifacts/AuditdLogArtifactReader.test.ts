@@ -310,7 +310,7 @@ it("reports the tail event total as an upper bound when a run repeats", async ()
     record("SYSCALL", 1700000000, 100, 1000 + index, "success=yes"),
   );
   // A, B, A: the second run of A is the same event counted again, so the total
-  // over-counts and must not be presented as an exact or lower bound.
+  // over-counts and must not be presented as an exact count.
   lines.push(
     record("SYSCALL", 1700000000, 200, 5000, "success=yes"),
     record("SYSCALL", 1700000000, 300, 6000, "success=yes"),
@@ -318,14 +318,32 @@ it("reports the tail event total as an upper bound when a run repeats", async ()
   );
   const metadata = await metadataOf(`${lines.join("\n")}\n`);
   expect(metadata.event_count).toBe(4099);
-  // Two distinct tail identities were seen and one repeated, so the total may
-  // repeat an event: an upper bound, not a lower one, and nothing was dropped.
+  // The second run of A repeats an event, so the total can only be an upper
+  // bound and no honest lower bound exists.
   expect(metadata.event_count_upper_bound).toBe(true);
   expect(metadata.event_count_lower_bound).toBe(false);
   expect(metadata.event_count_identity_omitted).toBe(false);
   expect(metadata.limitations.join(" ")).toContain(
     "event_count can be an upper bound",
   );
+});
+
+it("reports a single tail event split into runs as an upper bound, not a lower bound", async () => {
+  const lines = Array.from({ length: 4096 }, (_unused, index) =>
+    record("SYSCALL", 1700000000, 100, 1000 + index, "success=yes"),
+  );
+  // One tail event, its two records split by a retained event's record. The
+  // tail sees the same identity twice and counts it twice; with only that one
+  // identity the old code called the total a lower bound, but the run itself
+  // already inflated it, so nothing below the upper bound is honest.
+  lines.push(
+    record("SYSCALL", 1700000000, 200, 5000, "success=yes"),
+    record("SYSCALL", 1700000000, 100, 1000, "success=yes"),
+    record("EXECVE", 1700000000, 200, 5000, "argc=1 a0=whoami"),
+  );
+  const metadata = await metadataOf(`${lines.join("\n")}\n`);
+  expect(metadata.event_count_upper_bound).toBe(true);
+  expect(metadata.event_count_lower_bound).toBe(false);
 });
 
 it("names the type sample omission for a wide event", async () => {
@@ -361,11 +379,13 @@ it("stops retaining record digests within one event and says so", async () => {
   );
 });
 
-it("counts a record under a type past the per-event type cap and says so", async () => {
-  // One more than the per-event cap, each record its own type: the last type
-  // cannot join the event's counts, but its record must still be counted.
-  const eventLines = Array.from(
-    { length: AUDITD_RETAINED_EVENT_TYPE_LIMIT + 1 },
+it("counts omitted type labels once however many records carry them", async () => {
+  // 64 distinct types fill the cap; two records then repeat one 65th type. The
+  // event holds one label past the cap and two records past it, so the distinct
+  // count is one — the old record-based count reported two, which corrupted
+  // `record_types_omitted` and the affected-event tally.
+  const capped = Array.from(
+    { length: AUDITD_RETAINED_EVENT_TYPE_LIMIT },
     (_unused, index) =>
       record(
         `W${String(index).padStart(2, "0")}`,
@@ -375,14 +395,20 @@ it("counts a record under a type past the per-event type cap and says so", async
         "x=1",
       ),
   );
-  const metadata = await metadataOf(`${eventLines.join("\n")}\n`);
+  capped.push(
+    record("PAST", 1700000000, 100, 1000, "x=1"),
+    record("PAST", 1700000000, 100, 1000, "x=2"),
+  );
+  const metadata = await metadataOf(`${capped.join("\n")}\n`);
   const event = metadata.events[0];
-  expect(event?.record_count).toBe(AUDITD_RETAINED_EVENT_TYPE_LIMIT + 1);
-  expect(event?.record_types).toHaveLength(16);
-  // 48 distinct types fall past the 16-name display list and one past the cap.
-  expect(event?.record_types_omitted).toBe(48 + 1);
-  expect(event?.record_count).toBe(AUDITD_RETAINED_EVENT_TYPE_LIMIT + 1);
-  expect(metadata.limitations.join(" ")).toContain("per-type counts stop at");
+  expect(event?.record_count).toBe(AUDITD_RETAINED_EVENT_TYPE_LIMIT + 2);
+  // The 16 listed types are W00..W15; 48 more capped types plus PAST fall past
+  // the display list. Two records name PAST, but it is one distinct label, so
+  // the count is 49 — the old record-based count reported 50.
+  expect(event?.record_types_omitted).toBe(64 - 16 + 1);
+  expect(metadata.limitations.join(" ")).toContain(
+    "1 event(s) hold types past",
+  );
 });
 
 it("bounds the whole-file type table once the retained window fills", async () => {
@@ -403,6 +429,51 @@ it("bounds the whole-file type table once the retained window fills", async () =
   expect(metadata.limitations.join(" ")).toContain(
     "event_type_counts omits those types",
   );
+});
+
+it("keeps headers that differ only in invalid bytes as distinct events", async () => {
+  // Two lines whose `node=` differs by one byte UTF-8 cannot decode. A lossy
+  // decode turns both bytes into U+FFFD, so the two headers become one identity
+  // and join into a single event; a byte-faithful header keeps them apart.
+  const lineWith = (nodeSuffix: number): Buffer =>
+    Buffer.concat([
+      Buffer.from("node=host"),
+      Buffer.from([nodeSuffix]),
+      Buffer.from(" type=SYSCALL msg=audit(1700000000.100:1000): x=1\n"),
+    ]);
+  const directory = await createTestTempDirectory("rea-auditd-bytes-");
+  const path = join(directory, "audit.log");
+  await writeFile(path, Buffer.concat([lineWith(0x80), lineWith(0x81)]));
+  const reader = new AuditdLogArtifactReader(path);
+  try {
+    for await (const _entry of reader.entries()) {
+      // No members.
+    }
+    const metadata = reader.formatMetadata();
+    if (metadata?.kind !== "auditd-log")
+      throw new Error("Expected auditd-log metadata");
+    expect(metadata.malformed_line_count).toBe(0);
+    // Two raw node values must stay two events; a lossy decode merges them.
+    expect(metadata.event_count).toBe(2);
+  } finally {
+    await reader.close();
+  }
+});
+
+it("judges record order within each node rather than across hosts", async () => {
+  // Two hosts emit at the same millisecond with unrelated serials. Node `a`
+  // follows with a lower serial than its own earlier event: out of order. Node
+  // `b`'s low serial says nothing about `a`, so it must not be counted.
+  const metadata = await metadataOf(
+    [
+      "node=a type=SYSCALL msg=audit(1700000000.007:900): x=1",
+      "node=b type=SYSCALL msg=audit(1700000000.007:1): x=1",
+      "node=a type=SYSCALL msg=audit(1700000000.007:800): x=1",
+    ].join("\n") + "\n",
+  );
+  expect(metadata.event_count).toBe(3);
+  // Only the final `a` record is out of order; `b`'s serial is not comparable.
+  expect(metadata.out_of_order_record_count).toBe(1);
 });
 
 it("keeps a record whose opaque body holds a line-separator character", async () => {

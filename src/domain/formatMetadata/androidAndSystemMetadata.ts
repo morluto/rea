@@ -335,7 +335,7 @@ export const auditdLogMetadataSchema = z.strictObject({
    * total unbounded in either direction.
    */
   event_count_upper_bound: z.boolean(),
-  /** True when the repeat is the only gap: the total still counts each event. */
+  /** Always false: a repeated tail run repeats an event, so no lower bound holds. */
   event_count_lower_bound: z.boolean(),
   /** True when a tail identity was dropped, so no bound can be stated. */
   event_count_identity_omitted: z.boolean(),

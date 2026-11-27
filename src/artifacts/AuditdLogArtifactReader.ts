@@ -143,11 +143,24 @@ export class AuditdLogArtifactReader implements ArtifactReader {
         // facts, so each chunk's work is bounded and cancellation is never
         // blocked on a whole-file buffer.
         const written = decoder.value.write(chunk);
-        if (!written.ok) throw this.#failure(written.error);
+        if (!written.ok) throw await this.#stableFailure(written.error, signal);
       }
     const image = decoder.value.finish();
-    if (!image.ok) throw this.#failure(image.error);
+    if (!image.ok) throw await this.#stableFailure(image.error, signal);
     return image.value;
+  }
+
+  /**
+   * A decoder failure blames the bytes only once the source is shown to be
+   * unchanged; a source that shrank or was replaced reports that instead, so an
+   * analyst does not read "malformed" for a file that changed mid-read.
+   */
+  async #stableFailure(
+    failure: RegionDecodeFailure,
+    signal: AbortSignal | undefined,
+  ): Promise<ArtifactReaderFailure> {
+    await this.#source.read(signal);
+    return this.#failure(failure);
   }
 
   #failure(failure: RegionDecodeFailure): ArtifactReaderFailure {
