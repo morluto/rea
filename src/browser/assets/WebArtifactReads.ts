@@ -19,6 +19,7 @@ import {
   AnalysisError,
   primaryAnalysisError,
 } from "../../domain/analysisErrorBase.js";
+import type { AnalysisParameterLimit } from "../../domain/analysisSettings.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
@@ -44,6 +45,10 @@ export interface WebArtifactReadContext {
   readonly callerSelected: boolean;
   /** Exact resource recovery supplied by the selected artifact owner. */
   readonly limitRecovery?: string;
+  /** Structured per-call limit supplied by the selected artifact owner. */
+  readonly limit?: (
+    cause: ArtifactReaderFailure,
+  ) => AnalysisParameterLimit | undefined;
 }
 
 /** The ParseFailure format of a captured web artifact document. */
@@ -197,7 +202,8 @@ const webArtifactPrimaryError = (
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure
-  )
+  ) {
+    const limit = cause.reason === "limit" ? context.limit?.(cause) : undefined;
     return new ArtifactOperationError(
       context.operation,
       artifactOperationReason(cause),
@@ -207,6 +213,7 @@ const webArtifactPrimaryError = (
         : cause.message,
       {
         cause,
+        ...(limit === undefined ? {} : { limit }),
         ...(cause.reason === "limit" && context.limitRecovery !== undefined
           ? { remediationAction: context.limitRecovery }
           : {}),
@@ -215,6 +222,7 @@ const webArtifactPrimaryError = (
           : { integrityCheck: cause.integrityCheck }),
       },
     );
+  }
   if (
     cause instanceof Error &&
     "code" in cause &&

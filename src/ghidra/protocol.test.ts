@@ -41,3 +41,29 @@ it("refuses a candidate list that cannot describe an ambiguity", () => {
     ).ok,
   ).toBe(false);
 });
+
+it("keeps the measured value a bounded refusal requires", () => {
+  expect(
+    failure({
+      code: "parenthesis_depth_limit",
+      message: "signature nests parentheses 10 levels deep",
+      required_value: 10,
+    }),
+  ).toMatchObject({ code: "parenthesis_depth_limit", requiredValue: 10 });
+  expect(
+    failure({ code: "procedure_not_found", message: "Unknown" })?.requiredValue,
+  ).toBeUndefined();
+  expect(
+    ghidraReplyEnvelope.parse(
+      JSON.stringify({
+        id: 3,
+        ok: false,
+        error: {
+          code: "signature_length_limit",
+          message: "x",
+          required_value: 0,
+        },
+      }),
+    ).ok,
+  ).toBe(false);
+});

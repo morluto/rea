@@ -61,3 +61,17 @@ export const requirePermissionDenial = async (
       `Host bypasses POSIX ${operation} denial; real permission coverage is unverified`,
     );
 };
+
+/** Run with the fixture directory at mode 000, then restore its original permissions. */
+export const withoutSearchPermission = async <T>(
+  directory: string,
+  run: () => Promise<T>,
+): Promise<T> => {
+  const permissions = (await stat(directory)).mode & 0o7777;
+  await chmod(directory, 0o000);
+  try {
+    return await run();
+  } finally {
+    await chmod(directory, permissions);
+  }
+};

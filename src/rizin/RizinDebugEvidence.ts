@@ -50,6 +50,9 @@ export const RIZIN_SESSION_TARGET_LIMITATION =
 export const RIZIN_LAUNCH_PROVENANCE_LIMITATION =
   "Launch provenance records the original and resolved startup paths; it does not establish the current target after unrestricted debugger commands.";
 
+export const RIZIN_TERMINATED_WITHOUT_VERIFIED_DETACH_LIMITATION =
+  "The owned Rizin process was terminated without a verified inferior detach because its command transport could not be resynchronized; the target may continue running and its state and output route are unknown.";
+
 export interface RizinCommandEvidenceInput {
   readonly sessionId: string;
   readonly command: string;
@@ -117,6 +120,7 @@ export interface RizinCommandTimeoutEvidenceInput {
   readonly result: RizinDebugCommandResult;
   readonly inferiorTty: string;
   readonly cleanupFailure: string | undefined;
+  readonly inferiorDetachUnverified: boolean;
   readonly launchProvenance: RizinLaunchProvenance;
   readonly launchTarget: DebuggerLaunchFileObservation;
   readonly deadline: DebuggerAdmissionLimit;
@@ -133,6 +137,7 @@ export const createRizinCommandTimeoutEvidence = ({
   result,
   inferiorTty,
   cleanupFailure,
+  inferiorDetachUnverified,
   launchProvenance,
   launchTarget,
   deadline,
@@ -151,13 +156,15 @@ export const createRizinCommandTimeoutEvidence = ({
             "Collected command frame bytes did not form valid UTF-8; displayed output contains replacement characters.",
           ]
         : []),
-      ...(cleanupFailure === undefined
+      ...(cleanupFailure !== undefined
         ? [
-            "The owned debugger session was stopped because output correlation could no longer be guaranteed.",
-          ]
-        : [
             `The owned debugger session remains retained because cleanup could not be verified: ${cleanupFailure}`,
-          ]),
+          ]
+        : inferiorDetachUnverified
+          ? [RIZIN_TERMINATED_WITHOUT_VERIFIED_DETACH_LIMITATION]
+          : [
+              "The owned debugger session was stopped because output correlation could no longer be guaranteed.",
+            ]),
       "The command is unrestricted and may access local files, the shell, network, or mutate the target.",
     ],
   });
@@ -166,6 +173,7 @@ export const rizinCaptureStoppedSentence = (
   limit: RizinOutputLimit | undefined,
   output: DebuggerAdmissionLimit,
   cleanupFailure: string | undefined,
+  inferiorDetachUnverified: boolean,
 ): string => {
   const cap =
     limit === "command_frames"
@@ -178,9 +186,11 @@ export const rizinCaptureStoppedSentence = (
             ? `the ${String(output.value)} byte output limit`
             : "a capture limit";
   const cleanup =
-    cleanupFailure === undefined
-      ? " The owned debugger session was stopped."
-      : ` The owned debugger session remains retained because cleanup could not be verified: ${cleanupFailure}`;
+    cleanupFailure !== undefined
+      ? ` The owned debugger session remains retained because cleanup could not be verified: ${cleanupFailure}`
+      : inferiorDetachUnverified
+        ? ` ${RIZIN_TERMINATED_WITHOUT_VERIFIED_DETACH_LIMITATION}`
+        : " The owned debugger session was stopped.";
   const recovery =
     limit === "command_output_bytes"
       ? ` ${debuggerAdmissionRecovery(output)}`

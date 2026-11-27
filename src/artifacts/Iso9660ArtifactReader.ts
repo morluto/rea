@@ -11,16 +11,10 @@ import type {
   Iso9660EntryMetadata,
   Iso9660Metadata,
 } from "../domain/formatMetadata/androidAndSystemMetadata.js";
-import type {
-  ParseFailure,
-  ParseFailureError,
-  ParseFailureKind,
-} from "../domain/parseFailure.js";
 import type { Result } from "../domain/result.js";
 import {
   admitIso9660Extent,
   extentOf,
-  parsedIso9660,
   ISO9660_DESCRIPTOR_OFFSET,
   ISO9660_LIMITS,
   ISO9660_SECTOR_BYTES,
@@ -43,7 +37,14 @@ import {
   parseIso9660VolumeDescriptors,
   type Iso9660VolumeDescriptorSet,
 } from "../domain/iso9660/iso9660VolumeDescriptors.js";
-import { malformedInput, unsupportedInput } from "../domain/parseFailure.js";
+import {
+  captureParseFailure,
+  malformedInput,
+  unsupportedInput,
+  type ParseFailure,
+  type ParseFailureError,
+  type ParseFailureKind,
+} from "../domain/parseFailure.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import {
   ArtifactEntryContentUnavailable,
@@ -225,7 +226,7 @@ export class Iso9660ArtifactReader extends PositionalArtifactReader<Iso9660Metad
       const used = new Set<string>();
       const children: PendingDirectory[] = [];
       while (true) {
-        const next = unwrap(parsedIso9660(() => members.next()));
+        const next = unwrap(captureParseFailure(() => members.next()));
         if (next.done) break;
         if (++steps % 256 === 0) await setImmediate();
         this.assertOpen(signal);

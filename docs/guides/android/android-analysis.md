@@ -240,10 +240,11 @@ rea trace-android-references /path/Example.apk example.MainActivity --method-nam
 Equivalent MCP methods are `inspect_android_package`, `search_android_classes`,
 `inspect_android_class`, `inspect_android_method` and `trace_android_references`.
 Every request includes `path`. `search_android_classes` also accepts optional
-`limit` (`1..10000`) and `offset` (`>= 0`) pagination (CLI `--limit` and
-`--offset`) so large APKs stop JADX pagination early once the requested page
-is filled; omitting both returns all matches with `coverage: "complete"`, while
-a paged slice reports `coverage: "partial"`. Class/method operations use `class_name`,
+`limit` (`>= 1`, default 256) and `offset` (`>= 0`) pagination (CLI `--limit`
+and `--offset`), so large APKs stop JADX pagination early once the requested
+page is filled. A result that returns every match reports
+`coverage: "complete"`, and a page that omits matches reports
+`coverage: "partial"`. Class/method operations use `class_name`,
 `method_name` and optional `overload_index` as applicable. For example:
 
 ```json
@@ -261,12 +262,11 @@ a paged slice reports `coverage: "partial"`. Class/method operations use `class_
 For class searches, `offset` is the zero-based index among matches, and
 `limit` is the maximum number of matches to return. Pass `--offset` and
 `--limit` on the CLI or `offset` and `limit` in an MCP request. Omitting
-both returns every match. Omitting `limit` with an offset returns the matching
-suffix. Keep the same APK and query when advancing the offset by each page's
-length. A page reports `partial` when it omits matching rows, including earlier
-pages. A short or empty page ends forward paging. If the last page was full,
-request the next offset to check for more. `duplicate_names` counts occurrences
-within the returned page.
+`limit` returns at most 256 matches; an empty query on a large APK lists tens
+of thousands of classes. `next_offset` is the offset of the next page, or null
+when no match follows this one. Keep the same APK and query when advancing to
+`next_offset`. A page reports `partial` when it omits matching rows, including
+earlier pages. `duplicate_names` counts occurrences within the returned page.
 
 Use `inspect_android_class` to choose an overload. REA rejects an ambiguous
 method request rather than silently selecting the first match. Method reference
@@ -308,8 +308,9 @@ that class the summary was 5,987 bytes. Page the using nodes with
 - `references`: using nodes with their `index`, and only the `fields` you name.
 
 Both filter by exact `kinds`, `packages` (the top class's name before its last
-dot) and `top_classes`. A top class can itself be a nested synthetic class, so
-group by the name before the first `$` when you need outer classes.
+dot) and `top_classes`. Use `packages: [""]` for classes in the unnamed
+package. A top class can itself be a nested synthetic class, so group by the
+name before the first `$` when you need outer classes.
 
 External prototype and caller metadata use a bridge-frame-derived representation
 allowance that reserves space for retained raw calls and CLI/MCP copies. Exhausting
@@ -498,9 +499,11 @@ is `unknown`, never `unmatched`. ELF/ABI label mismatches preserve facts without
 asserting a binding. No result establishes library loading, runtime registration
 or method invocation.
 
-Summary returns the first 64 selected binding rows, their declaration/candidate
-closure and every selected library's identity, coverage and failure reason;
-counts and page coverage describe the full selected binding set. Selected
+Summary returns the first 16 selected binding rows, their declaration/candidate
+closure and the first 16 selected libraries' identity, coverage and failure
+reason, so a large APK's summary stays within the default agent result budget.
+Counts and page coverage describe the full selected binding set, and
+`library_coverage` says how many libraries the summary omits. Selected
 declaration IDs have separate preview coverage, so native declarations remain
 visible even when the APK has no bundled ABI libraries. Complete
 Evidence stays retained. Read exact fields or further pages without reopening

@@ -12,7 +12,7 @@ import {
 } from "../uefi/uefiFirmwareAnalysis.js";
 import { invalidAnalysisView } from "./analysisViewErrors.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
@@ -282,11 +282,7 @@ export const projectUefiExtractionView = (
       path: subject?.path ?? parentArtifactPath(parent),
       sha256: subject?.sha256 ?? null,
     },
-    limitations: boundedViewMessages(
-      [...parent.limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent),
     unknowns: [
       "Page exhaustion covers published files and recorded gaps only; extraction gaps and parser limits name what was not published.",
     ],

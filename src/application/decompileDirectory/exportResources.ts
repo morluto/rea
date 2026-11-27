@@ -53,6 +53,23 @@ export class ExportPublishedCleanupFailure extends ArtifactReaderFailure {
   }
 }
 
+/** Bytes written and synced in an owned staging directory, not yet published. */
+export type StagedExportFile =
+  | {
+      readonly owner: {
+        readonly kind: "staged-output";
+        readonly resource: string;
+        readonly output: OwnedStagedOutput;
+      };
+      readonly path: string;
+      readonly failure: { readonly cause: unknown } | undefined;
+    }
+  /** The staging directory could not be created. */
+  | {
+      readonly owner: undefined;
+      readonly failure: { readonly cause: unknown };
+    };
+
 /** Own every descriptor and staging area until cleanup, then release the directory lease. */
 export class ExportResources {
   readonly #files = new ArtifactResourceScope();
@@ -154,7 +171,28 @@ export class ExportResources {
     destination: string,
     mode: "link" | "rename",
   ): Promise<void> {
-    const directory = await mkdtemp(join(this.root, ".decompile-stage-"));
+    await this.publishStaged(await this.stage(bytes), destination, mode);
+  }
+
+  /**
+   * Write and sync bytes in an owned staging directory without publishing
+   * them. Never rejects: a failure stays with the staging owner and is thrown
+   * by `publishStaged`, so staging can run ahead of publication. Cleanup waits
+   * for staging in flight, so closing never removes a directory still in use.
+   */
+  stage(bytes: string | Buffer): Promise<StagedExportFile> {
+    return this.#files
+      .track(() => this.#stage(bytes))
+      .catch((cause: unknown) => ({ owner: undefined, failure: { cause } }));
+  }
+
+  async #stage(bytes: string | Buffer): Promise<StagedExportFile> {
+    let directory: string;
+    try {
+      directory = await mkdtemp(join(this.root, ".decompile-stage-"));
+    } catch (cause: unknown) {
+      return { owner: undefined, failure: { cause } };
+    }
     const staging = await OwnedStagedOutput.create(directory);
     const owner = {
       kind: "staged-output" as const,
@@ -162,27 +200,44 @@ export class ExportResources {
       output: staging,
     };
     this.#files.retain(owner);
-    let outcome:
-      | { readonly kind: "completed" }
-      | { readonly kind: "failed"; readonly cause: unknown } = {
-      kind: "completed",
-    };
+    const path = join(directory, "content");
     try {
-      const path = join(directory, "content");
       const handle = await open(path, "wx", 0o600);
       staging.setFile(new OwnedFileHandle(handle));
       await handle.writeFile(bytes);
       await handle.sync();
       await staging.closeFile();
-      await staging.assertReadyForPublication(path);
-      if (mode === "link") await link(path, destination);
-      else {
-        await rename(path, destination);
-        staging.recordPublishedRename();
-      }
+      return { owner, path, failure: undefined };
     } catch (cause: unknown) {
-      outcome = { kind: "failed", cause };
+      return { owner, path, failure: { cause } };
     }
+  }
+
+  /** Publish a staged file under its final name, then release its staging. */
+  async publishStaged(
+    staged: StagedExportFile,
+    destination: string,
+    mode: "link" | "rename",
+  ): Promise<void> {
+    if (staged.owner === undefined) throw staged.failure.cause;
+    const { owner, path } = staged;
+    let outcome:
+      | { readonly kind: "completed" }
+      | { readonly kind: "failed"; readonly cause: unknown } =
+      staged.failure === undefined
+        ? { kind: "completed" }
+        : { kind: "failed", cause: staged.failure.cause };
+    if (outcome.kind === "completed")
+      try {
+        await owner.output.assertReadyForPublication(path);
+        if (mode === "link") await link(path, destination);
+        else {
+          await rename(path, destination);
+          owner.output.recordPublishedRename();
+        }
+      } catch (cause: unknown) {
+        outcome = { kind: "failed", cause };
+      }
     const released = await this.#files.release(owner);
     if (released.kind === "failed") {
       const failure = this.#files.cleanupFailure(outcome, [released]);
@@ -191,6 +246,14 @@ export class ExportResources {
         : failure;
     }
     if (outcome.kind === "failed") throw outcome.cause;
+  }
+
+  /**
+   * Remove a staged file that will not be published. A failed removal stays
+   * owned by this export, which retries and reports it when it closes.
+   */
+  async discardStaged(staged: StagedExportFile): Promise<void> {
+    if (staged.owner !== undefined) await this.#files.release(staged.owner);
   }
 
   /** Keep the lease through all initialization cleanup, including any retry. */

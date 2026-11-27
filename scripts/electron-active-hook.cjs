@@ -175,7 +175,9 @@ const isAllowedNavigation = (value) => {
   if (typeof value !== "string") return true;
   try {
     const parsed = new URL(value);
-    if (["file:", "data:", "about:"].includes(parsed.protocol)) return true;
+    // A file URL with a hostname names another host, not a local path.
+    if (parsed.protocol === "file:") return parsed.hostname === "";
+    if (["data:", "about:"].includes(parsed.protocol)) return true;
     return (
       ["http:", "https:"].includes(parsed.protocol) &&
       ["127.0.0.1", "localhost", "[::1]", "::1"].includes(parsed.hostname)

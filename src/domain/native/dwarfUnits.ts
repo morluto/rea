@@ -295,7 +295,7 @@ export const inspectDwarfUnitsInputSchema = z.strictObject({
   architecture: machoSliceArchitectureSchema
     .exactOptional()
     .describe(
-      "CPU family of the slice to read from a universal Mach-O. Required for universal files and rejected for every other image.",
+      "Slice to read from a universal Mach-O, by CPU family; arm64e and arm64e.x1 read only a slice of that subtype, as lipo -thin does. Required for universal files and rejected for every other image.",
     ),
 });
 

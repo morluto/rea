@@ -120,6 +120,8 @@ export const reportUnknownMcpSubcommand = (
           },
         ),
   );
-  (options.exit ?? ((code: number) => process.exit(code)))(1);
+  // Set the exit code rather than exiting, so piped stdout drains first.
+  if (options.exit !== undefined) options.exit(1);
+  else process.exitCode = 1;
   return true;
 };

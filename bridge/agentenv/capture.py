@@ -581,6 +581,7 @@ def abandon_drain():
             time.sleep(0.2)
 
 def finish_stop():
+    global output_incomplete
     stop_owned()
     if leader_unsettled and drainer is not None and drainer.is_alive():
         output_incomplete = True
@@ -724,17 +725,28 @@ def run_poll(arguments: dict) -> int:
 def run_cancel(arguments: dict) -> int:
     job = os.path.abspath(arguments["job"])
     os.makedirs(os.path.dirname(job), exist_ok=True)
+    absent_path = os.path.join(job, "absent")
     try:
         os.mkdir(job, 0o700)
     except FileExistsError:
         pass
     else:
-        # A late begin cannot launch into a folder cancellation claimed.
+        # A late begin cannot launch into a folder cancellation claimed, and a
+        # retried cancel returns absent immediately instead of polling forever.
         with open(os.path.join(job, "owner"), "x", encoding="ascii") as owner:
             owner.write(arguments["token"])
+        descriptor = os.open(absent_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        os.close(descriptor)
         return _say({"absent": True})
+    deadline = time.monotonic() + min(max(arguments.get("timeout_s", 1), 0.1), 1.0)
+    while not os.path.exists(os.path.join(job, "owner")) and not os.path.exists(absent_path):
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.02)
     if not _owns_run(job, arguments["token"]):
         return _say({"error": "the command job ownership is not confirmed"})
+    if os.path.exists(absent_path):
+        return _say({"absent": True})
     with open(os.path.join(job, "cancel"), "a", encoding="utf-8"):
         pass
     return run_poll(arguments)

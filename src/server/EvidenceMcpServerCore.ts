@@ -578,7 +578,13 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
         description:
           this.discoveryTool?.description ?? DISCOVER_TOOLS.description,
       });
-    return { tools, discoveryAvailable };
+    return {
+      tools,
+      discoveryAvailable,
+      ...(discoveryAvailable && this.progressiveCatalog !== undefined
+        ? { unloadedTools: this.progressiveCatalog.unloadedTools() }
+        : {}),
+    };
   }
 
   /** Preserve the SDK transport lifecycle while retaining oversized errors. */

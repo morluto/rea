@@ -36,10 +36,9 @@ const trace = (count: number) => ({
     recorded_sites: 0,
   },
   references: Array.from({ length: count }, (_, index) => {
-    const pkg = ["com.example.ui", "com.example.media", "com.other"][
-      index % 3
-    ]!;
-    const top = `${pkg}.Owner${String(Math.floor(index / 5))}`;
+    const pkg = ["com.example.ui", "com.example.media", ""][index % 3]!;
+    const owner = `Owner${String(Math.floor(index / 5))}`;
+    const top = pkg === "" ? owner : `${pkg}.${owner}`;
     return {
       kind: index % 4 === 0 ? "method" : "class",
       name: `node${String(index)}`,
@@ -111,9 +110,9 @@ it("summarizes a large trace and pages its top classes and using nodes", async (
         },
         packages: {
           items: [
+            { package: "", references: 100 },
             { package: "com.example.media", references: 100 },
             { package: "com.example.ui", references: 100 },
-            { package: "com.other", references: 100 },
           ],
           omitted: 0,
         },
@@ -144,6 +143,20 @@ it("summarizes a large trace and pages its top classes and using nodes", async (
     coverage: { total: 60, next_offset: 2 },
   });
 
+  const unnamed = await call("inspect_analysis_view", {
+    source,
+    view: {
+      kind: "android-references",
+      facet: "references",
+      packages: [""],
+      limit: 1,
+    },
+  });
+  expect(unnamed.normalized_result).toMatchObject({
+    items: [{ index: 2, top_class: "Owner0" }],
+    coverage: { total: 100 },
+  });
+
   const methods = await call("inspect_analysis_view", {
     source,
     view: {
@@ -170,12 +183,13 @@ it("returns a view page in the trace call and refuses a view without summary", a
     view: {
       kind: "android-references",
       facet: "top-classes",
-      top_classes: ["com.other.Owner2"],
+      packages: [""],
+      top_classes: ["Owner2", "com.example.ui.Owner2"],
     },
   });
   expect(page.normalized_result).toMatchObject({
     facet: "top-classes",
-    items: [{ top_class: "com.other.Owner2", package: "com.other" }],
+    items: [{ top_class: "Owner2", package: "" }],
   });
   const refused = await reply("trace_android_references", {
     ...target,

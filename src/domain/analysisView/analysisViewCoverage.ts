@@ -1,4 +1,5 @@
 import { uniqueSorted } from "../canonicalOrdering.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 import { z } from "zod";
 
 export const analysisViewCoverageSchema = z.strictObject({
@@ -109,3 +110,18 @@ export const boundedViewMessages = (
     ? unique
     : [...uniqueSorted([...retained]), notice(omitted)];
 };
+
+/** Bound parent and report limitations together and link omissions to the parent Evidence. */
+export const boundedViewLimitations = (
+  parent: Pick<AnalysisViewParent, "evidenceId" | "limitations">,
+  reportLimitations?: readonly string[],
+  required?: readonly string[],
+): string[] =>
+  boundedViewMessages(
+    reportLimitations === undefined
+      ? parent.limitations
+      : [...parent.limitations, ...reportLimitations],
+    parent.evidenceId,
+    "limitations",
+    required,
+  );

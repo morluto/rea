@@ -455,10 +455,14 @@ export class PlaywrightBrowserScenarioProvider implements BrowserScenarioCapture
               OPERATION,
               { cause },
             );
-      if (retained.length === 0) return err(primary);
+      // A lease the failed attempt already released is not retained cleanup.
+      for (const lease of retained)
+        if (lease.released) this.#pendingCleanup.delete(lease);
+      const unreleased = retained.filter((lease) => !lease.released);
+      if (unreleased.length === 0) return err(primary);
       const cleanup = new ProviderCleanupError(
         PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY.id,
-        retained.flatMap((lease) =>
+        unreleased.flatMap((lease) =>
           (lease.cleanupResources ?? []).map(
             this.#pendingCleanup.get(lease) ?? ((value) => value),
           ),
@@ -466,7 +470,7 @@ export class PlaywrightBrowserScenarioProvider implements BrowserScenarioCapture
         { reason: "Browser scenario cleanup capabilities remain retained." },
         { operation: OPERATION, cause },
       );
-      this.#bindCleanup(cleanup, retained);
+      this.#bindCleanup(cleanup, unreleased);
       return err(
         analysisErrorWithCleanupDependencies(primary, cleanup, OPERATION),
       );

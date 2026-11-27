@@ -1,10 +1,10 @@
 import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
 import { execFile } from "node:child_process";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import { afterEach, expect, it } from "vitest";
+import { expect, it } from "vitest";
 import { z } from "zod";
 
 import { createBrowserEvidence } from "../../../src/application/BrowserEvidence.js";
@@ -14,15 +14,6 @@ import { passiveNetworkCapture } from "../../fixtures/passiveNetworkCapture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const execute = promisify(execFile);
-const temporary: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(
-    temporary
-      .splice(0)
-      .map(async (path) => rm(path, { recursive: true, force: true })),
-  );
-});
 
 const reconciledSchema = z.object({
   normalized_result: z.object({
@@ -198,7 +189,6 @@ const mappedLocation = (path: string) => ({
 
 it("matches a source-free webpack script to its containing asset", async () => {
   const root = await createTestTempDirectory("rea-url-bundler-asset-");
-  temporary.push(root);
   await mkdir(join(root, "chunks"));
   await writeFile(
     join(root, "chunks", "runtime.js"),
@@ -219,7 +209,6 @@ it("matches a source-free webpack script to its containing asset", async () => {
 
 it("keeps an encoded slash inside one URL segment rather than naming a nested artifact", async () => {
   const root = await createTestTempDirectory("rea-url-prefix-segments-");
-  temporary.push(root);
   await mkdir(join(root, "child"));
   await Promise.all([
     writeFile(join(root, "child", "part.js"), "export const nested = 1;\n"),
@@ -254,7 +243,6 @@ it("keeps an encoded slash inside one URL segment rather than naming a nested ar
 
 it("keeps static load state unknown beneath a prefix whose runtime script had no artifact path", async () => {
   const root = await createTestTempDirectory("rea-url-prefix-load-state-");
-  temporary.push(root);
   await mkdir(join(root, "child"));
   await Promise.all([
     writeFile(join(root, "child", "part.js"), "export const nested = 1;\n"),

@@ -4,6 +4,7 @@ import {
   webExecutionObservationSchema,
   type WebExecutionObservation,
 } from "../webExecution.js";
+import { webRuntimeSourceMetadataSchema } from "../webRuntime.js";
 import { err, ok } from "../result.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import {
@@ -11,7 +12,7 @@ import {
   type AnalysisViewParent,
 } from "./analysisViewParent.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
@@ -24,7 +25,7 @@ import {
   analysisTextPage,
   analysisTextPageItemSchema,
 } from "./analysisViewText.js";
-import { selectViewRows } from "./selectViewRows.js";
+import { selectViewRows, filterSet } from "./selectViewRows.js";
 
 export const WEB_EXECUTION_OPERATION = "observe_web_execution" as const;
 
@@ -49,19 +50,8 @@ const webExecutionFunctionRowSchema = functionSchema.extend({
 });
 
 /** Source metadata without the captured text, which pages separately. */
-const webExecutionSourceRowSchema = sourceSchema.omit({ source: true }).extend({
-  source: z.discriminatedUnion("state", [
-    z.strictObject({
-      state: z.literal("captured"),
-      sha256: z.string(),
-      utf8_bytes: z.int().nonnegative(),
-      utf16_units: z.int().nonnegative(),
-    }),
-    z.strictObject({
-      state: z.enum(["unavailable", "excluded"]),
-      reason: z.string(),
-    }),
-  ]),
+const webExecutionSourceRowSchema = sourceSchema.extend({
+  source: webRuntimeSourceMetadataSchema,
 });
 
 /** The retained collection owns both its selector and its projected rows. */
@@ -98,7 +88,7 @@ export const webExecutionCollections = {
     view: z.strictObject({
       kind: z.literal("web-execution"),
       collection: z.literal("source-text"),
-      script_id: z.string().min(1),
+      script_id: sourceSchema.shape.script_id,
       offset: z
         .int()
         .nonnegative()
@@ -107,7 +97,9 @@ export const webExecutionCollections = {
       limit: z.int().positive().max(65_536).default(16_384),
     }),
     items: z.array(
-      analysisTextPageItemSchema.extend({ script_id: z.string() }),
+      analysisTextPageItemSchema.extend({
+        script_id: sourceSchema.shape.script_id,
+      }),
     ),
   },
 };
@@ -155,9 +147,6 @@ type Source = WebExecutionObservation["sources"][number];
 const executed = (row: { readonly ranges: readonly { count: number }[] }) =>
   row.ranges.some((range) => range.count > 0);
 
-const selected = (ids: readonly string[] | undefined) =>
-  ids === undefined ? undefined : new Set(ids);
-
 /**
  * One page of function rows in coverage order, with the total that match.
  * Only returned rows are built, so a small page of a large capture stays small.
@@ -166,7 +155,7 @@ const selectFunctionRows = (
   report: WebExecutionObservation,
   view: Extract<WebExecutionView, { collection: "functions" }>,
 ): { rows: FunctionRow[]; total: number } => {
-  const ids = selected(view.script_ids);
+  const ids = filterSet(view.script_ids);
   const rows: FunctionRow[] = [];
   let total = 0;
   for (const script of report.coverage.scripts) {
@@ -312,11 +301,7 @@ export const projectWebExecutionView = (
     parent_digest: parent.evidenceId.slice(3),
     artifact: parent.artifact ?? null,
     target_url: report.target.initial_url,
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...report.limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, report.limitations),
     unknowns: [
       "Execution outside the armed window, in workers, or caused by UI actions remains unknown.",
     ],
@@ -349,7 +334,7 @@ export const projectWebExecutionView = (
       return page(view, rows.rows, rows.total);
     }
     case "requests": {
-      const methods = selected(view.methods);
+      const methods = filterSet(view.methods);
       const rows = selectViewRows(
         report.requests,
         view,
@@ -359,7 +344,7 @@ export const projectWebExecutionView = (
       return page(view, rows.rows, rows.total);
     }
     case "sources": {
-      const ids = selected(view.script_ids);
+      const ids = filterSet(view.script_ids);
       const rows = selectViewRows(
         report.sources,
         view,
