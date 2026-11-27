@@ -25,6 +25,7 @@ import { hasBfltMagic } from "./bfltExecutable.js";
 import { hasNroMagic, hasNsoMagic } from "./switchExecutable.js";
 import { hasUnityFsHeader } from "./unityfsFormat.js";
 import { hasMftFileRecordHeader } from "./windows/ntfsMft.js";
+import { hasAuditdLogRecord } from "./linux/auditdLog.js";
 import { hasWindowsShortcutHeader } from "./windows/windowsShortcutHeader.js";
 import { BinaryFormatFailure } from "./binaryContainer.js";
 import {
@@ -77,6 +78,7 @@ export type RecognizedArtifactFormat = Extract<
   | "fit"
   | "qualcomm-mbn"
   | "ntfs-mft"
+  | "auditd-log"
   | "plist"
   | StandaloneArtifactFormat
 >;
@@ -268,6 +270,7 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     },
     when("fit", hasFitImagesNode),
     when("ntfs-mft", hasMftFileRecordHeader),
+    when("auditd-log", hasAuditdLogRecord),
     when("sqlite", hasSqliteHeader),
     when("windows-shortcut", hasWindowsShortcutHeader),
     when("deb", hasDebPackageHeader),

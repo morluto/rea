@@ -56,6 +56,7 @@ import { PyInstallerArtifactReader } from "./PyInstallerArtifactReader.js";
 import { UefiArtifactReader } from "../uefi/UefiArtifactReader.js";
 import { Uf2ArtifactReader } from "./Uf2ArtifactReader.js";
 import { NtfsMftArtifactReader } from "./NtfsMftArtifactReader.js";
+import { AuditdLogArtifactReader } from "./AuditdLogArtifactReader.js";
 import { AndroidOtaPayloadArtifactReader } from "./AndroidOtaPayloadArtifactReader.js";
 import { AndroidSparseImageArtifactReader } from "./AndroidSparseImageArtifactReader.js";
 import { UbiImageArtifactReader } from "./UbiImageArtifactReader.js";
@@ -98,6 +99,11 @@ export interface FormatDescriptor {
   readonly occurrenceContainer: boolean;
   /** Path-role classification treats the format as a container of its own. */
   readonly roleContainer: boolean;
+  /**
+   * Path role for a format whose bytes say nothing about executability, such as
+   * a text log. Without it those formats fall through to `executable`.
+   */
+  readonly role?: "resource" | undefined;
   /** Classification keeps the admitted source for a later reader. */
   readonly retainClassifiedSource: boolean;
   /** Extraction can open this format without an embedded-pack probe. */
@@ -713,6 +719,15 @@ const NON_ZIP_FORMATS = {
       "MFT inventory reports whole-stream counts and up to 32 physical FILE record details, including fixup coverage, supported names, timestamps, declared sizes and attributes. Bounded attribute-list links expose verified metadata from acquired extension records, with explicit reference outcomes and omissions. Nonresident list values and file contents are not recovered; full paths and complete change history are not established. Use inspect_ntfs_journal for caller-paired journal events.",
     createReader: (path, options) =>
       new NtfsMftArtifactReader(path, sourceOf(options)),
+  }),
+  "auditd-log": described("auditd-log", {
+    ...plain,
+    role: "resource",
+    retainClassifiedSource: true,
+    readerLimitation:
+      "auditd log inventory reports record and event totals, per-type counts and a bounded window of events joined on their full audit event identity (node, timestamp and serial), with duplicate, out-of-order and malformed records counted. Per-record identity is retained for a bounded window of recent events; events and records past it are counted in the totals but their duplicate and interleaving status is not established. Record key-value fields, hex and escaped values, argument ordering and decoded syscall or permission meanings are not interpreted; the log is not treated as complete or authentic.",
+    createReader: (path, options) =>
+      new AuditdLogArtifactReader(path, sourceOf(options)),
   }),
   unknown: described("unknown", plain),
 } satisfies Record<
