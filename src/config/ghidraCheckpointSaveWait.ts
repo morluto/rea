@@ -28,7 +28,9 @@ export const MINIMUM_GHIDRA_CHECKPOINT_SAVE_WAIT_MS =
  * startup, and it covers only another session's publication: one copy and
  * sync of a packed Program and a manifest rename. A lease still held after
  * that long is a stalled publisher, which the busy refusal names so the caller
- * can act instead of leaving the close blocked.
+ * can act instead of leaving the close blocked. The MCP client's own request
+ * deadline is separate and unknown to REA; a wait above it leaves the client
+ * giving up while the close continues, so recovery says to stay below it.
  */
 export const MAXIMUM_GHIDRA_CHECKPOINT_SAVE_WAIT_MS = 600_000;
 
@@ -113,4 +115,4 @@ export const ghidraCheckpointSaveWaitRecovery = (
     wait.waitMs < MAXIMUM_GHIDRA_CHECKPOINT_SAVE_WAIT_MS
       ? `To wait longer within one call, set ${GHIDRA_CHECKPOINT_SAVE_WAIT_SETTING} in the environment that starts REA and restart REA`
       : `${GHIDRA_CHECKPOINT_SAVE_WAIT_SETTING} is already at its maximum`
-  }; update_analysis_settings does not change it, and it does not shorten the other session's save.`;
+  }; update_analysis_settings does not change it, and it does not shorten the other session's save. Raising it cannot make an MCP client wait longer: that client's own request deadline is separate and unknown to REA, so keep the wait below it.`;

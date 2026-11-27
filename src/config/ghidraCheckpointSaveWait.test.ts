@@ -134,6 +134,10 @@ it("reports the control, effective value, source and range of an exhausted wait"
   expect(raised).toContain("floor 50, maximum 600000");
   expect(raised).toContain("restart REA");
   expect(raised).toContain("update_analysis_settings does not change it");
+  // The client's deadline is independent, so a longer wait is no promise.
+  expect(raised).toContain(
+    "cannot make an MCP client wait longer: that client's own request deadline is separate and unknown to REA",
+  );
   const unset = ghidraCheckpointSaveWaitRecovery({
     waitMs: 30_000,
     source: "default",

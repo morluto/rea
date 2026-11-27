@@ -476,7 +476,16 @@ export class GhidraCheckpoint {
    * same initial generation, so the later one adopts the published Program
    * instead of publishing a second copy.
    */
-  async publish(path: string, signal?: AbortSignal): Promise<void> {
+  /**
+   * `leaseSignal` ends only the wait for another session's publication, which
+   * is this save's cancellation cutoff; once the lease is held, publication
+   * observes `signal` alone, so a close's save completes the bounded copy.
+   */
+  async publish(
+    path: string,
+    signal?: AbortSignal,
+    leaseSignal: AbortSignal | undefined = signal,
+  ): Promise<void> {
     const admission = this.#admission;
     if (admission === undefined || this.#source === undefined)
       throw failure(
@@ -496,7 +505,7 @@ export class GhidraCheckpoint {
     let primary: unknown;
     let failed = false;
     try {
-      this.#lease = await this.#acquireLease(admission, signal);
+      this.#lease = await this.#acquireLease(admission, leaseSignal);
       const current = await readManifest(
         this.selection,
         this.resources,

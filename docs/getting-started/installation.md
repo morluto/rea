@@ -1684,8 +1684,12 @@ another session saved first, the later session's `close_binary` fails with
 `cleanup_incomplete`, its remediation states that the edits were not saved,
 and the current checkpoint is unchanged. That refusal is permanent for the
 session: call `close_binary` again to discard its edits and release it, then
-reopen the target and reapply them. To avoid it, make edits to one target from
-one session at a time.
+reopen the target and reapply them. That close succeeds with
+`result.checkpoint` set to `{"status": "discarded", "reason": "superseded",
+"directory": ...}`, alongside the snapshot receipt when `snapshot_path` was
+given, so the discard is recorded rather than silent. Only the close that
+releases the edits reports it. To avoid the refusal, make edits to one target
+from one session at a time.
 
 Two related refusals are not configuration faults and leave the checkpoint
 intact. A session whose selected checkpoint was replaced before its Ghidra
@@ -1713,7 +1717,11 @@ to the default: `rea doctor` and registration validation report it, REA still
 starts, and a checkpointed Ghidra session refuses to open with
 `configuration_invalid` until it is corrected. Sessions without a checkpoint
 never apply the wait. The control lengthens only this session's wait; it does
-not shorten the other session's save.
+not shorten the other session's save. It also cannot make an MCP client wait
+longer: the client's own request deadline is separate and unknown to REA, so
+keep the wait below it, or the client gives up while the close continues. A
+forced stop, such as a cancelled request escalating a close, ends the wait
+without publishing.
 
 The directory retains the current manifest and packed Program. Publication
 writes and syncs a new packed file before atomically replacing the manifest;

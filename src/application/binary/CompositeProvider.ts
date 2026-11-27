@@ -19,6 +19,7 @@ import type {
   ProviderIdentity,
 } from "../../ports/AnalysisProvider.js";
 import { closeAnalysisClient } from "../../providers/AnalysisClientCleanup.js";
+import { mergeEngineCloseReports } from "../../domain/engineCloseReport.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 
 /** Synthetic identity for a deterministic provider set. */
@@ -69,7 +70,12 @@ const closeCompositeClients = (
     const failures = outcomes.flatMap(({ providerId, release, result }) =>
       result.ok ? [] : [{ providerId, release, error: result.error }],
     );
-    if (failures.length === 0) return ok(null);
+    if (failures.length === 0)
+      return ok(
+        mergeEngineCloseReports(
+          outcomes.map(({ result }) => (result.ok ? result.value : null)),
+        ),
+      );
     if (failures.length === 1) {
       const failure = failures[0];
       if (failure !== undefined) return err(failure.error);

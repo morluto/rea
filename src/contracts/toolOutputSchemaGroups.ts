@@ -1,4 +1,5 @@
 import { coverageStatusSchema } from "../domain/coverage.js";
+import { discardedCheckpointEditsSchema } from "../domain/engineCloseReport.js";
 import { procedureReferencesSchema } from "../domain/native/procedureReferences.js";
 import {
   nativeAddressListSchema,
@@ -525,7 +526,9 @@ export const sessionOutputSchemas = {
           .describe(
             "All retained Evidence records, including observations without replay bindings.",
           ),
+        checkpoint: discardedCheckpointEditsSchema.optional(),
       }),
+      z.strictObject({ checkpoint: discardedCheckpointEditsSchema }),
     ]),
   ),
   // Every session kind crossed with every detail level, so `detail` fixes

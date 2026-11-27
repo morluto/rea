@@ -34,6 +34,7 @@ import {
 } from "../domain/providerOperationHealth.js";
 import { readRuntimeSetting } from "../config/runtimeAnalysisSettings.js";
 import { err, ok, type Result } from "../domain/result.js";
+import type { EngineCloseReport } from "../domain/engineCloseReport.js";
 import { silentLogger } from "../logger.js";
 import type { Logger } from "pino";
 import {
@@ -223,6 +224,11 @@ export class GhidraClient {
     | undefined;
   #closePromise: Promise<void> | undefined;
   #closeForced = false;
+  /**
+   * Aborts a graceful close's final checkpoint save, including its wait for
+   * another session's publication lease, when a forced stop escalates it.
+   */
+  #gracefulCloseSave: AbortController | undefined;
   readonly #failure = bindGhidraSessionFailure(
     (scope) => this.#diagnostics(scope),
     (value, incomplete) => this.#redactAuthentication(value, incomplete),
@@ -924,10 +930,25 @@ export class GhidraClient {
   }
 
   /** Stop the owned process group and remove all project/runtime artifacts. */
-  async close(): Promise<Result<null, AnalysisError>> {
+  async close(): Promise<Result<EngineCloseReport | null, AnalysisError>> {
+    // A refusal survives a failed cleanup, so the close that finally
+    // releases the Program reports the discard; a retry after it has none.
+    const checkpoint = this.#checkpointSaveRefused
+      ? this.#checkpoint
+      : undefined;
     try {
       await this.#requestClose(false);
-      return ok(null);
+      return ok(
+        checkpoint === undefined
+          ? null
+          : {
+              checkpoint: {
+                status: "discarded",
+                reason: "superseded",
+                directory: checkpoint.selection.directory,
+              },
+            },
+      );
     } catch (cause: unknown) {
       return err(this.#cleanupError(cause));
     } finally {
@@ -1045,10 +1066,14 @@ export class GhidraClient {
     // stalled checkpoint or shutdown reply), then runs once it settles.
     if (previous !== undefined && (!forceStop || this.#closeForced))
       return previous;
-    if (previous !== undefined)
-      this.#failAll(
-        this.#failure("process", "Ghidra close escalated to a forced stop"),
+    if (previous !== undefined) {
+      const escalation = this.#failure(
+        "process",
+        "Ghidra close escalated to a forced stop",
       );
+      this.#gracefulCloseSave?.abort(escalation);
+      this.#failAll(escalation);
+    }
     this.#closeForced = forceStop;
     const attempt: Promise<void> = (previous ?? Promise.resolve())
       .catch(() => undefined)
@@ -1379,12 +1404,19 @@ export class GhidraClient {
     return completed;
   }
 
-  /** Save once at startup and after changes, retaining a failed publication for retry. */
-  async #saveCheckpoint(force: boolean, signal?: AbortSignal): Promise<void> {
+  /**
+   * Save once at startup and after changes, retaining a failed publication
+   * for retry. `leaseSignal` ends only the wait for another session's lease.
+   */
+  async #saveCheckpoint(
+    force: boolean,
+    signal?: AbortSignal,
+    leaseSignal: AbortSignal | undefined = signal,
+  ): Promise<void> {
     const owner = this.#checkpoint;
     const runtime = this.#runtimeRoot;
     if (owner === undefined || runtime === undefined) return;
-    await this.#finishCheckpointStaging(signal);
+    await this.#finishCheckpointStaging(signal, leaseSignal);
     const path = join(runtime.path, `checkpoint-${randomUUID()}.gzf`);
     // Checkpoints run at startup and during close, so they use the session's
     // admitted ceilings rather than the current settings.
@@ -1420,7 +1452,7 @@ export class GhidraClient {
       );
     if (!parsed.data.saved) return;
     this.#checkpointStaging = { path, disposition: "publish" };
-    await this.#finishCheckpointStaging(signal);
+    await this.#finishCheckpointStaging(signal, leaseSignal);
   }
 
   /** An acknowledged failed export is owned but is not a valid checkpoint. */
@@ -1450,7 +1482,10 @@ export class GhidraClient {
     throw failure;
   }
 
-  async #finishCheckpointStaging(signal?: AbortSignal): Promise<void> {
+  async #finishCheckpointStaging(
+    signal?: AbortSignal,
+    leaseSignal: AbortSignal | undefined = signal,
+  ): Promise<void> {
     const staged = this.#checkpointStaging;
     if (staged === undefined) return;
     if (staged.disposition === "publish") {
@@ -1460,7 +1495,7 @@ export class GhidraClient {
           "Checkpoint publication owner is missing",
         );
       try {
-        await this.#checkpoint.publish(staged.path, signal);
+        await this.#checkpoint.publish(staged.path, signal, leaseSignal);
       } catch (cause: unknown) {
         if (cause instanceof GhidraCheckpointSupersededError) {
           this.#checkpointStaging = {
@@ -1599,11 +1634,15 @@ export class GhidraClient {
         this.#socket !== undefined &&
         !this.#socket.destroyed
       ) {
+        const save = new AbortController();
+        this.#gracefulCloseSave = save;
         try {
-          await this.#saveCheckpoint(false);
+          await this.#saveCheckpoint(false, undefined, save.signal);
         } catch (cause: unknown) {
           this.#requestQueue.reopen();
           throw cause;
+        } finally {
+          this.#gracefulCloseSave = undefined;
         }
       }
       const socket = this.#socket;

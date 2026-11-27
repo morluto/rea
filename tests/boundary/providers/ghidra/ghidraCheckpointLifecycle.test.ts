@@ -376,8 +376,20 @@ it.skipIf(process.platform === "win32")(
     expect((await stale.client.callTool("list_documents", {})).ok).toBe(true);
 
     // The refusal is permanent for this generation, so the next close
-    // releases the session without another export or publication.
-    expect((await stale.client.close()).ok).toBe(true);
+    // releases the session without another export or publication, and says
+    // that it released the edits unsaved.
+    expect(await stale.client.close()).toEqual({
+      ok: true,
+      value: {
+        checkpoint: {
+          status: "discarded",
+          reason: "superseded",
+          directory: f.selection.directory,
+        },
+      },
+    });
+    // The discard is reported once, by the close that released the edits.
+    expect(await stale.client.close()).toEqual({ ok: true, value: null });
     expect(await readFile(manifest, "utf8")).toBe(published);
     expect((await readdir(f.selection.directory)).sort()).toEqual(files);
     expect(refused.error.cleanupResources).toEqual([]);
@@ -591,6 +603,56 @@ it.skipIf(process.platform === "win32")(
     for (const root of f.launcher.runtimeRoots)
       await expect(access(root)).rejects.toThrow();
     expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "ends a graceful close's wait for another session's lease when a cancellation forces a stop",
+  async () => {
+    const f = await fixture("checkpoint_hang_tool");
+    // The wait would otherwise outlast this test by minutes.
+    const waiting = await peer(f, f.launcher, {
+      waitMs: 600_000,
+      source: "setting",
+    });
+    expect((await waiting.client.start()).ok).toBe(true);
+    expect((await rename(waiting.client)).ok).toBe(true);
+    const controller = new AbortController();
+    const active = waiting.client.callTool(
+      "list_documents",
+      {},
+      { signal: controller.signal },
+    );
+    await waitFor(() =>
+      expect(f.launcher.requests).toContain("list_documents"),
+    );
+    vi.mocked(acquireOwnedLease)
+      .mockClear()
+      .mockResolvedValue({
+        acquired: false,
+        owner: { runId: "publisher", processId: 4242 },
+      });
+    const closing = waiting.client.close();
+    // The export finished and the save is polling the publisher's lease.
+    await waitFor(() =>
+      expect(vi.mocked(acquireOwnedLease).mock.calls.length).toBeGreaterThan(1),
+    );
+    const started = Date.now();
+    controller.abort(new Error("caller stopped waiting"));
+    const [cancelled, closed] = await Promise.all([active, closing]);
+    await restoreLeases();
+    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(cancelled).toMatchObject({ ok: false });
+    // The graceful close did not publish; the forced stop released the session.
+    expect(closed).toMatchObject({ ok: false });
+    expect(
+      JSON.parse(
+        await readFile(join(f.selection.directory, "current.json"), "utf8"),
+      ),
+    ).toMatchObject({ source: { kind: "initial-analysis" } });
+    const child = f.launcher.processes.at(-1)!;
+    if (child.exitCode === null && child.signalCode === null)
+      await once(child, "exit");
   },
 );
 
