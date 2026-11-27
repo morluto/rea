@@ -60,8 +60,11 @@ export const findEmbeddedRsrcContainers = (bytes: Buffer): EmbeddedRsrcScan => {
       return { ok: true, containers: [], complete: !declaresPe };
     throw cause;
   }
-  if (layout.rva === 0 || layout.size < PE_RESOURCE_DIRECTORY_BYTES)
-    return { ok: true, containers: [], complete: true };
+  // No resource directory is observed absence. A declared root whose
+  // file-backed run cannot hold one directory header was never read.
+  if (layout.rva === 0) return { ok: true, containers: [], complete: true };
+  if (layout.size < PE_RESOURCE_DIRECTORY_BYTES)
+    return { ok: true, containers: [], complete: false };
 
   const reader = new BinaryReader(bytes, true, "pe");
   const root = layout.rva;
@@ -131,6 +134,16 @@ export const findEmbeddedRsrcContainers = (bytes: Buffer): EmbeddedRsrcScan => {
         "resource directory",
       ),
     );
+    // Rows that do not fit are an unreadable tree, not a capacity question:
+    // frame them before either entry allowance.
+    const rows = metadataOffset(
+      relativeOffset + PE_RESOURCE_DIRECTORY_BYTES,
+      entryCount * PE_RESOURCE_ENTRY_BYTES,
+    );
+    if (rows === undefined) {
+      complete = false;
+      return;
+    }
     if (entryCount > MAX_ENTRIES_PER_DIRECTORY)
       throw decodeLimit(
         FORMAT,
@@ -152,14 +165,6 @@ export const findEmbeddedRsrcContainers = (bytes: Buffer): EmbeddedRsrcScan => {
           required: examinedEntries,
         },
       );
-    const rows = metadataOffset(
-      relativeOffset + PE_RESOURCE_DIRECTORY_BYTES,
-      entryCount * PE_RESOURCE_ENTRY_BYTES,
-    );
-    if (rows === undefined) {
-      complete = false;
-      return;
-    }
     for (let index = 0; index < entryCount; index += 1) {
       const at = rows + index * PE_RESOURCE_ENTRY_BYTES;
       const { identity, target } = readPeResourceEntryFacts(

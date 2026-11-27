@@ -151,6 +151,50 @@ describe("parseLabviewRsrc", () => {
     );
   });
 
+  it("treats a declared resource root shorter than one directory as unread", () => {
+    const fixture = peResourceFixture(true, [
+      { type: 10, name: 1, language: 1033, payload: labviewContainer() },
+    ]);
+    // Move the resource RVA to 8 bytes before the section's mapped end.
+    const rva = fixture.bytes.readUInt32LE(fixture.directoryAt);
+    const virtualSize = fixture.bytes.readUInt32LE(fixture.sectionAt + 8);
+    fixture.bytes.writeUInt32LE(rva + virtualSize - 8, fixture.directoryAt);
+    const scan = findEmbeddedRsrcContainers(fixture.bytes);
+    if (!scan.ok) throw scan.failure;
+    expect(scan).toMatchObject({ containers: [], complete: false });
+  });
+
+  it("frames directory rows before the entry allowance", () => {
+    const fixture = peResourceFixture(true, [
+      { type: 10, name: 1, language: 1033, payload: labviewContainer() },
+    ]);
+    // The root directory's ID-entry count (+14) now declares 5000 rows that
+    // the resource span cannot hold: an unreadable tree, not capacity.
+    fixture.bytes.writeUInt16LE(5000, fixture.directoryOffsets[0]! + 14);
+    const scan = findEmbeddedRsrcContainers(fixture.bytes);
+    if (!scan.ok) throw scan.failure;
+    expect(scan).toMatchObject({ containers: [], complete: false });
+  });
+
+  it("keeps a fully framed directory over its entry allowance a capacity refusal", () => {
+    const fixture = peResourceFixture(
+      true,
+      Array.from({ length: 4097 }, (_, index) => ({ type: 1000 + index })),
+      262_144,
+    );
+    const scan = findEmbeddedRsrcContainers(fixture.bytes);
+    expect(scan.ok).toBe(false);
+    if (scan.ok) return;
+    expect(scan.failure.failure).toMatchObject({
+      kind: "limit",
+      limit: {
+        name: "pe_resource_directory_entries",
+        maximum: 4096,
+        required: 4097,
+      },
+    });
+  });
+
   it("reports where an embedded container starts in the selected file", async () => {
     const bytes = peResourceFixture(true, [
       { type: 10, name: 1, language: 1033, payload: labviewContainer() },
