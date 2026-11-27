@@ -105,6 +105,7 @@ import { PCAP_PROVIDER_IDENTITY } from "../pcap/PcapProviderIdentity.js";
 import { NUGET_NUPKG_PROVIDER_IDENTITY } from "../nuget/NugetNupkgProviderIdentity.js";
 import { VSIX_PACKAGE_PROVIDER_IDENTITY } from "../vsix/VsixPackageProviderIdentity.js";
 import { OCI_IMAGE_LAYOUT_PROVIDER_IDENTITY } from "../oci/OciImageLayoutProviderIdentity.js";
+import { YARA_PROVIDER_IDENTITY } from "../yara/YaraProviderIdentity.js";
 import { PYTHON_PYC_PROVIDER_IDENTITY } from "../python/PythonPycProviderIdentity.js";
 import { DEB_PACKAGE_PROVIDER_IDENTITY } from "../deb/DebPackageProviderIdentity.js";
 import { RIZIN_DEBUGGER_PROVIDER_IDENTITY } from "../rizin/RizinDebuggerProviderIdentity.js";
@@ -550,6 +551,13 @@ export const CAPABILITY_DECLARATIONS = {
     providers: [
       providerBinding(OCI_IMAGE_LAYOUT_PROVIDER_IDENTITY, {
         group: "OCI_IMAGE_LAYOUT_TOOL_CONTRACTS",
+      }),
+    ],
+  },
+  yaraMatches: {
+    providers: [
+      providerBinding(YARA_PROVIDER_IDENTITY, {
+        group: "YARA_TOOL_CONTRACTS",
       }),
     ],
   },

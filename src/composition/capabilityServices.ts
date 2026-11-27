@@ -53,6 +53,7 @@ import { createDebPackageService } from "./debPackage.js";
 import { createNugetNupkgService } from "./nugetNupkg.js";
 import { createVsixPackageService } from "./vsixPackage.js";
 import { createOciImageLayoutService } from "./ociImageLayout.js";
+import { createYaraMatchesService } from "./yara.js";
 import { createWebNetworkCaptureService } from "./webNetworkCaptures.js";
 import { createWebSourceLocationService } from "./webSourceLocations.js";
 import { createWebModuleTraceService } from "./webModules.js";
@@ -120,6 +121,7 @@ import type { DebPackageService } from "../application/deb/DebPackageService.js"
 import type { NugetNupkgService } from "../application/nuget/NugetNupkgService.js";
 import type { VsixPackageService } from "../application/vsix/VsixPackageService.js";
 import type { OciImageLayoutService } from "../application/oci/OciImageLayoutService.js";
+import type { YaraMatchesService } from "../application/yara/YaraMatchesService.js";
 import type { BeamService } from "../application/erlang/BeamService.js";
 import type { V8CodeCacheService } from "../application/v8CodeCache/V8CodeCacheService.js";
 import type { MavenGradleMetadataService } from "../application/java/MavenGradleMetadataService.js";
@@ -160,6 +162,7 @@ export interface CapabilityServiceOptions {
   readonly nugetNupkg?: NugetNupkgService;
   readonly vsixPackage?: VsixPackageService;
   readonly ociImageLayout?: OciImageLayoutService;
+  readonly yaraMatches?: YaraMatchesService;
   readonly erlangBeam?: BeamService;
   readonly v8CodeCache?: V8CodeCacheService;
   readonly mavenGradleMetadata?: MavenGradleMetadataService;
@@ -445,6 +448,11 @@ const modules = {
   ),
   ociImageLayout: service(
     ({ options }) => options.ociImageLayout ?? createOciImageLayoutService(),
+  ),
+  yaraMatches: service(
+    ({ environment, options, platform, settings }) =>
+      options.yaraMatches ??
+      createYaraMatchesService(environment, settings, platform),
   ),
   webNetworkCapture: service(
     ({ environment, options, settings }) =>
