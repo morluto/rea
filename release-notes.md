@@ -573,6 +573,7 @@
 * **signals:** report an unsupported host as a capability limit ([#14127](https://github.com/morluto/rea/issues/14127)) ([a35bfb9](https://github.com/morluto/rea/commit/a35bfb909813199dd86ecb9cc5c27d499254ff39))
 * **snapshot:** replay every one-shot Ghidra read and say when a live result cannot replay ([#14249](https://github.com/morluto/rea/issues/14249)) ([95190b1](https://github.com/morluto/rea/commit/95190b1ebcfe1007e81f431ede5f74ac97c16c6c))
 * **source-maps:** cancel requests waiting for decoder admission ([#13844](https://github.com/morluto/rea/issues/13844)) ([72eede7](https://github.com/morluto/rea/commit/72eede75d1211e5ffa78de861ce9c5dae29ec387))
+* **source-maps:** report details.limit for source_map_limits refusals ([#14797](https://github.com/morluto/rea/issues/14797)) ([3eb030c](https://github.com/morluto/rea/commit/3eb030ccb44ef7a76a89ea9a910787455634c729))
 * **sqlite:** accept the documented sqlite_master spelling of the schema catalog ([#10277](https://github.com/morluto/rea/issues/10277)) ([3ab1db2](https://github.com/morluto/rea/commit/3ab1db27e3b52f225d037ad667373bf945d41bc5))
 * **sqlite:** state the runtime requirement in supported-runtime terms ([#14206](https://github.com/morluto/rea/issues/14206)) ([7b056d2](https://github.com/morluto/rea/commit/7b056d2ff86b742dd68ffab2bdad865cc359d943))
 * **state-view:** preserve partial list status when total count is invalid ([1d78e6a](https://github.com/morluto/rea/commit/1d78e6abe61ab9ed49669ee0a2ecf7c691acf81d))
