@@ -13,7 +13,6 @@ import {
   iso9660DirectoryRecordAt,
   iso9660LimitFailure,
   iso9660Malformed,
-  parsedIso9660,
   readBothEndian16,
   readBothEndian32,
   type Iso9660DirectoryRecord,
@@ -21,6 +20,7 @@ import {
 } from "./iso9660Structures.js";
 import type { Result } from "../result.js";
 import {
+  captureParseFailure,
   truncatedInput,
   unsupportedInput,
   type ParseFailureError,
@@ -429,7 +429,7 @@ export const parseIso9660VolumeDescriptors = (
   fileSize: number,
   maxDescriptors = ISO9660_LIMITS.descriptors.maximum,
 ): Result<Iso9660VolumeDescriptorSet, ParseFailureError> =>
-  parsedIso9660(() => {
+  captureParseFailure(() => {
     if (fileSize < ISO9660_MINIMUM_IMAGE_BYTES)
       throw truncatedInput(
         ISO9660_FORMAT,

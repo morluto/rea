@@ -19,6 +19,7 @@ import {
   API_CONTRACT_OPERATION as operation,
   API_CONTRACT_PROVIDER,
 } from "../../domain/apiContract/apiContract.js";
+import { apiContractFileBytesLimit } from "../../domain/apiContract/apiContractQuery.js";
 import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import { err, ok } from "../../domain/result.js";
 
@@ -72,8 +73,21 @@ const readFailure = (
         {
           cause,
           retryable: false,
-          remediationAction:
-            "Select a complete document within max_file_bytes; increasing reply limits or paging does not change this file admission.",
+          ...(cause.boundary === undefined || cause.boundary === "file-size"
+            ? {
+                limit: apiContractFileBytesLimit(
+                  input.max_file_bytes,
+                  cause.observedBytes !== undefined &&
+                    cause.observedBytes <= BigInt(Number.MAX_SAFE_INTEGER)
+                    ? Number(cause.observedBytes)
+                    : undefined,
+                ),
+              }
+            : {
+                measuredExhaustion: true,
+                remediationAction:
+                  "Reduce the API contract document size or inspect a smaller file before retrying.",
+              }),
         },
       );
     if (cause.reason === "path")

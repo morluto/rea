@@ -10,6 +10,7 @@ import {
   isXmlElement,
   iterateXmlChildElements,
   opensLikeXml,
+  parseTrueFalseText,
   parseXmlDocumentWithinNodeLimit,
   xmlChildElements,
   xmlChildrenNamed,
@@ -50,16 +51,21 @@ const soleNamed = (element: Element, local: string): Element | undefined => {
   return match;
 };
 
-const MAVEN_POM_NAMESPACE = "http://maven.apache.org/POM/4.0.0";
+/** Maven names each POM model namespace by this prefix and its model version. */
+const MAVEN_POM_NAMESPACE_PREFIX = "http://maven.apache.org/POM/";
+/** Model versions released Maven reads: 4.0.0, and 4.1.0 for Maven 4 builds. */
+const MAVEN_POM_MODEL_VERSIONS: readonly string[] = ["4.0.0", "4.1.0"];
+const MAVEN_4_MODEL_VERSION = "4.1.0";
 
 /**
- * A Maven POM root: `project` in the POM namespace, or a namespace-free
+ * A Maven POM root: `project` in a Maven POM namespace, or a namespace-free
  * `project` that declares `modelVersion` or `artifactId`. Ant and other
  * `project` vocabularies declare neither and are not POMs.
  */
 const isMavenProjectRoot = (root: Node | null): root is Element => {
   if (!isXmlElement(root) || root.localName !== "project") return false;
-  if (root.namespaceURI === MAVEN_POM_NAMESPACE) return true;
+  if (root.namespaceURI?.startsWith(MAVEN_POM_NAMESPACE_PREFIX) === true)
+    return true;
   return (
     (root.namespaceURI === null || root.namespaceURI === "") &&
     (xmlFirstChildNamed(root, "modelVersion", "") !== undefined ||
@@ -108,17 +114,34 @@ const childText = (element: Element, local: string): string | null => {
   return child === undefined ? null : mavenText(child);
 };
 
+/**
+ * The POM model version: `modelVersion` when declared, otherwise the version
+ * named by the project namespace, as Maven 4 derives it. A namespaced POM must
+ * name a supported model both ways; legacy namespace-free POMs keep any
+ * declared `modelVersion`.
+ */
+const mavenModelVersion = (root: Element): string | null => {
+  const namespace = root.namespaceURI ?? "";
+  if (!namespace.startsWith(MAVEN_POM_NAMESPACE_PREFIX))
+    return childText(root, "modelVersion");
+  const namespaceVersion = namespace.slice(MAVEN_POM_NAMESPACE_PREFIX.length);
+  if (!MAVEN_POM_MODEL_VERSIONS.includes(namespaceVersion))
+    throw unsupportedInput(
+      MAVEN_GRADLE_METADATA_FORMAT,
+      "Maven POM uses a model namespace this reader does not support; it reads the 4.0.0 and 4.1.0 POM models.",
+    );
+  const declared = childText(root, "modelVersion");
+  if (declared !== null && !MAVEN_POM_MODEL_VERSIONS.includes(declared))
+    throw unsupportedInput(
+      MAVEN_GRADLE_METADATA_FORMAT,
+      "Maven POM declares a modelVersion this reader does not support; it reads the 4.0.0 and 4.1.0 POM models.",
+    );
+  return declared ?? namespaceVersion;
+};
+
 /** Keep Gradle JSON spelling for Evidence and exact comparisons. */
 const gradleText = (value: unknown): string | null =>
   typeof value === "string" && value.trim() !== "" ? value : null;
-
-const boolOf = (value: string | null): boolean | null => {
-  if (value === null) return null;
-  const folded = value.toLowerCase();
-  if (folded === "true") return true;
-  if (folded === "false") return false;
-  return null;
-};
 
 const emptyGradleVersion = {
   requires: null,
@@ -222,14 +245,18 @@ const parseMavenDependency = <
   origin: Origin,
   index: number,
   unresolved: MavenGradleUnresolvedCollector,
+  maven4Model: boolean,
 ): MavenGradleDependency<Origin> => {
   const group_id = childText(element, "groupId");
   const artifact_id = childText(element, "artifactId");
   const version = childText(element, "version");
   const type = childText(element, "type");
   const scope = childText(element, "scope");
+  // Maven 4 also imports a managed `bom` type, whatever its scope. Only a
+  // 4.1.0 model POM is certain to be built by Maven 4 rather than Maven 3.
   const bom_import =
-    origin === "dependencyManagement" && type === "pom" && scope === "import";
+    origin === "dependencyManagement" &&
+    ((type === "pom" && scope === "import") || (maven4Model && type === "bom"));
   const exclusions = mavenExclusionElements(element).map((exclusion) => ({
     group_id: childText(exclusion, "groupId"),
     artifact_id: childText(exclusion, "artifactId"),
@@ -262,7 +289,7 @@ const parseMavenDependency = <
     gradle_version: null,
     scope,
     type,
-    optional: boolOf(optional_spelling),
+    optional: parseTrueFalseText(optional_spelling),
     optional_spelling,
     classifier,
     exclusions,
@@ -306,6 +333,7 @@ const parsePom = (
       MAVEN_GRADLE_METADATA_FORMAT,
       "Selected XML document is not a Maven project POM.",
     );
+  const maven4Model = mavenModelVersion(root) === MAVEN_4_MODEL_VERSION;
   const unresolved = new MavenGradleUnresolvedCollector(
     limits.unresolved_records,
   );
@@ -384,14 +412,30 @@ const parsePom = (
     ),
   );
   const dependency_management = managedElements.map((element, index) =>
-    parseMavenDependency(element, "dependencyManagement", index, unresolved),
+    parseMavenDependency(
+      element,
+      "dependencyManagement",
+      index,
+      unresolved,
+      maven4Model,
+    ),
   );
   const dependencies = dependencyElements.map((element, index) =>
-    parseMavenDependency(element, "dependencies", index, unresolved),
+    parseMavenDependency(
+      element,
+      "dependencies",
+      index,
+      unresolved,
+      maven4Model,
+    ),
   );
   if (parent !== null)
     limitations.push(
       "Parent coordinates are recorded as spelled; the parent POM was not read and inheritance was not applied.",
+    );
+  if (maven4Model)
+    limitations.push(
+      "Maven 4 can infer omitted parent coordinates and, in model version 4.1.0, omitted dependency and managed dependency group IDs and versions from the local project tree; that inference was not applied.",
     );
   if (soleNamed(root, "repositories") !== undefined)
     limitations.push(

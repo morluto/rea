@@ -13,7 +13,10 @@ import type {
   ElectronScriptDraft,
   ElectronScriptFrameScope,
 } from "./CdpElectronScriptEvents.js";
-import { authorizedElectronFile } from "./ElectronFileScope.js";
+import {
+  authorizedElectronFile,
+  type ElectronFileScope,
+} from "./ElectronFileScope.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { cancelledBy } from "../domain/analysisErrorCore.js";
 import { selectedCdpCommandTimeoutMs } from "../domain/browserDeadline.js";
@@ -30,6 +33,7 @@ interface ElectronScriptCaptureInput {
   ) => ElectronScriptFrameScope;
   readonly completeness: CdpCaptureCompleteness;
   readonly asarHeaderAdmission: AsarHeaderAdmission;
+  readonly files?: ElectronFileScope;
 }
 
 /** Normalize local script metadata and optionally approved source. */
@@ -43,12 +47,15 @@ export const captureElectronScripts = async (
   const commandTimeoutMs = selectedCdpCommandTimeoutMs(
     input.request.command_timeout_ms,
   );
+  // The scripts parsed by now are the capture; later scriptParsed events
+  // keep appending to the live list while this loop awaits.
+  const scripts = [...input.scripts];
   const sourceBudget =
-    input.request.include_script_sources && input.scripts.length > 0
+    input.request.include_script_sources && scripts.length > 0
       ? new CdpScriptSourceBudget(input.signal, commandTimeoutMs)
       : undefined;
   try {
-    for (const script of input.scripts) {
+    for (const script of scripts) {
       throwIfCallerCancelled(input.signal);
       const frame = input.frameScopeForScript(script);
       if (frame.state === "excluded") {
@@ -60,6 +67,7 @@ export const captureElectronScripts = async (
         input.signal,
         "inspect_electron_page",
         input.asarHeaderAdmission,
+        input.files,
       );
       if (path === undefined) {
         input.completeness.exclude("scripts", "out_of_target_scope");

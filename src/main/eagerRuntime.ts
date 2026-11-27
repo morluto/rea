@@ -100,6 +100,12 @@ export const runEager = async (
           shutdown.request();
         })
       : undefined;
+  const outerStartup = dependencies.startupSignal;
+  const cancelStartup = (): void => {
+    startup.abort(outerStartup?.reason ?? OwnerCancellation.ownerClosed);
+  };
+  if (outerStartup?.aborted === true) cancelStartup();
+  else outerStartup?.addEventListener("abort", cancelStartup, { once: true });
   dependencies.captureShutdown?.(async () => {
     startup.abort(OwnerCancellation.ownerClosed);
     await shutdown.shutdown();
@@ -159,6 +165,7 @@ export const runEager = async (
     startupRejected = true;
     startupCause = cause;
   } finally {
+    outerStartup?.removeEventListener("abort", cancelStartup);
     settleStartup();
     startupInput?.close();
   }

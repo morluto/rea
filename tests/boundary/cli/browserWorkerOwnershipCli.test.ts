@@ -1,4 +1,4 @@
-import { rm, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -14,15 +14,9 @@ import {
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const browsers: FakeCdpBrowser[] = [];
-const temporary: string[] = [];
 
 afterEach(async () => {
   await Promise.all(browsers.splice(0).map(async (browser) => browser.close()));
-  await Promise.all(
-    temporary
-      .splice(0)
-      .map(async (root) => rm(root, { recursive: true, force: true })),
-  );
 });
 
 const normalizedResult = (value: unknown): unknown => {
@@ -133,7 +127,6 @@ cliTest(
   "uses the same ownership facts for passive Electron worker inspection",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-worker-ownership-");
-    temporary.push(root);
     await writeFile(join(root, "index.html"), "<html></html>");
     await writeFile(join(root, "worker.js"), "void 0;");
     const browser = await startFakeCdpBrowser({
