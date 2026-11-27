@@ -31,7 +31,11 @@ import {
   pageViewCoverage,
   analysisViewCoverageSchema,
 } from "./analysisViewCoverage.js";
-import { selectIndexedViewRows, selectViewRows } from "./selectViewRows.js";
+import {
+  selectIndexedViewRows,
+  selectViewRows,
+  filterSet,
+} from "./selectViewRows.js";
 
 const reportSchema = androidResultSchemas.inspect_android_jni_bindings;
 const readReport = createAnalysisViewResultReader(reportSchema);
@@ -253,10 +257,8 @@ export const projectAndroidJniView = (
     if (overBudget(summary)) return budgetError();
     return ok(summary);
   } else {
-    const indices =
-      view.indices === undefined ? undefined : new Set(view.indices);
-    const fields =
-      view.fields === undefined ? undefined : new Set<string>(view.fields);
+    const indices = filterSet(view.indices);
+    const fields = filterSet<string>(view.fields);
     const project = <Row extends object>(row: Row, index: number) =>
       fields === undefined
         ? { ...row, row_index: index }
@@ -273,15 +275,13 @@ export const projectAndroidJniView = (
       indices !== undefined
         ? selectIndexedViewRows(rows, indices, view, matches, project)
         : selectViewRows(rows, view, matches, project);
-    const set = (values: readonly string[] | undefined) =>
-      values === undefined ? undefined : new Set(values);
     let selected: { rows: object[]; total: number };
     switch (view.collection) {
       case "declarations": {
-        const classes = set(view.class_names),
-          names = set(view.method_names),
-          ids = set(view.declaration_ids),
-          descriptors = set(view.descriptors);
+        const classes = filterSet(view.class_names),
+          names = filterSet(view.method_names),
+          ids = filterSet(view.declaration_ids),
+          descriptors = filterSet(view.descriptors);
         selected = pick(
           report.declarations,
           (row) =>
@@ -293,8 +293,8 @@ export const projectAndroidJniView = (
         break;
       }
       case "libraries": {
-        const ids = set(view.library_ids),
-          abis = set(view.abis);
+        const ids = filterSet(view.library_ids),
+          abis = filterSet(view.abis);
         selected = pick(
           report.libraries,
           (row) =>
@@ -304,9 +304,9 @@ export const projectAndroidJniView = (
         break;
       }
       case "candidates": {
-        const ids = set(view.declaration_ids),
-          libs = set(view.library_ids),
-          candidates = set(view.candidate_ids);
+        const ids = filterSet(view.declaration_ids),
+          libs = filterSet(view.library_ids),
+          candidates = filterSet(view.candidate_ids);
         selected = pick(
           report.candidates,
           (row) =>
@@ -318,9 +318,9 @@ export const projectAndroidJniView = (
         break;
       }
       case "bindings": {
-        const ids = set(view.declaration_ids),
-          abis = set(view.abis),
-          statuses = set(view.statuses);
+        const ids = filterSet(view.declaration_ids),
+          abis = filterSet(view.abis),
+          statuses = filterSet(view.statuses);
         selected = pick(
           report.bindings,
           (row) =>
