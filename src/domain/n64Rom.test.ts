@@ -223,7 +223,21 @@ describe("Nintendo 64 ROM domain", () => {
     expect(metadata.media_name).toBeNull();
     expect(metadata.media_byte).toBe(1);
     expect(metadata.destination_name).toBeNull();
+    expect(metadata.destination_byte).toBe(1);
     expect(metadata.destination_code).toBe("?");
+  });
+
+  it("keeps a printable destination byte outside the known table", () => {
+    const image = n64RomImage();
+    image.normalized[0x3e] = 0x51;
+    const encoded = Buffer.from(swapN64Bytes(image.normalized, "z64"));
+    const { metadata } = parseN64Rom(encoded, encoded.length);
+    // Unknown is the null name; the code keeps the printable source byte.
+    expect(metadata).toMatchObject({
+      destination_byte: 0x51,
+      destination_code: "Q",
+      destination_name: null,
+    });
   });
 
   it("checks a full checksum window and reports a CRC mismatch", () => {
@@ -298,17 +312,33 @@ describe("Nintendo 64 ROM domain", () => {
     expect(entries.map((entry) => entry.path)).toContain("program.z64");
   });
 
-  it("refuses a truncated header, an odd length, an implausible boot address and a file above 64 MiB", () => {
+  it("refuses a truncated header, a length its order cannot normalize, an implausible boot address and a file above 64 MiB", () => {
     const image = n64RomImage();
     expect(failureOf(image.encoded.subarray(0, 32))).toMatchObject({
       kind: "truncated",
       failure: { format: N64_FORMAT, field: "header" },
     });
-    const odd = Buffer.concat([image.encoded, Buffer.from([0])]);
-    expect(failureOf(odd)).toMatchObject({
+    // The length rule follows the byte order's swap unit.
+    const oddV64 = Buffer.concat([
+      n64RomImage({ order: "v64" }).encoded,
+      Buffer.from([0]),
+    ]);
+    expect(failureOf(oddV64)).toMatchObject({
       kind: "malformed",
       failure: { field: "byte_order" },
     });
+    const oddN64 = Buffer.concat([
+      n64RomImage({ order: "n64" }).encoded,
+      Buffer.alloc(2),
+    ]);
+    expect(failureOf(oddN64)).toMatchObject({
+      kind: "malformed",
+      failure: { field: "byte_order" },
+    });
+    const oddZ64 = Buffer.concat([image.encoded, Buffer.from([0])]);
+    expect(parseN64Rom(oddZ64, oddZ64.length).metadata.rom_bytes).toBe(
+      oddZ64.length,
+    );
     expect(failureOf(image.encoded, N64_MAX_ROM_BYTES + 4)).toMatchObject({
       kind: "limit",
       failure: {
@@ -341,7 +371,14 @@ describe("Nintendo 64 ROM domain", () => {
     ).toBeUndefined();
     expect(n64RomRecognition(encoded.subarray(0, 32), 32)).toBeUndefined();
     const odd = Buffer.concat([encoded, Buffer.from([0])]);
-    expect(n64RomRecognition(odd, odd.length)).toMatchObject({
+    expect(n64RomRecognition(odd, odd.length)).toEqual({
+      state: "recognized",
+    });
+    const oddV64 = Buffer.concat([
+      n64RomImage({ order: "v64" }).encoded,
+      Buffer.from([0]),
+    ]);
+    expect(n64RomRecognition(oddV64, oddV64.length)).toMatchObject({
       state: "refused",
     });
     const badBoot = n64RomImage({ bootAddress: 0 }).encoded;

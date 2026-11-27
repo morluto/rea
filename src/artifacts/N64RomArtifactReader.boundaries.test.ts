@@ -60,24 +60,52 @@ describe("Nintendo 64 ROM boundaries", () => {
     });
   });
 
-  it("refuses a length that is not a multiple of 4", async () => {
-    const odd = Buffer.concat([n64RomImage().encoded, Buffer.from([0])]);
-    await expect(read(odd)).rejects.toMatchObject({
-      reason: "malformed",
-      parseFailure: {
-        kind: "malformed",
-        format: "n64-rom",
-        field: "byte_order",
-      },
-    });
+  it("refuses a length its byte order cannot normalize", async () => {
+    for (const [order, extra] of [
+      ["v64", 1],
+      ["n64", 2],
+    ] as const) {
+      const odd = Buffer.concat([
+        n64RomImage({ order }).encoded,
+        Buffer.alloc(extra),
+      ]);
+      await expect(read(odd)).rejects.toMatchObject({
+        reason: "malformed",
+        parseFailure: {
+          kind: "malformed",
+          format: "n64-rom",
+          field: "byte_order",
+        },
+      });
+      expect(
+        await parseBinaryTarget(
+          await createTestTempFile("rea-n64-odd-", `odd.${order}`, odd),
+        ),
+      ).toMatchObject({
+        ok: false,
+        error: { constraint: "file_format_rejected" },
+      });
+    }
+  });
+
+  it("reads a z64 image of any length, since it needs no swap", async () => {
+    const image = n64RomImage();
+    const odd = Buffer.concat([image.encoded, Buffer.from([0x5a])]);
+    const result = await read(odd);
+    expect(result.metadata?.rom_bytes).toBe(odd.length);
+    expect(result.contents.get("program.z64")?.equals(odd)).toBe(true);
+  });
+
+  it("reads a v64 image whose length is even but not a multiple of 4", async () => {
+    const image = n64RomImage({ order: "v64" });
+    const odd = Buffer.concat([image.encoded, Buffer.from([0x11, 0x22])]);
+    const result = await read(odd);
+    expect(result.metadata?.source_order).toBe("v64");
     expect(
-      await parseBinaryTarget(
-        await createTestTempFile("rea-n64-odd-", "odd.z64", odd),
-      ),
-    ).toMatchObject({
-      ok: false,
-      error: { constraint: "file_format_rejected" },
-    });
+      result.contents
+        .get("program.z64")
+        ?.equals(Buffer.concat([image.normalized, Buffer.from([0x22, 0x11])])),
+    ).toBe(true);
   });
 
   it("refuses an implausible boot address", async () => {
@@ -162,6 +190,32 @@ describe("Nintendo 64 ROM boundaries", () => {
           parameter: "artifact_limits.expanded_bytes",
           effective_value: 16,
           required_value: declared,
+        },
+      });
+    } finally {
+      await reader.close();
+    }
+  });
+
+  it("charges the allowance before it reads the checksum window", async () => {
+    // A boot address of 0 is only found after the window is read; the
+    // allowance refusal must come first, from the size and byte order alone.
+    const image = n64RomImage({ order: "v64", bootAddress: 0 });
+    const path = await createTestTempFile(
+      "rea-n64-budget-first-",
+      "game.v64",
+      image.encoded,
+    );
+    const reader = new N64RomArtifactReader(path, undefined, 1024);
+    try {
+      await expect(async () => {
+        for await (const entry of reader.entries()) void entry;
+      }).rejects.toMatchObject({
+        reason: "limit",
+        boundary: "memory",
+        readerLimit: {
+          parameter: "artifact_limits.expanded_bytes",
+          effective_value: 1024,
         },
       });
     } finally {

@@ -110,12 +110,28 @@ it("recognizes a Nintendo 64 ROM in every byte order", () => {
 
 it("refuses an odd or implausible Nintendo 64 image and still names an oversized one", () => {
   const encoded = n64RomImage().encoded;
-  const odd = Buffer.concat([encoded, Buffer.from([0])]);
-  expect(recognize(odd)).toMatchObject({
-    state: "refused",
+  // A z64 image needs no swap, so its length is free; v64 swaps halves and
+  // n64 reverses words.
+  expect(recognize(Buffer.concat([encoded, Buffer.from([0])]))).toMatchObject({
+    state: "recognized",
     format: "n64-rom",
-    reason: expect.stringMatching(/multiple of 4.*normalized$/u),
   });
+  for (const [order, extra] of [
+    ["v64", 1],
+    ["n64", 2],
+  ] as const) {
+    const odd = Buffer.concat([
+      n64RomImage({ order }).encoded,
+      Buffer.alloc(extra),
+    ]);
+    expect(recognize(odd)).toMatchObject({
+      state: "refused",
+      format: "n64-rom",
+      reason: expect.stringMatching(
+        new RegExp(`${order} ROM length .* multiple of .*normalized$`, "u"),
+      ),
+    });
+  }
   const badBoot = n64RomImage({ bootAddress: 0 }).encoded;
   expect(recognize(badBoot)).toMatchObject({
     state: "refused",

@@ -6,6 +6,8 @@ import {
   N64_FORMAT,
   N64_MAX_ROM_BYTES,
   N64_ROM_BYTES_LIMIT,
+  n64ByteOrder,
+  n64RomMemberBytes,
   n64RomSizeFailure,
   parseN64Rom,
   swapN64Bytes,
@@ -65,6 +67,24 @@ export class N64RomArtifactReader extends PositionalArtifactReader<N64RomMetadat
     try {
       const sizeFailure = n64RomSizeFailure(initial.size);
       if (sizeFailure !== undefined) throw sizeFailure;
+      // The member layout depends only on the size and byte order, so the
+      // allowance is charged from the first word before the checksum window
+      // is read and normalized.
+      const magic = await readArtifactFileBytes(
+        this.format,
+        handle,
+        0,
+        4,
+        initial.size,
+        signal,
+      );
+      this.assertOpen(signal);
+      const order = n64ByteOrder(magic);
+      if (order !== undefined) {
+        const alignment = n64RomSizeFailure(initial.size, order);
+        if (alignment !== undefined) throw alignment;
+        this.#admitMembers(initial.size, order);
+      }
       const covered = Math.min(initial.size, N64_CHECKSUM_END);
       const bytes = await readArtifactFileBytes(
         this.format,
@@ -98,25 +118,6 @@ export class N64RomArtifactReader extends PositionalArtifactReader<N64RomMetadat
       throw cause;
     }
     this.#order = image.metadata.source_order;
-    // Each member is hashed on its own, including the program range that
-    // overlaps the header and IPL3. A swapped dump also allocates a decoded
-    // copy of every member before that hash.
-    const expansionBudget =
-      this.expandedBytes ?? artifactExpansionBudgetBytes(initial.size);
-    let declaredBytes = 0n;
-    for (const region of image.entries) {
-      declaredBytes += BigInt(region.length);
-      if (image.metadata.source_order !== "z64")
-        declaredBytes += BigInt(region.length);
-    }
-    if (declaredBytes > BigInt(expansionBudget))
-      throw artifactReaderLimitFailure(
-        "artifact_limits.expanded_bytes",
-        expansionBudget,
-        "bytes",
-        declaredBytes,
-        "memory",
-      );
     const entries = image.entries.map((region): PositionalArtifactEntry => ({
       path: region.path,
       kind: "file",
@@ -139,6 +140,21 @@ export class N64RomArtifactReader extends PositionalArtifactReader<N64RomMetadat
       },
       formatMetadata: image.metadata,
     };
+  }
+
+  /** Refuse before allocation when the served members exceed the allowance. */
+  #admitMembers(fileSize: number, order: N64ByteOrder): void {
+    const expansionBudget =
+      this.expandedBytes ?? artifactExpansionBudgetBytes(fileSize);
+    const required = n64RomMemberBytes(fileSize, order);
+    if (required > BigInt(expansionBudget))
+      throw artifactReaderLimitFailure(
+        "artifact_limits.expanded_bytes",
+        expansionBudget,
+        "bytes",
+        required,
+        "memory",
+      );
   }
 
   /**

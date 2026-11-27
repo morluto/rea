@@ -157,21 +157,42 @@ export const n64ByteOrder = (prefix: Uint8Array): N64ByteOrder | undefined => {
 };
 
 /**
+ * Bytes each order swaps as one unit: v64 swaps 16-bit halves and n64
+ * reverses 32-bit words, so a v64 dump needs an even length and an n64 dump a
+ * multiple of 4. A z64 dump is already big-endian and has no unit. This
+ * matches mupen64plus-core's `is_valid_rom`.
+ */
+export const N64_SWAP_UNIT: Readonly<Record<N64ByteOrder, number>> = {
+  z64: 1,
+  v64: 2,
+  n64: 4,
+};
+
+const n64AlignmentFailure = (
+  length: number,
+  order: N64ByteOrder,
+): ParseFailureError<"malformed"> | undefined => {
+  const unit = N64_SWAP_UNIT[order];
+  if (length % unit === 0) return undefined;
+  return malformedInput(
+    N64_FORMAT,
+    `Nintendo 64 ${order} ROM length ${String(length)} is not a multiple of ${String(unit)}, so its byte order cannot be normalized.`,
+    { offset: 0, field: "byte_order" },
+  );
+};
+
+/**
  * Return `bytes` in big-endian order. z64 is already big-endian and is
  * returned as-is, so callers must not mutate the result. v64 swaps each pair
  * and n64 reverses each 4-byte word into a new array. The length must be a
- * multiple of 4.
+ * whole number of that order's swap unit ({@link N64_SWAP_UNIT}).
  */
 export const swapN64Bytes = (
   bytes: Uint8Array,
   order: N64ByteOrder,
 ): Uint8Array => {
-  if (bytes.length % 4 !== 0)
-    throw malformedInput(
-      N64_FORMAT,
-      `Nintendo 64 ROM length ${String(bytes.length)} is not a multiple of 4, so byte order cannot be normalized.`,
-      { offset: 0, field: "byte_order" },
-    );
+  const alignment = n64AlignmentFailure(bytes.length, order);
+  if (alignment !== undefined) throw alignment;
   if (order === "z64") return bytes;
   const out = new Uint8Array(bytes.length);
   if (order === "v64") {
@@ -260,10 +281,13 @@ const bootAddressDetail = (bootAddress: number): string =>
 
 /**
  * Structural size check. A file above 64 MiB is a named limit. A short header
- * is truncated. A length that is not a multiple of 4 is malformed.
+ * is truncated. When the byte order is known, a length that is not a whole
+ * number of its swap unit is malformed; without it only the order-free checks
+ * run, so a caller can refuse before reading the first word.
  */
 export const n64RomSizeFailure = (
   fileSize: number,
+  order?: N64ByteOrder,
 ):
   | ParseFailureError<"malformed">
   | ParseFailureError<"truncated">
@@ -285,12 +309,9 @@ export const n64RomSizeFailure = (
         extent: { availableBytes: fileSize, requiredBytes: N64_HEADER_BYTES },
       },
     );
-  if (fileSize % 4 !== 0)
-    return malformedInput(
-      N64_FORMAT,
-      `Nintendo 64 ROM length ${String(fileSize)} is not a multiple of 4, so byte order cannot be normalized.`,
-      { offset: 0, field: "byte_order" },
-    );
+  const alignment =
+    order === undefined ? undefined : n64AlignmentFailure(fileSize, order);
+  if (alignment !== undefined) return alignment;
   if (fileSize > N64_MAX_ROM_BYTES)
     return decodeLimit(
       N64_FORMAT,
@@ -314,7 +335,8 @@ export type N64RomClaim =
 
 /**
  * Claim an N64 image from a prefix. A prefix shorter than the header does not
- * claim the format. An odd length or an implausible boot address is refused.
+ * claim the format. A length the byte order cannot normalize or an
+ * implausible boot address is refused.
  * A file above the 64 MiB ceiling is still recognized when the header is
  * plausible, so the reader can report that fixed ceiling.
  */
@@ -324,7 +346,7 @@ export const n64RomRecognition = (
 ): N64RomClaim | undefined => {
   const order = n64ByteOrder(prefix);
   if (order === undefined || prefix.length < N64_HEADER_BYTES) return undefined;
-  const size = n64RomSizeFailure(fileSize);
+  const size = n64RomSizeFailure(fileSize, order);
   if (size !== undefined && size.kind !== "limit")
     return { state: "refused", reason: refusalReason(size.message) };
   const boot = readBe(
@@ -405,6 +427,45 @@ const entryFor = (
 });
 
 /**
+ * The members of a ROM of `fileSize` bytes. The layout depends only on the
+ * file size and byte order, so a reader can charge its allowance before it
+ * reads the checksum window.
+ */
+export const n64RomRegions = (
+  fileSize: number,
+  order: N64ByteOrder,
+): readonly N64RomRegion[] => [
+  entryFor(N64_HEADER_ENTRY, 0, N64_HEADER_BYTES, order, "header"),
+  ...(fileSize >= N64_IPL3_END
+    ? [
+        entryFor(
+          N64_IPL3_ENTRY,
+          N64_IPL3_OFFSET,
+          N64_IPL3_END - N64_IPL3_OFFSET,
+          order,
+          "ipl3",
+        ),
+      ]
+    : []),
+  entryFor(N64_PROGRAM_ENTRY, 0, fileSize, order, "program"),
+];
+
+/**
+ * Bytes the members of a ROM of `fileSize` bytes hold when served. Each member
+ * is hashed on its own, including the program range that overlaps the header
+ * and IPL3, and a v64 or n64 dump also holds a decoded copy of each member.
+ */
+export const n64RomMemberBytes = (
+  fileSize: number,
+  order: N64ByteOrder,
+): bigint => {
+  let bytes = 0n;
+  for (const region of n64RomRegions(fileSize, order))
+    bytes += BigInt(region.length) * (order === "z64" ? 1n : 2n);
+  return bytes;
+};
+
+/**
  * Interpret a cartridge image. `bytes` must cover the file, or the first
  * {@link N64_CHECKSUM_END} bytes when the file is longer. The result is the
  * big-endian header. A known CIC variant recomputes the CRC pair; a short
@@ -415,9 +476,9 @@ export const parseN64Rom = (
   bytes: Uint8Array,
   fileSize: number,
 ): N64RomImage => {
-  const sizeFailure = n64RomSizeFailure(fileSize);
-  if (sizeFailure !== undefined) throw sizeFailure;
   const order = n64ByteOrder(bytes);
+  const sizeFailure = n64RomSizeFailure(fileSize, order);
+  if (sizeFailure !== undefined) throw sizeFailure;
   if (order === undefined)
     throw malformedInput(
       N64_FORMAT,
@@ -513,20 +574,5 @@ export const parseN64Rom = (
     version: normalized[0x3f] ?? 0,
   } satisfies N64RomMetadata;
 
-  const entries = [
-    entryFor(N64_HEADER_ENTRY, 0, N64_HEADER_BYTES, order, "header"),
-    ...(ipl3Complete
-      ? [
-          entryFor(
-            N64_IPL3_ENTRY,
-            N64_IPL3_OFFSET,
-            N64_IPL3_END - N64_IPL3_OFFSET,
-            order,
-            "ipl3",
-          ),
-        ]
-      : []),
-    entryFor(N64_PROGRAM_ENTRY, 0, fileSize, order, "program"),
-  ];
-  return { metadata, limitations, entries };
+  return { metadata, limitations, entries: n64RomRegions(fileSize, order) };
 };

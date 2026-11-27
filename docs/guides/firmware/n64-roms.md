@@ -5,8 +5,10 @@ offline. Dumps circulate in three byte orders. Big-endian `.z64` starts with
 `80 37 12 40`. 16-bit byte-swapped `.v64` starts with `37 80 40 12`. 32-bit
 little-endian `.n64` starts with `40 12 37 80`. The file name does not matter.
 Recognition reads that first word and a plausible header: the image length is
-a multiple of 4, and the boot address is 4-byte aligned and lies in KSEG0 or
-KSEG1 (`0x80000000` through `0xBFFFFFFF`).
+a whole number of the order's swap unit (any length for `.z64`, even for
+`.v64`, a multiple of 4 for `.n64`, as in mupen64plus-core), and the boot
+address is 4-byte aligned and lies in KSEG0 or KSEG1 (`0x80000000` through
+`0xBFFFFFFF`).
 
 The reader normalizes header facts and every extracted member to big-endian
 order. Nothing is executed or patched. A CRC mismatch is reported and left
@@ -33,8 +35,9 @@ that normalization:
 - `media_byte` and `media_name` (`cartridge`, `64dd`,
   `expandable-cartridge`, `expandable-64dd`, `aleck64`, or null).
 - `cartridge_id`, `cartridge_id_hex`, `destination_byte`,
-  `destination_code`, `destination_name` and `version`. An unknown
-  destination code is `?` and `destination_name` is null.
+  `destination_code`, `destination_name` and `version`. Non-printable
+  destination bytes render as `?`. Codes outside the known table have a
+  null `destination_name`; `destination_byte` keeps the source byte.
 
 ## Members
 
@@ -90,8 +93,9 @@ coverage is `unknown` and a limitation names the cause:
 - Reserved header bytes at `0x18..0x1F` or `0x34..0x3A` are not zero.
 - The declared CRC pair differs from the computed pair for the named CIC.
 
-A file shorter than the 64-byte header is truncated. A length that is not a
-multiple of 4 is malformed, because byte order cannot be normalized. A boot
+A file shorter than the 64-byte header is truncated. An odd `.v64` length or an
+`.n64` length that is not a multiple of 4 is malformed, because its byte order
+cannot be normalized; a `.z64` image of any length needs no swap. A boot
 address outside KSEG0/KSEG1, or one that is not 4-byte aligned, is malformed.
 A prefix shorter than the header does not claim the format.
 
