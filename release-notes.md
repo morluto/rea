@@ -445,6 +445,7 @@
 * **ghidra:** point to the LC_MAIN entry when a stripped Mach-O has no main symbol ([#12966](https://github.com/morluto/rea/issues/12966)) ([3db9120](https://github.com/morluto/rea/commit/3db9120c5e8af1e60e6d0e8ea7a0da35c181e085))
 * **ghidra:** preserve cancellation and failure order in language discovery ([#13399](https://github.com/morluto/rea/issues/13399)) ([8ee0ffe](https://github.com/morluto/rea/commit/8ee0ffe0862721e928feb6cb18f7684403b58d77))
 * **ghidra:** report a held checkpoint lease as retryable contention ([#14844](https://github.com/morluto/rea/issues/14844)) ([059df00](https://github.com/morluto/rea/commit/059df00e70ee7067252f0ce10fa104cd45c51011))
+* **ghidra:** report a wait-bounded owner probe timeout as busy regardless of clock skew ([#14935](https://github.com/morluto/rea/issues/14935)) ([cd87f99](https://github.com/morluto/rea/commit/cd87f998e44c7b1fde8f7832d4f241945ffedfd2))
 * **ghidra:** report incomplete language catalogs at the file size limit ([#13407](https://github.com/morluto/rea/issues/13407)) ([3d3e7db](https://github.com/morluto/rea/commit/3d3e7db5b53329fa0a43c35cb26b9bfade0ee045))
 * **ghidra:** return an elapsed startup instead of importing again ([691c277](https://github.com/morluto/rea/commit/691c277d641f401ec473835c893bd9c50be1ba9b))
 * **ghidra:** reuse completed decompiles and decompile code outside functions ([#14843](https://github.com/morluto/rea/issues/14843)) ([a3a491c](https://github.com/morluto/rea/commit/a3a491c3893ca68359b0a22329c7992c91044116))
