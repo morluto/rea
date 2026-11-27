@@ -261,27 +261,66 @@ export const yaraMatchOutputSink = (parser: YaraMatchOutputParser): Writable =>
     },
   });
 
-/** One compiler or scan diagnostic yara wrote to stderr, read once here. */
+/**
+ * What a rule compile error means for the caller's repair. The kinds follow
+ * libyara 4.x message text (`yr_compiler_get_error_message` and the lexer's
+ * include errors); any other message is `other` and keeps its text.
+ */
+export type YaraCompileErrorKind =
+  | "include"
+  | "syntax"
+  | "undefined"
+  | "duplicate"
+  | "unreadable_file"
+  | "other";
+
+/** One rule compile error; `source` is the file yara named, which may be an included file. */
+export interface YaraCompileError {
+  readonly kind: YaraCompileErrorKind;
+  readonly source: string;
+  readonly line: number | null;
+  /** The rule yara named, when the error belongs to one. */
+  readonly rule: string | null;
+  readonly message: string;
+}
+
+/** Every diagnostic yara wrote to stderr, read once here. */
 export interface YaraDiagnostics {
   readonly warnings: readonly string[];
-  /** Rule source failures; `source` is the file yara named, which may be an included file. */
-  readonly compileErrors: readonly {
-    readonly source: string;
-    readonly line: number | null;
-    readonly message: string;
-  }[];
+  readonly compileErrors: readonly YaraCompileError[];
   readonly scanErrors: readonly {
     readonly path: string;
     readonly reason: string;
   }[];
-  /** Lines that match none of the documented forms. */
+  /** Lines that match none of the documented forms, kept verbatim. */
   readonly unrecognized: readonly string[];
 }
 
-const WARNING = /^(?:warning: .+|.+\(\d+\): warning: .+)$/u;
-const RULE_ERROR = /^error: rule "([^"]*)" in (.+)\((\d+)\): (.+)$/u;
-const SOURCE_ERROR = /^(.+)\((\d+)\): error: (.+)$/u;
+// yara 4.x cli/yara.c print_compiler_error writes exactly two forms:
+//   LEVEL: rule "RULE" in FILE(LINE): MESSAGE   (the error belongs to a rule)
+//   FILE(LINE): LEVEL: MESSAGE                  (it does not, e.g. includes)
+// cli/common.c writes `error: could not open file: FILE` for a rule file it
+// cannot open. FILE is the path passed to yara, after any NAMESPACE: prefix.
+const RULE_DIAGNOSTIC =
+  /^(error|warning): rule "([^"]*)" in (.+)\((\d+)\): (.+)$/u;
+const SOURCE_DIAGNOSTIC = /^(.+)\((\d+)\): (error|warning): (.+)$/u;
 const OPEN_ERROR = /^error: could not open file: (.+)$/u;
+const BARE_WARNING = /^warning: .+$/u;
+
+const INCLUDE_MESSAGE =
+  /^(?:can't open include file: |callback failed to provide include resource: |includes? circular reference$|too many levels of included rules$|includes depth exceeded$|includes are disabled$)/u;
+
+/** Classify one compiler message by the libyara text that produced it. */
+export const yaraCompileErrorKind = (message: string): YaraCompileErrorKind =>
+  INCLUDE_MESSAGE.test(message)
+    ? "include"
+    : message.startsWith("syntax error")
+      ? "syntax"
+      : /^(?:undefined (?:identifier|string) |unknown module )/u.test(message)
+        ? "undefined"
+        : message.startsWith("duplicated ")
+          ? "duplicate"
+          : "other";
 
 /** Classify yara stderr by line; scan errors must name the scanned path. */
 export const parseYaraDiagnostics = (
@@ -290,30 +329,48 @@ export const parseYaraDiagnostics = (
 ): YaraDiagnostics => {
   const scanError = `error scanning ${scannedPath}: `;
   const warnings: string[] = [];
-  const compileErrors: YaraDiagnostics["compileErrors"][number][] = [];
+  const compileErrors: YaraCompileError[] = [];
   const scanErrors: YaraDiagnostics["scanErrors"][number][] = [];
   const unrecognized: string[] = [];
+  const diagnostic = (
+    level: string,
+    source: string,
+    line: number,
+    rule: string | null,
+    message: string,
+    raw: string,
+  ) => {
+    if (level === "warning") warnings.push(raw);
+    else
+      compileErrors.push({
+        kind: yaraCompileErrorKind(message),
+        source,
+        line,
+        rule,
+        message,
+      });
+  };
   for (const raw of stderr.split("\n")) {
     const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
     if (line.trim() === "") continue;
     let match: RegExpExecArray | null;
-    if (WARNING.test(line)) warnings.push(line);
-    else if ((match = RULE_ERROR.exec(line)) !== null)
-      compileErrors.push({
-        source: match[2]!,
-        line: Number(match[3]),
-        message: `rule "${match[1]!}": ${match[4]!}`,
-      });
-    else if ((match = SOURCE_ERROR.exec(line)) !== null)
-      compileErrors.push({
-        source: match[1]!,
-        line: Number(match[2]),
-        message: match[3]!,
-      });
+    if ((match = RULE_DIAGNOSTIC.exec(line)) !== null)
+      diagnostic(
+        match[1]!,
+        match[3]!,
+        Number(match[4]),
+        match[2]!,
+        match[5]!,
+        line,
+      );
+    else if ((match = SOURCE_DIAGNOSTIC.exec(line)) !== null)
+      diagnostic(match[3]!, match[1]!, Number(match[2]), null, match[4]!, line);
     else if ((match = OPEN_ERROR.exec(line)) !== null)
       compileErrors.push({
+        kind: "unreadable_file",
         source: match[1]!,
         line: null,
+        rule: null,
         message: "could not open file",
       });
     else if (line.startsWith(scanError) && line.length > scanError.length)
@@ -321,6 +378,7 @@ export const parseYaraDiagnostics = (
         path: scannedPath,
         reason: line.slice(scanError.length),
       });
+    else if (BARE_WARNING.test(line)) warnings.push(line);
     else unrecognized.push(line);
   }
   return { warnings, compileErrors, scanErrors, unrecognized };

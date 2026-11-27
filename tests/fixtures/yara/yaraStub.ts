@@ -42,7 +42,8 @@ const collectRuleNames = (filePath) => {
     if (inc) {
       const targetInc = resolve(dirname(fullPath), inc[1]);
       if (!fs.existsSync(targetInc)) {
-        process.stderr.write("error: in " + filePath + "(1): can't include file: " + inc[1] + "\n");
+        // yara 4.x print_compiler_error, rule-less form.
+        process.stderr.write(filePath + "(1): error: can't open include file: " + inc[1] + "\n");
         process.exit(1);
       }
       names.push(...collectRuleNames(targetInc));

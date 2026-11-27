@@ -95,7 +95,8 @@ Each entry in `matches` has:
   the artifact for the exact bytes.
 
 Rules that did not match are absent. `warnings` holds the warning lines yara
-printed, such as slow-string warnings, verbatim.
+printed, such as slow-string warnings, verbatim, followed by any other stderr
+line that matches none of yara's documented diagnostic forms.
 
 ## Limits
 
@@ -129,10 +130,17 @@ string; string match counts are then lower bounds.
 ## Errors
 
 - A rule file that yara cannot compile fails with `invalid_request`. Each issue
-  names the rule file (`rule_paths[i]` when it is one of the selected files),
-  the line, and yara's message, and the remediation says to fix or remove that
-  file. Rules that need external variables (`-d`) or module data cannot be
-  compiled by this tool.
+  names the rule file (`rule_paths[i]` when it is one of the selected files, or
+  `rule_paths` for an included file), the line, the rule when yara named one,
+  and yara's message. `diagnostics.compile_errors` records each error with a
+  `kind` read from yara 4.x's message text: `include` (an include file cannot
+  be opened, a circular include, or too many include levels), `syntax`,
+  `undefined` (an undefined identifier or string, or an unknown module),
+  `duplicate` (a duplicated rule, string, tag, or metadata identifier),
+  `unreadable_file`, or `other`. The remediation gives one repair per kind
+  present. Rules that need external variables (`-d`) or module data cannot be
+  compiled by this tool. Stderr lines that match no documented form are kept
+  in `diagnostics.unrecognized_stderr_lines`.
 - A missing or unreadable rule file is refused before yara starts.
 - Cancellation stops the yara process group before the call returns. Cleanup
   that cannot be proven is retained and retried before the next scan.

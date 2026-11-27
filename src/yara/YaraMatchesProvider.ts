@@ -13,6 +13,7 @@ import {
   parseYaraDiagnostics,
   yaraMatchOutputSink,
   YaraMatchOutputParser,
+  type YaraCompileErrorKind,
   type YaraDiagnostics,
   type YaraParsedMatches,
 } from "./YaraOutput.js";
@@ -274,8 +275,45 @@ const pathInputRefusal = (
   );
 };
 
-const RULE_COMPILE_REMEDIATION =
-  "Fix the reported rule source, or remove that file from rule_paths, then retry. Rule names must be unique across all selected files, and rules that need external variables or module data cannot be compiled by this tool.";
+/** The repair each kind of compile error needs, in the order they are reported. */
+const COMPILE_ERROR_REMEDIATION: Readonly<
+  Record<YaraCompileErrorKind, string>
+> = {
+  include:
+    "Make each included file exist and be readable; a relative include resolves against the directory of the rule file that includes it. Or remove the include.",
+  syntax: "Fix the rule syntax at the reported line.",
+  undefined:
+    "Define the identifier or string, or import the module that provides it; rules that need external variables or module data cannot be compiled by this tool.",
+  duplicate:
+    "Rule names must be unique across all selected files and their includes; rename a rule or remove one file from rule_paths.",
+  unreadable_file:
+    "Select a rule file that exists and is readable, or remove it from rule_paths.",
+  other: "Fix the reported rule source, or remove that file from rule_paths.",
+};
+
+/** One repair sentence per kind present, then the retry. */
+const compileRemediation = (diagnostics: YaraDiagnostics): string =>
+  [
+    ...new Set(
+      diagnostics.compileErrors.map(
+        ({ kind }) => COMPILE_ERROR_REMEDIATION[kind],
+      ),
+    ),
+    "Then retry.",
+  ].join(" ");
+
+/** Lines yara wrote that match no documented form, kept for the caller. */
+const unrecognizedDiagnostics = (
+  diagnostics: YaraDiagnostics,
+  staged: StagedScanInputs,
+): Readonly<Record<string, unknown>> =>
+  diagnostics.unrecognized.length === 0
+    ? {}
+    : {
+        unrecognized_stderr_lines: diagnostics.unrecognized.map((line) =>
+          restoreCallerPaths(line, staged),
+        ),
+      };
 
 /** A rule source yara refused to compile is the caller's selection. */
 const ruleCompileError = (
@@ -301,7 +339,7 @@ const ruleCompileError = (
   const issues = compileErrors.map(({ index, failure }) => ({
     path: index === -1 ? ["rule_paths"] : ["rule_paths", index],
     reason: "invalid_value" as const,
-    message: `${failure.source}${failure.line === null ? "" : `(${String(failure.line)})`}: ${failure.message}`,
+    message: `${failure.source}${failure.line === null ? "" : `(${String(failure.line)})`}: ${failure.rule === null ? "" : `rule "${failure.rule}": `}${failure.message}`,
   }));
   return new AnalysisInputError(
     OPERATION,
@@ -309,10 +347,11 @@ const ruleCompileError = (
       ...details,
       conformsToInputContract: true,
       userMessage: `yara could not compile the selected rules: ${issues.map((issue) => issue.message).join("; ")}`,
-      remediationAction: RULE_COMPILE_REMEDIATION,
+      remediationAction: compileRemediation(diagnostics),
       diagnostics: {
         ...details.diagnostics,
         compile_errors: compileErrors.map(({ failure }) => failure),
+        ...unrecognizedDiagnostics(diagnostics, staged),
       },
     },
     issues,
@@ -386,9 +425,7 @@ const yaraOutcomeContext = (
                 restoreCallerPaths(reason, staged),
               ),
             }),
-        ...(diagnostics.unrecognized.length === 0
-          ? {}
-          : { unrecognized_stderr_lines: diagnostics.unrecognized.length }),
+        ...unrecognizedDiagnostics(diagnostics, staged),
       },
     });
   },

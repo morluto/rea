@@ -244,7 +244,9 @@ describe("inspect_yara_matches with a yara stand-in", () => {
           message: `${rule}(3): rule "Bad": undefined identifier "nope"`,
         },
       ],
-      remediationAction: expect.stringContaining("Fix the reported rule"),
+      remediationAction: expect.stringContaining(
+        "import the module that provides it",
+      ),
     });
   });
 
@@ -599,6 +601,52 @@ describe("inspect_yara_matches with a yara stand-in", () => {
         bytes: Buffer.byteLength(mainRuleText),
       },
     ]);
+  });
+
+  it("reports a missing include as an input error with include repair advice", async () => {
+    const { root, command, sample, args } = await fixture("resolve");
+    const rulesDir = join(root, "rules");
+    await mkdir(rulesDir);
+    const mainRule = join(rulesDir, "main.yar");
+    await writeFile(
+      mainRule,
+      'include "common.yar"\nrule MainRule { condition: true }\n',
+    );
+    const service = stubService(command, {
+      ...process.env,
+      YARA_STUB_MODE: "resolve",
+      YARA_STUB_ARGS: args,
+    });
+    const result = await service.inspect({
+      path: sample,
+      rule_paths: [mainRule],
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisInputError",
+      conformsToInputContract: true,
+      issues: [
+        {
+          path: ["rule_paths", 0],
+          reason: "invalid_value",
+          message: `${mainRule}(1): can't open include file: ${join(rulesDir, "common.yar")}`,
+        },
+      ],
+      remediationAction: expect.stringContaining(
+        "a relative include resolves against the directory of the rule file that includes it",
+      ),
+      diagnostics: {
+        compile_errors: [
+          {
+            kind: "include",
+            source: mainRule,
+            line: 1,
+            rule: null,
+          },
+        ],
+      },
+    });
   });
 
   it("retains completed Evidence and retries failed snapshot directory cleanup before the next scan", async () => {

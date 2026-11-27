@@ -87,7 +87,9 @@ posixTest(
       const { error } = parseMcpToolError(response);
       expect(error.code).toBe("invalid_request");
       expect(JSON.stringify(error)).toContain("undefined identifier");
-      expect(error.remediation.action).toContain("Fix the reported rule");
+      expect(error.remediation.action).toContain(
+        "import the module that provides it",
+      );
     } finally {
       await session.close();
     }
