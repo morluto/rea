@@ -583,6 +583,7 @@ const NON_ZIP_FORMATS = {
   "windows-shortcut": described("windows-shortcut", plain),
   "python-pyc": described("python-pyc", plain),
   devicetree: described("devicetree", plain),
+  "unity-addressables-catalog": described("unity-addressables-catalog", plain),
   deb: described("deb", plain),
   entitlements: described("entitlements", plain),
   directory: container("directory", {

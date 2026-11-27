@@ -1,3 +1,5 @@
+import type { JsonValue } from "../jsonValue.js";
+
 /** Preserve original indices and count every match while projecting only the requested page. */
 export const selectViewRows = <Source, Row>(
   rows: readonly Source[],
@@ -62,4 +64,20 @@ export const pickFields = <Row extends Record<string, unknown>>(
     if (Object.hasOwn(row, field)) picked[field] = row[field];
   }
   return picked;
+};
+
+/** Copy the selected columns of one retained row in row order; the source index always stays. */
+export const selectRowFields = (
+  row: object,
+  index: number,
+  fields: ReadonlySet<string> | undefined,
+): { index: number } & Record<string, JsonValue> => {
+  const item: { index: number } & Record<string, JsonValue> = { index };
+  const values = row as Readonly<Record<string, JsonValue | undefined>>;
+  for (const key of Object.keys(values)) {
+    const value = values[key];
+    if (value !== undefined && (fields === undefined || fields.has(key)))
+      item[key] = value;
+  }
+  return item;
 };

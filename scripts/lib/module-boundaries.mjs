@@ -11,6 +11,7 @@ const MIGRATED_PROVIDER_ROOTS = new Set([
   "evm",
   "go",
   "il2cpp",
+  "unity",
   "model",
   "gpu",
   "python",

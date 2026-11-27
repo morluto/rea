@@ -91,6 +91,7 @@ export const UNIT_LAYERS = Object.freeze(
       "signals",
       "sqlite",
       "uefi",
+      "unity",
       "v8",
       "wasm",
     ]),
@@ -407,6 +408,10 @@ export const ENTRY_FILES = Object.freeze(
       rust: ["RustBinaryProvider.ts", "RustBinaryProviderIdentity.ts"],
       signals: ["SigrokProviderIdentity.ts", "SigrokRecordingProvider.ts"],
       sqlite: ["SqliteDatabaseProvider.ts"],
+      unity: [
+        "UnityAddressablesProvider.ts",
+        "UnityAddressablesProviderIdentity.ts",
+      ],
       v8: ["V8CodeCacheProvider.ts", "V8CodeCacheProviderIdentity.ts"],
       wasm: ["WabtArtifactProvider.ts", "WabtRelease.ts"],
     }).map(([unit, files]) => [unit, Object.freeze(files)]),

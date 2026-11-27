@@ -226,6 +226,10 @@ explicit path or endpoint and do not need it.
   - Unity IL2CPP `global-metadata.dat`: `inspect_il2cpp_metadata`; pass the
     matching native binary as `binary_path` to link method addresses
     ([IL2CPP metadata guide](https://github.com/morluto/rea/blob/main/docs/il2cpp-metadata.md)).
+  - Unity Addressables `catalog.json` or `catalog.bin`:
+    `inspect_unity_addressables`, optional `hash_path`; follow a key with
+    `key_indices` on location pages. No bundle is opened
+    ([Addressables guide](https://github.com/morluto/rea/blob/main/docs/unity-addressables.md)).
   - Maven `pom.xml` or Gradle `.module`: `inspect_maven_gradle_metadata`
     ([Maven and Gradle guide](https://github.com/morluto/rea/blob/main/docs/maven-gradle-metadata.md)).
   - PE tables: `inspect_pe_certificates`, `inspect_pe_imports`,

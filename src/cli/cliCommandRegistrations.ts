@@ -90,6 +90,10 @@ export const CLI_COMMAND_REGISTRATIONS = {
     () => import("./il2cppCommands.js"),
     "registerIl2cppCommands",
   ),
+  unityAddressables: cliRegistrar(
+    () => import("./unityAddressablesCommands.js"),
+    "registerUnityAddressablesCommands",
+  ),
   model: cliRegistrar(
     () => import("./modelCommands.js"),
     "registerModelCommands",
@@ -312,6 +316,7 @@ const CLI_FAMILY_REGISTRATIONS: {
     "releaseExposure",
     "go",
     "il2cpp",
+    "unityAddressables",
     "model",
     "gpu",
     "rust",

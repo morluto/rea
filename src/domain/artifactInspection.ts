@@ -712,6 +712,11 @@ const STANDALONE_FORMAT_READERS = {
     rationale:
       "Decode the flattened devicetree header, reservations and node tree.",
   },
+  "unity-addressables-catalog": {
+    operation: "inspect_unity_addressables",
+    rationale:
+      "Inventory the binary content catalog's keys, locations, providers and bundle hashes without opening bundles.",
+  },
   deb: {
     operation: "inspect_deb_package",
     rationale:

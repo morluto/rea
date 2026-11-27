@@ -138,6 +138,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [CPython pyc inspection](python-pyc.md)
 - [Erlang BEAM files](erlang-beam.md)
 - [Godot PCK archives](godot-pck.md)
+- [Unity Addressables catalogs](unity-addressables.md)
 - [UnityFS AssetBundle archives](unityfs.md)
 - [iNES containers](ines-containers.md)
 - [Nintendo DS ROMs](guides/firmware/nds-roms.md)

@@ -69,6 +69,10 @@ import {
 } from "../../../src/artifacts/fit/FitImage.fixture.js";
 import { devicetreeFixture } from "../../../src/domain/firmware/devicetree.fixture.js";
 import {
+  binaryCatalog,
+  sampleCatalog,
+} from "../../fixtures/unity/addressables.js";
+import {
   gzipTarFixture,
   RELEASE_TAR_MEMBERS,
   tarFixture,
@@ -955,6 +959,22 @@ it("classifies a FIT by its /images node and a plain DTB as a devicetree artifac
     ok: true,
     value: { kind: "artifact", format: "devicetree" },
   });
+});
+
+it("classifies a binary Addressables catalog by its magic and header version", async () => {
+  const directory = await createTestTempDirectory("rea-addressables-target-");
+  const path = join(directory, "catalog.bin");
+  await writeFile(path, binaryCatalog(sampleCatalog(), { version: 3 }));
+  expect(await parseBinaryTarget(path)).toMatchObject({
+    ok: true,
+    value: { kind: "artifact", format: "unity-addressables-catalog" },
+  });
+  // An undecoded header version is not claimed by the magic alone.
+  await writeFile(path, binaryCatalog(sampleCatalog(), { version: 1 }));
+  const unclaimed = await parseBinaryTarget(path);
+  expect(unclaimed.ok ? unclaimed.value.format : undefined).not.toBe(
+    "unity-addressables-catalog",
+  );
 });
 
 it("classifies stored and gzip-compressed tar archives as tar whatever their name", async () => {

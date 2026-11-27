@@ -24,6 +24,7 @@ import { hasUImageMagic } from "./uimageFormat.js";
 import { hasBfltMagic } from "./bfltExecutable.js";
 import { hasNroMagic, hasNsoMagic } from "./switchExecutable.js";
 import { hasUnityFsHeader } from "./unityfsFormat.js";
+import { hasUnityAddressablesBinaryHeader } from "./unity/unityAddressables.js";
 import { hasMftFileRecordHeader } from "./windows/ntfsMft.js";
 import { hasWindowsShortcutHeader } from "./windows/windowsShortcutHeader.js";
 import { BinaryFormatFailure } from "./binaryContainer.js";
@@ -90,6 +91,7 @@ export const STANDALONE_ARTIFACT_FORMATS = [
   "windows-shortcut",
   "python-pyc",
   "devicetree",
+  "unity-addressables-catalog",
   "deb",
 ] as const;
 
@@ -293,6 +295,9 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
       }
       return { state: "recognized", format: "devicetree" };
     },
+    // The four-byte magic alone is too weak for arbitrary bytes; the complete
+    // header must also name a decoded catalog version.
+    when("unity-addressables-catalog", hasUnityAddressablesBinaryHeader),
     // Binary plists, including keyed archives, often use other extensions.
     when("plist", hasBinaryPlistSignature),
     // No magic: the stored logo CRC and a matching checksum claim it, after

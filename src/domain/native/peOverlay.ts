@@ -105,6 +105,7 @@ export const PE_OVERLAY_LEADING_FORMATS = [
   "python-pyc",
   "devicetree",
   "deb",
+  "unity-addressables-catalog",
 ] as const;
 export type PeOverlayLeadingFormat =
   (typeof PE_OVERLAY_LEADING_FORMATS)[number];

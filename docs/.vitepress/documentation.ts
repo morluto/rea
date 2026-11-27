@@ -554,6 +554,11 @@ export const documentationSections = [
         route: "/godot-pck",
       },
       {
+        text: "Unity Addressables catalogs",
+        source: "unity-addressables.md",
+        route: "/unity-addressables",
+      },
+      {
         text: "UnityFS AssetBundle archives",
         source: "unityfs.md",
         route: "/unityfs",
