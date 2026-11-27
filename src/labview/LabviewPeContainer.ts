@@ -32,6 +32,8 @@ export type EmbeddedRsrcScan =
   | {
       readonly ok: true;
       readonly containers: readonly EmbeddedRsrc[];
+      /** Whether this file declares a PE image at all. */
+      readonly admitted: boolean;
       /** Whether every resource branch this walk reached was examined. */
       readonly complete: boolean;
     }
@@ -45,18 +47,25 @@ export type EmbeddedRsrcScan =
  * executes or extracts anything.
  */
 export const findEmbeddedRsrcContainers = (bytes: Buffer): EmbeddedRsrcScan => {
+  // A file that does not even declare `MZ` is simply not a PE; a file that
+  // does but cannot be admitted has an unreadable structure.
+  const declaresPe =
+    bytes.length >= 2 && bytes[0] === 0x4d && bytes[1] === 0x5a;
   let layout: ReturnType<typeof readPeResourceLayout>;
   try {
     layout = readPeResourceLayout(bytes);
   } catch (cause) {
-    // Not an admitted PE, or a malformed one: this file carries no embedded
-    // RSRC container that this reader can locate.
     if (cause instanceof ParseFailureError)
-      return { ok: true, containers: [], complete: false };
+      return {
+        ok: true,
+        containers: [],
+        admitted: declaresPe,
+        complete: !declaresPe,
+      };
     throw cause;
   }
   if (layout.rva === 0 || layout.size < PE_RESOURCE_DIRECTORY_BYTES)
-    return { ok: true, containers: [], complete: true };
+    return { ok: true, containers: [], admitted: true, complete: true };
 
   const reader = new BinaryReader(bytes, true, "pe");
   const root = layout.rva;
@@ -230,5 +239,5 @@ export const findEmbeddedRsrcContainers = (bytes: Buffer): EmbeddedRsrcScan => {
       return { ok: false, failure: cause as ParseFailureError<"limit"> };
     throw cause;
   }
-  return { ok: true, containers: found, complete };
+  return { ok: true, containers: found, admitted: true, complete };
 };

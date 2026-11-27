@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { peResourceFixture } from "../domain/pe/peResources.fixture.js";
 import { findEmbeddedRsrcContainers } from "./LabviewPeContainer.js";
 import { parseLabviewRsrc } from "./LabviewRsrc.js";
@@ -430,6 +431,36 @@ describe("LabviewArtifactProvider", () => {
     expect(result.value.limitations.join(" ")).toContain(
       "cannot establish from its content",
     );
+    await provider.close();
+  });
+
+  it("does not call a non-PE file a malformed PE", async () => {
+    const root = await createTestTempDirectory("rea-labview-notpe-");
+    const path = join(root, "notes.txt");
+    await writeFile(path, Buffer.from("just some text, not an artifact"));
+    const provider = new LabviewArtifactProvider();
+    const result = await provider.inspect({ path });
+    expect(result.ok).toBe(false);
+    if (!result.ok && result.error instanceof AnalysisInputError) {
+      expect(result.error.issues[0]?.message).toContain(
+        "not a LabVIEW RSRC container",
+      );
+      expect(result.error.issues[0]?.message).not.toContain(
+        "could not be examined",
+      );
+    }
+    await provider.close();
+  });
+
+  it("reports a PE that cannot be admitted as unexamined", async () => {
+    const root = await createTestTempDirectory("rea-labview-badpe-");
+    const path = join(root, "broken.exe");
+    await writeFile(path, Buffer.concat([Buffer.from("MZ"), Buffer.alloc(30)]));
+    const provider = new LabviewArtifactProvider();
+    const result = await provider.inspect({ path });
+    expect(result.ok).toBe(false);
+    if (!result.ok && result.error instanceof AnalysisInputError)
+      expect(result.error.issues[0]?.message).toContain("could not be read");
     await provider.close();
   });
 

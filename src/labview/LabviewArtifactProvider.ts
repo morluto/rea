@@ -226,6 +226,7 @@ export class LabviewArtifactProvider implements LabviewArtifactPort {
 
     const bytes = snapshot.bytes;
     let containers: readonly EmbeddedRsrc[];
+    let admitted = true;
     let coverage = true;
     if (
       bytes.subarray(0, RSRC_MAGIC.length).toString("latin1") === RSRC_MAGIC
@@ -235,6 +236,7 @@ export class LabviewArtifactProvider implements LabviewArtifactPort {
       const scan = findEmbeddedRsrcContainers(bytes);
       if (!scan.ok) return err(withIdentity(limitFailure(scan.failure)));
       containers = scan.containers;
+      admitted = scan.admitted;
       coverage = scan.complete;
     }
     if (containers.length === 0)
