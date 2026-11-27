@@ -109,6 +109,7 @@ export const parseConfig = (
   );
   const valueFlowEdges = admitted("ghidra.value_flow_max_edges");
   const callerScan = admitted("hopper.caller_scan_budget_ms");
+  const hopperDecompileTimeout = admitted("hopper.decompile_timeout_ms");
   const bridgeBytes = admitted("bridge.max_request_bytes");
   const bridgeReplyBytes = admitted("bridge.max_reply_bytes");
   const regexDeadline = admitted("regex.matching_deadline_ms");
@@ -195,6 +196,9 @@ export const parseConfig = (
     ilspyCmdPath: env.REA_ILSPY_CMD_PATH,
     hopperLauncherPath: env.HOPPER_LAUNCHER_PATH,
     hopperStartupTimeoutMs: hopperStartup ?? DEFAULT_HOPPER_STARTUP_TIMEOUT_MS,
+    ...(hopperDecompileTimeout === undefined || hopperDecompileTimeout === null
+      ? {}
+      : { hopperDecompileTimeoutMs: hopperDecompileTimeout }),
     hopperStartupTimeoutSource:
       environment.REA_HOPPER_STARTUP_TIMEOUT_MS === undefined ||
       hopperStartup === undefined

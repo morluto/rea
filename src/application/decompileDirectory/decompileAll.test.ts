@@ -21,6 +21,8 @@ import {
 } from "../../ports/AnalysisProvider.js";
 import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
 import { EnhancedTools } from "../EnhancedTools.js";
+import { decompileAll } from "./decompileAll.js";
+import type { ProgressUpdate } from "../../ports/ProgressReporter.js";
 import { DecompileExport } from "./exportTree.js";
 import { ExportResources } from "./exportResources.js";
 import { selectProcedures, validateDecompileBounds } from "./selection.js";
@@ -2537,5 +2539,48 @@ describe("directory export selection order", () => {
       "unresolved:a",
       "unresolved:b",
     ]);
+  });
+});
+
+describe("decompile_all progress", () => {
+  const directory = useOutputDirectory();
+
+  it("names the function being decompiled and forwards the reporter", async () => {
+    const { port } = harness();
+    const updates: ProgressUpdate[] = [];
+    const progress = {
+      report: (update: ProgressUpdate) => {
+        updates.push(update);
+        return Promise.resolve();
+      },
+    };
+    const forwarded: boolean[] = [];
+    const observed: AnalysisOperationPort = {
+      execute: (operation, parameters, execution) => {
+        if (operation === "procedure_pseudo_code")
+          forwarded.push(execution?.progress === progress);
+        return port.execute(operation, parameters, execution);
+      },
+    };
+    const result = await decompileAll(
+      observed,
+      decompileDirectoryInputSchema.parse({
+        output_directory: directory(),
+      }),
+      undefined,
+      progress,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(forwarded).toEqual([true, true, true]);
+    const waiting = updates.filter(
+      (update) => update.phase === "decompile_all",
+    );
+    expect(waiting.map((update) => update.message)).toEqual([
+      expect.stringContaining("0x1000"),
+      expect.stringContaining("0x2000"),
+      expect.stringContaining("0x3000"),
+    ]);
+    expect(waiting.at(-1)).toMatchObject({ total: 3 });
   });
 });

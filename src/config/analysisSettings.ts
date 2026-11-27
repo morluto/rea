@@ -52,6 +52,7 @@ const environmentSchemas: Readonly<Record<string, z.ZodType<number, string>>> =
     REA_GHIDRA_DECOMPILE_MAX_PAYLOAD_MIB: ghidraDecompilePayloadMiBSchema,
     REA_GHIDRA_STARTUP_TIMEOUT_MS: providerStartupTimeoutSchema,
     REA_HOPPER_STARTUP_TIMEOUT_MS: providerStartupTimeoutSchema,
+    REA_HOPPER_DECOMPILE_TIMEOUT_MS: providerStartupTimeoutSchema,
     REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS: ghidraDecompileTimeoutSchema,
     REA_JADX_OPERATION_TIMEOUT_MS: providerStartupTimeoutSchema,
     REA_REGEX_MATCHING_DEADLINE_MS: regexMatchingDeadlineMsSchema,

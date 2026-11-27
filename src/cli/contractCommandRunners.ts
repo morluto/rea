@@ -1,4 +1,5 @@
 import { cliPublicationInvocation } from "./cliEvidencePublication.js";
+import { cliProgressReporter } from "./cliProgress.js";
 import type { Logger } from "pino";
 
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
@@ -186,6 +187,7 @@ export const runDirectOnTarget =
       {
         logger,
         signal,
+        progress: cliProgressReporter,
         ...directAnalysisOpening(opening),
         // A bundle needs the sources its record cites: a requested one, or
         // the retained-Evidence cache an over-budget result may go to.

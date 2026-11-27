@@ -346,6 +346,22 @@ export const ANALYSIS_SETTINGS = {
       "trace_native_values",
     ],
   },
+  "hopper.decompile_timeout_ms": {
+    updateMode: "runtime",
+    environment: "REA_HOPPER_DECOMPILE_TIMEOUT_MS",
+    defaultValue: null,
+    minimum: 1,
+    maximum: MAX_NODE_TIMER_DELAY_MS,
+    unit: "ms",
+    appliesAt: "next_operation",
+    provider: "hopper",
+    operations: [
+      "procedure_pseudo_code",
+      "procedure_info",
+      "analyze_function",
+      "decompile_all",
+    ],
+  },
   "ghidra.decompile_timeout_seconds": {
     updateMode: "runtime",
     environment: "REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS",
@@ -810,7 +826,8 @@ export const analysisSettingValueSchema = (id: AnalysisSettingId) => {
     .min(definition.minimum)
     .max(definition.maximum);
   return id === "ghidra.decompile_timeout_seconds" ||
-    id === "ghidra.decompile_max_payload_mib"
+    id === "ghidra.decompile_max_payload_mib" ||
+    id === "hopper.decompile_timeout_ms"
     ? number.nullable()
     : number;
 };

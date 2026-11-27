@@ -8,6 +8,7 @@ export interface AnalysisSettingValues {
   readonly "ghidra.value_flow_max_edges": number;
   readonly "ghidra.startup_timeout_ms": number;
   readonly "hopper.startup_timeout_ms": number;
+  readonly "hopper.decompile_timeout_ms": number | null;
   readonly "ghidra.decompile_timeout_seconds": number | null;
   readonly "ghidra.decompile_max_payload_mib": number | null;
   readonly "jadx.operation_timeout_ms": number;

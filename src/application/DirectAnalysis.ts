@@ -11,6 +11,7 @@ import {
 import type { EspFlashSelection } from "../domain/firmware/espFlashLocation.js";
 import { dispatchQueuedInterrupts } from "../process/queuedInterrupts.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
+import type { ProgressReporter } from "../ports/ProgressReporter.js";
 import type { NativeLoadSelection } from "../domain/rawBinary.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { DirectAnalysisDependencies } from "./DirectAnalysisDependencies.js";
@@ -126,6 +127,7 @@ export const runDirectAnalysis = async (
     readonly loadSelection?: NativeLoadSelection;
     readonly espFlash?: EspFlashSelection;
     readonly includeEvidenceSources?: boolean;
+    readonly progress?: ProgressReporter;
   } = {},
 ): Promise<AnalysisResultWithSources<Evidence, JsonValue>> =>
   withProcessCancellation(options.signal, (signal) => {
@@ -142,6 +144,9 @@ export const runDirectAnalysis = async (
         logger: options.logger ?? silentLogger,
         snapshotPath: options.snapshotPath,
         signal,
+        ...(options.progress === undefined
+          ? {}
+          : { progress: options.progress }),
         ...(options.includeEvidenceSources === true
           ? { includeEvidenceSources: true }
           : {}),
@@ -357,6 +362,7 @@ const runAnalysis = async (
     readonly evidenceParameters?: Readonly<Record<string, JsonValue>>;
     readonly createSession?: () => BinarySession | Promise<BinarySession>;
     readonly includeEvidenceSources?: boolean;
+    readonly progress?: ProgressReporter;
     readonly providerId?: AnalysisProviderSelector;
     readonly loadSelection?: NativeLoadSelection;
     readonly espFlash?: EspFlashSelection;
@@ -546,6 +552,7 @@ const runAnalysis = async (
       arguments: arguments_,
       evidenceParameters,
       signal,
+      ...(options.progress === undefined ? {} : { progress: options.progress }),
       evidenceProfile,
       saveSnapshot: snapshotPath !== undefined,
     });
@@ -717,6 +724,7 @@ const executeAnalysisTool = async (input: {
   readonly arguments: Readonly<Record<string, JsonValue>>;
   readonly evidenceParameters: Readonly<Record<string, JsonValue>>;
   readonly signal: AbortSignal;
+  readonly progress?: ProgressReporter;
   readonly evidenceProfile: AnalysisProfileCommitment | undefined;
   readonly saveSnapshot: boolean;
 }): Promise<
@@ -760,7 +768,12 @@ const executeAnalysisTool = async (input: {
     let result = await executeComposedWorkflow(
       session,
       (observed) =>
-        new EnhancedTools(observed).execute(tool, input.arguments, signal),
+        new EnhancedTools(observed).execute(
+          tool,
+          input.arguments,
+          signal,
+          input.progress,
+        ),
       composedLimitationBudget(tool),
     );
     retainPartialWorkflowEvidence(result, {

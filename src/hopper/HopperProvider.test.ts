@@ -513,3 +513,44 @@ it("preserves pre-abort with invalid startup seed", async () => {
   });
   expect(await client.close()).toMatchObject({ ok: true });
 });
+
+describe("Hopper decompile deadline", () => {
+  it("bounds decompile and body reads when the setting is configured", async () => {
+    const config = parseConfig({ REA_HOPPER_DECOMPILE_TIMEOUT_MS: "5000" });
+    if (!config.ok) throw config.error;
+    expect(config.value.hopperDecompileTimeoutMs).toBe(5000);
+    const seen: { method: string; timeoutMs: number | undefined }[] = [];
+    const callTool = vi
+      .spyOn(HopperClient.prototype, "callTool")
+      .mockImplementation((method, _parameters, options) => {
+        seen.push({ method, timeoutMs: options?.timeoutMs });
+        return Promise.resolve(ok("int fn(void) { return 0; }"));
+      });
+    const client = new HopperProvider(
+      config.value,
+      silentLogger,
+      {},
+      "linux",
+    ).createClient({
+      path: "/tmp/fixture.hop",
+      sha256: "a".repeat(64),
+      kind: "database",
+      format: "analysis-database",
+      databaseEngine: "hopper",
+    });
+    try {
+      await client.execute("procedure_pseudo_code", { procedure: "0x1000" });
+      await client.execute("list_procedures", {});
+      expect(seen).toEqual([
+        { method: "procedure_pseudo_code", timeoutMs: 5000 },
+        { method: "list_procedures", timeoutMs: undefined },
+      ]);
+    } finally {
+      try {
+        await client.close();
+      } finally {
+        callTool.mockRestore();
+      }
+    }
+  });
+});

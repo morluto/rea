@@ -522,7 +522,11 @@ const cleanupOutcome = (
       state.resources.has("hopper-document")
         ? {
             remediationAction:
-              "Export the Evidence bundle before close_binary clears session records. Let Hopper finish initial analysis or complete its pending dialog, then retry close_binary on this connection so REA can authenticate and close the retained document. If no matching bridge becomes available, manually close the reported document in Hopper, then restart the MCP connection. A helper exit or open:false does not establish that retained cleanup is complete.",
+              "Hopper may still be working on the retained document and can keep using a CPU core. Close the document in Hopper, or quit Hopper, then rerun the command. A helper exit or open:false does not establish that retained cleanup is complete.",
+            continuingCallerGuidance: {
+              remediationAction:
+                "Export the Evidence bundle before close_binary clears session records. Let Hopper finish initial analysis or complete its pending dialog, then retry close_binary on this connection so REA can authenticate and close the retained document. If no matching bridge becomes available, manually close the reported document in Hopper, then restart the MCP connection. A helper exit or open:false does not establish that retained cleanup is complete.",
+            },
           }
         : undefined,
     ),

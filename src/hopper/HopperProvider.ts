@@ -467,10 +467,22 @@ export class HopperProvider implements AnalysisProviderCandidate {
               operation === "analyze_function" ||
               (operation === "procedure_references" &&
                 parameters.direction === "incoming");
+            const decompileTimeoutMs =
+              operation === "procedure_pseudo_code" ||
+              operation === "procedure_info" ||
+              operation === "analyze_function"
+                ? this.config.hopperDecompileTimeoutMs
+                : undefined;
             const callOptions = {
               ...(willReconcile
                 ? reconciliationChildOptions(options)
                 : options),
+              // The deadline also bounds body reads queued behind a busy
+              // decompile, so a bulk export records the stalled function
+              // and moves on instead of waiting on the serial bridge.
+              ...(decompileTimeoutMs === undefined
+                ? {}
+                : { timeoutMs: decompileTimeoutMs }),
               operation,
             };
             // The client validates each reply against its method contract.

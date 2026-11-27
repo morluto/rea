@@ -84,6 +84,12 @@ export const runtimeAnalysisConfig = (
       admit("hopper.startup_timeout_ms");
       return config.hopperStartupTimeoutSource;
     },
+    get hopperDecompileTimeoutMs() {
+      const value = overrides()["hopper.decompile_timeout_ms"];
+      if (value !== undefined) return value === null ? undefined : value;
+      admit("hopper.decompile_timeout_ms");
+      return config.hopperDecompileTimeoutMs;
+    },
     get ghidraDecompileTimeoutSeconds() {
       const value = overrides()["ghidra.decompile_timeout_seconds"];
       if (value !== undefined) return value === null ? undefined : value;

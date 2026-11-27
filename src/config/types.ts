@@ -50,6 +50,8 @@ export interface AppConfig {
    */
   readonly hopperLauncherPath: string | undefined;
   readonly hopperStartupTimeoutMs: number;
+  /** Per-function Hopper decompile deadline; absent leaves decompiles unbounded. */
+  readonly hopperDecompileTimeoutMs?: number | undefined;
   /** Whether `hopperStartupTimeoutMs` came from the launch environment. */
   readonly hopperStartupTimeoutSource: "default" | "setting" | "runtime";
   /** Cooperative per-operation budget for forward caller reconciliation. */

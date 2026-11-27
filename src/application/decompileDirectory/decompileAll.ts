@@ -21,6 +21,7 @@ import type {
   AnalysisExecution,
   AnalysisOperationPort,
 } from "../../ports/AnalysisProvider.js";
+import type { ProgressReporter } from "../../ports/ProgressReporter.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
@@ -140,6 +141,7 @@ export const decompileAll = async (
   sessionAnalysis: WorkflowAnalysisPort,
   input: DecompileDirectoryInput,
   signal?: AbortSignal,
+  progress?: ProgressReporter,
 ): Promise<Result<JsonValue, AnalysisError>> => {
   const analysis = withInlineSessionLimitations(sessionAnalysis);
   const bounds = validateDecompileBounds(input);
@@ -150,7 +152,7 @@ export const decompileAll = async (
   );
   if (!placement.ok) return placement;
   if (isAborted(signal)) return err(cancelledBy("decompile_all", signal));
-  const loaded = await loadProcedures(analysis, input.layout, signal);
+  const loaded = await loadProcedures(analysis, input.layout, signal, progress);
   if (!loaded.ok) return loaded;
   if (isAborted(signal)) return err(cancelledBy("decompile_all", signal));
   const selection = selectProcedures(
@@ -190,6 +192,7 @@ export const decompileAll = async (
       procedures: attemptOrder(session, selection.procedures),
       identity: loaded.value.identity,
       signal,
+      progress,
       limit: input.limit,
       retryFailed: input.retry_failed,
       state,
@@ -324,6 +327,7 @@ const loadProcedures = async (
   analysis: AnalysisOperationPort,
   layout: DecompileDirectoryInput["layout"],
   signal: AbortSignal | undefined,
+  progress: ProgressReporter | undefined,
 ): Promise<
   Result<
     {
@@ -339,7 +343,7 @@ const loadProcedures = async (
     analysis,
     listProceduresFact,
     {},
-    executionOptions(signal),
+    executionOptions(signal, progress),
   );
   if (!inventory.ok) return inventory;
   const identity = identityFrom(inventory.value.execution, layout);
@@ -412,6 +416,7 @@ interface PublishInput {
   readonly procedures: readonly SelectedProcedure[];
   readonly identity: ExportIdentity;
   readonly signal: AbortSignal | undefined;
+  readonly progress: ProgressReporter | undefined;
   readonly limit: number | undefined;
   readonly retryFailed: DecompileDirectoryInput["retry_failed"];
   readonly state: PublishState;
@@ -465,6 +470,7 @@ const publishSelected = async (
       continue;
     input.state.attempted += 1;
     input.state.lastFailureCode = undefined;
+    await reportDecompiling(input, procedure);
     const externalBefore = input.state.external;
     const outcome = await attemptOne(input, procedure, existing, bodySupport);
     bodySupport = outcome.bodySupport;
@@ -538,6 +544,7 @@ const publishOne = async (input: {
   readonly procedure: SelectedProcedure;
   readonly identity: ExportIdentity;
   readonly signal: AbortSignal | undefined;
+  readonly progress: ProgressReporter | undefined;
   readonly state: PublishState;
   readonly bodySupport: "unknown" | "unavailable";
   readonly retryFailed: DecompileDirectoryInput["retry_failed"];
@@ -550,6 +557,7 @@ const publishOne = async (input: {
     input.procedure.address,
     input.identity,
     input.signal,
+    input.progress,
     input.bodySupport,
   );
   if (body.kind === "error")
@@ -574,7 +582,7 @@ const publishOne = async (input: {
   let decompiled = await input.analysis.execute(
     "procedure_pseudo_code",
     { procedure: input.procedure.address },
-    executionOptions(input.signal),
+    executionOptions(input.signal, input.progress),
   );
   // A provider still owns cleanup even if the caller aborted meanwhile.
   if (!decompiled.ok && decompiled.error.cleanupIncomplete)
@@ -612,7 +620,7 @@ const publishOne = async (input: {
     decompiled = await input.analysis.execute(
       "procedure_pseudo_code",
       { procedure: input.procedure.address, analysis: "independent_fresh" },
-      executionOptions(input.signal),
+      executionOptions(input.signal, input.progress),
     );
     if (!decompiled.ok && decompiled.error.cleanupIncomplete)
       return { result: decompiled, bodySupport: body.support };
@@ -770,6 +778,7 @@ const readBody = async (
   address: string,
   identity: ExportIdentity,
   signal: AbortSignal | undefined,
+  progress: ProgressReporter | undefined,
   support: "unknown" | "unavailable",
 ): Promise<
   | {
@@ -804,7 +813,7 @@ const readBody = async (
   const observed = await analysis.execute(
     "procedure_info",
     { procedure: address },
-    executionOptions(signal),
+    executionOptions(signal, progress),
   );
   if (!observed.ok) {
     if (
@@ -1196,10 +1205,31 @@ const manifestOf = (input: {
   };
 };
 
-const executionOptions = (signal: AbortSignal | undefined) => ({
+const executionOptions = (
+  signal: AbortSignal | undefined,
+  progress: ProgressReporter | undefined,
+) => ({
   ...(signal === undefined ? {} : { signal }),
+  ...(progress === undefined ? {} : { progress }),
   selectorOrigin: "provider" as const,
 });
+
+/** Name the function the export is about to wait on; observation only. */
+const reportDecompiling = async (
+  input: PublishInput,
+  procedure: SelectedProcedure,
+): Promise<void> => {
+  try {
+    await input.progress?.report({
+      phase: "decompile_all",
+      completed: input.state.attempted,
+      total: input.procedures.length,
+      message: `decompiling ${procedure.name ?? procedure.address} at ${procedure.address}`,
+    });
+  } catch {
+    // Progress observation cannot change the export outcome.
+  }
+};
 
 const nodeAbsent = (cause: unknown): boolean =>
   typeof cause === "object" &&

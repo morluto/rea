@@ -257,6 +257,36 @@ describe("Hopper shutdown rejection diagnostics", () => {
     );
   });
 
+  it("gives a one-shot caller shell steps instead of MCP recovery", async () => {
+    const result = await cleanupHopperSession({
+      socket: new Socket(),
+      resources: {
+        launch: undefined,
+        processSupervisor: undefined,
+        runtimeRoot: undefined,
+        shutdownConfirmed: false,
+        inspections: new ArtifactResourceScope(),
+        externalApplication: undefined,
+      },
+      activeRequest: null,
+      retainDocument: false,
+      progress: undefined,
+      logger: loggerHarness().logger,
+      onDiagnostic: undefined,
+      request: () => Promise.reject(failure("fixture primary rejection")),
+      releaseTransport: () => undefined,
+    });
+    if (result.ok) throw new Error("Expected the document to be retained");
+    const invocation = projectAnalysisError(result.error, "invocation");
+    expect(invocation.remediation.action).toContain(
+      "Close the document in Hopper",
+    );
+    expect(invocation.remediation.action).not.toContain("MCP connection");
+    expect(invocation.remediation.action).not.toContain("close_binary");
+    const continuing = projectAnalysisError(result.error);
+    expect(continuing.remediation.action).toContain("close_binary");
+  });
+
   it("retains the fallback shutdown operation and rejection cause", async () => {
     const { logger, logs } = loggerHarness();
     const methods: string[] = [];
