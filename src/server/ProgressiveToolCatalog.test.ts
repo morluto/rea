@@ -1,7 +1,10 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { DISCOVER_TOOLS } from "../contracts/catalog/catalogDiscovery.js";
+import {
+  DISCOVER_TOOLS,
+  DISCOVERY_REFRESH_GUIDANCE,
+} from "../contracts/catalog/catalogDiscovery.js";
 import { EvidenceMcpServerCore } from "./EvidenceMcpServerCore.js";
 import { ToolResultDelivery } from "./ToolResultDelivery.js";
 import { parseMcpToolError } from "../../tests/fixtures/mcpToolError.js";
@@ -214,6 +217,10 @@ it("accepts its own advertised name like an already-loaded tool", async () => {
   );
   const self = await f.discover({ names: ["discover_tools"] });
   expect(self.isError).not.toBe(true);
+  expect(advertised?.description).toContain(DISCOVERY_REFRESH_GUIDANCE);
+  expect(
+    DISCOVER_TOOLS.outputSchema.parse(self.structuredContent).next_step,
+  ).toContain(DISCOVERY_REFRESH_GUIDANCE);
   expect(self.structuredContent).toMatchObject({
     inventory_count: 4,
     loaded_count: 2,
