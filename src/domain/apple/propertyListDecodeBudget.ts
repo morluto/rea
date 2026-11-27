@@ -389,8 +389,10 @@ function* xmlPreflightTokens(source: XmlCodeUnits): Generator<{
       else if (character === 0x3d) attributes += 1;
       else if (doctype && character === 0x5b) {
         const emptySubsetEnd = emptyInternalSubsetEnd(source, end);
-        if (emptySubsetEnd === undefined) internalSubset = true;
-        else end = emptySubsetEnd;
+        if (emptySubsetEnd === undefined) {
+          internalSubset = true;
+          if (indexOfCodeUnit(source, 0x3e, end + 1) >= 0) break;
+        } else end = emptySubsetEnd;
       }
     }
     if (end === source.length) return;

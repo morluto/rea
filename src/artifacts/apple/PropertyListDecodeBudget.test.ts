@@ -58,8 +58,11 @@ it("refuses an XML plist whose DOM exceeds the native decode budget and honors c
 
   const dtdSource =
     '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist [ <!ENTITY x "a"> ]>\n<plist version="1.0"><string>&x;</string></plist>\n';
+  const dtdWithCommentApostrophe =
+    '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist [ <!-- don\'t --> <!ENTITY x "a"> ]>\n<plist version="1.0"><string>hello</string></plist>\n';
   const dtdFixtures = [
     Buffer.from(dtdSource, "utf8"),
+    Buffer.from(dtdWithCommentApostrophe, "utf8"),
     Buffer.from(
       `\uFEFF${dtdSource.replace('encoding="UTF-8"', 'encoding="UTF-16"')}`,
       "utf16le",

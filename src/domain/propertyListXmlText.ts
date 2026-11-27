@@ -100,7 +100,7 @@ const scanXmlDeclarationEncoding = (
   let cursor = XML_DECL_PREFIX.length + 1;
   while (cursor < count) {
     const code = codeAt(cursor);
-    if (utf8 && code > 0x7f) return { complete: false };
+    if (code > 0x7f) return { complete: false };
     if (code === 0x3f) {
       if (cursor + 1 < count && codeAt(cursor + 1) === 0x3e)
         return declared === undefined
@@ -146,7 +146,7 @@ const scanXmlDeclarationEncoding = (
         let sawQuestionInValue = false;
         while (probe < count) {
           const ch = codeAt(probe);
-          if (utf8 && ch > 0x7f) return { complete: false };
+          if (ch > 0x7f) return { complete: false };
           if (ch === quote) break;
           if (ch === 0x22 || ch === 0x27) break;
           if (ch === 0x3f) {
@@ -232,7 +232,7 @@ export const decodeXmlPlistText = (
 };
 
 const declaredEncoding = (text: string): string | undefined =>
-  /^<\?xml\s[^?]*\bencoding\s*=\s*(["'])([^"']+)\1/u.exec(text)?.[2];
+  /^<\?xml\s[^?]*?\bencoding\s*=\s*(["'])([^"']+)\1/u.exec(text)?.[2];
 
 const verifyEncodingDeclaration = (
   declaration: string | undefined,

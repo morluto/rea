@@ -40,6 +40,15 @@ it.each([
     Buffer.from('<?xml version="1.0" encoding="foo?bar"?><plist/>'),
     "unsupported-encoding",
   ],
+  [
+    Buffer.concat([
+      Buffer.from([0xff, 0xfe]),
+      Buffer.from('<?xml version="1.0" ', "utf16le"),
+      Buffer.from([0x00, 0xd8]),
+      Buffer.from(' encoding="ISO-8859-1"?><plist/>', "utf16le"),
+    ]),
+    "invalid-bytes",
+  ],
 ] as const)("tags XML decoding failures as %s", (bytes, reason) => {
   expect(() => decodeXmlPlistText(bytes)).toThrow(
     expect.objectContaining({
