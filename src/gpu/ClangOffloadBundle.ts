@@ -194,24 +194,37 @@ export const findLegacyCcobRecoveryTotal = async (
   base: number,
   maxObjectBytes: number = DEFAULT_GPU_OBJECT_BYTES,
 ): Promise<number> => {
-  const searchEnd = Math.min(source.size, base + maxObjectBytes);
+  const maxStart = Math.min(source.size, base + maxObjectBytes);
+  // Read up to 4 bytes past `maxStart` so a valid following CCOB magic starting
+  // at `base + maxObjectBytes` (when the corrupt v1 extent equals maxObjectBytes)
+  // is still observed without admitting markers starting beyond `maxStart`.
+  const searchEnd = Math.min(source.size, maxStart + CCOB_MAGIC.length);
+  const maxChunk = Math.max(1, Math.min(64 * 1024, maxObjectBytes));
   let position = base + 20;
   const seam = Buffer.allocUnsafe(6);
   let tailLen = 0;
   while (position < searchEnd) {
     const bytes = await source.read(
       position,
-      Math.min(64 * 1024, searchEnd - position),
+      Math.min(maxChunk, searchEnd - position),
     );
     if (bytes.length === 0) break;
     if (tailLen > 0) {
       const headLen = Math.min(3, bytes.length);
       bytes.copy(seam, tailLen, 0, headLen);
       const seamIndex = seam.subarray(0, tailLen + headLen).indexOf("CCOB");
-      if (seamIndex >= 0) return position - tailLen + seamIndex - base;
+      if (seamIndex >= 0) {
+        const matchOffset = position - tailLen + seamIndex;
+        if (matchOffset <= maxStart) return matchOffset - base;
+        break;
+      }
     }
     const index = bytes.indexOf("CCOB");
-    if (index >= 0) return position + index - base;
+    if (index >= 0) {
+      const matchOffset = position + index;
+      if (matchOffset <= maxStart) return matchOffset - base;
+      break;
+    }
     if (bytes.length >= 3) {
       bytes.copy(seam, 0, bytes.length - 3, bytes.length);
       tailLen = 3;
@@ -229,7 +242,7 @@ export const findLegacyCcobRecoveryTotal = async (
     }
     position += bytes.length;
   }
-  if (searchEnd < source.size)
+  if (maxStart < source.size)
     throw new BinaryResourceFailure(
       "structure",
       maxObjectBytes,

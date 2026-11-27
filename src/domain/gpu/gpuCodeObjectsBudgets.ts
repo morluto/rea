@@ -90,7 +90,7 @@ export const gpuCodeObjectsBudgetFields = {
     .max(GPU_CODE_OBJECTS_BUDGETS.max_work_bytes.maximum)
     .optional()
     .describe(
-      `Maximum aggregate payload input, decoded output, and AMDGPU note read bytes per inspection (default ${String(DEFAULT_GPU_WORK_BYTES)}, up to ${String(GPU_CODE_OBJECTS_BUDGETS.max_work_bytes.maximum)})`,
+      `Maximum aggregate payload input, decoded output, native-section, and AMDGPU note/structure read bytes per inspection (default ${String(DEFAULT_GPU_WORK_BYTES)}, up to ${String(GPU_CODE_OBJECTS_BUDGETS.max_work_bytes.maximum)})`,
     ),
   max_report_bytes: z
     .number()

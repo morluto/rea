@@ -99,6 +99,12 @@ export interface ZstandardFrameSuccess {
    * frame magic, rather than on definite non-frame trailing bytes.
    */
   readonly inputExhausted: boolean;
+  /**
+   * Present when `inputExhausted` is true and the walk already admitted
+   * `allowance.maxFrames` frames, so any following Zstandard/skippable frame
+   * would exceed `zstd.max_frames`.
+   */
+  readonly frameAllowanceReached?: ZstandardFrameAllowance;
 }
 
 export type ZstandardFrameResult =
@@ -116,6 +122,7 @@ interface WalkSuccess {
   readonly frames: readonly FrameSpan[];
   readonly consumed: number;
   readonly inputExhausted: boolean;
+  readonly frameAllowanceReached?: ZstandardFrameAllowance;
 }
 
 // Bound structural work between cooperative pauses, including across frames.
@@ -216,7 +223,17 @@ function* walkFrames(
   }
   if (frames.length === 0) return failure("truncated_frame_header", 0);
   if (offset === bytes.length) inputExhausted = true;
-  return { ok: true, frames, consumed: offset, inputExhausted };
+  const frameAllowanceReached =
+    inputExhausted && frames.length === allowance.maxFrames
+      ? allowance
+      : undefined;
+  return {
+    ok: true,
+    frames,
+    consumed: offset,
+    inputExhausted,
+    ...(frameAllowanceReached === undefined ? {} : { frameAllowanceReached }),
+  };
 }
 
 const decoderFailure = (
@@ -372,6 +389,7 @@ const finishFrames = (
   consumed: number,
   frames: number,
   inputExhausted: boolean,
+  frameAllowanceReached?: ZstandardFrameAllowance,
 ): ZstandardFrameSuccess => {
   const only = chunks.length === 1 ? chunks[0] : undefined;
   return {
@@ -385,6 +403,7 @@ const finishFrames = (
     consumedBytes: consumed,
     frames,
     inputExhausted,
+    ...(frameAllowanceReached === undefined ? {} : { frameAllowanceReached }),
   };
 };
 
@@ -393,6 +412,7 @@ const decodeFrames = (
   frames: readonly FrameSpan[],
   consumed: number,
   inputExhausted: boolean,
+  frameAllowanceReached: ZstandardFrameAllowance | undefined,
   options: DecompressOptions,
 ): ZstandardFrameSuccess | ZstandardFrameFailure => {
   if (options.rejectTrailing) {
@@ -406,6 +426,7 @@ const decodeFrames = (
         consumed,
         frames.length,
         inputExhausted,
+        frameAllowanceReached,
       ),
     };
   }
@@ -418,7 +439,13 @@ const decodeFrames = (
     total += step.bytes.length;
     chunks.push(step.bytes);
   }
-  return finishFrames(chunks, consumed, frames.length, inputExhausted);
+  return finishFrames(
+    chunks,
+    consumed,
+    frames.length,
+    inputExhausted,
+    frameAllowanceReached,
+  );
 };
 
 /**
@@ -431,6 +458,7 @@ interface PreparedDecode {
   readonly frames: readonly FrameSpan[];
   readonly consumed: number;
   readonly inputExhausted: boolean;
+  readonly frameAllowanceReached?: ZstandardFrameAllowance;
   readonly options: DecompressOptions;
 }
 
@@ -456,6 +484,9 @@ function* prepareDecode(
     frames: walked.frames,
     consumed: walked.consumed,
     inputExhausted: walked.inputExhausted,
+    ...(walked.frameAllowanceReached === undefined
+      ? {}
+      : { frameAllowanceReached: walked.frameAllowanceReached }),
     options: {
       maxOutputLength: options.maxOutputLength ?? bufferConstants.MAX_LENGTH,
       windowLogMax: options.windowLogMax ?? ZSTANDARD_WINDOW_LOG_MAX,
@@ -487,6 +518,7 @@ export const decodeZstandardFrames = (
     prepared.frames,
     prepared.consumed,
     prepared.inputExhausted,
+    prepared.frameAllowanceReached,
     prepared.options,
   );
 };
@@ -532,6 +564,7 @@ export const decodeZstandardFramesCooperative = async (
       prepared.consumed,
       prepared.frames.length,
       prepared.inputExhausted,
+      prepared.frameAllowanceReached,
     );
   }
   const chunks: Buffer[] = [];
@@ -550,5 +583,6 @@ export const decodeZstandardFramesCooperative = async (
     prepared.consumed,
     prepared.frames.length,
     prepared.inputExhausted,
+    prepared.frameAllowanceReached,
   );
 };

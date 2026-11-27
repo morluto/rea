@@ -35,8 +35,10 @@ const isWhitespaceAt = (text: string, at: number, code: number): boolean =>
 /** Byte coordinates are accumulated once, including non-ASCII comments and quoted strings. */
 function* tokens(
   text: string,
-  maxTokenBytes: number = DEFAULT_GPU_TOKEN_BYTES,
+  maxTokenBytes: number | (() => number) = DEFAULT_GPU_TOKEN_BYTES,
 ): Generator<Token> {
+  const limit =
+    typeof maxTokenBytes === "function" ? maxTokenBytes : () => maxTokenBytes;
   const len = text.length;
   let at = 0,
     byte = 0;
@@ -114,10 +116,11 @@ function* tokens(
         byte += 1;
       }
     } else advance();
-    if (byte - start > maxTokenBytes)
+    const currentLimit = limit();
+    if (byte - start > currentLimit)
       throw new BinaryResourceFailure(
         "structure",
-        maxTokenBytes,
+        currentLimit,
         "PTX token exceeds the string budget",
         GPU_TOKEN_BYTES_LIMIT,
         "bytes",
@@ -430,7 +433,7 @@ export function* readPtxKernels(
           throw new BinaryResourceFailure(
             "structure",
             128,
-            "PTX parameter declarations exceed the facts budget",
+            "PTX parameter declaration exceeds the fixed 128-token syntax limit",
           );
       }
       flush();
@@ -489,7 +492,7 @@ export function* readPtxKernels(
               throw new BinaryResourceFailure(
                 "structure",
                 128,
-                "PTX parameter declarations exceed the facts budget",
+                "PTX parameter declaration exceeds the fixed 128-token syntax limit",
               );
             bodyParameter.push(t.value);
           }
@@ -685,12 +688,168 @@ export const createPtxTargetTracker = (): PtxTargetTracker => {
 export const ptxTargetIdentity = (target: string): string =>
   target.replace(/^compute_(\d+[a-z]?)$/u, "sm_$1");
 
+/**
+ * Incremental standalone PTX candidate recognizer. Skips leading whitespace
+ * (including UTF-8 BOM and Unicode whitespace) and `//` or `/* ... *\/` comments
+ * across chunks to verify the first module token is `.version <major>.<minor>`
+ * without applying caller object or token budgets to non-PTX inputs.
+ */
+export const createPtxVersionScanner = (): {
+  feed(chunk: Uint8Array): "yes" | "no" | "incomplete";
+  finish(): "yes" | "no";
+} => {
+  type State =
+    | "leading"
+    | "slash"
+    | "line-comment"
+    | "block-comment"
+    | "block-star"
+    | "version-word"
+    | "after-version"
+    | "after-slash"
+    | "after-line-comment"
+    | "after-block-comment"
+    | "after-block-star"
+    | "version-number";
+  const VERSION_DIRECTIVE = ".version";
+  const MAX_VERSION_NUMBER_BYTES = 32;
+  let state: State = "leading";
+  let wordIndex = 0;
+  let versionNumber = "";
+  let utf8Pending: number[] = [];
+  let utf8Expected = 0;
+
+  const isAsciiWhitespace = (byte: number): boolean =>
+    byte === 0x20 || (byte >= 0x09 && byte <= 0x0d);
+
+  const isUnicodeWhitespace = (bytes: readonly number[]): boolean => {
+    const text = Buffer.from(bytes).toString("utf8");
+    return text.length > 0 && /^\s+$/u.test(text);
+  };
+
+  const stepByte = (byte: number): "yes" | "no" | "incomplete" => {
+    if (utf8Expected > 0) {
+      if ((byte & 0xc0) === 0x80) {
+        utf8Pending.push(byte);
+        if (utf8Pending.length < utf8Expected) return "incomplete";
+        const ws = isUnicodeWhitespace(utf8Pending);
+        utf8Pending = [];
+        utf8Expected = 0;
+        return ws ? "incomplete" : "no";
+      }
+      // Invalid UTF-8 continuation sequence cannot be whitespace.
+      utf8Pending = [];
+      utf8Expected = 0;
+      return "no";
+    }
+    while (true) {
+      if (state === "leading" || state === "after-version") {
+        if (isAsciiWhitespace(byte)) return "incomplete";
+        if (byte >= 0x80) {
+          if (byte >= 0xc2 && byte <= 0xdf) utf8Expected = 2;
+          else if (byte >= 0xe0 && byte <= 0xef) utf8Expected = 3;
+          else if (byte >= 0xf0 && byte <= 0xf4) utf8Expected = 4;
+          else return "no";
+          utf8Pending = [byte];
+          return "incomplete";
+        }
+        if (byte === 0x2f) {
+          state = state === "leading" ? "slash" : "after-slash";
+          return "incomplete";
+        }
+        if (state === "leading") {
+          if (byte !== 0x2e) return "no";
+          state = "version-word";
+          wordIndex = 1;
+          return "incomplete";
+        }
+        if (!isPtxWordChar(byte)) return "no";
+        state = "version-number";
+        versionNumber = String.fromCharCode(byte);
+        return "incomplete";
+      }
+      if (state === "slash" || state === "after-slash") {
+        if (byte === 0x2f) {
+          state = state === "slash" ? "line-comment" : "after-line-comment";
+          return "incomplete";
+        }
+        if (byte === 0x2a) {
+          state = state === "slash" ? "block-comment" : "after-block-comment";
+          return "incomplete";
+        }
+        return "no";
+      }
+      if (state === "line-comment" || state === "after-line-comment") {
+        if (byte === 0x0a)
+          state = state === "line-comment" ? "leading" : "after-version";
+        return "incomplete";
+      }
+      if (state === "block-comment" || state === "after-block-comment") {
+        if (byte === 0x2a)
+          state = state === "block-comment" ? "block-star" : "after-block-star";
+        return "incomplete";
+      }
+      if (state === "block-star" || state === "after-block-star") {
+        if (byte === 0x2f) {
+          state = state === "block-star" ? "leading" : "after-version";
+          return "incomplete";
+        }
+        if (byte !== 0x2a)
+          state =
+            state === "block-star" ? "block-comment" : "after-block-comment";
+        return "incomplete";
+      }
+      if (state === "version-word") {
+        if (isPtxWordChar(byte) && byte !== 0x2e) {
+          if (
+            wordIndex >= VERSION_DIRECTIVE.length ||
+            byte !== VERSION_DIRECTIVE.charCodeAt(wordIndex)
+          )
+            return "no";
+          wordIndex++;
+          return "incomplete";
+        }
+        if (wordIndex !== VERSION_DIRECTIVE.length) return "no";
+        state = "after-version";
+        continue;
+      }
+      // state === "version-number"
+      if (isPtxWordChar(byte)) {
+        if (versionNumber.length >= MAX_VERSION_NUMBER_BYTES) return "no";
+        versionNumber += String.fromCharCode(byte);
+        return "incomplete";
+      }
+      return ptxVersion(versionNumber) !== null ? "yes" : "no";
+    }
+  };
+
+  return {
+    feed(chunk) {
+      for (let i = 0; i < chunk.length; i++) {
+        const verdict = stepByte(chunk[i]!);
+        if (verdict !== "incomplete") return verdict;
+      }
+      return "incomplete";
+    },
+    finish() {
+      if (state === "version-number" && utf8Expected === 0)
+        return ptxVersion(versionNumber) !== null ? "yes" : "no";
+      return "no";
+    },
+  };
+};
+
 /** Resolve all module-scope targets through the highest numbered architecture. */
 export const readPtxTarget = (
   text: string,
   maxTokenBytes: number = DEFAULT_GPU_TOKEN_BYTES,
 ): PtxTargetFacts => {
-  const stream = tokens(text, maxTokenBytes);
+  // Format recognition (.version <major>.<minor>) must not be preempted by a
+  // caller-lowered max_token_bytes on non-PTX text; enforce it after recognition.
+  let enforceTokenBudget = false;
+  const stream = tokens(text, () =>
+    enforceTokenBudget ? maxTokenBytes : Number.POSITIVE_INFINITY,
+  );
   const tracker = createPtxTargetTracker();
   let depth = 0;
   try {
@@ -703,6 +862,7 @@ export const readPtxTarget = (
       ptxVersion(declaredVersion.value.value) === null
     )
       return { recognized: false, target: null, limitation: null };
+    enforceTokenBudget = true;
     for (const token of stream) {
       if (token.value === "{") {
         depth++;

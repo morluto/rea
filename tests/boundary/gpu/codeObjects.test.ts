@@ -2391,7 +2391,7 @@ it("keeps PTX single-parameter 128-token ceiling fixed independently of max_pars
   expect(defaultRefused.value.objects[0]).toMatchObject({
     inspection: "capacity",
     limitations: expect.arrayContaining([
-      "PTX parameter declarations exceed the facts budget",
+      "PTX parameter declaration exceeds the fixed 128-token syntax limit",
     ]),
   });
   expect(
@@ -2411,7 +2411,7 @@ it("keeps PTX single-parameter 128-token ceiling fixed independently of max_pars
   expect(bodyRefused.value.objects[0]).toMatchObject({
     inspection: "capacity",
     limitations: expect.arrayContaining([
-      "PTX parameter declarations exceed the facts budget",
+      "PTX parameter declaration exceeds the fixed 128-token syntax limit",
     ]),
   });
   expect(
@@ -2745,6 +2745,215 @@ it("keeps corrupt CCOB v1 recovery distinct from max_object_bytes window truncat
     max_work_bytes: 512 * 1024 * 1024,
   });
   expect(atWorkMax.success).toBe(true);
+});
+
+it("does not double-charge work on CCOB v1 refill, bounds aliased sections, keeps non-GPU inputs unsupported, and aligns zstd.max_frames and recovery bounds", async () => {
+  // 1. Cached CCOB v1 refill charges declaredDecodedSize once, not twice.
+  const b1 = hipFixture(Buffer.alloc(200, 0x31), "host-x86_64");
+  const c1 = deflateSync(b1, { level: 0 });
+  const h1 = Buffer.from(ccobFixture(1, "zlib", b1).subarray(0, 20));
+  const v1First = Buffer.concat([h1, c1]);
+
+  const b2 = hipFixture(Buffer.alloc(120, 0x41), "host-x86_64");
+  const f2a = zstdCompressSync(b2.subarray(0, 60));
+  const f2b = zstdCompressSync(b2.subarray(60));
+  const c2 = Buffer.concat([f2a, f2b]);
+  const h2 = Buffer.from(ccobFixture(1, "zstd", b2).subarray(0, 20));
+  const v1Second = Buffer.concat([h2, c2]);
+  const refillPair = Buffer.concat([v1First, v1Second]);
+  const refillObjBudget = c1.length + 20 + f2a.length;
+  expect(refillObjBudget).toBeGreaterThanOrEqual(b2.length);
+  expect(refillObjBudget).toBeGreaterThanOrEqual(c2.length);
+  const exactWorkOnce = refillObjBudget + b1.length + b2.length + c2.length;
+  const refillOnce = await inspect(refillPair, {
+    analysis: "inventory",
+    max_object_bytes: refillObjBudget,
+    max_work_bytes: exactWorkOnce,
+  });
+  if (!refillOnce.ok) throw refillOnce.error;
+  expect(
+    refillOnce.value.objects
+      .filter((o) => o.kind === "hip-bundle")
+      .map((o) => o.inspection),
+  ).toEqual(["complete", "complete"]);
+
+  // 2. Second hasFollowingZstandardFrame check after refill prevents false capacity
+  // when a refilled multi-frame Zstd stream fits max_object_bytes exactly and is followed by NUL.
+  const small1 = hipFixture(Buffer.from("x"), "host-x86_64");
+  const stored1 = deflateSync(small1, { level: 0 });
+  const stored1V1 = Buffer.concat([
+    Buffer.from(ccobFixture(1, "zlib", small1).subarray(0, 20)),
+    stored1,
+  ]);
+  const small2 = hipFixture(Buffer.from("x"), "host-x86_64");
+  const manySmallFrames: Buffer[] = [];
+  for (let off = 0; off < small2.length; off += 2) {
+    manySmallFrames.push(
+      zstdCompressSync(small2.subarray(off, Math.min(small2.length, off + 2))),
+    );
+  }
+  const manyEncoded = Buffer.concat(manySmallFrames);
+  const manyV1 = Buffer.concat([
+    Buffer.from(ccobFixture(1, "zstd", small2).subarray(0, 20)),
+    manyEncoded,
+  ]);
+  const refillThenNul = Buffer.concat([stored1V1, manyV1, Buffer.alloc(16)]);
+  expect(stored1.length + 20).toBeLessThan(manyEncoded.length);
+  const afterRefillNul = await inspect(refillThenNul, {
+    analysis: "inventory",
+    max_object_bytes: manyEncoded.length,
+  });
+  if (!afterRefillNul.ok) throw afterRefillNul.error;
+  const refillNulBundles = afterRefillNul.value.objects.filter(
+    (o) => o.kind === "hip-bundle",
+  );
+  expect(refillNulBundles.map((o) => o.inspection)).toEqual([
+    "complete",
+    "complete",
+  ]);
+  expect(refillNulBundles[1]?.encoded_size).toBe(manyEncoded.length);
+
+  // 3. 40 aliased .hip_fatbin sections pointing to a 4.8 KiB PTX payload must be
+  // bounded by max_work_bytes rather than reading ~198 KiB unchecked.
+  const aliasedPtx = Buffer.from(
+    `.version 8.8\n.target sm_80\n// ${"x".repeat(4800)}\n.visible .entry k() { ret; }\n`,
+  );
+  const secCount = 40;
+  const totalSections = 2 + secCount;
+  const shstrtab = Buffer.from("\0.shstrtab\0.hip_fatbin\0");
+  const payloadOff = 64;
+  const strOff = Math.ceil((payloadOff + aliasedPtx.length) / 8) * 8;
+  const shoff = Math.ceil((strOff + shstrtab.length) / 8) * 8;
+  const aliasedSectionElf = Buffer.alloc(shoff + totalSections * 64);
+  Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1, 0]).copy(aliasedSectionElf, 0);
+  aliasedSectionElf.writeUInt16LE(2, 16);
+  aliasedSectionElf.writeUInt16LE(62, 18);
+  aliasedSectionElf.writeUInt32LE(1, 20);
+  aliasedSectionElf.writeBigUInt64LE(BigInt(shoff), 40);
+  aliasedSectionElf.writeUInt16LE(64, 52);
+  aliasedSectionElf.writeUInt16LE(64, 58);
+  aliasedSectionElf.writeUInt16LE(totalSections, 60);
+  aliasedSectionElf.writeUInt16LE(1, 62);
+  aliasedPtx.copy(aliasedSectionElf, payloadOff);
+  shstrtab.copy(aliasedSectionElf, strOff);
+  const s1 = shoff + 64;
+  aliasedSectionElf.writeUInt32LE(1, s1);
+  aliasedSectionElf.writeUInt32LE(3, s1 + 4);
+  aliasedSectionElf.writeBigUInt64LE(BigInt(strOff), s1 + 24);
+  aliasedSectionElf.writeBigUInt64LE(BigInt(shstrtab.length), s1 + 32);
+  for (let i = 0; i < secCount; i += 1) {
+    const sh = shoff + (2 + i) * 64;
+    aliasedSectionElf.writeUInt32LE(11, sh);
+    aliasedSectionElf.writeUInt32LE(1, sh + 4);
+    aliasedSectionElf.writeBigUInt64LE(BigInt(payloadOff), sh + 24);
+    aliasedSectionElf.writeBigUInt64LE(BigInt(aliasedPtx.length), sh + 32);
+  }
+  const aliasedSectionRefused = await inspect(aliasedSectionElf, {
+    analysis: "inventory",
+    max_work_bytes: 16_384,
+  });
+  if (!aliasedSectionRefused.ok) throw aliasedSectionRefused.error;
+  expect(
+    aliasedSectionRefused.value.objects.some(
+      (o) =>
+        o.kind === "native-section" &&
+        o.inspection === "capacity" &&
+        o.limitations.some((l) => l.includes("(parameter: max_work_bytes)")),
+    ),
+  ).toBe(true);
+
+  // 4. Non-GPU plain text must fail with unsupported_target rather than being
+  // preempted by lowered max_object_bytes or max_token_bytes.
+  const plainLong = Buffer.from("hello world ".repeat(100)); // 1200 bytes
+  for (const budget of [512, 1]) {
+    const nonGpuObj = await inspect(plainLong, {
+      analysis: "inventory",
+      max_object_bytes: budget,
+    });
+    expect(nonGpuObj.ok).toBe(false);
+    if (nonGpuObj.ok) return;
+    expect(projectAnalysisError(nonGpuObj.error)).toMatchObject({
+      code: "unsupported_target",
+    });
+  }
+  const plainWord = Buffer.from(
+    "this_is_plain_non_gpu_text_with_a_long_identifier_token_123",
+  );
+  const nonGpuToken = await inspect(plainWord, {
+    analysis: "inventory",
+    max_token_bytes: 16,
+  });
+  expect(nonGpuToken.ok).toBe(false);
+  if (nonGpuToken.ok) return;
+  expect(projectAnalysisError(nonGpuToken.error)).toMatchObject({
+    code: "unsupported_target",
+  });
+
+  // 5. zstd.max_frames takes precedence over max_object_bytes at +0..+3 when
+  // lookahead confirms a following frame past the frame allowance.
+  const frameTarget = hipFixture(Buffer.from("x"), "host-x86_64");
+  const bigSkipPayload = Buffer.alloc(frameTarget.length + 16);
+  const bigSkip = Buffer.alloc(8 + bigSkipPayload.length);
+  bigSkip.writeUInt32LE(0x184d2a50, 0);
+  bigSkip.writeUInt32LE(bigSkipPayload.length, 4);
+  const dataFrame = zstdCompressSync(frameTarget);
+  const skipThenDataV1 = Buffer.concat([
+    Buffer.from(ccobFixture(1, "zstd", frameTarget).subarray(0, 20)),
+    bigSkip,
+    dataFrame,
+  ]);
+  for (const extra of [0, 1, 2, 3, 4]) {
+    const res = await runWithAnalysisOperationSnapshot(
+      { revision: 1, overrides: { "zstd.max_frames": 1 } },
+      () =>
+        inspect(skipThenDataV1, {
+          analysis: "inventory",
+          max_object_bytes: bigSkip.length + extra,
+        }),
+    );
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.error).toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      limit: { setting: "zstd.max_frames", effective_value: 1 },
+    });
+  }
+
+  // 6. Corrupt CCOB v1 whose total extent equals max_object_bytes still recovers
+  // the immediately following valid CCOB v2 marker at offset === max_object_bytes.
+  const corruptExact = Buffer.concat([
+    Buffer.from(ccobFixture(1, "zlib", small1).subarray(0, 20)),
+    Buffer.alloc(180, 0xff),
+  ]);
+  expect(corruptExact.length).toBe(200);
+  const nextValidV2 = ccobFixture(2, "zlib", small1);
+  const exactRecovery = await inspect(
+    Buffer.concat([corruptExact, nextValidV2]),
+    {
+      analysis: "inventory",
+      max_object_bytes: corruptExact.length,
+    },
+  );
+  if (!exactRecovery.ok) throw exactRecovery.error;
+  expect(
+    exactRecovery.value.objects
+      .filter((o) => o.kind === "hip-bundle")
+      .map((o) => o.inspection),
+  ).toEqual(["malformed", "complete"]);
+
+  const overRecovery = await inspect(
+    Buffer.concat([corruptExact, Buffer.of(0xff), nextValidV2]),
+    {
+      analysis: "inventory",
+      max_object_bytes: corruptExact.length,
+    },
+  );
+  if (!overRecovery.ok) throw overRecovery.error;
+  expect(
+    overRecovery.value.objects
+      .filter((o) => o.kind === "hip-bundle")
+      .map((o) => o.inspection),
+  ).toEqual(["capacity"]);
 });
 
 it("applies max_structure_bytes independently of max_object_bytes and covers PE, CUBIN, and report baseline", async () => {

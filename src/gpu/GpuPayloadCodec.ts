@@ -9,7 +9,10 @@ import {
   isZstandardTruncationReason,
   ZSTANDARD_WINDOW_LOG_MAX,
 } from "../domain/compression/zstandardExactFrame.js";
-import { ZstandardFrameAllowanceError } from "../domain/compression/zstandardFrameAllowance.js";
+import {
+  ZstandardFrameAllowanceError,
+  type ZstandardFrameAllowance,
+} from "../domain/compression/zstandardFrameAllowance.js";
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
@@ -49,6 +52,7 @@ export const decodeGpuPayloadStream = async (
   buffer: Buffer;
   consumedBytes: number;
   inputExhausted: boolean;
+  frameAllowanceReached?: ZstandardFrameAllowance;
 }> => {
   assertArtifactReadActive(signal);
   const maxOutputLength = Math.max(1, maximumDecodedSize);
@@ -103,6 +107,9 @@ export const decodeGpuPayloadStream = async (
       buffer: decoded.bytes,
       consumedBytes: decoded.consumedBytes,
       inputExhausted: decoded.inputExhausted,
+      ...(decoded.frameAllowanceReached === undefined
+        ? {}
+        : { frameAllowanceReached: decoded.frameAllowanceReached }),
     };
   }
   let result: unknown;

@@ -203,6 +203,10 @@
     "\"The GPU nesting allowance\"": {
       "class": "representation",
       "reason": "Bounds recursive GPU container nesting (8 levels in GpuInventory.ts) and AMDGPU MessagePack value nesting (32 levels in AmdGpuMetadata.ts) to prevent unbounded call-stack recursion."
+    },
+    "\"The GPU parser syntax allowance\"": {
+      "class": "representation",
+      "reason": "Fallback fixed parser syntax ceiling (such as 128 tokens per PTX parameter declaration) so unmapped parser BinaryResourceFailure values stay inside the Result error contract."
     }
   },
   "src/ida/IdaMcpConnection.ts": {

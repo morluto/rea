@@ -90,14 +90,21 @@ const gpuResourceConstraint = (
       limit: gpuCodeObjectsBudgetLimit(parameter, maximum),
     });
   if (
-    name !== GPU_CONTAINER_NESTING_LIMIT &&
-    name !== GPU_AMD_METADATA_DEPTH_LIMIT
+    name === GPU_CONTAINER_NESTING_LIMIT ||
+    name === GPU_AMD_METADATA_DEPTH_LIMIT
   )
-    throw primary;
+    return parseLimitConstraint(OPERATION, "memory", primary, {
+      reportedLimitContext,
+      ...fixedAllowanceOptions(
+        "The GPU nesting allowance",
+        "parser",
+        binaryResourceCeiling(primary),
+      ),
+    });
   return parseLimitConstraint(OPERATION, "memory", primary, {
     reportedLimitContext,
     ...fixedAllowanceOptions(
-      "The GPU nesting allowance",
+      "The GPU parser syntax allowance",
       "parser",
       binaryResourceCeiling(primary),
     ),

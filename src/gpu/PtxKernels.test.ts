@@ -278,3 +278,18 @@ it("does not label unrelated malformed quoted text as a recognized PTX artifact"
   expect(readPtxTarget('unrelated "unterminated').recognized).toBe(false);
   expect(readPtxTarget("/* unrelated unterminated").recognized).toBe(false);
 });
+
+it("does not preempt non-PTX recognition with max_token_bytes but enforces it after .version", () => {
+  expect(
+    readPtxTarget(
+      "this_is_plain_non_gpu_text_with_a_long_identifier_token_123",
+      16,
+    ).recognized,
+  ).toBe(false);
+  expect(() =>
+    readPtxTarget(
+      ".version 8.8\n.target sm_80\n.visible .entry very_long_kernel_name_exceeding_sixteen() { ret; }\n",
+      16,
+    ),
+  ).toThrow("PTX token exceeds the string budget");
+});
