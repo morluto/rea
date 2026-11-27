@@ -27,12 +27,12 @@ import {
 } from "./analysisViewShape.js";
 import {
   analysisViewCoverageSchema,
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
-import { pickFields, selectViewRows } from "./selectViewRows.js";
+import { pickFields, selectViewRows, filterSet } from "./selectViewRows.js";
 import {
   analysisViewInputError,
   invalidAnalysisView,
@@ -108,8 +108,6 @@ export const playwrightTraceViewItemsSchema = z.union([
   ),
 ]);
 const readReport = createAnalysisViewResultReader(playwrightTraceSchema);
-const values = (selected: readonly string[] | undefined) =>
-  selected === undefined ? undefined : new Set(selected);
 const allows = (
   selection: ReadonlySet<string> | undefined,
   value: string | null,
@@ -226,10 +224,10 @@ const selectRows = (
   view: Exclude<View, { collection: "event-text" }>,
 ) => {
   if (view.collection === "events") {
-    const ids = values(view.event_ids),
-      streams = values(view.stream_ids),
-      kinds = values(view.kinds),
-      calls = values(view.call_ids);
+    const ids = filterSet(view.event_ids),
+      streams = filterSet(view.stream_ids),
+      kinds = filterSet(view.kinds),
+      calls = filterSet(view.call_ids);
     const activeFilters = [ids, streams, kinds, calls].filter(
       (selection) => selection !== undefined,
     );
@@ -262,8 +260,8 @@ const selectRows = (
     return selectViewRows(report.events, view, undefined, projectEvent);
   }
   if (view.collection === "members") {
-    const ids = values(view.member_ids),
-      paths = values(view.paths);
+    const ids = filterSet(view.member_ids),
+      paths = filterSet(view.paths);
     const filtered = ids !== undefined || paths !== undefined;
     const matchMember = (row: PlaywrightTrace["members"][number]): boolean =>
       allows(ids, row.member_id) && allows(paths, row.path);
@@ -300,7 +298,7 @@ const selectRows = (
     return selectViewRows(report.members, view, undefined, projectMember);
   }
   if (view.collection === "streams") {
-    const ids = values(view.stream_ids);
+    const ids = filterSet(view.stream_ids);
     const matchStream = (row: PlaywrightTrace["streams"][number]): boolean =>
       allows(ids, row.stream_id);
     const streamFields = view.fields ?? [
@@ -335,7 +333,7 @@ const selectRows = (
     }
     return selectViewRows(report.streams, view, undefined, projectStream);
   }
-  const codes = values(view.codes);
+  const codes = filterSet(view.codes);
   const matchDiagnostic = (
     row: PlaywrightTrace["diagnostics"][number],
   ): boolean => allows(codes, row.code);
@@ -449,11 +447,7 @@ export const projectPlaywrightTraceView = (
     parent_evidence_id: parent.evidenceId,
     parent_operation: PLAYWRIGHT_TRACE_OPERATION,
     parent_digest: parent.evidenceId.slice(3),
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, limitations),
     unknowns: [
       "Recording completeness and cross-stream ordering remain unknown. Resource contents are not decoded.",
     ],

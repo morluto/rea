@@ -103,6 +103,26 @@ it("fetches historical durations when portable tests can use them", async () => 
   }
 });
 
+it("uploads the test runtime when portable tests or SQLite need it", async () => {
+  const steps = (await workflow()).build!.steps!;
+  const condition = z
+    .string()
+    .parse(steps.find((step) => step.with?.name === "rea-test-runtime")?.if);
+  for (const [tier, code, sqlite, expected] of [
+    ["fast", "false", "false", false],
+    ["fast", "true", "false", true],
+    ["fast", "false", "true", true],
+    ["warm", "true", "false", false],
+    ["full", "true", "true", true],
+  ] as const) {
+    expect(
+      evaluateCondition(condition, {
+        needs: { changes: { outputs: { tier, code, sqlite } } },
+      }),
+    ).toBe(expected);
+  }
+});
+
 it("looks up a baseline only when main selection can use it", async () => {
   const steps = (await workflow()).changes!.steps!;
   const qualification = steps.findIndex((step) => step.id === "qualification");
@@ -162,13 +182,19 @@ it.each(["fast", "full"] as const)(
       (command) => command.includes("mutation") || command.includes("stryker"),
     );
     expect(mutationCommands).toEqual([
+      "npm run verify:mutation-targets",
       "node scripts/prepare-reverse-tools-mutation.mjs",
       "npx --no-install stryker run stryker.config.mjs --dryRunOnly",
       "npx --no-install stryker run stryker.semantics.config.mjs --dryRunOnly",
     ]);
+    const guard = commands.indexOf("npm run verify:mutation-targets");
     const coverage = commands.indexOf("npm run test:coverage:reverse-tools");
-    expect(coverage).toBeGreaterThanOrEqual(0);
-    expect(coverage).toBeLessThan(commands.indexOf(mutationCommands[0]!));
+    const preflight = commands.indexOf(
+      "node scripts/prepare-reverse-tools-mutation.mjs",
+    );
+    expect(guard).toBeGreaterThanOrEqual(0);
+    expect(coverage).toBeGreaterThan(guard);
+    expect(preflight).toBeGreaterThan(coverage);
 
     const flags = await scopeFlags();
     const context: Record<

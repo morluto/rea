@@ -288,7 +288,10 @@ export class AndroidSparseImageArtifactReader implements ArtifactReader {
     this.#prepared = {
       image: image.value,
       entry: entryFor(image.value),
-      coverage: { status: "complete", limitations: image.value.limitations },
+      coverage: {
+        status: image.value.trailingBytes === 0 ? "complete" : "unknown",
+        limitations: image.value.limitations,
+      },
     };
   }
 }

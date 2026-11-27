@@ -15,6 +15,7 @@ import { DEB_PACKAGE_TOOL_CONTRACTS } from "../../../src/contracts/deb/debPackag
 import { NUGET_NUPKG_TOOL_CONTRACTS } from "../../../src/contracts/nuget/nupkgToolContracts.js";
 import { VSIX_PACKAGE_TOOL_CONTRACTS } from "../../../src/contracts/vsix/vsixPackageToolContracts.js";
 import { OCI_IMAGE_LAYOUT_TOOL_CONTRACTS } from "../../../src/contracts/oci/ociImageLayoutToolContracts.js";
+import { YARA_TOOL_CONTRACTS } from "../../../src/contracts/yara/yaraToolContracts.js";
 import { RequestTrackingMcpServer } from "../../../src/server/RequestTrackingMcpServer.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
@@ -30,6 +31,7 @@ const CONTRACTS = [
   ...NUGET_NUPKG_TOOL_CONTRACTS,
   ...VSIX_PACKAGE_TOOL_CONTRACTS,
   ...OCI_IMAGE_LAYOUT_TOOL_CONTRACTS,
+  ...YARA_TOOL_CONTRACTS,
   ...V8_CODE_CACHE_TOOL_CONTRACTS,
   ...MAVEN_GRADLE_METADATA_TOOL_CONTRACTS,
 ];
@@ -39,6 +41,7 @@ const PATH_FIELDS = {
   inspect_elf_notes: ["path"],
   inspect_elf_debug_link: ["path", "candidate_path"],
   inspect_elf_unwind_ranges: ["path"],
+  inspect_macho_function_starts: ["path"],
   inspect_kernel_module: ["path"],
   inspect_byte_entropy: ["path"],
   inspect_api_contract: ["path", "operations_path"],
@@ -49,6 +52,7 @@ const PATH_FIELDS = {
   inspect_nuget_nupkg: ["path"],
   inspect_vsix_package: ["path"],
   inspect_oci_image_layout: ["path"],
+  inspect_yara_matches: ["path", "rule_paths"],
   inspect_v8_code_cache: ["path"],
   inspect_maven_gradle_metadata: ["path"],
   export_web_scripts: ["capture_path", "output_directory"],
@@ -85,6 +89,8 @@ const validInput = (
       output_directory: absoluteDirectory,
       additional_paths: [absoluteFile],
     };
+  if (name === "inspect_yara_matches")
+    return { path: absoluteFile, rule_paths: [absoluteFile] };
   return { path: absoluteFile };
 };
 
@@ -93,7 +99,10 @@ const withRelativeField = (
   field: string,
 ): Record<string, unknown> => ({
   ...validInput(name),
-  [field]: field === "additional_paths" ? ["sample.bin"] : "sample.bin",
+  [field]:
+    field === "additional_paths" || field === "rule_paths"
+      ? ["sample.bin"]
+      : "sample.bin",
 });
 
 it("rejects one relative path field at a time on tools/list", async () => {
@@ -149,6 +158,7 @@ it("rejects one relative path field at a time on tools/list", async () => {
     "inspect_elf_debug_link.path",
     "inspect_elf_debug_link.candidate_path",
     "inspect_elf_unwind_ranges.path",
+    "inspect_macho_function_starts.path",
     "inspect_kernel_module.path",
     "inspect_byte_entropy.path",
     "inspect_api_contract.path",
@@ -160,6 +170,8 @@ it("rejects one relative path field at a time on tools/list", async () => {
     "inspect_nuget_nupkg.path",
     "inspect_vsix_package.path",
     "inspect_oci_image_layout.path",
+    "inspect_yara_matches.path",
+    "inspect_yara_matches.rule_paths",
     "inspect_v8_code_cache.path",
     "inspect_maven_gradle_metadata.path",
     "export_web_scripts.capture_path",

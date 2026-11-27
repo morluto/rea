@@ -1427,3 +1427,122 @@ cliTest(
     expect(regConflictReport.kernels[0]?.sources.shared).not.toBeNull();
   },
 );
+
+cliTest(
+  "projects per-call GPU budget refusals with adapter flags and preserves omission through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-gpu-budgets-cli-mcp-");
+    const ptxPath = join(root, "sample.ptx");
+    const ptxSource = [
+      ".version 8.0",
+      ".target sm_90",
+      ".address_size 64",
+      ".visible .entry add_one(.param .u64 a) {",
+      "  .reg .b32 %r<4>;",
+      "  ret;",
+      "}",
+    ].join("\n");
+    await writeFile(ptxPath, ptxSource, "utf8");
+
+    const refusedCli = await cli.run({
+      arguments: [
+        "inspect-gpu-code-objects",
+        ptxPath,
+        "--analysis",
+        "kernels",
+        "--max-report-bytes",
+        "64",
+        "--json",
+      ],
+    });
+    expect(refusedCli.exitCode).toBe(1);
+    expect(refusedCli.json).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_report_bytes",
+          cli_flag: "--max-report-bytes",
+          effective_value: 64,
+          unit: "bytes",
+          minimum: 1,
+          maximum: 16 * 1024 * 1024,
+          default_value: 16 * 1024 * 1024,
+          applies_at: "next_call",
+        },
+        refusal: {
+          kind: "adjustable_budget",
+          operation: "inspect_gpu_code_objects",
+          control: "max_report_bytes",
+        },
+      },
+      remediation: {
+        action: expect.stringContaining("--max-report-bytes"),
+      },
+    });
+
+    const recoveredCli = await cli.run({
+      arguments: [
+        "inspect-gpu-code-objects",
+        ptxPath,
+        "--analysis",
+        "kernels",
+        "--max-report-bytes",
+        "1048576",
+        "--json",
+      ],
+    });
+    expect(recoveredCli.exitCode, recoveredCli.stderr).toBe(0);
+    const cliEvidence = parseEvidence(
+      toolContract("inspect_gpu_code_objects").outputSchema.parse(
+        recoveredCli.json,
+      ),
+    );
+    expect(cliEvidence.parameters).toEqual({
+      path: ptxPath,
+      analysis: "kernels",
+      max_report_bytes: 1048576,
+    });
+
+    const { call } = await connectLocalToolsMcp();
+    const refusedMcp = await call("inspect_gpu_code_objects", {
+      path: ptxPath,
+      analysis: "kernels",
+      detail: "complete",
+      max_report_bytes: 64,
+    });
+    expect(refusedMcp.isError).toBe(true);
+    const mcpError = parseMcpToolError(refusedMcp).error;
+    expect(mcpError).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        limit: {
+          parameter: "max_report_bytes",
+          effective_value: 64,
+        },
+        refusal: {
+          kind: "adjustable_budget",
+          control: "max_report_bytes",
+        },
+      },
+    });
+    expect(
+      (mcpError.details as { limit?: Record<string, unknown> } | undefined)
+        ?.limit,
+    ).not.toHaveProperty("cli_flag");
+
+    const omittedMcp = await call("inspect_gpu_code_objects", {
+      path: ptxPath,
+      analysis: "kernels",
+      detail: "complete",
+    });
+    expect(omittedMcp.isError, JSON.stringify(omittedMcp.content)).not.toBe(
+      true,
+    );
+    expect(parseEvidence(omittedMcp.structuredContent).parameters).toEqual({
+      path: ptxPath,
+      analysis: "kernels",
+    });
+  },
+);

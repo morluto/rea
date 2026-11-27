@@ -12,7 +12,13 @@ export interface ProgressReporter {
   report(update: ProgressUpdate): Promise<void>;
 }
 
-/** Create a monotonic, rate-bounded reporter around a surface-specific sink. */
+/**
+ * Create a monotonic, rate-bounded reporter around a surface-specific sink.
+ * The interval bounds each phase's own intermediate updates, so a frequent
+ * heartbeat from one phase, such as a provider request, cannot suppress a
+ * rarer update from another, such as the workflow naming the item it waits on.
+ * The total rate stays bounded by the number of phases a request reports.
+ */
 export const createProgressReporter = (
   sink: (
     update: ProgressUpdate & { readonly sequence: number },
@@ -25,7 +31,7 @@ export const createProgressReporter = (
   const minimumIntervalMs = options.minimumIntervalMs ?? 100;
   const now = options.now ?? (() => performance.now());
   let lastCompleted = -1;
-  let lastSentAt = Number.NEGATIVE_INFINITY;
+  const lastSentAt = new Map<string, number>();
   let sequence = 0;
   return {
     async report(update) {
@@ -39,10 +45,12 @@ export const createProgressReporter = (
       const observedAt = now();
       if (
         update.terminal !== true &&
-        observedAt - lastSentAt < minimumIntervalMs
+        observedAt -
+          (lastSentAt.get(update.phase) ?? Number.NEGATIVE_INFINITY) <
+          minimumIntervalMs
       )
         return;
-      lastSentAt = observedAt;
+      lastSentAt.set(update.phase, observedAt);
       sequence += 1;
       await sink({ ...update, sequence });
     },

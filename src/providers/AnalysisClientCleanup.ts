@@ -5,6 +5,7 @@ import {
   type AnalysisCleanupReleaseClaim,
 } from "../domain/analysisErrorBase.js";
 import type { AnalysisClient } from "../ports/AnalysisProvider.js";
+import type { EngineCloseReport } from "../domain/engineCloseReport.js";
 
 /** Close one provider client and normalize unexpected adapter rejection. */
 export const closeAnalysisClient = async (
@@ -12,7 +13,7 @@ export const closeAnalysisClient = async (
   providerId: string,
   options: Parameters<AnalysisClient["close"]>[0] = {},
   closeRejectionRelease?: AnalysisCleanupReleaseClaim,
-): Promise<Result<null, AnalysisError>> => {
+): Promise<Result<EngineCloseReport | null, AnalysisError>> => {
   // Nested/composite clients report failures before their final result settles.
   // Own notification identity for this close attempt, including the fallback
   // for clients that only return or reject with their cleanup failure.
@@ -22,7 +23,7 @@ export const closeAnalysisClient = async (
     reported.add(failure);
     options.onCleanupFailure?.(failure);
   };
-  let result: Result<null, AnalysisError>;
+  let result: Result<EngineCloseReport | null, AnalysisError>;
   try {
     result = await client.close({
       ...options,

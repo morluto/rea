@@ -24,6 +24,7 @@ export const AGENT_BUDGET_OPERATIONS = [
   "inspect_devicetree",
   "inspect_elf_dependencies",
   "inspect_erlang_beam",
+  "inspect_esp_nvs",
   "inspect_evm_interface",
   "inspect_go_binary",
   "inspect_macho",

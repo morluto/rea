@@ -23,6 +23,7 @@ import type {
   ContractCommandContext,
 } from "./contractCommand.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { cliProgressReporter } from "./cliProgress.js";
 import {
   projectCliAnalysisResult,
   projectCliInputFields,
@@ -186,6 +187,7 @@ export const runDirectOnTarget =
       {
         logger,
         signal,
+        progress: cliProgressReporter,
         ...directAnalysisOpening(opening),
         // A bundle needs the sources its record cites: a requested one, or
         // the retained-Evidence cache an over-budget result may go to.

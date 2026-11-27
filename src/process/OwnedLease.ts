@@ -55,6 +55,25 @@ export type LeaseFailureFactory = (
   cause?: unknown,
 ) => Error;
 
+/** How long an owner may take to answer before the probe reports it unverified. */
+export const LEASE_OWNER_RESPONSE_TIMEOUT_MS = 250;
+
+/** Reason on `owner_unverified` when that probe budget elapses with no identity. */
+export const LEASE_OWNER_RESPONSE_TIMED_OUT = "owner response timed out";
+
+/** Reason on `owner_unverified` when the caller's signal stops the probe. */
+export const LEASE_OWNER_PROBE_ABORTED = "owner probe aborted";
+
+/**
+ * A caller's bound on the owner-identity probe. The probe never waits longer
+ * than `LEASE_OWNER_RESPONSE_TIMEOUT_MS`; a shorter `timeoutMs` is that
+ * caller's own deadline. `signal` ends the probe when the caller stops.
+ */
+export interface LeaseOwnerProbe {
+  readonly signal?: AbortSignal;
+  readonly timeoutMs?: number;
+}
+
 /** Recovery finalization retains its operation outcome and every failed owner. */
 export class OwnedLeaseCleanupFailure extends ArtifactReaderFailure {
   override readonly cleanupLeases;
@@ -86,6 +105,7 @@ export const acquireOwnedLease = async (input: {
   readonly directory: string;
   readonly failure: LeaseFailureFactory;
   readonly resources?: ArtifactResourceScope | undefined;
+  readonly probe?: LeaseOwnerProbe;
 }): Promise<LeaseAcquisition> => {
   const produced = new WeakSet<Error>();
   const cleanupCauses = new WeakMap<Error, ArtifactReaderFailure>();
@@ -109,6 +129,7 @@ export const acquireOwnedLease = async (input: {
         fail,
         false,
         resources,
+        input.probe,
       );
       if (typeof acquisition !== "string") return acquisition;
     }
@@ -122,6 +143,7 @@ export const acquireOwnedLease = async (input: {
     fail,
     true,
     resources,
+    input.probe,
   );
   if (typeof acquisition !== "string") return acquisition;
 
@@ -138,7 +160,14 @@ export const acquireOwnedLease = async (input: {
   let primary: unknown;
   let failed = false;
   try {
-    recovered = await tryAcquireLease(socketPath, owner, fail, true, resources);
+    recovered = await tryAcquireLease(
+      socketPath,
+      owner,
+      fail,
+      true,
+      resources,
+      input.probe,
+    );
     if (recovered === "stale") await rm(socketPath, { force: true });
     if (typeof recovered === "string")
       recovered = await tryAcquireLease(
@@ -147,6 +176,7 @@ export const acquireOwnedLease = async (input: {
         fail,
         true,
         resources,
+        input.probe,
       );
     if (typeof recovered === "string") throw fail({ kind: "unrecoverable" });
   } catch (cause: unknown) {
@@ -219,6 +249,7 @@ const tryAcquireLease = async (
   fail: (failure: LeaseFailure, cause?: unknown) => Error,
   securePath: boolean,
   resources: ArtifactResourceScope,
+  probe?: LeaseOwnerProbe,
 ): Promise<LeaseAcquisition | "missing" | "stale"> => {
   const connections = new Set<Socket>();
   const server = createServer((socket) => {
@@ -233,7 +264,7 @@ const tryAcquireLease = async (
   // alive; process exit leaves a stale socket that later acquirers recover.
   server.unref();
   if (!(await bind(server, socketPath))) {
-    const existingOwner = await readOwner(socketPath, fail);
+    const existingOwner = await readOwner(socketPath, fail, probe);
     return typeof existingOwner === "string"
       ? existingOwner
       : { acquired: false, owner: existingOwner };
@@ -382,24 +413,42 @@ const sendOwner = (socket: Socket, owner: LeaseOwner): void => {
 const readOwner = (
   socketPath: string,
   fail: (failure: LeaseFailure, cause?: unknown) => Error,
+  probe?: LeaseOwnerProbe,
 ): Promise<LeaseOwner | "missing" | "stale"> =>
   new Promise((resolveOwner, rejectOwner) => {
     const socket = createConnection(socketPath);
     socket.setEncoding("utf8");
     let response = "";
     let settled = false;
+    let timer: NodeJS.Timeout | undefined;
+    const timeoutMs = Math.min(
+      LEASE_OWNER_RESPONSE_TIMEOUT_MS,
+      probe?.timeoutMs ?? LEASE_OWNER_RESPONSE_TIMEOUT_MS,
+    );
+    const stopWaiting = (): void => {
+      clearTimeout(timer);
+      probe?.signal?.removeEventListener("abort", onAbort);
+    };
     const reject = (reason: string, cause?: unknown): void => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      stopWaiting();
       socket.destroy();
       rejectOwner(fail({ kind: "owner_unverified", reason }, cause));
     };
-    const timer = setTimeout(() => reject("owner response timed out"), 250);
+    const onAbort = (): void => {
+      reject(LEASE_OWNER_PROBE_ABORTED, probe?.signal?.reason);
+    };
+    if (probe?.signal?.aborted === true) {
+      reject(LEASE_OWNER_PROBE_ABORTED, probe.signal.reason);
+      return;
+    }
+    timer = setTimeout(() => reject(LEASE_OWNER_RESPONSE_TIMED_OUT), timeoutMs);
+    probe?.signal?.addEventListener("abort", onAbort, { once: true });
     const finish = (owner: LeaseOwner | "missing" | "stale"): void => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      stopWaiting();
       socket.destroy();
       resolveOwner(owner);
     };
