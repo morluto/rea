@@ -352,10 +352,13 @@ a known body. `--layout dwarf`
 reports that compilation-unit paths are unavailable and still names files by
 address. Filters are a case-sensitive name substring, a case-sensitive name
 prefix, an inclusive address range (including uppercase hexadecimal input), and a positive safe-integer attempt limit. The limit does not allocate space in proportion to its value. Cancellation leaves
-files already written in place. While one function stays pending, the export
-reports a `decompile_all` progress update every five seconds naming that
-function's name and address, its position among the selected functions, and
-the elapsed wait; functions that settle sooner report nothing. MCP delivers
+files already written in place. While one provider request for a function, reading its body
+or decompiling it, stays pending, the export reports a `decompile_all` progress
+update every five seconds naming that request, the function's name and
+address, its position among the selected functions, and the elapsed wait;
+requests that settle sooner report nothing. The export's own journal and file
+writes are not timed, so a slow output volume is never reported as a provider
+wait. MCP delivers
 these as progress notifications when the request carries a progress token, and
 the CLI writes each as a `rea_progress` JSON line on stderr, leaving stdout for
 the manifest. Ghidra bounds one function with its decompile deadline. Hopper
