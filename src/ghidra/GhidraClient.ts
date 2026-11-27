@@ -214,6 +214,7 @@ export class GhidraClient {
     | { readonly timeoutMs: number; readonly failure: GhidraSessionError }
     | undefined;
   #closePromise: Promise<void> | undefined;
+  #closeForced = false;
   readonly #failure = bindGhidraSessionFailure(
     (scope) => this.#diagnostics(scope),
     (value, incomplete) => this.#redactAuthentication(value, incomplete),
@@ -1013,10 +1014,28 @@ export class GhidraClient {
   #requestClose(forceStop: boolean): Promise<void> {
     const starting = this.#startupAttempt;
     starting?.close();
-    this.#closePromise ??= Promise.resolve().then(() =>
-      this.#close(starting, forceStop),
-    );
-    return this.#closePromise;
+    const previous = this.#closePromise;
+    // Join an equal or stronger close. A forced stop requested during a
+    // graceful close interrupts that close's outstanding bridge requests (a
+    // stalled checkpoint or shutdown reply), then runs once it settles.
+    if (previous !== undefined && (!forceStop || this.#closeForced))
+      return previous;
+    if (previous !== undefined)
+      this.#failAll(
+        this.#failure("process", "Ghidra close escalated to a forced stop"),
+      );
+    this.#closeForced = forceStop;
+    const attempt: Promise<void> = (previous ?? Promise.resolve())
+      .catch(() => undefined)
+      .then(() => this.#close(starting, forceStop))
+      .finally(() => {
+        if (this.#closePromise === attempt) {
+          this.#closePromise = undefined;
+          this.#closeForced = false;
+        }
+      });
+    this.#closePromise = attempt;
+    return attempt;
   }
 
   #stopAfterActiveCancellation(): Promise<Result<null, AnalysisError>> {
@@ -1504,7 +1523,6 @@ export class GhidraClient {
     forceStop: boolean,
   ): Promise<void> {
     try {
-      // best-effort cleanup: a rejected startup must not mask close/cleanup.
       await starting?.promise.catch(() => undefined);
       await this.#cleanup(forceStop);
     } finally {
@@ -1513,7 +1531,6 @@ export class GhidraClient {
         (forceStop || this.#socket === undefined || this.#socket.destroyed)
       )
         this.#startupAttempt = undefined;
-      this.#closePromise = undefined;
     }
   }
 

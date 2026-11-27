@@ -4,6 +4,8 @@ import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
+import { validateRepository } from "./github-api.mjs";
+
 const execFileAsync = promisify(execFile);
 const MAX_BUFFER = 16 * 1024 * 1024;
 const TIMEOUT_MS = 30_000;
@@ -59,6 +61,21 @@ export async function collectJobTimings({
   );
   await mkdir(outputDirectory, { recursive: true });
   await writeFile(rawPath, stdout, "utf8");
+  const jobs = parseAttemptJobs(stdout, identity);
+  const report = normalizeReport({ identity, jobs, observedAt });
+
+  await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+  if (summaryPath !== undefined)
+    await appendSummary(summaryPath, report, rawPath, reportPath);
+  return { rawPath, reportPath, report };
+}
+
+/** Validate the paginated jobs for one workflow attempt before using their contents. */
+export function parseAttemptJobs(
+  stdout,
+  identity,
+  { requireTotalCount = false } = {},
+) {
   const pages = parsePages(stdout);
   const jobs = pages.flatMap(({ jobs: pageJobs }, index) =>
     validateJobs(pageJobs, index, identity),
@@ -66,7 +83,8 @@ export async function collectJobTimings({
   if (
     pages.some(
       ({ total_count }) =>
-        total_count !== undefined && total_count !== jobs.length,
+        (requireTotalCount || total_count !== undefined) &&
+        total_count !== jobs.length,
     )
   )
     throw new Error(
@@ -77,22 +95,11 @@ export async function collectJobTimings({
     .filter((id) => Number.isSafeInteger(id) && id > 0);
   if (new Set(ids).size !== ids.length)
     throw new Error("GitHub jobs API contains duplicate job IDs");
-  const report = normalizeReport({ identity, jobs, observedAt });
-
-  await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
-  if (summaryPath !== undefined)
-    await appendSummary(summaryPath, report, rawPath, reportPath);
-  return { rawPath, reportPath, report };
+  return jobs;
 }
 
 function validateIdentity({ repository, runId, runAttempt }) {
-  if (
-    typeof repository !== "string" ||
-    !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository)
-  )
-    throw new Error(
-      "CI_REPOSITORY must be an owner/name repository identifier",
-    );
+  validateRepository(repository);
   return {
     repository,
     runId: parsePositiveInteger(runId, "CI_TIMING_RUN_ID"),

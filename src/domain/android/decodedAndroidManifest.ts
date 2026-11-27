@@ -12,7 +12,11 @@ export const parseDecodedAndroidManifest = (
   source: string,
   doctype: "allow" | "reject",
 ): Result<
-  { readonly root: Element; readonly packageName: string | null },
+  {
+    readonly root: Element;
+    readonly packageName: string | null;
+    readonly hasPackageAttribute: boolean;
+  },
   XmlParseFailure | { readonly kind: "unexpected-root" }
 > => {
   const parsed = parseXmlDocument(source, { doctype, lineEndings: "preserve" });
@@ -20,8 +24,10 @@ export const parseDecodedAndroidManifest = (
   const root = parsed.value.documentElement;
   if (!isUnqualifiedXmlElement(root) || root.localName !== "manifest")
     return err({ kind: "unexpected-root" });
+  const packageAttribute = root.getAttributeNodeNS(null, "package");
   return ok({
     root,
-    packageName: root.getAttributeNS(null, "package") || null,
+    packageName: packageAttribute?.value || null,
+    hasPackageAttribute: packageAttribute != null,
   });
 };

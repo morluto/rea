@@ -2,6 +2,7 @@ import { isNativeObservationOperation } from "../domain/native/nativeObservation
 import { isNativeInventoryOperation } from "../domain/native/nativeInventory.js";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { ToolResultDelivery } from "./ToolResultDelivery.js";
+import { AGENT_RESULT_BUDGET_ENVIRONMENT } from "../domain/agentResultBudget.js";
 import { INSPECT_ANALYSIS_VIEW_OPERATION } from "../domain/analysisView/analysisViewErrors.js";
 import { inspectAnalysisViewInputSchema } from "../domain/analysisView/analysisViewRequest.js";
 import { smallerBatchDecompileSelection } from "../domain/analysisView/batchDecompileView.js";
@@ -11,10 +12,14 @@ import { ownedJsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 /** Compose native Evidence continuation with the selected, parsed response budget. */
 export const createToolResultDelivery = (
   maximumResponseBytes: number | undefined,
+  /** The server's captured launch environment, read only for its budget seed. */
+  environment: Readonly<Record<string, string | undefined>> = {},
 ): ToolResultDelivery =>
   new ToolResultDelivery(
     maximumResponseBytes ?? STDIO_DEFAULT_MAX_BUFFER_SIZE,
     retainedEvidenceContinuation,
+    undefined,
+    environment[AGENT_RESULT_BUDGET_ENVIRONMENT],
   );
 
 /**

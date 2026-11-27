@@ -1,12 +1,11 @@
 import { truncate, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 
 import { expect, it, vi } from "vitest";
 
 import { assertArtifactReadActive } from "../resources/ArtifactFileOperation.js";
 import { NtfsMftArtifactReader } from "./NtfsMftArtifactReader.js";
 
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { createTestTempFile } from "../../tests/fixtures/temporaryDirectory.js";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 
@@ -62,12 +61,8 @@ const recordBytes = (options: {
   return record;
 };
 
-const writeMft = async (name: string, bytes: Buffer): Promise<string> => {
-  const directory = await createTestTempDirectory("rea-ntfs-mft-");
-  const path = join(directory, name);
-  await writeFile(path, bytes);
-  return path;
-};
+const writeMft = (name: string, bytes: Buffer): Promise<string> =>
+  createTestTempFile("rea-ntfs-mft-", name, bytes);
 
 it("reports a $MFT stream's record headers as the root occurrence", async () => {
   const inventory = await scanCanonicalArtifactInventory(

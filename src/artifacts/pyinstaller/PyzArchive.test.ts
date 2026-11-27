@@ -1,3 +1,4 @@
+import { int32LE as int32 } from "../../native/BinaryInteger.fixture.js";
 import { pythonPycFixture } from "../../python/PythonPyc.fixture.js";
 import { parsePythonPyc } from "../../python/PythonPycParser.js";
 import { pythonPycLimitsSchema } from "../../domain/python/pythonPyc.js";
@@ -179,12 +180,6 @@ it.each([0x61, 0x41, 0x7a, 0x5a, 0x75])(
     });
   },
 );
-
-const int32 = (value: number): Buffer => {
-  const bytes = Buffer.alloc(4);
-  bytes.writeInt32LE(value);
-  return bytes;
-};
 
 const readImage = async (bytes: Buffer, declaredSize = bytes.length) => {
   const root = await createTestTempDirectory("rea-pyz-file-");

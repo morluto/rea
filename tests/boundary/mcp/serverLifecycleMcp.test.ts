@@ -1,3 +1,4 @@
+import { connectFixtureClient } from "../../support/mcp/mcpFixture.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { parseMcpEvidenceBundle } from "../../fixtures/mcpEvidenceBundle.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -545,19 +546,14 @@ afterEach(async () => {
 
 const connect = async (analysis: AnalysisOperationPort) => {
   const server = createServer({ kind: "fixed", analysis });
-  const client = new Client(
+  return connectFixtureClient(
+    server,
     {
       name: "integration-test",
       version: "1.0.0",
     },
-    { jsonSchemaValidator: createMcpSchemaValidation() },
+    resources,
   );
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  resources.push(client, server);
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
-  return client;
 };
 
 const text = (result: CallToolResult): string => {

@@ -7,10 +7,8 @@ import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
 import { err } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import {
-  createJadxProtocolFixture,
-  verifyJadxFixtureCleanup,
-} from "../../fixtures/android/jadx.js";
+import { expectProviderLaunchCleanup } from "../../support/process/expectProviderLaunchCleanup.js";
+import { createJadxProtocolFixture } from "../../fixtures/android/jadx.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const INVENTORY_CLASS_COUNT = 7096;
@@ -84,7 +82,7 @@ const connectJadxSearchFixture = async () => {
     await client.close();
     await server.close();
     await session.close();
-    await verifyJadxFixtureCleanup(launches);
+    await expectProviderLaunchCleanup(launches);
   });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
@@ -151,7 +149,8 @@ test("delivers bounded search_android_classes Evidence while retaining the compl
     matches: ["fixture.Class7094"],
     coverage: "complete",
   });
-  const inventory = await search("");
+  // A limit above the inventory keeps both full provider pages.
+  const inventory = await search("", { limit: 20_000 });
   const inventorySource = session.evidenceById(
     inventory.evidence_links[0] as string,
   );
@@ -212,7 +211,8 @@ test("delivers bounded search_android_classes Evidence while retaining the compl
       offset: 0,
       next_offset: INVENTORY_CLASS_COUNT,
       total_classes: INVENTORY_CLASS_COUNT,
-      limit: 4096,
+      // The default 256-match page and one more match to prove a next page.
+      limit: 257,
       items_omitted: 0,
       fixture_metadata: {
         page_offset: 0,
@@ -281,6 +281,7 @@ test("keeps the complete paged inventory inline without a retaining session", as
   const result = await service.execute("search_android_classes", {
     path: apk,
     query: "",
+    limit: 20_000,
   });
   if (!result.ok) throw result.error;
   // No retaining writer means the CLI receives the unmodified source pages.
@@ -330,7 +331,7 @@ test("keeps the complete paged inventory inline without a retaining session", as
     "items_omitted",
   );
   await provider.close();
-  await verifyJadxFixtureCleanup(launches);
+  await expectProviderLaunchCleanup(launches);
 });
 
 test("withholds inline summary when retaining complete Evidence fails", async () => {
@@ -351,6 +352,7 @@ test("withholds inline summary when retaining complete Evidence fails", async ()
   const result = await service.execute("search_android_classes", {
     path: apk,
     query: "",
+    limit: 20_000,
   });
 
   expect(result).toEqual({ ok: false, error: writeFailure });
@@ -373,5 +375,5 @@ test("withholds inline summary when retaining complete Evidence fails", async ()
   );
 
   await provider.close();
-  await verifyJadxFixtureCleanup(launches);
+  await expectProviderLaunchCleanup(launches);
 });

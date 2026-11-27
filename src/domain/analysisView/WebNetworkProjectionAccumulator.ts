@@ -13,7 +13,7 @@ import {
   type WebNetworkCapture,
 } from "../webNetworkCapture.js";
 import { admitAnalysisViewData } from "./analysisViewDataAdmission.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisViewSubject } from "./analysisViewErrors.js";
 import { analysisInputErrorFromIssues } from "../inputIssueProjection.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
@@ -230,14 +230,8 @@ export const admitHarCaptureParent = (
     artifact.sha256 !== null &&
     (subject == null || subject.sha256 !== artifact.sha256)
   )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message: "Capture parent subject must identify the report's SHA-256.",
-        },
-      ]),
+    return invalidAnalysisViewSubject(
+      "Capture parent subject must identify the report's SHA-256.",
     );
   // The view would write path templates it cannot check against declarations
   // the parent does not retain, so the refusal does not repeat declaration text.

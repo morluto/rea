@@ -27,10 +27,13 @@ import {
 } from "../resources/index.js";
 import {
   isXmlElement,
+  parseTrueFalseText,
   parseXmlDocument,
   xmlChildElements,
   xmlChildrenNamed,
   xmlFirstChildNamed,
+  xmlTrimmedAttribute,
+  xmlTrimmedDirectText,
 } from "../domain/xmlDocument.js";
 import { decodeXmlPlistText } from "../domain/propertyListXmlText.js";
 import { hasZipSignature } from "../domain/zipPackageFormat.js";
@@ -64,28 +67,6 @@ const BASE_LIMITATIONS = [
   "Directory ZIP markers are omitted from contents; only file members are listed.",
 ] as const;
 
-const nonempty = (value: string | null | undefined): string | null => {
-  if (value === null || value === undefined) return null;
-  const trimmed = value.trim();
-  return trimmed === "" ? null : trimmed;
-};
-
-const attribute = (element: Element, name: string): string | null =>
-  nonempty(element.getAttribute(name));
-
-const elementText = (element: Element): string | null => {
-  const parts: string[] = [];
-  for (
-    let child = element.firstChild;
-    child !== null;
-    child = child.nextSibling
-  )
-    // Text (3) and CDATA section (4) nodes both carry character data.
-    if (child.nodeType === 3 || child.nodeType === 4)
-      parts.push(child.nodeValue ?? "");
-  return nonempty(parts.join(""));
-};
-
 const zipSize = (value: number | undefined): number | null =>
   typeof value === "number" && Number.isSafeInteger(value) && value >= 0
     ? value
@@ -106,7 +87,7 @@ const indexedMetadataText = (
     if (!text) continue;
     // XDocument ignores ordinary XML whitespace. CDATA and xml:space can
     // retain a whitespace-only value that occupies this key in NuGet's index.
-    if (/[^\t\r\n ]/u.test(text)) return nonempty(text);
+    if (/[^\t\r\n ]/u.test(text)) return text.trim() || null;
     if (
       Array.from(child.childNodes).some(
         (node) => node.nodeType === 4 && node.nodeValue,
@@ -269,9 +250,9 @@ const opcManifestTargets = (
   const targets = new Map<string, OpcManifestTarget>();
   for (const relationship of xmlChildrenNamed(root, "Relationship")) {
     if (relationship.namespaceURI !== OPC_RELATIONSHIP_NAMESPACE) continue;
-    const type = attribute(relationship, "Type");
+    const type = xmlTrimmedAttribute(relationship, "Type");
     if (type !== NUGET_MANIFEST_RELATIONSHIP) continue;
-    const target = attribute(relationship, "Target");
+    const target = xmlTrimmedAttribute(relationship, "Target");
     if (target === null) continue;
     const displayedTarget = redactRecordedTransportUrl(target).url;
     // Only an absent mode defaults to Internal. External targets can be relative.
@@ -307,14 +288,6 @@ const opcManifestTargets = (
   return [...targets.values()];
 };
 
-const parseBooleanAttribute = (value: string | null): boolean | null => {
-  if (value === null) return null;
-  const folded = value.toLowerCase();
-  if (folded === "true") return true;
-  if (folded === "false") return false;
-  return null;
-};
-
 const parseDependencies = (
   metadata: Element,
   namespace: string,
@@ -332,18 +305,18 @@ const parseDependencies = (
   const readDependency = (
     element: Element,
   ): NugetNupkg["dependency_groups"][number]["dependencies"][number] => ({
-    id: attribute(element, "id"),
-    version: attribute(element, "version"),
-    include: attribute(element, "include"),
-    exclude: attribute(element, "exclude"),
-    development_dependency: parseBooleanAttribute(
-      attribute(element, "developmentDependency"),
+    id: xmlTrimmedAttribute(element, "id"),
+    version: xmlTrimmedAttribute(element, "version"),
+    include: xmlTrimmedAttribute(element, "include"),
+    exclude: xmlTrimmedAttribute(element, "exclude"),
+    development_dependency: parseTrueFalseText(
+      xmlTrimmedAttribute(element, "developmentDependency"),
     ),
   });
   const fromGroup = (
     element: Element,
   ): NugetNupkg["dependency_groups"][number] => ({
-    target_framework: attribute(element, "targetFramework"),
+    target_framework: xmlTrimmedAttribute(element, "targetFramework"),
     dependencies: xmlChildrenNamed(element, "dependency", namespace).map(
       readDependency,
     ),
@@ -408,7 +381,7 @@ const parseNuspecDocument = (
   const metadataNamespace = metadata.lookupNamespaceURI("") ?? "";
   const metadataText = (local: string): string | null => {
     const element = xmlFirstChildNamed(metadata, local, metadataNamespace);
-    return element === undefined ? null : elementText(element);
+    return element === undefined ? null : xmlTrimmedDirectText(element);
   };
   const licenseElement = xmlFirstChildNamed(
     metadata,
@@ -416,7 +389,7 @@ const parseNuspecDocument = (
     metadataNamespace,
   );
   const licenseType = licenseElement
-    ? attribute(licenseElement, "type")?.toLowerCase()
+    ? xmlTrimmedAttribute(licenseElement, "type")?.toLowerCase()
     : undefined;
   const repositoryElement = xmlFirstChildNamed(
     metadata,
@@ -438,16 +411,18 @@ const parseNuspecDocument = (
               licenseType === "expression" || licenseType === "file"
                 ? licenseType
                 : null,
-            value: elementText(licenseElement),
+            value: xmlTrimmedDirectText(licenseElement),
           },
     repository:
       repositoryElement === undefined
         ? null
         : {
-            type: attribute(repositoryElement, "type"),
-            ...redactRecordedTransportUrl(attribute(repositoryElement, "url")),
-            commit: attribute(repositoryElement, "commit"),
-            branch: attribute(repositoryElement, "branch"),
+            type: xmlTrimmedAttribute(repositoryElement, "type"),
+            ...redactRecordedTransportUrl(
+              xmlTrimmedAttribute(repositoryElement, "url"),
+            ),
+            commit: xmlTrimmedAttribute(repositoryElement, "commit"),
+            branch: xmlTrimmedAttribute(repositoryElement, "branch"),
           },
     dependency_groups: parseDependencies(
       metadata,

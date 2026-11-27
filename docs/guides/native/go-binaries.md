@@ -247,7 +247,7 @@ The existing default resource budgets are now explicit per-call controls:
 
 | Parameter                      | Default     | What it admits                                                |
 | ------------------------------ | ----------- | ------------------------------------------------------------- |
-| `max_input_bytes`              | 256 MiB     | Complete stable input file                                    |
+| `max_input_bytes`              | 2 GiB       | Complete stable input file                                    |
 | `max_report_bytes`             | 8 MiB       | Complete normalized metadata representation                   |
 | `max_build_info_bytes`         | 1 MiB       | Aggregate embedded string contents, excluding length prefixes |
 | `max_header_search_bytes`      | 256 MiB     | Cumulative build-info search work                             |
@@ -267,8 +267,9 @@ parameter and effective bytes; increase that parameter on the next call,
 without restarting REA. The original complete artifact and its identity are
 preserved. An unchanged retry cannot increase a deterministic allowance.
 
-The shared native container reader separately bounds structural table decoding
-to 16 MiB. None of these Go controls changes that boundary. Inline strings must
+The shared native container reader separately bounds its ELF directory and
+Mach-O load-command tables with `max_structure_bytes` (default 16 MiB); none of
+the other Go controls changes that boundary. Inline strings must
 also fit their actual mapped source range. Identical search spans with the same
 virtual alignment are searched once; partially overlapping spans consume the
 cumulative search budget. Oversized complete reports fail without partial

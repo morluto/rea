@@ -4,22 +4,25 @@ import {
 } from "../../domain/artifactReadBudget.js";
 import { projectPeBinaryFailure } from "./PeBinaryFailure.js";
 import {
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   withStableArtifactHandle,
   assertArtifactReadActive,
   ArtifactResourceScope,
 } from "../../resources/index.js";
 import type { PeUnwindRangesPort } from "../../ports/binaryDiagnostics/PeUnwindRangesPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
-import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
   MAX_INSPECT_PE_UNWIND_FILE_BYTES,
+  peUnwindEntryLimit,
   type InspectPeUnwindRangesInput,
   type PeUnwindRanges,
 } from "../../domain/native/peUnwindRanges.js";
 import { err, ok } from "../../domain/result.js";
 import { PE_UNWIND_RANGES_PROVIDER } from "../../domain/investigationProviders.js";
-import { parsePeUnwindRangesFromHandle } from "./PeUnwindRangesParser.js";
+import {
+  parsePeUnwindRangesFromHandle,
+  PE_UNWIND_ENTRY_LIMIT,
+} from "./PeUnwindRangesParser.js";
 
 const OPERATION = "inspect_pe_unwind_ranges";
 const PE_HEADER_PREFIX_BYTES = 4096;
@@ -29,16 +32,12 @@ export class PeUnwindRangesProvider implements PeUnwindRangesPort {
   readonly identity = PE_UNWIND_RANGES_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        PE_UNWIND_RANGES_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      PE_UNWIND_RANGES_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(input: InspectPeUnwindRangesInput, options?: ExecutionOptions) {
@@ -82,7 +81,7 @@ export class PeUnwindRangesProvider implements PeUnwindRangesPort {
         return ok(report);
       });
     } catch (cause) {
-      const failure = projectPeBinaryFailure<never>(
+      const failure = projectPeBinaryFailure<typeof PE_UNWIND_ENTRY_LIMIT>(
         cause,
         input,
         {
@@ -92,13 +91,19 @@ export class PeUnwindRangesProvider implements PeUnwindRangesPort {
             name: "The PE whole-file ceiling (32-bit file offsets)",
             bytes: PE_FILE_CEILING_BYTES,
           },
-          limits: [],
-          limitRecovery: (_limit, ceiling) =>
-            fixedAllowanceOptions(
-              "The PE exception-directory entry allowance",
-              "parser",
-              ceiling,
-            ),
+          limits: [PE_UNWIND_ENTRY_LIMIT],
+          limitRecovery: (_limit, failure) => {
+            const { required } = failure.failure.limit;
+            return {
+              retryable: false,
+              limit: {
+                ...peUnwindEntryLimit(failure.maximum_bytes),
+                ...(typeof required === "number"
+                  ? { required_value: required }
+                  : {}),
+              },
+            };
+          },
           ...(completed === undefined ? {} : { completed }),
         },
         observed,

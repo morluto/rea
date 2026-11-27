@@ -12,6 +12,7 @@ import { ComputerHelper } from "../../desktop/AgentEnvComputerHelper.js";
 import { ScreenJudgeProcess } from "../../desktop/ScreenJudgeProcess.js";
 import { BuildComputerLongRuns } from "../../desktop/BuildComputerLongRuns.js";
 import { DesktopBuildComputers } from "./DesktopBuildComputers.js";
+import { DesktopBuildCapture } from "./DesktopBuildCapture.js";
 import { DesktopRemoteTaskReaders } from "./DesktopRemoteTaskReaders.js";
 import { readHostFile } from "../../desktop/HostFileRead.js";
 
@@ -375,4 +376,125 @@ it("retains the computer while command and reader cleanup fail, but still releas
     spawn.mockRestore();
     connect.mockRestore();
   }
+});
+
+it("tears the computer down when a remote task reader is terminally uncertain, and resolves that reader after teardown", async () => {
+  const computerClose = vi
+    .fn()
+    .mockResolvedValue({ verified: true, teardown: "agentenv" });
+  const exec = vi.fn().mockResolvedValue({
+    exit_code: null,
+    timed_out: true,
+    stdout: "",
+    stderr: "",
+  });
+  const spawn = vi
+    .spyOn(ComputerHelper, "spawn")
+    .mockResolvedValue({} as never);
+  const connect = vi.spyOn(AgentEnvComputer, "connect").mockResolvedValue({
+    computer: { close: computerClose, exec, sandboxId: "sandbox" },
+    frame: { structured: null, content: [] },
+  } as never);
+  const computers = new DesktopBuildComputers(
+    {
+      REA_AGENT_ENV_COMMAND: "/runner",
+      REA_DOCKER_COMMAND: "/docker",
+    },
+    readHostFile,
+  );
+  try {
+    const started = await computers.start(
+      { source: { kind: "bundle", path: "/bundle" } },
+      new AbortController().signal,
+    );
+    if (!started.ok) throw started.error;
+    const id = started.value.value.computer_id;
+    const steps = computers.steps(id);
+    if (steps === undefined) throw new Error("Expected live computer steps");
+    await expect(
+      steps.witness.readers.read(
+        [
+          {
+            id: "note",
+            file: "Documents/note",
+            argv: ["reader", "{file}"],
+            output: "json",
+          },
+        ],
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow();
+    const closed = await computers.close(id);
+    expect(closed.ok).toBe(true);
+    expect(computerClose).toHaveBeenCalledTimes(1);
+  } finally {
+    await computers.closeAll().catch(() => computers.closeAll());
+    spawn.mockRestore();
+    connect.mockRestore();
+  }
+});
+
+it("DesktopBuildCapture.start runs stop rollback with an un-aborted signal when cancelled during launch", async () => {
+  const controller = new AbortController();
+  let stopSignalAborted: boolean | undefined;
+  const schemaBytes = Buffer.from(
+    JSON.stringify({
+      options: {
+        properties: { syntheticSeed: {}, taskEnd: {} },
+      },
+    }),
+  );
+  const capture = new DesktopBuildCapture(
+    {
+      exec: async (
+        argv: readonly string[],
+        _timeoutS: number,
+        signal?: AbortSignal,
+      ) => {
+        const command = argv[4];
+        if (command === "run") {
+          return {
+            exit_code: 0,
+            timed_out: false,
+            stdout: JSON.stringify({
+              exit_code: 0,
+              stdout_bytes: schemaBytes.length,
+              stderr: "",
+            }),
+            stderr: "",
+          };
+        }
+        if (command === "start") {
+          controller.abort("caller cancelled start");
+          throw controller.signal.reason;
+        }
+        if (command === "stop") {
+          stopSignalAborted = signal?.aborted ?? false;
+          return {
+            exit_code: 0,
+            timed_out: false,
+            stdout: JSON.stringify({ absent: true }),
+            stderr: "",
+          };
+        }
+        return {
+          exit_code: 0,
+          timed_out: false,
+          stdout: JSON.stringify({ ok: true }),
+          stderr: "",
+        };
+      },
+      homeFiles: async (paths: readonly string[]) =>
+        new Map(paths.map((p) => [p, schemaBytes])),
+      redacted: (text: string) => text,
+      callTool: async () => ({ isError: false, structured: null, content: [] }),
+      addHomeFiles: async () => undefined,
+    } as never,
+    request({ kind: "archive", package: "mousepad", extra_packages: [] }),
+  );
+  const captureStarted = await capture.start({}, controller.signal);
+  expect(captureStarted.ok).toBe(false);
+  expect(stopSignalAborted).toBe(false);
+  if (!captureStarted.ok)
+    expect(captureStarted.error._tag).toBe("AnalysisCancelledError");
 });

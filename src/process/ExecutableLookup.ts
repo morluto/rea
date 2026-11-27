@@ -7,6 +7,7 @@ import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { posixPathCandidates } from "./executableSearch.js";
 import { fileDeadline } from "./FileDeadline.js";
+import { reportedSystemCode } from "../kernel/reportedSystemCode.js";
 
 /** Where a command resolves through an effective PATH, or why it does not. */
 export type ExecutableLookup =
@@ -166,7 +167,7 @@ export const lookupExecutable = async (
       const metadata = await deadline.run(() => stat(candidate));
       if (metadata.status === "interrupted") return { ...metadata, candidate };
       if (metadata.status === "rejected") {
-        const code = systemErrorCode(metadata.cause);
+        const code = reportedSystemCode(metadata.cause);
         if (explicit && (code === "EACCES" || code === "EPERM"))
           return {
             status: "denied",
@@ -198,7 +199,7 @@ export const lookupExecutable = async (
               ...(selectedPath === undefined ? {} : { selectedPath }),
             }
           : { status: "no-working-directory", cause: unnamed.cause };
-      const code = systemErrorCode(executable.cause);
+      const code = reportedSystemCode(executable.cause);
       movedPast(candidate, code);
       if (!searchMovesPast(code)) return missing({ candidate, code });
     }
@@ -284,14 +285,6 @@ const PATH_MAX: Partial<Record<NodeJS.Platform, number>> = {
   linux: 4096,
   darwin: 1024,
 };
-
-const systemErrorCode = (cause: unknown): string | undefined =>
-  typeof cause === "object" &&
-  cause !== null &&
-  "code" in cause &&
-  typeof cause.code === "string"
-    ? cause.code
-    : undefined;
 
 const systemErrorSuffix = (code: string | undefined): string =>
   code === undefined ? "" : ` (${code})`;

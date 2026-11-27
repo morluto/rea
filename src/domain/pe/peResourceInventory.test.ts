@@ -8,30 +8,17 @@ import {
 import {
   hasPeResourceName,
   locatePeResourcePayloads,
-  readPeResourceLayout,
 } from "./peResourceLayout.js";
 import {
-  parsePeResources,
   parsePeResourcesFromSource,
   peResourceLimitBoundary,
 } from "./peResourceInventory.js";
 import { peResourceFixture } from "./peResources.fixture.js";
+import { peResourceReportFixture } from "../../../tests/fixtures/binaryDiagnostics/peResources.js";
 import { ParseFailureError } from "../parseFailure.js";
 
 const parse = (bytes: Buffer, maxEntries = 4096, signal?: AbortSignal) =>
-  parsePeResources(
-    bytes,
-    {
-      path: "/fixtures/example.exe",
-      bytes: bytes.length,
-      sha256: createHash("sha256").update(bytes).digest("hex"),
-    },
-    inspectPeResourcesInputSchema.parse({
-      path: "/fixtures/example.exe",
-      max_entries: maxEntries,
-    }),
-    signal,
-  );
+  peResourceReportFixture(bytes, maxEntries, signal);
 
 describe("word-aligned PE resource records", () => {
   it.each([false, true])(
