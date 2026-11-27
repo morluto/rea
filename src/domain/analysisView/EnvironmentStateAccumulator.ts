@@ -22,6 +22,12 @@ import { readRecordedRequestBody } from "./recordedExchangeBody.js";
 import { EnvironmentStateExtraction } from "./EnvironmentStateExtraction.js";
 import type { TemplateRule } from "./environmentManifestRules.js";
 import {
+  hasXssiGuardPrefix,
+  isXssiEligibleMediaType,
+  parseXssiOrExactJson,
+  XSSI_RESPONSE_BODY_LIMIT_BYTES,
+} from "./rpcOperationSelector.js";
+import {
   isStateWrite,
   STATE_BODY_LIMIT_BYTES,
   type ParsedBody,
@@ -54,26 +60,39 @@ const STATE_NESTING_DEPTH = 16;
 // this also covers the whole-second digits of every finite number duration.
 const DURATION_DIGITS = 3 - Math.floor(Math.log10(Number.MIN_VALUE));
 
-const parseStateJsonText = (text: string): JsonValue | undefined => {
-  const value = parseExactJson(text);
+const parseStateJsonText = (
+  text: string,
+  allowXssi = false,
+): JsonValue | undefined => {
+  const value = allowXssi ? parseXssiOrExactJson(text) : parseExactJson(text);
   return value === undefined ||
     jsonValueExceedsDepth(value, MAX_JSON_DEPTH - STATE_NESTING_DEPTH)
     ? undefined
     : value;
 };
 
-/** Parsed state JSON for a body whose media type has already been admitted. */
+/** Parsed state JSON for a body whose media type has already been normalized. */
 const parseStateBodyJson = (
+  essence: string | null,
   body: RecordedResponseBody,
+  allowXssi = true,
 ): JsonValue | undefined => {
+  const isJson = isJsonLike(essence);
   if (
     body.bodyText === null ||
     body.bodyEncoding === "base64" ||
     body.bodyCut === true ||
-    Buffer.byteLength(body.bodyText, "utf8") > STATE_BODY_LIMIT_BYTES
+    !(
+      isJson ||
+      (allowXssi &&
+        isXssiEligibleMediaType(essence) &&
+        hasXssiGuardPrefix(body.bodyText))
+    ) ||
+    Buffer.byteLength(body.bodyText, "utf8") >
+      (isJson ? STATE_BODY_LIMIT_BYTES : XSSI_RESPONSE_BODY_LIMIT_BYTES)
   )
     return undefined;
-  return parseStateJsonText(body.bodyText);
+  return parseStateJsonText(body.bodyText, allowXssi);
 };
 
 /** Interpret a serving exchange's raw media type before reading its state body. */
@@ -81,9 +100,10 @@ export const stateBodyJson = (
   contentType: string | null,
   body: RecordedResponseBody,
 ): JsonValue | undefined =>
-  contentType !== null && isJsonLike(mediaTypeEssence(contentType))
-    ? parseStateBodyJson(body)
-    : undefined;
+  parseStateBodyJson(
+    contentType === null ? null : mediaTypeEssence(contentType),
+    body,
+  );
 
 const startSchema = z.object({ startedDateTime: z.string() });
 const durationSchema = z.object({ time: z.number().nonnegative() });
@@ -161,8 +181,9 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
   constructor(
     maximumBytes = WEB_NETWORK_CAPTURE_LIMITS.outputBytes,
     rules: readonly TemplateRule[] = [],
+    discriminateRpc = true,
   ) {
-    super(maximumBytes, true, rules, "Environment-state");
+    super(maximumBytes, true, rules, "Environment-state", discriminateRpc);
   }
 
   /** The state publishes no body shapes. */
@@ -279,12 +300,30 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
   #body(ordinal: number): ParsedBody | null {
     this.#bodyReleases.push(this.temporaryCheckpoint());
     const entry = this.#entries.get(ordinal);
-    // A body that is not JSON-like is refused before its decoding is charged.
-    if (entry === undefined || !isJsonLike(entry.contentTypeEssence))
+    // A body whose media type cannot carry JSON or XSSI JSON is refused before its decoding is charged.
+    if (
+      entry === undefined ||
+      (this.discriminateRpc
+        ? !isXssiEligibleMediaType(entry.contentTypeEssence)
+        : !isJsonLike(entry.contentTypeEssence))
+    )
       return { kind: "unusable" };
     const declaration = readRecordedResponseDeclaration(entry.record.reported);
     const content = declaration?.content;
     if (typeof content?.text !== "string") return { kind: "unusable" };
+    if (
+      !isJsonLike(entry.contentTypeEssence) &&
+      !(content.encoding === undefined
+        ? hasXssiGuardPrefix(content.text)
+        : content.encoding === "base64" &&
+          entry.record.binary_fields.some(
+            (field) =>
+              field.pointer === "/response/content/text" &&
+              field.state === "retained" &&
+              field.content_base64?.startsWith("KV19J") === true,
+          ))
+    )
+      return { kind: "unusable" };
     // Larger bodies are never parsed; within the limit, decoding copies at most the retained text and the tree is linear in it.
     const length = content.text.length;
     if (length > base64PrefixChars(STATE_BODY_LIMIT_BYTES))
@@ -292,11 +331,13 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
     if (!this.temporary(RECORD_SCRATCH_BYTES + textBytes(length) * 4))
       return null;
     const value = parseStateBodyJson(
+      entry.contentTypeEssence,
       readRecordedResponseBody(
         entry.record,
         STATE_BODY_LIMIT_BYTES,
         declaration,
       ),
+      this.discriminateRpc,
     );
     return value === undefined ? { kind: "unusable" } : { kind: "json", value };
   }
@@ -399,6 +440,7 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
         body: (ordinal) => this.#body(ordinal),
         withRequestBody: (ordinal, use) => this.#withRequestBody(ordinal, use),
         emptyResponse: (ordinal) => this.#emptyResponse(ordinal),
+        rpcOperation: (ordinal) => this.recordRpcOperation(ordinal),
         retain: (bytes) => this.retain(bytes),
         checkpoint: () => this.retainedCheckpoint(),
         release: () => this.#bodyReleases.pop()?.(),

@@ -16,6 +16,12 @@ import {
 } from "./environmentStateRules.js";
 import { isAbsence } from "./environmentStateWriteChecks.js";
 import { prefixRelated } from "./environmentStateWriteRules.js";
+import {
+  graphqlOperationKind,
+  selectRpcOperationFactsFromText,
+  type RpcOperation,
+  type RpcOperationFacts,
+} from "./rpcOperationSelector.js";
 import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
 
 /** The words of a segment or operation name. */
@@ -95,6 +101,7 @@ export interface QueryCallIo {
     use: (body: JsonValue | undefined) => T,
   ) => T;
   readonly request: (ordinal: number) => JsonValue | undefined;
+  readonly rpcOperation?: (ordinal: number) => RpcOperationFacts | null;
   readonly retain: (bytes: number) => void;
 }
 
@@ -217,6 +224,9 @@ export const readOnlyTools = (
       .map((ordinal) => records[position.get(ordinal) ?? -1])
       .filter((record): record is StateRecordFacts => record !== undefined);
     if (!calls.some(succeeded) || calls.some(unresolved)) continue;
+    const operations = calls.map((call) => callOperationChecks(tool, call, io));
+    // A declared mutation or subscription stays a write, whatever its response repeats.
+    if (operations.some((operation) => operation.declaresWrite())) continue;
     const timeline = {
       position,
       chronology,
@@ -225,7 +235,7 @@ export const readOnlyTools = (
     };
     if (
       repeatsRead(calls, records, timeline) ||
-      namesReadOperations(calls, io) ||
+      operations.every((operation) => operation.readsOnly()) ||
       namesLookup(tool.path_template)
     )
       candidates.set(tool.name, calls);
@@ -403,19 +413,128 @@ class ReadsByEnd {
   }
 }
 
-/** Every call names only read operations. */
-const namesReadOperations = (
-  calls: readonly StateRecordFacts[],
+const fallbackRpcFacts = (
+  rpcOperation: RpcOperation,
+  body: JsonValue | undefined,
+): RpcOperationFacts => {
+  if (rpcOperation.kind !== "graphql")
+    return { kind: rpcOperation.kind, name: rpcOperation.name };
+  if (!isObject(body))
+    return {
+      kind: "graphql",
+      name: rpcOperation.name,
+      graphqlDocument: "unknown",
+    };
+  if (typeof body.query === "string")
+    return {
+      kind: "graphql",
+      name: rpcOperation.name,
+      graphqlDocument:
+        graphqlOperationKind(body.query, rpcOperation.name) ?? "unknown",
+    };
+  return {
+    kind: "graphql",
+    name: rpcOperation.name,
+    graphqlDocument: Object.hasOwn(body, "query") ? "unknown" : "absent",
+  };
+};
+
+const rpcFactsForCall = (
+  tool: StateToolFacts,
+  call: StateRecordFacts,
+  requestBody: () => JsonValue | undefined,
   io: QueryCallIo,
-): boolean =>
-  calls.every((call) => {
-    const operations = operationsOf(call, io.request(call.ordinal));
+): RpcOperationFacts | undefined => {
+  if (io.rpcOperation !== undefined) {
+    const recorded = io.rpcOperation(call.ordinal);
+    if (recorded !== null) return recorded;
+    return tool.rpc_operation === undefined
+      ? undefined
+      : fallbackRpcFacts(tool.rpc_operation, requestBody());
+  }
+  if (tool.rpc_operation !== undefined)
+    return fallbackRpcFacts(tool.rpc_operation, requestBody());
+  const body = requestBody();
+  return selectRpcOperationFactsFromText({
+    method: call.method,
+    path: call.path,
+    query: call.query,
+    bodyText: body === undefined ? undefined : JSON.stringify(body),
+  });
+};
+
+const rpcCallReadsOnly = (rpc: RpcOperationFacts): boolean => {
+  if (rpc.kind !== "graphql") return readsOnly(rpc.name);
+  switch (rpc.graphqlDocument) {
+    case "query":
+      return true;
+    case "mutation":
+    case "subscription":
+    case "unknown":
+      return false;
+    case "absent":
+      return readsOnly(rpc.name);
+  }
+};
+
+/** Share one call's RPC selection and fallback read decision without retaining its parsed body. */
+const callOperationChecks = (
+  tool: StateToolFacts,
+  call: StateRecordFacts,
+  io: QueryCallIo,
+): {
+  readonly declaresWrite: () => boolean;
+  readonly readsOnly: () => boolean;
+} => {
+  let fallbackReadsOnly: boolean | undefined;
+  const bodyReadsOnly = (body: JsonValue | undefined): boolean => {
+    const operations = operationsOf(call, body);
     return (
       operations !== undefined &&
       operations.length > 0 &&
       operations.every(readsOnly)
     );
-  });
+  };
+  let rpc: RpcOperationFacts | undefined;
+  let selected = false;
+  const selectedRpc = (): RpcOperationFacts | undefined => {
+    if (!selected) {
+      let body: JsonValue | undefined;
+      let bodyLoaded = false;
+      rpc = rpcFactsForCall(
+        tool,
+        call,
+        () => {
+          body = io.request(call.ordinal);
+          bodyLoaded = true;
+          return body;
+        },
+        io,
+      );
+      if (rpc === undefined && bodyLoaded)
+        fallbackReadsOnly = bodyReadsOnly(body);
+      selected = true;
+    }
+    return rpc;
+  };
+  return {
+    declaresWrite: () => {
+      const facts = selectedRpc();
+      return (
+        facts?.kind === "graphql" &&
+        (facts.graphqlDocument === "mutation" ||
+          facts.graphqlDocument === "subscription")
+      );
+    },
+    readsOnly: () => {
+      const facts = selectedRpc();
+      if (facts !== undefined) return rpcCallReadsOnly(facts);
+      if (fallbackReadsOnly === undefined)
+        fallbackReadsOnly = bodyReadsOnly(io.request(call.ordinal));
+      return fallbackReadsOnly!;
+    },
+  };
+};
 
 /** The path's last literal segment is a session segment, or names a lookup by its last meaningful word and no write word. */
 const namesLookup = (template: string): boolean => {

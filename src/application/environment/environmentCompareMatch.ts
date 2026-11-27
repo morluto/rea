@@ -4,9 +4,9 @@ import {
 } from "../../domain/analysisView/environmentStateRules.js";
 import { bulkCollectionOf } from "../../domain/analysisView/environmentStateWriteAddress.js";
 import { isPagingParameter } from "../../domain/analysisView/environmentStatePaging.js";
-import { segmentRule } from "../../domain/analysisView/webNetworkRouteTemplates.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import type { BulkIds } from "./environmentCompareIds.js";
+import { matchReplayTool } from "./environmentReplay.js";
 import type {
   EnvironmentManifest,
   EnvironmentManifestTool,
@@ -17,13 +17,6 @@ import {
   type EnvironmentToolDefinition,
 } from "./environmentTools.js";
 
-const FORMAT_RULES: ReadonlySet<string> = new Set([
-  "numeric",
-  "uuid",
-  "hex",
-  "iso-date",
-]);
-
 /** One request of a probe capture, as the comparison replays it. */
 export interface ProbeRequest {
   readonly method: string;
@@ -31,6 +24,9 @@ export interface ProbeRequest {
   /** WHATWG query spelling including `?`, or null. */
   readonly query: string | null;
   readonly body: JsonValue | undefined;
+  readonly contentType?: string | null | undefined;
+  /** Raw wire request body text; `null` when the recorded request carried no body text. */
+  readonly bodyText?: string | null | undefined;
 }
 
 /** A probe request as a call of one manifest tool. */
@@ -140,38 +136,6 @@ export const literalPositions = (
   );
 };
 
-interface Fit {
-  readonly tool: EnvironmentManifestTool;
-  readonly literals: number;
-}
-
-/** How a path fits a tool's template: the literal segments it matches, or undefined when it does not fit. */
-const fitOf = (
-  tool: EnvironmentManifestTool,
-  segments: readonly string[],
-): Fit | undefined => {
-  const template = tool.path_template.slice(1).split("/");
-  if (template.length !== segments.length) return undefined;
-  const params = new Map(tool.params.map((param) => [param.index, param]));
-  let literals = 0;
-  for (const [index, part] of template.entries()) {
-    const segment = segments[index]!;
-    const param = params.get(index);
-    if (param === undefined) {
-      if (part !== segment && part !== decodedSegment(segment))
-        return undefined;
-      literals += 1;
-    } else if (
-      // Replay matches a path value decoded, so its format is the decoded value's.
-      FORMAT_RULES.has(param.rule) &&
-      segmentRule(decodedSegment(segment)) !== param.rule
-    )
-      return undefined;
-    else if (segment === "") return undefined;
-  }
-  return { tool, literals };
-};
-
 /** A tool's arguments as the served catalog offers them: a body too when `bodies` names it. */
 export const probeArguments = (
   tool: EnvironmentManifestTool,
@@ -193,25 +157,15 @@ export const bodyTools = (
     ),
   );
 
-/** The tool of the request's method whose template fits the path with the most literal segments; the manifest's order breaks ties. `bodies` names the tools a served catalog gives a body beyond their method's. */
+/** The tool of the request's method and optional RPC operation whose template fits the path with the most literal segments; the manifest's order breaks ties. `bodies` names the tools a served catalog gives a body beyond their method's. */
 export const matchProbeRequest = (
   manifest: EnvironmentManifest,
   request: ProbeRequest,
   bodies: ReadonlySet<string> = new Set(),
 ): ProbeToolCall | undefined => {
-  const segments = request.path.slice(1).split("/");
-  let best: Fit | undefined;
-  for (const tool of manifest.tools) {
-    if (tool.method !== request.method) continue;
-    const fit = fitOf(tool, segments);
-    if (
-      fit !== undefined &&
-      (best === undefined || fit.literals > best.literals)
-    )
-      best = fit;
-  }
-  if (best === undefined) return undefined;
-  const { tool } = best;
+  const matched = matchReplayTool(manifest, request);
+  if (matched === undefined) return undefined;
+  const { tool, segments } = matched;
   const names = probeArguments(tool, bodies);
   const args = new Map<string, JsonValue>();
   const pathArguments: string[] = [];

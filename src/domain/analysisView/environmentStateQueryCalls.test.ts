@@ -2,7 +2,10 @@ import { StateRecordChronology } from "./StateRecordChronology.js";
 import { parseOffsetDateTimeInstant } from "../offsetDateTime.js";
 import { describe, expect, it } from "vitest";
 
+import { environmentManifestCaptureFixture } from "../../../tests/fixtures/analysisView.js";
 import type { JsonValue } from "../jsonValue.js";
+import type { WebNetworkCaptureRecord } from "../webNetworkCapture.js";
+import { EnvironmentStateAccumulator } from "./EnvironmentStateAccumulator.js";
 import {
   readOnlyTools,
   type QueryCallIo,
@@ -22,6 +25,7 @@ interface Call {
   readonly request?: JsonValue;
   readonly tool: string;
   readonly template?: string;
+  readonly rpcOperation?: StateToolFacts["rpc_operation"];
   readonly start?: number;
   readonly end?: number | null;
 }
@@ -29,6 +33,8 @@ interface Call {
 /** How the read-only pass parses response bodies and charges what it keeps of them, when a test watches either. */
 interface Bodies {
   readonly withBody?: QueryCallIo["withBody"];
+  readonly request?: QueryCallIo["request"];
+  readonly rpcOperation?: QueryCallIo["rpcOperation"];
   readonly retain?: (bytes: number) => void;
 }
 
@@ -67,6 +73,9 @@ const readOnlyOf = (
       name: call.tool,
       method: call.method,
       path_template: call.template ?? call.path,
+      ...(call.rpcOperation === undefined
+        ? {}
+        : { rpc_operation: call.rpcOperation }),
       record_ordinals: [...(known?.record_ordinals ?? []), index],
     });
   });
@@ -78,7 +87,10 @@ const readOnlyOf = (
       records,
       {
         withBody,
-        request: (ordinal) => calls[ordinal]?.request,
+        request: bodies.request ?? ((ordinal) => calls[ordinal]?.request),
+        ...(bodies.rpcOperation === undefined
+          ? {}
+          : { rpcOperation: bodies.rpcOperation }),
         retain: bodies.retain ?? (() => undefined),
       },
       new StateRecordChronology(records, timeline),
@@ -89,6 +101,109 @@ const readOnlyOf = (
 const JOBS = [{ id: "night-watch", status: "running" }];
 
 describe("POSTs that read state", () => {
+  it("reuses saved RPC facts without reading a request body for the fallback", () => {
+    let requestReads = 0;
+    let factsReads = 0;
+    const call: Call = {
+      method: "POST",
+      path: "/graphql",
+      tool: "post_graphql",
+      rpcOperation: { kind: "graphql", name: "GetViewer" },
+      response: { viewer: { id: "1" } },
+    };
+
+    expect(
+      readOnlyOf([call], {
+        rpcOperation: () => {
+          factsReads += 1;
+          return {
+            kind: "graphql",
+            name: "GetViewer",
+            graphqlDocument: "query",
+          };
+        },
+        request: () => {
+          requestReads += 1;
+          return { query: "mutation GetViewer { resetViewer { id } }" };
+        },
+      }),
+    ).toEqual(["post_graphql"]);
+    expect(requestReads).toBe(0);
+    expect(factsReads).toBe(1);
+  });
+
+  it.each([
+    {
+      label: "declared GraphQL",
+      path: "/graphql",
+      rpcOperation: { kind: "graphql", name: "GetViewer" } as const,
+      request: { query: "query GetViewer { viewer { id } }" },
+    },
+    {
+      label: "inferred JSON-RPC",
+      path: "/rpc",
+      request: { jsonrpc: "2.0", method: "users.get", id: 1 },
+    },
+    {
+      label: "ordinary operation",
+      path: "/rpc",
+      request: { operation: "getViewer" },
+    },
+    {
+      label: "query operation with an unavailable body",
+      path: "/rpc",
+      query: "?op=getViewer",
+    },
+  ])("reads each $label fallback body once across both checks", (fixture) => {
+    const reads: number[] = [];
+    const calls: Call[] = [0, 1].map(() => ({
+      ...fixture,
+      method: "POST",
+      tool: "post_read",
+      response: { viewer: { id: "1" } },
+    }));
+
+    expect(
+      readOnlyOf(calls, {
+        request: (ordinal) => {
+          reads.push(ordinal);
+          return calls[ordinal]?.request;
+        },
+      }),
+    ).toEqual(["post_read"]);
+    expect(reads).toEqual([0, 1]);
+  });
+
+  it("uses saved mutation facts before repeated-response guesses without reading the body", () => {
+    let requestReads = 0;
+    const response = { viewer: { id: "1" } };
+    expect(
+      readOnlyOf(
+        [
+          { method: "GET", path: "/graphql", tool: "get_viewer", response },
+          {
+            method: "POST",
+            path: "/graphql",
+            tool: "post_reset",
+            response,
+          },
+        ],
+        {
+          rpcOperation: () => ({
+            kind: "graphql",
+            name: "GetViewer",
+            graphqlDocument: "mutation",
+          }),
+          request: () => {
+            requestReads += 1;
+            return { query: "query GetViewer { viewer { id } }" };
+          },
+        },
+      ),
+    ).toEqual([]);
+    expect(requestReads).toBe(0);
+  });
+
   it("reads a POST answering as the latest GET of its path did, with no write between", () => {
     const get = {
       method: "GET",
@@ -705,5 +820,407 @@ describe("the bodies read-only decisions compare", () => {
     expect([...outside]).toEqual([]);
     // Each body is kept as its digest's hex text, charged before it is.
     expect(retained).toBeGreaterThanOrEqual(parsed.size * 64);
+  });
+});
+
+describe("GraphQL operation definition classification with fragments and keyword names", () => {
+  it("skips fragment headers and directive or variable defaults so a fragment never hides a mutation", () => {
+    const graphqlCall = (name: string, query: string): Call => ({
+      method: "POST",
+      path: "/graphql",
+      query: "?op=getViewer",
+      tool: `post_graphql_${name}`,
+      rpcOperation: { kind: "graphql", name },
+      request: { operationName: name, query },
+      response: { data: { ok: true } },
+    });
+
+    expect(
+      readOnlyOf([
+        graphqlCall(
+          "on",
+          "fragment query on Mutation { reset } mutation on { ...query }",
+        ),
+      ]),
+    ).toEqual([]);
+
+    expect(
+      readOnlyOf([
+        graphqlCall(
+          "mutation",
+          "fragment mutation on Query { viewer { id } } query mutation { ...mutation }",
+        ),
+      ]),
+    ).toEqual(["post_graphql_mutation"]);
+
+    expect(
+      readOnlyOf([
+        graphqlCall(
+          "Save",
+          'mutation Save($in: Input = { query: "x" }) @dir(arg: { a: 1 }) { update { id } }',
+        ),
+      ]),
+    ).toEqual([]);
+
+    expect(
+      readOnlyOf([
+        graphqlCall(
+          "getDup",
+          "query getDup { viewer { id } } mutation getDup { reset }",
+        ),
+      ]),
+    ).toEqual([]);
+  });
+});
+
+describe("declared GraphQL writes in separate operation buckets", () => {
+  it("keeps a named mutation a write even when its response repeats the latest read", () => {
+    const viewer = { data: { viewer: { id: "v1" } } };
+    const calls: Call[] = [
+      {
+        method: "GET",
+        path: "/graphql",
+        tool: "get_graphql",
+        response: viewer,
+      },
+      {
+        method: "POST",
+        path: "/graphql",
+        tool: "post_graphql_rename",
+        rpcOperation: { kind: "graphql", name: "Rename" },
+        request: {
+          operationName: "Rename",
+          query: "mutation Rename { rename { id } }",
+        },
+        response: viewer,
+      },
+      {
+        method: "POST",
+        path: "/graphql",
+        tool: "post_graphql_teams",
+        rpcOperation: { kind: "graphql", name: "Teams" },
+        request: {
+          operationName: "Teams",
+          query: "query Teams { teams { id } }",
+        },
+        response: { data: { teams: [] } },
+      },
+    ];
+    expect(readOnlyOf(calls)).toEqual(["post_graphql_teams"]);
+  });
+});
+
+describe("single-operation POST RPC read-only classification", () => {
+  it("classifies single-operation GraphQL, JSON-RPC, and batchexecute calls when tool.rpc_operation is omitted", () => {
+    expect(
+      readOnlyOf([
+        {
+          method: "POST",
+          path: "/graphql",
+          tool: "post_graphql",
+          request: {
+            operationName: "GetViewer",
+            query: "query GetViewer { viewer { id } }",
+          },
+          response: { data: { viewer: { id: "u1" } } },
+        },
+      ]),
+    ).toEqual(["post_graphql"]);
+
+    expect(
+      readOnlyOf([
+        {
+          method: "POST",
+          path: "/graphql",
+          tool: "post_graphql",
+          request: {
+            operationName: "GetViewer",
+            query: "mutation GetViewer { updateViewer { id } }",
+          },
+          response: { data: { updateViewer: { id: "u1" } } },
+        },
+      ]),
+    ).toEqual([]);
+
+    expect(
+      readOnlyOf([
+        {
+          method: "POST",
+          path: "/rpc",
+          tool: "post_rpc",
+          request: { jsonrpc: "2.0", method: "users.get", id: 1 },
+          response: { jsonrpc: "2.0", id: 1, result: {} },
+        },
+      ]),
+    ).toEqual(["post_rpc"]);
+
+    expect(
+      readOnlyOf([
+        {
+          method: "POST",
+          path: "/rpc",
+          tool: "post_rpc",
+          request: { jsonrpc: "2.0", method: "users.create", id: 1 },
+          response: { jsonrpc: "2.0", id: 1, result: {} },
+        },
+      ]),
+    ).toEqual([]);
+
+    expect(
+      readOnlyOf([
+        {
+          method: "POST",
+          path: "/_/AppUi/data/batchexecute",
+          query: "?rpcids=GetItems",
+          tool: "post_appui_data_batchexecute",
+          response: [],
+        },
+      ]),
+    ).toEqual(["post_appui_data_batchexecute"]);
+
+    expect(
+      readOnlyOf([
+        {
+          method: "POST",
+          path: "/_/AppUi/data/batchexecute",
+          query: "?rpcids=SaveItem",
+          tool: "post_appui_data_batchexecute",
+          response: [],
+        },
+      ]),
+    ).toEqual([]);
+  });
+});
+
+describe("persisted GraphQL read-only classification", () => {
+  it("classifies persisted GraphQL requests without body.query by operation name and repeated-read evidence", () => {
+    const viewerResponse = { data: { viewer: { id: "u1", login: "ada" } } };
+    const persistedCall = (
+      name: string,
+      tool: string,
+      discriminated: boolean,
+    ): Call => ({
+      method: "POST",
+      path: "/graphql",
+      tool,
+      ...(discriminated ? { rpcOperation: { kind: "graphql", name } } : {}),
+      request: {
+        operationName: name,
+        extensions: {
+          persistedQuery: { version: 1, sha256Hash: "a".repeat(64) },
+        },
+      },
+      response: viewerResponse,
+    });
+
+    expect(
+      readOnlyOf([persistedCall("GetViewer", "post_graphql_get_viewer", true)]),
+    ).toEqual(["post_graphql_get_viewer"]);
+    expect(
+      readOnlyOf([persistedCall("GetViewer", "post_graphql", false)]),
+    ).toEqual(["post_graphql"]);
+
+    expect(
+      readOnlyOf([
+        persistedCall("UpdateProfile", "post_graphql_update_profile", true),
+      ]),
+    ).toEqual([]);
+    expect(
+      readOnlyOf([persistedCall("UpdateProfile", "post_graphql", false)]),
+    ).toEqual([]);
+
+    expect(
+      readOnlyOf([persistedCall("Viewer", "post_graphql_viewer", true)]),
+    ).toEqual([]);
+    expect(
+      readOnlyOf([persistedCall("Viewer", "post_graphql", false)]),
+    ).toEqual([]);
+
+    const priorGet: Call = {
+      method: "GET",
+      path: "/graphql",
+      query: "?operationName=Viewer",
+      tool: "get_graphql",
+      response: viewerResponse,
+      start: 0,
+      end: 1,
+    };
+    expect(
+      readOnlyOf([
+        priorGet,
+        {
+          ...persistedCall("Viewer", "post_graphql_viewer", true),
+          start: 2,
+          end: 3,
+        },
+      ]),
+    ).toEqual(["post_graphql_viewer"]);
+    expect(
+      readOnlyOf([
+        priorGet,
+        { ...persistedCall("Viewer", "post_graphql", false), start: 2, end: 3 },
+      ]),
+    ).toEqual(["post_graphql"]);
+  });
+});
+
+interface RawGraphqlExchange {
+  readonly postText: string;
+  readonly mimeType?: string;
+}
+
+const graphqlCaptureRecord = (
+  ordinal: number,
+  exchange: RawGraphqlExchange,
+): WebNetworkCaptureRecord => ({
+  ...environmentManifestCaptureFixture().records[0]!,
+  ordinal,
+  limitations: [],
+  reported: {
+    startedDateTime: new Date(1_700_000_000_000 + ordinal * 100).toISOString(),
+    time: 10,
+    request: {
+      method: "POST",
+      url: "https://manifest.test/graphql",
+      postData: {
+        ...(exchange.mimeType === undefined
+          ? {}
+          : { mimeType: exchange.mimeType }),
+        text: exchange.postText,
+      },
+    },
+    response: {
+      status: 200,
+      content: {
+        mimeType: "application/json",
+        text: JSON.stringify({ data: { viewer: { id: "u1" } } }),
+      },
+    },
+  },
+});
+
+const extractGraphqlStateBuckets = (
+  exchanges: readonly RawGraphqlExchange[],
+): {
+  readonly views: readonly string[];
+  readonly writes: readonly string[];
+} => {
+  const accumulator = new EnvironmentStateAccumulator(1024 * 1024);
+  for (const [ordinal, exchange] of exchanges.entries())
+    expect(accumulator.add(graphqlCaptureRecord(ordinal, exchange)).ok).toBe(
+      true,
+    );
+  const state = accumulator.finishState();
+  if (!state.ok) throw state.error;
+  return {
+    views: state.value.views.map((view) => view.tool),
+    writes: state.value.writes.map((plan) => plan.tool),
+  };
+};
+
+describe("GraphQL read-only classification with unreadable state bodies and non-string query fields", () => {
+  it("keeps mutations and null-query payloads in writes when state request bodies are unreadable", () => {
+    const omittedMimeMutation: RawGraphqlExchange = {
+      postText:
+        '{"operationName":"GetViewer","query":"mutation GetViewer { resetViewer { id } }"}',
+    };
+    const lossyVarMutation: RawGraphqlExchange = {
+      mimeType: "application/json",
+      postText:
+        '{"operationName":"GetViewer","query":"mutation GetViewer($id: ID!) { resetViewer(id: $id) { id } }","variables":{"cursor":9007199254740993}}',
+    };
+    const nullQueryPayload: RawGraphqlExchange = {
+      mimeType: "application/json",
+      postText: '{"operationName":"GetViewer","query":null}',
+    };
+    const siblingRead: RawGraphqlExchange = {
+      mimeType: "application/json",
+      postText:
+        '{"operationName":"ListItems","query":"query ListItems { items { id } }"}',
+    };
+
+    for (const writeExchange of [
+      omittedMimeMutation,
+      lossyVarMutation,
+      nullQueryPayload,
+    ]) {
+      expect(extractGraphqlStateBuckets([writeExchange])).toEqual({
+        views: [],
+        writes: ["post_graphql"],
+      });
+      expect(extractGraphqlStateBuckets([writeExchange, siblingRead])).toEqual({
+        views: ["post_graphql_list_items"],
+        writes: ["post_graphql_get_viewer"],
+      });
+    }
+
+    expect(
+      readOnlyOf([
+        {
+          method: "POST",
+          path: "/graphql",
+          tool: "post_graphql_get_viewer",
+          rpcOperation: { kind: "graphql", name: "GetViewer" },
+          response: { data: { resetViewer: { id: "u1" } } },
+        },
+      ]),
+    ).toEqual([]);
+
+    expect(
+      readOnlyOf([
+        {
+          method: "POST",
+          path: "/graphql",
+          tool: "post_graphql_get_viewer",
+          rpcOperation: { kind: "graphql", name: "GetViewer" },
+          request: { operationName: "GetViewer", query: null },
+          response: { data: { viewer: { id: "u1" } } },
+        },
+      ]),
+    ).toEqual([]);
+  });
+
+  it("classifies declared queries and genuine persisted queries as read-only when state request bodies are unreadable", () => {
+    expect(
+      extractGraphqlStateBuckets([
+        {
+          postText:
+            '{"operationName":"Viewer","query":"query Viewer { viewer { id } }"}',
+        },
+      ]),
+    ).toEqual({ views: ["post_graphql"], writes: [] });
+
+    expect(
+      extractGraphqlStateBuckets([
+        {
+          mimeType: "application/json",
+          postText:
+            '{"operationName":"Viewer","query":"query Viewer($id: ID!) { viewer(id: $id) { id } }","variables":{"cursor":9007199254740993}}',
+        },
+      ]),
+    ).toEqual({ views: ["post_graphql"], writes: [] });
+
+    expect(
+      extractGraphqlStateBuckets([
+        {
+          postText: JSON.stringify({
+            operationName: "GetViewer",
+            extensions: {
+              persistedQuery: { version: 1, sha256Hash: "a".repeat(64) },
+            },
+          }),
+        },
+      ]),
+    ).toEqual({ views: ["post_graphql"], writes: [] });
+
+    expect(
+      extractGraphqlStateBuckets([
+        {
+          mimeType: "application/json",
+          postText:
+            '{"operationName":"GetViewer","variables":{"cursor":9007199254740993},"extensions":{"persistedQuery":{"version":1,"sha256Hash":"abc"}}}',
+        },
+      ]),
+    ).toEqual({ views: ["post_graphql"], writes: [] });
   });
 });

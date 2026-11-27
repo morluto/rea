@@ -39,7 +39,10 @@ import {
   type AnalysisViewRequest,
   type InspectAnalysisViewInput,
 } from "../../domain/analysisView/analysisViewRequest.js";
-import { prepareAnalysisViewProjection } from "../../domain/analysisView/analysisView.js";
+import {
+  prepareAnalysisViewProjection,
+  type AnalysisViewAccumulators,
+} from "../../domain/analysisView/analysisView.js";
 import type { AnalysisViewResult } from "../../domain/analysisView/analysisViewResult.js";
 import {
   immutableJsonSnapshotMember,
@@ -211,8 +214,9 @@ const cancelledFileViewResult = <T>(
 export const inspectAnalysisViewValidated = (
   input: ReadyAnalysisViewInput,
   lookup?: EvidenceLookup,
+  accumulators?: AnalysisViewAccumulators,
 ): Result<Evidence, AnalysisError> => {
-  const projection = prepareAnalysisViewProjection(input.view);
+  const projection = prepareAnalysisViewProjection(input.view, accumulators);
   if (input.source.kind === "inline") {
     const admitted = projection.admitInlineEvidence(input.source.evidence);
     if (!admitted.ok) return admitted;
