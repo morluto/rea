@@ -137,6 +137,7 @@ const TARGETS: TargetFixtures = {
   nso: { ...archive, format: "nso" },
   nro: { ...archive, format: "nro" },
   "android-boot-image": { ...archive, format: "android-boot-image" },
+  "android-dtbo": { ...archive, format: "android-dtbo" },
   iso9660: { ...archive, format: "iso9660" },
   "qualcomm-mbn": { ...archive, format: "qualcomm-mbn" },
   "android-ota-payload": { ...archive, format: "android-ota-payload" },
