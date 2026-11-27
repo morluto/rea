@@ -1245,3 +1245,28 @@ it("reports a manifest value that names itself but is not an entry SEQUENCE", as
   expect(result.facts.manifest?.objects[0]?.name).toBe("ibot");
   expect(result.limitations.join("\n")).toContain("Unknown Image4 tag 0xa3");
 });
+
+it("keeps IMG4 restore info after an unsupported manifest slot", async () => {
+  for (const manifestSlot of [
+    integer(1),
+    // A primitive [0] in the manifest position.
+    tlv(0x80, Buffer.from([0x01])),
+  ]) {
+    const result = await image4(
+      sequence(ia5("IMG4"), im4p(), manifestSlot, explicit(1, im4r())),
+    );
+    expect(result.facts.manifest).toBeNull();
+    expect(result.facts.restore_info?.properties_present).toEqual(["BNCN"]);
+    expect(result.entries.map((entry) => entry.path)).toEqual([
+      "payload",
+      "restore-info.der",
+    ]);
+    expect(result.limitations.join("\n")).toContain("Unknown Image4 tag");
+  }
+  // A restore value directly after the payload still fills its own slot.
+  const direct = await image4(
+    sequence(ia5("IMG4"), im4p(), explicit(1, im4r())),
+  );
+  expect(direct.facts.restore_info?.properties_present).toEqual(["BNCN"]);
+  expect(direct.limitations).toEqual([]);
+});

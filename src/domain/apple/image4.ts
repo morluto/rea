@@ -1733,10 +1733,54 @@ interface ByteRange {
   readonly length: number;
 }
 
-const contextNumber = (value: DerValue | undefined): number | undefined =>
-  value !== undefined && tagClassOf(value) === "context" && isConstructed(value)
-    ? tagNumberOf(value)
-    : undefined;
+/** The IMG4 payload, manifest and restore slots, each read in its position. */
+/** One position in a structure: untagged, or identified by a context tag. */
+interface SlotSpec<Key extends string> {
+  readonly key: Key;
+  readonly context?: number;
+}
+
+/**
+ * Assign a structure's values to its ordered slots. A context-tagged value
+ * fills the slot with its tag number, skipping earlier optional slots. Any
+ * other value occupies the next slot in position, even when it cannot fill
+ * it, so an unsupported value never shifts a later sibling out of its slot.
+ * Values that fit no remaining slot are returned as extras.
+ */
+const assignSlots = <Key extends string>(
+  values: readonly DerValue[],
+  layout: readonly SlotSpec<Key>[],
+): { readonly slots: Map<Key, DerValue>; readonly extras: DerValue[] } => {
+  const slots = new Map<Key, DerValue>();
+  const extras: DerValue[] = [];
+  let next = 0;
+  for (const value of values) {
+    const context =
+      tagClassOf(value) === "context" ? tagNumberOf(value) : undefined;
+    const at =
+      context === undefined
+        ? next < layout.length
+          ? next
+          : -1
+        : layout.findIndex(
+            (slot, index) => index >= next && slot.context === context,
+          );
+    const slot = at < 0 ? undefined : layout[at];
+    if (slot === undefined) extras.push(value);
+    else {
+      slots.set(slot.key, value);
+      next = at + 1;
+    }
+  }
+  return { slots, extras };
+};
+
+/** IMG4 after its magic: IM4P, [0] IM4M, [1] IM4R (img4tool, img4lib). */
+const IMG4_LAYOUT = [
+  { key: "payload" },
+  { key: "manifest", context: 0 },
+  { key: "restore", context: 1 },
+] as const satisfies readonly SlotSpec<string>[];
 
 /** The IMG4 payload, manifest and restore slots, each read in its position. */
 const img4Slots = async (
@@ -1745,14 +1789,10 @@ const img4Slots = async (
   notes: Notes,
   counter: PropertyCounter,
 ): Promise<Img4Slots> => {
-  let index = 1;
+  const { slots, extras } = assignSlots(kids.slice(1), IMG4_LAYOUT);
   let payloadKids: readonly DerValue[] | undefined;
-  const payloadSlot = kids[index];
-  // The payload slot is consumed whatever it holds, so an unsupported value
-  // there does not hide the manifest and restore slots after it. Only a
-  // context-tagged value means the payload slot is empty.
-  if (payloadSlot !== undefined && contextNumber(payloadSlot) === undefined) {
-    index += 1;
+  const payloadSlot = slots.get("payload");
+  if (payloadSlot !== undefined) {
     const inner = isSequence(payloadSlot)
       ? await walk.childrenOf(payloadSlot, 1)
       : [];
@@ -1760,36 +1800,41 @@ const img4Slots = async (
     else unknownTag(payloadSlot, notes);
   }
   let manifest: Img4Slots["manifest"];
-  if (contextNumber(kids[index]) === 0) {
-    const slot = kids[index++];
-    const inner =
-      slot === undefined ? undefined : await wrappedSequence(slot, walk, 1);
+  const manifestSlot = slots.get("manifest");
+  if (manifestSlot !== undefined) {
+    const inner = isContextWrapper(manifestSlot)
+      ? await wrappedSequence(manifestSlot, walk, 1)
+      : undefined;
     const innerKids =
       inner === undefined ? [] : await walk.childrenOf(inner, 2);
     const facts = await parseManifestKids(innerKids, walk, 2, notes, counter);
     const range = inner === undefined ? undefined : encodedRange(inner);
     if (facts !== undefined && range !== undefined) manifest = { facts, range };
-    else if (slot !== undefined) unknownTag(slot, notes);
+    else unknownTag(manifestSlot, notes);
   }
   let restore: Img4Slots["restore"];
-  if (contextNumber(kids[index]) === 1) {
-    const slot = kids[index++];
-    const inner =
-      slot === undefined ? undefined : await wrappedSequence(slot, walk, 1);
+  const restoreSlot = slots.get("restore");
+  if (restoreSlot !== undefined) {
+    const inner = isContextWrapper(restoreSlot)
+      ? await wrappedSequence(restoreSlot, walk, 1)
+      : undefined;
     const facts =
       inner === undefined
         ? undefined
         : await parseRestore(inner, walk, 2, counter);
     const range = inner === undefined ? undefined : encodedRange(inner);
     if (facts !== undefined && range !== undefined) restore = { facts, range };
-    else if (slot !== undefined) unknownTag(slot, notes);
+    else unknownTag(restoreSlot, notes);
   }
-  for (const extra of kids.slice(index)) {
-    if (extra.kind === "stopped") break;
-    unknownTag(extra, notes);
-  }
+  for (const extra of extras) unknownTag(extra, notes);
   return { payloadKids, manifest, restore };
 };
+
+/** An EXPLICIT context wrapper that can be read: constructed, not stopped. */
+const isContextWrapper = (value: DerValue): boolean =>
+  value.kind !== "stopped" &&
+  tagClassOf(value) === "context" &&
+  isConstructed(value);
 
 /**
  * Decode an Image4 DER container. Payload bodies are not loaded when the
