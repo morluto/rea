@@ -1445,6 +1445,7 @@
 * **fixtures:** share byte digest calculations ([#14564](https://github.com/morluto/rea/issues/14564)) ([edca378](https://github.com/morluto/rea/commit/edca3783ca62065aa50b4faf2622bd02b8442e48))
 * **fixtures:** share literal-only LZ4 blocks across fixture builders ([#14696](https://github.com/morluto/rea/issues/14696)) ([0771d11](https://github.com/morluto/rea/commit/0771d11c7f9dddd5983a85e4335d2e0f4f7785c4))
 * **fixtures:** share little-endian integer buffers ([#14432](https://github.com/morluto/rea/issues/14432)) ([1e5cdbc](https://github.com/morluto/rea/commit/1e5cdbc7ee10118dde862e904b2b537e886bf35a))
+* **fixtures:** use per-test cleanup in catalog suites ([#14815](https://github.com/morluto/rea/issues/14815)) ([5c49ebc](https://github.com/morluto/rea/commit/5c49ebcf1097ecc12d79ee8a67ee22ac6786de46))
 * **flutter:** consolidate ELF and snapshot header checks ([#13595](https://github.com/morluto/rea/issues/13595)) ([2d65688](https://github.com/morluto/rea/commit/2d65688ac79ebe9b625d2620e4bb2bfc6ffd1b5e))
 * **formats:** consolidate BEAM and DOL boundary checks ([#12832](https://github.com/morluto/rea/issues/12832)) ([c9caa0a](https://github.com/morluto/rea/commit/c9caa0aa5b60e049ac5284b7f9efaad4d793c3ff))
 * **gdb:** consolidate inferior terminal admission checks ([#13011](https://github.com/morluto/rea/issues/13011)) ([c235b61](https://github.com/morluto/rea/commit/c235b6160ee25704926fac30f137dcb503a58f2a))
