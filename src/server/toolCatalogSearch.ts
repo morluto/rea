@@ -195,6 +195,8 @@ const levenshteinDistance = (
  * Find tools with minimal Levenshtein distance to the requested name.
  * Compares against each word within a tool's name/description so multi-part
  * tool names like "decompile_all" can match a typo like "decomplie".
+ * Also compares against the full name to catch separator typos like
+ * "openbinary" -> "open_binary".
  * Returns tools sorted by distance, then alphabetically.
  */
 const suggestByLevenshtein = (
@@ -210,6 +212,7 @@ const suggestByLevenshtein = (
   for (const candidate of candidates) {
     const words = candidate.name.split(/[\s_-]+/u);
     let bestDistance = maxDistance + 1;
+    // Check distance against each word in the tool name
     for (const word of words) {
       const distance = levenshteinDistance(
         requested.toLowerCase(),
@@ -218,6 +221,13 @@ const suggestByLevenshtein = (
       );
       if (distance < bestDistance) bestDistance = distance;
     }
+    // Also check against the full unsplit name to catch separator typos
+    const fullDistance = levenshteinDistance(
+      requested.toLowerCase(),
+      candidate.name.toLowerCase(),
+      maxDistance,
+    );
+    if (fullDistance < bestDistance) bestDistance = fullDistance;
     if (bestDistance <= maxDistance) {
       matches.push({ name: candidate.name, distance: bestDistance });
     }
