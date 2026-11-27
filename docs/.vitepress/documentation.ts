@@ -575,7 +575,7 @@ export const documentationSections = [
       },
       {
         text: "Android binary XML (AXML)",
-        source: "axml.md",
+        source: "guides/android/axml.md",
         route: "/axml",
       },
       {
