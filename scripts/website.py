@@ -20,6 +20,8 @@ from urllib.parse import quote, urlsplit
 
 SITE_ORIGIN = "https://rea.tools"
 NOTES_FIXTURES = {"examples/notes-electron/index.html", "examples/notes-web/index.html"}
+# Inspection fixtures stay minimal; a fixture declares only the regions it shares.
+FIXTURE_REGIONS = {"examples/notes-web/index.html": ("theme",)}
 NAVIGATION = (
     ("Get started", "get-started/"),
     ("Showcases", "showcase/"),
@@ -309,11 +311,15 @@ def sync_pages(root, check=False):
     site = root / "website/public"
     changes = []
     for path in sorted(site.rglob("*.html")):
-        if path.relative_to(site).as_posix() in NOTES_FIXTURES:
+        relative = path.relative_to(site).as_posix()
+        if relative in NOTES_FIXTURES and relative not in FIXTURE_REGIONS:
             continue
         original = path.read_text(encoding="utf-8")
         source = original
-        for name, block in shared_blocks(root, path, source).items():
+        blocks = shared_blocks(root, path, source)
+        if relative in FIXTURE_REGIONS:
+            blocks = {name: blocks[name] for name in FIXTURE_REGIONS[relative]}
+        for name, block in blocks.items():
             start = f"    <!-- website:{name}:start -->\n"
             end = f"    <!-- website:{name}:end -->"
             if source.count(start) != 1 or source.count(end) != 1:

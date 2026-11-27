@@ -2,7 +2,7 @@ REA npm dependency inventory
 Prepared from the root package-lock.json; refresh this inventory when locked dependencies change.
 License identifiers are upstream lockfile declarations, not a legal assessment.
 Runtime includes transitive and optional platform packages; development includes build, test and website tooling.
-Locked package entries: 933; runtime: 167.
+Locked package entries: 955; runtime: 191.
 Full runtime copyright/license/NOTICE texts: npm-runtime-notices.txt.
 
 @algolia/abtesting@1.25.0 | development | MIT
@@ -720,11 +720,121 @@ minimatch@11.0.9 | development | BlueOak-1.0.0
   Package: https://www.npmjs.com/package/@msgpack/msgpack/v/3.1.3
   Archive: https://registry.npmjs.org/@msgpack/msgpack/-/msgpack-3.1.3.tgz
   Integrity: sha512-47XIizs9XZXvuJgoaJUIE2lFoID8ugvc0jzSHP+Ptfk8nTbnR8g788wv48N03Kx0UkAv559HWRQ3yzOgzlRNUA==
+@napi-rs/lzma@1.5.3 | runtime | MIT
+  Lockfile path: node_modules/@napi-rs/lzma
+  Package: https://www.npmjs.com/package/@napi-rs/lzma/v/1.5.3
+  Archive: https://registry.npmjs.org/@napi-rs/lzma/-/lzma-1.5.3.tgz
+  Integrity: sha512-QSIzELPyd2A7mcaDiJEWjwzApoAOWq9PVl9xYq+CxzIwstufv48s8aBgOUr0sgbjGmb15aYU88YKNaFaCaOuhQ==
+@napi-rs/lzma-android-arm-eabi@1.5.3 | runtime, optional | MIT
+  Lockfile path: node_modules/@napi-rs/lzma-android-arm-eabi
+  Package: https://www.npmjs.com/package/@napi-rs/lzma-android-arm-eabi/v/1.5.3
+  Archive: https://registry.npmjs.org/@napi-rs/lzma-android-arm-eabi/-/lzma-android-arm-eabi-1.5.3.tgz
+  Integrity: sha512-Jo8Ej9sTXZO+vHVllHPYxcHVoW4dQe30eLx7wk3H786vv2zy/qIIi5KoO6WhK/VsSBhAb13xbIa/vc4maUgp8Q==
+@napi-rs/lzma-android-arm64@1.5.3 | runtime, optional | MIT
+  Lockfile path: node_modules/@napi-rs/lzma-android-arm64
+  Package: https://www.npmjs.com/package/@napi-rs/lzma-android-arm64/v/1.5.3
+  Archive: https://registry.npmjs.org/@napi-rs/lzma-android-arm64/-/lzma-android-arm64-1.5.3.tgz
+  Integrity: sha512-BUEMluJxOJ/9WkZH/IFyyi3viNQGEByodAHDbmJ/k7mVhabGIxjYBea3MmnyTZoIoqZs/ftAKH7jhVCIj+k6mw==
+@napi-rs/lzma-darwin-arm64@1.5.3 | runtime, optional | MIT
+  Lockfile path: node_modules/@napi-rs/lzma-darwin-arm64
+  Package: https://www.npmjs.com/package/@napi-rs/lzma-darwin-arm64/v/1.5.3
+  Archive: https://registry.npmjs.org/@napi-rs/lzma-darwin-arm64/-/lzma-darwin-arm64-1.5.3.tgz
+  Integrity: sha512-ea46AUzmoGqWnrDP8JNea14TCiVMmxWtaD/d5YjRgh1KbL3YfZ9O2BZzfF7DAF+yrVuAQqS52rHveysjnzYlJA==
+@napi-rs/lzma-darwin-x64@1.5.3 | runtime, optional | MIT
+  Lockfile path: node_modules/@napi-rs/lzma-darwin-x64
+  Package: https://www.npmjs.com/package/@napi-rs/lzma-darwin-x64/v/1.5.3
+  Archive: https://registry.npmjs.org/@napi-rs/lzma-darwin-x64/-/lzma-darwin-x64-1.5.3.tgz
+  Integrity: sha512-/vz8UpAe/9fV7JiTrT+lAV9Xk9bK4F28u8JRDNIYdGaT7lXP0r/e7YjDvBuJZ9bJtStW4nn/08q5Q7yfFmsF1Q==
+@napi-rs/lzma-freebsd-x64@1.5.3 | runtime, optional | MIT
+  Lockfile path: node_modules/@napi-rs/lzma-freebsd-x64
+  Package: https://www.npmjs.com/package/@napi-rs/lzma-freebsd-x64/v/1.5.3
+  Archive: https://registry.npmjs.org/@napi-rs/lzma-freebsd-x64/-/lzma-freebsd-x64-1.5.3.tgz
+  Integrity: sha512-gAxemzm8Zk1OaMXihd0L8zeAb/P+71NqhrYnrPVweW3cTXg7XACC+zXQsvENAvHhkroeHCfaMmFupRwfHi+u7A==
+@napi-rs/lzma-linux-arm-gnueabihf@1.5.3 | runtime, optional | MIT
+  Lockfile path: node_modules/@napi-rs/lzma-linux-arm-gnueabihf
+  Package: https://www.npmjs.com/package/@napi-rs/lzma-linux-arm-gnueabihf/v/1.5.3
+  Archive: https://registry.npmjs.org/@napi-rs/lzma-linux-arm-gnueabihf/-/lzma-linux-arm-gnueabihf-1.5.3.tgz
+  Integrity: sha512-T7ZvCSEAKGoYSw7vIwdKgk1ZaYl8V1JLTgWSlGhnYBau23R9qZP79ONiF7FTosXnvR8G9RLe9peVuVGS5GI7ig==
+@napi-rs/lzma-linux-arm64-gnu@1.5.3 | runtime, optional | MIT
+  Lockfile path: node_modules/@napi-rs/lzma-linux-arm64-gnu
+  Package: https://www.npmjs.com/package/@napi-rs/lzma-linux-arm64-gnu/v/1.5.3
+  Archive: https://registry.npmjs.org/@napi-rs/lzma-linux-arm64-gnu/-/lzma-linux-arm64-gnu-1.5.3.tgz
+  Integrity: sha512-fEfgGb/y8jo2X57cTtMQ62XSD57rxDbpSbT38TSq0gSMKg6A/zq3oOxZLRfoCuZkL3cDtuZMi4fAuo6xIkP5eQ==
+@napi-rs/lzma-linux-arm64-musl@1.5.3 | runtime, optional | MIT
+  Lockfile path: node_modules/@napi-rs/lzma-linux-arm64-musl
+  Package: https://www.npmjs.com/package/@napi-rs/lzma-linux-arm64-musl/v/1.5.3
+  Archive: https://registry.npmjs.org/@napi-rs/lzma-linux-arm64-musl/-/lzma-linux-arm64-musl-1.5.3.tgz
+  Integrity: sha512-Phe10HwfNrtM7U2XsVLhJGePWOgx0BVW2/EWUBq1hoPkmKuUTjbrFj8y4XSTGS5eHMWABUtehnkbX+MPnN5sKg==
+@napi-rs/lzma-linux-ppc64-gnu@1.5.3 | runtime, optional | MIT
+  Lockfile path: node_modules/@napi-rs/lzma-linux-ppc64-gnu
+  Package: https://www.npmjs.com/package/@napi-rs/lzma-linux-ppc64-gnu/v/1.5.3
+  Archive: https://registry.npmjs.org/@napi-rs/lzma-linux-ppc64-gnu/-/lzma-linux-ppc64-gnu-1.5.3.tgz
+  Integrity: sha512-rhuUE76jYbXZaR5oXAWqvfXzxoZKaCFM1nTH3yrdmz2Jtog5mnFcmyJ9WjDFmUgzQo062p1WfXWm3FA8SJOwaA==
+@napi-rs/lzma-linux-riscv64-gnu@1.5.3 | runtime, optional | MIT
+  Lockfile path: node_modules/@napi-rs/lzma-linux-riscv64-gnu
+  Package: https://www.npmjs.com/package/@napi-rs/lzma-linux-riscv64-gnu/v/1.5.3
+  Archive: https://registry.npmjs.org/@napi-rs/lzma-linux-riscv64-gnu/-/lzma-linux-riscv64-gnu-1.5.3.tgz
+  Integrity: sha512-ogeKmHMV80J1uGYu5Lg4XVacyQxv9wapsEMEKH6beFtouIpo5wZMod5/zGLNHA+sg0/9HIAQbm/bVFJ5flkiQQ==
+@napi-rs/lzma-linux-s390x-gnu@1.5.3 | runtime, optional | MIT
+  Lockfile path: node_modules/@napi-rs/lzma-linux-s390x-gnu
+  Package: https://www.npmjs.com/package/@napi-rs/lzma-linux-s390x-gnu/v/1.5.3
+  Archive: https://registry.npmjs.org/@napi-rs/lzma-linux-s390x-gnu/-/lzma-linux-s390x-gnu-1.5.3.tgz
+  Integrity: sha512-FvFzkI1zzVUqpX21UQdLZ0efTPxDolaCH1bqIp6k7hMTtx0RNwHJgcrsbGXQisAJ8uLWKRKncwNVL8MzcBVxUg==
 @napi-rs/lzma-linux-x64-gnu@1.5.1 | development, optional | MIT
   Lockfile path: node_modules/@napi-rs/lzma-linux-x64-gnu
   Package: https://www.npmjs.com/package/@napi-rs/lzma-linux-x64-gnu/v/1.5.1
   Archive: https://registry.npmjs.org/@napi-rs/lzma-linux-x64-gnu/-/lzma-linux-x64-gnu-1.5.1.tgz
   Integrity: sha512-oTXEIha4SsuXdTA4Iyskj0kpdx2yVXdhd75c2v3xGrHFfVMsbhTPZU/nMPL4sWKo4pBHm3aucLaqGlF696dTyQ==
+@napi-rs/lzma-linux-x64-musl@1.5.3 | runtime, optional | MIT
+  Lockfile path: node_modules/@napi-rs/lzma-linux-x64-musl
+  Package: https://www.npmjs.com/package/@napi-rs/lzma-linux-x64-musl/v/1.5.3
+  Archive: https://registry.npmjs.org/@napi-rs/lzma-linux-x64-musl/-/lzma-linux-x64-musl-1.5.3.tgz
+  Integrity: sha512-ZBMasmon/mQmwIKNCWDJagq/zq45vvDQzhSijJSBSIgyef8IRvoD9O4H2lq62Lrq3toHxhlMD2D85jwUVr4QQw==
+@napi-rs/lzma-wasm32-wasi@1.5.3 | runtime, optional | MIT
+  Lockfile path: node_modules/@napi-rs/lzma-wasm32-wasi
+  Package: https://www.npmjs.com/package/@napi-rs/lzma-wasm32-wasi/v/1.5.3
+  Archive: https://registry.npmjs.org/@napi-rs/lzma-wasm32-wasi/-/lzma-wasm32-wasi-1.5.3.tgz
+  Integrity: sha512-gJ2YpVByn8xNbSCbOwQhCN9Jc2ZQY0ERx/K3XFDldbyiFXCphbEnciptp3bwqcp+WUJvIvpZxcKP1+6tcUEj1g==
+@emnapi/core@2.0.0-beta.3 | runtime, optional | MIT
+  Lockfile path: node_modules/@napi-rs/lzma-wasm32-wasi/node_modules/@emnapi/core
+  Package: https://www.npmjs.com/package/@emnapi/core/v/2.0.0-beta.3
+  Archive: https://registry.npmjs.org/@emnapi/core/-/core-2.0.0-beta.3.tgz
+  Integrity: sha512-KA+gOBtbifRATmUa/Gpf5C2B2EJ0r4brHUT3XSgACeHREcuiObXH56xd+B3fFsEFbUT04VBEe6MuZiCtMp0tQg==
+@emnapi/runtime@2.0.0-beta.3 | runtime, optional | MIT
+  Lockfile path: node_modules/@napi-rs/lzma-wasm32-wasi/node_modules/@emnapi/runtime
+  Package: https://www.npmjs.com/package/@emnapi/runtime/v/2.0.0-beta.3
+  Archive: https://registry.npmjs.org/@emnapi/runtime/-/runtime-2.0.0-beta.3.tgz
+  Integrity: sha512-ayb/PyyLzpwRyFVxeC0uoEHu59QlB1iWGcGsOpXQcaB/Dc+uGfBmNmpCHp3HmTT0t8lSsMmg3j7+tdJW/TlHjQ==
+@emnapi/wasi-threads@2.2.0 | runtime, optional | MIT
+  Lockfile path: node_modules/@napi-rs/lzma-wasm32-wasi/node_modules/@emnapi/wasi-threads
+  Package: https://www.npmjs.com/package/@emnapi/wasi-threads/v/2.2.0
+  Archive: https://registry.npmjs.org/@emnapi/wasi-threads/-/wasi-threads-2.2.0.tgz
+  Integrity: sha512-JP7OYH38Q7+pyTAe14raZHLQIK7BDKbdwji+Xi3pcd/6QkJYQH3SX4wu6EplGrGJWRepoNzedfm0G3B9Z4e9Rw==
+@napi-rs/wasm-runtime@1.2.7 | runtime, optional | MIT
+  Lockfile path: node_modules/@napi-rs/lzma-wasm32-wasi/node_modules/@napi-rs/wasm-runtime
+  Package: https://www.npmjs.com/package/@napi-rs/wasm-runtime/v/1.2.7
+  Archive: https://registry.npmjs.org/@napi-rs/wasm-runtime/-/wasm-runtime-1.2.7.tgz
+  Integrity: sha512-zJccwplOAbgfZju95IUHazLnx9RAPtPN2YGJXI6UbrgeaR9QfPjGrQL6ERkSAtnVCA4Q+83ApGyaX5zdpCaKkQ==
+@napi-rs/lzma-win32-arm64-msvc@1.5.3 | runtime, optional | MIT
+  Lockfile path: node_modules/@napi-rs/lzma-win32-arm64-msvc
+  Package: https://www.npmjs.com/package/@napi-rs/lzma-win32-arm64-msvc/v/1.5.3
+  Archive: https://registry.npmjs.org/@napi-rs/lzma-win32-arm64-msvc/-/lzma-win32-arm64-msvc-1.5.3.tgz
+  Integrity: sha512-oB9iJluslRc3bZ3upZ7ZD2tJfICX3tjTsqS8jUUWK+d7PpJei/oZ3YklBLNyczmLZ+JXHYZlBbotIeVCaoNGPw==
+@napi-rs/lzma-win32-ia32-msvc@1.5.3 | runtime, optional | MIT
+  Lockfile path: node_modules/@napi-rs/lzma-win32-ia32-msvc
+  Package: https://www.npmjs.com/package/@napi-rs/lzma-win32-ia32-msvc/v/1.5.3
+  Archive: https://registry.npmjs.org/@napi-rs/lzma-win32-ia32-msvc/-/lzma-win32-ia32-msvc-1.5.3.tgz
+  Integrity: sha512-b5HxoRno1C9kS9I9pH9E7uYO9oMEQZ2RuOzAs8+PafoHzcHA5KMzSibNfA//seedILG1w22IS7YfrW4s0+4FvA==
+@napi-rs/lzma-win32-x64-msvc@1.5.3 | runtime, optional | MIT
+  Lockfile path: node_modules/@napi-rs/lzma-win32-x64-msvc
+  Package: https://www.npmjs.com/package/@napi-rs/lzma-win32-x64-msvc/v/1.5.3
+  Archive: https://registry.npmjs.org/@napi-rs/lzma-win32-x64-msvc/-/lzma-win32-x64-msvc-1.5.3.tgz
+  Integrity: sha512-cPH8uIK0aaD9KZ0FTPBBPTIvncNHQ2Si3DNTP2rjPWyDRVV+syT2dWvlmkiklKgnRipXtx4eJ+tYQZhG30/+9w==
+@napi-rs/lzma-linux-x64-gnu@1.5.3 | runtime, optional | MIT
+  Lockfile path: node_modules/@napi-rs/lzma/node_modules/@napi-rs/lzma-linux-x64-gnu
+  Package: https://www.npmjs.com/package/@napi-rs/lzma-linux-x64-gnu/v/1.5.3
+  Archive: https://registry.npmjs.org/@napi-rs/lzma-linux-x64-gnu/-/lzma-linux-x64-gnu-1.5.3.tgz
+  Integrity: sha512-cqF0sRTngwVgnH0y7OV/5zWKWZomMYY71t3gzjtmJou4oPoWQHjxmO1Jo5E3GqUg2bPk+Fp3DcRw1xLAeKs1cg==
 @napi-rs/wasm-runtime@1.2.6 | development, optional | MIT
   Lockfile path: node_modules/@napi-rs/wasm-runtime
   Package: https://www.npmjs.com/package/@napi-rs/wasm-runtime/v/1.2.6
@@ -1595,7 +1705,7 @@ minimatch@11.0.9 | development | BlueOak-1.0.0
   Package: https://www.npmjs.com/package/@turbo/windows-arm64/v/2.11.13
   Archive: https://registry.npmjs.org/@turbo/windows-arm64/-/windows-arm64-2.11.13.tgz
   Integrity: sha512-YdRHWstBUHWt/eChOEM4f9LT0dPiWK5SNgtV77bLCr3JNke9M5E7metqelNYj+tXe36dH0BZrk2CMnFlWqHKng==
-@tybys/wasm-util@0.10.4 | development, optional | MIT
+@tybys/wasm-util@0.10.4 | runtime, optional | MIT
   Lockfile path: node_modules/@tybys/wasm-util
   Package: https://www.npmjs.com/package/@tybys/wasm-util/v/0.10.4
   Archive: https://registry.npmjs.org/@tybys/wasm-util/-/wasm-util-0.10.4.tgz
@@ -2525,11 +2635,11 @@ eventsource-parser@3.1.0 | runtime | MIT
   Package: https://www.npmjs.com/package/eventsource-parser/v/3.1.0
   Archive: https://registry.npmjs.org/eventsource-parser/-/eventsource-parser-3.1.0.tgz
   Integrity: sha512-kJezFj9YFAMLeORyi7aCLxLbD5/qWMQnoMVlVPyHIll7lgRJCc3JVln9Vgl9nwQi0YkMnhdGTMNn7CkRRAptMg==
-evmole@0.9.6 | runtime | MIT
+evmole@0.10.1 | runtime | MIT
   Lockfile path: node_modules/evmole
-  Package: https://www.npmjs.com/package/evmole/v/0.9.6
-  Archive: https://registry.npmjs.org/evmole/-/evmole-0.9.6.tgz
-  Integrity: sha512-JKqceBQQz8tdM09rt8XsXBd9w+zq9qT1v7BuUN+aRTbpOcEbOmYXyqgUREi6XUEEEhb5yaTIYrTi5BxQwcU98Q==
+  Package: https://www.npmjs.com/package/evmole/v/0.10.1
+  Archive: https://registry.npmjs.org/evmole/-/evmole-0.10.1.tgz
+  Integrity: sha512-kSN/g/Wi4vXNJPV7jgV1TrKSFKCJuaNiBs2rvCDv5+mzRaHkM7inImkRhqQKHdLx41TCIsWKzAaDihVMf06iTg==
 execa@9.6.1 | development | MIT
   Lockfile path: node_modules/execa
   Package: https://www.npmjs.com/package/execa/v/9.6.1
@@ -3570,11 +3680,11 @@ playwright-core@1.65.1 | runtime | Apache-2.0
   Package: https://www.npmjs.com/package/playwright-core/v/1.65.1
   Archive: https://registry.npmjs.org/playwright-core/-/playwright-core-1.65.1.tgz
   Integrity: sha512-hqPpz7blSMPxWVdoeE1yiBSzXsKiVOd2k+kjCvmUywD2GPO2Dd9HfcWnq9NN0GHbNZDFgZ9JfBFr+X5/BLo0qw==
-plist@5.1.1 | runtime | MIT
+plist@5.1.2 | runtime | MIT
   Lockfile path: node_modules/plist
-  Package: https://www.npmjs.com/package/plist/v/5.1.1
-  Archive: https://registry.npmjs.org/plist/-/plist-5.1.1.tgz
-  Integrity: sha512-n55fGiwWNHf6zFdP9qvtr1x7P898lfJ/rbDvB3pYqVRcO+iG3sl5SSkGSLiIoAI9ZZc2F3Ga/5wPtM8EqhgSqA==
+  Package: https://www.npmjs.com/package/plist/v/5.1.2
+  Archive: https://registry.npmjs.org/plist/-/plist-5.1.2.tgz
+  Integrity: sha512-sAsRKAzFGIdewBCE1IptS7Ncvi0JTjTkFrhjwjT6dDS+R3PIrSLosErSJCfpfnpJ1v5lRh7ZLQnERZnEiUDj/A==
 possible-typed-array-names@1.1.0 | runtime | MIT
   Lockfile path: node_modules/possible-typed-array-names
   Package: https://www.npmjs.com/package/possible-typed-array-names/v/1.1.0
@@ -4110,7 +4220,7 @@ trim-newlines@3.0.1 | development | MIT
   Package: https://www.npmjs.com/package/trim-newlines/v/3.0.1
   Archive: https://registry.npmjs.org/trim-newlines/-/trim-newlines-3.0.1.tgz
   Integrity: sha512-c1PTsA3tYrIsLGkJkzHF+w9F2EyxfXGo4UyJc4pFL++FMjnq0HJS69T3M7d//gKrFKwy429bouPescbjecU+Zw==
-tslib@2.8.1 | development | 0BSD
+tslib@2.8.1 | runtime | 0BSD
   Lockfile path: node_modules/tslib
   Package: https://www.npmjs.com/package/tslib/v/2.8.1
   Archive: https://registry.npmjs.org/tslib/-/tslib-2.8.1.tgz

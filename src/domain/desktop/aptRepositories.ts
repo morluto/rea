@@ -348,8 +348,12 @@ const stanza = (
 /** Keep the position of undecodable lines without inserting replacement text. */
 function* sourceLines(text: string | Buffer): Generator<string | undefined> {
   if (typeof text === "string") {
-    yield* text.split("\n");
-    return;
+    for (let start = 0; ;) {
+      const end = text.indexOf("\n", start);
+      yield text.slice(start, end === -1 ? text.length : end);
+      if (end === -1) return;
+      start = end + 1;
+    }
   }
   for (let start = 0; start <= text.length;) {
     const end = text.indexOf(0x0a, start);
@@ -529,10 +533,15 @@ const isDeb822LineWhitespace = (character: string): boolean =>
 const trimDeb822Line = (value: string): string =>
   trimEdges(value, isDeb822LineWhitespace);
 
-/** Fields of each deb822 paragraph by lowercase name; continuation lines keep their line breaks. */
+/**
+ * Fields of each deb822 paragraph by lowercase name; continuation lines keep
+ * their line breaks. Stop reading when the paragraph limit is reached.
+ */
 export const deb822Paragraphs = (
   text: string | Buffer,
+  limit = Number.POSITIVE_INFINITY,
 ): ReadonlyMap<string, string>[] => {
+  if (limit <= 0) return [];
   const found: Map<string, string>[] = [];
   let current = new Map<string, string>();
   let last: string | undefined;
@@ -562,6 +571,7 @@ export const deb822Paragraphs = (
     const afterLeadingCr = line.replace(/^\r+/u, "");
     if (afterLeadingCr.length === 0) {
       finish();
+      if (found.length >= limit) return found;
     } else if (line.startsWith("#")) continue;
     else if (/^[ \t\v\f]/u.test(afterLeadingCr) && last !== undefined) {
       const content = trimDeb822Line(line);

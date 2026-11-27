@@ -4,6 +4,7 @@ import {
   webExecutionObservationSchema,
   type WebExecutionObservation,
 } from "../webExecution.js";
+import { webRuntimeSourceMetadataSchema } from "../webRuntime.js";
 import { err, ok } from "../result.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import {
@@ -49,19 +50,8 @@ const webExecutionFunctionRowSchema = functionSchema.extend({
 });
 
 /** Source metadata without the captured text, which pages separately. */
-const webExecutionSourceRowSchema = sourceSchema.omit({ source: true }).extend({
-  source: z.discriminatedUnion("state", [
-    z.strictObject({
-      state: z.literal("captured"),
-      sha256: z.string(),
-      utf8_bytes: z.int().nonnegative(),
-      utf16_units: z.int().nonnegative(),
-    }),
-    z.strictObject({
-      state: z.enum(["unavailable", "excluded"]),
-      reason: z.string(),
-    }),
-  ]),
+const webExecutionSourceRowSchema = sourceSchema.extend({
+  source: webRuntimeSourceMetadataSchema,
 });
 
 /** The retained collection owns both its selector and its projected rows. */
@@ -98,7 +88,7 @@ export const webExecutionCollections = {
     view: z.strictObject({
       kind: z.literal("web-execution"),
       collection: z.literal("source-text"),
-      script_id: z.string().min(1),
+      script_id: sourceSchema.shape.script_id,
       offset: z
         .int()
         .nonnegative()
@@ -107,7 +97,9 @@ export const webExecutionCollections = {
       limit: z.int().positive().max(65_536).default(16_384),
     }),
     items: z.array(
-      analysisTextPageItemSchema.extend({ script_id: z.string() }),
+      analysisTextPageItemSchema.extend({
+        script_id: sourceSchema.shape.script_id,
+      }),
     ),
   },
 };

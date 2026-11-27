@@ -3,9 +3,15 @@ const concat = (...parts: Buffer[]): Buffer => Buffer.concat(parts);
 const encodeLength = (length: number): Buffer => {
   if (length < 0x80) return Buffer.from([length]);
   if (length <= 0xff) return Buffer.from([0x81, length]);
-  const bytes = Buffer.alloc(3);
-  bytes[0] = 0x82;
-  bytes.writeUInt16BE(length, 1);
+  if (length <= 0xffff) {
+    const bytes = Buffer.alloc(3);
+    bytes[0] = 0x82;
+    bytes.writeUInt16BE(length, 1);
+    return bytes;
+  }
+  const bytes = Buffer.alloc(4);
+  bytes[0] = 0x83;
+  bytes.writeUIntBE(length, 1, 3);
   return bytes;
 };
 
@@ -71,12 +77,11 @@ export const pkcs7SignedDataFixture = (
   unsignedAttributes?: readonly (readonly number[] | Buffer)[],
   fields: Partial<
     Record<
-      "issuer" | "subject" | "signerIssuer" | "extensions" | "signedAttributes",
-      Buffer
-    >
-  > = {},
-  algorithms: Partial<
-    Record<
+      | "issuer"
+      | "subject"
+      | "signerIssuer"
+      | "extensions"
+      | "signedAttributes"
       | "certificateSignature"
       | "subjectPublicKey"
       | "digest"
@@ -85,39 +90,47 @@ export const pkcs7SignedDataFixture = (
       Buffer
     >
   > = {},
+  /** Extra certificate sharing the signer serial, for ambiguous-match fixtures. */
+  extraCertificateName?: string,
 ): Buffer => {
   const serial = Buffer.from([0x11, 0x22, 0x33, 0x44]);
   const subject = name(commonName, organization);
-  const tbs = seq(
-    context(0, integer(2)),
-    integer(serial),
-    algorithms.certificateSignature ?? algorithm(SHA256_RSA),
-    fields.issuer ?? subject,
-    seq(utc("250101000000Z"), utc("260101000000Z")),
-    fields.subject ?? subject,
+  const certificateOf = (issuer: Buffer, owner: Buffer) =>
     seq(
-      algorithms.subjectPublicKey ?? algorithm(RSA),
-      bitString(Buffer.from("pubkey")),
-    ),
-    context(
-      3,
-      fields.extensions ??
-        seq(seq(oid([2, 5, 29, 14]), octet(Buffer.from([0x04, 0x01, 0xaa])))),
-    ),
-  );
-  const certificate = seq(
-    tbs,
-    algorithms.certificateSignature ?? algorithm(SHA256_RSA),
-    bitString(Buffer.from("signature")),
+      seq(
+        context(0, integer(2)),
+        integer(serial),
+        fields.certificateSignature ?? algorithm(SHA256_RSA),
+        issuer,
+        seq(utc("250101000000Z"), utc("260101000000Z")),
+        owner,
+        seq(
+          fields.subjectPublicKey ?? algorithm(RSA),
+          bitString(Buffer.from("pubkey")),
+        ),
+        context(
+          3,
+          fields.extensions ??
+            seq(
+              seq(oid([2, 5, 29, 14]), octet(Buffer.from([0x04, 0x01, 0xaa]))),
+            ),
+        ),
+      ),
+      fields.certificateSignature ?? algorithm(SHA256_RSA),
+      bitString(Buffer.from("signature")),
+    );
+  const certificate = certificateOf(
+    fields.issuer ?? subject,
+    fields.subject ?? subject,
   );
   const signer = seq(
     integer(1),
     seq(fields.signerIssuer ?? subject, integer(serial)),
-    algorithms.signerDigest ?? algorithm(SHA256),
+    fields.signerDigest ?? algorithm(SHA256),
     ...(fields.signedAttributes === undefined
       ? []
       : [context(0, fields.signedAttributes)]),
-    algorithms.signerSignature ?? algorithm(SHA256_RSA),
+    fields.signerSignature ?? algorithm(SHA256_RSA),
     signature,
     ...(unsignedAttributes === undefined
       ? []
@@ -136,9 +149,20 @@ export const pkcs7SignedDataFixture = (
   );
   const signedData = seq(
     integer(1),
-    set(algorithms.digest ?? algorithm(SHA256)),
+    set(fields.digest ?? algorithm(SHA256)),
     seq(DATA),
-    context(0, certificate),
+    context(
+      0,
+      extraCertificateName === undefined
+        ? certificate
+        : concat(
+            certificateOf(
+              name(extraCertificateName, organization),
+              name(extraCertificateName, organization),
+            ),
+            certificate,
+          ),
+    ),
     set(signer),
   );
   return seq(SIGNED_DATA, context(0, signedData));

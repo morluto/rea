@@ -40,7 +40,7 @@ it("forwards an interrupt into the export workflow and reports cancellation", as
   const previousExitCode = process.exitCode;
   try {
     const output = await command.run({
-      formatExplicit: false,
+      structuredOutput: false,
       options: {},
       args: {
         capturePath: "/unused/capture.json",
@@ -73,7 +73,7 @@ it.each(["cleanup failure", "cancellation during cleanup"] as const)(
     const previousExitCode = process.exitCode;
     try {
       const output = await command.run({
-        formatExplicit: false,
+        structuredOutput: false,
         options: {},
         args: {
           capturePath: "/unused/capture.json",
@@ -105,7 +105,7 @@ it("closes export resources when the operation throws", async () => {
     .mockResolvedValue();
   try {
     const output = await command.run({
-      formatExplicit: false,
+      structuredOutput: false,
       options: {},
       args: {
         capturePath: "/unused/capture.json",

@@ -609,9 +609,12 @@ it("retains uninterpreted integrity declarations through packed and unpacked inv
         expect((await readFile(join(outputRoot, name))).equals(payload)).toBe(
           true,
         );
-        expect(extracted.limitations).toContain(
-          `${name}: ${occurrence(name).limitations[0]}`,
-        );
+        // Each written file keeps its own occurrence's limitations.
+        expect(
+          extracted.artifacts.find(
+            ({ relative_path }) => relative_path === name,
+          )?.limitations,
+        ).toContain(occurrence(name).limitations[0]);
       }
     } finally {
       await resources.close();

@@ -28,7 +28,6 @@ cliTest.for(["certificateSignature", "digest"] as const)(
       undefined,
       undefined,
       undefined,
-      {},
       { [target]: malformed },
     );
     const bytes = peCertificateFixture(false, payload);
