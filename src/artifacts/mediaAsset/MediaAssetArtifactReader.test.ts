@@ -549,6 +549,27 @@ describe("Bink 2 headers", () => {
     expect(result.coverage[0]?.status).toBe("unknown");
   });
 
+  it("reports truncated when tables do not fit a matching declared size", async () => {
+    // 10 frames need a 44-byte offset table ending at 92; a 64-byte file whose
+    // size field matches still cannot hold that table.
+    const bytes = bink2Fixture(10).subarray(0, 64);
+    bytes.writeUInt32LE(bytes.length - 8, 4);
+    const result = await read("bink2", bytes);
+    expect(result.metadata).toMatchObject({
+      kind: "bink2",
+      extent_check: "truncated",
+      frame_offset_table_offset: 48,
+      frame_offset_table_bytes: 44,
+    });
+    expect(result.entries).toEqual([]);
+    expect(result.coverage[0]?.status).toBe("unknown");
+    expect(
+      result.coverage[0]?.limitations.some((line) =>
+        line.includes("header tables end at offset"),
+      ),
+    ).toBe(true);
+  });
+
   it("does not claim trailing bytes beyond the declared end as frames", async () => {
     const base = bink2Fixture(10);
     const tableOffset = 48;

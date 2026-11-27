@@ -818,7 +818,20 @@ export const bink2Layout = (
   const tableBytes = (frameCount + 1) * 4;
   const framesOffset = tableOffset + tableBytes;
   if (framesOffset > declaredEnd) {
-    const fitted = fitRegions("bink2", [], fileSize, declaredEnd);
+    const fitted = fitRegions(
+      "bink2",
+      [
+        {
+          path: "frame-offsets.bin",
+          role: "frame-offset-table",
+          index: 0,
+          offset: tableOffset,
+          length: tableBytes,
+        },
+      ],
+      fileSize,
+      declaredEnd,
+    );
     return {
       metadata: {
         ...metadataBase,
@@ -831,7 +844,9 @@ export const bink2Layout = (
       limitations: [
         `Bink 2 header tables end at offset ${String(framesOffset)} but the file declares only ${String(declaredEnd)} bytes; the frame-offset table and frames were not listed.`,
         ...fitted.limitations.filter(
-          (line) => !line.includes("follow the last declared"),
+          (line) =>
+            !line.includes("follow the last declared") &&
+            !line.includes("was not listed"),
         ),
       ],
       regionsExamined: "unknown",
