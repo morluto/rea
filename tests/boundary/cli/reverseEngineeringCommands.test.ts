@@ -35,6 +35,7 @@ import {
 import type { CliInstance } from "../../../src/cli/types.js";
 import type { ReverseEngineeringService } from "../../../src/application/reverse/ReverseEngineeringService.js";
 import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
+import { findsNoExecutable } from "../../support/reverseEngineeringService.js";
 
 const originalExitCode = process.exitCode;
 
@@ -80,7 +81,7 @@ const runObjdump = async (
   if (command === undefined)
     throw new Error("objdump CLI command was not registered");
   return command.run({
-    formatExplicit: false,
+    structuredOutput: false,
     args: { path, operation: selection.operation ?? "file_headers" },
     options: {
       followDebugLinks: false,
@@ -160,7 +161,7 @@ it("lists objdump architectures without inventing an artifact path", async () =>
     throw new Error("architecture command was not registered");
 
   const result = await command.run({
-    formatExplicit: false,
+    structuredOutput: false,
     args: {},
     options: { detail: "complete" },
   });
@@ -195,17 +196,20 @@ it("promotes only complete production cleanup-only Evidence after CLI cleanup re
   } as unknown as ProviderProcessSupervisor;
   const service = new CoreReverseEngineeringService({
     commands: createReverseEngineeringCommandPort({}),
-    runOwned: vi.fn(async () => {
-      throw new OwnedCommandFailure(
-        "process",
-        "Cleanup after process completion was incomplete.",
-        providerSnapshot(),
-        "provider process still running",
-        undefined,
-        ["owned-run"],
-        owner,
-      );
-    }),
+    processes: {
+      lookup: findsNoExecutable,
+      runOwned: vi.fn(async () => {
+        throw new OwnedCommandFailure(
+          "process",
+          "Cleanup after process completion was incomplete.",
+          providerSnapshot(),
+          "provider process still running",
+          undefined,
+          ["owned-run"],
+          owner,
+        );
+      }),
+    },
   });
   const inspect = service.inspectWithObjdump.bind(service);
   let producedCleanupFailure: AnalysisOutputError | undefined;
@@ -260,17 +264,20 @@ it("preserves an operation timeout and unknown partial Evidence after cleanup re
   } as unknown as ProviderProcessSupervisor;
   const service = new CoreReverseEngineeringService({
     commands: createReverseEngineeringCommandPort({}),
-    runOwned: vi.fn(async () => {
-      throw new OwnedCommandFailure(
-        "timeout",
-        "Provider command timed out.",
-        providerSnapshot({ exitCode: null }),
-        "provider process still running",
-        undefined,
-        ["owned-run"],
-        owner,
-      );
-    }),
+    processes: {
+      lookup: findsNoExecutable,
+      runOwned: vi.fn(async () => {
+        throw new OwnedCommandFailure(
+          "timeout",
+          "Provider command timed out.",
+          providerSnapshot({ exitCode: null }),
+          "provider process still running",
+          undefined,
+          ["owned-run"],
+          owner,
+        );
+      }),
+    },
   });
   let timeout: AnalysisTimeoutError | undefined;
   const inspect = service.inspectWithObjdump.bind(service);
@@ -498,7 +505,7 @@ it.each([false, true])(
       throw new Error("Rizin CLI command was not registered");
 
     await command.run({
-      formatExplicit: false,
+      structuredOutput: false,
       args: { path: "./sample.bin", command: "dr" },
       options: { inferiorTty: "/dev/pts/7" },
     });
@@ -651,7 +658,7 @@ it.each(["incomplete", "interrupt", "control"] as const)(
     try {
       process.exitCode = 0;
       const result = await command.run({
-        formatExplicit: false,
+        structuredOutput: false,
         args: { path: "./sample.bin", command: "dr" },
         options: { inferiorTty: "/dev/pts/7" },
       });

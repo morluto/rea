@@ -3,7 +3,18 @@ import { dnsResponseLayers } from "../../tests/fixtures/pcap/pcapTestTools.js";
 import { expect, it } from "vitest";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { parseCapinfosOutput, parseTsharkJsonOutput } from "./PcapOutput.js";
+import {
+  finalizeTsharkWithDns,
+  parseCapinfosOutput,
+  prepareTsharkBaseOutput,
+} from "./PcapOutput.js";
+
+const readTsharkFields = async (stdout: string, dnsStdout?: string) => {
+  const base = await prepareTsharkBaseOutput(stdout);
+  return dnsStdout === undefined
+    ? base.fallback
+    : finalizeTsharkWithDns(base, dnsStdout);
+};
 
 const capture = (layers: ReadonlyArray<Record<string, unknown>>) =>
   JSON.stringify(
@@ -30,7 +41,7 @@ it.each([
 ] as const)(
   "counts every frame while aggregating only reported protocol stacks: %j",
   async (stacks, expected) => {
-    const result = await parseTsharkJsonOutput(
+    const result = await readTsharkFields(
       capture(stacks.map((stack) => ({ "frame.protocols": [stack] }))),
     );
     expect(result.packetCount).toBe(stacks.length);
@@ -51,7 +62,7 @@ it.each([
   { "frame.number": ["2"], "frame.protocols": [""] },
 ])("rejects malformed or ambiguous frame inventories: %j", async (layers) => {
   await expect(
-    parseTsharkJsonOutput(JSON.stringify([{ _source: { layers } }])),
+    readTsharkFields(JSON.stringify([{ _source: { layers } }])),
   ).rejects.toMatchObject({ _tag: "AnalysisProtocolError" });
 });
 
@@ -65,7 +76,7 @@ it.each(["before", "after"] as const)(
       "ip.dst": ["192.0.2.1"],
       ...dnsResponseLayers("api.example", "203.0.113.5"),
     };
-    const result = await parseTsharkJsonOutput(
+    const result = await readTsharkFields(
       capture(position === "before" ? [empty, response] : [response, empty]),
     );
     expect(result).toMatchObject({
@@ -95,7 +106,7 @@ it.each(["before", "after"] as const)(
 
 it("rejects duplicate frame identities even when protocol stacks are empty", async () => {
   await expect(
-    parseTsharkJsonOutput(
+    readTsharkFields(
       capture([
         { "frame.protocols": [""] },
         { "frame.number": ["1"], "frame.protocols": [""] },
@@ -109,7 +120,7 @@ it("marks a TC response partial without losing its observed DNS answer", async (
   const bytes = Buffer.from(layers.dns_raw[0] as string, "hex");
   bytes.writeUInt16BE(0x8380, 2);
   layers.dns_raw[0] = bytes.toString("hex");
-  const result = await parseTsharkJsonOutput(capture([layers]));
+  const result = await readTsharkFields(capture([layers]));
   expect(result.dnsQueries).toEqual([
     {
       query: "api.example",
@@ -125,7 +136,7 @@ it("marks a TC response partial without losing its observed DNS answer", async (
 });
 
 it("binds interleaved DNS answers to each response packet", async () => {
-  const result = await parseTsharkJsonOutput(
+  const result = await readTsharkFields(
     capture([
       dnsResponseLayers("alpha.example", "192.0.2.10"),
       dnsResponseLayers("beta.example", "192.0.2.20"),
@@ -144,7 +155,7 @@ it("binds interleaved DNS answers to each response packet", async () => {
 });
 
 it("retains unassignable DNS observations when wire identity is missing", async () => {
-  const result = await parseTsharkJsonOutput(
+  const result = await readTsharkFields(
     capture([
       { dns: { "dns.qry.name": ["same", "same"], "dns.a": "192.0.2.9" } },
       { dns: { "dns.aaaa": "2001:db8::9" } },
@@ -170,7 +181,7 @@ it("counts IPv6 endpoints once per packet and preserves every examined fact", as
     "tls.handshake.extensions_server_name": [`host${String(index)}.example`],
     "frame.protocols": [`ipv6:protocol${String(index)}`],
   }));
-  const result = await parseTsharkJsonOutput(capture(packets));
+  const result = await readTsharkFields(capture(packets));
   expect(result.endpoints).toEqual([
     { address: "2001:db8::1", port: null, packet_count: 51 },
   ]);
@@ -183,7 +194,7 @@ it("counts IPv6 endpoints once per packet and preserves every examined fact", as
 
 it("orders equal-count endpoints and protocols by code point, not host locale", async () => {
   // Locale collation puts "fe80::1" first and, under da-DK, "aarp" after "zz".
-  const result = await parseTsharkJsonOutput(
+  const result = await readTsharkFields(
     capture([
       { "ipv6.src": ["fe80::1"], "frame.protocols": ["eth:llc:zz"] },
       { "ipv6.src": ["fe80:1::1"], "frame.protocols": ["eth:llc:aarp"] },
@@ -200,7 +211,7 @@ it("orders equal-count endpoints and protocols by code point, not host locale", 
 });
 
 it("preserves all DNS addresses and their exact examined count", async () => {
-  const result = await parseTsharkJsonOutput(
+  const result = await readTsharkFields(
     capture(
       Array.from({ length: 101 }, (_, index) => ({
         ...dnsResponseLayers("rotating.example", `192.0.2.${String(index)}`),
@@ -241,7 +252,7 @@ it.each([
 );
 
 it("excludes transport credentials without normalizing observed URL bytes", async () => {
-  const result = await parseTsharkJsonOutput(
+  const result = await readTsharkFields(
     capture([
       {
         "http.request.full_uri": [
@@ -264,7 +275,7 @@ it("excludes transport credentials without normalizing observed URL bytes", asyn
 });
 
 it("retains HTTP absolute-form request targets when Wireshark cannot synthesize full_uri", async () => {
-  const result = await parseTsharkJsonOutput(
+  const result = await readTsharkFields(
     capture([
       { "http.request.uri": ["http://proxy.example.test/a/../resource"] },
       { "http.request.uri": ["/relative/path"] },
@@ -278,7 +289,7 @@ it("retains HTTP absolute-form request targets when Wireshark cannot synthesize 
 });
 
 it("marks mixed request arrays partial when a relative target has no full URI", async () => {
-  const result = await parseTsharkJsonOutput(
+  const result = await readTsharkFields(
     capture([
       {
         "http.request.uri": ["/resolved/with-host", "/unresolved/without-host"],
@@ -293,7 +304,7 @@ it("marks mixed request arrays partial when a relative target has no full URI", 
 });
 
 it("accounts for paired full URIs and absolute-form values without inventing array joins", async () => {
-  const result = await parseTsharkJsonOutput(
+  const result = await readTsharkFields(
     capture([
       {
         "http.request.uri": ["/first", "/second", "http://proxy.example/third"],
@@ -315,7 +326,7 @@ it("accounts for paired full URIs and absolute-form values without inventing arr
 
 it("refuses dense JSON before its expanded graph exceeds the decoding budget", async () => {
   await expect(
-    parseTsharkJsonOutput(`[${"{},".repeat(600_000)}{}]`),
+    readTsharkFields(`[${"{},".repeat(600_000)}{}]`),
   ).rejects.toMatchObject({
     _tag: "AnalysisResourceConstraintError",
     fixedAllowance: {
@@ -333,7 +344,7 @@ it("refuses packet facts above the retained-fact budget with its value", async (
     String(index).padStart(16, "0"),
   );
   await expect(
-    parseTsharkJsonOutput(capture([{ "ip.src": sources }])),
+    readTsharkFields(capture([{ "ip.src": sources }])),
   ).rejects.toMatchObject({
     _tag: "AnalysisResourceConstraintError",
     fixedAllowance: {
@@ -352,7 +363,7 @@ it.each([
   "preserves opaque cancellation while validating producer output: %s",
   async (reason) => {
     const controller = new AbortController();
-    const result = parseTsharkJsonOutput(
+    const result = prepareTsharkBaseOutput(
       capture([{ "ip.src": ["192.0.2.1"] }]),
       controller.signal,
     );
@@ -369,7 +380,7 @@ it.each([
 );
 
 it("includes decoded HTTP/2 URIs with shared credential handling and reports unresolved targets", async () => {
-  const full = await parseTsharkJsonOutput(
+  const full = await readTsharkFields(
     capture([
       {
         "http2.request.full_uri": [
@@ -391,7 +402,7 @@ it("includes decoded HTTP/2 URIs with shared credential handling and reports unr
   expect(full.partial).toBe(false);
   expect(
     (
-      await parseTsharkJsonOutput(
+      await readTsharkFields(
         capture([{ "http2.headers.path": ["/unresolved"] }]),
       )
     ).partial,
@@ -407,7 +418,7 @@ it("parses recorded Wireshark raw trees without merging display-colliding names"
     new URL("../../tests/fixtures/pcap/dns-raw-tree.json", import.meta.url),
     "utf8",
   );
-  const result = await parseTsharkJsonOutput(output);
+  const result = await readTsharkFields(output);
   expect(result.packetCount).toBe(5);
   expect(result.dnsQueries).toEqual([
     {
@@ -441,15 +452,13 @@ it("shares the decoded-graph allowance across base and DNS acquisitions", async 
       },
     },
   ]);
-  await expect(parseTsharkJsonOutput(base)).resolves.toMatchObject({
+  await expect(readTsharkFields(base)).resolves.toMatchObject({
     packetCount: 1,
   });
-  await expect(parseTsharkJsonOutput(dns)).resolves.toMatchObject({
+  await expect(readTsharkFields(dns)).resolves.toMatchObject({
     packetCount: 1,
   });
-  await expect(
-    parseTsharkJsonOutput(base, undefined, dns),
-  ).rejects.toMatchObject({
+  await expect(readTsharkFields(base, dns)).rejects.toMatchObject({
     _tag: "AnalysisResourceConstraintError",
     fixedAllowance: { limit: 128 * 1024 ** 2, unit: "bytes" },
   });
@@ -476,9 +485,8 @@ it.each(["dns", "mdns", "llmnr"] as const)(
     if (packet === undefined)
       throw new Error("Expected matching producer family");
     packet._source.layers.frame["frame.number"] = "1";
-    const result = await parseTsharkJsonOutput(
+    const result = await readTsharkFields(
       capture([{ "dns.qry.name": ["a.example"], "dns.a": ["192.0.2.9"] }]),
-      undefined,
       JSON.stringify([packet]),
     );
     expect(result.dnsQueries).toEqual([
@@ -504,7 +512,7 @@ it("preserves selected occurrences omitted by a partial DNS message pass", async
   const tree = JSON.stringify([
     { _source: { layers: { frame: { "frame.number": "1" }, ...raw } } },
   ]);
-  const result = await parseTsharkJsonOutput(base, undefined, tree);
+  const result = await readTsharkFields(base, tree);
   expect(result.dnsQueries).toEqual([
     {
       query: "same.example",
@@ -529,4 +537,111 @@ it("preserves selected occurrences omitted by a partial DNS message pass", async
   expect(result.unattributedDnsPackets).toBe(1);
   expect(result.partial).toBe(true);
   expect(result.dnsLimitations.join(" ")).toContain("occurrences");
+});
+
+it("still reconciles selected DNS facts when embedded messages report unattributed addresses", async () => {
+  const base = capture([
+    {
+      "dns.qry.name": ["tree.example", "missing.example"],
+      "dns.a": ["192.0.2.1", "192.0.2.2"],
+    },
+  ]);
+  const tree = JSON.stringify([
+    {
+      _source: {
+        layers: {
+          frame: { "frame.number": "1" },
+          dns: {
+            Queries: { question: { "dns.qry.name": "tree.example" } },
+            Answers: { answer: { "dns.a": "192.0.2.1" } },
+          },
+        },
+      },
+    },
+  ]);
+  const expectedQueries = [
+    {
+      query: "tree.example",
+      query_labels_hex: null,
+      response_addresses: [],
+      response_address_count: 0,
+    },
+    {
+      query: "missing.example",
+      query_labels_hex: null,
+      response_addresses: [],
+      response_address_count: 0,
+    },
+  ];
+  const result = await readTsharkFields(base, tree);
+  expect(result.dnsQueries).toEqual(expectedQueries);
+  expect(result.unattributedDnsAddresses).toEqual(["192.0.2.1", "192.0.2.2"]);
+  expect(result.unattributedDnsPackets).toBe(1);
+  expect(result.partial).toBe(true);
+});
+
+it("handles unique HTTP request targets beyond the cache limit without dropping resolution checks", async () => {
+  const packets = Array.from({ length: 1100 }, (_, index) => ({
+    "http.request.uri": [`http://example.test/u/${String(index)}`],
+    "http.request.full_uri": [`http://example.test/u/${String(index)}`],
+  }));
+  packets.push({
+    "http.request.uri": ["relative-without-slash"],
+    "http.request.full_uri": [],
+  });
+  const result = await readTsharkFields(capture(packets));
+  expect(result.httpRequestUriCount).toBe(1100);
+  expect(result.partial).toBe(true);
+});
+
+it("reports hasDnsProtocol only when base dissection sees DNS, mDNS, or LLMNR traffic or fields", async () => {
+  expect(
+    (
+      await prepareTsharkBaseOutput(
+        capture([{ "frame.protocols": ["eth:ethertype:ip:tcp:tls"] }]),
+      )
+    ).hasDnsProtocol,
+  ).toBe(false);
+  for (const stack of [
+    "eth:ethertype:ip:udp:dns",
+    "eth:ethertype:ip:udp:mdns",
+    "eth:ethertype:ip:udp:llmnr",
+  ]) {
+    expect(
+      (await prepareTsharkBaseOutput(capture([{ "frame.protocols": [stack] }])))
+        .hasDnsProtocol,
+    ).toBe(true);
+  }
+  expect(
+    (
+      await prepareTsharkBaseOutput(
+        capture([
+          {
+            "frame.protocols": ["eth:ethertype:ip:udp"],
+            "dns.qry.name": ["example.com"],
+          },
+        ]),
+      )
+    ).hasDnsProtocol,
+  ).toBe(true);
+});
+
+it("refuses tshark JSON above producer_limits.output_bytes and admits it when raised", async () => {
+  const text = capture([{ "ip.src": ["192.0.2.1"] }]);
+  await expect(
+    prepareTsharkBaseOutput(text, undefined, text.length - 1),
+  ).rejects.toMatchObject({
+    _tag: "AnalysisResourceConstraintError",
+    fixedAllowance: undefined,
+    limit: {
+      control_kind: "parameter",
+      parameter: "producer_limits.output_bytes",
+      effective_value: text.length - 1,
+      maximum: 128 * 1024 * 1024,
+      default_value: 8 * 1024 * 1024,
+    },
+  });
+  await expect(
+    prepareTsharkBaseOutput(text, undefined, text.length),
+  ).resolves.toMatchObject({ fallback: { endpointCount: 1 } });
 });

@@ -18,6 +18,7 @@ import type {
   JavaScriptSemanticAnalysisState,
   JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
+import { semanticConsumerMemo } from "./javascriptSemanticConsumer.js";
 
 /**
  * A call that directly invokes a source function expression, as in a UMD
@@ -32,10 +33,8 @@ interface DirectInvocation {
   readonly bound: readonly (t.Identifier | null | undefined)[];
 }
 
-const directInvocations = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  WeakMap<t.Function, DirectInvocation | null>
->();
+const directInvocations =
+  semanticConsumerMemo<WeakMap<t.Function, DirectInvocation | null>>();
 
 interface ArgumentsReaders {
   /** Functions whose subtree names `arguments`. */
@@ -44,10 +43,7 @@ interface ArgumentsReaders {
   readonly functionProperties: boolean;
 }
 
-const argumentsReaders = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  ArgumentsReaders
->();
+const argumentsReaders = semanticConsumerMemo<ArgumentsReaders>();
 
 /**
  * Whether `callee`'s activation arguments may be read other than by its

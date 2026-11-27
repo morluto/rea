@@ -1,8 +1,8 @@
 import { isMachoZeroFillSection } from "../domain/apple/machoSectionHeader.js";
-import { MAX_LOAD_COMMAND_BYTES } from "../domain/apple/machoLoadCommandReader.js";
 import {
+  MAX_LOAD_COMMAND_BYTES,
+  readBoundedMachoLoadCommandTableHeader,
   readMachoHeaderDeclarations,
-  readMachoLoadCommandTableHeader,
 } from "../domain/apple/machoLoadCommands.js";
 import { decodeMachoFixedName } from "../domain/apple/appleMachoNames.js";
 import { parseFailureFromCause } from "../domain/parseFailure.js";
@@ -128,14 +128,10 @@ export const readKunaMachoLayout = async (head: {
   readonly prefix: Buffer;
 }): Promise<KunaInventoryLayout> => {
   const { bytes, prefix } = head;
-  const declared = readMachoLoadCommandTableHeader(prefix, bytes);
-  if (!declared.ok) return unavailable(declared.error);
+  const declared = readBoundedMachoLoadCommandTableHeader(prefix, bytes);
+  if (!declared.ok) return unavailable(declared.error.message);
   if (declared.value === null) return unavailable("it has no Mach-O header");
   const { headerSize, commandBytes } = declared.value;
-  if (commandBytes > MAX_LOAD_COMMAND_BYTES)
-    return unavailable(
-      `its load commands occupy ${String(commandBytes)} bytes, above the ${String(MAX_LOAD_COMMAND_BYTES)}-byte load-command limit`,
-    );
   let commands: Awaited<ReturnType<typeof readMachoCommandNames>>["commands"];
   try {
     ({ commands } = await readMachoCommandNames(
@@ -143,6 +139,8 @@ export const readKunaMachoLayout = async (head: {
       bytes,
       MAX_LOAD_COMMAND_BYTES,
       MAX_LAYOUT_RECORDS,
+      undefined,
+      declared.value,
     ));
   } catch (cause: unknown) {
     const failure = parseFailureFromCause(cause);

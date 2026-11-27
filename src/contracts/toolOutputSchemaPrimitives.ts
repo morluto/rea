@@ -604,28 +604,30 @@ export function expandToolAvailability(
           group.client_requirements ?? inventory.client_requirements,
       })),
     );
-  return inventory.groups.flatMap((group) =>
-    group.names.map((name) =>
+  return inventory.groups.flatMap((group) => {
+    const effectSet = new Set(group.effects);
+    const annotationSet = new Set(group.annotations);
+    const effects = Object.fromEntries(
+      TOOL_EFFECT_NAMES.map((effect) => [effect, effectSet.has(effect)]),
+    );
+    const annotations = Object.fromEntries(
+      TOOL_ANNOTATION_NAMES.map((annotation) => [
+        annotation,
+        annotationSet.has(annotation),
+      ]),
+    );
+    const client_requirements =
+      group.client_requirements ?? inventory.client_requirements;
+    return group.names.map((name) =>
       toolAvailability.parse({
         ...group,
         name,
-        client_requirements:
-          group.client_requirements ?? inventory.client_requirements,
-        effects: Object.fromEntries(
-          TOOL_EFFECT_NAMES.map((effect) => [
-            effect,
-            group.effects.includes(effect),
-          ]),
-        ),
-        annotations: Object.fromEntries(
-          TOOL_ANNOTATION_NAMES.map((annotation) => [
-            annotation,
-            group.annotations.includes(annotation),
-          ]),
-        ),
+        client_requirements,
+        effects,
+        annotations,
       }),
-    ),
-  );
+    );
+  });
 }
 
 /** Session status facts shared by every detail level and session kind. */
@@ -654,6 +656,9 @@ export const sessionProviderFacts = z
         analysis_profile: analysisProfileSchema,
         release_verification: providerReleaseVerificationSchema.optional(),
       })
+      .describe(
+        "Binding for the active target. Fresh matching Hopper, Ghidra, IDA and Kuna observations retain this selection as provider_selection. Historical and replayed Evidence preserve their original metadata, including absence; REA-derived and other provider records are not attributed to this binding.",
+      )
       .nullable(),
     client_features: z.object({
       elicitation_form: z.boolean(),

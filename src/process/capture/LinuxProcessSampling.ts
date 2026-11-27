@@ -214,33 +214,65 @@ export const readLinuxCommand = async (
   );
 };
 
+/** Procfs file-descriptor operations remain injectable below error classification and composition. */
+export interface LinuxOpenFilesHost {
+  descriptors(pid: number, signal: AbortSignal): Promise<readonly string[]>;
+  readlink(
+    pid: number,
+    descriptor: string,
+    signal: AbortSignal,
+  ): Promise<string>;
+}
+
+const systemLinuxOpenFilesHost: LinuxOpenFilesHost = {
+  descriptors(pid) {
+    return readdir(`/proc/${String(pid)}/fd`);
+  },
+  readlink(pid, descriptor) {
+    return readlink(`/proc/${String(pid)}/fd/${descriptor}`);
+  },
+};
+
 /** Read named file targets from procfs. Callers attribute them through the process identity bracket. */
 export const readLinuxOpenFiles = async (
   pid: number,
   signal: AbortSignal,
+  host: LinuxOpenFilesHost = systemLinuxOpenFilesHost,
 ): Promise<SamplingObservation<readonly string[]>> => {
   const directory = `/proc/${String(pid)}/fd`;
   const listing = await readProcSamplingSource(directory, signal, () =>
-    readdir(directory),
+    host.descriptors(pid, signal),
   );
+  if (listing.value === undefined)
+    return samplingObservation([], listing.diagnostics);
+  const descriptors = listing.value;
+  if (descriptors.length === 0)
+    return samplingObservation([], listing.diagnostics);
   const paths: string[] = [];
   let diagnostics = listing.diagnostics;
-  for (const descriptor of listing.value ?? []) {
-    if (signal.aborted) {
-      diagnostics = mergeSamplingDiagnostics(
-        diagnostics,
-        samplingInterrupted(),
-      );
-      break;
-    }
-    const path = `${directory}/${descriptor}`;
-    const target = await readProcSamplingSource(path, signal, () =>
-      readlink(path),
+  let offset = 0;
+  for (
+    ;
+    offset < descriptors.length && !signal.aborted;
+    offset += PROC_READ_CONCURRENCY
+  ) {
+    const targets = await settleSamplingReads(
+      descriptors
+        .slice(offset, offset + PROC_READ_CONCURRENCY)
+        .map((descriptor) =>
+          readProcSamplingSource(`${directory}/${descriptor}`, signal, () =>
+            host.readlink(pid, descriptor, signal),
+          ),
+        ),
     );
-    diagnostics = mergeSamplingDiagnostics(diagnostics, target.diagnostics);
-    if (target.value?.startsWith("/"))
-      paths.push(target.value.replace(/ \(deleted\)$/u, ""));
+    for (const target of targets) {
+      diagnostics = mergeSamplingDiagnostics(diagnostics, target.diagnostics);
+      if (target.value?.startsWith("/"))
+        paths.push(target.value.replace(/ \(deleted\)$/u, ""));
+    }
   }
+  if (offset < descriptors.length && signal.aborted)
+    diagnostics = mergeSamplingDiagnostics(diagnostics, samplingInterrupted());
   return samplingObservation(paths, diagnostics);
 };
 

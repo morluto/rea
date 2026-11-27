@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ArtifactReaderFailure } from "./ArtifactReader.js";
 
 import {
   ArtifactPathRegistry,
@@ -9,34 +10,34 @@ import {
   normalizeArtifactPath,
 } from "./ArtifactPaths.js";
 
-it.each(["drive", "escaped", "normalization", "prefix", "collision"])(
-  "bounds path failure diagnostics at the owning boundary: %s",
-  (kind) => {
-    const name = "x".repeat(1024 * 1024);
-    const registry = new ArtifactPathRegistry();
-    const fail = () => {
-      if (kind === "drive") normalizeArtifactPath("C:/" + name);
-      else if (kind === "escaped")
-        normalizeArtifactPath("\0".repeat(name.length));
-      else if (kind === "normalization")
-        normalizeArtifactPath(name + "/../child");
-      else {
-        registry.add(name, "file");
-        registry.add(kind === "prefix" ? name + "/child" : name, "directory");
-      }
-    };
-    const failure = (() => {
-      try {
-        fail();
-      } catch (cause: unknown) {
-        return cause;
-      }
-      return undefined;
-    })();
+const longName = "x".repeat(2_048);
+
+const obstructedDestination = (path: string) => {
+  const registry = new ArtifactPathRegistry();
+  registry.add(longName, "file");
+  registry.add(path, "directory");
+};
+
+it.each([
+  ["absolute or unsafe", () => normalizeArtifactPath(`C:/${longName}`)],
+  [
+    "absolute or unsafe",
+    () => normalizeArtifactPath("\0".repeat(longName.length)),
+  ],
+  ["not normalized", () => normalizeArtifactPath(`${longName}/../child`)],
+  ["prefix conflict", () => obstructedDestination(`${longName}/child`)],
+  ["path collision", () => obstructedDestination(longName)],
+] as const)("bounds the %s path diagnostic", (diagnostic, fail) => {
+  expect.assertions(3);
+  try {
+    fail();
+  } catch (failure: unknown) {
     expect(failure).toMatchObject({ reason: "path" });
-    expect((failure as Error).message.length).toBeLessThan(1024);
-  },
-);
+    if (!(failure instanceof Error)) throw failure;
+    expect(failure.message).toContain(diagnostic);
+    expect(failure.message.length).toBeLessThan(1_024);
+  }
+});
 
 it.each(["a:b", "C:cache/file.txt", "a:"])(
   "preserves a literal POSIX colon name %s",
@@ -70,9 +71,6 @@ const expectCollision = (
   expect(limitations).toHaveLength(1);
   const warning = limitations?.[0] ?? "";
   for (const fact of facts) expect(warning).toContain(fact);
-  expect(warning).toMatch(/collid.*English.*case folding/iu);
-  expect(warning).toMatch(/case.insensitive destination.*cannot store both/iu);
-  expect(warning).toMatch(/not a filesystem observation/iu);
 };
 
 describe("English Unicode case collisions", () => {
@@ -85,47 +83,42 @@ describe("English Unicode case collisions", () => {
     );
   });
 
-  it("names the other spelling of a colliding file", () => {
-    const { limitation, byPath } = annotate([".", "Main.js", "main.js", "x"]);
-    expect(limitation).toBe(ENGLISH_UNICODE_CASE_INVENTORY_LIMITATION);
-    expectCollision(byPath.get("Main.js"), "Main.js", "main.js");
-    expectCollision(byPath.get("main.js"), "main.js", "Main.js");
-    expect(byPath.get("x")).toEqual([]);
-  });
-
-  it("records a directory collision once at the diverging segment", () => {
-    const { byPath } = annotate([
+  it("reports colliding spellings at the diverging segment only", () => {
+    const { limitation, byPath } = annotate([
+      "Main.js",
+      "main.js",
+      "a.TXT",
+      "A.txt",
+      "a.txt",
       "res/Foo",
       "res/Foo/a.txt",
       "res/foo",
       "res/foo/b.txt",
+      "unrelated",
     ]);
-    expectCollision(byPath.get("res/Foo"), "res/Foo", "res/foo");
+    expect(limitation).toBe(ENGLISH_UNICODE_CASE_INVENTORY_LIMITATION);
+    expectCollision(byPath.get("Main.js"), "Main.js collides", "with main.js;");
+    expectCollision(byPath.get("main.js"), "main.js collides", "with Main.js;");
+    expectCollision(byPath.get("a.txt"), "with A.txt and 1 other spelling;");
+    expectCollision(byPath.get("res/Foo"), "res/Foo collides", "with res/foo;");
     expectCollision(
       byPath.get("res/foo/b.txt"),
-      "res/foo/b.txt",
-      "under res/foo",
-      "res/Foo",
+      "res/foo/b.txt is under res/foo",
+      "with res/Foo;",
     );
-  });
-
-  it("counts further spellings, each of which is its own occurrence", () => {
-    const { byPath } = annotate(["A.txt", "a.txt", "a.TXT"]);
-    expectCollision(byPath.get("a.txt"), "a.txt", "A.txt", "1 other spelling");
+    expect(byPath.get("unrelated")).toEqual([]);
+    for (const path of ["Main.js", "res/foo/b.txt"])
+      expect(byPath.get(path)?.[0]).toMatch(
+        /English.*case folding.*case-insensitive destination cannot store both.*not a filesystem observation/iu,
+      );
   });
 
   it("retains every spelling in a high-cardinality folded sibling group", () => {
     const count = 8_192;
-    const variants = caseVariants("abcdefghijklm", count);
-    const { limitation, byPath } = annotate(variants);
-    const ordered = [...variants].sort();
-    const first = ordered[0];
-    const second = ordered[1];
-    const original = variants[0];
-    if (first === undefined || second === undefined || original === undefined) {
-      throw new Error("Expected at least two case variants");
-    }
-    expect(limitation).toBe(ENGLISH_UNICODE_CASE_INVENTORY_LIMITATION);
+    const original = "abcdefghijklm";
+    const { byPath } = annotate(caseVariants(original, count));
+    const first = "ABCDEFGHIJKLM";
+    const second = "ABCDEFGHIJKLm";
     expect(byPath.size).toBe(count);
     expectCollision(
       byPath.get(first),
@@ -148,11 +141,13 @@ describe("English Unicode case collisions", () => {
       `foo/b${String(index)}.txt`,
     ]).flat();
     const { byPath } = annotate(paths);
-    for (const path of paths) {
-      const limitations = byPath.get(path) ?? [];
-      expect(limitations).toHaveLength(1);
-      expect(limitations[0]?.length).toBeLessThan(300);
-    }
+    const incorrect = paths.find((path) => {
+      const limitations = byPath.get(path);
+      return (
+        limitations?.length !== 1 || (limitations[0]?.length ?? 300) >= 300
+      );
+    });
+    expect(incorrect).toBeUndefined();
   });
 
   it("walks names with more components than the call stack holds", () => {
@@ -163,14 +158,16 @@ describe("English Unicode case collisions", () => {
   });
 });
 
-const caseVariants = (lowercase: string, count: number): string[] =>
-  Array.from({ length: count }, (_, mask) =>
-    [...lowercase]
+const caseVariants = (lowercase: string, count: number): string[] => {
+  const characters = [...lowercase];
+  return Array.from({ length: count }, (_, mask) =>
+    characters
       .map((character, index) =>
         (mask & (1 << index)) === 0 ? character : character.toUpperCase(),
       )
       .join(""),
   );
+};
 
 it("retains both source spellings and the native failure in a destination collision", () => {
   const cause = Object.assign(new Error("exclusive create refused"), {
@@ -195,10 +192,46 @@ it.each([["app.js", "App.js"], ["other.js"]])(
   },
 );
 
+/** The reader failure a registry call throws. */
+const pathFailure = (run: () => void): ArtifactReaderFailure => {
+  try {
+    run();
+  } catch (cause) {
+    if (cause instanceof ArtifactReaderFailure) return cause;
+    throw cause;
+  }
+  throw new Error("Expected a path budget refusal");
+};
+
+it("refuses a deeper path at path_parts without claiming a required value", () => {
+  const registry = new ArtifactPathRegistry({
+    group: "deno",
+    maxParts: 2,
+    maxNodes: 100,
+  });
+  // A later path may be deeper still, so this one's depth is a lower bound.
+  const failure = pathFailure(() => registry.reservePath("a/b/c"));
+  expect(failure.readerLimit).toMatchObject({
+    parameter: "artifact_limits.deno.path_parts",
+    effective_value: 2,
+  });
+  expect(failure.readerLimit).not.toHaveProperty("required_value");
+});
+
 it("reserves prefix capacity atomically without declaring destination kinds", () => {
-  const registry = new ArtifactPathRegistry({ maxParts: 4, maxNodes: 3 });
+  const registry = new ArtifactPathRegistry({
+    group: "deno",
+    maxParts: 4,
+    maxNodes: 3,
+  });
   registry.reservePath("a/b");
-  expect(() => registry.reservePath("a/c/d")).toThrow();
+  // Unvisited paths may add nodes, so no required value is claimed.
+  const failure = pathFailure(() => registry.reservePath("a/c/d"));
+  expect(failure.readerLimit).toMatchObject({
+    parameter: "artifact_limits.deno.path_nodes",
+    effective_value: 3,
+  });
+  expect(failure.readerLimit).not.toHaveProperty("required_value");
   expect(() => registry.reservePath("z")).not.toThrow();
   expect(() => registry.reservePath("a/b")).not.toThrow();
   registry.add("a/b", "file");
@@ -206,7 +239,11 @@ it("reserves prefix capacity atomically without declaring destination kinds", ()
 });
 
 it("reports a file prefix conflict without inserting the candidate", () => {
-  const registry = new ArtifactPathRegistry({ maxParts: 4, maxNodes: 2 });
+  const registry = new ArtifactPathRegistry({
+    group: "deno",
+    maxParts: 4,
+    maxNodes: 2,
+  });
   registry.reservePath("a/b");
   expect(registry.conflicts("a/b")).toBe(true);
   expect(registry.conflicts("a")).toBe(true);

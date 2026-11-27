@@ -1,5 +1,3 @@
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -16,7 +14,7 @@ import type {
 import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import type { BinaryTarget } from "../../../src/domain/binaryTargetTypes.js";
 import { ok } from "../../../src/domain/result.js";
-import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createStubHopperProject } from "../../fixtures/hopperProjectFile.js";
 
 const target: BinaryTarget = {
   path: "/fixture",
@@ -70,9 +68,7 @@ describe("composite analysis provider", () => {
   });
 
   it("retains lineage snapshots from two lazily started dynamic providers", async () => {
-    const directory = await createTestTempDirectory("rea-composite-lineage-");
-    const targetPath = join(directory, "fixture.hop");
-    await writeFile(targetPath, "fixture");
+    const targetPath = await createStubHopperProject("rea-composite-lineage-");
     const first = dynamicProvider("first", "address_name", 100);
     const second = dynamicProvider("second", "analyze_function", 200);
     const session = createTestBinarySession(

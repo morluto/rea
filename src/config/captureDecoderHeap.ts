@@ -1,3 +1,4 @@
+import { defaultedNumberSettingParser } from "./optionalSetting.js";
 import {
   DEFAULT_CAPTURE_DECODER_OLD_GENERATION_MIB,
   CAPTURE_DECODER_SEMI_SPACE_MIB,
@@ -5,9 +6,7 @@ import {
 } from "../domain/analysisResourceLimits.js";
 import { positiveDecimalIntegerSchema } from "./positiveDecimalInteger.js";
 
-import { ConfigurationError } from "../domain/configurationErrors.js";
 import { currentAnalysisSettingOverride } from "../domain/analysisOperationSnapshot.js";
-import { err, ok, type Result } from "../domain/result.js";
 
 export const CAPTURE_DECODER_OLD_GENERATION_SETTING =
   "REA_CAPTURE_DECODER_OLD_GENERATION_MIB";
@@ -34,24 +33,14 @@ export const captureDecoderOldGenerationMiBSchema =
   );
 
 /** Resolve the effective heap from one environment value. */
-export const parseCaptureDecoderHeap = (
-  value: string | undefined,
-): Result<CaptureDecoderHeap, ConfigurationError> => {
-  if (value === undefined) return ok(DEFAULT_CAPTURE_DECODER_HEAP);
-  const parsed = captureDecoderOldGenerationMiBSchema.safeParse(value);
-  return parsed.success
-    ? ok({ oldGenerationMiB: parsed.data, source: "setting" })
-    : err(
-        new ConfigurationError(captureDecoderHeapConstraint, {
-          settings: [
-            {
-              setting: CAPTURE_DECODER_OLD_GENERATION_SETTING,
-              constraint: captureDecoderHeapConstraint,
-            },
-          ],
-        }),
-      );
-};
+export const parseCaptureDecoderHeap =
+  defaultedNumberSettingParser<CaptureDecoderHeap>(
+    CAPTURE_DECODER_OLD_GENERATION_SETTING,
+    captureDecoderOldGenerationMiBSchema,
+    captureDecoderHeapConstraint,
+    DEFAULT_CAPTURE_DECODER_HEAP,
+    (oldGenerationMiB) => ({ oldGenerationMiB, source: "setting" }),
+  );
 
 /**
  * Resolve the heap from a composition root's selected environment. An invalid

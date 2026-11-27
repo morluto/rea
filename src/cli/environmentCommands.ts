@@ -35,6 +35,7 @@ import {
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { AbortedWait, waitForAbortable } from "../process/AbortablePromise.js";
 import { createLogger } from "../logger.js";
 import { TEMPLATE_RULES } from "../domain/analysisView/environmentManifestRules.js";
 import { inspectWebNetworkCaptureInputSchema } from "../domain/webNetworkCapture.js";
@@ -60,16 +61,6 @@ const infoLogger = (
   DEFAULT_INFO_LOGGING_COMMANDS.has(command)
     ? createLogger("cli", "info")
     : logger;
-
-/** Resolve until the one-shot signal requests shutdown. */
-const untilAborted = (signal: AbortSignal): Promise<undefined> =>
-  new Promise((resolve) => {
-    if (signal.aborted) resolve(undefined);
-    else
-      signal.addEventListener("abort", () => resolve(undefined), {
-        once: true,
-      });
-  });
 
 /** A listener failure as the command's typed refusal. */
 export const transportError = (
@@ -225,9 +216,11 @@ const serveEnvironmentCommand = async (
     if (!(cause instanceof StreamableHttpListenError)) throw cause;
     return cliError(transportError(endpoint.value, cause));
   }
-  const failure = await Promise.race([untilAborted(signal), listenerFailed]);
+  const failure = await waitForAbortable(listenerFailed, signal);
   const listenerError =
-    failure === undefined ? undefined : transportError(endpoint.value, failure);
+    failure instanceof AbortedWait
+      ? undefined
+      : transportError(endpoint.value, failure);
   const observation = {
     url: served.url,
     environment: served.card.name,

@@ -4,9 +4,16 @@ import { join } from "node:path";
 
 import { expect } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 import { analyzeJavaScriptDirectory } from "../../support/cli/javascriptApplication.js";
 import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js";
+
+const graphThroughBothSurfaces = async (cli: TestCli, root: string) => {
+  const { graph } = await analyzeJavaScriptDirectory("CLI", cli, root);
+  const mcp = await analyzeJavaScriptDirectory("stdio MCP", cli, root);
+  expect(mcp.graph).toEqual(graph);
+  return graph;
+};
 
 cliTest.for(["CLI", "stdio MCP"] as const)(
   "recovers retained prefixed source-map originals and byte identity through %s",
@@ -243,9 +250,9 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
   },
 );
 
-cliTest.for(["CLI", "stdio MCP"] as const)(
-  "keeps source declarations whose paths cannot be projected into the artifact through %s",
-  async (surface, { cli }) => {
+cliTest(
+  "keeps source declarations whose paths cannot be projected into the artifact through CLI and MCP",
+  async ({ cli }) => {
     const root = await createTestTempDirectory(
       "rea-source-map-path-projection-",
     );
@@ -272,7 +279,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       mappings: "",
     });
     await writeFixtureFiles(root, { [mapPath]: mapText });
-    const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
+    const graph = await graphThroughBothSurfaces(cli, root);
     const originals = graph.nodes.filter(
       ({ identity }) => identity.strategy === "source-map-original",
     );
@@ -302,9 +309,9 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
   },
 );
 
-cliTest.for(["CLI", "stdio MCP"] as const)(
-  "keeps local originals but reports incomplete source maps with malformed mappings or offsets through %s",
-  async (surface, { cli }) => {
+cliTest(
+  "keeps local originals but reports incomplete source maps with malformed mappings or offsets through CLI and MCP",
+  async ({ cli }) => {
     const root = await createTestTempDirectory("rea-malformed-source-map-");
     const leaf = {
       version: 3,
@@ -328,7 +335,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       ),
     );
 
-    const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
+    const graph = await graphThroughBothSurfaces(cli, root);
     expect(graph.coverage.status).toBe("partial");
     for (const path of Object.keys(maps))
       expect(graph.nodes).toContainEqual(

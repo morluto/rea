@@ -3,6 +3,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { deflateSync, zstdCompressSync } from "node:zlib";
 import { createHash } from "node:crypto";
+import { encode } from "@msgpack/msgpack";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { runWithAnalysisOperationSnapshot } from "../../../src/domain/analysisOperationSnapshot.js";
 import {
@@ -11,7 +12,10 @@ import {
 } from "../../../src/domain/analysisResourceLimits.js";
 import { pe } from "../../../src/domain/binaryTarget.fixture.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
-import { gpuCodeObjectsPartialSchema } from "../../../src/domain/gpu/gpuCodeObjects.js";
+import {
+  gpuCodeObjectsPartialSchema,
+  gpuCodeObjectsSchema,
+} from "../../../src/domain/gpu/gpuCodeObjects.js";
 import { GpuCodeObjectsProvider } from "../../../src/gpu/GpuCodeObjectsProvider.js";
 import { GpuInventory } from "../../../src/gpu/GpuInventory.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -23,9 +27,13 @@ import {
   peGpuFixture,
   elfFixture,
   ptxFixture,
+  amdAbiFixture,
+  amdDescriptorNoteFixture,
   amdFixture,
   amdNoteFixture,
+  amdPalMetadataFixture,
   llvmBitcodeFixture,
+  msgpackWithIntegerKeys,
 } from "../../fixtures/gpu/codeObjects.js";
 const inspect = async (
   bytes: Buffer,
@@ -116,6 +124,52 @@ it.each(["none", "zstd", "lz4"] as const)(
     ]);
   },
 );
+
+it("keeps each kernel resource location in its own payload", async () => {
+  const inspected = await inspect(cudaFixture("none"));
+  if (!inspected.ok) throw inspected.error;
+  const report = inspected.value;
+  const kernelIndex = report.kernels.findIndex(
+    ({ representation }) => representation === "cuda-elf-metadata",
+  );
+  const kernel = report.kernels[kernelIndex];
+  const sibling = report.objects.find(({ kind }) => kind === "ptx");
+  if (
+    !kernel?.sources.parameters ||
+    sibling === undefined ||
+    sibling.decoded_size === null ||
+    sibling.decoded_size < 1
+  )
+    throw new Error(
+      "Fixture needs a CUBIN parameter site and a decoded PTX sibling",
+    );
+  expect(kernel.sources.parameters.container_id).toBe(kernel.object_id);
+  for (const container_id of [null, sibling.id]) {
+    const replacement = {
+      container_id,
+      offset: 0,
+      size: 1,
+      section_index: null,
+      section_name: null,
+    };
+    const kernels = report.kernels.with(kernelIndex, {
+      ...kernel,
+      sources: { ...kernel.sources, parameters: replacement },
+    });
+    expect(
+      gpuCodeObjectsSchema.safeParse({ ...report, kernels }),
+    ).toMatchObject({
+      success: false,
+      error: {
+        issues: [
+          expect.objectContaining({
+            path: ["kernels", kernelIndex, "sources", "parameters"],
+          }),
+        ],
+      },
+    });
+  }
+});
 
 it("observes cancellation during a cubin kernel directory read", async () => {
   const cubin = cubinFixture();
@@ -450,8 +504,50 @@ it("derives V3 AMDGPU processor identity from ELF flags when the note omits it",
   });
   const selected = await inspect(bytes, { targets: ["gfx900"] });
   if (!selected.ok) throw selected.error;
+  expect(selected.value.objects[0]).toMatchObject({
+    payload_target: "gfx900",
+    amd_pal_metadata: null,
+    amd_target_metadata: {
+      os_abi: 64,
+      abi: "amdhsa",
+      note_coverage: "complete",
+      notes: [{ target: null, target_state: "absent" }],
+    },
+  });
   expect(selected.value.kernels).toHaveLength(1);
   expect(selected.value.kernels[0]).toMatchObject({ parameter_bytes: 12 });
+});
+it("distinguishes an invalid MessagePack target from legacy note coverage", async () => {
+  const legacy = Buffer.alloc(20);
+  legacy.writeUInt32LE(4, 0);
+  legacy.writeUInt32LE(4, 4);
+  legacy.writeUInt32LE(10, 8); // YAML rather than MessagePack
+  legacy.write("AMD\0", 12);
+  const declared = "amdgcn-amd-amdhsa--gfx900";
+  for (const [bytes, target, state, limitation] of [
+    [
+      amdFixture(false, undefined, 123),
+      null,
+      "invalid",
+      /target is not a string/u,
+    ],
+    [amdFixture(false, legacy), declared, "declared", /Legacy AMDGPU YAML/u],
+  ] as const) {
+    const result = await inspect(bytes);
+    if (!result.ok) throw result.error;
+    const row = result.value.objects[0]!;
+    expect(row).toMatchObject({
+      target,
+      payload_target: target,
+      amd_target_metadata: {
+        note_coverage: "partial",
+        notes: [{ target, target_state: state }],
+      },
+    });
+    expect(row.limitations.join(" ")).toMatch(limitation);
+    expect(result.value.coverage.payloads).toBe("partial");
+    expect(result.value.kernels.map(({ name }) => name)).toEqual(["add_one"]);
+  }
 });
 it("keeps AMDGPU processor identity unknown when ELF flags are unassigned", async () => {
   const bytes = amdFixture(false, undefined, null);
@@ -464,6 +560,249 @@ it("keeps AMDGPU processor identity unknown when ELF flags are unassigned", asyn
     inspection: "inventory",
   });
 });
+const palNote = (bytes: Buffer, metadata: Buffer) => ({
+  container_id: "file@0",
+  section_index: 2,
+  section_name: ".note",
+  offset: bytes.indexOf(metadata),
+  size: metadata.length,
+});
+it("reports PAL-ABI target, ABI and declared pipeline facts without HSA kernels", async () => {
+  const metadata = amdPalMetadataFixture();
+  const bytes = amdAbiFixture(65, metadata);
+  const inventory = await inspect(bytes, { analysis: "inventory" });
+  if (!inventory.ok) throw inventory.error;
+  const header = {
+    processor: "gfx1030",
+    os_abi: 65,
+    abi: "amdpal",
+    note_coverage: "complete",
+    notes: [
+      {
+        target: null,
+        target_state: "absent",
+        location: palNote(bytes, metadata),
+      },
+    ],
+  };
+  expect(inventory.value.objects[0]).toMatchObject({
+    target: "gfx1030",
+    inspection: "inventory",
+    amd_target_metadata: header,
+    amd_pal_metadata: null,
+    limitations: [],
+  });
+  expect(inventory.value.coverage.discovery).toBe("complete");
+  const selected = await inspect(bytes, { targets: ["gfx1030"] });
+  if (!selected.ok) throw selected.error;
+  expect(selected.value.objects[0]).toMatchObject({
+    target: "gfx1030",
+    inspection: "complete",
+    amd_target_metadata: header,
+    limitations: [],
+  });
+  expect(selected.value.objects[0]!.amd_pal_metadata).toEqual({
+    version: { major: 3, minor: 0 },
+    pipelines: [
+      {
+        index: 0,
+        name: "triangle",
+        type: "VsPs",
+        api: "Vulkan",
+        shaders: [
+          { stage: ".vertex", hardware_mapping: [".vs"] },
+          { stage: ".pixel", hardware_mapping: [".ps"] },
+        ],
+        hardware_stages: [
+          {
+            stage: ".vs",
+            entry_point: "_amdgpu_vs_main",
+            entry_point_symbol: "main_vs",
+            sgpr_count: 20,
+            vgpr_count: 12,
+            agpr_count: null,
+            wavefront_size: 32,
+            lds_size: null,
+            scratch_memory_size: 0,
+          },
+          {
+            stage: ".ps",
+            entry_point: "_amdgpu_ps_main",
+            entry_point_symbol: null,
+            sgpr_count: 10,
+            vgpr_count: 6,
+            agpr_count: null,
+            wavefront_size: null,
+            lds_size: 256,
+            scratch_memory_size: null,
+          },
+        ],
+        location: palNote(bytes, metadata),
+      },
+    ],
+  });
+  expect(selected.value.kernels).toEqual([]);
+  expect(selected.value.coverage.payloads).toBe("complete");
+  expect(gpuCodeObjectsSchema.safeParse(selected.value).success).toBe(true);
+});
+it("keeps a PAL-ABI object without metadata unsupported with its target", async () => {
+  for (const analysis of ["inventory", "kernels"] as const) {
+    const result = await inspect(amdAbiFixture(65, null), { analysis });
+    if (!result.ok) throw result.error;
+    expect(result.value.objects[0]).toMatchObject({
+      target: "gfx1030",
+      inspection: "unsupported",
+      amd_target_metadata: { os_abi: 65, abi: "amdpal", notes: [] },
+      amd_pal_metadata: null,
+      limitations: [
+        "No AMDGPU PAL MessagePack pipeline metadata was available",
+      ],
+    });
+  }
+});
+it("keeps the version of an LLVM PAL note that omits amdpal.version null", async () => {
+  // llc 23 -mtriple=amdgcn--amdpal emits only amdpal.pipelines.
+  const metadata = msgpackWithIntegerKeys({
+    "amdpal.pipelines": [
+      {
+        ".hardware_stages": {
+          ".ps": { ".entry_point_symbol": "ps_main", ".sgpr_count": 1 },
+        },
+        ".registers": new Map([[0x2c0a, 0x22f0000]]),
+      },
+    ],
+  });
+  const result = await inspect(amdAbiFixture(65, metadata));
+  if (!result.ok) throw result.error;
+  expect(result.value.objects[0]).toMatchObject({
+    inspection: "complete",
+    limitations: [],
+    amd_pal_metadata: {
+      version: null,
+      pipelines: [{ hardware_stages: [{ stage: ".ps", sgpr_count: 1 }] }],
+    },
+  });
+});
+it("keeps an unexpected PAL scalar unknown and coverage partial", async () => {
+  const metadata = Buffer.from(
+    encode({
+      "amdpal.version": [3, 0],
+      "amdpal.pipelines": [
+        { ".hardware_stages": { ".cs": { ".sgpr_count": "many" } } },
+      ],
+    }),
+  );
+  const result = await inspect(amdAbiFixture(65, metadata));
+  if (!result.ok) throw result.error;
+  const row = result.value.objects[0]!;
+  expect(row.inspection).toBe("partial");
+  expect(row.amd_pal_metadata?.pipelines[0]?.hardware_stages).toMatchObject([
+    { stage: ".cs", sgpr_count: null },
+  ]);
+  expect(row.limitations).toEqual([
+    "AMDGPU PAL note 0 pipeline 0 stage .cs .sgpr_count is not an unsigned integer; it remains unknown",
+  ]);
+});
+it.each([
+  ["truncated MessagePack", () => amdPalMetadataFixture().subarray(0, 40)],
+  [
+    // A MessagePack binary value is not a map, even when empty.
+    "a binary pipeline entry",
+    () =>
+      Buffer.from(
+        encode({
+          "amdpal.version": [3, 0],
+          "amdpal.pipelines": [
+            { ".type": "Cs", ".hardware_stages": {} },
+            new Uint8Array(0),
+          ],
+        }),
+      ),
+  ],
+  [
+    "a non-map hardware stage table",
+    () =>
+      Buffer.from(
+        encode({
+          "amdpal.version": [3, 0],
+          "amdpal.pipelines": [
+            { ".type": "Cs", ".hardware_stages": {} },
+            { ".type": "Cs", ".hardware_stages": [".cs"] },
+          ],
+        }),
+      ),
+  ],
+])("reports a PAL note with %s as malformed", async (label, metadata) => {
+  for (const analysis of ["inventory", "kernels"] as const) {
+    const result = await inspect(amdAbiFixture(65, metadata()), { analysis });
+    if (!result.ok) throw result.error;
+    expect(result.value.objects[0]).toMatchObject({
+      target: "gfx1030",
+      inspection: "malformed",
+      amd_target_metadata: { abi: "amdpal" },
+    });
+  }
+  const retained = await inspect(amdAbiFixture(65, metadata()));
+  if (!retained.ok) throw retained.error;
+  // Pipelines decoded before the failure stay as declared facts.
+  expect(
+    retained.value.objects[0]!.amd_pal_metadata?.pipelines.map(
+      ({ index, type }) => ({ index, type }),
+    ) ?? [],
+  ).toEqual(
+    label === "truncated MessagePack" ? [] : [{ index: 0, type: "Cs" }],
+  );
+});
+it("shares one decoded-value allowance across a code object's PAL notes", async () => {
+  // Each note fits the per-note allowance; together they exceed it.
+  const note = amdDescriptorNoteFixture(
+    Buffer.from(
+      encode({ "amdpal.pipelines": Array.from({ length: 65536 }, () => ({})) }),
+    ),
+  );
+  const bytes = elfFixture(224, [
+    {
+      name: ".note",
+      type: 7,
+      bytes: Buffer.concat([note, note, note, note, note]),
+    },
+  ]);
+  bytes[7] = 65;
+  // Inventory decodes every note, so the allowance applies before selection.
+  const result = await inspect(bytes, { analysis: "inventory" });
+  if (!result.ok) throw result.error;
+  const row = result.value.objects[0]!;
+  expect(row).toMatchObject({ inspection: "capacity", amd_pal_metadata: null });
+  expect(row.limitations.join(" ")).toContain("262144-value");
+});
+it.each([
+  [66, "mesa3d", /Mesa3D-ABI metadata is outside/u],
+  [0, "unknown", /OS ABI 0 is not a recognized AMDGPU runtime ABI/u],
+] as const)(
+  "never reads OS ABI %s notes under the HSA schema",
+  async (osAbi, abi, limitation) => {
+    // An HSA-shaped note under another ABI must not yield HSA kernels.
+    const note = amdNoteFixture();
+    const result = await inspect(
+      amdAbiFixture(osAbi, note.subarray(20, 20 + note.readUInt32LE(4))),
+    );
+    if (!result.ok) throw result.error;
+    const row = result.value.objects[0]!;
+    expect(row).toMatchObject({
+      target: "gfx1030",
+      inspection: "unsupported",
+      amd_target_metadata: {
+        os_abi: osAbi,
+        abi,
+        note_coverage: "partial",
+        notes: [],
+      },
+      amd_pal_metadata: null,
+    });
+    expect(row.limitations.join(" ")).toMatch(limitation);
+    expect(result.value.kernels).toEqual([]);
+  },
+);
 it.each([false, true])(
   "keeps HIP bitcode representation unsupported with wrapped=%s and no declared processor",
   async (wrapped) => {
@@ -528,18 +867,22 @@ it.each([
 it.each(["amdgcn", "amdgpu9.00"])(
   "does not choose between conflicting AMDGPU %s note and ELF processor identities",
   async (triple) => {
-    const bytes = amdFixture(
-      false,
-      undefined,
-      `${triple}-amd-amdhsa--gfx900:xnack+`,
-    );
+    const declared = `${triple}-amd-amdhsa--gfx900:xnack+`;
+    const bytes = amdFixture(false, undefined, declared);
     bytes.writeUInt32LE(0x141, 48); // EF_AMDGPU_MACH gfx1100
     const result = await inspect(bytes);
     if (!result.ok) throw result.error;
     expect(result.value.objects[0]).toMatchObject({
       target: null,
+      payload_target: null,
       target_consistency: "unknown",
       inspection: "partial",
+      amd_target_metadata: {
+        flags: "0x00000141",
+        processor: "gfx1100",
+        note_coverage: "complete",
+        notes: [{ target: declared, target_state: "declared" }],
+      },
     });
     expect(result.value.objects[0]!.limitations.join(" ")).toContain(
       "processor flags conflict with target note metadata",
@@ -578,10 +921,10 @@ it.each([
   },
 );
 it("retains kernels from conflicting AMDGPU notes without choosing either note or ELF flags", async () => {
-  const bytes = amdFixture(
-    false,
-    amdNoteFixture(false, "amdgcn-amd-amdhsa--gfx1100"),
-  );
+  const first = amdNoteFixture();
+  const second = amdNoteFixture(false, "amdgcn-amd-amdhsa--gfx1100");
+  const bytes = amdFixture(false, second);
+  const firstDescriptor = bytes.indexOf(first) + 20;
   const result = await inspect(bytes);
   if (!result.ok) throw result.error;
   expect(result.value.objects).toMatchObject([
@@ -591,6 +934,24 @@ it("retains kernels from conflicting AMDGPU notes without choosing either note o
       payload_target: null,
       target_consistency: "unknown",
       inspection: "partial",
+      amd_target_metadata: {
+        note_coverage: "complete",
+        notes: [
+          {
+            target: "amdgcn-amd-amdhsa--gfx900",
+            target_state: "declared",
+            location: { offset: firstDescriptor, size: first.readUInt32LE(4) },
+          },
+          {
+            target: "amdgcn-amd-amdhsa--gfx1100",
+            target_state: "declared",
+            location: {
+              offset: firstDescriptor + first.length,
+              size: second.readUInt32LE(4),
+            },
+          },
+        ],
+      },
     },
   ]);
   expect(result.value.objects[0]?.limitations).toContainEqual(
@@ -1113,6 +1474,47 @@ it("reports invalid standalone PTX encoding in inventory and kernel inspection",
   }
 });
 
+it.each([
+  [
+    "an unmatched close",
+    ".version 8.0\n.target sm_80\n.entry k() { ret; }}\n.target sm_90\n",
+  ],
+  // The first target follows the stray close, so recognition depends on the
+  // scan continuing past it.
+  ["a close before the first target", ".version 8.0\n}\n.target sm_90\n"],
+  [
+    "a truncated entry body",
+    ".version 8.0\n.target sm_80\n.target sm_90\n.entry k() { ret;\n",
+  ],
+])("keeps the standalone PTX target unknown after %s", async (_label, text) => {
+  const malformed = Buffer.from(text);
+  const valid = Buffer.from(
+    ".version 8.0\n.target sm_80\n.entry k() { ret; }\n.target sm_90\n",
+  );
+  for (const analysis of ["inventory", "kernels"] as const) {
+    const result = await inspect(malformed, { analysis });
+    if (!result.ok) throw result.error;
+    expect(result.value.coverage.discovery).toBe("partial");
+    expect(result.value.objects).toMatchObject([{ kind: "ptx", target: null }]);
+    expect(result.value.objects[0]!.inspection).not.toBe("complete");
+    expect(result.value.objects[0]!.limitations).toContain(
+      "Malformed PTX text prevents complete target discovery.",
+    );
+
+    const control = await inspect(valid, { analysis });
+    if (!control.ok) throw control.error;
+    expect(control.value.coverage.discovery).toBe("complete");
+    expect(control.value.objects).toMatchObject([
+      {
+        kind: "ptx",
+        target: "sm_90",
+        inspection: analysis === "kernels" ? "complete" : "inventory",
+        limitations: [],
+      },
+    ]);
+  }
+});
+
 it("keeps a UTF-8 character split by the standalone PTX scan budget unexamined", async () => {
   const budget = 16 * 1024 * 1024;
   const header = Buffer.from(".version 8.0\n.target sm_80\n// ");
@@ -1240,6 +1642,16 @@ it.each(["section-names", "symbols"] as const)(
     );
   },
 );
+it.each(["add_one", "kérnel_日本"])(
+  "decodes UTF-8 CUBIN symbol name %s without a name limitation",
+  async (name) => {
+    const result = await inspect(cubinFixture({ name }));
+    if (!result.ok) throw result.error;
+    const [kernel] = result.value.kernels;
+    expect(kernel).toMatchObject({ name, symbol: name });
+    expect(kernel!.limitations.join(" ")).not.toContain("not valid UTF-8");
+  },
+);
 it("preserves non-UTF-8 CUBIN symbol bytes in the kernel name", async () => {
   const bytes = cubinFixture();
   const symbolName = bytes.indexOf(Buffer.from("\0add_one\0"));
@@ -1247,7 +1659,11 @@ it("preserves non-UTF-8 CUBIN symbol bytes in the kernel name", async () => {
   bytes[symbolName + 1] = 0xff;
   const result = await inspect(bytes);
   if (!result.ok) throw result.error;
-  expect(result.value.kernels[0]?.name).toBe("ÿdd_one");
+  const [kernel] = result.value.kernels;
+  expect(kernel?.name).toBe("ÿdd_one");
+  expect(kernel!.limitations).toContain(
+    `CUDA kernel symbol name is not valid UTF-8; name shows its bytes as Latin-1 (base64 ${Buffer.from("\xffdd_one", "latin1").toString("base64")})`,
+  );
 });
 
 it.each([9, 10])(
@@ -1305,10 +1721,7 @@ it("rejects out-of-range bundle entries without guessing a payload", async () =>
   const result = await inspect(bytes);
   expect(result).toMatchObject({
     ok: false,
-    error: {
-      _tag: "AnalysisInputError",
-      issues: [{ path: ["path"], reason: "invalid_format" }],
-    },
+    error: { _tag: "AnalysisTargetFailureError" },
   });
 });
 
@@ -1347,14 +1760,14 @@ it("does not recognize a CCOB signature after its first byte is corrupted", asyn
   const result = await inspect(bytes);
   expect(result).toMatchObject({
     ok: false,
-    error: { _tag: "AnalysisUnsupportedTargetError" },
+    error: { _tag: "AnalysisTargetFailureError" },
   });
 });
 it("requires the PTX version directive before any module content", async () => {
   const result = await inspect(Buffer.from(`unexpected-prefix ${ptxFixture}`));
   expect(result).toMatchObject({
     ok: false,
-    error: { _tag: "AnalysisUnsupportedTargetError" },
+    error: { _tag: "AnalysisTargetFailureError" },
   });
 });
 it("retains an embedded CCOB with a corrupted signature as unsupported", async () => {
@@ -1408,7 +1821,7 @@ it("does not dispatch a high-bit-corrupted DOS signature to the PE parser", asyn
   const result = await inspect(bytes);
   expect(result).toMatchObject({
     ok: false,
-    error: { _tag: "AnalysisUnsupportedTargetError" },
+    error: { _tag: "AnalysisTargetFailureError" },
   });
 });
 it("preserves the PE layout refusal at the GPU provider boundary", async () => {
@@ -1416,7 +1829,7 @@ it("preserves the PE layout refusal at the GPU provider boundary", async () => {
   expect(result).toMatchObject({
     ok: false,
     error: {
-      _tag: "AnalysisUnsupportedTargetError",
+      _tag: "AnalysisTargetFailureError",
       message: expect.stringContaining("overlapping PE header"),
     },
   });
@@ -1583,8 +1996,7 @@ it("distinguishes impossible Clang bundle counts from a framed over-capacity dir
     const result = await inspect(bytes, { analysis: "inventory" });
     if (result.ok) throw new Error("Expected malformed directory");
     expect(result.error).toMatchObject({
-      _tag: "AnalysisInputError",
-      issues: [{ path: ["path"], reason: "invalid_format" }],
+      _tag: "AnalysisTargetFailureError",
     });
   }
   const framed = Buffer.alloc(32 + 65537 * 25);
@@ -1642,8 +2054,7 @@ it("checks Clang bundle ID bounds before the retained directory allowance", asyn
     const result = await inspect(bytes, { analysis: "inventory" });
     if (result.ok) throw new Error("Expected a malformed bundle directory");
     expect(result.error).toMatchObject({
-      _tag: "AnalysisInputError",
-      issues: [{ path: ["path"], reason: "invalid_format" }],
+      _tag: "AnalysisTargetFailureError",
     });
   }
 });

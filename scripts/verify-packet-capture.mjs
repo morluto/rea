@@ -1,5 +1,9 @@
 #!/usr/bin/env node
-import { canonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
+import {
+  assertCanonicalOutput,
+  canonicalOutputSchema,
+} from "./lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
 import {
   requireMcpEvidenceBundle,
@@ -8,7 +12,6 @@ import {
 } from "./lib/mcp-verifier-results.mjs";
 import { estimateTokenCount } from "tokenx";
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
 import { readFile, writeFile, readdir, mkdir, rm } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,6 +25,10 @@ import {
   VerifierFixture,
   withVerifierFixture,
 } from "./lib/verifier-fixture.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./lib/complete-evidence.mjs";
 
 if (process.platform !== "linux")
   throw new Error(
@@ -44,7 +51,9 @@ const environment = {
   TMP: root.path,
   TEMP: root.path,
 };
-const client = new Client({ name: "packet-capture-verifier", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "packet-capture-verifier", version: "1" }),
+);
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
@@ -134,23 +143,12 @@ await withVerifierFixture(root, async () => {
       name: tool.name,
       arguments: input,
     });
-    assert.ok(
-      ajv.validate(
-        canonicalOutputSchema(tool.name),
-        response.structuredContent,
-      ),
-      JSON.stringify(ajv.errors),
-    );
+    assertCanonicalOutput(ajv, tool, response);
     const evidence = parseEvidence(
       requireMcpOutput(response, "inspect_packet_capture"),
     );
     const report = evidence.normalized_result;
-    assert.equal(
-      report.artifact.sha256,
-      createHash("sha256")
-        .update(await readFile(input.path))
-        .digest("hex"),
-    );
+    assert.equal(report.artifact.sha256, await sha256File(input.path));
     assert.equal(report.hardware_acquisition, "not-performed");
     assert.equal(report.limits.address_space_bytes, expectedAddressSpace);
     assert.equal(report.tool.configured_path, process.env.REA_TSHARK_COMMAND);
@@ -335,18 +333,20 @@ await withVerifierFixture(root, async () => {
     ).normalized_result;
     assert.equal(summary.summary.capture_start, expectedCaptureStart);
     assert.equal(summary.summary.capture_end, expectedCaptureEnd);
-    assert.equal(
-      summary.summary.target.sha256,
-      createHash("sha256")
-        .update(await readFile(capturePath))
-        .digest("hex"),
-    );
+    assert.equal(summary.summary.target.sha256, await sha256File(capturePath));
     const cli = parseEvidence(
       JSON.parse(
         (
           await execute(
             process.execPath,
-            [entrypoint, "inspect-pcap-capture", capturePath, "--json"],
+            [
+              entrypoint,
+              ...(await completeEvidenceCliArguments([
+                "inspect-pcap-capture",
+                capturePath,
+                "--json",
+              ])),
+            ],
             { env: environment, timeout: 60000, maxBuffer: 16 * 1024 * 1024 },
           )
         ).stdout,
@@ -432,13 +432,7 @@ await withVerifierFixture(root, async () => {
       name: discovery.name,
       arguments: input,
     });
-    assert.ok(
-      ajv.validate(
-        canonicalOutputSchema(discovery.name),
-        response.structuredContent,
-      ),
-      JSON.stringify(ajv.errors),
-    );
+    assertCanonicalOutput(ajv, discovery, response);
     const evidence = parseEvidence(
       requireMcpOutput(response, "inspect_packet_fields"),
     );
@@ -481,6 +475,8 @@ await withVerifierFixture(root, async () => {
       returned: expectedPage.length,
       has_more:
         Math.max(0, expectedMatches.length - offset) > expectedPage.length,
+      // Verified selections fit one page; the page budget is covered by boundary tests.
+      record_budget_reached: false,
     });
     discoveryMeasurements.push({
       input,

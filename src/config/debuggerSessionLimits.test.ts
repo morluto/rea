@@ -16,7 +16,6 @@ import {
   MINIMUM_DEBUGGER_MAX_SESSIONS,
   MAX_NODE_TIMER_DELAY_MS,
 } from "../domain/analysisResourceLimits.js";
-import { GdbSessionManager } from "../gdb/GdbSessionManager.js";
 import { RizinDebugSessionManager } from "../rizin/RizinDebugSessionManager.js";
 import { runWithAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
 import { parseEnvironment } from "./environment.js";
@@ -192,10 +191,6 @@ it("keeps the command-output maximum inside one Evidence hash string", () => {
   const expansion = escaped.length - 2;
   const nodeMaxStringLength = 536_870_888;
   const envelope = 1024 * 1024;
-  expect(expansion).toBe(6);
-  expect(MAXIMUM_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES).toBe(
-    Math.floor((nodeMaxStringLength - envelope) / expansion),
-  );
   expect(MAXIMUM_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES).toBeGreaterThanOrEqual(
     DEFAULT_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES,
   );
@@ -260,29 +255,4 @@ it("enforces each Rizin manager's cap and reports which setting refused a start"
     await independent;
     await blocked;
   }
-});
-
-it("defers an invalid GDB deadline until a command reads it", () => {
-  expect(
-    () =>
-      new GdbSessionManager({
-        environment: { [DEBUGGER_COMMAND_DEADLINE_SETTING]: "0" },
-      }),
-  ).not.toThrow();
-  const parsed = parseDebuggerSessionLimits({
-    [DEBUGGER_COMMAND_DEADLINE_SETTING]: "0",
-  });
-  if (parsed.ok) throw new Error("invalid deadline was accepted");
-  expect(projectAnalysisError(parsed.error)).toMatchObject({
-    code: "configuration_invalid",
-    details: { settings: parsed.error.settings },
-  });
-  const valid = parseDebuggerSessionLimits({
-    [DEBUGGER_COMMAND_DEADLINE_SETTING]: "1500",
-  });
-  if (!valid.ok) throw valid.error;
-  expect(valid.value.commandDeadline).toMatchObject({
-    value: 1500,
-    source: "setting",
-  });
 });

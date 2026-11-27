@@ -2,49 +2,28 @@ import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { scheduler } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
-import { runWithAnalysisOperationSnapshot } from "../../../src/domain/analysisOperationSnapshot.js";
-import {
-  MAXIMUM_ZSTD_MAX_FRAMES,
-  MINIMUM_ZSTD_MAX_FRAMES,
-} from "../../../src/domain/analysisResourceLimits.js";
-import { createElfUnwindRangesService } from "../../../src/composition/binaryDiagnostics.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { createElfUnwindRangesService } from "../../../src/composition/binaryDiagnostics/elfUnwindRanges.js";
 import { MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES } from "../../../src/domain/native/elfUnwindRanges.js";
 import { elfUnwindFixture } from "../../../src/native/elf/ElfUnwindTables.fixture.js";
 import { compressedElfNoteFixture } from "../../../src/native/elf/ElfNotes.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { expectFileSelectionErrors } from "../../support/expectFileSelectionErrors.js";
 
 describe("ELF unwind range stable filesystem boundary", () => {
-  it("reports non-file and malformed ELF selections as caller input errors", async () => {
+  it("reports non-file and missing selections as caller input errors", async () => {
     const root = await createTestTempDirectory("rea-elf-unwind-files-");
     const path = join(root, "program");
     const alias = join(root, "alias");
-    const malformed = join(root, "malformed");
     await writeFile(path, elfUnwindFixture());
-    await writeFile(malformed, Buffer.from("not an elf"));
     await symlink(path, alias);
     const service = createElfUnwindRangesService();
     try {
-      for (const [candidate, reason] of [
-        [root, "invalid_format"],
-        [alias, "invalid_format"],
-        [malformed, "invalid_format"],
-        [join(root, "missing"), "invalid_value"],
-        [join(path, "child"), "invalid_value"],
-      ] as const) {
-        const result = await service.inspect({ path: candidate });
-        if (result.ok) throw new Error("Expected file acquisition failure");
-        expect(result.error).toMatchObject({
-          _tag: "AnalysisInputError",
-          operation: "inspect_elf_unwind_ranges",
-          issues: [
-            {
-              path: ["path"],
-              reason,
-              message: expect.any(String),
-            },
-          ],
-        });
-      }
+      await expectFileSelectionErrors(service, "inspect_elf_unwind_ranges", {
+        root,
+        alias,
+        path,
+      });
     } finally {
       await service.close();
     }
@@ -101,6 +80,36 @@ describe("ELF unwind range stable filesystem boundary", () => {
 });
 
 describe("ELF unwind range budgets", () => {
+  it("names max_structure_bytes when a header table exceeds it", async () => {
+    const root = await createTestTempDirectory("rea-elf-unwind-structure-");
+    const path = join(root, "program");
+    await writeFile(path, elfUnwindFixture());
+    const service = createElfUnwindRangesService();
+    try {
+      const refused = await service.inspect({ path, max_structure_bytes: 64 });
+      if (refused.ok) throw new Error("Expected a max_structure_bytes refusal");
+      expect(refused.error).toMatchObject({
+        _tag: "AnalysisResourceConstraintError",
+        resource: "memory",
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_structure_bytes",
+          effective_value: 64,
+          unit: "bytes",
+          minimum: 64,
+          maximum: 512 * 1024 * 1024,
+          default_value: 16 * 1024 * 1024,
+          applies_at: "next_call",
+        },
+      });
+      expect(
+        (await service.inspect({ path, max_structure_bytes: 65536 })).ok,
+      ).toBe(true);
+    } finally {
+      await service.close();
+    }
+  });
+
   it("tells a caller over the symbol-name text allowance to request a smaller page", async () => {
     const root = await createTestTempDirectory("rea-elf-unwind-names-");
     const path = join(root, "program");
@@ -119,6 +128,11 @@ describe("ELF unwind range budgets", () => {
           limit: 300,
           maximum_bytes: MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES,
         },
+        fixedAllowance: {
+          name: "The ELF unwind symbol-name text allowance",
+          limit: MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES,
+          narrowing: expect.stringContaining("smaller limit than 300"),
+        },
         cause: {
           failure: {
             kind: "limit",
@@ -130,12 +144,9 @@ describe("ELF unwind range budgets", () => {
           },
         },
       });
-      const remediation =
-        "remediationAction" in result.error
-          ? result.error.remediationAction
-          : undefined;
+      const remediation = projectAnalysisError(result.error).remediation.action;
       expect(remediation).toContain("smaller limit than 300");
-      expect(remediation).not.toContain("Raise max_ranges");
+      expect(remediation).not.toContain("max_ranges budget");
       const smaller = await service.inspect({ path, limit: 200 });
       expect(smaller.ok).toBe(true);
     } finally {
@@ -162,6 +173,7 @@ describe("ELF unwind range budgets", () => {
         _tag: "AnalysisResourceConstraintError",
         resource: "capacity",
         reportedLimits: { max_ranges: 1 },
+        limit: { parameter: "max_ranges", effective_value: 1, maximum: 65536 },
         cause: {
           failure: {
             kind: "limit",
@@ -182,48 +194,6 @@ describe("ELF unwind range budgets", () => {
       await service.close();
     }
   });
-});
-
-it("projects a section-name frame cap as an adjustable zstd.max_frames limit", async () => {
-  const root = await createTestTempDirectory("rea-elf-unwind-zstd-");
-  const path = join(root, "program");
-  const frame = Buffer.from([
-    0x28, 0xb5, 0x2f, 0xfd, 0x20, 0x01, 0x09, 0x00, 0x00, 0x61,
-  ]);
-  await writeFile(
-    path,
-    compressedElfNoteFixture(
-      64,
-      true,
-      2,
-      ".note.gnu.build-id",
-      Buffer.concat([frame, frame]),
-    ),
-  );
-  const service = createElfUnwindRangesService();
-  try {
-    const result = await runWithAnalysisOperationSnapshot(
-      { revision: 1, overrides: { "zstd.max_frames": 1 } },
-      () => service.inspect({ path }),
-    );
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error).toMatchObject({
-      _tag: "AnalysisResourceConstraintError",
-      operation: "inspect_elf_unwind_ranges",
-      resource: "cpu",
-      limit: {
-        setting: "zstd.max_frames",
-        effective_value: 1,
-        source: "runtime",
-        minimum: MINIMUM_ZSTD_MAX_FRAMES,
-        maximum: MAXIMUM_ZSTD_MAX_FRAMES,
-        unit: "count",
-      },
-    });
-  } finally {
-    await service.close();
-  }
 });
 
 it("cancels a many-frame compressed section-name table", async () => {

@@ -157,7 +157,7 @@ it.each([
     });
     const path = await archiveWith(asarHeaderBytes(json));
     await expect(inventoryArtifact(path)).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: inArchive(message, path),
     });
   },
@@ -168,7 +168,7 @@ it("names the rejected root fields", async () => {
     asarHeaderBytes(JSON.stringify({ files: {}, unpacked: "yes" })),
   );
   await expect(inventoryArtifact(path)).rejects.toMatchObject({
-    reason: "format",
+    reason: "malformed",
     message: inArchive("ASAR root metadata is malformed (unpacked)", path),
   });
 });
@@ -291,8 +291,8 @@ it("retains inventory facts for members with unreadable packed offsets", async (
         declaredIntegrity: { algorithm: "sha256", digest },
       });
       await expect(reader.open(entry)).rejects.toMatchObject({
-        reason: "format",
-        message: `ASAR entry range is outside its container: ${entry.path}`,
+        reason: "malformed",
+        parseFailure: { kind: "malformed", format: "asar", field: "offset" },
       });
     }
     expect(seen).toEqual(Object.keys(offsets));
@@ -609,9 +609,12 @@ it("retains uninterpreted integrity declarations through packed and unpacked inv
         expect((await readFile(join(outputRoot, name))).equals(payload)).toBe(
           true,
         );
-        expect(extracted.limitations).toContain(
-          `${name}: ${occurrence(name).limitations[0]}`,
-        );
+        // Each written file keeps its own occurrence's limitations.
+        expect(
+          extracted.artifacts.find(
+            ({ relative_path }) => relative_path === name,
+          )?.limitations,
+        ).toContain(occurrence(name).limitations[0]);
       }
     } finally {
       await resources.close();

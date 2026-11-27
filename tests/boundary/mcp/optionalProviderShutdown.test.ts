@@ -3,13 +3,15 @@ import { phaseGate } from "../../support/lifecycleHarness.js";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import {
+  createDeferred,
+  createTestBinarySession,
+} from "../../fixtures/binarySession.js";
 import { createBrowserObservationProvider } from "../../../src/composition/browserObservation.js";
 import { createJavaScriptRuntimeObservationProvider } from "../../../src/composition/javascriptRuntimeObservation.js";
 import { run } from "../../../src/main.js";
 import { MCP_SHUTDOWN_FAILED } from "../../../src/main/messages.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { waitFor } from "../../support/testWait.js";
 
 mkdirSync(".cache", { recursive: true });
 const root = mkdtempSync(resolve(".cache/optional-provider-shutdown-"));
@@ -88,9 +90,9 @@ it("retries failed process-owned optional cleanup without reclosing completed pe
   const runtimeClose = vi.spyOn(runtime, "close");
   const browserClose = vi.spyOn(browser, "close");
   if (closeRuntime === undefined) throw new Error("Runtime close hook missing");
+  const runtimeFailure = new Error("controlled runtime cleanup failure");
   runtimeClose.mockImplementation(async () => {
-    if (runtimeClose.mock.calls.length === 1)
-      throw new Error("controlled runtime cleanup failure");
+    if (runtimeClose.mock.calls.length === 1) throw runtimeFailure;
     await closeRuntime();
   });
 
@@ -114,9 +116,11 @@ it("retries failed process-owned optional cleanup without reclosing completed pe
   }
 
   let shutdown: (() => void) | undefined;
+  let settleShutdown: (() => Promise<void>) | undefined;
   let servers = 0;
   let transportCloses = 0;
   let unregisterCalls = 0;
+  const unregistered = createDeferred<void>();
   const stderr: string[] = [];
   const exitCodes: number[] = [];
   const optionalProviderLoadFailures = {
@@ -152,29 +156,37 @@ it("retries failed process-owned optional cleanup without reclosing completed pe
           },
         };
       },
+      captureShutdown: (close) => {
+        settleShutdown = close;
+      },
       registerShutdown: (handler) => {
         shutdown = handler;
         return () => {
           unregisterCalls += 1;
+          unregistered.resolve();
         };
       },
       writeStderr: (text) => stderr.push(text),
       setExitCode: (code) => exitCodes.push(code),
     });
     expect(result).toBe(0);
-    if (shutdown === undefined)
-      throw new Error("Shutdown hook was not installed");
+    if (shutdown === undefined || settleShutdown === undefined)
+      throw new Error("Shutdown ownership hooks were not installed");
 
     shutdown();
-    await waitFor(() => expect(runtimeClose).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(exitCodes).toEqual([1]));
+    await expect(settleShutdown()).rejects.toMatchObject({
+      errors: [runtimeFailure],
+    });
+    expect(runtimeClose).toHaveBeenCalledTimes(1);
+    expect(exitCodes).toEqual([1]);
     expect(browserClose).toHaveBeenCalledTimes(1);
     expect(transportCloses).toBe(1);
     expect(servers).toBe(1);
     expect(unregisterCalls).toBe(0);
 
     shutdown();
-    await waitFor(() => expect(unregisterCalls).toBe(1));
+    await unregistered.promise;
+    expect(unregisterCalls).toBe(1);
 
     expect(runtimeClose).toHaveBeenCalledTimes(2);
     expect(browserClose).toHaveBeenCalledTimes(1);

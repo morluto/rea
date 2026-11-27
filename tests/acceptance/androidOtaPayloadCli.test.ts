@@ -109,6 +109,7 @@ cliTest(
       parseEvidence(incomplete.json).normalized_result,
     );
     const graph = inspection.substeps[0]!.evidence.normalized_result;
+    expect(graph.coverage.status).toBe("unknown");
     expect(
       graph.occurrences.find((row) => row.logical_path === ".")
         ?.format_metadata,
@@ -212,10 +213,22 @@ cliTest(
       ],
     });
     await writeFile(source, bytes);
-    const environment = { TMPDIR: root, TMP: root, TEMP: root };
+    const output = join(root, "out");
+    const observed = createHash("sha256").update(data).digest("hex");
+    const contradiction = {
+      logical_path: "boot.img",
+      declared_sha256: "ab".repeat(32),
+      observed_sha256: observed,
+      trust: "observed-untrusted",
+    };
     const refused = await cli.run({
-      arguments: ["extract-artifact", source, "--json"],
-      environment,
+      arguments: [
+        "extract-artifact",
+        source,
+        "--output-root",
+        output,
+        "--json",
+      ],
     });
     expect(refused.exitCode).toBe(1);
     expect(refused.json).toMatchObject({
@@ -223,7 +236,7 @@ cliTest(
       details: {
         logical_path: "boot.img",
         declared_sha256: "ab".repeat(32),
-        calculated_sha256: createHash("sha256").update(data).digest("hex"),
+        calculated_sha256: observed,
       },
     });
     expect(await readdir(root)).toEqual(["payload.bin"]);
@@ -241,14 +254,33 @@ cliTest(
       parseEvidence(recorded.json).normalized_result,
     );
     const graph = inspection.substeps[0]!.evidence.normalized_result;
+    expect(
+      graph.occurrences.find(({ logical_path }) => logical_path === "boot.img"),
+    ).toMatchObject({ hash_status: "mismatched" });
     expect(graph.integrity_contradictions).toEqual([
-      expect.objectContaining({
-        logical_path: "boot.img",
-        declared_sha256: "ab".repeat(32),
-        observed_sha256: createHash("sha256").update(data).digest("hex"),
-        trust: "observed-untrusted",
-      }),
+      expect.objectContaining(contradiction),
     ]);
+
+    const continued = await cli.run({
+      arguments: [
+        "extract-artifact",
+        source,
+        "--output-root",
+        output,
+        "--integrity-policy",
+        "record-and-continue",
+        "--json",
+      ],
+    });
+    expect(continued.exitCode, continued.stdout + continued.stderr).toBe(0);
+    const result = artifactExtractionResultSchema.parse(
+      parseEvidence(continued.json).normalized_result,
+    );
+    expect(result).toMatchObject({
+      containment_verified: true,
+      integrity_contradictions: [contradiction],
+    });
+    expect((await readFile(join(output, "boot.img"))).equals(data)).toBe(true);
     expect((await readFile(source)).equals(bytes)).toBe(true);
   },
 );
@@ -269,6 +301,9 @@ cliTest(
     const graph = inspection.substeps[0]!.evidence.normalized_result;
     expect(graph.manifest.root_format).toBe("android-ota-payload");
     expect(graph.coverage.status).toBe("complete");
+    expect(graph.limitations).toContainEqual(
+      expect.stringMatching(/signatures?.*not verified/iu),
+    );
     expect(
       graph.occurrences.find((row) => row.logical_path === ".")
         ?.format_metadata,
@@ -288,10 +323,15 @@ cliTest(
     );
     expect(result.containment_verified).toBe(true);
     expect(
-      (await readFile(join(result.output_root, "boot.img")))
-        .subarray(0, 7)
-        .toString("latin1"),
-    ).toBe("BOOTIMG");
+      (await readFile(join(result.output_root, "boot.img"))).equals(
+        Buffer.from("BOOTIMG"),
+      ),
+    ).toBe(true);
+    expect(
+      (await readFile(join(result.output_root, "system.img"))).equals(
+        Buffer.alloc(8192),
+      ),
+    ).toBe(true);
   },
 );
 
@@ -304,8 +344,14 @@ cliTest(
     const inspected = await cli.run({
       arguments: ["inspect-artifact", source, "--json"],
     });
-    expect(inspected.exitCode).not.toBe(0);
-    expect(`${inspected.stdout}\n${inspected.stderr}`).toContain("unsupported");
+    expect(inspected.exitCode).toBe(1);
+    expect(inspected.json).toMatchObject({
+      code: "target_unavailable",
+      details: {
+        constraint: "file_format_rejected",
+        reason: expect.stringContaining("Android OTA payload major version 1"),
+      },
+    });
   },
 );
 
@@ -325,12 +371,49 @@ cliTest(
     const graph = inspection.substeps[0]!.evidence.normalized_result;
     expect(graph.manifest.root_format).toBe("android-ota-payload");
     expect(
-      graph.occurrences.find((row) => row.logical_path === "vendor.img"),
-    ).toMatchObject({ hash_status: "unavailable" });
-    const extracted = await cli.run({
-      arguments: ["extract-artifact", source, "--json"],
-      environment: { TMPDIR: root, TMP: root, TEMP: root },
+      graph.occurrences.find(({ logical_path }) => logical_path === "."),
+    ).toMatchObject({
+      format_metadata: { payload_kind: "delta", max_timestamp: null },
     });
-    expect(extracted.exitCode).not.toBe(0);
+    expect(
+      graph.limitations.some((note) => note.includes("max_timestamp")),
+    ).toBe(false);
+    expect(
+      graph.occurrences.find(
+        ({ logical_path }) => logical_path === "vendor.img",
+      ),
+    ).toMatchObject({
+      hash_status: "unavailable",
+      limitations: expect.arrayContaining([
+        expect.stringContaining("not applied"),
+      ]),
+      format_metadata: {
+        kind: "android-ota-partition",
+        extractable: false,
+        operation_counts: [
+          { type: "SOURCE_COPY", type_code: 4, count: 1 },
+          { type: "BROTLI_BSDIFF", type_code: 10, count: 1 },
+        ],
+      },
+    });
+    const extracted = await cli.run({
+      arguments: [
+        "extract-artifact",
+        source,
+        "--output-root",
+        join(root, "out"),
+        "--json",
+      ],
+    });
+    expect(extracted.exitCode).toBe(1);
+    expect(extracted.json).toMatchObject({
+      code: "artifact_operation_failed",
+      details: {
+        operation: "extract_artifact",
+        reason: "unavailable",
+        detail: expect.stringContaining("vendor.img"),
+      },
+    });
+    expect(await readdir(root)).toEqual(["payload.bin"]);
   },
 );

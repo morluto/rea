@@ -81,10 +81,9 @@ were present; `null` means package metadata was invalid or unavailable. Renderer
 role mechanisms and package load edges name the field that supplied the candidate,
 selected as the first nonempty string from `renderer`, `browser`, then `module`.
 The package load edge retains `declared_path`, `source_field`, and resolution
-facts for that selection. New analyses no longer emit the derived package
-`renderer` alias; consumers must read declarations for source metadata and load
-edges for the selected candidate. Previously retained Evidence keeps its original
-properties and remains readable without migration.
+facts for that selection. Read declarations for source metadata and load edges
+for the selected candidate; there is no derived package `renderer` alias.
+Previously retained Evidence keeps its original properties.
 
 ## Select sources before analysis
 
@@ -466,6 +465,12 @@ while locally shadowed receivers can still contribute network endpoint
 candidates. A template recovered with a parser error and no cooked value stays
 dynamic; its raw spelling is not treated as a valid JavaScript string.
 
+Method-first `request` calls, as in superagent, needle, and Angular
+`HttpClient`, pass a standard HTTP method, in any letter case, before the
+target. In both `analyze_javascript_application` and `analyze_web_bundle`,
+`request("get", "/api/users")` contributes `/api/users` as the network endpoint
+candidate. When the target is computed, the method token remains the candidate.
+
 RPC client syntax also contributes network endpoint candidates, in both
 `analyze_javascript_application` and `analyze_web_bundle`, distinguished by
 `mechanism`:
@@ -628,6 +633,16 @@ Only explicitly present BrowserWindow values are observations. REA does not
 substitute version-dependent Electron defaults for omitted `webPreferences`.
 Unresolved option objects, bridge keys, API objects, and IPC channel expressions
 remain unknown and make coverage partial.
+
+A later spread can replace earlier options. A conditional spread whose
+branches are object literals, such as
+`...(process.platform === "darwin" && { titleBarStyle: "hidden" })` or
+`...(isMac ? { frame: false } : {})`, leaves unknown only the keys a branch
+can copy, so an earlier `webPreferences` stays explicit unless a branch also
+sets it. `&&` copies a falsy left operand itself, so that operand must also be
+bounded, such as a comparison or a `!` negation. A spread of an unresolved
+value, such as an identifier, `isMac && {...}` with an unresolved `isMac`, or
+an `||` or `??` fallback, leaves every earlier option unknown.
 
 BrowserWindow options and `webPreferences` can follow local `const` aliases
 whose initialization precedes the use. The shared lexical and mutation index
@@ -875,8 +890,24 @@ facts. Increasing these budgets does not raise graph retention, worker heap,
 transfer admission, or parent result memory. Cyclic or unsupported evaluations
 remain unknown. Wrapper limitations name visits and depth separately so a
 caller can change the resource actually exhausted. Finite inline literal object
-spreads use iterative syntax traversal and no longer inherit a duplicate
-semantic-depth cut.
+spreads use iterative syntax traversal.
+
+`semantic_analysis` selects how much of each source is examined. The default,
+`complete`, parses, static-analyzes and semantic-analyzes every selected
+source. `structure-only` returns the static and application-graph facts —
+package and Electron roles, preload and renderer structure, IPC and route
+structure — without building semantic IR, semantic graph content, semantic
+traces, or the application-graph source-module and export-binding nodes those
+facts feed. Each file's semantic coverage is recorded as not examined with
+that reason. The application graph's `coverage` is `partial`, with
+`truncated: false`, `omitted_count: null` and no extra limits: the number of
+omitted module and export nodes is not known, so a comparison reports those
+nodes as unknown rather than removed or added. The result states the omission
+once in `limitations`.
+Use it for a first pass over a large application when the structural surface
+is the question; request `complete` analysis afterwards, narrowed with
+`source_paths`, for semantic detail. The selection stays in Evidence
+parameters. The CLI accepts `--semantic-analysis structure-only`.
 
 Member-mutation analysis also has a work allowance of 524,288 alias states
 per source, selected by the `javascript.member_mutation_alias_states` setting

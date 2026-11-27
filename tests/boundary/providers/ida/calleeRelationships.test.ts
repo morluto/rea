@@ -32,7 +32,14 @@ const armSession = () =>
   });
 
 it("refuses direct callers and keeps caller coverage unknown in an ARM64 dossier", async () => {
-  const { client } = await armSession();
+  const { client, producer } = await callGraphSession({
+    callees: [{ addr: "0x4000", name: "bogus_callee", type: "external" }],
+    callgraph: graphRow([
+      edge("0x1000", "0x2000"),
+      edge("0x1000", "0x3000"),
+      edge("0x2000", "0x4000"),
+    ]),
+  });
   try {
     const declared = idaCapabilities(IDA_COMPATIBILITY_PROFILES.modern, false);
     const callers = declared.find(
@@ -70,6 +77,13 @@ it("refuses direct callers and keeps caller coverage unknown in an ARM64 dossier
     expect(result.value.result).toMatchObject({
       callers: [],
       callees: [{ address: "0x2000" }, { address: "0x3000" }],
+    });
+    expect(requestedRoots(producer)).toEqual(["0x1000"]);
+    expect(producer.calls.map(({ name }) => name)).not.toContain("callees");
+    expect(result.value.rawResult).toMatchObject({
+      observations: expect.arrayContaining([
+        expect.objectContaining({ tool: "callgraph" }),
+      ]),
     });
   } finally {
     await client.close();
@@ -358,6 +372,11 @@ it("preserves an explicit root cap below the edge limit through every relationsh
     });
     if (!direct.ok) throw direct.error;
     expect(direct.value.limitations).toContain(limitation);
+    expect(direct.value.relationshipCoverage).toMatchObject({
+      status: "partial",
+      limitations: [limitation],
+      limited_directions: ["callees"],
+    });
     expect(direct.value.result).toEqual(["0x2000"]);
     const application = new EnhancedTools(client);
     const graph = await application.executeValidated({

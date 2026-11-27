@@ -11,7 +11,6 @@ import {
   graphRow,
   removeCallGraphSessions,
 } from "../../tests/fixtures/idaCallGraph.js";
-import { UNRECOGNIZED_CALLEE_LIMITATION } from "./IdaCallGraph.js";
 import { IDA_LIMITATIONS } from "./IdaProviderCapabilities.js";
 import { IdaSessionClient } from "./IdaSessionClient.js";
 
@@ -35,39 +34,6 @@ const callees = async (client: IdaSessionClient) => {
   if (!result.ok) throw result.error;
   return result.value;
 };
-
-describe("headless IDA callee edges on non-x86 targets", () => {
-  it("uses the neutral call graph as the sole callee source on non-x86 targets", async () => {
-    const { client } = await session({
-      callees: [
-        { addr: "0x4000", name: "bogus_non_x86_match", type: "internal" },
-      ],
-      callgraph: graphRow([
-        edge("0x1000", "0x2000"),
-        edge("0x1000", "0x3000"),
-        edge("0x2000", "0x4000"),
-      ]),
-    });
-    try {
-      const execution = await callees(client);
-
-      expect(
-        execution.result,
-        "the root edges are observed and the child edge is ignored",
-      ).toEqual(["0x2000", "0x3000"]);
-      expect(
-        execution.limitations,
-        "calls to non-function targets remain unknown",
-      ).toContain(UNRECOGNIZED_CALLEE_LIMITATION);
-      expect(
-        observedTools(execution.rawResult),
-        "non-x86 callees is never queried",
-      ).not.toContain("callees");
-    } finally {
-      expect((await client.close()).ok).toBe(true);
-    }
-  });
-});
 
 describe("headless IDA call graph availability and cancellation", () => {
   it("takes the call graph path for a universal target whose loaded slice is unknown", async () => {
@@ -120,57 +86,43 @@ describe("headless IDA call graph availability and cancellation", () => {
 });
 
 describe("headless IDA callee edges on x86 targets", () => {
-  it("keeps the requests, result, limitations and observations of an x86 read unchanged", async () => {
-    const { client, producer } = await session(
-      {
-        callees: [
-          { addr: "0x2000", name: "imported_puts", type: "external" },
-          { addr: "0x3000", name: "printf_stub", type: "internal" },
-        ],
-      },
-      "x86_64",
-    );
-    try {
-      const execution = await callees(client);
+  it.each([
+    {
+      label: "external and internal callees",
+      rows: [
+        { addr: "0x2000", name: "imported_puts", type: "external" },
+        { addr: "0x3000", name: "printf_stub", type: "internal" },
+      ],
+      addresses: ["0x2000", "0x3000"],
+      tools: ["lookup_funcs", "callees", "lookup_funcs"],
+    },
+    {
+      label: "an explicitly complete empty reply",
+      rows: [],
+      addresses: [],
+      tools: ["lookup_funcs", "callees"],
+    },
+  ])(
+    "reads only the x86 callee source for $label",
+    async ({ rows, addresses, tools }) => {
+      const { client, producer } = await session({ callees: rows }, "x86_64");
+      try {
+        const execution = await callees(client);
 
-      expect(
-        execution.result,
-        "externals come first, then resolved internals, exactly as before",
-      ).toEqual(["0x2000", "0x3000"]);
-      expect(
-        execution.limitations,
-        "exactly the provider's own limitations, nothing added on x86",
-      ).toEqual([...IDA_LIMITATIONS]);
-      expect(
-        producer.calls.filter(({ name }) => name === "callees"),
-      ).toMatchObject([{ args: { addrs: ["0x1000"], limit: 500 } }]);
-      expect(
-        observedTools(execution.rawResult),
-        "the raw observations hold no call graph row",
-      ).toEqual(["lookup_funcs", "callees", "lookup_funcs"]);
-    } finally {
-      expect((await client.close()).ok).toBe(true);
-    }
-  });
-
-  it("keeps an empty x86 callees reply an observed empty list without any limitation", async () => {
-    const { client, producer } = await session({ callees: [] }, "x86_64");
-    try {
-      const execution = await callees(client);
-
-      expect(execution.result, "nothing is added").toEqual([]);
-      expect(
-        execution.limitations,
-        "no completeness warning on a trustworthy x86 target",
-      ).toEqual([...IDA_LIMITATIONS]);
-      expect(
-        producer.calls.some(({ name }) => name === "callgraph"),
-        "no call graph request even for an empty reply",
-      ).toBe(false);
-    } finally {
-      expect((await client.close()).ok).toBe(true);
-    }
-  });
+        expect(execution.result).toEqual(addresses);
+        expect(execution.relationshipCoverage).toMatchObject({
+          status: "complete",
+        });
+        expect(execution.limitations).toEqual([...IDA_LIMITATIONS]);
+        expect(
+          producer.calls.filter(({ name }) => name === "callees"),
+        ).toMatchObject([{ args: { addrs: ["0x1000"], limit: 500 } }]);
+        expect(observedTools(execution.rawResult)).toEqual(tools);
+      } finally {
+        expect((await client.close()).ok).toBe(true);
+      }
+    },
+  );
 
   it("does not use the call graph for the native attached profile on an ARM target", async () => {
     const { root, target } = await createIdaTarget("arm64");

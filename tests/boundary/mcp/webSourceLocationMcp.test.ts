@@ -1,8 +1,8 @@
 import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
-import { traceSourceMap } from "../../../src/javascript/sourceMaps/TraceSourceMap.js";
 import {
   webSourceLocationArgs as args,
   webSourceLocationFixture,
+  webSourceMapDecoderFixture,
 } from "../../fixtures/webSourceLocation.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -20,17 +20,12 @@ import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarnes
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
-it("publishes valid SDK schemas and records the named module trace without a binary target", async () => {
+it("validates source-location delivery and retains Evidence without a binary target", async () => {
+  const data = webSourceLocationFixture();
+  const load = vi.fn(async () => ok(data));
   const service = new WebSourceLocationService(
-    {
-      load: () => Promise.resolve(ok(webSourceLocationFixture())),
-    },
-    {
-      trace: (input) =>
-        Promise.resolve(
-          ok(traceSourceMap(input.text, input.url, input.position)),
-        ),
-    },
+    { load },
+    webSourceMapDecoderFixture,
   );
   const session = createTestBinarySession(() => {
     throw new Error("binary provider must not start");
@@ -40,7 +35,7 @@ it("publishes valid SDK schemas and records the named module trace without a bin
     { webSourceLocation: service },
   );
   const client = new Client(
-    { name: "module-contract", version: "1" },
+    { name: "source-location-contract", version: "1" },
     { jsonSchemaValidator: createMcpSchemaValidation() },
   );
   onTestFinished(async () => {
@@ -56,7 +51,7 @@ it("publishes valid SDK schemas and records the named module trace without a bin
     (tool) => tool.name === "trace_web_source_location",
   );
   if (advertised === undefined)
-    throw new Error("module trace must advertise both schemas");
+    throw new Error("source-location trace must advertise both schemas");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   const inputSchema: Record<string, unknown> = advertised.inputSchema;
   expect(ajv.validate(inputSchema, args)).toBe(true);
@@ -69,7 +64,6 @@ it("publishes valid SDK schemas and records the named module trace without a bin
     response.structuredContent,
   );
   const evidence = parseEvidence(parsed);
-  const data = webSourceLocationFixture();
   expect(evidence).toMatchObject({
     normalized_result: {
       source: { sha256: data.sourceFile.sha256 },
@@ -94,6 +88,56 @@ it("publishes valid SDK schemas and records the named module trace without a bin
       issues: [{ path: ["manifest_path"], reason: "invalid_format" }],
     },
   });
+  for (const delivery of [
+    {
+      detail: "complete",
+      view: { kind: "source-location", collection: "matches" },
+    },
+    {
+      detail: "summary",
+      view: {
+        kind: "source-location",
+        collection: "source-text",
+        match_index: -1,
+      },
+    },
+    {
+      detail: "summary",
+      view: { kind: "source-location", collection: "matches", limit: 0 },
+    },
+  ]) {
+    const result = await client.callTool({
+      name: "trace_web_source_location",
+      arguments: { ...args, ...delivery },
+    });
+    expect(parseMcpToolError(result).error.code).toBe("invalid_request");
+  }
+  expect(load).toHaveBeenCalledTimes(1);
+  // A valid page request traces again before refusing its page.
+  const oversized = await client.callTool({
+    name: "trace_web_source_location",
+    arguments: {
+      ...args,
+      detail: "summary",
+      view: { kind: "source-location", collection: "matches", max_bytes: 1 },
+    },
+  });
+  expect(parseMcpToolError(oversized).error).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    details: {
+      limit: {
+        control_kind: "parameter",
+        parameter: "view.max_bytes",
+        effective_value: 1,
+        unit: "bytes",
+        minimum: 1,
+        default_value: 1024 * 1024,
+        applies_at: "next_call",
+      },
+    },
+  });
+  expect(load).toHaveBeenCalledTimes(2);
 });
 
 it("preserves missing Linux ps capability and recovery through source-map tracing", async () => {
@@ -150,42 +194,43 @@ it("preserves missing Linux ps capability and recovery through source-map tracin
   expect(launcher).not.toHaveBeenCalled();
 });
 
-it("rejects malformed delivery controls before acquiring source-map artifacts", async () => {
-  const load = vi.fn(async () => ok(webSourceLocationFixture()));
+it("reports details.limit without cli_flag for MCP source_map_limits refusals", async () => {
+  const data = webSourceLocationFixture();
+  const decoder = new SourceMapDecoder();
   const harness = await createApplicationMcpHarness({
     serverOptions: {
       webSourceLocation: new WebSourceLocationService(
-        { load },
-        {
-          trace: async (input) =>
-            ok(traceSourceMap(input.text, input.url, input.position)),
-        },
+        { load: async () => ok(data) },
+        decoder,
       ),
     },
   });
-  for (const delivery of [
-    {
-      detail: "complete",
-      view: { kind: "source-location", collection: "matches" },
-    },
-    {
-      detail: "summary",
-      view: {
-        kind: "source-location",
-        collection: "source-text",
-        match_index: -1,
+  onTestFinished(async () => {
+    await harness.close();
+    await decoder.close();
+  });
+  const response = await harness.client.callTool({
+    name: "trace_web_source_location",
+    arguments: { ...args, source_map_limits: { output_bytes: 16 } },
+  });
+  const { error } = parseMcpToolError(response);
+  expect(error).toMatchObject({
+    code: "partial",
+    retryable: false,
+    details: {
+      limit: {
+        control_kind: "parameter",
+        parameter: "source_map_limits.output_bytes",
+        effective_value: 16,
+        unit: "bytes",
+        minimum: 1,
+        maximum: 536_870_887,
+        default_value: 33_554_432,
+        applies_at: "next_call",
       },
     },
-    {
-      detail: "summary",
-      view: { kind: "source-location", collection: "matches", limit: 0 },
-    },
-  ]) {
-    const result = await harness.client.callTool({
-      name: "trace_web_source_location",
-      arguments: { ...args, ...delivery },
-    });
-    expect(parseMcpToolError(result).error.code).toBe("invalid_request");
-  }
-  expect(load).not.toHaveBeenCalled();
+  });
+  expect(
+    (error.details as { limit?: Record<string, unknown> } | undefined)?.limit,
+  ).not.toHaveProperty("cli_flag");
 });

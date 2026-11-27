@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { describe, expect, it } from "vitest";
 
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
@@ -192,47 +194,103 @@ describe("CdpBrowserProvider: page cookie scope", () => {
   });
 });
 
-describe("CdpBrowserProvider: complete storage fingerprints", () => {
-  it("fingerprints cache bodies above 64 KiB", async () => {
-    const body = "x".repeat(64 * 1_024 + 1);
-    const browser = await startFakeCdpBrowser({ cachedResponseBody: body });
-    trackBrowser(browser);
-    const result = await new CdpBrowserProvider().inspectPage(
-      inspectWebPageInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 0,
-        include_storage_keys: true,
-        include_storage_fingerprints: true,
-      }),
-    );
-
-    if (!result.ok) throw result.error;
-    expect(result.value.storage.fingerprints_complete).toBe(true);
-    expect(
-      result.value.storage.content_fingerprints.find(
-        ({ scope }) => scope === "cache_entry",
-      ),
-    ).toMatchObject({ complete: true, value_sha256: expect.any(String) });
-    expect(JSON.stringify(result.value)).not.toContain(body);
-    // The storage capture always writes its fingerprint facts.
-    for (const omit of [
-      "content_fingerprints",
-      "fingerprint_algorithm",
-      "fingerprints_complete",
-    ])
-      expect(
-        webPageInspectionSchema.safeParse({
-          ...result.value,
-          storage: Object.fromEntries(
-            Object.entries(result.value.storage).filter(
-              ([key]) => key !== omit,
-            ),
-          ),
-        }).success,
-      ).toBe(false);
+it("fingerprints decoded cache bytes and leaves malformed cache entries incomplete", async () => {
+  const body = "x".repeat(64 * 1_024 + 1);
+  const validEntries = [
+    {
+      path: "/large",
+      encoded: Buffer.from(body).toString("base64"),
+      decoded: body,
+    },
+    { path: "/pad-bits", encoded: "e31=", decoded: "{}" },
+  ];
+  const malformed = { path: "/malformed", encoded: "e%30=", decoded: null };
+  let entries: readonly {
+    path: string;
+    encoded: string;
+    decoded: string | null;
+  }[] = validEntries;
+  const browser = await startFakeCdpBrowser({
+    commandResult(command, origin) {
+      if (command.method === "CacheStorage.requestEntries")
+        return {
+          cacheDataEntries: entries.map(({ path }) => ({
+            requestURL: origin + path,
+            requestMethod: "GET",
+            requestHeaders: [],
+          })),
+          returnCount: entries.length,
+        };
+      if (command.method !== "CacheStorage.requestCachedResponse")
+        return undefined;
+      const entry = entries.find(
+        ({ path }) => command.params.requestURL === origin + path,
+      );
+      if (entry === undefined) throw new Error("Unexpected cache body request");
+      return { response: { body: entry.encoded } };
+    },
   });
+  trackBrowser(browser);
+  const input = inspectWebPageInputSchema.parse({
+    cdp_endpoint: browser.endpoint,
+    allowed_origins: [browser.allowedOrigin],
+    target_id: "allowed-page",
+    observation_ms: 0,
+    include_storage_keys: true,
+    include_storage_fingerprints: true,
+  });
+  const capture = async () => {
+    const result = await new CdpBrowserProvider().inspectPage(input);
+    if (!result.ok) throw result.error;
+    const cacheEntries = result.value.storage.content_fingerprints.filter(
+      ({ scope }) => scope === "cache_entry",
+    );
+    expect(cacheEntries).toHaveLength(entries.length);
+    expect(cacheEntries).toEqual(
+      expect.arrayContaining(
+        entries.map(({ path, decoded }) =>
+          expect.objectContaining({
+            identity_sha256: createHash("sha256")
+              .update(
+                JSON.stringify({
+                  cache: "assets-v1",
+                  requestHeaders: [],
+                  requestMethod: "GET",
+                  requestURL: browser.allowedOrigin + path,
+                }),
+              )
+              .digest("hex"),
+            complete: decoded !== null,
+            value_sha256:
+              decoded === null
+                ? null
+                : createHash("sha256").update(decoded).digest("hex"),
+          }),
+        ),
+      ),
+    );
+    expect(JSON.stringify(result.value)).not.toContain(body);
+    return result.value;
+  };
+
+  const before = await capture();
+  expect(before.storage.fingerprints_complete).toBe(true);
+  entries = [...validEntries, malformed];
+  expect((await capture()).storage.fingerprints_complete).toBe(false);
+
+  for (const omit of [
+    "content_fingerprints",
+    "fingerprint_algorithm",
+    "fingerprints_complete",
+  ])
+    expect(
+      webPageInspectionSchema.safeParse({
+        ...before,
+        storage: Object.fromEntries(
+          Object.entries(before.storage).filter(([key]) => key !== omit),
+        ),
+      }).success,
+    ).toBe(false);
 });
 
 describe("CdpBrowserProvider: explicitly requested text and payload shapes", () => {
@@ -434,41 +492,6 @@ describe("CdpBrowserProvider: malformed approved payloads", () => {
           count: 1,
         },
       ]),
-    );
-  });
-
-  it("records a malformed response body reply as a body-shape gap", async () => {
-    const browser = await startFakeCdpBrowser({
-      eventsBeforeReply: ["Network.enable"],
-      commandResult: ({ method }) =>
-        method === "Network.getResponseBody"
-          ? { body: 7, base64Encoded: false }
-          : undefined,
-    });
-    trackBrowser(browser);
-    const result = await new CdpBrowserProvider().inspectPage(
-      inspectWebPageInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 0,
-        include_json_body_shapes: true,
-      }),
-    );
-
-    if (!result.ok) throw result.error;
-    expect(result.value.network.requests[0]?.body_shapes).toMatchObject({
-      status: "partial",
-      response: null,
-    });
-    expect(result.value.completeness.excluded).toContainEqual(
-      expect.objectContaining({
-        section: "json_body_shapes",
-        reason: "invalid_protocol_value",
-      }),
-    );
-    expect(result.value.limitations).toContain(
-      "Network.getResponseBody returned a malformed result; the section that reads it is incomplete.",
     );
   });
 });

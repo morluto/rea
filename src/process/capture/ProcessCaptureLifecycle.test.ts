@@ -105,6 +105,48 @@ const start = (
     recordEvent: () => undefined,
   });
 
+it("ends the wait when a zero-interval deadline kill throws", async () => {
+  fakePollingClock();
+  const fake = fakeTerminal();
+  fake.terminal.kill = (signal) => {
+    fake.signals.push(`terminal:${signal ?? "SIGHUP"}`);
+    throw new Error("pty kill refused");
+  };
+  const pending = start(fake, { timeout_ms: 100, finalization_ms: 0 });
+
+  await vi.advanceTimersByTimeAsync(100);
+  const result = await pending;
+
+  expect(result).toEqual({ unobserved: true, reason: "timeout" });
+  expect(Object.keys(result).sort()).toEqual(["reason", "unobserved"]);
+  expect(fake.signals).toEqual(["terminal:SIGKILL"]);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("ends the wait when a cancellation kill throws before finalization", async () => {
+  fakePollingClock();
+  const fake = fakeTerminal();
+  const controller = new AbortController();
+  fake.terminal.kill = (signal) => {
+    fake.signals.push(`terminal:${signal ?? "SIGHUP"}`);
+    throw new Error("pty kill refused");
+  };
+  const pending = start(
+    fake,
+    { timeout_ms: 60_000, finalization_ms: 5_000 },
+    controller.signal,
+  );
+  controller.abort();
+
+  await vi.advanceTimersByTimeAsync(20);
+  const result = await pending;
+
+  expect(result).toEqual({ unobserved: true, reason: "cancelled" });
+  expect(Object.keys(result).sort()).toEqual(["reason", "unobserved"]);
+  expect(fake.signals).toEqual(["terminal:SIGKILL"]);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
 it("uses the monotonic running deadline and releases zero-interval polling after exit", async () => {
   fakePollingClock();
   const fake = fakeTerminal();
@@ -379,7 +421,8 @@ it("stops waiting for a hung delivery once the exit is observed", async () => {
     {
       signal: "SIGTERM",
       delivery: "unverified",
-      reason: "delivery did not settle within 1000 ms",
+      reason:
+        "delivery did not settle within REA's fixed 1000 ms signal-delivery grace; this release has no runtime override and a larger finalization_ms does not extend it",
     },
   ]);
   expect(exit.signal, "the observed exit is kept").toBe(0);
@@ -464,7 +507,8 @@ it("stops waiting when the escalation delivery never settles and no exit arrives
   ).toMatchObject({
     signal: "SIGKILL",
     delivery: "unverified",
-    reason: "delivery did not settle within 1000 ms",
+    reason:
+      "delivery did not settle within REA's fixed 1000 ms signal-delivery grace; this release has no runtime override and a larger finalization_ms does not extend it",
   });
   expect(result.finalization).toMatchObject({
     elapsed_ms: null,

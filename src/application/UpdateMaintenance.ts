@@ -139,6 +139,7 @@ export const existingMaintenanceScope = async (
       // profile is absent, so maintenance reads ownership evidence instead of
       // product applicability. Owned rows stay the only ones selected below.
       evidence: "ownership",
+      scope: "user",
       ...(resources === undefined ? {} : { resources }),
       ...(systemPaths === undefined ? {} : { systemPaths }),
     },
@@ -148,6 +149,7 @@ export const existingMaintenanceScope = async (
   // The launcher and explicitly selected settings the maintenance setup run
   // registers; provider defaults doctor discovers there are not known here.
   const command = currentClientRegistrationCommand({
+    platform,
     entrypointPath: entryPoint,
     environment,
   });
@@ -172,6 +174,7 @@ export const existingMaintenanceScope = async (
     const refusal = await clientRefreshRefusal(client, settings, command, {
       platform,
       currentCommandPath: entryPoint,
+      launcherEnvironment: environment,
       ...(resources === undefined ? {} : { resources }),
     });
     if (refusal !== undefined) {

@@ -12,6 +12,7 @@ import {
   analysisErrorWithCleanupFailure,
   providerCleanupErrorFromFailures,
   withInheritedCleanupOwnership,
+  withSecondaryCleanupFailure,
 } from "./analysisErrorCleanup.js";
 import {
   projectAnalysisError,
@@ -124,6 +125,7 @@ it("reads completion through nested compositions from the releasing owner only",
     new ProviderCleanupError("fixture", ["later"], {}),
   ]);
   expect(outer.cleanupIncomplete).toBe(false);
+  expect(outer.cleanupResources).toEqual([]);
 });
 
 it("keeps completion when a dependency is bound after release without an intermediate read", () => {
@@ -531,16 +533,16 @@ it.each(["primary", "cleanup", "default", "cleanup-continuing"] as const)(
   },
 );
 
-it("composes cleanup failures that complete only after every part releases", () => {
+it("tracks a shared resource until both cleanup owners release", () => {
   const first = new ProviderCleanupError(
     "fixture",
-    ["first-handle"],
+    ["shared-handle", "first-handle"],
     { reason: "first" },
     { operation: "fixture_close" },
   );
   const second = new ProviderCleanupError(
     "fixture",
-    ["second-handle"],
+    ["shared-handle", "second-handle"],
     { reason: "second" },
     { operation: "fixture_close" },
   );
@@ -562,7 +564,7 @@ it("composes cleanup failures that complete only after every part releases", () 
     providerId: "fixture-provider",
     operation: "fixture_close",
     cleanupIncomplete: true,
-    cleanupResources: ["first-handle", "second-handle"],
+    cleanupResources: ["shared-handle", "first-handle", "second-handle"],
     diagnostics: { reason: "Fixture cleanup remains incomplete" },
   });
   expect(composite.cause).toBeInstanceOf(AggregateError);
@@ -576,9 +578,15 @@ it("composes cleanup failures that complete only after every part releases", () 
   );
 
   releaseOwnedCleanup(first);
-  expect(composite.cleanupIncomplete).toBe(true);
+  expect(composite).toMatchObject({
+    cleanupIncomplete: true,
+    cleanupResources: ["shared-handle", "second-handle"],
+  });
   releaseOwnedCleanup(second);
-  expect(composite.cleanupIncomplete).toBe(false);
+  expect(composite).toMatchObject({
+    cleanupIncomplete: false,
+    cleanupResources: [],
+  });
 });
 
 it("defaults the aggregate cause to the owned failures", () => {
@@ -632,4 +640,50 @@ it("follows an existing owner's release via withInheritedCleanupOwnership", () =
   );
   expect(cleanWrapper.hasCleanupOwner).toBe(false);
   expect(cleanWrapper.cleanupIncomplete).toBe(false);
+});
+
+it("reports a capability refusal as retryable once its cleanup settles", () => {
+  // The refusal is retryable only after the bound cleanup owner releases, so the
+  // flag has to follow the live cleanup state rather than the build-time one.
+  const error = new AnalysisCapabilityUnavailableError(
+    "ghidra",
+    "inspect",
+    "the selected provider is unavailable",
+    {
+      retryable: true,
+      cleanup: { reason: "close denied", resources: ["owned-worker"] },
+    },
+  );
+  expect(error.cleanupIncomplete).toBe(true);
+  expect(error.retryable).toBe(false);
+  releaseOwnedCleanup(error);
+  expect(error.cleanupIncomplete).toBe(false);
+  expect(error.retryable).toBe(true);
+});
+
+it("keeps a refusal the owner did not mark retryable non-retryable", () => {
+  const error = new AnalysisCapabilityUnavailableError(
+    "ghidra",
+    "inspect",
+    "the selected provider is unavailable",
+  );
+  expect(error.retryable).toBe(false);
+});
+
+it("keeps cleanupIncomplete and cleanupResources consistent when attaching secondary cleanup to a non-cleanup error", () => {
+  const primary = new AnalysisInputError("open", undefined, []);
+  const secondary = new ProviderCleanupError("fixture", ["leaked-fd"], {});
+  withSecondaryCleanupFailure(primary, secondary);
+  expect(primary.cleanupIncomplete).toBe(true);
+  expect(primary.cleanupResources).toEqual(["leaked-fd"]);
+
+  releaseOwnedCleanup(secondary);
+  expect(primary.cleanupIncomplete).toBe(false);
+  expect(primary.cleanupResources).toEqual([]);
+
+  primary.bindCleanupDependencies([
+    new ProviderCleanupError("fixture", ["after-settlement"], {}),
+  ]);
+  expect(primary.cleanupIncomplete).toBe(false);
+  expect(primary.cleanupResources).toEqual([]);
 });

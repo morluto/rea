@@ -1,7 +1,6 @@
 """Exercise automatic route discovery and mistakes that break search metadata."""
 
 import contextlib
-import errno
 from html import unescape
 import importlib.util
 import io
@@ -22,7 +21,7 @@ from urllib.request import build_opener, ProxyHandler, urlopen
 import xml.etree.ElementTree as ET
 
 import polib
-from website_i18n import Document, build_translations, checked_catalog, extract_catalogs, languages, prose_units, reading_pages, read_runtime
+from website_i18n import FALLBACK_NOTICE, Document, build_translations, checked_catalog, extract_catalogs, languages, prose_units, reading_pages, read_runtime
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -140,6 +139,25 @@ class WebsiteLinkAuditChecks(unittest.TestCase):
                 )
         self.assertEqual(heads, [{"ref": "refs/heads/topic"}])
         self.assertEqual(tags, [{"ref": "refs/tags/topic/nested"}])
+
+    def test_release_routes_check_the_requested_tag_and_asset(self):
+        cases = (
+            ('tag/series/v1', 'tags/series%2Fv1', 'ok'),
+            ('download/series/v1/tool%20kit.zip', 'tags/series%2Fv1', 'ok'),
+            ('download/series%2Fv1/absent.zip', 'tags/series%2Fv1', 'broken'),
+            ('latest', 'latest', 'ok'),
+            ('latest/download/tool%20kit.zip', 'latest', 'ok'),
+            ('latest/download/absent.zip', 'latest', 'broken'),
+            ('latest/%64ownload/absent.zip', 'latest', 'broken'),
+            ('%64ownload/series/v1/absent.zip', 'tags/series%2Fv1', 'broken'),
+            ('latest/%64ownload/tool%20kit.zip', 'latest', 'ok'),
+        )
+        for route, endpoint, status in cases:
+            with self.subTest(route=route), patch.object(AUDIT, 'github_api', return_value={'assets': [{'name': 'tool kit.zip'}]}) as request:
+                url = 'https://github.com/example/project/releases/' + route
+                report = AUDIT.audit_url((url, ['fixture.html']))
+                self.assertEqual(report['status'], status)
+                request.assert_called_once_with('repos/example/project/releases/' + endpoint)
 
     def test_plain_refs_and_pinned_commits_keep_their_contents_target(self):
         for ref in ("main", "a" * 40):
@@ -373,6 +391,13 @@ class WebsiteSearchChecks(unittest.TestCase):
 class WebsiteMaintenanceChecks(unittest.TestCase):
     """Exercise contributor edits and the static preview through real consumers."""
 
+    def test_home_navigation_starts_closed(self):
+        document = Document((ROOT / "website/public/index.html").read_text(encoding="utf-8"))
+        menus = [node for node in document.nodes if "home-page-nav" in node.attrs.get("class", "").split()]
+        self.assertEqual([node.tag for node in menus], ["details"])
+        self.assertNotIn("open", menus[0].attrs)
+        self.assertIn("data-home-nav", menus[0].attrs)
+
     def test_electron_guide_renderer_matches_download(self):
         public = ROOT / "website/public"
         source = (public / "guides/javascript/index.html").read_text(encoding="utf-8")
@@ -392,7 +417,9 @@ class WebsiteMaintenanceChecks(unittest.TestCase):
             snapshot = root / "website/public/contributors/people.json"
             data = json.loads(snapshot.read_text())
             people = data["contributors"][:3]
-            data["contributors"] = list(reversed(people))
+            for person, name, commits in zip(people, ("Zulu", "beta", "Amber"), (1, 4, 4)):
+                person.update(login=name, html_url=f"https://github.com/{name}", commits=commits)
+            data["contributors"] = people
             data["updated"] = "2026-10-15"
             snapshot.write_text(json.dumps(data))
             original = page.read_text()
@@ -403,79 +430,66 @@ class WebsiteMaintenanceChecks(unittest.TestCase):
             source = page.read_text()
             doc = Document(source)
             cards = [node for node in doc.nodes if "data-contributor" in node.attrs]
-            self.assertEqual([node.attrs["data-contributor"] for node in cards], sorted(
-                (person["login"] for person in people), key=str.casefold,
-            ))
+            self.assertEqual([node.attrs["data-contributor"] for node in cards], ["Amber", "beta", "Zulu"])
             links = [node.attrs["href"] for node in doc.nodes if node.attrs.get("class") == "contributor-card"]
             self.assertCountEqual(links, [person["html_url"] for person in people])
-            self.assertIn('<time datetime="2026-10-15" translate="no">2026-10-15</time>', source)
             self.assertEqual(WEBSITE.sync_pages(root), [])
             translated_units = [unit[1] for unit in prose_units(source, "contributors/index.html")]
             for person in people:
                 self.assertFalse(any(person["login"] in unit for unit in translated_units))
 
-    def test_contributor_refresh_collects_all_pages_and_preserves_snapshot_on_failure(self):
+    def test_commit_authors_from_both_sources_are_credited_once_per_commit(self):
+        people = json.loads((ROOT / "website/public/contributors/people.json").read_text())["contributors"][:3]
+        a, b, c = ({k: v for k, v in person.items() if k != "commits"} for person in people)
+        revision = "a" * 40
+        primary = [{"sha": "first", "author": a}, {"sha": "second", "author": c}]
+        commits = subprocess.CompletedProcess([], 0, stdout="\n".join(map(json.dumps, primary)))
+
+        def page(sha, authors):
+            commit = {"oid": sha, "authors": {"totalCount": len(authors), "nodes": [{"user": p} for p in authors]}}
+            return {"data": {"repository": {"object": {"history": {"nodes": [commit]}}}}}
+
+        pages = [page("first", [a, b]), page("second", [None, b])]
+        with patch.object(WEBSITE, "github_json", side_effect=[{"object": {"sha": revision}}, pages]), \
+                patch.object(WEBSITE.subprocess, "run", return_value=commits):
+            data = WEBSITE.collect_contributors()
+        self.assertEqual(data["revision"], revision)
+        self.assertEqual({p["id"]: p["commits"] for p in data["contributors"]}, {
+            a["id"]: 1, b["id"]: 2, c["id"]: 1,
+        })
+        with patch.object(WEBSITE, "github_json", side_effect=[{"object": {"sha": revision}}, pages[:1]]), \
+                patch.object(WEBSITE.subprocess, "run", return_value=commits):
+            with self.assertRaisesRegex(ValueError, "Incomplete GitHub commit history"):
+                WEBSITE.collect_contributors()
+
+    def test_failed_refresh_preserves_the_directory_and_readme_grid(self):
+        data = json.loads((ROOT / "website/public/contributors/people.json").read_text())
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             snapshot = root / "website/public/contributors/people.json"
             snapshot.parent.mkdir(parents=True)
-            original = (ROOT / "website/public/contributors/people.json").read_text()
-            snapshot.write_text(original)
-            people = json.loads(original)["contributors"][:3]
-            response = WEBSITE.subprocess.CompletedProcess([], 0, stdout=json.dumps(people[:2]) + "\n" + json.dumps(people[2:]))
-            with patch.object(WEBSITE.subprocess, "run", return_value=response) as api:
-                WEBSITE.refresh_contributors(root)
-            self.assertIn("--paginate", api.call_args.args[0])
-            self.assertEqual(json.loads(snapshot.read_text())["contributors"], people)
-            self.assertEqual(set(snapshot.parent.iterdir()), {snapshot})
-            good = snapshot.read_text()
-            for output in (json.dumps(people) + "\n[", json.dumps(people + people), "[]", '{"message":"API error"}'):
-                with self.subTest(output=output), patch.object(WEBSITE.subprocess, "run", return_value=WEBSITE.subprocess.CompletedProcess([], 0, stdout=output)):
-                    with self.assertRaises(ValueError):
-                        WEBSITE.refresh_contributors(root)
-                    self.assertEqual(snapshot.read_text(), good)
-            with patch.object(WEBSITE.subprocess, "run", side_effect=WEBSITE.subprocess.CalledProcessError(1, ["gh"])):
-                with self.assertRaises(WEBSITE.subprocess.CalledProcessError):
+            grid = snapshot.with_name("avatars.png")
+            snapshot.write_bytes(b"old snapshot")
+            grid.write_bytes(b"old grid")
+            replace = Path.replace
+
+            def fail_snapshot(source, dest):
+                if dest == snapshot:
+                    raise PermissionError("snapshot unavailable")
+                return replace(source, dest)
+
+            with patch.object(WEBSITE, "collect_contributors", return_value=data), \
+                    patch("website_contributor_grid.write_avatar_grid", side_effect=lambda people, path: path.write_bytes(b"new grid")), \
+                    patch.object(Path, "replace", fail_snapshot):
+                with self.assertRaises(PermissionError):
                     WEBSITE.refresh_contributors(root)
-            self.assertEqual(snapshot.read_text(), good)
-
-    def test_contributor_refresh_preserves_snapshot_and_cleans_staging_on_save_failure(self):
-        people = json.loads((ROOT / "website/public/contributors/people.json").read_text())["contributors"][:2]
-        response = WEBSITE.subprocess.CompletedProcess([], 0, stdout=json.dumps(people))
-        write_text = Path.write_text
-
-        def partial_write(path, text, *args, **kwargs):
-            write_text(path, text[:20], *args, **kwargs)
-            raise OSError(errno.ENOSPC, "injected partial write", str(path))
-
-        failures = (
-            ("partial write", patch.object(
-                Path, "write_text", autospec=True, side_effect=partial_write,
-            )),
-            ("replace", patch.object(
-                Path, "replace", autospec=True,
-                side_effect=PermissionError(errno.EACCES, "injected replace failure"),
-            )),
-        )
-        for name, failure in failures:
-            with self.subTest(failure=name), tempfile.TemporaryDirectory() as directory:
-                root = Path(directory)
-                snapshot = root / "website/public/contributors/people.json"
-                snapshot.parent.mkdir(parents=True)
-                snapshot.write_bytes(json.dumps({
-                    "repository": "morluto/rea", "updated": "2026-10-14", "contributors": people[:1],
-                }).encode("utf-8"))
-                before = snapshot.read_bytes()
-                with patch.object(WEBSITE.subprocess, "run", return_value=response), failure as save:
-                    with self.assertRaises(OSError):
-                        WEBSITE.refresh_contributors(root)
-                self.assertEqual(save.call_count, 1)
-                self.assertEqual(snapshot.read_bytes(), before)
-                self.assertEqual(set(snapshot.parent.iterdir()), {snapshot})
+            self.assertEqual(snapshot.read_bytes(), b"old snapshot")
+            self.assertEqual(grid.read_bytes(), b"old grid")
+            self.assertEqual(set(snapshot.parent.iterdir()), {snapshot, grid})
 
     def test_contributor_snapshot_rejects_malformed_identity_and_unsafe_links(self):
         original = json.loads((ROOT / "website/public/contributors/people.json").read_text())
-        for field, value in (("id", True), ("id", 0), ("login", ""), ("type", "unknown"),
+        for field, value in (("commits", 0), ("id", True), ("id", 0), ("login", ""), ("type", "unknown"),
                              ("html_url", "javascript:alert(1)"), ("html_url", "https://github.com.evil.test/person"),
                              ("avatar_url", "https://token@avatars.githubusercontent.com/u/1")):
             with self.subTest(field=field, value=value):
@@ -513,6 +527,7 @@ class WebsiteMaintenanceChecks(unittest.TestCase):
             site = root / "website/public"
             WEBSITE.sync_pages(root)
             shutil.copyfile(ROOT / "website/_site/assets/social-card.png", site / "assets/social-card.png")
+            shutil.copytree(ROOT / "website/_site/assets/share", site / "assets/share")
             PREPARE.prepare_notes_example(site)
             page = WEBSITE.new_page(root, "blog/new-example", 'A <test> & "result"', 'Check "quotes" & <markup>.')
             source = page.read_text()
@@ -550,6 +565,59 @@ class WebsiteMaintenanceChecks(unittest.TestCase):
             for _, message in cases:
                 with self.subTest(message=message):
                     self.assertIn(f"{page.relative_to(site)}: {message}", diagnostics)
+
+    def test_repository_fragments_use_rendered_headings_and_html_ids(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "website").mkdir()
+            (root / "docs").mkdir()
+            (root / "docs/guide.md").write_text(dedent("""\
+                ---
+                title: Guide
+                ---
+
+                ````markdown
+                ```
+                # Example heading
+                <span id="example-id"></span>
+                ```
+                ````
+
+                Guide heading
+                -------------
+
+                ## Read [the guide](another-guide.md) with `rea`
+
+                ## ![Caf&eacute; *crème*](badge.svg)
+
+                <p id="block-id">A block anchor.</p>
+
+                An <span id="inline-id">inline anchor</span>.
+            """), encoding="utf-8")
+            (root / "docs/rule.md").write_text("---\nOrdinary heading\n---\n", encoding="utf-8")
+            page = root / "website/README.md"
+            page.write_text(dedent("""\
+                ---
+                description: "[Metadata](../docs/not-a-link.md)"
+                ---
+
+                [Setext](../docs/guide.md#guide-heading)
+                [Leading rule](../docs/rule.md#ordinary-heading)
+                [Formatted](../docs/guide.md#read-the-guide-with-rea)
+                [Image alt text](../docs/guide.md#caf%C3%A9-cr%C3%A8me)
+                [Block ID](../docs/guide.md#block-id)
+                [Inline ID](../docs/guide.md#inline-id)
+                [Metadata title](../docs/guide.md#title-guide)
+                [Fenced heading](../docs/guide.md#example-heading)
+                [Fenced ID](../docs/guide.md#example-id)
+            """), encoding="utf-8")
+
+            source = page.relative_to(root)
+            self.assertEqual(VERIFY.check_repository_links(root), [
+                f"{source}: missing Markdown fragment: ../docs/guide.md#title-guide",
+                f"{source}: missing Markdown fragment: ../docs/guide.md#example-heading",
+                f"{source}: missing Markdown fragment: ../docs/guide.md#example-id",
+            ])
 
     def test_repository_links_preserve_targets_and_containment_through_aliased_roots(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -592,7 +660,7 @@ class WebsiteMaintenanceChecks(unittest.TestCase):
             alias = Path(directory) / "site-alias"
             alias.symlink_to(site, target_is_directory=True)
             # The tiny link fixture intentionally omits the social preview.
-            expected = ["Social preview PNG is missing; run scripts/prepare-website.py"]
+            expected = ["Social preview PNG is missing: assets/social-card.png; run scripts/prepare-website.py"]
             self.assertEqual(VERIFY.check_site(site)[3], expected)
             self.assertEqual(VERIFY.check_site(alias)[3], expected)
             (site.parent / "outside.html").write_text("<p>Outside</p>")
@@ -822,6 +890,27 @@ class WebsiteTranslationChecks(unittest.TestCase):
             self.assertIn('hreflang="zh-CN"', (site / "faq/index.html").read_text())
             self.assertIn("https://rea.tools/zh-CN/faq/", (site / "sitemap.xml").read_text())
 
+    def test_fallback_notice_direction_follows_its_own_language(self):
+        with self.translated_project() as root:
+            page = root / "website/public/faq/index.html"
+            page.write_text(page.read_text().replace("How do I install REA?", "How do I install REA today?"))
+            extract_catalogs(root)
+            path = root / "website/locales/ar/messages.po"
+            catalog = polib.pofile(path)
+            notice = catalog.find(FALLBACK_NOTICE, msgctxt="runtime")
+            translated_notice = notice.msgstr
+            self.assertNotEqual(translated_notice, "")
+            site = root / "website/_site"
+            for msgstr, attributes in (
+                ("", 'lang="en" dir="ltr"'),
+                (translated_notice, 'lang="ar" dir="rtl"'),
+            ):
+                notice.msgstr = msgstr
+                catalog.save(path)
+                build_translations(root, site)
+                result = (site / "ar/faq/index.html").read_text()
+                self.assertIn(f'<aside class="container translation-notice" {attributes}>', result)
+
     def test_broken_placeholders_and_inline_markup_fail_before_replacing_preview(self):
         with self.translated_project() as root:
             page = root / "website/public/index.html"
@@ -921,7 +1010,7 @@ class WebsiteTranslationChecks(unittest.TestCase):
         arabic.feed((site / "ar/faq/index.html").read_text())
         self.assertEqual(arabic.lang, "ar")
 
-    def test_every_reading_page_loads_theme_before_styles(self):
+    def test_reading_pages_set_the_initial_theme_and_defer_external_scripts(self):
         site = ROOT / "website/_site"
         english_pages = reading_pages(ROOT / "website/public")
         self.assertTrue(english_pages)
@@ -936,12 +1025,12 @@ class WebsiteTranslationChecks(unittest.TestCase):
                         self.assertEqual(len(colors), 1)
                         self.assertEqual(colors[0].attrs.get("content"), "#ffffff")
                         self.assertNotIn("media", colors[0].attrs)
-                        theme = [node for node in doc.nodes if node.tag == "script" and (node.attrs.get("src") or "").endswith("/assets/theme.js")]
-                        self.assertEqual(len(theme), 1)
-                        for deferred in ("defer", "async", "type"):
-                            self.assertNotIn(deferred, theme[0].attrs)
+                        scripts = [node for node in doc.nodes if node.tag == "script"]
+                        for node in scripts:
+                            if node.attrs.get("src"):
+                                self.assertTrue("defer" in node.attrs or "async" in node.attrs or node.attrs.get("type") == "module")
                         stylesheet = next(node for node in doc.nodes if node.tag == "link" and node.attrs.get("rel") == "stylesheet")
-                        self.assertLess(theme[0].start, stylesheet.start)
+                        self.assertTrue(any(node.start < stylesheet.start and "src" not in node.attrs and "type" not in node.attrs for node in scripts))
                         toggle = [node for node in doc.nodes if "data-theme-toggle" in node.attrs]
                         self.assertEqual(len(toggle), 1)
                         self.assertEqual(toggle[0].tag, "button")

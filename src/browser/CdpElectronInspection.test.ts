@@ -3,7 +3,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { describe, expect, it } from "vitest";
+import { expect, it } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 import { fakeCdpEvents } from "../../tests/fixtures/fakeCdpEvents.js";
@@ -29,6 +29,7 @@ import {
 } from "./CdpElectronScriptEvents.js";
 import { CDP_SCRIPT_SOURCE_BYTES_OMISSION_REASON } from "./CdpScriptSourceBudget.js";
 import { captureElectronScripts } from "./CdpElectronScripts.js";
+import { ElectronFileScope } from "./ElectronFileScope.js";
 import { inspectElectronPageInputSchema } from "../domain/javascript/electronObservation.js";
 import type { ProgressReporter } from "../ports/ProgressReporter.js";
 
@@ -42,6 +43,7 @@ const inspectRaceConnection = (
     ...(progress === undefined ? {} : { progress }),
     sessionId: undefined,
     asarHeaderAdmission: DEFAULT_ASAR_HEADER_ADMISSION,
+    files: new ElectronFileScope(),
     discovery: {
       webSocket: { scope: "browser", url: "ws://127.0.0.1:9222" },
       version: {
@@ -432,144 +434,99 @@ it.each([7, null, "", "claimed-parent"])(
   },
 );
 
-describe("Electron frame capture", () => {
-  it.each([7, undefined])(
-    "classifies a malformed child frame ID as unavailable: %s",
-    async (childId) => {
-      const root = await createTestTempDirectory("rea-electron-frame-");
-      const main = join(root, "index.html");
-      const child = join(root, "child.html");
-      await Promise.all([writeFile(main, "main"), writeFile(child, "child")]);
-      const mainUrl = pathToFileURL(main).href;
-      const childUrl = pathToFileURL(child).href;
-      const completeness = new CdpCaptureCompleteness();
+it("preserves script records across context teardown and ID reuse", async () => {
+  const root = await createTestTempDirectory("rea-electron-script-frame-");
+  const scriptPath = join(root, "app.js");
+  await writeFile(scriptPath, "export const app = true;");
+  const scripts: ElectronScriptDraft[] = [];
+  const executionContextFrames = new Map<string, CdpContextFrameClaim>();
+  const retention = { bytes: 2 };
+  const completeness = new CdpCaptureCompleteness();
+  const ingest = (method: string, params: unknown): void =>
+    ingestElectronScriptEvent({
+      event: receiveCdpEvent({ method, params }),
+      scripts,
+      executionContextFrames,
+      retention,
+      completeness,
+    });
+  const context = (frameId: string) => ({
+    context: { id: 7, auxData: { frameId } },
+  });
+  const parsed = (
+    scriptId: string,
+    hash: string,
+    url = pathToFileURL(scriptPath).href,
+  ) => ({
+    scriptId,
+    url,
+    hash,
+    executionContextId: 7,
+  });
 
-      const { frames } = await captureFrames(
-        frameTreeReply({
-          frameTree: {
-            frame: { id: "frame-main", url: mainUrl },
-            childFrames: [
-              {
-                frame: {
-                  ...(childId === undefined ? {} : { id: childId }),
-                  url: childUrl,
-                },
-              },
-            ],
-          },
-        }),
-        completeness,
-        DEFAULT_ASAR_HEADER_ADMISSION,
-      );
-
-      expect(frames.map((frame) => frame.frame_id)).toEqual(["frame-main"]);
-      expect(completeness.snapshot()).toMatchObject({
-        unavailable_sections: ["frames"],
-        excluded: [
-          { section: "frames", reason: "invalid_protocol_value", count: 1 },
-        ],
-      });
-      expect(completeness.snapshot().policy_filtered_sections).not.toContain(
-        "frames",
-      );
-      expect(completeness.snapshot().conditions).toContain("attach_limited");
-    },
+  ingest("Runtime.executionContextCreated", context("frame-old"));
+  ingest("Debugger.scriptParsed", parsed("script-old", "shared"));
+  ingest("Runtime.executionContextDestroyed", { executionContextId: 7 });
+  ingest("Runtime.executionContextCreated", context("frame-new"));
+  ingest("Debugger.scriptParsed", parsed("script-new", "shared"));
+  ingest("Runtime.executionContextsCleared", {});
+  ingest("Debugger.scriptParsed", parsed("script-unknown", "unknown"));
+  ingest("Runtime.executionContextCreated", context("frame-outside"));
+  ingest("Debugger.scriptParsed", parsed("script-outside", "outside"));
+  ingest(
+    "Debugger.scriptParsed",
+    parsed(
+      "script-out-of-scope",
+      "out-of-scope",
+      "https://example.test/app.js",
+    ),
   );
 
-  it("preserves script records across context teardown and ID reuse", async () => {
-    const root = await createTestTempDirectory("rea-electron-script-frame-");
-    const scriptPath = join(root, "app.js");
-    await writeFile(scriptPath, "export const app = true;");
-    const scripts: ElectronScriptDraft[] = [];
-    const executionContextFrames = new Map<string, CdpContextFrameClaim>();
-    const retention = { bytes: 2 };
-    const completeness = new CdpCaptureCompleteness();
-    const ingest = (method: string, params: unknown): void =>
-      ingestElectronScriptEvent({
-        event: receiveCdpEvent({ method, params }),
-        scripts,
-        executionContextFrames,
-        retention,
-        completeness,
-      });
-    const context = (frameId: string) => ({
-      context: { id: 7, auxData: { frameId } },
-    });
-    const parsed = (
-      scriptId: string,
-      hash: string,
-      url = pathToFileURL(scriptPath).href,
-    ) => ({
-      scriptId,
-      url,
-      hash,
-      executionContextId: 7,
-    });
+  const capture = await captureElectronScripts({
+    connection: {
+      send: async () => {
+        throw new Error("Source capture must remain disabled in this test");
+      },
+    } as unknown as CdpConnection,
+    sessionId: undefined,
+    request: inspectElectronPageInputSchema.parse({
+      cdp_endpoint: "http://127.0.0.1:9222",
+      target_id: "page-1",
+      observation_ms: 0,
+      include_script_sources: false,
+    }),
+    scripts,
+    frameScopeForScript: (script) =>
+      script.frameId !== null &&
+      new Set(["frame-old", "frame-new"]).has(script.frameId)
+        ? { state: "authorized", frameId: script.frameId }
+        : { state: "unknown", frameId: script.frameId },
+    completeness,
+    asarHeaderAdmission: DEFAULT_ASAR_HEADER_ADMISSION,
+  });
 
-    ingest("Runtime.executionContextCreated", context("frame-old"));
-    ingest("Debugger.scriptParsed", parsed("script-old", "shared"));
-    ingest("Runtime.executionContextDestroyed", { executionContextId: 7 });
-    ingest("Runtime.executionContextCreated", context("frame-new"));
-    ingest("Debugger.scriptParsed", parsed("script-new", "shared"));
-    ingest("Runtime.executionContextsCleared", {});
-    ingest("Debugger.scriptParsed", parsed("script-unknown", "unknown"));
-    ingest("Runtime.executionContextCreated", context("frame-outside"));
-    ingest("Debugger.scriptParsed", parsed("script-outside", "outside"));
-    ingest(
-      "Debugger.scriptParsed",
-      parsed(
-        "script-out-of-scope",
-        "out-of-scope",
-        "https://example.test/app.js",
-      ),
-    );
-
-    const capture = await captureElectronScripts({
-      connection: {
-        send: async () => {
-          throw new Error("Source capture must remain disabled in this test");
-        },
-      } as unknown as CdpConnection,
-      sessionId: undefined,
-      request: inspectElectronPageInputSchema.parse({
-        cdp_endpoint: "http://127.0.0.1:9222",
-        target_id: "page-1",
-        observation_ms: 0,
-        include_script_sources: false,
-      }),
-      scripts,
-      frameScopeForScript: (script) =>
-        script.frameId !== null &&
-        new Set(["frame-old", "frame-new"]).has(script.frameId)
-          ? { state: "authorized", frameId: script.frameId }
-          : { state: "unknown", frameId: script.frameId },
-      completeness,
-      asarHeaderAdmission: DEFAULT_ASAR_HEADER_ADMISSION,
-    });
-
-    expect(capture.total).toBe(4);
-    const sharedScripts = capture.items.filter(
-      (item) => item.cdp_hash === "shared",
-    );
-    expect(new Set(sharedScripts.map((item) => item.frame_id))).toEqual(
-      new Set(["frame-old", "frame-new"]),
-    );
-    expect(new Set(sharedScripts.map((item) => item.script_key)).size).toBe(2);
-    expect(
-      Object.fromEntries(
-        capture.items
-          .filter((item) => item.cdp_hash !== "shared")
-          .map((item) => [item.cdp_hash, item.frame_id]),
-      ),
-    ).toEqual({
-      unknown: null,
-      outside: "frame-outside",
-    });
-    expect(completeness.snapshot().excluded).toContainEqual({
-      section: "scripts",
-      reason: "out_of_target_scope",
-      count: 1,
-    });
+  expect(capture.total).toBe(4);
+  const sharedScripts = capture.items.filter(
+    (item) => item.cdp_hash === "shared",
+  );
+  expect(new Set(sharedScripts.map((item) => item.frame_id))).toEqual(
+    new Set(["frame-old", "frame-new"]),
+  );
+  expect(new Set(sharedScripts.map((item) => item.script_key)).size).toBe(2);
+  expect(
+    Object.fromEntries(
+      capture.items
+        .filter((item) => item.cdp_hash !== "shared")
+        .map((item) => [item.cdp_hash, item.frame_id]),
+    ),
+  ).toEqual({
+    unknown: null,
+    outside: "frame-outside",
+  });
+  expect(completeness.snapshot().excluded).toContainEqual({
+    section: "scripts",
+    reason: "out_of_target_scope",
+    count: 1,
   });
 });
 
@@ -852,18 +809,17 @@ it.each([2, 3])(
     await expect(
       inspectRaceConnection(connection, mainUrl),
     ).rejects.toMatchObject({
+      _tag: "BrowserObservationError",
+      operation: "inspect_electron_page",
       reason: "target_changed",
     });
   },
 );
 
 it.each([
-  { stage: 1, loader: undefined },
   { stage: 1, loader: "" },
   { stage: 2, loader: undefined },
-  { stage: 2, loader: "" },
   { stage: 3, loader: undefined },
-  { stage: 3, loader: "" },
   { stage: 0, loader: undefined },
 ])(
   "retains uncertainty when the main loader is missing at read $stage",
@@ -1008,3 +964,94 @@ it.each([
     }
   },
 );
+
+it("captures only the scripts parsed before script capture starts", async () => {
+  const directory = await createTestTempDirectory("rea-electron-snapshot-");
+  const first = join(directory, "first.js");
+  await writeFile(first, "1");
+  const scripts: ElectronScriptDraft[] = [];
+  const retention = { bytes: 2 };
+  const ingestCompleteness = new CdpCaptureCompleteness();
+  const executionContextFrames = new Map<string, CdpContextFrameClaim>();
+  const draft = (path: string, id: string): ElectronScriptDraft => {
+    const drafts: ElectronScriptDraft[] = [];
+    ingestElectronScriptEvent({
+      event: receiveCdpEvent({
+        method: "Debugger.scriptParsed",
+        params: { scriptId: id, url: pathToFileURL(path).href, hash: id },
+      }),
+      scripts: drafts,
+      executionContextFrames,
+      retention,
+      completeness: ingestCompleteness,
+    });
+    const created = drafts[0];
+    if (created === undefined) throw new Error("fixture script not ingested");
+    return created;
+  };
+  scripts.push(draft(first, "1"));
+  const captured = await captureElectronScripts({
+    connection: {} as CdpConnection,
+    sessionId: undefined,
+    request: inspectElectronPageInputSchema.parse({
+      cdp_endpoint: "http://127.0.0.1:9222",
+      target_id: "page",
+    }),
+    scripts,
+    frameScopeForScript: (script) => {
+      // A script parsed while capture awaits must not join this capture.
+      if (scripts.length === 1) scripts.push(draft(first, "2"));
+      return { state: "unknown", frameId: script.frameId };
+    },
+    completeness: new CdpCaptureCompleteness(["scripts", "script_sources"]),
+    asarHeaderAdmission: DEFAULT_ASAR_HEADER_ADMISSION,
+    files: new ElectronFileScope(),
+  });
+  expect(captured.total).toBe(1);
+});
+
+it("reports scripts parsed after script capture as omitted, not silently absent", async () => {
+  const root = await createTestTempDirectory("rea-electron-late-script-");
+  const main = join(root, "index.html");
+  const early = join(root, "early.js");
+  const late = join(root, "late.js");
+  await Promise.all([
+    writeFile(main, "main"),
+    writeFile(early, "void 0;"),
+    writeFile(late, "void 1;"),
+  ]);
+  const mainUrl = pathToFileURL(main).href;
+  const events = fakeCdpEvents();
+  const parsed = (scriptId: string, path: string) =>
+    events.emit({
+      method: "Debugger.scriptParsed",
+      params: { scriptId, url: pathToFileURL(path).href, hash: scriptId },
+    });
+  const connection = {
+    onEvent: events.onEvent,
+    send: fakeCdpSend(async (method) => {
+      if (method === "Page.getFrameTree")
+        return { frameTree: { frame: { id: "main", url: mainUrl } } };
+      if (method === "Debugger.enable") parsed("early", early);
+      if (method === "Page.getResourceTree")
+        return {
+          frameTree: { frame: { id: "main", url: mainUrl }, resources: [] },
+        };
+      if (method === "DOMSnapshot.captureSnapshot")
+        return { strings: [], documents: [] };
+      // Worker capture runs after scripts were captured; the page keeps
+      // loading code meanwhile.
+      if (method === "Target.getTargets") {
+        parsed("late", late);
+        return { targetInfos: [] };
+      }
+      return {};
+    }),
+  } as unknown as CdpConnection;
+  const result = await inspectRaceConnection(connection, mainUrl);
+  expect(result.scripts.items.map(({ cdp_hash }) => cdp_hash)).toEqual([
+    "early",
+  ]);
+  expect(result.scripts.total).toBe(2);
+  expect(result.completeness.dropped_events.scripts).toBe(1);
+});

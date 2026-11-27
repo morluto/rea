@@ -151,7 +151,8 @@ function initializeDinoDemo(demo) {
 
   const animate = (time) => {
     if (!running) return;
-    elapsed += Math.min(time - lastTime, 100);
+    // A frame timestamp can precede the performance.now() read by play().
+    elapsed += Math.min(Math.max(time - lastTime, 0), 100);
     lastTime = time;
     while (elapsed >= 1000 / 60 && running) {
       elapsed -= 1000 / 60;
@@ -220,7 +221,8 @@ function initializeDinoDemo(demo) {
   });
   if ("IntersectionObserver" in window) {
     new IntersectionObserver((entries) => {
-      if (!entries[0].isIntersecting && running)
+      // Batched entries arrive in order; the last one is the current state.
+      if (!entries.at(-1).isIntersecting && running)
         stop(t("Paused. Press Play to continue."));
     }).observe(demo);
   }

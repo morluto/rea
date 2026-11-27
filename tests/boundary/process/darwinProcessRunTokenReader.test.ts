@@ -10,7 +10,6 @@ import {
   access,
   chmod,
   mkdir,
-  mkdtemp,
   readFile,
   readdir,
   rm,
@@ -23,7 +22,9 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { _electron as electron } from "playwright-core";
 import { expect, it, onTestFinished, vi } from "vitest";
+import { waitForPosixObservation } from "../../support/process/observePosixProcess.js";
 import { z } from "zod";
+import { stopProviderProcessFixture } from "../../fixtures/providerProcess.js";
 import { writeFakeXcrun } from "../../fixtures/darwinHelperToolchain.js";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -1574,14 +1575,15 @@ it.skipIf(!onDarwin)(
         ["-e", 'process.title = "npm run check"; setInterval(() => {}, 1_000)'],
       );
       children.push(titleMutated);
-      await expect
-        .poll(async () => {
-          const process = (await host.listProcesses()).find(
-            ({ pid }) => pid === titleMutated.pid,
-          );
-          return process?.command ?? "";
-        })
-        .toMatch(/^npm run check/u);
+      const observedTitle = await waitForPosixObservation(async () => {
+        const entry = (await host.listProcesses()).find(
+          ({ pid }) => pid === titleMutated.pid,
+        );
+        return entry !== undefined && /^npm run check/u.test(entry.command)
+          ? entry.command
+          : undefined;
+      });
+      expect(observedTitle).toMatch(/^npm run check/u);
 
       const processes = await host.listProcesses();
       const entries = [decoy, owned, titleMutated].map(({ pid }) => {
@@ -1609,7 +1611,9 @@ it.skipIf(!onDarwin)(
       expect(identities?.get(titleMutated.pid)?.state).toBe("readable");
     } finally {
       try {
-        await Promise.all(children.map(({ child }) => stopNodeChild(child)));
+        await Promise.all(
+          children.map(({ child }) => stopProviderProcessFixture(child)),
+        );
       } finally {
         await host.close?.();
       }
@@ -1682,7 +1686,7 @@ it.skipIf(!onDarwin)(
       }
     } finally {
       try {
-        await Promise.all(children.map(stopNodeChild));
+        await Promise.all(children.map(stopProviderProcessFixture));
       } finally {
         await host.close?.();
       }
@@ -1732,7 +1736,7 @@ it.skipIf(!onDarwin)(
         { state: "readable" },
       ]);
     } finally {
-      for (const { child } of children) await stopNodeChild(child);
+      for (const { child } of children) await stopProviderProcessFixture(child);
       await host.close?.();
     }
   },
@@ -1756,15 +1760,6 @@ const startNodeChild = async (
     child.once("error", reject);
   });
   return { child, pid: child.pid };
-};
-
-const stopNodeChild = async (child: ChildProcess) => {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  const exited = new Promise<void>((resolve) =>
-    child.once("exit", () => resolve()),
-  );
-  child.kill("SIGKILL");
-  await exited;
 };
 
 const waitForChildReadiness = async (
@@ -1797,7 +1792,7 @@ it("stops a child that never acknowledges readiness", async () => {
       "title-mutating child readiness was not acknowledged before the gate deadline",
     );
   } finally {
-    await stopNodeChild(child);
+    await stopProviderProcessFixture(child);
   }
   expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
 });
@@ -1809,6 +1804,7 @@ it.skipIf(process.platform === "win32").each([
     stderrHex: "ff",
     stderrBytes: 1,
     truncated: false,
+    stderrInvalidUtf8: true,
   },
   {
     name: "bounded stdout",
@@ -1816,10 +1812,11 @@ it.skipIf(process.platform === "win32").each([
     stderrHex: "61",
     stderrBytes: 1,
     truncated: true,
+    stderrInvalidUtf8: false,
   },
 ])(
   "retains original output facts for $name compiler failures",
-  async ({ stdout, stderrHex, stderrBytes, truncated }) => {
+  async ({ stdout, stderrHex, stderrBytes, truncated, stderrInvalidUtf8 }) => {
     const directory = await createTestTempDirectory(
       "rea-compiler-output-facts-",
     );
@@ -1843,6 +1840,8 @@ it.skipIf(process.platform === "win32").each([
         truncated,
         exit_code: 7,
         signal: null,
+        // The replaced byte is marked where it was decoded.
+        ...(stderrInvalidUtf8 ? { stderr_invalid_utf8: true } : {}),
       });
       const normalized = normalizeCaptureFailure(failure);
       if (!(normalized instanceof ProcessCaptureError))

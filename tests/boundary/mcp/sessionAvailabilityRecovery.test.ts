@@ -22,7 +22,10 @@ import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.j
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { err, ok, type Result } from "../../../src/domain/result.js";
 import { silentLogger } from "../../../src/logger.js";
-import { observed } from "../../fixtures/analysisExecution.js";
+import {
+  createFixtureProviderIdentity,
+  observed,
+} from "../../fixtures/analysisExecution.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
@@ -326,11 +329,7 @@ it("keeps provider tools available after one request reaches its deadline", asyn
 type Reply = Result<AnalysisExecution, AnalysisError>;
 type Responder = (operation: string) => Promise<Reply>;
 
-const FIXTURE = {
-  id: "fixture",
-  name: "Fixture analysis provider",
-  version: "1",
-} as const satisfies ProviderIdentity;
+const FIXTURE = createFixtureProviderIdentity() satisfies ProviderIdentity;
 const AUXILIARY = {
   id: "fixture-auxiliary",
   name: "Auxiliary fixture provider",

@@ -3,7 +3,7 @@ import { Budget } from "../budget.js";
 import { fixedAllowanceOptions } from "../fixedAllowanceRemediation.js";
 import {
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
+  unsupportedTarget,
 } from "../analysisErrorCore.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js";
@@ -13,7 +13,7 @@ import {
   type WebNetworkCapture,
 } from "../webNetworkCapture.js";
 import { admitAnalysisViewData } from "./analysisViewDataAdmission.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisViewSubject } from "./analysisViewErrors.js";
 import { analysisInputErrorFromIssues } from "../inputIssueProjection.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
@@ -177,30 +177,13 @@ export abstract class WebNetworkProjectionAccumulator {
 }
 
 /** Authenticate and gate a retained HAR parent before a grouping view reads any record. */
-export const admitHarCaptureParent = (
+const parseHarCapture = (
   parent: AnalysisViewParent,
-  viewKind: "api-surface" | "environment-manifest" | "environment-state",
-  accumulator: WebNetworkProjectionAccumulator,
-  context: { readonly operation?: string; readonly sourceField?: string } = {},
+  operation: string,
+  sourceField: string,
 ): Result<WebNetworkCapture, AnalysisError> => {
-  const operation = context.operation ?? "inspect_analysis_view";
-  const sourceField = context.sourceField ?? "source";
-  const unsupported = (reason: string, remediationAction?: string) =>
-    err(
-      new AnalysisUnsupportedTargetError(
-        operation,
-        parent.evidenceId,
-        reason,
-        remediationAction === undefined ? undefined : { remediationAction },
-      ),
-    );
-  if (parent.operation !== "inspect_web_network_capture")
-    return unsupported(
-      `View ${viewKind} is unsupported for parent operation ${parent.operation}; ${viewKind} requires ${viewKind === "api-surface" ? "inspect_web_network_capture" : "inspect_web_network_capture or capture_browser_scenario"}.`,
-    );
-  const admitted = accumulator.admitCaptureClone(parent.normalizedResult);
-  if (!admitted.ok) return admitted;
-  const parsed = safeParseOwnedWebNetworkCapture(parent.normalizedResult);
+  const source = parent.normalizedResult;
+  const parsed = safeParseOwnedWebNetworkCapture(source);
   if (!parsed.success)
     return err(
       analysisInputErrorFromIssues(
@@ -209,31 +192,46 @@ export const admitHarCaptureParent = (
           ...issue,
           path: [sourceField, "normalized_result", ...issue.path],
         })),
-        { [sourceField]: { normalized_result: parent.normalizedResult } },
+        { [sourceField]: { normalized_result: source } },
         { cause: parsed.error },
       ),
     );
-  if (parsed.data.format !== "har")
+  return ok(parsed.data);
+};
+
+export const admitHarCaptureParent = (
+  parent: AnalysisViewParent,
+  viewKind: "api-surface" | "environment-manifest" | "environment-state",
+  accumulator: WebNetworkProjectionAccumulator,
+  context: { readonly operation?: string; readonly sourceField?: string } = {},
+): Result<WebNetworkCapture, AnalysisError> => {
+  const operation = context.operation ?? "inspect_analysis_view";
+  const sourceField = context.sourceField ?? "source";
+  const unsupported = (reason: string) =>
+    err(unsupportedTarget(operation, parent.evidenceId, "evidence", reason));
+  if (parent.operation !== "inspect_web_network_capture")
     return unsupported(
-      `${viewKind} does not support capture format ${parsed.data.format}.`,
+      `View ${viewKind} is unsupported for parent operation ${parent.operation}; ${viewKind} requires ${viewKind === "api-surface" ? "inspect_web_network_capture" : "inspect_web_network_capture or capture_browser_scenario"}.`,
+    );
+  const admitted = accumulator.admitCaptureClone(parent.normalizedResult);
+  if (!admitted.ok) return admitted;
+  const parsed = parseHarCapture(parent, operation, sourceField);
+  if (!parsed.ok) return parsed;
+  if (parsed.value.format !== "har")
+    return unsupported(
+      `${viewKind} does not support capture format ${parsed.value.format}.`,
     );
   // Environment views preserve the recorded report path and authenticate its digest;
   // the api-surface view keeps the admission its existing callers rely on.
-  const { artifact } = parsed.data;
+  const { artifact } = parsed.value;
   const subject = evidenceFileTarget(parent);
   if (
     viewKind !== "api-surface" &&
     artifact.sha256 !== null &&
     (subject == null || subject.sha256 !== artifact.sha256)
   )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message: "Capture parent subject must identify the report's SHA-256.",
-        },
-      ]),
+    return invalidAnalysisViewSubject(
+      "Capture parent subject must identify the report's SHA-256.",
     );
   // The view would write path templates it cannot check against declarations
   // the parent does not retain, so the refusal does not repeat declaration text.
@@ -241,9 +239,14 @@ export const admitHarCaptureParent = (
     .object({ sensitive_value_count: z.number().int().nonnegative() })
     .safeParse(parent.parameters);
   if (!declarations.success || declarations.data.sensitive_value_count > 0)
-    return unsupported(
-      "sensitive_values_unretained",
-      "This view cannot safely project this capture because sensitivity declarations are not retained. Use a compatible capture or summary view to inspect retained observations. Do not remove sensitivity declarations to bypass this restriction.",
+    return err(
+      unsupportedTarget(
+        operation,
+        parent.evidenceId,
+        "evidence",
+        "sensitive_values_unretained: this view cannot safely project this capture because sensitivity declarations are not retained. Use a compatible capture or summary view to inspect retained observations. Do not remove sensitivity declarations to bypass this restriction.",
+        { field: "sensitive_value_count" },
+      ),
     );
-  return ok(parsed.data);
+  return ok(parsed.value);
 };

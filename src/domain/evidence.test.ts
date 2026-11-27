@@ -1,4 +1,5 @@
 import { displayedEvidenceSubject } from "../../tests/fixtures/evidenceSubject.js";
+import { rawLoadAtEntry } from "./rawBinary.fixture.js";
 import { unknownTarget } from "./targetIdentity.js";
 import { fc, it } from "@fast-check/vitest";
 import { describe, expect } from "vitest";
@@ -16,6 +17,7 @@ import {
   immutableEvidence,
   withEvidenceCallerInputPath,
   rebindEvidenceToTargetPath,
+  withEvidenceProviderSelection,
   evidenceFileTarget,
   evidenceSubjectDisplay,
   evidenceSubject,
@@ -27,8 +29,9 @@ import {
 } from "./jsonValue.js";
 import { AnalysisResourceConstraintError } from "./analysisErrorCore.js";
 import { projectAnalysisError } from "./analysisErrorProjection.js";
-import { createEvidenceBundle } from "./evidenceBundle.js";
+import { createEvidenceBundle, parseEvidenceBundle } from "./evidenceBundle.js";
 import { freezeJsonSnapshot } from "./immutableJson.js";
+import { relationshipCoverageSchema } from "./relationshipCoverage.js";
 
 const TARGET: BinaryTarget = {
   path: "/tmp/fixture",
@@ -49,8 +52,7 @@ describe("subject target identity", () => {
     format: "raw-binary",
     architecture: "arm",
     availableArchitectures: ["arm"],
-    entryPoint,
-    entryPointSource: "caller",
+    rawLoad: rawLoadAtEntry(entryPoint),
   });
   const observe = (target: BinaryTarget) =>
     createEvidence(target, PROVIDER, {
@@ -84,13 +86,16 @@ describe("subject target identity", () => {
       local_path: "/elsewhere/firmware.bin",
     });
     expect(rebound.evidence_id).toBe(original.evidence_id);
-    // A different selection is a different target, so the path is not rebound.
-    expect(
-      rebindEvidenceToTargetPath(original, {
-        ...raw("0x100"),
-        path: "/elsewhere/firmware.bin",
-      }),
-    ).toBe(original);
+    for (const different of [
+      raw("0x100"),
+      { ...raw("0x0"), sha256: "f".repeat(64) },
+    ])
+      expect(
+        rebindEvidenceToTargetPath(original, {
+          ...different,
+          path: "/elsewhere/firmware.bin",
+        }),
+      ).toBe(original);
   });
 
   it("names the subject only by its identity and display facts", () => {
@@ -278,6 +283,53 @@ it("requires explicit coverage in serialized Evidence while producers encode omi
   expect(() => parseEvidence(oldEnvelope)).toThrow();
 });
 
+it("preserves saved format-2 Evidence and bundles whose unknown/partial coverage omits limited_directions", () => {
+  const unknownCoverage = {
+    status: "unknown" as const,
+    reason:
+      "Upstream callees omitted an explicit truncation marker; additional callees remain unknown.",
+  };
+  const partialCoverage = {
+    status: "partial" as const,
+    limitations: ["Upstream callees capped results at 500."],
+  };
+  expect(relationshipCoverageSchema.safeParse(unknownCoverage).success).toBe(
+    false,
+  );
+  expect(relationshipCoverageSchema.safeParse(partialCoverage).success).toBe(
+    false,
+  );
+
+  const unknownRecord = createEvidence(TARGET, PROVIDER, {
+    operation: "procedure_callees",
+    parameters: { procedure: "0x1000" },
+    result: ["0x2000"],
+    relationshipCoverage: unknownCoverage,
+  });
+  const partialRecord = createEvidence(TARGET, PROVIDER, {
+    operation: "procedure_callees",
+    parameters: { procedure: "0x1010" },
+    result: ["0x2010"],
+    relationshipCoverage: partialCoverage,
+  });
+
+  const reloadedUnknown = parseEvidence(
+    JSON.parse(JSON.stringify(unknownRecord)),
+  );
+  expect(reloadedUnknown).toEqual(unknownRecord);
+  expect(reloadedUnknown.evidence_id).toBe(unknownRecord.evidence_id);
+
+  const bundle = createEvidenceBundle([unknownRecord, partialRecord]);
+  const reloadedBundle = parseEvidenceBundle(
+    JSON.parse(JSON.stringify(bundle)),
+  );
+  expect(reloadedBundle).toEqual(bundle);
+  expect(reloadedBundle.records.map((record) => record.evidence_id)).toEqual([
+    unknownRecord.evidence_id,
+    partialRecord.evidence_id,
+  ]);
+});
+
 it("projects known provider fields and preserves open JSON payloads", () => {
   const liveProvider = { ...PROVIDER, transient_status: "starting" };
   const evidence = createEvidence(TARGET, liveProvider, {
@@ -448,6 +500,114 @@ it("retains verbatim caller input without changing semantic identity or copying 
       .success,
   ).toBe(false);
   expect(() => withEvidenceCallerInputPath(second, "invalid\0path")).toThrow();
+});
+
+it("retains the recording session's provider selection without changing semantic identity", () => {
+  const original = createEvidence(TARGET, PROVIDER, {
+    operation: "inspect",
+    parameters: { address: "0x1000" },
+    result: { nested: ["observed"] },
+    rawResult: { source: "provider" },
+  });
+  const selection = {
+    selection_source: "auto-single-candidate" as const,
+    candidates: [
+      {
+        provider: { id: "ghidra", name: "Ghidra", version: "11.2" },
+        selected: true,
+        availability: "available" as const,
+        target_support: "supported" as const,
+        rejection_codes: [],
+      },
+      {
+        provider: { id: "ida", name: "IDA", version: null },
+        selected: false,
+        availability: "unavailable" as const,
+        target_support: "unknown" as const,
+        rejection_codes: ["ida_missing"],
+      },
+    ],
+  };
+  const attributed = withEvidenceProviderSelection(original, selection);
+
+  expect(attributed.provider_selection).toEqual(selection);
+  expect(original.provider_selection).toBeUndefined();
+  // Selection provenance describes the session, not the observation.
+  expect(attributed.evidence_id).toBe(original.evidence_id);
+  expect(attributed.normalized_result).toEqual(original.normalized_result);
+  expect(attributed.raw_result).toEqual(original.raw_result);
+  expect(Object.isFrozen(attributed)).toBe(true);
+  expect(withEvidenceProviderSelection(attributed, selection)).toBe(attributed);
+  // Older records carry no provenance and still authenticate.
+  expect(parseEvidence(JSON.parse(JSON.stringify(original)))).toEqual(original);
+  expect(parseEvidence(JSON.parse(JSON.stringify(attributed)))).toEqual(
+    attributed,
+  );
+  expect(withEvidenceProviderSelection(original, undefined)).toEqual(
+    immutableEvidence(original),
+  );
+});
+
+it("refuses provider selection provenance that names no single provider", () => {
+  const original = createEvidence(TARGET, PROVIDER, {
+    operation: "inspect",
+    parameters: {},
+    result: {},
+    rawResult: null,
+  });
+  const candidate = (id: string, selected: boolean) => ({
+    provider: { id, name: id, version: null },
+    selected,
+    availability: "available" as const,
+    target_support: "supported" as const,
+    rejection_codes: [],
+  });
+  // Without a separate selected-provider id, a reader can only name the
+  // recording session's provider when exactly one candidate claims it.
+  for (const candidates of [
+    [candidate("ghidra", false), candidate("ida", false)],
+    [candidate("ghidra", true), candidate("ida", true)],
+    [],
+  ])
+    expect(() =>
+      withEvidenceProviderSelection(original, {
+        selection_source: "auto-single-candidate",
+        candidates,
+      }),
+    ).toThrow();
+});
+
+it("refuses a selected provider the registry could never have bound", () => {
+  const original = createEvidence(TARGET, PROVIDER, {
+    operation: "inspect",
+    parameters: {},
+    result: {},
+    rawResult: null,
+  });
+  const candidate = (status: {
+    readonly availability: "available" | "unavailable" | "unknown";
+    readonly target_support: "supported" | "unsupported" | "unknown";
+  }) => ({
+    provider: { id: "ghidra", name: "Ghidra", version: null },
+    selected: true,
+    ...status,
+    rejection_codes: [],
+  });
+  // Every registry path binds a provider only after both checks succeeded, so
+  // an imported bundle naming a selected unavailable or unsupported candidate
+  // would re-export a selection that never occurred.
+  for (const status of [
+    { availability: "unavailable", target_support: "supported" },
+    { availability: "unknown", target_support: "supported" },
+    { availability: "available", target_support: "unsupported" },
+    { availability: "available", target_support: "unknown" },
+  ] as const)
+    expect(() =>
+      withEvidenceProviderSelection(original, {
+        selection_source: "request",
+        candidates: [candidate(status)],
+      }),
+    ).toThrow();
 });
 
 it("retains named auxiliary path choices without changing identity, history or shared payloads", () => {
@@ -1115,4 +1275,62 @@ it("validates a debugger session subject's launch file with the file subject dec
       .identity,
     "an unobserved launch target stays an explicit unknown",
   ).toEqual({ ...session, target: unknownTarget("not-observed") });
+});
+
+it("still validates profile provider agreement when reusing an immutable snapshot result", () => {
+  const result = freezeJsonSnapshot({ ok: true });
+  const created = createEvidence(TARGET, PROVIDER, {
+    operation: "health",
+    parameters: {},
+    result,
+    analysisProfile: PROFILE,
+  });
+  expect(created.normalized_result).toBe(result);
+  expect(() =>
+    createEvidence(
+      TARGET,
+      { ...PROVIDER, id: "other" },
+      {
+        operation: "health",
+        parameters: {},
+        result,
+        analysisProfile: PROFILE,
+      },
+    ),
+  ).toThrow(/profile provider/u);
+});
+
+it("rejects rejection codes on a selected provider while retaining unselected rejections", () => {
+  const original = createEvidence(TARGET, PROVIDER, {
+    operation: "inspect",
+    parameters: {},
+    result: true,
+  });
+  const selected = {
+    provider: PROVIDER,
+    selected: true,
+    availability: "available" as const,
+    target_support: "supported" as const,
+    rejection_codes: ["unavailable"],
+  };
+  expect(() =>
+    withEvidenceProviderSelection(original, {
+      selection_source: "request",
+      candidates: [selected],
+    }),
+  ).toThrow();
+  expect(
+    withEvidenceProviderSelection(original, {
+      selection_source: "request",
+      candidates: [
+        { ...selected, rejection_codes: [] },
+        {
+          ...selected,
+          provider: { ...PROVIDER, id: "other" },
+          selected: false,
+          availability: "unavailable",
+        },
+      ],
+    }).provider_selection?.candidates[1]?.rejection_codes,
+  ).toEqual(["unavailable"]);
 });

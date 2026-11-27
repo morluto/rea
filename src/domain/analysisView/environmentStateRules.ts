@@ -1,3 +1,5 @@
+import { appendToMapList } from "../appendToMapList.js";
+import { isSuccessfulHttpStatus } from "../httpResponseStatus.js";
 import { isRecord } from "../../kernel/isRecord.js";
 import { escapeJsonPointerToken, jsonPointerTokens } from "../jsonPointer.js";
 import {
@@ -37,6 +39,9 @@ export interface StateRecordFacts {
     readonly endMs: number | undefined;
   };
 }
+
+export const requestLine = (record: StateRecordFacts): string =>
+  record.path + (record.query ?? "");
 
 /** The manifest tool facts extraction uses. */
 export interface StateToolFacts {
@@ -440,8 +445,14 @@ export const isQueryPost = (method: string, path: string): boolean =>
 export const changesState = (method: string, path: string): boolean =>
   WRITE_METHODS.has(method) && !isQueryPost(method, path);
 
+/** A 2xx record: the only status whose response shows what a request did. */
+export const succeeded = (record: Pick<StateRecordFacts, "status">): boolean =>
+  isSuccessfulHttpStatus(record.status);
+
 /** Whether a record may change state: a successful or unanswered request that `changesState` names. */
-export const isStateWrite = (record: StateRecordFacts): boolean =>
+export const isStateWrite = (
+  record: Pick<StateRecordFacts, "method" | "path" | "status">,
+): boolean =>
   changesState(record.method, record.path) &&
   (record.status === null || (record.status >= 200 && record.status < 400));
 
@@ -501,9 +512,7 @@ export const apiBaseLengths = (
   for (const template of templates) {
     const segments = segmentsOf(template);
     const first = segments[0] ?? "";
-    const group = groups.get(first);
-    if (group === undefined) groups.set(first, [segments]);
-    else group.push(segments);
+    appendToMapList(groups, first, segments);
   }
   return new Map(
     [...groups.entries()].map(([first, members]) => {
@@ -724,12 +733,15 @@ export const listItems = (
 /** An observed item count, retaining the original value separately for rendering. */
 export const recordedItemCount = (
   value: JsonValue | undefined,
-): number | undefined =>
-  typeof value === "number"
-    ? value
-    : typeof value === "string" && /^\d+$/u.test(value)
-      ? Number(value)
-      : undefined;
+): number | undefined => {
+  if (typeof value === "number")
+    return Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+  if (typeof value === "string" && /^\d+$/u.test(value)) {
+    const number = Number(value);
+    return Number.isSafeInteger(number) ? number : undefined;
+  }
+  return undefined;
+};
 
 /** Spell a changed count with the recorded numeric/string type and digit width. */
 export const formatItemCount = (

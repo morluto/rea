@@ -1,6 +1,5 @@
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, writeFile } from "node:fs/promises";
 import { rizinDebugMcpServer } from "../../fixtures/debuggerMcp.js";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -18,7 +17,7 @@ import {
   rizinTestInferiorTty,
 } from "../providers/RizinTestInferiorTty.js";
 import { silentLogger } from "../../../src/logger.js";
-import type { RizinDebugToolOptions } from "../../../src/server/serviceToolBindings.js";
+import type { RizinDebugToolOptions } from "../../../src/server/debuggerToolBindings.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import {
   createBinarySessionTargets,

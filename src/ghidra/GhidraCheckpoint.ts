@@ -1,16 +1,7 @@
 import { appendCallerPath } from "../filesystem/callerPath.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import { createHash, randomUUID } from "node:crypto";
-import { constants } from "node:fs";
-import {
-  copyFile,
-  lstat,
-  mkdir,
-  open,
-  realpath,
-  rename,
-  rm,
-} from "node:fs/promises";
+import { lstat, mkdir, open, realpath, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
@@ -32,6 +23,7 @@ import {
 } from "../filesystem/RegularFile.js";
 import { acquireOwnedLease, type OwnedLease } from "../process/OwnedLease.js";
 import {
+  copyGhidraRegularFile,
   ghidraFileDialect,
   readGhidraProfileArtifact,
 } from "./GhidraFileArtifacts.js";
@@ -320,45 +312,35 @@ export class GhidraCheckpoint {
     let failed = false;
     try {
       assertArtifactReadActive(signal);
-      await copyFile(path, destination, constants.COPYFILE_EXCL);
-      const sha256 = await hashGhidraPackedProgram(
-        destination,
-        this.resources,
+      const hash = createHash("sha256");
+      await copyGhidraRegularFile(path, destination, this.resources, {
         signal,
-      );
+        hash,
+        sync: true,
+      });
+      const sha256 = hash.digest("hex");
       const source: CheckpointSource = {
         file,
         sha256,
         kind: previous === null ? "initial-analysis" : "retained",
       };
-      for (const [output, bytes] of [
-        [destination, undefined],
-        [
-          temporary,
-          JSON.stringify({
-            version: 2,
-            target_sha256: this.selection.target_sha256,
-            base_profile_digest: this.selection.base_profile_digest,
-            source,
-          }),
-        ],
-      ] as const) {
-        const handle = await open(
-          output,
-          bytes === undefined ? "r+" : "wx",
-          0o600,
-        );
-        await withArtifactFileHandle(
-          output,
-          handle,
-          this.resources,
-          signal,
-          async (handle) => {
-            if (bytes !== undefined) await handle.writeFile(bytes);
-            await handle.sync();
-          },
-        );
-      }
+      const metadata = JSON.stringify({
+        version: 2,
+        target_sha256: this.selection.target_sha256,
+        base_profile_digest: this.selection.base_profile_digest,
+        source,
+      });
+      const handle = await open(temporary, "wx", 0o600);
+      await withArtifactFileHandle(
+        temporary,
+        handle,
+        this.resources,
+        signal,
+        async (handle) => {
+          await handle.writeFile(metadata);
+          await handle.sync();
+        },
+      );
       assertArtifactReadActive(signal);
       await rename(
         temporary,

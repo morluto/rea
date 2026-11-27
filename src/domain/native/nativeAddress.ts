@@ -1,9 +1,13 @@
 import { z } from "zod";
 
+/** Observed coordinate pattern: optional space with uppercase `%XX` escapes and lowercase `0x` hex. */
+export const OBSERVED_NATIVE_ADDRESS_PATTERN =
+  /^(?:(?:[A-Za-z0-9._~\x2d]|%[0-9A-F]{2})+:)?0x[0-9a-f]+$/u;
+
 /** Observed hexadecimal coordinate; preserve padding and encoded space spelling. */
 export const nativeAddressObservationSchema = z
   .string()
-  .regex(/^(?:(?:[A-Za-z0-9._~\x2d]|%[0-9A-F]{2})+:)?0x[0-9a-f]+$/u);
+  .regex(OBSERVED_NATIVE_ADDRESS_PATTERN);
 
 /** Canonical hexadecimal coordinate, retaining its optional address space. */
 export const nativeAddressSchema = z

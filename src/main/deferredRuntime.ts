@@ -14,12 +14,27 @@ import { ToolResultDelivery } from "../server/ToolResultDelivery.js";
 import { createLogger } from "../logger.js";
 import { reportMcpShutdownFailure } from "./shutdown.js";
 import type { McpServerHandle, RuntimeDependencies } from "./types.js";
-import { SERVER_START_FAILED } from "./messages.js";
+import { SERVER_START_FAILED } from "../server/serverStartFailure.js";
 import { reportMcpTransportError } from "./reportMcpTransportError.js";
 import { OwnedMcpServers } from "./OwnedMcpServers.js";
-import { COMPACT_INPUT_SCHEMA_PRESENTATION } from "../contracts/mcpSchemaPresentation.js";
+import {
+  COMPACT_INPUT_SCHEMA_PRESENTATION,
+  type McpOutputSchemaProfile,
+} from "../contracts/mcpSchemaPresentation.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
+
+/**
+ * Digests of the selected output profile. The catalog file records the `off`
+ * identity; compact listings advertise different schemas and must start with
+ * the compact digest or the first runtime attach rejects them.
+ */
+const deferredCatalogDigests = (
+  catalog: RecordedMcpCatalog,
+  profile: McpOutputSchemaProfile | undefined,
+): RecordedMcpCatalog["identity"]["digests"] =>
+  RECORDED_CATALOG_DIGEST_PROFILES?.[profile ?? "off"] ??
+  catalog.identity.digests;
 
 /** Verify the build-owned artifact before trusting its exact typed projection. */
 const readCatalog = (): RecordedMcpCatalog => {
@@ -43,6 +58,7 @@ const initializeRuntime = async (
   context: McpRequestContext,
   config: AppConfig,
   startedAt: string,
+  signal: AbortSignal,
 ): Promise<void> => {
   let shutdown: (() => Promise<void>) | undefined;
   let closeSession: (() => Promise<void>) | undefined;
@@ -51,7 +67,7 @@ const initializeRuntime = async (
   server.ownRuntimeCleanup(async () => {
     if (shutdown !== undefined) return shutdown();
     const results = await Promise.allSettled([
-      server.closePartialRuntime(),
+      server.closeRuntimeHooks(),
       (async () => {
         if (!sessionClosed && closeSession !== undefined) {
           await closeSession();
@@ -70,9 +86,12 @@ const initializeRuntime = async (
     import("./eagerRuntime.js"),
     import("../server/createServer.js"),
   ]);
+  // A close during module loading owns nothing yet; never start providers for it.
+  if (signal.aborted) return;
   const result = await runEager(
     {
       ...dependencies,
+      startupSignal: signal,
       // The outer SDK transport already owns and frames this stream. Eager
       // materialization owns providers only, never another copy of raw input.
       stdin: undefined,
@@ -102,18 +121,22 @@ const initializeRuntime = async (
           startedAt,
         });
       },
+      closeServer: () => server.closeRuntimeHooks(),
       serve: (factory) => {
-        let close: (() => Promise<void>) | undefined;
         server.materialize(() => {
-          const configured = factory(context);
-          if (configured !== server) throw new Error(SERVER_START_FAILED);
-          close = configured.close.bind(configured);
+          if (factory(context) !== server) throw new Error(SERVER_START_FAILED);
         });
-        return { close: () => close?.() ?? Promise.resolve() };
+        // The outer SDK closes the protocol. The eager registry owns only the
+        // materialized server's hooks through closeServer.
+        return { close: async () => {} };
       },
     },
     config,
   );
+  // The eager result classifies cancellation before its cleanup await. A close
+  // during that await aborts this signal even when startup already failed.
+  // Only a zero result is a cancelled startup whose shutdown already ran.
+  if (result === 0 && signal.aborted && shutdown !== undefined) return;
   if (result !== 0 || shutdown === undefined)
     throw new Error(SERVER_START_FAILED);
 };
@@ -126,9 +149,17 @@ export const runDeferred = async (
   const serverLogger = createLogger("mcp", config.logLevel).child({
     layer: "server",
   });
-  // `main.ts` defers only the default output profile, which omits output
-  // schemas from listings; the recorded catalog keeps them for validation.
+  // Deferred listings serve build-recorded output advertisements (omitted,
+  // or compact when recorded); canonical result validation loads on first use.
+  // A catalog recorded before compact outputs existed falls back to eager.
   let firstCatalog: RecordedMcpCatalog | undefined = readCatalog();
+  if (
+    config.mcpOutputSchemaProfile === "compact" &&
+    firstCatalog.compactOutputSchemas === undefined
+  ) {
+    const { runEager } = await import("./eagerRuntime.js");
+    return runEager(dependencies, config);
+  }
   const toolFamilies =
     config.mcpToolFamilies === undefined
       ? undefined
@@ -200,26 +231,30 @@ export const runDeferred = async (
               new ToolResultDelivery(
                 config.mcpMaxResponseBytes ?? STDIO_DEFAULT_MAX_BUFFER_SIZE,
               ),
-              (target) =>
+              (target, signal) =>
                 initializeRuntime(
                   target,
                   dependencies,
                   context,
                   config,
                   startedAt,
+                  signal,
                 ).catch((cause) => {
                   dependencies.setExitCode(1);
                   throw cause;
                 }),
               {
                 maximumInputElements: config.mcpMaxInputElements,
+                toolsListPageBudget: config.mcpToolsListPageBudget,
                 compactPresentation: COMPACT_INPUT_SCHEMA_PRESENTATION,
+                outputProfile: config.mcpOutputSchemaProfile,
                 toolFamilies,
                 identity: {
                   ...catalog.identity,
-                  digests:
-                    RECORDED_CATALOG_DIGEST_PROFILES?.off ??
-                    catalog.identity.digests,
+                  digests: deferredCatalogDigests(
+                    catalog,
+                    config.mcpOutputSchemaProfile,
+                  ),
                 },
               },
             );
@@ -227,11 +262,7 @@ export const runDeferred = async (
               server.enableProgressiveCatalog();
             return server;
           });
-          const previous = server.server.onclose;
-          server.server.onclose = () => {
-            previous?.();
-            requestClose();
-          };
+          server.registerTransportCloseHook(requestClose);
           return server;
         },
         {

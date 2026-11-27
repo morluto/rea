@@ -10,8 +10,10 @@ import {
   chmod,
   mkdir,
   readFile,
+  stat,
   symlink,
   truncate,
+  utimes,
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
@@ -19,6 +21,7 @@ import { fileURLToPath } from "node:url";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { AndroidAnalysisService } from "../../../src/application/android/AndroidAnalysisService.js";
 import { JadxProvider } from "../../../src/android/JadxProvider.js";
+import { JADX_RELEASE } from "../../../src/android/JadxRelease.js";
 import { JadxSession } from "../../../src/android/JadxSession.js";
 import { androidResultSchemas } from "../../../src/domain/android/androidAnalysis.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
@@ -29,10 +32,8 @@ import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { RegularFileCleanupFailure } from "../../../src/filesystem/OwnedRegularFile.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
-import {
-  createJadxProtocolFixture as setup,
-  verifyJadxFixtureCleanup as verifyCleanup,
-} from "../../fixtures/android/jadx.js";
+import { expectProviderLaunchCleanup } from "../../support/process/expectProviderLaunchCleanup.js";
+import { createJadxProtocolFixture as setup } from "../../fixtures/android/jadx.js";
 import { writeJadxJarInventory } from "../../fixtures/android/jadxJar.js";
 import { writeOrderedZip } from "../../fixtures/artifactEntryOrder.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -194,7 +195,7 @@ it("retains a failed input hash descriptor until provider shutdown retries it", 
   } finally {
     fault.restore();
     await provider.close();
-    await verifyCleanup(launches);
+    await expectProviderLaunchCleanup(launches);
   }
 });
 
@@ -218,7 +219,7 @@ it("clears hash cleanup uncertainty when the provider immediately retries the sa
   } finally {
     fault.restore();
     await provider.close();
-    await verifyCleanup(launches);
+    await expectProviderLaunchCleanup(launches);
   }
 });
 
@@ -232,6 +233,9 @@ it("drains hash descriptors even when session shutdown fails and retains its wor
   const workspace = launches[0]?.cwd;
   if (workspace === undefined)
     throw new Error("Expected an acquired workspace");
+  // Change the verified stat identity without changing the retained APK bytes.
+  const { atime, mtimeMs } = await stat(apk);
+  await utimes(apk, atime, new Date(mtimeMs - 10_000));
   const target = await parseBinaryTarget(apk);
   if (!target.ok) throw target.error;
   const fault = failInputHashCloses(target.value.path, 1);
@@ -258,12 +262,12 @@ it("drains hash descriptors even when session shutdown fails and retains its wor
     fault.restore();
     await provider.close();
     expect(outcome.error.cleanupIncomplete).toBe(false);
-    await verifyCleanup(launches);
+    await expectProviderLaunchCleanup(launches);
   } finally {
     sessionClose.mockRestore();
     fault.restore();
     await provider.close();
-    await verifyCleanup(launches);
+    await expectProviderLaunchCleanup(launches);
   }
 });
 
@@ -292,7 +296,7 @@ it("cancels Android admission while hashing the selected APK", async () => {
   } finally {
     clearTimeout(timer);
     await provider.close();
-    await verifyCleanup(launches);
+    await expectProviderLaunchCleanup(launches);
   }
 });
 
@@ -342,7 +346,7 @@ it("preserves cancellation cause when hashing succeeded but descriptor close fai
   } finally {
     close.mockRestore();
     await provider.close();
-    await verifyCleanup(launches);
+    await expectProviderLaunchCleanup(launches);
   }
 });
 
@@ -397,10 +401,7 @@ it("reuses immutable engine state while keeping each Evidence observation separa
   expect(JSON.stringify(first.value)).toBe(preserved);
   expect(second.value.raw_result).toMatchObject({
     loaded: { class_count: 401 },
-    calls: [
-      expect.objectContaining({ operation: "rea_jvm_status" }),
-      expect.objectContaining({ operation: "get_class_summary" }),
-    ],
+    calls: [expect.objectContaining({ operation: "get_class_summary" })],
   });
   expect(
     androidResultSchemas.inspect_android_class.parse(
@@ -408,7 +409,120 @@ it("reuses immutable engine state while keeping each Evidence observation separa
     ).engine.heap_limit_mib,
   ).toBe(8192);
   await provider.close();
-  await verifyCleanup(launches);
+  await expectProviderLaunchCleanup(launches);
+});
+
+it("does not cache failed or wrong-version rea_jvm_status and preserves engine_version on warm failures", async () => {
+  const { apk } = await setup();
+  const target = await parseBinaryTarget(apk);
+  if (!target.ok) throw target.error;
+  const fixturePath = fileURLToPath(
+    new URL("../../fixtures/android/jadx-mcp.mjs", import.meta.url),
+  );
+  const startSession = async (mode: string) => {
+    const workspace = await createTestTempDirectory("rea-jadx-runtime-cache-");
+    return new JadxSession(
+      {
+        command: process.execPath,
+        arguments: [],
+        cwd: workspace,
+        hostEnvironment: process.env,
+        signal: new AbortController().signal,
+      },
+      (options) =>
+        spawnOwnedProviderProcess({
+          ...options,
+          command: process.execPath,
+          arguments: [fixturePath],
+          expectedCommand: process.execPath,
+          env: { ...options.env, REA_FAKE_JADX_MODE: mode },
+        }),
+    );
+  };
+  const baseContext = {
+    target: target.value,
+    snapshot: apk,
+    jarHash: "0".repeat(64),
+    bridgeHash: "0".repeat(64),
+    bridgeIdentity: packagedJadxBridgeIdentity(),
+    signal: new AbortController().signal,
+    timeoutMs: 10_000,
+    resources: new ArtifactResourceScope(),
+    deadline: new AbortController().signal,
+  };
+
+  const wrongVersion = await startSession("engine-version");
+  onTestFinished(() => wrongVersion.close());
+  try {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await expect(
+        wrongVersion.execute({
+          ...baseContext,
+          request: {
+            operation: "inspect_android_package",
+            input: { path: apk },
+          },
+        }),
+      ).rejects.toMatchObject({ _tag: "AnalysisCapabilityUnavailableError" });
+      expect(wrongVersion.partialObservation()).toMatchObject({
+        provider_facts: { engine_version: "0.7.0" },
+        calls: [expect.objectContaining({ operation: "rea_jvm_status" })],
+      });
+    }
+  } finally {
+    await wrongVersion.close();
+  }
+
+  const healthy = await startSession("normal");
+  onTestFinished(() => healthy.close());
+  try {
+    await healthy.execute({
+      ...baseContext,
+      request: { operation: "inspect_android_package", input: { path: apk } },
+    });
+    await expect(
+      healthy.execute({
+        ...baseContext,
+        request: {
+          operation: "inspect_android_class",
+          input: { path: apk, class_name: "fixture.Missing" },
+        },
+      }),
+    ).rejects.toMatchObject({ _tag: "AnalysisInputError" });
+    expect(healthy.partialObservation()).toMatchObject({
+      provider_facts: { engine_version: JADX_RELEASE.version },
+      calls: [expect.objectContaining({ operation: "get_class_summary" })],
+    });
+  } finally {
+    await healthy.close();
+  }
+});
+
+it("re-queries rea_jvm_status when JadxProvider replaces a session", async () => {
+  const { service, apk, launches, provider, environment } = await setup();
+  const cold = await service.execute("inspect_android_package", { path: apk });
+  if (!cold.ok) throw cold.error;
+  expect(cold.value.raw_result).toMatchObject({
+    calls: expect.arrayContaining([
+      expect.objectContaining({ operation: "rea_jvm_status" }),
+    ]) as unknown,
+  });
+  environment.JAVA_TOOL_OPTIONS = "-Xmx8g";
+  const replaced = await service.execute("inspect_android_class", {
+    path: apk,
+    class_name: "fixture.Target",
+  });
+  if (!replaced.ok) throw replaced.error;
+  expect(launches).toHaveLength(2);
+  expect(replaced.value.raw_result).toMatchObject({
+    calls: expect.arrayContaining([
+      expect.objectContaining({ operation: "rea_jvm_status" }),
+      expect.objectContaining({ operation: "load_apk" }),
+      expect.objectContaining({ operation: "get_class_summary" }),
+    ]) as unknown,
+  });
+  await provider.close();
+  await expectProviderLaunchCleanup(launches);
 });
 
 it("bounds output per operation without repeating prerequisite probes for a retained session", async () => {
@@ -429,7 +543,7 @@ it("bounds output per operation without repeating prerequisite probes for a reta
   expect(launches).toHaveLength(1);
   expect(await javaProbeCount()).toBe(1);
   await provider.close();
-  await verifyCleanup(launches);
+  await expectProviderLaunchCleanup(launches);
 });
 
 it("retire sessions when APK bytes, engine bytes or JVM options change", async () => {
@@ -453,7 +567,7 @@ it("retire sessions when APK bytes, engine bytes or JVM options change", async (
   expect(fileIdentity(changed.subject).sha256).not.toBe(
     fileIdentity(first.subject).sha256,
   );
-  await verifyCleanup(launches.slice(0, 1));
+  await expectProviderLaunchCleanup(launches.slice(0, 1));
   await writeJadxJarInventory(jar, ["fixture/NewEngineMarker.class"]);
   await inspect();
   environment.JAVA_TOOL_OPTIONS = "-Xmx8g";
@@ -468,7 +582,7 @@ it("retire sessions when APK bytes, engine bytes or JVM options change", async (
   expect(launches[3]?.arguments).not.toContain("-Xmx512m");
   expect(launches[3]?.arguments).not.toContain("-XX:ActiveProcessorCount=1");
   await provider.close();
-  await verifyCleanup(launches);
+  await expectProviderLaunchCleanup(launches);
 });
 
 it("keeps one operation's JVM environment aligned with its retained session identity", async () => {
@@ -499,7 +613,7 @@ it("keeps one operation's JVM environment aligned with its retained session iden
   } finally {
     allocation.mockRestore();
     await provider.close();
-    await verifyCleanup(launches);
+    await expectProviderLaunchCleanup(launches);
   }
 });
 
@@ -518,7 +632,7 @@ it("retires an idle engine and starts a fresh one for a later request", async ()
   await expect
     .poll(async () => {
       try {
-        await verifyCleanup(launches);
+        await expectProviderLaunchCleanup(launches);
         return true;
       } catch {
         return false;
@@ -529,7 +643,7 @@ it("retires an idle engine and starts a fresh one for a later request", async ()
   if (!later.ok) throw later.error;
   expect(launches).toHaveLength(2);
   await provider.close();
-  await verifyCleanup(launches);
+  await expectProviderLaunchCleanup(launches);
 });
 
 it("keeps idle retirement after refusing a mapping for a loaded engine", async () => {
@@ -554,7 +668,7 @@ it("keeps idle retirement after refusing a mapping for a loaded engine", async (
   await expect
     .poll(async () => {
       try {
-        await verifyCleanup(launches);
+        await expectProviderLaunchCleanup(launches);
         return true;
       } catch {
         return false;
@@ -570,6 +684,7 @@ it("completes large class inventories with exact case-sensitive search semantics
   const full = await service.execute("search_android_classes", {
     path: apk,
     query: "",
+    limit: 10_000,
   });
   if (!full.ok) throw full.error;
   const inventory = androidResultSchemas.search_android_classes.parse(
@@ -590,6 +705,7 @@ it("completes large class inventories with exact case-sensitive search semantics
   const filtered = await service.execute("search_android_classes", {
     path: apk,
     query: "Class",
+    limit: 10_000,
   });
   if (!filtered.ok) throw filtered.error;
   const matches = androidResultSchemas.search_android_classes.parse(
@@ -602,7 +718,7 @@ it("completes large class inventories with exact case-sensitive search semantics
   expect(matches.matches.at(-1)).toBe("fixture.Class8999");
   expect(launches).toHaveLength(1);
   await provider.close();
-  await verifyCleanup(launches);
+  await expectProviderLaunchCleanup(launches);
 });
 
 it("close cancels active and queued work and prevents later acquisition", async () => {
@@ -621,7 +737,7 @@ it("close cancels active and queued work and prevents later acquisition", async 
       error: { _tag: "AnalysisCancelledError" },
     });
   expect(launches).toHaveLength(1);
-  await verifyCleanup(launches);
+  await expectProviderLaunchCleanup(launches);
 });
 
 it("does not carry a factory instance's cleanup failure into another instance", async () => {
@@ -639,7 +755,7 @@ it("does not carry a factory instance's cleanup failure into another instance", 
   });
   expect(result.ok).toBe(true);
   await healthy.provider.close();
-  await verifyCleanup(healthy.launches);
+  await expectProviderLaunchCleanup(healthy.launches);
 });
 
 it("retains APK identity, original input, raw producer data and normalized observations", async () => {
@@ -661,7 +777,7 @@ it("retains APK identity, original input, raw producer data and normalized obser
     ]),
   });
   await provider.close();
-  await verifyCleanup(launches);
+  await expectProviderLaunchCleanup(launches);
 });
 
 it("preserves duplicate class-name rows and occurrence counts", async () => {
@@ -684,6 +800,7 @@ it("preserves duplicate class-name rows and occurrence counts", async () => {
   const full = await service.execute("search_android_classes", {
     path: apk,
     query: "",
+    limit: 10_000,
   });
   if (!full.ok) throw full.error;
   const fullResult = androidResultSchemas.search_android_classes.parse(
@@ -695,7 +812,7 @@ it("preserves duplicate class-name rows and occurrence counts", async () => {
     { name: "fixture.Target", occurrences: 2 },
   ]);
   await provider.close();
-  await verifyCleanup(launches);
+  await expectProviderLaunchCleanup(launches);
 });
 
 it("exposes overload candidates and executes only an explicitly selected ambiguous method", async () => {
@@ -770,7 +887,7 @@ it("exposes overload candidates and executes only an explicitly selected ambiguo
     reported_signature: "choose(int): void",
   });
   await provider.close();
-  await verifyCleanup(launches);
+  await expectProviderLaunchCleanup(launches);
 });
 
 it.each([
@@ -805,7 +922,7 @@ it.each([
       error: { _tag: "AnalysisOutputError" },
     });
     await provider.close();
-    await verifyCleanup(launches);
+    await expectProviderLaunchCleanup(launches);
   },
 );
 
@@ -826,7 +943,7 @@ it("rejects fuzzy class resolution and unsupported upstream versions", async () 
       },
     });
     await provider.close();
-    await verifyCleanup(launches);
+    await expectProviderLaunchCleanup(launches);
   }
 });
 
@@ -851,7 +968,7 @@ it.each(["truncated", "smali"])(
       expect(result.source?.reported_total_bytes).toBe(100);
     else expect(result.fell_back).toBe(true);
     await provider.close();
-    await verifyCleanup(launches);
+    await expectProviderLaunchCleanup(launches);
   },
 );
 
@@ -882,7 +999,7 @@ it("cancels active and queued requests, cleans ownership and never launches a qu
     error: { _tag: "AnalysisCancelledError" },
   });
   await provider.close();
-  await verifyCleanup(launches);
+  await expectProviderLaunchCleanup(launches);
 });
 
 it("ends each queued stalled operation at the caller-selected deadline and cleans ownership", async () => {
@@ -919,7 +1036,7 @@ it("ends each queued stalled operation at the caller-selected deadline and clean
   }
   expect(launches).toHaveLength(2);
   // The deadline path itself releases ownership before provider shutdown.
-  await verifyCleanup(launches);
+  await expectProviderLaunchCleanup(launches);
   await provider.close();
 });
 
@@ -935,7 +1052,7 @@ it("completes an operation under the largest accepted deadline", async () => {
   });
   expect(outcome.ok).toBe(true);
   await provider.close();
-  await verifyCleanup(launches);
+  await expectProviderLaunchCleanup(launches);
 });
 
 it.each(["", "2147483648"])(
@@ -1101,7 +1218,7 @@ it.each(["tool-error", "frame-overflow", "body-error", "heap-decoy"])(
       });
     }
     await provider.close();
-    await verifyCleanup(launches);
+    await expectProviderLaunchCleanup(launches);
   },
 );
 
@@ -1134,7 +1251,7 @@ it.each(["heap-failure", "other-memory-failure"])(
         : "increasing heap alone may not help",
     );
     await provider.close();
-    await verifyCleanup(launches);
+    await expectProviderLaunchCleanup(launches);
   },
 );
 
@@ -1194,7 +1311,7 @@ it("retains typed memory failure through failed cleanup and restores it after re
         reported_limits: { observed_max_heap_bytes: 67108864 },
       },
     });
-    await verifyCleanup(launches);
+    await expectProviderLaunchCleanup(launches);
   } finally {
     rootClose.mockRestore();
     workspaceCloseFails = false;
@@ -1289,7 +1406,7 @@ it("resolves every reported shutdown cleanup failure after ownership recovers", 
     await closeAfterRecovery();
     expect(firstFailure).toMatchObject({ cleanupIncomplete: false });
     expect(secondFailure).toMatchObject({ cleanupIncomplete: false });
-    await verifyCleanup(launches);
+    await expectProviderLaunchCleanup(launches);
     expect(launches).toHaveLength(1);
   } finally {
     await closeAfterRecovery();
@@ -1340,7 +1457,7 @@ it.each(["idle", "target-change"])(
       if (!retried.ok) throw retried.error;
       expect(launches).toHaveLength(2);
       await provider.close();
-      await verifyCleanup(launches);
+      await expectProviderLaunchCleanup(launches);
     } finally {
       vi.useRealTimers();
       cleanupFails = false;
@@ -1414,7 +1531,7 @@ it("retains the execution failure while cleanup is pending and resumes after cle
         },
       },
     });
-    await verifyCleanup(launches);
+    await expectProviderLaunchCleanup(launches);
   } finally {
     cleanupFails = false;
     await provider.close();
@@ -1441,7 +1558,7 @@ it("does not send a jadx-reported request failure to doctor", async () => {
     expect(projected.message).toContain("details.diagnostics.reason");
     for (const text of [projected.message, projected.remediation.action])
       expect(text).not.toContain("doctor");
-    await verifyCleanup(launches);
+    await expectProviderLaunchCleanup(launches);
   } finally {
     await provider.close();
   }
@@ -1467,7 +1584,7 @@ it("accepts exact selected-overload smali from the bridge", async () => {
     body_status: "available",
   });
   await provider.close();
-  await verifyCleanup(launches);
+  await expectProviderLaunchCleanup(launches);
 });
 
 it.each(["unavailable-body", "unavailable-wrong-descriptor"] as const)(
@@ -1511,7 +1628,7 @@ it.each(["unavailable-body", "unavailable-wrong-descriptor"] as const)(
       ).toBe(true);
     } finally {
       await provider.close();
-      await verifyCleanup(launches);
+      await expectProviderLaunchCleanup(launches);
     }
   },
 );
@@ -1531,7 +1648,7 @@ it("retains parsed native body absence without claiming an empty implementation"
   expect(result.source?.text).toBe("");
   expect(result.markers).toEqual(["native_method"]);
   await provider.close();
-  await verifyCleanup(launches);
+  await expectProviderLaunchCleanup(launches);
 });
 
 it("classifies a heap shortage that stops the bridge before the handshake", async () => {
@@ -1558,5 +1675,5 @@ it("classifies a heap shortage that stops the bridge before the handshake", asyn
     },
   });
   await provider.close();
-  await verifyCleanup(launches);
+  await expectProviderLaunchCleanup(launches);
 });

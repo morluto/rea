@@ -1,4 +1,4 @@
-import { accessSync, constants, statSync } from "node:fs";
+import { isExecutableFileSync } from "../filesystem/regularFileProbe.js";
 
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 
@@ -20,6 +20,8 @@ import {
 export interface HopperLauncherDiscovery {
   /** Fixed launcher paths, probed in order. */
   readonly candidates: readonly string[];
+  /** Discovery must stop here if an earlier candidate did not resolve. */
+  readonly stopsAtUnresolvedHome?: true;
   /**
    * Whether renamed `Hopper*.app` bundles are probed after the fixed paths.
    * Doctor also reports the Homebrew cask application only when this is set.
@@ -32,17 +34,23 @@ export interface HopperLauncherDiscovery {
 /** Select the automatic Hopper launcher candidates for one platform. */
 export const hopperLauncherDiscovery = (
   platform: NodeJS.Platform,
-  homeDirectory: string,
+  homeDirectory: string | undefined,
 ): HopperLauncherDiscovery => {
+  const completeness =
+    homeDirectory === undefined
+      ? ({ stopsAtUnresolvedHome: true } as const)
+      : {};
   if (platform === "darwin")
     return {
       candidates: macHopperCanonicalLauncherCandidates(homeDirectory),
+      ...completeness,
       probesMacApplicationBundles: true,
       fallback: MAC_HOPPER_SYSTEM_LAUNCHER,
     };
   if (platform === "linux")
     return {
       candidates: linuxHopperLauncherCandidates(homeDirectory),
+      ...completeness,
       probesMacApplicationBundles: false,
       fallback: REA_MANAGED_LINUX_HOPPER_LAUNCHER,
     };
@@ -53,15 +61,6 @@ export const hopperLauncherDiscovery = (
   };
 };
 
-const executableAvailable = (path: string): boolean => {
-  try {
-    accessSync(path, constants.X_OK);
-    return statSync(path).isFile();
-  } catch {
-    return false;
-  }
-};
-
 /**
  * The launcher automatic discovery selects: the first executable candidate,
  * then renamed macOS application bundles, else the platform's fallback.
@@ -69,7 +68,7 @@ const executableAvailable = (path: string): boolean => {
 export const defaultHopperLauncherPath = (
   platform: NodeJS.Platform,
   homeDirectory: string,
-  executable: (path: string) => boolean = executableAvailable,
+  executable: (path: string) => boolean = isExecutableFileSync,
 ): string => {
   const discovery = hopperLauncherDiscovery(platform, homeDirectory);
   for (const candidate of discovery.candidates)

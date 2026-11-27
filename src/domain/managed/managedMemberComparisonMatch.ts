@@ -1,7 +1,4 @@
-import {
-  hasCompleteMethodRows,
-  type ManagedComparisonScope,
-} from "./managedMemberComparisonCoverage.js";
+import type { ManagedComparisonScope } from "./managedMemberComparisonCoverage.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import {
   managedMemberInspectionSchema,
@@ -536,10 +533,8 @@ export const keyMembers = (
         matchMethods(
           a,
           b,
-          scope.left.metadataComplete &&
-            scope.right.metadataComplete &&
-            hasCompleteMethodRows(left.result) &&
-            hasCompleteMethodRows(right.result),
+          scope.left.inventoryComplete.method &&
+            scope.right.inventoryComplete.method,
         ),
       (item) => keyMethod(item, declaredLeft(item)),
       (item) => keyMethod(item, declaredRight(item)),
@@ -552,7 +547,8 @@ export const keyMembers = (
         matchFields(
           a,
           b,
-          scope.left.metadataComplete && scope.right.metadataComplete,
+          scope.left.inventoryComplete.field &&
+            scope.right.inventoryComplete.field,
         ),
       (item) => keyField(item, declaredLeft(item)),
       (item) => keyField(item, declaredRight(item)),

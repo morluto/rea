@@ -10,7 +10,7 @@ import type { FieldRule } from "./environmentStateWriteRules.js";
 import {
   envelopeOf,
   nestedClockValue,
-  pinnedQuery,
+  validatePinnedQuery,
   sameQuery,
   stampProblem,
   storedRestamp,
@@ -548,17 +548,15 @@ describe("call shapes", () => {
     expect(sameQuery("?source=html&b=2", "b=2&source=html")).toBe(true);
     expect(sameQuery(null, "")).toBe(true);
     expect(sameQuery("a=1&a=2", "a=1&a=2")).toBe(false);
-    // A call that leaves a pinned parameter out takes the recorded value; another value or parameter is refused.
     const recorded = "?source=html";
-    expect(pinnedQuery(recorded, new Map())).toEqual({
-      ok: true,
-      value: new Map([["source", "html"]]),
-    });
-    expect(pinnedQuery(recorded, new Map([["source", "markdown"]]))).toEqual({
+    expect(validatePinnedQuery(recorded, new Map()).ok).toBe(true);
+    expect(
+      validatePinnedQuery(recorded, new Map([["source", "markdown"]])),
+    ).toEqual({
       ok: false,
       error: "takes only the query its recording sent (source=html).",
     });
-    expect(pinnedQuery(null, new Map([["page", "2"]])).ok).toBe(false);
+    expect(validatePinnedQuery(null, new Map([["page", "2"]])).ok).toBe(false);
   });
 });
 

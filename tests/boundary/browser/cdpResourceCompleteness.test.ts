@@ -1,9 +1,9 @@
+import { inspectFakePage } from "../../support/browser/inspectFakePage.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
-import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
 import {
   webPageInspectionSchema,
   type WebPageInspection,
@@ -89,18 +89,7 @@ const startBrowser = async () => {
     },
   });
   trackBrowser(browser);
-  const inspect = async () => {
-    const result = await new CdpBrowserProvider().inspectPage(
-      inspectWebPageInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 0,
-      }),
-    );
-    if (!result.ok) throw result.error;
-    return result.value;
-  };
+  const inspect = () => inspectFakePage(browser);
   return {
     state,
     inspect,
@@ -113,110 +102,6 @@ const resourceExclusions = (inspection: WebPageInspection) =>
   inspection.completeness.excluded.filter(
     ({ section }) => section === "resources",
   );
-
-describe("resource metadata through CDP", () => {
-  it("drops resources with malformed required fields and retains those with unknown size", async () => {
-    const { state, inspect, origin } = await startBrowser();
-    state.extraResources = [
-      { name: "missing-type.js", fields: { type: undefined } },
-      { name: "null-type.js", fields: { type: null } },
-      { name: "numeric-type.js", fields: { type: 17 } },
-      { name: "empty-type.js", fields: { type: "" } },
-      { name: "missing-mime.js", fields: { mimeType: undefined } },
-      { name: "null-mime.js", fields: { mimeType: null } },
-      { name: "numeric-mime.js", fields: { mimeType: 17 } },
-      { name: "negative-size.js", fields: { contentSize: -1 } },
-      { name: "null-size.js", fields: { contentSize: null } },
-      { name: "string-size.js", fields: { contentSize: "128" } },
-      { name: "object-size.js", fields: { contentSize: {} } },
-    ];
-    const capture = await inspect();
-    expect(capture.completeness.unavailable_sections).toContain("resources");
-    expect(resourceExclusions(capture)).toEqual([
-      { section: "resources", reason: "invalid_protocol_value", count: 11 },
-    ]);
-    expect(
-      capture.resources.toSorted((left, right) =>
-        left.url.localeCompare(right.url),
-      ),
-    ).toEqual(
-      [
-        ["keep.js", 128],
-        ["negative-size.js", null],
-        ["null-size.js", null],
-        ["object-size.js", null],
-        ["peer.js", 128],
-        ["string-size.js", null],
-      ].map(([name, contentSize]) =>
-        expect.objectContaining({
-          url: `${origin}/${name}`,
-          origin,
-          type: "Script",
-          mime_type: "text/javascript",
-          content_size: contentSize,
-        }),
-      ),
-    );
-  });
-
-  it("admits omitted size, empty MIME type, zero size, and fractional size", async () => {
-    const { state, inspect, origin } = await startBrowser();
-    state.extraResources = [
-      {
-        name: "omitted.js",
-        fields: { type: "Other", mimeType: "", contentSize: undefined },
-      },
-      { name: "zero.js", fields: { contentSize: 0 } },
-      { name: "fractional.js", fields: { contentSize: 1.5 } },
-    ];
-    const capture = await inspect();
-    expect(capture.completeness.unavailable_sections).not.toContain(
-      "resources",
-    );
-    expect(resourceExclusions(capture)).toEqual([]);
-    expect(
-      capture.resources
-        .map(({ url, type, mime_type, content_size }) => ({
-          url,
-          type,
-          mime_type,
-          content_size,
-        }))
-        .sort((left, right) => left.url.localeCompare(right.url)),
-    ).toEqual([
-      {
-        url: `${origin}/fractional.js`,
-        type: "Script",
-        mime_type: "text/javascript",
-        content_size: 1.5,
-      },
-      {
-        url: `${origin}/keep.js`,
-        type: "Script",
-        mime_type: "text/javascript",
-        content_size: 128,
-      },
-      {
-        url: `${origin}/omitted.js`,
-        type: "Other",
-        mime_type: "",
-        content_size: null,
-      },
-      {
-        url: `${origin}/peer.js`,
-        type: "Script",
-        mime_type: "text/javascript",
-        content_size: 128,
-      },
-      {
-        url: `${origin}/zero.js`,
-        type: "Script",
-        mime_type: "text/javascript",
-        content_size: 0,
-      },
-    ]);
-  });
-});
 
 it("retains readable inventories and reports unknown coverage for missing or malformed trees", async () => {
   const { state, inspect, origin } = await startBrowser();
@@ -285,7 +170,7 @@ it("retains readable inventories and reports unknown coverage for missing or mal
 });
 
 describe("resource uncertainty in production MCP registration", () => {
-  it("delivers partial resources and preserves comparison uncertainty through the SDK", async () => {
+  it("preserves typed resource facts and comparison uncertainty through the SDK", async () => {
     const { state, origin, endpoint } = await startBrowser();
     const harness = await createApplicationMcpHarness({
       serverOptions: { browserObservation: new CdpBrowserProvider() },
@@ -309,39 +194,66 @@ describe("resource uncertainty in production MCP registration", () => {
         parseEvidence(reply.structuredContent).normalized_result,
       );
     };
-    const expectedResource = (name: string, contentSize: number | null = 128) =>
+    const expectedResource = (
+      name: string,
+      contentSize: number | null = 128,
+      declaration = { type: "Script", mime_type: "text/javascript" },
+    ) =>
       expect.objectContaining({
         url: `${origin}/${name}`,
         origin,
-        type: "Script",
-        mime_type: "text/javascript",
+        ...declaration,
         content_size: contentSize,
       });
+    const healthy: ResourceFixture[] = [
+      {
+        name: "omitted.js",
+        fields: { type: "Other", mimeType: "", contentSize: undefined },
+      },
+      { name: "zero.js", fields: { contentSize: 0 } },
+      { name: "fractional.js", fields: { contentSize: 1.5 } },
+    ];
+    const malformed: ResourceFixture[] = [
+      { name: "missing-type.js", fields: { type: undefined } },
+      { name: "null-type.js", fields: { type: null } },
+      { name: "numeric-type.js", fields: { type: 17 } },
+      { name: "empty-type.js", fields: { type: "" } },
+      { name: "missing-mime.js", fields: { mimeType: undefined } },
+      { name: "null-mime.js", fields: { mimeType: null } },
+      { name: "numeric-mime.js", fields: { mimeType: 17 } },
+      { name: "negative-size.js", fields: { contentSize: -1 } },
+      { name: "null-size.js", fields: { contentSize: null } },
+      { name: "string-size.js", fields: { contentSize: "128" } },
+      { name: "object-size.js", fields: { contentSize: {} } },
+    ];
+    const expectedHealthy = [
+      expectedResource("keep.js"),
+      expectedResource("peer.js"),
+      expectedResource("fractional.js", 1.5),
+      expectedResource("omitted.js", null, { type: "Other", mime_type: "" }),
+      expectedResource("zero.js", 0),
+    ];
+    state.extraResources = healthy;
     const before = await capture();
-    expect(
-      before.resources.toSorted((left, right) =>
-        left.url.localeCompare(right.url),
-      ),
-    ).toEqual([expectedResource("keep.js"), expectedResource("peer.js")]);
+    expect(before.resources).toHaveLength(expectedHealthy.length);
+    expect(before.resources).toEqual(expect.arrayContaining(expectedHealthy));
     expect(before.completeness.unavailable_sections).not.toContain("resources");
     expect(resourceExclusions(before)).toEqual([]);
 
-    state.extraResources = [
-      { name: "rejected.js", fields: { type: undefined } },
-      { name: "size-unknown.js", fields: { contentSize: -1 } },
-    ];
+    state.extraResources = [...healthy, ...malformed];
     const after = await capture();
-    expect(
-      after.resources.toSorted((left, right) =>
-        left.url.localeCompare(right.url),
-      ),
-    ).toEqual([
-      expectedResource("keep.js"),
-      expectedResource("peer.js"),
-      expectedResource("size-unknown.js", null),
-    ]);
+    expect(after.resources).toHaveLength(expectedHealthy.length + 4);
+    expect(after.resources).toEqual(
+      expect.arrayContaining([
+        ...expectedHealthy,
+        expectedResource("negative-size.js", null),
+        expectedResource("null-size.js", null),
+        expectedResource("object-size.js", null),
+        expectedResource("string-size.js", null),
+      ]),
+    );
     expect(resourceExclusions(after)).toEqual([
-      { section: "resources", reason: "invalid_protocol_value", count: 2 },
+      { section: "resources", reason: "invalid_protocol_value", count: 11 },
     ]);
     expect(after.completeness.unavailable_sections).toContain("resources");
     const comparison = await harness.client.callTool({

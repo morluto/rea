@@ -18,6 +18,8 @@ Inspect file-wide and block byte entropy without executing the file
 | `--block-size` | `unknown` | `4096` | Power-of-two block size from 256 to 65536 bytes |
 | `--offset` | `unknown` | `0` | Window start as a decimal file byte offset |
 | `--length` | `unknown` |  | Window length in bytes; omit to extend through EOF |
+| `--detail` | `string` |  | Omit for complete Evidence when it fits the agent result budget (32768 compact JSON bytes by default, about 11k tokens) and its summary otherwise; complete always delivers everything; summary needs --evidence_output |
+| `--evidence_output` | `string` |  | Save complete Evidence as a bundle; required for summary delivery. Never overwrites. |
 <end>
 --- stderr
 <end>

@@ -128,6 +128,7 @@ const verifyCliSelection = async ({
 const verifyCliFullPages = async (
   { cli, cwd, bundlePath, parent, report }: CliMemberViewContext,
   reportedCounts: Readonly<Record<string, number | null>>,
+  expectedEmpty: ReadonlySet<string> = new Set(),
 ) => {
   for (const collection of [
     "types",
@@ -144,7 +145,8 @@ const verifyCliFullPages = async (
         ? report.user_strings?.literals
         : report[collection];
     if (rows == null) throw new Error(`${collection} was not examined`);
-    expect(rows.length, collection).toBeGreaterThan(0);
+    if (expectedEmpty.has(collection)) expect(rows.length, collection).toBe(0);
+    else expect(rows.length, collection).toBeGreaterThan(0);
     expect(reportedCounts[collection]).toBe(rows.length);
     const paged: unknown[] = [];
     for (let offset: number | null = 0; offset !== null;) {
@@ -328,14 +330,14 @@ cliTest(
     const report = managedMemberInspectionSchema.parse(
       parent.normalized_result,
     );
-    // The fixture declares three MemberRef rows. Paging against the produced
-    // report alone would also pass if the inspector silently dropped rows.
+    // Selected Fixture.Program bodies reference only 0x0a000001 and no
+    // ExportedType matches the selected type names.
     expect(report.member_refs.map(({ token }) => token)).toEqual([
       "0x0a000001",
-      "0x0a000002",
-      "0x0a000003",
     ]);
-    expect(summary.summary.reported_counts.member_refs).toBe(3);
+    expect(summary.summary.reported_counts.member_refs).toBe(1);
+    expect(report.exported_types).toEqual([]);
+    expect(summary.summary.reported_counts.exported_types).toBe(0);
     expect(summary.summary.selection).toEqual({
       type_names: typeNames,
       unmatched_type_names: ["Missing.Type"],
@@ -345,6 +347,41 @@ cliTest(
     expect(summary.summary.assembly).toEqual(report.assembly);
     expect(summary.summary).not.toHaveProperty("member_refs");
     expect(summary.summary).not.toHaveProperty("methods");
+
+    // Whole-assembly (unselected) inspection retains all three MemberRef rows
+    // and the System.Object ExportedType row.
+    const wholeBundlePath = join(root, "whole-members.json");
+    const wholeReply = await cli.run({
+      cwd: root,
+      arguments: [
+        "inspect-managed-members",
+        path,
+        "--detail",
+        "summary",
+        "--evidence_output",
+        "whole-members.json",
+        "--json",
+      ],
+    });
+    expect(wholeReply.exitCode).toBe(0);
+    const wholeDelivered = wholeReply.json as { summary: unknown };
+    const wholeSummary = managedMemberSummaryViewResultSchema.parse(
+      parseEvidence(wholeDelivered.summary).normalized_result,
+    );
+    const wholeParent = parseEvidenceBundle(
+      JSON.parse(await readFile(wholeBundlePath, "utf8")),
+    ).records[0]!;
+    const wholeReport = managedMemberInspectionSchema.parse(
+      wholeParent.normalized_result,
+    );
+    expect(wholeReport.member_refs.map(({ token }) => token)).toEqual([
+      "0x0a000001",
+      "0x0a000002",
+      "0x0a000003",
+    ]);
+    expect(wholeSummary.summary.reported_counts.member_refs).toBe(3);
+    expect(wholeReport.exported_types).toHaveLength(1);
+    expect(wholeSummary.summary.reported_counts.exported_types).toBe(1);
 
     await unlink(path);
     const otherDirectory = join(root, "later-process");
@@ -358,8 +395,22 @@ cliTest(
     };
     // The producer has exited and its target is gone. Reuse only the reader
     // process across page selections; every command still loads the bundle.
-    await verifyCliFullPages(pageContext, summary.summary.reported_counts);
+    await verifyCliFullPages(
+      pageContext,
+      summary.summary.reported_counts,
+      new Set(["exported_types"]),
+    );
     await verifyCliSelection(pageContext);
+    await verifyCliFullPages(
+      {
+        cli,
+        cwd: otherDirectory,
+        bundlePath: wholeBundlePath,
+        parent: wholeParent,
+        report: wholeReport,
+      },
+      wholeSummary.summary.reported_counts,
+    );
     expect(await readFile(bundlePath, "utf8")).toBe(originalBytes);
   },
 );

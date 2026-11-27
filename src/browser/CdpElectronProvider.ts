@@ -36,16 +36,15 @@ import {
 import { inspectCdpElectronPage } from "./CdpElectronInspection.js";
 import {
   authorizedElectronFile,
+  ElectronFileScope,
   mapElectronFileAuthorizationFailure,
   retryElectronFileCleanup,
 } from "./ElectronFileScope.js";
 
 import { CDP_ELECTRON_PROVIDER_IDENTITY } from "./providerIdentities.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
-import {
-  analysisErrorWithCleanupFailure,
-  providerCleanupErrorFromFailures,
-} from "../domain/analysisErrorCleanup.js";
+import { providerCleanupErrorFromFailures } from "../domain/analysisErrorCleanup.js";
+import { finalizedResult, runOwned } from "../providers/runOwned.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   CdpTargetSessionOwner,
@@ -55,6 +54,8 @@ import { errorMessage } from "../kernel/errorMessage.js";
 /** Passive Electron provider for local file pages exposed by loopback CDP. */
 export class CdpElectronProvider implements ElectronObservationPort {
   readonly #owner = new CdpTargetSessionOwner();
+  /** This provider's ASAR descriptors; shutdown retries only its own. */
+  readonly #files = new ElectronFileScope();
   readonly #asarHeaderAdmission: AsarHeaderAdmission;
 
   /** The admission comes from the composition root's environment; default otherwise. */
@@ -87,7 +88,7 @@ export class CdpElectronProvider implements ElectronObservationPort {
       await new Promise<void>((resolve) => this.#idleWaiters.add(resolve));
     const outcomes = await Promise.allSettled([
       this.#owner.close(),
-      retryElectronFileCleanup(),
+      retryElectronFileCleanup(this.#files),
     ]);
     const failures = outcomes.flatMap((outcome) =>
       outcome.status === "rejected" ? [outcome.reason as unknown] : [],
@@ -163,6 +164,7 @@ export class CdpElectronProvider implements ElectronObservationPort {
           options.signal,
           "list_electron_targets",
           this.#asarHeaderAdmission,
+          this.#files,
         );
         if (path === undefined) {
           examined += 1;
@@ -264,132 +266,94 @@ export class CdpElectronProvider implements ElectronObservationPort {
     options: ExecutionOptions,
   ): Promise<Result<ElectronPageInspection, AnalysisError>> {
     let targetSession: CdpTargetSession | undefined;
-    let cleanupFailure: AnalysisError | undefined;
-    let result: Result<ElectronPageInspection, AnalysisError>;
-    try {
-      const discovery = await discoverCdpEndpoint(
-        input.cdp_endpoint,
-        "inspect_electron_page",
-        options.signal,
-      );
-      const target = await authorizeTarget(
-        discovery,
-        input.target_id,
-        this.#asarHeaderAdmission,
-        options.signal,
-      );
-      targetSession = await openCdpTargetSession(
-        discovery,
-        target,
-        "inspect_electron_page",
-        options.signal,
-        {
-          commandTimeoutMs: selectedCdpCommandTimeoutMs(
-            input.command_timeout_ms,
-          ),
-        },
-        this.#owner,
-      );
-      result = ok(
-        electronPageInspectionSchema.parse(
-          await inspectCdpElectronPage({
-            connection: targetSession.connection,
-            sessionId: targetSession.sessionId,
+    const operation = "inspect_electron_page";
+    let cleanupIncomplete = false;
+    const result = await runOwned<ElectronPageInspection>(
+      async () => {
+        try {
+          const discovery = await discoverCdpEndpoint(
+            input.cdp_endpoint,
+            operation,
+            options.signal,
+          );
+          const target = await authorizeTarget(
+            discovery,
+            input.target_id,
+            this.#asarHeaderAdmission,
+            this.#files,
+            options.signal,
+          );
+          targetSession = await openCdpTargetSession(
             discovery,
             target,
-            input,
-            asarHeaderAdmission: this.#asarHeaderAdmission,
-            ...(options.signal === undefined ? {} : { signal: options.signal }),
-            ...(options.progress === undefined
-              ? {}
-              : { progress: options.progress }),
-          }),
-        ),
-      );
-    } catch (cause: unknown) {
-      result = err(providerError(cause, "inspect_electron_page"));
-    } finally {
-      if (targetSession !== undefined)
-        try {
-          await closeCdpTargetSession(
-            targetSession,
-            ["Debugger", "Runtime", "Page"],
+            operation,
             options.signal,
+            {
+              commandTimeoutMs: selectedCdpCommandTimeoutMs(
+                input.command_timeout_ms,
+              ),
+            },
             this.#owner,
           );
+          return ok(
+            electronPageInspectionSchema.parse(
+              await inspectCdpElectronPage({
+                connection: targetSession.connection,
+                sessionId: targetSession.sessionId,
+                discovery,
+                target,
+                input,
+                asarHeaderAdmission: this.#asarHeaderAdmission,
+                files: this.#files,
+                ...(options.signal === undefined
+                  ? {}
+                  : { signal: options.signal }),
+                ...(options.progress === undefined
+                  ? {}
+                  : { progress: options.progress }),
+              }),
+            ),
+          );
         } catch (cause: unknown) {
-          cleanupFailure =
-            cause instanceof AnalysisError
-              ? cause
-              : new ProviderCleanupError(
-                  CDP_ELECTRON_PROVIDER_IDENTITY.id,
-                  [input.target_id],
-                  {
-                    reason: errorMessage(cause),
-                  },
-                  { operation: "inspect_electron_page", cause },
-                );
+          return err(providerError(cause, operation));
         }
-    }
-    const finalCancellation =
-      result.ok && options.signal?.aborted === true
-        ? cancelledBy("inspect_electron_page", options.signal, {
-            partialObservation: {
-              kind: "electron-page-observation",
-              inspection: result.value,
-              cleanup:
-                cleanupFailure === undefined
-                  ? "transport-closed"
-                  : "incomplete",
-            },
-          })
-        : undefined;
-    if (cleanupFailure !== undefined) {
-      if (finalCancellation !== undefined)
-        return err(
-          bindCdpTransportCleanup(
-            cleanupFailure,
-            analysisErrorWithCleanupFailure(
-              finalCancellation,
-              cleanupFailure,
-              "inspect_electron_page",
-            ),
-          ),
-        );
-      if (!result.ok)
-        return err(
-          bindCdpTransportCleanup(
-            cleanupFailure,
-            analysisErrorWithCleanupFailure(
-              result.error,
-              cleanupFailure,
-              "inspect_electron_page",
-            ),
-          ),
-        );
-      return err(
-        bindCdpTransportCleanup(
-          cleanupFailure,
-          new ProviderCleanupError(
-            CDP_ELECTRON_PROVIDER_IDENTITY.id,
-            cleanupFailure.cleanupResources,
-            { cleanup_error: cleanupFailure.message },
-            {
-              operation: "inspect_electron_page",
-              cause: cleanupFailure,
-              partialObservation: {
-                kind: "electron-page-observation",
-                inspection: result.value,
-                cleanup: "incomplete",
+      },
+      {
+        operation,
+        providerId: CDP_ELECTRON_PROVIDER_IDENTITY.id,
+        signal: options.signal,
+        partial: (inspection) => ({
+          kind: "electron-page-observation",
+          inspection,
+          cleanup: cleanupIncomplete ? "incomplete" : "transport-closed",
+        }),
+        close: async () => {
+          if (targetSession === undefined) return;
+          try {
+            await closeCdpTargetSession(
+              targetSession,
+              ["Debugger", "Runtime", "Page"],
+              options.signal,
+              this.#owner,
+            );
+          } catch (cause: unknown) {
+            cleanupIncomplete = true;
+            const cleanupFailure =
+              cause instanceof AnalysisError ? cause : undefined;
+            const failure = new ProviderCleanupError(
+              CDP_ELECTRON_PROVIDER_IDENTITY.id,
+              cleanupFailure?.cleanupResources ?? [input.target_id],
+              {
+                cleanup_error: cleanupFailure?.message ?? errorMessage(cause),
               },
-            },
-          ),
-        ),
-      );
-    }
-    if (!result.ok) return result;
-    if (finalCancellation !== undefined) return err(finalCancellation);
-    return result;
+              { operation, cause },
+            );
+            throw bindCdpTransportCleanup(cause, failure);
+          }
+        },
+      },
+    );
+    return finalizedResult(result);
   }
 
   async #withAdmission<Value>(
@@ -422,28 +386,31 @@ const authorizeTarget = async (
   discovery: CdpEndpointDiscovery,
   targetId: string,
   asarHeaderAdmission: AsarHeaderAdmission,
+  files: ElectronFileScope,
   signal?: AbortSignal,
 ): Promise<CdpEndpointTarget> => {
-  throwIfElectronOperationCancelled(signal, "inspect_electron_page");
+  const operation = "inspect_electron_page";
+  throwIfElectronOperationCancelled(signal, operation);
   const target = selectCdpDiscoveryTarget(
     discovery.targets,
     targetId,
-    "inspect_electron_page",
+    operation,
     discovery.ambiguousTargetIds,
   );
   if (target === undefined)
-    throw new BrowserObservationError("inspect_web_page", "target_not_found");
+    throw new BrowserObservationError(operation, "target_not_found");
   if (target.type !== "page")
-    throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
+    throw new BrowserObservationError(operation, "target_not_allowed");
   const path = await authorizedElectronFile(
     target.url,
     signal,
-    "inspect_electron_page",
+    operation,
     asarHeaderAdmission,
+    files,
   );
-  throwIfElectronOperationCancelled(signal, "inspect_electron_page");
+  throwIfElectronOperationCancelled(signal, operation);
   if (path === undefined)
-    throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
+    throw new BrowserObservationError(operation, "target_not_allowed");
   return target;
 };
 

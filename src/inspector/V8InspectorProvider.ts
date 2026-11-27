@@ -25,8 +25,10 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
-import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupFailure,
+  providerCleanupErrorFromFailures,
+} from "../domain/analysisErrorCleanup.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { delayWithCancellation } from "../browser/CdpCaptureValues.js";
@@ -80,7 +82,8 @@ export class V8InspectorAdmission {
     operation: BrowserObservationOperation,
     work: () => Promise<Value>,
   ): Promise<Value> {
-    if (this.#closing && this.#closePromise !== undefined)
+    // A close can start while this caller waits for an earlier one.
+    while (this.#closing && this.#closePromise !== undefined)
       await this.#closePromise;
     if (this.#closing)
       throw new ProviderAdapterError(
@@ -132,20 +135,15 @@ export class V8InspectorAdmission {
       }
       if (failures.length === 0) return;
       if (failures.length === 1) throw failures[0]!;
-      const cleanup = new ProviderCleanupError(
+      throw providerCleanupErrorFromFailures(
         V8_INSPECTOR_PROVIDER_IDENTITY.id,
-        failures.flatMap(({ cleanupResources }) => cleanupResources),
-        { reason: "Inspector provider cleanup remains incomplete." },
+        failures,
+        "Inspector provider cleanup remains incomplete.",
         {
           operation: "observe_javascript_runtime",
-          cause: new AggregateError(
-            failures,
-            "Inspector provider cleanup owners remain unresolved.",
-          ),
+          message: "Inspector provider cleanup owners remain unresolved.",
         },
       );
-      cleanup.bindCleanupDependencies(failures);
-      throw cleanup;
     } finally {
       this.#closing = false;
     }

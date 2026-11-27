@@ -1,57 +1,48 @@
-import {
-  isParseLimit,
-  parseFailureAnalysisError,
-  parseLimitConstraint,
-} from "../../domain/parseFailureAnalysisError.js";
+import { parseLimitConstraint } from "../../domain/parseFailureAnalysisError.js";
 import { decodeLimit } from "../../domain/parseFailure.js";
-import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  projectArtifactCloseFailure,
-  projectOwnedArtifactIdentityFailure,
-  projectSelectedArtifactFileFailure,
+  closeArtifactResources,
   projectStableArtifactFailure,
-  stableArtifactInputFailure,
   ArtifactReaderFailure,
   completedStableArtifactStream,
-  readStableArtifact,
+  withStableArtifactHandle,
   streamStableArtifact,
-  type StableArtifactSnapshot,
   type StableArtifactStream,
   artifactFilePrimaryFacts,
-  type ArtifactFilePrimaryFacts,
+  artifactFileCompletion,
   ArtifactResourceScope,
 } from "../../resources/index.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { ElfDebugLinkPort } from "../../ports/binaryDiagnostics/ElfDebugLinkPort.js";
-import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
+import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
+import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
   ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
+  ELF_DEBUG_LINK_CANDIDATE_COMPARISON_INCOMPLETE_LIMITATION,
+  ELF_DEBUG_LINK_READ_BUDGETS,
   MAX_ELF_DEBUG_CANDIDATE_BYTES,
-  MAX_INSPECT_ELF_DEBUG_LINK_ENTRIES,
-  MAX_INSPECT_ELF_DEBUG_LINK_FILE_BYTES,
   type ElfDebugLink,
   type InspectElfDebugLinkInput,
 } from "../../domain/native/elfDebugLink.js";
 import { err, ok } from "../../domain/result.js";
 import type { AnalysisPartialObservation } from "../../domain/analysisErrorBase.js";
 import { ELF_DEBUG_LINK_PROVIDER } from "../../domain/investigationProviders.js";
-import {
-  binaryResourceCeiling,
-  BinaryResourceFailure,
-} from "../../domain/binaryContainer.js";
+import { isNativeStructureFailure } from "../../domain/binaryContainer.js";
+import { nativeStructureConstraint } from "../../domain/native/nativeStructureBudget.js";
 import {
   continueGnuDebuglinkCrc32,
-  parseElfDebugLinkCooperative,
+  parseElfDebugLinkFromHandle,
   unreadableElfDebugCandidate,
   verifyElfDebugCandidate,
   verifyElfDebugCandidateCooperative,
   type ElfDebugCandidateFile,
 } from "./ElfDebugLink.js";
-import { ELF_NOTE_TEXT_ALLOWANCE } from "./ElfNoteParser.js";
-import { elfSectionNameBudget } from "../../domain/native/elfSectionNameTable.js";
+import { elfNoteLimitConstraint } from "./elfNoteLimitConstraint.js";
+import { elfReadBudgetLimit } from "../../domain/native/elfReadBudgets.js";
 
 const OPERATION = "inspect_elf_debug_link";
+const HEADER_PREFIX_BYTES = 4096;
 
 type SelectedField = "path" | "candidate_path";
 
@@ -60,16 +51,12 @@ export class ElfDebugLinkProvider implements ElfDebugLinkPort {
   readonly identity = ELF_DEBUG_LINK_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        ELF_DEBUG_LINK_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      ELF_DEBUG_LINK_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(input: InspectElfDebugLinkInput, options?: ExecutionOptions) {
@@ -77,26 +64,38 @@ export class ElfDebugLinkProvider implements ElfDebugLinkPort {
     let candidatePhase: CandidatePhase | undefined;
     let candidate: StableArtifactStream | undefined;
     let crc32 = 0;
-    let snapshot: StableArtifactSnapshot | undefined;
+    let completedImage: ElfDebugLink | undefined;
+    let observedImage:
+      | { readonly sha256: string; readonly bytes: number }
+      | undefined;
     try {
       return await this.#resources.run(async () => {
         field = "path";
-        snapshot = await readStableArtifact(
+        const image = await withStableArtifactHandle<ElfDebugLink>(
           input.path,
           input.max_file_bytes,
-          options?.signal,
-          undefined,
-          this.#resources,
-        );
-        const image = await parseElfDebugLinkCooperative(
-          snapshot.bytes,
           {
-            path: input.path,
-            sha256: snapshot.sha256,
-            bytes: snapshot.bytes.length,
+            signal: options?.signal,
+            resourceScope: this.#resources,
+            retainBytes: (size) => Math.min(size, HEADER_PREFIX_BYTES),
+            onIdentity: (identity) => {
+              observedImage = identity;
+            },
+            onVerifiedResult: (value) => {
+              completedImage = value;
+            },
           },
-          input,
-          options?.signal,
+          (handle) =>
+            parseElfDebugLinkFromHandle(
+              handle,
+              {
+                path: input.path,
+                sha256: handle.sha256,
+                bytes: handle.size,
+              },
+              input,
+              options?.signal,
+            ),
         );
         if (input.candidate_path === undefined) return ok(image);
         field = "candidate_path";
@@ -133,23 +132,27 @@ export class ElfDebugLinkProvider implements ElfDebugLinkPort {
         );
       });
     } catch (cause) {
-      return err(
-        elfDebugLinkFailure(
+      let retained: AnalysisPartialObservation | undefined;
+      if (candidatePhase !== undefined)
+        retained = candidatePhaseObservation(
+          candidatePhase,
           cause,
+          crc32,
           input,
-          field,
-          candidatePhase === undefined
-            ? { imageSnapshot: snapshot }
-            : {
-                retained: candidatePhaseObservation(
-                  candidatePhase,
-                  cause,
-                  crc32,
-                  input,
-                  candidate,
-                ),
-              },
-        ),
+          candidate,
+        );
+      else if (completedImage !== undefined) {
+        retained =
+          input.candidate_path === undefined
+            ? completedImage
+            : incompleteCandidateObservation(completedImage);
+      }
+      return err(
+        elfDebugLinkFailure(cause, input, field, {
+          retained,
+          imageSnapshot:
+            candidatePhase === undefined ? observedImage : undefined,
+        }),
       );
     }
   }
@@ -183,6 +186,17 @@ const verifiedCandidate = (
     signal,
   );
 
+const incompleteCandidateObservation = (
+  report: ElfDebugLink,
+): ElfDebugLink => ({
+  ...report,
+  limitation_codes: [...report.limitation_codes, "candidate_read_incomplete"],
+  limitations: [
+    ...report.limitations,
+    ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
+  ],
+});
+
 const unverifiedCandidateObservation = (
   report: ElfDebugLink,
   candidate: ElfDebugCandidateFile,
@@ -197,9 +211,13 @@ const unverifiedCandidateObservation = (
     debug_info: "unknown",
     symtab: "unknown",
   },
+  limitation_codes: [
+    ...report.limitation_codes,
+    "candidate_comparison_incomplete",
+  ],
   limitations: [
     ...report.limitations,
-    "The candidate read completed. Its ELF comparison did not complete.",
+    ELF_DEBUG_LINK_CANDIDATE_COMPARISON_INCOMPLETE_LIMITATION,
   ],
 });
 
@@ -218,15 +236,11 @@ const candidatePhaseObservation = (
     );
   const completed = completedStableArtifactStream(cause);
   if (completed === undefined)
-    return {
-      ...phase.report,
-      limitations: [
-        ...phase.report.limitations,
-        ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
-      ],
-    };
+    return incompleteCandidateObservation(phase.report);
   const file = candidateFile(phase, completed, crc32);
-  // A stream whose close failed can still supply a complete comparison.
+  if (artifactFileCompletion(cause)?.cancellation !== undefined)
+    return unverifiedCandidateObservation(phase.report, file);
+  // A close failure alone can retain a complete comparison.
   try {
     return verifyElfDebugCandidate(phase.report, file, input);
   } catch {
@@ -261,34 +275,6 @@ const candidateUnreadable = (cause: unknown): boolean => {
   );
 };
 
-const inputLabel = (field: SelectedField): string =>
-  field === "candidate_path" ? "candidate" : "image";
-
-const inputBudgetRemediation = (
-  boundary: "file-size" | "capacity",
-  input: InspectElfDebugLinkInput,
-  field: SelectedField,
-): string => {
-  const label = inputLabel(field);
-  return boundary === "file-size"
-    ? input.max_file_bytes >= MAX_INSPECT_ELF_DEBUG_LINK_FILE_BYTES
-      ? `The ${label} exceeds the ${String(MAX_INSPECT_ELF_DEBUG_LINK_FILE_BYTES)}-byte input ceiling this operation accepts; select a smaller ${label}.`
-      : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller ${label}; the limit is the caller-selected input read budget.`
-    : input.max_entries >= MAX_INSPECT_ELF_DEBUG_LINK_ENTRIES
-      ? `The ${label} exceeds the ${String(MAX_INSPECT_ELF_DEBUG_LINK_ENTRIES)}-entry note-table ceiling this operation accepts; select a smaller ${label}.`
-      : `Raise max_entries above ${String(input.max_entries)} or select a smaller ${label}; the limit is the caller-selected note entry budget.`;
-};
-
-const sectionNameBudgetRemediation = (
-  required: bigint,
-  field: SelectedField,
-): string => {
-  const label = inputLabel(field);
-  return required <= BigInt(MAX_INSPECT_ELF_DEBUG_LINK_FILE_BYTES)
-    ? `Raise max_file_bytes to at least ${String(required)} bytes to admit the ${label} and its decoded ELF section names.`
-    : `The ${label} and its decoded ELF section names require ${String(required)} bytes, above this operation's ${String(MAX_INSPECT_ELF_DEBUG_LINK_FILE_BYTES)}-byte maximum; select a ${label} with a smaller section-name table.`;
-};
-
 const selectedPath = (
   input: InspectElfDebugLinkInput,
   field: SelectedField,
@@ -296,128 +282,6 @@ const selectedPath = (
   field === "candidate_path"
     ? (input.candidate_path ?? input.path)
     : input.path;
-
-const elfDebugLinkFailurePrimary = (
-  facts: ArtifactFilePrimaryFacts,
-  input: InspectElfDebugLinkInput,
-  field: SelectedField,
-) => {
-  const { cause, origin } = facts;
-  if (origin === "owned-or-classified" && cause instanceof AnalysisError)
-    return cause;
-  const path = selectedPath(input, field);
-  const sectionNameBudget = elfSectionNameBudget(cause);
-  if (isParseLimit(cause, "elf") && sectionNameBudget !== undefined)
-    return parseLimitConstraint(OPERATION, "memory", cause, {
-      retryable: false,
-      remediationAction: sectionNameBudgetRemediation(
-        sectionNameBudget.required,
-        field,
-      ),
-    });
-  if (cause instanceof BinaryResourceFailure)
-    return parseLimitConstraint(
-      OPERATION,
-      "memory",
-      cause,
-      fixedAllowanceOptions(
-        "The ELF structural decoding allowance",
-        "parser",
-        binaryResourceCeiling(cause),
-      ),
-    );
-  if (isParseLimit(cause, "elf-notes")) {
-    const entryBudget = cause.failure.limit.name === "max_entries";
-    return parseLimitConstraint(
-      OPERATION,
-      entryBudget ? "capacity" : "memory",
-      cause,
-      entryBudget
-        ? {
-            retryable: false,
-            remediationAction: inputBudgetRemediation("capacity", input, field),
-          }
-        : fixedAllowanceOptions(ELF_NOTE_TEXT_ALLOWANCE, "parser", {
-            limit: cause.failure.limit.maximum,
-            unit: "bytes",
-          }),
-    );
-  }
-  const formatFailure = parseFailureAnalysisError(
-    OPERATION,
-    path,
-    cause,
-    field,
-  );
-  if (formatFailure !== undefined) return formatFailure;
-  const identityFailure = projectOwnedArtifactIdentityFailure(
-    facts,
-    OPERATION,
-    path,
-  );
-  if (identityFailure !== undefined) return identityFailure;
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure
-  ) {
-    if (cause.reason === "limit") {
-      const candidate = field === "candidate_path";
-      return parseLimitConstraint(
-        OPERATION,
-        "file-size",
-        decodeLimit(
-          "elf-debug-link",
-          cause.message,
-          {
-            name: candidate ? "candidate_bytes" : "max_file_bytes",
-            maximum: candidate
-              ? MAX_ELF_DEBUG_CANDIDATE_BYTES
-              : input.max_file_bytes,
-          },
-          { cause },
-        ),
-        candidate
-          ? fixedAllowanceOptions(
-              "The whole-file debug candidate read allowance",
-              "input",
-              {
-                limit: MAX_ELF_DEBUG_CANDIDATE_BYTES,
-                unit: "bytes",
-              },
-            )
-          : {
-              retryable: false,
-              remediationAction: inputBudgetRemediation(
-                "file-size",
-                input,
-                field,
-              ),
-            },
-      );
-    }
-    if (cause.reason === "path" || cause.reason === "format")
-      return stableArtifactInputFailure(cause, OPERATION, field);
-  }
-  const fileFailure = projectSelectedArtifactFileFailure(
-    cause,
-    OPERATION,
-    path,
-    field === "candidate_path" ? "debug file candidate" : "ELF image",
-    field,
-  );
-  if (fileFailure !== undefined) return fileFailure;
-  return new ArtifactOperationError(
-    OPERATION,
-    origin === "owned-or-classified" && cause instanceof ArtifactReaderFailure
-      ? cause.reason
-      : "io",
-    undefined,
-    cause instanceof Error
-      ? cause.message
-      : "ELF debug-link inspection failed.",
-    { cause },
-  );
-};
 
 const elfDebugLinkFailure = (
   cause: unknown,
@@ -427,16 +291,71 @@ const elfDebugLinkFailure = (
     retained,
     imageSnapshot,
   }: {
-    // The decoded report from a failed candidate phase.
-    readonly retained?: AnalysisPartialObservation;
+    // The completed report before image finalization or a candidate failure.
+    readonly retained: AnalysisPartialObservation | undefined;
     // A fully read image whose ELF decoding then failed keeps its identity.
-    readonly imageSnapshot?: StableArtifactSnapshot | undefined;
+    readonly imageSnapshot?:
+      | { readonly sha256: string; readonly bytes: number }
+      | undefined;
   },
 ) => {
-  const primary = elfDebugLinkFailurePrimary(
-    artifactFilePrimaryFacts(cause),
-    input,
-    field,
+  const path = selectedPath(input, field);
+  const facts = artifactFilePrimaryFacts(cause);
+  const primary = classifyProviderFailure(
+    facts.cause,
+    offlineArtifactFailureDialect(facts, {
+      providerId: ELF_DEBUG_LINK_PROVIDER.id,
+      operation: OPERATION,
+      path,
+      description:
+        field === "candidate_path" ? "debug file candidate" : "ELF image",
+      field,
+      fallbackMessage: "ELF debug-link inspection failed.",
+      recognise: (failure) =>
+        isNativeStructureFailure(failure)
+          ? nativeStructureConstraint(OPERATION, failure)
+          : elfNoteLimitConstraint(
+              OPERATION,
+              failure,
+              input,
+              ELF_DEBUG_LINK_READ_BUDGETS,
+            ),
+      fileSize: (failure) => {
+        const candidate = field === "candidate_path";
+        return parseLimitConstraint(
+          OPERATION,
+          "file-size",
+          decodeLimit(
+            "elf-debug-link",
+            failure.message,
+            {
+              name: candidate ? "candidate_bytes" : "max_file_bytes",
+              maximum: candidate
+                ? MAX_ELF_DEBUG_CANDIDATE_BYTES
+                : input.max_file_bytes,
+            },
+            { cause: failure },
+          ),
+          candidate
+            ? fixedAllowanceOptions(
+                "The whole-file debug candidate read allowance",
+                "input",
+                {
+                  limit: MAX_ELF_DEBUG_CANDIDATE_BYTES,
+                  unit: "bytes",
+                },
+              )
+            : {
+                retryable: false,
+                limit: elfReadBudgetLimit(
+                  ELF_DEBUG_LINK_READ_BUDGETS,
+                  "max_file_bytes",
+                  input.max_file_bytes,
+                ),
+              },
+        );
+      },
+    }),
   );
   // Retained before stable-read projection so the decoded report, which
   // already carries any completed candidate identity, takes precedence.
@@ -444,7 +363,7 @@ const elfDebugLinkFailure = (
   return projectStableArtifactFailure(
     cause,
     primary,
-    selectedPath(input, field),
+    path,
     ELF_DEBUG_LINK_PROVIDER.id,
     OPERATION,
     imageSnapshot,

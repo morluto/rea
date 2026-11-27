@@ -5,8 +5,10 @@ import { analysisViewSourceSchema } from "../domain/analysisView/analysisViewReq
 import { evidenceSchema } from "../domain/evidence.js";
 import { evidenceBundleSchema } from "../domain/evidenceBundle.js";
 import {
+  declareBorrowedEvidenceInput,
   getEvidenceInputContract,
   isDeclaredEvidenceInput,
+  isEvidenceReferenceAlternative,
 } from "../domain/evidenceInputContract.js";
 import {
   evidenceFileReferenceSchema,
@@ -23,9 +25,7 @@ owners.add(evidenceSchema, { owner: "record" });
 owners.add(retainedEvidenceReferenceSchema, { owner: "reference" });
 for (const schema of [
   evidenceBundleSchema,
-  evidenceSourceInputSchema,
   evidenceFileReferenceSchema,
-  analysisViewSourceSchema,
   exportEnvironmentBundleInputSchema.shape.source,
 ])
   owners.add(schema, { owner: "source-or-bundle" });
@@ -143,7 +143,10 @@ const declarationIssues = (root: z.ZodType): string[] => {
         );
       return;
     }
-    const owner = owners.get(schema)?.owner;
+    // A declared inline-or-reference source owns its reference.
+    const owner = isEvidenceReferenceAlternative(schema)
+      ? "source-or-bundle"
+      : owners.get(schema)?.owner;
     if (owner === "source-or-bundle") return;
     if (owner === "record" || owner === "reference") {
       problems.add(
@@ -177,57 +180,25 @@ describe("public Evidence input declarations", () => {
     expect(problems).toEqual([]);
   });
 
-  it("detects bare/described records and independently declared references", () => {
-    expect(
-      declarationIssues(
-        z.strictObject({
-          left: evidenceSchema.describe("Complete source"),
-          right: retainedEvidenceReferenceSchema.describe("Retained source"),
-        }),
-      ),
-    ).toEqual([
+  it("reports bare and unsupported sources alongside valid declared fields", () => {
+    const mixed = z
+      .object({
+        supported: evidenceInputSchema.describe("Declared source"),
+        bundle: evidenceBundleSchema,
+        fileSource: evidenceSourceInputSchema.describe(
+          "Explicit file authority",
+        ),
+        left: evidenceSchema.describe("Complete source"),
+        right: retainedEvidenceReferenceSchema.describe("Retained source"),
+        records: z.record(z.string(), evidenceInputSchema),
+      })
+      .catchall(evidenceInputSchema);
+    expect(declarationIssues(mixed)).toEqual([
+      "input.catchall: declared Evidence hidden by unsupported object catchall",
       "input.left: bare record requires the shared Evidence input declaration",
+      "input.records.values: declared Evidence hidden by unsupported record",
       "input.right: bare reference requires the shared Evidence input declaration",
     ]);
-  });
-
-  it("does not let a supported sibling conceal an unsupported marked input path", () => {
-    const schema = z.strictObject({
-      supported: evidenceInputSchema,
-      records: z.record(z.string(), evidenceInputSchema),
-    });
-    expect(getEvidenceInputContract(schema).hasEvidence).toBe(true);
-    expect(declarationIssues(schema)).toEqual([
-      "input.records.values: declared Evidence hidden by unsupported record",
-    ]);
-    const dynamic = z
-      .object({ supported: evidenceInputSchema })
-      .catchall(evidenceInputSchema);
-    expect(declarationIssues(dynamic)).toEqual([
-      "input.catchall: declared Evidence hidden by unsupported object catchall",
-    ]);
-  });
-
-  it("follows nested optional/default/union declarations and stops at collection owners", () => {
-    const schema = z.strictObject({
-      layers: z
-        .array(
-          z.strictObject({
-            source: evidenceInputSchema.describe("Selected source").optional(),
-          }),
-        )
-        .default([]),
-      choice: z.union([
-        z.strictObject({
-          kind: z.literal("source"),
-          source: evidenceInputSchema,
-        }),
-        z.strictObject({ kind: z.literal("none") }),
-      ]),
-      bundle: evidenceBundleSchema,
-      fileSource: evidenceSourceInputSchema.describe("Explicit file authority"),
-    });
-    expect(declarationIssues(schema)).toEqual([]);
   });
 
   it("distinguishes replaceable inline Evidence from reference-only sources", () => {
@@ -277,5 +248,30 @@ describe("public Evidence input declarations", () => {
       "input.default.union[0].source: Evidence union selection requires prefault instead of a skipping default",
     ]);
     expect(declarationIssues(choice.prefault(fallback))).toEqual([]);
+  });
+
+  it("refuses to borrow a declaration that resolves by its parsed union branch", () => {
+    const choice = z.union([
+      z.strictObject({
+        kind: z.literal("source"),
+        source: evidenceInputSchema,
+      }),
+      z.strictObject({ kind: z.literal("none") }),
+    ]);
+    // The borrowing parser never runs the union's branch capture, so its
+    // Evidence would pass through unvisited.
+    expect(() =>
+      getEvidenceInputContract(
+        declareBorrowedEvidenceInput(z.unknown().nonoptional(), choice),
+      ),
+    ).toThrow("cannot select union branches");
+    expect(
+      getEvidenceInputContract(
+        declareBorrowedEvidenceInput(
+          z.unknown().nonoptional(),
+          z.array(evidenceInputSchema),
+        ),
+      ).hasEvidence,
+    ).toBe(true);
   });
 });

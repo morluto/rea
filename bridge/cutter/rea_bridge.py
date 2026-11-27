@@ -283,6 +283,17 @@ def _windows_user_sid_text() -> str:
         kernel32.CloseHandle(token)
 
 
+def _record_private_acl_trustee(
+    expected_user: str, sid: str, user_allowed: bool, system_allowed: bool
+) -> tuple[bool, bool]:
+    """Record one ACE. The current user can be SYSTEM, so one ACE can set both."""
+    is_user = sid == expected_user
+    is_system = sid == "S-1-5-18"
+    if not is_user and not is_system:
+        raise RuntimeError("Cutter bridge ACL allows an unrelated principal")
+    return user_allowed or is_user, system_allowed or is_system
+
+
 def _verify_windows_private_path(path: Path, directory: bool) -> None:
     kernel32, advapi32 = _windows_api()
     attributes = kernel32.GetFileAttributesW(str(path))
@@ -370,12 +381,9 @@ def _verify_windows_private_path(path: Path, directory: bool) -> None:
             if not advapi32.ConvertSidToStringSidW(sid_pointer, ctypes.byref(sid_text)):
                 raise ctypes.WinError(ctypes.get_last_error())
             try:
-                if sid_text.value == expected_user:
-                    user_allowed = True
-                elif sid_text.value == "S-1-5-18":
-                    system_allowed = True
-                else:
-                    raise RuntimeError("Cutter bridge ACL allows an unrelated principal")
+                user_allowed, system_allowed = _record_private_acl_trustee(
+                    expected_user, sid_text.value, user_allowed, system_allowed
+                )
             finally:
                 kernel32.LocalFree(sid_text)
         if not user_allowed or not system_allowed:
@@ -684,16 +692,21 @@ class _BridgeServer(threading.Thread):
             descriptor_info = os.fstat(descriptor)
             if descriptor_info.st_uid != os.getuid() or stat.S_IMODE(descriptor_info.st_mode) & 0o077:
                 raise RuntimeError("Cutter bridge descriptor must be owned by the current user with mode 0600")
-            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream = os.fdopen(descriptor, "w", encoding="utf-8")
+            # The stream owns the descriptor now; closing the number again
+            # could close a descriptor another thread has since opened.
+            descriptor = None
+            with stream:
                 stream.write(json.dumps(payload))
                 stream.flush()
                 os.fsync(stream.fileno())
             os.replace(temporary_path, self.descriptor)
         except Exception:
-            try:
-                os.close(descriptor)
-            except OSError:
-                pass
+            if descriptor is not None:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
             try:
                 os.unlink(temporary_path)
             except OSError:
@@ -1264,12 +1277,19 @@ def _escape_json_fragment(fragment: str) -> bytes:
     return json.dumps(fragment, ensure_ascii=False)[1:-1].encode("utf-8")
 
 
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f]")
+_EXIT_CONTAINER = object()
+
+
 def _within_response_limit(value: Any) -> bool:
-    pending = [value]
+    pending: list[Any] = [value]
     seen: set[int] = set()
     size = 0
     while pending:
         current = pending.pop()
+        if isinstance(current, tuple) and len(current) == 2 and current[0] is _EXIT_CONTAINER:
+            seen.discard(current[1])
+            continue
         if isinstance(current, str):
             size += 2
             if len(current) > MAX_FRAME_BYTES - size:
@@ -1289,11 +1309,12 @@ def _within_response_limit(value: Any) -> bool:
             size += current.count('"') + current.count("\\")
             # A short escape is two JSON bytes and was already counted as one.
             # Other controls expand to a six-byte \\u00XX sequence.
-            size += sum(
-                1 if ord(character) in (0x08, 0x09, 0x0A, 0x0C, 0x0D) else 5
-                for character in current
-                if ord(character) < 0x20
-            )
+            if _CONTROL_CHAR_RE.search(current) is not None:
+                size += sum(
+                    1 if ord(character) in (0x08, 0x09, 0x0A, 0x0C, 0x0D) else 5
+                    for character in current
+                    if ord(character) < 0x20
+                )
         elif isinstance(current, dict):
             identity = id(current)
             if identity in seen:
@@ -1305,6 +1326,7 @@ def _within_response_limit(value: Any) -> bool:
             size += 2 + count + max(0, count - 1)
             if size > MAX_FRAME_BYTES:
                 return False
+            pending.append((_EXIT_CONTAINER, identity))
             pending.extend(current.keys())
             pending.extend(current.values())
         elif isinstance(current, (list, tuple)):
@@ -1317,6 +1339,7 @@ def _within_response_limit(value: Any) -> bool:
             size += 2 + max(0, count - 1)
             if size > MAX_FRAME_BYTES:
                 return False
+            pending.append((_EXIT_CONTAINER, identity))
             pending.extend(current)
         elif current is None:
             size += 4
