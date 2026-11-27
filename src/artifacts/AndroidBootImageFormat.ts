@@ -1,4 +1,4 @@
-import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import { decodeUtf8PreservingBomOrNull } from "../domain/strictUtf8.js";
 import { logicalPathNfc } from "../domain/artifactIdentity.js";
 import type { Result } from "../domain/result.js";
 import {
@@ -305,18 +305,10 @@ const untilNul = (bytes: Buffer): Buffer => {
   return nul === -1 ? bytes : bytes.subarray(0, nul);
 };
 
-const decodeText = (bytes: Buffer): string | null => {
-  try {
-    return decodeStrictUtf8(bytes, "preserve");
-  } catch {
-    return null;
-  }
-};
-
 const decodeField = (
   bytes: Buffer,
 ): { readonly text: string | null; readonly hex: string } => ({
-  text: decodeText(untilNul(bytes)),
+  text: decodeUtf8PreservingBomOrNull(untilNul(bytes)),
   hex: bytes.toString("hex"),
 });
 
@@ -343,7 +335,7 @@ const commandFields = (
     commandLine:
       extraBytes === null
         ? cmdline.text
-        : decodeText(
+        : decodeUtf8PreservingBomOrNull(
             Buffer.concat([untilNul(cmdlineBytes), untilNul(extraBytes)]),
           ),
   };

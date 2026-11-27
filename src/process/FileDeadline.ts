@@ -27,20 +27,26 @@ export const fileDeadline = (
   timeoutMs: number | undefined,
 ): FileDeadline => {
   let ended: "cancellation" | "deadline" | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   let interrupt: ((by: "cancellation" | "deadline") => void) | undefined;
   const interrupted = new Promise<"cancellation" | "deadline">((resolve) => {
     interrupt = (by) => {
       ended ??= by;
+      if (timer !== undefined) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
       resolve(by);
     };
   });
   const cancel = (): void => interrupt?.("cancellation");
-  const timer =
-    timeoutMs === undefined
-      ? undefined
-      : setTimeout(() => interrupt?.("deadline"), timeoutMs);
-  if (signal?.aborted === true) cancel();
-  else signal?.addEventListener("abort", cancel, { once: true });
+  if (signal?.aborted === true) {
+    cancel();
+  } else {
+    if (timeoutMs !== undefined)
+      timer = setTimeout(() => interrupt?.("deadline"), timeoutMs);
+    signal?.addEventListener("abort", cancel, { once: true });
+  }
   return {
     get ended() {
       return ended;

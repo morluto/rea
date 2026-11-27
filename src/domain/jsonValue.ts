@@ -49,6 +49,48 @@ export const equalJsonValues = (
   return true;
 };
 
+/** Whether a UTF-16 code unit can continue a JSON number or literal token. */
+const jsonTokenUnit = (code: number): boolean =>
+  (code >= 0x30 && code <= 0x39) || // 0-9
+  (code >= 0x41 && code <= 0x5a) || // A-Z
+  (code >= 0x61 && code <= 0x7a) || // a-z
+  code === 0x2b || // +
+  code === 0x2d || // -
+  code === 0x2e; // .
+
+/**
+ * How many values `JSON.parse(source)` would allocate (objects, arrays,
+ * strings including member names, numbers, booleans and nulls), counted in
+ * one scan without building them. Counting stops at `limit + 1`, so a caller
+ * can refuse a document whose decoded tree would outgrow its text before
+ * parsing it. Ill-formed text returns an approximate count; `JSON.parse`
+ * still reports the syntax failure.
+ */
+export const countJsonValues = (source: string, limit: number): number => {
+  let values = 0;
+  let inString = false;
+  let inToken = false;
+  for (let index = 0; index < source.length; index++) {
+    const code = source.charCodeAt(index);
+    if (inString) {
+      if (code === 0x5c) index++;
+      else if (code === 0x22) inString = false;
+      continue;
+    }
+    if (jsonTokenUnit(code)) {
+      if (inToken) continue;
+      inToken = true;
+    } else {
+      inToken = false;
+      if (code === 0x22) inString = true;
+      else if (code !== 0x7b && code !== 0x5b) continue;
+    }
+    values++;
+    if (values > limit) return values;
+  }
+  return values;
+};
+
 const immutableValidation = new WeakMap<object, string | undefined>();
 
 /** Validate JSON meaning and nesting without cloning a trusted immutable value. */

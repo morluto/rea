@@ -1,0 +1,2576 @@
+import { createHash } from "node:crypto";
+
+import { digestCanonicalValue } from "../domain/canonicalDigest.js";
+import { jsonByteLength } from "../domain/jsonSerialization.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import { Budget } from "../domain/budget.js";
+import { parseJsonWithDuplicatePolicy } from "../domain/jsonDuplicateMember.js";
+import {
+  decodeLimit,
+  malformedInput,
+  ParseFailureError,
+} from "../domain/parseFailure.js";
+import {
+  isOciConfigMediaType,
+  isOciIndexMediaType,
+  isOciKnownMediaType,
+  isOciManifestMediaType,
+  ociBlobPath,
+  parseOciDigest,
+  OCI_IMAGE_LAYOUT_FORMAT,
+  type InspectOciImageLayoutInput,
+  type OciImageLayout,
+  type OciImageLayoutBlob,
+  type OciImageLayoutFinding,
+  type OciImageLayoutImage,
+  type OciImageLayoutIndex,
+} from "../domain/oci/imageLayout.js";
+import { isRecord } from "../kernel/isRecord.js";
+import {
+  abortIfNeeded,
+  ArtifactReaderFailure,
+  artifactFileCompletion,
+  digestReadableToCompletion,
+  DirectoryArtifactTraversalLimit,
+  readArtifactFileChunks,
+  streamChunkToBuffer,
+  type ArtifactReaderTraversal,
+  type ArtifactTraversalOmission,
+  type DirectoryArtifactEntry,
+  type DirectoryArtifactReader,
+} from "../resources/index.js";
+import type { FileSnapshotPartialObservation } from "../domain/fileSnapshotObservation.js";
+
+/** Limitation wording owned by the parser; tests assert delivery through these. */
+export const OCI_IMAGE_LAYOUT_LIMITATIONS = {
+  directoryOnly:
+    "This workflow reads an OCI image-layout directory without decompressing layers, executing the image, or contacting a registry. Tar image layouts are not inspected.",
+  noLayerContents:
+    "Layer contents are not listed; decompression is a follow-up.",
+  envRedacted:
+    "Config Env values are omitted (null) because include_env_values was set to false.",
+} as const;
+
+export class OciImageLayoutRefusal extends ParseFailureError {
+  constructor(
+    failure: ParseFailureError["failure"],
+    readonly layoutObservation: FileSnapshotPartialObservation | undefined,
+    options?: ErrorOptions,
+  ) {
+    super(failure, options);
+  }
+}
+
+/** Traversal identity of index.json, kept outside the blob digest keys. */
+const ROOT_INDEX_IDENTITY = "root:index.json";
+
+const OCI_INDEX_MEDIA_TYPE = "application/vnd.oci.image.index.v1+json";
+
+const BASE_LIMITATIONS = [
+  OCI_IMAGE_LAYOUT_LIMITATIONS.directoryOnly,
+  OCI_IMAGE_LAYOUT_LIMITATIONS.noLayerContents,
+] as const;
+
+/** Present string as written; blank or whitespace-only values count as absent. */
+const nonempty = (value: unknown): string | null =>
+  typeof value === "string" && value.trim() !== "" ? value : null;
+
+const isStringArray = (value: unknown): value is readonly string[] => {
+  if (!Array.isArray(value)) return false;
+  for (const item of value) if (typeof item !== "string") return false;
+  return true;
+};
+
+interface ParsedAnnotations {
+  readonly annotations: { name: string; value: string }[];
+  readonly dropped: number;
+}
+
+// Each retained annotation is charged as its serialized {name, value} record
+// before it is allocated, so many short pairs cannot outgrow their text.
+// Non-string values are counted in the same pass so defect reporting does not
+// rescan annotations.
+const annotationsOf = (
+  value: unknown,
+  options: {
+    readonly retain: boolean;
+    readonly charge?: (bytes: number) => void;
+  },
+): ParsedAnnotations => {
+  if (!isRecord(value)) return { annotations: [], dropped: 0 };
+  const annotations: { name: string; value: string }[] = [];
+  let dropped = 0;
+  for (const [name, entry] of Object.entries(value)) {
+    if (typeof entry !== "string") {
+      dropped += 1;
+      continue;
+    }
+    if (!options.retain) continue;
+    options.charge?.(
+      annotationRecordBytes(name, entry) + (annotations.length > 0 ? 1 : 0),
+    );
+    annotations.push({ name, value: entry });
+  }
+  return { annotations, dropped };
+};
+
+const platformOf = (
+  value: unknown,
+): OciImageLayoutIndex["entries"][number]["platform"] => {
+  if (!isRecord(value)) return null;
+  return {
+    os: nonempty(value.os),
+    architecture: nonempty(value.architecture),
+    variant: nonempty(value.variant),
+    os_version: nonempty(value["os.version"]),
+  };
+};
+
+// OCI and Docker v2 indexes and manifests both require the number 2.
+const schemaVersionDefect = (value: unknown): string | undefined => {
+  if (value === 2) return undefined;
+  if (value === undefined) return "lacks schemaVersion";
+  if (typeof value === "number")
+    return `schemaVersion ${String(value)} is not 2`;
+  const kind =
+    value === null
+      ? "null"
+      : Array.isArray(value)
+        ? "an array"
+        : typeof value === "object"
+          ? "an object"
+          : `a ${typeof value}`;
+  return `schemaVersion is ${kind}, not the number 2`;
+};
+
+interface ParsedDescriptor {
+  readonly descriptor: OciImageLayoutIndex["entries"][number];
+  readonly droppedAnnotations: number;
+}
+
+const descriptorOf = (
+  value: unknown,
+  options: {
+    readonly retainAnnotations?: boolean;
+    readonly chargeAnnotation?: (bytes: number) => void;
+  } = {},
+): ParsedDescriptor | undefined => {
+  if (!isRecord(value)) return undefined;
+  const mediaType = nonempty(value.mediaType) ?? nonempty(value.media_type);
+  const digest = nonempty(value.digest);
+  if (mediaType === null || digest === null) return undefined;
+  const size =
+    typeof value.size === "number" &&
+    Number.isSafeInteger(value.size) &&
+    value.size >= 0
+      ? value.size
+      : null;
+  const { annotations, dropped } = annotationsOf(value.annotations, {
+    retain: options.retainAnnotations ?? false,
+    ...(options.chargeAnnotation === undefined
+      ? {}
+      : { charge: options.chargeAnnotation }),
+  });
+  return {
+    descriptor: {
+      media_type: mediaType,
+      digest,
+      size,
+      platform: platformOf(value.platform),
+      annotations,
+    },
+    droppedAnnotations: dropped,
+  };
+};
+
+/**
+ * Why a descriptor's required size is unusable, or undefined when it is a
+ * non-negative safe integer.
+ */
+const descriptorSizeDefect = (value: unknown): string | undefined => {
+  if (!isRecord(value)) return undefined;
+  const size = value.size;
+  if (typeof size === "number" && Number.isSafeInteger(size) && size >= 0)
+    return undefined;
+  return size === undefined
+    ? "lacks a size"
+    : `size ${describeSizeValue(size)} is not a non-negative integer`;
+};
+
+/**
+ * A bounded description of an unusable size member. The value is untrusted,
+ * so containers and long strings are named by type and length, never
+ * serialized.
+ */
+const describeSizeValue = (size: unknown): string => {
+  if (typeof size === "number" || typeof size === "boolean")
+    return String(size);
+  if (size === null) return "null";
+  if (typeof size === "string")
+    return size.length <= 32
+      ? JSON.stringify(size)
+      : `(a ${String(size.length)}-character string)`;
+  if (Array.isArray(size)) return `(an array of ${String(size.length)} items)`;
+  return "(an object)";
+};
+
+/**
+ * Why a descriptor's present platform or annotations cannot be modeled in
+ * full. `descriptorOf` still keeps the readable parts; null counts as absent.
+ */
+const descriptorMetadataDefects = (
+  value: unknown,
+  droppedAnnotations: number,
+): string[] => {
+  if (!isRecord(value)) return [];
+  const defects: string[] = [];
+  const { platform, annotations } = value;
+  if (platform !== undefined && platform !== null) {
+    if (!isRecord(platform))
+      defects.push("platform is not a JSON object; it is not modeled");
+    else {
+      const bad = ["os", "architecture", "variant", "os.version"].filter(
+        (name) =>
+          platform[name] !== undefined &&
+          platform[name] !== null &&
+          typeof platform[name] !== "string",
+      );
+      if (bad.length > 0)
+        defects.push(
+          `platform ${bad.join(", ")} ${bad.length === 1 ? "is" : "are"} not a string; ${bad.length === 1 ? "it is" : "they are"} omitted`,
+        );
+    }
+  }
+  if (annotations !== undefined && annotations !== null) {
+    if (!isRecord(annotations))
+      defects.push("annotations is not a JSON object; it is not modeled");
+    else if (droppedAnnotations > 0)
+      defects.push(
+        `annotations has ${String(droppedAnnotations)} value${droppedAnnotations === 1 ? "" : "s"} that ${droppedAnnotations === 1 ? "is" : "are"} not a string; ${droppedAnnotations === 1 ? "it is" : "they are"} omitted`,
+      );
+  }
+  return defects;
+};
+
+/** Untrusted digest text that `descriptorDefect` embeds for a rejected record. */
+const rejectedDescriptorDigest = (value: unknown): string | null =>
+  isRecord(value) ? nonempty(value.digest) : null;
+
+/** What a descriptor that `descriptorOf` cannot model is missing. */
+const descriptorDefect = (value: unknown): string => {
+  if (!isRecord(value)) return "is not a JSON object";
+  const digest = rejectedDescriptorDigest(value);
+  const missing = [
+    ...((nonempty(value.mediaType) ?? nonempty(value.media_type))
+      ? []
+      : ["a string mediaType"]),
+    ...(digest !== null ? [] : ["a string digest"]),
+  ];
+  return `lacks ${missing.join(" and ")}${digest === null ? "" : ` (digest ${digest})`}`;
+};
+
+interface JsonDocument {
+  readonly value: unknown;
+  readonly sha256: string;
+  readonly bytes: number;
+}
+
+const jsonLimit = (label: string, maximum: number, required: number) =>
+  decodeLimit(
+    OCI_IMAGE_LAYOUT_FORMAT,
+    `${label} exceeds the ${String(maximum)}-byte budget.`,
+    { name: "max_json_bytes", maximum, required },
+  );
+
+class BlobOversize extends Error {
+  constructor(
+    readonly maximum: number,
+    readonly required: number,
+  ) {
+    super("blob oversize");
+  }
+}
+
+/**
+ * A bounded description of a JSON member name. The name is untrusted
+ * and can be as long as the blob, so a long one is named by length only.
+ */
+const describeMemberName = (name: string): string =>
+  name.length <= 64
+    ? JSON.stringify(name)
+    : `(a ${String(name.length)}-character name)`;
+
+interface JsonFileBytes {
+  readonly content: Buffer;
+  readonly sha256: string;
+  readonly bytes: number;
+}
+
+/**
+ * Read and hash one JSON file through the reader, then hand its bytes to
+ * `finish` inside the read. With an identity `finish`, the returned hash has
+ * passed the reader's own checks, so a caller can keep it even when the bytes
+ * later fail to decode.
+ */
+const readJsonFile = async <Value>(
+  reader: DirectoryArtifactReader,
+  entry: DirectoryArtifactEntry,
+  maximum: number,
+  signal: AbortSignal | undefined,
+  label: string,
+  finish: (file: JsonFileBytes) => Value,
+): Promise<Value> => {
+  if (entry.kind !== "file")
+    throw malformedInput(
+      OCI_IMAGE_LAYOUT_FORMAT,
+      `${label} is not a regular file.`,
+    );
+  if (entry.declaredSize !== null && entry.declaredSize > maximum)
+    throw jsonLimit(label, maximum, entry.declaredSize);
+  try {
+    return await reader.inspectFile(
+      entry,
+      async (file) => {
+        const budget = new Budget(maximum);
+        const hash = createHash("sha256");
+        const chunks: Buffer[] = [];
+        for await (const raw of readArtifactFileChunks(file, { signal })) {
+          abortIfNeeded(signal);
+          const chunk = streamChunkToBuffer(raw);
+          budget.charge(chunk.length, () =>
+            jsonLimit(label, maximum, budget.used + chunk.length),
+          );
+          hash.update(chunk);
+          chunks.push(chunk);
+        }
+        const content = Buffer.concat(chunks);
+        return finish({
+          content,
+          sha256: hash.digest("hex"),
+          bytes: content.length,
+        });
+      },
+      signal,
+    );
+  } catch (cause: unknown) {
+    if (cause instanceof ParseFailureError) throw cause;
+    // DirectoryArtifactReader.inspectFile wraps a callback failure as a plain
+    // "io" error; reader-owned failures such as "integrity", "cancelled" or
+    // "limit" (and any failure carrying cleanup) keep their reader facts.
+    if (
+      cause instanceof ArtifactReaderFailure &&
+      cause.reason === "io" &&
+      cause.cleanup === undefined &&
+      cause.cause instanceof ParseFailureError
+    )
+      throw cause.cause;
+    throw cause;
+  }
+};
+
+const isJsonFileBytes = (value: unknown): value is JsonFileBytes =>
+  isRecord(value) &&
+  Buffer.isBuffer(value.content) &&
+  typeof value.sha256 === "string" &&
+  typeof value.bytes === "number";
+
+/** Decode bytes `readJsonFile` admitted as strict UTF-8 JSON. */
+const decodeJsonDocument = (
+  file: JsonFileBytes,
+  label: string,
+): JsonDocument => {
+  let text: string;
+  try {
+    text = decodeStrictUtf8(file.content, "strip-signature");
+  } catch (cause: unknown) {
+    throw malformedInput(
+      OCI_IMAGE_LAYOUT_FORMAT,
+      `${label} is not valid UTF-8.`,
+      { cause },
+    );
+  }
+  const parsed = parseJsonWithDuplicatePolicy(text, "reject");
+  if (!parsed.ok) {
+    if (parsed.duplicate !== undefined)
+      throw malformedInput(
+        OCI_IMAGE_LAYOUT_FORMAT,
+        `${label} repeats object member ${describeMemberName(parsed.duplicate.name)}.`,
+      );
+    throw malformedInput(
+      OCI_IMAGE_LAYOUT_FORMAT,
+      `${label} is not valid JSON.`,
+      { cause: parsed.cause },
+    );
+  }
+  return { value: parsed.value, sha256: file.sha256, bytes: file.bytes };
+};
+
+const readJsonDocument = async (
+  reader: DirectoryArtifactReader,
+  entry: DirectoryArtifactEntry,
+  maximum: number,
+  signal: AbortSignal | undefined,
+  label: string,
+): Promise<JsonDocument> =>
+  readJsonFile(reader, entry, maximum, signal, label, (file) =>
+    decodeJsonDocument(file, label),
+  );
+
+interface ReferencedBlob {
+  digest: string;
+  mediaType: string | null;
+  declaredSize: number | null;
+  /** Every distinct size the descriptors referencing this blob declared, in declaration order. */
+  declaredSizes: number[];
+  /** Membership index for declaredSizes, so many shared references stay linear. */
+  declaredSizeSet: Set<number>;
+}
+
+const recordFinding = (
+  findings: OciImageLayoutFinding[],
+  kind: OciImageLayoutFinding["kind"],
+  message: string,
+  digest: string | null = null,
+  path: string | null = null,
+): void => {
+  findings.push({ kind, digest, path, message });
+};
+
+const hashBlob = async (
+  reader: DirectoryArtifactReader,
+  entry: DirectoryArtifactEntry,
+  input: InspectOciImageLayoutInput,
+  signal: AbortSignal | undefined,
+  algorithm: "sha256" | "sha512" | undefined,
+): Promise<{
+  sha256: string;
+  sha512: string | null;
+  bytes: number;
+}> => {
+  if (entry.declaredSize !== null && entry.declaredSize > input.max_blob_bytes)
+    throw new BlobOversize(input.max_blob_bytes, entry.declaredSize);
+  const stream = await reader.open(entry, signal);
+  const sha512 = algorithm === "sha512" ? createHash("sha512") : undefined;
+  const budget = new Budget(input.max_blob_bytes);
+  try {
+    const digest = await digestReadableToCompletion(
+      stream,
+      signal,
+      undefined,
+      (chunk) => {
+        budget.charge(chunk.length, () => {
+          throw new BlobOversize(
+            input.max_blob_bytes,
+            budget.used + chunk.length,
+          );
+        });
+        sha512?.update(chunk);
+      },
+    );
+    return {
+      sha256: digest.sha256,
+      sha512: sha512 === undefined ? null : sha512.digest("hex"),
+      bytes: digest.bytes,
+    };
+  } finally {
+    stream.destroy();
+  }
+};
+
+type ChargeConfigBytes = (bytes: number) => void;
+
+const chargeArrayItem = (
+  charge: ChargeConfigBytes,
+  count: number,
+  bytes: number,
+): void => {
+  charge(bytes + (count > 0 ? 1 : 0));
+};
+
+const NULL_JSON_BYTES = 4;
+const EMPTY_STRING_JSON_BYTES = 2;
+
+const jsonStringBytes = (value: string): number =>
+  value.length <= 8192
+    ? Buffer.byteLength(JSON.stringify(value), "utf8")
+    : jsonByteLength(value);
+
+// UTF-16 keeps unpaired surrogates in a name byte-for-byte.
+const detached = (value: string): string =>
+  Buffer.from(value, "utf16le").toString("utf16le");
+
+const EMPTY_ENV_BINDING_BYTES = jsonByteLength({ name: "", value: null });
+const envBindingBytes = (name: string, value: string | null): number =>
+  EMPTY_ENV_BINDING_BYTES +
+  (jsonStringBytes(name) - EMPTY_STRING_JSON_BYTES) +
+  (value === null ? 0 : jsonStringBytes(value) - NULL_JSON_BYTES);
+
+const EMPTY_LABEL_BYTES = jsonByteLength({ name: "", value: "" });
+const labelBytes = (name: string, value: string): number =>
+  EMPTY_LABEL_BYTES +
+  (jsonStringBytes(name) - EMPTY_STRING_JSON_BYTES) +
+  (jsonStringBytes(value) - EMPTY_STRING_JSON_BYTES);
+
+// Annotations serialize as the same {name, value} record as labels.
+const annotationRecordBytes = labelBytes;
+
+const envBindings = (
+  value: unknown,
+  includeValues: boolean,
+  defects: string[],
+  charge: ChargeConfigBytes,
+): OciImageLayoutImage["env"] => {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    defects.push("config.Env is not an array; it is not modeled");
+    return [];
+  }
+  const bindings: OciImageLayoutImage["env"] = [];
+  let invalid = 0;
+  let first = -1;
+  for (const [position, item] of value.entries()) {
+    const separator = typeof item === "string" ? item.indexOf("=") : -1;
+    const name =
+      typeof item !== "string"
+        ? ""
+        : separator === -1
+          ? item
+          : item.slice(0, separator);
+    if (typeof item !== "string" || name.length === 0) {
+      invalid += 1;
+      if (first === -1) first = position;
+      continue;
+    }
+    const envValue =
+      includeValues && separator !== -1 ? item.slice(separator + 1) : null;
+    chargeArrayItem(charge, bindings.length, envBindingBytes(name, envValue));
+    // A V8 slice keeps the whole NAME=value string alive, so a redacted
+    // binding keeps a standalone copy of its name.
+    bindings.push({
+      name: envValue === null && separator !== -1 ? detached(name) : name,
+      value: envValue,
+    });
+  }
+  if (invalid > 0)
+    defects.push(
+      `config.Env has ${String(invalid)} member${invalid === 1 ? "" : "s"} that ${invalid === 1 ? "is" : "are"} not a named string, first at [${String(first)}]; ${invalid === 1 ? "it is" : "they are"} omitted`,
+    );
+  return bindings;
+};
+
+const HISTORY_FIELDS = [
+  ["created", "string"],
+  ["created_by", "string"],
+  ["createdBy", "string"],
+  ["empty_layer", "boolean"],
+  ["emptyLayer", "boolean"],
+  ["comment", "string"],
+] as const;
+
+const historyRecordOf = (
+  item: Record<string, unknown>,
+): OciImageLayoutImage["history"][number] => ({
+  created: nonempty(item.created),
+  created_by:
+    typeof item.created_by === "string"
+      ? item.created_by
+      : typeof item.createdBy === "string"
+        ? item.createdBy
+        : null,
+  empty_layer:
+    typeof item.empty_layer === "boolean"
+      ? item.empty_layer
+      : typeof item.emptyLayer === "boolean"
+        ? item.emptyLayer
+        : null,
+  comment: typeof item.comment === "string" ? item.comment : null,
+});
+
+const EMPTY_HISTORY_RECORD_BYTES = jsonByteLength(historyRecordOf({}));
+const historyRecordBytes = (
+  record: OciImageLayoutImage["history"][number],
+): number =>
+  EMPTY_HISTORY_RECORD_BYTES +
+  (record.created === null
+    ? 0
+    : jsonStringBytes(record.created) - NULL_JSON_BYTES) +
+  (record.created_by === null
+    ? 0
+    : jsonStringBytes(record.created_by) - NULL_JSON_BYTES) +
+  (record.empty_layer === false ? 1 : 0) +
+  (record.comment === null
+    ? 0
+    : jsonStringBytes(record.comment) - NULL_JSON_BYTES);
+
+const historyOf = (
+  value: unknown,
+  defects: string[],
+  charge: ChargeConfigBytes,
+): OciImageLayoutImage["history"] => {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    defects.push("history is not an array; it is not modeled");
+    return [];
+  }
+  const history: OciImageLayoutImage["history"] = [];
+  let invalid = 0;
+  let first = -1;
+  const fieldDefects = new Map<
+    (typeof HISTORY_FIELDS)[number][0],
+    { count: number; first: number }
+  >();
+  for (const [position, item] of value.entries()) {
+    if (!isRecord(item)) {
+      invalid += 1;
+      if (first === -1) first = position;
+      continue;
+    }
+    const record = historyRecordOf(item);
+    chargeArrayItem(charge, history.length, historyRecordBytes(record));
+    for (const [name, expected] of HISTORY_FIELDS) {
+      const member = item[name];
+      if (
+        member !== undefined &&
+        member !== null &&
+        typeof member !== expected
+      ) {
+        const current = fieldDefects.get(name);
+        if (current === undefined)
+          fieldDefects.set(name, { count: 1, first: position });
+        else current.count += 1;
+      }
+    }
+    history.push(record);
+  }
+  if (invalid > 0)
+    defects.push(
+      `history has ${String(invalid)} member${invalid === 1 ? "" : "s"} that ${invalid === 1 ? "is" : "are"} not a JSON object, first at [${String(first)}]; ${invalid === 1 ? "it is" : "they are"} omitted`,
+    );
+  for (const [name, expected] of HISTORY_FIELDS) {
+    const defect = fieldDefects.get(name);
+    if (defect === undefined) continue;
+    defects.push(
+      `history has ${String(defect.count)} member${defect.count === 1 ? "" : "s"} whose ${name} is not a ${expected}, first at [${String(defect.first)}]; ${defect.count === 1 ? "it is" : "they are"} not modeled`,
+    );
+  }
+  return history;
+};
+
+type ConfigFacts = Pick<
+  OciImageLayoutImage,
+  | "architecture"
+  | "os"
+  | "variant"
+  | "created"
+  | "author"
+  | "user"
+  | "env"
+  | "entrypoint"
+  | "cmd"
+  | "working_dir"
+  | "exposed_ports"
+  | "volumes"
+  | "labels"
+  | "stop_signal"
+  | "rootfs_diff_ids"
+  | "history"
+>;
+
+const EMPTY_CONFIG_FACTS: ConfigFacts = {
+  architecture: null,
+  os: null,
+  variant: null,
+  created: null,
+  author: null,
+  user: null,
+  env: [],
+  entrypoint: null,
+  cmd: null,
+  working_dir: null,
+  exposed_ports: [],
+  volumes: [],
+  labels: [],
+  stop_signal: null,
+  rootfs_diff_ids: [],
+  history: [],
+};
+
+// Fixed JSON skeleton of ConfigFacts (braces, keys, colons, commas, and the
+// empty `[]` for always-array fields), leaving each nullable field's value
+// and each array's elements to be charged incrementally as they are built.
+const CONFIG_FACTS_BASE_BYTES =
+  jsonByteLength(EMPTY_CONFIG_FACTS) -
+  Object.values(EMPTY_CONFIG_FACTS).filter((value) => value === null).length *
+    NULL_JSON_BYTES;
+
+/**
+ * Keys of a config set such as ExposedPorts or Volumes. An empty key names
+ * nothing, so it is omitted and reported as a defect instead of becoming an
+ * empty fact. OCI defines these sets as objects whose member values are JSON
+ * objects (`{}`); nonempty keys with non-object values are still kept as
+ * declared and reported as a defect.
+ */
+const configKeys = (
+  value: unknown,
+  label: string,
+  defects: string[],
+  charge: ChargeConfigBytes,
+): string[] => {
+  if (value === undefined || value === null) return [];
+  if (!isRecord(value)) {
+    defects.push(`${label} is not a JSON object; it is not modeled`);
+    return [];
+  }
+  const named: string[] = [];
+  let hasEmpty = false;
+  let invalidValues = 0;
+  let firstInvalidKey: string | undefined;
+  for (const [key, entry] of Object.entries(value)) {
+    if (key === "") {
+      hasEmpty = true;
+      continue;
+    }
+    if (!isRecord(entry)) {
+      invalidValues += 1;
+      if (firstInvalidKey === undefined) firstInvalidKey = key;
+    }
+    chargeArrayItem(charge, named.length, jsonStringBytes(key));
+    named.push(key);
+  }
+  if (hasEmpty) defects.push(`${label} has an empty key; it is omitted`);
+  if (invalidValues > 0 && firstInvalidKey !== undefined)
+    defects.push(
+      `${label} has ${String(invalidValues)} member${invalidValues === 1 ? "" : "s"} whose value is not a JSON object, first at ${describeMemberName(firstInvalidKey)}; ${invalidValues === 1 ? "it is" : "they are"} kept as declared`,
+    );
+  return named;
+};
+
+/**
+ * rootfs.diff_ids as nonempty strings. Members that are not are omitted and
+ * reported, so a damaged config keeps its other facts.
+ */
+const diffIdsOf = (
+  rootfs: Record<string, unknown>,
+  defects: string[],
+  charge: ChargeConfigBytes,
+) => {
+  const value = rootfs.diff_ids;
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    defects.push("rootfs.diff_ids is not an array; it is not modeled");
+    return [];
+  }
+  const diffIds: string[] = [];
+  let invalid = 0;
+  let first = -1;
+  for (const [position, item] of value.entries()) {
+    if (typeof item === "string" && item !== "") {
+      chargeArrayItem(charge, diffIds.length, jsonStringBytes(item));
+      diffIds.push(item);
+      continue;
+    }
+    invalid += 1;
+    if (first === -1) first = position;
+  }
+  if (invalid > 0)
+    defects.push(
+      `rootfs.diff_ids has ${String(invalid)} member${invalid === 1 ? "" : "s"} that ${invalid === 1 ? "is" : "are"} not a nonempty string, first at [${String(first)}]; ${invalid === 1 ? "it is" : "they are"} omitted`,
+    );
+  return diffIds;
+};
+
+const configSubobject = (
+  value: unknown,
+  defect: string,
+  defects: string[],
+): Record<string, unknown> => {
+  if (value === undefined) return {};
+  if (isRecord(value)) return value;
+  defects.push(defect);
+  return {};
+};
+
+/**
+ * A string config field. A present value of another type is reported rather
+ * than read as an omitted declaration; null is treated as omitted.
+ */
+const stringField = (
+  value: unknown,
+  label: string,
+  defects: string[],
+  charge: ChargeConfigBytes,
+): string | null => {
+  if (value === undefined || value === null) {
+    charge(NULL_JSON_BYTES);
+    return null;
+  }
+  if (typeof value !== "string") {
+    defects.push(`${label} is not a string; it is not modeled`);
+    charge(NULL_JSON_BYTES);
+    return null;
+  }
+  const result = nonempty(value);
+  charge(result === null ? NULL_JSON_BYTES : jsonStringBytes(result));
+  return result;
+};
+
+/** A string-array config field such as Cmd, reported when malformed. */
+const stringArrayField = (
+  value: unknown,
+  label: string,
+  defects: string[],
+  charge: ChargeConfigBytes,
+): string[] | null => {
+  if (value === undefined || value === null) {
+    charge(NULL_JSON_BYTES);
+    return null;
+  }
+  if (!isStringArray(value)) {
+    defects.push(`${label} is not an array of strings; it is not modeled`);
+    charge(NULL_JSON_BYTES);
+    return null;
+  }
+  charge(2);
+  const items: string[] = [];
+  for (const item of value) {
+    chargeArrayItem(charge, items.length, jsonStringBytes(item));
+    items.push(item);
+  }
+  return items;
+};
+
+/** Config labels, with a defect for a non-object or non-string values. */
+const labelsField = (
+  value: unknown,
+  defects: string[],
+  charge: ChargeConfigBytes,
+): { name: string; value: string }[] => {
+  if (value === undefined || value === null) return [];
+  if (!isRecord(value)) {
+    defects.push("config.Labels is not a JSON object; it is not modeled");
+    return [];
+  }
+  const labels: { name: string; value: string }[] = [];
+  let dropped = 0;
+  for (const [name, entry] of Object.entries(value)) {
+    if (typeof entry !== "string") {
+      dropped += 1;
+      continue;
+    }
+    chargeArrayItem(charge, labels.length, labelBytes(name, entry));
+    labels.push({ name, value: entry });
+  }
+  if (dropped > 0)
+    defects.push(
+      `config.Labels has ${String(dropped)} value${dropped === 1 ? "" : "s"} that ${dropped === 1 ? "is" : "are"} not a string; ${dropped === 1 ? "it is" : "they are"} omitted`,
+    );
+  return labels;
+};
+
+/**
+ * Image facts from one config document, with the defects that left any of
+ * them out. Defects are reported once per config blob by the caller.
+ * Serialized fact bytes are charged against `allowance` incrementally as
+ * records are built so expanding inputs such as sparse `history` arrays
+ * refuse before allocating every record.
+ */
+const parseConfig = (
+  value: unknown,
+  includeEnvValues: boolean,
+  allowance: number,
+  overflow: (bytes: number) => ParseFailureError<"limit">,
+): { facts: ConfigFacts; defects: string[] } => {
+  if (!isRecord(value)) return { facts: EMPTY_CONFIG_FACTS, defects: [] };
+  const budget = new Budget(Math.max(0, allowance));
+  const charge: ChargeConfigBytes = (bytes) => {
+    budget.charge(bytes, () => overflow(budget.used + bytes));
+  };
+  charge(CONFIG_FACTS_BASE_BYTES);
+  const defects: string[] = [];
+  const config = configSubobject(
+    value.config,
+    "config is not a JSON object; its runtime facts are not modeled",
+    defects,
+  );
+  const rootfs = configSubobject(
+    value.rootfs,
+    "rootfs is not a JSON object; its diff IDs are not modeled",
+    defects,
+  );
+  return {
+    facts: {
+      architecture: stringField(
+        value.architecture,
+        "architecture",
+        defects,
+        charge,
+      ),
+      os: stringField(value.os, "os", defects, charge),
+      variant: stringField(value.variant, "variant", defects, charge),
+      created: stringField(value.created, "created", defects, charge),
+      author: stringField(value.author, "author", defects, charge),
+      user: stringField(
+        config.User ?? config.user,
+        "config.User",
+        defects,
+        charge,
+      ),
+      env: envBindings(
+        config.Env ?? config.env,
+        includeEnvValues,
+        defects,
+        charge,
+      ),
+      entrypoint: stringArrayField(
+        config.Entrypoint ?? config.entrypoint,
+        "config.Entrypoint",
+        defects,
+        charge,
+      ),
+      cmd: stringArrayField(
+        config.Cmd ?? config.cmd,
+        "config.Cmd",
+        defects,
+        charge,
+      ),
+      working_dir: stringField(
+        config.WorkingDir ?? config.workingDir,
+        "config.WorkingDir",
+        defects,
+        charge,
+      ),
+      exposed_ports: configKeys(
+        config.ExposedPorts ?? config.exposedPorts,
+        "config.ExposedPorts",
+        defects,
+        charge,
+      ),
+      volumes: configKeys(
+        config.Volumes ?? config.volumes,
+        "config.Volumes",
+        defects,
+        charge,
+      ),
+      labels: labelsField(config.Labels ?? config.labels, defects, charge),
+      stop_signal: stringField(
+        config.StopSignal ?? config.stopSignal,
+        "config.StopSignal",
+        defects,
+        charge,
+      ),
+      rootfs_diff_ids: diffIdsOf(rootfs, defects, charge),
+      history: historyOf(value.history, defects, charge),
+    },
+    defects,
+  };
+};
+
+/** OCI's `algorithm:encoded` grammar, for digests this parser cannot verify. */
+const OCI_DIGEST_GRAMMAR =
+  /^([a-z0-9]+(?:[+._-][a-z0-9]+)*):([a-zA-Z0-9=_-]+)$/u;
+
+/** Where the layout stores a blob whose digest algorithm is unsupported. */
+const unverifiedBlobPath = (digest: string): string | undefined => {
+  const match = OCI_DIGEST_GRAMMAR.exec(digest);
+  return match === null ? undefined : `blobs/${match[1]!}/${match[2]!}`;
+};
+
+/** What the directory listing establishes about one blob path. */
+type BlobLookup =
+  | { readonly state: "listed"; readonly entry: DirectoryArtifactEntry }
+  | { readonly state: "omitted"; readonly omission: ArtifactTraversalOmission }
+  | { readonly state: "unexamined"; readonly via: string }
+  | { readonly state: "missing" };
+
+const blobRecord = (
+  digest: string,
+  path: string,
+  mediaType: string | null,
+  declaredSize: number | null,
+  referenced: boolean | null,
+  kind: OciImageLayoutBlob["kind"],
+  extras: Partial<OciImageLayoutBlob> = {},
+): OciImageLayoutBlob => ({
+  digest,
+  path,
+  media_type: mediaType,
+  declared_size: declaredSize,
+  observed_size: extras.observed_size ?? null,
+  present: extras.present ?? kind === "file",
+  hashed: extras.hashed ?? false,
+  sha256: extras.sha256 ?? null,
+  sha512: extras.sha512 ?? null,
+  referenced,
+  kind,
+});
+
+const refuse = (
+  failure: ParseFailureError["failure"],
+  layoutObservation: FileSnapshotPartialObservation | undefined,
+  cause?: unknown,
+): never => {
+  throw new OciImageLayoutRefusal(
+    failure,
+    layoutObservation,
+    cause === undefined ? undefined : { cause },
+  );
+};
+
+/** Inventory one admitted OCI image-layout directory without layer decompression. */
+export const parseOciImageLayout = async (
+  reader: DirectoryArtifactReader,
+  input: InspectOciImageLayoutInput,
+  signal?: AbortSignal,
+): Promise<OciImageLayout> => {
+  const observed: { layout?: FileSnapshotPartialObservation } = {};
+  try {
+    return await inventoryOciImageLayout(reader, input, observed, signal);
+  } catch (cause: unknown) {
+    // A refusal after oci-layout was hashed, such as a later manifest, config
+    // or descriptor budget, keeps that completed observation.
+    if (
+      cause instanceof ParseFailureError &&
+      !(cause instanceof OciImageLayoutRefusal) &&
+      observed.layout !== undefined
+    )
+      refuse(cause.failure, observed.layout, cause);
+    // A reader failure after that point, such as an unreadable blob, keeps
+    // the observation too unless the reader already attached its own.
+    if (
+      cause instanceof ArtifactReaderFailure &&
+      cause.partialObservation === undefined &&
+      observed.layout !== undefined
+    )
+      cause.partialObservation = observed.layout;
+    throw cause;
+  }
+};
+
+const inventoryOciImageLayout = async (
+  reader: DirectoryArtifactReader,
+  input: InspectOciImageLayoutInput,
+  observed: { layout?: FileSnapshotPartialObservation },
+  signal?: AbortSignal,
+): Promise<OciImageLayout> => {
+  const findings: OciImageLayoutFinding[] = [];
+  const limitations: string[] = [...BASE_LIMITATIONS];
+  if (!input.include_env_values)
+    limitations.push(OCI_IMAGE_LAYOUT_LIMITATIONS.envRedacted);
+
+  const entries: DirectoryArtifactEntry[] = [];
+  // Silence from the reader is not a completeness claim.
+  const traversal: { current: ArtifactReaderTraversal } = {
+    current: {
+      status: "unknown",
+      limitations: ["Directory traversal did not report its coverage."],
+    },
+  };
+  // Directories outside blobs/ are skipped on purpose; any other omission is
+  // an entry the inventory cannot account for.
+  const omitted: ArtifactTraversalOmission[] = [];
+  let admittedEntries = 0;
+  try {
+    for await (const entry of reader.entries(signal, {
+      maximumEntries: input.max_entries,
+      descendInto: (path) => path === "blobs" || path.startsWith("blobs/"),
+      admitExaminedEntry: () => {
+        admittedEntries += 1;
+      },
+      onCoverage: (coverage) => {
+        traversal.current = coverage;
+      },
+      onOmission: (omission) => {
+        if (omission.kind !== "directory-descendants") omitted.push(omission);
+      },
+    }))
+      entries.push(entry);
+  } catch (cause: unknown) {
+    if (cause instanceof DirectoryArtifactTraversalLimit)
+      throw decodeLimit(
+        OCI_IMAGE_LAYOUT_FORMAT,
+        `OCI image layout exceeds the ${String(input.max_entries)}-entry budget.`,
+        {
+          name: "max_entries",
+          maximum: input.max_entries,
+          required: cause.examinedEntries + 1,
+        },
+        { cause },
+      );
+    throw cause;
+  }
+  if (omitted.length > 0)
+    traversal.current = {
+      ...traversal.current,
+      status: "unknown",
+      limitations: [
+        ...traversal.current.limitations,
+        `Directory traversal omitted ${String(omitted.length)} entr${omitted.length === 1 ? "y" : "ies"} that are not regular files, directories, or symlinks; they are absent from the blob inventory. First omitted: ${omitted[0]?.path ?? "unknown"} (${omitted[0]?.kind ?? "unknown"}).`,
+      ],
+    };
+  for (const limitation of traversal.current.limitations)
+    if (!limitations.includes(limitation)) limitations.push(limitation);
+
+  const byPath = new Map<string, DirectoryArtifactEntry>();
+  for (const entry of entries) byPath.set(entry.path, entry);
+  const omittedByPath = new Map<string, ArtifactTraversalOmission>();
+  for (const omission of omitted) omittedByPath.set(omission.path, omission);
+  // A blob omitted as a non-regular entry was observed by the reader and must
+  // not read as missing. A blob under a symlinked blobs or blobs/<algorithm>
+  // directory was never listed, so its absence from the listing proves nothing.
+  // Every blob lookup goes through here so neither reads as missing.
+  const lookupBlob = (path: string): BlobLookup => {
+    const entry = byPath.get(path);
+    if (entry !== undefined) return { state: "listed", entry };
+    const omission = omittedByPath.get(path);
+    if (omission !== undefined) return { state: "omitted", omission };
+    const parts = path.split("/");
+    for (let depth = 1; depth < parts.length; depth += 1) {
+      const ancestor = parts.slice(0, depth).join("/");
+      if (byPath.get(ancestor)?.kind === "symlink")
+        return { state: "unexamined", via: ancestor };
+    }
+    return { state: "missing" };
+  };
+  const unexaminedMessage = (digest: string, via: string): string =>
+    `Blob ${digest} is under symlinked directory ${via}, which was not followed.`;
+
+  const layoutEntry = byPath.get("oci-layout");
+  if (layoutEntry === undefined)
+    throw malformedInput(
+      OCI_IMAGE_LAYOUT_FORMAT,
+      "Selected directory has no oci-layout file.",
+    );
+  if (layoutEntry.kind === "symlink")
+    throw malformedInput(
+      OCI_IMAGE_LAYOUT_FORMAT,
+      "oci-layout is a symlink and was not followed.",
+    );
+  let layoutFile: JsonFileBytes;
+  try {
+    layoutFile = await readJsonFile(
+      reader,
+      layoutEntry,
+      input.max_json_bytes,
+      signal,
+      "oci-layout",
+      (file) => file,
+    );
+  } catch (cause: unknown) {
+    // A read can complete and still fail when its descriptor close fails or
+    // is cancelled. The reader keeps the completed bytes on that failure, so
+    // their hash is recorded before the failure itself is rethrown.
+    const completed = artifactFileCompletion(cause)?.value;
+    if (isJsonFileBytes(completed))
+      observed.layout = {
+        kind: "file-snapshot-hash",
+        path: "oci-layout",
+        sha256: completed.sha256,
+        bytes: completed.bytes,
+      };
+    throw cause;
+  }
+  // The completed hash is kept before decoding, so a malformed oci-layout
+  // refusal still carries the file identity the reader admitted.
+  const layoutObservation: FileSnapshotPartialObservation = {
+    kind: "file-snapshot-hash",
+    path: "oci-layout",
+    sha256: layoutFile.sha256,
+    bytes: layoutFile.bytes,
+  };
+  observed.layout = layoutObservation;
+  const layoutDocument = decodeJsonDocument(layoutFile, "oci-layout");
+  const layoutVersion = isRecord(layoutDocument.value)
+    ? nonempty(layoutDocument.value.imageLayoutVersion)
+    : null;
+  if (layoutVersion === null)
+    throw new OciImageLayoutRefusal(
+      malformedInput(
+        OCI_IMAGE_LAYOUT_FORMAT,
+        "oci-layout is missing imageLayoutVersion.",
+      ).failure,
+      layoutObservation,
+    );
+  let jsonBytesRead = layoutDocument.bytes;
+
+  const indexEntry = byPath.get("index.json");
+  if (indexEntry === undefined || indexEntry.kind === "symlink") {
+    throw new OciImageLayoutRefusal(
+      malformedInput(
+        OCI_IMAGE_LAYOUT_FORMAT,
+        indexEntry === undefined
+          ? "Selected directory has no index.json file."
+          : "index.json is a symlink and was not followed.",
+      ).failure,
+      layoutObservation,
+    );
+  }
+  let indexDocument: JsonDocument;
+  try {
+    indexDocument = await readJsonDocument(
+      reader,
+      indexEntry,
+      input.max_json_bytes,
+      signal,
+      "index.json",
+    );
+  } catch (cause: unknown) {
+    if (cause instanceof ParseFailureError)
+      refuse(cause.failure, layoutObservation, cause);
+    throw cause;
+  }
+  jsonBytesRead += indexDocument.bytes;
+  if (!isRecord(indexDocument.value)) {
+    throw new OciImageLayoutRefusal(
+      malformedInput(
+        OCI_IMAGE_LAYOUT_FORMAT,
+        "index.json root is not a JSON object.",
+      ).failure,
+      layoutObservation,
+    );
+  }
+  // manifests is required; a wrong-typed member is a damaged index, not an
+  // empty one.
+  if (!Array.isArray(indexDocument.value.manifests)) {
+    throw new OciImageLayoutRefusal(
+      malformedInput(
+        OCI_IMAGE_LAYOUT_FORMAT,
+        "index.json manifests is not an array.",
+      ).failure,
+      layoutObservation,
+    );
+  }
+  const indexRoot = indexDocument.value;
+
+  const referenced = new Map<string, ReferencedBlob>();
+  const remember = (
+    digest: string,
+    mediaType: string | null,
+    declaredSize: number | null,
+  ): void => {
+    const existing = referenced.get(digest);
+    if (existing === undefined) {
+      referenced.set(digest, {
+        digest,
+        mediaType,
+        declaredSize,
+        declaredSizes: declaredSize === null ? [] : [declaredSize],
+        declaredSizeSet: new Set(declaredSize === null ? [] : [declaredSize]),
+      });
+      return;
+    }
+    if (existing.mediaType === null && mediaType !== null)
+      existing.mediaType = mediaType;
+    if (declaredSize === null || existing.declaredSizeSet.has(declaredSize))
+      return;
+    existing.declaredSize ??= declaredSize;
+    existing.declaredSizes.push(declaredSize);
+    existing.declaredSizeSet.add(declaredSize);
+  };
+
+  // A descriptor whose required size is unusable keeps its other facts, but
+  // its blob cannot be size-checked against that declaration, so the defect
+  // is reported instead of disappearing into a null size.
+  const reportDescriptorDefects = (
+    where: string,
+    value: unknown,
+    ownerDigest: string,
+    droppedAnnotations: number,
+  ): void => {
+    const defect = descriptorSizeDefect(value);
+    if (defect !== undefined)
+      recordFinding(
+        findings,
+        "malformed_blob_json",
+        `${where} ${defect}; its declared size is not checked.`,
+        ownerDigest,
+      );
+    // Damaged platform or annotations are reported rather than read as
+    // absent; the readable entries stay on the descriptor.
+    for (const metadataDefect of descriptorMetadataDefects(
+      value,
+      droppedAnnotations,
+    ))
+      recordFinding(
+        findings,
+        "malformed_blob_json",
+        `${where} ${metadataDefect}.`,
+        ownerDigest,
+      );
+  };
+
+  const indexes: OciImageLayoutIndex[] = [];
+  const images: OciImageLayoutImage[] = [];
+  // Traversal is keyed by the resolved blob path, so descriptors whose
+  // digests differ only in accepted hex casing read and walk one blob once
+  // while each keeps its source spelling in the report.
+  // A spelling that does not parse keeps its own namespace, so text such as
+  // "blobs/sha256/<hex>" never collides with the accepted digest's key.
+  const traversalKey = (digest: string): string => {
+    const parsed = parseOciDigest(digest);
+    return parsed === undefined
+      ? `raw:${digest}`
+      : `blob:${ociBlobPath(parsed)}`;
+  };
+  const visited = new Set<string>();
+  // Decoded descriptors have their own allowance: max_entries bounds the
+  // directory walk, and a shared layer is a single file but one descriptor
+  // in every manifest that references it.
+  let descriptorsDecoded = 0;
+  const chargeDescriptor = (): void => {
+    descriptorsDecoded += 1;
+    if (descriptorsDecoded > input.max_descriptors)
+      throw decodeLimit(
+        OCI_IMAGE_LAYOUT_FORMAT,
+        `OCI image layout exceeds the ${String(input.max_descriptors)}-descriptor budget.`,
+        {
+          name: "max_descriptors",
+          maximum: input.max_descriptors,
+          required: descriptorsDecoded,
+        },
+      );
+  };
+
+  // Each config blob is read and parsed once; images sharing it reuse those
+  // facts. Every image still carries its own copy of them in the report, so
+  // the serialized size of those facts spends max_config_bytes once per image
+  // before the image is added. The facts are charged rather than the source
+  // document because they can be larger: each `{}` history entry becomes a
+  // record with four null fields.
+  const configs = new Map<
+    string,
+    { facts: ConfigFacts; bytes: number } | undefined
+  >();
+  let configBytesExpanded = 0;
+  const configBytesLimit = (required: number) =>
+    decodeLimit(
+      OCI_IMAGE_LAYOUT_FORMAT,
+      `OCI image layout config facts exceed the ${String(input.max_config_bytes)}-byte budget.`,
+      {
+        name: "max_config_bytes",
+        maximum: input.max_config_bytes,
+        required,
+      },
+    );
+  const chargeConfigBytes = (bytes: number): void => {
+    configBytesExpanded += bytes;
+    if (configBytesExpanded > input.max_config_bytes)
+      throw configBytesLimit(configBytesExpanded);
+  };
+
+  // Index entries keep their text, annotations included, in the report;
+  // accepted subjects, configs and layers keep their digest and media type in
+  // image rows, the reference map, findings and blob rows; and rejected
+  // descriptors embed their untrusted digest in findings. All of that text
+  // spends max_descriptor_bytes before being retained.
+  let descriptorBytesRetained = 0;
+  const spendDescriptorBytes = (bytes: number): void => {
+    descriptorBytesRetained += bytes;
+    if (descriptorBytesRetained > input.max_descriptor_bytes)
+      throw decodeLimit(
+        OCI_IMAGE_LAYOUT_FORMAT,
+        `OCI image layout retained descriptor text exceeds the ${String(input.max_descriptor_bytes)}-byte budget.`,
+        {
+          name: "max_descriptor_bytes",
+          maximum: input.max_descriptor_bytes,
+          required: descriptorBytesRetained,
+        },
+      );
+  };
+  const chargeDescriptorBytes = (
+    descriptor: OciImageLayoutIndex["entries"][number],
+  ): void => {
+    let bytes =
+      Buffer.byteLength(descriptor.digest) +
+      Buffer.byteLength(descriptor.media_type);
+    for (const text of Object.values(descriptor.platform ?? {}))
+      if (text !== null) bytes += Buffer.byteLength(text);
+    spendDescriptorBytes(bytes);
+  };
+  const chargeAcceptedDescriptorText = (descriptor: {
+    digest: string;
+    media_type: string;
+  }): void => {
+    spendDescriptorBytes(
+      Buffer.byteLength(descriptor.digest) +
+        Buffer.byteLength(descriptor.media_type),
+    );
+  };
+  const chargeRejectedDescriptorText = (value: unknown): void => {
+    const digest = rejectedDescriptorDigest(value);
+    if (digest !== null) spendDescriptorBytes(Buffer.byteLength(digest));
+  };
+
+  // A referenced index, manifest or config that could not be read leaves its
+  // facts unexamined, whatever finding explains why.
+  let referencedJsonSkipped = false;
+  // An index or manifest left unexamined may reference any blob, so the
+  // walk no longer proves which blobs nothing references.
+  let referenceGraphTruncated = false;
+  const readReferencedJson = async (
+    digest: string,
+    label: string,
+  ): Promise<JsonDocument | undefined> => {
+    const document = await readReferencedJsonDocument(digest, label);
+    if (document === undefined) referencedJsonSkipped = true;
+    return document;
+  };
+  const readReferencedJsonDocument = async (
+    digest: string,
+    label: string,
+  ): Promise<JsonDocument | undefined> => {
+    const parsed = parseOciDigest(digest);
+    if (parsed === undefined) {
+      recordFinding(
+        findings,
+        "unsupported_digest_algorithm",
+        `Digest ${digest} uses an unsupported algorithm.`,
+        digest,
+      );
+      return undefined;
+    }
+    const path = ociBlobPath(parsed);
+    const lookup = lookupBlob(path);
+    if (lookup.state === "unexamined") {
+      recordFinding(
+        findings,
+        "symlink_blob",
+        unexaminedMessage(digest, lookup.via),
+        digest,
+        path,
+      );
+      return undefined;
+    }
+    if (lookup.state === "omitted") {
+      recordFinding(
+        findings,
+        "missing_blob",
+        `Referenced blob ${digest} is not a regular file.`,
+        digest,
+        path,
+      );
+      return undefined;
+    }
+    if (lookup.state === "missing") {
+      recordFinding(
+        findings,
+        "missing_blob",
+        `Referenced blob ${digest} is missing.`,
+        digest,
+        path,
+      );
+      return undefined;
+    }
+    const entry = lookup.entry;
+    if (entry.kind === "symlink") {
+      recordFinding(
+        findings,
+        "symlink_blob",
+        `Referenced blob ${digest} is a symlink and was not followed.`,
+        digest,
+        path,
+      );
+      return undefined;
+    }
+    if (entry.kind !== "file") {
+      recordFinding(
+        findings,
+        "missing_blob",
+        `Referenced blob ${digest} is not a regular file.`,
+        digest,
+        path,
+      );
+      return undefined;
+    }
+    try {
+      // The bytes count once the read completes, before decoding, so a
+      // malformed document still shows in json_bytes_read.
+      return await readJsonFile(
+        reader,
+        entry,
+        input.max_json_bytes,
+        signal,
+        label,
+        (file) => {
+          jsonBytesRead += file.bytes;
+          return decodeJsonDocument(file, label);
+        },
+      );
+    } catch (cause: unknown) {
+      // Only a format failure is a finding about the blob. Reader failures,
+      // including a close failure after a complete read, keep their own
+      // facts and reach the caller.
+      if (!(cause instanceof ParseFailureError) || cause.kind === "limit")
+        throw cause;
+      recordFinding(
+        findings,
+        "malformed_blob_json",
+        cause.failure.detail,
+        digest,
+        path,
+      );
+      return undefined;
+    }
+  };
+
+  // Indexes are walked breadth-first so each one is first reached at the
+  // shallowest depth any path gives it; a deeper first visit through a shared
+  // index would otherwise hide what it reaches within max_index_depth.
+  const queuedIndexes = new Set<string>();
+  const indexQueue: { digest: string; mediaType: string; depth: number }[] = [];
+  const enqueueIndex = (
+    digest: string,
+    mediaType: string,
+    depth: number,
+  ): void => {
+    // Breadth-first, an index already queued was reached at this depth or a
+    // shallower one. Its declaration is still checked against this
+    // reference's media type.
+    if (queuedIndexes.has(traversalKey(digest))) {
+      admitAgain("Index", traversalKey(digest), digest, mediaType);
+      return;
+    }
+    if (depth > input.max_index_depth) {
+      referenceGraphTruncated = true;
+      recordFinding(
+        findings,
+        "nested_index_depth_exceeded",
+        `Nested index ${digest} exceeds max_index_depth ${String(input.max_index_depth)}.`,
+        digest,
+      );
+      return;
+    }
+    queuedIndexes.add(traversalKey(digest));
+    indexQueue.push({ digest, mediaType, depth });
+  };
+
+  // An OCI 1.1 subject names the manifest an index or manifest refers to.
+  // The subject may legitimately be absent from the layout, so only a
+  // subject blob present at its layout path joins the referenced set, where
+  // it is hashed and no longer reported as unreferenced. A present subject
+  // manifest is queued and walked after its owner finishes, and a present
+  // subject index goes through the breadth-first queue one level below its
+  // owner, so the blobs it names are not reported as unreferenced either. A
+  // present subject with an unfamiliar media type is still reported as
+  // unknown.
+  const rememberSubject = async (
+    owner: string,
+    ownerDigest: string,
+    value: unknown,
+    ownerDepth: number,
+  ): Promise<void> => {
+    if (value === undefined) return;
+    chargeDescriptor();
+    const parsedSubject = descriptorOf(value);
+    if (parsedSubject === undefined) {
+      referenceGraphTruncated = true;
+      chargeRejectedDescriptorText(value);
+      recordFinding(
+        findings,
+        "malformed_blob_json",
+        `${owner} ${ownerDigest} subject ${descriptorDefect(value)}; the subject is not modeled.`,
+        ownerDigest,
+      );
+      return;
+    }
+    const { descriptor, droppedAnnotations } = parsedSubject;
+    chargeAcceptedDescriptorText(descriptor);
+    reportDescriptorDefects(
+      `${owner} ${ownerDigest} subject`,
+      value,
+      ownerDigest,
+      droppedAnnotations,
+    );
+    const parsed = parseOciDigest(descriptor.digest);
+    const path =
+      parsed === undefined
+        ? unverifiedBlobPath(descriptor.digest)
+        : ociBlobPath(parsed);
+    if (path === undefined) {
+      // A malformed subject reference cannot be resolved, so the walk can no
+      // longer prove which blobs nothing references.
+      referenceGraphTruncated = true;
+      recordFinding(
+        findings,
+        "malformed_blob_json",
+        `${owner} ${ownerDigest} subject digest ${JSON.stringify(descriptor.digest)} is not a valid OCI digest; the subject is not modeled.`,
+        ownerDigest,
+      );
+      return;
+    }
+    const lookup = lookupBlob(path);
+    // An unexamined subject may exist and name further blobs, so the walk
+    // can no longer prove which blobs nothing references.
+    if (lookup.state === "unexamined") {
+      referenceGraphTruncated = true;
+      return;
+    }
+    if (lookup.state === "missing") return;
+    remember(descriptor.digest, descriptor.media_type, descriptor.size);
+    if (!isOciKnownMediaType(descriptor.media_type)) {
+      // A present opaque subject is not walked, so whatever it references is
+      // unknown and no blob can be called unreferenced.
+      referenceGraphTruncated = true;
+      recordFinding(
+        findings,
+        "unknown_media_type",
+        `${owner} ${ownerDigest} subject media type ${JSON.stringify(descriptor.media_type)} is unknown.`,
+        descriptor.digest,
+      );
+      return;
+    }
+    // A digest this parser cannot verify is not read; the blob pass reports
+    // the unsupported algorithm. An unread index or manifest subject may
+    // still name further blobs.
+    if (parsed === undefined) {
+      if (
+        isOciIndexMediaType(descriptor.media_type) ||
+        isOciManifestMediaType(descriptor.media_type)
+      )
+        referenceGraphTruncated = true;
+      return;
+    }
+    if (isOciIndexMediaType(descriptor.media_type))
+      enqueueIndex(descriptor.digest, descriptor.media_type, ownerDepth + 1);
+    else if (isOciManifestMediaType(descriptor.media_type))
+      await walkManifest(descriptor.digest, descriptor.media_type, ownerDepth);
+  };
+
+  // A referenced index or manifest may repeat its media type in its own
+  // optional mediaType member. A present declaration is checked against the
+  // descriptor type the walk admitted it under, so conflicting format
+  // evidence is diagnosed; the members are still read and reported. A
+  // document that declares an unknown type, or a type of another document
+  // kind, may hold members the admitted kind does not read, so the walk no
+  // longer proves which blobs nothing references.
+  const checkDeclaredMediaType = (
+    owner: string,
+    digest: string,
+    admitted: string,
+    document: Record<string, unknown>,
+  ): void => {
+    const declared: unknown = document.mediaType;
+    if (declared === undefined) return;
+    if (typeof declared !== "string") {
+      recordFinding(
+        findings,
+        "malformed_blob_json",
+        `${owner} ${digest} mediaType is not a string; the descriptor media type ${JSON.stringify(admitted)} is kept.`,
+        digest,
+      );
+      return;
+    }
+    if (declared === admitted) return;
+    const sameKind =
+      (isOciIndexMediaType(declared) && isOciIndexMediaType(admitted)) ||
+      (isOciManifestMediaType(declared) && isOciManifestMediaType(admitted));
+    if (!sameKind) referenceGraphTruncated = true;
+    if (!isOciKnownMediaType(declared)) {
+      // The finding quotes the untrusted declaration, so its escaped text
+      // spends max_descriptor_bytes before the finding is retained.
+      spendDescriptorBytes(Buffer.byteLength(JSON.stringify(declared)));
+      recordFinding(
+        findings,
+        "unknown_media_type",
+        `${owner} ${digest} declares unknown media type ${JSON.stringify(declared)}; it was referenced as ${JSON.stringify(admitted)}.`,
+        digest,
+      );
+      return;
+    }
+    recordFinding(
+      findings,
+      "malformed_blob_json",
+      `${owner} ${digest} declares media type ${JSON.stringify(declared)}, which conflicts with its descriptor media type ${JSON.stringify(admitted)}.`,
+      digest,
+    );
+  };
+
+  // A document reached again is not decoded or walked again, but each
+  // distinct media type a descriptor admits it under is still checked
+  // against the declaration its first decode recorded, so conflict findings
+  // and completeness do not depend on descriptor order. A media type that
+  // names a document not yet decoded waits for that decode. Only a string
+  // declaration is kept; a non-string one is rejected whatever it holds, so
+  // null stands in for it rather than retaining untrusted JSON no budget
+  // charges.
+  const declarations = new Map<
+    string,
+    {
+      readonly declared: string | null | undefined;
+      readonly checked: Set<string>;
+    }
+  >();
+  const pendingAdmissions = new Map<string, Set<string>>();
+  const admitAgain = (
+    owner: string,
+    identity: string,
+    digest: string,
+    admitted: string,
+  ): void => {
+    const known = declarations.get(identity);
+    if (known === undefined) {
+      const pending = pendingAdmissions.get(identity) ?? new Set<string>();
+      pending.add(admitted);
+      pendingAdmissions.set(identity, pending);
+      return;
+    }
+    if (known.checked.has(admitted)) return;
+    known.checked.add(admitted);
+    checkDeclaredMediaType(owner, digest, admitted, {
+      mediaType: known.declared,
+    });
+  };
+  const checkFirstDeclaration = ({
+    owner,
+    identity,
+    digest,
+    admitted,
+    document,
+  }: {
+    readonly owner: string;
+    readonly identity: string;
+    readonly digest: string;
+    readonly admitted: string;
+    readonly document: Record<string, unknown>;
+  }): void => {
+    checkDeclaredMediaType(owner, digest, admitted, document);
+    const declared: unknown = document.mediaType;
+    declarations.set(identity, {
+      declared:
+        declared === undefined || typeof declared === "string"
+          ? declared
+          : null,
+      checked: new Set([admitted]),
+    });
+    const pending = pendingAdmissions.get(identity);
+    pendingAdmissions.delete(identity);
+    for (const mediaType of pending ?? [])
+      admitAgain(owner, identity, digest, mediaType);
+  };
+
+  const walkIndex = async (
+    digest: string,
+    mediaType: string,
+    document: JsonDocument,
+    depth: number,
+    identity: string = traversalKey(digest),
+  ): Promise<void> => {
+    if (visited.has(identity)) return;
+    visited.add(identity);
+    chargeDescriptor();
+    if (depth > input.max_index_depth) {
+      referenceGraphTruncated = true;
+      recordFinding(
+        findings,
+        "nested_index_depth_exceeded",
+        `Nested index ${digest} exceeds max_index_depth ${String(input.max_index_depth)}.`,
+        digest,
+      );
+      return;
+    }
+    if (!isRecord(document.value)) {
+      referenceGraphTruncated = true;
+      recordFinding(
+        findings,
+        "malformed_blob_json",
+        `Index ${digest} root is not a JSON object.`,
+        digest,
+      );
+      return;
+    }
+    // No descriptor names the root index.json, so it is admitted as an index:
+    // an index declaration of either family stands, and any other declared
+    // type is checked against the OCI index type like a nested index.
+    const admitted =
+      identity !== ROOT_INDEX_IDENTITY || isOciIndexMediaType(mediaType)
+        ? mediaType
+        : OCI_INDEX_MEDIA_TYPE;
+    checkFirstDeclaration({
+      owner: "Index",
+      identity,
+      digest,
+      admitted,
+      document: document.value,
+    });
+    await rememberSubject("Index", digest, document.value.subject, depth);
+    const schemaVersion =
+      typeof document.value.schemaVersion === "number" &&
+      Number.isSafeInteger(document.value.schemaVersion)
+        ? document.value.schemaVersion
+        : null;
+    const indexVersionDefect = schemaVersionDefect(
+      document.value.schemaVersion,
+    );
+    if (indexVersionDefect !== undefined)
+      recordFinding(
+        findings,
+        "malformed_blob_json",
+        `Index ${digest} ${indexVersionDefect}; its entries are read as a version 2 index.`,
+        digest,
+      );
+    let manifests: unknown[] = [];
+    if (Array.isArray(document.value.manifests))
+      manifests = document.value.manifests;
+    else {
+      referenceGraphTruncated = true;
+      recordFinding(
+        findings,
+        "malformed_blob_json",
+        `Index ${digest} manifests is not an array; its entries are not modeled.`,
+        digest,
+      );
+    }
+    const indexEntries: OciImageLayoutIndex["entries"] = [];
+    for (const [position, item] of manifests.entries()) {
+      chargeDescriptor();
+      // Annotations spend max_descriptor_bytes as each record is built.
+      const parsedEntry = descriptorOf(item, {
+        retainAnnotations: true,
+        chargeAnnotation: spendDescriptorBytes,
+      });
+      if (parsedEntry === undefined) {
+        referenceGraphTruncated = true;
+        chargeRejectedDescriptorText(item);
+        recordFinding(
+          findings,
+          "malformed_blob_json",
+          `Index ${digest} manifests[${String(position)}] ${descriptorDefect(item)}; the entry is not modeled.`,
+          digest,
+        );
+        continue;
+      }
+      const { descriptor, droppedAnnotations } = parsedEntry;
+      chargeDescriptorBytes(descriptor);
+      indexEntries.push(descriptor);
+      reportDescriptorDefects(
+        `Index ${digest} manifests[${String(position)}]`,
+        item,
+        digest,
+        droppedAnnotations,
+      );
+      remember(descriptor.digest, descriptor.media_type, descriptor.size);
+      if (!isOciKnownMediaType(descriptor.media_type)) {
+        // An opaque entry is not walked, so whatever it references is
+        // unknown and no blob can be called unreferenced.
+        referenceGraphTruncated = true;
+        recordFinding(
+          findings,
+          "unknown_media_type",
+          `Descriptor media type ${JSON.stringify(descriptor.media_type)} is unknown.`,
+          descriptor.digest,
+        );
+      }
+      if (parseOciDigest(descriptor.digest) === undefined)
+        recordFinding(
+          findings,
+          "unsupported_digest_algorithm",
+          `Digest ${descriptor.digest} uses an unsupported algorithm.`,
+          descriptor.digest,
+        );
+    }
+    indexes.push({
+      digest,
+      media_type: mediaType,
+      schema_version: schemaVersion,
+      depth,
+      entries: indexEntries,
+    });
+    for (const descriptor of indexEntries) {
+      if (isOciIndexMediaType(descriptor.media_type))
+        enqueueIndex(descriptor.digest, descriptor.media_type, depth + 1);
+      else if (isOciManifestMediaType(descriptor.media_type))
+        await walkManifest(descriptor.digest, descriptor.media_type, depth);
+    }
+  };
+
+  // Manifests are drained iteratively so a chain of local subject links
+  // finishes each owner (charging its config bytes, recording its image, and
+  // dropping its parsed JSON document) before reading the next manifest.
+  const manifestQueue: { digest: string; mediaType: string; depth: number }[] =
+    [];
+  let drainingManifests = false;
+
+  /** `depth` is that of the index whose walk reached this manifest. */
+  const walkOneManifest = async (
+    digest: string,
+    mediaType: string,
+    depth: number,
+  ): Promise<void> => {
+    const identity = `manifest:${traversalKey(digest)}`;
+    if (visited.has(identity)) {
+      admitAgain("Manifest", identity, digest, mediaType);
+      return;
+    }
+    visited.add(identity);
+    chargeDescriptor();
+    const document = await readReferencedJson(digest, `manifest ${digest}`);
+    if (document === undefined) {
+      referenceGraphTruncated = true;
+      return;
+    }
+    if (!isRecord(document.value)) {
+      referenceGraphTruncated = true;
+      recordFinding(
+        findings,
+        "malformed_blob_json",
+        `Manifest ${digest} root is not a JSON object.`,
+        digest,
+      );
+      return;
+    }
+    checkFirstDeclaration({
+      owner: "Manifest",
+      identity,
+      digest,
+      admitted: mediaType,
+      document: document.value,
+    });
+    await rememberSubject("Manifest", digest, document.value.subject, depth);
+    const manifestVersionDefect = schemaVersionDefect(
+      document.value.schemaVersion,
+    );
+    if (manifestVersionDefect !== undefined)
+      recordFinding(
+        findings,
+        "malformed_blob_json",
+        `Manifest ${digest} ${manifestVersionDefect}; its config and layers are read as a version 2 manifest.`,
+        digest,
+      );
+    // config is required; a manifest without one is as damaged as one whose
+    // config descriptor cannot be modeled.
+    const parsedConfigDescriptor = descriptorOf(document.value.config);
+    const configDescriptor = parsedConfigDescriptor?.descriptor;
+    if (configDescriptor === undefined) {
+      referenceGraphTruncated = true;
+      chargeRejectedDescriptorText(document.value.config);
+      recordFinding(
+        findings,
+        "malformed_blob_json",
+        document.value.config === undefined
+          ? `Manifest ${digest} lacks a config descriptor; the config is not modeled.`
+          : `Manifest ${digest} config ${descriptorDefect(document.value.config)}; the config is not modeled.`,
+        digest,
+      );
+    }
+    const layers: OciImageLayoutImage["layers"] = [];
+    let layerItems: unknown[] = [];
+    if (Array.isArray(document.value.layers))
+      layerItems = document.value.layers;
+    else {
+      referenceGraphTruncated = true;
+      recordFinding(
+        findings,
+        "malformed_blob_json",
+        `Manifest ${digest} layers is not an array; its layers are not modeled.`,
+        digest,
+      );
+    }
+    for (const [position, item] of layerItems.entries()) {
+      chargeDescriptor();
+      const parsedLayer = descriptorOf(item);
+      if (parsedLayer === undefined) {
+        referenceGraphTruncated = true;
+        chargeRejectedDescriptorText(item);
+        recordFinding(
+          findings,
+          "malformed_blob_json",
+          `Manifest ${digest} layers[${String(position)}] ${descriptorDefect(item)}; the layer is not modeled.`,
+          digest,
+        );
+        continue;
+      }
+      const { descriptor, droppedAnnotations } = parsedLayer;
+      chargeAcceptedDescriptorText(descriptor);
+      reportDescriptorDefects(
+        `Manifest ${digest} layers[${String(position)}]`,
+        item,
+        digest,
+        droppedAnnotations,
+      );
+      remember(descriptor.digest, descriptor.media_type, descriptor.size);
+      if (!isOciKnownMediaType(descriptor.media_type))
+        recordFinding(
+          findings,
+          "unknown_media_type",
+          `Layer media type ${JSON.stringify(descriptor.media_type)} is unknown.`,
+          descriptor.digest,
+        );
+      // Presence is observed at the layout path even when the digest
+      // algorithm cannot be verified, matching the blob inventory.
+      const parsed = parseOciDigest(descriptor.digest);
+      const path =
+        parsed === undefined
+          ? unverifiedBlobPath(descriptor.digest)
+          : ociBlobPath(parsed);
+      const lookup = path === undefined ? undefined : lookupBlob(path);
+      layers.push({
+        media_type: descriptor.media_type,
+        digest: descriptor.digest,
+        size: descriptor.size,
+        present: lookup?.state === "listed" && lookup.entry.kind === "file",
+      });
+    }
+    let configFacts = EMPTY_CONFIG_FACTS;
+    if (parsedConfigDescriptor !== undefined) {
+      const configDescriptor = parsedConfigDescriptor.descriptor;
+      chargeAcceptedDescriptorText(configDescriptor);
+      reportDescriptorDefects(
+        `Manifest ${digest} config`,
+        document.value.config,
+        digest,
+        parsedConfigDescriptor.droppedAnnotations,
+      );
+      remember(
+        configDescriptor.digest,
+        configDescriptor.media_type,
+        configDescriptor.size,
+      );
+      if (
+        configDescriptor.media_type !== null &&
+        !isOciConfigMediaType(configDescriptor.media_type) &&
+        !isOciKnownMediaType(configDescriptor.media_type)
+      )
+        recordFinding(
+          findings,
+          "unknown_media_type",
+          `Config media type ${JSON.stringify(configDescriptor.media_type)} is unknown.`,
+          configDescriptor.digest,
+        );
+      // Only image config media types are decoded as JSON. Any other config,
+      // such as an artifact's application/octet-stream blob, stays an opaque
+      // reference that the blob pass still hashes.
+      const decodeConfig =
+        configDescriptor.media_type !== null &&
+        isOciConfigMediaType(configDescriptor.media_type);
+      const configKey = traversalKey(configDescriptor.digest);
+      let config = decodeConfig ? configs.get(configKey) : undefined;
+      if (decodeConfig && !configs.has(configKey)) {
+        const configDocument = await readReferencedJson(
+          configDescriptor.digest,
+          `config ${configDescriptor.digest}`,
+        );
+        if (configDocument !== undefined && !isRecord(configDocument.value))
+          recordFinding(
+            findings,
+            "malformed_blob_json",
+            `Config ${configDescriptor.digest} root is not a JSON object; its facts are not modeled.`,
+            configDescriptor.digest,
+          );
+        if (configDocument === undefined) config = undefined;
+        else {
+          const parsedConfig = parseConfig(
+            configDocument.value,
+            input.include_env_values,
+            input.max_config_bytes - configBytesExpanded,
+            (bytes) => configBytesLimit(configBytesExpanded + bytes),
+          );
+          // A defective member is omitted from the facts rather than
+          // failing the whole inventory, and the config is reported once.
+          for (const defect of parsedConfig.defects)
+            recordFinding(
+              findings,
+              "malformed_blob_json",
+              `Config ${configDescriptor.digest} ${defect}.`,
+              configDescriptor.digest,
+            );
+          config = {
+            facts: parsedConfig.facts,
+            bytes: jsonByteLength(parsedConfig.facts),
+          };
+        }
+        configs.set(configKey, config);
+      }
+      if (config !== undefined) {
+        chargeConfigBytes(config.bytes);
+        configFacts = config.facts;
+      }
+    }
+    images.push({
+      digest,
+      media_type: mediaType,
+      config_digest: configDescriptor?.digest ?? null,
+      ...configFacts,
+      layers,
+    });
+  };
+
+  const walkManifest = async (
+    digest: string,
+    mediaType: string,
+    depth: number,
+  ): Promise<void> => {
+    manifestQueue.push({ digest, mediaType, depth });
+    if (drainingManifests) return;
+    drainingManifests = true;
+    try {
+      // Advance a cursor rather than shift(): shifting relocates the rest of
+      // the queue on every step, which is quadratic for wide layouts.
+      for (let cursor = 0; cursor < manifestQueue.length; cursor += 1) {
+        const next = manifestQueue[cursor];
+        if (next === undefined) break;
+        await walkOneManifest(next.digest, next.mediaType, next.depth);
+      }
+    } finally {
+      manifestQueue.length = 0;
+      drainingManifests = false;
+    }
+  };
+
+  const topMediaType =
+    nonempty(indexRoot.mediaType) ??
+    nonempty(indexRoot.media_type) ??
+    OCI_INDEX_MEDIA_TYPE;
+  const rootDigest = `sha256:${indexDocument.sha256}`;
+  // index.json is its own file, not the blob stored under its digest. A
+  // descriptor naming that digest reads and walks the blob, whose bytes may
+  // differ, so the root keeps a traversal identity outside the blob keys.
+  await walkIndex(
+    rootDigest,
+    topMediaType,
+    indexDocument,
+    0,
+    ROOT_INDEX_IDENTITY,
+  );
+  // Cursor, not shift(): many index references would otherwise make draining
+  // the breadth-first queue quadratic.
+  for (let cursor = 0; cursor < indexQueue.length; cursor += 1) {
+    const next = indexQueue[cursor];
+    if (next === undefined) break;
+    const nested = await readReferencedJson(
+      next.digest,
+      `index ${next.digest}`,
+    );
+    if (nested === undefined) referenceGraphTruncated = true;
+    else await walkIndex(next.digest, next.mediaType, nested, next.depth);
+  }
+
+  const blobs: OciImageLayoutBlob[] = [];
+  let blobsHashed = 0;
+  // Reference membership is by resolved blob path: a descriptor spelling
+  // such as uppercase hex resolves to the same file as its canonical form.
+  const referencedPaths = new Set<string>();
+  // Per-blob findings may already have been emitted while walking the
+  // reference graph; index them once so each check is constant time.
+  const findingKey = (kind: OciImageLayoutFinding["kind"], digest: string) =>
+    `${kind}\u0000${digest}`;
+  const emittedFindings = new Set(
+    findings.flatMap((finding) =>
+      finding.digest === null ? [] : [findingKey(finding.kind, finding.digest)],
+    ),
+  );
+  const recordFindingOnce = (
+    kind: OciImageLayoutFinding["kind"],
+    message: string,
+    digest: string,
+    path: string | null = null,
+  ): void => {
+    const key = findingKey(kind, digest);
+    if (emittedFindings.has(key)) return;
+    emittedFindings.add(key);
+    recordFinding(findings, kind, message, digest, path);
+  };
+
+  const checkDeclaredSizes = (
+    digest: string,
+    path: string,
+    entry: DirectoryArtifactEntry,
+    declaredSizes: readonly number[],
+  ): void => {
+    if (entry.declaredSize === null) return;
+    for (const declared of declaredSizes)
+      if (declared !== entry.declaredSize)
+        recordFinding(
+          findings,
+          "size_mismatch",
+          `Blob ${digest} declared size ${String(declared)} disagrees with file size ${String(entry.declaredSize)}.`,
+          digest,
+          path,
+        );
+  };
+
+  // Digest spellings that differ only in accepted hex casing resolve to one
+  // file, so each file is hashed once and every spelling reuses the result,
+  // including an oversize refusal, with its own row and checks.
+  const hashedByPath = new Map<
+    string,
+    Awaited<ReturnType<typeof hashBlob>> | BlobOversize
+  >();
+  for (const [digest, reference] of referenced) {
+    const parsed = parseOciDigest(digest);
+    if (parsed === undefined) {
+      // The blob cannot be hashed, but its presence and file size are still
+      // observable at the path the layout gives every digest.
+      recordFindingOnce(
+        "unsupported_digest_algorithm",
+        `Digest ${digest} uses an unsupported algorithm.`,
+        digest,
+      );
+      const path = unverifiedBlobPath(digest);
+      if (path !== undefined) referencedPaths.add(path);
+      const lookup = path === undefined ? undefined : lookupBlob(path);
+      const entry = lookup?.state === "listed" ? lookup.entry : undefined;
+      if (path !== undefined) {
+        // Presence defects are independent of whether the digest can be
+        // verified, so they get the same findings a supported digest gets.
+        if (lookup?.state === "unexamined")
+          recordFindingOnce(
+            "symlink_blob",
+            unexaminedMessage(digest, lookup.via),
+            digest,
+            path,
+          );
+        else if (lookup?.state === "omitted")
+          recordFindingOnce(
+            "missing_blob",
+            `Referenced blob ${digest} is not a regular file.`,
+            digest,
+            path,
+          );
+        else if (entry === undefined)
+          recordFindingOnce(
+            "missing_blob",
+            `Referenced blob ${digest} is missing.`,
+            digest,
+            path,
+          );
+        else if (entry.kind === "symlink")
+          recordFindingOnce(
+            "symlink_blob",
+            `Blob ${digest} is a symlink and was not followed.`,
+            digest,
+            path,
+          );
+        else if (entry.kind !== "file")
+          recordFindingOnce(
+            "missing_blob",
+            `Referenced blob ${digest} is not a regular file.`,
+            digest,
+            path,
+          );
+        else checkDeclaredSizes(digest, path, entry, reference.declaredSizes);
+      }
+      blobs.push(
+        blobRecord(
+          digest,
+          path ?? digest,
+          reference.mediaType,
+          reference.declaredSize,
+          true,
+          lookup?.state === "unexamined"
+            ? "symlink"
+            : lookup?.state === "omitted"
+              ? "other"
+              : entry === undefined
+                ? "missing"
+                : entry.kind === "file"
+                  ? "file"
+                  : entry.kind === "symlink"
+                    ? "symlink"
+                    : "other",
+          {
+            present: entry?.kind === "file",
+            observed_size: entry?.kind === "file" ? entry.declaredSize : null,
+          },
+        ),
+      );
+      continue;
+    }
+    const path = ociBlobPath(parsed);
+    referencedPaths.add(path);
+    const lookup = lookupBlob(path);
+    if (lookup.state === "unexamined") {
+      recordFindingOnce(
+        "symlink_blob",
+        unexaminedMessage(digest, lookup.via),
+        digest,
+        path,
+      );
+      blobs.push(
+        blobRecord(
+          digest,
+          path,
+          reference.mediaType,
+          reference.declaredSize,
+          true,
+          "symlink",
+          { present: false },
+        ),
+      );
+      continue;
+    }
+    if (lookup.state === "omitted") {
+      recordFindingOnce(
+        "missing_blob",
+        `Referenced blob ${digest} is not a regular file.`,
+        digest,
+        path,
+      );
+      blobs.push(
+        blobRecord(
+          digest,
+          path,
+          reference.mediaType,
+          reference.declaredSize,
+          true,
+          "other",
+          { present: false },
+        ),
+      );
+      continue;
+    }
+    if (lookup.state === "missing") {
+      recordFindingOnce(
+        "missing_blob",
+        `Referenced blob ${digest} is missing.`,
+        digest,
+        path,
+      );
+      blobs.push(
+        blobRecord(
+          digest,
+          path,
+          reference.mediaType,
+          reference.declaredSize,
+          true,
+          "missing",
+          { present: false },
+        ),
+      );
+      continue;
+    }
+    const entry = lookup.entry;
+    if (entry.kind === "symlink") {
+      recordFindingOnce(
+        "symlink_blob",
+        `Blob ${digest} is a symlink and was not followed.`,
+        digest,
+        path,
+      );
+      blobs.push(
+        blobRecord(
+          digest,
+          path,
+          reference.mediaType,
+          reference.declaredSize,
+          true,
+          "symlink",
+          { present: false },
+        ),
+      );
+      continue;
+    }
+    if (entry.kind !== "file") {
+      recordFindingOnce(
+        "missing_blob",
+        `Referenced blob ${digest} is not a regular file.`,
+        digest,
+        path,
+      );
+      blobs.push(
+        blobRecord(
+          digest,
+          path,
+          reference.mediaType,
+          reference.declaredSize,
+          true,
+          "other",
+          { present: false },
+        ),
+      );
+      continue;
+    }
+    // Each reference's declaration is checked against the one file.
+    checkDeclaredSizes(digest, path, entry, reference.declaredSizes);
+    try {
+      let hashed = hashedByPath.get(path);
+      if (hashed === undefined) {
+        try {
+          hashed = await hashBlob(
+            reader,
+            entry,
+            input,
+            signal,
+            parsed.algorithm,
+          );
+          blobsHashed += 1;
+        } catch (cause: unknown) {
+          if (!(cause instanceof BlobOversize)) throw cause;
+          hashed = cause;
+        }
+        hashedByPath.set(path, hashed);
+      }
+      if (hashed instanceof BlobOversize) throw hashed;
+      const expected =
+        parsed.algorithm === "sha512" ? hashed.sha512 : hashed.sha256;
+      if (expected !== parsed.hex)
+        recordFinding(
+          findings,
+          "digest_mismatch",
+          `Blob ${digest} content does not match its digest.`,
+          digest,
+          path,
+        );
+      for (const declared of reference.declaredSizes)
+        if (hashed.bytes !== declared)
+          recordFinding(
+            findings,
+            "size_mismatch",
+            `Blob ${digest} hashed ${String(hashed.bytes)} bytes; descriptor size is ${String(declared)}.`,
+            digest,
+            path,
+          );
+      blobs.push(
+        blobRecord(
+          digest,
+          path,
+          reference.mediaType,
+          reference.declaredSize,
+          true,
+          "file",
+          {
+            present: true,
+            hashed: true,
+            sha256: hashed.sha256,
+            sha512: hashed.sha512,
+            observed_size: hashed.bytes,
+          },
+        ),
+      );
+    } catch (cause: unknown) {
+      if (cause instanceof BlobOversize) {
+        recordFinding(
+          findings,
+          "blob_oversize",
+          `Blob ${digest} exceeds the ${String(cause.maximum)}-byte hash budget.`,
+          digest,
+          path,
+        );
+        blobs.push(
+          blobRecord(
+            digest,
+            path,
+            reference.mediaType,
+            reference.declaredSize,
+            true,
+            "file",
+            {
+              present: true,
+              hashed: false,
+              observed_size: entry.declaredSize,
+            },
+          ),
+        );
+        continue;
+      }
+      throw cause;
+    }
+  }
+
+  // Unreferenced status is only definite once the whole reference graph was
+  // examined; otherwise blobs outside the walked part keep their inventory
+  // row with an unknown referenced status.
+  if (referenceGraphTruncated)
+    limitations.push(
+      "The reference graph was not fully examined, so blobs it did not reach are listed with an unknown referenced status instead of being reported as unreferenced.",
+    );
+  // A symlink at blobs or blobs/<algorithm> is not followed, so whatever it
+  // points at is unexamined, not absent, and the inventory cannot be complete.
+  for (const entry of entries) {
+    if (entry.kind !== "symlink") continue;
+    if (
+      entry.path !== "blobs" &&
+      !(entry.path.startsWith("blobs/") && entry.path.split("/").length === 2)
+    )
+      continue;
+    recordFinding(
+      findings,
+      "symlink_blob",
+      `Blob directory ${entry.path} is a symlink and was not followed; blobs under it are not inventoried.`,
+      null,
+      entry.path,
+    );
+  }
+  for (const entry of entries) {
+    if (!entry.path.startsWith("blobs/") || entry.path === "blobs") continue;
+    const parts = entry.path.split("/");
+    if (parts.length !== 3) continue;
+    const digest = `${parts[1]}:${parts[2]}`;
+    if (referenced.has(digest) || referencedPaths.has(entry.path)) continue;
+    if (entry.kind === "directory") continue;
+    if (!referenceGraphTruncated)
+      recordFinding(
+        findings,
+        "unreferenced_blob",
+        `Blob ${entry.path} is not referenced by the index, manifests, or configs.`,
+        digest,
+        entry.path,
+      );
+    blobs.push(
+      blobRecord(
+        digest,
+        entry.path,
+        null,
+        entry.declaredSize,
+        referenceGraphTruncated ? null : false,
+        entry.kind === "symlink"
+          ? "symlink"
+          : entry.kind === "file"
+            ? "file"
+            : "other",
+        {
+          present: entry.kind === "file",
+          observed_size: entry.declaredSize,
+        },
+      ),
+    );
+  }
+
+  const snapshot = digestCanonicalValue(
+    {
+      layout_version: layoutVersion,
+      oci_layout_digest: layoutDocument.sha256,
+      index_digest: indexDocument.sha256,
+    },
+    "OCI image layout snapshot",
+  );
+  const findingsStatus =
+    referencedJsonSkipped ||
+    referenceGraphTruncated ||
+    findings.some(
+      (finding) =>
+        finding.kind === "missing_blob" ||
+        finding.kind === "symlink_blob" ||
+        finding.kind === "unsupported_digest_algorithm" ||
+        finding.kind === "nested_index_depth_exceeded" ||
+        finding.kind === "blob_oversize" ||
+        finding.kind === "malformed_blob_json",
+    )
+      ? ("partial" as const)
+      : ("complete" as const);
+  const traversalStatus = traversal.current.status;
+  const coverageStatus =
+    traversalStatus === "complete" ? findingsStatus : traversalStatus;
+
+  return {
+    artifact: {
+      path: input.path,
+      format: "directory",
+      snapshot_sha256: snapshot,
+      layout_version: layoutVersion,
+      oci_layout_digest: layoutDocument.sha256,
+      index_digest: indexDocument.sha256,
+    },
+    indexes,
+    images,
+    blobs,
+    findings,
+    coverage: {
+      status: coverageStatus,
+      entries_examined:
+        traversal.current.examinedEntries ??
+        Math.max(admittedEntries, entries.length),
+      blobs_hashed: blobsHashed,
+      json_bytes_read: jsonBytesRead,
+    },
+    limitations,
+  };
+};

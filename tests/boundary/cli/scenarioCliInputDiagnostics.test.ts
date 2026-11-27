@@ -1,5 +1,6 @@
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { withoutSearchPermission } from "../../fixtures/permissionDenial.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { describe, expect } from "vitest";
 
@@ -145,10 +146,8 @@ cliTest.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     await mkdir(denied);
     const application = join(denied, "main.js");
     await writeFile(application, "module.exports = {};\n");
-    await chmod(denied, 0o000);
-    let result;
-    try {
-      result = await cli.run({
+    const result = await withoutSearchPermission(denied, () =>
+      cli.run({
         arguments: [
           "capture-electron-scenario",
           JSON.stringify({
@@ -159,10 +158,8 @@ cliTest.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
           "--json",
         ],
         environment: { REA_LOG_LEVEL: "silent" },
-      });
-    } finally {
-      await chmod(denied, 0o700);
-    }
+      }),
+    );
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
       code: "access_denied",

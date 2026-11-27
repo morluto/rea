@@ -580,7 +580,7 @@ it("shares static task snapshots only after validation using the npm cache owner
   expect(deepSave?.uses).toMatch(/^actions\/cache\/save@/u);
   expectSavePolicy(deepSave?.if, "static-cache", false);
   const deepCheck = deep.findIndex(
-    (step) => step.run === "npm run check:ci:deep",
+    (step) => step.run === "npm run check:ci:deep:job",
   );
   expect(deepCheck).toBeGreaterThanOrEqual(0);
   expect(deep.indexOf(deepSave!)).toBeGreaterThan(deepCheck);

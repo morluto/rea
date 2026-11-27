@@ -18,6 +18,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { BrowserScenarioSessionPort } from "./BrowserScenarioSessionPort.js";
 import { PlaywrightBrowserScenarioProvider } from "./PlaywrightBrowserScenarioProvider.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { primaryAnalysisError } from "../domain/analysisErrorBase.js";
 import { PlaywrightScenarioEvents } from "./PlaywrightScenarioEvents.js";
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
@@ -1363,3 +1364,32 @@ it.each(["clean", "pending", "queued"] as const)(
     }
   },
 );
+
+it("reports a browser open failure whose cleanup already released as that failure alone", async () => {
+  const primary = new ProviderAdapterError("playwright", "browser_open", {
+    diagnostics: { reason: "launch refused" },
+  });
+  let opens = 0;
+  let release = true;
+  const provider = new PlaywrightBrowserScenarioProvider(
+    async (_scenario, options) => {
+      opens += 1;
+      const lease = new AnalysisCleanupLease(async () => {
+        if (!release) throw new Error("profile still busy");
+      }, ["browser profile"]);
+      options.retainCleanup?.(lease);
+      await lease.release().catch(() => undefined);
+      throw primary;
+    },
+  );
+  const clean = await provider.captureScenario(scenario());
+  expect(clean).toEqual({ ok: false, error: primary });
+  // Nothing was retained, so the next capture is admitted.
+  release = false;
+  const retained = await provider.captureScenario(scenario());
+  if (retained.ok) throw new Error("Expected retained cleanup");
+  expect(retained.error.cleanupIncomplete).toBe(true);
+  expect(opens).toBe(2);
+  release = true;
+  await provider.close();
+});

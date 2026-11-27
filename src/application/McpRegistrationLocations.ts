@@ -4,6 +4,7 @@ import { ConfigurationError } from "../domain/configurationErrors.js";
 import type { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { isEnoentError } from "./ClientConfigPath.js";
 import type { ClientRootContext } from "./ClientConfigRoots.js";
 // Type-only: the client table imports project-location owners from here.
 import type { SetupClient } from "./SupportedClients.js";
@@ -56,8 +57,7 @@ export const present = async (
     await lstat(path);
     return ok(true);
   } catch (cause: unknown) {
-    if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
-      return ok(false);
+    if (isEnoentError(cause)) return ok(false);
     return err(
       new ConfigurationError(
         `Cannot determine the registration location at ${path}. Repair its access or path before registering.`,

@@ -258,6 +258,25 @@ export const registerBinaryDiagnosticsCommands = (
   registerContractCommand(
     cli,
     logger,
+    contract("inspect_pe_overlay"),
+    {
+      description:
+        "Report bytes appended after a PE image, including a certificate-table split",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      fields: { path: { description: "Local PE32/PE32+ image" } },
+    },
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/peOverlay.js")
+        ).createPeOverlayService(),
+      "rea-pe-overlay",
+    ),
+  );
+  registerContractCommand(
+    cli,
+    logger,
     contract("inspect_binary_hardening"),
     {
       description:
