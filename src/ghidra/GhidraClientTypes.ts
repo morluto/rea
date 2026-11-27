@@ -17,6 +17,11 @@ export type GhidraStartResult = Result<GhidraSessionInfo, GhidraSessionError>;
 /** Cancellation and deadline controls shared by authenticated requests. */
 export interface GhidraRequestOptions {
   readonly decompileTimeoutSeconds?: number | null;
+  /**
+   * Native decompiler payload limit in MiB. Omitted leaves the session's
+   * current limit, and the decompiles completed under it, unchanged; `null`
+   * selects the installed Ghidra default.
+   */
   readonly decompileMaxPayloadMiB?: number | null;
   readonly valueFlowLimits?: NativeValueFlowLimits;
   readonly signal?: AbortSignal;

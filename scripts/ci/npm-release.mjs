@@ -10,6 +10,10 @@ import {
   requireMatchingNpmRelease,
 } from "./npm-release-state.mjs";
 
+const windowMinutes = 75;
+const windowMs = windowMinutes * 60_000;
+const intervalMs = 30_000;
+
 /** Read-only callers derive the channel through the canonical SemVer owner. */
 export async function readNpmRelease(version, request = fetch) {
   return readQualifiedNpmRelease(version, releaseNpmTag(version), request);
@@ -44,24 +48,37 @@ function transientRegistryRead(error) {
 /** Retry absence and a bounded number of consecutive transient reads. */
 export async function waitForNpmRelease(
   version,
-  lookup = readNpmRelease,
-  pause = setTimeout,
+  lookup = (candidate, signal) =>
+    readNpmRelease(candidate, (url, init) =>
+      fetch(url, { ...init, signal: AbortSignal.any([init.signal, signal]) }),
+    ),
+  pause = (milliseconds, signal) =>
+    setTimeout(milliseconds, undefined, { signal }),
+  signal = AbortSignal.timeout(windowMs),
 ) {
-  const windowMinutes = 75;
-  const intervalMs = 30_000;
-  const attempts = (windowMinutes * 60_000) / intervalMs + 1;
+  const attempts = windowMs / intervalMs + 1;
   let transientFailures = 0;
-  for (let attempt = 1; attempt <= attempts; attempt++) {
-    try {
-      const published = await lookup(version);
-      if (published.status === "published") return published;
-      transientFailures = 0;
-    } catch (error) {
-      if (!transientRegistryRead(error)) throw error;
-      transientFailures += 1;
-      if (transientFailures === 3 || attempt === attempts) throw error;
+  try {
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      signal.throwIfAborted();
+      try {
+        const published = await lookup(version, signal);
+        signal.throwIfAborted();
+        if (published.status === "published") return published;
+        transientFailures = 0;
+      } catch (error) {
+        if (signal.aborted || !transientRegistryRead(error)) throw error;
+        transientFailures += 1;
+        if (transientFailures === 3 || attempt === attempts) throw error;
+      }
+      if (attempt < attempts) await pause(intervalMs, signal);
     }
-    if (attempt < attempts) await pause(intervalMs);
+  } catch (cause) {
+    if (!signal.aborted) throw cause;
+    throw new Error(
+      `npm registry visibility deadline reached for rea-agents@${version} after ${windowMinutes} minutes. Re-run the failed verification after the version becomes visible.`,
+      { cause },
+    );
   }
   throw new Error(
     `rea-agents@${version} was not visible on npm after ${attempts} attempts over ${windowMinutes} minutes. Re-run the failed verification after the version becomes visible.`,

@@ -303,7 +303,10 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
             provider_id: "ghidra",
           });
           const error = requireMcpToolError(await other.raw("list_documents"));
-          assert.equal(error.code, "configuration_invalid");
+          // A held lease is contention that ends when its owner closes, not
+          // a configuration fault: the same call is retryable afterwards.
+          assert.equal(error.code, "capability_unavailable");
+          assert.equal(error.retryable, true);
           assert.match(error.message, /another REA session/);
           await other.call("close_binary");
         } finally {

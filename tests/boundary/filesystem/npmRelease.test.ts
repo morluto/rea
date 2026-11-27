@@ -1,13 +1,16 @@
+import { createServer } from "node:http";
+import { once } from "node:events";
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import {
   readNpmRelease,
   stableUpdateVersion,
   waitForNpmRelease,
 } from "../../../scripts/ci/npm-release.mjs";
 import { requireMatchingNpmRelease } from "../../../scripts/ci/npm-release-state.mjs";
+import { createDeferred } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const metadata = (
@@ -284,4 +287,120 @@ it.each([
   await expect(
     readNpmRelease("6.5.0", async () => Response.json(value)),
   ).rejects.toThrow();
+});
+
+it("keeps the 75-minute visibility budget and the per-request cap", async () => {
+  const timeout = vi.spyOn(AbortSignal, "timeout");
+  const request = vi.fn(async () =>
+    Response.json(metadata("6.5.0", "sha512-target", { latest: "6.5.0" })),
+  );
+  vi.stubGlobal("fetch", request);
+  try {
+    await expect(waitForNpmRelease("6.5.0")).resolves.toMatchObject({
+      status: "published",
+    });
+    expect(timeout.mock.calls).toEqual([[75 * 60_000], [30_000]]);
+    expect(request).toHaveBeenCalledOnce();
+  } finally {
+    vi.unstubAllGlobals();
+    timeout.mockRestore();
+  }
+});
+
+it("interrupts an in-flight registry request at the shared deadline", async () => {
+  const deadline = new AbortController();
+  const reason = new Error("test deadline");
+  const { promise: started, resolve: markStarted } = createDeferred<void>();
+  vi.stubGlobal("fetch", (_url: string, init: RequestInit) => {
+    markStarted();
+    const requestSignal = init.signal;
+    if (!requestSignal) throw new Error("missing request signal");
+    return new Promise<Response>((_resolve, reject) => {
+      requestSignal.addEventListener(
+        "abort",
+        () => reject(requestSignal.reason),
+        {
+          once: true,
+        },
+      );
+    });
+  });
+  try {
+    const waiting = waitForNpmRelease(
+      "6.5.0",
+      undefined,
+      undefined,
+      deadline.signal,
+    );
+    await Promise.race([started, waiting]);
+    deadline.abort(reason);
+    await expect(waiting).rejects.toMatchObject({
+      message: expect.stringContaining("after 75 minutes"),
+      cause: reason,
+    });
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+it("interrupts the polling delay without starting another lookup", async () => {
+  const deadline = new AbortController();
+  const lookup = vi.fn(async () => {
+    setImmediate(() => deadline.abort());
+    return { status: "absent" } as const;
+  });
+  await expect(
+    waitForNpmRelease("6.5.0", lookup, undefined, deadline.signal),
+  ).rejects.toThrow("visibility deadline reached");
+  expect(lookup).toHaveBeenCalledExactlyOnceWith("6.5.0", deadline.signal);
+});
+
+it("retries a real HTTP response whose body is interrupted after headers", async () => {
+  const version = "6.5.0";
+  const payload = JSON.stringify(
+    metadata(version, "sha512-target", { latest: version }),
+  );
+  let requests = 0;
+  let interruptBody: (() => void) | undefined;
+  let interrupted = false;
+  const server = createServer((_request, response) => {
+    requests += 1;
+    response.writeHead(200, {
+      "content-type": "application/json",
+      "content-length": Buffer.byteLength(payload),
+    });
+    if (requests === 1) {
+      response.write(payload.slice(0, 10));
+      interruptBody = () => response.destroy();
+    } else {
+      response.end(payload);
+    }
+  });
+  server.listen(0, "127.0.0.1");
+  try {
+    await once(server, "listening");
+    const address = server.address();
+    if (address === null || typeof address === "string")
+      throw new Error("expected TCP listener");
+    const lookup = (candidate: string) =>
+      readNpmRelease(candidate, async (_url, init) => {
+        const response = await fetch(`http://127.0.0.1:${address.port}/`, init);
+        if (interruptBody !== undefined) {
+          interrupted = true;
+          interruptBody();
+          interruptBody = undefined;
+        }
+        return response;
+      });
+    await expect(
+      waitForNpmRelease(version, lookup, async () => {}),
+    ).resolves.toMatchObject({ status: "published", taggedVersion: version });
+    expect(interrupted).toBe(true);
+    expect(requests).toBe(2);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
 });
