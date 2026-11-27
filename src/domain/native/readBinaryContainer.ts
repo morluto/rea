@@ -1,5 +1,6 @@
 import {
   BinaryFormatFailure,
+  UnrecognizedBinaryFailure,
   hasElfMagic,
   type BinaryContainer,
 } from "../binaryContainer.js";
@@ -131,8 +132,5 @@ const readNonElfContainer = (bytes: Buffer): BinaryContainer => {
     if (readMachoHeaderPrefixFacts(bytes).format !== null)
       return readMachoImage(bytes);
   }
-  throw new BinaryFormatFailure(
-    "unsupported",
-    "Only ELF, PE, and thin Mach-O native images are supported",
-  );
+  throw new UnrecognizedBinaryFailure();
 };

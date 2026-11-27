@@ -73,7 +73,7 @@ export const registerIl2cppCommands = (
         binary_path: {
           name: "binary",
           description:
-            "Matching native binary (Mach-O GameAssembly.dylib, PE GameAssembly.dll or ELF libil2cpp.so) to link method addresses; read only",
+            "Matching binary (Mach-O GameAssembly.dylib, PE GameAssembly.dll, ELF libil2cpp.so, or an uncompressed Unity WebGL .wasm module) to link method addresses; read only",
         },
         binary_architecture: {
           name: "architecture",
