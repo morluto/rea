@@ -442,6 +442,7 @@
 * **hermes:** resolve nested HERMES_HOME selection from the override root ([#13792](https://github.com/morluto/rea/issues/13792)) ([6542e81](https://github.com/morluto/rea/commit/6542e81a120864e2ed0d62476632c506cee1e43c))
 * **hopper:** name xrefs when a selector resolves outside every procedure ([#14188](https://github.com/morluto/rea/issues/14188)) ([b1b0bdf](https://github.com/morluto/rea/commit/b1b0bdf01115df8c66589e059bee45e299e03403))
 * **hopper:** refuse downloads redirected to another origin ([#6700](https://github.com/morluto/rea/issues/6700)) ([8575dfe](https://github.com/morluto/rea/commit/8575dfe370c585d198392063dd71c040380537aa))
+* **hopper:** report the stalled export function and shell recovery ([#14855](https://github.com/morluto/rea/issues/14855)) ([cc888f5](https://github.com/morluto/rea/commit/cc888f5f7d7a1210be0b2ff36486d84593b3546b))
 * **ida:** extend verifier admission check deadline to 90s ([d7ba8ad](https://github.com/morluto/rea/commit/d7ba8adbc3b8dc009549d6405873e68c8934c814))
 * **ida:** report an idb_open rejection with its upstream reason ([0cf7483](https://github.com/morluto/rea/commit/0cf7483322e0499cec72cc3df06d761871a75929)), refs [#13286](https://github.com/morluto/rea/issues/13286)
 * **ida:** report the supervisor's open deadline as provider_timeout ([ddf2cd9](https://github.com/morluto/rea/commit/ddf2cd9102ddcc6da901aa37f752223de61b289d)), refs [#13286](https://github.com/morluto/rea/issues/13286)
