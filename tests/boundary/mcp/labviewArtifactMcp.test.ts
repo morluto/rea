@@ -113,6 +113,31 @@ describe("inspect_labview_artifact delivery", () => {
       ],
     });
 
+    // An unfiltered page that crosses a block boundary keeps flat source order.
+    const crossRes = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: {
+        source: { kind: "retained-evidence", evidence_id: parentId },
+        view: {
+          kind: "labview-artifact",
+          collection: "sections",
+          offset: 3,
+          limit: 5,
+        },
+      },
+    });
+    expect(crossRes.isError).not.toBe(true);
+    expect(
+      (crossRes.structuredContent as { normalized_result: unknown })
+        .normalized_result,
+    ).toMatchObject({
+      items: [
+        { block: "DFDS", block_index: 1, stored_bytes: 3, source_index: 3 },
+        { block: "LIvi", block_index: 2, stored_bytes: 1, source_index: 4 },
+      ],
+      coverage: { total: 5 },
+    });
+
     const completeRes = await client.callTool({
       name: "inspect_labview_artifact",
       arguments: { path, detail: "complete" },

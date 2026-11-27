@@ -78,6 +78,50 @@ export const labviewArtifactPageContextSchema = z.strictObject(context);
 
 const readReport = createAnalysisViewResultReader(labviewArtifactSchema);
 
+type LabviewReport = z.output<typeof labviewArtifactSchema>;
+
+/**
+ * Where each section sits, built once per immutable report: section `i`
+ * (in block order) is `blocks[blockOf[i]].sections[sectionOf[i]]`, and
+ * `byBlock` lists the section positions each block identifier owns.
+ */
+interface SectionIndex {
+  readonly blockOf: Uint32Array;
+  readonly sectionOf: Uint32Array;
+  readonly byBlock: ReadonlyMap<string, readonly number[]>;
+}
+
+const sectionIndexes = new WeakMap<LabviewReport, SectionIndex>();
+
+const sectionIndex = (report: LabviewReport): SectionIndex => {
+  const known = sectionIndexes.get(report);
+  if (known !== undefined) return known;
+  let total = 0;
+  for (const block of report.blocks) total += block.sections.length;
+  const blockOf = new Uint32Array(total);
+  const sectionOf = new Uint32Array(total);
+  const byBlock = new Map<string, number[]>();
+  let at = 0;
+  report.blocks.forEach((block, blockIndex) => {
+    let positions = byBlock.get(block.identifier);
+    if (positions === undefined) {
+      positions = [];
+      byBlock.set(block.identifier, positions);
+    }
+    for (let index = 0; index < block.sections.length; index += 1) {
+      blockOf[at] = blockIndex;
+      sectionOf[at] = index;
+      positions.push(at);
+      at += 1;
+    }
+  });
+  const built = { blockOf, sectionOf, byBlock };
+  // The reader returns one frozen report per sealed parent, so the index is
+  // reused across pages of the same Evidence.
+  if (Object.isFrozen(report)) sectionIndexes.set(report, built);
+  return built;
+};
+
 /**
  * Bounded projections of one retained LabVIEW inspection: a summary of the
  * container and heap facts, and paged block and section inventories. The
@@ -97,13 +141,7 @@ export const projectLabviewArtifactView = (
   const parsed = readReport(parent);
   if (!parsed.ok) return parsed;
   const r = parsed.value;
-  const sections = r.blocks.flatMap((block, block_index) =>
-    block.sections.map((section) => ({
-      ...section,
-      block: block.identifier,
-      block_index,
-    })),
-  );
+  const index = sectionIndex(r);
   const facts = {
     artifact: r.artifact,
     container: r.container,
@@ -112,7 +150,7 @@ export const projectLabviewArtifactView = (
     block_diagram: r.block_diagram,
     front_panel: r.front_panel,
     block_count: r.blocks.length,
-    section_count: sections.length,
+    section_count: index.blockOf.length,
   };
   const shared = {
     parent_evidence_id: parent.evidenceId,
@@ -146,14 +184,7 @@ export const projectLabviewArtifactView = (
             source_index,
           }),
         )
-      : selectViewRows(
-          sections,
-          view,
-          view.block === undefined
-            ? undefined
-            : (section) => section.block === view.block,
-          (section, source_index) => ({ ...section, source_index }),
-        );
+      : selectSections(r, index, view);
 
   return ok({
     ...shared,
@@ -167,4 +198,31 @@ export const projectLabviewArtifactView = (
       selected.total,
     ),
   });
+};
+
+/** Build section rows only for the requested page, from the shared index. */
+const selectSections = (
+  report: LabviewReport,
+  index: SectionIndex,
+  view: z.output<typeof labviewArtifactViewRequestSchema>,
+) => {
+  const positions =
+    view.block === undefined
+      ? undefined
+      : (index.byBlock.get(view.block) ?? []);
+  const total = positions?.length ?? index.blockOf.length;
+  const rows = [];
+  const end = Math.min(total, view.offset + view.limit);
+  for (let at = view.offset; at < end; at += 1) {
+    const source_index = positions === undefined ? at : positions[at]!;
+    const block_index = index.blockOf[source_index]!;
+    const block = report.blocks[block_index]!;
+    rows.push({
+      ...block.sections[index.sectionOf[source_index]!]!,
+      block: block.identifier,
+      block_index,
+      source_index,
+    });
+  }
+  return { rows, total };
 };
