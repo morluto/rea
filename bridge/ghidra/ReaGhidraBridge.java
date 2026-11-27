@@ -1317,15 +1317,20 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 function,
                 currentProgram.getListing().getInstructions(function.getBody(), true)
             ));
-            boolean undefined = selection.has("undefined_function_entry");
-            if (undefined) limitations.add(0, undefinedFunctionLimitation(selection));
+            if (selection.has("undefined_function_entry"))
+                limitations.add(0, undefinedFunctionLimitation(selection));
             JsonObject result = functionObservation(
                 value == null ? JsonNull.INSTANCE : GSON.toJsonTree(value),
                 limitations
             );
-            // The file-offset selection is a contract field; the undefined
-            // function's facts are carried by its limitation.
-            if (selection.size() > 0 && !undefined) result.add("selection", selection);
+            // The file-offset selection is a contract field; an undefined
+            // function's inferred entry is carried by its limitation.
+            if (selection.has("file_offset")) {
+                JsonObject fileOffsetSelection = new JsonObject();
+                for (String key : List.of("file_offset", "mapped_address", "procedure_address"))
+                    fileOffsetSelection.add(key, selection.get(key));
+                result.add("selection", fileOffsetSelection);
+            }
             return result;
         } catch (RequestFailure failure) {
             if (!selection.has("mapped_address")) throw failure;
@@ -1350,7 +1355,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 if (!failure.code.equals("procedure_not_found")) throw failure;
                 // Analyzed code outside every function is still an analysis
                 // address, so it wins over a file-offset reading of the number.
-                Function undefined = undefinedFunctionAt(selector, selection);
+                Address requested = isExplicitReaAddress(selector) ? parseReaAddress(selector) : tryParseAddress(selector);
+                Function undefined = requested == null ? null : undefinedFunctionAt(requested, selection);
                 if (undefined != null) return undefined;
                 if (!selector.matches("0x[0-9a-fA-F]+")) throw failure;
             }
@@ -1389,14 +1395,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 " has no loaded source mapping for the admitted target file; Ghidra image base: " + canonicalAddress(currentProgram.getImageBase()) +
                 ". Inspect mappings with rea inspect-native-load-image <path> --provider ghidra --json or MCP inspect_native_load_image.");
         Address mapped = candidates.get(0);
+        // A file offset names the same location as its mapped analysis
+        // address, so it resolves the way that address does, including code
+        // outside every function.
         Function function = functionAtOrContaining(mapped);
+        if (function == null) function = undefinedFunctionAt(mapped, selection);
         if (function == null)
             throw new RequestFailure("procedure_not_found", "File offset " + coordinate +
                 " maps to analysis address " + canonicalAddress(mapped) +
                 ", but no procedure starts at or contains that address in the current Ghidra analysis. " +
-                (isCodeOutsideFunctions(mapped)
-                    ? CODE_OUTSIDE_FUNCTIONS + "; procedure_pseudo_code can decompile it on the fly when selected by that analysis address."
-                    : "Choose an observed procedure with CLI rea search <path> . --kind procedures --mode regex --provider ghidra --json or MCP list_procedures."));
+                "Choose an observed procedure with CLI rea search <path> . --kind procedures --mode regex --provider ghidra --json or MCP list_procedures.");
         selection.addProperty("file_offset", offset);
         selection.addProperty("mapped_address", canonicalAddress(mapped));
         selection.addProperty("procedure_address", canonicalAddress(function.getEntryPoint()));
@@ -1411,9 +1419,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
      * leaves the Program unchanged; this does the same and records that the
      * entry is inferred from control flow and absent from the inventory.
      */
-    private Function undefinedFunctionAt(String selector, JsonObject selection) throws Exception {
-        Address address = isExplicitReaAddress(selector) ? parseReaAddress(selector) : tryParseAddress(selector);
-        if (address == null || !isCodeOutsideFunctions(address)) return null;
+    private Function undefinedFunctionAt(Address address, JsonObject selection) throws Exception {
+        if (!isCodeOutsideFunctions(address)) return null;
         UndefinedFunction undefined =
             UndefinedFunction.findFunction(currentProgram, address, monitor);
         if (undefined == null) return null;

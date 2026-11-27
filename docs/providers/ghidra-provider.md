@@ -202,7 +202,9 @@ an entry found by following control flow back from that address, the way
 Ghidra's decompiler panel does. The Program and the procedure inventory are
 unchanged, and the result's limitations state that the entry and extent are
 inferred rather than an analyzed function boundary. This reading takes
-precedence over the file-offset fallback. Other procedure operations still
+precedence over the file-offset fallback. A file offset that maps to such code
+resolves the same way as its mapped address; its `selection` reports the
+inferred entry as `procedure_address`. Other procedure operations still
 require a function and say when the address holds code without one.
 
 Completed decompilations are reused while the Program is unchanged, so
@@ -223,9 +225,8 @@ payload-limit change or shutdown.
 
 If an offset maps to loaded target bytes but no procedure starts at or contains
 the mapped address, the failure preserves both the original file offset and
-analysis address, and says when that address holds code outside every function
-so that it can be decompiled by analysis address. This differs from an unmapped
-offset and does not recommend retrying the same offset syntax.
+analysis address. This differs from an unmapped offset and does not recommend
+retrying the same offset syntax.
 If the function resolves but the backend fails or cancels decompilation, the
 failure retains the selector, mapped address and procedure entry without
 changing the backend failure code.
