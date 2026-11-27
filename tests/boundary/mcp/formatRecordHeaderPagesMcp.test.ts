@@ -11,6 +11,7 @@ import {
   HEADER_BYTES,
   journalBytes,
 } from "../../../src/domain/linux/systemdJournal.fixture.js";
+import { mftHeaderPageFixture } from "../../fixtures/ntfsMftHeaderPage.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { openArtifactTarget } from "../../support/mcp/artifactSession.js";
@@ -55,13 +56,13 @@ const pageResult = (reply: Awaited<ReturnType<typeof readPage>>) => {
   return view;
 };
 
-const inventoryJournal = async (
+const inventoryFormat = async (
   mcp: TestMcp,
   onTestFinished: (handler: OnTestFinishedHandler) => void,
   bytes: Buffer | string,
   name = "system.journal",
 ) => {
-  const directory = await createTestTempDirectory("rea-journal-pages-");
+  const directory = await createTestTempDirectory("rea-format-record-pages-");
   const path = join(directory, name);
   await writeFile(path, bytes);
   const client = await openArtifactTarget(mcp, onTestFinished, path);
@@ -81,7 +82,7 @@ mcpTest(
   "pages journal object headers past the inline window by re-reading the file",
   async ({ mcp, onTestFinished }) => {
     const objects = Array.from({ length: 40 }, () => ({ type: 1, size: 32 }));
-    const { client, path, parent } = await inventoryJournal(
+    const { client, path, parent } = await inventoryFormat(
       mcp,
       onTestFinished,
       journalBytes({ objects }),
@@ -124,7 +125,7 @@ mcpTest(
       // that ends the chain, reported at its own offset.
       { type: 3, size: 8 },
     ];
-    const { client, path, parent } = await inventoryJournal(
+    const { client, path, parent } = await inventoryFormat(
       mcp,
       onTestFinished,
       // The undersized object's 16-byte header must be readable in full.
@@ -147,7 +148,7 @@ mcpTest(
   async ({ mcp, onTestFinished }) => {
     const objects = Array.from({ length: 40 }, () => ({ type: 1, size: 32 }));
     const bytes = journalBytes({ objects });
-    const { client, path, parent } = await inventoryJournal(
+    const { client, path, parent } = await inventoryFormat(
       mcp,
       onTestFinished,
       bytes,
@@ -177,7 +178,7 @@ mcpTest(
 mcpTest(
   "refuses record pages for a format without a record window",
   async ({ mcp, onTestFinished }) => {
-    const { client, path, parent } = await inventoryJournal(
+    const { client, path, parent } = await inventoryFormat(
       mcp,
       onTestFinished,
       await zipBytes(),
@@ -206,7 +207,7 @@ mcpTest(
   async ({ mcp, onTestFinished }) => {
     const objects = Array.from({ length: 40 }, () => ({ type: 1, size: 32 }));
     const bytes = journalBytes({ objects });
-    const { client, path, parent } = await inventoryJournal(
+    const { client, path, parent } = await inventoryFormat(
       mcp,
       onTestFinished,
       bytes,
@@ -227,5 +228,50 @@ mcpTest(
       },
     });
     expect(missing.isError).toBe(true);
+  },
+);
+
+mcpTest(
+  "pages MFT FILE headers in ordinal order across physical slot gaps",
+  async ({ mcp, onTestFinished }) => {
+    const bytes = mftHeaderPageFixture();
+    const { client, path, parent } = await inventoryFormat(
+      mcp,
+      onTestFinished,
+      bytes,
+      "$MFT",
+    );
+    const first = pageResult(await readPage(client, parent, path, 0));
+    expect(first.items).toHaveLength(32);
+    expect(first.items[31]).toMatchObject({ index: 32, fileOffset: 32 * 1024 });
+    expect(first.coverage).toMatchObject({ next_offset: 32, total: 40 });
+
+    const later = pageResult(await readPage(client, parent, path, 32, 2));
+    expect(later.items).toMatchObject([
+      { index: 34, fileOffset: 34 * 1024, fixups: { verifiedSectors: 2 } },
+      { index: 35, fileOffset: 35 * 1024 },
+    ]);
+    expect(later.coverage).toMatchObject({ next_offset: 34, total: 40 });
+
+    const last = pageResult(await readPage(client, parent, path, 34));
+    expect(last.items).toHaveLength(6);
+    expect(last.items[0]).toMatchObject({ index: 36 });
+    expect(last.items[5]).toMatchObject({ index: 41 });
+    expect(last.coverage).toMatchObject({ next_offset: null, exhausted: true });
+    const empty = pageResult(await readPage(client, parent, path, 40));
+    expect(empty.items).toEqual([]);
+    expect(empty.coverage).toMatchObject({ status: "empty", total: 40 });
+
+    const changed = Buffer.from(bytes);
+    changed.writeUInt16LE(2, 34 * 1024 + 16);
+    await writeFile(path, changed);
+    expect(
+      parseMcpToolError(await readPage(client, parent, path, 32)),
+    ).toMatchObject({
+      error: {
+        code: "artifact_integrity_mismatch",
+        details: { integrity_check: "container-identity" },
+      },
+    });
   },
 );

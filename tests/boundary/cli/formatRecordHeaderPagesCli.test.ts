@@ -8,6 +8,7 @@ import {
   HEADER_BYTES,
   journalBytes,
 } from "../../../src/domain/linux/systemdJournal.fixture.js";
+import { mftHeaderPageFixture } from "../../fixtures/ntfsMftHeaderPage.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
@@ -68,5 +69,47 @@ cliTest(
     const refused = await page(32);
     expect(refused.exitCode).not.toBe(0);
     expect(`${refused.stdout}${refused.stderr}`).toMatch(/changed/u);
+  },
+);
+
+cliTest(
+  "reads a later MFT FILE header page from inline Evidence",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-mft-pages-cli-");
+    const path = join(root, "$MFT");
+    await writeFile(path, mftHeaderPageFixture());
+    const inspected = await cli.run({
+      arguments: ["inspect-artifact", path, "--detail", "complete", "--json"],
+    });
+    expect(inspected.exitCode, inspected.stderr).toBe(0);
+    const request = join(root, "mft-page.json");
+    await writeFile(
+      request,
+      JSON.stringify({
+        source: { kind: "inline", evidence: parseEvidence(inspected.json) },
+        view: {
+          kind: "inventory",
+          collection: "format_record_headers",
+          artifact_path: path,
+          offset: 32,
+          limit: 1,
+        },
+      }),
+    );
+    const page = await cli.run({
+      arguments: ["inspect-analysis-view", request, "--json"],
+    });
+    expect(page.exitCode, page.stderr).toBe(0);
+    const view = analysisViewResultSchema.parse(
+      parseEvidence(page.json).normalized_result,
+    );
+    if (view.kind !== "inventory")
+      throw new Error("Expected an inventory page");
+    expect(view.items).toMatchObject([{ index: 34, fileOffset: 34 * 1024 }]);
+    expect(view.coverage).toMatchObject({
+      examined: 1,
+      next_offset: 33,
+      total: 40,
+    });
   },
 );

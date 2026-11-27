@@ -35,6 +35,8 @@ const RECORD_HEADER_WINDOWS: Readonly<
     >
   >
 > = {
+  "ntfs-mft": (metadata) =>
+    metadata.kind === "ntfs-mft" ? metadata.record_headers : [],
   "systemd-journal": (metadata) =>
     metadata.kind === "systemd-journal" ? metadata.object_headers : [],
 };

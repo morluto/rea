@@ -29,8 +29,15 @@ import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 export class NtfsMftArtifactReader extends PositionalArtifactReader<ArtifactFormatMetadata> {
   override readonly format = "ntfs-mft" as const;
 
-  constructor(path: string, admitted?: StableRegularFileDescriptor) {
+  readonly #recordHeaderStartOrdinal: number;
+
+  constructor(
+    path: string,
+    admitted?: StableRegularFileDescriptor,
+    options: { readonly recordHeaderStartOrdinal?: number } = {},
+  ) {
     super(path, "$MFT stream", admitted);
+    this.#recordHeaderStartOrdinal = options.recordHeaderStartOrdinal ?? 0;
   }
 
   formatMetadata(): ArtifactFormatMetadata | undefined {
@@ -61,7 +68,10 @@ export class NtfsMftArtifactReader extends PositionalArtifactReader<ArtifactForm
 
   async #decode(signal?: AbortSignal): Promise<MftInventory> {
     const { handle, initial } = await this.verifyCarrier(signal);
-    const decoder = createMftDecoder(initial.size);
+    const decoder = createMftDecoder(
+      initial.size,
+      this.#recordHeaderStartOrdinal,
+    );
     if (!decoder.ok) throw this.#failure(decoder.error);
     if (initial.size > 0)
       for await (const chunk of readFileHandleChunks(handle, {

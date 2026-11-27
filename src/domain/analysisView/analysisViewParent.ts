@@ -6,7 +6,10 @@ import { analysisInputErrorFromIssues } from "../inputIssueProjection.js";
 import { err, ok, type Result } from "../result.js";
 import { ownedJsonValueSchema } from "../jsonValue.js";
 import { EvidenceIntegrityError } from "../evidenceErrors.js";
-import type { systemdJournalObjectHeaderSchema } from "../formatMetadata/androidAndSystemMetadata.js";
+import type {
+  ntfsMftMetadataSchema,
+  systemdJournalObjectHeaderSchema,
+} from "../formatMetadata/androidAndSystemMetadata.js";
 
 /** Bind a projected artifact to the parent subject when one is recorded. */
 export const validateAnalysisViewSubject = (
@@ -28,9 +31,9 @@ export const validateAnalysisViewSubject = (
  * One row of a `format_record_headers` page. Owned here, beside the parent it
  * travels on, so projectors and the request hub never import each other.
  */
-export type FormatRecordHeader = z.output<
-  typeof systemdJournalObjectHeaderSchema
->;
+export type FormatRecordHeader =
+  | z.output<typeof systemdJournalObjectHeaderSchema>
+  | z.output<typeof ntfsMftMetadataSchema>["record_headers"][number];
 
 export interface AnalysisViewParent {
   readonly evidenceId: string;

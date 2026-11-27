@@ -36,9 +36,9 @@ it("reads the window starting at the requested record", async () => {
     start: 36,
     limit: 2,
   });
-  expect(items.map(({ offset }) => offset)).toEqual([
-    HEADER_BYTES + 36 * 32,
-    HEADER_BYTES + 37 * 32,
+  expect(items).toMatchObject([
+    { offset: HEADER_BYTES + 36 * 32 },
+    { offset: HEADER_BYTES + 37 * 32 },
   ]);
 });
 
