@@ -5,6 +5,7 @@ import { lstat, mkdir, open, realpath, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
+import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
@@ -265,9 +266,22 @@ export class GhidraCheckpoint {
         ),
     });
     if (!acquired.acquired)
-      throw failure(
-        directory,
-        `another REA session owns this checkpoint (run ${acquired.owner.runId}, process ${acquired.owner.processId}); close that session before retrying`,
+      throw new AnalysisResourceConstraintError(
+        "open_binary",
+        "capacity",
+        `another REA session owns this checkpoint (run ${acquired.owner.runId}, process ${acquired.owner.processId})`,
+        {
+          checkpoint_directory: directory,
+          owner_run_id: acquired.owner.runId,
+          owner_process_id: acquired.owner.processId,
+        },
+        {
+          measuredExhaustion: true,
+          retryable: true,
+          requestSent: false,
+          remediationAction:
+            "Wait for the owning REA session to close, or close it if you control it, then retry. If the checkpoint changed while you waited, reopen the target.",
+        },
       );
     this.#lease = acquired.lease;
     this.#source = undefined;

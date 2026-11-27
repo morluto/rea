@@ -1669,7 +1669,9 @@ enabling checkpoint mode requires the startup environment and an MCP restart.
 Storage is separated by target SHA-256 and analysis-profile identity, including
 the supported Ghidra version. Identical executable bytes at another path can
 reuse the Program. One live REA session holds the checkpoint's socket lease;
-a competing session reports that owner and must wait until it closes. Only
+a competing session reports a retryable capacity refusal with the owner
+identity. Wait for that session to close, then retry. If the checkpoint
+changed in the meantime, reopen the target. Only
 REA-owned Programs are checkpointed. Caller-selected existing projects retain
 their separate read-only workflow below.
 

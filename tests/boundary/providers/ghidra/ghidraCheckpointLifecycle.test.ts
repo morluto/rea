@@ -8,6 +8,8 @@ import { access, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ArtifactResourceScope } from "../../../../src/resources/ArtifactResourceScope.js";
 import { createAnalysisProfile } from "../../../../src/domain/analysisProfile.js";
+import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
+import { projectSessionError } from "../../../../src/ghidra/GhidraSessionErrorProjection.js";
 import { GhidraClient } from "../../../../src/ghidra/GhidraClient.js";
 import type { BridgeMaxReplyBytes } from "../../../../src/config/bridgeMaxReplyBytes.js";
 import { ConfigurationError } from "../../../../src/domain/configurationErrors.js";
@@ -157,6 +159,53 @@ it.skipIf(process.platform === "win32")(
     };
     expect(resumed.checkpointRestore()).toEqual(packed);
     expect(f.launcher.packedPrograms.at(-1)).toEqual(packed);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "reports checkpoint contention as retryable before launching a competing bridge",
+  async () => {
+    const f = await fixture();
+    const initial = await f.client.start();
+    if (!initial.ok) throw initial.error;
+    const contender = new GhidraClient({
+      launcher: f.launcher,
+      targetPath: f.targetPath,
+      targetSha256: f.sha256,
+      providerVersion: "12.1.4",
+      profileDigest: profile.digest,
+      checkpoint: f.selection,
+      startupTimeoutMs: 10_000,
+    });
+    clients.push(contender);
+    const launchCount = f.launcher.packedPrograms.length;
+    const busy = await contender.start();
+    if (busy.ok) throw new Error("expected a busy checkpoint");
+    const refusal = projectAnalysisError(
+      projectSessionError("procedure_pseudo_code", busy.error, {
+        limits: {
+          ghidraStartupTimeoutMs: 10_000,
+          ghidraDecompileTimeoutSeconds: 30,
+        },
+        programName: undefined,
+        source: "owned-checkpoint",
+      }),
+    );
+    expect(refusal).toMatchObject({
+      code: "resource_constraint",
+      retryable: true,
+      remediation: { action: expect.stringContaining("owning REA session") },
+      details: {
+        reported_limits: {
+          checkpoint_directory: f.selection.directory,
+          owner_process_id: process.pid,
+        },
+      },
+    });
+    expect(f.launcher.packedPrograms).toHaveLength(launchCount);
+    expect((await f.client.close()).ok).toBe(true);
+    expect((await contender.start()).ok).toBe(true);
+    expect(f.launcher.packedPrograms).toHaveLength(launchCount + 1);
   },
 );
 
