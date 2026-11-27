@@ -21,6 +21,7 @@ import {
 import { err, ok, type Result } from "../domain/result.js";
 import {
   artifactFixedLimitFailure,
+  completedStableArtifactObservation,
   readStableArtifact,
   translateArtifactFailure,
 } from "../resources/index.js";
@@ -95,6 +96,8 @@ export const labviewReadDialect = (path: string): ProviderFailureDialect => ({
   file: {
     path,
     description: "LabVIEW artifact",
+    // The read's identity survives a later refusal or a failed close.
+    retainCompletedIdentity: true,
     // Restate the release-fixed ceiling as an allowance with its recovery.
     fileSize: (_failure, details) =>
       translateArtifactFailure(
@@ -174,8 +177,20 @@ export class LabviewArtifactProvider implements LabviewArtifactPort {
         classifyProviderFailure(cause, labviewReadDialect(input.path)),
       );
     }
+    // A later refusal still belongs to the bytes already read.
+    const withIdentity = (error: AnalysisError): AnalysisError => {
+      const observation = completedStableArtifactObservation(
+        error,
+        input.path,
+        snapshot,
+      );
+      if (observation !== undefined)
+        error.retainPartialObservation(observation);
+      return error;
+    };
     const laterCancellation = cancellation();
-    if (laterCancellation !== undefined) return err(laterCancellation);
+    if (laterCancellation !== undefined)
+      return err(withIdentity(laterCancellation));
 
     const bytes = snapshot.bytes;
     let containers: readonly EmbeddedRsrc[];
@@ -184,14 +199,16 @@ export class LabviewArtifactProvider implements LabviewArtifactPort {
       containers = [{ offset: 0, bytes }];
     } else {
       const scan = findEmbeddedRsrcContainers(bytes);
-      if (!scan.ok) return err(limitFailure(scan.failure));
+      if (!scan.ok) return err(withIdentity(limitFailure(scan.failure)));
       containers = scan.containers;
       coverage = scan.complete;
     }
     if (containers.length === 0)
       return err(
-        inputFailure(
-          "The selected file is not a LabVIEW RSRC container and carries no embedded RSRC resource.",
+        withIdentity(
+          inputFailure(
+            "The selected file is not a LabVIEW RSRC container and carries no embedded RSRC resource.",
+          ),
         ),
       );
     const chosen = containers.reduce((largest, candidate) =>
@@ -200,13 +217,13 @@ export class LabviewArtifactProvider implements LabviewArtifactPort {
     const parsed = parseLabviewRsrc(chosen.bytes);
     if (!parsed.ok) {
       const limit = limitCause(parsed.failure);
-      if (limit !== undefined) return err(limitFailure(limit));
+      if (limit !== undefined) return err(withIdentity(limitFailure(limit)));
       const error = parseFailureAnalysisError(
         OPERATION,
         input.path,
         parsed.failure,
       );
-      if (error !== undefined) return err(error);
+      if (error !== undefined) return err(withIdentity(error));
       throw parsed.failure;
     }
     const value = parsed.value;

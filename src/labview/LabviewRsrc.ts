@@ -304,7 +304,10 @@ export const parseLabviewRsrc = (bytes: Buffer): LabviewParseResult => {
       inputRemaining: MAX_COMPRESSED_BYTES,
     };
     const decodedSections = new Map<string, SectionDecoding>();
+    // First pass: validate every block's start table and locate the one name
+    // list that all section-name offsets address, after every start table.
     let totalSections = 0;
+    let namesBase = blockInfo;
     for (let blockIndex = 0; blockIndex < blockCount; blockIndex += 1) {
       const headerAt = blockHeadersAt + blockIndex * BLOCK_HEADER_BYTES;
       const identifier = reader
@@ -334,14 +337,31 @@ export const parseLabviewRsrc = (bytes: Buffer): LabviewParseResult => {
           ),
           { offset: headerAt + 4, field: identifier },
         );
-      const sectionStartsOffset = reader.u32(headerAt + 8);
-      const startsAt = blockInfo + sectionStartsOffset;
+      const startsAt = blockInfo + reader.u32(headerAt + 8);
       if (!inside(startsAt, sectionCount * SECTION_START_BYTES, listEnd))
         throw truncatedInput(FORMAT, "truncated RSRC section starts", {
           offset: startsAt,
           field: identifier,
         });
-      const nameBase = startsAt + sectionCount * SECTION_START_BYTES;
+      namesBase = Math.max(
+        namesBase,
+        startsAt + sectionCount * SECTION_START_BYTES,
+      );
+    }
+    if (namesBase > listEnd)
+      throw truncatedInput(
+        FORMAT,
+        "RSRC section-name list exceeds the declared list",
+        { offset: namesBase },
+      );
+
+    for (let blockIndex = 0; blockIndex < blockCount; blockIndex += 1) {
+      const headerAt = blockHeadersAt + blockIndex * BLOCK_HEADER_BYTES;
+      const identifier = reader
+        .range(headerAt, 4, "block identifier")
+        .toString("latin1");
+      const sectionCount = reader.u32(headerAt + 4) + 1;
+      const startsAt = blockInfo + reader.u32(headerAt + 8);
       const sections: LabviewSection[] = [];
       for (let index = 0; index < sectionCount; index += 1) {
         const at = startsAt + index * SECTION_START_BYTES;
@@ -379,7 +399,7 @@ export const parseLabviewRsrc = (bytes: Buffer): LabviewParseResult => {
         }
         sections.push({
           index: declaredIndex,
-          name: sectionName(reader, nameBase, nameOffset, listEnd),
+          name: sectionName(reader, namesBase, nameOffset, listEnd),
           storedBytes,
           decodedBytes: decoded.decodedBytes,
           coding: decoded.coding,

@@ -16,7 +16,10 @@ const u32 = (value: number): Buffer => {
  * section data this reader parses. Names are omitted; the container's own
  * offsets are the fact under test, not a producer's naming.
  */
-export const buildLabviewRsrc = (blocks: readonly BlockFixture[]): Buffer => {
+export const buildLabviewRsrc = (
+  blocks: readonly BlockFixture[],
+  names: readonly string[] = [],
+): Buffer => {
   const dataParts: Buffer[] = [];
   const sectionArrays: Buffer[] = [];
   let dataLength = 0;
@@ -33,7 +36,9 @@ export const buildLabviewRsrc = (blocks: readonly BlockFixture[]): Buffer => {
       }
       const start = Buffer.alloc(20);
       start.writeInt32BE(0, 0);
-      start.writeUInt32BE(0xffffffff, 4);
+      // A shared name list gives every section name offset 0; no list leaves
+      // the sections unnamed.
+      start.writeUInt32BE(names.length > 0 ? 0 : 0xffffffff, 4);
       start.writeUInt32BE(0, 8);
       start.writeUInt32BE(at, 12);
       start.writeUInt32BE(0, 16);
@@ -55,10 +60,15 @@ export const buildLabviewRsrc = (blocks: readonly BlockFixture[]): Buffer => {
     blockHeaders.push(header);
     cursor += sectionArrays[index]?.length ?? 0;
   }
+  const nameParts = names.map((name) => {
+    const bytes = Buffer.from(name, "latin1");
+    return Buffer.concat([Buffer.from([bytes.length]), bytes]);
+  });
   const blockInfo = Buffer.concat([
     u32(blocks.length - 1),
     ...blockHeaders,
     ...sectionArrays,
+    ...nameParts,
   ]);
   const listHeader = Buffer.alloc(20);
   listHeader.writeUInt32BE(0, 0);

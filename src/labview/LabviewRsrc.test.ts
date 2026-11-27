@@ -165,6 +165,23 @@ describe("parseLabviewRsrc", () => {
     expect(parsed.value.blocks[0]?.sections[0]?.index).toBe(-1);
   });
 
+  it("resolves section names against the shared name list", () => {
+    const parsed = parseLabviewRsrc(
+      buildLabviewRsrc(
+        [
+          { ident: "vers", sections: [labviewVersionSection()] },
+          { ident: "DFDS", sections: [Buffer.from("x")] },
+        ],
+        ["shared"],
+      ),
+    );
+    if (!parsed.ok) throw new Error(parsed.failure.message);
+    // Both blocks read the one name list after every start table.
+    expect(parsed.value.blocks.map((block) => block.sections[0]?.name)).toEqual(
+      ["shared", "shared"],
+    );
+  });
+
   it("accepts a list extent that runs past the resource payload", () => {
     // A real LabVIEW-built PE declares more list bytes than its resource
     // payload holds; the records it actually uses still fit.
@@ -339,6 +356,23 @@ describe("LabviewArtifactProvider", () => {
     expect(result.value.limitations.join(" ")).toContain(
       "cannot establish from its content",
     );
+    await provider.close();
+  });
+
+  it("keeps the completed file identity on a later parse failure", async () => {
+    const root = await createTestTempDirectory("rea-labview-identity-");
+    const path = join(root, "fixture.vi");
+    const bytes = Buffer.concat([Buffer.from("RSRC\r\n"), Buffer.alloc(10)]);
+    await writeFile(path, bytes);
+    const provider = new LabviewArtifactProvider();
+    const result = await provider.inspect({ path });
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(result.error.partialObservation).toMatchObject({
+        kind: "file-snapshot-hash",
+        path,
+        bytes: bytes.length,
+      });
     await provider.close();
   });
 
