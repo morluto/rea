@@ -458,6 +458,16 @@ export class GhidraCheckpoint {
     for (;;) {
       assertArtifactReadActive(signal);
       let acquired: LeaseAcquisition | undefined;
+      // A probe given the rest of the wait ends exactly when the wait does.
+      // Its timeout is that fact: Node's timer runs on the event loop's
+      // cached clock, which can lag the clock the deadline reads, so the
+      // timer can fire before `deadline.expired()` agrees.
+      const waitLeftMs = deadline.remainingMs();
+      const probeTimeoutMs = Math.min(
+        LEASE_OWNER_RESPONSE_TIMEOUT_MS,
+        waitLeftMs,
+      );
+      const probeEndsWait = probeTimeoutMs === waitLeftMs;
       try {
         acquired = await acquireOwnedLease({
           identity: {
@@ -472,10 +482,7 @@ export class GhidraCheckpoint {
           resources: this.resources,
           probe: {
             ...(signal === undefined ? {} : { signal }),
-            timeoutMs: Math.min(
-              LEASE_OWNER_RESPONSE_TIMEOUT_MS,
-              deadline.remainingMs(),
-            ),
+            timeoutMs: probeTimeoutMs,
           },
           failure: (reason, cause) => {
             const error = failure(
@@ -518,7 +525,7 @@ export class GhidraCheckpoint {
         if (
           cause instanceof Error &&
           probeTimedOut.has(cause) &&
-          deadline.expired()
+          (probeEndsWait || deadline.expired())
         )
           throw new GhidraCheckpointBusyError(
             admission.directory,
