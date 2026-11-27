@@ -490,7 +490,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 dispatchAndWrite(writer, request, descriptor);
             }
             catch (RequestFailure failure) {
-                writeFailure(writer, request.id, failure.code, failure.getMessage(), failure.candidates);
+                writeFailure(writer, request.id, failure);
             }
             catch (Exception exception) {
                 writeFailure(
@@ -1308,10 +1308,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
             if (selection.size() == 0) throw failure;
             // Preserve completed resolution facts without changing the backend's
             // failure code or suggesting that the successful mapping was invalid.
-            throw new RequestFailure(failure.code, "Selector " + selector +
+            throw failure.prefixed("Selector " + selector +
                 " mapped to analysis address " + selection.get("mapped_address").getAsString() +
-                " and procedure " + canonicalAddress(function.getEntryPoint()) +
-                "; " + failure.getMessage(), failure.candidates);
+                " and procedure " + canonicalAddress(function.getEntryPoint()) + "; ");
         }
     }
 
@@ -1845,7 +1844,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     private JsonObject annotateNativeFunction(JsonObject params) throws Exception {
-        if (!Set.of("procedure", "name", "comment", "inline_comment", "signature", "signature_max_utf16")
+        if (!Set.of("procedure", "name", "comment", "inline_comment", "signature", "signature_max_utf16",
+                    "parenthesis_max_depth")
                 .containsAll(params.keySet()))
             throw new RequestFailure("invalid_request", "Unknown function annotation field");
         if (!params.has("name") && !params.has("comment") && !params.has("inline_comment") && !params.has("signature"))
@@ -1861,7 +1861,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         int signatureBound = callerCTextBound(
             params, "signature_max_utf16", DEFAULT_FUNCTION_SIGNATURE_UTF16, MAX_FUNCTION_SIGNATURE_UTF16);
         SignatureEdit signature = params.has("signature")
-            ? parseFunctionSignature(function, requireText(params, "signature"), signatureBound) : null;
+            ? parseFunctionSignature(function, requireText(params, "signature"), signatureBound,
+                callerParenthesisBound(params)) : null;
         FunctionDefinitionDataType prototype = signature == null ? null : signature.prototype();
         int transaction = currentProgram.startTransaction("REA function annotations");
         boolean commit = false;
@@ -1927,13 +1928,15 @@ public final class ReaGhidraBridge extends HeadlessScript {
     // the slowest admitted text under about 7 s; the TypeScript contract owns the
     // same defaults and ranges. Each level of nested parentheses in an expression
     // doubles parse time and the cost repeats per occurrence (8192 units filled at
-    // depth 8 take 0.2 s, at depth 12 2.2 s), so nesting has one fixed ceiling.
+    // depth 8 take 0.2 s, at depth 12 2.2 s), so parenthesis_max_depth stops at 12.
     private static final int MIN_C_TEXT_UTF16 = 16;
     private static final int DEFAULT_FUNCTION_SIGNATURE_UTF16 = 2048;
     private static final int MAX_FUNCTION_SIGNATURE_UTF16 = 4096;
     private static final int DEFAULT_TYPE_DECLARATIONS_UTF16 = 4096;
     private static final int MAX_TYPE_DECLARATIONS_UTF16 = 8192;
-    private static final int MAX_C_PARENTHESIS_DEPTH = 8;
+    private static final int MIN_C_PARENTHESIS_DEPTH = 1;
+    private static final int DEFAULT_C_PARENTHESIS_DEPTH = 8;
+    private static final int MAX_C_PARENTHESIS_DEPTH = 12;
     private static final Set<String> C_CONST_QUALIFIERS = Set.of("const", "__const", "__const__");
     private static final Set<String> C_VOLATILE_QUALIFIERS = Set.of("volatile", "__volatile", "__volatile__");
     /** Accepted caller C and the qualifiers Ghidra's types cannot record. */
@@ -1957,16 +1960,128 @@ public final class ReaGhidraBridge extends HeadlessScript {
             "; Ghidra's C parser would not apply it as written, so nothing was changed");
     }
 
+    /** One token of caller C text and where it starts in the caller's own lines. */
+    private record CToken(String text, int line, int column) {
+        boolean is(String expected) { return text.equals(expected); }
+        boolean isIdentifier() { return Character.isLetter(text.charAt(0)) || text.charAt(0) == '_'; }
+    }
+
+    /**
+     * The one reader of caller C text. Tokens are identifiers or single
+     * characters; comments read as whitespace, as in C. CR, LF and CRLF each
+     * end one line, as in Ghidra's own C parser, so positions name the
+     * caller's text. A string or character literal is refused here, so no
+     * later check can mistake its contents for code.
+     */
+    private static final class CTokenizer {
+        private final String text;
+        private final String field;
+        private final String code;
+        private int index;
+        private int line = 1;
+        private int lineStart;
+        /** The text ends inside a line comment, which would swallow anything appended on its line. */
+        private boolean endsInLineComment;
+
+        CTokenizer(String text, String field, String code) {
+            this.text = text;
+            this.field = field;
+            this.code = code;
+        }
+
+        private static boolean isLineBreak(char character) {
+            return character == '\n' || character == '\r';
+        }
+
+        /** Step over one UTF-16 unit, or one CRLF pair, counting line breaks. */
+        private void advance() {
+            char character = text.charAt(index++);
+            if (character == '\r' && index < text.length() && text.charAt(index) == '\n') index++;
+            if (isLineBreak(character)) {
+                line++;
+                lineStart = index;
+            }
+        }
+
+        /**
+         * The next token, or null at the end of the text. Within a directive
+         * (lineEnds), a line break also ends the tokens, and a block comment that
+         * crosses one is refused: it would carry the directive onto another line.
+         */
+        CToken next(boolean lineEnds) {
+            while (index < text.length()) {
+                char character = text.charAt(index);
+                int tokenLine = line, column = index - lineStart + 1;
+                if (lineEnds && isLineBreak(character)) return null;
+                if (Character.isWhitespace(character)) {
+                    advance();
+                    continue;
+                }
+                if (text.startsWith("//", index)) {
+                    while (index < text.length() && !isLineBreak(text.charAt(index))) index++;
+                    endsInLineComment = index == text.length();
+                    continue;
+                }
+                if (text.startsWith("/*", index)) {
+                    int close = text.indexOf("*/", index + 2);
+                    int stop = close < 0 ? text.length() : close + 2;
+                    while (index < stop) advance();
+                    if (lineEnds && line != tokenLine)
+                        throw refusedConstruct(code, field,
+                            "a block comment that continues a directive onto another line", tokenLine, column);
+                    continue;
+                }
+                if (character == '"' || character == '\'')
+                    throw refusedConstruct(code, field, "a string or character literal", tokenLine, column);
+                int stop = index + 1;
+                if (Character.isLetter(character) || character == '_')
+                    while (stop < text.length() &&
+                            (Character.isLetterOrDigit(text.charAt(stop)) || text.charAt(stop) == '_')) stop++;
+                String token = text.substring(index, stop);
+                index = stop;
+                return new CToken(token, tokenLine, column);
+            }
+            return null;
+        }
+    }
+
+    /** What the tokenizer observed in admitted caller C. */
+    private record AdmittedCallerC(JsonArray droppedQualifiers, boolean terminated, boolean endsInLineComment) {}
+
+    /**
+     * Admit one directive from the tokens after its #. Only a declarations
+     * text's #pragma pack(...) with no nested parentheses is applied; Ghidra's
+     * parser accepts other directives without recording them.
+     */
+    private static void admitCallerCDirective(
+            CTokenizer tokens, CToken hash, String field, boolean declarations, String code) {
+        CToken first = tokens.next(true);
+        String name = first == null ? "" : first.text();
+        // Any other directive is refused by its name, before its operands are read.
+        List<CToken> directive = new ArrayList<>();
+        if (declarations && name.equals("pragma"))
+            for (CToken token = tokens.next(true); token != null; token = tokens.next(true)) directive.add(token);
+        boolean pack = directive.size() >= 3 && directive.get(0).is("pack") && directive.get(1).is("(") &&
+            directive.get(directive.size() - 1).is(")") &&
+            directive.subList(2, directive.size() - 1).stream().noneMatch(token -> token.is("(") || token.is(")"));
+        if (!pack)
+            throw refusedConstruct(code, field, "the directive #" + name +
+                (name.equals("pragma") ? " (only #pragma pack is applied)" : ""), hash.line(), hash.column());
+    }
+
     /**
      * Tokenize caller C once, before the parser sees it: bound parenthesis
      * nesting and refuse every construct Ghidra's parser accepts and drops.
      * A declarations text may hold only struct, union, enum and typedef
      * definitions and #pragma pack; a signature holds one prototype.
      */
-    private static JsonArray admitCallerC(String text, String field, boolean declarations, String code) {
+    private static AdmittedCallerC admitCallerC(
+            String text, String field, boolean declarations, String code, int maxParenthesisDepth) {
         final int start = 0, tag = 1, named = 2, body = 3, afterBody = 4, typedef = 5;
         int state = start;
-        int line = 1, lineStart = 0, parentheses = 0, braces = 0;
+        int parentheses = 0, braces = 0;
+        // The deepest nesting in the whole text, so a refusal reports the depth to admit.
+        int deepest = 0, beyondLine = 0, beyondColumn = 0;
         // A signature's parameter index: -1 before its parameter list opens, the return type.
         int parameter = -1;
         boolean parametersClosed = false;
@@ -1974,53 +2089,15 @@ public final class ReaGhidraBridge extends HeadlessScript {
         String previous = "";
         String definition = "";
         boolean ended = false;
-        int index = 0;
-        while (index < text.length()) {
-            char character = text.charAt(index);
-            int column = index - lineStart + 1;
-            if (character == '\n') {
-                line++;
-                lineStart = ++index;
+        CTokenizer tokens = new CTokenizer(text, field, code);
+        for (CToken next = tokens.next(false); next != null; next = tokens.next(false)) {
+            String token = next.text();
+            int line = next.line(), column = next.column();
+            if (next.is("#")) {
+                admitCallerCDirective(tokens, next, field, declarations, code);
                 continue;
             }
-            if (Character.isWhitespace(character)) {
-                index++;
-                continue;
-            }
-            if (text.startsWith("//", index)) {
-                int next = text.indexOf('\n', index);
-                index = next < 0 ? text.length() : next;
-                continue;
-            }
-            if (text.startsWith("/*", index)) {
-                int close = text.indexOf("*/", index + 2);
-                int stop = close < 0 ? text.length() : close + 2;
-                for (int cursor = index; cursor < stop; cursor++)
-                    if (text.charAt(cursor) == '\n') {
-                        line++;
-                        lineStart = cursor + 1;
-                    }
-                index = stop;
-                continue;
-            }
-            if (character == '#') {
-                int next = text.indexOf('\n', index);
-                String directive = text.substring(index, next < 0 ? text.length() : next).strip();
-                if (!declarations || !PRAGMA_PACK.matcher(directive).matches())
-                    throw refusedConstruct(code, field, "the directive " + directive.split("\\s+", 3)[0] +
-                        (directive.startsWith("#pragma") || directive.startsWith("# pragma") ? " (only #pragma pack is applied)" : ""),
-                        line, column);
-                index += directive.length();
-                continue;
-            }
-            if (character == '"' || character == '\'')
-                throw refusedConstruct(code, field, "a string or character literal", line, column);
-            String token;
-            if (Character.isLetter(character) || character == '_') {
-                int stop = index + 1;
-                while (stop < text.length() &&
-                        (Character.isLetterOrDigit(text.charAt(stop)) || text.charAt(stop) == '_')) stop++;
-                token = text.substring(index, stop);
+            if (next.isIdentifier()) {
                 if (UNAPPLIED_C_EXTENSIONS.contains(token))
                     throw refusedConstruct(code, field, "the attribute or extension " + token +
                         (declarations ? " (use #pragma pack for packing)" : ""), line, column);
@@ -2037,15 +2114,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
                             ? JsonNull.INSTANCE : GSON.toJsonTree(parameter));
                     dropped.add(qualifier);
                 }
-            } else {
-                token = String.valueOf(character);
             }
-            index += token.length();
             if (ended && !token.equals(";"))
                 throw refusedConstruct(code, field, "a second declaration", line, column);
-            if (token.equals("(") && ++parentheses > MAX_C_PARENTHESIS_DEPTH)
-                throw new RequestFailure("parenthesis_depth_limit", field + " nests parentheses " + parentheses +
-                    " levels deep at line " + line + ", column " + column);
+            if (next.is("(") && ++parentheses > deepest) {
+                deepest = parentheses;
+                if (deepest == maxParenthesisDepth + 1) {
+                    beyondLine = line;
+                    beyondColumn = column;
+                }
+            }
             if (!declarations && parentheses == 1 && !parametersClosed) {
                 if (token.equals("(") && parameter < 0) parameter = 0;
                 else if (token.equals(",")) parameter++;
@@ -2106,32 +2184,49 @@ public final class ReaGhidraBridge extends HeadlessScript {
             }
             previous = token;
         }
-        return dropped;
+        // Measured over the whole text, so the refusal names the depth that admits it.
+        if (deepest > maxParenthesisDepth)
+            throw new RequestFailure("parenthesis_depth_limit", field + " nests parentheses " + deepest +
+                " levels deep, first beyond " + maxParenthesisDepth + " at line " + beyondLine + ", column " + beyondColumn,
+                null, deepest);
+        return new AdmittedCallerC(dropped, ended, tokens.endsInLineComment);
     }
 
-    private static final Pattern PRAGMA_PACK = Pattern.compile("#\\s*pragma\\s+pack\\s*\\([^()]*\\)");
-
-    /** The caller's per-call bound on one C text, or its default; the contract owns the range. */
-    private static int callerCTextBound(JsonObject params, String name, int defaultValue, int maximum) {
+    /** The caller's per-call bound, or its default; the contract owns the range. */
+    private static int callerBound(JsonObject params, String name, int minimum, int defaultValue, int maximum) {
         if (!params.has(name)) return defaultValue;
         int bound = requireInteger(params, name);
-        if (bound < MIN_C_TEXT_UTF16 || bound > maximum)
-            throw new RequestFailure("invalid_request", name + " must be from " + MIN_C_TEXT_UTF16 + " to " + maximum);
+        if (bound < minimum || bound > maximum)
+            throw new RequestFailure("invalid_request", name + " must be from " + minimum + " to " + maximum);
         return bound;
+    }
+
+    private static int callerCTextBound(JsonObject params, String name, int defaultValue, int maximum) {
+        return callerBound(params, name, MIN_C_TEXT_UTF16, defaultValue, maximum);
+    }
+
+    private static int callerParenthesisBound(JsonObject params) {
+        return callerBound(params, "parenthesis_max_depth",
+            MIN_C_PARENTHESIS_DEPTH, DEFAULT_C_PARENTHESIS_DEPTH, MAX_C_PARENTHESIS_DEPTH);
     }
 
     /** Parse caller C text against the type database without storing anything in it. */
     private ParsedCallerC parseCallerC(
-            String text, String parsed, String field, boolean declarations, String code, int maximum) {
+            String text, String field, boolean declarations, String code, int maximum, int maxParenthesisDepth) {
         validateAnnotationText(text, field);
         if (text.length() > maximum)
             throw new RequestFailure(declarations ? "declarations_length_limit" : "signature_length_limit",
-                field + " has " + text.length() + " UTF-16 code units");
-        JsonArray dropped = admitCallerC(text, field, declarations, code);
+                field + " has " + text.length() + " UTF-16 code units", null, text.length());
+        AdmittedCallerC admitted = admitCallerC(text, field, declarations, code, maxParenthesisDepth);
         DataTypeManager types = currentProgram.getDataTypeManager();
         CParser parser = new CParser(types, false, new DataTypeManager[] { types });
         try {
-            parser.parse(parsed);
+            // The parser needs a terminated prototype. Nothing precedes the caller's
+            // text, so the parser's positions name the caller's own lines; the
+            // terminator ends the last line, or follows it when a line comment
+            // would otherwise swallow it.
+            parser.parse(declarations || admitted.terminated() ? text
+                : text + (admitted.endsInLineComment() ? "\n;" : ";"));
         }
         catch (ghidra.app.util.cparser.C.ParseException | ghidra.app.util.cparser.C.TokenMgrError rejected) {
             throw new RequestFailure(code, "Ghidra's C parser rejected " + field + ": " + cParserReason(rejected.getMessage()));
@@ -2141,7 +2236,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
         if (!parser.didParseSucceed())
             throw new RequestFailure(code, "Ghidra's C parser rejected " + field + ": " + cParserReason(parser.getParseMessages()));
-        return new ParsedCallerC(parser, dropped);
+        return new ParsedCallerC(parser, admitted.droppedQualifiers());
     }
 
     /**
@@ -2178,16 +2273,13 @@ public final class ReaGhidraBridge extends HeadlessScript {
     /** A parsed prototype and the qualifiers in its text that Ghidra does not record. */
     private record SignatureEdit(FunctionDefinitionDataType prototype, JsonArray droppedQualifiers) {}
 
-    private SignatureEdit parseFunctionSignature(Function function, String text, int maximum) {
+    private SignatureEdit parseFunctionSignature(Function function, String text, int maximum, int maxParenthesisDepth) {
         String code = "invalid_function_signature";
         String entry = canonicalAddress(function.getEntryPoint());
         // Ghidra redirects a thunk's prototype to the thunked function, which may be external.
         if (function.isThunk())
             throw new RequestFailure(code, "Function at " + entry + " is a thunk; its prototype belongs to the function it forwards to");
-        String stripped = text.strip();
-        // The parser needs a terminated declaration; the bounds apply to the caller's text.
-        ParsedCallerC parsed = parseCallerC(
-            text, stripped.endsWith(";") ? stripped : stripped + ";", "signature", false, code, maximum);
+        ParsedCallerC parsed = parseCallerC(text, "signature", false, code, maximum, maxParenthesisDepth);
         CParser parser = parsed.parser();
         // The parser invents an empty composite for an undefined struct, union or enum tag.
         Set<String> undefined = new TreeSet<>(parser.getComposites().keySet());
@@ -2250,12 +2342,13 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     private JsonObject defineNativeDataTypes(JsonObject params) throws Exception {
-        if (!Set.of("declarations", "declarations_max_utf16").containsAll(params.keySet()) || !params.has("declarations"))
+        if (!Set.of("declarations", "declarations_max_utf16", "parenthesis_max_depth").containsAll(params.keySet()) || !params.has("declarations"))
             throw new RequestFailure("invalid_request", "Bridge request fields are invalid");
         String code = "invalid_type_declarations";
         String declarations = requireText(params, "declarations");
-        ParsedCallerC parsedDeclarations = parseCallerC(declarations, declarations, "declarations", true, code,
-            callerCTextBound(params, "declarations_max_utf16", DEFAULT_TYPE_DECLARATIONS_UTF16, MAX_TYPE_DECLARATIONS_UTF16));
+        ParsedCallerC parsedDeclarations = parseCallerC(declarations, "declarations", true, code,
+            callerCTextBound(params, "declarations_max_utf16", DEFAULT_TYPE_DECLARATIONS_UTF16, MAX_TYPE_DECLARATIONS_UTF16),
+            callerParenthesisBound(params));
         CParser parser = parsedDeclarations.parser();
         if (!parser.getFunctions().isEmpty())
             throw new RequestFailure(code, "declarations must not declare functions or function-pointer members: " +
@@ -7083,19 +7176,15 @@ public final class ReaGhidraBridge extends HeadlessScript {
             int id,
             String code,
             String message) throws IOException {
-        writeFailure(writer, id, code, message, null);
+        writeFailure(writer, id, new RequestFailure(code, message));
     }
 
-    private static void writeFailure(
-            BufferedWriter writer,
-            int id,
-            String code,
-            String message,
-            JsonArray candidates) throws IOException {
+    private static void writeFailure(BufferedWriter writer, int id, RequestFailure failure) throws IOException {
         JsonObject error = new JsonObject();
-        error.addProperty("code", code);
-        error.addProperty("message", message);
-        if (candidates != null) error.add("candidates", candidates);
+        error.addProperty("code", failure.code);
+        error.addProperty("message", failure.getMessage());
+        if (failure.candidates != null) error.add("candidates", failure.candidates);
+        if (failure.requiredValue != null) error.addProperty("required_value", failure.requiredValue);
         JsonObject response = new JsonObject();
         response.addProperty("id", id);
         response.addProperty("ok", false);
@@ -7458,10 +7547,23 @@ public final class ReaGhidraBridge extends HeadlessScript {
             this(code, message, null);
         }
 
+        /** The measured value a per-call control must admit, for a bounded refusal only. */
+        private final Integer requiredValue;
+
         RequestFailure(String code, String message, JsonArray candidates) {
+            this(code, message, candidates, null);
+        }
+
+        RequestFailure(String code, String message, JsonArray candidates, Integer requiredValue) {
             super(message);
             this.code = code;
             this.candidates = candidates;
+            this.requiredValue = requiredValue;
+        }
+
+        /** The same failure, its facts kept, with context before its message. */
+        RequestFailure prefixed(String context) {
+            return new RequestFailure(code, context + getMessage(), candidates, requiredValue);
         }
     }
 

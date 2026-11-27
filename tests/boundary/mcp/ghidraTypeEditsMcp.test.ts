@@ -8,7 +8,29 @@ import {
 } from "../../../src/domain/jsonValue.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { GhidraSessionError } from "../../../src/ghidra/GhidraSessionError.js";
+import { GhidraRemoteError } from "../../../src/ghidra/protocol.js";
 import { connectGhidraMcp, ghidraFixtureResult } from "./ghidraMcpHarness.js";
+
+/** A bridge refusal as the client receives it, with the value the bridge measured. */
+const bridgeRefusal = (
+  remoteCode: string,
+  message: string,
+  requiredValue: number,
+): GhidraSessionError =>
+  new GhidraSessionError(
+    "remote",
+    message,
+    {},
+    {
+      remoteCode,
+      cause: new GhidraRemoteError(
+        remoteCode,
+        message,
+        undefined,
+        requiredValue,
+      ),
+    },
+  );
 
 const SESSION_TYPE = {
   id: "/rea_caller_defined/session",
@@ -172,7 +194,7 @@ it.each([
     remoteCode: "invalid_type_declarations",
     field: "declarations",
     message:
-      "declarations nests parentheses deeper than 8 levels at UTF-16 index 25. This release has no runtime override.",
+      "declarations contains the directive #define at line 2, column 1; Ghidra's C parser would not apply it as written, so nothing was changed",
     recovery: undefined,
   },
   {
@@ -383,7 +405,7 @@ it.each([
       (requested, input) =>
         Promise.resolve(
           requested === operation
-            ? err(new GhidraSessionError("remote", message, {}, { remoteCode }))
+            ? err(bridgeRefusal(remoteCode, message, text.length))
             : ok(ghidraFixtureResult(requested, input)),
         ),
     );
@@ -431,55 +453,96 @@ it.each([
   },
 );
 
-it("reports nested parentheses over the fixed nesting ceiling", async () => {
-  const message =
-    "declarations nests parentheses 9 levels deep at line 1, column 30";
-  const harness = await connectGhidraMcp(
-    "ghidra-parenthesis-depth",
-    (requested, input) =>
-      Promise.resolve(
-        requested === "define_native_data_types"
-          ? err(
-              new GhidraSessionError(
-                "remote",
-                message,
-                {},
-                { remoteCode: "parenthesis_depth_limit" },
-              ),
-            )
-          : ok(ghidraFixtureResult(requested, input)),
-      ),
-  );
-  try {
-    const { error } = parseMcpToolError(
-      await harness.mcp.callTool({
-        name: "define_native_data_types",
-        arguments: { declarations: DECLARATIONS },
-      }),
+it.each([
+  {
+    name: "the default bound",
+    operation: "define_native_data_types",
+    bound: undefined,
+    required: 9,
+    effective: 8,
+    recovery:
+      /Pass a larger parenthesis_max_depth .*define_native_data_types.*\(at least 9; range 1\.\.12\), then retry/u,
+  },
+  {
+    name: "the caller's bound",
+    operation: "annotate_native_function",
+    bound: 3,
+    required: 5,
+    effective: 3,
+    recovery:
+      /Pass a larger parenthesis_max_depth .*at least 5; range 1\.\.12/u,
+  },
+  {
+    name: "nesting above the maximum",
+    operation: "define_native_data_types",
+    bound: undefined,
+    required: 13,
+    effective: 8,
+    recovery:
+      /requires 13, above the parenthesis_max_depth maximum \(1\.\.12\); narrow the request/u,
+  },
+] as const)(
+  "binds a nesting refusal under $name to its per-call control",
+  async ({ operation, bound, required, effective, recovery }) => {
+    const field =
+      operation === "annotate_native_function" ? "signature" : "declarations";
+    const message = `${field} nests parentheses ${String(required)} levels deep, first beyond ${String(effective)} at line 1, column 30`;
+    const harness = await connectGhidraMcp(
+      `ghidra-parenthesis-depth-${String(required)}`,
+      (requested, input) =>
+        Promise.resolve(
+          requested === operation
+            ? err(bridgeRefusal("parenthesis_depth_limit", message, required))
+            : ok(ghidraFixtureResult(requested, input)),
+        ),
     );
-    expect(error).toMatchObject({
-      code: "resource_constraint",
-      retryable: false,
-      details: {
-        operation: "define_native_data_types",
-        refusal: {
-          kind: "fixed_ceiling",
-          allowance: "The Ghidra C parenthesis nesting allowance",
-          allowance_kind: "count",
-          limit: 8,
-          unit: "levels",
+    try {
+      const { error } = parseMcpToolError(
+        await harness.mcp.callTool({
+          name: operation,
+          arguments: {
+            ...(operation === "annotate_native_function"
+              ? { procedure: "0x401000", signature: SIGNATURE }
+              : { declarations: DECLARATIONS }),
+            ...(bound === undefined ? {} : { parenthesis_max_depth: bound }),
+          },
+        }),
+      );
+      expect(error).toMatchObject({
+        code: "resource_constraint",
+        retryable: false,
+        details: {
+          operation,
+          limit: {
+            control_kind: "parameter",
+            parameter: "parenthesis_max_depth",
+            effective_value: effective,
+            unit: "count",
+            minimum: 1,
+            maximum: 12,
+            default_value: 8,
+            applies_at: "next_call",
+            required_value: required,
+          },
         },
-      },
-    });
-    expect(error.details).not.toHaveProperty("limit");
-    expect(error.message).toContain(message);
-    expect(error.remediation.action).toMatch(
-      /The allowance is 8 levels; this release has no runtime override\. Simplify the nested expression/u,
-    );
-  } finally {
-    await harness.close();
-  }
-});
+      });
+      // An adjustable budget, not a fixed ceiling.
+      expect(error.details).toMatchObject({
+        refusal: {
+          kind: "adjustable_budget",
+          control: "parenthesis_max_depth",
+        },
+      });
+      expect(error.message).toContain(message);
+      expect(error.message).toContain(
+        `parenthesis_max_depth admits at most ${String(effective)} levels`,
+      );
+      expect(error.remediation.action).toMatch(recovery);
+    } finally {
+      await harness.close();
+    }
+  },
+);
 
 it("returns the qualifiers each edit could not record", async () => {
   const qualifier = { qualifier: "const", line: 1, column: 14 };

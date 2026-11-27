@@ -1548,15 +1548,15 @@ of that name is equivalent; otherwise the refusal lists their category paths,
 because C text cannot select one.
 
 Ghidra's C parser cannot be cancelled, so REA bounds the text it parses. Each
-length has a per-call parameter, and a refusal names it with its effective
-value, range and the text's length:
+bound has a per-call parameter, and a refusal names it with its effective
+value, range and the measured need:
 
 | Parameter                                             | Default | Range    | Bounds                              |
 | ----------------------------------------------------- | ------: | -------- | ----------------------------------- |
 | `signature_max_utf16` (`annotate_native_function`)    |    2048 | 16..4096 | UTF-16 code units of `signature`    |
 | `declarations_max_utf16` (`define_native_data_types`) |    4096 | 16..8192 | UTF-16 code units of `declarations` |
+| `parenthesis_max_depth` (both)                        |       8 | 1..12    | Parenthesis nesting in either text  |
 
-Parentheses in either text nest at most 8 levels; that ceiling is fixed.
 The maxima follow measured parse times on Ghidra 12.2: the slowest admitted
 text at the maxima took about 7 seconds (a single chain of 8192 pointer
 declarators); twice the length took 100 seconds. Each level of parentheses

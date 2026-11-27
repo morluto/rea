@@ -1,5 +1,15 @@
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
-import { MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS } from "../domain/analysisResourceLimits.js";
+import {
+  MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS,
+  DEFAULT_GHIDRA_SIGNATURE_MAX_UTF16,
+  DEFAULT_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16,
+  DEFAULT_GHIDRA_C_PARENTHESIS_DEPTH,
+  MAXIMUM_GHIDRA_C_PARENTHESIS_DEPTH,
+  MINIMUM_GHIDRA_C_PARENTHESIS_DEPTH,
+  MAXIMUM_GHIDRA_SIGNATURE_MAX_UTF16,
+  MAXIMUM_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16,
+  MINIMUM_GHIDRA_C_TEXT_UTF16,
+} from "../domain/analysisResourceLimits.js";
 import { z } from "zod";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
@@ -37,15 +47,6 @@ import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import type { AnalysisErrorOptions } from "../domain/analysisErrorBase.js";
 import { parseLimitConstraint } from "../domain/parseFailureAnalysisError.js";
 import { decodeLimit } from "../domain/parseFailure.js";
-import {
-  DEFAULT_GHIDRA_SIGNATURE_MAX_UTF16,
-  DEFAULT_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16,
-  GHIDRA_C_MAX_PARENTHESIS_DEPTH,
-  MAXIMUM_GHIDRA_SIGNATURE_MAX_UTF16,
-  MAXIMUM_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16,
-  MINIMUM_GHIDRA_C_TEXT_UTF16,
-} from "../domain/analysisResourceLimits.js";
-import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { GhidraLaunchError } from "./GhidraLauncher.js";
 import type { GhidraSessionSource } from "./GhidraProviderCapabilities.js";
 import {
@@ -795,19 +796,28 @@ const ghidraTypeEditRefusal = (
       };
 };
 
-/** The per-call control that bounds each caller C text's length. */
-const GHIDRA_C_TEXT_CONTROLS = {
+/** The per-call control that bounds each Ghidra C parser refusal. */
+const GHIDRA_C_PARSER_CONTROLS = {
   signature_length_limit: {
-    field: "signature",
     parameter: "signature_max_utf16",
+    unit: "UTF-16 code units",
+    minimum: MINIMUM_GHIDRA_C_TEXT_UTF16,
     defaultValue: DEFAULT_GHIDRA_SIGNATURE_MAX_UTF16,
     maximum: MAXIMUM_GHIDRA_SIGNATURE_MAX_UTF16,
   },
   declarations_length_limit: {
-    field: "declarations",
     parameter: "declarations_max_utf16",
+    unit: "UTF-16 code units",
+    minimum: MINIMUM_GHIDRA_C_TEXT_UTF16,
     defaultValue: DEFAULT_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16,
     maximum: MAXIMUM_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16,
+  },
+  parenthesis_depth_limit: {
+    parameter: "parenthesis_max_depth",
+    unit: "levels",
+    minimum: MINIMUM_GHIDRA_C_PARENTHESIS_DEPTH,
+    defaultValue: DEFAULT_GHIDRA_C_PARENTHESIS_DEPTH,
+    maximum: MAXIMUM_GHIDRA_C_PARENTHESIS_DEPTH,
   },
 } as const;
 
@@ -815,10 +825,10 @@ const GHIDRA_C_PARSER_LIMIT_REASON =
   "Ghidra's C parser cannot be cancelled, so REA bounds the text it parses. Nothing in this call was applied";
 
 /**
- * Caller C text over a bound on Ghidra's parser. The bridge refused it before
- * parsing, so the session is unaffected. Length has a per-call control whose
- * value and the text's measured length come from the request; nesting depth
- * is a fixed ceiling.
+ * Caller C text over a per-call bound on Ghidra's parser. The bridge refused
+ * it before parsing, so the session is unaffected. The effective bound comes
+ * from the request; the bridge measured the text's whole length or deepest
+ * nesting and sends it as the required value.
  */
 const ghidraCParserLimitRefusal = (
   operation: string,
@@ -832,45 +842,20 @@ const ghidraCParserLimitRefusal = (
   )
     return undefined;
   const { cause: _cause, ...options } = context;
-  if (failure.remoteCode === "parenthesis_depth_limit")
-    return parseLimitConstraint(
-      operation,
-      "cpu",
-      decodeLimit(
-        "c-declarations",
-        `${failure.message}; at most ${String(GHIDRA_C_MAX_PARENTHESIS_DEPTH)} levels are admitted. ${GHIDRA_C_PARSER_LIMIT_REASON}`,
-        {
-          name: "Ghidra C parenthesis nesting",
-          maximum: GHIDRA_C_MAX_PARENTHESIS_DEPTH,
-        },
-        { cause: failure },
-      ),
-      {
-        ...options,
-        requestSent: true,
-        ...fixedAllowanceOptions(
-          "The Ghidra C parenthesis nesting allowance",
-          "count",
-          {
-            limit: GHIDRA_C_MAX_PARENTHESIS_DEPTH,
-            unit: "levels",
-            narrowing:
-              "Simplify the nested expression; a prototype's own parameter list is one level.",
-          },
-        ),
-      },
-    );
-  const control = GHIDRA_C_TEXT_CONTROLS[failure.remoteCode];
+  const control = GHIDRA_C_PARSER_CONTROLS[failure.remoteCode];
   const requested = request?.[control.parameter];
   const effective =
     typeof requested === "number" ? requested : control.defaultValue;
-  const text = request?.[control.field];
+  const required =
+    failure.cause instanceof GhidraRemoteError
+      ? failure.cause.requiredValue
+      : undefined;
   return parseLimitConstraint(
     operation,
     "cpu",
     decodeLimit(
       "c-declarations",
-      `${failure.message}; ${control.parameter} admits at most ${String(effective)} UTF-16 code units. ${GHIDRA_C_PARSER_LIMIT_REASON}`,
+      `${failure.message}; ${control.parameter} admits at most ${String(effective)} ${control.unit}. ${GHIDRA_C_PARSER_LIMIT_REASON}`,
       { name: control.parameter, maximum: effective },
       { cause: failure },
     ),
@@ -883,12 +868,11 @@ const ghidraCParserLimitRefusal = (
         parameter: control.parameter,
         effective_value: effective,
         unit: "count",
-        minimum: MINIMUM_GHIDRA_C_TEXT_UTF16,
+        minimum: control.minimum,
         maximum: control.maximum,
         default_value: control.defaultValue,
         applies_at: "next_call",
-        // The bridge measured the whole text before refusing it.
-        ...(typeof text === "string" ? { required_value: text.length } : {}),
+        ...(required === undefined ? {} : { required_value: required }),
       },
     },
   );

@@ -1,10 +1,23 @@
 import { z } from "zod";
 import { nativeMetadataRecoverySchema } from "./nativeMetadataRecovery.js";
 import {
+  DEFAULT_GHIDRA_C_PARENTHESIS_DEPTH,
   DEFAULT_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16,
+  MAXIMUM_GHIDRA_C_PARENTHESIS_DEPTH,
   MAXIMUM_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16,
+  MINIMUM_GHIDRA_C_PARENTHESIS_DEPTH,
   MINIMUM_GHIDRA_C_TEXT_UTF16,
 } from "../analysisResourceLimits.js";
+
+/** Per-call bound on parenthesis nesting in caller C text, shared by both type-edit tools. */
+export const cParenthesisMaxDepthSchema = z
+  .int()
+  .min(MINIMUM_GHIDRA_C_PARENTHESIS_DEPTH)
+  .max(MAXIMUM_GHIDRA_C_PARENTHESIS_DEPTH)
+  .optional()
+  .describe(
+    `Deepest parenthesis nesting to parse (default ${String(DEFAULT_GHIDRA_C_PARENTHESIS_DEPTH)})`,
+  );
 
 /** Select a database type by exact category path or a defined typed data address. */
 export const nativeDataTypeInputSchema = z
@@ -33,6 +46,7 @@ export const nativeDataTypeDefinitionsInputSchema = z.strictObject({
     .describe(
       `Longest declarations text to parse, in UTF-16 code units (default ${String(DEFAULT_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16)}); the C parser cannot be cancelled`,
     ),
+  parenthesis_max_depth: cParenthesisMaxDepthSchema,
 });
 
 /** A const or volatile in caller C text, which Ghidra's types cannot record. */

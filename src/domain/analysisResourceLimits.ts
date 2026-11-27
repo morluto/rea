@@ -73,12 +73,15 @@ export const MAXIMUM_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16 = 8192;
 /** Shorter text cannot hold a prototype or a definition worth refusing by length. */
 export const MINIMUM_GHIDRA_C_TEXT_UTF16 = 16;
 /**
- * Fixed nesting ceiling for parentheses in caller C text. Each level doubles
+ * Per-call bound on parenthesis nesting in caller C text. Each level doubles
  * Ghidra's recursive-descent parse time and the cost repeats per occurrence
- * (8192 units filled at depth 8: 0.2 s; at depth 12: 2.2 s). A prototype's own
- * parameter list is one level.
+ * (8192 units filled at depth 8: 0.2 s; at depth 12: 2.2 s), so the maximum
+ * keeps the slowest admitted text near the length bounds' own. A prototype's
+ * own parameter list is one level.
  */
-export const GHIDRA_C_MAX_PARENTHESIS_DEPTH = 8;
+export const MINIMUM_GHIDRA_C_PARENTHESIS_DEPTH = 1;
+export const DEFAULT_GHIDRA_C_PARENTHESIS_DEPTH = 8;
+export const MAXIMUM_GHIDRA_C_PARENTHESIS_DEPTH = 12;
 
 /** Default absolute deadline for Hopper launch, analysis, bridge, and readiness. */
 export const DEFAULT_HOPPER_STARTUP_TIMEOUT_MS = 120_000;

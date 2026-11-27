@@ -6,6 +6,7 @@ import {
   MINIMUM_GHIDRA_C_TEXT_UTF16,
 } from "../analysisResourceLimits.js";
 import {
+  cParenthesisMaxDepthSchema,
   droppedCQualifierSchema,
   droppedCQualifiersDescription,
 } from "./nativeDataType.js";
@@ -43,6 +44,7 @@ export const nativeFunctionAnnotationsInputSchema = z
       .describe(
         `Longest signature to parse, in UTF-16 code units (default ${String(DEFAULT_GHIDRA_SIGNATURE_MAX_UTF16)}); the C parser cannot be cancelled`,
       ),
+    parenthesis_max_depth: cParenthesisMaxDepthSchema,
   })
   .refine(
     (value) =>
@@ -59,6 +61,16 @@ export const nativeFunctionAnnotationsInputSchema = z
       path: ["signature_max_utf16"],
       message:
         "signature_max_utf16 bounds a signature; supply signature with it",
+    },
+  )
+  .refine(
+    (value) =>
+      value.parenthesis_max_depth === undefined ||
+      value.signature !== undefined,
+    {
+      path: ["parenthesis_max_depth"],
+      message:
+        "parenthesis_max_depth bounds a signature; supply signature with it",
     },
   );
 

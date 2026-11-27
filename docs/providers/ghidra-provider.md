@@ -140,26 +140,26 @@ client's deadline or receive buffer.
 
 `annotate_native_function` `signature` and `define_native_data_types`
 `declarations` are parsed by Ghidra's C parser, which cannot be cancelled, so
-REA bounds that text before parsing it. Each length has a per-call parameter;
-parenthesis nesting has one fixed ceiling.
+REA bounds that text before parsing it. Each bound has a per-call parameter;
+`parenthesis_max_depth` applies to both tools.
 
-| Bound                                        | Default | Floor | Maximum | Slowest measured parse at the maximum     |
-| -------------------------------------------- | ------: | ----: | ------: | ----------------------------------------- |
-| `signature_max_utf16` (UTF-16 code units)    |    2048 |    16 |    4096 | 0.8 s (one chain of pointer declarators)  |
-| `declarations_max_utf16` (UTF-16 code units) |    4096 |    16 |    8192 | 6.8 s (one chain of pointer declarators)  |
-| Parenthesis nesting (fixed, levels)          |       8 |     — |       8 | 0.2 s (8192 units of 8-level expressions) |
+| Bound                                        | Default | Floor | Maximum | Slowest measured parse at the maximum      |
+| -------------------------------------------- | ------: | ----: | ------: | ------------------------------------------ |
+| `signature_max_utf16` (UTF-16 code units)    |    2048 |    16 |    4096 | 0.8 s (one chain of pointer declarators)   |
+| `declarations_max_utf16` (UTF-16 code units) |    4096 |    16 |    8192 | 6.8 s (one chain of pointer declarators)   |
+| `parenthesis_max_depth` (levels)             |       8 |     1 |      12 | 2.2 s (8192 units of 12-level expressions) |
 
 Measured with Ghidra 12.2 on arm64 macOS; other hosts differ. Parse time is
 cubic in the length of a declarator chain (16384 units took 100 s) and doubles
 with each level of nested parentheses (12 levels took 2.2 s), so the maxima
-are fixed. A text over a length bound is refused before parsing with
+are fixed. A text over a bound is refused before parsing with
 `code: "resource_constraint"`; `details.limit` carries
 `control_kind: "parameter"`, the parameter, its effective value, range,
-default and `required_value`, the text's length. The recovery names the
-larger value to pass, or asks for shorter text or several calls when the
-text is above the maximum. Nesting deeper than 8 levels reports
-`details.refusal.kind: "fixed_ceiling"` with the allowance and its value.
-The bridge also refuses, with the construct's line and column,
+default and `required_value`: the text's length, or its deepest nesting over
+the whole text. The recovery names the larger value to pass, or asks for
+shorter or flatter text, or several calls, when the need is above the maximum.
+The bridge also refuses, with the construct's line and column (CR, LF and
+CRLF each end a line, as in Ghidra's parser),
 what its parser would accept without applying; see the
 [native guide](../guides/native/native-investigation.md).
 

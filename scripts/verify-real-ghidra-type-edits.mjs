@@ -128,16 +128,26 @@ async function connect(environment = {}) {
       assert.ok(error.message.includes(limit.parameter));
       assert.match(error.message, /Nothing in this call was applied/u);
     },
-    /** The refusal of nesting over the fixed parenthesis ceiling. */
-    overNesting: async (name, args) => {
+    /** The refusal of nesting over parenthesis_max_depth, measured over the whole text. */
+    overNesting: async (name, args, required) => {
       const error = requireMcpToolError(await raw(name, args));
       assert.equal(error.code, "resource_constraint");
-      assert.equal(error.details.limit, undefined);
-      assert.deepEqual(
-        [error.details.refusal.kind, error.details.refusal.limit],
-        ["fixed_ceiling", 8],
+      const effective = args.parenthesis_max_depth ?? 8;
+      assert.deepEqual(error.details.limit, {
+        control_kind: "parameter",
+        parameter: "parenthesis_max_depth",
+        effective_value: effective,
+        unit: "count",
+        minimum: 1,
+        maximum: 12,
+        default_value: 8,
+        applies_at: "next_call",
+        required_value: required,
+      });
+      assert.match(
+        error.message,
+        new RegExp(`nests parentheses ${String(required)} levels deep`, "u"),
       );
-      assert.match(error.message, /nests parentheses 9 levels deep/u);
     },
     close: () => owner.close(),
   };
@@ -228,10 +238,24 @@ int main(void) { struct session one = { 1, "one", 16, 1.5, 0 }; return (int)rea_
         );
         assert.match(syntax.message, /line 1, column/u);
         // The prototype's own parentheses are one level, so this reaches nine.
-        await first.overNesting("annotate_native_function", {
-          ...rejected,
-          signature: `int total(int a[${"(".repeat(8)}1${")".repeat(8)}])`,
-        });
+        await first.overNesting(
+          "annotate_native_function",
+          {
+            ...rejected,
+            signature: `int total(int a[${"(".repeat(8)}1${")".repeat(8)}])`,
+          },
+          9,
+        );
+        // The required depth is the text's deepest, not the first over the bound.
+        await first.overNesting(
+          "annotate_native_function",
+          {
+            ...rejected,
+            signature: `int total(int a[(((1)))], int b[${"(".repeat(10)}1${")".repeat(10)}])`,
+            parenthesis_max_depth: 3,
+          },
+          11,
+        );
         const long = `int total(int a /* ${"x".repeat(2040)} */)`;
         await first.overLimit(
           "annotate_native_function",
@@ -245,10 +269,14 @@ int main(void) { struct session one = { 1, "one", 16, 1.5, 0 }; return (int)rea_
           },
         );
         // Parentheses inside comments are not nesting, and comments cannot hide it.
-        await first.overNesting("annotate_native_function", {
-          ...rejected,
-          signature: `int total(int a[${"( /*)*/".repeat(8)}1${")".repeat(8)}])`,
-        });
+        await first.overNesting(
+          "annotate_native_function",
+          {
+            ...rejected,
+            signature: `int total(int a[${"( /*)*/".repeat(8)}1${")".repeat(8)}])`,
+          },
+          9,
+        );
         // Each is accepted by Ghidra's parser and applied differently or not at all.
         for (const [refusedSignature, reason] of [
           ["double total(int a, int a)", /repeats parameter name a/u],
@@ -360,15 +388,17 @@ int main(void) { struct session one = { 1, "one", 16, 1.5, 0 }; return (int)rea_
         // Constructs the parser applies are proven by the stored layout.
         const applied = await first.call("define_native_data_types", {
           declarations: `/* comments are skipped */
-#pragma pack(push, 1)
+#pragma pack(push, 1) // wire layout
 struct rea_packed { char a; int b; };
-#pragma pack(pop)
+#pragma /* restore */ pack(pop)
 struct rea_natural { char a; int b; }; // after pop
 struct rea_flexible { int n; char data[]; };
 struct rea_bits { unsigned low:3; unsigned high:5; };
 typedef struct rea_node { struct rea_node *next; const int v; } rea_node, *rea_node_ptr;
 enum rea_flags { REA_NONE, REA_EIGHT = 1 << 3, REA_NINE = REA_EIGHT + 1 };
+struct rea_deep { char d[${"(".repeat(10)}1${")".repeat(10)}]; };
 typedef struct { volatile int k; } rea_unnamed_t;`,
+          parenthesis_max_depth: 10,
         });
         assert.deepEqual(
           applied.types.map(({ name, kind, size_bytes }) => [
@@ -378,6 +408,7 @@ typedef struct { volatile int k; } rea_unnamed_t;`,
           ]),
           [
             ["rea_bits", "struct", 4],
+            ["rea_deep", "struct", 1],
             ["rea_flags", "enum", 4],
             ["rea_flexible", "struct", 4],
             ["rea_natural", "struct", 8],
@@ -390,7 +421,7 @@ typedef struct { volatile int k; } rea_unnamed_t;`,
         // Both qualifiers' lines and columns in the declarations text above.
         assert.deepEqual(applied.dropped_qualifiers, [
           { qualifier: "const", line: 8, column: 50 },
-          { qualifier: "volatile", line: 10, column: 18 },
+          { qualifier: "volatile", line: 11, column: 18 },
         ]);
         const inspect = (name) =>
           first.call("inspect_native_data_type", {
@@ -533,6 +564,14 @@ typedef struct { volatile int k; } rea_unnamed_t;`,
             /directive #pragma \(only #pragma pack is applied\) at line 1, column 1/u,
           ],
           ['#line 5 "x.h"\nstruct rea_kept { int a; };', /directive #line/u],
+          [
+            "#pragma pack(1) /* a\r\nb */\nstruct rea_kept { int a; };",
+            /block comment that continues a directive onto another line at line 1, column 17/u,
+          ],
+          [
+            "#pragma pack(push, (1))\nstruct rea_kept { int a; };",
+            /directive #pragma \(only #pragma pack is applied\)/u,
+          ],
           ["enum { REA_A, REA_B };", /unnamed enum/u],
           ["typedef enum { REA_A } rea_enum_t;", /unnamed enum/u],
           [
@@ -652,6 +691,17 @@ typedef struct { volatile int k; } rea_unnamed_t;`,
         });
         assert.deepEqual(replayed.annotations, updated.annotations);
         assert.equal(replayed.dropped_qualifiers, undefined);
+        // CR, CRLF and LF each end a line, and an unterminated prototype ending
+        // in a line comment is terminated after that comment.
+        const reflowed = await first.call("annotate_native_function", {
+          procedure,
+          signature:
+            "double total(\r  const struct session *s,\r\n  unsigned mask)\n// edited",
+        });
+        assert.deepEqual(reflowed.annotations, updated.annotations);
+        assert.deepEqual(reflowed.dropped_qualifiers, [
+          { qualifier: "const", line: 2, column: 3, parameter_index: 0 },
+        ]);
         return {};
       },
     );
