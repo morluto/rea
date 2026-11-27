@@ -182,6 +182,26 @@ const resourceConstraintRecoveryFrom = (
   };
 };
 
+/** A pre-dispatch refusal when an observed owner occupies the available slot. */
+export const occupiedAnalysisCapacity = (
+  operation: string,
+  reason: string,
+  reportedLimits: Readonly<Record<string, JsonValue>>,
+  remediationAction: string,
+): AnalysisResourceConstraintError =>
+  new AnalysisResourceConstraintError(
+    operation,
+    "capacity",
+    reason,
+    reportedLimits,
+    {
+      measuredExhaustion: true,
+      retryable: true,
+      requestSent: false,
+      remediationAction,
+    },
+  );
+
 /**
  * Re-attribute a resource refusal to another operation. Recovery and the
  * structured setting limit travel with it; a new error that keeps only the
