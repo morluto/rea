@@ -3,7 +3,6 @@ import type { NpmReleaseState } from "./npm-release-state.mjs";
 export function readNpmRelease(
   version: string,
   request?: (url: string, init: RequestInit) => Promise<Response>,
-  signal?: AbortSignal,
 ): Promise<NpmReleaseState>;
 export function stableUpdateVersion(
   version: string,

@@ -1,7 +1,7 @@
 import { appendFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { setTimeout as sleep } from "node:timers/promises";
+import { setTimeout } from "node:timers/promises";
 import { prerelease, valid } from "semver";
 import { releaseNpmTag } from "../release-npm-tag.mjs";
 import {
@@ -14,13 +14,8 @@ const windowMs = windowMinutes * 60_000;
 const intervalMs = 30_000;
 
 /** Read-only callers derive the channel through the canonical SemVer owner. */
-export async function readNpmRelease(version, request = fetch, signal) {
-  return readQualifiedNpmRelease(
-    version,
-    releaseNpmTag(version),
-    request,
-    signal,
-  );
+export async function readNpmRelease(version, request = fetch) {
+  return readQualifiedNpmRelease(version, releaseNpmTag(version), request);
 }
 
 /** REA update follows stable latest even when the candidate is published on next. */
@@ -42,8 +37,12 @@ export function stableUpdateVersion(version, published) {
 /** Retry only confirmed absence during the existing registry propagation window. */
 export async function waitForNpmRelease(
   version,
-  lookup = (candidate, signal) => readNpmRelease(candidate, fetch, signal),
-  pause = (milliseconds, signal) => sleep(milliseconds, undefined, { signal }),
+  lookup = (candidate, signal) =>
+    readNpmRelease(candidate, (url, init) =>
+      fetch(url, { ...init, signal: AbortSignal.any([init.signal, signal]) }),
+    ),
+  pause = (milliseconds, signal) =>
+    setTimeout(milliseconds, undefined, { signal }),
   signal = AbortSignal.timeout(windowMs),
 ) {
   const attempts = windowMs / intervalMs + 1;

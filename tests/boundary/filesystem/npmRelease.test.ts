@@ -198,35 +198,36 @@ it("interrupts an in-flight registry request at the shared deadline", async () =
   const deadline = new AbortController();
   const reason = new Error("test deadline");
   const { promise: started, resolve: markStarted } = createDeferred<void>();
-  const waiting = waitForNpmRelease(
-    "6.5.0",
-    (version, signal) =>
-      readNpmRelease(
-        version,
-        async (_url, init) => {
-          markStarted();
-          const requestSignal = init.signal;
-          if (!requestSignal) throw new Error("missing request signal");
-          return new Promise((_resolve, reject) => {
-            requestSignal.addEventListener(
-              "abort",
-              () => reject(requestSignal.reason),
-              { once: true },
-            );
-          });
+  vi.stubGlobal("fetch", (_url: string, init: RequestInit) => {
+    markStarted();
+    const requestSignal = init.signal;
+    if (!requestSignal) throw new Error("missing request signal");
+    return new Promise<Response>((_resolve, reject) => {
+      requestSignal.addEventListener(
+        "abort",
+        () => reject(requestSignal.reason),
+        {
+          once: true,
         },
-        signal,
-      ),
-    undefined,
-    deadline.signal,
-  );
-  const failure = expect(waiting).rejects.toMatchObject({
-    message: expect.stringContaining("after 75 minutes"),
-    cause: reason,
+      );
+    });
   });
-  await started;
-  deadline.abort(reason);
-  await failure;
+  try {
+    const waiting = waitForNpmRelease(
+      "6.5.0",
+      undefined,
+      undefined,
+      deadline.signal,
+    );
+    await Promise.race([started, waiting]);
+    deadline.abort(reason);
+    await expect(waiting).rejects.toMatchObject({
+      message: expect.stringContaining("after 75 minutes"),
+      cause: reason,
+    });
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });
 
 it("interrupts the polling delay without starting another lookup", async () => {
