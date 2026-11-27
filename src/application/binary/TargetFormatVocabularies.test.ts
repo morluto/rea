@@ -127,6 +127,8 @@ const TARGETS: TargetFixtures = {
   "godot-pck": { ...archive, format: "godot-pck" },
   unityfs: { ...archive, format: "unityfs" },
   wxapkg: { ...archive, format: "wxapkg" },
+  axml: { ...archive, format: "axml" },
+  arsc: { ...archive, format: "arsc" },
   tar: { ...archive, format: "tar" },
   dds: { ...archive, format: "dds" },
   glb: { ...archive, format: "glb" },

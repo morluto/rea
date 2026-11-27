@@ -1,6 +1,8 @@
 import type { ArtifactFormatId } from "./artifactGraph.js";
 import { hasAndroidBootImageMagic } from "./androidBootImageFormat.js";
 import { hasBinaryPlistSignature } from "./apple/appleArchiveFormat.js";
+import { hasArscHeader } from "./arscFormat.js";
+import { hasAxmlHeader } from "./axmlFormat.js";
 import { hasDfuSePrefix, isDfuSeFile } from "./firmware/dfuse.js";
 import { ESP8266_REFUSAL, recognizeEspImage } from "./firmware/espImage.js";
 import { hasFitImagesNode } from "./firmware/fitImage.js";
@@ -53,6 +55,8 @@ export type RecognizedArtifactFormat = Extract<
   | "godot-pck"
   | "unityfs"
   | "wxapkg"
+  | "axml"
+  | "arsc"
   | "tar"
   | "dds"
   | "glb"
@@ -174,6 +178,8 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
       "wxapkg",
       (prefix) => hasWxapkgEncryptedMagic(prefix) || hasWxapkgHeader(prefix),
     ),
+    when("axml", hasAxmlHeader),
+    when("arsc", hasArscHeader),
     // A ustar or GNU header, or a gzip member whose first block is one.
     ({ prefix }) => {
       if (recognizeTarPrefix(prefix) !== undefined)

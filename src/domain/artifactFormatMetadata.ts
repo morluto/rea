@@ -51,6 +51,10 @@ import {
   androidBootImageMetadataSchema,
   androidOtaPartitionMetadataSchema,
   androidOtaPayloadMetadataSchema,
+  arscDocumentMetadataSchema,
+  arscMetadataSchema,
+  axmlDocumentMetadataSchema,
+  axmlMetadataSchema,
   androidVbmetaEntryMetadataSchema,
   androidVbmetaDescriptorEntryMetadataSchema,
   androidVbmetaMetadataSchema,
@@ -90,6 +94,10 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   nodeSeaEntryMetadataSchema,
   hexRecordsMetadataSchema,
   hexRecordRegionMetadataSchema,
+  axmlMetadataSchema,
+  axmlDocumentMetadataSchema,
+  arscMetadataSchema,
+  arscDocumentMetadataSchema,
   uImageMetadataSchema,
   uImageEntryMetadataSchema,
   androidOtaPayloadMetadataSchema,
@@ -185,6 +193,22 @@ const declarationsByKind: {
   "wxapkg-entry": {
     notCompared:
       "index is layout. source_path keeps the declared name, including a producer root prefix the occurrence path strips.",
+  },
+  axml: {
+    notCompared:
+      "Its fields come from the document's own chunk stream, which content comparison covers.",
+  },
+  "axml-document": {
+    notCompared:
+      "The counts describe the decoded document, and length follows from them; the region's bytes are compared by content.",
+  },
+  arsc: {
+    notCompared:
+      "Its fields come from the table's own chunk stream, which content comparison covers.",
+  },
+  "arsc-document": {
+    notCompared:
+      "The counts describe the decoded table projection, and length follows from them; the region's bytes are compared by content.",
   },
   tar: {
     notCompared:

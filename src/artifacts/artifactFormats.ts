@@ -42,6 +42,8 @@ import { FitArtifactReader } from "./FitArtifactReader.js";
 import type { GodotPckAdmission } from "./GodotPckLocation.js";
 import { GodotPckArtifactReader } from "./GodotPckArtifactReader.js";
 import { InesArtifactReader } from "./InesArtifactReader.js";
+import { AxmlArtifactReader } from "./AxmlArtifactReader.js";
+import { ArscArtifactReader } from "./ArscArtifactReader.js";
 import { NdsRomArtifactReader } from "./NdsRomArtifactReader.js";
 import { Iso9660ArtifactReader } from "./Iso9660ArtifactReader.js";
 import { QualcommMbnArtifactReader } from "./QualcommMbnArtifactReader.js";
@@ -427,6 +429,34 @@ const NON_ZIP_FORMATS = {
         sourceOf(options),
         options.readerLimits?.wxapkg,
         options.readerLimits?.expanded_bytes,
+      ),
+  }),
+  axml: container("axml", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "AXML inventory decodes the document chunk stream into XML text; resource table names, DEX references and runtime behavior are not resolved.",
+    createReader: (path, options) =>
+      new AxmlArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.axml,
+      ),
+  }),
+  arsc: container("arsc", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "ARSC inventory decodes the resource table into an XML projection of packages, types and entries; library/overlay/staged-alias chunks are walked but not projected, and runtime resource behavior is not evaluated.",
+    createReader: (path, options) =>
+      new ArscArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.arsc,
       ),
   }),
   tar: container("tar", {

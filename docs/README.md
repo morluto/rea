@@ -142,6 +142,8 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [iNES containers](ines-containers.md)
 - [Nintendo DS ROMs](guides/firmware/nds-roms.md)
 - [WeChat mini-program wxapkg archives](wxapkg.md)
+- [Android binary XML (AXML)](axml.md)
+- [Android compiled resources (arsc)](arsc.md)
 - [macOS flat installer packages](macos-pkg.md)
 - [ISO 9660 disc images](guides/firmware/iso9660-images.md)
 - [tar and gzip-compressed tar archives](tar-archives.md)

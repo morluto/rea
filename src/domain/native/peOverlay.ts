@@ -77,6 +77,8 @@ export const PE_OVERLAY_LEADING_FORMATS = [
   "godot-pck",
   "unityfs",
   "wxapkg",
+  "axml",
+  "arsc",
   "uimage",
   "nso",
   "nro",
