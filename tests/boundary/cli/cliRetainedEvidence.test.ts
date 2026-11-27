@@ -19,6 +19,7 @@ import { createCli } from "../../../src/cli.js";
 import { publishCliAnalysisEvidence } from "../../../src/cli/analysisEvidenceDelivery.js";
 import {
   cliEvidencePublicationReceipt,
+  retainCliPublicationOnError,
   withCliEvidencePublication,
 } from "../../../src/cli/cliEvidencePublication.js";
 import {
@@ -29,6 +30,7 @@ import {
 import { createByteEntropyService } from "../../../src/composition/binaryDiagnostics/byteEntropy.js";
 import { PARTIAL_OBSERVATION_DELIVERY } from "../../../src/domain/agentResultBudget.js";
 import { CLI_RETAINED_EVIDENCE_MAX_AGE_MS } from "../../../src/domain/analysisResourceLimits.js";
+import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
 import {
   createEvidence,
   parseEvidence,
@@ -848,33 +850,36 @@ it.each([false, true])(
       },
     );
     const directory = join(root, "cache");
+    const publishResult = (
+      sources: readonly Evidence[],
+      evidenceOutput?: string,
+    ) =>
+      publishCliAnalysisEvidence(
+        {
+          ...(failed
+            ? err({
+                code: "provider_timeout",
+                message: "Analysis timed out after partial work.",
+                retryable: true,
+                details: { partial_observation: complete },
+              })
+            : ok(complete)),
+          sourceEvidence: sources,
+        },
+        {
+          operation: "inspect_byte_entropy",
+          signal: new AbortController().signal,
+          detail: undefined,
+          evidenceOutput,
+        },
+      );
     const deliver = (
       sources: readonly Evidence[],
       capBytes = 1024 * 1024 * 1024,
     ) =>
-      withCliEvidencePublication(
-        () =>
-          publishCliAnalysisEvidence(
-            {
-              ...(failed
-                ? err({
-                    code: "provider_timeout",
-                    message: "Analysis timed out after partial work.",
-                    retryable: true,
-                    details: { partial_observation: complete },
-                  })
-                : ok(complete)),
-              sourceEvidence: sources,
-            },
-            {
-              operation: "inspect_byte_entropy",
-              signal: new AbortController().signal,
-              detail: undefined,
-              evidenceOutput: undefined,
-            },
-          ),
-        { retention: { directory, capBytes } },
-      );
+      withCliEvidencePublication(() => publishResult(sources), {
+        retention: { directory, capBytes },
+      });
     const publish = async (sources: readonly Evidence[]) => {
       const output = await deliver(sources);
       const receipt = failed
@@ -944,6 +949,36 @@ it.each([false, true])(
     ).toBeUndefined();
     expect((await stat(expanded.path)).mtimeMs).toBe(lastUsed.getTime());
     expect((await readFile(expanded.path)).equals(publishedBytes)).toBe(true);
+
+    await withCliEvidencePublication(
+      async () => {
+        const earlierPath = join(root, "earlier-publication.json");
+        await publishResult([firstSource], earlierPath);
+        const earlierReceipt = cliEvidencePublicationReceipt();
+        expect(earlierReceipt).toBeDefined();
+        const earlierBytes = await readFile(earlierPath);
+        const rejected = await publishResult([secondSource, extra]);
+        const rejectedDelivery = failed
+          ? (rejected as FailureOutput).details[PARTIAL_OBSERVATION_DELIVERY]
+          : (rejected as unknown as Output).delivery;
+        expect(rejectedDelivery).toMatchObject({ retained: "not-retained" });
+        expect(cliEvidencePublicationReceipt()).toBe(earlierReceipt);
+        const outputFailure = retainCliPublicationOnError(
+          new AnalysisInputError("inspect_byte_entropy", {
+            userMessage: "Later output formatting failed.",
+          }),
+        );
+        expect(outputFailure.diagnostics?.evidence_bundle).toEqual(
+          earlierReceipt,
+        );
+        expect((await readFile(earlierPath)).equals(earlierBytes)).toBe(true);
+        expect((await readFile(expanded.path)).equals(publishedBytes)).toBe(
+          true,
+        );
+        expect((await stat(expanded.path)).mtimeMs).toBe(lastUsed.getTime());
+      },
+      { retention: { directory, capBytes: smallerCap } },
+    );
   },
 );
 
