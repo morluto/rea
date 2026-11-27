@@ -1,3 +1,7 @@
+import {
+  playwrightTraceLimits,
+  playwrightTraceSchema,
+} from "../../../domain/playwrightTrace/playwrightTrace.js";
 import { createDeferred } from "../../../../tests/fixtures/binarySession.js";
 import { awaitAcknowledgement } from "../../../../tests/fixtures/lifecycleAcknowledgement.js";
 import { readFile, rename, copyFile } from "node:fs/promises";
@@ -7,7 +11,6 @@ import { PlaywrightTraceDecoder } from "./PlaywrightTraceDecoder.js";
 import { PlaywrightTraceService } from "../../../application/playwrightTrace/PlaywrightTraceService.js";
 import { projectAnalysisError } from "../../../domain/analysisErrorProjection.js";
 import { parseEvidence } from "../../../domain/evidence.js";
-import { playwrightTraceSchema } from "../../../domain/playwrightTrace/playwrightTrace.js";
 import { playwrightTraceFixture } from "../../../../tests/fixtures/playwrightTrace.js";
 import { OwnedFileHandle } from "../../../filesystem/OwnedFileHandle.js";
 import { ZipArtifactReader } from "../../../resources/index.js";
@@ -138,6 +141,7 @@ it.each([false, true])(
     try {
       const result = await new PlaywrightTraceDecoder(resources).inspect(
         fixture.path,
+        playwrightTraceLimits(),
         controller.signal,
       );
       if (result.ok) throw new Error("Expected version refusal");
@@ -238,6 +242,7 @@ it.skipIf(process.platform === "win32")(
     try {
       const result = await new PlaywrightTraceDecoder(resources).inspect(
         fixture.path,
+        playwrightTraceLimits(),
       );
       if (result.ok) throw new Error("Expected source identity refusal");
       expect(result.error._tag).toBe("AnalysisArtifactChangedError");
@@ -266,15 +271,17 @@ it("bounds active imports without an unbounded queue and releases admission afte
         return realRun(operation);
       },
     );
-  const first = port.inspect(fixture.path);
+  const first = port.inspect(fixture.path, playwrightTraceLimits());
   try {
     await awaitAcknowledgement(reached.promise, first, "trace import");
-    const second = await port.inspect(fixture.path);
+    const second = await port.inspect(fixture.path, playwrightTraceLimits());
     if (second.ok) throw new Error("Expected capacity refusal");
     expect(second.error._tag).toBe("AnalysisResourceConstraintError");
     release.resolve();
     expect((await first).ok).toBe(true);
-    expect((await port.inspect(fixture.path)).ok).toBe(true);
+    expect((await port.inspect(fixture.path, playwrightTraceLimits())).ok).toBe(
+      true,
+    );
     expect(resources.hasPending).toBe(false);
   } finally {
     release.resolve();

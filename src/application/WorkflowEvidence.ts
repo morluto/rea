@@ -2,7 +2,10 @@ import { unknownTarget } from "../domain/targetIdentity.js";
 import { AnalysisWorkScope } from "../ports/AnalysisWorkScope.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
-import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
+import {
+  completedOperationEvidence,
+  carrySessionExecutionProvenance,
+} from "./binary/SessionEvidenceReuse.js";
 import { REA_WORKFLOW_PROVIDER } from "../domain/investigationProviders.js";
 import {
   workflowAnalysisProfile,
@@ -179,18 +182,25 @@ export const executeComposedWorkflow = async (
         options?.retainEvidence === true &&
         execution.value.evidenceId === undefined
       ) {
-        const source = createAnalysisExecutionEvidence(
+        const materialized = completedOperationEvidence(
           operation,
           parameters,
           execution.value,
-          "observed",
+          { target: null },
         );
+        if (!materialized.ok) return materialized;
+        const source = materialized.value;
         const recorded = recordEvidenceSources(
           (evidence) => sourceLedger.record(evidence),
           [source],
         );
         if (!recorded.ok) return recorded;
-        execution = ok({ ...execution.value, evidenceId: source.evidence_id });
+        execution = ok(
+          carrySessionExecutionProvenance(execution.value, {
+            ...execution.value,
+            evidenceId: source.evidence_id,
+          }),
+        );
       }
       if (execution.ok && execution.value.evidenceId !== undefined)
         evidenceLinks.add(execution.value.evidenceId);

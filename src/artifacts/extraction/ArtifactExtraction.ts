@@ -2,6 +2,7 @@ import { selectArtifactExtractionOccurrences } from "./ArtifactExtractionSelecti
 import type { ArtifactReaderLimits } from "../../domain/artifactReaderLimits.js";
 import { assertAdmittedRootDigest } from "../inventory/classify.js";
 import { InesArtifactReader } from "../InesArtifactReader.js";
+import { locatesQualcommMbnHashSegment } from "../QualcommMbnLocation.js";
 import {
   openRootArtifact,
   hashStableRootArtifactHandle,
@@ -25,6 +26,7 @@ import {
   resolveAsarHeaderAdmission,
 } from "../../resources/index.js";
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
+import { readFileHandleRange } from "../../filesystem/readFileHandleRange.js";
 import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
 import type { EspFlashSelection } from "../../domain/firmware/espFlashLocation.js";
 import { artifactFormatDescriptor } from "../artifactFormats.js";
@@ -310,6 +312,8 @@ interface ExtractedOccurrence {
   readonly sha256: string;
   readonly bytes_written: number;
   readonly created: true;
+  /** The selected occurrence's own limitations; not part of the file digest. */
+  readonly limitations: readonly string[];
 }
 
 const materializeSelection = async ({
@@ -517,6 +521,7 @@ const writeSelectedEntries = async ({
       sha256: written.sha256,
       bytes_written: written.bytesWritten,
       created: true,
+      limitations: selectedItem.occurrence.limitations,
     });
     selected.delete(occurrence.occurrence_id);
   }
@@ -578,12 +583,16 @@ const createExtractionResult = (
   );
   const extractedContradictions =
     integrityContradictions.length - (rootContradicted ? 1 : 0);
+  const files = extracted.map(({ limitations: _limitations, ...file }) => file);
+  const limitedFiles = extracted.filter(
+    ({ limitations }) => limitations.length > 0,
+  ).length;
   const extractionSemantic = {
     source_manifest_id: inventory.manifest.manifest_id,
     selected_occurrence_ids: selected
       .map(({ occurrence }) => occurrence.occurrence_id)
       .sort(compareUnicodeCodePoints),
-    files_sha256: digestCanonicalValue(extracted, "Artifact"),
+    files_sha256: digestCanonicalValue(files, "Artifact"),
     output_root_alias: "$OUTPUT_ROOT" as const,
   };
   return artifactExtractionResultSchema.parse({
@@ -593,7 +602,13 @@ const createExtractionResult = (
       extraction_id: `aex_${digestCanonicalValue(extractionSemantic, "Artifact")}`,
     },
     output_root: outputRoot,
-    artifacts: extracted,
+    // Each file keeps its occurrence's limitations, so the extraction's own
+    // list does not grow with the archive.
+    artifacts: extracted.map(({ limitations, ...file }) =>
+      limitations.length === 0
+        ? file
+        : { ...file, limitations: [...limitations] },
+    ),
     containment_verified: true,
     cleanup: { attempted: false, verified: true, residual_paths: [] },
     provenance: [...inventory.provenance, ...materializationProvenance],
@@ -604,11 +619,11 @@ const createExtractionResult = (
     integrity_contradictions: integrityContradictions,
     limitations: [
       ...traversal.limitations,
-      ...selected.flatMap(({ occurrence }) =>
-        occurrence.limitations.map(
-          (limitation) => `${occurrence.logical_path}: ${limitation}`,
-        ),
-      ),
+      ...(limitedFiles === 0
+        ? []
+        : [
+            `${String(limitedFiles)} extracted file(s) carry their inventory occurrence's limitations in artifacts[].limitations.`,
+          ]),
       input.occurrenceIds !== undefined
         ? "Only caller-selected regular occurrences exposed by the active artifact reader were materialized; unselected entries and nested archive members were not extracted. Inventory integrity checks still cover the full input."
         : traversal.status === "complete"
@@ -689,7 +704,15 @@ const requireExtractableFormat = async (
         const pack =
           (await probes.godotPck()) !== undefined ||
           ((format === "elf" || format === "pe" || format === "mach-o") &&
-            (await hasExecutablePack(probes)));
+            (await hasExecutablePack(probes))) ||
+          (format === "elf" &&
+            (await locatesQualcommMbnHashSegment(
+              (offset, length) =>
+                readFileHandleRange(source.handle, offset, length, () =>
+                  abortIfNeeded(signal),
+                ),
+              source.initial.size,
+            )));
         if (pack && input.expectedRootSha256 !== undefined) {
           const digest = await hashStableRootArtifactHandle(
             path,

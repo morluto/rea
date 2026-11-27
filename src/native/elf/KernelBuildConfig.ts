@@ -1,3 +1,4 @@
+import { systemCodeFromError } from "../../kernel/reportedSystemCode.js";
 import { createHash } from "node:crypto";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { crc32, inflateRaw } from "node:zlib";
@@ -65,11 +66,6 @@ const CONFIG_SEARCH_BUDGET_FACTOR = 4;
 /** Bytes scanned between event-loop turns, so a live abort can be delivered. */
 const TURN_STRIDE = 0x100000;
 const UNTRUSTED = "target-derived-untrusted" as const;
-
-const codeOf = (error: unknown): string | null =>
-  error instanceof Error && "code" in error && typeof error.code === "string"
-    ? error.code
-    : null;
 
 /**
  * Let pending signals and requests run, then honor an abort they raised. The
@@ -256,7 +252,7 @@ const inflateGzipMember = async (
     consumed = inflated.engine.bytesWritten;
   } catch (error) {
     assertArtifactReadActive(signal);
-    const code = codeOf(error);
+    const code = systemCodeFromError(error);
     if (code === "ERR_BUFFER_TOO_LARGE") return { kind: "limit" };
     return code === "Z_BUF_ERROR"
       ? { kind: "truncated", spent: maxOutput }

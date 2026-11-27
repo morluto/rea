@@ -132,3 +132,41 @@ cliTest("refuses a GLB whose first chunk is not JSON", async ({ cli }) => {
     "the first GLB chunk is not JSON",
   );
 });
+
+cliTest(
+  "reports a non-object GLB JSON root as invalid with unknown coverage through the CLI",
+  async ({ cli }) => {
+    const directory = await createTestTempDirectory("rea-glb-array-root-cli-");
+    const source = join(directory, "array-root.glb");
+    const json = Buffer.from("[]  ", "utf8");
+    const header = Buffer.alloc(20);
+    header.write("glTF", 0, "latin1");
+    header.writeUInt32LE(2, 4);
+    header.writeUInt32LE(20 + json.length, 8);
+    header.writeUInt32LE(json.length, 12);
+    header.write("JSON", 16, "latin1");
+    await writeFile(source, Buffer.concat([header, json]));
+    const inspected = await cli.run({
+      arguments: ["inspect-artifact", source, "--json"],
+    });
+    expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
+    const inspection = artifactInspectionResultSchema.parse(
+      parseEvidence(inspected.json).normalized_result,
+    );
+    const graph = artifactInventoryResultSchema.parse(
+      inspection.substeps[0]?.evidence.normalized_result,
+    );
+    expect(graph.coverage.status).toBe("unknown");
+    expect(graph.limitations).toContain(
+      "The GLB JSON chunk is not a readable JSON object; collection counts were not read.",
+    );
+    expect(
+      graph.occurrences.find((row) => row.logical_path === ".")
+        ?.format_metadata,
+    ).toMatchObject({
+      kind: "glb",
+      json_status: "invalid",
+      extent_check: "consistent",
+    });
+  },
+);

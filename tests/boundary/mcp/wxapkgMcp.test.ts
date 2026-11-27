@@ -86,7 +86,7 @@ it.each(["compact"] as const)(
   },
 );
 
-it("refuses a wxapkg member table above its fixed allowance with a typed refusal through compiled MCP", async () => {
+it("refuses a wxapkg member table above artifact_limits.wxapkg.table_bytes and admits it when raised through compiled MCP", async () => {
   const root = await createTestTempDirectory("rea-wxapkg-mcp-table-");
   const path = join(root, "package.wxapkg");
   const declaredTableBytes = 17 * 1024 * 1024;
@@ -101,15 +101,25 @@ it("refuses a wxapkg member table above its fixed allowance with a typed refusal
   expect(reply.isError, JSON.stringify(reply)).toBe(true);
   const { error } = parseMcpToolError(reply);
   expect(error).toMatchObject({
-    retryable: false,
+    retryable: true,
     details: {
-      refusal: {
-        kind: "fixed_ceiling",
-        allowance_kind: "parser",
-        limit: 16 * 1024 * 1024,
-        unit: "bytes",
+      reader_limit: {
+        parameter: "artifact_limits.wxapkg.table_bytes",
+        effective_value: 16 * 1024 * 1024,
+        required_value: declaredTableBytes - 4,
+        can_increase: true,
+        update_mode: "parameter",
       },
     },
   });
+  // Raising the control admits the table; its zero-filled rows are then
+  // reported as malformed rather than as an admission limit.
+  const raised = await call("extract_artifact", {
+    artifact_limits: { wxapkg: { table_bytes: declaredTableBytes } },
+  });
+  expect(raised.isError, JSON.stringify(raised)).toBe(true);
+  expect(parseMcpToolError(raised).error.details).not.toHaveProperty(
+    "reader_limit",
+  );
   await call("close_binary", {});
 });

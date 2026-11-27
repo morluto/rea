@@ -15,6 +15,7 @@ import {
   BinaryResourceFailure,
 } from "../../domain/binaryContainer.js";
 import { elfObjectTypeName } from "../../domain/native/elfNotes.js";
+import type { NativeDirectoryBudgets } from "../../domain/native/nativeStructureBudget.js";
 import {
   zstandardFrameAllowanceCause,
   type ZstandardFrameAllowanceError,
@@ -96,6 +97,14 @@ const isRethrownBudget = (cause: unknown): boolean =>
   isParseLimit(cause, "elf") ||
   isParseLimit(cause, "elf-notes") ||
   cause instanceof BinaryResourceFailure;
+
+/** The caller's directory budgets: decoded section names count against max_file_bytes. */
+const directoryBudgets = (
+  input: InspectElfDebugLinkInput,
+): NativeDirectoryBudgets => ({
+  structureBytes: input.max_structure_bytes,
+  sourceAndDecodedNamesBytes: input.max_file_bytes,
+});
 
 interface LocatedSection {
   readonly status: SectionStatus;
@@ -668,7 +677,7 @@ const readCandidateIdentity = (
       throw preparedImage.error;
     image =
       preparedImage?.value ??
-      readElfImage(content, ELF_DEBUG_LINK_OPERATION, input.max_file_bytes);
+      readElfImage(content, ELF_DEBUG_LINK_OPERATION, directoryBudgets(input));
   } catch (cause) {
     frameAllowance = zstandardFrameAllowanceCause(cause);
     if (frameAllowance === undefined) {
@@ -940,7 +949,7 @@ export const parseElfDebugLinkFromHandle = async (
     source,
     ELF_DEBUG_LINK_OPERATION,
     pause,
-    input.max_file_bytes,
+    directoryBudgets(input),
     (request) => {
       sectionNames = request;
       return decode(request);
@@ -1025,7 +1034,7 @@ export const verifyElfDebugCandidateCooperative = async (
         candidate.prefix,
         ELF_DEBUG_LINK_OPERATION,
         pause,
-        input.max_file_bytes,
+        directoryBudgets(input),
         decode,
       ),
     );

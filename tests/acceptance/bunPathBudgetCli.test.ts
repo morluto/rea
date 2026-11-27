@@ -39,12 +39,16 @@ for (const shared of [false, true])
           reader_limit: {
             parameter: "artifact_limits.bun.path_nodes",
             effective_value: 250_000,
-            required_value: 250_112,
             unit: "count",
             can_increase: true,
           },
         },
       });
+      expect(result.json).not.toHaveProperty([
+        "details",
+        "reader_limit",
+        "required_value",
+      ]);
     } else {
       expect(result.exitCode, result.stderr).toBe(0);
       const inspected = artifactInspectionResultSchema.parse(

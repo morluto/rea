@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 import { sha256File } from "./lib/verifier-file-sha256.mjs";
-import { canonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
+import {
+  assertCanonicalOutput,
+  canonicalOutputSchema,
+} from "./lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
 import {
   requireMcpEvidenceBundle,
@@ -140,13 +143,7 @@ await withVerifierFixture(root, async () => {
       name: tool.name,
       arguments: input,
     });
-    assert.ok(
-      ajv.validate(
-        canonicalOutputSchema(tool.name),
-        response.structuredContent,
-      ),
-      JSON.stringify(ajv.errors),
-    );
+    assertCanonicalOutput(ajv, tool, response);
     const evidence = parseEvidence(
       requireMcpOutput(response, "inspect_packet_capture"),
     );
@@ -435,13 +432,7 @@ await withVerifierFixture(root, async () => {
       name: discovery.name,
       arguments: input,
     });
-    assert.ok(
-      ajv.validate(
-        canonicalOutputSchema(discovery.name),
-        response.structuredContent,
-      ),
-      JSON.stringify(ajv.errors),
-    );
+    assertCanonicalOutput(ajv, discovery, response);
     const evidence = parseEvidence(
       requireMcpOutput(response, "inspect_packet_fields"),
     );
@@ -484,6 +475,8 @@ await withVerifierFixture(root, async () => {
       returned: expectedPage.length,
       has_more:
         Math.max(0, expectedMatches.length - offset) > expectedPage.length,
+      // Verified selections fit one page; the page budget is covered by boundary tests.
+      record_budget_reached: false,
     });
     discoveryMeasurements.push({
       input,

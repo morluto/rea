@@ -1,4 +1,5 @@
 import * as t from "@babel/types";
+import { unwrapPureJavaScriptSequenceExpression } from "./javascriptAstValues.js";
 import { electronMemberPath } from "./javascriptElectronMemberWrites.js";
 import { isUnshadowedGlobal } from "./javascriptSemanticMutationInitializers.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
@@ -78,3 +79,12 @@ export const isUnmodifiedImportMetaUrl = (
 ): boolean =>
   isImportMetaUrl(node) &&
   !ambientPathMayHaveChanged(state, ["import-meta", "url"]);
+
+/** Strip transparent syntax wrappers and pure-leading comma sequences. */
+export const unwrapPureSemanticSequenceExpression = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): t.Node =>
+  unwrapPureJavaScriptSequenceExpression(node, (identifier) =>
+    isIntrinsicGlobalReference(identifier, state, "undefined"),
+  );
