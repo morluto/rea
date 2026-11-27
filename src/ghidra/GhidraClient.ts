@@ -289,6 +289,11 @@ export class GhidraClient {
     });
     this.#requestQueue = new GhidraRequestQueue(
       async (method, parameters, requestOptions) => {
+        if (
+          method === "abandon_decompile_read_ahead" &&
+          !this.#readAheadCancellation.owns(requestOptions.readAheadGeneration)
+        )
+          return ok({ abandoned: false });
         const owner = this.#process;
         const checkpoint = owner?.checkpointOutput();
         const token = this.#token;
@@ -332,8 +337,8 @@ export class GhidraClient {
         grace: options.cancelGrace ?? DEFAULT_GHIDRA_CANCEL_GRACE,
       },
     );
-    this.#readAheadCancellation = new GhidraReadAheadCancellation(() =>
-      this.#abandonDecompileReadAhead(),
+    this.#readAheadCancellation = new GhidraReadAheadCancellation((generation) =>
+      this.#abandonDecompileReadAhead(generation),
     );
   }
 
@@ -565,14 +570,11 @@ export class GhidraClient {
       readonly valueFlowLimits?: NativeValueFlowLimits;
     },
   ): Promise<Result<JsonValue, GhidraSessionError>> {
-    // One worker pool. A new read-ahead window replaces its owner. A request
-    // that does not carry one leaves the current owner's abort watch alone,
-    // including while that owner is committing or journaling.
+    // One worker pool. Ownership changes only when a read-ahead request is
+    // admitted, so a request rejected while queued leaves the current owner.
+    // A window with no signal still replaces that owner.
     const readAhead = options.decompileReadAhead;
-    const carriesReadAhead =
-      readAhead !== undefined && readAhead.length > 1;
-    if (carriesReadAhead)
-      this.#readAheadCancellation.takeOwnership(options.signal);
+    const carriesReadAhead = readAhead !== undefined && readAhead.length > 1;
     const pattern =
       (operation === "search_procedures" || operation === "search_strings") &&
       parameters.mode === "literal" &&
@@ -611,6 +613,12 @@ export class GhidraClient {
         ...(options.decompileReadAhead === undefined
           ? {}
           : { decompileReadAhead: options.decompileReadAhead }),
+        ...(carriesReadAhead
+          ? {
+              onAdmitted: () =>
+                this.#readAheadCancellation.takeOwnership(options.signal),
+            }
+          : {}),
       },
     );
     const settled =
@@ -641,12 +649,12 @@ export class GhidraClient {
    * the caller's signal: that signal is already aborted, and the queue would
    * otherwise refuse the cleanup.
    */
-  async #abandonDecompileReadAhead(): Promise<void> {
+  async #abandonDecompileReadAhead(generation: number): Promise<void> {
     if (!this.isReady()) return;
     const abandoned = await this.#enqueue(
       "abandon_decompile_read_ahead",
       {},
-      {},
+      { readAheadGeneration: generation },
     );
     if (!abandoned.ok)
       this.#logger.warn(

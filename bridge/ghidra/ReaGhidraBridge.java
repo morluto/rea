@@ -5970,11 +5970,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 decompileAheadTasks.put(task.key, task);
                 decompileAheadQueue.add(task);
             }
-            // Finished results nobody requested, for example after a workflow
-            // stopped early, are dropped oldest first beyond two windows.
-            // Completion trims again: tasks that were still running here can
-            // finish after the last hint and would otherwise stay retained.
-            trimFinishedDecompileAhead();
+            // Tasks nobody took are dropped oldest first beyond two windows:
+            // finished results, and queued work no worker has started. A
+            // running decompile stays until it finishes; the worker cap
+            // bounds how many of those can be in progress.
+            trimDecompileAhead();
             // A single queued function is cheaper to decompile when its own
             // request arrives than to start a decompiler process for it.
             if (decompileAheadQueue.size() < 2 && decompileAheadLiveWorkers == 0) return;
@@ -5997,24 +5997,34 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     /**
-     * Publish one worker outcome, then drop finished results nobody took
-     * beyond two windows. The hint path can trim only what is already
-     * finished; a result that completes after the last hint is trimmed here.
+     * Publish one worker outcome, then drop unrequested tasks beyond two
+     * windows. A result that completes after the last hint is trimmed here,
+     * and so is queued work no worker has started.
      */
     private void completeDecompileAhead(AheadTask task, DecompileResults results) {
         task.done.complete(results);
         synchronized (decompileAheadLock) {
-            trimFinishedDecompileAhead();
+            trimDecompileAhead();
         }
     }
 
-    /** Caller holds decompileAheadLock. Oldest finished tasks are dropped first. */
-    private void trimFinishedDecompileAhead() {
+    /**
+     * Caller holds decompileAheadLock. Drops the oldest tasks beyond two
+     * windows. A task a worker has started but not finished stays: at most
+     * one such task exists per live worker. Queued tasks are removed from
+     * the queue as well, so a later window cannot leave an unbounded backlog.
+     */
+    private void trimDecompileAhead() {
         int excess = decompileAheadTasks.size() - 2 * DECOMPILE_AHEAD_WINDOW;
         if (excess <= 0) return;
         Iterator<AheadTask> retained = decompileAheadTasks.values().iterator();
         while (excess > 0 && retained.hasNext()) {
-            if (!retained.next().done.isDone()) continue;
+            AheadTask task = retained.next();
+            if (task.started && !task.done.isDone()) continue;
+            if (!task.started) {
+                decompileAheadQueue.remove(task);
+                task.monitor.cancel();
+            }
             retained.remove();
             excess--;
         }

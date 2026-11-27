@@ -6,24 +6,32 @@
  * Another request on a different signal leaves the watch in place.
  */
 export class GhidraReadAheadCancellation {
-  #owner: AbortSignal | undefined;
+  #generation = 0;
+  /** `null` is a window admitted with no signal. `undefined` means none yet. */
+  #owner: AbortSignal | null | undefined;
   #signal: AbortSignal | undefined;
   #onAbort: (() => void) | undefined;
-  #sending = false;
+  #sendingGeneration: number | undefined;
 
-  constructor(private readonly abandon: () => Promise<void>) {}
+  constructor(private readonly abandon: (generation: number) => Promise<void>) {}
 
   /**
-   * A request that carries read-ahead is about to run. The same signal keeps
-   * its watch. A different signal becomes the owner, because the bridge has
-   * one worker pool and disposing it would stop the new window. A request
-   * that does not carry read-ahead must not call this. A later `watch` from
-   * an older request cannot take the owner back.
+   * The carrying read-ahead request has been admitted. `signal` becomes the
+   * owner, including when it is absent: a window with no signal still
+   * replaces the previous owner so that owner's abort cannot dispose it.
+   * A later `watch` from an older request cannot take the owner back.
+   * Call this only once the request is admitted. A request rejected while
+   * queued must not call it.
    */
   takeOwnership(signal: AbortSignal | undefined): void {
-    if (signal === undefined) return;
-    this.#owner = signal;
-    if (signal !== this.#signal) this.#drop();
+    this.#generation += 1;
+    this.#owner = signal ?? null;
+    this.#drop();
+  }
+
+  /** Whether an abandon queued for `generation` still owns the workers. */
+  owns(generation: number | undefined): boolean {
+    return generation !== undefined && generation === this.#generation;
   }
 
   /**
@@ -32,17 +40,16 @@ export class GhidraReadAheadCancellation {
    * read-ahead before this request's `finally` runs.
    */
   watch(signal: AbortSignal | undefined): void {
-    if (signal === undefined) return;
-    if (this.#owner !== undefined && signal !== this.#owner) return;
-    this.#owner = signal;
+    if (signal === undefined || this.#owner !== signal) return;
     if (signal === this.#signal && this.#onAbort !== undefined) {
       if (signal.aborted) this.#onAbort();
       return;
     }
     this.#drop();
+    const generation = this.#generation;
     const onAbort = (): void => {
       this.#drop();
-      this.#send();
+      this.#send(generation);
     };
     this.#signal = signal;
     this.#onAbort = onAbort;
@@ -63,11 +70,12 @@ export class GhidraReadAheadCancellation {
     this.#onAbort = undefined;
   }
 
-  #send(): void {
-    if (this.#sending) return;
-    this.#sending = true;
-    void this.abandon().finally(() => {
-      this.#sending = false;
+  #send(generation: number): void {
+    if (this.#sendingGeneration === generation) return;
+    this.#sendingGeneration = generation;
+    void this.abandon(generation).finally(() => {
+      if (this.#sendingGeneration === generation)
+        this.#sendingGeneration = undefined;
     });
   }
 }
