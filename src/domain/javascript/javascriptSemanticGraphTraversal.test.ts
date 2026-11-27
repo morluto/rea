@@ -1,4 +1,6 @@
 import {
+  fixtureNode,
+  registryForGraph,
   resolveJavaScriptSemanticEvidence,
   semanticFixtureGraph,
   semanticGraphTestEvidence,
@@ -9,7 +11,6 @@ import { freezeJsonSnapshot } from "../immutableJson.js";
 import { z } from "zod";
 
 import {
-  JAVASCRIPT_SEMANTIC_NODE_KINDS,
   JAVASCRIPT_SEMANTIC_RELATION_FAMILIES,
   JAVASCRIPT_SEMANTIC_RELATION_FAMILY,
   type JavaScriptSemanticGraphInput,
@@ -30,33 +31,6 @@ import type { JsonValue } from "../jsonValue.js";
 
 const SHA = "a".repeat(64);
 const JAG_ID = `jag_${"b".repeat(64)}`;
-const node = (
-  kind: (typeof JAVASCRIPT_SEMANTIC_NODE_KINDS)[number],
-  role: string,
-  evidenceContexts: JavaScriptSemanticEvidenceContextRegistry,
-  properties: Record<string, JsonValue> = {},
-  functionNodeId: string | null = null,
-): JavaScriptSemanticGraphNode =>
-  createJavaScriptSemanticGraphNode(
-    {
-      kind,
-      identity: {
-        artifact_sha256: SHA,
-        module_path: "bundle.js",
-        source_range: {
-          start: { line: 1, column: role.length },
-          end: { line: 1, column: role.length + 1 },
-        },
-        role_key: role,
-      },
-      function_node_id: functionNodeId,
-      application_node_ids: [],
-      label: role,
-      properties,
-      evidence: semanticGraphTestEvidence(),
-    },
-    evidenceContexts,
-  );
 
 const graphWithCandidateEdge = (): JavaScriptSemanticGraph => {
   const graph = semanticFixtureGraph();
@@ -100,20 +74,6 @@ const constructionInput = (
 ): JavaScriptSemanticGraphInput => {
   const { graph_id: _graphId, ...input } = graph;
   return input;
-};
-
-const registryForGraph = (
-  graph: JavaScriptSemanticGraph,
-): JavaScriptSemanticEvidenceContextRegistry => {
-  const registry = new JavaScriptSemanticEvidenceContextRegistry();
-  for (const { evidence: reference } of [
-    ...graph.nodes,
-    ...graph.relations,
-    ...graph.unknowns,
-    ...graph.fingerprints,
-  ])
-    registry.intern(resolveJavaScriptSemanticEvidence(graph, reference));
-  return registry;
 };
 
 it("does not admit a semantic-node seed absent from the graph", () => {
@@ -201,7 +161,7 @@ it("accepts deeply nested semantic properties", () => {
   for (let index = 0; index < 12; index += 1)
     nested = { [`level-${String(index)}`]: nested };
 
-  const result = node(
+  const result = fixtureNode(
     "binding",
     "deep-properties",
     new JavaScriptSemanticEvidenceContextRegistry(),
@@ -296,7 +256,7 @@ it("rejects an empty relation selection at the query schema boundary", () => {
 
 it("retains every structural application node linked to one semantic node", () => {
   const evidenceContexts = new JavaScriptSemanticEvidenceContextRegistry();
-  const original = node("module", "module", evidenceContexts);
+  const original = fixtureNode("module", "module", evidenceContexts);
   const linked = createJavaScriptSemanticGraphNode(
     {
       kind: original.kind,
@@ -430,9 +390,17 @@ it.each([
   "limits $direction ambiguity to traversable $relation candidates (incoming=$incoming)",
   ({ direction, relation, incoming, relevant }) => {
     const evidenceContexts = new JavaScriptSemanticEvidenceContextRegistry();
-    const seed = node("function", "directional-seed", evidenceContexts);
-    const reached = node("function", "directional-reached", evidenceContexts);
-    const other = node("function", "directional-other", evidenceContexts);
+    const seed = fixtureNode("function", "directional-seed", evidenceContexts);
+    const reached = fixtureNode(
+      "function",
+      "directional-reached",
+      evidenceContexts,
+    );
+    const other = fixtureNode(
+      "function",
+      "directional-other",
+      evidenceContexts,
+    );
     const reverse =
       direction === "callers" || direction === "backward-provenance";
     const resolved = relationBetween(
@@ -493,8 +461,8 @@ it.each([
 
 it("excludes explicitly filtered candidates without hiding partial graph coverage", () => {
   const evidenceContexts = new JavaScriptSemanticEvidenceContextRegistry();
-  const seed = node("function", "filtered-seed", evidenceContexts);
-  const other = node("function", "filtered-other", evidenceContexts);
+  const seed = fixtureNode("function", "filtered-seed", evidenceContexts);
+  const other = fixtureNode("function", "filtered-other", evidenceContexts);
   const candidate = relationBetween(
     seed,
     other,
@@ -522,7 +490,7 @@ it("excludes explicitly filtered candidates without hiding partial graph coverag
 it("keeps candidate uncertainty at the end of a long reachable path", () => {
   const evidenceContexts = new JavaScriptSemanticEvidenceContextRegistry();
   const chain = Array.from({ length: 72 }, (_, index) =>
-    node("binding", `candidate-chain-${index}`, evidenceContexts),
+    fixtureNode("binding", `candidate-chain-${index}`, evidenceContexts),
   );
   const relations = chain.slice(1).map((target, index) => {
     const source = chain[index];

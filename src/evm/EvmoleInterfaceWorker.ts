@@ -97,10 +97,7 @@ const main = async (): Promise<void> => {
         };
       reply = {
         ok: false,
-        reason:
-          selected.error.reason === "format"
-            ? "malformed"
-            : selected.error.reason,
+        reason: selected.error.reason,
         message: selected.error.message,
         ...(selected.error.limit === undefined
           ? {}

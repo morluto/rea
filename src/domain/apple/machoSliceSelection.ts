@@ -12,6 +12,7 @@ import {
 import {
   MACHO_CPU_TYPES,
   machoSliceFamily,
+  machoSliceNamesSubtypeOnly,
   machoSliceSubtypeSelector,
   type MachoSliceArchitecture,
   type MachoTargetSelection,
@@ -21,7 +22,6 @@ import {
   AnalysisTargetFailureError,
 } from "../analysisErrorCore.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import { ParseFailureError } from "../parseFailure.js";
 import { err, ok, type Result } from "../result.js";
 import { MACHO_ARCHITECTURE_POLICIES } from "./machoArchitectureSelection.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
@@ -67,6 +67,7 @@ export const SHARED_SLICE_SELECTION_INPUT: SliceSelectionInput = {
     arm: "arm",
     arm64: "arm64",
     arm64e: "arm64e",
+    "arm64e.x1": "arm64e.x1",
   },
 };
 
@@ -128,7 +129,7 @@ const selectionError = (
   failure: MachoSliceSelectionFailure,
   input: SliceSelectionInput,
 ): AnalysisError => {
-  if (failure.kind !== "format")
+  if (failure.kind !== "target")
     return new AnalysisInputError(operation, undefined, [
       {
         path: [input.architectureField],
@@ -136,9 +137,7 @@ const selectionError = (
         message: failure.message,
       },
     ]);
-  const parsed = failure.failure;
-  const cause = new ParseFailureError(parsed);
-  return new AnalysisTargetFailureError(operation, path, parsed, { cause });
+  return new AnalysisTargetFailureError(operation, path, failure.failure);
 };
 
 interface FatSlice {
@@ -150,15 +149,15 @@ interface FatSlice {
 /** Whether a value names a subtype, not only a CPU family. */
 const namesSubtype = (architecture: MachoSliceArchitecture): boolean =>
   architecture === "arm64" ||
-  architecture === "arm64e" ||
-  architecture === "x86_64";
+  architecture === "x86_64" ||
+  machoSliceNamesSubtypeOnly(architecture);
 
 /** The architecture values that address slices of this value's CPU family. */
 const familyValues = (
   architecture: MachoSliceArchitecture,
 ): readonly MachoSliceArchitecture[] =>
-  architecture === "arm64" || architecture === "arm64e"
-    ? ["arm64", "arm64e"]
+  machoSliceFamily(architecture) === "arm64"
+    ? ["arm64", "arm64e", "arm64e.x1"]
     : [architecture];
 
 /**
@@ -169,7 +168,7 @@ const addressedSlices = <Slice extends FatSlice>(
   family: readonly Slice[],
   architecture: MachoSliceArchitecture,
 ): readonly Slice[] =>
-  architecture !== "arm64e" && family.length === 1
+  !machoSliceNamesSubtypeOnly(architecture) && family.length === 1
     ? family
     : family.filter(
         (slice) =>

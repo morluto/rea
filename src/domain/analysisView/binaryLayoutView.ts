@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import {
   analysisViewInputError,
   invalidAnalysisView,
@@ -19,6 +20,7 @@ import type {
 } from "./analysisViewShape.js";
 import { assertOwnedView } from "./analysisViewShape.js";
 import {
+  boundedViewLimitations,
   boundedViewMessages,
   completeWithinViewCoverage as completeCoverage,
   pageViewCoverage as pageCoverage,
@@ -57,9 +59,7 @@ const layoutNameIndex = <Row extends { readonly name: LayoutName }>(
       const row = rows[i]!;
       if (row.name.unknown_reason !== null || row.name.bytes_base64 === null)
         continue;
-      const bucket = built.get(row.name.bytes_base64);
-      if (bucket === undefined) built.set(row.name.bytes_base64, [i]);
-      else bucket.push(i);
+      appendToMapList(built, row.name.bytes_base64, i);
     }
     index = built;
     layoutNameIndexes.set(rows, index);
@@ -166,11 +166,7 @@ const parentFields = (parent: AnalysisViewParent, layout: BinaryLayout) => ({
     path: layout.artifact.path,
     sha256: layout.artifact.sha256,
   },
-  limitations: boundedViewMessages(
-    [...parent.limitations, ...layout.limitations],
-    parent.evidenceId,
-    "limitations",
-  ),
+  limitations: boundedViewLimitations(parent, layout.limitations),
   unknowns: boundedViewMessages(
     layoutUnknowns(layout),
     parent.evidenceId,

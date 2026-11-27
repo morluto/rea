@@ -109,7 +109,8 @@ a malformed cycle. A directory extent is malformed when it lacks its `.` and
 `..` records, when `.` does not describe the directory's own extent or `..`
 its parent's (extent block, data length, and extended attribute length; the
 root's `..` describes the root), or when a later record uses identifier 0x00
-or 0x01. A record whose even-length identifier lacks its zero padding byte, or
+or 0x01. In the Joliet tree, a `..` that describes its own directory is also
+accepted: libisofs (xorriso) writes every Joliet `..` record that way. A record whose even-length identifier lacks its zero padding byte, or
 that declares an interleave gap without a file unit size, is malformed. An
 extent that starts or ends, counting
 interleave gaps, outside the declared volume is malformed. An extent inside

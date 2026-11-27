@@ -573,6 +573,8 @@ export abstract class KunaJsonDocumentReader<Parsed> extends Writable {
           heap_size_limit_bytes: heap.heap_size_limit,
         },
         {
+          // Live heap headroom was measured; no configured budget was exceeded.
+          measuredExhaustion: true,
           remediationAction:
             "Close other targets in this REA process, or start REA with a larger Node.js heap (--max-old-space-size), then reopen the target.",
         },

@@ -63,7 +63,7 @@ describe("Apple IPS stable filesystem boundary", () => {
       resource: "capacity",
       reportedLimits: { boundary: "registers", maximum: 2 },
       retryable: false,
-      remediationAction: expect.stringContaining("max_registers"),
+      limit: { parameter: "max_registers", effective_value: 2 },
     });
 
     const nesting = await service.inspect({ path: deep });

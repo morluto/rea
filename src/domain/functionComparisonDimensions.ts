@@ -1,3 +1,4 @@
+import { appendToMapList } from "./appendToMapList.js";
 import { hasStableNativeSymbol } from "./native/nativeSymbol.js";
 import { canonicalJson } from "./comparisonSemantics.js";
 import {
@@ -512,9 +513,7 @@ const groupStringsByContent = (
   const groups = new Map<string, ReferencedStringFact[]>();
   for (const string of strings) {
     if (string.content === null) continue;
-    const rows = groups.get(string.content);
-    if (rows === undefined) groups.set(string.content, [string]);
-    else rows.push(string);
+    appendToMapList(groups, string.content, string);
   }
   return groups;
 };
@@ -536,9 +535,7 @@ const groupStringsByOffset = (
 ): Map<string | null, ReferencedStringFact[]> => {
   const groups = new Map<string | null, ReferencedStringFact[]>();
   for (const string of strings) {
-    const rows = groups.get(string.source_offset);
-    if (rows === undefined) groups.set(string.source_offset, [string]);
-    else rows.push(string);
+    appendToMapList(groups, string.source_offset, string);
   }
   return groups;
 };

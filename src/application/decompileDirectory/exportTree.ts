@@ -47,10 +47,11 @@ import {
   type OwnedLease,
 } from "../../process/OwnedLease.js";
 import type { RetainedResourceScope } from "../../ports/AnalysisProvider.js";
-import { ExportResources } from "./exportResources.js";
+import { ExportResources, type StagedExportFile } from "./exportResources.js";
 import { decompileInputError } from "./inputError.js";
 import { sortByProcedureAddress } from "./selection.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
+import { reportedSystemCode } from "../../kernel/reportedSystemCode.js";
 
 export interface ExportIdentity {
   readonly targetSha256: string | null;
@@ -82,7 +83,7 @@ export const classifyOutputPath = async (
     (cause: unknown) => cause,
   );
   if (!isDirectoryStat(listed)) {
-    if (resume && nodeCode(listed) === "ENOENT")
+    if (resume && reportedSystemCode(listed) === "ENOENT")
       return err(
         decompileInputError(
           "output_directory",
@@ -195,43 +196,63 @@ export class DecompileExport {
     return relativePath;
   }
 
+  /**
+   * Append records in order with one write and one sync. A caller publishes
+   * each record's file before appending, so no journal line, synced or not,
+   * names content that was not synced first.
+   */
   async append(
-    record: DecompileDirectoryFunctionRecord,
+    records: readonly DecompileDirectoryFunctionRecord[],
   ): Promise<Result<void, AnalysisError>> {
-    const line = decompileJournalLineSchema.safeParse({
-      kind: "function",
-      ...record,
-    });
-    if (!line.success || line.data.kind !== "function")
-      return err(
-        new AnalysisOutputError(
+    const lines: DecompileDirectoryFunctionRecord[] = [];
+    let text = "";
+    let invalid: AnalysisOutputError | undefined;
+    for (const record of records) {
+      const line = decompileJournalLineSchema.safeParse({
+        kind: "function",
+        ...record,
+      });
+      // Records before an invalid one are still appended, as they were when
+      // each record was appended on its own.
+      if (!line.success || line.data.kind !== "function") {
+        invalid = new AnalysisOutputError(
           "decompile_all",
           "decompile journal record is invalid",
-        ),
-      );
-    const written = await this.journal
-      .writeFile(`${JSON.stringify(line.data)}\n`)
-      .then(() => this.journal.sync())
-      .then(
-        () => true,
-        () => false,
-      );
-    if (!written)
-      return err(
-        new AnalysisOutputError(
+        );
+        break;
+      }
+      text += `${JSON.stringify(line.data)}\n`;
+      // The journal schema owns the parsed snapshot, including nested fields;
+      // the caller may change its input while the append is pending.
+      const { kind: _kind, ...committed } = line.data;
+      lines.push(committed);
+    }
+    if (lines.length > 0) {
+      const written = await this.journal
+        .writeFile(text)
+        .then(() => this.journal.sync())
+        .then(
+          () => true,
+          () => false,
+        );
+      if (!written) {
+        const failure = new AnalysisOutputError(
           "decompile_all",
           "decompile journal could not be updated",
-        ),
-      );
-    // The journal schema owns the parsed snapshot, including nested fields;
-    // the caller may have changed its input while the append was pending.
-    const { kind: _kind, ...committed } = line.data;
-    this.records.set(committed.address, committed);
-    if (committed.status === "written")
-      this.written.set(committed.address, committed);
-    if (committed.relative_path !== undefined)
-      reservePath(this.paths, committed.relative_path, committed.address);
-    return ok(undefined);
+        );
+        // The records before the invalid one failed first; it stays behind.
+        if (invalid !== undefined) failure.retainSecondaryFailure(invalid);
+        return err(failure);
+      }
+    }
+    for (const committed of lines) {
+      this.records.set(committed.address, committed);
+      if (committed.status === "written")
+        this.written.set(committed.address, committed);
+      if (committed.relative_path !== undefined)
+        reservePath(this.paths, committed.relative_path, committed.address);
+    }
+    return invalid === undefined ? ok(undefined) : err(invalid);
   }
 
   async writeIndex(input: {
@@ -284,8 +305,31 @@ export class DecompileExport {
     );
   }
 
-  commitFunctionFile(relativePath: string, bytes: Buffer): Promise<FileCommit> {
-    return commitFunctionFile(this.root, relativePath, bytes, this.resources);
+  /**
+   * Write and sync a function file's bytes in staging. Nothing appears under
+   * a final name until `commitFunctionFile`. Never rejects.
+   */
+  stageFunctionFile(bytes: Buffer): Promise<StagedExportFile> {
+    return this.resources.stage(bytes);
+  }
+
+  commitFunctionFile(
+    relativePath: string,
+    bytes: Buffer,
+    staged: StagedExportFile,
+  ): Promise<FileCommit> {
+    return commitFunctionFile(
+      this.root,
+      relativePath,
+      bytes,
+      staged,
+      this.resources,
+    );
+  }
+
+  /** Drop staged bytes whose function this run will not record. */
+  discardStaged(staged: StagedExportFile): Promise<void> {
+    return this.resources.discardStaged(staged);
   }
 
   hashFile(relativePath: string, signal?: AbortSignal): Promise<string> {
@@ -444,20 +488,26 @@ export type FileCommit =
   | { readonly status: "error"; readonly error: AnalysisError };
 
 /**
- * Publish bytes with `link`, which fails when the final name exists.
+ * Publish staged bytes with `link`, which fails when the final name exists.
  * A matching existing file is adopted. A different file is left unchanged.
  */
 const commitFunctionFile = async (
   root: string,
   relativePath: string,
   bytes: Buffer,
+  staged: StagedExportFile,
   resources: ExportResources,
 ): Promise<FileCommit> => {
-  if (!isDecompileFunctionRelativePath(relativePath)) return { status: "io" };
   const finalPath = join(root, relativePath);
-  if (!isPathWithinRoot(root, finalPath)) return { status: "io" };
+  if (
+    !isDecompileFunctionRelativePath(relativePath) ||
+    !isPathWithinRoot(root, finalPath)
+  ) {
+    await resources.discardStaged(staged);
+    return { status: "io" };
+  }
   const digest = sha256Hex(bytes);
-  const linked = await resources.publish(bytes, finalPath, "link").then(
+  const linked = await resources.publishStaged(staged, finalPath, "link").then(
     () => true,
     (cause: unknown) => cause,
   );
@@ -470,7 +520,7 @@ const commitFunctionFile = async (
         linked,
       ),
     };
-  if (nodeCode(linked) !== "EEXIST") return { status: "io" };
+  if (reportedSystemCode(linked) !== "EEXIST") return { status: "io" };
   const existing = await resources
     .hashFile(finalPath)
     .catch((cause: unknown) => cause);
@@ -509,7 +559,7 @@ const missingOrRejected = async (
         "The output path exists and is not a directory.",
       ),
     );
-  if (nodeCode(listed) !== "ENOENT")
+  if (reportedSystemCode(listed) !== "ENOENT")
     return err(
       decompileInputError(
         "output_directory",
@@ -537,7 +587,7 @@ const createPrivateDirectory = async (
   );
   if (created !== undefined)
     return err(
-      nodeCode(created) === "EEXIST"
+      reportedSystemCode(created) === "EEXIST"
         ? decompileInputError(
             "output_directory",
             "Output directory already exists. Pass resume to continue an export that matches this target and analysis profile.",
@@ -577,7 +627,7 @@ const prepareFunctionsDirectory = async (
   const created = await mkdir(directory, { mode: 0o700 }).catch(
     (cause: unknown) => cause,
   );
-  if (created !== undefined && nodeCode(created) !== "EEXIST")
+  if (created !== undefined && reportedSystemCode(created) !== "EEXIST")
     return err(
       decompileInputError(
         "output_directory",
@@ -595,17 +645,39 @@ const prepareFunctionsDirectory = async (
       ),
     );
   resources.ownFunctionsDirectory(stat);
+  // umask can clear bits, and a parent setgid bit is inherited, so mkdir's
+  // 0700 is not always the mode on disk. macOS virtiofs shares assign a new
+  // inode when chmod changes that mode. Cleanup compares the owned identity,
+  // so a repair records the post-chmod directory only when it is still a real
+  // directory on this device. A symlink or a different device keeps the
+  // pre-chmod identity and is not removed.
+  if (directoryPermissionMode(stat) === 0o700n) return ok(undefined);
   const secured = await chmod(directory, 0o700).catch(
     (cause: unknown) => cause,
   );
-  return secured === undefined
-    ? ok(undefined)
-    : err(
-        decompileInputError(
-          "output_directory",
-          "The functions directory could not be secured.",
-        ),
-      );
+  if (secured !== undefined)
+    return err(
+      decompileInputError(
+        "output_directory",
+        "The functions directory could not be secured.",
+      ),
+    );
+  const repaired = await lstat(directory, { bigint: true }).catch(
+    (cause: unknown) => cause,
+  );
+  if (
+    !isDirectoryStat(repaired) ||
+    !hasFileIdentity(repaired) ||
+    repaired.dev !== stat.dev
+  )
+    return err(
+      decompileInputError(
+        "output_directory",
+        "The functions directory is not a real directory.",
+      ),
+    );
+  resources.ownFunctionsDirectory(repaired);
+  return ok(undefined);
 };
 
 const seedJournal = async (
@@ -693,7 +765,7 @@ interface OpenedJournal {
 const JOURNAL_READ_CHUNK_BYTES = 64 * 1024;
 
 const journalReadError = (cause: unknown): AnalysisInputError =>
-  nodeCode(cause) === "ENOENT"
+  reportedSystemCode(cause) === "ENOENT"
     ? decompileInputError(
         "output_directory",
         "Resume requires decompile-journal.jsonl in the output directory. An export stopped before its journal was written has no functions to keep; choose a new output directory, or remove this one if it is yours.",
@@ -1165,6 +1237,13 @@ const isFileHandle = (value: unknown): value is FileHandle =>
 const isDirectoryStat = (value: unknown): boolean =>
   isStat(value) && value.isDirectory() && !value.isSymbolicLink();
 
+/** Permission bits, including set-id and sticky, from a bigint lstat. */
+const directoryPermissionMode = (value: unknown): bigint | undefined => {
+  if (typeof value !== "object" || value === null || !("mode" in value))
+    return undefined;
+  return typeof value.mode === "bigint" ? value.mode & 0o7777n : undefined;
+};
+
 const isSymlinkStat = (value: unknown): boolean =>
   isStat(value) && value.isSymbolicLink();
 
@@ -1182,11 +1261,3 @@ const isStat = (
   "isSymbolicLink" in value &&
   typeof value.isDirectory === "function" &&
   typeof value.isSymbolicLink === "function";
-
-const nodeCode = (cause: unknown): string | undefined =>
-  typeof cause === "object" &&
-  cause !== null &&
-  "code" in cause &&
-  typeof cause.code === "string"
-    ? cause.code
-    : undefined;

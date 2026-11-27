@@ -5,6 +5,7 @@ import {
   artifactIntegrityClaimSchema,
   artifactSha256PairSchema,
   artifactMd5PairSchema,
+  signedAfterPackingExplanationSchema,
 } from "./artifactIntegrity.js";
 import { artifactFormatMetadataSchema } from "./artifactFormatMetadata.js";
 import { z } from "zod";
@@ -71,6 +72,8 @@ export const ARTIFACT_FORMAT_IDS = [
   "pkg",
   "asar",
   "ines",
+  "nds",
+  "n64-rom",
   "godot-pck",
   "unityfs",
   "wxapkg",
@@ -79,9 +82,19 @@ export const ARTIFACT_FORMAT_IDS = [
   "glb",
   "ktx",
   "ktx2",
+  "ogg-opus",
+  "riff-xma2",
+  "bink2",
+  "vulkan-pipeline-cache",
   "uimage",
+  "nso",
+  "nro",
   "android-boot-image",
+  "android-dtbo",
   "android-ota-payload",
+  "android-vbmeta",
+  "android-sparse-image",
+  "ubi-image",
   "iso9660",
   "uefi",
   "javascript-bundle",
@@ -108,13 +121,19 @@ export const ARTIFACT_FORMAT_IDS = [
   "esp-image",
   "uf2",
   "dfuse",
+  "bflt",
   "esp-flash-image",
   "fit",
+  "qualcomm-mbn",
   "ntfs-mft",
+  "systemd-journal",
+  "auditd-log",
   "sqlite",
   "windows-shortcut",
   "python-pyc",
   "devicetree",
+  "esp-nvs",
+  "deb",
   "unknown",
 ] as const;
 
@@ -125,6 +144,8 @@ const artifactFormatSchema = z.enum(ARTIFACT_FORMAT_IDS);
 /** Formats established from bytes or a virtual directory tree, independent of path roles. */
 const artifactContentFormatSchema = artifactFormatSchema.extract([
   "ines",
+  "nds",
+  "n64-rom",
   "zip",
   "godot-pck",
   "unityfs",
@@ -134,9 +155,19 @@ const artifactContentFormatSchema = artifactFormatSchema.extract([
   "glb",
   "ktx",
   "ktx2",
+  "ogg-opus",
+  "riff-xma2",
+  "bink2",
+  "vulkan-pipeline-cache",
   "uimage",
+  "nso",
+  "nro",
   "android-boot-image",
+  "android-dtbo",
   "android-ota-payload",
+  "android-vbmeta",
+  "android-sparse-image",
+  "ubi-image",
   "iso9660",
   "uefi",
   "intel-hex",
@@ -144,8 +175,12 @@ const artifactContentFormatSchema = artifactFormatSchema.extract([
   "esp-image",
   "uf2",
   "dfuse",
+  "bflt",
   "fit",
+  "qualcomm-mbn",
   "ntfs-mft",
+  "systemd-journal",
+  "auditd-log",
   "mach-o-universal",
   "mach-o",
   "elf",
@@ -156,6 +191,8 @@ const artifactContentFormatSchema = artifactFormatSchema.extract([
   "windows-shortcut",
   "python-pyc",
   "devicetree",
+  "esp-nvs",
+  "deb",
   "directory",
   "file",
   "unknown",
@@ -242,7 +279,11 @@ const integrityContradictionBaseSchema = z.object({
 });
 
 export const integrityContradictionSchema = z.union([
-  integrityContradictionBaseSchema.extend(artifactSha256PairSchema.shape),
+  integrityContradictionBaseSchema.extend({
+    ...artifactSha256PairSchema.shape,
+    /** Present when PE Authenticode stripping restores the declared SHA-256. */
+    signing_explanation: signedAfterPackingExplanationSchema.exactOptional(),
+  }),
   integrityContradictionBaseSchema.extend(artifactMd5PairSchema.shape),
   integrityContradictionBaseSchema.extend(artifactDfuCrc32PairSchema.shape),
   integrityContradictionBaseSchema.extend(artifactCrc32PairSchema.shape),
@@ -320,6 +361,13 @@ const extractedArtifactSchema = z.object({
   sha256: sha256Schema,
   bytes_written: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
   created: z.boolean(),
+  limitations: z
+    .array(z.string())
+    .min(1)
+    .exactOptional()
+    .describe(
+      "The inventory occurrence's own limitations, such as a case-folding collision or a normalized member name; absent when it has none",
+    ),
 });
 
 /** Path-independent commitment to one selected extraction operation. */

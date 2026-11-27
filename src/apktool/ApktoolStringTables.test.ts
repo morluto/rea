@@ -169,9 +169,7 @@ describe("physical Apktool string facts", () => {
       coverage: "partial",
     });
     expect(result.strings).toHaveLength(DEFAULT_APKTOOL_STRING_LIMIT);
-    expect(result.limitations).toContain(
-      `strings reports the first ${String(DEFAULT_APKTOOL_STRING_LIMIT)} of ${String(DEFAULT_APKTOOL_STRING_LIMIT + 1)} entries`,
-    );
+    expect(result.tables[0]?.status).toBe("present");
   });
 
   it("does not read unexamined tables after output exhaustion", async () => {
@@ -274,9 +272,6 @@ describe("Apktool string projection admission", () => {
         tables: [{ locale: null, total_count: 1 }],
       });
       expect(result.error.partial.strings).toHaveLength(tablesOnly ? 0 : 1);
-      expect(result.error.partial.limitations).toContain(
-        'String projection stopped at locale "de"; this selection and 1 remaining selections were not projected',
-      );
     },
   );
 

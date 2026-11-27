@@ -96,7 +96,8 @@ export const executeSessionWorkflowEvidence = async (
   const { EnhancedTools } = await import("./EnhancedTools.js");
   const executed = await executeComposedWorkflow(
     analysis,
-    (observed) => new EnhancedTools(observed).executeValidated(call, signal),
+    (observed) =>
+      new EnhancedTools(observed).executeValidated(call, signal, progress),
     composedLimitationBudget(name),
   );
   retainPartialWorkflowEvidence(executed, evidenceInput);
@@ -166,6 +167,10 @@ export const executeSessionFunctionAnalysis = async (
       jsonParameters(input),
       session?.activeTarget(),
       request,
+      {
+        admitRecovery: session?.admitRecoveryObservation.bind(session),
+        evidenceById: session?.evidenceForAnalysis.bind(session),
+      },
     ),
   );
   return analyzed.ok ? ok({ evidence: analyzed.value }) : analyzed;

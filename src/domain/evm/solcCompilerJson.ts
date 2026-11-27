@@ -4,7 +4,7 @@ import { decodeLimit, type LimitRef } from "../parseFailure.js";
 import { isParseLimit } from "../parseFailureAnalysisError.js";
 
 interface SolcJsonError {
-  readonly reason: "format" | "resource";
+  readonly reason: "malformed" | "resource";
   readonly message: string;
   /** The named ceiling that stopped a resource-limited parse. */
   readonly limit?: LimitRef;
@@ -112,13 +112,13 @@ export function strictTree(text: string): Result<Node, SolcJsonError> {
   }
   if (invalid)
     return failure(
-      "format",
+      "malformed",
       "Compiler JSON contains malformed syntax, comments or duplicate properties",
     );
   const errors: ParseError[] = [];
   const tree = parseTree(text, errors, strictOptions);
   return tree === undefined || errors.length > 0
-    ? failure("format", "Malformed compiler JSON")
+    ? failure("malformed", "Malformed compiler JSON")
     : ok(tree);
 }
 

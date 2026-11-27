@@ -3,10 +3,10 @@ import {
   fileSubjectDisplay,
 } from "../../fixtures/evidenceSubject.js";
 import { unknownTarget } from "../../../src/domain/targetIdentity.js";
-import { rm, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -52,16 +52,6 @@ import { projectManagedApplicationGraphEvidence } from "../../../src/application
 import { MANAGED_APPLICATION_GRAPH_EXAMPLE } from "../../../src/contracts/managed/managedWorkflowExamples.js";
 import { JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE } from "../../../src/contracts/javascript/javascriptRuntimeReconciliationExample.js";
 import { managedApplicationGraphResultSchema } from "../../../src/domain/managed/managedApplicationGraph.js";
-
-const temporary: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(
-    temporary
-      .splice(0)
-      .map(async (path) => rm(path, { recursive: true, force: true })),
-  );
-});
 
 describe("JavaScript application workflows", () => {
   it("preserves source-owned requested native members across trace directions", () => {
@@ -271,7 +261,6 @@ describe("historical native comparison projections", () => {
     const root = await createTestTempDirectory(
       "rea-historical-native-members-",
     );
-    temporary.push(root);
     await writeFile(join(root, "package.json"), '{"type":"commonjs"}');
     await writeFile(
       join(root, "main.js"),
@@ -362,7 +351,6 @@ describe("historical native comparison projections", () => {
 describe("complete comparison projections", () => {
   it("matches rechunked modules by exact source and minified modules by structural fingerprint", async () => {
     const root = await createTestTempDirectory("rea-application-versions-");
-    temporary.push(root);
     const fixtures = await writeVersionedJavaScriptApplicationFixtures(root);
     const [left, right] = await Promise.all([
       analyzeFixture(fixtures.left),
@@ -425,7 +413,6 @@ describe("complete comparison projections", () => {
 
   it("pairs source-map originals without promoting the match to exact", async () => {
     const root = await createTestTempDirectory("rea-source-map-versions-");
-    temporary.push(root);
     const fixtures = await writeVersionedJavaScriptApplicationFixtures(root);
     const [left, right] = await Promise.all([
       analyzeFixture(fixtures.left),
@@ -570,7 +557,6 @@ describe("JavaScript application workflow error diagnostics", () => {
     const root = await createTestTempDirectory(
       "rea-application-workflow-diagnostics-",
     );
-    temporary.push(root);
     const evidence = await analyzeFixture(root);
     const subject = evidence.subject;
     if (subject.identity.kind !== "file")
@@ -603,7 +589,6 @@ describe("JavaScript application workflow error diagnostics", () => {
     const root = await createTestTempDirectory(
       "rea-application-workflow-schema-diagnostics-",
     );
-    temporary.push(root);
     const evidence = await analyzeFixture(root);
     const subject = evidence.subject;
     const result = javascriptApplicationAnalysisResultSchema.parse(
@@ -663,7 +648,6 @@ describe("JavaScript application workflow error diagnostics", () => {
     const root = await createTestTempDirectory(
       "rea-runtime-workflow-diagnostics-",
     );
-    temporary.push(root);
     const evidence = await analyzeFixture(root);
 
     const result = reconcileJavaScriptRuntimeEvidence({

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { analysisErrorRecoverySchema } from "./analysisErrorRecovery.js";
+import { signedAfterPackingExplanationSchema } from "./artifactIntegrity.js";
 import { jsonValueSchema } from "./jsonValue.js";
 import type { AnalysisErrorProjection } from "./analysisErrorProjection.js";
 
@@ -69,6 +70,8 @@ export const analysisErrorProjectionSchema = z.discriminatedUnion("code", [
             declared_sha256: z.string().nullable(),
             calculated_sha256: z.string().nullable(),
             unpacked: z.boolean(),
+            signing_explanation:
+              signedAfterPackingExplanationSchema.exactOptional(),
           })
           .catchall(jsonValueSchema),
         z

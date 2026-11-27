@@ -258,7 +258,7 @@ describe("exact recorded solc artifact selection", () => {
     }).replace(/}$/, `,"errors":[${diagnostic}]}`);
     const result = select(malformed);
     if (result.ok) throw new Error("Expected invalid span failure");
-    expect(result.error.reason).toBe("format");
+    expect(result.error.reason).toBe("malformed");
     expect(result.error.compiler_diagnostics?.[0]?.severity).toBe("error");
   });
 });
@@ -342,7 +342,7 @@ describe("malformed compiler carriers", () => {
     '{"contracts":[]}',
   ])("rejects malformed carrier %s", (text) => {
     const result = select(text);
-    expect(result.ok ? null : result.error.reason).toBe("format");
+    expect(result.ok ? null : result.error.reason).toBe("malformed");
   });
 
   it("bounds wide JSON trees before AST allocation independently of byte size", () => {
@@ -360,11 +360,11 @@ describe("malformed compiler carriers", () => {
       immutableReferences: { "1": [{ start: 0, length: 1 }] },
     }).replace('"start":0', '"start":9007199254740991.1');
     const result = select(text);
-    expect(result.ok ? null : result.error.reason).toBe("format");
+    expect(result.ok ? null : result.error.reason).toBe("malformed");
     const deep = select("[".repeat(10000) + "0" + "]".repeat(10000));
     expect(deep.ok ? null : deep.error.reason).toBe("resource");
     const invalidUtf8 = selectSolcArtifact(Uint8Array.of(0xff), selection);
-    expect(invalidUtf8.ok ? null : invalidUtf8.error.reason).toBe("format");
+    expect(invalidUtf8.ok ? null : invalidUtf8.error.reason).toBe("malformed");
     const tooLarge = selectSolcArtifact(
       new Uint8Array(4 * 1024 * 1024 + 1),
       selection,

@@ -8,7 +8,13 @@ export type ElfHashWordReader = (offset: number) => Result<number, string>;
 
 export type ElfHashCountFailure =
   | { readonly kind: "malformed"; readonly message: string }
-  | { readonly kind: "budget"; readonly label: string; readonly count: number };
+  | {
+      readonly kind: "budget";
+      readonly label: string;
+      readonly count: number;
+      /** True when the walk stopped before reaching the end of the table. */
+      readonly lowerBound?: true;
+    };
 
 /** Yields between bounded steps so each driver owns scheduling and cancellation. */
 export type ElfGnuHashCountWalk = Generator<
@@ -24,7 +30,14 @@ const malformed = (message: string): Result<never, ElfHashCountFailure> =>
 const overBudget = (
   label: string,
   count: number,
-): Result<never, ElfHashCountFailure> => err({ kind: "budget", label, count });
+  lowerBound?: true,
+): Result<never, ElfHashCountFailure> =>
+  err({
+    kind: "budget",
+    label,
+    count,
+    ...(lowerBound === true ? { lowerBound: true } : {}),
+  });
 
 /** A byte offset requests one word. An empty step is a cancellation checkpoint. */
 export type ElfHashCountSteps<
@@ -32,25 +45,71 @@ export type ElfHashCountSteps<
   Step extends number | undefined = number | undefined,
 > = Generator<Step, Result<Count, ElfHashCountFailure>, Result<number, string>>;
 
+/** The width of one DT_HASH entry and, for eight-byte entries, its byte order. */
+export type ElfHashEntryLayout = {
+  readonly bytes: 4 | 8;
+  readonly little: boolean;
+};
+
+const EM_S390 = 22;
+const EM_ALPHA = 0x9026;
+const EM_S390_OLD = 0xa390;
+
+/** binutils and glibc store 64-bit Alpha and s390x DT_HASH entries in eight bytes. */
+export const elfHashEntryLayout = ({
+  machine,
+  bits,
+  little,
+}: {
+  readonly machine: number;
+  readonly bits: 32 | 64;
+  readonly little: boolean;
+}): ElfHashEntryLayout => ({
+  bytes:
+    bits === 64 &&
+    (machine === EM_S390 || machine === EM_ALPHA || machine === EM_S390_OLD)
+      ? 8
+      : 4,
+  little,
+});
+
 /** DT_HASH's nchain is the dynamic symbol count; the whole table must be readable. */
 export function* readElfHashSymbolCountSteps(
   maximum = Number.POSITIVE_INFINITY,
+  entry: ElfHashEntryLayout = { bytes: 4, little: true },
 ): ElfHashCountSteps<number, number> {
-  const buckets = yield 0;
-  if (!buckets.ok) return malformed(`DT_HASH header ${buckets.error}`);
-  const count = yield 4;
-  if (!count.ok) return malformed(`DT_HASH header ${count.error}`);
+  function* header(index: number): ElfHashCountSteps<number, number> {
+    const at = index * entry.bytes;
+    if (entry.bytes === 4) {
+      const word = yield at;
+      return word.ok
+        ? ok(word.value)
+        : malformed(`DT_HASH header ${word.error}`);
+    }
+    const low = yield at + (entry.little ? 0 : 4);
+    if (!low.ok) return malformed(`DT_HASH header ${low.error}`);
+    const high = yield at + (entry.little ? 4 : 0);
+    if (!high.ok) return malformed(`DT_HASH header ${high.error}`);
+    return high.value === 0
+      ? ok(low.value)
+      : malformed("DT_HASH header entry exceeds 32 bits");
+  }
+  const buckets = yield* header(0);
+  if (!buckets.ok) return buckets;
+  const count = yield* header(1);
+  if (!count.ok) return count;
   if (count.value > maximum)
     return overBudget("DT_HASH symbol table", count.value);
-  const end = yield 8 + 4 * (buckets.value + count.value) - 4;
+  const end = yield entry.bytes * (2 + buckets.value + count.value) - 4;
   return end.ok ? ok(count.value) : malformed(`DT_HASH table ${end.error}`);
 }
 
 export const readElfHashSymbolCount = (
   read: ElfHashWordReader,
   maximum = Number.POSITIVE_INFINITY,
+  entry?: ElfHashEntryLayout,
 ): Result<number, ElfHashCountFailure> => {
-  const steps = readElfHashSymbolCountSteps(maximum);
+  const steps = readElfHashSymbolCountSteps(maximum, entry);
   let next = steps.next();
   while (!next.done) next = steps.next(read(next.value));
   return next.value;
@@ -97,7 +156,7 @@ export function* readElfGnuHashSymbolCountSteps(
   if (last === 0) return ok(null);
   for (let index = last; ; index += 1) {
     if (index + 1 > maximum)
-      return overBudget("DT_GNU_HASH symbol table", index + 1);
+      return overBudget("DT_GNU_HASH symbol table", index + 1, true);
     if ((index - last) % CHECKPOINT_STEPS === 0) yield;
     const chain = yield prefixBytes + (index - firstSymbol) * 4;
     if (!chain.ok) return malformed(`DT_GNU_HASH chain ${chain.error}`);

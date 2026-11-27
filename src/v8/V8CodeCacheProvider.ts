@@ -12,11 +12,12 @@ import {
 } from "../resources/index.js";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type { V8CodeCachePort } from "../ports/v8CodeCache/V8CodeCachePort.js";
+import type { AnalysisParameterLimit } from "../domain/analysisSettings.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import {
-  MAX_INSPECT_V8_CODE_CACHE_FILE_BYTES,
   MAX_INSPECT_V8_CODE_CACHE_MIN_STRING_BYTES,
   MAX_INSPECT_V8_CODE_CACHE_STRINGS,
+  v8CodeCacheBudgetLimit,
   type InspectV8CodeCacheInput,
   type V8CodeCache,
 } from "../domain/v8/v8CodeCache.js";
@@ -83,16 +84,16 @@ export class V8CodeCacheProvider implements V8CodeCachePort {
   }
 }
 
-const inputBudgetRemediation = (
-  cause: ArtifactReaderFailure,
-  input: InspectV8CodeCacheInput,
-): string | undefined => {
-  if (cause.boundary === "file-size")
-    return input.max_file_bytes >= MAX_INSPECT_V8_CODE_CACHE_FILE_BYTES
-      ? `The file exceeds the ${String(MAX_INSPECT_V8_CODE_CACHE_FILE_BYTES)}-byte input ceiling this operation accepts; select a smaller artifact.`
-      : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`;
-  return undefined;
-};
+const fileSizeBudgetLimit = (
+  effectiveValue: number,
+  observedBytes: bigint | undefined,
+): AnalysisParameterLimit => ({
+  ...v8CodeCacheBudgetLimit("max_file_bytes", effectiveValue),
+  ...(observedBytes === undefined ||
+  observedBytes > BigInt(Number.MAX_SAFE_INTEGER)
+    ? {}
+    : { required_value: Number(observedBytes) }),
+});
 
 /** Raising either admitted knob can make an exhausted string count fit. */
 const observationBudgetRemediation = (
@@ -138,6 +139,10 @@ const v8CodeCacheFailure = (
         )
           return parseLimitConstraint(OPERATION, "capacity", failure, {
             retryable: false,
+            limit: v8CodeCacheBudgetLimit(
+              "max_strings",
+              failure.failure.limit.maximum,
+            ),
             remediationAction: observationBudgetRemediation(
               failure.failure.limit.maximum,
               input,
@@ -147,8 +152,7 @@ const v8CodeCacheFailure = (
           origin === "owned-or-classified" &&
           failure instanceof ArtifactReaderFailure &&
           failure.reason === "limit"
-        ) {
-          const remediationAction = inputBudgetRemediation(failure, input);
+        )
           return new AnalysisResourceConstraintError(
             OPERATION,
             failure.boundary ?? "memory",
@@ -156,12 +160,17 @@ const v8CodeCacheFailure = (
             reportedLimits,
             {
               cause: failure,
-              ...(remediationAction === undefined
-                ? {}
-                : { retryable: false, remediationAction }),
+              ...(failure.boundary === "file-size"
+                ? {
+                    retryable: false,
+                    limit: fileSizeBudgetLimit(
+                      input.max_file_bytes,
+                      failure.observedBytes,
+                    ),
+                  }
+                : {}),
             },
           );
-        }
         return undefined;
       },
     }),

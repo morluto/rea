@@ -1,11 +1,12 @@
 import { withPyInstallerReader } from "../../../tests/fixtures/pyinstallerReader.js";
 import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { getEventListeners, once } from "node:events";
 import { Readable } from "node:stream";
 import { finished } from "node:stream/promises";
-import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { createHash, randomBytes } from "node:crypto";
+import { createTestTempFile } from "../../../tests/fixtures/temporaryDirectory.js";
+import { randomBytes } from "node:crypto";
+import { sha256 as hash } from "../../../tests/support/sha256.js";
 import { rename, unlink, writeFile, type FileHandle } from "node:fs/promises";
 import { buffer } from "node:stream/consumers";
 import { deflateSync, Inflate } from "node:zlib";
@@ -30,8 +31,6 @@ import {
   PYTHON_39_MAGIC,
 } from "./CArchive.fixture.js";
 
-const hash = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 const archive = (body: Buffer) =>
   cArchiveExecutable({
     layout: "2.1",
@@ -415,9 +414,9 @@ it.each(["success", "io", "caller cancellation", "reader close"] as const)(
 it.each([false, true])(
   "settles independent private and carrier closes and retries only failed owners (carrier failure: %s)",
   async (failCarrier) => {
-    const path = join(await createTestTempDirectory("rea-pyi-cleanup-"), "app");
-    await writeFile(
-      path,
+    const path = await createTestTempFile(
+      "rea-pyi-cleanup-",
+      "app",
       cArchiveExecutable({
         layout: "2.1",
         pythonVersion: 309,

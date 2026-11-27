@@ -8,8 +8,8 @@ import {
   pyzArchive,
   type CArchiveFixtureMember,
 } from "../../src/artifacts/pyinstaller/CArchive.fixture.js";
-import { artifactInventoryResultSchema } from "../../src/domain/artifactGraph.js";
 import type { Evidence } from "../../src/domain/evidence.js";
+import { occurrenceAt } from "../fixtures/artifactEvidence.js";
 import { connectArtifactComparisonMcp } from "../fixtures/artifactComparisonMcp.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
@@ -32,14 +32,6 @@ const connectArchiveComparison = async () => {
   return { inspect, compare };
 };
 
-const occurrence = (evidence: Evidence, path: string) => {
-  const found = artifactInventoryResultSchema
-    .parse(evidence.normalized_result)
-    .occurrences.find(({ logical_path }) => logical_path === path);
-  if (found === undefined) throw new Error(`Missing ${path}`);
-  return found;
-};
-
 it("reports a changed PyInstaller declaration whose member bytes are unavailable", async () => {
   const { inspect, compare } = await connectArchiveComparison();
   const link = (name: string) => [
@@ -51,11 +43,11 @@ it("reports a changed PyInstaller declaration whose member bytes are unavailable
   const nfc = "café-link";
   const left = await inspect("nfc", link(nfc));
   const right = await inspect("nfd", link("café-link"));
-  expect(occurrence(left, nfc)).toMatchObject({
+  expect(occurrenceAt(left, nfc)).toMatchObject({
     hash_status: "not-hashed",
     format_metadata: { source_name: nfc },
   });
-  expect(occurrence(right, nfc)).toMatchObject({
+  expect(occurrenceAt(right, nfc)).toMatchObject({
     hash_status: "not-hashed",
     format_metadata: { source_name: "café-link" },
   });
@@ -66,8 +58,8 @@ it("reports a changed PyInstaller declaration whose member bytes are unavailable
   ).toMatchObject({
     classification: "changed",
     dimensions: ["metadata", "availability"],
-    left_occurrence_id: occurrence(left, nfc).occurrence_id,
-    right_occurrence_id: occurrence(right, nfc).occurrence_id,
+    left_occurrence_id: occurrenceAt(left, nfc).occurrence_id,
+    right_occurrence_id: occurrenceAt(right, nfc).occurrence_id,
   });
 });
 
@@ -101,7 +93,7 @@ it("reports a PYZ namespace record that becomes encrypted", async () => {
     },
     pyz,
   ]);
-  expect(occurrence(encrypted, namespace)).toMatchObject({
+  expect(occurrenceAt(encrypted, namespace)).toMatchObject({
     entry_kind: "metadata",
     artifact_id: null,
     encrypted: true,
@@ -113,7 +105,7 @@ it("reports a PYZ namespace record that becomes encrypted", async () => {
   ).toMatchObject({
     classification: "changed",
     dimensions: ["metadata"],
-    left_occurrence_id: occurrence(plain, namespace).occurrence_id,
-    right_occurrence_id: occurrence(encrypted, namespace).occurrence_id,
+    left_occurrence_id: occurrenceAt(plain, namespace).occurrence_id,
+    right_occurrence_id: occurrenceAt(encrypted, namespace).occurrence_id,
   });
 });

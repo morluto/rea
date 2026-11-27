@@ -2,6 +2,10 @@ import { projectWebSourceLocationView } from "./webSourceLocationView.js";
 import { projectNativeProcedureReferencesView } from "./nativeProcedureReferencesView.js";
 import { projectPlaywrightTraceView } from "./playwrightTraceView.js";
 import { projectWebPageView } from "./webPageView.js";
+import { projectWebExecutionView } from "./webExecutionView.js";
+import { projectApktoolResourcesView } from "./apktoolResourcesView.js";
+import { projectAndroidReferencesView } from "./androidReferencesView.js";
+import { projectArtifactExtractionView } from "./artifactExtractionView.js";
 import { projectApiContractView } from "./apiContractView.js";
 import {
   isNativeObservationOperation,
@@ -9,16 +13,21 @@ import {
 } from "../native/nativeObservation.js";
 import { projectNativeObservationView } from "./nativeObservationView.js";
 import { projectRecordedArrayView } from "./recordedArrayView.js";
+import { projectEvidenceJsonView } from "./evidenceJsonView.js";
 import { projectNativeInstructionReferencesView } from "./nativeInstructionReferencesView.js";
 import { projectNativeValueTraceView } from "./nativeValueTraceView.js";
 import { projectDevicetreeView } from "./devicetreeView.js";
+import { projectEspNvsView } from "./espNvsView.js";
 import { projectUefiExtractionView } from "./uefiExtractionView.js";
 import { projectUefiFirmwareView } from "./uefiFirmwareView.js";
 import { projectApkSignatureView } from "./apkSignatureView.js";
 import { byteEntropySchema } from "../native/byteEntropy.js";
 import { projectErlangBeamView } from "./erlangBeamView.js";
 import { projectPythonPycView } from "./pythonPycView.js";
+import { projectDebPackageView } from "./debPackageView.js";
 import { projectNugetNupkgView } from "./nugetNupkgView.js";
+import { projectVsixPackageView } from "./vsixPackageView.js";
+import { projectOciImageLayoutView } from "./ociImageLayoutView.js";
 import { projectNativeExportsView } from "./nativeExportsView.js";
 import { projectElfDependenciesView } from "./elfDependenciesView.js";
 import { projectByteEntropyView } from "./byteEntropyView.js";
@@ -103,6 +112,7 @@ import { projectEnvironmentCoverageView } from "./environmentCoverageView.js";
 import { projectPcapCaptureView } from "./pcapCaptureView.js";
 import { projectAndroidPackageView } from "./androidPackageView.js";
 import { projectAndroidSymbolSummary } from "./androidSymbolView.js";
+import { projectAndroidClassView } from "./androidClassView.js";
 import { projectAndroidJniView } from "./androidJniView.js";
 import { projectDartAotView } from "./dartAotView.js";
 import { projectIl2cppMetadataView } from "./il2cppMetadataView.js";
@@ -200,13 +210,17 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("trace_native_values", projectNativeValueTraceView),
   retain("inspect_erlang_beam", projectErlangBeamView),
   retain("inspect_devicetree", projectDevicetreeView),
+  retain("inspect_esp_nvs", projectEspNvsView),
   retain("inspect_uefi_firmware", projectUefiFirmwareView),
   retain("extract_uefi_firmware", projectUefiExtractionView),
   retain("inspect_native_exports", projectNativeExportsView),
   retain("inspect_elf_dependencies", projectElfDependenciesView),
   retain("inspect_native_load_image", projectNativeLoadImageView),
   retain("inspect_python_pyc", projectPythonPycView),
+  retain("inspect_deb_package", projectDebPackageView),
   retain("inspect_nuget_nupkg", projectNugetNupkgView),
+  retain("inspect_vsix_package", projectVsixPackageView),
+  retain("inspect_oci_image_layout", projectOciImageLayoutView),
   retain("frida_session_status", projectFridaSessionStatusView),
   retain("gdb_console", projectCommandObservationView),
   retain("inspect_with_objdump", projectCommandObservationView),
@@ -223,7 +237,7 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("inspect_managed_artifact", projectManagedArtifactView),
   retain("inspect_managed_members", projectManagedMemberView),
   retain("inspect_android_package", projectAndroidPackageView),
-  retain("inspect_android_class", projectAndroidSymbolSummary),
+  retain("inspect_android_class", projectAndroidClassView),
   retain("inspect_android_method", projectAndroidSymbolSummary),
   retain("inspect_android_jni_bindings", projectAndroidJniView),
   retain("capture_browser_scenario", projectBrowserScenarioView),
@@ -246,6 +260,10 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("inventory_artifact", projectArtifactInventoryView),
   retain("analyze_web_bundle", projectWebBundleView),
   retain("inspect_web_page", projectWebPageView),
+  retain("observe_web_execution", projectWebExecutionView),
+  retain("decode_android_resources", projectApktoolResourcesView),
+  retain("trace_android_references", projectAndroidReferencesView),
+  retain("extract_artifact", projectArtifactExtractionView),
   retain("trace_web_source_location", projectWebSourceLocationView),
 ]);
 
@@ -370,6 +388,8 @@ export const projectAnalysisView = (
   if (view.kind === "recorded-array") {
     return sealProjected(projectRecordedArrayView(parent, view));
   }
+  if (view.kind === "evidence-json")
+    return sealProjected(projectEvidenceJsonView(parent, view));
   if (view.kind === "javascript-routes") {
     const projected = projectJavaScriptRoutesView(parent, view);
     return sealProjected(projected);

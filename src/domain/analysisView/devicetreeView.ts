@@ -10,7 +10,7 @@ import {
 import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
@@ -93,11 +93,7 @@ export const projectDevicetreeView = (
     parent_operation: "inspect_devicetree" as const,
     parent_digest: parent.evidenceId.slice(3),
     artifact: { path: r.artifact.path, sha256: r.artifact.sha256 },
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...r.limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, r.limitations),
     unknowns: [
       "Binding-specific references, address translation and runtime hardware state are not established.",
     ],

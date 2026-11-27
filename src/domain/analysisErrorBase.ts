@@ -4,9 +4,11 @@ import type { ElfDebugLink } from "./native/elfDebugLink.js";
 import type { ElfDependencies } from "./native/elfDependencies.js";
 import type { ElfNotes } from "./native/elfNotes.js";
 import type { ElfUnwindRanges } from "./native/elfUnwindRanges.js";
+import type { MachoFunctionStarts } from "./native/machoFunctionStarts.js";
 import type { PeUnwindRanges } from "./native/peUnwindRanges.js";
 import type { KernelBuildConfig } from "./native/kernelBuildConfig.js";
 import type { KernelModule } from "./native/kernelModule.js";
+import type { EspNvsReport } from "./firmware/espNvs.js";
 import type { V8CodeCache } from "./v8/v8CodeCache.js";
 import type { InterfaceBuilderAnalysis } from "./apple/interfaceBuilderGraph.js";
 import type { PartialTaskMeasurement } from "./desktop/taskDifficulty.js";
@@ -15,7 +17,7 @@ import type { PlaywrightTrace } from "./playwrightTrace/playwrightTrace.js";
 import type { ErlangBeam } from "./erlang/beam.js";
 import type { ApiContract } from "./apiContract/apiContract.js";
 import type { GraphqlContract } from "./apiContract/graphqlContract.js";
-import type { SavedAnalysisSnapshotPartialObservation } from "./savedAnalysisSnapshot.js";
+import type { CloseOutcomePartialObservation } from "./engineCloseReport.js";
 import type { AnalysisLimit } from "./analysisSettings.js";
 import type { JsonValue } from "./jsonValue.js";
 import type { AnalysisCleanupRetry } from "./analysisErrorRecovery.js";
@@ -413,7 +415,9 @@ export abstract class AnalysisError extends Error {
   /**
    * This error's own completion record. A bound release claim is its owner's
    * record; without one, an error composed only of dependencies has no
-   * resources of its own, and any other error waits for its owner.
+   * resources of its own, and any other error waits for its owner. Several
+   * claims are successive owners of the same resources (a retry owner that
+   * took over a lease), so the first owner to release completes them.
    */
   #ownCleanupPending(): boolean {
     if (this.#cleanupReleaseClaims.size === 0)
@@ -570,14 +574,22 @@ export abstract class AnalysisError extends Error {
     dependencies: readonly AnalysisError[],
     resourceProjection?: { readonly cleanupResources: readonly string[] },
   ): this {
-    // Settle the dependencies already bound before adding more: completion is
-    // monotonic, so a dependency bound after they released cannot reopen it.
-    if (!this.cleanupIncomplete) this.#cleanupDependencies?.clear();
+    // Completion is monotonic once this error has owned and settled cleanup;
+    // a dependency bound after settlement cannot reopen it or leak into cleanupResources.
+    if (this.#carriesCleanup && !this.cleanupIncomplete) {
+      this.#cleanupDependencies?.clear();
+      return this;
+    }
+    const incomplete = dependencies.filter(
+      (dependency) => dependency.cleanupIncomplete,
+    );
+    if (!this.#carriesCleanup && incomplete.length > 0)
+      this.#cleanupIncomplete = true;
+    this.#carriesCleanup = true;
     const pending = (this.#cleanupDependencies ??= new Set<AnalysisError>());
     if (resourceProjection !== undefined)
       this.#cleanupResourceProjection = resourceProjection;
-    for (const dependency of dependencies)
-      if (dependency.cleanupIncomplete) pending.add(dependency);
+    for (const dependency of incomplete) pending.add(dependency);
     return this;
   }
 
@@ -716,6 +728,7 @@ import type { CutterBridgeDiscovery } from "./cutterDiscovery.js";
 
 import type { WebTraceObservation } from "./webTraceObservation.js";
 import type { WebArtifactAcquisition } from "./webArtifactAcquisition.js";
+import type { YaraMatches } from "./yara/yaraMatches.js";
 
 /** Provider-neutral evidence collected before a typed analysis failure. */
 export type AnalysisPartialObservation =
@@ -725,6 +738,7 @@ export type AnalysisPartialObservation =
   | ElfDependencies
   | ElfNotes
   | ElfUnwindRanges
+  | MachoFunctionStarts
   | PeUnwindRanges
   | KernelBuildConfig
   | KernelModule
@@ -743,7 +757,7 @@ export type AnalysisPartialObservation =
   | ApiContract
   | GraphqlContract
   | PlaywrightTrace
-  | SavedAnalysisSnapshotPartialObservation
+  | CloseOutcomePartialObservation
   | WebArtifactAcquisition
   | WebTraceObservation
   | CutterBridgeDiscovery
@@ -792,4 +806,6 @@ export type AnalysisPartialObservation =
   | AdbActivityStartPartialObservation
   | AdbAcquiredFilePartialObservation
   | AdbPackagePullPartialObservation
-  | AdbDisplayPartialObservation;
+  | AdbDisplayPartialObservation
+  | EspNvsReport
+  | YaraMatches;

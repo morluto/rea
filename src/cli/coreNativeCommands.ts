@@ -50,6 +50,27 @@ export const registerCoreNativeCommands = (
           name: "inline-comment",
           description: "Inline entry comment; empty text clears it",
         },
+        signature: {
+          description:
+            "C prototype using existing database types; its function name is a placeholder",
+        },
+      },
+    },
+    run,
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(OFFICIAL_TOOL_CONTRACTS, "define_native_data_types"),
+    {
+      description:
+        "Add C struct, union, enum and typedef definitions to the analysis database. In Ghidra ephemeral mode they are discarded when this command exits; REA_GHIDRA_CHECKPOINT_DIR keeps them under the same conditions as function annotations",
+      sessionTarget: executable,
+      positionals: ["declarations"],
+      fields: {
+        declarations: {
+          description: "C type definitions; existing type names are refused",
+        },
       },
     },
     run,

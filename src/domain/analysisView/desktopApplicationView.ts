@@ -12,7 +12,7 @@ import {
   type DesktopApplication,
 } from "../desktopApplication.js";
 import {
-  analysisViewInputError,
+  invalidAnalysisViewSubject,
   invalidAnalysisView,
 } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
@@ -26,8 +26,8 @@ import {
   type AdmittedView,
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
-import { pickFields, selectViewRows } from "./selectViewRows.js";
-import { ok, err } from "../result.js";
+import { filterSet, pickFields, selectViewRows } from "./selectViewRows.js";
+import { ok } from "../result.js";
 import { evidenceFileTarget } from "../evidence.js";
 
 // Bound diagnostic context independently of the retained report size. Previews
@@ -174,14 +174,8 @@ export const projectDesktopApplicationView = (
     subject.format !== "directory" ||
     subject.sha256 !== report.root.snapshot_sha256
   )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message: "Parent must identify the same examined directory snapshot.",
-        },
-      ]),
+    return invalidAnalysisViewSubject(
+      "Parent must identify the same examined directory snapshot.",
     );
   const shared = {
     parent_evidence_id: parent.evidenceId,
@@ -283,9 +277,9 @@ export const projectDesktopApplicationView = (
   const rows: readonly DesktopViewRow[] = report[view.collection];
   let matches: ((row: DesktopViewRow) => boolean) | undefined;
   if (view.collection === "files" || view.collection === "omissions") {
-    const paths = view.paths === undefined ? undefined : new Set(view.paths);
+    const paths = filterSet(view.paths);
     const ids = view.collection === "files" ? view.file_ids : view.omission_ids;
-    const selected = ids === undefined ? undefined : new Set(ids);
+    const selected = filterSet(ids);
     const withIssues =
       view.collection === "files" ? view.has_issues : undefined;
     if (

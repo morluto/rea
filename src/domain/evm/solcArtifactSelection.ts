@@ -18,7 +18,7 @@ import { err, ok, type Result } from "../result.js";
 import type { LimitRef } from "../parseFailure.js";
 
 export interface SolcArtifactSelectionError {
-  readonly reason: "format" | "selection" | "resource";
+  readonly reason: "malformed" | "selection" | "resource";
   readonly message: string;
   /** The named ceiling that stopped a resource-limited selection. */
   readonly limit?: LimitRef;
@@ -48,7 +48,7 @@ function references(
 ): Result<SolcArtifact["link_references"], SolcArtifactSelectionError> {
   if (node === undefined) return ok(null);
   if (node.type !== "object")
-    return failure("format", `${kind}References must be an object`);
+    return failure("malformed", `${kind}References must be an object`);
   const output: NonNullable<SolcArtifact["link_references"]> = [];
   function spans(
     array: Node,
@@ -102,16 +102,16 @@ function references(
     const key = property.children?.[0]?.value as string;
     const value = property.children?.[1];
     if (value === undefined)
-      return failure("format", "Malformed reference property");
+      return failure("malformed", "Malformed reference property");
     if (kind === "immutable") {
       if (!spans(value, null, null, key))
         return failure(
-          "format",
+          "malformed",
           "Malformed or out-of-range immutable reference span",
         );
     } else {
       if (value.type !== "object")
-        return failure("format", "Link source references must be objects");
+        return failure("malformed", "Link source references must be objects");
       for (const library of properties(value)) {
         const array = library.children?.[1];
         if (
@@ -119,7 +119,7 @@ function references(
           !spans(array, key, library.children?.[0]?.value as string, null)
         )
           return failure(
-            "format",
+            "malformed",
             "Malformed or out-of-range link reference span",
           );
       }
@@ -156,12 +156,12 @@ export function selectSolcArtifact(
   try {
     text = decodeStrictUtf8(bytes, "preserve");
   } catch {
-    return failure("format", "Compiler JSON is not valid UTF-8");
+    return failure("malformed", "Compiler JSON is not valid UTF-8");
   }
   const parsed = strictTree(text);
   if (!parsed.ok) return parsed;
   if (parsed.value.type !== "object")
-    return failure("format", "Compiler JSON must be an object");
+    return failure("malformed", "Compiler JSON must be an object");
   const diagnostics = compilerDiagnostics(parsed.value, text);
   if (!diagnostics.ok) return diagnostics;
   const result = selectFromTree(
@@ -181,7 +181,7 @@ function compilerDiagnostics(
 ): Result<SolcArtifact["diagnostics"], SolcArtifactSelectionError> {
   const errors = child(tree, "errors");
   if (errors !== undefined && errors.type !== "array")
-    return failure("format", "Compiler diagnostics must be an array");
+    return failure("malformed", "Compiler diagnostics must be an array");
   const diagnostics =
     errors === undefined
       ? null
@@ -213,16 +213,20 @@ function selectFromTree(
   const bytecodeKey = solcBytecodeProperty(selection.bytecode_kind);
   const evm = child(contract, "evm");
   if (evm !== undefined && evm.type !== "object")
-    return failure("format", "Selected contract evm output must be an object");
+    return failure(
+      "malformed",
+      "Selected contract evm output must be an object",
+    );
   const bytecode = child(evm, bytecodeKey);
   if (bytecode !== undefined && bytecode.type !== "object")
-    return failure("format", "Selected compiler bytecode must be an object");
+    return failure("malformed", "Selected compiler bytecode must be an object");
   const objectNode = child(bytecode, "object");
   if (objectNode !== undefined && objectNode.type !== "string")
-    return failure("format", "Compiler bytecode object must be a string");
+    return failure("malformed", "Compiler bytecode object must be a string");
   const object = objectNode === undefined ? null : (objectNode.value as string);
   const decoded = object === null ? null : inspectSolcBytecodeObject(object);
-  if (decoded !== null && !decoded.ok) return failure("format", decoded.error);
+  if (decoded !== null && !decoded.ok)
+    return failure("malformed", decoded.error);
   const byteLength = decoded?.ok ? decoded.value.byteLength : null;
   const placeholders = decoded?.ok ? decoded.value.placeholders : [];
   const links = references(
@@ -307,13 +311,16 @@ function selectedContract(
 ): Result<Node, SolcArtifactSelectionError> {
   const contracts = child(tree, "contracts");
   if (contracts !== undefined && contracts.type !== "object")
-    return failure("format", "Compiler contracts output must be an object");
+    return failure("malformed", "Compiler contracts output must be an object");
   const source = child(contracts, selection.source_unit);
   if (source !== undefined && source.type !== "object")
-    return failure("format", "Selected source unit output must be an object");
+    return failure(
+      "malformed",
+      "Selected source unit output must be an object",
+    );
   const contract = child(source, selection.contract_name);
   if (contract !== undefined && contract.type !== "object")
-    return failure("format", "Selected contract output must be an object");
+    return failure("malformed", "Selected contract output must be an object");
   if (contract?.type !== "object")
     return failure(
       "selection",

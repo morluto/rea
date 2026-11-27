@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { jsonRecordSchema } from "../jsonRecord.js";
 import { jsonValueSchema } from "../jsonValue.js";
-import { offset, uint32 } from "./primitives.js";
+import { offset, sha256Hex, uint32, uint8 } from "./primitives.js";
 
 /** Parsed source fields owned by the PCK adapter, independent of content hashes. */
 export const godotPckMetadataSchema = z.strictObject({
@@ -360,3 +360,156 @@ export const tarEntryMetadataSchema = z.strictObject({
   gname: z.string().nullable(),
   link_name: z.string().nullable(),
 });
+
+const switchExtentSchema = z.strictObject({ offset: uint32, size: uint32 });
+
+/**
+ * Nintendo Switch NSO or NRO header facts. Offsets and sizes are the header's
+ * declarations; `asset_section` is null when an NRO has no `ASET` trailer.
+ */
+export const switchExecutableMetadataSchema = z.strictObject({
+  kind: z.literal("switch-executable"),
+  format: z.enum(["nso", "nro"]),
+  version: uint32,
+  flags: uint32,
+  /** NSO flag bits outside compression and hash checks; 0 for NRO. */
+  unknown_flags: uint32,
+  /** Build id that pairs the module with crash logs and patches. */
+  module_id: z.string().regex(/^[0-9a-f]{64}$/u),
+  bss_size: uint32,
+  /**
+   * MOD0 header offset, when it could be read: for NSO relative to the start
+   * of text (read at text+4); for NRO the header's file-relative field at 0x4.
+   */
+  mod0_offset: uint32.nullable(),
+  /** NRO: whether `MOD0` is at that file offset; null for NSO or when unread. */
+  mod0_present: z.boolean().nullable(),
+  embedded: switchExtentSchema,
+  dynstr: switchExtentSchema,
+  dynsym: switchExtentSchema,
+  /** NRO declared image size; null for NSO. */
+  image_size: uint32.nullable(),
+  asset_section: z.strictObject({ offset, version: uint32 }).nullable(),
+});
+export type SwitchExecutableMetadata = z.infer<
+  typeof switchExecutableMetadataSchema
+>;
+
+/** One NSO/NRO segment or NRO asset as the header declares it. */
+export const switchExecutableEntryMetadataSchema = z.strictObject({
+  kind: z.literal("switch-executable-entry"),
+  role: z.enum(["text", "rodata", "data", "icon", "nacp", "romfs"]),
+  file_offset: offset,
+  /** Load offset of a segment; null for assets. */
+  memory_offset: offset.nullable(),
+  /** Bytes stored in the file; differs from the entry size when compressed. */
+  file_size: offset,
+  compressed: z.boolean(),
+  /** Declared SHA-256 of the loaded segment (NSO only). */
+  declared_sha256: sha256Hex.nullable(),
+  /** SHA-256 REA computed over the loaded segment, when it was read. */
+  observed_sha256: sha256Hex.nullable(),
+  /**
+   * `match`/`mismatch`: the header asked for a hash check and REA compared.
+   * `not-checked`: the header does not request a check. `unavailable`: the
+   * segment could not be read or decompressed within budget.
+   */
+  hash_status: z.enum(["match", "mismatch", "not-checked", "unavailable"]),
+});
+export type SwitchExecutableEntryMetadata = z.infer<
+  typeof switchExecutableEntryMetadataSchema
+>;
+
+/** Byte order of a Nintendo 64 ROM image, named by its usual extension. */
+export const N64_BYTE_ORDERS = ["z64", "v64", "n64"] as const;
+/**
+ * IPL3/CIC variant named by the CRC32 of bytes 0x40..0x1000. NTSC and PAL
+ * partners share one boot image. `unknown` is a hash outside this table.
+ */
+export const N64_CIC_IDS = [
+  "6101",
+  "6102/7101",
+  "6103/7103",
+  "6105/7105",
+  "6106/7106",
+  "unknown",
+] as const;
+/** Media byte at header 0x3B, when it is one of the documented values. */
+export const N64_MEDIA_NAMES = [
+  "cartridge",
+  "64dd",
+  "expandable-cartridge",
+  "expandable-64dd",
+  "aleck64",
+] as const;
+/** Destination byte at header 0x3E, when it is one of the documented codes. */
+export const N64_DESTINATION_NAMES = [
+  "Asia",
+  "Brazil",
+  "China",
+  "Germany",
+  "North America",
+  "France",
+  "Gateway 64 NTSC",
+  "Netherlands",
+  "Italy",
+  "Japan",
+  "Korea",
+  "Gateway 64 PAL",
+  "Canada",
+  "Europe",
+  "Spain",
+  "Australia",
+  "Scandinavia",
+  "Beta",
+] as const;
+
+const n64CrcSchema = z.strictObject({
+  status: z.enum(["match", "mismatch", "not-checked"]),
+  declared_crc1: uint32,
+  declared_crc2: uint32,
+  computed_crc1: uint32.nullable(),
+  computed_crc2: uint32.nullable(),
+});
+
+/**
+ * Nintendo 64 cartridge header after the image is normalized to big-endian
+ * (z64) order. Title bytes stay in `title_raw_hex`; `title_ascii` renders
+ * printable ASCII and replaces every other byte with `.`.
+ */
+export const n64RomMetadataSchema = z.strictObject({
+  kind: z.literal("n64-rom"),
+  source_order: z.enum(N64_BYTE_ORDERS),
+  rom_bytes: offset,
+  /** First header word. A normalized image carries 0x80371240. */
+  pi_dom1_config: uint32,
+  clock_rate: uint32,
+  boot_address: uint32,
+  /** Raw word at 0x0C. REA does not map it to a libultra version name. */
+  libultra_release: uint32,
+  crc: n64CrcSchema,
+  /** IEEE CRC32 of IPL3 (0x40..0x1000); null when those bytes are absent. */
+  ipl3_crc32: uint32.nullable(),
+  cic: z.enum(N64_CIC_IDS),
+  title_raw_hex: z.string().regex(/^[0-9a-f]{40}$/u),
+  title_ascii: z.string().length(20),
+  media_byte: uint8,
+  media_name: z.enum(N64_MEDIA_NAMES).nullable(),
+  cartridge_id: z.string().length(2),
+  cartridge_id_hex: z.string().regex(/^[0-9a-f]{4}$/u),
+  destination_byte: uint8,
+  destination_code: z.string().length(1),
+  destination_name: z.enum(N64_DESTINATION_NAMES).nullable(),
+  version: uint8,
+});
+export type N64RomMetadata = z.infer<typeof n64RomMetadataSchema>;
+
+/** One normalized range of an N64 ROM: header, IPL3, or the whole image. */
+export const n64RomEntryMetadataSchema = z.strictObject({
+  kind: z.literal("n64-rom-entry"),
+  role: z.enum(["header", "ipl3", "program"]),
+  source_order: z.enum(N64_BYTE_ORDERS),
+  /** True when the served bytes were swapped out of v64 or n64 order. */
+  decoded: z.boolean(),
+});
+export type N64RomEntryMetadata = z.infer<typeof n64RomEntryMetadataSchema>;

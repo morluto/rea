@@ -436,10 +436,15 @@ it("runs the existing onboarding and Python producer guards from their selected 
   expect(deep?.if).toBe(
     "needs.changes.outputs.tier == 'full' && needs.changes.outputs.code == 'true'",
   );
-  expect(deep?.steps.some((step) => step.run === "npm run check:ci:deep")).toBe(
-    true,
+  expect(
+    deep?.steps.some((step) => step.run === "npm run check:ci:deep:job"),
+  ).toBe(true);
+  expect(scripts["check:ci:deep"]).toBe(
+    "npm run verify:architecture-guards && npm run check:ci:deep:job",
   );
-  expect(scripts["check:ci:deep"]).toContain("npm run test:python");
+  expect(scripts["precheck:ci:deep:job"]).toBe("npm run deps:check");
+  expect(scripts["check:ci:deep:job"]).not.toContain("architecture-guards");
+  expect(scripts["check:ci:deep:job"]).toContain("npm run test:python");
   expect(scripts["check:ci:fast"]).toBe(
     "node scripts/run-exclusive.mjs artifacts npm run check:ci:fast:tasks",
   );

@@ -7,11 +7,15 @@ import {
 } from "../../src/ports/AnalysisProvider.js";
 import { ok } from "../../src/domain/result.js";
 
-const FIXTURE_PROVIDER = {
-  id: "fixture",
-  name: "Fixture analysis provider",
-  version: "1",
-} as const;
+/** A new identity object for the default session test provider. */
+export const createFixtureProviderIdentity = () =>
+  ({
+    id: "fixture",
+    name: "Fixture analysis provider",
+    version: "1",
+  }) as const;
+
+const FIXTURE_PROVIDER = createFixtureProviderIdentity();
 
 /** Wrap fixture output in the same atomic provider envelope as production. */
 export const observed = (value: unknown) =>

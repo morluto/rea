@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto";
+import { sha256 } from "../../tests/support/sha256.js";
 import { appendFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { Readable } from "node:stream";
+import { buffer } from "node:stream/consumers";
 
 import { expect, it } from "vitest";
 
@@ -23,15 +23,6 @@ import {
 } from "../domain/iso9660/iso9660.fixture.js";
 
 const SECTOR = 2048;
-const sha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
-
-const collect = async (stream: Readable): Promise<Buffer> => {
-  const chunks: Buffer[] = [];
-  for await (const chunk of stream) chunks.push(chunk as Buffer);
-  return Buffer.concat(chunks);
-};
-
 const writeCarrier = async (name: string, bytes: Buffer): Promise<string> => {
   const path = join(await createTestTempDirectory("rea-iso9660-"), name);
   await writeFile(path, bytes);
@@ -60,7 +51,7 @@ const listing = async (path: string) => {
     const contents = new Map<string, Buffer>();
     for (const entry of entries)
       if (entry.kind === "file")
-        contents.set(entry.path, await collect(await reader.open(entry)));
+        contents.set(entry.path, await buffer(await reader.open(entry)));
     return { entries, contents, metadata: reader.formatMetadata() };
   } finally {
     await reader.close();
@@ -129,6 +120,32 @@ it("lists the same tree from primary and Joliet names, with Joliet spellings win
   expect(
     joliet.entries.find(({ path }) => path === "bin/setup.exe")?.sourcePath,
   ).toBe("bin/setup.exe;1");
+});
+
+it("reads a Joliet tree whose .. records describe their own directory, as libisofs writes them", async () => {
+  const selfParent = (joliet: boolean): Buffer => {
+    const { bytes, layout } = buildIso9660Image({ files, joliet });
+    for (const path of ["bin", "bin/data"]) {
+      const self = layout.directoryBlocks.get(path)! * SECTOR;
+      bytes.copy(bytes, self + 34 + 2, self + 2, self + 18);
+    }
+    return bytes;
+  };
+  const joliet = await listing(
+    await writeCarrier("libisofs.iso", selfParent(true)),
+  );
+  expect(joliet.metadata).toMatchObject({
+    name_source: "joliet",
+    directory_count: 2,
+    file_count: 3,
+  });
+  for (const file of files)
+    expect(sha256(joliet.contents.get(file.path)!), file.path).toBe(
+      sha256(file.bytes),
+    );
+  await expect(
+    listing(await writeCarrier("primary.iso", selfParent(false))),
+  ).rejects.toMatchObject({ reason: "malformed" });
 });
 
 it("inventories volume facts and classifies an extracted executable child", async () => {
@@ -223,7 +240,7 @@ it("concatenates contiguous extents and refuses separated or interleaved ones", 
     for await (const entry of reader.entries()) entries.push(entry);
     const byPath = new Map(entries.map((entry) => [entry.path, entry]));
     expect(
-      (await collect(await reader.open(byPath.get("big.bin")!))).equals(big),
+      (await buffer(await reader.open(byPath.get("big.bin")!))).equals(big),
     ).toBe(true);
     // Flags are observed in the first record, which continues the file.
     expect(byPath.get("big.bin")?.formatMetadata).toMatchObject({
@@ -276,7 +293,10 @@ it("concatenates contiguous extents and refuses separated or interleaved ones", 
   const snapshot = await scanCanonicalArtifactInventory(path);
   expect(
     snapshot.occurrences.find((row) => row.logical_path === "units.bin"),
-  ).toMatchObject({ hash_status: "unavailable" });
+  ).toMatchObject({
+    hash_status: "unavailable",
+    limitations: [expect.stringContaining("interleaved")],
+  });
   expect(
     snapshot.occurrences.find((row) => row.logical_path === "big.bin"),
   ).toMatchObject({ hash_status: "verified" });
@@ -364,7 +384,7 @@ it("charges the plaintext budget only for files it can read", async () => {
       extent_layout: "fragmented",
       extent_count: sections,
     });
-    const keep = await collect(await reader.open(byPath.get("keep.txt")!));
+    const keep = await buffer(await reader.open(byPath.get("keep.txt")!));
     expect(keep.toString()).toBe("keep");
   } finally {
     await reader.close();

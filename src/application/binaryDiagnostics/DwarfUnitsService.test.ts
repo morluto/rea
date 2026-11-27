@@ -1,8 +1,8 @@
+import { expectInvalidInspectionInputs } from "../../../tests/support/expectInvalidInspectionInputs.js";
 import { parseEvidence } from "../../domain/evidence.js";
 import { expect, it } from "vitest";
 import {
   AnalysisCancelledError,
-  AnalysisInputError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
 import { DWARF_UNITS_PROVIDER } from "../../domain/investigationProviders.js";
@@ -40,26 +40,12 @@ const report: DwarfUnitsReport = {
   ],
 };
 
-it("rejects a relative path and extra arguments before reading", async () => {
-  let calls = 0;
-  const service = new DwarfUnitsService({
-    identity,
-    inspect: () => {
-      calls += 1;
-      return Promise.resolve(ok(report));
-    },
-  });
-  const relative = await service.inspect({ path: "program" });
-  const extra = await service.inspect({
-    path: report.artifact.path,
-    extra: true,
-  });
-  expect(relative.ok).toBe(false);
-  expect(extra.ok).toBe(false);
-  if (!relative.ok) expect(relative.error).toBeInstanceOf(AnalysisInputError);
-  if (!extra.ok) expect(extra.error).toBeInstanceOf(AnalysisInputError);
-  expect(calls).toBe(0);
-});
+it("rejects a relative path and extra arguments before reading", () =>
+  expectInvalidInspectionInputs(
+    report,
+    "program",
+    (inspect) => new DwarfUnitsService({ identity, inspect }),
+  ));
 
 it("records absent debug info for this file", async () => {
   const result = await new DwarfUnitsService({
@@ -147,29 +133,43 @@ it("retains caller-selected parameters if cancellation arrives as the provider c
   expect(evidenceIds[0]).not.toBe(evidenceIds[1]);
 });
 
-it("accepts an arm64e request answered by its arm64-family slice", async () => {
-  const result = await new DwarfUnitsService({
-    identity,
-    inspect: () =>
-      Promise.resolve(
-        ok({
-          ...report,
-          format: "macho",
-          architecture: "arm64",
-          selected_slice: {
-            kind: "macho-selected-image-v1",
-            container: "fat",
-            offset: 4096,
-            byte_length: 128,
-            cpu_type: 0x0100000c,
-            cpu_subtype: 2,
-            container_table_sha256: "b".repeat(64),
-          },
-        }),
-      ),
-  }).inspect({ path: report.artifact.path, architecture: "arm64e" });
-  if (!result.ok) throw result.error;
-  expect(result.value).toMatchObject({
-    normalized_result: { architecture: "arm64" },
-  });
-});
+it.each([
+  { architecture: "arm64e", subtype: "0x80000002", accepted: true },
+  { architecture: "arm64e", subtype: "0x8000000c", accepted: false },
+  { architecture: "arm64e", subtype: "0x0", accepted: false },
+  { architecture: "arm64e.x1", subtype: "0x8000000c", accepted: true },
+  { architecture: "arm64e.x1", subtype: "0x80000002", accepted: false },
+] as const)(
+  "accepts $architecture for a report of subtype $subtype: $accepted",
+  async ({ architecture, subtype, accepted }) => {
+    const result = await new DwarfUnitsService({
+      identity,
+      inspect: () =>
+        Promise.resolve(
+          ok({
+            ...report,
+            format: "macho",
+            architecture: "arm64",
+            selected_slice: {
+              kind: "macho-selected-image-v1",
+              container: "fat",
+              offset: 4096,
+              byte_length: 128,
+              cpu_type: 0x0100000c,
+              cpu_subtype: Number(subtype),
+              container_table_sha256: "b".repeat(64),
+            },
+          }),
+        ),
+    }).inspect({ path: report.artifact.path, architecture });
+    if (accepted) {
+      if (!result.ok) throw result.error;
+      expect(result.value).toMatchObject({
+        normalized_result: { architecture: "arm64" },
+      });
+    } else {
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisOutputError);
+    }
+  },
+);
