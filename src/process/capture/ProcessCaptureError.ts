@@ -150,6 +150,9 @@ export const processCaptureFailureForClose = (
     ...(error.cleanupReport === undefined
       ? {}
       : { cleanupReport: error.cleanupReport }),
+    ...(error.partialObservation === undefined
+      ? {}
+      : { partialObservation: error.partialObservation }),
     ...(error.capturedOutput === undefined
       ? {}
       : { capturedOutput: error.capturedOutput }),

@@ -4,6 +4,7 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { EngineCloseReport } from "../domain/engineCloseReport.js";
 import { err, ok } from "../domain/result.js";
 import { silentLogger } from "../logger.js";
+import type { PartialProcessCaptureObservation } from "../domain/process/processCapture.js";
 import { ProcessCaptureError } from "../process/capture/ProcessCaptureError.js";
 import { closeWithProcessResources } from "./sessionLifecycle.js";
 
@@ -63,4 +64,38 @@ it("reports a discard on the close that released the edits, not on a close shari
   ).toBeUndefined();
   expect(cleanup.partialObservation).toBeUndefined();
   expect(released.error).not.toBe(untouched.error);
+});
+
+it("keeps a process capture's collected facts on the close that reports them", async () => {
+  const captured = {
+    scenario_id: "cap-kept",
+  } as unknown as PartialProcessCaptureObservation;
+  const cleanup = new ProcessCaptureError(
+    "Process capture cleanup remains incomplete: denied",
+    {
+      reason: "cleanup_incomplete",
+      executionFailure: "denied",
+      partialObservation: captured,
+      cleanup: {
+        reason: "denied",
+        resources: ["process_capture_resources"],
+      },
+    },
+  );
+  const close = closeWithProcessResources({
+    logger: silentLogger,
+    closeProcessResources: async () => err(cleanup),
+  });
+  const closed = await close(async () => ok(discarded));
+  if (closed.ok) throw new Error("shared cleanup failure was not reported");
+  expect(projectAnalysisError(closed.error)).toMatchObject({
+    code: "cleanup_incomplete",
+    details: {
+      partial_observation: {
+        checkpoint: discarded.checkpoint,
+        cleanup_observation: { scenario_id: "cap-kept" },
+      },
+    },
+  });
+  expect(cleanup.partialObservation).toEqual({ scenario_id: "cap-kept" });
 });
