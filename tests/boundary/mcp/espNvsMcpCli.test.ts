@@ -439,5 +439,36 @@ describe("inspect_esp_nvs CLI and MCP parity", () => {
     };
     expect(errorBlock.text).toContain("partition_bytes");
     expect(errorBlock.text).toContain("12288");
+
+    // 7. Dense decoded representations refuse with max_decoded_bytes adjustable_budget recovery.
+    const decodedLimitRes = await client.callTool({
+      name: "inspect_esp_nvs",
+      arguments: {
+        path: nvsPath,
+        max_decoded_bytes: 1024,
+      },
+    });
+    expect(decodedLimitRes.isError).toBe(true);
+    const decodedLimitErr = JSON.parse(
+      (decodedLimitRes.content[0] as { type: "text"; text: string }).text,
+    ) as Record<string, unknown>;
+    expect(decodedLimitErr).toMatchObject({
+      error: {
+        code: "resource_constraint",
+        details: {
+          limit: {
+            control_kind: "parameter",
+            parameter: "max_decoded_bytes",
+            effective_value: 1024,
+          },
+          related_parameters: ["partition_offset", "partition_bytes"],
+          refusal: {
+            kind: "adjustable_budget",
+            control: "max_decoded_bytes",
+            effective_value: 1024,
+          },
+        },
+      },
+    });
   });
 });

@@ -56,6 +56,10 @@ and anomalies can be paged with `inspect_analysis_view` (`kind: "esp-nvs"` or
 ## Provenance and limitations
 
 - Stored keys and values are preserved verbatim as local artifact observations.
+- Decoded page summaries, namespaces, entries, and anomalies are accounted
+  against `max_decoded_bytes` (default 32 MiB, up to 128 MiB) before report
+  allocation; narrow full-flash dumps to the NVS region with `partition_offset`
+  and `partition_bytes`, or raise `max_decoded_bytes` within its ceiling.
 - Explicit `partition_offset` and `partition_bytes` selections that extend past
   the input file are rejected rather than silently truncated.
 - XTS-AES encrypted NVS partitions are not decrypted. NVS encryption keeps page

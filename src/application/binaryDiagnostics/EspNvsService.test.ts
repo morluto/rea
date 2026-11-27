@@ -78,7 +78,7 @@ describe("EspNvsService", () => {
             }),
             {
               retryable: false,
-              limit: espNvsBudgetLimit(input.max_file_bytes),
+              limit: espNvsBudgetLimit("max_file_bytes", input.max_file_bytes),
               remediationAction: "Raise max_file_bytes.",
             },
           ),

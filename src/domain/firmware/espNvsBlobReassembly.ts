@@ -25,6 +25,7 @@ export const reassembleNvsV2Blobs = async (
   indices: readonly RawBlobIndex[],
   chunks: readonly RawBlobChunk[],
   onCheckpoint?: () => void,
+  admitDecodedBytes?: (bytes: number) => void,
 ): Promise<PendingNvsEntry[]> => {
   // Index stored chunks once by namespace -> canonical key bytes -> chunkIndex,
   // keeping the newest page sequence number for any overwritten chunk index.
@@ -155,12 +156,16 @@ export const reassembleNvsV2Blobs = async (
           chunksCrcValid,
         };
       }
+      admitDecodedBytes?.(256 + summary.previewHex.length * 2);
       cacheByRange.set(rangeKey, summary);
     }
 
     const allCrcValid = idx.headerCrcValid && summary.chunksCrcValid;
     const complete =
       summary.allPresent && summary.joinedLength === idx.totalSize;
+    admitDecodedBytes?.(
+      512 + idx.key.length * 2 + summary.previewHex.length * 2,
+    );
     out.push({
       page_index: idx.pageIndex,
       entry_index: idx.entryIndex,
@@ -199,6 +204,11 @@ export const reassembleNvsV2Blobs = async (
     // the same chunk, which an interrupted page move leaves, is reported as a
     // superseded copy only when the newer replacement passed payload CRC.
     if (claimed && winner === ch) continue;
+    admitDecodedBytes?.(
+      512 +
+        ch.key.length * 2 +
+        Math.min(ch.payload.length, MAX_BLOB_PREVIEW_BYTES) * 4,
+    );
     out.push({
       page_index: ch.pageIndex,
       entry_index: ch.entryIndex,

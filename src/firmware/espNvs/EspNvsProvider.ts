@@ -1,6 +1,9 @@
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { decodeLimit } from "../../domain/parseFailure.js";
-import { parseLimitConstraint } from "../../domain/parseFailureAnalysisError.js";
+import {
+  isParseLimit,
+  parseLimitConstraint,
+} from "../../domain/parseFailureAnalysisError.js";
 import {
   ArtifactResourceScope,
   artifactFilePrimaryFacts,
@@ -99,6 +102,7 @@ export class EspNvsProvider implements EspNvsPort {
           partitionOffset: input.partition_offset,
           partitionBytes: input.partition_bytes,
           sliceBytes: slice,
+          maxDecodedBytes: input.max_decoded_bytes,
           onCheckpoint: () => assertArtifactReadActive(options?.signal),
         });
         if (!parsed.ok) throw parsed.error;
@@ -130,6 +134,20 @@ const espNvsFailure = (
       path: input.path,
       description: "ESP-IDF NVS partition",
       fallbackMessage: "ESP-IDF NVS partition inspection failed.",
+      recognise: (failure) =>
+        isParseLimit(failure, "esp-nvs") &&
+        failure.failure.limit.name === "max_decoded_bytes"
+          ? parseLimitConstraint(OPERATION, "memory", failure, {
+              retryable: false,
+              limit: espNvsBudgetLimit(
+                "max_decoded_bytes",
+                failure.failure.limit.maximum,
+              ),
+              related: {
+                parameters: ["partition_offset", "partition_bytes"],
+              },
+            })
+          : undefined,
       fileSize: (failure) =>
         parseLimitConstraint(
           OPERATION,
@@ -142,7 +160,7 @@ const espNvsFailure = (
           ),
           {
             retryable: false,
-            limit: espNvsBudgetLimit(input.max_file_bytes),
+            limit: espNvsBudgetLimit("max_file_bytes", input.max_file_bytes),
             remediationAction: fileSizeRemediation(input),
           },
         ),

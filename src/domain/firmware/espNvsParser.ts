@@ -1,10 +1,16 @@
 import { setImmediate } from "node:timers/promises";
 import { byteToHex } from "../../kernel/byteToHex.js";
 import { BinaryReader, readUint32At } from "../binaryContainer.js";
+import { Budget } from "../budget.js";
 import { CoverageAccumulator } from "../coverageAccumulator.js";
-import { malformedInput, type ParseFailureError } from "../parseFailure.js";
+import {
+  decodeLimit,
+  malformedInput,
+  ParseFailureError,
+} from "../parseFailure.js";
 import { err, ok, type Result } from "../result.js";
 import {
+  DEFAULT_ESP_NVS_MAX_DECODED_BYTES,
   ESP_NVS_ENTRY_COUNT,
   ESP_NVS_ENTRY_DATA_OFFSET,
   ESP_NVS_ENTRY_TABLE_OFFSET,
@@ -83,16 +89,31 @@ export const hasEspNvsHeader = (
 
 interface PageWalkAccumulator {
   readonly pages: EspNvsPageSummary[];
+  readonly seqByPage: Map<number, number>;
   readonly namespacesById: Map<number, EspNvsNamespace>;
   readonly rawEntries: PendingNvsEntry[];
   readonly blobIndices: RawBlobIndex[];
   readonly blobChunks: RawBlobChunk[];
   readonly anomalies: string[];
+  readonly admitDecodedBytes: (bytes: number) => void;
   // not-an-allowance: corrupt entry tally
   corruptEntryCount: number;
   // not-an-allowance: tally of pages whose entries were not walked
   undecodedPageCount: number;
+  hasIllegalSlots: boolean;
+  hasDirtyEmptyPage: boolean;
 }
+
+const recordAnomaly = (acc: PageWalkAccumulator, message: string): void => {
+  acc.admitDecodedBytes(64 + message.length * 2);
+  acc.anomalies.push(message);
+};
+
+const entryDecodedBytes = (entry: PendingNvsEntry): number =>
+  512 +
+  entry.key.length * 2 +
+  (entry.value_text?.length ?? 0) * 2 +
+  (entry.blob_preview_hex?.length ?? 0) * 2;
 
 const undecodedReason = (
   state: EspNvsPageState,
@@ -143,8 +164,11 @@ const walkPageEntries = (
     else consistentItems += 1;
     if (decoded.inconsistentHeader === true || decoded.damagedItem === true)
       acc.corruptEntryCount += 1;
-    acc.anomalies.push(...decoded.anomalies);
+    for (const anomaly of decoded.anomalies) recordAnomaly(acc, anomaly);
     if (decoded.namespaceDef !== undefined) {
+      if (!acc.namespacesById.has(decoded.namespaceDef.id)) {
+        acc.admitDecodedBytes(128 + decoded.namespaceDef.name.length * 2);
+      }
       acc.namespacesById.set(decoded.namespaceDef.id, {
         namespace_id: decoded.namespaceDef.id,
         name: decoded.namespaceDef.name,
@@ -152,11 +176,22 @@ const walkPageEntries = (
         entry_index: decoded.namespaceDef.entryIndex,
       });
     }
-    if (decoded.immediateEntry !== undefined)
+    if (decoded.immediateEntry !== undefined) {
+      acc.admitDecodedBytes(entryDecodedBytes(decoded.immediateEntry));
       acc.rawEntries.push(decoded.immediateEntry);
-    if (decoded.blobIndex !== undefined)
+    }
+    if (decoded.blobIndex !== undefined) {
+      acc.admitDecodedBytes(256 + decoded.blobIndex.key.length * 2);
       acc.blobIndices.push(decoded.blobIndex);
-    if (decoded.blobChunk !== undefined) acc.blobChunks.push(decoded.blobChunk);
+    }
+    if (decoded.blobChunk !== undefined) {
+      acc.admitDecodedBytes(
+        256 +
+          decoded.blobChunk.key.length * 2 +
+          decoded.blobChunk.payload.length,
+      );
+      acc.blobChunks.push(decoded.blobChunk);
+    }
     slotIdx += Math.max(1, decoded.consumedSlots);
   }
   return { inconsistentItems, consistentItems };
@@ -176,9 +211,11 @@ const decodeSinglePage = (
   const tallies = { written: 0, erased: 0, empty: 0, illegal: 0 };
   for (let s = 0; s < ENTRIES_PER_PAGE; s += 1)
     tallies[readBitmapSlotState(bitmap, s)] += 1;
+  if (tallies.illegal > 0) acc.hasIllegalSlots = true;
   const state = PAGE_STATES.get(rawState) ?? "unknown";
 
   if (state === "empty") {
+    acc.admitDecodedBytes(256);
     acc.pages.push({
       page_index: pageIndex,
       file_offset: pageFileOffset,
@@ -194,10 +231,13 @@ const decodeSinglePage = (
       illegal_slot_count: tallies.illegal,
       inconsistent_item_count: 0,
     });
-    if (tallies.empty !== ENTRIES_PER_PAGE)
-      acc.anomalies.push(
+    if (tallies.empty !== ENTRIES_PER_PAGE) {
+      acc.hasDirtyEmptyPage = true;
+      recordAnomaly(
+        acc,
         `Page ${String(pageIndex)} at offset 0x${pageFileOffset.toString(16)} is uninitialized but its entry-state bitmap marks ${String(ENTRIES_PER_PAGE - tallies.empty)} slot(s) used.`,
       );
+    }
     return;
   }
 
@@ -214,12 +254,14 @@ const decodeSinglePage = (
     formatVersion !== "unknown";
 
   if (tallies.illegal > 0)
-    acc.anomalies.push(
+    recordAnomaly(
+      acc,
       `Page ${String(pageIndex)} at offset 0x${pageFileOffset.toString(16)} has ${String(tallies.illegal)} slot(s) in the ILLEGAL entry state (0b01), which only inconsistent flash produces.`,
     );
   if (!entriesDecoded) {
     acc.undecodedPageCount += 1;
-    acc.anomalies.push(
+    recordAnomaly(
+      acc,
       `Page ${String(pageIndex)} at offset 0x${pageFileOffset.toString(16)} (state ${hex32(rawState)}) was not decoded: ${undecodedReason(state, headerCrcValid, versionByte)}.`,
     );
   }
@@ -233,10 +275,13 @@ const decodeSinglePage = (
   // NVS encryption (XTS-AES) leaves the page header and entry-state bitmap in
   // plaintext and encrypts each 32-byte entry, so every item header fails.
   if (inconsistentItems > 0 && consistentItems === 0)
-    acc.anomalies.push(
+    recordAnomaly(
+      acc,
       `Page ${String(pageIndex)} at offset 0x${pageFileOffset.toString(16)} has a valid header but none of its ${String(inconsistentItems)} written item header(s) is readable, which is consistent with an encrypted NVS partition.`,
     );
 
+  if (headerCrcValid) acc.seqByPage.set(pageIndex, seqNo);
+  acc.admitDecodedBytes(256);
   acc.pages.push({
     page_index: pageIndex,
     file_offset: pageFileOffset,
@@ -321,18 +366,25 @@ export interface ParseEspNvsOptions {
   readonly partitionOffset: number;
   readonly partitionBytes?: number | undefined;
   readonly sliceBytes: Buffer;
+  readonly maxDecodedBytes?: number | undefined;
   readonly onCheckpoint?: (() => void) | undefined;
 }
 
 /** Decode a complete ESP-IDF v1/v2 Non-Volatile Storage partition slice. */
 export const parseEspNvsPartition = async (
   options: ParseEspNvsOptions,
-): Promise<Result<EspNvsReport, ParseFailureError<"malformed">>> => {
+): Promise<
+  Result<
+    EspNvsReport,
+    ParseFailureError<"malformed"> | ParseFailureError<"limit">
+  >
+> => {
   const {
     artifact,
     partitionOffset,
     partitionBytes,
     sliceBytes,
+    maxDecodedBytes = DEFAULT_ESP_NVS_MAX_DECODED_BYTES,
     onCheckpoint,
   } = options;
   if (
@@ -361,105 +413,129 @@ export const parseEspNvsPartition = async (
 
   const pageCount = Math.floor(sliceBytes.length / ESP_NVS_PAGE_BYTES);
   const trailingBytes = sliceBytes.length - pageCount * ESP_NVS_PAGE_BYTES;
-  const acc: PageWalkAccumulator = {
-    pages: [],
-    namespacesById: new Map(),
-    rawEntries: [],
-    blobIndices: [],
-    blobChunks: [],
-    anomalies: [],
-    corruptEntryCount: 0,
-    undecodedPageCount: 0,
+  const decodedBudget = new Budget(maxDecodedBytes);
+  const admitDecodedBytes = (bytes: number): void => {
+    decodedBudget.charge(bytes, () =>
+      decodeLimit(
+        "esp-nvs",
+        `Decoded ESP-IDF NVS representation exceeds max_decoded_bytes (${String(maxDecodedBytes)} bytes).`,
+        { name: "max_decoded_bytes", maximum: maxDecodedBytes },
+      ),
+    );
   };
 
-  for (let p = 0; p < pageCount; p += 1) {
-    if (p > 0 && p % PAGES_PER_YIELD === 0) await setImmediate();
-    onCheckpoint?.();
-    const start = p * ESP_NVS_PAGE_BYTES;
-    decodeSinglePage(
-      sliceBytes.subarray(start, start + ESP_NVS_PAGE_BYTES),
-      p,
-      partitionOffset + start,
-      acc,
+  try {
+    const acc: PageWalkAccumulator = {
+      pages: [],
+      seqByPage: new Map(),
+      namespacesById: new Map(),
+      rawEntries: [],
+      blobIndices: [],
+      blobChunks: [],
+      anomalies: [],
+      admitDecodedBytes,
+      corruptEntryCount: 0,
+      undecodedPageCount: 0,
+      hasIllegalSlots: false,
+      hasDirtyEmptyPage: false,
+    };
+
+    for (let p = 0; p < pageCount; p += 1) {
+      if (p > 0 && p % PAGES_PER_YIELD === 0) await setImmediate();
+      onCheckpoint?.();
+      const start = p * ESP_NVS_PAGE_BYTES;
+      decodeSinglePage(
+        sliceBytes.subarray(start, start + ESP_NVS_PAGE_BYTES),
+        p,
+        partitionOffset + start,
+        acc,
+      );
+    }
+
+    const v2Blobs = await reassembleNvsV2Blobs(
+      acc.blobIndices,
+      acc.blobChunks,
+      onCheckpoint,
+      admitDecodedBytes,
     );
-  }
-
-  const v2Blobs = await reassembleNvsV2Blobs(
-    acc.blobIndices,
-    acc.blobChunks,
-    onCheckpoint,
-  );
-  const seqByPage = new Map<number, number>();
-  for (const page of acc.pages)
-    if (page.seq_no !== null) seqByPage.set(page.page_index, page.seq_no);
-  const allUnresolved = markSuperseded(
-    [...acc.rawEntries, ...v2Blobs],
-    seqByPage,
-  ).sort((a, b) =>
-    a.page_index !== b.page_index
-      ? a.page_index - b.page_index
-      : a.entry_index - b.entry_index,
-  );
-
-  const entries: EspNvsEntry[] = allUnresolved.map(
-    ({ keyId: _keyId, ...item }) => ({
-      ...item,
-      namespace: acc.namespacesById.get(item.namespace_id)?.name ?? null,
-    }),
-  );
-
-  const limitations: string[] = [
-    "Encrypted NVS partitions (XTS-AES with nvs_keys) are not decrypted. NVS encryption keeps page headers and entry-state bitmaps in plaintext, so an encrypted page decodes as a valid page whose item headers all fail; whole-flash encryption makes the page header fail CRC32 instead.",
-  ];
-  if (trailingBytes > 0) {
-    limitations.push(
-      `${String(trailingBytes)} trailing byte(s) after the last complete 4096-byte NVS page were not decoded.`,
+    const totalPending = acc.rawEntries.length + v2Blobs.length;
+    admitDecodedBytes(totalPending * 256);
+    const allUnresolved = markSuperseded(
+      [...acc.rawEntries, ...v2Blobs],
+      acc.seqByPage,
+    ).sort((a, b) =>
+      a.page_index !== b.page_index
+        ? a.page_index - b.page_index
+        : a.entry_index - b.entry_index,
     );
+
+    let hasMissingChunks = false;
+    let hasCrcMismatch = false;
+    let hasUnresolvedNamespace = false;
+    const entries: EspNvsEntry[] = [];
+    for (const { keyId: _keyId, ...item } of allUnresolved) {
+      const namespace = acc.namespacesById.get(item.namespace_id)?.name ?? null;
+      if (item.completeness === "missing_chunks") hasMissingChunks = true;
+      else if (item.completeness === "crc_mismatch") hasCrcMismatch = true;
+      if (namespace === null) hasUnresolvedNamespace = true;
+      entries.push({ ...item, namespace });
+    }
+
+    const limitations: string[] = [
+      "Encrypted NVS partitions (XTS-AES with nvs_keys) are not decrypted. NVS encryption keeps page headers and entry-state bitmaps in plaintext, so an encrypted page decodes as a valid page whose item headers all fail; whole-flash encryption makes the page header fail CRC32 instead.",
+    ];
+    if (trailingBytes > 0) {
+      limitations.push(
+        `${String(trailingBytes)} trailing byte(s) after the last complete 4096-byte NVS page were not decoded.`,
+      );
+    }
+
+    const namespaces = [...acc.namespacesById.values()].sort(
+      (a, b) => a.namespace_id - b.namespace_id,
+    );
+    const coverage = new CoverageAccumulator().recordComplete();
+    if (trailingBytes > 0) coverage.recordOmission("trailing unaligned bytes");
+    if (acc.undecodedPageCount > 0) coverage.recordOmission("undecoded pages");
+    if (acc.corruptEntryCount > 0)
+      coverage.recordOmission("corrupt NVS entries");
+    if (acc.hasIllegalSlots)
+      coverage.recordOmission("illegal NVS bitmap slots");
+    if (acc.hasDirtyEmptyPage)
+      coverage.recordOmission(
+        "uninitialized pages with non-empty slot bitmaps",
+      );
+    if (hasMissingChunks) coverage.recordOmission("missing NVS blob chunks");
+    if (hasCrcMismatch) coverage.recordOmission("NVS entry CRC mismatch");
+    if (hasUnresolvedNamespace)
+      coverage.recordOmission("unresolved NVS namespace definitions");
+
+    return ok({
+      artifact,
+      partition_range: {
+        start: partitionOffset,
+        end: partitionOffset + pageCount * ESP_NVS_PAGE_BYTES,
+        page_count: pageCount,
+        trailing_unaligned_bytes: trailingBytes,
+      },
+      coverage: {
+        status: coverage.finalizeKnown(),
+        examined_pages: pageCount,
+        retained_entries: entries.length,
+        omitted_entries: 0,
+      },
+      pages: acc.pages,
+      namespaces,
+      entries,
+      corrupt_entry_count: acc.corruptEntryCount,
+      undecoded_page_count: acc.undecodedPageCount,
+      anomalies: acc.anomalies,
+      limitations,
+    });
+  } catch (cause) {
+    if (isEspNvsLimit(cause)) return err(cause);
+    throw cause;
   }
-
-  const namespaces = [...acc.namespacesById.values()].sort(
-    (a, b) => a.namespace_id - b.namespace_id,
-  );
-  const coverage = new CoverageAccumulator().recordComplete();
-  if (trailingBytes > 0) coverage.recordOmission("trailing unaligned bytes");
-  if (acc.undecodedPageCount > 0) coverage.recordOmission("undecoded pages");
-  if (acc.corruptEntryCount > 0) coverage.recordOmission("corrupt NVS entries");
-  if (acc.pages.some((page) => page.illegal_slot_count > 0))
-    coverage.recordOmission("illegal NVS bitmap slots");
-  if (
-    acc.pages.some(
-      (page) =>
-        page.state === "empty" && page.empty_slot_count !== ENTRIES_PER_PAGE,
-    )
-  )
-    coverage.recordOmission("uninitialized pages with non-empty slot bitmaps");
-  if (entries.some((entry) => entry.completeness === "missing_chunks"))
-    coverage.recordOmission("missing NVS blob chunks");
-  if (entries.some((entry) => entry.completeness === "crc_mismatch"))
-    coverage.recordOmission("NVS entry CRC mismatch");
-  if (entries.some((entry) => entry.namespace === null))
-    coverage.recordOmission("unresolved NVS namespace definitions");
-
-  return ok({
-    artifact,
-    partition_range: {
-      start: partitionOffset,
-      end: partitionOffset + pageCount * ESP_NVS_PAGE_BYTES,
-      page_count: pageCount,
-      trailing_unaligned_bytes: trailingBytes,
-    },
-    coverage: {
-      status: coverage.finalizeKnown(),
-      examined_pages: pageCount,
-      retained_entries: entries.length,
-      omitted_entries: 0,
-    },
-    pages: acc.pages,
-    namespaces,
-    entries,
-    corrupt_entry_count: acc.corruptEntryCount,
-    undecoded_page_count: acc.undecodedPageCount,
-    anomalies: acc.anomalies,
-    limitations,
-  });
 };
+
+const isEspNvsLimit = (cause: unknown): cause is ParseFailureError<"limit"> =>
+  cause instanceof ParseFailureError && cause.failure.kind === "limit";

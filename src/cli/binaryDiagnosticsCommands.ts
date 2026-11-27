@@ -567,6 +567,10 @@ export const registerBinaryDiagnosticsCommands = (
             "Optional inline cap on decoded NVS entries; complete entries remain in --evidence_output",
         },
         max_file_bytes: { description: "Maximum input file size in bytes" },
+        max_decoded_bytes: {
+          description:
+            "Maximum estimated decoded NVS representation size in bytes",
+        },
       },
     },
     async (input, context) => {

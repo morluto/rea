@@ -1037,4 +1037,35 @@ describe("parseEspNvsPartition", () => {
     ]);
     expect(report.coverage.status).toBe("partial");
   });
+
+  it("refuses dense NVS representations before unchecked entry or anomaly growth exceeds max_decoded_bytes", async () => {
+    const dense = initActivePage(1, 0xfe);
+    writeNamespaceSlot(dense, 0, "cfg", 1);
+    for (let slot = 1; slot < 64; slot += 1) {
+      writeU32Slot({
+        page: dense,
+        slotIdx: slot,
+        nsId: 1,
+        key: `k_${String(slot)}`,
+        val: slot,
+      });
+    }
+    const refused = await parseEspNvsPartition({
+      artifact: {
+        path: "/tmp/dense.bin",
+        sha256: "e".repeat(64),
+        bytes: dense.length,
+      },
+      partitionOffset: 0,
+      sliceBytes: dense,
+      maxDecodedBytes: 4096,
+    });
+    expect(refused.ok).toBe(false);
+    if (!refused.ok && refused.error.failure.kind === "limit") {
+      expect(refused.error.failure.limit).toEqual({
+        name: "max_decoded_bytes",
+        maximum: 4096,
+      });
+    }
+  });
 });

@@ -1,7 +1,12 @@
 import { z } from "zod";
-import type { AnalysisLimit } from "../analysisSettings.js";
+import type { AnalysisParameterLimit } from "../analysisSettings.js";
 import { knownCoverageStatusSchema } from "../coverage.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
+import {
+  parameterBudgetLimitFor,
+  parameterBudgetSchema,
+  type ParameterBudget,
+} from "../parameterBudget.js";
 
 /** ESP-IDF `nvs_constants.h`: page size, entry size and count, and the page layout. */
 export const ESP_NVS_PAGE_BYTES = 4096;
@@ -13,18 +18,32 @@ export const ESP_NVS_ENTRY_TABLE_OFFSET = 32;
 export const ESP_NVS_ENTRY_DATA_OFFSET = 64;
 export const DEFAULT_ESP_NVS_MAX_FILE_BYTES = 32 * 1024 * 1024;
 export const MAX_ESP_NVS_FILE_BYTES = 64 * 1024 * 1024;
+export const DEFAULT_ESP_NVS_MAX_DECODED_BYTES = 32 * 1024 * 1024;
+export const MAX_ESP_NVS_DECODED_BYTES = 128 * 1024 * 1024;
 export const MAX_ESP_NVS_INLINE_ENTRIES = 0x7fff_ffff;
 
-export const espNvsBudgetLimit = (effectiveValue: number): AnalysisLimit => ({
-  control_kind: "parameter",
-  parameter: "max_file_bytes",
-  applies_at: "next_call",
-  unit: "bytes",
-  effective_value: effectiveValue,
-  default_value: DEFAULT_ESP_NVS_MAX_FILE_BYTES,
-  minimum: ESP_NVS_PAGE_BYTES,
-  maximum: MAX_ESP_NVS_FILE_BYTES,
-});
+export const ESP_NVS_BUDGETS = {
+  max_file_bytes: {
+    minimum: ESP_NVS_PAGE_BYTES,
+    maximum: MAX_ESP_NVS_FILE_BYTES,
+    default_value: DEFAULT_ESP_NVS_MAX_FILE_BYTES,
+    unit: "bytes",
+  },
+  /** Estimated bytes of the decoded NVS report, charged before each allocation. */
+  max_decoded_bytes: {
+    minimum: 1024,
+    maximum: MAX_ESP_NVS_DECODED_BYTES,
+    default_value: DEFAULT_ESP_NVS_MAX_DECODED_BYTES,
+    unit: "bytes",
+  },
+} as const satisfies Record<string, ParameterBudget>;
+
+export type EspNvsBudgetParameter = keyof typeof ESP_NVS_BUDGETS;
+
+export const espNvsBudgetLimit: (
+  parameter: EspNvsBudgetParameter,
+  effectiveValue: number,
+) => AnalysisParameterLimit = parameterBudgetLimitFor(ESP_NVS_BUDGETS);
 
 export const espNvsProviderInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(
@@ -50,13 +69,14 @@ export const espNvsProviderInputSchema = z.strictObject({
     .describe(
       "Optional 4096-byte multiple size of the NVS slice to decode starting at partition_offset. Omit to read through the end of the file (clipped to full 4096-byte pages).",
     ),
-  max_file_bytes: z
-    .number()
-    .int()
-    .min(ESP_NVS_PAGE_BYTES)
-    .max(MAX_ESP_NVS_FILE_BYTES)
-    .default(DEFAULT_ESP_NVS_MAX_FILE_BYTES)
-    .describe("Maximum input file size admitted for reading."),
+  max_file_bytes: parameterBudgetSchema(
+    ESP_NVS_BUDGETS.max_file_bytes,
+  ).describe("Maximum input file size admitted for reading."),
+  max_decoded_bytes: parameterBudgetSchema(
+    ESP_NVS_BUDGETS.max_decoded_bytes,
+  ).describe(
+    "Maximum estimated decoded NVS representation bytes admitted before report allocation.",
+  ),
 });
 
 export type EspNvsProviderInput = z.output<typeof espNvsProviderInputSchema>;
