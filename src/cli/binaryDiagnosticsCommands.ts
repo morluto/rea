@@ -61,7 +61,7 @@ export const registerBinaryDiagnosticsCommands = (
         },
         architecture: {
           description:
-            "CPU family of the slice to read from a universal Mach-O; required for universal files",
+            "Slice to read from a universal Mach-O, by CPU family; arm64e and arm64e.x1 read only a slice of that subtype, as lipo -thin does; required for universal files",
         },
       },
     },

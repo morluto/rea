@@ -1,4 +1,5 @@
 import {
+  machoSelectionAnswersArchitecture,
   machoSliceFamily,
   metadataReportSubjectFormat,
 } from "../../domain/apple/machoTargetSelection.js";
@@ -106,8 +107,8 @@ const validReport = (
   if (report.page.offset !== input.offset || report.page.limit !== input.limit)
     return false;
   const requested = input.architecture;
-  const slice = report.selected_slice;
-  if ((requested === undefined) !== (slice === undefined)) return false;
+  if (!machoSelectionAnswersArchitecture(report.selected_slice, requested))
+    return false;
   // Reports name the CPU family; arm64e and arm64e.x1 select arm64 slices.
   return (
     requested === undefined ||
