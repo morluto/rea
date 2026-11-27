@@ -22,6 +22,7 @@ import {
 import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
 import { EnhancedTools } from "../EnhancedTools.js";
 import { DecompileExport } from "./exportTree.js";
+import { FUNCTION_WAIT_REPORT_INTERVAL_MS } from "./decompileAll.js";
 import { ExportResources } from "./exportResources.js";
 import { selectProcedures, validateDecompileBounds } from "./selection.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
@@ -1042,6 +1043,75 @@ describe("decompile_all partial results", () => {
       index.functions.filter((record) => record.status === "failed"),
     ).toHaveLength(33);
     expect(JSON.stringify(index)).not.toContain(sentinel);
+  });
+
+  it("names the function it is waiting on only while that function stays pending", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      const base = harness({
+        procedures: [
+          { address: "0x1000", name: "quick" },
+          { address: "0x2000", name: "slow" },
+        ],
+      });
+      let reached = (): void => undefined;
+      const waiting = new Promise<void>((resolve) => {
+        reached = resolve;
+      });
+      let release = (): void => undefined;
+      const released = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const port: AnalysisOperationPort = {
+        execute: async (operation, parameters, execution) => {
+          if (
+            operation === "procedure_pseudo_code" &&
+            parameters.procedure === "0x2000"
+          ) {
+            reached();
+            await released;
+          }
+          return base.port.execute(operation, parameters, execution);
+        },
+      };
+      const updates: unknown[] = [];
+      const running = new EnhancedTools(port).execute(
+        "decompile_all",
+        { output_directory: directory() },
+        undefined,
+        {
+          report: (update) => {
+            updates.push(update);
+            return Promise.reject(new Error("observer failed"));
+          },
+        },
+      );
+      await waiting;
+      // The quick function settled before one interval and reported nothing.
+      expect(updates).toEqual([]);
+      await vi.advanceTimersByTimeAsync(FUNCTION_WAIT_REPORT_INTERVAL_MS * 2);
+      expect(updates).toEqual([
+        {
+          phase: "decompile_all",
+          completed: 1,
+          total: 2,
+          message: expect.stringMatching(
+            /^Waiting for the provider to decompile slow at 0x2000 \(\d+s elapsed\); function 2 of 2 selected\.$/u,
+          ),
+        },
+        expect.objectContaining({ phase: "decompile_all", completed: 1 }),
+      ]);
+      release();
+      const result = await running;
+      // A failing observer does not change the export.
+      expect(result.ok ? result.value : result.error).toMatchObject({
+        counts: { written: 2, failed: 0 },
+      });
+      await vi.advanceTimersByTimeAsync(FUNCTION_WAIT_REPORT_INTERVAL_MS * 2);
+      expect(updates).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("leaves committed files in place when the caller cancels", async () => {

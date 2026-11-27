@@ -352,7 +352,18 @@ a known body. `--layout dwarf`
 reports that compilation-unit paths are unavailable and still names files by
 address. Filters are a case-sensitive name substring, a case-sensitive name
 prefix, an inclusive address range (including uppercase hexadecimal input), and a positive safe-integer attempt limit. The limit does not allocate space in proportion to its value. Cancellation leaves
-files already written in place. One run at a time holds an output directory,
+files already written in place. While one function stays pending, the export
+reports a `decompile_all` progress update every five seconds naming that
+function's name and address, its position among the selected functions, and
+the elapsed wait; functions that settle sooner report nothing. MCP delivers
+these as progress notifications when the request carries a progress token, and
+the CLI writes each as a `rea_progress` JSON line on stderr, leaving stdout for
+the manifest. Ghidra bounds one function with its decompile deadline. Hopper
+has no per-function deadline and REA cannot interrupt a decompilation Hopper
+has started, so a pathological function holds the serial bridge until Hopper
+finishes or is quit. Cancelling such an export from the CLI ends the command
+with `cleanup_incomplete` while Hopper keeps working; the remediation then
+describes the steps available in Hopper itself. One run at a time holds an output directory,
 identified by its device and inode, through export finalization and any retained cleanup retry; another
 run on the same directory is refused with the holder's process ID, and a
 crashed run can be recovered by the next run. Failed descriptor or staging cleanup remains owned by the session; close the target to retry it. Initialization cleanup preserves unexpected entries rather than recursively removing the directory. Resume hashes existing files in bounded chunks, and index generation reuses committed journal facts already held by the export owner. After five consecutive functions whose files

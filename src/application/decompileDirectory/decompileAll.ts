@@ -1,4 +1,5 @@
 import type { WorkflowAnalysisPort } from "../WorkflowEvidence.js";
+import type { ProgressReporter } from "../../ports/ProgressReporter.js";
 import { ExportPublishedCleanupFailure } from "./exportResources.js";
 import { join } from "node:path";
 import { z } from "zod";
@@ -67,6 +68,12 @@ const PROFILE_UNAVAILABLE =
   "The provider did not commit an analysis profile, so this export cannot be resumed.";
 const DUPLICATE_ADDRESSES =
   "Duplicate procedure addresses were coalesced to the first matching inventory row.";
+/**
+ * How long one function may stay pending before the export names it, and how
+ * often it repeats while the wait continues. A provider may be unable to bound
+ * or interrupt one decompilation, so the wait itself is reported.
+ */
+export const FUNCTION_WAIT_REPORT_INTERVAL_MS = 5_000;
 /** Consecutive output_io failures after which an export stops. */
 export const OUTPUT_IO_STREAK_LIMIT = 5;
 const unaddressedRows = (count: number): string =>
@@ -140,6 +147,7 @@ export const decompileAll = async (
   sessionAnalysis: WorkflowAnalysisPort,
   input: DecompileDirectoryInput,
   signal?: AbortSignal,
+  progress?: ProgressReporter,
 ): Promise<Result<JsonValue, AnalysisError>> => {
   const analysis = withInlineSessionLimitations(sessionAnalysis);
   const bounds = validateDecompileBounds(input);
@@ -190,6 +198,7 @@ export const decompileAll = async (
       procedures: attemptOrder(session, selection.procedures),
       identity: loaded.value.identity,
       signal,
+      progress,
       limit: input.limit,
       retryFailed: input.retry_failed,
       state,
@@ -412,6 +421,7 @@ interface PublishInput {
   readonly procedures: readonly SelectedProcedure[];
   readonly identity: ExportIdentity;
   readonly signal: AbortSignal | undefined;
+  readonly progress: ProgressReporter | undefined;
   readonly limit: number | undefined;
   readonly retryFailed: DecompileDirectoryInput["retry_failed"];
   readonly state: PublishState;
@@ -421,7 +431,7 @@ const publishSelected = async (
   input: PublishInput,
 ): Promise<Result<void, AnalysisError>> => {
   let bodySupport: "unknown" | "unavailable" = "unknown";
-  for (const procedure of input.procedures) {
+  for (const [index, procedure] of input.procedures.entries()) {
     if (isAborted(input.signal))
       return err(cancelledBy("decompile_all", input.signal));
     const existing = await existingFile(
@@ -466,7 +476,13 @@ const publishSelected = async (
     input.state.attempted += 1;
     input.state.lastFailureCode = undefined;
     const externalBefore = input.state.external;
-    const outcome = await attemptOne(input, procedure, existing, bodySupport);
+    const attempt = attemptOne(input, procedure, existing, bodySupport);
+    const outcome = await reportingFunctionWait(
+      input,
+      procedure,
+      index,
+      attempt,
+    );
     bodySupport = outcome.bodySupport;
     if (!outcome.result.ok) return outcome.result;
     // An external function writes no file, so it says nothing about the directory.
@@ -482,6 +498,46 @@ const publishSelected = async (
       return err(outputStoppedAccepting(input.state));
   }
   return ok(undefined);
+};
+
+/**
+ * Name the function an export is waiting on once it has been pending for a
+ * reporting interval, and again each interval until it settles. Functions that
+ * settle sooner report nothing, so a healthy export stays quiet.
+ */
+const reportingFunctionWait = async <Value>(
+  input: PublishInput,
+  procedure: SelectedProcedure,
+  index: number,
+  pending: Promise<Value>,
+): Promise<Value> => {
+  const { progress } = input;
+  if (progress === undefined) return pending;
+  const startedAt = performance.now();
+  const subject =
+    procedure.name === null
+      ? procedure.address
+      : `${procedure.name} at ${procedure.address}`;
+  const timer = setInterval(() => {
+    if (isAborted(input.signal)) return;
+    const elapsedSeconds = Math.floor((performance.now() - startedAt) / 1000);
+    // Reporting is observational; its failure cannot change the export.
+    void Promise.resolve()
+      .then(() =>
+        progress.report({
+          phase: "decompile_all",
+          completed: index,
+          total: input.procedures.length,
+          message: `Waiting for the provider to decompile ${subject} (${String(elapsedSeconds)}s elapsed); function ${String(index + 1)} of ${String(input.procedures.length)} selected.`,
+        }),
+      )
+      .catch(() => undefined);
+  }, FUNCTION_WAIT_REPORT_INTERVAL_MS);
+  try {
+    return await pending;
+  } finally {
+    clearInterval(timer);
+  }
 };
 
 /** One function this call takes on: report a file problem or decompile it. */
