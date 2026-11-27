@@ -848,8 +848,11 @@ it.each([false, true])(
       },
     );
     const directory = join(root, "cache");
-    const publish = async (sources: readonly Evidence[]) => {
-      const output = await withCliEvidencePublication(
+    const deliver = (
+      sources: readonly Evidence[],
+      capBytes = 1024 * 1024 * 1024,
+    ) =>
+      withCliEvidencePublication(
         () =>
           publishCliAnalysisEvidence(
             {
@@ -870,8 +873,10 @@ it.each([false, true])(
               evidenceOutput: undefined,
             },
           ),
-        { retention: { directory, capBytes: 1024 * 1024 * 1024 } },
+        { retention: { directory, capBytes } },
       );
+    const publish = async (sources: readonly Evidence[]) => {
+      const output = await deliver(sources);
       const receipt = failed
         ? (output as FailureOutput).details.diagnostics?.evidence_bundle
         : (output as unknown as Output).evidence_bundle;
@@ -914,6 +919,31 @@ it.each([false, true])(
     expect(reordered).toEqual(expanded);
     expect((await stat(reordered.path)).ino).toBe(before.ino);
     expect((await readFile(reordered.path)).equals(publishedBytes)).toBe(true);
+
+    // The same record may fit the parent budget but exceed a later cache cap
+    // once its retained source records are counted.
+    const smallerCap = expanded.bytes - 1;
+    expect(smallerCap).toBeGreaterThan(
+      Buffer.byteLength(JSON.stringify(complete)),
+    );
+    const lastUsed = new Date("2026-01-01T00:00:00Z");
+    await utimes(expanded.path, lastUsed, lastUsed);
+    const declined = await deliver([secondSource, extra], smallerCap);
+    const failedDetails = (declined as FailureOutput).details;
+    const delivery = failed
+      ? failedDetails[PARTIAL_OBSERVATION_DELIVERY]
+      : (declined as unknown as Output).delivery;
+    expect(delivery).toMatchObject({
+      retained: "not-retained",
+      retention_failure: expect.stringContaining("larger than"),
+    });
+    expect(
+      failed
+        ? failedDetails.diagnostics?.evidence_bundle
+        : (declined as unknown as Output).evidence_bundle,
+    ).toBeUndefined();
+    expect((await stat(expanded.path)).mtimeMs).toBe(lastUsed.getTime());
+    expect((await readFile(expanded.path)).equals(publishedBytes)).toBe(true);
   },
 );
 
