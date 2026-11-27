@@ -141,7 +141,7 @@ client's deadline or receive buffer.
 `annotate_native_function` `signature` and `define_native_data_types`
 `declarations` are parsed by Ghidra's C parser, which cannot be cancelled, so
 REA bounds that text before parsing it. Each bound has a per-call parameter;
-`parenthesis_max_depth` applies to `signature`; a `declarations` text admits no parentheses at all.
+`parenthesis_max_depth` applies to `signature`; a `declarations` text admits parentheses only in a function-pointer declarator, `ret (*name)(parameters)`, which nests one level and needs no bound.
 
 | Bound                                         | Default | Floor | Maximum | Slowest measured parse at the maximum      |
 | --------------------------------------------- | ------: | ----: | ------: | ------------------------------------------ |
