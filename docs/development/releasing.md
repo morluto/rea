@@ -40,7 +40,9 @@ Before publishing, npm lookup failures and malformed metadata stop the job.
 An existing version must match the qualified tarball's SHA-512 and intended
 `latest`/`next` dist-tag before it can be reused. Publication never overwrites
 an existing version or silently changes a dist-tag. After publication, confirmed
-registry absence is polled every 30 seconds for a 75-minute retry window. Lookup errors and content or tag mismatches fail immediately. If
+registry absence is polled every 30 seconds. A single 75-minute deadline covers
+both requests and polling delays, and each request keeps its 30-second cap.
+Lookup errors and content or tag mismatches fail immediately. If
 visibility takes longer, rerun the failed jobs in the original workflow once the
 package appears. A separate post-publication job with read-only
 repository/actions permissions verifies registry bytes and tags, then installs

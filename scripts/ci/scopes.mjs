@@ -46,6 +46,8 @@ const PATH_SCOPES = {
     "scripts/run-python-tests.py",
   ],
   packet_capture: [
+    UBUNTU_ARCHIVE_ACTION,
+    ".github/actions/host-apt-packages/action.{yml,yaml}",
     "tests/boundary/captures/**",
     "tests/boundary/cli/captureCleanup.test.ts",
     "tests/boundary/mcp/packetCaptureMcp.test.ts",

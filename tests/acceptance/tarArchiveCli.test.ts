@@ -1,13 +1,16 @@
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { gzipSync } from "node:zlib";
 import { expect, onTestFinished } from "vitest";
 
 import { cliTest } from "../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import {
   gzipTarFixture,
+  withGzipExtraField,
   RELEASE_TAR_MEMBERS,
   tarFixture,
+  tarMembers,
 } from "../../src/artifacts/tar/tar.fixture.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
@@ -25,6 +28,11 @@ cliTest.for([
   {
     name: "release.tar.gz",
     bytes: gzipTarFixture(RELEASE_TAR_MEMBERS),
+    compression: "gzip",
+  },
+  {
+    name: "release-with-extra",
+    bytes: withGzipExtraField(gzipTarFixture(RELEASE_TAR_MEMBERS), 9000),
     compression: "gzip",
   },
 ] as const)(
@@ -73,6 +81,38 @@ cliTest.for([
   },
 );
 
+cliTest.for([
+  { name: "stored", wrap: (bytes: Uint8Array) => bytes },
+  { name: "gzip", wrap: gzipSync },
+] as const)(
+  "keeps complete members but reports partial coverage after one $name tar end block",
+  async ({ wrap }, { cli }) => {
+    const directory = await createTestTempDirectory("rea-tar-marker-cli-");
+    const source = join(directory, "archive");
+    const bytes = Buffer.concat([
+      tarMembers([{ name: "a.txt", data: "a" }]),
+      Buffer.alloc(512),
+    ]);
+    await writeFile(source, wrap(bytes));
+    const inspected = await cli.run({
+      arguments: ["inspect-artifact", source, "--json"],
+    });
+    expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
+    const inspection = artifactInspectionResultSchema.parse(
+      parseEvidence(inspected.json).normalized_result,
+    );
+    const graph = artifactInventoryResultSchema.parse(
+      inspection.substeps[0]?.evidence.normalized_result,
+    );
+    expect(graph.coverage.status).toBe("unknown");
+    expect(graph.occurrences.map((row) => row.logical_path)).toContain("a.txt");
+    expect(
+      graph.occurrences.find((row) => row.logical_path === ".")
+        ?.format_metadata,
+    ).toMatchObject({ kind: "tar", end_state: "truncated", end_offset: 1024 });
+  },
+);
+
 cliTest(
   "reports a truncated tar as partial coverage, not a refusal",
   async ({ cli }) => {
@@ -108,7 +148,10 @@ cliTest(
   async ({ cli }) => {
     const directory = await createTestTempDirectory("rea-tar-malformed-cli-");
     const source = join(directory, "bad.tar");
-    const bytes = tarFixture([{ name: "a.txt", data: "a" }]);
+    const bytes = Buffer.concat([
+      tarMembers([{ name: "a.txt", data: "a" }]),
+      Buffer.alloc(512),
+    ]);
     // The ustar magic stays, so the refusal names the tar header fault.
     bytes[148] = 0x39;
     await writeFile(source, bytes);

@@ -23,6 +23,9 @@ export const TOOL_EXAMPLE_OVERRIDES: Readonly<
   procedure_info: { procedure: "main" },
   trace_native_values: { procedure: "0x1000" },
   inspect_native_data_type: { type: "/MyStruct" },
+  define_native_data_types: {
+    declarations: "struct session { int id; struct session *next; };",
+  },
   inspect_native_instruction: { address: "0x1000" },
   resolve_native_call_targets: { address: "0x1000" },
   read_function_instructions: { procedure: "main" },

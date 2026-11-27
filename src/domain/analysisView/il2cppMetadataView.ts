@@ -1,4 +1,4 @@
-import { selectIndexedViewRows, selectViewRows } from "./selectViewRows.js";
+import { filterSet, selectViewRows } from "./selectViewRows.js";
 import { z } from "zod";
 import {
   analysisViewInputError,
@@ -680,20 +680,16 @@ export const projectIl2cppMetadataView = (
       ]),
     );
   const matches = selection(view, report);
-  const selectedFields =
-    view.fields === undefined ? undefined : new Set<string>(view.fields);
+  const selectedFields = filterSet<string>(view.fields);
   const project = (row: Row, index: number) =>
     selectFields(row, index, selectedFields);
-  const { rows: items, total } =
-    view.indices === undefined
-      ? selectViewRows(rows, view, matches, project)
-      : selectIndexedViewRows(
-          rows,
-          new Set(view.indices),
-          view,
-          matches,
-          project,
-        );
+  const { rows: items, total } = selectViewRows(
+    rows,
+    view,
+    matches,
+    project,
+    filterSet(view.indices),
+  );
   return ok({
     kind: "il2cpp-metadata" as const,
     view,

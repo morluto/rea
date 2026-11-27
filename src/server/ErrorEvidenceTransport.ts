@@ -21,6 +21,7 @@ import { transportClosedByOwner } from "./transportOwnerClose.js";
 import { ForwardingTransport } from "./ForwardingTransport.js";
 import {
   formatUnknownMcpToolMessage,
+  formatUnloadedMcpToolMessage,
   type AdvertisedToolCatalog,
 } from "./toolCatalogSearch.js";
 import {
@@ -901,10 +902,23 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
     if (
       !isJSONRPCErrorResponse(recovered) ||
       tool === undefined ||
-      recovered.error.code !== -32602 ||
-      recovered.error.message !== `Tool ${tool} not found`
+      recovered.error.code !== -32602
     )
       return recovered;
+    // The SDK rejects a disabled registration before any handler runs. In a
+    // dynamic catalog that is an in-scope tool the caller has not loaded yet.
+    if (
+      recovered.error.message === `Tool ${tool} disabled` &&
+      this.currentAdvertisedTools().unloadedTools?.has(tool) === true
+    )
+      return {
+        ...recovered,
+        error: {
+          ...recovered.error,
+          message: formatUnloadedMcpToolMessage(tool),
+        },
+      };
+    if (recovered.error.message !== `Tool ${tool} not found`) return recovered;
     return {
       ...recovered,
       error: {
