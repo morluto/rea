@@ -168,8 +168,9 @@ type OwnedTreeFrame =
 /**
  * Seal a freshly parsed, exclusively owned JSON tree. Its parser has removed
  * aliases, accessors and hidden properties; existing sealed subtrees may be shared.
- * Completed objects are remembered only for this call, so a subtree shared
- * along several paths is sealed once instead of once per path.
+ * The only strong set is the active ancestry. Completed identities are
+ * remembered weakly for this call, so a shared subtree is sealed once
+ * without retaining every finished row.
  * Unlike general graph sealing, failure can leave this provisional tree frozen.
  */
 export const freezeOwnedJsonTreeSnapshot = <T extends JsonValue>(
@@ -177,7 +178,7 @@ export const freezeOwnedJsonTreeSnapshot = <T extends JsonValue>(
 ): T => {
   const frames: OwnedTreeFrame[] = [];
   const ancestors = new Set<object>();
-  const completed = new Set<object>();
+  const completed = new WeakSet<object>();
   const enter = (item: unknown): void => {
     if (isImmutableJsonSnapshot(item)) return;
     if (typeof item === "object" && item !== null && completed.has(item))

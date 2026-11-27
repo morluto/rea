@@ -17,7 +17,10 @@ import {
 import type { RegularFileOperationOutcome } from "../filesystem/OwnedRegularFile.js";
 import { readRegularFileTextSnapshot } from "../process/RegularFileRead.js";
 import { ClientConfigurationPublicationFailure } from "./ClientConfigurationCleanup.js";
-import { resolveClientConfigTransactionPath } from "./ClientConfigPath.js";
+import {
+  isEnoentError,
+  resolveClientConfigTransactionPath,
+} from "./ClientConfigPath.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
@@ -356,8 +359,7 @@ const selectedConfiguration = async (
   try {
     selected = await readRegularFileTextSnapshot(path, { symlinks: "reject" });
   } catch (cause: unknown) {
-    if (!(cause instanceof Error && "code" in cause && cause.code === "ENOENT"))
-      throw cause;
+    if (!isEnoentError(cause)) throw cause;
   }
   if (selected?.text !== previous || selected?.state.ino === 0)
     throw new RegularFileChangedError(path);
@@ -372,8 +374,7 @@ const assertSelectedConfiguration = async (
   try {
     current = await lstat(path);
   } catch (cause: unknown) {
-    if (!(cause instanceof Error && "code" in cause && cause.code === "ENOENT"))
-      throw cause;
+    if (!isEnoentError(cause)) throw cause;
   }
   if (
     selected === undefined

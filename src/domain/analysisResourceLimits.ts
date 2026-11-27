@@ -327,6 +327,18 @@ export const MINIMUM_AGENT_RESULT_BUDGET_BYTES = 4_096;
 export const MAXIMUM_AGENT_RESULT_BUDGET_BYTES = 10 * 1024 * 1024;
 
 /**
+ * Default byte allowance for armed `observe_web_session` timeline rows.
+ * Request-identity metadata uses `WEB_RUNTIME_LIMITS.retainedEventBytes` as
+ * its own counter. The two counters start at the same 8 MiB and do not share
+ * remaining room.
+ */
+export const DEFAULT_BROWSER_TIMELINE_RETAINED_BYTES = 8 * 1024 * 1024;
+/** One byte is enough to refuse the next row. */
+export const MINIMUM_BROWSER_TIMELINE_RETAINED_BYTES = 1;
+/** Admission arithmetic stays inside a safe integer. */
+export const MAXIMUM_BROWSER_TIMELINE_RETAINED_BYTES = Number.MAX_SAFE_INTEGER;
+
+/**
  * Total size of the per-user cache that keeps over-budget CLI results
  * recoverable. A delivery bound, not an admission limit: a result that cannot
  * be kept falls back to the rerun arguments, and 0 turns retention off. 256

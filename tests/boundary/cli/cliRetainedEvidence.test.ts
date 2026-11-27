@@ -19,6 +19,7 @@ import { createCli } from "../../../src/cli.js";
 import { publishCliAnalysisEvidence } from "../../../src/cli/analysisEvidenceDelivery.js";
 import {
   cliEvidencePublicationReceipt,
+  retainCliPublicationOnError,
   withCliEvidencePublication,
 } from "../../../src/cli/cliEvidencePublication.js";
 import {
@@ -29,6 +30,7 @@ import {
 import { createByteEntropyService } from "../../../src/composition/binaryDiagnostics/byteEntropy.js";
 import { PARTIAL_OBSERVATION_DELIVERY } from "../../../src/domain/agentResultBudget.js";
 import { CLI_RETAINED_EVIDENCE_MAX_AGE_MS } from "../../../src/domain/analysisResourceLimits.js";
+import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
 import {
   createEvidence,
   parseEvidence,
@@ -39,6 +41,7 @@ import { parseEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
+import { writeOrderedZip } from "../../fixtures/artifactEntryOrder.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 type Output = {
@@ -847,30 +850,38 @@ it.each([false, true])(
       },
     );
     const directory = join(root, "cache");
-    const publish = async (sources: readonly Evidence[]) => {
-      const output = await withCliEvidencePublication(
-        () =>
-          publishCliAnalysisEvidence(
-            {
-              ...(failed
-                ? err({
-                    code: "provider_timeout",
-                    message: "Analysis timed out after partial work.",
-                    retryable: true,
-                    details: { partial_observation: complete },
-                  })
-                : ok(complete)),
-              sourceEvidence: sources,
-            },
-            {
-              operation: "inspect_byte_entropy",
-              signal: new AbortController().signal,
-              detail: undefined,
-              evidenceOutput: undefined,
-            },
-          ),
-        { retention: { directory, capBytes: 1024 * 1024 * 1024 } },
+    const publishResult = (
+      sources: readonly Evidence[],
+      evidenceOutput?: string,
+    ) =>
+      publishCliAnalysisEvidence(
+        {
+          ...(failed
+            ? err({
+                code: "provider_timeout",
+                message: "Analysis timed out after partial work.",
+                retryable: true,
+                details: { partial_observation: complete },
+              })
+            : ok(complete)),
+          sourceEvidence: sources,
+        },
+        {
+          operation: "inspect_byte_entropy",
+          signal: new AbortController().signal,
+          detail: undefined,
+          evidenceOutput,
+        },
       );
+    const deliver = (
+      sources: readonly Evidence[],
+      capBytes = 1024 * 1024 * 1024,
+    ) =>
+      withCliEvidencePublication(() => publishResult(sources), {
+        retention: { directory, capBytes },
+      });
+    const publish = async (sources: readonly Evidence[]) => {
+      const output = await deliver(sources);
       const receipt = failed
         ? (output as FailureOutput).details.diagnostics?.evidence_bundle
         : (output as unknown as Output).evidence_bundle;
@@ -913,5 +924,92 @@ it.each([false, true])(
     expect(reordered).toEqual(expanded);
     expect((await stat(reordered.path)).ino).toBe(before.ino);
     expect((await readFile(reordered.path)).equals(publishedBytes)).toBe(true);
+
+    // The same record may fit the parent budget but exceed a later cache cap
+    // once its retained source records are counted.
+    const smallerCap = expanded.bytes - 1;
+    expect(smallerCap).toBeGreaterThan(
+      Buffer.byteLength(JSON.stringify(complete)),
+    );
+    const lastUsed = new Date("2026-01-01T00:00:00Z");
+    await utimes(expanded.path, lastUsed, lastUsed);
+    const declined = await deliver([secondSource, extra], smallerCap);
+    const failedDetails = (declined as FailureOutput).details;
+    const delivery = failed
+      ? failedDetails[PARTIAL_OBSERVATION_DELIVERY]
+      : (declined as unknown as Output).delivery;
+    expect(delivery).toMatchObject({
+      retained: "not-retained",
+      retention_failure: expect.stringContaining("larger than"),
+    });
+    expect(
+      failed
+        ? failedDetails.diagnostics?.evidence_bundle
+        : (declined as unknown as Output).evidence_bundle,
+    ).toBeUndefined();
+    expect((await stat(expanded.path)).mtimeMs).toBe(lastUsed.getTime());
+    expect((await readFile(expanded.path)).equals(publishedBytes)).toBe(true);
+
+    await withCliEvidencePublication(
+      async () => {
+        const earlierPath = join(root, "earlier-publication.json");
+        await publishResult([firstSource], earlierPath);
+        const earlierReceipt = cliEvidencePublicationReceipt();
+        expect(earlierReceipt).toBeDefined();
+        const earlierBytes = await readFile(earlierPath);
+        const rejected = await publishResult([secondSource, extra]);
+        const rejectedDelivery = failed
+          ? (rejected as FailureOutput).details[PARTIAL_OBSERVATION_DELIVERY]
+          : (rejected as unknown as Output).delivery;
+        expect(rejectedDelivery).toMatchObject({ retained: "not-retained" });
+        expect(cliEvidencePublicationReceipt()).toBe(earlierReceipt);
+        const outputFailure = retainCliPublicationOnError(
+          new AnalysisInputError("inspect_byte_entropy", {
+            userMessage: "Later output formatting failed.",
+          }),
+        );
+        expect(outputFailure.diagnostics?.evidence_bundle).toEqual(
+          earlierReceipt,
+        );
+        expect((await readFile(earlierPath)).equals(earlierBytes)).toBe(true);
+        expect((await readFile(expanded.path)).equals(publishedBytes)).toBe(
+          true,
+        );
+        expect((await stat(expanded.path)).mtimeMs).toBe(lastUsed.getTime());
+      },
+      { retention: { directory, capBytes: smallerCap } },
+    );
   },
 );
+
+it("delivers an unretained over-budget extraction complete, since a rerun cannot reproduce it", async () => {
+  const { serve } = await workspace();
+  const root = await createTestTempDirectory("rea-retain-extraction-");
+  const archive = join(root, "app.zip");
+  await writeOrderedZip(
+    archive,
+    Array.from({ length: 400 }, (_, index) => `res/item${String(index)}.txt`),
+  );
+  const extract = (output: string, ...flags: string[]) =>
+    serve([
+      "extract-artifact",
+      archive,
+      "--output-root",
+      join(root, output),
+      "--json",
+      ...flags,
+    ]);
+  // The extraction created its output root, so rerunning it fails; its
+  // complete record is the only recovery.
+  const unretained = parseEvidence(await extract("unretained", "--no-retain"));
+  expect(unretained.operation).toBe("extract_artifact");
+  expect(
+    (unretained.normalized_result as { artifacts: unknown[] }).artifacts,
+  ).toHaveLength(400);
+  // With the cache on, the summary stays and pages the retained record.
+  const retained = (await extract("retained")) as Output;
+  expect(parseEvidence(retained.summary).operation).toBe(
+    "inspect_analysis_view",
+  );
+  expect(retained.delivery).toMatchObject({ retained: "cache-file" });
+});

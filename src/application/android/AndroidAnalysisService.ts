@@ -1,3 +1,4 @@
+import { callerAnalysisParameters } from "../AnalysisInput.js";
 import { analysisOperationInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import type { EvidenceWriter } from "../investigation/InvestigationRecordPort.js";
 import { summarizeRetainedAndroidSearch } from "./AndroidSearchEvidenceSummary.js";
@@ -55,7 +56,9 @@ export class AndroidAnalysisService {
     const completed = completeProviderEvidence(
       createAnalysisExecutionEvidence(
         operation,
-        request.data.input,
+        // Evidence records the caller's selections, not defaults such as
+        // the class-search page size.
+        callerAnalysisParameters(input)(request.data.input),
         {
           ...execution,
           subject:

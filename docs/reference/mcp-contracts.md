@@ -2057,6 +2057,20 @@ selected files face destination name collisions; input path and integrity checks
 still cover the full inventory. The extraction manifest records exactly which
 occurrences were materialized and retains the source manifest identity.
 
+`extract_artifact` delivery follows the agent result budget. Omitted `detail`
+returns the complete extraction Evidence when it fits
+`delivery.agent_result_budget_bytes`; a larger one, such as an APK's thousands
+of written files, is retained behind its summary. The summary keeps the
+manifests, `output_root`, containment and cleanup verification, coverage and
+counts of written files, created files, bytes written and integrity
+contradictions, with at most 16 provenance commands, contradictions and residual
+paths each. `inspect_analysis_view` with
+`{"kind": "artifact-extraction", "collection": "artifacts"}` pages written files
+by exact `relative_paths`, `path_globs` or `artifact_ids`, with optional
+`fields`; `integrity_contradictions` and `residual_paths` page those lists.
+`detail: "complete"` (`--detail complete`) returns everything inline. The files
+are written whichever delivery is selected.
+
 `extract_artifact` accepts the same policy in MCP and as `--integrity-policy`
 on `rea extract-artifact`. With `record-and-continue` it writes the observed
 bytes and returns the `integrity_contradictions` records for the extracted
@@ -2102,8 +2116,9 @@ when both are omitted, storage is not compared.
 
 `compare_artifacts` also compares the declarations in the `format_metadata` of <!-- BEGIN:compare-artifacts:compared-format-metadata-kinds -->UnityFS members (`unityfs-entry`), PyInstaller entries
 (`pyinstaller-entry`), Node SEA members (`node-sea-entry`),
-ESP image segments (`esp-image-segment`), DfuSe elements (`dfuse-element`),
-ESP flash partitions (`esp-flash-partition`), FIT images (`fit-image`) and tar
+UBI volumes (`ubi-volume`), ESP image segments (`esp-image-segment`), DfuSe elements (`dfuse-element`),
+ESP flash partitions (`esp-flash-partition`), Nintendo DS ROM members
+(`nds-entry`), FIT images (`fit-image`) and tar
 members (`tar-entry`)<!-- END:compare-artifacts:compared-format-metadata-kinds -->;
 each format's guide names the compared fields. A changed declaration is a
 metadata change, including when content is unavailable. A declaration that
@@ -2374,6 +2389,9 @@ annotations, handlers and client approval rules. Loading does not execute an
 analysis, open a target, or initialize the deferred analysis runtime. A batch
 emits one list-change notification; repeating it emits none. Loaded tools remain
 available until the connection ends. There is no generic execution gateway.
+Calling an in-scope tool before it is loaded returns a JSON-RPC `-32602` error
+that names the `discover_tools` call with that exact name; a tool excluded from
+the server keeps the SDK's `disabled` refusal.
 If a loaded tool does not appear in the client, enable client catalog refresh
 or reconnect using `REA_MCP_TOOL_CATALOG_PROFILE=full`.
 
