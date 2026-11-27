@@ -10,7 +10,7 @@ import {
   inspectPacketFieldsInputSchema,
   type InspectPacketFieldsInput,
 } from "../domain/captures/packetFields.js";
-import type { StableArtifactSnapshot } from "../artifacts/readStableArtifact.js";
+import type { StableArtifactSnapshot } from "../resources/readStableArtifact.js";
 import type { LinuxResourceLimits } from "../process/LinuxResourceLimits.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import type {
@@ -56,10 +56,12 @@ class FakeProcess extends EventEmitter implements ProviderProcessHandle {
   readonly signalCode = null;
   readonly pid = 4242;
 
-  constructor(stdoutText: string) {
+  constructor(stdoutText: string, stderrText = "") {
     super();
     this.stdout = Readable.from([Buffer.from(stdoutText, "utf8")]);
-    this.stderr = Readable.from([]);
+    this.stderr = Readable.from(
+      stderrText === "" ? [] : [Buffer.from(stderrText, "utf8")],
+    );
     let ended = 0;
     const finish = () => {
       if (++ended < 2) return;
@@ -75,8 +77,11 @@ class FakeProcess extends EventEmitter implements ProviderProcessHandle {
   }
 }
 
-const spawnFake = (stdoutText: string): SpawnedOwnedProviderProcess => ({
-  process: new FakeProcess(stdoutText),
+const spawnFake = (
+  stdoutText: string,
+  stderrText = "",
+): SpawnedOwnedProviderProcess => ({
+  process: new FakeProcess(stdoutText, stderrText),
   ownership: {} as OwnedProcessGroup,
   cleanup: async (): Promise<ProcessCleanupResult> => ({
     cleaned: true,
@@ -124,6 +129,7 @@ const makeProvider = (
 ) => {
   const localCalls = { version: 0, fields: 0, plugins: 0 };
   let plugins = PLUGINS_V1;
+  let pluginsStderr = "";
   let fieldsGate: (() => Promise<void>) | undefined;
   const launcher = async (
     spawn: OwnedProviderProcessSpawnOptions,
@@ -135,7 +141,7 @@ const makeProvider = (
     }
     if (args.includes("plugins")) {
       localCalls.plugins++;
-      return spawnFake(plugins);
+      return spawnFake(plugins, pluginsStderr);
     }
     if (args.includes("-G")) {
       localCalls.fields++;
@@ -167,6 +173,9 @@ const makeProvider = (
     setPlugins: (next: string) => {
       plugins = next;
     },
+    setPluginsStderr: (next: string) => {
+      pluginsStderr = next;
+    },
     setFieldsGate: (gate: () => Promise<void>) => {
       fieldsGate = gate;
     },
@@ -175,11 +184,13 @@ const makeProvider = (
 
 interface FieldPageReport {
   records: { abbreviation: string }[];
+  tool: { plugins_diagnostics: string };
   output_window: {
     examined: number;
     matching: number;
     returned: number;
     has_more: boolean;
+    record_budget_reached: boolean;
   };
 }
 
@@ -221,6 +232,7 @@ describe("TsharkCaptureProvider field glossary cache", () => {
   let provider: TsharkCaptureProvider;
   let calls: { version: number; fields: number; plugins: number };
   let setPlugins: (next: string) => void;
+  let setPluginsStderr: (next: string) => void;
   let extraProviders: TsharkCaptureProvider[];
   let fakes: ProviderTestFakes;
 
@@ -245,6 +257,7 @@ describe("TsharkCaptureProvider field glossary cache", () => {
     provider = setup.provider;
     calls = setup.calls;
     setPlugins = setup.setPlugins;
+    setPluginsStderr = setup.setPluginsStderr;
   });
 
   afterEach(async () => {
@@ -269,14 +282,41 @@ describe("TsharkCaptureProvider field glossary cache", () => {
       matching: 5,
       returned: 2,
       has_more: true,
+      record_budget_reached: false,
     });
     expectFieldPage(second.value, ["ip.dst", "tcp.port"], {
       examined: 5,
       matching: 5,
       returned: 2,
       has_more: true,
+      record_budget_reached: false,
     });
     expect(first.value.limitations.join(" ")).toContain("cached in memory");
+  });
+
+  it("retains plugin probe warnings on cache misses and hits", async () => {
+    const warning = "tshark: Warning: plugin 'gryphon.so' failed to load\n";
+    setPluginsStderr(warning);
+    const first = await provider.inspectFields(
+      input({ kind: "fields", limit: 1, offset: 0 }),
+    );
+    if (!first.ok) throw new Error(`first page failed: ${first.error}`);
+    const second = await provider.inspectFields(
+      input({ kind: "fields", limit: 1, offset: 1 }),
+    );
+    if (!second.ok) throw new Error(`second page failed: ${second.error}`);
+    // The glossary dump ran once (second page is a cache hit), but the
+    // plugin probe ran during both requests, so both reports keep its
+    // stderr instead of dropping it.
+    expect(calls).toEqual({ version: 2, fields: 1, plugins: 2 });
+    expect(
+      (first.value.result as unknown as FieldPageReport).tool
+        .plugins_diagnostics,
+    ).toBe(warning);
+    expect(
+      (second.value.result as unknown as FieldPageReport).tool
+        .plugins_diagnostics,
+    ).toBe(warning);
   });
 
   it("dumps again when the tool identity changes", async () => {

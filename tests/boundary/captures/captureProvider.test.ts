@@ -63,6 +63,7 @@ else { if(readFileSync('capture', 'utf8') !== 'recording bytes') throw Error('wr
   if (mode === "path") await symlink(script, join(directory, "tshark"));
   const controller = new AbortController();
   let calls = 0;
+  let producerLaunched = false;
   let mayClean = !failCleanup;
   let mayStopDecoder = mode !== "process-cleanup";
   const acquired = createDeferred<void>();
@@ -78,6 +79,13 @@ else { if(readFileSync('capture', 'utf8') !== 'recording bytes') throw Error('wr
     },
     async (input) => {
       calls++;
+      // The version and plugin probes are not producer runs; the
+      // post-run abort must land after the capture/fields command.
+      if (
+        !input.arguments.includes("--version") &&
+        !input.arguments.includes("plugins")
+      )
+        producerLaunched = true;
       if (mode === "launch-failure" && !input.arguments.includes("--version"))
         throw spawnFailure("E2BIG", input.command);
       if (mode === "file-limit" && !input.arguments.includes("--version")) {
@@ -144,7 +152,7 @@ else { if(readFileSync('capture', 'utf8') !== 'recording bytes') throw Error('wr
         const { truncate } = await import("node:fs/promises");
         await truncate(script, 64 * 1024 * 1024 + 1);
       }
-      if (mode === "post-run-abort" && calls === 2) controller.abort();
+      if (mode === "post-run-abort" && producerLaunched) controller.abort();
       return readStableArtifact(...args);
     },
     async (limits) => ({ ...limits, file_bytes: 1048576 }),
@@ -862,6 +870,7 @@ it("rejects oversized selector lists and UTF-8 argv expansion before provider wo
 
 it("discovers installed protocols and field definitions without a capture", async () => {
   const f = await fixture();
+  let discoveryCalls = 0;
   for (const [input, expected] of [
     [
       { query: "USB" },
@@ -932,7 +941,13 @@ it("discovers installed protocols and field definitions without a capture", asyn
     expect(report).toMatchObject(expected);
     expect(report.tool.arguments).toEqual(["-G", "fields"]);
     expect(report.tool.version_diagnostics).toBe("version warning\n");
-    expect(report.diagnostics).toBe("glossary warning\n");
+    // The glossary is dumped once and cached for the session: only the
+    // first report carries the fields command's stderr, while the plugin
+    // probe runs on every request and its warnings are always retained.
+    expect(report.diagnostics).toBe(
+      discoveryCalls++ === 0 ? "glossary warning\n" : "",
+    );
+    expect(report.tool.plugins_diagnostics).toBe("glossary warning\n");
     expect(report.limits.output_bytes).toBe(32 * 1024 * 1024);
   }
   expect(
@@ -1036,7 +1051,9 @@ it("retains completed discovery on late cancellation and cleanup failure", async
     if (mode === "cleanup") {
       await f.service.inspectFields({});
       await f.service.inspect({ path: f.path, fields: ["ip.addr"] });
-      expect(f.calls()).toBe(2);
+      // Version probe, plugin probe and the fields dump launched; the
+      // retained cleanup ownership refuses later requests without launching.
+      expect(f.calls()).toBe(3);
       for (let attempt = 0; attempt < 2; attempt++)
         await expect(f.service.close()).rejects.toMatchObject({
           operation: "inspect_packet_fields",

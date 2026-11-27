@@ -103,7 +103,8 @@ the report preserves the exact requested selection and the producer's output key
 Evidence includes source path/digest/size, exact selections, typed packet fields,
 configured and resolved executable paths/digests/full version banner, arguments and stderr. Warnings remain
 visible even on exit zero. `tool.version_diagnostics` also retains warnings from
-the separate version probe. Post-run identity failures identify the affected
+the separate version probe, and field discovery retains the plugin probe's
+warnings in `tool.plugins_diagnostics` on every request, including cache hits. Post-run identity failures identify the affected
 private copy, executable or limiter; resource-signal errors retain the signal
 and effective ceilings. Two-pass mode cannot recover missing capture bytes.
 

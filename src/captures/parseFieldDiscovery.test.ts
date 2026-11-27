@@ -5,7 +5,6 @@ import {
   type InspectPacketFieldsInput,
 } from "../domain/captures/packetFields.js";
 import {
-  FieldDiscoveryBudgetError,
   parseFieldDiscovery,
   parseFieldGlossary,
   selectFieldRecords,
@@ -42,6 +41,7 @@ describe("parseFieldDiscovery", () => {
       matching: 3,
       returned: 3,
       has_more: false,
+      record_budget_reached: false,
     });
   });
 
@@ -59,6 +59,7 @@ describe("parseFieldDiscovery", () => {
       matching: 5,
       returned: 2,
       has_more: true,
+      record_budget_reached: false,
     });
     const rest = parseFieldDiscovery(
       GLOSSARY,
@@ -119,11 +120,25 @@ describe("parseFieldDiscovery", () => {
     expect(parseFieldGlossary(GLOSSARY)[0]).toHaveProperty("sourceByteLength");
   });
 
-  it("rejects a page over the record budget", () => {
-    const wide = `F\tx.y\tx.y\tFT_STRING\tx\t0x0\t0\t${"a".repeat(1_500_000)}`;
-    expect(() => parseFieldDiscovery(wide, input({ kind: "fields" }))).toThrow(
-      FieldDiscoveryBudgetError,
+  it("ends the page at the record budget and reports it", () => {
+    const wide = (index: number) =>
+      `F\tx.y${index}\tx.y${index}\tFT_STRING\tx\t0x0\t0\t${"a".repeat(1_500_000)}`;
+    const result = parseFieldDiscovery(
+      [wide(1), wide(2)].join("\n"),
+      input({ kind: "fields" }),
     );
+    // The first record is always returned; the second would exceed the
+    // 8 MiB page budget, so the page ends early and says so.
+    expect(result.records.map((record) => record.abbreviation)).toEqual([
+      "x.y1",
+    ]);
+    expect(result.output_window).toEqual({
+      examined: 2,
+      matching: 2,
+      returned: 1,
+      has_more: true,
+      record_budget_reached: true,
+    });
   });
 
   it("rejects malformed and empty glossaries", () => {

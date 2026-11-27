@@ -344,7 +344,11 @@ export class TsharkCaptureProvider implements PacketCapturePort {
         throw new Error(
           "Expected TShark 4.x; inspect the selected installation.",
         );
-      const metadata = (args: readonly string[], diagnostics: string) => ({
+      const metadata = (
+        args: readonly string[],
+        diagnostics: string,
+        pluginsDiagnostics?: string,
+      ) => ({
         diagnostics,
         tool: {
           configured_path: configured,
@@ -353,6 +357,11 @@ export class TsharkCaptureProvider implements PacketCapturePort {
           sha256: tool.sha256,
           version_banner: version.stdout.text,
           version_diagnostics: version.stderr.text,
+          // The plugin probe runs on every field-discovery request, cache
+          // hit or not; its warnings are retained like the version probe's.
+          ...(pluginsDiagnostics === undefined
+            ? {}
+            : { plugins_diagnostics: pluginsDiagnostics }),
           arguments: [...args],
         },
         resource_limiter: {
@@ -413,7 +422,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
         const report = packetFieldsCatalogSchema.parse({
           selection: input,
           ...selection,
-          ...metadata(args, fieldsDiagnostics),
+          ...metadata(args, fieldsDiagnostics, plugins.stderr.text),
           limits: {
             ...limits,
             ...effectiveLimits,
