@@ -593,7 +593,18 @@ it("returns all point matches when they fit and reports output exhaustion otherw
     _tag: "ArtifactOperationError",
     reason: "limit",
     detail: expect.stringContaining("source_map_limits.output_bytes is 5500"),
+    limit: {
+      control_kind: "parameter",
+      parameter: "source_map_limits.output_bytes",
+      effective_value: 5500,
+      unit: "bytes",
+      minimum: 1,
+      maximum: 536_870_887,
+      default_value: 33_554_432,
+      applies_at: "next_call",
+    },
   });
+  expect(limited.error.limit).not.toHaveProperty("required_value");
   expect(limited.error.partialObservation).toBeUndefined();
 });
 it("admits a codec reply only from the selected runtime and memory envelope", async () => {
@@ -690,6 +701,16 @@ it.each([true, false])(
             reason: expect.stringContaining("process memory limit"),
             reportedLimits: {
               codec_process_memory_limit_bytes: expectedProcessMemoryLimitBytes,
+            },
+            limit: {
+              control_kind: "parameter",
+              parameter: "source_map_limits.codec_heap_mib",
+              effective_value: 192,
+              unit: "MiB",
+              minimum: 128,
+              maximum: 16384,
+              default_value: 192,
+              applies_at: "next_call",
             },
             capturedOutput: { stderr: "panic: out of memory" },
           }

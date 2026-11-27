@@ -158,7 +158,10 @@ flag; FastMCP was tested with explicit refresh calls. Neither establishes
 automatic refresh for every installed version or other client. Keep `full`
 until refresh is established for the selected client and configuration.
 See the [discovery contract](../reference/mcp-contracts.md#hotcold-catalog-discovery) for
-pagination, identity and family-scope semantics.
+pagination, identity and family-scope semantics. An exact call to an in-scope
+tool that is still unloaded returns the `discover_tools` arguments needed to
+load it. After discovery, refresh the catalog if your client caches the tool
+list, then retry the original call.
 
 Analysis tools, including `inspect_analysis_view`, load on demand. For example,
 load `inspect_api_contract` and supply its `view` to answer an initial OpenAPI

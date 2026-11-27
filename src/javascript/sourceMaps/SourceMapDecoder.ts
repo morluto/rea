@@ -2,6 +2,7 @@ import { QueuedProviderClose } from "../../providers/QueuedProviderClose.js";
 import {
   selectedSourceMapLimits,
   localSourceMapLimitsSchema,
+  sourceMapBudgetLimit,
   sourceMapLimitRecovery,
 } from "../../domain/sourceMapLimits.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
@@ -110,6 +111,7 @@ export class SourceMapDecoder implements WebSourceMapPort {
     const capacityFailure = (
       field: "map_bytes" | "output_bytes",
       value: number,
+      requiredValue?: number,
     ) => {
       const recovery = sourceMapLimitRecovery(field, value);
       return new ArtifactOperationError(
@@ -117,11 +119,15 @@ export class SourceMapDecoder implements WebSourceMapPort {
         "limit",
         undefined,
         `${input.path}: Source-map admission exhausted. ${recovery}`,
-        { remediationAction: recovery },
+        {
+          limit: sourceMapBudgetLimit(field, value, requiredValue),
+          remediationAction: recovery,
+        },
       );
     };
-    if (Buffer.byteLength(input.text) > limits.mapBytes)
-      return err(capacityFailure("map_bytes", limits.mapBytes));
+    const inputBytes = Buffer.byteLength(input.text);
+    if (inputBytes > limits.mapBytes)
+      return err(capacityFailure("map_bytes", limits.mapBytes, inputBytes));
     const encoded: string[] = [];
     let encodedBytes = 0;
     for (const part of jsonParts(request.data)) {

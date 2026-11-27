@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { deflateSync } from "node:zlib";
 import { randomBytes } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
+import { collectEntries } from "../../../tests/fixtures/artifactEntries.js";
 import { withPyInstallerReader } from "../../../tests/fixtures/pyinstallerReader.js";
 import {
   scanCanonicalArtifactInventory,
@@ -122,8 +123,7 @@ it.each([0, 1, 2])(
     for (let row = 0; row < index; row++)
       record += original.readUInt32BE(record);
     await withPyInstallerReader(original, async (reader) => {
-      const entries = [];
-      for await (const entry of reader.entries()) entries.push(entry);
+      const entries = await collectEntries(reader);
       expect(entries).toHaveLength(3);
     });
     const malformed = Buffer.from(original);
@@ -169,8 +169,7 @@ it.each([
         ],
       }),
       async (reader) => {
-        const entries = [];
-        for await (const entry of reader.entries()) entries.push(entry);
+        const entries = await collectEntries(reader);
         const module = entries.find((entry) => entry.path === "module")!;
         expect(module.formatMetadata).toMatchObject({
           bytecode_header: "unknown",
@@ -197,8 +196,7 @@ it("fills short descriptor reads when distinguishing both CArchive module layout
       return Reflect.apply(read, this, args);
     });
     try {
-      const entries = [];
-      for await (const entry of reader.entries()) entries.push(entry);
+      const entries = await collectEntries(reader);
       for (const module of fixture.modules) {
         const entry = entries.find((item) => item.path === module.name)!;
         expect(await buffer(await reader.open(entry))).toEqual(module.bytes);
@@ -238,8 +236,7 @@ it.each(["unused compressed input", "wrong declared size"])(
         ],
       }),
       async (reader) => {
-        const entries = [];
-        for await (const entry of reader.entries()) entries.push(entry);
+        const entries = await collectEntries(reader);
         const module = entries.find((entry) => entry.path === "module")!;
         expect(module.formatMetadata).toMatchObject({
           bytecode_header: "derived",
@@ -371,8 +368,7 @@ it.each(["magic", "marshal"])(
         members: [{ name: "PYZ.pyz", typeCode: "z", payload, compress: true }],
       }),
       async (reader, carrier) => {
-        const entries: ArtifactEntry[] = [];
-        for await (const entry of reader.entries()) entries.push(entry);
+        const entries = await collectEntries(reader);
         const entry = entries[0]!;
         expect(entry.kind).toBe("file");
         const read = vi
@@ -959,8 +955,7 @@ it.each([false, true])(
         ],
       }),
       async (reader, _handle, path) => {
-        const entries: ArtifactEntry[] = [];
-        for await (const entry of reader.entries()) entries.push(entry);
+        const entries = await collectEntries(reader);
         const inventory = await scanCanonicalArtifactInventory(path);
         for (const [logicalPath, code, bytecode] of [
           ["PYZ.pyz/app/mod.pyc", 0, true],
@@ -1305,8 +1300,7 @@ it("retains multipackage references as distinct unresolved declarations", async 
       })),
     }),
     async (reader) => {
-      const entries: ArtifactEntry[] = [];
-      for await (const entry of reader.entries()) entries.push(entry);
+      const entries = await collectEntries(reader);
       expect(reader.formatMetadata()).toMatchObject({
         external_dependency_count: names.length,
         runtime_option_count: 0,

@@ -25,14 +25,9 @@ import {
   readGhidraInstallationProperties,
   type GhidraInstallationFileOptions,
 } from "./GhidraInstallationProperties.js";
-import {
-  constants,
-  accessSync,
-  readdirSync,
-  realpathSync,
-  statSync,
-} from "node:fs";
+import { readdirSync, realpathSync, statSync } from "node:fs";
 import { dirname, posix, win32 } from "node:path";
+import { isExecutableFileSync } from "../filesystem/regularFileProbe.js";
 
 import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 import {
@@ -1140,7 +1135,7 @@ export const systemGhidraInstallationHost = (): GhidraInstallationHost => ({
     }
   },
   executableHeader: readGhidraExecutableHeader,
-  executable: executablePath,
+  executable: isExecutableFileSync,
   probeJava: probeGhidraJava,
   discoverInstallDirOnPath: discoverGhidraInstallationOnPath,
 });
@@ -1174,7 +1169,7 @@ export const discoverGhidraInstallationOnPath = (
   for (const { path: candidate } of candidates) {
     let resolved: string;
     try {
-      if (!executablePath(candidate)) continue;
+      if (!isExecutableFileSync(candidate)) continue;
       resolved = realpathSync.native(candidate);
     } catch (cause: unknown) {
       void cause;
@@ -1188,7 +1183,7 @@ export const discoverGhidraInstallationOnPath = (
       platform === "win32" ? "analyzeHeadless.bat" : "analyzeHeadless",
     );
     try {
-      if (statSync(properties).isFile() && executablePath(headless))
+      if (statSync(properties).isFile() && isExecutableFileSync(headless))
         return stableGhidraInstallationRoot(root, platform);
     } catch (cause: unknown) {
       void cause;
@@ -1279,15 +1274,4 @@ const stableJavaHome = (
     "libexec/openjdk.jdk/Contents/Home",
   );
   return sameHome(candidate) ? candidate : observedHome;
-};
-
-const executablePath = (path: string): boolean => {
-  try {
-    accessSync(path, constants.X_OK);
-    return statSync(path).isFile();
-  } catch (cause: unknown) {
-    // best-effort cleanup: optional executable probing; failure means missing.
-    void cause;
-    return false;
-  }
 };
