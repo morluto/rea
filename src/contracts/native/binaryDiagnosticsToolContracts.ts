@@ -4,6 +4,7 @@ import {
 } from "../../domain/firmware/devicetree.js";
 import { binaryLayoutSummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/binaryLayoutSummarySchema.js";
 import { devicetreeSummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/devicetreeSummarySchema.js";
+import { espNvsSummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/espNvsSummarySchema.js";
 import { elfDependenciesSummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/elfDependenciesSummarySchema.js";
 import { nativeExportsSummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/nativeExportsSummarySchema.js";
 import {
@@ -103,6 +104,10 @@ import {
   inspectWindowsShortcutInputSchema,
   windowsShortcutSchema,
 } from "../../domain/native/windowsShortcut.js";
+import {
+  espNvsReportSchema,
+  inspectEspNvsInputSchema,
+} from "../../domain/firmware/espNvs.js";
 
 /** Caller-selected delivery of completed binary layout Evidence. */
 export const inspectBinaryLayoutRequestSchema =
@@ -584,6 +589,37 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
         input: {
           path: "/artifacts/crash.core",
           include_debugger_context: true,
+        },
+      },
+    ],
+  },
+  {
+    name: "inspect_esp_nvs",
+    availability: "standalone",
+    cli: true,
+    ...toolContractMetadata("inspect_esp_nvs", evidenceEffects),
+    kind: "native-provider",
+    description:
+      "Decode an ESP-IDF v1/v2 Non-Volatile Storage (NVS) flash partition or a 4096-byte aligned slice of a raw ESP flash dump without executing code or decrypting keys. Verifies page-header, item-header, and variable-payload IEEE CRC32 checksums (seeded with 0xFFFFFFFF), reconstructs namespace tables, primitive integers (u8..u64, i8..i64), UTF-8 strings (sz), v1 single-page blobs, and v2 multi-chunk BLOB_IDX/BLOB_DATA records, recovers slot-by-slot past damaged item headers, and flags corrupt or XTS-AES encrypted pages explicitly. Complete detail returns all decoded entries inline; summary (or omitted detail over the agent result budget) retains complete Evidence for inspect_analysis_view kind esp-nvs (collections entries, pages, namespaces, anomalies) or evidence-json.",
+    inputSchema: inspectEspNvsInputSchema.extend({
+      detail: analysisDetailSchema,
+    }),
+    outputSchema: analysisDetailOutputSchemaOf(
+      espNvsReportSchema,
+      espNvsSummaryViewResultSchema,
+    ),
+    examples: [
+      {
+        title: "Decode a standalone carved nvs.bin partition",
+        input: { path: "/artifacts/nvs.bin" },
+      },
+      {
+        title:
+          "Decode the NVS partition at 0x9000 inside a full ESP32 flash dump",
+        input: {
+          path: "/artifacts/esp32_flash.bin",
+          partition_offset: 36864,
+          partition_bytes: 24576,
         },
       },
     ],

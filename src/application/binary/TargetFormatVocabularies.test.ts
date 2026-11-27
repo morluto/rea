@@ -168,6 +168,7 @@ const TARGETS: TargetFixtures = {
   "windows-shortcut": { ...artifact, format: "windows-shortcut" },
   "python-pyc": { ...artifact, format: "python-pyc" },
   devicetree: { ...artifact, format: "devicetree" },
+  "esp-nvs": { ...artifact, format: "esp-nvs" },
   deb: { ...artifact, format: "deb" },
 };
 

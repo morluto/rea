@@ -948,6 +948,11 @@ ComLoader rejects records `loader: "BinaryLoader"`, `load_address: "1000:0100"`
 analysis. PSP contents, stack, and device state remain unmodeled. See [DOS guide](https://github.com/morluto/rea/blob/main/docs/providers/ghidra-dos.md).
 
 Use `inspect_byte_entropy` to triage high- and low-entropy ranges before extraction.
+For ESP32/ESP8266 flash dumps or carved `partitions/nvs.bin` files (`esp-nvs`), use
+`inspect_esp_nvs` (`rea inspect-esp-nvs PATH [--partition-offset N] [--partition-bytes N]`)
+to decode ESP-IDF v1/v2 Non-Volatile Storage pages, CRC32 checksums, namespaces,
+strings, integers, floats, and multi-chunk v2 blobs, marking older copies of a
+key `superseded`; encrypted NVS entries are not decrypted. See [ESP-IDF NVS partitions](https://github.com/morluto/rea/blob/main/docs/guides/firmware/esp-nvs.md).
 
 For other headerless images (embedded firmware without ELF/Mach-O/PE/MZ
 headers), open with `format: "raw-binary"`, `architecture` (`x86`, `x86_64`,

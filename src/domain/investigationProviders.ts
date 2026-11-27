@@ -265,3 +265,9 @@ export const BINARY_HARDENING_PROVIDER = Object.freeze({
   name: "REA binary hardening parser",
   version: "1",
 } as const);
+
+export const ESP_NVS_PROVIDER = Object.freeze({
+  id: "rea-esp-nvs",
+  name: "REA ESP-IDF NVS partition decoder",
+  version: "1",
+} as const);
