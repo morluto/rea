@@ -196,24 +196,22 @@ it.skipIf(yara === undefined)(
 );
 
 it.skipIf(yara === undefined)(
-  "compiles a rule file with a relative include directive against its original directory",
+  "compiles a rule that references a rule from another selected rule file, the recovery for a refused include",
   async () => {
     const { root, sample } = await sampleFile();
     const rulesDir = join(root, "rules");
     await mkdir(rulesDir);
     const common = join(rulesDir, "common.yar");
-    await writeFile(
-      common,
-      'rule CommonRule { strings: $t = "hello" condition: $t }\n',
-    );
-    const mainSource =
-      'include "common.yar"\nrule MainRule { condition: CommonRule }\n';
+    const commonSource =
+      'rule CommonRule { strings: $t = "hello" condition: $t }\n';
+    await writeFile(common, commonSource);
+    const mainSource = "rule MainRule { condition: CommonRule }\n";
     const mainRule = join(rulesDir, "main.yar");
     await writeFile(mainRule, mainSource);
     const service = realService(yara!);
     const result = await service.inspect({
       path: sample,
-      rule_paths: [mainRule],
+      rule_paths: [common, mainRule],
     });
     expect(result.ok, JSON.stringify(result)).toBe(true);
     if (!result.ok) return;
@@ -223,6 +221,11 @@ it.skipIf(yara === undefined)(
       "MainRule",
     ]);
     expect(report.rule_files).toEqual([
+      {
+        path: common,
+        sha256: createHash("sha256").update(commonSource).digest("hex"),
+        bytes: Buffer.byteLength(commonSource),
+      },
       {
         path: mainRule,
         sha256: createHash("sha256").update(mainSource).digest("hex"),

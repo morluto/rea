@@ -567,24 +567,102 @@ describe("inspect_yara_matches with a yara stand-in", () => {
     }
   });
 
-  it("preserves relative include lookup when staging rule files", async () => {
-    const { root, command, sample, args } = await fixture("resolve");
+  it("refuses rule files with include directives before starting yara, naming each one", async () => {
+    const { root, sample, args, service } = await fixture("resolve");
+    const rulesDir = join(root, "rules");
+    await mkdir(rulesDir);
+    await writeFile(
+      join(rulesDir, "common.yar"),
+      "rule CommonRule { condition: true }\n",
+    );
+    // Only lines 3 and 8 hold directives yara's lexer acts on; the others
+    // spell `include` inside a comment, string, regex or longer token.
+    const mainRule = join(rulesDir, "main.yar");
+    await writeFile(
+      mainRule,
+      [
+        '// include "line-comment.yar"',
+        '/* include "block-comment.yar" */',
+        'include "common.yar"',
+        "rule MainRule {",
+        '  strings: $a = "include \\"str.yar\\"" $r = /include "re.yar"/i',
+        "  condition: $a or $r or $include or xinclude",
+        "}",
+        '  include\t"second.yar"',
+        "",
+      ].join("\n"),
+    );
+    const otherRule = join(rulesDir, "other.yar");
+    await writeFile(
+      otherRule,
+      'rule Other { condition: 0xABinclude "third.yar" }\n',
+    );
+    const plainRule = join(rulesDir, "plain.yar");
+    await writeFile(plainRule, "rule Plain { condition: true }\n");
+    const result = await service.inspect({
+      path: sample,
+      rule_paths: [mainRule, plainRule, otherRule],
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisInputError",
+      conformsToInputContract: true,
+      issues: [
+        {
+          path: ["rule_paths", 0],
+          reason: "invalid_value",
+          message: `${mainRule}(3:1): include "common.yar"; included files are not hashed into this Evidence.`,
+        },
+        {
+          path: ["rule_paths", 0],
+          reason: "invalid_value",
+          message: `${mainRule}(8:3): include "second.yar"; included files are not hashed into this Evidence.`,
+        },
+        {
+          path: ["rule_paths", 2],
+          reason: "invalid_value",
+          message: `${otherRule}(1:29): include "third.yar"; included files are not hashed into this Evidence.`,
+        },
+      ],
+      remediationAction: expect.stringContaining(
+        "pass the included file as another rule_paths entry",
+      ),
+      diagnostics: {
+        include_directives: [
+          {
+            rule_path_index: 0,
+            total: 2,
+            listed: [
+              { line: 3, column: 1, path: "common.yar" },
+              { line: 8, column: 3, path: "second.yar" },
+            ],
+          },
+          {
+            rule_path_index: 2,
+            total: 1,
+            listed: [{ line: 1, column: 29, path: "third.yar" }],
+          },
+        ],
+      },
+    });
+    // yara never started.
+    await expect(readFile(args)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("scans the included file once it is passed as another rule file", async () => {
+    const { root, sample, service } = await fixture("resolve");
     const rulesDir = join(root, "rules");
     await mkdir(rulesDir);
     const common = join(rulesDir, "common.yar");
     await writeFile(common, "rule CommonRule { condition: true }\n");
-    const mainRuleText =
-      'include "common.yar"\nrule MainRule { condition: true }\n';
     const mainRule = join(rulesDir, "main.yar");
-    await writeFile(mainRule, mainRuleText);
-    const service = stubService(command, {
-      ...process.env,
-      YARA_STUB_MODE: "resolve",
-      YARA_STUB_ARGS: args,
-    });
+    const mainText = "rule MainRule { condition: CommonRule }\n";
+    await writeFile(mainRule, mainText);
     const result = await service.inspect({
       path: sample,
-      rule_paths: [mainRule],
+      rule_paths: [common, mainRule],
     });
     expect(result.ok, JSON.stringify(result)).toBe(true);
     if (!result.ok) return;
@@ -593,60 +671,10 @@ describe("inspect_yara_matches with a yara stand-in", () => {
       "CommonRule",
       "MainRule",
     ]);
-    // The reported rule digest and byte length remain bound to the original rule file.
-    expect(report.rule_files).toEqual([
-      {
-        path: mainRule,
-        sha256: createHash("sha256").update(mainRuleText).digest("hex"),
-        bytes: Buffer.byteLength(mainRuleText),
-      },
-    ]);
-  });
-
-  it("reports a missing include as an input error with include repair advice", async () => {
-    const { root, command, sample, args } = await fixture("resolve");
-    const rulesDir = join(root, "rules");
-    await mkdir(rulesDir);
-    const mainRule = join(rulesDir, "main.yar");
-    await writeFile(
+    expect(report.rule_files.map((file) => file.path)).toEqual([
+      common,
       mainRule,
-      'include "common.yar"\nrule MainRule { condition: true }\n',
-    );
-    const service = stubService(command, {
-      ...process.env,
-      YARA_STUB_MODE: "resolve",
-      YARA_STUB_ARGS: args,
-    });
-    const result = await service.inspect({
-      path: sample,
-      rule_paths: [mainRule],
-    });
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error).toMatchObject({
-      _tag: "AnalysisInputError",
-      conformsToInputContract: true,
-      issues: [
-        {
-          path: ["rule_paths", 0],
-          reason: "invalid_value",
-          message: `${mainRule}(1): can't open include file: ${join(rulesDir, "common.yar")}`,
-        },
-      ],
-      remediationAction: expect.stringContaining(
-        "a relative include resolves against the directory of the rule file that includes it",
-      ),
-      diagnostics: {
-        compile_errors: [
-          {
-            kind: "include",
-            source: mainRule,
-            line: 1,
-            rule: null,
-          },
-        ],
-      },
-    });
+    ]);
   });
 
   it("gives a duplicated string the scope-aware duplicate repair", async () => {
@@ -1514,84 +1542,6 @@ describe("inspect_yara_matches with a yara stand-in", () => {
         });
       }
     }
-  });
-
-  it("refuses a rule file whose rewritten relative includes exceed max_file_bytes before launching yara", async () => {
-    const { root, sample, args, service } = await fixture("resolve");
-    const longDir = join(root, "nested-rule-directory".repeat(4));
-    await mkdir(longDir, { recursive: true });
-    const ruleText =
-      Array.from({ length: 8 }, (_, i) => `include "r${String(i)}.yar"`).join(
-        "\n",
-      ) + "\n";
-    const rulePath = join(longDir, "main.yar");
-    await writeFile(rulePath, ruleText);
-    const maxFileBytes = Buffer.byteLength(ruleText) + 32;
-    const result = await service.inspect({
-      path: sample,
-      rule_paths: [rulePath],
-      max_file_bytes: maxFileBytes,
-    });
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error.cleanupIncomplete).toBe(false);
-    expect(result.error).toMatchObject({
-      _tag: "AnalysisResourceConstraintError",
-      limit: expect.objectContaining({
-        control_kind: "parameter",
-        parameter: "max_file_bytes",
-        effective_value: maxFileBytes,
-      }),
-    });
-    expect(result.error.limit).not.toHaveProperty("required_value");
-    await expect(readFile(args)).rejects.toMatchObject({ code: "ENOENT" });
-  });
-
-  it("retains completed rule identity when a buffered trailing include exceeds max_file_bytes during finish", async () => {
-    const { root, sample, args, service } = await fixture("resolve");
-    const longDir = join(root, "nested-rule-directory".repeat(3));
-    await mkdir(longDir, { recursive: true });
-    const trailingTail = "trailing-unterminated-include-path";
-    const ruleText = `include "a.yar"\ninclude "${trailingTail}`;
-    const rulePath = join(longDir, "main.yar");
-    await writeFile(rulePath, ruleText);
-    const pushedBytes = Buffer.byteLength(
-      `include "${longDir}/a.yar"\ninclude "`,
-    );
-    const maxFileBytes = pushedBytes;
-    expect(Buffer.byteLength(ruleText)).toBeLessThanOrEqual(maxFileBytes);
-    expect(pushedBytes + Buffer.byteLength(trailingTail)).toBeGreaterThan(
-      maxFileBytes,
-    );
-    const result = await service.inspect({
-      path: sample,
-      rule_paths: [rulePath],
-      max_file_bytes: maxFileBytes,
-    });
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error.cleanupIncomplete).toBe(false);
-    expect(result.error).toMatchObject({
-      _tag: "AnalysisResourceConstraintError",
-      limit: expect.objectContaining({
-        control_kind: "parameter",
-        parameter: "max_file_bytes",
-        effective_value: maxFileBytes,
-      }),
-    });
-    const expectedObservation = {
-      kind: "file-snapshot-hash",
-      path: rulePath,
-      sha256: createHash("sha256").update(ruleText).digest("hex"),
-      bytes: Buffer.byteLength(ruleText),
-    };
-    expect(result.error.partialObservation).toEqual(expectedObservation);
-    expect(projectAnalysisError(result.error)).toMatchObject({
-      details: {
-        partial_observation: expectedObservation,
-      },
-    });
-    await expect(readFile(args)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("refuses matches when the scanned file changes during the scan", async () => {
