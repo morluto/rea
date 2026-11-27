@@ -954,4 +954,42 @@ describe("parseEspNvsPartition", () => {
       superseded: false,
     });
   });
+
+  it("reports an older copy of a used blob chunk as a superseded copy", async () => {
+    const chunk = Buffer.from("0123456789abcdef");
+    const writeChunk = (page: Buffer, slot: number) =>
+      writeVarSlot({
+        page,
+        slotIdx: slot,
+        nsId: 1,
+        typeCode: 0x42,
+        chunkIndex: 0,
+        key: "cert",
+        payload: chunk,
+      });
+    const older = initActivePage(5);
+    older.writeUInt32LE(0xffff_fff8, 0); // FREEING: being copied forward
+    writeNamespaceSlot(older, 0, "tls", 1);
+    writeChunk(older, 1);
+    const newer = initActivePage(6);
+    writeChunk(newer, 0);
+    const idx = Buffer.alloc(8, 0xff);
+    idx.writeUInt32LE(chunk.length, 0);
+    idx[4] = 1;
+    idx[5] = 0;
+    writeRawSlot(newer, 2, { nsId: 1, typeCode: 0x48, key: "cert", data: idx });
+    const report = await parse(Buffer.concat([older, newer]));
+    expect(
+      report.entries.map((entry) => [
+        entry.data_type,
+        entry.page_index,
+        entry.completeness,
+        entry.superseded,
+      ]),
+    ).toEqual([
+      ["blob_data_copy", 0, "complete", true],
+      ["blob_v2", 1, "complete", false],
+    ]);
+    expect(report.coverage.status).toBe("complete");
+  });
 });

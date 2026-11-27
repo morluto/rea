@@ -141,6 +141,8 @@ export const espNvsDataTypeSchema = z.enum([
   "blob_v1",
   "blob_v2",
   "blob_data_orphan",
+  /** An older copy of a BLOB_DATA chunk whose newer copy a recovered blob used. */
+  "blob_data_copy",
   "unknown",
 ]);
 export type EspNvsDataType = z.infer<typeof espNvsDataTypeSchema>;

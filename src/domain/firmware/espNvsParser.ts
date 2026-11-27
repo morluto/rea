@@ -281,6 +281,7 @@ const markSuperseded = (
   for (const entry of entries) {
     if (
       entry.data_type === "blob_data_orphan" ||
+      entry.data_type === "blob_data_copy" ||
       entry.completeness !== "complete"
     )
       continue;
@@ -296,7 +297,11 @@ const markSuperseded = (
       newest.set(id, entry);
   }
   return entries.map((entry) => {
-    if (entry.data_type === "blob_data_orphan") return entry;
+    if (
+      entry.data_type === "blob_data_orphan" ||
+      entry.data_type === "blob_data_copy"
+    )
+      return entry;
     const winner = newest.get(identity(entry));
     if (winner === undefined || winner === entry) return entry;
     const [seq, slot] = order(entry);

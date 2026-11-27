@@ -68,6 +68,9 @@ and anomalies can be paged with `inspect_analysis_view` (`kind: "esp-nvs"` or
   Latin-1, each with an anomaly.
 - Orphan `BLOB_DATA` chunks without a matching `BLOB_IDX` record are surfaced
   with `data_type: "blob_data_orphan"` and `completeness: "missing_chunks"`.
+  An older copy of a chunk whose newer copy a recovered blob used, which an
+  interrupted page move leaves, is `data_type: "blob_data_copy"` with
+  `superseded: true`, and does not make coverage partial.
 
 ## Sources
 
