@@ -18,6 +18,7 @@ export const ghidraFixturePath = fileURLToPath(
 type FixtureMode =
   | "checkpoint"
   | "checkpoint_fail_close"
+  | "checkpoint_hang_edit"
   | "checkpoint_hold_startup"
   | "checkpoint_hold_close"
   | "checkpoint_hold_close_hang_tool"
@@ -48,6 +49,8 @@ type FixtureMode =
   | "invalid_shutdown_ack"
   | "hang_after_start"
   | "hang_tools"
+  | "interruptible_tools"
+  | "interruptible_tools_reply_success"
   | "exit_tools"
   | "silent"
   | "exit"

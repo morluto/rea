@@ -199,6 +199,12 @@
       "reason": "Bounds Ghidra's own Ghidra/application.properties, a short key=value installation descriptor of the bring-your-own provider (about 1 KiB); no analysis input passes through it, and a larger file is not a Ghidra installation REA can drive."
     }
   },
+  "src/ghidra/GhidraSessionErrorProjection.ts": {
+    "\"The Ghidra C type depth allowance\"": {
+      "class": "representation",
+      "reason": "Ghidra 12.2 stores, names and compares a data type recursively through its pointer, array, typedef and member chain; measured on Ghidra 12.2, 1024 levels resolve and 2048 exhaust the JVM stack inside addDataType while its database lock is held, leaving that lock held and the Program unusable. No caller value can raise the stack, so the bound is a quarter of the last measured safe depth."
+    }
+  },
   "src/gpu/GpuCodeObjectsProvider.ts": {
     "\"The GPU object allowance\"": {
       "class": "pending",

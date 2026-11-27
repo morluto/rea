@@ -80,7 +80,15 @@ no-overwrite CLI delivery. It checks the target and project files for changes.
   that `analyze_function` still returns that function's assembly, callers,
   callees, references and basic blocks unchanged, marks pseudocode, native API
   and p-code value flow unavailable with the decompiler's reason, and that
-  cancellation still ends the request. Run `npm run build:cached`, then
+  cancellation still ends the request. It also injects a read-ahead window
+  whose carrying function times out beside a sibling that never finishes, and
+  checks that the request reports that timeout without decompiling again,
+  waits only within its own deadline, leaves the cancelled sibling uncached,
+  uses REA's own thread pool, and clamps a longer hint to one window. It
+  checks that a read without decompiler options keeps the configured payload
+  limit and completed decompiles while an explicit `null` restores the Ghidra
+  default, and that a repeated decompile of code outside every function keeps
+  the body Ghidra widened. Run `npm run build:cached`, then
   `node scripts/verify-real-ghidra-decompiler-failure.mjs` on Linux or macOS
   x64/arm64. The lane also parses the degraded dossier with REA's Ghidra output
   contract and checks the healthy provider path through the real read-only TCP bridge.

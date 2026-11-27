@@ -70,6 +70,7 @@ import {
 import { devicetreeFixture } from "../../../src/domain/firmware/devicetree.fixture.js";
 import {
   gzipTarFixture,
+  withGzipExtraField,
   RELEASE_TAR_MEMBERS,
   tarFixture,
 } from "../../../src/artifacts/tar/tar.fixture.js";
@@ -961,13 +962,21 @@ it("classifies stored and gzip-compressed tar archives as tar whatever their nam
   const directory = await createTestTempDirectory("rea-tar-target-");
   const stored = join(directory, "release.tar");
   const gzip = join(directory, "package.unitypackage");
+  const extra = join(directory, "package-with-extra");
   const plainGzip = join(directory, "notes.gz");
   await Promise.all([
     writeFile(stored, tarFixture(RELEASE_TAR_MEMBERS)),
     writeFile(gzip, gzipTarFixture(RELEASE_TAR_MEMBERS)),
-    writeFile(plainGzip, gzipSync(Buffer.alloc(4096, 0x41))),
+    writeFile(
+      extra,
+      withGzipExtraField(gzipTarFixture(RELEASE_TAR_MEMBERS), 65531),
+    ),
+    writeFile(
+      plainGzip,
+      withGzipExtraField(gzipSync(Buffer.alloc(4096, 0x41)), 9000),
+    ),
   ]);
-  for (const path of [stored, gzip])
+  for (const path of [stored, gzip, extra])
     expect(await parseBinaryTarget(path)).toMatchObject({
       ok: true,
       value: { kind: "archive", format: "tar" },

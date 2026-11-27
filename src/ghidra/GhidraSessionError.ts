@@ -39,6 +39,18 @@ export type GhidraSessionFailureKind =
 export const GHIDRA_STARTUP_DEADLINE_ELAPSED =
   "Ghidra startup deadline elapsed";
 
+/**
+ * Whether the bridge reports that it stopped the request because its monitor
+ * was cancelled: `decompile_cancelled` from the native decompiler, or
+ * `request_cancelled` from a cancellation check elsewhere in the handler.
+ */
+export const isGhidraRemoteCancellation = (
+  failure: GhidraSessionError,
+): boolean =>
+  failure.kind === "remote" &&
+  (failure.remoteCode === "decompile_cancelled" ||
+    failure.remoteCode === "request_cancelled");
+
 /** Additional structured context for a Ghidra session failure. */
 export interface GhidraSessionErrorOptions extends ErrorOptions {
   readonly cancellation?: { readonly reason: unknown };
@@ -197,6 +209,45 @@ const createGhidraSessionError = (failure: {
     },
   );
 
+/**
+ * Refusals of a prototype or type definition. The bridge rolled the call back
+ * and the session is unaffected, so their diagnostics are request-scoped.
+ */
+export type GhidraTypeEditRefusalCode =
+  | "invalid_function_signature"
+  | "unknown_data_type"
+  | "ambiguous_data_type"
+  | "invalid_type_declarations"
+  | "data_type_conflict"
+  | "conflicting_type_definitions";
+
+/** Bridge refusals of caller C text over a bound on Ghidra's uncancellable parser. */
+export const GHIDRA_C_PARSER_LIMIT_CODES = [
+  "signature_length_limit",
+  "declarations_length_limit",
+  "parenthesis_depth_limit",
+  "type_depth_limit",
+] as const;
+export type GhidraCParserLimitCode =
+  (typeof GHIDRA_C_PARSER_LIMIT_CODES)[number];
+
+export const isGhidraCParserLimitCode = (
+  code: string | undefined,
+): code is GhidraCParserLimitCode =>
+  (GHIDRA_C_PARSER_LIMIT_CODES as readonly (string | undefined)[]).includes(
+    code,
+  );
+
+export const isGhidraTypeEditRefusalCode = (
+  code: string | undefined,
+): code is GhidraTypeEditRefusalCode =>
+  code === "invalid_function_signature" ||
+  code === "unknown_data_type" ||
+  code === "ambiguous_data_type" ||
+  code === "invalid_type_declarations" ||
+  code === "data_type_conflict" ||
+  code === "conflicting_type_definitions";
+
 /** Bridge input failures share classification with their domain error projection. */
 export const isGhidraInputFailureCode = (code: string | undefined): boolean =>
   code === "invalid_request" ||
@@ -233,6 +284,8 @@ export const bindGhidraSessionFailure =
           kind === "remote" &&
             (isGhidraInputFailureCode(options.remoteCode) ||
               options.remoteCode === "invalid_function_name" ||
+              isGhidraTypeEditRefusalCode(options.remoteCode) ||
+              isGhidraCParserLimitCode(options.remoteCode) ||
               ghidraFileOffsetOutcome(options.remoteCode) !== undefined ||
               isGhidraByteSearchCursorMismatch(options.remoteCode))
             ? "request"
