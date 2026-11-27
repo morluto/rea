@@ -394,6 +394,25 @@ export const registerBinaryDiagnosticsCommands = (
   registerContractCommand(
     cli,
     logger,
+    contract("inspect_pe_rich_header"),
+    {
+      description:
+        "Inspect PE Rich header linker records without executing the image",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      fields: { path: { description: "Local PE32/PE32+ image" } },
+    },
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/peRichHeader.js")
+        ).createPeRichHeaderService(),
+      "rea-pe-rich-header",
+    ),
+  );
+  registerContractCommand(
+    cli,
+    logger,
     contract("inspect_windows_shortcut"),
     {
       description:

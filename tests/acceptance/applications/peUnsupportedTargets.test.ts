@@ -17,7 +17,7 @@ const cases = (
 );
 
 cliTest.for(cases)(
-  "classifies $format for PE resources and certificates through $surface",
+  "classifies $format for PE resources, certificates and Rich headers through $surface",
   async ({ format, surface }, { cli }) => {
     const root = await createTestTempDirectory("rea-pe-dos-public-");
     const path = join(root, "program.exe");
@@ -41,7 +41,12 @@ cliTest.for(cases)(
     await writeFile(path, bytes);
     const mcp =
       surface === "stdio MCP" ? await connectLocalToolsMcp() : undefined;
-    for (const operation of ["resources", "certificates"] as const) {
+    for (const operation of [
+      "resources",
+      "certificates",
+      "rich-header",
+    ] as const) {
+      const tool = `inspect_pe_${operation.replace("-", "_")}`;
       let error: unknown;
       if (surface === "CLI") {
         const response = await cli.run({
@@ -50,7 +55,7 @@ cliTest.for(cases)(
         expect(response.exitCode).toBe(1);
         error = response.json;
       } else {
-        const response = await mcp!.call(`inspect_pe_${operation}`, { path });
+        const response = await mcp!.call(tool, { path });
         expect(response.isError).toBe(true);
         error = parseMcpToolError(response).error;
       }
@@ -59,7 +64,7 @@ cliTest.for(cases)(
         code: "unsupported_target",
         category: "unsupported_target",
         retryable: false,
-        details: { operation: `inspect_pe_${operation}` },
+        details: { operation: tool },
       });
       if (malformed) {
         expect(error).toMatchObject({

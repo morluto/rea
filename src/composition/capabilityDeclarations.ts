@@ -54,6 +54,7 @@ import {
   PE_UNWIND_RANGES_PROVIDER,
   PE_OVERLAY_PROVIDER,
   PE_RESOURCES_PROVIDER,
+  PE_RICH_HEADER_PROVIDER,
   RELEASE_EXPOSURE_PROVIDER,
   ESP_NVS_PROVIDER,
   WEB_SCRIPT_EXPORT_PROVIDER,
@@ -518,6 +519,11 @@ export const CAPABILITY_DECLARATIONS = {
   peResources: {
     providers: [
       providerBinding(PE_RESOURCES_PROVIDER, ["inspect_pe_resources"]),
+    ],
+  },
+  peRichHeader: {
+    providers: [
+      providerBinding(PE_RICH_HEADER_PROVIDER, ["inspect_pe_rich_header"]),
     ],
   },
   windowsShortcut: {

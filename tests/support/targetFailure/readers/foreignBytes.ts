@@ -43,6 +43,7 @@ export default targetFailureReaders([
   foreign("inspect_pe_load_config", "malformed", "native-binary"),
   foreign("inspect_pe_certificates", "malformed", "native-binary"),
   foreign("inspect_pe_resources", "malformed", "native-binary"),
+  foreign("inspect_pe_rich_header", "malformed", "native-binary"),
   foreign("inspect_native_exports", "unsupported", "native-binary"),
   foreign("inspect_native_initializers", "malformed", "native-binary"),
   foreign("inspect_binary_hardening", "unsupported", "native-binary"),

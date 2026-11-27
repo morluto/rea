@@ -229,11 +229,13 @@ explicit path or endpoint and do not need it.
   - Maven `pom.xml` or Gradle `.module`: `inspect_maven_gradle_metadata`
     ([Maven and Gradle guide](https://github.com/morluto/rea/blob/main/docs/maven-gradle-metadata.md)).
   - PE tables: `inspect_pe_certificates`, `inspect_pe_imports`,
-    `inspect_pe_load_config` and `inspect_pe_resources`; PE or ELF exports:
-    `inspect_native_exports`. Signatures are not verified
+    `inspect_pe_load_config`, `inspect_pe_resources` and
+    `inspect_pe_rich_header`; PE or ELF exports: `inspect_native_exports`.
+    Signatures are not verified; Rich product IDs are not tool names
     ([certificates](https://github.com/morluto/rea/blob/main/docs/pe-certificates.md),
     [imports](https://github.com/morluto/rea/blob/main/docs/pe-imports.md),
-    [load configuration](https://github.com/morluto/rea/blob/main/docs/pe-load-config.md)).
+    [load configuration](https://github.com/morluto/rea/blob/main/docs/pe-load-config.md),
+    [Rich header](https://github.com/morluto/rea/blob/main/docs/guides/native/pe-rich-header.md)).
   - Windows `.lnk` shortcut: `inspect_windows_shortcut`; the target is not
     resolved ([shortcut guide](https://github.com/morluto/rea/blob/main/docs/guides/native/windows-shortcut.md)).
   - ELF, PE and Mach-O hardening: `inspect_binary_hardening`; use

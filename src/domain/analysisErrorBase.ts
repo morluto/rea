@@ -5,6 +5,7 @@ import type { ElfDependencies } from "./native/elfDependencies.js";
 import type { ElfNotes } from "./native/elfNotes.js";
 import type { ElfUnwindRanges } from "./native/elfUnwindRanges.js";
 import type { MachoFunctionStarts } from "./native/machoFunctionStarts.js";
+import type { PeRichHeader } from "./native/peRichHeader.js";
 import type { PeUnwindRanges } from "./native/peUnwindRanges.js";
 import type { KernelBuildConfig } from "./native/kernelBuildConfig.js";
 import type { KernelModule } from "./native/kernelModule.js";
@@ -739,6 +740,7 @@ export type AnalysisPartialObservation =
   | ElfNotes
   | ElfUnwindRanges
   | MachoFunctionStarts
+  | PeRichHeader
   | PeUnwindRanges
   | KernelBuildConfig
   | KernelModule

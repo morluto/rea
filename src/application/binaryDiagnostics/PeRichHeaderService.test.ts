@@ -1,0 +1,227 @@
+import { createHash } from "node:crypto";
+import { expect, it } from "vitest";
+import { bufferByteSource } from "../../domain/byteSource.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
+import {
+  inspectPeRichHeaderInputSchema,
+  type PeRichHeader,
+} from "../../domain/native/peRichHeader.js";
+import { PE_RICH_HEADER_PROVIDER } from "../../domain/investigationProviders.js";
+import {
+  AnalysisCancelledError,
+  AnalysisInputError,
+  AnalysisOutputError,
+} from "../../domain/analysisErrorCore.js";
+import { parseEvidence } from "../../domain/evidence.js";
+import { ok } from "../../domain/result.js";
+import { peRichHeaderImage } from "../../native/pe/PeRichHeader.fixture.js";
+import { parsePeRichHeaderFromHandle } from "../../native/pe/PeRichHeaderParser.js";
+import { PeRichHeaderService } from "./PeRichHeaderService.js";
+
+const identity = PE_RICH_HEADER_PROVIDER;
+const path = "/artifacts/app.exe";
+
+const parsedReport = async (
+  options: Parameters<typeof peRichHeaderImage>[0] = {},
+): Promise<PeRichHeader> => {
+  const bytes = peRichHeaderImage(options);
+  return parsePeRichHeaderFromHandle(
+    bufferByteSource(bytes),
+    {
+      path,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      bytes: bytes.length,
+    },
+    inspectPeRichHeaderInputSchema.parse({ path }),
+  );
+};
+
+const serviceFor = (report: PeRichHeader) =>
+  new PeRichHeaderService({
+    identity,
+    inspect: () => Promise.resolve(ok(report)),
+  });
+
+it("rejects a relative path and extra arguments before reading", async () => {
+  let calls = 0;
+  const report = await parsedReport();
+  const service = new PeRichHeaderService({
+    identity,
+    inspect: () => {
+      calls += 1;
+      return Promise.resolve(ok(report));
+    },
+  });
+  const relative = await service.inspect({ path: "app.exe" });
+  const extra = await service.inspect({ path, extra: true });
+  expect(relative.ok).toBe(false);
+  expect(extra.ok).toBe(false);
+  if (!relative.ok) expect(relative.error).toBeInstanceOf(AnalysisInputError);
+  if (!extra.ok) expect(extra.error).toBeInstanceOf(AnalysisInputError);
+  expect(calls).toBe(0);
+});
+
+it("retains the completed observation and abort reason when the caller cancels while the provider completes", async () => {
+  const controller = new AbortController();
+  const reason = { request: "late PeRichHeader cancellation" };
+  const report = await parsedReport();
+  const service = new PeRichHeaderService({
+    identity,
+    inspect: () => {
+      controller.abort(reason);
+      return Promise.resolve(ok(report));
+    },
+  });
+  const result = await service.inspect({ path }, { signal: controller.signal });
+  if (result.ok) throw new Error("Expected late cancellation");
+  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  expect(result.error.cause).toBe(reason);
+  expect(parseEvidence(result.error.partialObservation)).toMatchObject({
+    operation: "inspect_pe_rich_header",
+    normalized_result: report,
+  });
+});
+
+it.each([
+  ["omitted", { path }],
+  ["explicit", { path, max_entries: 1024, max_file_bytes: 67_108_864 }],
+] as const)(
+  "records only caller-selected limits when they are %s",
+  async (_label, parameters) => {
+    const report = await parsedReport();
+    const completed = await serviceFor(report).inspect(parameters);
+    if (!completed.ok) throw completed.error;
+    expect(completed.value.parameters).toEqual(parameters);
+
+    const controller = new AbortController();
+    const cancelled = await new PeRichHeaderService({
+      identity,
+      inspect: () => {
+        controller.abort();
+        return Promise.resolve(ok(report));
+      },
+    }).inspect(parameters, { signal: controller.signal });
+    if (cancelled.ok) throw new Error("Expected late cancellation");
+    expect(
+      parseEvidence(cancelled.error.partialObservation).parameters,
+    ).toEqual(parameters);
+  },
+);
+
+it("accepts a report whose file size exceeds the read budget", async () => {
+  const report = await parsedReport();
+  const result = await serviceFor(report).inspect({
+    path,
+    max_file_bytes: 64,
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value.normalized_result).toEqual(report);
+});
+
+it("locates the whole record in observed Evidence", async () => {
+  const report = await parsedReport();
+  const result = await serviceFor(report).inspect({ path });
+  if (!result.ok) throw result.error;
+  expect(result.value.normalized_result).toEqual(report);
+  expect(result.value.subject).toMatchObject({
+    identity: { format: "pe", architecture: "x86_64" },
+  });
+  expect(result.value.locations).toContainEqual({
+    kind: "file-offset-range",
+    start: 0x80,
+    end: 0xb0,
+  });
+});
+
+it("reports no record when the PE header immediately follows the DOS header and refuses an overlapping PE header", async () => {
+  // e_lfanew 0x40 leaves no room for an 8-byte Rich footer.
+  const report = await parsedReport({ block: false, peOffset: 0x40 });
+  expect(report).toMatchObject({
+    pe_header_offset: 0x40,
+    rich_header: { state: "absent" },
+  });
+  const result = await serviceFor(report).inspect({ path });
+  if (!result.ok) throw result.error;
+  expect(result.value.normalized_result).toEqual(report);
+
+  // The shared PE header owner rejects overlapping headers inside the 64-byte DOS header.
+  const overlapping = await parsedReport({
+    block: false,
+    peOffset: 0x30,
+  }).catch((error: unknown) => error);
+  expect(overlapping).toBeInstanceOf(ParseFailureError);
+  expect(overlapping).toMatchObject({
+    failure: { kind: "unsupported", format: "native-binary" },
+  });
+});
+
+it.each([
+  ["absent", { block: false }, null],
+  ["malformed", { omitStart: true }, { start: 0xa8, end: 0xb0 }],
+] as const)(
+  "locates an %s record by what was read",
+  async (_label, options, range) => {
+    const result = await serviceFor(await parsedReport(options)).inspect({
+      path,
+    });
+    if (!result.ok) throw result.error;
+    const ranges = result.value.locations.filter(
+      (location) => location.kind === "file-offset-range",
+    );
+    expect(ranges).toEqual(
+      range === null ? [] : [{ kind: "file-offset-range", ...range }],
+    );
+  },
+);
+
+it.each([
+  [
+    "a record outside the space before the PE header",
+    (value: PeRichHeader) => {
+      value.pe_header_offset = 0x90;
+    },
+  ],
+  [
+    "an entry count that disagrees with the record size",
+    (value: PeRichHeader) => {
+      if (value.rich_header.state === "present")
+        value.rich_header.entries.pop();
+    },
+  ],
+  [
+    "a footer detached from its record",
+    (value: PeRichHeader) => {
+      if (value.rich_header.state === "present")
+        value.rich_header.footer_location.offset -= 8;
+    },
+  ],
+  [
+    "a checksum verdict that contradicts its values",
+    (value: PeRichHeader) => {
+      if (value.rich_header.state === "present")
+        value.rich_header.checksum.matches = false;
+    },
+  ],
+  [
+    "a PE header inside the DOS header",
+    (value: PeRichHeader) => {
+      value.pe_header_offset = 0x30;
+      value.rich_header = { state: "absent" };
+    },
+  ],
+  [
+    "a PE header past the artifact",
+    (value: PeRichHeader) => {
+      value.pe_header_offset = value.artifact.bytes;
+    },
+  ],
+] as const)(
+  "rejects %s before creating observed Evidence",
+  async (_label, mutate) => {
+    const report = await parsedReport();
+    mutate(report);
+    const result = await serviceFor(report).inspect({ path });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisOutputError);
+  },
+);

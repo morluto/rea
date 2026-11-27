@@ -245,6 +245,13 @@ export const PE_LOAD_CONFIG_PROVIDER = Object.freeze({
   version: "1",
 } as const);
 
+/** Provider identity for portable, execution-free PE Rich header decoding. */
+export const PE_RICH_HEADER_PROVIDER = Object.freeze({
+  id: "rea-pe-rich-header",
+  name: "REA PE Rich header parser",
+  version: "1",
+} as const);
+
 /** Provider identity for bytes appended after a PE image. */
 export const PE_OVERLAY_PROVIDER = Object.freeze({
   id: "rea-pe-overlay",

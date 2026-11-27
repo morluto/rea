@@ -1,5 +1,6 @@
 import { peImportImage } from "../../../fixtures/binaryDiagnostics/peImports.js";
 import { peLoadConfigImage } from "../../../../src/native/pe/PeLoadConfig.fixture.js";
+import { peRichHeaderImage } from "../../../../src/native/pe/PeRichHeader.fixture.js";
 import { targetFailureReaders, type TargetFailureCase } from "../registry.js";
 
 /** A valid image whose DOS signature is replaced, so the PE owner refuses it. */
@@ -28,4 +29,8 @@ const withoutMz = (
 export default targetFailureReaders([
   { operation: "inspect_pe_imports", cases: withoutMz(peImportImage) },
   { operation: "inspect_pe_load_config", cases: withoutMz(peLoadConfigImage) },
+  {
+    operation: "inspect_pe_rich_header",
+    cases: withoutMz(({ bits }) => peRichHeaderImage({ plus: bits === 64 })),
+  },
 ]);

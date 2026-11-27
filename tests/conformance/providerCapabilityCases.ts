@@ -149,6 +149,7 @@ export const PROVIDER_CAPABILITY_CONFORMANCE: Readonly<
   },
   peOverlay: { cases: ["tests/acceptance/peOverlayCli.test.ts"] },
   peResources: { cases: ["tests/acceptance/applications/peResources.test.ts"] },
+  peRichHeader: { cases: ["tests/acceptance/peRichHeaderCli.test.ts"] },
   nugetNupkg: { cases: ["tests/acceptance/nugetNupkgCli.test.ts"] },
   vsixPackage: { cases: ["tests/acceptance/vsixPackageCli.test.ts"] },
   ociImageLayout: { cases: ["tests/acceptance/ociImageLayoutCli.test.ts"] },

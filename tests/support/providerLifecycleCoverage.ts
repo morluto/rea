@@ -1572,6 +1572,15 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     ),
     typedFailures("tests/boundary/filesystem/peResources.test.ts"),
   ),
+  "rea-pe-rich-header": inProcess(
+    covered(
+      test(
+        "tests/acceptance/peRichHeaderCli.test.ts",
+        "reads the same Rich header through the CLI and MCP",
+      ),
+    ),
+    typedFailures("tests/boundary/filesystem/peRichHeader.test.ts"),
+  ),
   "rea-pe-unwind-ranges": inProcess(
     covered(
       test(

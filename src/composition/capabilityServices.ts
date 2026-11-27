@@ -89,6 +89,7 @@ import { createPeOverlayService } from "./binaryDiagnostics/peOverlay.js";
 import { createBinaryHardeningService } from "./binaryDiagnostics/binaryHardening.js";
 import { createPeCertificatesService } from "./binaryDiagnostics/peCertificates.js";
 import { createPeImportsService } from "./binaryDiagnostics/peImports.js";
+import { createPeRichHeaderService } from "./binaryDiagnostics/peRichHeader.js";
 import { createNativeExportsService } from "./binaryDiagnostics/nativeExports.js";
 import { createPeResourcesService } from "./binaryDiagnostics/peResources.js";
 import { createWindowsShortcutService } from "./binaryDiagnostics/windowsShortcut.js";
@@ -429,6 +430,7 @@ const modules = {
   binaryHardening: service(() => createBinaryHardeningService()),
   peCertificates: service(() => createPeCertificatesService()),
   peImports: service(() => createPeImportsService()),
+  peRichHeader: service(() => createPeRichHeaderService()),
   windowsShortcut: service(() => createWindowsShortcutService()),
   electronFuses: service(
     ({ options }) => options.electronFuses ?? createElectronFuseService(),

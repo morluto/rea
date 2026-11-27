@@ -171,8 +171,8 @@ whose declared count exceeds `max_entries` reports that count as
 ### Static reader read allowance
 
 `inspect_pe_imports`, `inspect_pe_resources`, `inspect_pe_load_config`,
-`inspect_pe_certificates`, `inspect_pe_unwind_ranges`, `inspect_macho_function_starts`,
-`inspect_binary_hardening` and
+`inspect_pe_certificates`, `inspect_pe_unwind_ranges`, `inspect_pe_rich_header`,
+`inspect_macho_function_starts`, `inspect_binary_hardening` and
 `inspect_native_exports` bound the bytes they read, not the file size.
 `max_file_bytes` (CLI `--max-file-bytes`) counts each positional read of
 headers, directory tables and the ranges they reference. Defaults are 64 MiB
@@ -196,6 +196,8 @@ Those readers also report `details.limit` for their per-call inventory budgets:
 names, default 16 MiB, at most 256 MiB); `inspect_pe_load_config`
 `max_callbacks`; `inspect_pe_unwind_ranges` `max_entries` (default 2,097,152, at
 most 16,777,216; the declared count is its `required_value`);
+`inspect_pe_rich_header` `max_entries` (default 1,024, at most 65,536; the
+decoded entry count is its `required_value`);
 `inspect_macho_function_starts` `max_entries` (default 2,097,152, at most
 16,777,216; the combined start and data-in-code count is its `required_value`);
 and
