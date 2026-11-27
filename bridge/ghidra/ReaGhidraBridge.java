@@ -537,7 +537,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 decompileTimeoutSeconds = request.decompileTimeoutSeconds() == null
                     ? descriptor.decompileTimeoutSeconds() : request.decompileTimeoutSeconds();
                 valueFlowLimits = request.valueFlowLimits();
-                applyDecompilePayloadLimit(request.decompileMaxPayloadMiB());
+                applyRequestDecompilerOptions(request);
                 dispatchAndWrite(writer, request, descriptor);
             }
             catch (RequestFailure failure) {
@@ -1320,6 +1320,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return options;
     }
 
+    /**
+     * Only a request that carries decompiler options changes them. Another
+     * read leaves the session's payload limit, and the decompiles completed
+     * under it, in place.
+     */
+    private void applyRequestDecompilerOptions(Request request) {
+        if (request.decompilePayload() != null)
+            applyDecompilePayloadLimit(request.decompilePayload().mebibytes());
+    }
+
     private void applyDecompilePayloadLimit(Integer payloadMiB) {
         if (java.util.Objects.equals(decompileMaxPayloadMiB, payloadMiB)) return;
         // DecompInterface supports live setOptions: it updates the existing
@@ -1350,10 +1360,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
         JsonObject selection = new JsonObject();
         Function function = resolveDecompileProcedure(selector, selection);
         try {
-            String value = decompiledText(decompile(function));
+            DecompileResults results = decompile(function);
+            String value = decompiledText(results);
+            Function decompiled = decompiledFunction(function, results);
             List<String> limitations = new ArrayList<>(functionBoundaryLimitations(
-                function,
-                currentProgram.getListing().getInstructions(function.getBody(), true)
+                decompiled,
+                currentProgram.getListing().getInstructions(decompiled.getBody(), true)
             ));
             if (selection.has("undefined_function_entry"))
                 limitations.add(0, undefinedFunctionLimitation(selection));
@@ -4936,6 +4948,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
     }
 
+    /**
+     * The function whose body the decompilation covers. Ghidra's decompile
+     * callback widens an UndefinedFunction's body to the code it followed, so
+     * a reused result keeps the widened function; a fresh lookup of the same
+     * entry covers only that entry.
+     */
+    private static Function decompiledFunction(Function requested, DecompileResults results) {
+        return results == null || results.getFunction() == null ? requested : results.getFunction();
+    }
+
     /** Every input a completed decompilation of one Program state depends on. */
     private record DecompileCacheKey(
         Address entry,
@@ -6762,11 +6784,15 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (parsed.isJsonObject() && parsed.getAsJsonObject().has("decompile_read_ahead"))
             keys.add("decompile_read_ahead");
         JsonObject object = requireObject(parsed, keys);
-        Integer payloadMiB = null;
-        if (object.has("decompile_max_payload_mib") && !object.get("decompile_max_payload_mib").isJsonNull()) {
-            payloadMiB = requireInteger(object, "decompile_max_payload_mib");
-            if (payloadMiB < 1 || payloadMiB > MAX_DECOMPILE_PAYLOAD_MIB)
-                throw new IllegalArgumentException("Invalid per-request native decompiler payload limit");
+        DecompilePayload payload = null;
+        if (object.has("decompile_max_payload_mib")) {
+            Integer payloadMiB = null;
+            if (!object.get("decompile_max_payload_mib").isJsonNull()) {
+                payloadMiB = requireInteger(object, "decompile_max_payload_mib");
+                if (payloadMiB < 1 || payloadMiB > MAX_DECOMPILE_PAYLOAD_MIB)
+                    throw new IllegalArgumentException("Invalid per-request native decompiler payload limit");
+            }
+            payload = new DecompilePayload(payloadMiB);
         }
         ValueFlowLimits flowLimits = defaultValueFlowLimits();
         if (object.has("value_flow_limits")) {
@@ -6806,7 +6832,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 if (readAhead.size() < DECOMPILE_AHEAD_WINDOW) readAhead.add(selector.getAsString());
             }
         }
-        return new Request(id, requireString(object, "method"), params.getAsJsonObject(), timeout, payloadMiB, flowLimits,
+        return new Request(id, requireString(object, "method"), params.getAsJsonObject(), timeout, payload, flowLimits,
             List.copyOf(readAhead));
     }
 
@@ -7312,7 +7338,14 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return new ValueFlowLimits(DEFAULT_HIGH_PCODE_OPS, DEFAULT_HIGH_PCODE_INPUTS_PER_OP, DEFAULT_HIGH_PCODE_DEF_USE_EDGES);
     }
     private record ValueFlowLimits(int maxOperations, int maxInputsPerOperation, int maxEdges) {}
-    private record Request(int id, String method, JsonObject params, Integer decompileTimeoutSeconds, Integer decompileMaxPayloadMiB, ValueFlowLimits valueFlowLimits,
+    /**
+     * A request's decompiler payload selection. A null selection means the
+     * request carried no decompiler options; a null limit inside one selects
+     * the installed Ghidra default.
+     */
+    private record DecompilePayload(Integer mebibytes) {}
+
+    private record Request(int id, String method, JsonObject params, Integer decompileTimeoutSeconds, DecompilePayload decompilePayload, ValueFlowLimits valueFlowLimits,
         List<String> decompileReadAhead) {}
 
     private static final class RequestFailure extends RuntimeException {
