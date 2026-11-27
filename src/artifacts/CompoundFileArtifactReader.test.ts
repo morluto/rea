@@ -8,6 +8,7 @@ import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInv
 import { CompoundFileArtifactReader } from "./CompoundFileArtifactReader.js";
 import { ArtifactFileSource } from "../resources/ArtifactFileSource.js";
 import { assertArtifactReadActive } from "../resources/ArtifactFileOperation.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 
 const SECTOR = 512;
 const END = 0xffff_fffe;
@@ -450,26 +451,34 @@ it("retries a shared preparation cancelled by another traversal", async () => {
       assertArtifactReadActive(signal);
       return read.call(this, signal);
     });
+  let cancelled: Promise<unknown> | undefined;
+  let other: Promise<string[]> | undefined;
   try {
-    const cancelled = reader
+    cancelled = reader
       .entries(controller.signal)
       [Symbol.asyncIterator]()
       .next();
     const cancelledResult = expect(cancelled).rejects.toMatchObject({
       reason: "cancelled",
     });
-    await started;
+    // If the first traversal fails before reaching the mocked read, waiting on
+    // `started` alone would hide that failure until the test timed out.
+    await awaitAcknowledgement(started, cancelled, "shared preparation");
     const collect = async (): Promise<string[]> => {
       const paths: string[] = [];
       for await (const entry of reader.entries()) paths.push(entry.path);
       return paths;
     };
-    const other = collect();
+    other = collect();
     controller.abort("cancelled first traversal");
     await cancelledResult;
     await expect(other).resolves.toContain("Stream");
   } finally {
     controller.abort();
+    // Both traversals must be joined before the mock goes away, or a read the
+    // second one still needs would run against the restored implementation.
+    await cancelled?.catch(() => undefined);
+    await other?.catch(() => undefined);
     spy.mockRestore();
     await reader.close();
   }
