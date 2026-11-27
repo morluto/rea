@@ -185,6 +185,24 @@ it("recognizes an auditd log by its first record and leaves plain text alone", (
   expect(recognize(Buffer.from("just some text\nand more\n"))).toBeUndefined();
 });
 
+it("decides an auditd claim on a multi-megabyte prefix without overflowing the stack", () => {
+  // Format recognition hands every candidate the whole leading buffer, and
+  // byte-faithful header decoding spreads its code points into one call. A
+  // single spread over a buffer this size throws RangeError instead of
+  // answering, which turned every large text member into an adapter failure.
+  const binary = Buffer.alloc(4 * 1024 * 1024, 0xff);
+  expect(() => recognize(binary)).not.toThrow();
+  expect(recognize(binary)).toBeUndefined();
+  const record = Buffer.concat([
+    Buffer.from("type=SYSCALL msg=audit(1700000000.123:1000): body\n"),
+    Buffer.alloc(4 * 1024 * 1024, 0x41),
+  ]);
+  expect(recognize(record)).toMatchObject({
+    state: "recognized",
+    format: "auditd-log",
+  });
+});
+
 it("recognizes an Android sparse image by its 0xED26FF3A magic", () => {
   expect(recognize(mixedAndroidSparseImage())).toMatchObject({
     state: "recognized",

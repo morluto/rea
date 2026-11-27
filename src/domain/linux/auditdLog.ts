@@ -61,6 +61,12 @@ export const AUDITD_RETAINED_EVENT_TYPE_LIMIT = 64;
  * event says so, instead of a set that grows with the file.
  */
 export const AUDITD_RETAINED_OMITTED_TYPE_LIMIT = 64;
+/**
+ * Bytes decoded per `String.fromCodePoint` call in the header mapping. The
+ * call receives its code points as arguments, so a single spread over a
+ * multi-megabyte candidate prefix overflows the call stack.
+ */
+const HEADER_DECODE_CHUNK = 4096;
 
 /** `type=... msg=audit(<sec>.<millis>:<serial>): <body>` — the auditd record header. */
 // The body is opaque bytes: a literal CR, U+2028 or U+2029 can reach it through
@@ -222,9 +228,17 @@ const sortedCounts = (counts: Map<string, number>): AuditEventTypeCount[] =>
  * every byte a token can hold, and no two inputs collide.
  */
 const decodeHeaderBytes = (bytes: Uint8Array): string => {
-  const codePoints: number[] = [];
-  for (const byte of bytes) codePoints.push(byte < 0x80 ? byte : 0x100 + byte);
-  return String.fromCodePoint(...codePoints);
+  // Chunked so the code points reach `fromCodePoint` as a bounded argument
+  // list. Spreading a header-sized array overflows the call stack, and this
+  // runs on every candidate prefix from format recognition.
+  let text = "";
+  for (let start = 0; start < bytes.length; start += HEADER_DECODE_CHUNK) {
+    const codePoints: number[] = [];
+    for (const byte of bytes.subarray(start, start + HEADER_DECODE_CHUNK))
+      codePoints.push(byte < 0x80 ? byte : 0x100 + byte);
+    text += String.fromCodePoint(...codePoints);
+  }
+  return text;
 };
 
 /** The raw bytes a `decodeHeaderBytes` string stands for. */
