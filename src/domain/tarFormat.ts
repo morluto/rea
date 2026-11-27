@@ -358,20 +358,28 @@ export const walkPaxRecords = (
   return undefined;
 };
 
-/** Keywords whose values `hdrcharset=BINARY` leaves as raw bytes (POSIX pax "hdrcharset"). */
+/**
+ * Keywords whose values `hdrcharset=BINARY` leaves as raw bytes (POSIX pax
+ * "hdrcharset"). GNU tar also writes them as raw bytes without that record
+ * when a name is not valid in the current locale.
+ */
 const PAX_BINARY_KEYWORDS = new Set(["path", "linkpath", "uname", "gname"]);
 
 /**
  * Parse pax extended-header records: `"<length> <key>=<value>\n"`, where
- * `length` counts the whole record in bytes. Values are UTF-8, except that a
- * `hdrcharset=BINARY` record in the same header leaves path, linkpath, uname
- * and gname as raw bytes; those that are not UTF-8 are decoded as Latin-1 and
- * named in `latin1`.
+ * `length` counts the whole record in bytes. Values are UTF-8, except path,
+ * linkpath, uname and gname, which may hold raw bytes; those that are not
+ * UTF-8 are decoded as Latin-1 and named in `latin1`. `binary` tells whether
+ * the header declared `hdrcharset=BINARY` for them.
  */
 export const parsePaxRecords = (
   bytes: Uint8Array,
 ):
-  | { readonly records: TarPaxRecords; readonly latin1: readonly string[] }
+  | {
+      readonly records: TarPaxRecords;
+      readonly latin1: readonly string[];
+      readonly binary: boolean;
+    }
   | { readonly reason: string } => {
   const values: [string, Uint8Array][] = [];
   const error = walkPaxRecords(bytes, (key, value) => {
@@ -391,12 +399,12 @@ export const parsePaxRecords = (
       latin1.delete(key);
       continue;
     }
-    if (!binary || !PAX_BINARY_KEYWORDS.has(key))
+    if (!PAX_BINARY_KEYWORDS.has(key))
       return { reason: "pax record value is not UTF-8" };
     records.set(key, Buffer.from(value).toString("latin1"));
     latin1.add(key);
   }
-  return { records, latin1: [...latin1] };
+  return { records, latin1: [...latin1], binary };
 };
 
 /** Number of whole blocks that hold `size` data bytes. */

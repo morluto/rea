@@ -98,6 +98,19 @@ describe("walkPaxRecords and parsePaxRecords", () => {
     expect([...(seen[1]?.[1] ?? [])]).toEqual([0xff]);
 
     expect(parsePaxRecords(payload)).toEqual({
+      records: new Map([
+        ["path", "abc"],
+        ["uname", "ÿ"],
+      ]),
+      latin1: ["uname"],
+      binary: false,
+    });
+    // Only the keywords that may hold raw bytes are decoded as Latin-1.
+    const comment = Buffer.concat([
+      Buffer.from("13 comment="),
+      Buffer.from([0xff, 0x0a]),
+    ]);
+    expect(parsePaxRecords(comment)).toEqual({
       reason: "pax record value is not UTF-8",
     });
 

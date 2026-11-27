@@ -612,7 +612,7 @@ describe("tar header edge cases", () => {
     ]);
   });
 
-  it("decodes a pax path under hdrcharset=BINARY as Latin-1 and keeps later members", async () => {
+  it("decodes a non-UTF-8 pax path as Latin-1 and keeps later members", async () => {
     // Python tarfile and libarchive write this for a name that is not UTF-8.
     const pax = Buffer.from(
       "21 hdrcharset=BINARY\n17 path=caf\xe9.txt\n",
@@ -640,8 +640,17 @@ describe("tar header edge cases", () => {
     ]);
     expect(result.metadata?.end_state).toBe("end-marker");
     expect(result.coverage[0]?.status).toBe("complete");
-    // Without hdrcharset=BINARY the value must still be UTF-8.
-    expect((await read(archive(strict))).metadata?.end_state).toBe("malformed");
+    // GNU tar writes the raw name without hdrcharset=BINARY when the name is
+    // not valid in its locale; the walk reads it the same way and says so.
+    const gnu = await read(archive(strict));
+    expect(gnu.entries.map((entry) => entry.path)).toEqual([
+      "café.txt",
+      "after.txt",
+    ]);
+    expect(gnu.entries[0]?.limitations).toEqual([
+      "tar pax path is not UTF-8 without hdrcharset=BINARY; decoded as Latin-1; raw hex: 636166e92e747874.",
+    ]);
+    expect(gnu.metadata?.end_state).toBe("end-marker");
   });
 
   it("raises cancellation from a gzip read that is waiting for output", async () => {
