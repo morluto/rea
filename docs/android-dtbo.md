@@ -50,6 +50,9 @@ For every non-empty entry, the reader probes the first 4 bytes at `dt_offset`:
 - Entries that point at exactly the same payload range are valid: `mkdtimg`
   writes a repeated input file once and points every entry for it at that
   payload. Each entry is listed, and a limitation names the shared range.
+  Every row is hashed and can be extracted separately, so the declared bytes of
+  all rows, shared or not, are admitted against `artifact_limits.expanded_bytes`
+  before any payload is read.
 - Bytes inside `total_size` that the header, entry table and payloads do not
   claim are reported with their range, and coverage becomes `unknown` because
   they may hold data no entry lists.

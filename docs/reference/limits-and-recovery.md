@@ -780,7 +780,8 @@ one domain-owned default policy. See [.NET bundles](../dotnet-bundles.md),
 SEA, PCK, ISO 9660, Deno, wxapkg, tar, macOS flat `.pkg` (including
 `Scripts`/`Payload` cpio archive decoding and scaled cpio member and path-byte
 allowances, plus `Distribution`/`PackageInfo` metadata decoding and scaled
-metadata record and XML-node allowances) and Android sparse image readers, NSO
+metadata record and XML-node allowances), Android sparse image and Android DTBO
+readers (every DTBO row is charged, including rows that share one payload), NSO
 segment decompression, and bFLT gzip decompression (which is also capped at a
 fixed 128 MiB in-memory inflation ceiling), including repeated readable logical
 occurrences. Omission retains each archive's encoded-size-derived default. The

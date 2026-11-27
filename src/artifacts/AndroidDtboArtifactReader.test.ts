@@ -238,6 +238,53 @@ describe("AndroidDtboArtifactReader", () => {
     }
   });
 
+  it("charges every row of a shared payload against expanded_bytes", async () => {
+    // Three rows naming one 64-byte payload declare 192 readable bytes.
+    const rows = 3;
+    const payloadAt = 32 + rows * 32;
+    const image = Buffer.alloc(payloadAt + 64);
+    image.writeUInt32BE(ANDROID_DTBO_MAGIC, 0);
+    image.writeUInt32BE(image.length, 4);
+    image.writeUInt32BE(32, 8);
+    image.writeUInt32BE(32, 12);
+    image.writeUInt32BE(rows, 16);
+    image.writeUInt32BE(32, 20);
+    for (let row = 0; row < rows; row++) {
+      image.writeUInt32BE(64, 32 + row * 32);
+      image.writeUInt32BE(payloadAt, 32 + row * 32 + 4);
+    }
+    const path = await writeTempImage(image);
+    const admitted = new AndroidDtboArtifactReader(
+      path,
+      undefined,
+      undefined,
+      192,
+    );
+    try {
+      expect(await collectEntries(admitted)).toHaveLength(rows);
+    } finally {
+      await admitted.close();
+    }
+    const refused = new AndroidDtboArtifactReader(
+      path,
+      undefined,
+      undefined,
+      191,
+    );
+    try {
+      await expect(collectEntries(refused)).rejects.toMatchObject({
+        reason: "limit",
+        readerLimit: {
+          parameter: "artifact_limits.expanded_bytes",
+          effective_value: 191,
+          required_value: 192,
+        },
+      });
+    } finally {
+      await refused.close();
+    }
+  });
+
   it("fails closed on corrupt, truncated, unsupported-version, overlapping, and over-limit inputs", async () => {
     const badMagic = buildSyntheticAndroidDtbo({
       magic: 0x01020304,

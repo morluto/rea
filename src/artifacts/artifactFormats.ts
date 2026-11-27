@@ -497,6 +497,7 @@ const NON_ZIP_FORMATS = {
         path,
         sourceOf(options),
         options.readerLimits?.android_dtbo,
+        options.readerLimits?.expanded_bytes,
       ),
   }),
   "android-ota-payload": container("android-ota-payload", {

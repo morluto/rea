@@ -2,6 +2,7 @@ import {
   DEFAULT_ANDROID_DTBO_READER_LIMITS,
   type AndroidDtboReaderLimits,
 } from "../domain/artifactReaderLimits.js";
+import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
 import { BinaryReader } from "../domain/binaryContainer.js";
 import {
   ANDROID_DTBO_FORMAT,
@@ -73,14 +74,18 @@ function entryLogicalPath(index: number): string {
 export class AndroidDtboArtifactReader extends PositionalArtifactReader<AndroidDtboMetadata> {
   override readonly format = ANDROID_DTBO_FORMAT;
   readonly #limits: AndroidDtboReaderLimits;
+  readonly #expandedBytes: number | undefined;
 
+  /** `expandedBytes` is `artifact_limits.expanded_bytes`. */
   constructor(
     path: string,
     admitted?: StableRegularFileDescriptor,
     limits: AndroidDtboReaderLimits = DEFAULT_ANDROID_DTBO_READER_LIMITS,
+    expandedBytes?: number,
   ) {
     super(path, "Android DTBO image", admitted);
     this.#limits = limits;
+    this.#expandedBytes = expandedBytes;
   }
 
   formatMetadata(): AndroidDtboMetadata | undefined {
@@ -130,6 +135,24 @@ export class AndroidDtboArtifactReader extends PositionalArtifactReader<AndroidD
     const entriesResult = parseAndroidDtboEntries(header, tableBuffer);
     if (!entriesResult.ok) throw parseFailure(entriesResult.error);
     const parsedTable = entriesResult.value;
+
+    // Shared payloads are valid, but every row is hashed and can be copied
+    // separately, so admit the whole table's declared bytes before reading
+    // any payload: 4096 rows naming one large payload multiply the work.
+    const expansionBudget =
+      this.#expandedBytes ?? artifactExpansionBudgetBytes(header.totalSize);
+    const declaredBytes = parsedTable.entries.reduce(
+      (total, row) => total + row.dtSize,
+      0,
+    );
+    if (declaredBytes > expansionBudget)
+      throw artifactReaderLimitFailure(
+        "artifact_limits.expanded_bytes",
+        expansionBudget,
+        "bytes",
+        declaredBytes,
+        "memory",
+      );
 
     const entries: DtboEntry[] = [];
     const childLimitations: string[] = [];
