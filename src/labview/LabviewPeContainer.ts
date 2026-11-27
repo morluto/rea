@@ -1,4 +1,5 @@
 import {
+  PE_RESOURCE_TYPE_RCDATA,
   PE_RESOURCE_DATA_ENTRY_BYTES,
   PE_RESOURCE_DIRECTORY_BYTES,
   PE_RESOURCE_ENTRY_BYTES,
@@ -20,8 +21,6 @@ const MAX_ENTRIES_PER_DIRECTORY = 4096;
 /** Entry records one scan may examine across every directory it reaches. */
 const MAX_RESOURCE_ENTRIES = 4096;
 const MAX_CONTAINERS = 64;
-/** LabVIEW stores its RSRC container under the RCDATA resource type. */
-const RT_RCDATA = 10;
 
 export interface EmbeddedRsrc {
   /** File offset of the embedded RSRC container. */
@@ -161,14 +160,15 @@ export const findEmbeddedRsrcContainers = (bytes: Buffer): EmbeddedRsrcScan => {
       const { identity, target } = readPeResourceEntryFacts(
         reader.range(at, PE_RESOURCE_ENTRY_BYTES, "resource entry"),
       );
+      // Depth 0 holds the resource types. LabVIEW stores its container under
+      // RT_RCDATA, so every other type is skipped before its target is read,
+      // whether that target is a subdirectory or a noncanonical leaf.
+      if (
+        depth === 0 &&
+        (identity.kind !== "id" || identity.id !== PE_RESOURCE_TYPE_RCDATA)
+      )
+        continue;
       if (target.kind === "directory") {
-        // Depth 0 holds the resource types; only LabVIEW's RCDATA subtree is
-        // relevant, so other types are neither walked nor charged.
-        if (
-          depth === 0 &&
-          (identity.kind !== "id" || identity.id !== RT_RCDATA)
-        )
-          continue;
         visit(target.offset, depth + 1);
         continue;
       }
@@ -187,15 +187,16 @@ export const findEmbeddedRsrcContainers = (bytes: Buffer): EmbeddedRsrcScan => {
           "resource data entry",
         ),
       );
-      if (size < 6) continue;
+      if (size < RSRC_MAGIC.length) continue;
       const dataOffset = payloadOffset(rva, size);
       if (dataOffset === undefined) {
         complete = false;
         continue;
       }
       if (
-        reader.range(dataOffset, 6, "resource payload").toString("latin1") !==
-        RSRC_MAGIC
+        reader
+          .range(dataOffset, RSRC_MAGIC.length, "resource payload")
+          .toString("latin1") !== RSRC_MAGIC
       )
         continue;
       const payloadKey = `${String(dataOffset)}:${String(size)}`;

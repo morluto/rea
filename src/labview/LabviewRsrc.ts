@@ -185,33 +185,24 @@ const sectionName = (
 };
 
 /**
- * The LabVIEW version packed into the first four bytes of a `vers` record:
- * two decimal major digits, then minor, bugfix, stage, and a four-digit build.
+ * The LabVIEW version packed big-endian into the first four bytes of a `vers`
+ * record: bits 31-24 hold two decimal major digits, bits 23-20 the minor
+ * digit and bits 19-16 the bugfix digit (pylabview `LVmisc.decodeVersion`,
+ * matching the classic Mac `NumVersion` layout `vers` mirrors). Only
+ * `major.minor` is reported, so only those nibbles are validated.
+ *
+ * The stage (bits 15-13) and build (bits 12-0) fields are not read: pylabview
+ * decodes the build as decimal digit nibbles, while `NumVersion` keeps its
+ * non-release revision as a plain binary count. The references disagree, so
+ * a build nibble above 9 neither validates nor invalidates the record.
  */
 const decodeVersion = (content: Uint8Array): string | null => {
   if (content.length < 4) return null;
-  const word =
-    ((((content[0] ?? 0) << 24) |
-      ((content[1] ?? 0) << 16) |
-      ((content[2] ?? 0) << 8) |
-      (content[3] ?? 0)) >>>
-      0) >>>
-    0;
-  const majorHigh = (word >>> 28) & 0x0f;
-  const majorLow = (word >>> 24) & 0x0f;
-  const minor = (word >>> 20) & 0x0f;
-  const bugfix = (word >>> 16) & 0x0f;
-  // The format packs decimal digits; any A-F nibble is a damaged record.
-  const digits = [
-    majorHigh,
-    majorLow,
-    minor,
-    bugfix,
-    (word >>> 8) & 0x0f,
-    (word >>> 4) & 0x0f,
-    word & 0x0f,
-  ];
-  if (digits.some((digit) => digit > 9)) return null;
+  const majorHigh = (content[0] ?? 0) >>> 4;
+  const majorLow = (content[0] ?? 0) & 0x0f;
+  const minor = (content[1] ?? 0) >>> 4;
+  // A decimal digit above 9 is a damaged record, so its version is unknown.
+  if ([majorHigh, majorLow, minor].some((digit) => digit > 9)) return null;
   return `${String(majorHigh * 10 + majorLow)}.${String(minor)}`;
 };
 

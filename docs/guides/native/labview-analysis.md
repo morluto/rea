@@ -30,9 +30,11 @@ SHA-256, then reports:
   for a direct RSRC file — to map them onto the artifact;
 - the LabVIEW version recorded by the container's `vers` block, decoded from
   the packed four-byte field at the start of that record (two decimal major
-  digits, then minor), with `version_coverage` saying whether it was
+  digits, then the minor digit), with `version_coverage` saying whether it was
   `observed`, has no `vers` record (`absent`), or has one that could not be
-  decoded (`unknown`);
+  decoded (`unknown`). Only those three digits are checked. The stage and build
+  bits are not read, because public references disagree on whether the build
+  is stored as decimal digits or as a binary count;
 - whether a block-diagram heap (`BDH*`) and a front-panel heap (`FPH*`) are
   present, absent from the inspected container, or unknown because content the
   reader did not examine could still hold one;
@@ -41,7 +43,9 @@ SHA-256, then reports:
   optional name, stored byte count, coding, and the decoded byte count when
   this reader decoded the section.
 
-A LabVIEW-built executable is read through its PE resource directory: the
+A LabVIEW-built executable is read through its PE resource directory, under
+the `RT_RCDATA` resource type only (other types are skipped before their
+entries are read): the
 largest embedded RSRC container is inspected and the count of containers found
 is reported. The outer container of a built executable usually holds a `FLAG`
 block and one `LVzp` block (the embedded program tree) rather than the per-VI

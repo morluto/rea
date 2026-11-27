@@ -83,6 +83,29 @@ describe("parseLabviewRsrc", () => {
     expect(scan.containers).toHaveLength(0);
   });
 
+  it.each([
+    [11, 0],
+    [10, 1],
+  ])(
+    "filters a root type-%i leaf by its resource type before reading it",
+    (type, expected) => {
+      const fixture = peResourceFixture(true, [
+        { type, name: 1, language: 1033, payload: labviewContainer() },
+      ]);
+      // Point the root type entry straight at the data entry, skipping the
+      // name and language directories (a noncanonical leaf target).
+      const rootEntry = fixture.entryOffsets[0]!;
+      const root = fixture.directoryOffsets[0]!;
+      fixture.bytes.writeUInt32LE(
+        fixture.dataOffsets[0]! - root,
+        rootEntry + 4,
+      );
+      const scan = findEmbeddedRsrcContainers(fixture.bytes);
+      if (!scan.ok) throw scan.failure;
+      expect(scan.containers).toHaveLength(expected);
+    },
+  );
+
   it("reports where an embedded container starts in the selected file", async () => {
     const bytes = peResourceFixture(true, [
       { type: 10, name: 1, language: 1033, payload: labviewContainer() },
@@ -199,6 +222,28 @@ describe("parseLabviewRsrc", () => {
     // The damaged record is not a version; the next record still is.
     expect(parsed.value.labviewVersion).toBe("11.0");
     expect(parsed.value.versionCoverage).toBe("observed");
+  });
+
+  it("reads major.minor without validating the build field", () => {
+    // LabVIEW 11.0, release stage (4), build 10 written as a binary count:
+    // 0x11 major digits, minor 0, bugfix 0, 0x800a stage and build bits.
+    const record = Buffer.from([0x11, 0x00, 0x80, 0x0a, 0, 0, 0, 0]);
+    const parsed = parseLabviewRsrc(
+      buildLabviewRsrc([{ ident: "vers", sections: [record] }]),
+    );
+    if (!parsed.ok) throw new Error(parsed.failure.message);
+    expect(parsed.value.labviewVersion).toBe("11.0");
+    expect(parsed.value.versionCoverage).toBe("observed");
+  });
+
+  it("reports a minor nibble above 9 as an unknown version", () => {
+    const record = Buffer.from([0x11, 0xa0, 0x80, 0x00, 0, 0, 0, 0]);
+    const parsed = parseLabviewRsrc(
+      buildLabviewRsrc([{ ident: "vers", sections: [record] }]),
+    );
+    if (!parsed.ok) throw new Error(parsed.failure.message);
+    expect(parsed.value.labviewVersion).toBeNull();
+    expect(parsed.value.versionCoverage).toBe("unknown");
   });
 
   it("reports a damaged-only vers record as unknown", () => {
