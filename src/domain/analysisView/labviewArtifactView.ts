@@ -15,7 +15,7 @@ import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
   boundedViewLimitations,
   completeWithinViewCoverage,
-  pageViewCoverage,
+  selectedViewPage,
 } from "./analysisViewCoverage.js";
 import { selectViewRows } from "./selectViewRows.js";
 
@@ -191,12 +191,7 @@ export const projectLabviewArtifactView = (
     kind: "labview-artifact" as const,
     view,
     labview: facts,
-    items: selected.rows,
-    coverage: pageViewCoverage(
-      view.offset,
-      selected.rows.length,
-      selected.total,
-    ),
+    ...selectedViewPage(view.offset, selected),
   });
 };
 
