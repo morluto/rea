@@ -11,6 +11,21 @@ import {
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import { analyzeParsedJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 
+it("parses a class extending a local binding named module", () => {
+  const source = "const module = Array; class Cards extends module {}";
+  const path = "cards.mjs";
+  for (const file of [
+    parseJavaScriptSource(source, path),
+    parseRecoveredJavaScript(source, path, {}).file,
+  ]) {
+    expect(file?.errors).toHaveLength(0);
+    expect(file?.program.body[1]).toMatchObject({
+      type: "ClassDeclaration",
+      superClass: { type: "Identifier", name: "module" },
+    });
+  }
+});
+
 it.each([
   ["class C extends (this.marker, Object) {}", true],
   ["class C { [this.marker]() {} }", true],
