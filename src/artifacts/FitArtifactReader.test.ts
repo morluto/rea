@@ -752,4 +752,10 @@ it("reports unknown coverage when an image field could not be decoded", async ()
   ).toContain("load");
   expect(root).toBeDefined();
   expect(snapshot.coverage).toMatchObject({ status: "unknown" });
+  // The reason travels with the status, so a coverage consumer can name the field.
+  expect(
+    snapshot.limitations.some(
+      (line) => line.includes("kernel") && line.includes("load"),
+    ),
+  ).toBe(true);
 });
