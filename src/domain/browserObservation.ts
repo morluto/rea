@@ -13,6 +13,7 @@ import {
   DEFAULT_MAX_CSS_VARIABLES,
   DEFAULT_MAX_CSS_VARIABLE_VALUE_LENGTH,
   MAX_CSS_VARIABLES_CEILING,
+  MAX_CSS_VARIABLES_TOTAL_CHARS,
   MAX_CSS_VARIABLE_VALUE_LENGTH_CEILING,
 } from "./browserObservationSchemas.js";
 import {
@@ -298,6 +299,17 @@ export const refineInspectWebPageInput = (
   context: z.RefinementCtx,
 ): void => {
   refineBrowserStorageInput(input, context);
+  const maxVars = input.max_css_variables ?? DEFAULT_MAX_CSS_VARIABLES;
+  const maxLen =
+    input.max_css_variable_value_length ??
+    DEFAULT_MAX_CSS_VARIABLE_VALUE_LENGTH;
+  if (maxVars * maxLen > MAX_CSS_VARIABLES_TOTAL_CHARS) {
+    context.addIssue({
+      code: "custom",
+      path: ["max_css_variables"],
+      message: `max_css_variables * max_css_variable_value_length exceeds the ${String(MAX_CSS_VARIABLES_TOTAL_CHARS)} UTF-16 unit capture budget; lower max_css_variables or max_css_variable_value_length.`,
+    });
+  }
 };
 
 /** Caller-visible schema for one passive inspection. */

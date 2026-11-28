@@ -1565,63 +1565,71 @@ const metadataDimension = (
   }
 
   let cssComplete = true;
+  let cssScopeMismatch = false;
   if (beforeCssSelected && afterCssSelected) {
-    const beforeCssComplete =
-      before.css_variables.status === "included" &&
-      sectionsComplete(before, ["css_variables"]);
-    const afterCssComplete =
-      after.css_variables.status === "included" &&
-      sectionsComplete(after, ["css_variables"]);
+    if (
+      before.css_variables.origin_scope !== after.css_variables.origin_scope
+    ) {
+      cssComplete = false;
+      cssScopeMismatch = true;
+    } else {
+      const beforeCssComplete =
+        before.css_variables.status === "included" &&
+        sectionsComplete(before, ["css_variables"]);
+      const afterCssComplete =
+        after.css_variables.status === "included" &&
+        sectionsComplete(after, ["css_variables"]);
 
-    const beforeCssMap = new Map(
-      before.css_variables.items.map((item) => [
-        item.name,
-        digestCanonicalValue({ value: item.value, redacted: item.redacted }),
-      ]),
-    );
-    const afterCssMap = new Map(
-      after.css_variables.items.map((item) => [
-        item.name,
-        digestCanonicalValue({ value: item.value, redacted: item.redacted }),
-      ]),
-    );
+      const beforeCssMap = new Map(
+        before.css_variables.items.map((item) => [
+          item.name,
+          digestCanonicalValue({ value: item.value, redacted: item.redacted }),
+        ]),
+      );
+      const afterCssMap = new Map(
+        after.css_variables.items.map((item) => [
+          item.name,
+          digestCanonicalValue({ value: item.value, redacted: item.redacted }),
+        ]),
+      );
 
-    let cssModified = false;
-    for (const [name, beforeDigest] of beforeCssMap) {
-      const afterDigest = afterCssMap.get(name);
-      if (afterDigest !== undefined && afterDigest !== beforeDigest) {
-        cssModified = true;
-        break;
-      }
-    }
-
-    let cssTokensAddedOrRemoved = false;
-    if (beforeCssComplete) {
-      for (const name of afterCssMap.keys()) {
-        if (!beforeCssMap.has(name)) {
-          cssTokensAddedOrRemoved = true;
+      let cssModified = false;
+      for (const [name, beforeDigest] of beforeCssMap) {
+        const afterDigest = afterCssMap.get(name);
+        if (afterDigest !== undefined && afterDigest !== beforeDigest) {
+          cssModified = true;
           break;
         }
       }
-    }
-    if (!cssTokensAddedOrRemoved && afterCssComplete) {
-      for (const name of beforeCssMap.keys()) {
-        if (!afterCssMap.has(name)) {
-          cssTokensAddedOrRemoved = true;
-          break;
+
+      let cssTokensAddedOrRemoved = false;
+      if (beforeCssComplete) {
+        for (const name of afterCssMap.keys()) {
+          if (!beforeCssMap.has(name)) {
+            cssTokensAddedOrRemoved = true;
+            break;
+          }
         }
       }
+      if (!cssTokensAddedOrRemoved && afterCssComplete) {
+        for (const name of beforeCssMap.keys()) {
+          if (!afterCssMap.has(name)) {
+            cssTokensAddedOrRemoved = true;
+            break;
+          }
+        }
+      }
+
+      if (cssModified || cssTokensAddedOrRemoved) {
+        changes.push({ identity: "css_variables", change: "modified" });
+      }
+
+      const hasRedactedTokens =
+        before.css_variables.items.some((item) => item.redacted) ||
+        after.css_variables.items.some((item) => item.redacted);
+
+      cssComplete = beforeCssComplete && afterCssComplete && !hasRedactedTokens;
     }
-
-    if (cssModified || cssTokensAddedOrRemoved) {
-      changes.push({ identity: "css_variables", change: "modified" });
-    }
-
-    const hasRedactedTokens =
-      before.css_variables.items.some((item) => item.redacted) ||
-      after.css_variables.items.some((item) => item.redacted);
-
-    cssComplete = beforeCssComplete && afterCssComplete && !hasRedactedTokens;
   }
 
   if (changes.length > 0) {
@@ -1646,7 +1654,9 @@ const metadataDimension = (
 
   const reason = !metadataComplete
     ? "Safe metadata capture was incomplete in at least one observation."
-    : "CSS variables capture was incomplete in at least one observation.";
+    : cssScopeMismatch
+      ? "CSS variables origin_scope differed between observations."
+      : "CSS variables capture was incomplete in at least one observation.";
   return {
     status: "unknown",
     total_changes: 0,

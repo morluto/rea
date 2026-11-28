@@ -356,11 +356,17 @@ describe("browser CSS variables item and summary schemas", () => {
       }).success,
     ).toBe(false);
 
-    // Rejects oversized variable names (>128 chars) to protect LLM context
+    // Admits long valid custom property names (>128 chars) and rejects invalid syntax
     expect(
       browserCssVariablesSchema.safeParse({
         ...valid,
         items: [{ name: `--${"x".repeat(130)}`, value: "red" }],
+      }).success,
+    ).toBe(true);
+    expect(
+      browserCssVariablesSchema.safeParse({
+        ...valid,
+        items: [{ name: "--invalid name", value: "red" }],
       }).success,
     ).toBe(false);
 

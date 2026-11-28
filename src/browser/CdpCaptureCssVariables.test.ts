@@ -325,7 +325,7 @@ it("truncates excessively long rejected names and bounds preview list in limitat
     "CSS.enable": {},
     "CSS.getComputedStyleForNode": {
       computedStyle: [
-        { name: longName, value: "10px" },
+        { name: longName, value: "x".repeat(600) },
         { name: "--bad-1", value: "x".repeat(600) },
         { name: "--bad-2", value: "x".repeat(600) },
         { name: "--bad-3", value: "x".repeat(600) },
@@ -1125,7 +1125,17 @@ it("admits valid Unicode symbol code points such as emoji in custom property nam
   ]);
 });
 
-it("bounds aggregate retained CSS variable payload size and marks section truncated", async () => {
+it("enforces combined CSS variable capture budget at input validation and retains large allowed captures without a hidden cap", async () => {
+  expect(() =>
+    inspectWebPageInputSchema.parse({
+      cdp_endpoint: "http://127.0.0.1:9222",
+      target_id: "target_1",
+      include_css_variables: true,
+      max_css_variables: 500,
+      max_css_variable_value_length: 65_536,
+    }),
+  ).toThrow(/UTF-16 unit capture budget/);
+
   const bigValue = "x".repeat(65_000);
   const computedStyle = Array.from({ length: 80 }, (_, index) => ({
     name: `--big-${String(index).padStart(3, "0")}`,
@@ -1153,18 +1163,84 @@ it("bounds aggregate retained CSS variable payload size and marks section trunca
         cdp_endpoint: "http://127.0.0.1:9222",
         target_id: "target_1",
         include_css_variables: true,
-        max_css_variables: 500,
+        max_css_variables: 100,
         max_css_variable_value_length: 65_536,
       }),
     },
     limitations,
   );
 
-  expect(result.status).toBe("truncated");
+  expect(result.status).toBe("included");
   expect(result.total).toBe(80);
-  expect(result.retained_count).toBeLessThan(80);
-  expect(result.retained_count).toBeGreaterThan(0);
-  expect(limitations.some((lim) => lim.includes("UTF-16 code units"))).toBe(
-    true,
+  expect(result.retained_count).toBe(80);
+});
+
+it("redacts credentials from standalone URL custom properties and admits custom property names longer than 128 chars", async () => {
+  const longName = `--${"token-".repeat(25)}end`;
+  expect(longName.length).toBeGreaterThan(128);
+
+  const connection = makeMockConnection({
+    "DOM.getDocument": {
+      root: {
+        nodeId: 1,
+        children: [{ nodeId: 2, nodeType: 1, nodeName: "HTML" }],
+      },
+    },
+    "CSS.enable": {},
+    "CSS.getComputedStyleForNode": {
+      computedStyle: [
+        {
+          name: "--asset-quoted",
+          value: '"https://alice:secret@example.test/a.png"',
+        },
+        {
+          name: "--asset-unquoted",
+          value: "https://bob:pw@example.test/b.png",
+        },
+        {
+          name: "--asset-escaped",
+          value: '"https://carol:pw\\40 example.test/c.png"',
+        },
+        { name: longName, value: "#123456" },
+      ],
+    },
+    "CSS.disable": {},
+  });
+
+  const limitations: string[] = [];
+  const result = await captureCssVariables(
+    {
+      connection,
+      sessionId: undefined,
+      input: inspectWebPageInputSchema.parse({
+        cdp_endpoint: "http://127.0.0.1:9222",
+        target_id: "target_1",
+        include_css_variables: true,
+      }),
+    },
+    limitations,
   );
+
+  expect(result.status).toBe("included");
+  const byName = new Map(result.items.map((item) => [item.name, item]));
+  expect(byName.get("--asset-quoted")).toEqual({
+    name: "--asset-quoted",
+    value: '"https://example.test/a.png"',
+    redacted: true,
+  });
+  expect(byName.get("--asset-unquoted")).toEqual({
+    name: "--asset-unquoted",
+    value: "https://example.test/b.png",
+    redacted: true,
+  });
+  expect(byName.get("--asset-escaped")).toEqual({
+    name: "--asset-escaped",
+    value: '"https://example.test/c.png"',
+    redacted: true,
+  });
+  expect(byName.get(longName)).toEqual({
+    name: longName,
+    value: "#123456",
+    redacted: false,
+  });
 });

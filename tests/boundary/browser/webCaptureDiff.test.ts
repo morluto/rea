@@ -1267,6 +1267,39 @@ describe("web capture CSS variables comparison", () => {
       status: "changed",
       changes: [{ identity: "css_variables", change: "modified" }],
     });
+
+    const sameOriginSide = structuredClone(beforeCss);
+    sameOriginSide.css_variables = {
+      status: "included",
+      origin_scope: "same_origin",
+      total: 1,
+      retained_count: 1,
+      items: [{ name: "--brand", value: "#0066cc", redacted: false }],
+    };
+    markSectionsComplete(sameOriginSide, ["css_variables"]);
+
+    const allAllowedSide = structuredClone(beforeCss);
+    allAllowedSide.css_variables = {
+      status: "included",
+      origin_scope: "all_allowed",
+      total: 1,
+      retained_count: 1,
+      items: [{ name: "--brand", value: "#0066cc", redacted: false }],
+    };
+    markSectionsComplete(allAllowedSide, ["css_variables"]);
+
+    const scopeMismatch = compareWebCaptures(
+      compareWebCapturesInputSchema.parse({
+        before: { inspection: sameOriginSide },
+        after: { inspection: allAllowedSide },
+      }),
+    );
+    expect(scopeMismatch.dimensions.metadata).toMatchObject({
+      status: "unknown",
+      total_changes: 0,
+      changes: [],
+      reason: "CSS variables origin_scope differed between observations.",
+    });
   });
 });
 

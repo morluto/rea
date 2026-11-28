@@ -261,14 +261,14 @@ export const DEFAULT_MAX_CSS_VARIABLES = 250;
 export const MAX_CSS_VARIABLES_CEILING = 10_000;
 export const DEFAULT_MAX_CSS_VARIABLE_VALUE_LENGTH = 512;
 export const MAX_CSS_VARIABLE_VALUE_LENGTH_CEILING = 65_536;
+export const MAX_CSS_VARIABLES_TOTAL_CHARS = 16_777_216;
 
 export const browserCssVariableItemSchema = z.object({
   name: z
     .string()
     .regex(
       /^--(?:[A-Za-z0-9_\-]|[^\u0000-\u009F\u202A-\u202E\u2066-\u2069])+$/u,
-    )
-    .max(128),
+    ),
   value: z
     .string()
     .max(MAX_CSS_VARIABLE_VALUE_LENGTH_CEILING)
