@@ -277,3 +277,10 @@ export const FIRMWARE_VECTOR_TABLE_PROVIDER = Object.freeze({
   name: "REA firmware vector table decoder",
   version: "1",
 } as const);
+
+/** Bundled reader identity; package id and version are separate observed facts. */
+export const VSIX_PACKAGE_PROVIDER_IDENTITY = {
+  id: "rea-vsix-package",
+  name: "REA VS Code vsix reader",
+  version: "1",
+} as const;

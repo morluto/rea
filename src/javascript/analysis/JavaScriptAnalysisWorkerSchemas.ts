@@ -573,14 +573,16 @@ const semanticValue: z.ZodType<JavaScriptSemanticValue> = z.lazy(() =>
 const origin = z
   .strictObject({
     loaderAuthority: z.literal("candidate").optional(),
+    importSyntax: z.literal(true).optional(),
     specifier: z.string(),
     importedPath: strings,
     resolutionMode: z
       .enum(["import", "require", "compiler-dependent"])
       .optional(),
   })
-  .transform(({ resolutionMode, loaderAuthority, ...rest }) => ({
+  .transform(({ resolutionMode, loaderAuthority, importSyntax, ...rest }) => ({
     ...rest,
+    ...(importSyntax === undefined ? {} : { importSyntax }),
     ...(resolutionMode === undefined ? {} : { resolutionMode }),
     ...(loaderAuthority === undefined ? {} : { loaderAuthority }),
   }));

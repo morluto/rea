@@ -375,6 +375,8 @@ export const javaScriptSemanticGraphInputSchema = z.strictObject({
   unknowns: z.array(javaScriptSemanticUnknownSchema),
   coverage: graphCoverageSchema,
   limitations: z.array(nonEmptyTextSchema),
+  /** Modules whose call sites carry `module_callee`; absent in older graphs. */
+  callee_fact_modules: z.array(nonEmptyTextSchema).exactOptional(),
 });
 
 /** Stored JavaScript Semantic Relation Graph. */

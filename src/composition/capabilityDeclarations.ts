@@ -57,6 +57,7 @@ import {
   PE_RESOURCES_PROVIDER,
   RELEASE_EXPOSURE_PROVIDER,
   ESP_NVS_PROVIDER,
+  VSIX_PACKAGE_PROVIDER_IDENTITY,
   FIRMWARE_VECTOR_TABLE_PROVIDER,
   WEB_SCRIPT_EXPORT_PROVIDER,
   WINDOWS_SHORTCUT_PROVIDER,
@@ -106,7 +107,6 @@ import { PWNTOOLS_PROVIDER_IDENTITY } from "../native/pwntools/PwntoolsProviderI
 import { OBJDUMP_PROVIDER_IDENTITY } from "../objdump/ObjdumpProviderIdentity.js";
 import { PCAP_PROVIDER_IDENTITY } from "../pcap/PcapProviderIdentity.js";
 import { NUGET_NUPKG_PROVIDER_IDENTITY } from "../nuget/NugetNupkgProviderIdentity.js";
-import { VSIX_PACKAGE_PROVIDER_IDENTITY } from "../vsix/VsixPackageProviderIdentity.js";
 import { OCI_IMAGE_LAYOUT_PROVIDER_IDENTITY } from "../oci/OciImageLayoutProviderIdentity.js";
 import { YARA_PROVIDER_IDENTITY } from "../yara/YaraProviderIdentity.js";
 import { PYTHON_PYC_PROVIDER_IDENTITY } from "../python/PythonPycProviderIdentity.js";
@@ -196,6 +196,7 @@ export const CAPABILITY_DECLARATIONS = {
         "compare_application_versions",
         "compare_javascript_export_shapes",
         "compare_source_to_bundle",
+        "correlate_vsix_registrations",
         "evaluate_reconstruction_coverage",
         "guided_workflows",
         "read_guidance_section",
