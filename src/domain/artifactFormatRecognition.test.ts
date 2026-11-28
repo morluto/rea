@@ -352,6 +352,8 @@ it("recognizes an audit record after a BOM or blank lines and ignores other padd
     state: "recognized",
     format: "kubernetes-audit-log",
   });
+  const replaced = `{"auditID":"a","stage":"RequestReceived","pad":"${"y".repeat(5000)}","stage":"Unknown","requestObject":${"[".repeat(KUBERNETES_AUDIT_JSON_DEPTH + 8)}1${"]".repeat(KUBERNETES_AUDIT_JSON_DEPTH + 8)}}`;
+  expect(recognize(Buffer.from(replaced))).toBeUndefined();
   expect(recognize(Buffer.from(claimed))).toMatchObject({
     state: "recognized",
     format: "kubernetes-audit-log",

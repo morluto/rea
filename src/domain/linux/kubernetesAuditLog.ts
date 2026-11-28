@@ -507,10 +507,12 @@ class KubernetesAuditScanner {
     this.#recordCount += 1;
     const versionUnexamined =
       depthLimited && !Object.hasOwn(event, "apiVersion");
-    const unsupported =
-      versionUnexamined || isUnsupportedVersion(event.apiVersion);
+    // A cutoff before apiVersion is not a declared unmodelled version.
+    const unsupported = isUnsupportedVersion(event.apiVersion);
+    const suppressFields = unsupported || versionUnexamined;
     if (unsupported) this.#unsupportedVersionLineCount += 1;
-    else if (typeof event.verb === "string") this.#countVerb(event.verb);
+    else if (!suppressFields && typeof event.verb === "string")
+      this.#countVerb(event.verb);
     this.#stageCounts.set(stage, (this.#stageCounts.get(stage) ?? 0) + 1);
     const sampled = this.#sample.get(auditId);
     if (
@@ -524,16 +526,16 @@ class KubernetesAuditScanner {
     const stageRecord: KubernetesAuditStageRecord = {
       stage,
       line: this.#lineNumber,
-      request_received_timestamp: unsupported
+      request_received_timestamp: suppressFields
         ? null
         : parseTimestamp(event.requestReceivedTimestamp),
-      response_code: unsupported ? null : responseCode(event),
+      response_code: suppressFields ? null : responseCode(event),
     };
     if (sampled === undefined) {
       const key = detachedText(auditId);
       this.#sample.set(key, {
         summary: summarizeEvent(
-          unsupported ? undefined : event,
+          suppressFields ? undefined : event,
           key,
           stageRecord,
           unsupported,
@@ -558,7 +560,7 @@ class KubernetesAuditScanner {
     else sampled.seenStages.add(stage);
     if (!unsupported && !sampled.fieldsRecorded) {
       const filled = summarizeEvent(
-        event,
+        suppressFields ? undefined : event,
         sampled.summary.audit_id,
         stageRecord,
         false,

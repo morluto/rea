@@ -157,15 +157,11 @@ export class KubernetesAuditEventProbe {
               this.#done = true;
               return;
             }
-            // Identity from earlier slices stands. Replay only when this
-            // slice may have held the identity that the throw discarded.
-            if (this.#hasAuditId && this.#hasStage) this.#depthStopped = true;
-            else this.#rereadRecord();
+            this.#rereadRecord();
             this.#failed = !this.#depthStopped;
             this.#done = true;
             return;
           }
-          if (this.#hasAuditId && this.#hasStage) this.#recordSlices.length = 0;
           index = end;
         }
       }
@@ -181,8 +177,8 @@ export class KubernetesAuditEventProbe {
    * its start so identity that shared that chunk is still observed.
    */
   #rereadRecord(): void {
-    const record = this.#recordSlices.join("");
-    this.#recordSlices.length = 0;
+    const failed = this.#recordSlices.pop() ?? "";
+    const prior = this.#recordSlices.splice(0);
     this.#depth = 0;
     this.#hasAuditId = false;
     this.#hasStage = false;
@@ -197,9 +193,10 @@ export class KubernetesAuditEventProbe {
       streamValues: true,
       maxDepth: KUBERNETES_AUDIT_JSON_DEPTH,
     }) as AuditJsonTokenizer;
-    for (let index = 0; index < record.length; index += 1) {
+    for (const slice of prior) this.#feed(slice);
+    for (let index = 0; index < failed.length; index += 1) {
       try {
-        this.#feed(record.charAt(index));
+        this.#feed(failed.charAt(index));
       } catch (cause: unknown) {
         if (isHostLimitFailure(cause)) throw cause;
         this.#depthStopped = this.#hasAuditId && this.#hasStage;

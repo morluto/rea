@@ -76,6 +76,7 @@ export const isTokenizerDepth = (cause: unknown): boolean =>
 export const parseKubernetesAuditLine = (
   line: string,
   step = 4096,
+  replayFrom?: number,
 ): KubernetesAuditLineParse => {
   const value: Record<string, unknown> = {};
   const user: Record<string, unknown> = {};
@@ -435,20 +436,8 @@ export const parseKubernetesAuditLine = (
     if (isMany(produced))
       for (const token of getManyValues(produced)) consume(token);
   };
-  try {
-    for (let index = 0; index < line.length;) {
-      const end = Math.min(line.length, index + step);
-      feed(line.slice(index, end));
-      index = end;
-    }
-    feed(none);
-  } catch (cause: unknown) {
-    if (isHostLimitFailure(cause)) throw cause;
-    if (!isTokenizerDepth(cause)) return { kind: "syntax" };
-    // A chunk that overflows drops the tokens inside it. Read that line one
-    // code unit at a time so identity before the cap is kept.
-    if (step !== 1) return parseKubernetesAuditLine(line, 1);
-    return typeof value.auditID === "string" && typeof value.stage === "string"
+  const partial = (): KubernetesAuditLineParse =>
+    typeof value.auditID === "string" && typeof value.stage === "string"
       ? {
           kind: "event",
           value: publish(),
@@ -456,6 +445,38 @@ export const parseKubernetesAuditLine = (
           budgetOmitted,
         }
       : { kind: "nesting" };
+  try {
+    if (replayFrom === undefined) {
+      let offset = 0;
+      while (offset < line.length) {
+        const end = Math.min(line.length, offset + step);
+        try {
+          feed(line.slice(offset, end));
+        } catch (cause: unknown) {
+          if (isHostLimitFailure(cause)) throw cause;
+          if (!isTokenizerDepth(cause) || step === 1) throw cause;
+          // Replay the successful prefix in slices and only the overflowed
+          // slice one code unit at a time.
+          return parseKubernetesAuditLine(line, 1, offset);
+        }
+        offset = end;
+      }
+    } else {
+      let offset = 0;
+      while (offset < replayFrom) {
+        const end = Math.min(replayFrom, offset + 4096);
+        feed(line.slice(offset, end));
+        offset = end;
+      }
+      const badEnd = Math.min(line.length, replayFrom + 4096);
+      for (let index = replayFrom; index < badEnd; index += 1)
+        feed(line.charAt(index));
+    }
+    feed(none);
+  } catch (cause: unknown) {
+    if (isHostLimitFailure(cause)) throw cause;
+    if (!isTokenizerDepth(cause)) return { kind: "syntax" };
+    return partial();
   }
   return {
     kind: "event",

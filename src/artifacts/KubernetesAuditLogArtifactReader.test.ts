@@ -577,7 +577,7 @@ it("does not interpret fields when the depth cap hides apiVersion", async () => 
     verb: null,
     request_uri: null,
     depth_limited: true,
-    unsupported_version: true,
+    unsupported_version: false,
   });
   expect(metadata.verb_counts).toEqual([]);
 });
