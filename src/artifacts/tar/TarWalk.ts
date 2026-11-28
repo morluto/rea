@@ -14,7 +14,10 @@ import {
   type TarHeaderDialect,
   type TarPaxRecords,
 } from "../../domain/tarFormat.js";
-import type { ArtifactTraversalOmissionKind } from "../../domain/artifactGraph.js";
+import type {
+  ArtifactLinkTarget,
+  ArtifactTraversalOmissionKind,
+} from "../../domain/artifactGraph.js";
 import type { TarReaderLimits } from "../../domain/artifactReaderLimits.js";
 import {
   artifactReaderLimitFailure,
@@ -55,6 +58,7 @@ export interface TarMember {
   readonly uname: string | null;
   readonly gname: string | null;
   readonly linkName: string | null;
+  readonly linkTarget?: ArtifactLinkTarget;
   readonly limitations: readonly string[];
 }
 
@@ -257,6 +261,8 @@ export const walkTar = async (
   const global = new Map<string, string>();
   let chargedGlobalPax = 0;
   let local: TarPaxRecords | undefined;
+  let globalLinkIsLatin1 = false;
+  let localLinkIsLatin1 = false;
   let localLimitations: string[] = [];
   let chargedLocalLimitations = 0;
   let longName: Uint8Array | undefined;
@@ -436,12 +442,15 @@ export const walkTar = async (
               retained.refund(chargedGlobalPax - nextBytes);
             chargedGlobalPax = nextBytes;
             applyPaxInPlace(global, pax.records);
+            if (pax.records.has("linkpath"))
+              globalLinkIsLatin1 = pax.latin1.includes("linkpath");
             limitations.push(...latin1);
           } else {
             // A later local header discards the warnings of this one.
             retained.refund(chargedLocalLimitations);
             chargedLocalLimitations = latin1Bytes;
             local = pax.records;
+            localLinkIsLatin1 = pax.latin1.includes("linkpath");
             localLimitations = latin1;
           }
         } else {
@@ -458,8 +467,13 @@ export const walkTar = async (
         records.get("path") ??
         decodeName(longName ?? header.name, "name", memberLimitations);
       const linkBytes = longLink ?? header.linkname;
-      const linkTarget =
-        records.get("linkpath") ??
+      const paxLink = records.get("linkpath");
+      const paxLinkIsLatin1 =
+        local?.has("linkpath") === true
+          ? localLinkIsLatin1
+          : globalLinkIsLatin1;
+      const linkName =
+        paxLink ??
         (linkBytes.length === 0
           ? null
           : decodeName(linkBytes, "link name", memberLimitations));
@@ -494,6 +508,12 @@ export const walkTar = async (
       const sourcePath = name;
       const path = withoutCurrentDirectoryPrefix(name);
       const role = memberRole(typeflag, name, records);
+      const symlinkBytes =
+        "member" in role && role.member === "symlink"
+          ? paxLink === undefined
+            ? Buffer.from(linkBytes)
+            : Buffer.from(paxLink, paxLinkIsLatin1 ? "latin1" : "utf8")
+          : undefined;
       // Only an inventoried member keeps its pax warnings.
       if ("omit" in role || role.member === "root")
         retained.refund(chargedMemberLimitations);
@@ -501,7 +521,9 @@ export const walkTar = async (
       if ("omit" in role || role.member !== "root")
         retained.charge(
           MEMBER_OVERHEAD_BYTES +
-            2 * (Buffer.byteLength(path) + Buffer.byteLength(linkTarget ?? "")),
+            2 * (Buffer.byteLength(path) + Buffer.byteLength(linkName ?? "")) +
+            // Each target byte becomes two retained UTF-16 hex digits.
+            4 * (symlinkBytes?.length ?? 0),
           metadataLimit,
         );
       if ("omit" in role)
@@ -530,7 +552,15 @@ export const walkTar = async (
             (header.gname.length === 0
               ? null
               : decodeName(header.gname, "group name", memberLimitations)),
-          linkName: linkTarget,
+          linkName,
+          ...(symlinkBytes === undefined
+            ? {}
+            : {
+                linkTarget: {
+                  text: isStrictUtf8(symlinkBytes) ? (linkName ?? "") : null,
+                  hex: symlinkBytes.toString("hex"),
+                },
+              }),
           limitations: memberLimitations,
         });
       }
