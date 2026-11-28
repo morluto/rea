@@ -1168,5 +1168,30 @@ describe("client launcher traversal semantics", () => {
     expect(classifyClientRegistrationCommand([cmd, "mcp"], script)).toBe(
       "unknown",
     );
+
+    await writeFile(
+      cmd,
+      [
+        "@ECHO off",
+        "GOTO start",
+        ":find_dp0",
+        'SET "dp0=C:\\other"',
+        "EXIT /b",
+        ":start",
+        "SETLOCAL",
+        "CALL :find_dp0",
+        'IF EXIST "%dp0%\\node.exe" (',
+        '  SET "_prog=%dp0%\\node.exe"',
+        ") ELSE (",
+        '  SET "_prog=node"',
+        "  SET PATHEXT=%PATHEXT:;.JS;=;%",
+        ")",
+        `endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\${PRODUCT_IDENTITY.packageName}\\scripts\\rea.mjs" %*`,
+        "",
+      ].join("\r\n"),
+    );
+    expect(classifyClientRegistrationCommand([cmd, "mcp"], script)).toBe(
+      "unknown",
+    );
   });
 });

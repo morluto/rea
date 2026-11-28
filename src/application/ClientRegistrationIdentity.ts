@@ -212,45 +212,60 @@ const readBoundedRegularFile = (
   }
 };
 
-const NPM_CMD_SHIM_PREAMBLE =
-  /^(?:@?\s*echo\s+off|@?\s*goto\s+[\w-]+|:[\w-]+|@?\s*call\s+:[\w-]+|@?\s*exit\s+\/b|@?\s*setlocal|@?\s*set\s+[^&|<>]+|@?\s*if\s+exist\s+"%dp0%[\\/]node\.exe"\s*\(|\)\s*else\s*\(|\))$/iu;
+/**
+ * Exact non-empty preamble lines emitted by npm's `cmd-shim` for a Node CLI
+ * entrypoint (`#!/usr/bin/env node` with no extra shebang arguments).
+ */
+const NPM_CMD_SHIM_PREAMBLE_LINES: readonly RegExp[] = [
+  /^@echo off$/iu,
+  /^goto start$/iu,
+  /^:find_dp0$/iu,
+  /^set dp0=%~dp0$/iu,
+  /^exit \/b$/iu,
+  /^:start$/iu,
+  /^setlocal$/iu,
+  /^call :find_dp0$/iu,
+  /^if exist "%dp0%[\\/]node\.exe" \($/iu,
+  /^set "_prog=%dp0%[\\/]node\.exe"$/iu,
+  /^\) else \($/iu,
+  /^set "_prog=node"$/iu,
+  /^set pathext=%pathext:;\.js;=;%$/iu,
+  /^\)$/iu,
+];
 
 const NPM_CMD_SHIM_LAUNCH =
-  /^(?:(?:endLocal\s*&\s*(?:goto\s+#_undefined_#\s+2>NUL\s*\|\|\s*title\s+%COMSPEC%\s*&\s*)?)?(?:@\s*)?)"%_prog%"\s+"%dp0%([\\/][^"]+)"\s+%\*$/iu;
+  /^endLocal & (?:goto #_undefined_# 2>NUL \|\| title %COMSPEC% & )?"%_prog%"\s+"%dp0%([\\/][^"]+)"\s+%\*$/iu;
 
 /**
- * Recover the script an npm Windows `rea.cmd` shim launches. Ownership follows
- * only the recognized npm cmd-shim wrapper structure and its single launch
- * statement (`"%_prog%" "%dp0%\…" %*`), rejecting custom or chained wrappers.
+ * Recover the script an npm Windows `rea.cmd` shim launches. Ownership matches
+ * only the generated npm `cmd-shim` wrapper verbatim so customized, commented,
+ * or variable-overridden batch files stay unknown.
  */
 const windowsReaCmdScript = (cmdPath: string): string | undefined => {
   if (commandFileName(cmdPath) !== `${PRODUCT_IDENTITY.cliBinary}.cmd`)
     return undefined;
   const text = readBoundedRegularFile(cmdPath, NPM_CMD_SHIM_BYTES);
   if (text === undefined) return undefined;
-  const packageName = PRODUCT_IDENTITY.packageName.toLowerCase();
-  let relative: string | undefined;
-  for (const line of text.split(/\r?\n/u)) {
-    const trimmed = line.trim();
-    if (trimmed === "" || /^(?:@?\s*rem\b|::)/iu.test(trimmed)) continue;
-    if (relative !== undefined) return undefined;
-    const match = NPM_CMD_SHIM_LAUNCH.exec(trimmed);
-    if (match === null) {
-      if (!NPM_CMD_SHIM_PREAMBLE.test(trimmed)) return undefined;
-      continue;
-    }
-    const candidate = match[1]!.replace(/^[\\/]/u, "");
-    const parts = candidate.split(/[/\\]/u).map((part) => part.toLowerCase());
-    const modules = parts.indexOf("node_modules");
-    if (
-      modules >= 0 &&
-      parts[modules + 1] === packageName &&
-      !parts.slice(modules + 1).includes("..")
-    )
-      relative = candidate;
-    else return undefined;
+  const lines = text
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+  if (lines.length !== NPM_CMD_SHIM_PREAMBLE_LINES.length + 1) return undefined;
+  for (let index = 0; index < NPM_CMD_SHIM_PREAMBLE_LINES.length; index++) {
+    if (!NPM_CMD_SHIM_PREAMBLE_LINES[index]!.test(lines[index]!))
+      return undefined;
   }
-  if (relative === undefined) return undefined;
+  const match = NPM_CMD_SHIM_LAUNCH.exec(lines[lines.length - 1]!);
+  if (match === null) return undefined;
+  const relative = match[1]!.replace(/^[\\/]/u, "");
+  const parts = relative.split(/[/\\]/u).map((part) => part.toLowerCase());
+  const modules = parts.indexOf("node_modules");
+  if (
+    modules < 0 ||
+    parts[modules + 1] !== PRODUCT_IDENTITY.packageName.toLowerCase() ||
+    parts.slice(modules + 1).includes("..")
+  )
+    return undefined;
   // Host path rules: Windows keeps UNC `//server/share` roots; fixtures on
   // POSIX keep their own separators.
   if (HOST_PLATFORM.platform === "win32")
