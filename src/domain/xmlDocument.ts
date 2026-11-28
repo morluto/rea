@@ -5,7 +5,7 @@ import {
   type Element,
   type Node,
 } from "@xmldom/xmldom";
-import { SaxesParser, type SaxesTagNS } from "saxes";
+import { SaxesParser, type SaxesStartTagNS, type SaxesTagNS } from "saxes";
 import { err, ok, type Result } from "./result.js";
 import {
   decodeLimit,
@@ -211,7 +211,7 @@ const checkXmlSyntax = (
   // one. The depth guard owns opentagstart and closetag, then runs every
   // handler a caller sets.
   let depth = 0;
-  const openHandlers: ((tag: SaxesTagNS) => void)[] = [];
+  const openHandlers: ((tag: SaxesStartTagNS) => void)[] = [];
   const closeHandlers: ((...args: readonly unknown[]) => void)[] = [];
   syntax.on("opentagstart", (tag) => {
     depth += 1;
@@ -226,7 +226,7 @@ const checkXmlSyntax = (
   const remove = syntax.off.bind(syntax);
   syntax.on = ((name, handler) => {
     if (name === "opentagstart") {
-      openHandlers.push(handler as (tag: SaxesTagNS) => void);
+      openHandlers.push(handler as (tag: SaxesStartTagNS) => void);
       return;
     }
     if (name === "closetag") {
