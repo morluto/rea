@@ -68,7 +68,7 @@ const main = async (): Promise<void> => {
                   ? {}
                   : {
                       ceiling: cause.ceiling.fixedAllowance,
-                      boundary: cause.boundary,
+                      boundary: cause.ceiling.boundary,
                     }),
               }
             : {
