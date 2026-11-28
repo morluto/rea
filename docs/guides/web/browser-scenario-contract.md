@@ -219,13 +219,25 @@ Existing capture gaps still prevent complete or equality-eligible claims.
 That cleanup requires REA to remain running. Abrupt termination, including
 Windows process-tree termination or POSIX `SIGKILL`, can leave the launch
 profile and Playwright artifacts behind. A profile can retain cookies, history,
-cache and origin storage. Later REA runs currently do not reclaim these paths.
-Playwright 1.58.2 can also leave an artifacts directory when launch preparation
-fails before a browser process exists, such as for a missing executable.
-POSIX wrappers can request awaited cancellation with `SIGINT` or `SIGTERM`;
-Windows process termination is not an equivalent graceful-cancellation channel.
-Do not identify owned artifacts by directory prefix or creation time alone.
-See [#4659](https://github.com/morluto/rea/issues/4659) for the remaining recovery
+cache and origin storage. Each launch records its owning process id and native
+process start identity in a bounded marker inside the profile. A later launch
+reclaims that profile only when the marker is a recognized regular file, the
+recorded owner identity is proven gone (a reused pid is not the recorded owner),
+and Chromium's published `SingletonLock` names a dead process. `SingletonCookie`
+and `SingletonSocket` targets are opaque token and socket values, not process
+ids, so they are never parsed as one. A profile with no published lock may still
+be starting in an orphaned browser and is kept, as is any profile whose lock or
+marker inspection fails or is unprovable. Hosts that cannot read a start
+identity keep their profiles. The reclamation sweep is time-bounded and best
+effort, and a named pipe or oversized marker cannot hold up the caller's launch.
+Playwright artifacts directories cannot be attributed this way and can still be
+left behind after abrupt termination. Playwright 1.58.2 can also leave an
+artifacts directory when launch preparation fails before a browser process
+exists, such as for a missing executable. POSIX wrappers can request awaited
+cancellation with `SIGINT` or `SIGTERM`; Windows process termination is not an
+equivalent graceful-cancellation channel. Do not identify owned artifacts by
+directory prefix or creation time alone. See
+[#4659](https://github.com/morluto/rea/issues/4659) for the remaining recovery
 and wrapper-cancellation work.
 
 Keeping that browser alive does not guarantee its emulation state survives.

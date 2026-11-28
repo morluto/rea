@@ -2,8 +2,19 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { afterEach, expect, it, vi } from "vitest";
-import { mkdir, writeFile, rm, access, symlink } from "node:fs/promises";
+import { afterEach, expect, it, vi, onTestFinished } from "vitest";
+import {
+  mkdir,
+  writeFile,
+  rm,
+  access,
+  symlink,
+  realpath,
+} from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { phaseGate } from "../../tests/support/lifecycleHarness.js";
@@ -25,6 +36,12 @@ import {
   openPlaywrightScenarioBrowser,
   PlaywrightScenarioBrowserCleanupOwner,
 } from "./PlaywrightScenarioBrowser.js";
+import {
+  SCENARIO_PROFILE_OWNER_FILE,
+  SCENARIO_PROFILE_PREFIX,
+  observeScenarioOwnerIdentity,
+  writeScenarioProfileOwner,
+} from "./ScenarioProfileReclamation.js";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -1478,3 +1495,49 @@ it("keeps discovered transport credentials out of projected handshake timeouts",
   expect(projected).not.toContain("fixture-user");
   expect(projected).not.toContain("fixture-password");
 });
+
+it.skipIf(process.platform === "win32")(
+  "reclaims a terminated run's profile and records this one before launching",
+  async () => {
+    const stale = join(
+      await realpath(tmpdir()),
+      `${SCENARIO_PROFILE_PREFIX}${randomUUID()}`,
+    );
+    await mkdir(stale, { recursive: true });
+    onTestFinished(async () => {
+      await rm(stale, { recursive: true, force: true });
+    });
+    const exited = spawn(
+      process.execPath,
+      ["-e", "setTimeout(() => {}, 5000)"],
+      { stdio: "ignore" },
+    );
+    const ownerPid = exited.pid;
+    if (ownerPid === undefined) throw new Error("Expected a child process id");
+    const observed = await observeScenarioOwnerIdentity(ownerPid);
+    if (observed.state !== "readable")
+      throw new Error("Expected a readable owner identity");
+    exited.kill("SIGKILL");
+    await once(exited, "exit");
+    await writeScenarioProfileOwner(stale, {
+      pid: ownerPid,
+      observeIdentity: async () => observed,
+    });
+    // A killed browser leaves its published singleton link behind.
+    await symlink(`testhost-${String(ownerPid)}`, join(stale, "SingletonLock"));
+
+    const { profile } = await rejectedLaunch(launchScenario);
+    const recorded = await access(
+      join(profile, SCENARIO_PROFILE_OWNER_FILE),
+    ).then(
+      () => true,
+      () => false,
+    );
+    await expect(
+      access(stale).then(
+        () => true,
+        () => false,
+      ),
+    ).resolves.toBe(false);
+  },
+);
