@@ -20,9 +20,11 @@ import {
   ArtifactResourceScope,
   assertArtifactReadActive,
   closeArtifactResources,
+  completedStableArtifactObservation,
   projectStableArtifactFailure,
   readStableArtifact,
   type RequestField,
+  type StableArtifactFileSystem,
 } from "../resources/index.js";
 import {
   decodeEvmBytecodeCarrier,
@@ -42,6 +44,11 @@ const EVM_PROXY_LIMITATIONS = [
 export class EvmProxyProvider implements EvmProxyPort {
   readonly identity = EVM_PROXY_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
+  readonly #fileSystem: StableArtifactFileSystem | undefined;
+
+  constructor(options?: { readonly fileSystem?: StableArtifactFileSystem }) {
+    this.#fileSystem = options?.fileSystem;
+  }
 
   close(): Promise<void> {
     return closeArtifactResources(
@@ -64,7 +71,7 @@ export class EvmProxyProvider implements EvmProxyPort {
         selected.path,
         input.max_file_bytes,
         options?.signal,
-        undefined,
+        this.#fileSystem,
         this.#resources,
       );
       observed = { sha256: carrier.sha256, bytes: carrier.bytes.length };
@@ -100,12 +107,22 @@ export class EvmProxyProvider implements EvmProxyPort {
         facts.cause,
         evmProxyDialect(facts, selected),
       );
-      if (completed.length > 0)
+      if (completed.length > 0) {
+        // A read can complete inside the thrown error, e.g. when close fails.
+        const failed = completedStableArtifactObservation(
+          cause,
+          path,
+          observed,
+        );
         primary.retainPartialObservation({
           kind: "evm-proxy-accounts",
           accounts: completed,
-          failed_carrier: observed === undefined ? null : { path, ...observed },
+          failed_carrier:
+            failed?.kind === "file-snapshot-hash" && failed.sha256 !== null
+              ? { path, sha256: failed.sha256, bytes: failed.bytes }
+              : null,
         });
+      }
       return err(
         projectStableArtifactFailure(
           cause,

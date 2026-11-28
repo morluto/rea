@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { writeFile } from "node:fs/promises";
+import { lstat, open, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -162,5 +162,35 @@ describe("inspect_evm_proxy", () => {
     expect(
       !result.ok && projectAnalysisError(result.error).details,
     ).toMatchObject({ issues: [{ path: ["related", 1, "path"] }] });
+  });
+
+  it("keeps a related carrier's identity when closing it fails", async () => {
+    const relatedPath = await carrier("0x00");
+    const request = await chainRequest(relatedPath);
+    const provider = new EvmProxyProvider({
+      fileSystem: {
+        lstat: (path) => lstat(path, { bigint: true }),
+        realpath,
+        open: async (path, flags, mode) => {
+          const handle = await open(path, flags, mode);
+          if (path !== relatedPath) return handle;
+          const close = handle.close.bind(handle);
+          handle.close = async () => {
+            await close();
+            throw new Error("close failed");
+          };
+          return handle;
+        },
+      },
+    });
+    const result = await provider.inspect(
+      inspectEvmProxyInputSchema.parse(request),
+    );
+    await provider.close().catch(() => undefined);
+    expect(!result.ok && result.error.partialObservation).toMatchObject({
+      kind: "evm-proxy-accounts",
+      accounts: [{ artifact: { path: request.path } }, expect.anything()],
+      failed_carrier: { path: relatedPath, bytes: 4 },
+    });
   });
 });
