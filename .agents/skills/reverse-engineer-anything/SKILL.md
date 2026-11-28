@@ -213,6 +213,8 @@ explicit path or endpoint and do not need it.
     rather than a trust verdict ([APK signature guide](https://github.com/morluto/rea/blob/main/docs/apk-signature.md)).
   - EVM bytecode: `inspect_evm_interface`; selectors, arguments and mutability
     are inferred candidates ([EVM bytecode guide](https://github.com/morluto/rea/blob/main/docs/guides/evm/evm-bytecode.md)).
+  - Standard ERC-1167 clone proxy: `inspect_evm_proxy`; `none_recognized`
+    does not rule out a proxy ([EVM proxy guide](https://github.com/morluto/rea/blob/main/docs/guides/evm/evm-proxies.md)).
   - Go build metadata or static `(ptr, len)` strings: `inspect_go_binary`
     ([Go binary guide](https://github.com/morluto/rea/blob/main/docs/guides/native/go-binaries.md)).
   - Rust cargo-auditable dependencies: `inspect_rust_binary`; for selected
