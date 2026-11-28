@@ -475,6 +475,41 @@ describe("Ghidra installation inspection", () => {
   );
 });
 
+it("inspects the FreeBSD package without admitting a JVM launch", async () => {
+  const decompiler = `${INSTALL}/Ghidra/Features/Decompiler/build/os/freebsd_x86_64/decompile`;
+  const probeJava = vi.fn(() => javaProbeOk<GhidraJavaObservation>(JAVA));
+  const inspection = await inspectGhidraInstallation(
+    {
+      resourceOwner: inspectionResources.owner,
+      environment: {},
+      installDir: INSTALL,
+      platform: "freebsd",
+      architecture: "x64",
+    },
+    host({
+      executable: (path) => path === HEADLESS || path === decompiler,
+      executableHeader: () => headerProbe(elf(2, 1, 62)),
+      probeJava,
+    }),
+  );
+
+  expect(probeJava).not.toHaveBeenCalled();
+  expect(inspection).toMatchObject({
+    status: "unavailable",
+    rejection: { code: "unsupported_host" },
+    nativeDecompilerPath: decompiler,
+    checks: expect.arrayContaining([
+      expect.objectContaining({ name: "platform", status: "failed" }),
+      expect.objectContaining({
+        name: "native_decompiler",
+        status: "passed",
+        detail: expect.stringContaining("reports elf x86_64"),
+      }),
+    ]),
+  });
+  expect(inspection.checks.map(({ name }) => name)).not.toContain("java");
+});
+
 describe("Ghidra Windows installation commitment", () => {
   it("accepts the exact Windows x64 batch launcher and JDK commitment", async () => {
     const windowsHost: GhidraInstallationHost = {
