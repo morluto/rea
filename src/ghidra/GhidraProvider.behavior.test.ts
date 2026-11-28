@@ -1473,6 +1473,13 @@ describe("Ghidra client projection", () => {
       non_contiguous: false,
       contains_entry: true,
     };
+    const emptyBody = {
+      ...body,
+      ranges: [],
+      total_bytes: 0,
+      span_bytes: 0,
+      contains_entry: false,
+    };
     const limitations = [
       "Ghidra Listing reports a terminal call in the fixture.",
     ];
@@ -1506,6 +1513,22 @@ describe("Ghidra client projection", () => {
                   },
                   limitations,
                 },
+              },
+              {
+                address: "0x3000",
+                value: "fixture_empty_local",
+                procedure: {
+                  external: false,
+                  thunk: false,
+                  thunk_target: null,
+                },
+                export_body_metadata: { body: emptyBody, limitations },
+              },
+              {
+                address: "EXTERNAL:0x4000",
+                value: "fixture_external",
+                procedure: { external: true, thunk: false, thunk_target: null },
+                export_body_metadata: { body: emptyBody, limitations },
               },
             ])
           : ok({
@@ -1561,10 +1584,18 @@ describe("Ghidra client projection", () => {
           export_body_metadata: { body, limitations: direct.value.limitations },
         },
         { address: "0x2000", value: "fixture_second" },
+        { address: "0x3000", value: "fixture_empty_local" },
+        {
+          address: "EXTERNAL:0x4000",
+          export_body_metadata: { body: emptyBody },
+        },
       ]);
       if (!Array.isArray(inventory.value.result))
         throw new Error("Expected procedure rows");
       expect(inventory.value.result[1]).not.toHaveProperty(
+        "export_body_metadata",
+      );
+      expect(inventory.value.result[2]).not.toHaveProperty(
         "export_body_metadata",
       );
     } finally {

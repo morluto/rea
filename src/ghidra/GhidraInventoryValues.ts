@@ -31,6 +31,7 @@ import { outputContractDiagnostics } from "../domain/native/nativeProviderOutput
 import {
   availableFunctionBodySchema,
   functionBodyEntryAgrees,
+  type functionBodySchema,
 } from "../domain/native/functionBody.js";
 import { procedureIdentitySchema } from "../domain/native/procedureInfo.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -201,6 +202,15 @@ export const ghidraFunctionBodySchema = availableFunctionBodySchema.safeExtend({
   ),
 });
 
+/** A reported local function body must cover its own entry point. */
+export const ghidraProcedureBodyEntryAgrees = (
+  body: z.infer<typeof functionBodySchema>,
+  entry: string,
+  external: boolean,
+): boolean =>
+  functionBodyEntryAgrees(body, entry) &&
+  (!body.available || external || body.contains_entry);
+
 /** Canonical Ghidra identity, retaining the generic dossier's name and symbol admission. */
 export const ghidraFunctionIdentitySchema = procedureIdentitySchema
   .safeExtend({
@@ -357,7 +367,11 @@ const resultSchemas = {
         if (advisory === undefined) return row;
         const parsed = exportBodyMetadataSchema.safeParse(advisory);
         return parsed.success &&
-          functionBodyEntryAgrees(parsed.data.body, row.address)
+          ghidraProcedureBodyEntryAgrees(
+            parsed.data.body,
+            row.address,
+            row.procedure.external,
+          )
           ? { ...row, export_body_metadata: parsed.data }
           : row;
       }),

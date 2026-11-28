@@ -38,7 +38,6 @@ import {
   swiftSmallStringLiteralOmissionSchema,
   swiftLargeStringLiteralOmissionSchema,
 } from "../domain/native/swiftStringLiteral.js";
-import { functionBodyEntryAgrees } from "../domain/native/functionBody.js";
 import { ownedJsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import type { EvidenceLocation } from "../domain/evidence.js";
 import {
@@ -53,6 +52,7 @@ import {
   ghidraInputAddressSchema,
   ghidraFunctionClassificationSchema as classification,
   ghidraFunctionBodySchema as ghidraFunctionBody,
+  ghidraProcedureBodyEntryAgrees,
   ghidraProcedureIdentitySchema as procedureIdentity,
   ghidraFunctionIdentitySchema as dossierProcedureIdentity,
 } from "./GhidraInventoryValues.js";
@@ -187,10 +187,12 @@ const procedureInfo = procedureInfoSchema
   .strict()
   .superRefine((value, context) => {
     if (
-      !functionBodyEntryAgrees(value.body, value.entrypoint) ||
-      (value.body.available &&
-        (value.length !== value.body.total_bytes ||
-          (!value.classification.external && !value.body.contains_entry)))
+      !ghidraProcedureBodyEntryAgrees(
+        value.body,
+        value.entrypoint,
+        value.classification.external,
+      ) ||
+      value.length !== value.body.total_bytes
     )
       context.addIssue({
         code: "custom",
