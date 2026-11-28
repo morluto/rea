@@ -540,7 +540,9 @@ describe("independent script publication failure", () => {
         if (
           String(args[0]).startsWith(input.output_directory) &&
           typeof args[1] === "number" &&
-          (args[1] & constants.O_WRONLY) !== 0
+          // The output handle is O_RDWR since #8410 (one descriptor for the
+          // write and the durable readback), so it must match here too.
+          (args[1] & (constants.O_WRONLY | constants.O_RDWR)) !== 0
         )
           vi.spyOn(handle, "write").mockImplementation(async () => {
             controller.abort(
