@@ -484,6 +484,11 @@ export const documentationSections = [
         route: "/qualcomm-mbn-images",
       },
       {
+        text: "Image4 containers",
+        source: "guides/apple/image4-containers.md",
+        route: "/image4-containers",
+      },
+      {
         text: "Intel HEX and S-record images",
         source: "hex-records.md",
         route: "/hex-records",

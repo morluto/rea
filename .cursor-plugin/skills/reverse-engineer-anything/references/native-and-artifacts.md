@@ -1173,6 +1173,16 @@ Signatures and certificates are located, not verified; hashes are not
 recomputed. See
 [Qualcomm MBN images](https://github.com/morluto/rea/blob/main/docs/guides/firmware/qualcomm-mbn-images.md).
 
+Image4 firmware containers (`IMG4`, `IM4P`, `IM4M`) use the same inspection
+and extraction workflows. Recognition is the DER SEQUENCE magic, not the
+filename. `payload` is the stored octet string. `manifest.der` and
+`restore-info.der` are the embedded IM4M and IM4R sequences. Keybags are
+reported as a count and key types; nothing is decrypted, and an encrypted
+payload is refused on open. Signatures and certificates are sized and not
+checked. LZFSE (`bvx2`, `bvx1`, `bvxn`, `bvx-`) and `complzss` payloads stay compressed. IM4R property names
+such as `BNCN` are listed and their values stay redacted. See
+[Image4 containers](https://github.com/morluto/rea/blob/main/docs/guides/apple/image4-containers.md).
+
 Android A/B OTA `payload.bin` files (CrAU v2) use the same
 inspection/extraction workflows. Prefer a retained summary for header,
 partition table, dynamic groups and signature counts. Signatures are not
