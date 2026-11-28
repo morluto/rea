@@ -55,7 +55,6 @@ export const FIRMWARE_DETECTOR_IDS = [
   "cortex-m-vector-table",
   "instruction-signature-census",
 ] as const;
-export type FirmwareDetectorId = (typeof FIRMWARE_DETECTOR_IDS)[number];
 
 export const FIRMWARE_CPU_FAMILIES = [
   "x86",
@@ -92,8 +91,6 @@ export const FIRMWARE_CANDIDATE_CONFIDENCES = [
   "derived",
   "inferred",
 ] as const;
-export type FirmwareCandidateConfidence =
-  (typeof FIRMWARE_CANDIDATE_CONFIDENCES)[number];
 
 export const inspectFirmwareArchitectureCandidatesInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(
