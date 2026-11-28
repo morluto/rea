@@ -11,6 +11,7 @@ import {
   classifyArtifactContent,
   createOccurrence,
   indexDestinationOccurrencesByPath,
+  materializeDirectoryNodes,
   resolveOccurrenceParents,
 } from "./ArtifactGraphConstruction.js";
 import { createArtifactClassificationProbe } from "../ArtifactClassificationProbe.js";
@@ -18,6 +19,7 @@ import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { translateArtifactFailure } from "../../resources/index.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { artifactIdForContent } from "../../domain/artifactIdentity.js";
+import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
 import { pe } from "../../domain/binaryTarget.fixture.js";
 import { parseExecutableHeader } from "../../domain/binaryTarget.js";
 import {
@@ -241,6 +243,44 @@ it("preserves a positive storage declaration without reader format", () => {
 });
 
 describe("occurrence parent ownership", () => {
+  it("hashes an explicitly owned flat directory before the deeper parent", () => {
+    const parent = createOccurrence(
+      entry("outer/nested", "directory"),
+      "outer/nested",
+      null,
+    );
+    const child = createOccurrence(
+      entry("entry-9", "directory"),
+      "entry-9",
+      null,
+    );
+    const items = [parent, child];
+    resolveOccurrenceParents(
+      items,
+      indexDestinationOccurrencesByPath(items),
+      new Set(),
+      new Map([[child, parent.logical_path]]),
+    );
+    const nodes = new Map();
+    materializeDirectoryNodes(items, nodes);
+    expect(child.artifact_id).not.toBeNull();
+    const expected = digestCanonicalValue(
+      {
+        kind: "directory",
+        children: [
+          {
+            name: "entry-9",
+            artifact_id: child.artifact_id,
+            entry_kind: "directory",
+          },
+        ],
+      },
+      "Artifact",
+    );
+    expect(parent.hash_status).toBe("verified");
+    expect(nodes.get(parent.artifact_id)?.sha256).toBe(expected);
+  });
+
   it("selects the nearest unique nested parent", () => {
     const outer = createOccurrence(entry("a", "directory"), "a", null);
     const inner = createOccurrence(entry("a/b", "directory"), "a/b", null);

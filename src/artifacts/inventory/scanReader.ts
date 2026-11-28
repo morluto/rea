@@ -302,6 +302,7 @@ const visitArtifactEntries = async (
     readonly prefix: string;
     readonly containerId: string | null;
     readonly iterator: AsyncIterator<ArtifactEntry>;
+    observedParentKeys?: Map<string, string>;
   }> = [
     {
       reader: currentReader,
@@ -351,15 +352,19 @@ const visitArtifactEntries = async (
         entry.kind === "metadata" ? frame.containerId : null,
         { duplicateOrdinal, sourceFormat: frame.reader.format },
       );
-      if (entry.observedParentPath !== undefined)
-        context.observedParentPaths.set(
-          occurrence,
-          normalizeArtifactPath(
+      if (entry.observedParentPath !== undefined) {
+        const keys = (frame.observedParentKeys ??= new Map());
+        let key = keys.get(entry.observedParentPath);
+        if (key === undefined) {
+          key = normalizeArtifactPath(
             frame.prefix.length === 0
               ? entry.observedParentPath
               : `${frame.prefix}/${entry.observedParentPath}`,
-          ),
-        );
+          );
+          keys.set(entry.observedParentPath, key);
+        }
+        context.observedParentPaths.set(occurrence, key);
+      }
       let digested:
         | {
             readonly node: ArtifactNode;

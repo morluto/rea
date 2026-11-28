@@ -180,16 +180,20 @@ export const materializeDirectoryNodes = (
   occurrences: MutableOccurrence[],
   nodes: Map<string, ArtifactNode>,
 ): void => {
-  const directories = occurrences
-    .filter(
-      ({ entry_kind: kind, hash_status }) =>
-        kind === "directory" && hash_status !== "unavailable",
-    )
-    .sort(
-      (left, right) => depth(right.logical_path) - depth(left.logical_path),
-    );
+  const directories = new Map<
+    string,
+    { occurrence: MutableOccurrence; pendingChildren: number }
+  >();
   const childrenByParent = new Map<string, MutableOccurrence[]>();
   for (const occurrence of occurrences) {
+    if (
+      occurrence.entry_kind === "directory" &&
+      occurrence.hash_status !== "unavailable"
+    )
+      directories.set(occurrence.occurrence_id, {
+        occurrence,
+        pendingChildren: 0,
+      });
     if (occurrence.parent_occurrence_id === null) continue;
     appendToMapList(
       childrenByParent,
@@ -197,7 +201,20 @@ export const materializeDirectoryNodes = (
       occurrence,
     );
   }
-  for (const directory of directories) {
+  // A reader can observe containment even when a child's path is a flat
+  // ordinal. The parent edge, not path depth, requires the child's hash first.
+  for (const { occurrence } of directories.values()) {
+    if (occurrence.parent_occurrence_id === null) continue;
+    const parent = directories.get(occurrence.parent_occurrence_id);
+    if (parent !== undefined) parent.pendingChildren += 1;
+  }
+  const ready = [...directories.values()].filter(
+    (entry) => entry.pendingChildren === 0,
+  );
+  for (;;) {
+    const next = ready.pop();
+    if (next === undefined) break;
+    const directory = next.occurrence;
     const prefix = `${directory.logical_path}/`;
     const children = (childrenByParent.get(directory.occurrence_id) ?? [])
       .map(({ logical_path, artifact_id, entry_kind }) => ({
@@ -220,6 +237,20 @@ export const materializeDirectoryNodes = (
     nodes.set(node.artifact_id, node);
     directory.artifact_id = node.artifact_id;
     directory.hash_status = "verified";
+    directories.delete(directory.occurrence_id);
+    if (directory.parent_occurrence_id === null) continue;
+    const parent = directories.get(directory.parent_occurrence_id);
+    if (parent !== undefined) {
+      parent.pendingChildren -= 1;
+      if (parent.pendingChildren === 0) ready.push(parent);
+    }
+  }
+  for (const { occurrence } of directories.values()) {
+    occurrence.artifact_id = null;
+    occurrence.hash_status = "unavailable";
+    occurrence.limitations.push(
+      "A cycle in the directory relationships prevents materializing this directory identity.",
+    );
   }
 };
 
@@ -756,5 +787,3 @@ const classifyFatArtifact = (
 /** Relation of a non-source-map occurrence to its parent. */
 const relationFor = (path: string): ArtifactEdge["relation"] =>
   path.toLowerCase().includes(".framework/") ? "embeds" : "contains";
-
-const depth = (path: string): number => path.split("/").length;
