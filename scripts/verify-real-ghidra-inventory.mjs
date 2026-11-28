@@ -81,6 +81,12 @@ async function verifyBridgeRejections(client, names) {
       { document: null, procedure: "file-offset:0x1fffffffffffff" },
       "file_offset_unmapped",
     ),
+    unmappedBareSelector: await expectRemoteFailure(
+      client,
+      "procedure_pseudo_code",
+      { document: null, procedure: "0x1fffffffffffff" },
+      "procedure_not_found",
+    ),
     unknownDocument: await expectRemoteFailure(
       client,
       "list_segments",
