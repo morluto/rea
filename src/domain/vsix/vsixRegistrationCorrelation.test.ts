@@ -91,7 +91,7 @@ describe("VS Code command correlation", () => {
       `${VSCODE}vscode.commands.registerCommand(prefix + ".a", f);`,
       contributes(["demo.a"]),
     );
-    expect(result.commands[0]?.status).toBe("not_found");
+    expect(result.commands[0]?.status).toBe("undetermined");
     expect(result.unresolved_registrations).toHaveLength(1);
   });
 

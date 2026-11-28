@@ -619,9 +619,15 @@ const rowList = (value: unknown): readonly unknown[] =>
 
 const rowsOf = (value: unknown) => rowList(value).filter(isRow);
 
-/** A declared row that is not an object cannot be read. */
-const unreadableRows = (value: unknown): boolean =>
-  !rowList(value).every(isRow);
+/** A row that is not an object, or holds a non-text field, cannot be read. */
+const unreadableRows = (value: unknown, fields: readonly string[]): boolean =>
+  !rowList(value).every(
+    (row) =>
+      isRow(row) &&
+      fields.every(
+        (field) => row[field] === undefined || typeof row[field] === "string",
+      ),
+  );
 
 const exactText = (value: unknown): string | null =>
   typeof value === "string" && value !== "" ? value : null;
@@ -643,7 +649,8 @@ const menuGroups = (menus: unknown) =>
 /** Menus are one object keyed by menu name, each holding its rows. */
 const unreadableMenus = (menus: unknown): boolean =>
   menus !== undefined &&
-  (!isRow(menus) || Object.values(menus).some(unreadableRows));
+  (!isRow(menus) ||
+    Object.values(menus).some((rows) => unreadableRows(rows, ["command"])));
 
 const parsePackageJsonDocument = (
   text: string,
@@ -765,7 +772,8 @@ const parsePackageJsonDocument = (
           ? null
           : menuGroups(contributesRaw?.menus),
       keybindings:
-        unreadContributes || unreadableRows(contributesRaw?.keybindings)
+        unreadContributes ||
+        unreadableRows(contributesRaw?.keybindings, ["command", "key"])
           ? null
           : rowsOf(contributesRaw?.keybindings).map((row) => ({
               command: exactText(row.command),

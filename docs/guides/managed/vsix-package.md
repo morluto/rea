@@ -116,9 +116,10 @@ REA does not verify that the two records describe the same files:
 `entry_points` says whether each declared entry path was analyzed. `not_found`
 does not prove that a command has no handler.
 
-`undetermined` replaces `not_found` when a declared entry point was not analyzed
-or analysis was truncated. It also replaces `registered_undeclared` when the
-manifest was not read or an older record omitted commands. Absence is not
+`undetermined` replaces `not_found` when a declared entry point was not
+analyzed, analysis was truncated, or any registration identifier is unresolved,
+because it could be that command. It also replaces `registered_undeclared` when
+the manifest was not read or an older record omitted commands. Absence is not
 claimed when any source was skipped or unparsed, or for application Evidence
 recorded before callee facts existed; rerun the analysis for those.
 

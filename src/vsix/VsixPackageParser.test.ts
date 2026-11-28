@@ -2153,6 +2153,14 @@ it.each([
   { menus: { "editor/context": ["demo.a"] }, keybindings: ["ctrl+h"] },
   { menus: { "editor/context": [null] }, keybindings: [[]] },
   { menus: { "editor/context": "demo.a" }, keybindings: [{}, 1] },
+  {
+    menus: { "editor/context": [{ command: 7 }] },
+    keybindings: [{ command: "demo.a", key: 7 }],
+  },
+  {
+    menus: { "editor/context": [{ command: null }] },
+    keybindings: [{ command: ["demo.a"], key: "ctrl+h" }],
+  },
 ])("keeps unreadable contribution rows unknown: %j", async (contributes) => {
   const bytes = await vsixPackageFixture({
     packageJson: JSON.stringify({

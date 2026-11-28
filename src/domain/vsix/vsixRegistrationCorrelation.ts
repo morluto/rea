@@ -234,7 +234,8 @@ export const correlateVsixRegistrations = ({
           : ("undetermined" as const)
         : firm
           ? ("registered" as const)
-          : complete && registrations.length === 0
+          : // An identifier built at run time could be this command.
+            complete && registrations.length === 0 && unresolved.length === 0
             ? ("not_found" as const)
             : ("undetermined" as const);
       return {
