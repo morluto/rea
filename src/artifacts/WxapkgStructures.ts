@@ -72,6 +72,8 @@ export interface WxapkgMember {
 
 export interface WxapkgFileTable {
   readonly members: readonly WxapkgMember[];
+  /** Absolute offset just after the last parsed member row. */
+  readonly rowsEnd: number;
 }
 
 /** Decode header fields once; encrypted variants and absent signatures are distinct. */
@@ -217,5 +219,5 @@ export const readWxapkgFileTable = async (
         );
     }
   }
-  return { members };
+  return { members, rowsEnd: tableStart + cursor };
 };
