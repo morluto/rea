@@ -1158,6 +1158,33 @@ describe("XML plist decode budget", () => {
       },
     });
   });
+
+  it("decodes an OpenStep archive whose strings contain XML markup", () => {
+    const openStep = `{
+      $archiver = NSKeyedArchiver;
+      $version = 100000;
+      $objects = (
+        "$null",
+        {
+          $class = { CF$UID = 2; };
+          label = "<!DOCTYPE plist [<!ELEMENT plist ANY>]>";
+        },
+        {
+          $classes = ( "NSMutableDictionary", "NSDictionary", "NSObject" );
+          $classname = NSMutableDictionary;
+        }
+      );
+      $top = { root = { CF$UID = 1; }; };
+    }`;
+    const graph = decodeKeyedArchiveBytes(Buffer.from(openStep), {
+      offset: 0,
+      limit: 4,
+    });
+    expect(graph.archive_format).toBe("xml-plist");
+    expect(JSON.stringify(graph.objects)).toContain(
+      "<!DOCTYPE plist [<!ELEMENT plist ANY>]>",
+    );
+  });
 });
 
 it("distinguishes binary UID records from authored UID-shaped dictionaries", () => {
