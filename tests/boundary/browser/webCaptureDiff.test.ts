@@ -1300,6 +1300,26 @@ describe("web capture CSS variables comparison", () => {
       changes: [],
       reason: "CSS variables origin_scope differed between observations.",
     });
+
+    // Escaped custom-property spellings canonicalize to the same identity
+    const escapedBefore = structuredClone(sameOriginSide);
+    escapedBefore.css_variables.items = [
+      { name: "--foo", value: "#0066cc", redacted: false },
+    ];
+    const escapedAfter = structuredClone(sameOriginSide);
+    escapedAfter.css_variables.items = [
+      { name: "--f\\6f o", value: "#0066cc", redacted: false },
+    ];
+    const escapedSame = compareWebCaptures(
+      compareWebCapturesInputSchema.parse({
+        before: { inspection: escapedBefore },
+        after: { inspection: escapedAfter },
+      }),
+    );
+    expect(escapedSame.dimensions.metadata).toMatchObject({
+      status: "unchanged",
+      total_changes: 0,
+    });
   });
 });
 

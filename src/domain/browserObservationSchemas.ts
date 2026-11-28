@@ -263,6 +263,24 @@ export const DEFAULT_MAX_CSS_VARIABLE_VALUE_LENGTH = 512;
 export const MAX_CSS_VARIABLE_VALUE_LENGTH_CEILING = 65_536;
 export const MAX_CSS_VARIABLES_TOTAL_CHARS = 33_554_432;
 
+const CSS_PROP_ESCAPE_RE = /\\([0-9a-fA-F]{1,6}[ \t\r\n\f]?|[^\r\n\f])/gu;
+
+/** Canonicalize a CSS custom property name by decoding CSS escapes while preserving source spelling elsewhere. */
+export const canonicalizeCssCustomPropertyName = (name: string): string => {
+  if (!name.includes("\\")) return name;
+  return name.replace(CSS_PROP_ESCAPE_RE, (_full, body: string) => {
+    const trimmed = body.replace(/[ \t\r\n\f]$/u, "");
+    if (/^[0-9a-fA-F]{1,6}$/u.test(trimmed)) {
+      const code = Number.parseInt(trimmed, 16);
+      if (code === 0 || (code >= 0xd800 && code <= 0xdfff) || code > 0x10ffff) {
+        return "\uFFFD";
+      }
+      return String.fromCodePoint(code);
+    }
+    return body;
+  });
+};
+
 export const browserCssVariableItemSchema = z.object({
   name: z
     .string()
@@ -352,7 +370,8 @@ export const browserCssVariablesSchema =
     }
     const seenNames = new Set<string>();
     for (const item of val.items) {
-      if (seenNames.has(item.name)) {
+      const canonicalName = canonicalizeCssCustomPropertyName(item.name);
+      if (seenNames.has(canonicalName)) {
         ctx.addIssue({
           code: "custom",
           path: ["items"],
@@ -360,7 +379,7 @@ export const browserCssVariablesSchema =
         });
         break;
       }
-      seenNames.add(item.name);
+      seenNames.add(canonicalName);
     }
   });
 export type BrowserCssVariables = z.infer<typeof browserCssVariablesSchema>;

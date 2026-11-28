@@ -4,7 +4,10 @@ import {
   compareUnicodeCodePoints,
   compositeKey,
 } from "./unicodeCodePointOrder.js";
-import type { WebPageInspection } from "./browserObservationSchemas.js";
+import {
+  canonicalizeCssCustomPropertyName,
+  type WebPageInspection,
+} from "./browserObservationSchemas.js";
 import { webResourceComparisonIdentity } from "./webInventory.js";
 import {
   webCaptureDiffSchema,
@@ -1582,13 +1585,13 @@ const metadataDimension = (
 
       const beforeCssMap = new Map(
         before.css_variables.items.map((item) => [
-          item.name,
+          canonicalizeCssCustomPropertyName(item.name),
           digestCanonicalValue({ value: item.value, redacted: item.redacted }),
         ]),
       );
       const afterCssMap = new Map(
         after.css_variables.items.map((item) => [
-          item.name,
+          canonicalizeCssCustomPropertyName(item.name),
           digestCanonicalValue({ value: item.value, redacted: item.redacted }),
         ]),
       );

@@ -1251,6 +1251,10 @@ it("redacts credentials from standalone URL custom properties and admits custom 
           value: '"https://carol:pw\\40 example.test/c.png"',
         },
         {
+          name: "--asset-escaped-space",
+          value: "https://alice:sec\\ ret@example.test/space.png",
+        },
+        {
           name: "--sources",
           value:
             '"https://alice:secret@example.test/a.png" 1x, "https://bob:pw@example.test/b.png" 2x',
@@ -1348,6 +1352,11 @@ it("redacts credentials from standalone URL custom properties and admits custom 
   expect(byName.get("--asset-escaped")).toEqual({
     name: "--asset-escaped",
     value: '"https://example.test/c.png"',
+    redacted: true,
+  });
+  expect(byName.get("--asset-escaped-space")).toEqual({
+    name: "--asset-escaped-space",
+    value: "https://example.test/space.png",
     redacted: true,
   });
   expect(byName.get("--sources")).toEqual({

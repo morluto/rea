@@ -5,6 +5,7 @@ import {
 import { parseRecordedTransportUrl } from "../domain/recordedTransportUrl.js";
 import {
   browserCssVariableItemSchema,
+  canonicalizeCssCustomPropertyName,
   DEFAULT_MAX_CSS_VARIABLES,
   DEFAULT_MAX_CSS_VARIABLE_VALUE_LENGTH,
   type BrowserCssVariableItem,
@@ -484,13 +485,18 @@ const redactStandaloneCssUrl = (value: string): string => {
       continue;
     }
 
-    let tokenEnd = pos + 1;
-    while (
-      tokenEnd < len &&
-      !CSS_WHITESPACE_OR_QUOTE_RE.test(value[tokenEnd]!)
-    ) {
+    let tokenEnd = pos;
+    while (tokenEnd < len) {
+      const tokCh = value[tokenEnd]!;
+      if (tokCh === "\\") {
+        const [, nextPos] = consumeEscape(value, tokenEnd + 1);
+        tokenEnd = nextPos;
+        continue;
+      }
+      if (CSS_WHITESPACE_OR_QUOTE_RE.test(tokCh)) break;
       tokenEnd++;
     }
+    tokenEnd = Math.max(pos + 1, tokenEnd);
     const token = value.slice(pos, tokenEnd);
     const parts = splitUrlListToken(token);
     result += parts
@@ -648,6 +654,20 @@ export const captureCssVariables = async (
     return emptyCssVariables("unavailable");
   }
 
+  try {
+    return await captureCssVariablesWithDom(context, doc, limitations);
+  } finally {
+    await safeCdpCommand(context, "DOM.disable", {}, limitations).catch(
+      () => {},
+    );
+  }
+};
+
+const captureCssVariablesWithDom = async (
+  context: Parameters<typeof captureCssVariables>[0],
+  doc: unknown,
+  limitations: string[],
+): Promise<BrowserCssVariables> => {
   const rootRecord = recordValue(recordValue(doc)?.root);
   if (rootRecord === undefined) {
     context.events?.completeness.exclude(
@@ -829,10 +849,11 @@ export const captureCssVariables = async (
       redacted,
     });
     if (parsed.success) {
-      if (validItemsByName.has(parsed.data.name)) {
+      const canonicalName = canonicalizeCssCustomPropertyName(parsed.data.name);
+      if (validItemsByName.has(canonicalName)) {
         malformedProtocolEntries += 1;
       } else if (validItemsByName.size < maxIntake) {
-        validItemsByName.set(parsed.data.name, parsed.data);
+        validItemsByName.set(canonicalName, parsed.data);
       }
     } else {
       rejectedCount += 1;
