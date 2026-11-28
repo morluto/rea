@@ -56,6 +56,7 @@ import {
 import {
   ambientBindingMayObserveWriteAt,
   ambientPathMayObserveAt,
+  ambientMemberReadMayExposeAt,
   ambientPathOrMemberMayHaveChanged,
   bindingHasUnmodeledMemberValues,
   opaqueCodeMayRebindBinding,
@@ -141,7 +142,13 @@ export const invalidateSemanticRequireDelegateWrites = (
 const commonJsDelegateChangedAt = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
+  use: "read" | "effect" = "read",
 ): boolean =>
+  (use === "read" &&
+    ambientMemberReadMayExposeAt(state, node, [
+      "commonjs-module",
+      "require",
+    ])) ||
   writesModuleRequire(state).some((write) =>
     semanticEffectMayPrecede(state, node, write),
   );
@@ -2008,12 +2015,13 @@ const isConditionalRequireAt = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
   allowAmbientModule = false,
+  use: "read" | "effect" = "read",
 ): boolean => {
   const runtime = javaScriptRuntimeContext(state.program);
   if (
     (runtime !== "unknown" && !(allowAmbientModule && runtime === "module")) ||
     semanticResolutionBlocked(state, root, "require") ||
-    commonJsDelegateChangedAt(node, state)
+    commonJsDelegateChangedAt(node, state, use)
   )
     return false;
   const binding = resolveSemanticBindingState(state, root, "require");
@@ -2040,6 +2048,7 @@ export const semanticRequireOriginCandidate = (
   node: t.Node | null | undefined,
   state: JavaScriptSemanticAnalysisState,
   allowAmbientModule = false,
+  use: "read" | "effect" = "read",
 ): JavaScriptRequireOrigin | undefined => {
   const chain = semanticMemberChain(node);
   const current = chain?.root;
@@ -2062,8 +2071,9 @@ export const semanticRequireOriginCandidate = (
           current,
           state,
           allowAmbientModule,
+          use,
         )
-      : commonJsDelegateChangedAt(current, state) ||
+      : commonJsDelegateChangedAt(current, state, use) ||
         (binding !== undefined &&
           !isUnmodifiedCommonJsWrapperBinding(
             current.callee,

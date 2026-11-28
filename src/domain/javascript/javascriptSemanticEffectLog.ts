@@ -480,6 +480,19 @@ export const ambientPathMayObserveAt = (
   );
 };
 
+/** Projected getter operands escape at the member read that invoked the getter. */
+export const ambientMemberReadMayExposeAt = (
+  state: JavaScriptSemanticAnalysisState,
+  read: t.Node,
+  path: readonly string[],
+): boolean =>
+  ambientPathEffects(state, path).escapes.some(
+    ({ node }) =>
+      node !== undefined &&
+      state.projectedPropertyReadSites.has(node) &&
+      semanticEffectMayPrecede(state, read, node),
+  );
+
 /**
  * `mayObserve` for an unbound name: whether a recorded assignment to the
  * ambient binding `name` may run before `read`. The loader and the origin of

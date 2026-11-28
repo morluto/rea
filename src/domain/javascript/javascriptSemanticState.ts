@@ -251,6 +251,7 @@ export interface JavaScriptSemanticAnalysisState {
   /** Store targets whose ownership is unknown or ambient, as classified by ambient indexing. */
   readonly escapingReferenceStores: WeakSet<t.MemberExpression>;
   /** Ambient object identities passed to calls whose effects are not evaluated. */
+  readonly projectedPropertyReadSites: WeakSet<t.Node>;
   readonly ambientEscapes: SemanticPropertyPathCoverage;
   /** Capture sites keep later opaque effects from changing earlier copies. */
   readonly ambientEscapeEffects: JavaScriptSemanticMemberEffect[];

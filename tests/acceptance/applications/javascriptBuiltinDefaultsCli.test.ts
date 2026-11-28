@@ -200,6 +200,16 @@ it("preserves earlier and sibling effects without inventing replaced cached-modu
     `const fs=require('fs'); let assigned; const saved=(0, fs.readFileSync); fs.readFileSync=custom; const late=(assigned=fs.readFileSync); saved('wrapped-kept.json'); late('wrong-wrapped.json');`,
   );
   await writeFile(
+    join(root, "getter.cjs"),
+    `const box={owner:module,get value(){observe(this.owner);return 0}};
+     require('fs').readFileSync('before-getter.json');
+     const fs = require('fs');
+     const {value} = box;
+     require('fs').readFileSync('after-getter.json');
+     require('fs').readFileSync = custom;
+     fs.readFileSync('after-getter-write.json');`,
+  );
+  await writeFile(
     join(root, "global-process.cjs"),
     `process.env={MODE:'local'}; const proc=require('process'); const mode=proc.env.MODE;`,
   );
@@ -218,6 +228,7 @@ it("preserves earlier and sibling effects without inventing replaced cached-modu
       .map(({ properties }) => properties.key)
       .sort(),
   ).toEqual([
+    "before-getter.json",
     "before-write.json",
     "before.json",
     "direct.json",
