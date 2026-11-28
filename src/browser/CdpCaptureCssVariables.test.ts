@@ -783,6 +783,16 @@ it("redacts credentials from quoted and unquoted CSS URLs including opposite quo
           name: "--escaped-payload-at",
           value: 'url("https://alice:secret\\40 example.com/a\\"b")',
         },
+        {
+          name: "--image-set-urls",
+          value:
+            'image-set("https://alice:secret@example.com/a.png" 1x, \'https://bob:pw@example.com/b.png\' 2x)',
+        },
+        {
+          name: "--webkit-image-set-url",
+          value:
+            '-webkit-image-set("https://alice:secret@example.com/c.png" 1x)',
+        },
       ],
     },
     "CSS.disable": {},
@@ -830,6 +840,12 @@ it("redacts credentials from quoted and unquoted CSS URLs including opposite quo
       value: "url('https://example.com/a\\'b')",
     },
     {
+      name: "--image-set-urls",
+      redacted: true,
+      value:
+        'image-set("https://example.com/a.png" 1x, \'https://example.com/b.png\' 2x)',
+    },
+    {
       name: "--scheme-relative",
       redacted: true,
       value: 'url("//example.com/a.png")',
@@ -838,6 +854,11 @@ it("redacts credentials from quoted and unquoted CSS URLs including opposite quo
       name: "--unquoted",
       redacted: true,
       value: "url(https://example.com/path)",
+    },
+    {
+      name: "--webkit-image-set-url",
+      redacted: true,
+      value: '-webkit-image-set("https://example.com/c.png" 1x)',
     },
     {
       name: "--with-double-quote",
@@ -853,10 +874,52 @@ it("redacts credentials from quoted and unquoted CSS URLs including opposite quo
   expect(
     limitations.some((lim) =>
       lim.includes(
-        "9 root CSS custom property values had transport credentials redacted",
+        "11 root CSS custom property values had transport credentials redacted",
       ),
     ),
   ).toBe(true);
+});
+
+it("allows callers to raise max_css_variables and max_css_variable_value_length", async () => {
+  const manyVariables = Array.from({ length: 260 }, (_, i) => ({
+    name: `--var-${String(i).padStart(3, "0")}`,
+    value: i === 0 ? "x".repeat(600) : `${String(i)}px`,
+  }));
+  const connection = makeMockConnection({
+    "DOM.getDocument": {
+      root: {
+        nodeId: 1,
+        children: [{ nodeId: 2, nodeType: 1, nodeName: "HTML" }],
+      },
+    },
+    "CSS.enable": {},
+    "CSS.getComputedStyleForNode": {
+      computedStyle: manyVariables,
+    },
+    "CSS.disable": {},
+  });
+
+  const limitations: string[] = [];
+  const result = await captureCssVariables(
+    {
+      connection,
+      sessionId: undefined,
+      input: inspectWebPageInputSchema.parse({
+        cdp_endpoint: "http://127.0.0.1:9222",
+        target_id: "target_1",
+        include_css_variables: true,
+        max_css_variables: 300,
+        max_css_variable_value_length: 1024,
+      }),
+    },
+    limitations,
+  );
+
+  expect(result.status).toBe("included");
+  expect(result.total).toBe(260);
+  expect(result.retained_count).toBe(260);
+  expect(result.items).toHaveLength(260);
+  expect(result.items[0]?.value).toHaveLength(600);
 });
 
 it("excludes invalid_protocol_value and records limitation when DOM root or nodeId is malformed", async () => {

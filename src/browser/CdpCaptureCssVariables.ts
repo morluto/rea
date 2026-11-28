@@ -5,6 +5,8 @@ import {
 import { parseRecordedTransportUrl } from "../domain/recordedTransportUrl.js";
 import {
   browserCssVariableItemSchema,
+  DEFAULT_MAX_CSS_VARIABLES,
+  DEFAULT_MAX_CSS_VARIABLE_VALUE_LENGTH,
   type BrowserCssVariableItem,
   type BrowserCssVariables,
 } from "../domain/browserObservationSchemas.js";
@@ -22,11 +24,9 @@ import type { CdpConnection } from "./CdpConnection.js";
 import { optionalCdpCommand } from "./CdpOptionalCommand.js";
 import type { CdpCommand, CdpCommandParams } from "./protocol/CdpCommands.js";
 
-const MAX_RETAINED_CSS_VARIABLES = 250;
 const MAX_INTAKE_CSS_VARIABLES = 2000;
 const MAX_REJECTED_PREVIEWS = 3;
 const MAX_PREVIEW_NAME_LENGTH = 64;
-const MAX_CSS_VALUE_LENGTH = 512;
 
 const sanitizeDiagnosticPreview = (text: string): string =>
   text.replace(/[\u0000-\u001F\u007F-\u009F\u202A-\u202E\u2066-\u2069]/gu, "");
@@ -290,16 +290,88 @@ const findCssUrlMatches = (text: string): readonly CssUrlMatch[] => {
       }
     }
 
+    const lowerIdent = identName.toLowerCase();
+    if (
+      (lowerIdent === "image-set" || lowerIdent === "-webkit-image-set") &&
+      curr < len &&
+      text[curr] === "("
+    ) {
+      curr++;
+      let depth = 1;
+      while (curr < len && depth > 0) {
+        const ch = text[curr]!;
+        if (ch === "(") {
+          depth++;
+          curr++;
+        } else if (ch === ")") {
+          depth--;
+          curr++;
+        } else if (ch === '"' || ch === "'") {
+          const quote = ch;
+          const strStart = curr;
+          curr++;
+          const urlStart = curr;
+          let closed = false;
+          while (curr < len) {
+            const inner = text[curr]!;
+            if (inner === quote) {
+              closed = true;
+              break;
+            }
+            if (inner === "\r" || inner === "\n" || inner === "\f") {
+              break;
+            }
+            if (inner === "\\") {
+              curr++;
+              if (curr >= len) break;
+              const [, nextPos] = consumeEscape(text, curr);
+              curr = nextPos;
+              continue;
+            }
+            curr++;
+          }
+          if (closed) {
+            const urlEnd = curr;
+            curr++;
+            if (depth === 1) {
+              matches.push({
+                start: strStart,
+                end: curr,
+                prefix: quote,
+                rawUrl: text.slice(urlStart, urlEnd),
+                suffix: quote,
+              });
+            }
+          }
+        } else if (ch === "\\") {
+          curr++;
+          if (curr < len) {
+            const [, nextPos] = consumeEscape(text, curr);
+            curr = nextPos;
+          }
+        } else {
+          curr++;
+        }
+      }
+      pos = curr;
+      continue;
+    }
+
     pos++;
   }
 
   return matches;
 };
 
-export const redactCssUrlCredentials = (value: string): string => {
+export const redactCssUrlCredentials = (
+  value: string,
+  maxLength = DEFAULT_MAX_CSS_VARIABLE_VALUE_LENGTH,
+): string => {
   if (
-    value.length > MAX_CSS_VALUE_LENGTH ||
-    (!/url\(/iu.test(value) && !value.includes("\\"))
+    value.length > maxLength ||
+    (!/url\(/iu.test(value) &&
+      !/image-set\(/iu.test(value) &&
+      !value.includes("\\"))
   ) {
     return value;
   }
@@ -482,6 +554,13 @@ export const captureCssVariables = async (
     return emptyCssVariables("unavailable");
   }
 
+  const maxRetainedVariables =
+    context.input.max_css_variables ?? DEFAULT_MAX_CSS_VARIABLES;
+  const maxValueLength =
+    context.input.max_css_variable_value_length ??
+    DEFAULT_MAX_CSS_VARIABLE_VALUE_LENGTH;
+  const maxIntake = Math.max(MAX_INTAKE_CSS_VARIABLES, maxRetainedVariables);
+
   const validItems: BrowserCssVariableItem[] = [];
   let totalObserved = 0;
   let rejectedCount = 0;
@@ -521,10 +600,21 @@ export const captureCssVariables = async (
 
     totalObserved += 1;
 
-    const sanitizedValue =
-      rawValue.length > MAX_CSS_VALUE_LENGTH
-        ? rawValue
-        : redactCssUrlCredentials(rawValue);
+    if (rawValue.length > maxValueLength) {
+      rejectedCount += 1;
+      if (rejectedPreviews.length < MAX_REJECTED_PREVIEWS) {
+        const truncatedName = ellipsisExcerpt(
+          sanitizeDiagnosticPreview(name),
+          MAX_PREVIEW_NAME_LENGTH,
+        );
+        rejectedPreviews.push(
+          `${truncatedName} (value length ${String(rawValue.length)} exceeds max_css_variable_value_length ${String(maxValueLength)})`,
+        );
+      }
+      continue;
+    }
+
+    const sanitizedValue = redactCssUrlCredentials(rawValue, maxValueLength);
     const redacted = sanitizedValue !== rawValue;
     const parsed = browserCssVariableItemSchema.safeParse({
       name,
@@ -532,7 +622,7 @@ export const captureCssVariables = async (
       redacted,
     });
     if (parsed.success) {
-      if (validItems.length < MAX_INTAKE_CSS_VARIABLES) {
+      if (validItems.length < maxIntake) {
         validItems.push(parsed.data);
       }
     } else {
@@ -576,7 +666,7 @@ export const captureCssVariables = async (
   );
 
   const total = totalObserved;
-  const items = [...boundedList(validItems, MAX_RETAINED_CSS_VARIABLES).items];
+  const items = [...boundedList(validItems, maxRetainedVariables).items];
   const redactedCount = items.filter((item) => item.redacted).length;
   if (redactedCount > 0) {
     limitations.push(
@@ -591,9 +681,9 @@ export const captureCssVariables = async (
         ? "truncated"
         : "included";
 
-  if (total > MAX_RETAINED_CSS_VARIABLES) {
+  if (total > maxRetainedVariables) {
     limitations.push(
-      `CSS custom properties were truncated to ${String(MAX_RETAINED_CSS_VARIABLES)} items (${String(total)} were observed on the root element).`,
+      `CSS custom properties were truncated to ${String(maxRetainedVariables)} items (${String(total)} were observed on the root element).`,
     );
   }
 

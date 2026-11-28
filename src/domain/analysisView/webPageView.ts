@@ -1,6 +1,8 @@
 import { z } from "zod";
 
 import {
+  browserCssVariableItemSchema,
+  browserCssVariablesSchema,
   webPageInspectionSchema,
   type WebPageInspection,
 } from "../browserObservationSchemas.js";
@@ -38,6 +40,7 @@ const scriptSchema = page.scripts.shape.items.element;
 const resourceSchema = page.resources.element;
 const frameSchema = page.frames.element;
 const workerSchema = page.workers.element;
+const cssVariableItemSchema = browserCssVariableItemSchema;
 
 /** Script metadata; captured text pages through the script-source collection. */
 export const webPageScriptRowSchema = scriptSchema
@@ -61,6 +64,7 @@ export const webPageSectionSchema = z.strictObject({
     .omit({ requests: true, websocket_connections: true })
     .optional(),
   scripts: page.scripts.omit({ items: true }).optional(),
+  css_variables: browserCssVariablesSchema.omit({ items: true }).optional(),
 });
 
 const pageShape = {
@@ -109,6 +113,13 @@ export const webPageViewRequestSchema = z.discriminatedUnion("collection", [
   z.strictObject({ ...pageShape, collection: z.literal("resources") }),
   z.strictObject({ ...pageShape, collection: z.literal("frames") }),
   z.strictObject({ ...pageShape, collection: z.literal("workers") }),
+  z.strictObject({
+    ...pageShape,
+    collection: z.literal("css-variables"),
+    names: names.describe(
+      "Exact CSS custom property names, such as --primary-color",
+    ),
+  }),
 ]);
 type WebPageView = z.output<typeof webPageViewRequestSchema>;
 
@@ -127,6 +138,7 @@ export const webPageSummarySchema = z.strictObject({
     usage_bytes: true,
     quota_bytes: true,
   }),
+  css_variables: browserCssVariablesSchema.omit({ items: true }),
   counts: z.strictObject({
     dom_nodes: z.int().nonnegative(),
     accessibility_nodes: z.int().nonnegative(),
@@ -143,6 +155,7 @@ export const webPageSummarySchema = z.strictObject({
     metadata_dom_urls: z.int().nonnegative(),
     storage_keys: z.int().nonnegative(),
     storage_fingerprints: z.int().nonnegative(),
+    css_variables: z.int().nonnegative(),
   }),
 });
 type WebPageSummary = z.output<typeof webPageSummarySchema>;
@@ -156,6 +169,7 @@ export const webPageViewItemsSchema = z.union([
   z.array(resourceSchema),
   z.array(frameSchema),
   z.array(workerSchema),
+  z.array(cssVariableItemSchema),
   z.array(analysisTextPageItemSchema.extend({ script_key: z.string() })),
 ]);
 
@@ -173,6 +187,7 @@ const summarize = (report: WebPageInspection): WebPageSummary => {
     ...network
   } = report.network;
   const { events: _events, ...consoleContext } = report.console;
+  const { items: _cssItems, ...cssVariables } = report.css_variables;
   return {
     browser: report.browser,
     target: report.target,
@@ -187,6 +202,7 @@ const summarize = (report: WebPageInspection): WebPageSummary => {
       usage_bytes: report.storage.usage_bytes,
       quota_bytes: report.storage.quota_bytes,
     },
+    css_variables: cssVariables,
     counts: {
       dom_nodes: report.dom.nodes.length,
       accessibility_nodes: report.accessibility.nodes.length,
@@ -205,6 +221,7 @@ const summarize = (report: WebPageInspection): WebPageSummary => {
         report.storage.local_storage_keys.length +
         report.storage.session_storage_keys.length,
       storage_fingerprints: report.storage.content_fingerprints.length,
+      css_variables: report.css_variables.items.length,
     },
   };
 };
@@ -262,6 +279,10 @@ const sectionOf = (
       const { items: _items, ...scripts } = report.scripts;
       return { scripts };
     }
+    case "css-variables": {
+      const { items: _items, ...css_variables } = report.css_variables;
+      return { css_variables };
+    }
     default:
       return {};
   }
@@ -308,6 +329,13 @@ const selectRows = (
       return selectViewRows(report.frames, view, undefined, identity);
     case "workers":
       return selectViewRows(report.workers, view, undefined, identity);
+    case "css-variables":
+      return selectViewRows(
+        report.css_variables.items,
+        view,
+        matching(view.names, (row) => row.name),
+        identity,
+      );
   }
 };
 

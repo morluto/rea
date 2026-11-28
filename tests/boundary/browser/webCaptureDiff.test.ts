@@ -1235,6 +1235,38 @@ describe("web capture CSS variables comparison", () => {
       status: "changed",
       changes: [{ identity: "css_variables", change: "modified" }],
     });
+
+    // One complete empty inventory vs a truncated inventory containing a retained token proves an addition
+    const emptyComplete = structuredClone(beforeCss);
+    emptyComplete.css_variables = {
+      status: "included",
+      origin_scope: "same_origin",
+      total: 0,
+      retained_count: 0,
+      items: [],
+    };
+    markSectionsComplete(emptyComplete, ["css_variables"]);
+
+    const truncatedWithBrand = structuredClone(beforeCss);
+    truncatedWithBrand.css_variables = {
+      status: "truncated",
+      origin_scope: "same_origin",
+      total: 300,
+      retained_count: 1,
+      items: [{ name: "--brand", value: "#0066cc", redacted: false }],
+    };
+    truncatedWithBrand.completeness.truncated_sections.push("css_variables");
+
+    const oneSidedAddition = compareWebCaptures(
+      compareWebCapturesInputSchema.parse({
+        before: { inspection: emptyComplete },
+        after: { inspection: truncatedWithBrand },
+      }),
+    );
+    expect(oneSidedAddition.dimensions.metadata).toMatchObject({
+      status: "changed",
+      changes: [{ identity: "css_variables", change: "modified" }],
+    });
   });
 });
 

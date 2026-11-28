@@ -88,6 +88,12 @@ export const registerBrowserCommands = (
         include_css_variables: {
           description: "Include root CSS custom properties and variables",
         },
+        max_css_variables: {
+          description: "Maximum root CSS variables retained",
+        },
+        max_css_variable_value_length: {
+          description: "Maximum length per retained CSS variable value",
+        },
       },
       evidenceDelivery: true,
     },

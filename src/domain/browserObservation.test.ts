@@ -364,11 +364,11 @@ describe("browser CSS variables item and summary schemas", () => {
       }).success,
     ).toBe(false);
 
-    // Rejects oversized variable values (>512 chars)
+    // Rejects oversized variable values (>65536 chars ceiling)
     expect(
       browserCssVariablesSchema.safeParse({
         ...valid,
-        items: [{ name: "--bg", value: "a".repeat(520) }],
+        items: [{ name: "--bg", value: "a".repeat(65_537) }],
       }).success,
     ).toBe(false);
 
@@ -394,11 +394,11 @@ describe("browser CSS variables item and summary schemas", () => {
       }).success,
     ).toBe(false);
 
-    // Security 2: Caps total items at 250 to prevent token bomb / memory exhaustion
+    // Security 2: Caps total items at 10000 ceiling to prevent token bomb / memory exhaustion
     expect(
       browserCssVariablesSchema.safeParse({
         ...valid,
-        items: Array.from({ length: 251 }, (_, i) => ({
+        items: Array.from({ length: 10_001 }, (_, i) => ({
           name: `--var-${String(i)}`,
           value: "10px",
         })),

@@ -178,3 +178,43 @@ it("pages a captured script's metadata without its text, and the text separately
     coverage: { total: body.length, next_offset: 10 },
   });
 });
+
+it("summarizes and pages captured CSS variables through the web-page view", async () => {
+  const browser = await consolePage(400);
+  onTestFinished(() => browser.close());
+  const { client } = await createApplicationMcpHarness({
+    serverOptions: { browserObservation: new CdpBrowserProvider() },
+    testDelivery: "budgeted",
+  });
+  const call = listedEvidenceCaller(client, (await client.listTools()).tools);
+  const summary = await call("inspect_web_page", {
+    cdp_endpoint: browser.endpoint,
+    allowed_origins: [browser.allowedOrigin],
+    target_id: "allowed-page",
+    observation_ms: 0,
+    include_css_variables: true,
+  });
+  expect(summary.normalized_result).toMatchObject({
+    kind: "summary",
+    summary: {
+      css_variables: {
+        status: expect.stringMatching(/^(included|unavailable|truncated)$/u),
+        origin_scope: "same_origin",
+      },
+      counts: {
+        css_variables: expect.any(Number),
+      },
+    },
+  });
+  const parent = summary.evidence_links[0];
+  if (parent === undefined) throw new Error("Expected a retained parent");
+  const cssPage = await call("inspect_analysis_view", {
+    source: { kind: "retained-evidence", evidence_id: parent },
+    view: { kind: "web-page", collection: "css-variables", limit: 10 },
+  });
+  expect(cssPage.normalized_result).toMatchObject({
+    kind: "web-page",
+    section: { css_variables: { origin_scope: "same_origin" } },
+    items: expect.any(Array),
+  });
+});

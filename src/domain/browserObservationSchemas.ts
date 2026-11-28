@@ -257,6 +257,11 @@ const browserSafeMetadataSchema = z.object({
   headers_allowlisted: z.literal(true),
 });
 
+export const DEFAULT_MAX_CSS_VARIABLES = 250;
+export const MAX_CSS_VARIABLES_CEILING = 10_000;
+export const DEFAULT_MAX_CSS_VARIABLE_VALUE_LENGTH = 512;
+export const MAX_CSS_VARIABLE_VALUE_LENGTH_CEILING = 65_536;
+
 export const browserCssVariableItemSchema = z.object({
   name: z
     .string()
@@ -264,7 +269,7 @@ export const browserCssVariableItemSchema = z.object({
     .max(128),
   value: z
     .string()
-    .max(512)
+    .max(MAX_CSS_VARIABLE_VALUE_LENGTH_CEILING)
     .refine(
       (val) =>
         !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u202A-\u202E\u2066-\u2069]/u.test(
@@ -286,7 +291,7 @@ export const browserCssVariablesSchema = z.object({
   origin_scope: z.enum(["same_origin", "all_allowed"]).default("same_origin"),
   total: z.int().min(0),
   retained_count: z.int().min(0),
-  items: z.array(browserCssVariableItemSchema).max(250),
+  items: z.array(browserCssVariableItemSchema).max(MAX_CSS_VARIABLES_CEILING),
 });
 export type BrowserCssVariables = z.infer<typeof browserCssVariablesSchema>;
 

@@ -10,6 +10,12 @@ import {
   parseUrlQueryParameterNames,
 } from "./recordedTransportUrl.js";
 import {
+  DEFAULT_MAX_CSS_VARIABLES,
+  DEFAULT_MAX_CSS_VARIABLE_VALUE_LENGTH,
+  MAX_CSS_VARIABLES_CEILING,
+  MAX_CSS_VARIABLE_VALUE_LENGTH_CEILING,
+} from "./browserObservationSchemas.js";
+import {
   unknownTarget,
   type UnknownTargetIdentity,
   type UrlTargetIdentity,
@@ -242,6 +248,22 @@ export const inspectWebPageInputFacts = {
     .boolean()
     .default(false)
     .describe("Include root CSS custom properties and variables"),
+  max_css_variables: z
+    .int()
+    .min(1)
+    .max(MAX_CSS_VARIABLES_CEILING)
+    .optional()
+    .describe(
+      `Maximum root CSS variables retained (default ${String(DEFAULT_MAX_CSS_VARIABLES)}, max ${String(MAX_CSS_VARIABLES_CEILING)}).`,
+    ),
+  max_css_variable_value_length: z
+    .int()
+    .min(1)
+    .max(MAX_CSS_VARIABLE_VALUE_LENGTH_CEILING)
+    .optional()
+    .describe(
+      `Maximum UTF-16 code units per retained CSS variable value (default ${String(DEFAULT_MAX_CSS_VARIABLE_VALUE_LENGTH)}, max ${String(MAX_CSS_VARIABLE_VALUE_LENGTH_CEILING)}).`,
+    ),
 } as const;
 
 export const analyzeWebBundleBaseShapeSchema = z.strictObject({

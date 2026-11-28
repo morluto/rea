@@ -1566,10 +1566,11 @@ const metadataDimension = (
 
   let cssComplete = true;
   if (beforeCssSelected && afterCssSelected) {
-    const inventoryComplete =
+    const beforeCssComplete =
       before.css_variables.status === "included" &&
+      sectionsComplete(before, ["css_variables"]);
+    const afterCssComplete =
       after.css_variables.status === "included" &&
-      sectionsComplete(before, ["css_variables"]) &&
       sectionsComplete(after, ["css_variables"]);
 
     const beforeCssMap = new Map(
@@ -1595,15 +1596,19 @@ const metadataDimension = (
     }
 
     let cssTokensAddedOrRemoved = false;
-    if (inventoryComplete) {
-      if (beforeCssMap.size !== afterCssMap.size) {
-        cssTokensAddedOrRemoved = true;
-      } else {
-        for (const name of afterCssMap.keys()) {
-          if (!beforeCssMap.has(name)) {
-            cssTokensAddedOrRemoved = true;
-            break;
-          }
+    if (beforeCssComplete) {
+      for (const name of afterCssMap.keys()) {
+        if (!beforeCssMap.has(name)) {
+          cssTokensAddedOrRemoved = true;
+          break;
+        }
+      }
+    }
+    if (!cssTokensAddedOrRemoved && afterCssComplete) {
+      for (const name of beforeCssMap.keys()) {
+        if (!afterCssMap.has(name)) {
+          cssTokensAddedOrRemoved = true;
+          break;
         }
       }
     }
@@ -1616,7 +1621,7 @@ const metadataDimension = (
       before.css_variables.items.some((item) => item.redacted) ||
       after.css_variables.items.some((item) => item.redacted);
 
-    cssComplete = inventoryComplete && !hasRedactedTokens;
+    cssComplete = beforeCssComplete && afterCssComplete && !hasRedactedTokens;
   }
 
   if (changes.length > 0) {
