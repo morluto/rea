@@ -71,8 +71,10 @@ The node vocabulary covers:
 Static network endpoints can have `resolution: "partial"` when the analyzer
 recognizes a request call but cannot resolve its target to one exact value.
 The observation's `value` then preserves the source expression, and its
-evidence points to the call site. Partial and exact endpoints have distinct
-identities even when their displayed values match. Partial identities also retain
+evidence points to the call site. URL userinfo written in a string or template
+literal of that expression is removed, as it is from an exact endpoint value.
+Partial and exact endpoints have distinct identities even when their displayed
+values match. Partial identities also retain
 the source site: matching expression text at different sites does not establish
 the same runtime target. This records observed source syntax; it does not
 establish that the call ran or contacted that endpoint.

@@ -467,3 +467,196 @@ it("keeps Request objects partial when Request is locally shadowed", () => {
     resolution: "partial",
   });
 });
+
+it("reads Electron net targets with the argument forms each API accepts", () => {
+  expect(
+    endpoints(`
+        import { net } from "electron";
+        const exact = "https://api.example.test/string";
+        const address = new URL("https://api.example.test/url");
+        const input = new Request("https://api.example.test/request");
+        net.fetch(exact);
+        net.fetch(address);
+        net.fetch(input);
+        net.fetch(new Request("https://api.example.test/inline"));
+        net.request(exact);
+        net.request(address);
+        net.request({ method: "POST", url: "https://api.example.test/options" });
+        net.fetch(runtimeUrl);
+        net.fetch.call(net, "https://api.example.test/forwarded");
+      `),
+  ).toEqual([
+    {
+      kind: "network",
+      value: "https://api.example.test/string",
+      mechanism: "call:net.fetch",
+      resolution: undefined,
+    },
+    {
+      kind: "network",
+      value: "https://api.example.test/url",
+      mechanism: "call:net.fetch",
+      resolution: undefined,
+    },
+    {
+      kind: "network",
+      value: "https://api.example.test/request",
+      mechanism: "call:net.fetch",
+      resolution: undefined,
+    },
+    {
+      kind: "network",
+      value: "https://api.example.test/inline",
+      mechanism: "call:net.fetch",
+      resolution: undefined,
+    },
+    {
+      kind: "network",
+      value: "https://api.example.test/string",
+      mechanism: "call:net.request",
+      resolution: undefined,
+    },
+    {
+      kind: "network",
+      value: "address",
+      mechanism: "call:net.request",
+      resolution: "partial",
+    },
+    {
+      kind: "network",
+      value: '{ method: "POST", url: "https://api.example.test/options" }',
+      mechanism: "call:net.request",
+      resolution: "partial",
+    },
+    {
+      kind: "network",
+      value: "runtimeUrl",
+      mechanism: "call:net.fetch",
+      resolution: "partial",
+    },
+  ]);
+});
+
+it("resolves net.request from the string an unchanged URL object returns", () => {
+  expect(
+    endpoints(`
+        import { net } from "electron";
+        const address = new URL("https://api.example.test/ping");
+        const moved = new URL("https://api.example.test/old");
+        moved.pathname = "/new";
+        net.request(address.toString());
+        net.request(address);
+        net.request(moved.toString());
+      `),
+  ).toEqual([
+    {
+      kind: "network",
+      value: "https://api.example.test/ping",
+      mechanism: "call:net.request",
+      resolution: undefined,
+    },
+    {
+      kind: "network",
+      value: "address",
+      mechanism: "call:net.request",
+      resolution: "partial",
+    },
+    {
+      kind: "network",
+      value: "moved.toString()",
+      mechanism: "call:net.request",
+      resolution: "partial",
+    },
+  ]);
+});
+
+// A partial value echoes source text, so URL userinfo written in its literals
+// is a transport credential and goes the way exact endpoint values already do.
+it.each([
+  [
+    'fetch({ url: "https://user:secret@api.example.test/v1" });',
+    '{ url: "https://api.example.test/v1" }',
+  ],
+  [
+    'fetch("https://user:secret@api.example.test/" + path);',
+    '"https://api.example.test/" + path',
+  ],
+  [
+    "fetch(`https://user:secret@api.example.test/${path}`);",
+    "`https://api.example.test/${path}`",
+  ],
+  [
+    "new WebSocket('wss://user:secret@api.example.test/' + path);",
+    "'wss://api.example.test/' + path",
+  ],
+  [
+    // The host is dynamic, so the literal is only the start of a URL.
+    "fetch(`https://user:secret@${host}/v1`);",
+    "`https://${host}/v1`",
+  ],
+  [
+    // The escape moves every offset, so the literal is written again.
+    'fetch("https://user:secret\\u0040api.example.test/" + path);',
+    '"https://api.example.test/" + path',
+  ],
+  [
+    'import { net } from "electron"; net.request({ method: "POST", url: "https://user:secret@api.example.test/v1" });',
+    '{ method: "POST", url: "https://api.example.test/v1" }',
+  ],
+  [
+    'import { net } from "electron"; net.fetch("https://user:secret@api.example.test/" + path);',
+    '"https://api.example.test/" + path',
+  ],
+  [
+    // The userinfo starts in one literal and ends in the next.
+    'import { net } from "electron"; net.fetch("https://user:" + "secret@" + host);',
+    '"https://" + "" + host',
+  ],
+  [
+    'fetch("https://user:" + "sec" + "ret@api.example.test/" + path);',
+    '"https://" + "" + "api.example.test/" + path',
+  ],
+  [
+    'fetch(`https://user:${"secret@"}${host}/v1`);',
+    '`https://${""}${host}/v1`',
+  ],
+])(
+  "removes URL userinfo from a partial endpoint expression: %s",
+  (source, value) => {
+    const analysis = analyzeJavaScriptStaticSource(source);
+    expect(analysis.endpoints.map((endpoint) => endpoint.value)).toEqual([
+      value,
+    ]);
+    expect(analysis.endpoints[0]?.resolution).toBe("partial");
+    expect(JSON.stringify(analysis)).not.toContain("secret");
+  },
+);
+
+it.each([
+  'fetch("https://api.example.test" + "/to/" + "user:secret@x" + path);',
+  // The dynamic piece may hold the host and a path, as in
+  // "api.example.test/users/", so the address after it is path text.
+  'fetch("https://" + hostAndPath + "person@example.test" + suffix);',
+])("keeps literals after a URL authority that may be closed: %s", (source) => {
+  expect(endpoints(source)).toEqual([
+    {
+      kind: "network",
+      value: source.slice("fetch(".length, -");".length),
+      mechanism: "call:fetch",
+      resolution: "partial",
+    },
+  ]);
+});
+
+it("keeps partial expression text that only resembles URL credentials", () => {
+  const source =
+    'fetch({ url: "https://api.example.test/@scope/pkg", mail: "user:secret@api.example.test", next: "https://api.example.test/?to=a@b" });';
+  expect(endpoints(source)).toEqual([
+    {
+      kind: "network",
+      value: source.slice("fetch(".length, -");".length),
+      mechanism: "call:fetch",
+      resolution: "partial",
+    },
+  ]);
+});

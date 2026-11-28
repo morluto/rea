@@ -1,13 +1,17 @@
 import {
   isBrowserNetworkRequest,
-  literalFetchRequestConstructorUrl,
+  isFetchCall,
+  literalRequestConstructorUrl,
 } from "./javascriptNetworkRequests.js";
 import * as t from "@babel/types";
 import {
   intrinsicPrototypeMemberMayHaveChanged,
   isIntrinsicMapLookup,
 } from "./javascriptSemanticIntrinsicInstances.js";
-import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
+import {
+  traverseJavaScriptAst,
+  traverseJavaScriptValueAst,
+} from "./javascriptSemanticTraversal.js";
 import { semanticIdentifierRole } from "./javascriptSemanticProjection.js";
 
 import {
@@ -15,7 +19,14 @@ import {
   htmlUrlText,
   stripQueryAndFragment,
 } from "../artifactPathSyntax.js";
-import { sanitizeEndpointCandidate } from "../browserObservation.js";
+import {
+  removeTransportCredentials,
+  sanitizeEndpointCandidate,
+} from "../browserObservation.js";
+import {
+  electronCalleePath,
+  electronCandidateAuthority,
+} from "./electronStaticAnalysisValues.js";
 import {
   addFindingOnce,
   addLocatedFinding,
@@ -601,7 +612,9 @@ const inspectEndpointCall = (
     if (target === undefined) return;
     const literal =
       stringValue(target) ??
-      literalFetchRequestConstructorUrl(node, target, bindings);
+      (requestTargetObjects(node, bindings, context) === "request"
+        ? literalRequestConstructorUrl(target, bindings)
+        : undefined);
     if (literal !== undefined) {
       addEndpoint(context, {
         node,
@@ -694,6 +707,8 @@ const networkRequestAuthority = (
   context: FindingContext,
 ): "proven" | "candidate" | undefined => {
   if (isBrowserNetworkRequest(node, bindings)) return "proven";
+  const electron = electronNetRequest(node, context);
+  if (electron !== undefined) return electron.authority;
   const callee = unwrapJavaScriptExpression(node.callee).node;
   if (
     (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
@@ -708,6 +723,57 @@ const networkRequestAuthority = (
         : "proven";
   }
   return undefined;
+};
+
+/**
+ * Electron's `net.fetch(input)` and `net.request(options)` take their target
+ * first. The shared Electron identity facts must name the direct callee:
+ * forwarding through `call` or `apply` moves that argument, and the same
+ * method on another receiver remains a candidate. A `require` whose loader is
+ * not established leaves the identity a candidate, and the endpoint keeps it.
+ */
+const electronNetRequest = (
+  node: JavaScriptCallLike,
+  context: FindingContext,
+):
+  | {
+      readonly api: "fetch" | "request";
+      readonly authority: "proven" | "candidate";
+    }
+  | undefined => {
+  if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
+    return undefined;
+  const path = electronCalleePath(node.callee, context);
+  if (path?.length !== 2 || path[0] !== "net") return undefined;
+  if (path[1] !== "fetch" && path[1] !== "request") return undefined;
+  return {
+    api: path[1],
+    authority:
+      electronCandidateAuthority(node.callee, context).loader_authority ??
+      "proven",
+  };
+};
+
+/**
+ * Objects that can name a known request's target besides a string. `fetch`
+ * and Electron's `net.fetch` construct a `Request` from a `Request` or a URL
+ * object; other recognized APIs resolve URL objects only. Electron's
+ * `ClientRequest` reads a shallow copy of a non-string argument as options,
+ * and a URL object has no own `url` or `href`, so only a string names a
+ * `net.request` target.
+ */
+type RequestTargetObjects = "request" | "url" | "none";
+
+const requestTargetObjects = (
+  node: JavaScriptCallLike,
+  bindings: JavaScriptSemanticAnalysisState,
+  context: FindingContext,
+): RequestTargetObjects => {
+  const electron = electronNetRequest(node, context)?.api;
+  if (electron === "request") return "none";
+  return electron === "fetch" || isFetchCall(node, bindings)
+    ? "request"
+    : "url";
 };
 
 /** Finish queued targets after shared member-mutation facts are indexed. */
@@ -725,7 +791,13 @@ export const finishPartialNetworkEndpoints = (
     }
     const target = argumentNode(node.arguments[0]);
     if (target === undefined) continue;
-    const resolved = resolvedRequestTarget(target, node, bindings, index);
+    const resolved = resolvedRequestTarget(
+      target,
+      node,
+      bindings,
+      index,
+      requestTargetObjects(node, bindings, context),
+    );
     if (resolved !== undefined)
       addEndpoint(context, {
         node,
@@ -752,18 +824,162 @@ const addPartialNetworkEndpoint = (
   addEndpoint(context, {
     node,
     kind: "network",
-    // Partial values preserve the original expression text, byte for byte.
-    value: sourceSlice(context.source, target),
+    value: partialEndpointValue(context.source, target),
     mechanism: `call:${name}`,
     ...(authority === "candidate" ? { interpretation: "candidate" } : {}),
     resolution: "partial",
   });
+
+interface SourceEdit {
+  readonly start: number;
+  readonly end: number;
+  readonly text: string;
+}
+
+/**
+ * Partial values preserve the original expression text, byte for byte, except
+ * URL userinfo in its literals. That is a transport credential, which exact
+ * endpoint values already omit, so no analyzer output echoes it.
+ */
+const partialEndpointValue = (source: string, target: t.Node): string => {
+  const texts = new Map<t.StringLiteral | t.TemplateElement, string>();
+  traverseJavaScriptAst(target, {
+    enter: (node) => {
+      if (!t.isStringLiteral(node) && !t.isTemplateElement(node)) return;
+      const cooked = cookedLiteral(node);
+      if (cooked !== undefined) texts.set(node, cooked);
+    },
+  });
+  // Userinfo inside one literal goes as in an exact value.
+  const redacted = new Map(
+    [...texts].map(([node, text]) => [node, removeTransportCredentials(text)]),
+  );
+  for (const pieces of urlTextSequences(target))
+    removeSplitUserinfo(pieces, redacted);
+  const edits = [...redacted].flatMap(([node, text]): SourceEdit[] => {
+    const cooked = texts.get(node)!;
+    if (text === cooked) return [];
+    const edit = literalEdit(source, node, cooked, text);
+    return edit === undefined ? [] : [edit];
+  });
+  let value = sourceSlice(source, target);
+  const base = target.start ?? 0;
+  // Apply the last edit first so earlier offsets stay valid.
+  for (const edit of edits.sort((left, right) => right.start - left.start))
+    value = `${value.slice(0, edit.start - base)}${edit.text}${value.slice(edit.end - base)}`;
+  return value;
+};
+
+const cookedLiteral = (
+  node: t.StringLiteral | t.TemplateElement,
+): string | undefined => {
+  const cooked = t.isStringLiteral(node) ? node.value : node.value.cooked;
+  return typeof cooked === "string" ? cooked : undefined;
+};
+
+/** A literal piece of a string's text, or null for a dynamic piece. */
+type UrlTextPiece = t.StringLiteral | t.TemplateElement | null;
+
+/**
+ * The pieces that join into each string a request target spells: the
+ * target, or each property value of an options object. Only `+` operands
+ * and template parts join; a literal inside another expression, such as a
+ * computed key, is not part of the text.
+ */
+const urlTextSequences = (target: t.Node): UrlTextPiece[][] => {
+  const node = unwrapJavaScriptExpression(target).node;
+  if (t.isObjectExpression(node))
+    return node.properties.flatMap((property) =>
+      t.isObjectProperty(property) ? urlTextSequences(property.value) : [],
+    );
+  return [urlTextPieces(node)];
+};
+
+const urlTextPieces = (input: t.Node): UrlTextPiece[] => {
+  const node = unwrapJavaScriptExpression(input).node;
+  if (t.isStringLiteral(node)) return [node];
+  if (t.isBinaryExpression(node, { operator: "+" }))
+    return [...urlTextPieces(node.left), ...urlTextPieces(node.right)];
+  if (t.isTemplateLiteral(node))
+    return node.quasis.flatMap((quasi, index) => {
+      const expression = node.expressions[index];
+      return expression === undefined
+        ? [quasi]
+        : [quasi, ...urlTextPieces(expression)];
+    });
+  return [null];
+};
+
+/** A literal that ends inside a URL authority, before any `@`. */
+const OPEN_AUTHORITY = /^(?:[a-z][a-z\d+.-]*:)?\/\/[^/?#\\@]*$/iu;
+
+/**
+ * A literal that ends inside a URL authority, such as `"https://user:"`,
+ * leaves its userinfo open: the following pieces belong to it up to the `@`
+ * that ends it, as in `"https://user:" + "secret@" + host`. A path, query or
+ * fragment delimiter before any `@` closes the authority without userinfo,
+ * and so does a dynamic piece, whose text may hold one.
+ */
+const removeSplitUserinfo = (
+  pieces: readonly UrlTextPiece[],
+  redacted: Map<t.StringLiteral | t.TemplateElement, string>,
+): void => {
+  let open: { readonly index: number; readonly from: number } | undefined;
+  for (let index = 0; index < pieces.length; index++) {
+    const piece = pieces[index];
+    // A dynamic piece may end the authority itself, so the text after it
+    // can be a path: keep it as written.
+    const text = piece === null ? undefined : redacted.get(piece!);
+    if (text === undefined) {
+      open = undefined;
+      continue;
+    }
+    if (open !== undefined) {
+      const end = text.search(/[@/?#\\]/u);
+      if (end === -1) continue;
+      if (text[end] === "@") {
+        const first = pieces[open.index]!;
+        redacted.set(first, redacted.get(first)!.slice(0, open.from));
+        for (let between = open.index + 1; between < index; between++) {
+          const middle = pieces[between];
+          if (middle !== null && middle !== undefined) redacted.set(middle, "");
+        }
+        redacted.set(piece!, text.slice(end + 1));
+      }
+      open = undefined;
+    }
+    const current = redacted.get(piece!)!;
+    if (OPEN_AUTHORITY.test(current))
+      open = { index, from: current.indexOf("//") + "//".length };
+  }
+};
+
+/** Write one literal with new text; keep its quotes and every other byte. */
+const literalEdit = (
+  source: string,
+  node: t.StringLiteral | t.TemplateElement,
+  cooked: string,
+  text: string,
+): SourceEdit | undefined => {
+  if (typeof node.start !== "number" || typeof node.end !== "number")
+    return undefined;
+  const quoted = t.isStringLiteral(node);
+  const start = quoted ? node.start + 1 : node.start;
+  const end = quoted ? node.end - 1 : node.end;
+  // An unescaped body keeps its quotes and every other byte.
+  if (source.slice(start, end) === cooked) return { start, end, text };
+  // An escape moves the offsets, so write the literal again from its value.
+  return quoted
+    ? { start: node.start, end: node.end, text: JSON.stringify(text) }
+    : { start, end, text: text.replace(/[\\`]|\$\{/gu, "\\$&") };
+};
 
 const resolvedRequestTarget = (
   node: t.Node,
   site: t.Node,
   bindings: JavaScriptSemanticAnalysisState,
   index: JavaScriptBindingIndex,
+  objects: RequestTargetObjects,
 ): string | undefined => {
   const reference = requestReferenceNode(node);
   // A toString result is selected before the enclosing request invocation.
@@ -775,7 +991,17 @@ const resolvedRequestTarget = (
   const evaluated = evaluateSemanticExpression(node, bindings);
   if (evaluated.status === "literal" && typeof evaluated.value === "string")
     return evaluated.value;
-  return urlObjectRequestTarget(node, capture, bindings, index);
+  // When no object names the target, a URL object passed directly stays
+  // partial, but the string its toString() returns still names it.
+  return objects === "none" && reference === expression
+    ? undefined
+    : urlObjectRequestTarget(
+        node,
+        capture,
+        bindings,
+        index,
+        objects === "request",
+      );
 };
 
 const requestInitializerPrecedesSite = (
@@ -819,6 +1045,7 @@ const urlObjectRequestTarget = (
   site: t.Node,
   bindings: JavaScriptSemanticAnalysisState,
   index: JavaScriptBindingIndex,
+  requestObjects: boolean,
   seen = new Set<string>(),
   isToString = false,
 ): string | undefined => {
@@ -861,15 +1088,12 @@ const urlObjectRequestTarget = (
       site,
       bindings,
       index,
+      requestObjects,
       seen,
       isToString,
     );
-  if (!isToString) {
-    const requestUrl = literalFetchRequestConstructorUrl(
-      site,
-      initialized,
-      bindings,
-    );
+  if (!isToString && requestObjects) {
+    const requestUrl = literalRequestConstructorUrl(initialized, bindings);
     if (requestUrl !== undefined) return requestUrl;
   }
   if (!t.isNewExpression(initialized)) return undefined;

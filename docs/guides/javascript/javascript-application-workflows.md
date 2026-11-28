@@ -387,7 +387,8 @@ valid inputs.
 
 Endpoint observations keep their value in `properties.value`. When
 `properties.resolution` is `partial`, that value is the unresolved source
-expression, with an identity distinct from an exact endpoint of the same text.
+expression without URL userinfo, with an identity distinct from an exact
+endpoint of the same text.
 Semantic request and response nodes keep their endpoint in `properties.endpoint`. Endpoint
 lookup identities are preserved independently of the primitive-value lattice's
 byte budget. An oversized normalized literal can become unknown while the same

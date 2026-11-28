@@ -140,6 +140,99 @@ it.each([
   },
 );
 
+const netTarget = '"https://api.example.test/v1/config"';
+
+// A `require` source needs CommonJS wrapper authority to prove the loader.
+it.each([
+  [`const { net } = require("electron"); net.fetch(${netTarget});`, true, true],
+  [`import { net } from "electron/main"; net.request(${netTarget});`, true],
+  [
+    `import * as electron from "electron"; electron.net.fetch(${netTarget});`,
+    true,
+  ],
+  [
+    `const electron = require("electron"); electron.net.request(${netTarget}).end();`,
+    true,
+    true,
+  ],
+  [`import electron from "electron"; electron.net?.fetch(${netTarget});`, true],
+  [
+    `const { net } = require("electron"); const { fetch } = net; fetch(${netTarget});`,
+    true,
+    true,
+  ],
+  [
+    `const net = { fetch(value) { return value; } }; net.fetch(${netTarget});`,
+    false,
+  ],
+  [
+    `import { net } from "electron"; function local(net) { net.request(${netTarget}); }`,
+    false,
+  ],
+  [
+    `const { net } = require("electron"); net.fetch = (value) => value; net.fetch(${netTarget});`,
+    false,
+    true,
+  ],
+  [`const net = require("net"); net.request(${netTarget});`, false, true],
+])(
+  "observes Electron net requests only through proven module identity: %s",
+  (source, proven, commonJs = false) => {
+    const analysis = commonJs
+      ? analyzeCommonJsStaticFixture(source)
+      : analyzeJavaScriptStaticSource(source);
+    expect(analysis.parse_error_count).toBe(0);
+    expect(
+      analysis.endpoints.map(({ value, interpretation }) => ({
+        value,
+        interpretation,
+      })),
+    ).toEqual([
+      {
+        value: "https://api.example.test/v1/config",
+        interpretation: proven ? undefined : "candidate",
+      },
+    ]);
+  },
+);
+
+it("keeps Electron net requests candidates until the require loader is established", () => {
+  const source = `
+    const { net } = require("electron");
+    const exact = "https://api.example.test/v1/exact";
+    net.fetch(${netTarget});
+    net.request(exact);
+    net.request(runtimeOptions);
+  `;
+  const targets = (interpretation: "candidate" | undefined) => [
+    {
+      value: "https://api.example.test/v1/config",
+      interpretation,
+      resolution: undefined,
+    },
+    {
+      value: "https://api.example.test/v1/exact",
+      interpretation,
+      resolution: undefined,
+    },
+    { value: "runtimeOptions", interpretation, resolution: "partial" },
+  ];
+  const summary = (
+    analysis: ReturnType<typeof analyzeJavaScriptStaticSource>,
+  ) =>
+    analysis.endpoints.map(({ value, interpretation, resolution }) => ({
+      value,
+      interpretation,
+      resolution,
+    }));
+  expect(summary(analyzeJavaScriptStaticSource(source))).toEqual(
+    targets("candidate"),
+  );
+  expect(summary(analyzeCommonJsStaticFixture(source))).toEqual(
+    targets(undefined),
+  );
+});
+
 it("recovers APIs through an ES module default import of Electron", () => {
   const analysis = analyzeJavaScriptStaticSource(`
     import electron from "electron";
