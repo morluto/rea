@@ -573,9 +573,13 @@ it("shares static task snapshots only after validation using the npm cache owner
   const deepSave = deep.find(
     (step) => step.name === "Save validated deep static task cache",
   );
-  const knipRestore = deep.find((step) => step.id === "knip-cache");
-  const knipSave = deep.find(
+  const build = ci?.workflow.jobs?.build?.steps ?? [];
+  const knipRestore = build.find((step) => step.id === "knip-cache");
+  const knipSave = build.find(
     (step) => step.name === "Save Knip analysis cache",
+  );
+  const knipCheck = build.findIndex(
+    (step) => step.run === "node scripts/run-turbo.mjs run knip",
   );
   expect(deepSave?.uses).toMatch(/^actions\/cache\/save@/u);
   expectSavePolicy(deepSave?.if, "static-cache", false);
@@ -584,7 +588,11 @@ it("shares static task snapshots only after validation using the npm cache owner
   );
   expect(deepCheck).toBeGreaterThanOrEqual(0);
   expect(deep.indexOf(deepSave!)).toBeGreaterThan(deepCheck);
-  expect(deep.indexOf(knipSave!)).toBeGreaterThan(deepCheck);
+  expect(knipCheck).toBeGreaterThan(
+    build.findIndex((step) => step.run === "npm run test:prepare"),
+  );
+  expect(build.indexOf(knipRestore!)).toBeLessThan(knipCheck);
+  expect(build.indexOf(knipSave!)).toBeGreaterThan(knipCheck);
   const knipWith = z
     .object({
       path: z.string(),
@@ -596,7 +604,7 @@ it("shares static task snapshots only after validation using the npm cache owner
   expect(knipWith.key).toContain("${{ github.sha }}");
   expect(knipWith["restore-keys"]).not.toContain("github.sha");
   expect(knipWith["restore-keys"].startsWith("knip-meta-v1-")).toBe(true);
-  expectSavePolicy(knipSave?.if, "knip-cache", false);
+  expectSavePolicy(knipSave?.if, "knip-cache", true);
   expect(knipSave?.with).toEqual({
     path: "node_modules/.cache/knip",
     key: "${{ steps.knip-cache.outputs.cache-primary-key }}",
@@ -708,6 +716,7 @@ it("deletes superseded caches only from the trusted follow-up workflow", async (
   }
   const staticSteps = ci.jobs?.static?.steps ?? [];
   const deepSteps = ci.jobs?.["static-deep"]?.steps ?? [];
+  const buildSteps = ci.jobs?.build?.steps ?? [];
   const publishedKey = (steps: typeof deepSteps, id: string) =>
     z
       .string()
@@ -740,9 +749,9 @@ it("deletes superseded caches only from the trusted follow-up workflow", async (
   );
   expect(retentionEnv.CACHE_KNIP_PREFIX).toBe(knipPrefix);
   expect(retentionEnv.CACHE_KNIP_KEEP_KEY).toBe(
-    targetSourceKey(deepSteps, "knip-cache"),
+    targetSourceKey(buildSteps, "knip-cache"),
   );
-  expect(publishedKey(deepSteps, "knip-cache").startsWith(knipPrefix)).toBe(
+  expect(publishedKey(buildSteps, "knip-cache").startsWith(knipPrefix)).toBe(
     true,
   );
   const toolchain = "hashFiles('.nvmrc', '.npmrc', 'package-lock.json')";
@@ -750,7 +759,7 @@ it("deletes superseded caches only from the trusted follow-up workflow", async (
     [staticSteps, "static-cache", toolchain],
     [deepSteps, "static-cache", toolchain],
     [
-      deepSteps,
+      buildSteps,
       "knip-cache",
       "hashFiles('knip.json', 'tsconfig.json', 'package.json', 'package-lock.json')",
     ],
