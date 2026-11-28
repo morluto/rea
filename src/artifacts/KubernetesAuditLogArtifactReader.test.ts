@@ -618,6 +618,37 @@ it("clears groups when a later scalar replaces the list", async () => {
   });
 });
 
+it("does not clear a nested omission from a same-named top-level key", async () => {
+  const metadata = await metadataOf(
+    `{"apiVersion":"audit.k8s.io/v1","auditID":"nested","stage":"RequestReceived","requestURI":"/api","verb":"get","user":{"username":"${"x".repeat(200_000)}"},"user.username":null}\n`,
+  );
+  expect(metadata.events[0]).toMatchObject({
+    audit_id: "nested",
+    request_uri: "/api",
+    username: null,
+    request_fields_omitted: true,
+  });
+});
+
+it("clears budget omission when a later object replaces an address list", async () => {
+  const addresses = Array.from({ length: 5000 }, () => "10.0.0.1");
+  const first = JSON.stringify({
+    apiVersion: "audit.k8s.io/v1",
+    auditID: "ips-object",
+    stage: "RequestReceived",
+    verb: "get",
+    requestURI: "/api",
+    sourceIPs: addresses,
+  });
+  const metadata = await metadataOf(`${first.slice(0, -1)},"sourceIPs":{}}\n`);
+  expect(metadata.events[0]).toMatchObject({
+    audit_id: "ips-object",
+    request_uri: "/api",
+    source_ips: null,
+    request_fields_omitted: false,
+  });
+});
+
 it("clears budget omission when a later null replaces the value", async () => {
   const metadata = await metadataOf(
     `{"apiVersion":"audit.k8s.io/v1","auditID":"agent-null","stage":"RequestReceived","requestURI":"/api","verb":"get","userAgent":"${"x".repeat(200_000)}","userAgent":null}\n`,

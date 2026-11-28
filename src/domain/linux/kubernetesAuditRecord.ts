@@ -98,12 +98,12 @@ export const parseKubernetesAuditLine = (
   const fieldKey = (): string | undefined => {
     const frame = top();
     if (frame?.kind === "strings")
-      return frame.target === "sourceIPs" ? "sourceIPs" : "user.groups";
-    if (frame?.kind === "root") return pendingKey;
+      return frame.target === "sourceIPs" ? "list:sourceIPs" : "list:groups";
+    if (frame?.kind === "root") return `root:${pendingKey}`;
     if (frame?.kind === "user" && pendingKey === "username")
-      return "user.username";
+      return "user:username";
     if (frame?.kind === "objectRef" && pendingKey !== undefined)
-      return `objectRef.${pendingKey}`;
+      return `object:${pendingKey}`;
     return undefined;
   };
   const forgetOmission = (): void => {
@@ -216,11 +216,16 @@ export const parseKubernetesAuditLine = (
     if (frame?.kind === "root" && pendingKey === "user") {
       sawUser = false;
       for (const key of Object.keys(user)) delete user[key];
+      budgetOmittedFields.delete("user:username");
+      budgetOmittedFields.delete("list:groups");
       return;
     }
     if (frame?.kind === "root" && pendingKey === "objectRef") {
       sawObject = false;
       for (const key of Object.keys(objectRef)) delete objectRef[key];
+      budgetOmittedFields.delete("object:resource");
+      budgetOmittedFields.delete("object:namespace");
+      budgetOmittedFields.delete("object:name");
       return;
     }
     if (frame?.kind === "root" && pendingKey === "responseStatus") {
@@ -230,6 +235,7 @@ export const parseKubernetesAuditLine = (
     }
     if (frame?.kind === "root" && pendingKey === "sourceIPs") {
       value.sourceIPs = null;
+      budgetOmittedFields.delete("list:sourceIPs");
       return;
     }
     if (
@@ -329,7 +335,8 @@ export const parseKubernetesAuditLine = (
   };
 
   const finishList = (frame: StringList): void => {
-    const listKey = frame.target === "sourceIPs" ? "sourceIPs" : "user.groups";
+    const listKey =
+      frame.target === "sourceIPs" ? "list:sourceIPs" : "list:groups";
     if (frame.overBudget) budgetOmittedFields.add(listKey);
     else budgetOmittedFields.delete(listKey);
     const list = frame.invalid ? null : frame.values;
