@@ -68,6 +68,8 @@ export function unaffected() { return 42; }`,
         "128",
         "--analysis-timeout-ms",
         "5000",
+        "--semantic-precision",
+        '{"alias_selections":4096}',
         "--json",
       ],
     });
@@ -81,6 +83,7 @@ export function unaffected() { return 42; }`,
       format: "directory",
       max_heap_mb: 128,
       analysis_timeout_ms: 5000,
+      semantic_precision: { alias_selections: 4096 },
     });
     expect(analyzed.isError, JSON.stringify(analyzed.content)).not.toBe(true);
     verify(analyzed.structuredContent);
