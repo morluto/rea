@@ -103,6 +103,7 @@
 * **android:** count components in package summaries ([e731ca7](https://github.com/morluto/rea/commit/e731ca7bbe4242ca76870f7beac160a420413dee))
 * **android:** pin jadx-headless-mcp 0.8.0 ([3ca89d8](https://github.com/morluto/rea/commit/3ca89d8272b3d8e49580ed261753ad6780df2839))
 * **apktool:** budget decode_android_resources delivery ([a16facb](https://github.com/morluto/rea/commit/a16facbd9f2b323f9bd575e251af6cba7b62e48f))
+* **apple:** inspect Image4 (IMG4, IM4P, IM4M) firmware containers offline ([#14907](https://github.com/morluto/rea/issues/14907)) ([88373e3](https://github.com/morluto/rea/commit/88373e3fba088601388700911445121d4a5cc333))
 * **artifacts:** back archive member counts with the artifact.member_count setting ([#14650](https://github.com/morluto/rea/issues/14650)) ([3129747](https://github.com/morluto/rea/commit/31297470ef829a404dc38c2acf327272e222c404))
 * **artifacts:** budget extract_artifact delivery ([981dd11](https://github.com/morluto/rea/commit/981dd11ec4cd8ea7d54840550a5214acf420eb38))
 * **artifacts:** decode Android Verified Boot vbmeta images offline ([#13239](https://github.com/morluto/rea/issues/13239)) ([3e8f6a4](https://github.com/morluto/rea/commit/3e8f6a43a9402fea3108e5b15dd5a152b4665960))
