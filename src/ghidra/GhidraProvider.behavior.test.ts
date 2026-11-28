@@ -139,6 +139,10 @@ import { AnalysisSnapshotCache } from "../application/binary/AnalysisSnapshotCac
 import { createEvidence } from "../domain/evidence.js";
 import { createEvidenceBundle } from "../domain/evidenceBundle.js";
 import {
+  snapshotBinding,
+  snapshotMatchesProfile,
+} from "../domain/analysisSnapshot.js";
+import {
   admittedRawLoad,
   rawLoadAtEntry,
 } from "../domain/rawBinary.fixture.js";
@@ -1310,6 +1314,70 @@ describe("Ghidra Windows PE fixture admission", () => {
           });
         }
       }
+    }
+  });
+});
+
+describe("Ghidra companion dSYM profile binding", () => {
+  it("commits a sibling dSYM digest into the analysis profile so saved snapshots invalidate when it changes", async () => {
+    const root = await createTestTempDirectory("rea-ghidra-companion-");
+    const targetPath = join(root, "target");
+    const dwarf = join(
+      `${targetPath}.dSYM`,
+      "Contents",
+      "Resources",
+      "DWARF",
+      "target",
+    );
+    const target: BinaryTarget = {
+      path: targetPath,
+      sha256: createHash("sha256").update("target bytes").digest("hex"),
+      kind: "executable",
+      format: "mach-o",
+      architecture: "arm64",
+      availableArchitectures: ["arm64"],
+    };
+    const ghidra = provider();
+    try {
+      const baseline = await ghidra.resolveAnalysisProfile(target);
+      if (!baseline.ok) throw baseline.error;
+      const baselineProfile = baseline.value.profile;
+      if (baselineProfile === null)
+        throw new Error("Expected a bound Ghidra profile");
+      expect(baselineProfile.parameters).not.toHaveProperty(
+        "companion_dsym_sha256",
+      );
+
+      await mkdir(
+        join(`${targetPath}.dSYM`, "Contents", "Resources", "DWARF"),
+        { recursive: true },
+      );
+      await writeFile(dwarf, "companion v1");
+      const first = await ghidra.resolveAnalysisProfile(target);
+      if (!first.ok) throw first.error;
+      const firstProfile = first.value.profile;
+      if (firstProfile === null)
+        throw new Error("Expected a bound Ghidra profile");
+      expect(firstProfile.parameters.companion_dsym_sha256).toBe(
+        createHash("sha256").update("companion v1").digest("hex"),
+      );
+      expect(firstProfile.digest).not.toBe(baselineProfile.digest);
+      expect(
+        snapshotMatchesProfile(snapshotBinding(baselineProfile), firstProfile),
+      ).toBe(false);
+
+      await writeFile(dwarf, "companion v2");
+      const changed = await ghidra.resolveAnalysisProfile(target);
+      if (!changed.ok) throw changed.error;
+      const changedProfile = changed.value.profile;
+      if (changedProfile === null)
+        throw new Error("Expected a bound Ghidra profile");
+      expect(changedProfile.parameters.companion_dsym_sha256).toBe(
+        createHash("sha256").update("companion v2").digest("hex"),
+      );
+      expect(changedProfile.digest).not.toBe(firstProfile.digest);
+    } finally {
+      await ghidra.closeOwnedResources();
     }
   });
 });

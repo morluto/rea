@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
-import { open } from "node:fs/promises";
-import { basename, extname, join } from "node:path";
+import { mkdir, open, rm, stat } from "node:fs/promises";
+import { basename, dirname, extname, join } from "node:path";
 import {
   withArtifactRegularFile,
   withArtifactFileHandle,
@@ -13,6 +13,7 @@ import {
 } from "../resources/index.js";
 import {
   NonRegularFileReadError,
+  RegularFileChangedError,
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
 
@@ -25,11 +26,17 @@ import {
   WindowsSnapshotCancelledError,
   windowsPrivateRuntime,
 } from "../windows/WindowsPrivateRuntime.js";
+import {
+  companionCancelled,
+  companionDwarfPath,
+} from "./GhidraCompanionDsym.js";
 
 /** Immutable target copy admitted to one ephemeral Ghidra import. */
 export interface GhidraTargetSnapshot {
   readonly path: string;
   readonly sha256: string;
+  /** Digest of the staged sibling companion, or null when none staged. */
+  readonly companionDsymSha256: string | null;
   readonly admission?: JsonValue;
 }
 
@@ -68,12 +75,13 @@ export const createGhidraTargetSnapshot = async (
     return {
       path: snapshotPath,
       sha256: observed.sha256,
+      companionDsymSha256: null,
       admission: { source: observed.source, snapshot: observed.snapshot },
     };
   }
   const resources = options.resourceScope ?? new ArtifactResourceScope();
   try {
-    return await resources.run(() =>
+    const snapshot = await resources.run(() =>
       withArtifactRegularFile(
         sourcePath,
         resources,
@@ -123,10 +131,100 @@ export const createGhidraTargetSnapshot = async (
         "follow",
       ),
     );
+    // Xcode 17 clang keeps all DWARF in a sibling <name>.dSYM bundle while the
+    // staged Mach-O keeps no __debug_info. Ghidra's DWARFAnalyzer only discovers
+    // a bundle named after the staged executable's path, so stage a renamed copy
+    // next to the snapshot; the runtime root owner cleans it up with the tree.
+    const companionDsymSha256 = await stageCompanionDsym(
+      sourcePath,
+      snapshotPath,
+      resources,
+      options.signal,
+    );
+    return { ...snapshot, companionDsymSha256 };
   } catch (cause: unknown) {
     // The private runtime owns partial snapshot entries. Its owner removes the
     // tree after every retained descriptor settles; do not unlink a raw name.
     throw mapArtifactFileFailure(cause, classifySnapshotFailure);
+  }
+};
+
+const stageCompanionDsym = async (
+  sourcePath: string,
+  snapshotPath: string,
+  resources: ArtifactResourceScope,
+  signal?: AbortSignal,
+): Promise<string | null> => {
+  const sourceDwarf = companionDwarfPath(sourcePath);
+  const stagedBundle = `${snapshotPath}.dSYM`;
+  const stagedDwarf = join(
+    stagedBundle,
+    "Contents",
+    "Resources",
+    "DWARF",
+    basename(snapshotPath),
+  );
+  try {
+    if (!(await stat(sourceDwarf)).isFile()) return null;
+    await mkdir(dirname(stagedDwarf), { recursive: true });
+    // Copy in bounded chunks so cancellation and startup-deadline expiry
+    // interrupt even a large dSYM instead of blocking on one whole-file copy.
+    return await withArtifactRegularFile(
+      sourceDwarf,
+      resources,
+      signal,
+      async ({ handle: source }) => {
+        const initial = await source.stat({ bigint: true });
+        assertArtifactReadActive(signal);
+        return await withArtifactFileHandle(
+          stagedDwarf,
+          await open(stagedDwarf, "wx", 0o600),
+          resources,
+          signal,
+          async (destination) => {
+            await destination.chmod(0o600);
+            const hash = createHash("sha256");
+            const input = readArtifactFileChunks(source, {
+              end: initial.size,
+              signal,
+            });
+            for await (const chunk of input) {
+              assertArtifactReadActive(signal);
+              await destination.writeFile(chunk);
+              hash.update(chunk);
+              assertArtifactReadActive(signal);
+            }
+            // A companion that shifts mid-copy would stage truncated or mixed
+            // bytes; treat it like the digest probe and fall into the
+            // optional-companion skip below instead of staging bad DWARF.
+            if (
+              input.readCoverage().kind !== "complete" ||
+              !sameRegularFileState(
+                initial,
+                await source.stat({ bigint: true }),
+              )
+            )
+              throw new RegularFileChangedError(sourceDwarf);
+            return hash.digest("hex");
+          },
+        );
+      },
+      "follow",
+    );
+  } catch (cause: unknown) {
+    // Remove any partial staged bundle so a later attempt starts clean; the
+    // runtime root owner still removes the whole tree if this best-effort
+    // cleanup itself fails.
+    try {
+      await rm(stagedBundle, { recursive: true, force: true });
+    } catch {
+      // Best effort only; the runtime root owner still removes the tree.
+    }
+    if (companionCancelled(cause)) throw cause;
+    // DWARF is optional evidence: when the sibling bundle is absent,
+    // unreadable, or has an unexpected layout, keep the snapshot and its
+    // "unknown symbols" semantics instead of failing admission.
+    return null;
   }
 };
 
