@@ -3,7 +3,7 @@ import { once } from "node:events";
 import { createInterface } from "node:readline";
 import { PassThrough, type Readable } from "node:stream";
 import { setImmediate as yieldToIo } from "node:timers/promises";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
@@ -19,6 +19,7 @@ import {
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import type { JavaScriptArtifactFile } from "../../../src/domain/javascript/javascriptArtifactFiles.js";
 import { staticCheckpointFacts } from "../../fixtures/javascriptWorkerCheckpoint.js";
+import { phaseArrival, phaseGate } from "../../support/lifecycleHarness.js";
 
 // The observer is attached before the protocol reader. A queued microtask
 // runs after both readers have synchronously processed the current chunk.
@@ -79,6 +80,52 @@ const ready =
   'process.stdout.write(JSON.stringify({kind:"ready",heap_limit_bytes:require("node:v8").getHeapStatistics().heap_size_limit})+"\\n");';
 const phaseAfterRequest =
   'process.stdin.once("data", chunk => { const request=JSON.parse(String(chunk)); process.stdout.write(JSON.stringify({kind:"phase",id:request.id,phase:"parse"})+"\\n");';
+
+it("reports the last observed phase even when the deadline precedes its dequeue", async () => {
+  const readingParse = phaseGate();
+  const observedStatic = phaseArrival();
+  const timeoutMs = 30_000;
+  const worker = new JavaScriptAnalysisWorker(
+    { heapMb: 128, timeoutMs },
+    async (request) => {
+      const launched = await spawnOwnedProviderProcess(request);
+      observeWorkerFrames(launched.process.stdout, (frame) => {
+        if (frame.kind === "phase" && frame.phase === "static")
+          observedStatic.arrive();
+      });
+      return launched;
+    },
+  );
+  const now = performance.now.bind(performance);
+  const clock = vi.spyOn(performance, "now");
+  try {
+    const analysis = worker.analyze(
+      file,
+      { nodes: 1, unknowns: 1 },
+      undefined,
+      async (phase) => {
+        if (phase === "parse") await readingParse.hold();
+      },
+    );
+    await Promise.all([
+      readingParse.reached(analysis, "parse frame consumed"),
+      observedStatic.reached(analysis, "static frame buffered"),
+    ]);
+    clock.mockImplementation(() => now() + timeoutMs);
+    readingParse.release();
+    const result = await analysis;
+    if (result.ok) throw new Error("Expected a source analysis deadline");
+    expect(projectAnalysisError(result.error.error)).toMatchObject({
+      code: "provider_timeout",
+      message: expect.stringContaining("Last observed phase: static"),
+      details: { timeout_ms: timeoutMs, diagnostics: { phase: "static" } },
+    });
+  } finally {
+    clock.mockRestore();
+    readingParse.release();
+    await worker.close();
+  }
+});
 
 it.each([
   {

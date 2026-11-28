@@ -168,7 +168,15 @@ export class JavaScriptAnalysisWorker {
   #activeJobPhase = "startup";
   #staticResponseId: string | undefined;
   #terminalResponseId: string | undefined;
-  #phase = "startup";
+  #parentPhase:
+    | "startup"
+    | "source-transfer"
+    | "checkpoint-read"
+    | "result-admission"
+    | undefined = "startup";
+  get #phase(): string {
+    return this.#parentPhase ?? this.#activeJobPhase;
+  }
   #lastFailure: AnalysisError | undefined;
   #staticProjectionReservations: {
     sourceIndex: number;
@@ -394,7 +402,7 @@ export class JavaScriptAnalysisWorker {
           "JavaScript worker has unsolicited or incomplete control frames",
         );
       supervisor.resetOutput();
-      this.#phase = "source-transfer";
+      this.#parentPhase = "source-transfer";
       await writeJavaScriptAnalysisSourceTransfer(
         join(rootPath, `${id}.source`),
         file.text.value,
@@ -433,7 +441,8 @@ export class JavaScriptAnalysisWorker {
       if (stdin === undefined || stdin === null)
         throw new TypeError("JavaScript worker has no writable request stream");
       this.#activeJobId = id;
-      this.#activeJobPhase = this.#phase;
+      this.#activeJobPhase = this.#parentPhase;
+      this.#parentPhase = undefined;
       this.#staticResponseId = undefined;
       this.#terminalResponseId = undefined;
       await new Promise<void>((resolve, reject) =>
@@ -453,7 +462,6 @@ export class JavaScriptAnalysisWorker {
           );
         if (response.id !== id) continue;
         if (response.kind === "phase") {
-          this.#phase = response.phase;
           await onPhase?.(response.phase);
           continue;
         }
@@ -463,17 +471,18 @@ export class JavaScriptAnalysisWorker {
               OPERATION,
               "JavaScript worker emitted a duplicate static checkpoint",
             );
-          const previousPhase = this.#phase;
-          this.#phase = "checkpoint-read";
+          this.#parentPhase = "checkpoint-read";
           javascript = await this.#readCheckpoint(
             id,
             file.path,
             sourceIndex,
             response,
           );
-          this.#phase = previousPhase;
           const exhausted = this.#parentCapacityFailure(file.path);
           if (exhausted !== undefined) throw exhausted;
+          if (deadline.interruption !== undefined)
+            throw this.#interruptionFailure(file.path, deadline);
+          this.#parentPhase = undefined;
           offeredResultBudget =
             this.#applicationProjectionFailure !== undefined &&
             this.#sourcesRemaining !== undefined &&
@@ -556,7 +565,7 @@ export class JavaScriptAnalysisWorker {
           break;
         }
         const retainGraph = moduleEstimate + graphEstimate <= remaining;
-        this.#phase = "result-admission";
+        this.#parentPhase = "result-admission";
         const decoded = await readJavaScriptAnalysisTransfer(
           join(rootPath, `${id}.records`),
           descriptor,
@@ -761,7 +770,7 @@ export class JavaScriptAnalysisWorker {
 
   async #start(deadline: ProviderStartupDeadline): Promise<void> {
     if (this.#runtime.supervisor !== undefined && this.#ready) return;
-    this.#phase = "startup";
+    this.#parentPhase = "startup";
     this.#heapLimitBytes = 0;
     const environment: NodeJS.ProcessEnv = {
       ...process.env,
@@ -1260,8 +1269,9 @@ export class JavaScriptAnalysisWorker {
         this.limits.timeoutSource,
       ),
       related: { parameters: ["source_paths"] },
+      diagnostics: { phase: this.#phase },
       ...(withCapturedOutput ? { capturedOutput: this.#captured() } : {}),
-      userMessage: `JavaScript source analysis reached its ${String(this.limits.timeoutMs)}ms per-source server/provider deadline (analysis_timeout_ms), not the MCP client deadline.`,
+      userMessage: `JavaScript source analysis reached its ${String(this.limits.timeoutMs)}ms per-source server/provider deadline (analysis_timeout_ms), not the MCP client deadline. Last observed phase: ${this.#phase}.`,
       remediationAction:
         "Reuse accessible partial_observation Evidence to avoid recomputation; reading it is not a prerequisite for a corrected retry. Increase analysis_timeout_ms on the next call. Alternatively, reduce semantic limits or select exact inventoried source_paths. Omit source_paths to analyze all sources; an empty array is invalid. detail: summary reduces response size, not analysis work. Allow execution, cleanup and delivery headroom in the MCP client tool deadline; increasing that client deadline alone does not change this server budget. Resolve any reported incomplete cleanup before retrying.",
     });
