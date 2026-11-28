@@ -8,7 +8,6 @@ import { expect } from "vitest";
 import { keyedArchiveResultSchema } from "../../../src/domain/apple/keyedArchive.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 cliTest.for(["xml", "binary"] as const)(
@@ -48,8 +47,6 @@ cliTest.for(["xml", "binary"] as const)(
       const output = await cli.run({
         arguments: ["inspect-keyed-archive", path, ...arguments_, "--json"],
         environment: {
-          HOME: root,
-          USERPROFILE: root,
           REA_LOG_LEVEL: "silent",
           REA_ANALYSIS_PROVIDER: "auto",
         },
@@ -60,10 +57,8 @@ cliTest.for(["xml", "binary"] as const)(
       );
     };
     const result = await run();
-    const { call } = await connectLocalToolsMcp({
-      HOME: root,
-      USERPROFILE: root,
-    });
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
     const opened = await call("open_binary", { path });
     expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
     const mcp = await call("inspect_keyed_archive", {});
@@ -205,8 +200,6 @@ cliTest.for(["xml", "binary"] as const)(
     const output = await cli.run({
       arguments: ["inspect-keyed-archive", path, "--json"],
       environment: {
-        HOME: root,
-        USERPROFILE: root,
         REA_LOG_LEVEL: "silent",
         REA_ANALYSIS_PROVIDER: "auto",
       },
@@ -215,10 +208,8 @@ cliTest.for(["xml", "binary"] as const)(
     const result = keyedArchiveResultSchema.parse(
       parseEvidence(output.json).normalized_result,
     );
-    const { call } = await connectLocalToolsMcp({
-      HOME: root,
-      USERPROFILE: root,
-    });
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
     const opened = await call("open_binary", { path });
     expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
     const mcp = await call("inspect_keyed_archive", {});
@@ -251,10 +242,8 @@ cliTest(
   "rejects scalar top dictionaries through the public CLI and MCP",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-keyed-scalar-top-");
-    const { call } = await connectLocalToolsMcp({
-      HOME: root,
-      USERPROFILE: root,
-    });
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
     for (const format of ["xml", "binary"]) {
       const archive = {
         $archiver: "NSKeyedArchiver",
@@ -269,7 +258,6 @@ cliTest(
       );
       const output = await cli.run({
         arguments: ["inspect-keyed-archive", path, "--json"],
-        environment: { HOME: root, USERPROFILE: root },
       });
       expect(output.exitCode).toBe(1);
       expect(output.json).toMatchObject({
@@ -315,7 +303,7 @@ cliTest("preserves binary IEEE non-finite scalar identity", async ({ cli }) => {
   await writeFile(path, bytes);
   const output = await cli.run({
     arguments: ["inspect-keyed-archive", path, "--json"],
-    environment: { HOME: root, USERPROFILE: root, REA_LOG_LEVEL: "silent" },
+    environment: { REA_LOG_LEVEL: "silent" },
   });
   expect(output.exitCode, output.stderr).toBe(0);
   const result = keyedArchiveResultSchema.parse(
@@ -333,10 +321,8 @@ cliTest("preserves binary IEEE non-finite scalar identity", async ({ cli }) => {
   expect(result.archive_sha256).toBe(
     createHash("sha256").update(bytes).digest("hex"),
   );
-  const { call } = await connectLocalToolsMcp({
-    HOME: root,
-    USERPROFILE: root,
-  });
+  const call = await cli.sharedMcpCall?.();
+  if (call === undefined) throw new Error("Expected a stdio MCP session");
   const opened = await call("open_binary", { path });
   expect(opened.isError).not.toBe(true);
   const mcp = await call("inspect_keyed_archive", {});
@@ -384,8 +370,6 @@ cliTest(
     const output = await cli.run({
       arguments: ["inspect-keyed-archive", path, "--json"],
       environment: {
-        HOME: root,
-        USERPROFILE: root,
         REA_LOG_LEVEL: "silent",
         REA_ANALYSIS_PROVIDER: "auto",
       },
@@ -394,10 +378,8 @@ cliTest(
     const result = keyedArchiveResultSchema.parse(
       parseEvidence(output.json).normalized_result,
     );
-    const { call } = await connectLocalToolsMcp({
-      HOME: root,
-      USERPROFILE: root,
-    });
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
     const opened = await call("open_binary", { path });
     expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
     const mcp = await call("inspect_keyed_archive", {});
