@@ -43,6 +43,7 @@ export class EvmProxyProvider implements EvmProxyPort {
   }
 
   async inspect(input: InspectEvmProxyInput, options?: ExecutionOptions) {
+    let observed: { sha256: string; bytes: number } | undefined;
     try {
       return await this.#resources.run(async () => {
         const carrier = await readStableArtifact(
@@ -52,6 +53,7 @@ export class EvmProxyProvider implements EvmProxyPort {
           undefined,
           this.#resources,
         );
+        observed = { sha256: carrier.sha256, bytes: carrier.bytes.length };
         assertArtifactReadActive(options?.signal);
         const code = decodeEvmBytecodeCarrier(carrier.bytes, input.encoding);
         return ok({
@@ -79,6 +81,7 @@ export class EvmProxyProvider implements EvmProxyPort {
           input.path,
           EVM_PROXY_PROVIDER.id,
           OPERATION,
+          observed,
         ),
       );
     }
@@ -103,19 +106,33 @@ const evmProxyDialect = (
             detail: failure.message,
           })
         : undefined,
-    fileSize: (failure) =>
-      parseLimitConstraint(
+    fileSize: (failure) => {
+      // Absent or beyond a safe integer: report no retry value.
+      const observed = Number(failure.observedBytes);
+      const required = Number.isSafeInteger(observed) ? observed : undefined;
+      const limit = evmProxyBudgetLimit("max_file_bytes", input.max_file_bytes);
+      return parseLimitConstraint(
         OPERATION,
         "file-size",
         decodeLimit(
           "evm-bytecode",
           failure.message,
-          { name: "max_file_bytes", maximum: input.max_file_bytes },
+          {
+            name: "max_file_bytes",
+            maximum: input.max_file_bytes,
+            ...(failure.observedBytes === undefined
+              ? {}
+              : { required: failure.observedBytes }),
+          },
           { cause: failure },
         ),
         {
           retryable: false,
-          limit: evmProxyBudgetLimit("max_file_bytes", input.max_file_bytes),
+          limit:
+            required === undefined
+              ? limit
+              : { ...limit, required_value: required },
         },
-      ),
+      );
+    },
   });

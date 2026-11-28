@@ -212,7 +212,7 @@ export const OFFLINE_INSPECTION_TOOL_BINDINGS = {
   })) satisfies Bind<GpuCodeObjectsService>,
   evmProxy: ((service) => ({
     inspect_evm_proxy: {
-      admission: "sdk",
+      admission: "application",
       run: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<EvmProxyService>,

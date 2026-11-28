@@ -151,9 +151,11 @@ const ADDRESS_BYTES = 20;
 export const matchErc1167Clone = (code: Uint8Array): EvmProxyPattern => {
   const start = ERC1167_PREFIX.length;
   const end = start + ADDRESS_BYTES;
+  // Rule out by length first so large inputs are not copied.
+  if (code.length !== end + ERC1167_SUFFIX.length)
+    return { kind: "none_recognized" };
   const bytes = Buffer.from(code);
   if (
-    bytes.length !== end + ERC1167_SUFFIX.length ||
     !bytes.subarray(0, start).equals(ERC1167_PREFIX) ||
     !bytes.subarray(end).equals(ERC1167_SUFFIX)
   )
