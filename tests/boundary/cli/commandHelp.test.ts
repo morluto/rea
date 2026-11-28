@@ -42,6 +42,7 @@ it("renders type placeholders, shown defaults and aliases", () => {
       "Hint.",
       "",
       "Global Options:",
+      "  --columns <fields>        Comma-separated row fields for --format csv or tsv, in output order",
       "  --filter-output <keys>    Filter output by key paths (e.g. foo,bar.baz,a[0,3])",
       "  --format <toon|json|csv>  Output format",
       "  --full-output             Show full output envelope",
