@@ -92,7 +92,20 @@ export const parseKubernetesAuditLine = (
   let keyTooLong = false;
   let numberTooLong = false;
   let stringOverflow = false;
-  let budgetOmitted = false;
+  /** Final fields whose last value was dropped for the text budget. */
+  const budgetOmittedFields = new Set<string>();
+  const budgetOmitted = (): boolean => budgetOmittedFields.size > 0;
+  const fieldKey = (): string | undefined => {
+    const frame = top();
+    if (frame?.kind === "strings")
+      return frame.target === "sourceIPs" ? "sourceIPs" : "user.groups";
+    if (frame?.kind === "root") return pendingKey;
+    if (frame?.kind === "user" && pendingKey === "username")
+      return "user.username";
+    if (frame?.kind === "objectRef" && pendingKey !== undefined)
+      return `objectRef.${pendingKey}`;
+    return undefined;
+  };
 
   const top = (): Frame | undefined => stack.at(-1);
   const skipping = (): boolean => top()?.kind === "skip";
@@ -309,7 +322,9 @@ export const parseKubernetesAuditLine = (
   };
 
   const finishList = (frame: StringList): void => {
-    if (frame.overBudget) budgetOmitted = true;
+    const listKey = frame.target === "sourceIPs" ? "sourceIPs" : "user.groups";
+    if (frame.overBudget) budgetOmittedFields.add(listKey);
+    else budgetOmittedFields.delete(listKey);
     const list = frame.invalid ? null : frame.values;
     if (frame.target === "sourceIPs") value.sourceIPs = list;
     else {
@@ -364,7 +379,8 @@ export const parseKubernetesAuditLine = (
         break;
       case "endString":
         if (capture === "string" && stringOverflow) {
-          budgetOmitted = true;
+          const key = fieldKey();
+          if (key !== undefined) budgetOmittedFields.add(key);
           rejectScalar();
           const list = top();
           if (list?.kind === "strings") {
@@ -372,7 +388,11 @@ export const parseKubernetesAuditLine = (
             list.overBudget = true;
             list.values.length = 0;
           }
-        } else if (capture === "string") takeString(text);
+        } else if (capture === "string") {
+          const key = fieldKey();
+          takeString(text);
+          if (key !== undefined) budgetOmittedFields.delete(key);
+        }
         stringOverflow = false;
         capture = undefined;
         pendingKey = undefined;
@@ -442,7 +462,7 @@ export const parseKubernetesAuditLine = (
           kind: "event",
           value: publish(),
           depthLimited: true,
-          budgetOmitted,
+          budgetOmitted: budgetOmitted(),
         }
       : { kind: "nesting" };
   try {
@@ -482,6 +502,6 @@ export const parseKubernetesAuditLine = (
     kind: "event",
     value: publish(),
     depthLimited: false,
-    budgetOmitted,
+    budgetOmitted: budgetOmitted(),
   };
 };

@@ -618,6 +618,19 @@ it("clears groups when a later scalar replaces the list", async () => {
   });
 });
 
+it("keeps a small duplicate after an over-budget value", async () => {
+  const metadata = await metadataOf(
+    `{"apiVersion":"audit.k8s.io/v1","auditID":"agent","stage":"RequestReceived","requestURI":"/api","verb":"get","userAgent":"${"x".repeat(200_000)}","userAgent":"kubectl"}\n`,
+  );
+  expect(metadata.events[0]).toMatchObject({
+    audit_id: "agent",
+    request_uri: "/api",
+    verb: "get",
+    user_agent: "kubectl",
+    request_fields_omitted: false,
+  });
+});
+
 it("drops a response object when a later value replaces it", async () => {
   const metadata = await metadataOf(
     '{"auditID":"replaced","stage":"ResponseComplete","responseStatus":{"code":403},"responseStatus":null,"verb":"get"}\n',
