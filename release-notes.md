@@ -1432,6 +1432,7 @@
 * **ci:** consolidate project deadline policy checks ([#12777](https://github.com/morluto/rea/issues/12777)) ([ec533c6](https://github.com/morluto/rea/commit/ec533c6e648aa63fd0f0d10e985abbaa497a8df7))
 * **ci:** consolidate project discovery and isolation checks ([#12842](https://github.com/morluto/rea/issues/12842)) ([21795b1](https://github.com/morluto/rea/commit/21795b199d1bc94f3ee17688e45403e689cbc966))
 * **ci:** consolidate required lane gate coverage ([#13515](https://github.com/morluto/rea/issues/13515)) ([77c5e6b](https://github.com/morluto/rea/commit/77c5e6bf82bf4bceb4a4cffcd2e4b517d3ffb51a))
+* **ci:** keep the separator regression in the Windows-only lane guard ([21cfc80](https://github.com/morluto/rea/commit/21cfc809bc9465b4c39d0f14874bdbbd58159f44))
 * **ci:** make test selection and provider report refusals observable ([#12782](https://github.com/morluto/rea/issues/12782)) ([21051b9](https://github.com/morluto/rea/commit/21051b9d06f82d9da0a932d328cae8db87644f77))
 * **ci:** require a positive binary-layout download deadline ([#14755](https://github.com/morluto/rea/issues/14755)) ([72b77b2](https://github.com/morluto/rea/commit/72b77b2f8e429aa24c2b475a0d54f4de222b1337))
 * **ci:** require planner directories in classifier checkouts ([#14553](https://github.com/morluto/rea/issues/14553)) ([0acafde](https://github.com/morluto/rea/commit/0acafdeafa5880c8e8a385ef0e5b737887a4cecf))
@@ -1992,6 +1993,7 @@
 * shallow-checkout the classifier for qualification runs ([#14312](https://github.com/morluto/rea/issues/14312)) ([b73cc58](https://github.com/morluto/rea/commit/b73cc58925f09c08dca88cbbe1e04d7182cf7643))
 * validate workflow anchors with actionlint 1.7.12 ([#14298](https://github.com/morluto/rea/issues/14298)) ([f919526](https://github.com/morluto/rea/commit/f9195263d0ae23df996d28f4a7bf848067d936fa))
 * wait for static checks before broad PR test shards ([#14299](https://github.com/morluto/rea/issues/14299)) ([b8dd2c4](https://github.com/morluto/rea/commit/b8dd2c47d46419b0d82d03c1de2f261b7ffe3f73))
+* **windows:** run the caller path separator regression in the Windows lane ([#4988](https://github.com/morluto/rea/issues/4988)) ([21cfc80](https://github.com/morluto/rea/commit/21cfc809bc9465b4c39d0f14874bdbbd58159f44))
 
 ---
 This PR was generated with [Release Please](https://github.com/googleapis/release-please). See [documentation](https://github.com/googleapis/release-please#release-please).
