@@ -297,8 +297,7 @@ it("records the commands that menus and keybindings invoke", async () => {
     await parseVsixPackage(bytes, artifactOf(bytes), defaults),
   );
   expect(report.contributes.menus).toEqual([
-    { menu: "editor/context", command: "demo.run" },
-    { menu: "editor/context", command: null },
+    { menu: "editor/context", commands: ["demo.run", null] },
   ]);
   expect(report.contributes.keybindings).toEqual([
     { command: "demo.run", key: "ctrl+h" },
