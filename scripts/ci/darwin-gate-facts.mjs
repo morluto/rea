@@ -129,7 +129,7 @@ const arrayEmptiness = (
   }
 };
 
-/** Whether a case list contributes cases on macOS but none on Linux. */
+/** Whether a case list may contribute cases on macOS but none on Linux. */
 export const caseListHasDarwinOnlyCases = (
   expression,
   constants,
@@ -145,11 +145,7 @@ export const caseListHasDarwinOnlyCases = (
       return gated;
     }
     case "conditional": {
-      const linux = evaluateGateExpression(
-        expression.test,
-        "linux",
-        constants,
-      );
+      const linux = evaluateGateExpression(expression.test, "linux", constants);
       const darwin = evaluateGateExpression(
         expression.test,
         "darwin",
@@ -164,7 +160,7 @@ export const caseListHasDarwinOnlyCases = (
         const onDarwin = darwin ? expression.consequent : expression.alternate;
         if (
           arrayEmptiness(onLinux, "linux", constants) === true &&
-          arrayEmptiness(onDarwin, "darwin", constants) === false
+          arrayEmptiness(onDarwin, "darwin", constants) !== true
         )
           return true;
       }

@@ -103,6 +103,10 @@ it.for([
     { macOsOnly: true, darwinGated: true },
   ],
   [
+    `it.for([...(process.platform === "darwin" ? [...makeCases()] : [])])("%s", () => {});`,
+    { macOsOnly: false, darwinGated: true },
+  ],
+  [
     `const identity = ((value: number) => value);\ndescribe.skipIf(process.platform !== "darwin")("runs", () => {});`,
     { macOsOnly: true, darwinGated: true },
   ],
