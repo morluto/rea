@@ -51,6 +51,7 @@ import {
   UnsupportedBinaryPlistUidError,
 } from "../../domain/apple/plistScalars.js";
 import { parseXmlPropertyList } from "../../domain/propertyListKeys.js";
+import { startsOpenStepPropertyList } from "../../domain/propertyListOpenStep.js";
 import {
   KeyedArchiveKindError,
   keyedArchiveInputSchema,
@@ -124,7 +125,9 @@ export const decodeKeyedArchiveBytes = (
   // Empty XML elements charge the DOM model far above the input cap. The
   // binary branch already preflights. Number projection matches the literals
   // this decoder retains. UID projection does not change the XML estimate.
-  if (!binary)
+  // OpenStep is selected by the same check the shared parser uses. Quoted
+  // markup in that form is string data, so it is not an XML budget.
+  if (!binary && !startsOpenStepPropertyList(xmlText ?? ""))
     preflightPropertyListDecode(bytes, MAX_DECODE_BYTES, xmlText, {
       numberProjection: true,
       uidProjection: true,
