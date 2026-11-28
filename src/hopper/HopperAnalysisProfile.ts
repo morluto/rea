@@ -211,6 +211,7 @@ const HOPPER_ARCHITECTURE_FLAGS = {
   arm: "--armv7",
   arm64: "--aarch64",
   arm64_32: null,
+  loongarch: null,
   mips: null,
   "6502": "raw-only",
   riscv: null,

@@ -1,0 +1,464 @@
+#!/usr/bin/env node
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { mkdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { Client } from "@modelcontextprotocol/client";
+import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
+import { parseAnalysisSnapshot } from "../dist/domain/analysisSnapshot.js";
+import { parseEvidence } from "../dist/domain/evidence.js";
+import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
+import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
+import { buildLoongArchFixture } from "../tests/conformance/ghidra/loongarch-fixture.mjs";
+import {
+  analysisAddressOffset,
+  assertLoongArchGlobalBytes,
+  assertLoongArchLoadedImage,
+  assertLoongArchProbeBytes,
+  assertLoongArchProbeInstructions,
+  assertLoongArchProbePseudocode,
+  inspectLoongArchReadelf,
+  loongArchPointer,
+  requireLoongArchRelocation,
+} from "../tests/conformance/ghidra/loongarch-checks.mjs";
+import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
+import {
+  createVerifierMcpOwner,
+  VerifierStdioTransport,
+} from "./lib/verifier-mcp-owner.mjs";
+import {
+  assertVerifierCleanupComplete,
+  createVerifierRun,
+  completeVerifierRun,
+} from "./lib/verifier-run.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import { requireLaneToolchain } from "../tests/conformance/ghidra/fixture-toolchain.mjs";
+
+// Optional cross-target lane. No tool acquisition and no target execution.
+if (process.argv.length !== 2)
+  throw new Error("Usage: node scripts/verify-real-ghidra-loongarch.mjs");
+if (!["linux", "darwin"].includes(process.platform))
+  throw new Error(
+    "This optional verifier requires POSIX process lineage for owned cleanup",
+  );
+if (process.env.GHIDRA_INSTALL_DIR === undefined)
+  throw new Error("Missing prerequisite: caller-supplied GHIDRA_INSTALL_DIR");
+const installation = await inspectVerifierGhidraInstallation({
+  environment: process.env,
+  installDir: process.env.GHIDRA_INSTALL_DIR,
+  ...(process.env.JAVA_HOME === undefined
+    ? {}
+    : { javaHome: process.env.JAVA_HOME }),
+});
+if (installation.status !== "available")
+  throw new Error(
+    `Ghidra prerequisite unavailable: ${JSON.stringify(installation)}`,
+  );
+const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
+const run = createVerifierRun();
+// Refuse a host without the fixture toolchain before allocating anything.
+await requireLaneToolchain("loongarch");
+const workspaceFixture = await VerifierFixture.open({
+  prefix: "rea-loongarch-proof-",
+  // Ghidra children use the workspace as TMPDIR; a plain root admits them on every host.
+  private: false,
+});
+const workspace = workspaceFixture.path;
+// A failed run keeps its workspace for diagnosis; the fixture records why.
+const retainWorkspace = (message, options) => {
+  workspaceFixture.retain(message);
+  return new Error(message, options);
+};
+const runtime = join(workspace, "runtime");
+await mkdir(runtime);
+const env = {
+  PATH: process.env.PATH ?? "/usr/bin:/bin",
+  TMPDIR: runtime,
+  REA_LOG_LEVEL: "silent",
+  REA_ANALYSIS_PROVIDER: "ghidra",
+  REA_PROCESS_RUN_ID: run.run_id,
+  GHIDRA_INSTALL_DIR: installation.installDir,
+  JAVA_HOME: installation.javaHome,
+  HOPPER_LAUNCHER_PATH: "/rea-unconfigured-deep-provider/hopper",
+};
+for (const setting of ["GHIDRA_HEADLESS_MAXMEM", "GHIDRA_MAXMEM"])
+  if (process.env[setting] !== undefined) env[setting] = process.env[setting];
+// Compiler, reader and CLI launches share one command owner. A timeout stops
+// that process group.
+const commands = await createVerifierCommands();
+const reports = [];
+let primaryFailure;
+try {
+  const fixture = await buildLoongArchFixture(workspace, commands);
+  const shared = await inspectLoongArchReadelf(commands, fixture.shared.path, {
+    type: 3,
+    flags: 0x43,
+  });
+  const oldWorld = await inspectLoongArchReadelf(
+    commands,
+    fixture.old_world.path,
+    {
+      type: 3,
+      flags: 0x3,
+    },
+  );
+  const executable = await inspectLoongArchReadelf(
+    commands,
+    fixture.executable.path,
+    {
+      type: 2,
+      flags: 0x43,
+    },
+  );
+  const relocation64 = requireLoongArchRelocation(shared, "R_LARCH_64");
+  const jumpSlot = requireLoongArchRelocation(shared, "R_LARCH_JUMP_SLOT");
+  assert.equal(relocation64.symbol, "rea_loongarch_global");
+  assert.equal(jumpSlot.symbol, "rea_loongarch_add");
+  for (const [path, independent] of [
+    [fixture.shared.path, shared],
+    [fixture.old_world.path, oldWorld],
+    [fixture.executable.path, executable],
+  ]) {
+    const resolved = await parseBinaryTarget(path);
+    if (!resolved.ok) throw resolved.error;
+    assert.equal(resolved.value.architecture, "loongarch");
+    assert.deepEqual(
+      resolved.value.loongarch,
+      independent.loongarch,
+      "REA ELF interpretation disagrees with GNU readelf",
+    );
+  }
+  assert.equal(oldWorld.loongarch.objectAbiVersion, 0);
+  assert.equal(shared.loongarch.objectAbiVersion, 1);
+
+  const owner = createVerifierMcpOwner();
+  commands.adopt(owner, "LoongArch MCP connection");
+  const transport = new VerifierStdioTransport({
+    command: process.execPath,
+    args: [entrypoint, "mcp"],
+    env,
+    stderr: "pipe",
+  });
+  const client = new Client({ name: "rea-real-loongarch-proof", version: "1" });
+  let stderr = "";
+  transport.stderr?.on("data", (chunk) => {
+    stderr = (stderr + chunk.toString()).slice(-65536);
+  });
+  const call = async (name, args = {}) => {
+    const reply = await client.callTool({ name, arguments: args }, undefined, {
+      timeout: 300000,
+    });
+    return requireMcpOperationResult(reply, name);
+  };
+  try {
+    await owner.open(client, transport);
+    const target = await call("open_binary", {
+      path: fixture.shared.path,
+      provider_id: "ghidra",
+    });
+    assert.equal(target.architecture, "loongarch");
+    assert.equal(target.sha256, fixture.shared.sha256);
+    const image = await call("inspect_native_load_image");
+    assertLoongArchLoadedImage(image.observations, fixture.shared.sha256);
+    assert.equal(image.observations.compiler_spec_id, "default");
+    // A shared image's coordinates are its analysis image base plus the ELF
+    // virtual address readelf reports, not the runtime load address.
+    const imageBase = analysisAddressOffset(image.observations.image_base);
+    const relocationAddress = (entry) =>
+      `0x${(imageBase + BigInt(entry.offset)).toString(16)}`;
+    for (const entry of [relocation64, jumpSlot]) {
+      const applied = image.observations.relocations.find(
+        (relocation) =>
+          analysisAddressOffset(relocation.address) ===
+            imageBase + BigInt(entry.offset) &&
+          relocation.type === entry.typeId,
+      );
+      assert.equal(
+        applied?.status,
+        "APPLIED",
+        `Ghidra did not apply the fixture's ${entry.type} relocation`,
+      );
+    }
+
+    const names = await call("list_names");
+    const probeName = names.find(
+      (item) => item.value === "rea_loongarch_probe",
+    );
+    const globalName = names.find(
+      (item) => item.value === "rea_loongarch_global",
+    );
+    assert.ok(probeName, "Probe symbol is missing from the real inventory");
+    assert.ok(globalName, "Global symbol is missing from the real inventory");
+    assert.equal(
+      analysisAddressOffset(probeName.address),
+      imageBase + BigInt(shared.symbols.rea_loongarch_probe),
+    );
+    assert.equal(
+      analysisAddressOffset(globalName.address),
+      imageBase + BigInt(shared.symbols.rea_loongarch_global),
+    );
+    const probeBytes = await call("read_bytes", {
+      address: probeName.address,
+      length: 12,
+    });
+    assert.equal(probeBytes.returned_bytes, 12);
+    assertLoongArchProbeBytes(probeBytes.bytes_hex);
+    const globalBytes = await call("read_bytes", {
+      address: globalName.address,
+      length: 4,
+    });
+    assert.equal(globalBytes.returned_bytes, 4);
+    assertLoongArchGlobalBytes(globalBytes.bytes_hex);
+
+    // Ghidra's APPLIED label is not proof of the value it wrote. Each dynamic
+    // relocation is checked at its readelf-reported site against the symbol
+    // address plus addend, and against the unrelocated source bytes.
+    const sharedSource = await readFile(fixture.shared.path);
+    for (const entry of [relocation64, jumpSlot]) {
+      const address = relocationAddress(entry);
+      const loaded = await call("read_bytes", { address, length: 8 });
+      assert.equal(
+        loaded.returned_bytes,
+        8,
+        `${entry.type} relocation site is not a complete pointer`,
+      );
+      assert.equal(
+        loongArchPointer(loaded.bytes_hex),
+        imageBase + BigInt(entry.symbolValue) + entry.addend,
+        `${entry.type} loaded pointer is not the readelf symbol address plus its addend`,
+      );
+      const mapping = await call("address_to_file_offset", { address });
+      const sourcePointer = sharedSource.readBigUInt64LE(mapping.file_offset);
+      if (entry.type === "R_LARCH_64") {
+        // The fixture emits `.quad rea_loongarch_global`, so this data slot
+        // holds the unrelocated absolute value Ghidra must rebase.
+        assert.equal(
+          sourcePointer,
+          BigInt(entry.symbolValue) + entry.addend,
+          "R_LARCH_64 source bytes do not hold the unrelocated absolute value",
+        );
+      }
+      // A JUMP_SLOT slot starts as its PLT stub address; both the dynamic
+      // linker and Ghidra replace it with the resolved symbol address.
+      assert.notEqual(
+        sourcePointer,
+        loongArchPointer(loaded.bytes_hex),
+        `${entry.type} loaded pointer still holds the unrelocated source value`,
+      );
+    }
+
+    const instructions = await call("read_function_instructions", {
+      procedure: "rea_loongarch_probe",
+    });
+    assertLoongArchProbeInstructions(
+      instructions.instructions,
+      probeName.address,
+    );
+    const pseudocode = await call("procedure_pseudo_code", {
+      procedure: "rea_loongarch_probe",
+    });
+    assertLoongArchProbePseudocode(pseudocode);
+    const dossier = functionDossierSchema.parse(
+      await call("analyze_function", {
+        procedure: "rea_loongarch_probe",
+        detail: "complete",
+      }),
+    );
+    assert.equal(dossier.procedure.address, probeName.address);
+    assert.ok(dossier.assembly.length > 0);
+
+    const sharedSnapshotPath = join(workspace, "loongarch.snapshot.json");
+    const closed = await call("close_binary", {
+      snapshot_path: sharedSnapshotPath,
+    });
+    assert.ok(closed.evidence_records > 0);
+    const snapshot = parseAnalysisSnapshot(
+      JSON.parse(await readFile(sharedSnapshotPath, "utf8")),
+    );
+    assert.equal(snapshot.target.identity.architecture, "loongarch");
+    assert.equal(
+      snapshot.binding.analysis_profile.parameters.language_id,
+      "Loongarch:LE:64:lp64d",
+    );
+    assert.match(
+      String(
+        snapshot.binding.analysis_profile.parameters.loongarch_support_lane,
+      ),
+      /^elf64-le-dyn-lp64d-objabi-v1-/u,
+    );
+    assert.ok(snapshot.evidence_bundle.records.length > 0);
+    for (const evidence of snapshot.evidence_bundle.records)
+      assert.equal(
+        parseEvidence(evidence).subject?.identity.architecture,
+        "loongarch",
+      );
+    await call("open_binary", {
+      path: fixture.shared.path,
+      provider_id: "ghidra",
+      snapshot_path: sharedSnapshotPath,
+    });
+    assert.deepEqual(await call("list_names"), names);
+    await call("close_binary");
+
+    for (const [item, lane] of [
+      [fixture.old_world, "elf64-le-dyn-lp64d-objabi-v0-generic-v1"],
+      [fixture.executable, "elf64-le-exec-lp64d-objabi-v1-generic-v1"],
+    ]) {
+      const snapshotPath = join(
+        workspace,
+        `${item.sha256.slice(0, 12)}.snapshot.json`,
+      );
+      const opened = await call("open_binary", {
+        path: item.path,
+        provider_id: "ghidra",
+      });
+      assert.equal(opened.architecture, "loongarch");
+      const loaded = await call("inspect_native_load_image");
+      assertLoongArchLoadedImage(loaded.observations, item.sha256);
+      const saved = await call("close_binary", { snapshot_path: snapshotPath });
+      assert.ok(saved.evidence_records > 0);
+      const laneSnapshot = parseAnalysisSnapshot(
+        JSON.parse(await readFile(snapshotPath, "utf8")),
+      );
+      assert.equal(
+        laneSnapshot.binding.analysis_profile.parameters.language_id,
+        "Loongarch:LE:64:lp64d",
+      );
+      assert.equal(
+        laneSnapshot.binding.analysis_profile.parameters.loongarch_support_lane,
+        lane,
+      );
+    }
+
+    // Same public operation through the CLI, not a private injected provider.
+    const cli = await commands.exec(
+      process.execPath,
+      [
+        entrypoint,
+        "function",
+        fixture.shared.path,
+        "rea_loongarch_probe",
+        "--provider",
+        "ghidra",
+        "--json",
+      ],
+      { env, timeout: 300000, maxBuffer: 16 * 1024 * 1024 },
+    );
+    const evidence = parseEvidence(JSON.parse(cli.stdout));
+    assert.equal(evidence.subject?.identity.architecture, "loongarch");
+    assert.equal(evidence.subject?.identity.sha256, fixture.shared.sha256);
+    const cliDossier = functionDossierSchema.parse(evidence.normalized_result);
+    assert.equal(cliDossier.procedure.address, probeName.address);
+    assert.ok(cliDossier.pseudocode.trim().length > 0);
+    assert.equal(
+      createHash("sha256")
+        .update(await readFile(fixture.shared.path))
+        .digest("hex"),
+      fixture.shared.sha256,
+      "Analysis modified the source executable",
+    );
+
+    reports.push({
+      ...fixture,
+      independent_reader: {
+        command: shared.command,
+        version: shared.version,
+        shared: shared.loongarch,
+        old_world: oldWorld.loongarch,
+        executable: executable.loongarch,
+        relocations: shared.relocations,
+        // JSON has no BigInt; report the arithmetic addend as decimal text.
+        relocation_entries: shared.relocationEntries.map((entry) => ({
+          ...entry,
+          addend: entry.addend.toString(),
+        })),
+      },
+      effective_language: image.observations.language_id,
+      effective_compiler_spec: image.observations.compiler_spec_id,
+      checks: [
+        "independent ELF headers, symbols and relocations",
+        "new-world, old-world and fixed-address lane identity",
+        "loaded Ghidra identity and pinned LP64D language",
+        "relocation sites and type ids retained from readelf",
+        "applied R_LARCH_64 and R_LARCH_JUMP_SLOT fixups at their reported sites",
+        "loaded relocation pointers equal image base plus symbol value and addend",
+        "R_LARCH_64 source slot holds the unrelocated absolute value",
+        "both loaded pointers differ from their unrelocated source slots",
+        "fixed probe instruction bytes and listing text",
+        "relocated global bytes",
+        "constant-folded probe pseudocode",
+        "CLI/MCP and snapshot identity",
+      ],
+      status: "passed",
+    });
+  } catch (cause) {
+    throw new Error(`LoongArch verification failed; MCP stderr: ${stderr}`, {
+      cause,
+    });
+  }
+} catch (cause) {
+  primaryFailure = cause;
+}
+// Close the command owner before the parent-tree check. A failed close stays
+// registered for retry and the diagnostic workspace is retained.
+let cleanupFailure;
+try {
+  await workspaceFixture.closeEarly([() => commands.close()]);
+} catch (cause) {
+  cleanupFailure = cause;
+}
+if (cleanupFailure !== undefined)
+  throw retainWorkspace(
+    `LoongArch command cleanup failed; retained diagnostic workspace: ${workspace}`,
+    {
+      cause:
+        primaryFailure === undefined
+          ? cleanupFailure
+          : new AggregateError(
+              [primaryFailure, cleanupFailure],
+              "LoongArch verification and command cleanup both failed",
+            ),
+    },
+  );
+const completed = await completeVerifierRun(run);
+let lineageFailure;
+try {
+  assertVerifierCleanupComplete(completed.process_lineage);
+} catch (cause) {
+  lineageFailure = cause;
+}
+if (lineageFailure !== undefined)
+  throw retainWorkspace(
+    `Cleanup unverified; retained workspace: ${workspace}`,
+    {
+      cause:
+        primaryFailure === undefined
+          ? lineageFailure
+          : new AggregateError(
+              [primaryFailure, lineageFailure],
+              "LoongArch verification and cleanup check both failed",
+            ),
+    },
+  );
+if (primaryFailure !== undefined)
+  throw retainWorkspace(
+    `LoongArch verification failed; retained workspace: ${workspace}`,
+    { cause: primaryFailure },
+  );
+await workspaceFixture.release();
+console.log(
+  JSON.stringify(
+    {
+      ...completed,
+      lane: "ghidra-loongarch",
+      host: { platform: process.platform, architecture: process.arch },
+      provider: { id: "ghidra", version: installation.providerVersion },
+      fixtures: reports,
+      cleanup: "complete",
+    },
+    null,
+    2,
+  ),
+);
