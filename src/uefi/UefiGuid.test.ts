@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer";
 import { expect, it } from "vitest";
-import { formatGuidLittleEndian } from "./UefiGuid.js";
+import { formatGuidLittleEndian, guidBytesLittleEndian } from "./UefiGuid.js";
 
 const ffs2RawBytes = Buffer.from([
   0x78, 0xe5, 0x8c, 0x8c, 0x3d, 0x8a, 0x1c, 0x4f, 0x99, 0x35, 0x89, 0x61, 0x85,
@@ -54,4 +54,23 @@ it("returns null for out-of-bounds and truncated reads", () => {
   expect(formatGuidLittleEndian(truncated, 0)).toBeNull();
   expect(formatGuidLittleEndian(Buffer.alloc(0), -1)).toBeNull();
   expect(formatGuidLittleEndian(ffs2RawBytes, 1)).toBeNull();
+});
+
+it("encodes signature GUID text back to the bytes a volume stores", () => {
+  expect(
+    guidBytesLittleEndian("8c8ce578-8a3d-4f1c-9935-896185c32dd3").equals(
+      ffs2RawBytes,
+    ),
+  ).toBe(true);
+  expect(
+    guidBytesLittleEndian("5473c07a-3dcb-4dca-bd6f-1e9689e7349a").equals(
+      ffs3RawBytes,
+    ),
+  ).toBe(true);
+  expect(() => guidBytesLittleEndian("8c8ce578-8a3d-4f1c-9935")).toThrow(
+    "invalid GUID text",
+  );
+  expect(() =>
+    guidBytesLittleEndian("zzzzzzzz-8a3d-4f1c-9935-896185c32dd3"),
+  ).toThrow("invalid GUID text");
 });

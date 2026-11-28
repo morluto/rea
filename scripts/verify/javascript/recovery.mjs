@@ -17,6 +17,7 @@ import { parseEvidence } from "../../../dist/domain/evidence.js";
 import { javascriptRecoveryResultSchema } from "../../../dist/domain/javascript/javascriptRecovery.js";
 import { buildRecoveryFixtures } from "../../fixtures/javascript-recovery/build.mjs";
 import { mcpTextValue } from "../../lib/mcp-verifier-results.mjs";
+import { completeEvidenceClient } from "../../lib/complete-evidence.mjs";
 
 const OFFICIAL_BINARY_SHA256 =
   "664fa06782a61eda7ed15885134b52525fd565dd77607e642062ceb6cd927c38";
@@ -39,7 +40,9 @@ const rootFixture = await VerifierFixture.open({
   prefix: "rea-real-recovery-",
 });
 const root = rootFixture.path;
-const client = new Client({ name: "real-recovery", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "real-recovery", version: "1" }),
+);
 const run = promisify(execFile);
 const cli = async (...args) => {
   const { stdout } = await run(
@@ -111,8 +114,13 @@ await withVerifierFixture(rootFixture, async () => {
           ? await cli(
               "analyze-javascript-application",
               result.analysis_input.input_path,
+              "--detail",
+              "complete",
             )
-          : await call("analyze_javascript_application", result.analysis_input);
+          : await call("analyze_javascript_application", {
+              ...result.analysis_input,
+              detail: "complete",
+            });
       assert.equal(analysis.normalized_result.statistics.parse_failures, 0);
       assert.equal(
         analysis.normalized_result.statistics.parsed_javascript_files,

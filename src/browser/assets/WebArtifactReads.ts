@@ -3,29 +3,31 @@ import type { WebArtifactAcquisition as Acquisition } from "../../domain/webArti
 import { isAbortOf } from "../../process/SignalAbort.js";
 import { z } from "zod";
 import {
+  artifactFileCleanupError,
   ArtifactReaderFailure,
   stableArtifactInputRecovery,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   artifactFilePrimaryFacts,
-  bindArtifactFileCleanup,
   type ArtifactFilePrimaryFacts,
   type ArtifactResourceScope,
   completedStableArtifact,
   readStableArtifact,
+  artifactOperationReason,
+  artifactReaderTargetFailure,
 } from "../../resources/index.js";
 import {
   AnalysisError,
   primaryAnalysisError,
 } from "../../domain/analysisErrorBase.js";
+import type { AnalysisParameterLimit } from "../../domain/analysisSettings.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
+  AnalysisTargetFailureError,
   cancelledBy,
-  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
-import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { safeParseJson } from "../../domain/safeJson.js";
 import {
@@ -43,6 +45,10 @@ export interface WebArtifactReadContext {
   readonly callerSelected: boolean;
   /** Exact resource recovery supplied by the selected artifact owner. */
   readonly limitRecovery?: string;
+  /** Structured per-call limit supplied by the selected artifact owner. */
+  readonly limit?: (
+    cause: ArtifactReaderFailure,
+  ) => AnalysisParameterLimit | undefined;
 }
 
 /** The ParseFailure format of a captured web artifact document. */
@@ -150,14 +156,12 @@ export const webArtifactReadError = (
     context,
     signal,
   );
-  if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {
-    const cleanup = new ProviderCleanupError(
-      "captured-web-artifacts",
-      cause.cleanup.resources,
-      { reason: cause.cleanup.reason },
-      { cause, operation: context.operation },
-    );
-    bindArtifactFileCleanup(cause, cleanup);
+  const cleanup = artifactFileCleanupError(
+    cause,
+    "captured-web-artifacts",
+    context.operation,
+  );
+  if (cleanup !== undefined) {
     return analysisErrorWithCleanupDependencies(
       primary,
       cleanup,
@@ -179,29 +183,37 @@ const webArtifactPrimaryError = (
     cause instanceof ArtifactReaderFailure &&
     cause.reason === "cancelled"
   )
-    return cancelledBy(
-      context.operation,
-      carriedReason(artifactFileCancellationCause(cause)),
-    );
+    return artifactFileCancellationError(context.operation, cause);
   if (origin === "owned-or-classified" && isAbortOf(cause, signal))
     return cancelledBy(context.operation, signal);
   const selection = context.callerSelected
     ? selectedFileError({ cause, origin }, context)
     : undefined;
   if (selection !== undefined) return selection;
+  const target =
+    origin === "owned-or-classified"
+      ? artifactReaderTargetFailure(
+          context.operation,
+          context.targetPath,
+          cause,
+        )
+      : undefined;
+  if (target !== undefined) return target;
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure
-  )
+  ) {
+    const limit = cause.reason === "limit" ? context.limit?.(cause) : undefined;
     return new ArtifactOperationError(
       context.operation,
-      cause.reason,
+      artifactOperationReason(cause),
       cause.details,
       cause.reason === "limit" && context.limitRecovery !== undefined
         ? `${cause.message} ${context.limitRecovery}`
         : cause.message,
       {
         cause,
+        ...(limit === undefined ? {} : { limit }),
         ...(cause.reason === "limit" && context.limitRecovery !== undefined
           ? { remediationAction: context.limitRecovery }
           : {}),
@@ -210,6 +222,7 @@ const webArtifactPrimaryError = (
           : { integrityCheck: cause.integrityCheck }),
       },
     );
+  }
   if (
     cause instanceof Error &&
     "code" in cause &&
@@ -226,19 +239,17 @@ const webArtifactPrimaryError = (
     );
   // A malformed producer document, distinct from host I/O failures.
   const malformed =
-    cause instanceof ParseFailureError && cause.kind === "malformed"
-      ? cause
+    cause instanceof ParseFailureError && cause.failure.kind === "malformed"
+      ? cause.failure
       : undefined;
-  if (!context.callerSelected && malformed !== undefined)
-    return new ArtifactOperationError(
+  if (malformed !== undefined)
+    return new AnalysisTargetFailureError(
       context.operation,
-      "format",
-      undefined,
-      `${context.targetPath}: ${malformed.message}`,
+      context.targetPath,
+      malformed,
       { cause },
     );
-  const invalid =
-    malformed ?? (cause instanceof z.ZodError ? cause : undefined);
+  const invalid = cause instanceof z.ZodError ? cause : undefined;
   if (invalid !== undefined)
     return new AnalysisInputError(context.operation, { cause }, [
       {

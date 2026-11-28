@@ -1,5 +1,9 @@
 import type { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { DEFAULT_MCP_MAX_INPUT_ELEMENTS } from "../config/mcpInputBudget.js";
+import {
+  DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET,
+  type McpToolsListPageBudget,
+} from "../config/mcpToolsListPageBudget.js";
 import type {
   Implementation,
   Icon,
@@ -32,6 +36,7 @@ import {
   type ToolResultDelivery,
 } from "./ToolResultDelivery.js";
 import { RequestTrackingMcpServer } from "./RequestTrackingMcpServer.js";
+import { AnalysisTargetFailureError } from "../domain/analysisErrorCore.js";
 import { DISCOVER_TOOLS } from "../contracts/catalog/catalogDiscovery.js";
 import { ProgressiveToolCatalog } from "./ProgressiveToolCatalog.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
@@ -45,15 +50,26 @@ import {
   COMPACT_INPUT_SCHEMA_PRESENTATION,
 } from "../contracts/mcpSchemaPresentation.js";
 import { ErrorEvidenceTransport } from "./ErrorEvidenceTransport.js";
+import type {
+  AdvertisedToolCatalog,
+  AdvertisedToolDescriptor,
+} from "./toolCatalogSearch.js";
 import { isRecord } from "../kernel/isRecord.js";
+import { RETAINED_SUMMARY_VIEW_TOOL } from "./retainedSummaryDelivery.js";
+import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
+import { registerRetainedEvidenceResource } from "./retainedEvidenceResource.js";
 
 /** Capture caller selections and issues at the canonical SDK validation boundary. */
 const captureInputValidation = <Schema extends StandardSchemaWithJSON>(
   tool: string,
   schema: Schema,
+  pageable: boolean,
+  record: () => EvidenceWriter["recordEvidence"] | undefined,
 ): Schema => {
   const standard = schema["~standard"];
-  if (standard.vendor !== "zod") return schema;
+  // Zod issues feed field-level diagnostics; the delivery selection is
+  // captured for every vendor, since every admitted call has its own.
+  const zod = standard.vendor === "zod";
   return {
     ...schema,
     "~standard": {
@@ -63,13 +79,19 @@ const captureInputValidation = <Schema extends StandardSchemaWithJSON>(
         const capture = (
           result: Awaited<ReturnType<typeof standard.validate>>,
         ) => {
-          if (context?.tool === tool && result.issues !== undefined)
+          if (zod && context?.tool === tool && result.issues !== undefined)
             context.validation = {
               issues: result.issues as readonly z.core.$ZodIssue[],
               input: value,
             };
-          if (result.issues === undefined)
+          if (zod && result.issues === undefined)
             context?.captureCallerParameters(tool, value, result.value);
+          if (result.issues === undefined && context?.tool === tool)
+            context.deliverySelection = {
+              detail: isRecord(value) ? value.detail : undefined,
+              pageable,
+              record: record(),
+            };
           return result;
         };
         const result = standard.validate(value);
@@ -106,16 +128,110 @@ export interface StandardToolRegistration {
   readonly _meta?: Record<string, unknown>;
 }
 
+/** Lifecycle hook registered on {@link EvidenceMcpServerCore} for awaitable close. */
+export interface ServerCloseHookOptions {
+  /** Message used when wrapping failures in an {@link AggregateError}. */
+  readonly failureMessage?: string | undefined;
+  /** Wrap even a single failure in an {@link AggregateError} with `failureMessage`. */
+  readonly alwaysAggregate?: boolean | undefined;
+}
+
+interface RegisteredCloseHook {
+  readonly close: () => Promise<void>;
+  readonly failureMessage: string | undefined;
+  readonly alwaysAggregate: boolean;
+}
+
 /** Bind oversized MCP error recovery to this server's Evidence ledger. */
 export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
   private readonly registrations = new Map<string, RegisteredTool>();
+  private readonly closeHooks: RegisteredCloseHook[] = [];
+  private readonly transportCloseHooks: (() => void)[] = [];
+  private transportOncloseInstalled = false;
   private progressiveCatalog: ProgressiveToolCatalog | undefined;
+  private discoveryTool: RegisteredTool | undefined;
   private catalogChangeDepth = 0;
   private catalogChanged = false;
   analysisSettings: AnalysisSettings | undefined;
   /** Transport-owned Evidence uses the same lifetime as application writes. */
   withAdmittedAnalysis: WithAdmittedAnalysis | undefined;
   private identity: ReturnType<typeof createCatalogIdentity> | undefined;
+
+  /** Register an awaitable cleanup hook settled during {@link close}. */
+  registerCloseHook(
+    close: () => Promise<void>,
+    options: ServerCloseHookOptions = {},
+  ): void {
+    this.closeHooks.push({
+      close,
+      failureMessage: options.failureMessage,
+      alwaysAggregate: options.alwaysAggregate === true,
+    });
+  }
+
+  /** Register a synchronous cleanup notification fired when the transport closes. */
+  registerTransportCloseHook(onClose: () => void): void {
+    this.transportCloseHooks.push(onClose);
+    if (this.transportOncloseInstalled) return;
+    this.transportOncloseInstalled = true;
+    const previousOnclose = this.server.onclose;
+    this.server.onclose = () => {
+      try {
+        previousOnclose?.();
+      } finally {
+        for (const hook of this.transportCloseHooks) {
+          try {
+            hook();
+          } catch {
+            // Hooks own their own error logging; one failure must not block the rest.
+          }
+        }
+      }
+    };
+  }
+
+  /** Close only the underlying MCP protocol/transport without running registered hooks. */
+  protected closeProtocol(): Promise<void> {
+    return super.close();
+  }
+
+  /** Settle all registered close hooks without closing the underlying transport. */
+  protected async closeRegisteredHooks(): Promise<void> {
+    if (this.closeHooks.length === 0) return;
+    await this.settleCloseTasks(this.closeHooks.map((hook) => hook.close()));
+  }
+
+  override async close(): Promise<void> {
+    await this.settleCloseTasks([
+      super.close(),
+      ...this.closeHooks.map((hook) => hook.close()),
+    ]);
+  }
+
+  private async settleCloseTasks(
+    tasks: readonly Promise<void>[],
+  ): Promise<void> {
+    const results = await Promise.allSettled(tasks);
+    const failures = results.flatMap((result) =>
+      result.status === "rejected" ? [result.reason as unknown] : [],
+    );
+    if (failures.length === 0) return;
+    const alwaysAggregateHook = [...this.closeHooks]
+      .reverse()
+      .find((hook) => hook.alwaysAggregate);
+    if (alwaysAggregateHook !== undefined)
+      throw new AggregateError(
+        failures,
+        alwaysAggregateHook.failureMessage ?? "REA server cleanup failed",
+      );
+    if (failures.length === 1) throw failures[0];
+    const message =
+      [...this.closeHooks]
+        .reverse()
+        .find((hook) => hook.failureMessage !== undefined)?.failureMessage ??
+      "REA server cleanup failed";
+    throw new AggregateError(failures, message);
+  }
 
   /** Composition supplies identity without importing the canonical schema graph. */
   get catalogIdentity(): ReturnType<typeof createCatalogIdentity> {
@@ -157,12 +273,32 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
       },
       () => this.delivery,
     );
+    this.discoveryTool = adapter;
     this.progressiveCatalog = catalog;
   }
 
   override sendToolListChanged(): void {
     if (this.catalogChangeDepth > 0) this.catalogChanged = true;
     else super.sendToolListChanged();
+  }
+
+  private evidenceLookup: EvidenceLookup | undefined;
+  private servesRetainedEvidence = false;
+
+  /**
+   * Serve `rea://evidence/{evidence_id}` from the session ledger. The
+   * template is registered once, before connecting, so the resource
+   * capability is advertised; a deferred server registers it before its
+   * runtime, and its ledger lookup attaches with the runtime.
+   */
+  serveRetainedEvidence(lookup: EvidenceLookup | undefined): void {
+    if (lookup !== undefined) this.evidenceLookup = lookup;
+    if (this.servesRetainedEvidence) return;
+    this.servesRetainedEvidence = true;
+    registerRetainedEvidenceResource(this, () => ({
+      lookup: this.evidenceLookup,
+      budgetBytes: this.delivery.resultBudgetBytes,
+    }));
   }
 
   /** Attach the process-owned session only after lazy runtime construction. */
@@ -210,13 +346,15 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     private recordEvidence: EvidenceWriter["recordEvidence"] | undefined,
     public delivery: ToolResultDelivery,
     compactPresentation: CompactInputSchemaPresentation = COMPACT_INPUT_SCHEMA_PRESENTATION,
-    outputSchemaProfile: McpOutputSchemaProfile = resolveMcpOutputSchemaProfile(
-      undefined,
-    ),
+    outputSchemaProfile:
+      | McpOutputSchemaProfile
+      | "recorded" = resolveMcpOutputSchemaProfile(undefined),
     identity?: ReturnType<typeof createCatalogIdentity>,
     readonly advertisedToolFamilies:
       | ReadonlySet<string>
       | undefined = undefined,
+    recordedTools?: ReadonlySet<string>,
+    readonly toolsListPageBudget: McpToolsListPageBudget = DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET,
   ) {
     const maximumInputElements =
       options.maxToolInputElements ?? DEFAULT_MCP_MAX_INPUT_ELEMENTS;
@@ -225,6 +363,7 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     this.presentation = advertisedToolPresentation(
       outputSchemaProfile,
       compactPresentation,
+      recordedTools,
     );
     this.identity = identity;
   }
@@ -275,6 +414,8 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
                 inputSchema: captureInputValidation(
                   name,
                   presented.inputSchema as StandardSchemaWithJSON,
+                  this.advertisesTool(RETAINED_SUMMARY_VIEW_TOOL),
+                  () => this.recordEvidence,
                 ),
               }),
           ...(outputSchema === undefined ? {} : { outputSchema }),
@@ -308,9 +449,19 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
                 input,
                 normalized(context as ServerContext),
               );
-        const result = await (this.analysisSettings === undefined
-          ? invoke()
-          : this.analysisSettings.run(invoke));
+        let result: Awaited<ReturnType<typeof invoke>>;
+        try {
+          result = await (this.analysisSettings === undefined
+            ? invoke()
+            : this.analysisSettings.run(invoke));
+        } catch (cause: unknown) {
+          // The SDK flattens a thrown handler failure into one text block and
+          // JSON-RPC errors are for protocol faults, so a target failure that
+          // escapes a handler is still returned as a projected tool result.
+          // Its message can name target bytes, so it is marked as such.
+          if (!(cause instanceof AnalysisTargetFailureError)) throw cause;
+          result = this.delivery.toErrorToolResult(cause, true);
+        }
         if (request !== undefined)
           request.projectedErrorEncoding = projectedErrorEncoding(result);
         return result;
@@ -411,6 +562,31 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     return registered;
   }
 
+  /** Snapshot currently enabled (advertised) tools for unknown-tool hints. */
+  private advertisedToolCatalog(): AdvertisedToolCatalog {
+    const tools: AdvertisedToolDescriptor[] = [];
+    for (const [name, registered] of this.registrations) {
+      if (registered.enabled)
+        tools.push({ name, description: registered.description });
+    }
+    const discoveryAvailable =
+      this.progressiveCatalog !== undefined &&
+      this.discoveryTool?.enabled === true;
+    if (discoveryAvailable)
+      tools.push({
+        name: DISCOVER_TOOLS.name,
+        description:
+          this.discoveryTool?.description ?? DISCOVER_TOOLS.description,
+      });
+    return {
+      tools,
+      discoveryAvailable,
+      ...(discoveryAvailable && this.progressiveCatalog !== undefined
+        ? { unloadedTools: this.progressiveCatalog.unloadedTools() }
+        : {}),
+    };
+  }
+
   /** Preserve the SDK transport lifecycle while retaining oversized errors. */
   override connect(transport: Transport): Promise<void> {
     // HTTP reuses the analysis server after draining the previous transport.
@@ -425,6 +601,8 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
         this.presentation.output,
         this.maximumInputElements,
         this.evidenceReferenceAlternatives,
+        this.toolsListPageBudget,
+        () => this.advertisedToolCatalog(),
       ),
     );
   }

@@ -1,3 +1,7 @@
+import {
+  availableFixtureProvider,
+  supportedFixtureTarget,
+} from "../../../tests/fixtures/analysisExecution.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
@@ -13,9 +17,7 @@ import {
   type AnalysisProvider,
   type AnalysisProviderCandidate,
   type CapabilityDescriptor,
-  type ProviderAvailability,
   type ProviderIdentity,
-  type ProviderTargetSupport,
 } from "../../ports/AnalysisProvider.js";
 import { createAnalysisProfile } from "../../domain/analysisProfile.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
@@ -456,18 +458,8 @@ const killableDeepProvider = (options: {
         ...(options.live ? { cachePolicy: "live" as const } : {}),
       },
     ],
-    inspectAvailability: (): ProviderAvailability => ({
-      status: "available",
-      code: null,
-      reason: null,
-      diagnostics: {},
-    }),
-    inspectTargetSupport: (): ProviderTargetSupport => ({
-      status: "supported",
-      code: null,
-      reason: null,
-      diagnostics: {},
-    }),
+    inspectAvailability: availableFixtureProvider,
+    inspectTargetSupport: supportedFixtureTarget,
     resolveAnalysisProfile: () =>
       Promise.resolve(
         ok({

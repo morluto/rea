@@ -332,11 +332,6 @@ it("reconstructs every graph field from dictionary pages without changing nulls,
       coverage.diagnostic_ids === undefined
         ? {}
         : { diagnostics: coverage.diagnostic_ids.map((i) => messages[i]!) };
-    const directions =
-      "limited_directions" in coverage &&
-      coverage.limited_directions !== undefined
-        ? { limited_directions: coverage.limited_directions }
-        : {};
     const originalCoverage =
       coverage.status === "complete"
         ? { status: "complete" as const, ...diagnostics }
@@ -344,13 +339,13 @@ it("reconstructs every graph field from dictionary pages without changing nulls,
           ? {
               status: "partial" as const,
               limitations: coverage.limitation_ids.map((i) => messages[i]!),
-              ...directions,
+              limited_directions: coverage.limited_directions,
               ...diagnostics,
             }
           : {
               status: "unknown" as const,
               reason: messages[coverage.reason_id]!,
-              ...directions,
+              limited_directions: coverage.limited_directions,
               ...diagnostics,
             };
     decoded[row.level] = [
@@ -608,8 +603,16 @@ it("pages recorded empty graph levels without inventing nodes or dropping their 
 });
 
 it.each([
-  { status: "partial" as const, limitations: ["Unresolved indirect edges"] },
-  { status: "unknown" as const, reason: "Provider did not establish coverage" },
+  {
+    status: "partial" as const,
+    limitations: ["Unresolved indirect edges"],
+    limited_directions: ["callees"] as ["callees"],
+  },
+  {
+    status: "unknown" as const,
+    reason: "Provider did not establish coverage",
+    limited_directions: ["callees"] as ["callees"],
+  },
 ])(
   "keeps $status relationship coverage on every context facet",
   async (coverage) => {

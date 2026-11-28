@@ -1,5 +1,5 @@
 import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
-import { createHash } from "node:crypto";
+import { sha256 } from "../../support/sha256.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -55,9 +55,6 @@ const sliceTest = mcpTest.extend<{
   },
 });
 
-const sha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
-
 const goSlices = () => {
   const intel = createGoBinaryFixture({
     format: "macho",
@@ -86,6 +83,14 @@ const issues = (response: unknown) =>
       }),
     })
     .parse(parseMcpToolError(response as never)).error;
+
+/** A universal file's own format refusal: a target fault, no field to correct. */
+const containerRefusal = (response: unknown) => {
+  const { error } = parseMcpToolError(response as never);
+  expect(error).not.toHaveProperty("details.issues");
+  expect(error).not.toHaveProperty("recovery");
+  return error;
+};
 
 sliceTest(
   "reads the selected Go slice of a universal Mach-O with file-relative provenance",
@@ -249,7 +254,7 @@ sliceTest(
     const damaged = await write("damaged", truncated);
     for (const architecture of [undefined, "arm64"] as const)
       expect(
-        issues(
+        containerRefusal(
           await client.callTool({
             name: "inspect_go_binary",
             arguments: {
@@ -257,11 +262,37 @@ sliceTest(
               ...(architecture === undefined ? {} : { architecture }),
             },
           }),
-        ).details.issues[0],
+        ),
       ).toMatchObject({
-        path: ["path"],
-        message: expect.stringContaining(`Selected artifact ${damaged}: FAT`),
+        code: "unsupported_target",
+        details: {
+          path: damaged,
+          failure_kind: "truncated",
+          format: "macho",
+          reason: "FAT architecture 0 slice range extends beyond the file",
+        },
       });
+
+    // A FAT table cut off by the file's end is truncated, not corrupt: the
+    // container reader measured both the file and the table it declares.
+    const cutOff = await write("cut-off", truncated.subarray(0, 20));
+    expect(
+      containerRefusal(
+        await client.callTool({
+          name: "inspect_go_binary",
+          arguments: { path: cutOff, architecture: "arm64" },
+        }),
+      ),
+    ).toMatchObject({
+      code: "unsupported_target",
+      details: {
+        path: cutOff,
+        failure_kind: "truncated",
+        format: "macho",
+        available_bytes: 20,
+        required_bytes: 28,
+      },
+    });
 
     // The FAT table and the slice header must agree before the slice is read.
     const disagreeing = await write(
@@ -276,21 +307,20 @@ sliceTest(
       ]).bytes,
     );
     expect(
-      issues(
+      containerRefusal(
         await client.callTool({
           name: "inspect_go_binary",
           arguments: { path: disagreeing, architecture: "arm64" },
         }),
       ),
     ).toMatchObject({
-      code: "invalid_request",
+      code: "unsupported_target",
       details: {
-        issues: [
-          {
-            path: ["path"],
-            message: `Selected artifact ${disagreeing}: FAT architecture 0 CPU type/subtype disagrees with its Mach-O header`,
-          },
-        ],
+        path: disagreeing,
+        failure_kind: "malformed",
+        format: "macho",
+        reason:
+          "FAT architecture 0 CPU type/subtype disagrees with its Mach-O header",
       },
     });
   },
@@ -355,6 +385,62 @@ sliceTest(
 );
 
 sliceTest(
+  "selects arm64e and arm64e.x1 slices of one file by their exact subtype names",
+  async ({ slices: { client, write } }) => {
+    // macOS 27 /bin/ls ships x86_64, arm64e and arm64e.x1 slices.
+    // lipo -thin and otool -arch name each arm64e subtype exactly.
+    const go = (goVersion: string) =>
+      createGoBinaryFixture({ format: "macho", goVersion }).bytes;
+    const universal = universalMacho([
+      { bytes: go("go1.25.0"), cpuType: CPU_ARM64, cpuSubtype: 0x80000002 },
+      { bytes: go("go1.26.1"), cpuType: CPU_ARM64, cpuSubtype: 0x8000000c },
+    ]);
+    const [arm64e, x1] = universal.slices;
+    if (arm64e === undefined || x1 === undefined)
+      throw new Error("expected two slices");
+    const path = await write("arm64e-and-arm64e-x1", universal.bytes);
+    const advertised = (await client.listTools()).tools.find(
+      ({ name }) => name === "inspect_go_binary",
+    );
+    if (advertised === undefined)
+      throw new Error("Missing advertised Go input schema");
+    const validateInput = new Ajv2020({
+      strict: false,
+      validateFormats: false,
+    }).compile(advertised.inputSchema);
+    const read = async (architecture: string) => {
+      expect(validateInput({ path, architecture })).toBe(true);
+      const response = await client.callTool({
+        name: "inspect_go_binary",
+        arguments: { path, architecture },
+      });
+      expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
+      return goBinarySchema.parse(
+        toolContract("inspect_go_binary").outputSchema.parse(
+          response.structuredContent,
+        ).normalized_result,
+      );
+    };
+    const plain = await read("arm64e");
+    expect(plain).toMatchObject({
+      selected_slice: { offset: arm64e.offset, cpu_subtype: 0x80000002 },
+      build_info: { go_version: "go1.25.0" },
+    });
+    expect(plain.limitations).toContain(
+      `Only the selected arm64e slice (arm64 (subtype 0x80000002) at file offset ${String(arm64e.offset)}) was read; this universal Mach-O also holds arm64 (subtype 0x8000000c) at file offset ${String(x1.offset)} (architecture arm64e.x1 selects it).`,
+    );
+    const variant = await read("arm64e.x1");
+    expect(variant).toMatchObject({
+      selected_slice: { offset: x1.offset, cpu_subtype: 0x8000000c },
+      build_info: { go_version: "go1.26.1" },
+    });
+    expect(variant.limitations).toContain(
+      `Only the selected arm64e.x1 slice (arm64 (subtype 0x8000000c) at file offset ${String(x1.offset)}) was read; this universal Mach-O also holds arm64 (subtype 0x80000002) at file offset ${String(arm64e.offset)} (architecture arm64e selects it).`,
+    );
+  },
+);
+
+sliceTest(
   "refuses a subtype that is missing or shared instead of choosing by preference",
   async ({ slices: { client, write } }) => {
     const slice = (cpuSubtype: number) => ({
@@ -392,6 +478,12 @@ sliceTest(
     const missing = await refusal("arm64-only", [0, 1], "arm64e");
     expect(missing).toMatchObject({ path: ["architecture"] });
     expect(missing?.message).not.toMatch(/Select architecture/u);
+    // arm64e does not read an arm64e.x1 slice, as lipo -thin arm64e does not.
+    const variantOnly = await refusal("arm64e-x1-only", [0x8000000c], "arm64e");
+    expect(variantOnly).toMatchObject({ path: ["architecture"] });
+    expect(variantOnly?.message).toMatch(
+      /no slice has the arm64e subtype\. Select architecture arm64 or arm64e\.x1\.$/u,
+    );
   },
 );
 
@@ -408,15 +500,20 @@ sliceTest(
     const path = await write("overlapping", universal.bytes);
     for (const architecture of ["arm64", "arm64e"])
       expect(
-        issues(
+        containerRefusal(
           await client.callTool({
             name: "inspect_go_binary",
             arguments: { path, architecture },
           }),
-        ).details.issues[0],
+        ),
       ).toMatchObject({
-        path: ["path"],
-        message: `Selected artifact ${path}: Mach-O slices 0 and 1 overlap.`,
+        code: "unsupported_target",
+        details: {
+          path,
+          failure_kind: "malformed",
+          format: "macho",
+          reason: "Mach-O slices 0 and 1 overlap.",
+        },
       });
   },
 );

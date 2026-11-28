@@ -5,10 +5,8 @@ import { wasmArtifactModule } from "../composition/wasm.js";
 import { COMPARE_WASM_INTERFACES_CONTRACT } from "../contracts/wasm/wasmComparisonContracts.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
-import {
-  inspectWithService,
-  registerContractCommand,
-} from "./contractCommand.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { inspectWithService } from "./contractCommandRunners.js";
 import {
   evidenceBundleOption,
   runEvidenceInputCommand,
@@ -53,7 +51,6 @@ export const registerWasmCommands = (
     logger,
     wasmArtifactModule.contract,
     {
-      command: wasmArtifactModule.cliCommand,
       description: "Inspect an explicit local WASM artifact with WABT",
       positionals: ["path"],
       callerPaths: ["path", "glue_paths", "candidate_paths"],

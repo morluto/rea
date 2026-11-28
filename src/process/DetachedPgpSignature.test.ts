@@ -14,7 +14,7 @@ beforeAll(async () => {
     type: "ecc",
     curve: "curve25519Legacy",
     userIDs: [{ name: "Fixture publisher" }],
-    subkeys: [{ sign: true }, { sign: true }],
+    subkeys: [{ sign: true }, { sign: true, curve: "brainpoolP256r1" }],
     format: "armored",
   });
   const privateKey = await readPrivateKey({ armoredKey: generated.privateKey });
@@ -51,7 +51,7 @@ const verify = ({
 } = {}) => verifyDetachedPgpSignature(payload, signature, key, pin, signal);
 
 describe("detached binary PGP publisher verification", () => {
-  it("accepts independently selected signing subkeys through one pinned primary", async () => {
+  it("accepts Ed25519 and Brainpool signing subkeys through one pinned primary", async () => {
     expect(signatures).toHaveLength(2);
     for (const [index, signature] of signatures.entries())
       expect(await verify({ signature })).toEqual({
@@ -70,11 +70,16 @@ describe("detached binary PGP publisher verification", () => {
     });
   });
 
+  it("rejects a changed payload with either signing subkey", async () => {
+    const payload = Buffer.from("Binary package fixture\0\xff", "latin1");
+    for (const signature of signatures)
+      expect(await verify({ payload, signature })).toMatchObject({
+        ok: false,
+        error: { reason: "invalid_signature" },
+      });
+  });
+
   it.each([
-    {
-      defect: "changed payload",
-      payload: Buffer.from("Binary package fixture\0\xff", "latin1"),
-    },
     { defect: "malformed signature", signature: Uint8Array.of(1, 2, 3) },
     { defect: "malformed public key", key: "malformed" },
   ])("refuses $defect", async (input) => {

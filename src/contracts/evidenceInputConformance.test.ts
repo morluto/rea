@@ -5,8 +5,10 @@ import { analysisViewSourceSchema } from "../domain/analysisView/analysisViewReq
 import { evidenceSchema } from "../domain/evidence.js";
 import { evidenceBundleSchema } from "../domain/evidenceBundle.js";
 import {
+  declareBorrowedEvidenceInput,
   getEvidenceInputContract,
   isDeclaredEvidenceInput,
+  isEvidenceReferenceAlternative,
 } from "../domain/evidenceInputContract.js";
 import {
   evidenceFileReferenceSchema,
@@ -23,9 +25,7 @@ owners.add(evidenceSchema, { owner: "record" });
 owners.add(retainedEvidenceReferenceSchema, { owner: "reference" });
 for (const schema of [
   evidenceBundleSchema,
-  evidenceSourceInputSchema,
   evidenceFileReferenceSchema,
-  analysisViewSourceSchema,
   exportEnvironmentBundleInputSchema.shape.source,
 ])
   owners.add(schema, { owner: "source-or-bundle" });
@@ -143,7 +143,10 @@ const declarationIssues = (root: z.ZodType): string[] => {
         );
       return;
     }
-    const owner = owners.get(schema)?.owner;
+    // A declared inline-or-reference source owns its reference.
+    const owner = isEvidenceReferenceAlternative(schema)
+      ? "source-or-bundle"
+      : owners.get(schema)?.owner;
     if (owner === "source-or-bundle") return;
     if (owner === "record" || owner === "reference") {
       problems.add(
@@ -245,5 +248,30 @@ describe("public Evidence input declarations", () => {
       "input.default.union[0].source: Evidence union selection requires prefault instead of a skipping default",
     ]);
     expect(declarationIssues(choice.prefault(fallback))).toEqual([]);
+  });
+
+  it("refuses to borrow a declaration that resolves by its parsed union branch", () => {
+    const choice = z.union([
+      z.strictObject({
+        kind: z.literal("source"),
+        source: evidenceInputSchema,
+      }),
+      z.strictObject({ kind: z.literal("none") }),
+    ]);
+    // The borrowing parser never runs the union's branch capture, so its
+    // Evidence would pass through unvisited.
+    expect(() =>
+      getEvidenceInputContract(
+        declareBorrowedEvidenceInput(z.unknown().nonoptional(), choice),
+      ),
+    ).toThrow("cannot select union branches");
+    expect(
+      getEvidenceInputContract(
+        declareBorrowedEvidenceInput(
+          z.unknown().nonoptional(),
+          z.array(evidenceInputSchema),
+        ),
+      ).hasEvidence,
+    ).toBe(true);
   });
 });

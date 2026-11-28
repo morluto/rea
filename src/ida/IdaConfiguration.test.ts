@@ -125,6 +125,86 @@ it("rejects registration growth beyond the byte limit after descriptor admission
   }
 });
 
+it.each([
+  ["admission", "denied"],
+  ["growth", "denied"],
+  ["admission", "cancelled"],
+  ["admission", "cancelled-and-denied"],
+] as const)(
+  "keeps the 64 KiB rejection from the %s size check through a %s close",
+  async (branch, closeOutcome) => {
+    const root = await createTestTempDirectory("rea-ida-config-");
+    const path = join(root, "mcp.json");
+    await writeFile(
+      path,
+      branch === "admission"
+        ? ATTACHED_REGISTRATION.padEnd(65_537)
+        : ATTACHED_REGISTRATION,
+    );
+    const retained: { close(): Promise<void> }[] = [];
+    const owner: RetainedResourceScope = {
+      retain: (resource) => retained.push(resource),
+      run: (operation) => operation(),
+    };
+    const openRegularFile = regularFile.openRegularFile;
+    const admission =
+      branch === "growth"
+        ? vi
+            .spyOn(regularFile, "openRegularFile")
+            .mockImplementation(async (...args) => {
+              const source = await openRegularFile(...args);
+              await appendFile(path, " ".repeat(65_536));
+              return source;
+            })
+        : undefined;
+    const controller = new AbortController();
+    const reason = new Error("cancel while closing the oversized registration");
+    const close = OwnedFileHandle.prototype.close;
+    const denial = new Error("descriptor close denied");
+    const closeSpy = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementationOnce(function (this: OwnedFileHandle) {
+        if (closeOutcome !== "denied") controller.abort(reason);
+        return closeOutcome === "cancelled"
+          ? close.call(this)
+          : Promise.reject(denial);
+      });
+    try {
+      const result = await readIdaConfiguration(path, {
+        resourceScope: owner,
+        signal: controller.signal,
+      });
+      if (result.ok) throw new Error("expected the size rejection");
+      expect(result.error.message).toContain("64 KiB");
+      if (closeOutcome !== "denied") {
+        expect(result.error.secondaryFailures).toEqual([
+          expect.objectContaining({
+            _tag: "AnalysisCancelledError",
+            cause: reason,
+          }),
+        ]);
+      }
+      if (closeOutcome === "cancelled") {
+        expect(result.error.cleanupIncomplete).toBe(false);
+        expect(retained).toHaveLength(0);
+      } else {
+        expect(result.error.cleanup).toMatchObject({
+          reason: expect.stringContaining("descriptor close denied"),
+          resources: [path],
+        });
+        expect(result.error.cleanupIncomplete).toBe(true);
+        expect(retained).toHaveLength(1);
+        await rm(path);
+        await retained[0]!.close();
+        expect(result.error.cleanupIncomplete).toBe(false);
+      }
+    } finally {
+      admission?.mockRestore();
+      closeSpy.mockRestore();
+    }
+  },
+);
+
 describe("IDA registration descriptor ownership", () => {
   it("retains the exact descriptor after close denial and resolves its error only after retry", async () => {
     const root = await createTestTempDirectory("rea-ida-config-");
@@ -138,24 +218,28 @@ describe("IDA registration descriptor ownership", () => {
     const close = OwnedFileHandle.prototype.close;
     let denied = false;
     const denial = new Error("descriptor close denied");
-    vi.spyOn(OwnedFileHandle.prototype, "close").mockImplementation(function (
-      this: OwnedFileHandle,
-    ) {
-      if (!denied) {
-        denied = true;
-        return Promise.reject(denial);
-      }
-      return close.call(this);
-    });
-    const result = await readIdaConfiguration(path, {
-      resourceScope: owner,
-    });
-    if (result.ok) throw new Error("expected close failure");
-    expect(result.error.cleanupIncomplete).toBe(true);
-    expect(retained).toHaveLength(1);
-    await rm(path);
-    await retained[0]!.close();
-    expect(result.error.cleanupIncomplete).toBe(false);
+    const closeSpy = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementation(function (this: OwnedFileHandle) {
+        if (!denied) {
+          denied = true;
+          return Promise.reject(denial);
+        }
+        return close.call(this);
+      });
+    try {
+      const result = await readIdaConfiguration(path, {
+        resourceScope: owner,
+      });
+      if (result.ok) throw new Error("expected close failure");
+      expect(result.error.cleanupIncomplete).toBe(true);
+      expect(retained).toHaveLength(1);
+      await rm(path);
+      await retained[0]!.close();
+      expect(result.error.cleanupIncomplete).toBe(false);
+    } finally {
+      closeSpy.mockRestore();
+    }
   });
   it("preserves the caller's exact cancellation reason", async () => {
     const root = await createTestTempDirectory("rea-ida-config-");

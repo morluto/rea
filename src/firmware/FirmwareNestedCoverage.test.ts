@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256 as hash } from "../../tests/support/sha256.js";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
@@ -15,8 +15,6 @@ import {
 import { publishFirmwareExtraction } from "./FirmwarePublication.js";
 import { normalizeUnblobReport } from "./FirmwareReports.js";
 
-const hash = (bytes: Buffer) =>
-  createHash("sha256").update(bytes).digest("hex");
 const known = (id: string, start: number, end: number) => ({
   __typename__: "ChunkReport",
   id,

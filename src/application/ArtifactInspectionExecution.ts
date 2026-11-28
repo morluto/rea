@@ -10,11 +10,13 @@ import type {
 } from "../ports/AnalysisProvider.js";
 import { parseAnalysisInput } from "./AnalysisInput.js";
 import {
-  projectRetainedAnalysis,
   requireAnalysisViewRetention,
   type AnalysisViewRetention,
-} from "./analysisView/AnalysisViewService.js";
-import { completeProviderEvidence } from "./ProviderOperationExecution.js";
+} from "./analysisView/AnalysisViewRetention.js";
+import {
+  completeProviderEvidence,
+  retainCompletedArtifactEvidence,
+} from "./ProviderOperationExecution.js";
 
 /** Provider boundary for a single-operation artifact inspection. */
 export interface ArtifactInspectionPort<TParameters, TReport> {
@@ -42,6 +44,8 @@ export interface ArtifactInspectionSpec<TInput, TParameters, TReport> {
     identity: ProviderIdentity,
     parameters: TParameters,
   ) => Evidence;
+  /** The provider retains a complete report when finalization fails. */
+  readonly retainCompletedReport?: true;
   readonly selectRetainedView?: (
     input: TInput,
   ) => AnalysisViewRequest | undefined;
@@ -77,16 +81,32 @@ export const executeArtifactInspection = async <TInput, TParameters, TReport>(
   }
   const parameters = spec.toParameters(input.value);
   const inspected = await spec.provider.inspect(parameters, options);
-  if (!inspected.ok) return inspected;
-  const checked = spec.outputSchema.safeParse(inspected.value);
+  const report = inspected.ok
+    ? inspected.value
+    : spec.retainCompletedReport === true
+      ? inspected.error.partialObservation
+      : undefined;
+  if (!inspected.ok && report === undefined) return inspected;
+  const checked = spec.outputSchema.safeParse(report);
   if (!checked.success || !spec.validateReport(checked.data, parameters))
-    return err(
-      new AnalysisOutputError(spec.operation, spec.invalidOutputMessage),
-    );
-  const completed = completeProviderEvidence(
-    spec.buildEvidence(checked.data, spec.provider.identity, parameters),
-    options?.signal,
+    return inspected.ok
+      ? err(new AnalysisOutputError(spec.operation, spec.invalidOutputMessage))
+      : inspected;
+  const evidence = spec.buildEvidence(
+    checked.data,
+    spec.provider.identity,
+    parameters,
   );
+  if (!inspected.ok) {
+    retainCompletedArtifactEvidence(inspected.error, evidence);
+    return inspected;
+  }
+  const completed = completeProviderEvidence(evidence, options?.signal);
   if (!completed.ok || retainedView === undefined) return completed;
-  return projectRetainedAnalysis(completed.value, retention, retainedView);
+  const service = await import("./analysisView/AnalysisViewService.js");
+  // The awaited import is the last finalization step; a late abort must not
+  // record or project the summary as success.
+  const ready = completeProviderEvidence(completed.value, options?.signal);
+  if (!ready.ok) return ready;
+  return service.projectRetainedAnalysis(ready.value, retention, retainedView);
 };

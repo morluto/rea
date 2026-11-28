@@ -7,7 +7,10 @@ import {
   peHardeningImage,
 } from "../../src/native/hardening/BinaryHardening.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { parseMcpToolError } from "../fixtures/mcpToolError.js";
+import {
+  expectAdapterErrorParity,
+  parseMcpToolError,
+} from "../fixtures/mcpToolError.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
 const states = (
@@ -87,6 +90,10 @@ cliTest(
     });
     const response = await call("inspect_binary_hardening", { path: foreign });
     expect(response.isError).toBe(true);
-    expect(parseMcpToolError(response)).toEqual({ error: rejected.json });
+    expectAdapterErrorParity(
+      parseMcpToolError(response).error,
+      rejected.json,
+      "inspect_binary_hardening",
+    );
   },
 );

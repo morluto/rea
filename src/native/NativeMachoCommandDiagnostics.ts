@@ -39,31 +39,28 @@ const UNSUPPORTED_SLICE_DIAGNOSTICS: ReadonlySet<string> = new Set([
   "old arm64e bind opcodes not supported",
 ]);
 
-const dyldFailureDiagnostics = (
-  capture: NativeCommandCapture,
-  outputs: readonly string[],
-): readonly string[] =>
-  capture.tool !== "dyld_info" ||
-  capture.exitCode === null ||
-  capture.exitCode === 0 ||
-  capture.signal !== null
-    ? []
-    : outputs.flatMap((output) =>
-        withoutEchoedPathHeader(output, capture.arguments.at(-1))
-          .split(/\r?\n/u)
-          .map((line) => line.trim().replace(/^(?:dyld_info:\s*)/u, ""))
-          .filter(Boolean),
-      );
-
-/** Admit the observed refusal only when it is the sole settled diagnostic. */
+/** Xcode 16 and 26 use different exit codes for the same sole refusal. */
 const dyldFailureDiagnostic = (
   capture: NativeCommandCapture,
 ): string | null => {
-  const diagnostics = dyldFailureDiagnostics(capture, [
-    capture.stdout,
-    capture.stderr,
-  ]);
-  return diagnostics.length === 1 ? (diagnostics[0] ?? null) : null;
+  if (
+    capture.tool !== "dyld_info" ||
+    capture.exitCode === null ||
+    capture.signal !== null
+  )
+    return null;
+
+  let diagnostic: string | null = null;
+  for (const output of [capture.stdout, capture.stderr]) {
+    const body = withoutEchoedPathHeader(output, nativeCommandOperand(capture));
+    for (const match of body.matchAll(/[^\n]+/gu)) {
+      const line = match[0].trim().replace(/^(?:dyld_info:\s*)/u, "");
+      if (!line) continue;
+      if (diagnostic !== null) return null;
+      diagnostic = line;
+    }
+  }
+  return diagnostic;
 };
 
 /** Keep missing-UUID admission limited to its observed stdout-only refusal. */
@@ -95,13 +92,15 @@ export const isUnbackedTextDyldFailure = (
 export const parseDyldFileTypeRefusal = (
   capture: NativeCommandCapture,
 ): {
-  readonly fileType: "3" | "4";
+  readonly fileType: 3 | 4;
   readonly diagnostic: string;
 } | null => {
   const diagnostic = dyldFailureDiagnostic(capture);
   if (diagnostic === null) return null;
-  const fileType = /^unknown (?:mh\.)?filetype ([34])$/u.exec(diagnostic)?.[1];
-  return fileType === "3" || fileType === "4" ? { fileType, diagnostic } : null;
+  const fileType = Number(
+    /^unknown (?:mh\.)?filetype ([34])$/u.exec(diagnostic)?.[1],
+  );
+  return fileType === 3 || fileType === 4 ? { fileType, diagnostic } : null;
 };
 
 /** Complete captures come from the settled native command owner. */

@@ -1,10 +1,9 @@
 import { expect, it } from "vitest";
+import { compareInspectionDimension } from "../../support/browser/webCaptureComparison.js";
 
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
 import type { WebPageInspection } from "../../../src/domain/browserObservationSchemas.js";
-import { compareWebCaptures } from "../../../src/domain/webCaptureDiff.js";
-import { compareWebCapturesInputSchema } from "../../../src/domain/webCaptureDiffSchemas.js";
 import {
   startFakeCdpBrowser,
   type FakeOptions,
@@ -30,13 +29,7 @@ const inspect = async (options: FakeOptions, includeFingerprints = true) => {
   return { browser, capture };
 };
 
-const compareStorage = (before: WebPageInspection, after: WebPageInspection) =>
-  compareWebCaptures(
-    compareWebCapturesInputSchema.parse({
-      before: { inspection: before },
-      after: { inspection: after },
-    }),
-  ).dimensions.storage;
+const compareStorage = compareInspectionDimension("storage");
 
 it.each([
   ["CacheStorage.requestCacheNames", {}, []],

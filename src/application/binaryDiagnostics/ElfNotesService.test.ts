@@ -1,51 +1,39 @@
-import { parseEvidence } from "../../domain/evidence.js";
+import { expectInvalidInspectionInputs } from "../../../tests/support/expectInvalidInspectionInputs.js";
+import { lateCancellationEvidence } from "../../../tests/support/lateCancellationEvidence.js";
 import { expect, it } from "vitest";
 import { ElfNotesService } from "./ElfNotesService.js";
 import { ELF_NOTES_PROVIDER } from "../../domain/investigationProviders.js";
 import { createHash } from "node:crypto";
 import { inspectElfNotesInputSchema } from "../../domain/native/elfNotes.js";
 import { elfNoteFixture } from "../../native/elf/ElfNotes.fixture.js";
-import { parseElfNotes } from "../../native/elf/ElfNoteParser.js";
+import { parseElfNotesFromHandle } from "../../native/elf/ElfNoteParser.js";
 import { ok } from "../../domain/result.js";
 import {
   AnalysisCancelledError,
-  AnalysisInputError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
+import { bufferByteSource } from "../../domain/byteSource.js";
 
 const identity = ELF_NOTES_PROVIDER;
 const path = "/artifacts/app";
 const bytes = elfNoteFixture({ ownership: "none" });
-const report = parseElfNotes(
-  bytes,
+const report = await parseElfNotesFromHandle(
+  bufferByteSource(bytes, 4096),
   {
     path,
     sha256: createHash("sha256").update(bytes).digest("hex"),
     bytes: bytes.length,
   },
   inspectElfNotesInputSchema.parse({ path }),
+  async () => {},
 );
 
-it("rejects a relative path and extra arguments before reading", async () => {
-  let calls = 0;
-  const service = new ElfNotesService({
-    identity,
-    inspect: () => {
-      calls += 1;
-      return Promise.resolve(ok(report));
-    },
-  });
-  const relative = await service.inspect({ path: "app" });
-  const extra = await service.inspect({
-    path: report.artifact.path,
-    extra: true,
-  });
-  expect(relative.ok).toBe(false);
-  expect(extra.ok).toBe(false);
-  if (!relative.ok) expect(relative.error).toBeInstanceOf(AnalysisInputError);
-  if (!extra.ok) expect(extra.error).toBeInstanceOf(AnalysisInputError);
-  expect(calls).toBe(0);
-});
+it("rejects a relative path and extra arguments before reading", () =>
+  expectInvalidInspectionInputs(
+    report,
+    "app",
+    (inspect) => new ElfNotesService({ identity, inspect }),
+  ));
 
 it("records the selected ELF and an absent note table", async () => {
   const result = await new ElfNotesService({
@@ -106,24 +94,31 @@ it("retains an examined empty table and rejects an uncounted table", async () =>
 });
 
 it("retains a completed observation when the caller cancels as the provider completes", async () => {
-  const controller = new AbortController();
-  const reason = { request: "late ElfNotes cancellation" };
-  const service = new ElfNotesService({
-    identity,
-    inspect: () => {
-      controller.abort(reason);
-      return Promise.resolve(ok(report));
-    },
-  });
-  const result = await service.inspect(
-    { path: report.artifact.path },
-    { signal: controller.signal },
+  const evidence = await lateCancellationEvidence(
+    report,
+    "late ElfNotes cancellation",
+    (inspect) => new ElfNotesService({ identity, inspect }),
   );
-  if (result.ok) throw new Error("Expected late cancellation");
-  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
-  expect(result.error.cause).toBe(reason);
-  expect(parseEvidence(result.error.partialObservation)).toMatchObject({
+  expect(evidence).toMatchObject({
     operation: "inspect_elf_notes",
     normalized_result: report,
   });
+});
+
+it("keeps a failed report for a different artifact outside admitted Evidence", async () => {
+  const foreignReport = {
+    ...report,
+    artifact: { ...report.artifact, path: "/artifacts/other" },
+  };
+  const failure = new AnalysisCancelledError("inspect_elf_notes", {
+    partialObservation: foreignReport,
+  });
+  const service = new ElfNotesService({
+    identity,
+    inspect: async () => ({ ok: false, error: failure }),
+  });
+  const result = await service.inspect({ path });
+  if (result.ok) throw new Error("Expected the original provider failure");
+  expect(result.error).toBe(failure);
+  expect(result.error.partialObservation).toBe(foreignReport);
 });

@@ -15,7 +15,6 @@ import {
   javaScriptExpressionWrapperTarget,
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
-  unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
   resolveSemanticBindingState,
@@ -26,6 +25,7 @@ import {
   type LocalCallableResolution,
   parameterBindings,
   resolveLocalCallables,
+  unwrapPureSemanticSequenceExpression,
 } from "./javascriptSemanticCallResolution.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
@@ -247,7 +247,7 @@ const retainedArguments = (
     if (node === null) continue;
     const valueNode =
       t.isExpression(node) && !t.isSpreadElement(node)
-        ? unwrapJavaScriptExpression(node).node
+        ? unwrapPureSemanticSequenceExpression(node, state)
         : null;
     retained.push({
       index,
@@ -276,7 +276,7 @@ const directLiteral = (
     parsed.status === "unknown" &&
     parsed.resourceLimit === "primitive-bytes"
   ) {
-    state.valueResourceLimits.add(parsed.resourceLimit);
+    state.observations.valueResourceLimits.add(parsed.resourceLimit);
     return { literalResourceLimit: parsed.resourceLimit };
   }
   return {};

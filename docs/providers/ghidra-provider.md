@@ -84,7 +84,7 @@ request ceiling.
 | Symbols          | `list_names` includes address-bearing memory and external symbols, including dynamic symbols, while excluding variable and no-address namespace records. Each item reports primary, dynamic, external, symbol type, and source facts.                                                           |
 | Procedures       | Both non-external and external functions are listed. A local thunk remains distinct from its resolved target; exact and qualified name lookup fails on ambiguity rather than guessing.                                                                                                          |
 | Strings          | Only Ghidra-defined string `Data` is observed. Items report charset, byte length, and whether a required null terminator is missing. The API cannot distinguish a present terminator from fixed/Pascal layouts when no terminator is missing, so that state is named `present_or_not_required`. |
-| Memory           | Memory-block end addresses are exclusive. Read/write/execute, initialization, overlay, address space, and image base are direct Ghidra observations.                                                                                                                                            |
+| Memory           | Memory-block end addresses are exclusive. Read/write/execute, initialization, overlay, address space, and image base are direct Ghidra observations, after any memory-map preparation a lane documents, such as the [RISC-V load layout](ghidra-riscv.md#load-layout).                          |
 | Inventory        | Procedure, symbol, and string listings plus searches return the complete matching collection in one response; callers do not provide offsets or result-count limits.                                                                                                                            |
 | Search           | Literal and Java-regex searches return every match in the immutable provider-defined inventory; string search does not cover every text sequence in artifact bytes. Search waits for a reply or caller cancellation; there are no caller-supplied offsets or result-count limits.               |
 | Analysis state   | The socket is exposed only after default auto-analysis completes. Established operations wait for their reply or caller cancellation; there is no fixed response-size ceiling.                                                                                                                  |
@@ -135,6 +135,45 @@ state. A failed decompile preserves the original diagnostic and reports the
 effective payload allowance; payload recovery applies only when that diagnostic
 identifies payload exhaustion. Raising these controls does not raise the MCP
 client's deadline or receive buffer.
+
+## C text for signatures and type definitions
+
+`annotate_native_function` `signature` and `define_native_data_types`
+`declarations` are parsed by Ghidra's C parser, which cannot be cancelled, so
+REA bounds that text before parsing it. Each bound has a per-call parameter;
+`parenthesis_max_depth` applies to `signature`; a `declarations` text admits parentheses only in a function-pointer declarator, `ret (*name)(parameters)`, which nests one level and needs no bound.
+
+| Bound                                         | Default | Floor | Maximum | Slowest measured parse at the maximum      |
+| --------------------------------------------- | ------: | ----: | ------: | ------------------------------------------ |
+| `signature_max_utf16` (UTF-16 code units)     |    2048 |    16 |    4096 | 0.8 s (one chain of pointer declarators)   |
+| `declarations_max_utf16` (UTF-16 code units)  |    4096 |    16 |    8192 | 6.8 s (one chain of pointer declarators)   |
+| `parenthesis_max_depth` (`signature`, levels) |       8 |     1 |      12 | 2.2 s (8192 units of 12-level expressions) |
+
+Measured with Ghidra 12.2 on arm64 macOS; other hosts differ. Parse time is
+cubic in the length of a declarator chain (16384 units took 100 s) and doubles
+with each level of nested parentheses (12 levels took 2.2 s), so the maxima
+are fixed. A text over a bound is refused before parsing with
+`code: "resource_constraint"`; `details.limit` carries
+`control_kind: "parameter"`, the parameter, its effective value, range,
+default and `required_value`: the text's length, or its deepest nesting over
+the whole text. The recovery names the larger value to pass, or asks for
+shorter or flatter text, or several calls, when the need is above the maximum.
+A type chained more than 256 levels deep through pointers, arrays, typedefs
+or members, counting existing database types, is refused with
+`details.refusal.kind: "fixed_ceiling"` and the measured depth of the whole
+chain. Because the depth counts through typedefs and existing types, naming
+intermediate types or splitting definitions across calls does not reduce it;
+only fewer nested levels do. Ghidra 12.2 stores, names and
+compares types recursively: 1024 levels resolved and 2048 exhausted the stack
+inside `addDataType` while its database lock was held, leaving the Program
+unable to save. No caller value raises that stack, so the bound is fixed. If
+Ghidra exhausts its stack anyway, the bridge reports it and ends the session
+rather than serve a Program whose lock may be held.
+
+The bridge also refuses, with the construct's line and column (CR, LF and
+CRLF each end a line, as in Ghidra's parser),
+what its parser would accept without applying; see the
+[native guide](../guides/native/native-investigation.md).
 
 ## PE debug-symbol coverage
 
@@ -192,6 +231,43 @@ Multiple mapping candidates fail as ambiguous rather than selecting a bank or
 address space. A successful conversion retains the file offset, mapped address
 and procedure entry in raw Evidence and `locations`.
 
+Ghidra can disassemble code without creating a function for it. A range named
+only by an exception-frame entry and reached through a data reference is one
+case: `main` in a stripped ELF is passed to `__libc_start_main` as a pointer
+and never called. Such an address is absent from `list_procedures`. When a
+decompile selector names an analysis address that holds disassembled code
+outside every function, `procedure_pseudo_code` decompiles it on the fly from
+an entry found by following control flow back from that address, the way
+Ghidra's decompiler panel does. The Program and the procedure inventory are
+unchanged, and the result's limitations state that the entry and extent are
+inferred rather than an analyzed function boundary. This reading takes
+precedence over the file-offset fallback. A file offset that maps to such code
+resolves the same way as its mapped address; its `selection` reports the
+inferred entry as `procedure_address`. Other procedure operations still
+require a function and say when the address holds code without one.
+
+Completed decompilations are reused while the Program is unchanged, so
+repeating `procedure_pseudo_code` or `analyze_function` for one function does
+not run the native decompiler again. A rename, comment or payload-limit change
+discards them.
+
+`decompile-all` and `batch_decompile` name the next functions they will
+request, up to 32 at a time, and the bridge decompiles them in the background
+with up to eight native decompiler processes. Results, per-function failures,
+the journal and file order are the same as a serial run. The request that names
+them decompiles its own function at once on the session's decompiler and never
+waits for a worker to start. Workers start only for the queued functions, one
+per function up to eight, and none for a single function. Each takes the next
+queued function as soon as its decompiler is open. A later request uses a
+finished result for its function, including a failure or timeout, without
+decompiling it again; waits for one still running, whose own decompile deadline
+bounds the wait; or decompiles a queued one itself. Cancelling that request
+cancels the read-ahead. Selectors beyond 32 are ignored. The workers run on
+REA's own threads, separate from Ghidra's shared pools, and close their
+decompiler processes after 30 seconds without work, a Program edit, a
+payload-limit change, cancellation or shutdown. Each worker is a native
+decompiler process, so a large batch uses more CPU and memory while it runs.
+
 If an offset maps to loaded target bytes but no procedure starts at or contains
 the mapped address, the failure preserves both the original file offset and
 analysis address. This differs from an unmapped offset and does not recommend
@@ -199,6 +275,47 @@ retrying the same offset syntax.
 If the function resolves but the backend fails or cancels decompilation, the
 failure retains the selector, mapped address and procedure entry without
 changing the backend failure code.
+
+### Active request cancellation
+
+Cancelling a request that is still queued removes it without touching the
+session. Cancelling the request Ghidra is working on depends on the operation:
+
+| Active operation                                                             | Cancellation                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Reads: every operation except the edits below                                | REA sends the bridge a `cancel` frame naming the request and waits up to the cancel grace (2,000 ms by default) for that request's reply. A decompilation (`procedure_pseudo_code`, `analyze_function`) stops its native decompiler and answers at once; other reads answer when they reach a cancellation check or finish. Once the reply arrives the call returns a cancellation, and the session, its annotations and the requests queued behind it stay. |
+| Edits: `annotate_native_function`, `set_address_name`, `set_addresses_names` | Not interrupted. REA closes the session, so a reply that raced the cancel cannot leave a committed edit behind a cancelled call.                                                                                                                                                                                                                                                                                                                             |
+
+The bridge reads the connection on one extra thread, which only cancels the
+named request's Ghidra `TaskMonitor`; requests still run one at a time on the
+script thread, and a `cancel` frame has no reply of its own. The reply to the
+cancelled request is the confirmation. If none arrives within the cancel grace,
+or the request fails without a bridge reply, REA closes the session exactly as it
+does for an edit: the Ghidra process is stopped, queued requests fail, session
+annotations are discarded, and the next provider query starts a new session
+(restoring the last checkpoint when one is configured). A result that raced the
+cancel is discarded and the call still returns a cancellation; a bridge failure
+other than the cancellation that raced it stays the reported failure, with the
+session kept.
+
+The cancel grace is 2,000 ms by default. Set `REA_GHIDRA_CANCEL_GRACE_MS` to
+an integer from 100 to 60,000 milliseconds in the environment that starts REA
+to change it. The floor is about five times the slowest acknowledgement
+measured with real Ghidra 12.2 (19 ms); a shorter grace closes sessions that
+would have answered. The maximum is one minute, the pinned MCP client SDK's
+default tool-call deadline: while the grace runs, the cancelled call has not
+returned and the requests queued behind it wait, so a stuck bridge delays all
+of them by the whole grace. REA reads the value when it starts and each session
+keeps the grace it opened with, so a change needs a restart;
+`update_analysis_settings` does not change it and `inspect_analysis_settings`
+does not list it. A fresh-import session's cancellation limitation states the
+value applied and whether it is the default or was set at launch. When the
+grace expires, the requests queued behind the cancelled one fail with a message
+naming the control, the value applied, its source and the range. An empty,
+malformed or out-of-range value does not fall back to the default:
+`rea doctor` and registration validation report it, REA still starts, and a
+Ghidra session refuses to open with `configuration_invalid` until it is
+corrected.
 
 Both mapping directions require a complete original `FileBytes` source whose
 SHA-256 matches the admitted target. Auxiliary files and partial source objects
@@ -305,7 +422,7 @@ profile stages before retrying their retained descriptors.
 | Concern                 | Ghidra contract                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Decompiler lifetime     | One persistent `DecompInterface` is opened for the imported Program and disposed during bridge shutdown. Native decompilation has no fixed per-function deadline unless the launch setting `REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS` or runtime override `ghidra.decompile_timeout_seconds` sets one; a decompile that reaches it fails only that request with `remote_code` `decompile_timed_out`, the Program and session stay open, and the next decompile uses a fresh decompiler process. External functions or functions without bodies return `null`; cancellation and native failure remain distinct.                 |
-| Serialization           | A FIFO sends one Program request at a time. Caller cancellation removes queued work promptly and is passed to active socket waits. This is an adapter safety commitment, not a claim that every Ghidra API is thread-safe.                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Serialization           | A FIFO sends one Program request at a time. Caller cancellation removes queued work promptly. Cancelling the active request follows [active request cancellation](#active-request-cancellation). This is an adapter safety commitment, not a claim that every Ghidra API is thread-safe.                                                                                                                                                                                                                                                                                                                                   |
 | Function identity       | Every function result carries the entry address and Ghidra FunctionManager classification for external, thunk, and resolved thunk target. These are observations, not proof that unresolved targetless calls have been recovered.                                                                                                                                                                                                                                                                                                                                                                                          |
 | Assembly and pseudocode | Assembly is complete Ghidra Listing text; pseudocode is Ghidra decompiler output. Neither is original source, and cross-provider comparison never treats Hopper and Ghidra text as equal or unequal semantic facts.                                                                                                                                                                                                                                                                                                                                                                                                        |
 | Instruction fast path   | `read_function_instructions` returns every raw Listing instruction for the requested function without invoking the decompiler or whole-program name/string inventories.                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
@@ -399,8 +516,12 @@ DWARF 4 type-layout object. It proves the admitted operations, external function
 behavior, direct and targetless indirect calls, typed references, strings/xrefs,
 multi-block CFG, bounded p-code def-use/effect links, semantic enhanced workflows, cancellation, startup deadlines,
 serialized concurrency, malformed-target rejection, profile identity, and
-process/project cleanup. Recorded on Ghidra 12.1.4 (no longer accepted); not
-yet re-run on 12.2. Unit fixtures separately cover startup deadlines, process
+process/project cleanup. Its namespace-annotation check also needs the host's
+GNU demangler native component (`demangler_gnu_v2_41` under
+`GPL/DemanglerGnu/os/<platform>/`); the Ghidra 12.2 release ships it only for
+`linux_x86_64` and `win_x86_64`, and REA does not build it. Recorded on Ghidra
+12.1.4 (no longer accepted); not yet re-run on 12.2. A 12.2 run on macOS arm64
+stopped at that missing demangler. Unit fixtures separately cover startup deadlines, process
 exit, queued cancellation, and malformed wire output.
 
 `npm run verify:ghidra:cross-format` adds AArch64 ELF, x86-64 PE, and x86-64

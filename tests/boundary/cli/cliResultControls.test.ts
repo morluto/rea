@@ -1,13 +1,13 @@
+import { captureOutput } from "../../support/cli/capturedOutput.js";
 import { cliCommand } from "../../../src/cli/commandRegistry.js";
 import { createCommandCli } from "../../support/cli/commandCli.js";
-import { Writable } from "node:stream";
 
 import { expect, it } from "vitest";
 import { z } from "zod";
 
 import { decode as decodeToon } from "@toon-format/toon";
 import { parse as parseYaml } from "yaml";
-import { parseCliOutputArguments } from "../../../src/cliOutput.js";
+import { parseCliOutputArguments } from "../../../src/cli/cliOutput.js";
 import { registerContractCommand } from "../../../src/cli/contractCommand.js";
 import { createCliResultOutput } from "../../../src/cli/cliResultOutput.js";
 import {
@@ -205,7 +205,7 @@ const runFixtureCommand = async (produce: () => unknown) => {
   const command = cliCommand(cli, "inspect-control-fixture")?.definition;
   if (command === undefined) throw new Error("command is not registered");
   const parse = (key: "args" | "options", value: unknown) =>
-    (Reflect.get(command, key) as { parse(v: unknown): unknown }).parse(value);
+    command[key]!.parse(value);
   return withCliResultControls(async () => {
     const value: unknown = await (
       Reflect.get(command, "run") as (value: unknown) => Promise<unknown>
@@ -239,13 +239,7 @@ const written = async (
   argv: readonly string[],
   cliControls?: Readonly<Record<string, string>>,
 ): Promise<{ readonly text: string; readonly collected: number }> => {
-  const chunks: Buffer[] = [];
-  const destination = new Writable({
-    write(chunk: Buffer, _encoding, callback) {
-      chunks.push(chunk);
-      callback();
-    },
-  });
+  const { destination, text: readText } = captureOutput();
   const output = createCliResultOutput(
     parseCliOutputArguments(["fixture", ...argv]),
     destination,
@@ -262,7 +256,7 @@ const written = async (
     },
   });
   return {
-    text: handled ? Buffer.concat(chunks).toString("utf8") : "",
+    text: handled ? readText() : "",
     collected,
   };
 };

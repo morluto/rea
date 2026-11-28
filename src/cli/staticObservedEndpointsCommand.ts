@@ -52,6 +52,7 @@ export const registerStaticObservedEndpointsCommand = (
         signal,
         detail: delivery.detail,
         evidenceOutput: delivery.evidenceOutput,
+        rerunRecoversResult: delivery.rerunRecoversResult,
         ...(delivery.view === undefined ? {} : { view: delivery.view }),
         sourceEvidence: sources,
       });

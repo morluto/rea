@@ -20,7 +20,7 @@ implementation or version. Evidence identifies the command profile as
 the executable is GNU objdump. Other implementations may accept some commands
 while differing in supported options and output.
 
-`inspect_with_objdump` and `rea inspect-with-objdump` capture stdout and stderr as inline Evidence. Artifact inspection Evidence records SHA-256 digests before and after the provider call and whether those observed digests differ; this cannot prove the exact bytes consumed if the artifact changes during execution. Choose one artifact operation: `file_headers`, `section_headers`, `symbols`, `relocations`, `dwarf`, `disassemble`, or `disassemble_all`. `disassemble` maps to `-d`; `disassemble_all` maps to `-D` and has different symbol-boundary semantics. The pathless `inspect_with_objdump {"operation":"architectures"}` MCP call or `rea list-objdump-architectures` CLI command maps to `-i` and produces subjectless Evidence containing the selected command’s output, not a guarantee that any target is supported. GNU objdump uses this option to list its compiled-in BFD targets.
+`inspect_with_objdump` and `rea inspect-with-objdump` capture stdout and stderr as inline Evidence. Their summary, delivered with `detail: "summary"` or when the complete Evidence exceeds the agent result budget, keeps the completion facts and reports `available_counts` of stdout and stderr UTF-16 code units instead of the text; the retained parent keeps the complete output. Artifact inspection Evidence records SHA-256 digests before and after the provider call and whether those observed digests differ; this cannot prove the exact bytes consumed if the artifact changes during execution. Choose one artifact operation: `file_headers`, `section_headers`, `symbols`, `relocations`, `dwarf`, `disassemble`, or `disassemble_all`. `disassemble` maps to `-d`; `disassemble_all` maps to `-D` and has different symbol-boundary semantics. The pathless `inspect_with_objdump {"operation":"architectures"}` MCP call or `rea list-objdump-architectures` CLI command maps to `-i` and produces subjectless Evidence containing the selected command’s output, not a guarantee that any target is supported. GNU objdump uses this option to list its compiled-in BFD targets.
 
 Failure to launch the selected executable reports provider unavailability, the
 configured command and the host error under `boundary: "provider-launch"`.
@@ -90,7 +90,7 @@ close_gdb_session {"session_id":"…"}
 
 ## Rizin
 
-`start_rizin_debug_session` and `rea debug-with-rizin` require an explicit `inferior_tty` on Linux. REA asks Rizin to launch the target with stdin, stdout and stderr routed to that caller-selected TTY and `dbg.exitkills=false`; the target can therefore continue running, reading input from the TTY and writing to it after REA closes the debugger. This is a visible target input and output effect, and the caller is responsible for selecting a suitable terminal that remains available. REA sends Rizin its commands on Rizin's own stdin, so a target left on that stream would read them. Before closing, REA serializes after the active command, parses the structured `olj` descriptor list, detaches only a unique `ptrace://` descriptor, confirms its absence, reads back `dbg.exitkills=false`, verifies `/proc/<pid>/fd/1` and `/proc/<pid>/fd/2` still identify the selected TTY by device and inode, and refuses to detach while `/proc/<pid>/fd/0` is Rizin's command stream. A target may close or replace its own stdin. If a previously identified inferior exits after Rizin confirms detach, REA verifies that the original process has ended instead of requiring output descriptors from an exited process. Unresolved identity or ambiguous readback keeps the Rizin session owned for retry. After output limits or a failed command interval, cleanup first waits up to 1000 ms for a fresh private NUL-delimited marker, discarding earlier frames before obtaining that new inferior readback. Synchronization never reopens user command admission. A missing marker, unavailable transport, or unknown inferior identity retains the cleanup owner. Caller cancellation keeps its exact reason and typed cancellation outcome even when cleanup remains incomplete; a successful retry resolves that retained cleanup state. Cancellation during final cleanup retains the captured observation and cleanup owner. An already observed startup or protocol failure remains primary and retains a later cancellation as a secondary failure; recovering the transport does not erase that original diagnosis. Persistent Rizin debugger sessions are unavailable outside Linux because this verification depends on `/proc`.
+`start_rizin_debug_session` and `rea debug-with-rizin` require an explicit `inferior_tty` on Linux. REA asks Rizin to launch the target with stdin, stdout and stderr routed to that caller-selected TTY and `dbg.exitkills=false`; the target can therefore continue running, reading input from the TTY and writing to it after REA closes the debugger. This is a visible target input and output effect, and the caller is responsible for selecting a suitable terminal that remains available. REA sends Rizin its commands on Rizin's own stdin, so a target left on that stream would read them. Before closing, REA serializes after the active command, parses the structured `olj` descriptor list, detaches only a unique `ptrace://` descriptor, confirms its absence, reads back `dbg.exitkills=false`, verifies `/proc/<pid>/fd/1` and `/proc/<pid>/fd/2` still identify the selected TTY by device and inode, and refuses to detach while `/proc/<pid>/fd/0` is Rizin's command stream. A target may close or replace its own stdin. If a previously identified inferior exits after Rizin confirms detach, REA verifies that the original process has ended instead of requiring output descriptors from an exited process. Unresolved identity or ambiguous readback keeps the Rizin session owned for retry. After output limits or a failed command interval, cleanup first waits up to 500 ms for a fresh private NUL-delimited marker, discarding earlier frames before obtaining that new inferior readback. Synchronization never reopens user command admission. When that marker is observed, the following inferior readback still decides detach; an unknown inferior identity or a refused detach retains the cleanup owner for retry. When it is not observed — the debugger is blocked in a running command or its command transport is unavailable — REA terminates the directly owned Rizin process and reports the target's state and output route as unknown; the target may continue running. Caller cancellation keeps its exact reason and typed cancellation outcome even when cleanup remains incomplete; a successful retry resolves that retained cleanup state. Cancellation during final cleanup retains the captured observation and cleanup owner. An already observed startup or protocol failure remains primary and retains a later cancellation as a secondary failure; recovering the transport does not erase that original diagnosis. Persistent Rizin debugger sessions are unavailable outside Linux because this verification depends on `/proc`.
 
 Persistent command Evidence retains the caller-selected and resolved startup paths in `parameters.launch_provenance`. These paths describe launch provenance, not the current target after unrestricted commands. Command Evidence names the session as its subject, `{ "kind": "session", "session_kind": "rizin", "id": <session_id>, "target": … }`, where `target` is the launch file REA hashed before Rizin started (`{ "kind": "file", "sha256", "format": "file", "architecture": null, "selection": null }`). Later debugger commands do not rebind it. If the launch file cannot be hashed (for example it does not exist or is not a regular file), the session still starts, `target` is `{ "kind": "unknown", "reason": "not-observed" }`, and a limitation records the reason; cancellation or a descriptor that cannot be closed during the hash fails the start. `rizin_debug_session_status.output_invalid_utf8` reports whether lossy frame decoding has been observed during the session. Command Evidence sets `output_invalid_utf8` only when loss was observed in frames collected for that command, including retained partial output; earlier startup or command frames do not mark later valid output as lossy.
 
@@ -142,9 +142,107 @@ rea debug-with-rizin --inferior-tty /dev/pts/7 ./program dr
 rea execute-rizin-command ./program iI
 ```
 
+Before a one-shot command, REA resolves the selected executable through `PATH`,
+hashes it, runs it with `-v` and reads the tool and version from its banner,
+the first line of that output, in the form Rizin and radare2 print:
+`<tool> <version>`, any build tokens, then `@ <os>-<arch>-<bits>` (for example
+`rizin 0.9.1 @ darwin-arm-64`). Any other first line identifies no tool. The command then runs the same path. Evidence
+records the tool and version as the provider name and version, and records the
+executable path, its SHA-256 and the banner in its parameters; a banner longer
+than 2,048 UTF-8 bytes is cut within that budget, between characters, and
+marked by `provider_version_banner_truncated`; a cut banner identifies no tool,
+since the cut could fall inside its version. The budget and the recorded banner
+cover the line as printed, surrounding whitespace included; only identification
+ignores that whitespace. These describe the file at that path when
+REA checked it; they cannot prove the exact bytes or version executed if the
+file changes before the launch, and Evidence that records them says so in a
+limitation.
+A different tool that accepts the same arguments, such as
+radare2, still runs: its Evidence names that tool and adds a limitation. A probe
+that fails, times out, prints output that is not valid UTF-8 or prints an
+unrecognized banner leaves the version unknown, and the command still runs.
+Evidence then keeps the provider name Rizin with `provider_identity: "assumed"`
+and a limitation saying the tool itself was not identified; an identified tool
+has `provider_identity: "banner"`. The probe runs before the command within
+the call's `max_output_bytes` allowance, and output that the allowance cuts
+identifies no tool. The
+probe's exit status and output, each stream cut to 2,048 UTF-8 bytes in the
+same way, are recorded in `provider_version_probe`,
+where `stdout_invalid_utf8` and `stderr_invalid_utf8` mark output that was not
+valid UTF-8 and so holds replacement characters, and `completion_status` is
+`unknown`, as for the command, when the probe's output was not fully collected
+or the probe was killed, signalled or left no exit code.
+Each call's lookup, hash and probe use that call's `command_timeout_ms` budget
+and cancellation; a lookup or hash that reaches the deadline ends the call
+without running the command. A hash that fails for another reason, for example
+on an executable that can be run but not read, leaves the version unknown
+without a probe; the command still runs the path the lookup found, which
+Evidence records without a SHA-256. REA probes before every command and reuses
+no reading: a launcher, such as a version-manager shim, keeps its path and SHA-256
+while the tool it runs changes, so only the call's own probe describes the tool
+that answers. Each call therefore launches the executable twice, the probe and
+then the command. If the command then fails to start, for example with `E2BIG`
+because its arguments exceed the host's launch limit, the call returns no
+Evidence; the error's `details.diagnostics` keep `provider`, the tool and
+version, the selected `provider_executable`, and the `provider_*` parameters
+above. A probe that is cancelled, or
+whose cleanup is incomplete, keeps the executable path and SHA-256 there; a hash
+that is cancelled or reaches the deadline keeps the executable path; and a lookup
+that is cancelled or reaches the deadline keeps the path it was checking, as
+`executable_lookup_candidate`. Every error from the lookup through the launch
+also keeps the selected `provider_executable` and, for a call with a target, its
+`artifact_path` and `artifact_sha256`.
+
+REA reports a version only for the file it runs. The lookup moves past what every native
+`PATH` search moves past: a missing file, a non-directory, a denied directory
+and a file without execute permission. When it finds no executable after
+moving past a denied directory or file, a launch by name fails with `EACCES`:
+a limitation names the first such file, and Evidence or the launch failure
+keeps it as `executable_lookup_denied_candidate`, where access must be granted.
+A candidate that is not a regular file, such as a directory, is denied the same
+way, since the host refuses to run it; `executable_lookup_denied_reason` is
+`permission` or `not-regular-file`.
+On Linux and macOS it also skips an
+entry too long for the native path buffer. At any other error, such as a
+symbolic link loop, a stale network file handle or an I/O error, at least one
+of the searches of glibc, musl, Android and libuv stops, so the lookup stops
+there. The
+command then runs by name, with the version unknown, and the host's own search
+decides what runs. A limitation names the file where the lookup stopped and its
+error, and Evidence or the launch failure keeps them as
+`executable_lookup_candidate` and `executable_lookup_code`. A found file that does not start with `ENOENT` or `EACCES`,
+as when a script's interpreter is missing or not executable, is one a native
+search moves past. At `ESTALE` or `ENODEV`, glibc's search moves past it and
+musl's stops, so the host decides. The command then also runs as selected,
+with the version unknown, and a limitation names that file. Evidence or the
+launch failure keeps it as `executable_lookup_candidate`, with its error as
+`executable_lookup_code` and its digest as `executable_lookup_candidate_sha256`,
+without claiming that it ran. An explicitly selected path has no
+later candidate, so the command runs that path, and Evidence or the launch
+failure keeps its path and SHA-256. When the host refuses to inspect an
+explicitly selected path (`EACCES` or `EPERM`), the command runs that path with
+the version unknown. When the lookup does not accept an explicitly selected
+path, for example because it lacks execute permission or its absolute spelling
+is too long, the command runs the selection as written. Either way, Evidence
+or the launch failure keeps the resolved path as `provider_executable_path`. A
+lookup or hash stops waiting, at the deadline or on cancellation, for a `stat`,
+an `access`, or a file's open, read or close that a stalled mount holds, but it
+cannot cancel that work. A hash completes only after its file closes, so a
+stalled close also reaches the deadline. Before the command, that deadline ends
+the call. The artifact's post-run hash instead keeps the command's Evidence:
+`artifact_sha256_after` is `null`, and a limitation names the deadline
+(`ETIMEDOUT`) and how to raise `command_timeout_ms`. The call then returns and gives back
+its place among the eight concurrent objdump and rizin operations. The work it
+stopped waiting for keeps running, and holds a thread of Node's file pool,
+until the mount answers. REA does not track or bound that work, and a later
+call on the same path starts its own. Closing the service does not wait for
+it. The process cannot exit until that work returns, even through
+`process.exit()`, because Node joins its pool threads at exit. A CLI command
+therefore prints its result and then stays alive until the mount answers.
+
 Rizin exits with status 0 even when its shell refuses a statement, so the exit code does not show whether the command ran. Rizin 0.6 through 0.9.1 log one of four stderr lines for such a refusal: `ERROR: Command '…' does not exist.`, ``ERROR: Wrong number of arguments passed to `…`…``, `ERROR: core: Error while executing command: …` (an invalid statement), or `ERROR: core: Error while parsing command: …`. Rizin then skips the refused statement and every later one in the command. When the completed process's stderr contains one of these lines, REA reports `completion_status: "rejected"`, a `refusal` record (`reason`: `unknown_command`, `wrong_argument_count`, `invalid_statement` or `parse_failure`; `command`: the command the line names, or null; `line`: the exact stderr line), and a limitation naming the refusal. stdout then holds only the output of earlier statements, so empty stdout is not an empty result. Other `ERROR:` lines, such as `ERROR: Cannot find function at …`, come from commands that ran; REA keeps them in stderr and reports `complete`. A command that lowers `log.level` or redirects stderr hides refusals from REA.
 
-Captured stdout and stderr use the same `max_output_bytes` (CLI: `--max-output-bytes`) admission and recovery described above, default 16 MiB. One-shot commands independently use `command_timeout_ms`. Raising output admission cannot recover an earlier capture; command effects and cleanup must be checked before another invocation.
+Captured stdout and stderr use the same `max_output_bytes` (CLI: `--max-output-bytes`) admission and recovery described above, default 16 MiB. One-shot commands independently use `command_timeout_ms`. Raising output admission cannot recover an earlier capture; command effects and cleanup must be checked before another invocation. A typed failure's `captured_output` marks a stream that held invalid UTF-8 with `stdout_invalid_utf8` or `stderr_invalid_utf8`.
 
 ### Decoder and map inputs
 
@@ -394,6 +492,6 @@ generation error.
 
 ## Configuration and coverage
 
-The optional `REA_OBJDUMP_COMMAND`, `REA_GDB_COMMAND`, and `REA_RIZIN_COMMAND` values select executable names or paths; otherwise REA searches `PATH`. On Windows, REA searches `PATH` and `PATHEXT` for a bare objdump or Rizin name itself and refuses with `capability_unavailable` (`boundary: "provider-lookup"`) when it is not found, rather than letting Windows also search the current directory. Values are passed directly to process spawning, not expanded as shell command lines. A host executable launch refusal preserves the selected command and host error code, with recovery through the corresponding command setting, PATH, or execute/search permissions. GDB does not retry that refusal with MI2; its MI2 fallback applies to protocol initialization failures. Provider versions and capabilities remain unknown until observed from the installed tool and verified in the corresponding real-provider lane.
+The optional `REA_OBJDUMP_COMMAND`, `REA_GDB_COMMAND`, and `REA_RIZIN_COMMAND` values select executable names or paths; otherwise REA searches `PATH`. On Windows, REA searches `PATH` and `PATHEXT` for a bare objdump or Rizin name itself and refuses with `capability_unavailable` (`boundary: "provider-lookup"`) when it is not found, rather than letting Windows also search the current directory. Values are passed directly to process spawning, not expanded as shell command lines. A host executable launch refusal preserves the selected command and host error code, with recovery through the corresponding command setting, PATH, or execute/search permissions. GDB does not retry that refusal with MI2; its MI2 fallback applies to protocol initialization failures. Provider versions and capabilities remain unknown until observed from the installed tool and verified in the corresponding real-provider lane. The Rizin version that Evidence records is the installed tool's `-v` banner, described above; it is an observation, not lane verification.
 
 Provider capture limits are separate from the MCP response budget. A result that fits the provider limit may still exceed the default 10 MiB MCP response budget and return a transport `resource_constraint`. Configure `REA_MCP_MAX_RESPONSE_BYTES` to match a larger client receive buffer when that client supports one; otherwise use retained Evidence/export or complete CLI JSON output. See [MCP response limits](reference/mcp-contracts.md#tool-results).

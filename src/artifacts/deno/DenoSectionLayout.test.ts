@@ -1,10 +1,7 @@
 import { expect, it } from "vitest";
 
-import {
-  MAX_DENO_REMOTE_BODY_BYTES,
-  MAX_DENO_SPECIFIER_TEXT_BYTES,
-  parseDenoSection,
-} from "./DenoSectionLayout.js";
+import { DEFAULT_DENO_READER_LIMITS } from "../../domain/artifactReaderLimits.js";
+import { parseDenoSection } from "./DenoSectionLayout.js";
 import {
   buildDenoSection,
   defaultDenoMetadata,
@@ -115,7 +112,7 @@ it("rejects a truncated length and a mismatched closing marker as malformed", as
   await expect(
     parseDenoSectionBytes(buildDenoSection({ metadataLength: 1_000_000 })),
   ).rejects.toMatchObject({
-    reason: "format",
+    reason: "malformed",
     message: expect.stringContaining("overruns"),
   });
   await expect(
@@ -123,7 +120,7 @@ it("rejects a truncated length and a mismatched closing marker as malformed", as
       buildDenoSection({ closingMagic: Buffer.from("xxxxxxxx") }),
     ),
   ).rejects.toMatchObject({
-    reason: "format",
+    reason: "malformed",
     message: expect.stringContaining("closing marker"),
   });
 });
@@ -147,7 +144,11 @@ it("refuses metadata JSON above the named allowance before reading it as JSON", 
   bytes.writeBigUInt64LE(BigInt(claimed), DENO_FIXTURE_SECTION_MAGIC.length);
   await expect(parseDenoSectionBytes(bytes)).rejects.toMatchObject({
     reason: "limit",
-    message: expect.stringContaining("metadata JSON"),
+    readerLimit: {
+      parameter: "artifact_limits.deno.metadata_json_bytes",
+      effective_value: 8 * 1024 * 1024,
+      required_value: claimed,
+    },
   });
 });
 
@@ -161,24 +162,28 @@ it("refuses a specifier table above the named record allowance", async () => {
     ),
   ).rejects.toMatchObject({
     reason: "limit",
-    message: expect.stringContaining("specifier"),
+    readerLimit: {
+      parameter: "artifact_limits.deno.table_records",
+      effective_value: 100_000,
+      required_value: 100_001,
+    },
   });
 });
 
 it.each([
   {
     text: "file:///wire-specifier.ts",
-    limit: MAX_DENO_SPECIFIER_TEXT_BYTES,
+    limit: DEFAULT_DENO_READER_LIMITS.specifier_text_bytes,
     field: "specifier text",
   },
   {
     text: "wire-module",
-    limit: MAX_DENO_REMOTE_BODY_BYTES,
+    limit: DEFAULT_DENO_READER_LIMITS.remote_body_bytes,
     field: "remote module",
   },
   {
     text: "wire-transpiled",
-    limit: MAX_DENO_REMOTE_BODY_BYTES,
+    limit: DEFAULT_DENO_READER_LIMITS.remote_body_bytes,
     field: "remote transpiled",
   },
 ])(
@@ -197,7 +202,7 @@ it.each([
     const read = async (offset: number, length: number) =>
       bytes.subarray(offset, offset + length);
     await expect(parseDenoSection(bytes.length, read)).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining(`${field} length overruns`),
     });
     // The same body could fit at this logical section size. The selected
@@ -232,7 +237,7 @@ it("stops on unrecognized remote flags and duplicate specifier ids", async () =>
       }),
     ),
   ).rejects.toMatchObject({
-    reason: "format",
+    reason: "malformed",
     message: expect.stringContaining("duplicate specifier id"),
   });
 });
@@ -293,11 +298,11 @@ it.each([false, true])(
       );
     };
     await expect(parseShort(1)).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: expect.stringMatching(/duplicate redirect specifier id 1/iu),
     });
     await expect(parseShort(2)).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: expect.stringMatching(
         physicalEof ? /section read was short/iu : /overruns the section/iu,
       ),
@@ -310,13 +315,17 @@ it("keeps the redirect count allowance and rejects duplicate IDs across batches"
   overCount.writeUInt32LE(100_001, REDIRECT_ROWS - 4);
   await expect(parseDenoSectionBytes(overCount)).rejects.toMatchObject({
     reason: "limit",
-    fixedAllowance: { limit: 100_000, unit: "records" },
+    readerLimit: {
+      parameter: "artifact_limits.deno.table_records",
+      effective_value: 100_000,
+      unit: "count",
+    },
   });
   const sources = Array.from({ length: 1_024 }, (_, index) => index);
   await expect(
     parseDenoSectionBytes(redirectSection([...sources, 0])),
   ).rejects.toMatchObject({
-    reason: "format",
+    reason: "malformed",
     message: expect.stringMatching(/duplicate redirect specifier id 0/iu),
   });
 });

@@ -2,7 +2,7 @@ import { mcpRegistrationOptionsSchema } from "../contracts/mcpRegistration.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 
 import type { CliGlobalArguments } from "../cliBuiltinArguments.js";
-import { readCliOutputArguments, renderCliDocument } from "../cliOutput.js";
+import { readCliOutputArguments, renderCliDocument } from "./cliOutput.js";
 import { jsonLinesErrorRecord } from "./jsonLines.js";
 import { renderFailure } from "./outputEnvelope.js";
 import { suggestCommand } from "./commandSuggestion.js";
@@ -120,6 +120,8 @@ export const reportUnknownMcpSubcommand = (
           },
         ),
   );
-  (options.exit ?? ((code: number) => process.exit(code)))(1);
+  // Set the exit code rather than exiting, so piped stdout drains first.
+  if (options.exit !== undefined) options.exit(1);
+  else process.exitCode = 1;
   return true;
 };

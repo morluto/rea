@@ -1,6 +1,11 @@
 import { keyedBy, uniqueKeyed } from "../keyedCollection.js";
 import { z } from "zod";
 import { coverageStatusSchema } from "../coverage.js";
+import {
+  parameterBudgetLimit,
+  parameterBudgetSchema,
+  type ParameterBudget,
+} from "../parameterBudget.js";
 
 import {
   machoSelectionContainsRange,
@@ -14,14 +19,42 @@ import {
   absoluteLocalPathStringSchema,
   localPathStringSchema,
 } from "../localPath.js";
+import { maxStructureBytesSchema } from "./nativeStructureBudget.js";
 
 /** Hard ceiling on the caller-selected input read budget. */
 export const MAX_INSPECT_DWARF_UNITS_FILE_BYTES = 536870912;
-/** Hard ceiling on decompressed DWARF debug bytes for one image. */
+/** `max_file_bytes` of `inspect_dwarf_units`. */
+export const DWARF_UNITS_FILE_BYTES = {
+  minimum: 64,
+  maximum: MAX_INSPECT_DWARF_UNITS_FILE_BYTES,
+  default_value: 67_108_864,
+  unit: "bytes",
+} as const satisfies ParameterBudget;
+/** The `max_file_bytes` control that refused an image. */
+export const dwarfUnitsFileLimit = (effectiveValue: number) =>
+  parameterBudgetLimit(
+    "max_file_bytes",
+    DWARF_UNITS_FILE_BYTES,
+    effectiveValue,
+  );
+/** `max_decompressed_bytes` when omitted: decompressed DWARF debug bytes for one image. */
 export const MAX_DWARF_DECOMPRESSED_SECTION_BYTES = 268435456;
-/** Display name of that fixed decompressed-section allowance. */
-export const DWARF_DECOMPRESSED_SECTION_ALLOWANCE =
-  "The DWARF decompressed section allowance";
+
+/** `max_decompressed_bytes`: decompressed DWARF sections are retained in memory. */
+export const DWARF_DECOMPRESSED_BUDGET = {
+  minimum: 1,
+  maximum: 1024 * 1024 * 1024,
+  default_value: MAX_DWARF_DECOMPRESSED_SECTION_BYTES,
+  unit: "bytes",
+} as const satisfies ParameterBudget;
+
+/** The `max_decompressed_bytes` control that stopped a DWARF decode. */
+export const dwarfDecompressedLimit = (effectiveValue: number) =>
+  parameterBudgetLimit(
+    "max_decompressed_bytes",
+    DWARF_DECOMPRESSED_BUDGET,
+    effectiveValue,
+  );
 /** Maximum compile-unit rows returned in one call. */
 export const MAX_INSPECT_DWARF_UNITS_LIMIT = 256;
 /** Default page size. */
@@ -236,13 +269,15 @@ export const inspectDwarfUnitsInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to an ELF, Mach-O, or PE image",
   ),
-  max_file_bytes: z
-    .number()
-    .int()
-    .min(64)
-    .max(MAX_INSPECT_DWARF_UNITS_FILE_BYTES)
-    .default(67_108_864)
-    .describe("Maximum stable artifact bytes to read (default 64 MiB)"),
+  max_structure_bytes: maxStructureBytesSchema,
+  max_decompressed_bytes: parameterBudgetSchema(
+    DWARF_DECOMPRESSED_BUDGET,
+  ).describe(
+    "Maximum DWARF section decompression budget in bytes for one image, charging the larger of declared uncompressed size and compressed payload bytes per section including failed attempts (default 256 MiB)",
+  ),
+  max_file_bytes: parameterBudgetSchema(DWARF_UNITS_FILE_BYTES).describe(
+    "Maximum stable artifact bytes to read (default 64 MiB)",
+  ),
   offset: z
     .number()
     .int()
@@ -260,7 +295,7 @@ export const inspectDwarfUnitsInputSchema = z.strictObject({
   architecture: machoSliceArchitectureSchema
     .exactOptional()
     .describe(
-      "CPU family of the slice to read from a universal Mach-O. Required for universal files and rejected for every other image.",
+      "Slice to read from a universal Mach-O, by CPU family; arm64e and arm64e.x1 read only a slice of that subtype, as lipo -thin does. Required for universal files and rejected for every other image.",
     ),
 });
 

@@ -25,12 +25,9 @@ import {
   analysisViewCoverageSchema,
   nullableCollectionViewCoverageSchema,
 } from "./analysisViewCoverage.js";
-import {
-  artifactSchema,
-  summaryViewResultBase,
-  viewResultBaseFields,
-} from "./analysisViewBase.js";
+import { artifactSchema, viewResultBaseFields } from "./analysisViewBase.js";
 import { recordedArrayViewSchema } from "./analysisViewRequest.js";
+import { evidenceJsonViewRequestSchema } from "./evidenceJsonView.js";
 import {
   facetViewSchema,
   itemViewSchema,
@@ -43,7 +40,6 @@ import {
   artifactInventoryViewRequestSchema,
 } from "./artifactInventoryView.js";
 import {
-  batchDecompileSummarySchema,
   batchDecompileViewCollections,
   batchDecompileViewContextSchema,
 } from "./batchDecompileView.js";
@@ -70,6 +66,21 @@ import {
   devicetreeViewItemsSchema,
   devicetreeViewRequestSchema,
 } from "./devicetreeView.js";
+import {
+  espNvsPageContextSchema,
+  espNvsViewItemsSchema,
+  espNvsViewRequestSchema,
+} from "./espNvsView.js";
+import {
+  firmwareVectorTablePageContextSchema,
+  firmwareVectorTableViewItemsSchema,
+  firmwareVectorTableViewRequestSchema,
+} from "./firmwareVectorTableView.js";
+import {
+  labviewArtifactPageContextSchema,
+  labviewArtifactViewItemsSchema,
+  labviewArtifactViewRequestSchema,
+} from "./labviewArtifactView.js";
 import {
   elfDependenciesSummarySchema,
   elfDependenciesViewItemsSchema,
@@ -103,6 +114,8 @@ import {
 } from "./interfaceBuilderView.js";
 import { javascriptApplicationSourceCoverageSchema } from "./javascriptApplicationCoverage.js";
 import {
+  javascriptFactGroupRowSchema,
+  javascriptFactGroupsViewRequestSchema,
   javascriptFactRowSchema,
   javascriptFactsViewRequestSchema,
 } from "./javascriptFactsView.js";
@@ -193,6 +206,7 @@ import {
 } from "./webNetworkCaptureView.js";
 
 import {
+  androidClassPageViewResultSchema,
   androidClassSummaryViewResultSchema,
   androidComponentSummaryViewResultSchema,
   androidComponentsViewResultSchema,
@@ -201,6 +215,8 @@ import {
   androidManifestViewResultSchema,
   androidMethodSummaryViewResultSchema,
   androidPackageSummaryViewResultSchema,
+  androidReferencesPageViewResultSchema,
+  androidReferencesSummaryViewResultSchema,
 } from "./summarySchemas/androidSummarySchemas.js";
 import {
   apiContractPageViewResultSchema,
@@ -215,10 +231,24 @@ import { artifactInventorySummaryViewResultSchema } from "./summarySchemas/artif
 import { batchDecompileSummaryViewResultSchema } from "./summarySchemas/batchDecompileSummarySchema.js";
 import { binaryLayoutSummaryViewResultSchema } from "./summarySchemas/binaryLayoutSummarySchema.js";
 import { browserScenarioSummaryViewResultSchema } from "./summarySchemas/browserScenarioSummarySchema.js";
-import { byteEntropySummaryViewResultSchema } from "./summarySchemas/byteEntropySummarySchema.js";
+import {
+  byteEntropyPageViewResultSchema,
+  byteEntropySummaryViewResultSchema,
+} from "./summarySchemas/byteEntropySummarySchema.js";
 import { dartAotSummaryViewResultSchema } from "./summarySchemas/dartAotSummarySchema.js";
 import { desktopApplicationSummaryViewResultSchema } from "./summarySchemas/desktopApplicationSummarySchema.js";
 import { devicetreeSummaryViewResultSchema } from "./summarySchemas/devicetreeSummarySchema.js";
+import { espNvsSummaryViewResultSchema } from "./summarySchemas/espNvsSummarySchema.js";
+import { firmwareVectorTableSummaryViewResultSchema } from "./summarySchemas/firmwareVectorTableSummarySchema.js";
+import { labviewArtifactSummaryViewResultSchema } from "./summarySchemas/labviewArtifactSummarySchema.js";
+import {
+  uefiExtractionPageViewResultSchema,
+  uefiExtractionSummaryViewResultSchema,
+} from "./summarySchemas/uefiExtractionSummarySchema.js";
+import {
+  uefiFirmwarePageViewResultSchema,
+  uefiFirmwareSummaryViewResultSchema,
+} from "./summarySchemas/uefiFirmwareSummarySchema.js";
 import { elfDependenciesSummaryViewResultSchema } from "./summarySchemas/elfDependenciesSummarySchema.js";
 import {
   endpointComparisonPageViewResultSchema,
@@ -262,8 +292,10 @@ import { nativeLoadImageSummaryViewResultSchema } from "./summarySchemas/nativeL
 import { nativeObservationSummaryViewResultSchemas } from "./summarySchemas/nativeObservationSummarySchemas.js";
 import { nativeProcedureReferencesSummaryViewResultSchema } from "./summarySchemas/nativeProcedureReferencesSummarySchema.js";
 import { nativeValueTraceSummaryViewResultSchema } from "./summarySchemas/nativeValueTraceSummarySchema.js";
+import { debPackageSummaryViewResultSchema } from "./summarySchemas/debPackageSummarySchema.js";
 import { nugetNupkgSummaryViewResultSchema } from "./summarySchemas/nugetNupkgSummarySchema.js";
 import { objdumpSummaryViewResultSchema } from "./summarySchemas/objdumpSummarySchema.js";
+import { ociImageLayoutSummaryViewResultSchema } from "./summarySchemas/ociImageLayoutSummarySchema.js";
 import { pcapCaptureSummaryViewResultSchema } from "./summarySchemas/pcapCaptureSummarySchema.js";
 import {
   playwrightTracePageViewResultSchema,
@@ -282,11 +314,28 @@ import {
   sourceToBundlePageViewResultSchema,
   sourceToBundleSummaryViewResultSchema,
 } from "./summarySchemas/sourceToBundleSummarySchemas.js";
+import { vsixPackageSummaryViewResultSchema } from "./summarySchemas/vsixPackageSummarySchema.js";
 import { wasmArtifactSummaryViewResultSchema } from "./summarySchemas/wasmArtifactSummarySchema.js";
 import {
   webBundlePageViewResultSchema,
   webBundleSummaryViewResultSchema,
 } from "./summarySchemas/webBundleSummarySchemas.js";
+import {
+  webPagePageViewResultSchema,
+  webPageSummaryViewResultSchema,
+} from "./summarySchemas/webPageSummarySchemas.js";
+import {
+  webExecutionPageViewResultSchema,
+  webExecutionSummaryViewResultSchema,
+} from "./summarySchemas/webExecutionSummarySchemas.js";
+import {
+  apktoolResourcesPageViewResultSchema,
+  apktoolResourcesSummaryViewResultSchema,
+} from "./summarySchemas/apktoolResourcesSummarySchemas.js";
+import {
+  artifactExtractionPageViewResultSchema,
+  artifactExtractionSummaryViewResultSchema,
+} from "./summarySchemas/artifactExtractionSummarySchemas.js";
 import { webNetworkCaptureSummaryViewResultSchema } from "./summarySchemas/webNetworkCaptureSummarySchema.js";
 import {
   webSourceLocationMatchesViewResultSchema,
@@ -295,6 +344,7 @@ import {
 } from "./summarySchemas/webSourceLocationSummarySchemas.js";
 
 export {
+  androidClassPageViewResultSchema,
   androidClassSummaryViewResultSchema,
   androidComponentSummaryViewResultSchema,
   androidComponentsViewResultSchema,
@@ -303,6 +353,8 @@ export {
   androidManifestViewResultSchema,
   androidMethodSummaryViewResultSchema,
   androidPackageSummaryViewResultSchema,
+  androidReferencesPageViewResultSchema,
+  androidReferencesSummaryViewResultSchema,
   apiContractPageViewResultSchema,
   apiContractSummaryViewResultSchema,
   apkSignaturePageViewResultSchema,
@@ -311,10 +363,15 @@ export {
   batchDecompileSummaryViewResultSchema,
   binaryLayoutSummaryViewResultSchema,
   browserScenarioSummaryViewResultSchema,
+  byteEntropyPageViewResultSchema,
   byteEntropySummaryViewResultSchema,
   dartAotSummaryViewResultSchema,
+  debPackageSummaryViewResultSchema,
   desktopApplicationSummaryViewResultSchema,
   devicetreeSummaryViewResultSchema,
+  espNvsSummaryViewResultSchema,
+  firmwareVectorTableSummaryViewResultSchema,
+  labviewArtifactSummaryViewResultSchema,
   elfDependenciesSummaryViewResultSchema,
   endpointComparisonPageViewResultSchema,
   endpointComparisonSummaryViewResultSchema,
@@ -349,6 +406,7 @@ export {
   nativeValueTraceSummaryViewResultSchema,
   nugetNupkgSummaryViewResultSchema,
   objdumpSummaryViewResultSchema,
+  ociImageLayoutSummaryViewResultSchema,
   pcapCaptureSummaryViewResultSchema,
   playwrightTracePageViewResultSchema,
   playwrightTraceSummaryViewResultSchema,
@@ -359,9 +417,22 @@ export {
   rustBinarySummaryViewResultSchema,
   sourceToBundlePageViewResultSchema,
   sourceToBundleSummaryViewResultSchema,
+  uefiExtractionPageViewResultSchema,
+  uefiExtractionSummaryViewResultSchema,
+  uefiFirmwarePageViewResultSchema,
+  uefiFirmwareSummaryViewResultSchema,
+  vsixPackageSummaryViewResultSchema,
   wasmArtifactSummaryViewResultSchema,
   webBundlePageViewResultSchema,
   webBundleSummaryViewResultSchema,
+  webPagePageViewResultSchema,
+  webPageSummaryViewResultSchema,
+  webExecutionPageViewResultSchema,
+  webExecutionSummaryViewResultSchema,
+  apktoolResourcesPageViewResultSchema,
+  apktoolResourcesSummaryViewResultSchema,
+  artifactExtractionPageViewResultSchema,
+  artifactExtractionSummaryViewResultSchema,
   webNetworkCaptureSummaryViewResultSchema,
   webSourceLocationMatchesViewResultSchema,
   webSourceLocationSummaryViewResultSchema,
@@ -373,9 +444,15 @@ const viewResultBase = {
   parent_operation: z.enum([
     "trace_web_source_location",
     "inspect_python_pyc",
+    "inspect_deb_package",
     "inspect_nuget_nupkg",
+    "inspect_vsix_package",
+    "inspect_oci_image_layout",
     "inspect_erlang_beam",
     "inspect_devicetree",
+    "inspect_esp_nvs",
+    "inspect_firmware_vector_table",
+    "inspect_labview_artifact",
     "inspect_byte_entropy",
     "inspect_native_exports",
     "inspect_elf_dependencies",
@@ -496,6 +573,16 @@ const javascriptFactsViewResultSchema = z.strictObject({
   view: javascriptFactsViewRequestSchema,
   parent_operation: z.literal("analyze_javascript_application"),
   rows: z.array(javascriptFactRowSchema),
+  source_coverage: javascriptApplicationSourceCoverageSchema,
+});
+
+/** Distinct selected property combinations over retained observations. */
+const javascriptFactGroupsViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  kind: z.literal("javascript-fact-groups"),
+  view: javascriptFactGroupsViewRequestSchema,
+  parent_operation: z.literal("analyze_javascript_application"),
+  rows: z.array(javascriptFactGroupRowSchema),
   source_coverage: javascriptApplicationSourceCoverageSchema,
 });
 
@@ -630,6 +717,18 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     view: recordedArrayViewSchema,
     rows: z.array(jsonValueSchema),
   }),
+  z.strictObject({
+    ...viewResultBaseFields,
+    parent_operation: z.string(),
+    artifact: artifactSchema.nullable(),
+    kind: z.literal("evidence-json"),
+    view: evidenceJsonViewRequestSchema,
+    text: z
+      .string()
+      .describe(
+        "This page of the parent Evidence JSON text; join pages in offset order.",
+      ),
+  }),
   playwrightTracePageViewResultSchema,
   z.strictObject({
     ...viewResultBase,
@@ -647,6 +746,10 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   nativeContextViewResultSchema,
   javaScriptRoutesViewResultSchema,
   webBundlePageViewResultSchema,
+  webPagePageViewResultSchema,
+  webExecutionPageViewResultSchema,
+  apktoolResourcesPageViewResultSchema,
+  artifactExtractionPageViewResultSchema,
   sourceToBundlePageViewResultSchema,
   endpointComparisonPageViewResultSchema,
   apiContractPageViewResultSchema,
@@ -711,7 +814,13 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     nativeValueTraceSummaryViewResultSchema,
     erlangBeamSummaryViewResultSchema,
     devicetreeSummaryViewResultSchema,
+    espNvsSummaryViewResultSchema,
+    firmwareVectorTableSummaryViewResultSchema,
+    labviewArtifactSummaryViewResultSchema,
+    uefiFirmwareSummaryViewResultSchema,
+    uefiExtractionSummaryViewResultSchema,
     pythonPycSummaryViewResultSchema,
+    debPackageSummaryViewResultSchema,
     nativeExportsSummaryViewResultSchema,
     elfDependenciesSummaryViewResultSchema,
     byteEntropySummaryViewResultSchema,
@@ -755,7 +864,14 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     featureTraceSummaryViewResultSchema,
     batchDecompileSummaryViewResultSchema,
     webBundleSummaryViewResultSchema,
+    webPageSummaryViewResultSchema,
+    webExecutionSummaryViewResultSchema,
+    apktoolResourcesSummaryViewResultSchema,
+    androidReferencesSummaryViewResultSchema,
+    artifactExtractionSummaryViewResultSchema,
     nugetNupkgSummaryViewResultSchema,
+    vsixPackageSummaryViewResultSchema,
+    ociImageLayoutSummaryViewResultSchema,
   ]),
   z.strictObject({
     ...viewResultBase,
@@ -765,6 +881,33 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     devicetree: devicetreePageContextSchema,
     items: devicetreeViewItemsSchema,
   }),
+  z.strictObject({
+    ...viewResultBase,
+    kind: z.literal("esp-nvs"),
+    parent_operation: z.literal("inspect_esp_nvs"),
+    view: espNvsViewRequestSchema,
+    nvs: espNvsPageContextSchema,
+    items: espNvsViewItemsSchema,
+  }),
+  z.strictObject({
+    ...viewResultBase,
+    kind: z.literal("firmware-vector-table"),
+    parent_operation: z.literal("inspect_firmware_vector_table"),
+    view: firmwareVectorTableViewRequestSchema,
+    vector_table: firmwareVectorTablePageContextSchema,
+    items: firmwareVectorTableViewItemsSchema,
+  }),
+  z.strictObject({
+    ...viewResultBase,
+    kind: z.literal("labview-artifact"),
+    parent_operation: z.literal("inspect_labview_artifact"),
+    view: labviewArtifactViewRequestSchema,
+    labview: labviewArtifactPageContextSchema,
+    items: labviewArtifactViewItemsSchema,
+  }),
+  uefiFirmwarePageViewResultSchema,
+  uefiExtractionPageViewResultSchema,
+  byteEntropyPageViewResultSchema,
   webSourceLocationMatchesViewResultSchema,
   webSourceLocationTextViewResultSchema,
   erlangBeamTableViewResultSchema,
@@ -879,6 +1022,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   }),
   javascriptModuleReferencesViewResultSchema,
   javascriptFactsViewResultSchema,
+  javascriptFactGroupsViewResultSchema,
   z.strictObject({
     kind: z.literal("native"),
     view: nativeViewSchema,
@@ -935,6 +1079,8 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   }),
   androidPackageViewResultSchema,
   androidJniPageViewResultSchema,
+  androidReferencesPageViewResultSchema,
+  androidClassPageViewResultSchema,
   z.strictObject({
     kind: z.literal("dart-aot"),
     view: dartAotViewRequestSchema,

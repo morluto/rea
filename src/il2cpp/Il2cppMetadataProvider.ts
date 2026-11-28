@@ -3,17 +3,23 @@ import {
   Il2cppBinaryFormatFailure,
   IL2CPP_BINARY_BYTES,
   IL2CPP_BINARY_FORMAT,
+  isIl2cppLinkConflict,
 } from "./Il2cppBinaryFormat.js";
 import {
   isParseLimit,
+  parseFailureAnalysisError,
   parseLimitConstraint,
 } from "../domain/parseFailureAnalysisError.js";
-import { Il2cppMetadataFormatFailure } from "./Il2cppMetadataFormat.js";
+import {
+  IL2CPP_METADATA_FORMAT,
+  Il2cppMetadataFormatFailure,
+} from "./Il2cppMetadataFormat.js";
 import { inspectIl2cppMetadataV108 } from "./Il2cppMetadataV108.js";
 import type { AnalysisPartialObservation } from "../domain/analysisErrorBase.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { setImmediate } from "node:timers/promises";
 import {
+  closeArtifactResources,
   readStableArtifact,
   type StableArtifactSnapshot,
   ArtifactResourceScope,
@@ -24,10 +30,9 @@ import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   artifactFileCompletion,
-  bindArtifactFileCleanup,
+  withArtifactCleanupFailure,
   assertArtifactReadActive,
 } from "../resources/index.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type { Il2cppMetadataPort } from "../ports/il2cpp/Il2cppMetadataPort.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -40,20 +45,20 @@ import {
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import {
   AnalysisCapabilityUnavailableError,
-  AnalysisInputError,
+  AnalysisTargetFailureError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
   cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import {
   il2cppMetadataSchema,
+  il2cppNativeIndexLimit,
   type Il2cppMetadata,
   type Il2cppMetadataProviderInput,
 } from "../domain/il2cpp/il2cppMetadata.js";
+import { ELF_VIRTUAL_POINTER_INDEX_LIMIT } from "../domain/native/elfPointerRelocations.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
-import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   readIl2cppMetadataForLinkingSteps,
@@ -75,6 +80,32 @@ const inferredReferenceForm = (architecture: string) =>
   architecture === "arm64"
     ? "an adjacent ADRP+ADD pair"
     : "RIP-relative LEA/MOV";
+/**
+ * Both files parsed, but the binary does not link to the metadata. They are
+ * two well-formed records that disagree, and nothing establishes which one
+ * is wrong, so neither is called malformed: the refusal lists both selecting
+ * fields, and the caller's partial observation keeps both files' identities.
+ */
+const linkConflict = (
+  binaryPath: string,
+  metadataPath: string,
+  cause: Il2cppBinaryFormatFailure,
+): AnalysisTargetFailureError =>
+  new AnalysisTargetFailureError(
+    OPERATION,
+    metadataPath,
+    {
+      kind: "conflict",
+      format: IL2CPP_BINARY_FORMAT,
+      detail: `Selected metadata does not link to the selected binary: ${cause.message}`,
+      inputs: [
+        { field: "path", path: metadataPath },
+        { field: "binary_path", path: binaryPath },
+      ],
+    },
+    { cause },
+  );
+
 const failureForPrimary = (
   facts: ArtifactFilePrimaryFacts,
   path: string,
@@ -85,6 +116,18 @@ const failureForPrimary = (
   const { cause, origin } = facts;
   if (origin === "owned-or-classified" && cause instanceof AnalysisError)
     return cause;
+  if (
+    cause instanceof Il2cppBinaryFormatFailure &&
+    isParseLimit(cause, IL2CPP_BINARY_FORMAT) &&
+    cause.failure.limit.name === ELF_VIRTUAL_POINTER_INDEX_LIMIT
+  ) {
+    const selected = cause.failure.limit.maximum;
+    return parseLimitConstraint(OPERATION, "memory", cause, {
+      retryable: false,
+      limit: il2cppNativeIndexLimit(selected),
+      remediationAction: `The ELF pointer index allowance is max_native_index_bytes = ${String(selected)} bytes. Pass a larger max_native_index_bytes (up to ${String(Number.MAX_SAFE_INTEGER)}) on the next ${OPERATION} call with the same binary_path; no restart is required. Host memory and the binary file allowance are independent. Repeating the unchanged request fails the same way.`,
+    });
+  }
   if (
     cause instanceof Il2cppBinaryFormatFailure &&
     isParseLimit(cause, IL2CPP_BINARY_FORMAT)
@@ -103,27 +146,20 @@ const failureForPrimary = (
       ),
     );
   if (
-    cause instanceof Il2cppBinaryFormatFailure ||
-    cause instanceof Il2cppMetadataFormatFailure
-  ) {
-    const binary = cause instanceof Il2cppBinaryFormatFailure;
-    // Metadata names are read on demand while linking, so a metadata failure
-    // can surface while path still names the binary.
-    const target = binary ? path : metadataPath;
-    return cause.kind === "unsupported"
-      ? new AnalysisUnsupportedTargetError(OPERATION, target, cause.message, {
-          cause,
-        })
-      : new AnalysisInputError(OPERATION, { cause }, [
-          {
-            path: [binary ? field : "path"],
-            reason: "invalid_format",
-            message: binary
-              ? `Selected binary ${target} does not link to the metadata: ${cause.message}`
-              : `Selected artifact ${target} is corrupt: ${cause.message}`,
-          },
-        ]);
-  }
+    cause instanceof Il2cppBinaryFormatFailure &&
+    isIl2cppLinkConflict(cause.reason)
+  )
+    return linkConflict(path, metadataPath, cause);
+  // Each file's own format failure names that file. Metadata names are read
+  // on demand while linking, so a metadata failure can surface while `path`
+  // here still names the binary.
+  const ownFormatFailure =
+    cause instanceof Il2cppBinaryFormatFailure
+      ? parseFailureAnalysisError(OPERATION, path, cause)
+      : cause instanceof Il2cppMetadataFormatFailure
+        ? parseFailureAnalysisError(OPERATION, metadataPath, cause)
+        : undefined;
+  if (ownFormatFailure !== undefined) return ownFormatFailure;
   const identityFailure = projectOwnedArtifactIdentityFailure(
     facts,
     OPERATION,
@@ -190,23 +226,18 @@ const failureFor = (
     maximum,
     metadataPath,
   );
+  if (!(cause instanceof ArtifactReaderFailure)) return primary;
   if (
-    cause instanceof ArtifactReaderFailure &&
     cause.partialObservation !== undefined &&
     primary.partialObservation === undefined
   )
     primary.retainPartialObservation(cause.partialObservation);
-  if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
-    return primary;
-  const cleanup = new ProviderCleanupError(
+  return withArtifactCleanupFailure(
+    cause,
+    primary,
     IL2CPP_METADATA_PROVIDER_IDENTITY.id,
-    cause.cleanup.resources,
-    { reason: cause.cleanup.reason },
-    { operation: OPERATION, cause },
+    OPERATION,
   );
-  const error = analysisErrorWithCleanupFailure(primary, cleanup, OPERATION);
-  bindArtifactFileCleanup(cause, error);
-  return error;
 };
 
 /** Report fields for a linked binary, with addresses as exact hexadecimal strings. */
@@ -384,25 +415,15 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
     private readonly yieldControl: () => Promise<void> = setImmediate,
   ) {}
 
-  async close(): Promise<void> {
-    this.#admissionStopped = true;
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      if (
-        !(cause instanceof ArtifactReaderFailure) ||
-        cause.cleanup === undefined
-      )
-        throw cause;
-      const error = new ProviderCleanupError(
-        IL2CPP_METADATA_PROVIDER_IDENTITY.id,
-        cause.cleanup.resources,
-        { reason: cause.cleanup.reason },
-        { cause, operation: OPERATION },
-      );
-      bindArtifactFileCleanup(cause, error);
-      throw error;
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => {
+        this.#admissionStopped = true;
+        return this.#resources.close();
+      },
+      IL2CPP_METADATA_PROVIDER_IDENTITY,
+      OPERATION,
+    );
   }
 
   /** Read every image, type and method name from one stable file snapshot. */
@@ -480,10 +501,17 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
         );
         assertArtifactReadActive(options?.signal);
         if (v108 !== null) {
-          const failure = new AnalysisUnsupportedTargetError(
+          const failure = new AnalysisTargetFailureError(
             OPERATION,
             input.path,
-            "unsupported-version: metadata version 108 has a partial header and string observation; type, method and binary layouts are not decoded",
+            {
+              kind: "unsupported",
+              format: IL2CPP_METADATA_FORMAT,
+              detail:
+                "unsupported-version: metadata version 108 has a partial header and string observation; type, method and binary layouts are not decoded",
+              field: "version",
+              undecodedContent: true,
+            },
           );
           failure.partialObservation = metadataSourceEvidence(
             artifact,
@@ -570,6 +598,9 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
               {
                 ...admission,
                 genericInstances: input.generic_instances === true,
+                ...(input.max_native_index_bytes === undefined
+                  ? {}
+                  : { maxNativeIndexBytes: input.max_native_index_bytes }),
               },
               async () => {
                 await this.yieldControl();

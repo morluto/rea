@@ -25,7 +25,10 @@ import {
   cells,
   devicetreeFixture,
 } from "../domain/firmware/devicetree.fixture.js";
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import {
+  createTestTempDirectory,
+  createTestTempFile,
+} from "../../tests/fixtures/temporaryDirectory.js";
 import { renameOpenParent } from "../../tests/fixtures/renameOpenParent.js";
 import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
@@ -33,12 +36,8 @@ import { ArtifactFileSource } from "../resources/index.js";
 
 const MIB = 1024 * 1024;
 
-const writeFit = async (name: string, bytes: Buffer): Promise<string> => {
-  const directory = await createTestTempDirectory("rea-fit-");
-  const path = join(directory, name);
-  await writeFile(path, bytes);
-  return path;
-};
+const writeFit = (name: string, bytes: Buffer): Promise<string> =>
+  createTestTempFile("rea-fit-", name, bytes);
 
 const withTotalsize = (bytes: Buffer, totalsize: number): Buffer => {
   const copy = Buffer.from(bytes);
@@ -195,6 +194,52 @@ it.each(["crc32", "md5", "sha1", "sha256", "sha384", "sha512"])(
   },
 );
 
+it.each(["crc32", "md5", "sha1", "sha256", "sha384", "sha512"])(
+  "emits FIT images and records %s hash mismatch under record-and-continue",
+  async (algo) => {
+    const bytes = fitFixture({
+      images: [
+        { name: "kernel", data: FIT_KERNEL, hashes: [algo] },
+        { name: "fdt-1", data: FIT_DEVICETREE, hashes: ["sha256"] },
+      ],
+      mode: "offset",
+    });
+    const kernelOffset = bytes.indexOf(FIT_KERNEL);
+    bytes[kernelOffset + 10] = (bytes[kernelOffset + 10] ?? 0) ^ 1;
+    const snapshot = await scanCanonicalArtifactInventory(
+      await writeFit(`bad-${algo}.itb`, bytes),
+      { integrity: "record-and-continue" },
+    );
+    expect(snapshot.manifest.root_format).toBe("fit");
+    expect(
+      snapshot.occurrences
+        .filter((row) => row.logical_path !== ".")
+        .map((row) => row.logical_path)
+        .sort(),
+    ).toEqual(["images/fdt-1.bin", "images/kernel.bin"]);
+    const kernel = snapshot.occurrences.find(
+      (row) => row.logical_path === "images/kernel.bin",
+    );
+    expect(kernel?.format_metadata).toMatchObject({
+      kind: "fit-image",
+      name: "kernel",
+      hashes_verified: 0,
+    });
+    expect(kernel?.limitations.join(" ")).toMatch(
+      new RegExp(`FIT image kernel hash-1 ${algo} does not match`, "u"),
+    );
+    expect(snapshot.limitations.join(" ")).toMatch(
+      new RegExp(`FIT image kernel hash-1 ${algo} does not match`, "u"),
+    );
+    if (algo === "sha256" || algo === "md5") {
+      expect(kernel?.hash_status).toBe("mismatched");
+      expect(snapshot.integrity_contradictions).toEqual([
+        expect.objectContaining({ logical_path: "images/kernel.bin" }),
+      ]);
+    }
+  },
+);
+
 it.each([
   ["embedded", FIT_EMBEDDED],
   ["external", FIT_EXTERNAL],
@@ -232,7 +277,8 @@ it.each([
           .map((row) => [row.logical_path, row.artifact_format])
           .sort(),
       ).toEqual([
-        ["images/fdt-1.bin", "file"],
+        // The stored flat_dt image is a devicetree in its own right.
+        ["images/fdt-1.bin", "devicetree"],
         ["images/kernel.bin", "file"],
       ]);
     } finally {
@@ -287,12 +333,20 @@ it("fails a devicetree totalsize past the end of the file", async () => {
       ),
     ),
   ).rejects.toMatchObject({
-    reason: "format",
-    message: expect.stringContaining("FIT devicetree is truncated"),
+    reason: "truncated",
+    parseFailure: {
+      kind: "truncated",
+      format: "fit",
+      field: "totalsize",
+      extent: {
+        availableBytes: FIT_EMBEDDED.length,
+        requiredBytes: FIT_EMBEDDED.length + 4,
+      },
+    },
   });
 });
 
-it("fails /images followed by a malformed structure, and leaves a plain DTB a file", async () => {
+it("fails /images followed by a malformed structure, and reads a plain DTB as a devicetree", async () => {
   const bytes = Buffer.from(FIT_EMBEDDED);
   const end = bytes.readUInt32BE(8) + bytes.readUInt32BE(36) - 4;
   expect(bytes.readUInt32BE(end)).toBe(9);
@@ -300,13 +354,13 @@ it("fails /images followed by a malformed structure, and leaves a plain DTB a fi
   await expect(
     scanCanonicalArtifactInventory(await writeFit("broken.itb", bytes)),
   ).rejects.toMatchObject({
-    reason: "format",
+    reason: "malformed",
     message: expect.stringMatching(/FDT.*token 10/iu),
   });
   const plain = await scanCanonicalArtifactInventory(
     await writeFit("board.dtb", devicetreeFixture()),
   );
-  expect(plain.manifest.root_format).toBe("file");
+  expect(plain.manifest.root_format).toBe("devicetree");
 });
 
 it("rejects a changed carrier during extraction preparation", async () => {
@@ -340,9 +394,7 @@ it("isolates returned declaration arrays from saved FIT facts", async () => {
       reason: "integrity",
     });
     const stream = await reader.open(fresh);
-    const chunks: Buffer[] = [];
-    for await (const chunk of stream) chunks.push(chunk as Buffer);
-    expect(Buffer.concat(chunks).equals(FIT_KERNEL)).toBe(true);
+    expect((await buffer(stream)).equals(FIT_KERNEL)).toBe(true);
   } finally {
     await reader.close();
   }

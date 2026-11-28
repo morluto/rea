@@ -263,9 +263,13 @@ static void verifyPrivate(HANDLE handle, const std::wstring& path, bool root) {
                       (OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE)),
             "Private DACL contains unsupported rights or ACE type", path, ERROR_ACCESS_DENIED);
     PSID sid = const_cast<DWORD*>(&ace->SidStart);
-    if (EqualSid(sid, expected.userSid())) user = true;
-    else if (EqualSid(sid, expected.system.data())) system = true;
-    else throw Failure("Private DACL permits an unrelated principal", path, ERROR_ACCESS_DENIED);
+    // The process user can be SYSTEM. That one ACE meets both trustee checks.
+    const bool isUser = EqualSid(sid, expected.userSid()) == TRUE;
+    const bool isSystem = EqualSid(sid, expected.system.data()) == TRUE;
+    if (!isUser && !isSystem)
+      throw Failure("Private DACL permits an unrelated principal", path, ERROR_ACCESS_DENIED);
+    if (isUser) user = true;
+    if (isSystem) system = true;
   }
   require(user && system, "Private DACL must allow only current user and SYSTEM", path, ERROR_ACCESS_DENIED);
 }
@@ -683,13 +687,25 @@ static void completeSnapshot(napi_env env, napi_status status, void* pointer) {
   const auto reject = [&](const Failure& failure) {
     try {
       disposeSnapshot(*work->root, work->destination, work->path);
-      napi_reject_deferred(env, work->deferred, failureValue(env, failure));
+      deliverFailure(env, work->deferred, failure);
     } catch (const Failure& cleanupFailure) {
       Failure combined = failure;
       combined.cleanupConstraint = cleanupFailure.constraint;
       combined.cleanupWin32 = cleanupFailure.win32;
       combined.cleanupPath = cleanupFailure.path;
-      napi_reject_deferred(env, work->deferred, failureValue(env, combined));
+      deliverFailure(env, work->deferred, combined);
+    } catch (const std::exception& cleanupFailure) {
+      Failure combined = failure;
+      combined.cleanupConstraint = cleanupFailure.what();
+      combined.cleanupWin32 = ERROR_GEN_FAILURE;
+      combined.cleanupPath = work->path;
+      deliverFailure(env, work->deferred, combined);
+    } catch (...) {
+      Failure combined = failure;
+      combined.cleanupConstraint = "Unknown snapshot cleanup failure";
+      combined.cleanupWin32 = ERROR_GEN_FAILURE;
+      combined.cleanupPath = work->path;
+      deliverFailure(env, work->deferred, combined);
     }
   };
   try {
@@ -708,6 +724,8 @@ static void completeSnapshot(napi_env env, napi_status status, void* pointer) {
     reject(failure);
   } catch (const std::exception& failure) {
     reject(Failure(failure.what(), work->path, ERROR_GEN_FAILURE));
+  } catch (...) {
+    reject(Failure("Unknown native snapshot completion failure", work->path, ERROR_GEN_FAILURE));
   }
   if (work->source != nullptr) parkUnresolved(*work->root, work->source->handles);
   parkUnresolved(*work->root, work->destination);
@@ -723,17 +741,17 @@ static napi_value snapshot(napi_env env, napi_value rootValue, Runtime& root,
   // Retain the write lease with read-only sharing, but omit DELETE authority:
   // Java's RandomAccessFile reader shares read/write, not delete access.
   work->destination = createPrivateFile(root, relative, GENERIC_WRITE | GENERIC_READ | READ_CONTROL);
+  const auto label = string(env, std::string("REA admitted Windows snapshot"));
   napi_value promise;
   check(napi_create_promise(env, &work->deferred, &promise));
-  check(napi_create_reference(env, rootValue, 1, &work->rootReference));
-  const auto label = string(env, std::string("REA admitted Windows snapshot"));
-  root.snapshotCancelled.store(false);
   try {
+    check(napi_create_reference(env, rootValue, 1, &work->rootReference));
+    root.snapshotCancelled.store(false);
     check(napi_create_async_work(env, nullptr, label, copySnapshot, completeSnapshot, work.get(), &work->work));
     check(napi_queue_async_work(env, work->work));
   } catch (...) {
-    if (work->work) napi_delete_async_work(env, work->work);
-    napi_delete_reference(env, work->rootReference);
+    if (work->work != nullptr) napi_delete_async_work(env, work->work);
+    if (work->rootReference != nullptr) napi_delete_reference(env, work->rootReference);
     throw;
   }
   root.snapshotPending = true;

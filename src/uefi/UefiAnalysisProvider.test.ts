@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256 } from "../../tests/support/sha256.js";
 import { existsSync } from "node:fs";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -13,7 +13,7 @@ import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { UefiAnalysisService } from "../application/uefi/UefiAnalysisService.js";
+import { createUefiAnalysisService } from "../application/ProviderOperationServices.js";
 import { AMD_ZLIB_HEADER_LENGTH } from "./FfsSections.js";
 import {
   buildCompressionSection,
@@ -95,9 +95,6 @@ const writeTestImage = async (options?: {
   await writeFile(imagePath, buildTestImage(options));
   return { imagePath, directory };
 };
-
-const sha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 /** Schema-validated admission, identical to the shared provider execution. */
 const inspectRequest = (path: string) =>
@@ -566,7 +563,7 @@ it("extracts embedded raw-file volume files and targets the nested volume by off
 
 it("validates requests through the service before execution", async () => {
   const provider = new UefiAnalysisProvider();
-  const service = new UefiAnalysisService(provider);
+  const service = createUefiAnalysisService(provider);
   const rejected = await service.execute("inspect_uefi_firmware", {
     path: "relative/image.fi",
   });

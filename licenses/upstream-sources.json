@@ -70,8 +70,8 @@
     "sha256": "cc535c21133c895b56b374c8a1dc1eb948d99003ed2b47372069456b62f42b24"
   },
   {
-    "file": "licenses/protobuf-es-v2.16.0-LICENSE.txt",
-    "source": "https://raw.githubusercontent.com/bufbuild/protobuf-es/b3b232f7f466eda27c66e8f63c82f930578b6cc6/LICENSE",
+    "file": "licenses/protobuf-es-v2.17.0-LICENSE.txt",
+    "source": "https://raw.githubusercontent.com/bufbuild/protobuf-es/01a8c3b7c95d17758c641b2b9e8ee2f14a3ee9d7/LICENSE",
     "sha256": "c04b4216f1cd4c5a4f7fb2f2a1b0ae70d847e9e0cac7c9dee9bf8cc03177c449"
   },
   {
@@ -83,5 +83,10 @@
     "file": "licenses/microsoft-uf2-MIT.txt",
     "source": "https://raw.githubusercontent.com/microsoft/uf2/cf3bd7f9c274b949528f8cd6a19eef2502a687d2/LICENSE.txt",
     "sha256": "c581accf1e5449482b70ac5fcdfb171599317ccff559cf0794d771671486f800"
+  },
+  {
+    "file": "licenses/napi-rs-MIT.txt",
+    "source": "https://raw.githubusercontent.com/napi-rs/napi-rs/a9362f80ff9bc65f011e7a487c27ab5a104ea194/LICENSE",
+    "sha256": "3f1ce66533302df3a32edbfdfc0b78f0dd34659e4c1f5817162e5ea3c2297215"
   }
 ]

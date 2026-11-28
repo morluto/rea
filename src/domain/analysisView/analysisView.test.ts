@@ -1731,7 +1731,7 @@ it("rejects unsupported parent operations and incompatible collections", () => {
   );
   expect(unsupported).toMatchObject({
     ok: false,
-    error: { _tag: "AnalysisUnsupportedTargetError" },
+    error: { _tag: "AnalysisTargetFailureError" },
   });
   const modulesOnLayout = projectAnalysisView(layoutParent(), {
     kind: "page",
@@ -1895,6 +1895,105 @@ it("ranks only the longest byte entropy runs with stable offset ties", () => {
       },
     },
   });
+});
+
+const entropyParent = (blockCount: number) => {
+  const blocks = Array.from({ length: blockCount }, (_, index) => ({
+    offset: 16 + index * 256,
+    length: 256,
+    entropy: index % 3 === 2 ? 4 : index % 3 === 0 ? 7.9 : 0.1,
+  }));
+  const runs = blocks.flatMap((block) =>
+    block.entropy === 4
+      ? []
+      : [
+          {
+            offset: block.offset,
+            length: block.length,
+            classification: block.entropy > 4 ? "high" : "low",
+          },
+        ],
+  );
+  return {
+    predicateType: "rea.byte-entropy",
+    evidenceId: `ev_${"3".repeat(64)}`,
+    operation: "inspect_byte_entropy",
+    limitations: [],
+    normalizedResult: {
+      artifact: {
+        path: "/tmp/fixture",
+        bytes: 16 + blockCount * 256,
+        sha256: "4".repeat(64),
+      },
+      block_size: 256,
+      window: { offset: 16, length: blockCount * 256 },
+      file_entropy: 4,
+      thresholds: { high: 7.2, low: 1 },
+      blocks,
+      runs,
+      limitations: [],
+    },
+  };
+};
+
+it("lists the first runs in offset order in the byte entropy summary", () => {
+  const parent = entropyParent(200);
+  const runs = parent.normalizedResult.runs;
+  const result = projectAnalysisView(parent, { kind: "summary" });
+  if (!result.ok) throw result.error;
+  expect(result.value).toMatchObject({
+    summary: { block_count: 200, run_count: runs.length },
+  });
+  expect(runs.length).toBeGreaterThan(64);
+  expect((result.value as { summary: { runs: unknown } }).summary.runs).toEqual(
+    runs.slice(0, 64),
+  );
+});
+
+it("pages retained byte entropy blocks and runs by index with a cursor", () => {
+  const parent = entropyParent(200);
+  const blocks = projectAnalysisView(parent, {
+    kind: "byte-entropy",
+    collection: "blocks",
+    offset: 190,
+    limit: 4,
+  });
+  if (!blocks.ok) throw blocks.error;
+  expect(blocks.value).toMatchObject({
+    kind: "byte-entropy",
+    parent_evidence_id: parent.evidenceId,
+    entropy: {
+      block_size: 256,
+      window: { offset: 16, length: 51200 },
+      block_count: 200,
+      run_count: parent.normalizedResult.runs.length,
+    },
+    items: parent.normalizedResult.blocks.slice(190, 194),
+    coverage: { status: "page", total: 200, next_offset: 194 },
+  });
+  const runs = projectAnalysisView(parent, {
+    kind: "byte-entropy",
+    collection: "runs",
+    offset: 130,
+    limit: 64,
+  });
+  if (!runs.ok) throw runs.error;
+  expect(runs.value).toMatchObject({
+    items: parent.normalizedResult.runs.slice(130),
+    coverage: {
+      total: parent.normalizedResult.runs.length,
+      next_offset: null,
+      exhausted: true,
+    },
+  });
+  expect(
+    projectAnalysisView(parent, {
+      kind: "native-exports",
+      collection: "issues",
+      offset: 0,
+      limit: 1,
+    }),
+  ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
 });
 
 const multiModuleJavaScriptAnalysis = () => {

@@ -122,6 +122,10 @@ export class UefiArtifactReader implements ArtifactReader {
     for (const hit of scan.volumes) {
       const header = hit.header;
       const name = volumePath(header.absoluteBase);
+      const checksumLimitation = header.checksumValid
+        ? undefined
+        : `Firmware volume at ${hex(header.absoluteBase)} failed header checksum verification (fv-checksum-mismatch): header words do not sum to zero over ${header.headerLength} bytes.`;
+      if (checksumLimitation !== undefined) limitations.add(checksumLimitation);
       const entry: ArtifactEntry = {
         path: name,
         kind: "directory",
@@ -134,6 +138,7 @@ export class UefiArtifactReader implements ArtifactReader {
         unpacked: true,
         limitations: [
           volumeLimitation(header),
+          ...(checksumLimitation === undefined ? [] : [checksumLimitation]),
           ...(imageTruncated && hit === scan.volumes[0]
             ? [IMAGE_TRUNCATION_LIMITATION]
             : []),
@@ -443,7 +448,7 @@ export class UefiArtifactReader implements ArtifactReader {
       const primary =
         cause.cause instanceof NonRegularFileReadError
           ? new ArtifactReaderFailure(
-              "format",
+              "path",
               `UEFI flash image source is not a regular file: ${this.path}`,
               { cause: cause.cause },
             )

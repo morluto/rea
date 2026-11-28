@@ -39,6 +39,7 @@ import type { ToolContract } from "./toolContractTypes.js";
 import type { EffectAudit } from "./toolEffects.js";
 import {
   toolContractMetadata,
+  artifactInspectionEffects,
   evidenceEffects,
   providerEffects,
   providerRemoteEffects,
@@ -105,7 +106,7 @@ export const SESSION_TOOL_CONTRACTS = [
       mayDiscardData: true,
       idempotent: false,
     }),
-    "Release the active engine and owned resources while retaining investigation Evidence and complete Unknown history in memory. Drains earlier requests and queues later ones. If cleanup fails, keep this connection and retry close_binary without snapshot_path after the reported condition settles. Optional snapshot_path saves a target-bound snapshot first; resource-only sessions have no snapshot binding, existing files require overwrite, and failed saves keep the engine open. Metadata edits prevent immutable snapshot saves until recreation. Ghidra checkpoint mode saves metadata on normal close and retains the Program for retry if saving fails. Closing does not persist investigation records: export_evidence_bundle to save them, or reset_investigation to clear them.",
+    "Release the active engine and owned resources while retaining investigation Evidence and complete Unknown history in memory. Drains earlier requests and queues later ones. If cleanup fails, keep this connection and retry close_binary without snapshot_path after the reported condition settles. Optional snapshot_path saves a target-bound snapshot first; resource-only sessions have no snapshot binding, existing files require overwrite, and failed saves keep the engine open. Metadata edits prevent immutable snapshot saves until recreation. Ghidra checkpoint mode saves metadata on normal close and retains the Program for retry if saving fails; after a save refused because another session published first, the next close releases the edits unsaved and reports checkpoint.status discarded. Closing does not persist investigation records: export_evidence_bundle to save them, or reset_investigation to clear them.",
     closeBinaryInputSchema,
   ),
   session(
@@ -162,8 +163,8 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "compare_artifacts",
-    evidenceEffects,
-    'Compare complete artifact inventories by occurrence path, content identity, metadata and graph relations; root . identifies the outer container separately. Accepts complete inline Evidence, {kind:"retained-evidence",evidence_id} for inspect_artifact/nested inventory/retained summary, or {kind:"evidence-file",path:"/absolute/bundle.json"} with optional evidence_id. Summaries resolve to their complete parent in that session/source bundle; summary facts alone are insufficient. Returns every delta inline with both source identities; coverage gaps remain truncated or unknown, never equivalence. Includes FIT and legacy uImage components.',
+    artifactInspectionEffects,
+    'Compare complete artifact inventories by occurrence path, content identity, metadata and graph relations; root . identifies the outer container separately. Accepts complete inline Evidence, {kind:"retained-evidence",evidence_id} for inspect_artifact/nested inventory/retained summary, {kind:"evidence-file",path:"/absolute/bundle.json"} with optional evidence_id, or {kind:"path",path:"/absolute/dir"} to inventory a file or directory in place. Summaries resolve to their complete parent in that session/source bundle; summary facts alone are insufficient. Returns every delta inline with both source identities; coverage gaps remain truncated or unknown, never equivalence. Includes FIT and legacy uImage components.',
     artifactComparisonInputSchema,
   ),
   session(
@@ -193,7 +194,7 @@ export const SESSION_TOOL_CONTRACTS = [
   session(
     "build_call_path",
     evidenceEffects,
-    "Build every shortest direct-callee path from complete analyze_function Evidence supplied inline or by exact retained-evidence references. References reuse the complete parent of an analyze_function summary without resending dossiers. Uses exact canonical addresses; missing dossiers and provider mixing remain unknown, and every node and edge cites source Evidence.",
+    "Build the shortest direct-callee paths from complete analyze_function Evidence supplied inline or by exact retained-evidence references. References reuse the complete parent of an analyze_function summary without resending dossiers. Uses exact canonical addresses. max_paths (default 64) is a caller-selected count preference, recorded in Evidence only when the caller selects it; the first shortest path is always returned, and a 2 MiB serialized paths-field budget bounds the paths after it. total_shortest_paths reports how many exist, total_shortest_paths_capped reports when that count only bounds one past the exactly representable range, paths_truncated reports when the returned list is a prefix, and paths_limited_by_bytes identifies byte-budget truncation. Missing dossiers and provider mixing remain unknown; every node and edge cites source Evidence.",
     callPathRequestSchema,
   ),
   session(

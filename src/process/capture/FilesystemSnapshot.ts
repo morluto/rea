@@ -1,3 +1,4 @@
+import { systemCodeFromError } from "../../kernel/reportedSystemCode.js";
 import { assertNotCancelled } from "./ProcessScenarioRuntimeValidation.js";
 import { observedSymlinkTarget } from "../../domain/symlinkTarget.js";
 import { createHash } from "node:crypto";
@@ -44,12 +45,6 @@ const hasSameIdentity = (
   before.ino === after.ino &&
   (expected === "directory" ? after.isDirectory() : after.isSymbolicLink());
 
-const filesystemSystemCode = (cause: unknown): string | undefined => {
-  if (!(cause instanceof Error) || !("code" in cause)) return undefined;
-  const code = cause.code;
-  return typeof code === "string" ? code : undefined;
-};
-
 const unavailableSystemCodes = new Set([
   "EACCES",
   "EISDIR",
@@ -61,7 +56,7 @@ const unavailableSystemCodes = new Set([
 ]);
 
 const fileUnavailableSystemCode = (cause: unknown): string | undefined => {
-  const code = filesystemSystemCode(cause);
+  const code = systemCodeFromError(cause);
   return code !== undefined && unavailableSystemCodes.has(code)
     ? code
     : undefined;
@@ -81,7 +76,7 @@ const readEntryObservation = async <T>(
   try {
     value = await read();
   } catch (cause: unknown) {
-    const code = filesystemSystemCode(cause);
+    const code = systemCodeFromError(cause);
     // readlink reports EINVAL if the observed symlink was replaced by a file.
     if (
       code === undefined ||
@@ -436,7 +431,7 @@ export const snapshotRoots = async (
       try {
         return await realpath(path);
       } catch (cause: unknown) {
-        const code = filesystemSystemCode(cause);
+        const code = systemCodeFromError(cause);
         if (code === "ENOENT" || code === "ENOTDIR") return undefined;
         throw cause;
       }
