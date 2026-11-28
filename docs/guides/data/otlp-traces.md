@@ -1,0 +1,97 @@
+# Offline OTLP traces
+
+Use `inspect_otlp_trace` or `inspect-otlp-trace` with an existing local
+**OTLP JSON** trace export. Import is offline: REA never contacts a collector or
+observability backend, fetches linked resources, or executes the recorded
+application.
+
+```sh
+rea inspect-otlp-trace /absolute/traces.json --json
+rea inspect-otlp-trace /absolute/traces.json --detail summary \
+  --evidence_output /absolute/new-evidence.bundle.json --json
+```
+
+Only the OTLP JSON encoding is decoded. Protobuf exports are not supported, and
+selecting one fails as an input-format error rather than being guessed at.
+
+## What is retained
+
+Each recorded span keeps its trace, span and parent identifiers, name, kind,
+status, start and end timestamps as exact 64-bit decimal strings, its own attributes, and indexes into the `resources` and `scopes` arrays. Each
+resource stores `service.name` and resource attributes once; each scope stores
+its name, version, and resource index. A scope name or version recorded as
+something other than a string keeps that value in `name_raw` / `version_raw`
+so it cannot be read as an omitted field. Group source pointers preserve their
+positions in the input. Event and link counts are reported without their payloads.
+When present, the export’s dropped event, link, and attribute counts are retained
+separately from omissions caused by the importer. Malformed span fields carry
+diagnostics with source pointers.
+
+- **Identity is recorded, not reconstructed.** A parent identifier the export
+  does not contain is reported in `orphan_span_ids` with a `missing-parent`
+  diagnostic. Its children stay parented to an unrecorded span and are not
+  promoted to roots. An invalid parent retains its original JSON value in
+  `parent_span_id_raw` and has `parent_span_id_state: "invalid"`; missing and
+  zero-value parent IDs have state `absent`. `roots` lists only spans that declare no parent at all, so a
+  captured subtree is never presented as a complete one.
+- **Duplicates and cycles stay visible.** A repeated span identifier retains both
+  records with a `duplicate-span-id` diagnostic, and a parent cycle is reported as
+  `cycle` instead of producing an ordering.
+- **Timing stays raw.** `duration_nano` is derived only when the recorded
+  interval is non-negative; a reversed interval keeps both timestamps and adds an
+  `invalid-time-interval` diagnostic. Clock domains and skew are not corrected.
+- **Unreadable integers stay recorded.** A timestamp outside uint64 or an
+  `intValue` outside int64 leaves the exact-value field null and keeps the
+  recorded JSON in `start_time_unix_nano_raw`, `end_time_unix_nano_raw` or
+  `int_value_raw`, so damage is never reported as an omitted value. If a rejected
+  value cannot be represented within the Evidence JSON depth limit, the import
+  fails with the completed file identity instead of dropping that value. A
+  numeric 64-bit field whose JSON number cannot be admitted exactly is also
+  refused with the file identity, rather than returning a rounded value. Numeric
+  spellings longer than 256 characters are refused before exactness checking;
+  recorded decimal strings are preserved within the file-size allowance. Source
+  coordinates for at most 16,384 imprecise numeric fields are retained; an
+  export exceeding that memory bound fails with the verified file identity.
+  Array and key-value-list contents are counted without scanning their numbers.
+- **Attributes are bounded.** Scalar attribute values are preserved as recorded,
+  including values whose keys resemble credentials. A `doubleValue` recorded as
+  one of the OTLP string spellings `"NaN"`, `"Infinity"` or `"-Infinity"` keeps
+  that spelling in `double_value_raw`. A JSON number that overflows to a
+  non-finite value — `1e400`, for example — cannot be held as a finite Evidence
+  number and refuses the whole import with the verified file identity rather
+  than returning a rounded or invented value. Array and key-value-list
+  attributes report only their element count. Byte attributes accept the standard
+  and URL-safe ProtoJSON base64 alphabets with optional padding and retain the
+  original spelling. Resource and scope groups are retained when at least one span
+  is inventoried.
+
+## Coverage
+
+`source_coverage` states what the import does not establish: recording
+completeness is unknown, the live collector is not contacted, protobuf encodings
+are unsupported and clock skew is not corrected. An absent span never proves that
+an operation did not occur.
+
+File admission is 32 MiB by default (`max_file_bytes`); a larger file is refused
+before parsing and the inspection fails with a resource-constraint error naming
+the `file-size` limit and the measured bytes required. Independently, a fixed
+representation allowance refuses exports with more than one million JSON values
+before parsing, bounding allocation even when individual fields are very small.
+
+`max_spans` defaults to 50,000 and accepts up to 100,000. `max_attributes` defaults
+to 128 and accepts up to 512 per span or resource. The inventory reports the
+effective controls, affected records report omitted attributes, and dropped spans
+are indicated by a diagnostic and limitation.
+
+Diagnostics retain the first 1000 findings in processing order, sorted by ID
+for display. If more occur, a limitation gives the omitted count; later findings
+are counted without retaining or hashing them.
+
+## Retain the complete inventory with a summary
+
+Use `--detail summary --evidence_output /absolute/new-evidence.bundle.json`
+for counts, artifact identity and source coverage in the reply. The bundle
+retains the complete parent Evidence, including the inventoried records and
+diagnostics. The summary names that parent and its digest. Complete summary
+projection does not imply complete source coverage; format limits, omissions
+and unsupported content remain explicit in `source_coverage`.

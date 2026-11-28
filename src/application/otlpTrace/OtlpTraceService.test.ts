@@ -1,0 +1,540 @@
+import { createHash } from "node:crypto";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { expect, it, onTestFinished } from "vitest";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import { otlpTraceSchema } from "../../domain/otlpTrace/otlpTrace.js";
+import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import { inspectOtlpTraceEvidence } from "./OtlpTraceService.js";
+
+it.each([
+  ["timestamp", "9223372036854775808"],
+  ["timestamp", "1.0000000000000001"],
+  ["timestamp", `0.${"0".repeat(260)}`],
+  ["span attribute", "9223372036854775808"],
+  ["resource attribute", "9223372036854775808"],
+])(
+  "refuses a lossy JSON number in %s while retaining the file identity",
+  async (kind, literal) => {
+    const attribute = { key: "count", value: { intValue: "NUMERIC_LITERAL" } };
+    const document = {
+      resourceSpans: [
+        {
+          resource: {
+            attributes: kind === "resource attribute" ? [attribute] : [],
+          },
+          scopeSpans: [
+            {
+              spans: [
+                {
+                  traceId: "1".repeat(32),
+                  spanId: "2".repeat(16),
+                  ...(kind === "timestamp"
+                    ? { startTimeUnixNano: "NUMERIC_LITERAL" }
+                    : {}),
+                  ...(kind === "span attribute"
+                    ? { attributes: [attribute] }
+                    : {}),
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const input = JSON.stringify(document).replace(
+      '"NUMERIC_LITERAL"',
+      literal,
+    );
+    const path = join(
+      await createTestTempDirectory("rea-otlp-unsafe-number-"),
+      "trace.json",
+    );
+    await writeFile(path, input);
+    const resources = new ArtifactResourceScope();
+    onTestFinished(() => resources.close());
+    const result = await inspectOtlpTraceEvidence({ path }, resources);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected numeric refusal");
+    expect(result.error._tag).toBe("AnalysisInputError");
+    expect(result.error.partialObservation).toMatchObject({
+      kind: "file-snapshot-hash",
+      path,
+      sha256: createHash("sha256").update(input).digest("hex"),
+      bytes: Buffer.byteLength(input),
+    });
+  },
+);
+
+it.each(["stringValue", "boolValue", "bytesValue"])(
+  "refuses a rounded JSON number %s retained as raw evidence",
+  async (field) => {
+    const input = `{"resourceSpans":[{"scopeSpans":[{"spans":[{"traceId":"11111111111111111111111111111111","spanId":"2222222222222222","attributes":[{"key":"count","value":{"${field}":9007199254740993}}]}]}]}]}`;
+    const path = join(
+      await createTestTempDirectory("rea-otlp-raw-number-"),
+      "trace.json",
+    );
+    await writeFile(path, input);
+    const resources = new ArtifactResourceScope();
+    onTestFinished(() => resources.close());
+    const result = await inspectOtlpTraceEvidence({ path }, resources);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected numeric refusal");
+    expect(result.error._tag).toBe("AnalysisInputError");
+    expect(result.error.partialObservation).toMatchObject({
+      kind: "file-snapshot-hash",
+      path,
+      sha256: createHash("sha256").update(input).digest("hex"),
+    });
+  },
+);
+
+it("keeps a fractional JSON number retained as raw evidence", async () => {
+  const input =
+    '{"resourceSpans":[{"scopeSpans":[{"spans":[{"traceId":"11111111111111111111111111111111","spanId":"2222222222222222","attributes":[{"key":"count","value":{"stringValue":1.5}}]}]}]}]}';
+  const path = join(
+    await createTestTempDirectory("rea-otlp-raw-fraction-"),
+    "trace.json",
+  );
+  await writeFile(path, input);
+  const resources = new ArtifactResourceScope();
+  onTestFinished(() => resources.close());
+  const result = await inspectOtlpTraceEvidence({ path }, resources);
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw new Error("Expected an inventory");
+  expect(result.value.evidence.normalized_result).toMatchObject({
+    spans: [{ attributes: [{ string_value: null, string_value_raw: 1.5 }] }],
+  });
+});
+
+it.each(["timestamp", "span attribute", "resource attribute"])(
+  "retains the file identity when a rejected %s value cannot fit Evidence",
+  async (kind) => {
+    let raw: unknown = "invalid";
+    for (let i = 0; i < 1001; i += 1) raw = [raw];
+    const attribute = { key: "count", value: { intValue: raw } };
+    const input = JSON.stringify({
+      resourceSpans: [
+        {
+          resource: {
+            attributes: kind === "resource attribute" ? [attribute] : [],
+          },
+          scopeSpans: [
+            {
+              spans: [
+                {
+                  traceId: "1".repeat(32),
+                  spanId: "2".repeat(16),
+                  ...(kind === "timestamp" ? { startTimeUnixNano: raw } : {}),
+                  ...(kind === "span attribute"
+                    ? { attributes: [attribute] }
+                    : {}),
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const path = join(
+      await createTestTempDirectory("rea-otlp-rejected-value-"),
+      "trace.json",
+    );
+    await writeFile(path, input);
+    const resources = new ArtifactResourceScope();
+    onTestFinished(() => resources.close());
+    const result = await inspectOtlpTraceEvidence({ path }, resources);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected depth refusal");
+    expect(result.error._tag).toBe("AnalysisInputError");
+    expect(result.error.partialObservation).toMatchObject({
+      kind: "file-snapshot-hash",
+      path,
+      sha256: createHash("sha256").update(input).digest("hex"),
+      bytes: Buffer.byteLength(input),
+    });
+  },
+);
+
+it.each([998, 999, 1001])(
+  "returns a typed failure with the verified file identity for a parent depth of %i",
+  async (depth) => {
+    let parent: unknown = "bad";
+    for (let i = 0; i < depth; i++) parent = [parent];
+    const input = JSON.stringify({
+      resourceSpans: [
+        {
+          scopeSpans: [
+            {
+              spans: [
+                {
+                  traceId: "1".repeat(32),
+                  spanId: "2".repeat(16),
+                  parentSpanId: parent,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const path = join(
+      await createTestTempDirectory("rea-otlp-deep-parent-"),
+      "trace.json",
+    );
+    await writeFile(path, input);
+    const resources = new ArtifactResourceScope();
+    onTestFinished(() => resources.close());
+    const result = await inspectOtlpTraceEvidence({ path }, resources);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected depth refusal");
+    expect(result.error._tag).toBe("AnalysisInputError");
+    expect(result.error.partialObservation).toMatchObject({
+      kind: "file-snapshot-hash",
+      path,
+      sha256: createHash("sha256").update(input).digest("hex"),
+      bytes: Buffer.byteLength(input),
+    });
+  },
+);
+
+it("admits a parent value that fits the Evidence nesting limit", async () => {
+  let parent: unknown = "bad";
+  for (let i = 0; i < 997; i++) parent = [parent];
+  const input = JSON.stringify({
+    resourceSpans: [
+      {
+        scopeSpans: [
+          {
+            spans: [
+              {
+                traceId: "1".repeat(32),
+                spanId: "2".repeat(16),
+                parentSpanId: parent,
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+  const path = join(
+    await createTestTempDirectory("rea-otlp-deep-control-"),
+    "trace.json",
+  );
+  await writeFile(path, input);
+  const resources = new ArtifactResourceScope();
+  onTestFinished(() => resources.close());
+  const result = await inspectOtlpTraceEvidence({ path }, resources);
+  expect(result.ok).toBe(true);
+});
+
+it("accepts exact numeric fields without interpreting unrelated similarly named data", async () => {
+  const input =
+    '{"resourceSpans":[{"scopeSpans":[{"spans":[{"traceId":"11111111111111111111111111111111","spanId":"2222222222222222","startTimeUnixNano":42,"attributes":[{"key":"count","value":{"intValue":17}}],"unexamined":{"intValue":9223372036854775808}}]}]}]}';
+  const path = join(
+    await createTestTempDirectory("rea-otlp-safe-number-"),
+    "trace.json",
+  );
+  await writeFile(path, input);
+  const resources = new ArtifactResourceScope();
+  onTestFinished(() => resources.close());
+  const result = await inspectOtlpTraceEvidence({ path }, resources);
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw new Error("Expected an inventory");
+  expect(result.value.evidence.normalized_result).toMatchObject({
+    spans: [{ start_time_unix_nano: "42", attributes: [{ int_value: "17" }] }],
+  });
+});
+
+it("accepts exact integer values written using JSON exponent and decimal forms", async () => {
+  const input =
+    '{"resourceSpans":[{"scopeSpans":[{"spans":[{"traceId":"11111111111111111111111111111111","spanId":"2222222222222222","startTimeUnixNano":1e3,"attributes":[{"key":"count","value":{"intValue":1.0}}]}]}]}]}';
+  const path = join(
+    await createTestTempDirectory("rea-otlp-exact-decimal-"),
+    "trace.json",
+  );
+  await writeFile(path, input);
+  const resources = new ArtifactResourceScope();
+  onTestFinished(() => resources.close());
+  const result = await inspectOtlpTraceEvidence({ path }, resources);
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw new Error("Expected an inventory");
+  expect(result.value.evidence.normalized_result).toMatchObject({
+    spans: [{ start_time_unix_nano: "1000", attributes: [{ int_value: "1" }] }],
+  });
+});
+
+it("detects a lossy numeric value under an escaped JSON key", async () => {
+  const input =
+    '{"resourceSpans":[{"scopeSpans":[{"spans":[{"traceId":"11111111111111111111111111111111","spanId":"2222222222222222","attributes":[{"key":"count","value":{"int\\u0056alue":9223372036854775808}}]}]}]}]}';
+  const path = join(
+    await createTestTempDirectory("rea-otlp-escaped-key-"),
+    "trace.json",
+  );
+  await writeFile(path, input);
+  const resources = new ArtifactResourceScope();
+  onTestFinished(() => resources.close());
+  const result = await inspectOtlpTraceEvidence({ path }, resources);
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("Expected numeric refusal");
+  expect(result.error._tag).toBe("AnalysisInputError");
+  expect(result.error.partialObservation).toMatchObject({
+    kind: "file-snapshot-hash",
+    path,
+    sha256: createHash("sha256").update(input).digest("hex"),
+  });
+});
+
+it("reports the selected path and cause when the trace cannot be resolved", async () => {
+  const root = await createTestTempDirectory("rea-otlp-missing-");
+  const blocker = join(root, "file");
+  await writeFile(blocker, "x");
+  const resources = new ArtifactResourceScope();
+  onTestFinished(() => resources.close());
+  for (const [path, code] of [
+    [join(root, "missing.json"), "ENOENT"],
+    [join(blocker, "child.json"), "ENOTDIR"],
+  ] as const) {
+    const result = await inspectOtlpTraceEvidence({ path }, resources);
+    expect(result.ok).toBe(false);
+    if (result.ok || !(result.error instanceof AnalysisInputError))
+      throw new Error("Expected input refusal");
+    expect(result.error.conformsToInputContract).toBe(true);
+    expect(result.error.remediationAction).toContain("host running REA");
+    expect(result.error.issues).toEqual([
+      {
+        path: ["path"],
+        reason: "invalid_format",
+        message: expect.stringContaining(path),
+      },
+    ]);
+    expect(result.error.issues[0]?.message).toContain(code);
+  }
+});
+
+it.each([
+  ['"intValue":1.0000000000000001,"intValue":1', true],
+  ['"intValue":1,"intValue":1.0000000000000001', false],
+])(
+  "uses the final duplicate numeric field for source accuracy",
+  async (fields, accepted) => {
+    const input = `{"resourceSpans":[{"scopeSpans":[{"spans":[{"traceId":"${"1".repeat(32)}","spanId":"${"2".repeat(16)}","attributes":[{"key":"count","value":{${fields}}}]}]}]}]}`;
+    const path = join(
+      await createTestTempDirectory("rea-otlp-duplicate-"),
+      "trace.json",
+    );
+    await writeFile(path, input);
+    const resources = new ArtifactResourceScope();
+    onTestFinished(() => resources.close());
+    const result = await inspectOtlpTraceEvidence({ path }, resources);
+    expect(result.ok).toBe(accepted);
+  },
+);
+
+it("counts a large unexamined array without interpreting its numeric members", async () => {
+  const input = `{"resourceSpans":[{"scopeSpans":[{"spans":[{"traceId":"${"1".repeat(32)}","spanId":"${"2".repeat(16)}","attributes":[{"key":"items","value":{"arrayValue":{"values":[${'{"intValue":1.0000000000000001},'.repeat(19999)}{"intValue":0}]}}}]}]}]}]}`;
+  const path = join(
+    await createTestTempDirectory("rea-otlp-array-"),
+    "trace.json",
+  );
+  await writeFile(path, input);
+  const resources = new ArtifactResourceScope();
+  onTestFinished(() => resources.close());
+  const result = await inspectOtlpTraceEvidence({ path }, resources);
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw new Error("Expected an inventory");
+  expect(result.value.evidence.normalized_result).toMatchObject({
+    spans: [{ attributes: [{ value_kind: "array", element_count: 20000 }] }],
+  });
+});
+
+it("bounds retained numeric-loss coordinates and keeps the file identity", async () => {
+  const group =
+    '{"resource":{"attributes":[{"key":"n","value":{"intValue":1.0000000000000001}}]}}';
+  const input = `{"resourceSpans":[${(group + ",").repeat(16384)}${group}]}`;
+  const path = join(
+    await createTestTempDirectory("rea-otlp-loss-cap-"),
+    "trace.json",
+  );
+  await writeFile(path, input);
+  const resources = new ArtifactResourceScope();
+  onTestFinished(() => resources.close());
+  const result = await inspectOtlpTraceEvidence({ path }, resources);
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("Expected resource refusal");
+  expect(result.error._tag).toBe("AnalysisResourceConstraintError");
+  expect(result.error.partialObservation).toMatchObject({
+    kind: "file-snapshot-hash",
+    path,
+    sha256: createHash("sha256").update(input).digest("hex"),
+  });
+});
+
+it("ignores overwritten containers before charging the numeric-coordinate limit", async () => {
+  const span = (digit: number) => ({
+    traceId: "1".repeat(32),
+    spanId: "2".repeat(16),
+    attributes: Array.from({ length: 128 }, (_, i) => ({
+      key: `key-${i}`,
+      value: { intValue: digit },
+    })),
+  });
+  const previous = JSON.stringify(Array.from({ length: 129 }, () => span(0)));
+  const final = JSON.stringify(Array.from({ length: 129 }, () => span(1)));
+  const input = `{"resourceSpans":[{"scopeSpans":[{"spans":${previous},"spans":${final}}]}]}`;
+  const path = join(
+    await createTestTempDirectory("rea-otlp-duplicate-container-"),
+    "trace.json",
+  );
+  await writeFile(path, input);
+  const resources = new ArtifactResourceScope();
+  onTestFinished(() => resources.close());
+  const result = await inspectOtlpTraceEvidence({ path }, resources);
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw new Error("Expected the surviving spans");
+  const trace = otlpTraceSchema.parse(result.value.evidence.normalized_result);
+  expect(trace.spans).toHaveLength(129);
+  expect(
+    trace.spans.every(
+      (item) =>
+        item.attributes.length === 128 &&
+        item.attributes.every((entry) => entry.int_value === "1"),
+    ),
+  ).toBe(true);
+});
+
+it("refuses an imprecise number in a surviving duplicate container", async () => {
+  const prefix = `{"traceId":"${"1".repeat(32)}","spanId":"${"2".repeat(16)}","startTimeUnixNano":`;
+  const input = `{"resourceSpans":[{"scopeSpans":[{"spans":[${prefix}1}],"spans":[${prefix}1.0000000000000001}]}]}]}`;
+  const path = join(
+    await createTestTempDirectory("rea-otlp-duplicate-loss-"),
+    "trace.json",
+  );
+  await writeFile(path, input);
+  const resources = new ArtifactResourceScope();
+  onTestFinished(() => resources.close());
+  const result = await inspectOtlpTraceEvidence({ path }, resources);
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("Expected a numeric refusal");
+  expect(result.error._tag).toBe("AnalysisInputError");
+});
+
+it("records the selected OTLP controls and reports the measured file size", async () => {
+  const input = '{"resourceSpans":[]}';
+  const path = join(
+    await createTestTempDirectory("rea-otlp-budget-"),
+    "trace.json",
+  );
+  await writeFile(path, input);
+  const resources = new ArtifactResourceScope();
+  onTestFinished(() => resources.close());
+  const refused = await inspectOtlpTraceEvidence(
+    { path, max_file_bytes: 1 },
+    resources,
+  );
+  if (refused.ok)
+    throw new Error("Expected the selected file allowance to refuse the read");
+  expect(projectAnalysisError(refused.error).details?.refusal).toMatchObject({
+    kind: "adjustable_budget",
+    control: "max_file_bytes",
+    required_value: Buffer.byteLength(input),
+  });
+  const defaults = await inspectOtlpTraceEvidence({ path }, resources);
+  if (!defaults.ok) throw defaults.error;
+  expect(defaults.value.evidence.parameters).toEqual({ path });
+  const selected = await inspectOtlpTraceEvidence(
+    { path, max_spans: 60_000, max_attributes: 200 },
+    resources,
+  );
+  if (!selected.ok) throw selected.error;
+  expect(selected.value.evidence.parameters).toEqual({
+    path,
+    max_spans: 60_000,
+    max_attributes: 200,
+  });
+  expect(selected.value.evidence.normalized_result).toMatchObject({
+    inventory_limits: { max_spans: 60_000, max_attributes: 200 },
+  });
+});
+
+it("does not charge discarded spans or unselected AnyValue members as numeric losses", async () => {
+  const good = `{"traceId":"${"1".repeat(32)}","spanId":"${"2".repeat(16)}","attributes":[{"key":"kept","value":{"intValue":1.0000000000000001,"stringValue":"retained"}},{"key":"discarded","value":{"intValue":1.0000000000000001}}]}`;
+  const discarded = `{"traceId":"${"1".repeat(32)}","spanId":"${"3".repeat(16)}","startTimeUnixNano":1.0000000000000001}`;
+  const input = `{"resourceSpans":[{"scopeSpans":[{"spans":[${good},${(discarded + ",").repeat(16_384)}${discarded}]}]}]}`;
+  const path = join(
+    await createTestTempDirectory("rea-otlp-selected-numbers-"),
+    "trace.json",
+  );
+  await writeFile(path, input);
+  const resources = new ArtifactResourceScope();
+  onTestFinished(() => resources.close());
+  const result = await inspectOtlpTraceEvidence(
+    { path, max_spans: 1, max_attributes: 1 },
+    resources,
+  );
+  if (!result.ok) throw result.error;
+  expect(result.value.evidence.normalized_result).toMatchObject({
+    spans: [
+      {
+        attributes_omitted: 1,
+        attributes: [
+          { key: "kept", value_kind: "string", string_value: "retained" },
+        ],
+      },
+    ],
+    inventory_limits: { max_spans: 1, max_attributes: 1 },
+  });
+});
+
+it("refuses JSON whose decoded structure would exceed the heap allowance", async () => {
+  const input = `{"resourceSpans":[],"unused":[${"0,".repeat(1_000_000)}0]}`;
+  const path = join(
+    await createTestTempDirectory("rea-otlp-structure-"),
+    "trace.json",
+  );
+  await writeFile(path, input);
+  const resources = new ArtifactResourceScope();
+  onTestFinished(() => resources.close());
+  const result = await inspectOtlpTraceEvidence({ path }, resources);
+  if (result.ok) throw new Error("Expected a representation allowance refusal");
+  expect(result.error._tag).toBe("AnalysisResourceConstraintError");
+  expect(result.error.partialObservation).toMatchObject({
+    kind: "file-snapshot-hash",
+    path,
+  });
+});
+
+it("reports rounded source drop counts as unreadable instead of inventing integers", async () => {
+  const ids = `"traceId":"${"1".repeat(32)}","spanId":"${"2".repeat(16)}"`;
+  const rounded = "1.0000000000000001";
+  const input = `{"resourceSpans":[{"resource":{"droppedAttributesCount":${rounded}},"scopeSpans":[{"spans":[{${ids},"droppedEventsCount":${rounded},"droppedLinksCount":${rounded},"droppedAttributesCount":${rounded}},{${ids.replace("2".repeat(16), "3".repeat(16))},"droppedEventsCount":1e1}]}]}]}`;
+  const path = join(
+    await createTestTempDirectory("rea-otlp-rounded-drops-"),
+    "trace.json",
+  );
+  await writeFile(path, input);
+  const resources = new ArtifactResourceScope();
+  onTestFinished(() => resources.close());
+  const result = await inspectOtlpTraceEvidence({ path }, resources);
+  if (!result.ok) throw result.error;
+  const report = otlpTraceSchema.parse(result.value.evidence.normalized_result);
+  expect(report.resources[0]).not.toHaveProperty("dropped_attributes_count");
+  for (const field of [
+    "dropped_events_count",
+    "dropped_links_count",
+    "dropped_attributes_count",
+  ])
+    expect(report.spans[0]).not.toHaveProperty(field);
+  expect(report.spans[1]).toMatchObject({ dropped_events_count: 10 });
+  expect(
+    report.diagnostics.map((entry) => entry.source_pointer).sort(),
+  ).toEqual([
+    "/resourceSpans/0/resource/droppedAttributesCount",
+    "/resourceSpans/0/scopeSpans/0/spans/0/droppedAttributesCount",
+    "/resourceSpans/0/scopeSpans/0/spans/0/droppedEventsCount",
+    "/resourceSpans/0/scopeSpans/0/spans/0/droppedLinksCount",
+  ]);
+});

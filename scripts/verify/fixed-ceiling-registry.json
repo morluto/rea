@@ -59,6 +59,16 @@
       "reason": "Bounds the reply to `apktool --version`, a short fixed-format banner; no analysis input passes through it."
     }
   },
+  "src/application/otlpTrace/OtlpTraceService.ts": {
+    "\"The OTLP JSON representation allowance\"": {
+      "class": "representation",
+      "reason": "A source value count bounds heap amplification from dense JSON before parsing, and bounds the inventory rows and retained raw values created from that tree."
+    },
+    "\"The OTLP imprecise-numeric-field allowance\"": {
+      "class": "representation",
+      "reason": "Source-coordinate metadata retained for imprecise numeric fields is bounded independently of the export's byte size; the OTLP JSON format states no such maximum."
+    }
+  },
   "src/artifacts/AndroidBootImageArtifactReader.ts": {
     "ceiling.name": {
       "class": "forwarding",

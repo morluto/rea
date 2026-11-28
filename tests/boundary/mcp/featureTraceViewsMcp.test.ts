@@ -1,5 +1,3 @@
-import { fileIdentity } from "../../fixtures/evidenceSubject.js";
-import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -12,10 +10,15 @@ import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
 import { applicationFeatureTraceResultSchema } from "../../../src/domain/javascript/javascriptFeatureTraceSchemas.js";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { deliverApplicationExecution } from "../../../src/server/deliverApplicationExecution.js";
-import { settledExecution } from "../../../src/application/ApplicationToolExecutions.js";
 import { traceApplicationFeatureEvidence } from "../../../src/application/javascript/JavaScriptApplicationWorkflowService.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
+import { deliverApplicationExecution } from "../../../src/server/deliverApplicationExecution.js";
+import { settledExecution } from "../../../src/application/ApplicationToolExecutions.js";
+import {
+  canonicalInputSchema,
+  canonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
@@ -69,7 +72,7 @@ contextBridge.exposeInMainWorld("api",{${CHANNELS.map(
   return root;
 };
 
-const connect = async (profile: "compact", maximumResponseBytes?: number) => {
+const connect = async (maximumResponseBytes?: number) => {
   const application = await analyzeJavaScriptApplication({
     input_path: await writeApplication(),
   });
@@ -82,7 +85,6 @@ const connect = async (profile: "compact", maximumResponseBytes?: number) => {
     clientIdentity: { name: "feature-trace-view", version: "1" },
     schemaValidator: schemaValidation,
     serverOptions: {
-      environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: profile },
       ...(maximumResponseBytes === undefined
         ? {}
         : { delivery: createToolResultDelivery(maximumResponseBytes) }),
@@ -115,101 +117,102 @@ const bytes = (value: unknown): number =>
 
 type Harness = Awaited<ReturnType<typeof connect>>;
 
-it.each(["compact"] as const)(
-  "returns selected feature-trace facts and retains the complete trace (%s)",
-  async (profile) => {
-    const harness = await connect(profile);
-    const { client, session, inputs, call } = harness;
-    // Select first: the view call alone must retain the complete parent.
-    const summary = await call("trace_application_feature", {
-      ...inputs,
-      view: { kind: "summary" },
-    });
-    const parentId = z
-      .object({ parent_evidence_id: z.string() })
-      .parse(summary.evidence.normalized_result).parent_evidence_id;
-    const retained = session.evidenceById(parentId);
-    const complete = await call("trace_application_feature", inputs);
-    const parent = complete.evidence;
-    expect(parent.evidence_id).toBe(parentId);
-    expect(retained).toEqual(parent);
-    const full = traced(parent);
-    const graph = full.graph!;
-    expect(full.paths.length).toBeGreaterThan(1);
-    expect(graph.edges.length).toBeGreaterThan(graph.nodes.length);
-    expect(summary.evidence.confidence).toBe(parent.confidence);
-    expect(summary.evidence.normalized_result).toMatchObject({
-      kind: "summary",
-      parent_operation: "trace_application_feature",
-      artifact: {
-        path: parent.subject.local_path,
-        sha256: fileIdentity(parent.subject).sha256,
-      },
-      summary: {
-        trace_id: full.trace_id,
-        source_evidence_id: full.source_evidence_id,
-        seed: full.seed,
-        summary: full.summary,
-        trace_coverage: full.coverage,
-        graph_coverage: graph.coverage,
-        evidence_links: full.evidence_links,
-      },
-      coverage: { status: "complete-within-view", exhausted: true },
-    });
-    expect(bytes(summary.result)).toBeLessThan(bytes(complete.result) / 10);
-
-    const { tools } = await client.listTools();
-    const ajv = schemaValidation.assertions;
-    const traceTool = tools.find(
-      ({ name }) => name === "trace_application_feature",
-    )!;
-    expect(ajv.validateSchema(traceTool.inputSchema)).toBe(true);
-    const outputSchema: Record<string, unknown> = canonicalOutputSchema(
-      traceTool.name,
-    );
-    expect(ajv.validateSchema(outputSchema)).toBe(true);
-    const request = {
-      kind: "feature-trace",
-      collection: "paths",
-      where: { end_kinds: ["endpoint"] },
-      limit: 2,
-    };
-    expect(
-      ajv.validate(traceTool.inputSchema, { ...inputs, view: request }),
-    ).toBe(true);
-    const selected = await call("trace_application_feature", {
-      ...inputs,
-      view: request,
-    });
-    for (const evidence of [summary.evidence, selected.evidence])
-      expect(ajv.validate(outputSchema, evidence)).toBe(true);
-    const endpointPaths = full.paths.filter(
-      ({ end_kind }) => end_kind === "endpoint",
-    );
-    expect(endpointPaths.length).toBeGreaterThan(2);
-    expect(selected.evidence.normalized_result).toMatchObject({
-      kind: "feature-trace",
-      parent_evidence_id: parent.evidence_id,
+it("returns selected feature-trace facts and retains the complete trace", async () => {
+  const harness = await connect();
+  const { client, session, inputs, call } = harness;
+  // Select first: the view call alone must retain the complete parent.
+  const summary = await call("trace_application_feature", {
+    ...inputs,
+    view: { kind: "summary" },
+  });
+  const parentId = z
+    .object({ parent_evidence_id: z.string() })
+    .parse(summary.evidence.normalized_result).parent_evidence_id;
+  const retained = session.evidenceById(parentId);
+  const complete = await call("trace_application_feature", inputs);
+  const parent = complete.evidence;
+  expect(parent.evidence_id).toBe(parentId);
+  expect(retained).toEqual(parent);
+  const full = traced(parent);
+  const graph = full.graph!;
+  expect(full.paths.length).toBeGreaterThan(1);
+  expect(graph.edges.length).toBeGreaterThan(graph.nodes.length);
+  expect(summary.evidence.confidence).toBe(parent.confidence);
+  expect(summary.evidence.normalized_result).toMatchObject({
+    kind: "summary",
+    parent_operation: "trace_application_feature",
+    artifact:
+      parent.subject === null
+        ? null
+        : {
+            path: parent.subject.local_path,
+            sha256: fileIdentity(parent.subject).sha256,
+          },
+    summary: {
       trace_id: full.trace_id,
+      source_evidence_id: full.source_evidence_id,
+      seed: full.seed,
+      summary: full.summary,
       trace_coverage: full.coverage,
-      items: endpointPaths.slice(0, 2),
-      coverage: { total: endpointPaths.length, next_offset: 2 },
-    });
-    // The advertised page contract binds each collection to its own rows.
-    const mixed = {
-      ...jsonObjectSchema.parse(selected.evidence.normalized_result),
-      items: graph.edges.slice(0, 1),
-    };
-    expect(analysisViewResultSchema.safeParse(mixed).success).toBe(false);
-    expect(
-      ajv.validate(outputSchema, {
-        ...jsonObjectSchema.parse(selected.result.structuredContent),
-        normalized_result: mixed,
-      }),
-    ).toBe(false);
-    await assertRetainedTracePages(harness, parent.evidence_id, full);
-  },
-);
+      graph_coverage: graph.coverage,
+      evidence_links: full.evidence_links,
+    },
+    coverage: { status: "complete-within-view", exhausted: true },
+  });
+  expect(bytes(summary.result)).toBeLessThan(bytes(complete.result) / 10);
+
+  const { tools } = await client.listTools();
+  const ajv = schemaValidation.assertions;
+  const traceTool = tools.find(
+    ({ name }) => name === "trace_application_feature",
+  )!;
+  // `tools/list` omits output schemas unless a presentation is configured, so
+  // validate both sides against the contract's canonical schemas.
+  const inputSchema = canonicalInputSchema(traceTool.name);
+  const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+    traceTool.name,
+  );
+  expect(ajv.validateSchema(inputSchema)).toBe(true);
+  expect(ajv.validateSchema(outputSchema)).toBe(true);
+  const request = {
+    kind: "feature-trace",
+    collection: "paths",
+    where: { end_kinds: ["endpoint"] },
+    limit: 2,
+  };
+  expect(ajv.validate(inputSchema, { ...inputs, view: request })).toBe(true);
+  const selected = await call("trace_application_feature", {
+    ...inputs,
+    view: request,
+  });
+  for (const evidence of [summary.evidence, selected.evidence])
+    expect(ajv.validate(outputSchema, evidence)).toBe(true);
+  const endpointPaths = full.paths.filter(
+    ({ end_kind }) => end_kind === "endpoint",
+  );
+  expect(endpointPaths.length).toBeGreaterThan(2);
+  expect(selected.evidence.normalized_result).toMatchObject({
+    kind: "feature-trace",
+    parent_evidence_id: parent.evidence_id,
+    trace_id: full.trace_id,
+    trace_coverage: full.coverage,
+    items: endpointPaths.slice(0, 2),
+    coverage: { total: endpointPaths.length, next_offset: 2 },
+  });
+  // The advertised page contract binds each collection to its own rows.
+  const mixed = {
+    ...jsonObjectSchema.parse(selected.evidence.normalized_result),
+    items: graph.edges.slice(0, 1),
+  };
+  expect(analysisViewResultSchema.safeParse(mixed).success).toBe(false);
+  expect(
+    ajv.validate(outputSchema, {
+      ...jsonObjectSchema.parse(selected.result.structuredContent),
+      normalized_result: mixed,
+    }),
+  ).toBe(false);
+  await assertRetainedTracePages(harness, parent.evidence_id, full);
+});
 
 /** Page the retained parent through inspect_analysis_view without re-running the trace. */
 const assertRetainedTracePages = async (
@@ -338,7 +341,7 @@ const assertRetainedTracePages = async (
 };
 
 it("keeps a no-match trace's discovery and empty collections explicit", async () => {
-  const { inputs, call } = await connect("compact");
+  const { inputs, call } = await connect();
   const missing = {
     ...inputs,
     seed: { kind: "string", value: "absent-literal", match: "exact" },
@@ -408,7 +411,7 @@ it("refuses a selected view before tracing when the server retains no Evidence",
 
 it("recovers an oversized completed trace through its retained paths page", async () => {
   const budget = 64 * 1024;
-  const { session, inputs, call, reply } = await connect("compact", budget);
+  const { session, inputs, call, reply } = await connect(budget);
   const failed = await reply("trace_application_feature", inputs);
   const error = parseMcpToolError(failed).error;
   expect(error.code).toBe("resource_constraint");
@@ -460,7 +463,7 @@ it("recovers an oversized completed trace through its retained paths page", asyn
 
 it("names the retained trace and a smaller page when a selected page is oversized", async () => {
   const budget = 64 * 1024;
-  const { session, inputs, reply } = await connect("compact", budget);
+  const { session, inputs, reply } = await connect(budget);
   const selection = {
     kind: "feature-trace",
     collection: "nodes",
@@ -519,8 +522,6 @@ it("commits no session facts when cancelled after the trace completes", async ()
   for (const view of [undefined, { kind: "summary" } as const]) {
     const cancelled = new AbortController();
     cancelled.abort(new Error("client cancelled"));
-    // Cancellation can only arrive between completion and commit through this
-    // staging step, which the public workflow cannot schedule deterministically.
     const delivered = await deliverApplicationExecution(
       createToolResultDelivery(undefined),
       {
@@ -532,7 +533,8 @@ it("commits no session facts when cancelled after the trace completes", async ()
       view,
       cancelled.signal,
     );
-    // Same contract as compare_source_to_bundle: a cancelled request leaves the session unchanged.
+    // A derived workflow references sources it has not committed yet, so a
+    // cancelled request leaves the session unchanged.
     expect(parseMcpToolError(delivered)).toMatchObject({
       error: { code: "cancelled" },
     });

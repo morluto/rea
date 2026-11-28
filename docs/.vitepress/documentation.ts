@@ -688,6 +688,11 @@ export const documentationSections = [
         source: "guides/data/pcap-analysis.md",
         route: "/pcap-analysis",
       },
+      {
+        text: "Offline OTLP traces",
+        source: "guides/data/otlp-traces.md",
+        route: "/otlp-traces",
+      },
     ],
   },
   {

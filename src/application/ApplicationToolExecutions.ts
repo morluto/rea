@@ -22,7 +22,7 @@ type ComparisonUnknownKind =
   | "javascript-export-shape"
   | "source-to-bundle-comparison";
 
-const mapResult = <Value, Mapped>(
+export const mapResult = <Value, Mapped>(
   result: Result<Value, AnalysisError>,
   map: (value: Value) => Mapped,
 ): Result<Mapped, AnalysisError> =>
