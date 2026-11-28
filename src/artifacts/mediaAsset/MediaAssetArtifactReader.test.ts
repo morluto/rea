@@ -124,6 +124,77 @@ describe("Ogg Opus headers", () => {
     expect(result.coverage).toEqual([{ status: "complete", limitations: [] }]);
   });
 
+  it("reports the stream routing declared by a 5.1 OpusHead", async () => {
+    const packet = opusHeadPacket(6, 1, [4, 2, 0, 4, 1, 2, 3, 5]);
+    const result = await read(
+      "ogg-opus",
+      Buffer.concat([
+        oggPage(0, 0n, packet, 2),
+        oggPage(1, 0n, opusTagsPacket(Buffer.from("enc")), 0),
+      ]),
+    );
+    expect(result.metadata).toMatchObject({
+      channel_count: 6,
+      mapping_family: 1,
+      channel_mapping_table: {
+        stream_count: 4,
+        coupled_stream_count: 2,
+        output_channel_map: [0, 4, 1, 2, 3, 5],
+      },
+    });
+  });
+
+  it.each([2, 255])(
+    "preserves repeated and silent output indices for family %i",
+    async (family) => {
+      const packet = opusHeadPacket(4, family, [2, 0, 0, 255, 1, 0]);
+      const result = await read("ogg-opus", oggPage(0, 0n, packet, 2));
+      expect(result.metadata).toMatchObject({
+        mapping_family: family,
+        channel_mapping_table: {
+          stream_count: 2,
+          coupled_stream_count: 0,
+          output_channel_map: [0, 255, 1, 0],
+        },
+      });
+    },
+  );
+
+  it.each([0, 3, 240])(
+    "does not invent indexed routing for family %i",
+    async (family) => {
+      const packet =
+        family === 0
+          ? opusHeadPacket()
+          : opusHeadPacket(1, family, [1, 0, 1, 0]);
+      const result = await read("ogg-opus", oggPage(0, 0n, packet, 2));
+      expect(result.metadata).not.toHaveProperty("channel_mapping_table");
+    },
+  );
+
+  it.each([false, true])(
+    "rejects an incomplete mapping within OpusHead (following packet: %s)",
+    async (followingPacket) => {
+      const short = opusHeadPacket(6, 1, [4, 2, 0, 4, 1, 2, 3]);
+      const page = followingPacket
+        ? oggPage(0, 0n, Buffer.concat([short, Buffer.from([5])]), 2, {
+            segmentSizes: [short.length, 1],
+          })
+        : oggPage(0, 0n, short, 2);
+      const bytes = Buffer.concat([
+        page,
+        oggPage(1, 0n, opusTagsPacket(Buffer.from("enc")), 0),
+      ]);
+      await expect(read("ogg-opus", bytes)).rejects.toMatchObject({
+        parseFailure: {
+          kind: "malformed",
+          format: "ogg-opus",
+          offset: 27 + page[26]! + short.length,
+        },
+      });
+    },
+  );
+
   it("reports a cut-off later page as truncated coverage after OpusHead", async () => {
     const whole = oggOpusFixture();
     // First page is complete; the second page header is cut mid-way.

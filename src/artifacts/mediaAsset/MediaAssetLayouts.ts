@@ -128,6 +128,8 @@ const malformed = (
 
 const OPUS_TAGS = Buffer.from("OpusTags", "latin1");
 const OPUS_HEAD_BYTES = 19;
+// Two stream counts and at most one index per output channel (an octet).
+const MAX_INDEXED_OPUS_HEAD_BYTES = OPUS_HEAD_BYTES + 2 + 0xff;
 const TAGS_PREFIX_LIMIT = 12 + MAX_VENDOR_BYTES;
 
 /** RFC 3533 header_type bits. */
@@ -215,6 +217,32 @@ const readOggPage = async (
   };
 };
 
+/** RFC 7845 and RFC 8486: only these families store one index per output channel. */
+const opusIndexedRouting = (
+  packet: Buffer,
+  packetOffset: number,
+  channelCount: number,
+  mappingFamily: number,
+): Pick<OggOpusMetadata, "channel_mapping_table"> => {
+  if (mappingFamily !== 1 && mappingFamily !== 2 && mappingFamily !== 255)
+    return {};
+  const mapStart = OPUS_HEAD_BYTES + 2;
+  const mapEnd = mapStart + channelCount;
+  if (packet.length < mapEnd)
+    throw malformed(
+      "ogg-opus",
+      "the OpusHead packet ends before its channel mapping table is complete",
+      packetOffset + packet.length,
+    );
+  return {
+    channel_mapping_table: {
+      stream_count: packet[OPUS_HEAD_BYTES]!,
+      coupled_stream_count: packet[OPUS_HEAD_BYTES + 1]!,
+      output_channel_map: [...packet.subarray(mapStart, mapEnd)],
+    },
+  };
+};
+
 /** Ogg Opus: OpusHead / OpusTags pages and remaining examined pages. */
 export const oggOpusLayout = async (
   header: Buffer,
@@ -264,7 +292,7 @@ export const oggOpusLayout = async (
     if (pages.length === 0) {
       const headBytes = await readRange(
         page.packetOffset,
-        Math.min(page.packetLength, OPUS_HEAD_BYTES),
+        Math.min(page.packetLength, MAX_INDEXED_OPUS_HEAD_BYTES),
       );
       if (headBytes === "truncated") {
         cutOff = { kind: "truncated", requiredEnd: page.offset + page.length };
@@ -504,6 +532,12 @@ export const oggOpusLayout = async (
       input_sample_rate: inputSampleRate,
       output_gain: outputGain,
       mapping_family: mappingFamily,
+      ...opusIndexedRouting(
+        headPacket,
+        headPage.packetOffset,
+        channelCount,
+        mappingFamily,
+      ),
       vendor,
       pages_read: pages.length,
       extent_check: extent,

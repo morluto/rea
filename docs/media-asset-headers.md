@@ -25,7 +25,14 @@ recognized, and inspection refuses it as truncated with the bytes it needs.
 
 - **Ogg Opus**: stream serials and page sequences for the examined
   identification and comment pages; OpusHead channel count, pre-skip, input
-  sample rate, output gain and mapping family; OpusTags vendor when the
+  sample rate, output gain and mapping family. For families 1, 2 and 255,
+  `channel_mapping_table` contains the declared stream count, coupled
+  stream count and one index per output channel, in file order. Repeated
+  indices and the silence value 255 are preserved. Family 0 has no stored
+  table. Family 3 uses a demixing matrix and is not interpreted as an
+  index map. A short indexed table is reported as a malformed OpusHead
+  even when another packet follows it on the same page. The reader also
+  reports the OpusTags vendor when the
   comment packet is complete and the vendor string fits the fixed 4096-byte
   root-fact bound. Regions are each examined page and, after a finished
   comment packet, `audio.bin` for the remaining bytes. OpusTags packets that
@@ -107,7 +114,7 @@ declared byte range and is never loaded during inventory.
 ## CLI
 
 ```sh
-rea inspect-artifact sample.opus --detail summary --json
+rea inspect-artifact sample.opus --detail summary --evidence_output opus-evidence.json --json
 rea extract-artifact voice.xma --json
 ```
 
