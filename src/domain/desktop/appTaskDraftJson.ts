@@ -24,12 +24,16 @@ import {
   locatePointer as locateView,
   resolvePointer as resolveView,
 } from "./viewPointer.js";
+import {
+  conditionReadsField,
+  selectorOf,
+  spellCondition,
+} from "./viewSelector.js";
 
 const locatePointer = (view: JsonValue | null, pointer: string) =>
   locateView(view, pointer, "json");
 const resolvePointer = (view: JsonValue | null, pointer: string) =>
   resolveView(view, pointer, "json");
-import { selectorOf, spellCondition } from "./viewSelector.js";
 import { isRecord } from "../../kernel/isRecord.js";
 
 type Suggestion = DesktopTaskCheckInput;
@@ -140,10 +144,10 @@ const ownNameRecord = (pointer: string): string | undefined => {
   const segments = spelled.map(unescapeJsonPointerToken);
   const at = segments.findIndex((segment, index) => {
     const conditions = selectorOf(segment) ?? [];
-    const rest = segments.slice(index + 1).join("/");
+    const rest = segments.slice(index + 1);
     return (
       conditions.some(({ prefix }) => prefix === ">") &&
-      conditions.some(({ prefix, key }) => prefix !== "@" && key === rest)
+      conditions.some((condition) => conditionReadsField(condition, rest))
     );
   });
   return at === -1 ? undefined : spelled.slice(0, at + 1).join("/");
@@ -394,9 +398,9 @@ export const isLikeDefault = (
 
 /** Whether a member's selector reads a field, as `[format=BOOK][>data~1Title=SPQR]` reads `/data/Title`: a guard of it proves only that such a member exists. */
 const selectsBy = (member: string, field: string) => {
-  const path = jsonPointerTokens(field).join("/");
-  return (selectorOf(member) ?? []).some(
-    ({ prefix, key }) => prefix !== "@" && key === path,
+  const path = jsonPointerTokens(field);
+  return (selectorOf(member) ?? []).some((condition) =>
+    conditionReadsField(condition, path),
   );
 };
 

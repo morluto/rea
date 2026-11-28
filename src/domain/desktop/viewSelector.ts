@@ -20,6 +20,22 @@ export const insideSteps = (key: string): readonly string[] | undefined => {
     : undefined;
 };
 
+/** Whether a selector condition reads the supplied JSON field path. */
+export const conditionReadsField = (
+  condition: Condition,
+  tokens: readonly string[],
+): boolean => {
+  if (condition.prefix === "@") return false;
+  if (condition.prefix === "")
+    return tokens.length === 1 && tokens[0] === condition.key;
+  const steps = insideSteps(condition.key);
+  return (
+    steps !== undefined &&
+    steps.length === tokens.length &&
+    steps.every((step, index) => step === tokens[index])
+  );
+};
+
 /** A condition as a selector spells it, such as `[@Col=3]`. */
 export const spellCondition = ({ prefix, key, value }: Condition) =>
   `[${prefix}${key}=${value}]`;
