@@ -5,7 +5,7 @@
 
 # REA：逆向一切
 
-### 通過一個 MCP 服務，逆向分析二進位檔案、應用程式和執行階段行為。
+### 透過一個 MCP 服務，逆向分析二進位檔案、應用程式和執行階段行為。
 
 **看到喜歡的功能，弄清它的工作原理，深入到二進位層面。**
 
@@ -57,7 +57,7 @@
 
 ---
 
-在應用中看到一個想加入自己產品的功能？讓 AI 代理用 REA 調查它。即使沒有原始碼，AI 代理也可以檢查應用、解釋功能的工作方式、展示證據，並為你的專案實現類似功能。
+在應用中看到一個想加入自己產品的功能？讓 AI 代理用 REA 調查它。即使沒有原始碼，AI 代理也可以檢查應用、解釋功能的工作方式、展示證據，並為你的專案實作類似功能。
 
 REA 將 AI 代理連接到分析工具，用於檢查原生二進位檔案、JavaScript 和 Electron 應用、.NET 程式集以及網站。你也可以在終端中使用同樣的工具。分析在本機執行，結果包含支撐各項結論的證據和相關限制。
 
@@ -82,7 +82,7 @@ npx rea-agents setup
 詢問 AI 代理：
 
 ```text
-弄清 Notes 應用的搜尋功能如何工作，展示證據，並為我的專案實現類似功能。
+弄清 Notes 應用的搜尋功能如何工作，展示證據，並為我的專案實作類似功能。
 ```
 
 把 Notes 替換為目標應用，並描述你想瞭解的功能。
@@ -110,13 +110,13 @@ rea --help
 
 ### 更新 REA
 
-通過 `npm install --global` 或 `bun add --global` 安裝的 CLI 使用：
+透過 `npm install --global` 或 `bun add --global` 安裝的 CLI 使用：
 
 ```bash
 rea update
 ```
 
-如果使用 `npx`，通過以下命令更新 AI 代理設定：
+如果使用 `npx`，透過以下命令更新 AI 代理設定：
 
 ```bash
 npx rea-agents@latest setup
@@ -137,7 +137,7 @@ npx rea-agents@latest setup
 <tbody>
 <tr><td>
 <h3>DX-Ball：重建聲像計算</h3>
-<p>沿聲音呼叫追蹤到根據位置計算聲像的輔助函數，檢查指令，將不完整的偽程式碼轉為 C。重建結果通過了 3,205 個原始 x86 測試用例，並復現了編譯後函數的全部 63 個位元組。</p>
+<p>沿聲音呼叫追蹤到根據位置計算聲像的輔助函式，檢查指令，將不完整的偽程式碼轉為 C。重建結果通過了 3,205 個原始 x86 測試案例，並重現了編譯後函式的全部 63 個位元組。</p>
 <p><a href="https://rea.tools/zh-TW/showcase/dx-ball/">閱讀案例</a> ·
 <a href="https://github.com/N0zoM1z0/dx-ball">重建專案儲存庫</a></p>
 </td></tr>
@@ -155,15 +155,15 @@ npx rea-agents@latest setup
 </tbody>
 </table>
 
-如果你用 REA 分析了有趣的目標，我們很想瞭解。歡迎通過 [issue](https://github.com/morluto/rea/issues) 或 [pull request](https://github.com/morluto/rea/pulls) 分享案例，說明目標、你的問題、REA 如何提供幫助，以及你的發現。
+如果你用 REA 分析了有趣的目標，我們很想瞭解。歡迎透過 [issue](https://github.com/morluto/rea/issues) 或 [pull request](https://github.com/morluto/rea/pulls) 分享案例，說明目標、你的問題、REA 如何提供幫助，以及你的發現。
 
 ## REA 的工作原理
 
-AI 代理通過 MCP 呼叫 REA，檢查目標並追蹤相關程式碼。REA 返回發現及對應證據。AI 代理據此提出後續問題、解釋行為，或編寫並測試實現。CLI 命令使用同樣的工作流程。
+AI 代理透過 MCP 呼叫 REA，檢查目標並追蹤相關程式碼。REA 回傳發現及對應證據。AI 代理據此提出後續問題、解釋行為，或撰寫並測試實作。CLI 命令使用同樣的工作流程。
 
-![REA 調查流程：AI 代理詢問本地目標的行為，REA 使用分析工具檢查和追蹤目標，AI 代理再利用返回的程式碼、引用和未知項進行解釋、實現與測試。](../../website/public/assets/figures/rea-investigation-flow.svg)
+![REA 調查流程：AI 代理詢問本機目標的行為，REA 使用分析工具檢查和追蹤目標，AI 代理再利用回傳的程式碼、引用和未知項進行解釋、實作與測試。](../../website/public/assets/figures/rea-investigation-flow.svg)
 
-[打開完整尺寸的圖示](../../website/public/assets/figures/rea-investigation-flow.svg)。
+[開啟完整尺寸的圖示](../../website/public/assets/figures/rea-investigation-flow.svg)。
 
 <a id="current-status"></a>
 
@@ -190,7 +190,7 @@ AI 代理通過 MCP 呼叫 REA，檢查目標並追蹤相關程式碼。REA 返�
 <details>
 <summary><strong>哪些 AI 代理可以使用 REA？</strong></summary>
 
-任何支援本地 MCP 服務的 AI 代理都可以使用。設定流程會設定[受支援的 AI 代理](../getting-started/installation.md#supported-agents)；其他客戶端可通過[手動註冊 MCP](../getting-started/installation.md#mcp-registry) 使用。
+任何支援本機 MCP 服務的 AI 代理都可以使用。設定流程會設定[受支援的 AI 代理](../getting-started/installation.md#supported-agents)；其他客戶端可透過[手動註冊 MCP](../getting-started/installation.md#mcp-registry) 使用。
 
 </details>
 
@@ -204,7 +204,7 @@ AI 代理通過 MCP 呼叫 REA，檢查目標並追蹤相關程式碼。REA 返�
 <details>
 <summary><strong>需要先啟動 Hopper 嗎？</strong></summary>
 
-REA 會在操作需要時啟動 Hopper。在 macOS 上，首次執行時可能會出現對話框，讓你選擇演示模式或啟用授權。見 [Hopper 啟動與故障排查](../getting-started/installation.md#launcher-paths-and-troubleshooting)。
+REA 會在操作需要時啟動 Hopper。在 macOS 上，首次執行時可能會出現對話框，讓你選擇示範模式或啟用授權。見 [Hopper 啟動與疑難排解](../getting-started/installation.md#launcher-paths-and-troubleshooting)。
 
 </details>
 
@@ -216,9 +216,9 @@ skill 為 AI 代理提供調查指引。使用 `npx rea-agents setup` 註冊 REA
 </details>
 
 <details>
-<summary><strong>REA 返回什麼程式碼？</strong></summary>
+<summary><strong>REA 回傳什麼程式碼？</strong></summary>
 
-原生分析返回偽程式碼和組合語言。JavaScript/Electron 分析恢復模組及其關係。AI 代理利用這些發現編寫並測試實現；[案例](#案例)提供了完整示例。
+原生分析回傳偽程式碼和組合語言。JavaScript/Electron 分析恢復模組及其關係。AI 代理利用這些發現撰寫並測試實作；[案例](#案例)提供了完整範例。
 
 </details>
 
@@ -234,19 +234,19 @@ REA 在本機分析目標。AI 代理會接收工具結果，其模型提供商�
 
 先更新；最近的版本可能已經修復了問題。
 
-通過 npm 安裝的 CLI 使用：
+透過 npm 安裝的 CLI 使用：
 
 ```bash
 rea update
 ```
 
-通過 `npx` 設定 AI 代理時使用：
+透過 `npx` 設定 AI 代理時使用：
 
 ```bash
 npx rea-agents@latest setup
 ```
 
-如果正在使用 AI 代理，請完成[設定更新](#更新-rea)並重新啟動 AI 代理。重試同一任務。如果問題仍然存在，請[提交 issue](https://github.com/morluto/rea/issues)，附上 REA 版本、目標類型、復現步驟和錯誤輸出。
+如果正在使用 AI 代理，請完成[設定更新](#更新-rea)並重新啟動 AI 代理。重試同一任務。如果問題仍然存在，請[提交 issue](https://github.com/morluto/rea/issues)，附上 REA 版本、目標類型、重現步驟和錯誤輸出。
 
 </details>
 
@@ -255,7 +255,7 @@ npx rea-agents@latest setup
 可以先閱讀網站上的[實操指南](https://rea.tools/zh-TW/guides/)。具體選項、前提條件和結果契約見：
 
 - [安裝與設定](../getting-started/installation.md)：AI 代理註冊、提供者組態、更新和卸載。
-- [就緒檢查與故障排查](../getting-started/installation.md#check-readiness-for-your-task)：診斷特定 AI 代理或分析引擎。
+- [就緒檢查與疑難排解](../getting-started/installation.md#check-readiness-for-your-task)：診斷特定 AI 代理或分析引擎。
 - [CLI 與 Evidence](../getting-started/cli.md)：命令、提供者選擇、快照、匯入/匯出和退出狀態。
 - [MCP 契約](../reference/mcp-contracts.md)和[AI 代理提示詞](../getting-started/mcp-prompts.md)：工具結果、會話和引導式調查。
 - [工具目錄](../reference/mcp-contracts.md#generated-catalog)：建置時生成的工具、提供者和 CLI 命令清單。
@@ -305,7 +305,7 @@ REA 用於合法的研究、教育、互通性、軟體保存，以及分析你�
 
 [MIT](../../LICENSE)
 
-REA 自行編寫的程式碼採用 MIT 授權；第三方內容保留各自的授權和著作權聲明。
+REA 自行撰寫的程式碼採用 MIT 授權；第三方內容保留各自的授權和著作權聲明。
 依賴清單、授權原文及外部工具條款見[第三方聲明](../../THIRD_PARTY_NOTICES.md)。
 
 **使用者須自行合法取得商用工具及所需使用權**，包括 IDA Pro / Hex-Rays 反編譯器、
