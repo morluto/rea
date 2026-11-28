@@ -203,8 +203,11 @@ it("preserves earlier and sibling effects without inventing replaced cached-modu
     join(root, "getter.cjs"),
     `const box={owner:module,get value(){observe(this.owner);return 0}};
      require('fs').readFileSync('before-getter.json');
-     void box.value;
-     require('fs').readFileSync('after-getter.json');`,
+     const fs = require('fs');
+     const {value} = box;
+     require('fs').readFileSync('after-getter.json');
+     require('fs').readFileSync = custom;
+     fs.readFileSync('after-getter-write.json');`,
   );
   await writeFile(
     join(root, "global-process.cjs"),

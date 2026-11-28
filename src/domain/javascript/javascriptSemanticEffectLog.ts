@@ -488,7 +488,8 @@ export const ambientMemberReadMayExposeAt = (
 ): boolean =>
   ambientPathEffects(state, path).escapes.some(
     ({ node }) =>
-      (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) &&
+      node !== undefined &&
+      state.projectedPropertyReadSites.has(node) &&
       semanticEffectMayPrecede(state, read, node),
   );
 

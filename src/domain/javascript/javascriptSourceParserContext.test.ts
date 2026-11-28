@@ -513,6 +513,9 @@ const unboundRequireCall = (
 it.each([
   ["void box.value", "unknown"],
   ["void box?.value", "unknown"],
+  ["const {value}=box", "unknown"],
+  ["const copy={...box}", "unknown"],
+  ["const {owner}=box", "commonjs-loader"],
   ["void box.owner", "commonjs-loader"],
   ["void box.returnOwner", "commonjs-loader"],
   ["void other.value", "commonjs-loader"],

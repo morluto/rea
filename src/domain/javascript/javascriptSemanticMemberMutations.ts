@@ -1173,7 +1173,12 @@ export function* collectSemanticMemberMutationsSteps(
       )
         continue;
       const expression = unwrapJavaScriptExpression(current.node).node;
-      const required = semanticRequireOriginCandidate(expression, state, true);
+      const required = semanticRequireOriginCandidate(
+        expression,
+        state,
+        true,
+        "effect",
+      );
       if (required !== undefined) {
         recordRequiredEffect(
           required.origin.specifier,
@@ -2270,8 +2275,10 @@ export function* collectSemanticMemberMutationsSteps(
           source.projection,
           source.lookup,
           source.invoke === true,
-        ))
+        )) {
+          state.projectedPropertyReadSites.add(source.mutation);
           markEscaped(effect.node, source.mutation, effect.path);
+        }
       }
       for (const execution of executions)
         switch (execution.kind) {
@@ -2292,8 +2299,10 @@ export function* collectSemanticMemberMutationsSteps(
             )
               for (const effect of propertyReadEffects(node.object, [
                 semanticStaticPropertyKey(node.property, node.computed),
-              ]))
+              ])) {
+                state.projectedPropertyReadSites.add(node);
                 markEscaped(effect.node, node, effect.path);
+              }
             break;
           case "property-write":
             markTarget(execution.target, node);
