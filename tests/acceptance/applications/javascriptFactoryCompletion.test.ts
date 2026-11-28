@@ -6,7 +6,6 @@ import { expect } from "vitest";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
-import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
@@ -354,7 +353,8 @@ cliTest(
   "retains guarded factory fallthrough through CLI and real stdio MCP",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-factory-completion-");
-    const { call } = await connectLocalToolsMcp();
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
     const contract = toolContract("analyze_javascript_application");
     for (const scenario of scenarios) {
       const source = factorySource(scenario);
@@ -423,7 +423,8 @@ cliTest(
   "does not execute unadvanced generator calls through public CLI/MCP",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-generator-call-");
-    const { call } = await connectLocalToolsMcp();
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
     const contract = toolContract("analyze_javascript_application");
     for (const [name, kind, expected, advance] of [
       ["regular", "", 1, false],
