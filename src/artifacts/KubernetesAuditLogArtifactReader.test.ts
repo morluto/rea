@@ -9,6 +9,7 @@ import {
   KUBERNETES_AUDIT_INLINE_EVENT_LIMIT,
   KUBERNETES_AUDIT_INLINE_VERB_LIMIT,
 } from "../domain/linux/kubernetesAuditLog.js";
+import { KUBERNETES_AUDIT_JSON_DEPTH } from "../domain/linux/kubernetesAuditRecord.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 interface EventOverrides {
@@ -477,6 +478,63 @@ it("bounds retained request text and verb labels while stage totals cover the lo
   expect(metadata.unlisted_verb_line_count).toBe(1);
   expect(metadata.unsampled_event_line_count).toBe(1);
   expect(metadata.event_count).toBe(next.length + 2);
+});
+
+it("skips an ignored body and still reads fields written after it", async () => {
+  const nest = `${"[".repeat(8)}1${"]".repeat(8)}`;
+  const metadata = await metadataOf(
+    `{"auditID":"ordered","stage":"ResponseComplete","requestObject":${nest},"requestURI":"/after","verb":"list","responseStatus":{"code":201},"user":{"username":"ada","groups":["system:authenticated"]}}\n`,
+  );
+  expect(metadata.malformed_line_count).toBe(0);
+  expect(metadata.events[0]).toMatchObject({
+    audit_id: "ordered",
+    request_uri: "/after",
+    verb: "list",
+    username: "ada",
+    user_groups: ["system:authenticated"],
+    response_code: 201,
+    stages: [{ stage: "ResponseComplete" }],
+  });
+});
+
+it("keeps owned fields when an ignored body exceeds the nesting bound", async () => {
+  const nest = `${"[".repeat(KUBERNETES_AUDIT_JSON_DEPTH)}1${"]".repeat(KUBERNETES_AUDIT_JSON_DEPTH)}`;
+  const deep = `{"apiVersion":"audit.k8s.io/v1","auditID":"deep","stage":"RequestReceived","requestURI":"/api/v1/pods","verb":"get","requestObject":${nest}}`;
+  const hidden = `{"requestObject":${nest},"auditID":"hidden","stage":"RequestReceived","requestURI":"/hidden"}`;
+  const metadata = await metadataOf(
+    `${deep}\n${hidden}\n${auditEvent({
+      auditID: "after",
+      stage: "ResponseComplete",
+      responseCode: 200,
+    })}\n`,
+  );
+  expect(metadata.events.map((event) => event.audit_id)).toEqual([
+    "deep",
+    "after",
+  ]);
+  expect(metadata.events[0]).toMatchObject({
+    request_uri: "/api/v1/pods",
+    verb: "get",
+    unsupported_version: false,
+  });
+  expect(metadata.malformed_line_count).toBe(1);
+  expect(metadata.malformed_lines.map((line) => line.line)).toEqual([2]);
+  expect(metadata.event_count).toBe(2);
+});
+
+it("does not read audit identity from inside an ignored body", async () => {
+  const metadata = await metadataOf(
+    '{"auditID":"top","stage":"RequestReceived","requestURI":"/top","requestObject":{"auditID":"nested","stage":"Panic","verb":"delete"}}\n',
+  );
+  expect(metadata.events[0]).toMatchObject({
+    audit_id: "top",
+    request_uri: "/top",
+    verb: null,
+    stages: [{ stage: "RequestReceived" }],
+  });
+  expect(metadata.stage_counts).toEqual([
+    { label: "RequestReceived", count: 1 },
+  ]);
 });
 
 it("retains small request fields alongside an ignored response body", async () => {

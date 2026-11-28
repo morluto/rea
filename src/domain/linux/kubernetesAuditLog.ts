@@ -14,6 +14,7 @@ import {
   kubernetesAuditStageOf,
   type KubernetesAuditStage,
 } from "./kubernetesAuditEventProbe.js";
+import { parseKubernetesAuditLine } from "./kubernetesAuditRecord.js";
 import type {
   RegionDecodeFailure,
   RegionDecoder,
@@ -437,14 +438,18 @@ class KubernetesAuditScanner {
     }
     const line = auditRecordText(decoded);
     if (line === undefined) return;
-    let value: unknown;
-    try {
-      value = JSON.parse(line);
-    } catch {
-      this.#diagnose("line is not JSON", line);
+    const parsed = parseKubernetesAuditLine(line);
+    if (parsed.kind !== "event") {
+      this.#diagnose(
+        parsed.kind === "nesting"
+          ? "ignored audit value exceeds the nesting depth the reader will scan"
+          : "line is not JSON",
+        line,
+      );
       return;
     }
-    if (!isRecord(value) || typeof value.auditID !== "string") {
+    const { value } = parsed;
+    if (typeof value.auditID !== "string") {
       this.#diagnose(
         "JSON value is not a Kubernetes audit event (no auditID)",
         line,
