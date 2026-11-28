@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 
@@ -194,4 +194,66 @@ it("states each comparison result without a claim it did not establish", async (
     "REA could not resolve its GHIDRA_INSTALL_DIR.",
   );
   expect(check?.detail).not.toContain("does not record");
+});
+
+it.each([
+  ["a launcher", { HOPPER_LAUNCHER_PATH: "/private/custom/hopper" }, true],
+  ["an unrelated setting", { JAVA_HOME: "/opt/jdk" }, undefined],
+  ["no environment", undefined, undefined],
+  // An unreadable environment establishes nothing about its settings.
+  ["a malformed environment", { HOPPER_LAUNCHER_PATH: 7 }, undefined],
+])(
+  "reports whether a Claude Desktop registration records %s without its value",
+  async (_case, env, recorded) => {
+    const home = await createTestTempDirectory("rea-doctor-hopper-record-");
+    const directory = join(home, "Library", "Application Support", "Claude");
+    await mkdir(directory, { recursive: true });
+    await writeFile(
+      join(directory, "claude_desktop_config.json"),
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            command: "/current/rea",
+            args: ["mcp"],
+            ...(env === undefined ? {} : { env }),
+          },
+        },
+      }),
+    );
+    const system = systemDoctorHost({
+      platform: "darwin",
+      environment: { HOME: home },
+    });
+    const statuses = await system.clientRegistrations?.(["claude_desktop"]);
+    await system.close?.();
+
+    expect(statuses?.[0]?.client).toBe("claude_desktop");
+    expect(statuses?.[0]?.records_hopper_launcher).toBe(recorded);
+    expect(JSON.stringify(statuses)).not.toContain("/private/custom/hopper");
+  },
+);
+
+it("does not read Hopper records for clients that keep TCC responsibility", async () => {
+  const home = await createTestTempDirectory("rea-doctor-hopper-record-");
+  await writeFile(
+    join(home, ".claude.json"),
+    JSON.stringify({
+      mcpServers: {
+        rea: {
+          command: "/current/rea",
+          args: ["mcp"],
+          env: { HOPPER_LAUNCHER_PATH: "/private/custom/hopper" },
+        },
+      },
+    }),
+  );
+  const system = systemDoctorHost({
+    platform: "darwin",
+    environment: { HOME: home },
+  });
+  const statuses = await system.clientRegistrations?.(["claude_code"]);
+  await system.close?.();
+
+  expect(statuses?.[0]?.client).toBe("claude_code");
+  expect(statuses?.[0]).not.toHaveProperty("records_hopper_launcher");
 });
