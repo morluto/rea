@@ -161,3 +161,38 @@ describe("module-rooted callees", () => {
     expect(callees(source)).not.toContain(REGISTER);
   });
 });
+
+describe("module members that are not the imported ones", () => {
+  it.each([
+    [
+      "an explicit default member of a require",
+      'const v = require("vscode"); v.default.commands.registerCommand("a", f);',
+    ],
+    [
+      "a replaced member",
+      'const v = require("vscode"); v.commands.registerCommand = noop; v.commands.registerCommand("a", f);',
+    ],
+    [
+      "a member replaced through an alias",
+      'const v = require("vscode"); const c = v.commands; c.registerCommand = noop; v.commands.registerCommand("a", f);',
+    ],
+    [
+      "a replaced parent object",
+      'const v = require("vscode"); v.commands = fake; v.commands.registerCommand("a", f);',
+    ],
+    [
+      "a replaced member of a wrapped require",
+      'var i = toESM(require("vscode")); i.commands.registerCommand = noop; i.commands.registerCommand("a", f);',
+    ],
+  ])("does not resolve %s", (_, source) => {
+    expect(callees(source)).not.toContain(REGISTER);
+  });
+
+  it("keeps a member when only a sibling is written", () => {
+    expect(
+      callees(
+        'const v = require("vscode"); v.commands.other = noop; v.commands.registerCommand("a", f);',
+      ),
+    ).toContain(REGISTER);
+  });
+});
