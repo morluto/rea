@@ -5,7 +5,6 @@ import {
   dosMz,
   nonPeWindowsMz,
 } from "../../../src/domain/binaryTarget.fixture.js";
-import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
@@ -40,7 +39,9 @@ cliTest.for(cases)(
     if (format === "LE") bytes = bytes.subarray(0, 130);
     await writeFile(path, bytes);
     const mcp =
-      surface === "stdio MCP" ? await connectLocalToolsMcp() : undefined;
+      surface === "stdio MCP"
+        ? { call: await cli.sharedMcpCall!() }
+        : undefined;
     for (const operation of ["resources", "certificates"] as const) {
       let error: unknown;
       if (surface === "CLI") {
