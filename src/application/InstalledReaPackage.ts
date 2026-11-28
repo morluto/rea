@@ -17,8 +17,8 @@ const reaPackageManifestSchema = z.object({
 /**
  * Whether a launcher script belongs to an installed REA package: verified,
  * absent (another package or location, or no manifest), or unknown when the
- * package layout matches but its manifest could not be read or parsed, or the
- * runtimes may select different scripts.
+ * script does not resolve, the package layout matches but its manifest could
+ * not be read or parsed, or the runtimes may select different scripts.
  */
 export type InstalledReaPackageEvidence = "verified" | "absent" | "unknown";
 
@@ -71,9 +71,10 @@ export const installedReaPackageEvidence = (
   const selections = [
     ...new Set([resolvedScript(path), resolvedScript(resolve(path))]),
   ];
+  // A script that does not resolve may be a removed REA installation.
   const evidence = selections.map((script) =>
-    script === undefined ? "absent" : scriptPackageEvidence(script),
+    script === undefined ? "unknown" : scriptPackageEvidence(script),
   );
-  if (evidence.length === 1) return evidence[0] ?? "absent";
+  if (evidence.length === 1) return evidence[0] ?? "unknown";
   return evidence.every((value) => value === "absent") ? "absent" : "unknown";
 };

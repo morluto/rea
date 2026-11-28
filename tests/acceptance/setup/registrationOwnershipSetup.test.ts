@@ -281,6 +281,42 @@ for (const [label, root, manifest, identity] of [
     expect(await readFile(config, "utf8")).toBe(original);
   });
 
+cliTest(
+  "setup leaves a removed installation's launcher under another runtime unknown",
+  async ({ cli }) => {
+    const home = await createTestTempDirectory("rea-setup-removed-install-");
+    const config = join(home, ".claude.json");
+    const runtime = join(home, "old-runtime", "node");
+    await mkdir(dirname(runtime), { recursive: true });
+    await writeFile(runtime, "");
+    const script = join(
+      home,
+      "npm-cache",
+      "_npx",
+      "af752b90",
+      "node_modules",
+      "rea-agents",
+      "scripts",
+      "rea.mjs",
+    );
+    const original = JSON.stringify({
+      mcpServers: { rea: { command: runtime, args: [script, "mcp"] } },
+    });
+    await writeFile(config, original);
+    const result = await cli.run({
+      arguments: [...setup, "--yes"],
+      cwd: home,
+      environment: { HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: home },
+    });
+    expect(result.exitCode, result.stdout).toBe(1);
+    expect(result.json).toMatchObject({
+      status: "needs_human",
+      remediation: expect.stringContaining("unknown ownership"),
+    });
+    expect(await readFile(config, "utf8")).toBe(original);
+  },
+);
+
 cliTest.skipIf(process.platform === "win32")(
   "setup leaves a launcher unknown when Node and native traversal select different scripts",
   async ({ cli }) => {
