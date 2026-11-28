@@ -126,6 +126,10 @@ with another copy, then the two volume table copies. It admits at most 262,144 P
 streamed from their LEB ranges when a member is opened, not buffered during
 inventory.
 
+The smaller-grid probe cache retains at most 65,536 results. Further positions
+are checked without retaining their results, so this cache capacity does not
+change which images are accepted.
+
 ## Verification scope
 
 Source and compiled CLI/MCP tests cover synthesized images with a static and
@@ -139,5 +143,8 @@ PEB size, zero `image_seq` values, LEBs sharing a `sqnum`, volume table
 `used_ebs`, interrupted
 wear-leveling copies, sparse LEB numbers near 2^32, non-UTF-8 volume names,
 unsafe and duplicate volume names, and nested ZIP member
-classification. Images written by `ubinize` and real NAND dumps with OOB
-data, bad blocks or bit flips were not verified. Fastmap is not read.
+classification. Parser and byte-reassembly checks also cover four images from
+`ubinize 2.1.5`: dynamic and static volumes, non-default volume alignment, and
+NAND subpage geometry. Those producer checks did not exercise public CLI/MCP.
+Real NAND dumps with OOB data, bad blocks or bit flips were not verified.
+Fastmap is not read.
