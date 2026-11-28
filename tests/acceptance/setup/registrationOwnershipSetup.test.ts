@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { expect } from "vitest";
 
@@ -269,6 +269,44 @@ for (const [label, root, manifest] of [
     });
     expect(await readFile(config, "utf8")).toBe(original);
   });
+
+cliTest.skipIf(process.platform === "win32")(
+  "setup keeps a launcher foreign when Node selects a script outside the REA package",
+  async ({ cli }) => {
+    const home = await createTestTempDirectory("rea-setup-divergent-install-");
+    const config = join(home, ".claude.json");
+    const root = join(home, "pkg", "node_modules", "rea-agents");
+    await installPackage(root, reaManifest);
+    await mkdir(join(root, "lib"));
+    // Native traversal follows the link before `..` into the REA package;
+    // Node removes `..` first and runs the unrelated sibling script.
+    await installPackage(join(home, "foreign"), { name: "foreign" });
+    await symlink(join(root, "lib"), join(home, "foreign", "link"), "dir");
+    const runtime = join(home, "old-runtime", "node");
+    await mkdir(dirname(runtime), { recursive: true });
+    await writeFile(runtime, "");
+    const original = JSON.stringify({
+      mcpServers: {
+        rea: {
+          command: runtime,
+          args: [`${home}/foreign/link/../scripts/rea.mjs`, "mcp"],
+        },
+      },
+    });
+    await writeFile(config, original);
+    const result = await cli.run({
+      arguments: [...setup, "--yes"],
+      cwd: home,
+      environment: { HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: home },
+    });
+    expect(result.exitCode, result.stdout).toBe(1);
+    expect(result.json).toMatchObject({
+      status: "needs_human",
+      remediation: expect.stringContaining("foreign ownership"),
+    });
+    expect(await readFile(config, "utf8")).toBe(original);
+  },
+);
 
 for (const repeated of [false, true])
   cliTest(

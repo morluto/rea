@@ -16,12 +16,16 @@ const reaPackageManifestSchema = z.object({
 /**
  * Whether a path resolves to the CLI script of an installed REA package.
  * npm, npx, pnpm and Bun place an installed package at `node_modules/<name>`,
- * and its manifest names the script REA's CLI runs. A source checkout or an
- * entry whose package is gone is not proven to be another REA installation.
+ * and its manifest names the script REA's CLI runs. A source checkout, an
+ * entry whose package is gone, or a spelling that Node and native traversal
+ * resolve to different files is not proven to be another REA installation.
  */
 export const installedReaPackageEntrypoint = (path: string): boolean => {
   try {
     const script = realpathSync.native(path);
+    // Node removes `..` before following links, while native traversal follows
+    // them first; a script the two select differently is not proven.
+    if (realpathSync.native(resolve(path)) !== script) return false;
     // Every published manifest maps the CLI to `scripts/rea.mjs`.
     const root = dirname(dirname(script));
     if (
