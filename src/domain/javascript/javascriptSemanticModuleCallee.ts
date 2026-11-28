@@ -75,8 +75,8 @@ const writtenMembers = (
   for (const operation of ir.objectOperations) {
     const { kind, objectBindingId, requireOrigin, propertyPath } = operation;
     if (kind !== "write") continue;
-    // A computed key may name any member of the object it is written on.
-    const path = propertyPath ?? [];
+    // A computed key may name any member below the static keys before it.
+    const path = propertyPath ?? operation.knownPathPrefix ?? [];
     if (objectBindingId !== null) record(objectBindingId, path);
     for (const origin of requireOrigin !== undefined
       ? [requireOrigin]
