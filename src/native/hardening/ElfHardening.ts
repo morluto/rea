@@ -29,20 +29,20 @@ import {
   readElfSymbolFieldsAt,
 } from "../../domain/elfSymbol.js";
 import {
-  readElfGnuHashSymbolCount,
+  readElfGnuHashSymbolCountSteps,
   readElfHashSymbolCount,
-  type ElfGnuHashCountWalk,
   type ElfHashCountFailure,
   type ElfHashWordReader,
 } from "../../domain/elfHashSymbolCount.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
+  BINARY_HARDENING_TABLE_ENTRY_LIMIT,
   type BinaryHardeningImage,
   type BinaryHardeningRow,
   ELF_HARDENING_PROPERTIES,
   MAX_BINARY_HARDENING_SYMBOL_NAME_BYTES,
   MAX_BINARY_HARDENING_SYMBOL_SCAN_BYTES,
-  MAX_BINARY_HARDENING_TABLE_ENTRIES,
+  normalizeBinaryHardeningTableEntryBudget,
 } from "../../domain/native/binaryHardening.js";
 import {
   elfNoteAlignment,
@@ -137,18 +137,27 @@ const exact = (value: bigint, label: string): number => {
   return Number(value);
 };
 
-const budgetFailure = (count: number, label: string): BinaryResourceFailure =>
+const budgetFailure = (
+  count: number,
+  label: string,
+  maxTableEntries: number,
+): BinaryResourceFailure =>
   new BinaryResourceFailure(
     "structure",
-    MAX_BINARY_HARDENING_TABLE_ENTRIES,
-    `${label} has ${String(count)} entries, above the ${String(MAX_BINARY_HARDENING_TABLE_ENTRIES)}-entry table allowance. This release has no runtime override.`,
-    "hardening-table-entries",
+    maxTableEntries,
+    `${label} has ${String(count)} entries, above the ${String(maxTableEntries)}-entry max_table_entries table allowance.`,
+    BINARY_HARDENING_TABLE_ENTRY_LIMIT,
     "entries",
+    count,
   );
 
-const budget = (count: number, label: string): void => {
-  if (count > MAX_BINARY_HARDENING_TABLE_ENTRIES)
-    throw budgetFailure(count, label);
+const budget = (
+  count: number,
+  label: string,
+  maxTableEntries: number,
+): void => {
+  if (!(count <= maxTableEntries))
+    throw budgetFailure(count, label, maxTableEntries);
 };
 
 type RowInput = {
@@ -213,6 +222,7 @@ export const readElfHardening = (
   bytes: Buffer,
   signal?: AbortSignal,
   structureBytes?: number,
+  maxTableEntries?: number,
 ): BinaryHardeningImage => {
   assertArtifactReadActive(signal);
   const directory = readElfDirectoryFromBuffer(bytes, OPERATION, {
@@ -224,6 +234,7 @@ export const readElfHardening = (
     directory,
     signal,
     structureBytes ?? DEFAULT_NATIVE_STRUCTURE_BYTES,
+    normalizeBinaryHardeningTableEntryBudget(maxTableEntries),
   );
   let next = steps.next();
   while (!next.done) {
@@ -239,6 +250,7 @@ export const readElfHardeningFromHandle = async (
   source: ByteSource,
   signal?: AbortSignal,
   structureBytes?: number,
+  maxTableEntries?: number,
 ): Promise<BinaryHardeningImage> => {
   assertArtifactReadActive(signal);
   const directory = await readElfDirectoryFromReader(
@@ -259,6 +271,7 @@ export const readElfHardeningFromHandle = async (
     directory,
     signal,
     structureBytes ?? DEFAULT_NATIVE_STRUCTURE_BYTES,
+    normalizeBinaryHardeningTableEntryBudget(maxTableEntries),
   );
   let next = steps.next();
   while (!next.done) {
@@ -274,6 +287,7 @@ function* elfHardeningSteps(
   directory: ReturnType<typeof readElfDirectoryFromBuffer>,
   signal: AbortSignal | undefined,
   structureBytes: number,
+  maxTableEntries: number,
 ): Generator<HardeningStep, BinaryHardeningImage, HardeningStepResult> {
   const { bits, little, machine, programs, sections } = directory;
   const headerWidth = bits === 64 ? 56 : 32;
@@ -319,6 +333,7 @@ function* elfHardeningSteps(
           little,
           mapVa,
           structureBytes,
+          maxTableEntries,
         );
   let symbols: SymbolScan;
   try {
@@ -329,6 +344,7 @@ function* elfHardeningSteps(
       little,
       mapVa,
       bits,
+      maxTableEntries,
       signal,
     );
   } catch (cause) {
@@ -535,6 +551,7 @@ function* readDynamic(
   little: boolean,
   mapVa: MapVa,
   structureBytes: number,
+  maxTableEntries: number,
 ): Generator<HardeningStep, DynamicTable, HardeningStepResult> {
   const offset = exact(program.offset, "PT_DYNAMIC offset");
   const size = exact(program.size, "PT_DYNAMIC size");
@@ -545,7 +562,7 @@ function* readDynamic(
   if (size > structureBytes)
     throw nativeStructureFailure("The ELF dynamic table", size, structureBytes);
   const count = size / width;
-  budget(count, "ELF dynamic table");
+  budget(count, "ELF dynamic table", maxTableEntries);
   const entries = new Map<bigint, DynamicEntry>();
   const dynamicSlice = yield* readSlice(offset, size);
   const walked = walkElfDynamicTable<never>(
@@ -630,6 +647,7 @@ function* readSymbols(
   little: boolean,
   mapVa: MapVa,
   bits: 32 | 64,
+  maxTableEntries: number,
   signal?: AbortSignal,
 ): Generator<HardeningStep, SymbolScan, HardeningStepResult> {
   const dynsym = uniqueKeyed(
@@ -655,8 +673,24 @@ function* readSymbols(
   if (dynamic.stringSize === null || dynamic.stringFileOffset === null)
     malformed("ELF DT_SYMTAB is present without a dynamic string table");
   const count =
-    (yield* symbolCount(fileSize, dynamic, bits, little, mapVa, signal)) ??
-    agreeingSectionCount(sections, section, dynamic, symtab, width, mapVa);
+    (yield* symbolCount(
+      fileSize,
+      dynamic,
+      bits,
+      little,
+      mapVa,
+      maxTableEntries,
+      signal,
+    )) ??
+    agreeingSectionCount(
+      sections,
+      section,
+      dynamic,
+      symtab,
+      width,
+      mapVa,
+      maxTableEntries,
+    );
   if (count === null)
     return {
       state: "unresolved",
@@ -665,7 +699,7 @@ function* readSymbols(
         : "Neither DT_HASH nor DT_GNU_HASH is present and no agreeing SHT_DYNSYM section gives the count, so the dynamic symbol table could not be read.",
       ...EMPTY_SYMBOL_MATCHES,
     };
-  budget(count, "ELF dynamic symbol table");
+  budget(count, "ELF dynamic symbol table", maxTableEntries);
   const base = mapVa(symtab.value, BigInt(count * width)).offset;
   if (count * width > fileSize - base)
     malformed("ELF dynamic symbol table extends outside the file");
@@ -687,6 +721,7 @@ const agreeingSectionCount = (
   symtab: DynamicEntry,
   width: number,
   mapVa: MapVa,
+  maxTableEntries: number,
 ): number | null => {
   if (dynsym === undefined) return null;
   const strings = sections[dynsym.link];
@@ -708,7 +743,7 @@ const agreeingSectionCount = (
   if (size % width !== 0)
     malformed("ELF SHT_DYNSYM size is not a whole number of symbols");
   const count = size / width;
-  budget(count, "ELF dynamic symbol table");
+  budget(count, "ELF dynamic symbol table", maxTableEntries);
   return mapVa(symtab.value, dynsym.size).offset ===
     exact(dynsym.offset, "SHT_DYNSYM offset")
     ? count
@@ -837,22 +872,17 @@ function* readSymbolNames(
     : { state: "scanned", stackProtector, fortify };
 }
 
-const finishGnuHashCount = (
-  walk: ElfGnuHashCountWalk,
-  signal: AbortSignal | undefined,
-): Result<number | null, ElfHashCountFailure> => {
-  for (let step = walk.next(); ; step = walk.next()) {
-    if (step.done === true) return step.value;
-    assertArtifactReadActive(signal);
-  }
-};
-
 const admitHashCount = (
   counted: Result<number | null, ElfHashCountFailure>,
+  maxTableEntries: number,
 ): number | null => {
   if (counted.ok) return counted.value;
   if (counted.error.kind === "budget")
-    throw budgetFailure(counted.error.count, `ELF ${counted.error.label}`);
+    throw budgetFailure(
+      counted.error.count,
+      `ELF ${counted.error.label}`,
+      maxTableEntries,
+    );
   return malformed(`ELF ${counted.error.message}`);
 };
 
@@ -861,6 +891,7 @@ function* readHashCount(
   va: bigint,
   little: boolean,
   mapVa: MapVa,
+  maxTableEntries: number,
 ): Generator<HardeningStep, number | null, HardeningStepResult> {
   const mapping = mapVa(va, 4n);
   const headerLen = Math.min(
@@ -881,7 +912,8 @@ function* readHashCount(
     return ok(0);
   };
   return admitHashCount(
-    readElfHashSymbolCount(readWord, MAX_BINARY_HARDENING_TABLE_ENTRIES),
+    readElfHashSymbolCount(readWord, maxTableEntries),
+    maxTableEntries,
   );
 }
 
@@ -891,6 +923,7 @@ function* readGnuHashCount(
   bits: 32 | 64,
   little: boolean,
   mapVa: MapVa,
+  maxTableEntries: number,
   signal?: AbortSignal,
 ): Generator<HardeningStep, number | null, HardeningStepResult> {
   const mapping = mapVa(va, 4n);
@@ -901,53 +934,56 @@ function* readGnuHashCount(
       ? Number.MAX_SAFE_INTEGER
       : Number(mapping.available),
   );
-  const headerLen = Math.min(16, Math.max(0, maxAvail));
-  const headerBuf = yield* readSlice(mapping.offset, headerLen);
-  const headerReader = new BinaryReader(headerBuf, little, "elf");
-  let tailStart = 0;
-  let tailBuf: Buffer = Buffer.alloc(0);
-  let tailReader = new BinaryReader(tailBuf, little, "elf");
-  if (headerBuf.length >= 16) {
-    const buckets = headerReader.u32(0);
-    const bloomWords = headerReader.u32(8);
-    if (
-      buckets > 0 &&
-      buckets <= MAX_BINARY_HARDENING_TABLE_ENTRIES &&
-      bloomWords > 0 &&
-      bloomWords <= MAX_BINARY_HARDENING_TABLE_ENTRIES
-    ) {
-      tailStart = 16 + bloomWords * wordBytes;
-      const tailLimit = (buckets + MAX_BINARY_HARDENING_TABLE_ENTRIES) * 4;
-      if (tailStart < maxAvail) {
-        const readLen = Math.min(tailLimit, maxAvail - tailStart);
-        tailBuf = yield* readSlice(mapping.offset + tailStart, readLen);
-        tailReader = new BinaryReader(tailBuf, little, "elf");
-      }
+  let winStart = 0;
+  let winBuf: Buffer = Buffer.alloc(0);
+  let winReader = new BinaryReader(winBuf, little, "elf");
+  const steps = readElfGnuHashSymbolCountSteps(wordBytes, maxTableEntries);
+  let next = steps.next();
+  while (!next.done) {
+    const step = next.value;
+    if (step === undefined) {
+      assertArtifactReadActive(signal);
+      next = steps.next(ok(0));
+      continue;
     }
-  }
-  const readWord: ElfHashWordReader = (relative) => {
+    const boundsOnly = typeof step === "object";
+    const relative = boundsOnly ? step.offset : step;
     const end = BigInt(relative + 4);
-    if (end > mapping.backed) return err("is not file-backed in its PT_LOAD");
-    if (end > mapping.available) return err("crosses another PT_LOAD mapping");
+    if (end > mapping.backed) {
+      next = steps.next(err("is not file-backed in its PT_LOAD"));
+      continue;
+    }
+    if (end > mapping.available) {
+      next = steps.next(err("crosses another PT_LOAD mapping"));
+      continue;
+    }
     const at = mapping.offset + relative;
-    if (at > fileSize - 4) return err("extends outside the file");
-    if (relative >= 0 && relative + 4 <= headerBuf.length)
-      return ok(headerReader.u32(relative));
-    const local = relative - tailStart;
-    if (local >= 0 && local + 4 <= tailBuf.length)
-      return ok(tailReader.u32(local));
-    return err("extends outside the file");
-  };
-  return admitHashCount(
-    finishGnuHashCount(
-      readElfGnuHashSymbolCount(
-        readWord,
-        wordBytes,
-        MAX_BINARY_HARDENING_TABLE_ENTRIES,
-      ),
-      signal,
-    ),
-  );
+    if (relative < 0 || at > fileSize - 4) {
+      next = steps.next(err("extends outside the file"));
+      continue;
+    }
+    if (boundsOnly) {
+      next = steps.next(ok(0));
+      continue;
+    }
+    if (
+      winBuf.length === 0 ||
+      relative < winStart ||
+      relative + 4 > winStart + winBuf.length
+    ) {
+      const windowSize = relative < 16 ? 16 : STREAM_WINDOW_BYTES;
+      const readLen = Math.min(windowSize, Math.max(0, maxAvail - relative));
+      if (readLen < 4) {
+        next = steps.next(err("extends outside the file"));
+        continue;
+      }
+      winBuf = yield* readSlice(mapping.offset + relative, readLen);
+      winStart = relative;
+      winReader = new BinaryReader(winBuf, little, "elf");
+    }
+    next = steps.next(ok(winReader.u32(relative - winStart)));
+  }
+  return admitHashCount(next.value, maxTableEntries);
 }
 
 function* symbolCount(
@@ -956,6 +992,7 @@ function* symbolCount(
   bits: 32 | 64,
   little: boolean,
   mapVa: MapVa,
+  maxTableEntries: number,
   signal?: AbortSignal,
 ): Generator<HardeningStep, number | null, HardeningStepResult> {
   const hash = dynamic.entries.get(DT_HASH);
@@ -963,7 +1000,13 @@ function* symbolCount(
   const classic =
     hash === undefined
       ? null
-      : yield* readHashCount(fileSize, hash.value, little, mapVa);
+      : yield* readHashCount(
+          fileSize,
+          hash.value,
+          little,
+          mapVa,
+          maxTableEntries,
+        );
   const gnuCount =
     gnu === undefined
       ? null
@@ -973,6 +1016,7 @@ function* symbolCount(
           bits,
           little,
           mapVa,
+          maxTableEntries,
           signal,
         );
   if (classic !== null && gnuCount !== null && classic !== gnuCount)

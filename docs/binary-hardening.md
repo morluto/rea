@@ -7,6 +7,7 @@ target execution is required. Universal Mach-O files return one image per slice.
 ```sh
 rea inspect-binary-hardening /absolute/path/to/program --json
 rea inspect-binary-hardening /absolute/path/to/program --max-file-bytes 1048576 --json
+rea inspect-binary-hardening /absolute/path/to/program --max-table-entries 131072 --json
 ```
 
 MCP accepts `{ "path": "/absolute/path/to/program" }`. CLI paths may be relative
@@ -61,4 +62,7 @@ other slices. A symbol table or
 symbol name over its budget leaves the import rows `unknown` and keeps the
 header rows. A GNU property note over its budget, or a compressed note section
 that may hold one, leaves the CET and BTI/PAC rows `unknown` and keeps the header
-rows. A dynamic-table budget still fails the ELF report.
+rows. `max_table_entries` (`--max-table-entries`, 1 to 1,048,576, default
+65,536) bounds ELF dynamic/symbol tables and Mach-O `LC_SYMTAB` symbol scans; a
+dynamic table over `max_table_entries` fails the ELF report with structured
+`details.limit` naming the required entry count.

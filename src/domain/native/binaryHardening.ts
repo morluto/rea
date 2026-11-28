@@ -7,12 +7,39 @@ import {
 } from "../binaryTargetTypes.js";
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
+import {
+  parameterBudgetLimitFor,
+  parameterBudgetSchema,
+  type ParameterBudget,
+} from "../parameterBudget.js";
 import { maxStructureBytesSchema } from "./nativeStructureBudget.js";
 
 /** Hard ceiling on the caller-selected input read budget. */
 export const MAX_INSPECT_BINARY_HARDENING_FILE_BYTES = 536870912;
-/** Fixed dynamic-entry and symbol budget. This release has no runtime override. */
-export const MAX_BINARY_HARDENING_TABLE_ENTRIES = 65536;
+/** Limit name carried by `BinaryResourceFailure` when `max_table_entries` is exceeded. */
+export const BINARY_HARDENING_TABLE_ENTRY_LIMIT = "hardening-table-entries";
+/** Per-call table-entry budget of `inspect_binary_hardening`. */
+export const BINARY_HARDENING_BUDGETS = {
+  max_table_entries: {
+    minimum: 1,
+    maximum: 1_048_576,
+    default_value: 65_536,
+    unit: "count",
+  },
+} as const satisfies Record<string, ParameterBudget>;
+export type BinaryHardeningBudget = keyof typeof BINARY_HARDENING_BUDGETS;
+/** Structured `details.limit` payload for `inspect_binary_hardening` table-entry refusals. */
+export const binaryHardeningBudgetLimit =
+  parameterBudgetLimitFor<BinaryHardeningBudget>(BINARY_HARDENING_BUDGETS);
+/** Normalize an optional direct-caller `max_table_entries` budget fail-closed. */
+export const normalizeBinaryHardeningTableEntryBudget = (
+  maxTableEntries?: number,
+): number =>
+  maxTableEntries === undefined
+    ? BINARY_HARDENING_BUDGETS.max_table_entries.default_value
+    : Number.isSafeInteger(maxTableEntries) && maxTableEntries >= 1
+      ? maxTableEntries
+      : 0;
 /** Bytes examined for one symbol name. A longer run is not a terminated name. */
 export const MAX_BINARY_HARDENING_SYMBOL_NAME_BYTES = 65536;
 /** Aggregate string-table bytes examined while resolving symbol names. */
@@ -28,6 +55,11 @@ export const inspectBinaryHardeningInputSchema = z.strictObject({
     "Absolute filesystem path to an ELF, PE, or Mach-O image",
   ),
   max_structure_bytes: maxStructureBytesSchema,
+  max_table_entries: parameterBudgetSchema(
+    BINARY_HARDENING_BUDGETS.max_table_entries,
+  ).describe(
+    "Maximum ELF dynamic/symbol table entries or Mach-O LC_SYMTAB symbols to inspect (default 65536, maximum 1048576)",
+  ),
   max_file_bytes: z
     .number()
     .int()

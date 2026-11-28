@@ -208,6 +208,9 @@ it("rejects truncated, duplicate and over-budget ELF tables", () => {
   expect(() => readElfHardening(wide)).toThrow(
     expect.objectContaining({ maximum_bytes: 65_536, unit: "entries" }),
   );
+  const wideRaised = readElfHardening(wide, undefined, undefined, 65_537);
+  expect(wideRaised.status).toBe("parsed");
+  expect(findRow(wideRaised.rows, "nx").state).toBe("enabled");
   const overBudget = readElfHardening(
     elfHardeningFixture({ symbolBudget: true }),
   );
@@ -218,6 +221,16 @@ it("rejects truncated, duplicate and over-budget ELF tables", () => {
     note: expect.stringContaining("table allowance"),
   });
   expect(findRow(overBudget.rows, "fortify").state).toBe("unknown");
+  const withStackChk = elfHardeningFixture({ stackChk: true });
+  expect(() => readElfHardening(withStackChk, undefined, undefined, 1)).toThrow(
+    expect.objectContaining({ maximum_bytes: 1, unit: "entries" }),
+  );
+  expect(
+    findRow(
+      readElfHardening(withStackChk, undefined, undefined, 16).rows,
+      "stack_protector",
+    ).state,
+  ).toBe("enabled");
   const longPath = "A".repeat(70000);
   const longRpath = readElfHardening(elfHardeningFixture({ rpath: longPath }));
   expect(findRow(longRpath.rows, "rpath")).toMatchObject({
@@ -468,8 +481,12 @@ it("keeps Mach-O siblings when one slice is big-endian, mismatched or malformed"
   expect(findRow(hugeSymbols?.rows ?? [], "pie").state).toBe("enabled");
   expect(findRow(hugeSymbols?.rows ?? [], "stack_protector")).toMatchObject({
     state: "unknown",
-    note: expect.stringContaining("structural budget"),
+    note: expect.stringContaining("max_table_entries"),
   });
+  const hugeRaised = (await readMachoHardening(hugeSlice, undefined, 65537))[0];
+  expect(findRow(hugeRaised?.rows ?? [], "stack_protector").note).not.toContain(
+    "max_table_entries",
+  );
   // The fixture ends with one string-table NUL after its symbol array.
   const truncatedSymbols = hugeSlice.subarray(0, -2);
   const truncatedStrings = hugeSlice.subarray(0, -1);
@@ -2081,4 +2098,32 @@ it("bounds the ELF dynamic table by max_structure_bytes", () => {
   expect(() => readElfHardening(partial, undefined, tableBytes)).toThrow(
     "not a whole number of entries",
   );
+});
+
+it("enforces maxTableEntries on ELF symbol tables and rejects non-finite budgets fail-closed", async () => {
+  const manySymbols = elfHardeningFixture({
+    stackChk: true,
+    extraSymbols: 20,
+  });
+  const degraded = readElfHardening(manySymbols, undefined, undefined, 16);
+  expect(degraded.status).toBe("parsed");
+  expect(findRow(degraded.rows, "stack_protector")).toMatchObject({
+    state: "unknown",
+    note: expect.stringContaining("max_table_entries"),
+  });
+  const raised = readElfHardening(manySymbols, undefined, undefined, 64);
+  expect(findRow(raised.rows, "stack_protector")).toMatchObject({
+    state: "enabled",
+    note: null,
+  });
+  expect(() =>
+    readElfHardening(manySymbols, undefined, undefined, Number.NaN),
+  ).toThrow(expect.objectContaining({ unit: "entries" }));
+
+  const macho = machoHardeningFixture({ stackChk: true });
+  const machoNan = (await readMachoHardening(macho, undefined, Number.NaN))[0];
+  expect(findRow(machoNan?.rows ?? [], "stack_protector")).toMatchObject({
+    state: "unknown",
+    note: expect.stringContaining("max_table_entries"),
+  });
 });

@@ -14,12 +14,12 @@ import {
 import type { BinaryHardeningPort } from "../../ports/binaryDiagnostics/BinaryHardeningPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
-import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
   BINARY_HARDENING_LIMITATIONS,
+  BINARY_HARDENING_TABLE_ENTRY_LIMIT,
+  binaryHardeningBudgetLimit,
   MAX_INSPECT_BINARY_HARDENING_FILE_BYTES,
   type InspectBinaryHardeningInput,
 } from "../../domain/native/binaryHardening.js";
@@ -29,7 +29,6 @@ import {
   hasElfMagic,
   BinaryResourceFailure,
   isNativeStructureFailure,
-  binaryResourceCeiling,
 } from "../../domain/binaryContainer.js";
 import { readElfHardeningFromHandle } from "./ElfHardening.js";
 import { readMachoHardeningFromHandle } from "./MachoHardening.js";
@@ -92,6 +91,7 @@ export class BinaryHardeningProvider implements BinaryHardeningPort {
                     handle,
                     options?.signal,
                     input.max_structure_bytes,
+                    input.max_table_entries,
                   ),
                 ],
                 limitations: [...BINARY_HARDENING_LIMITATIONS],
@@ -115,6 +115,7 @@ export class BinaryHardeningProvider implements BinaryHardeningPort {
               images: await readMachoHardeningFromHandle(
                 handle,
                 options?.signal,
+                input.max_table_entries,
               ),
               limitations: [...BINARY_HARDENING_LIMITATIONS],
             };
@@ -148,14 +149,20 @@ const binaryHardeningFailure = (
         }) ??
         (isNativeStructureFailure(failure)
           ? nativeStructureConstraint(OPERATION, failure, input.path)
-          : failure instanceof BinaryResourceFailure
+          : failure instanceof BinaryResourceFailure &&
+              failure.failure.limit.name === BINARY_HARDENING_TABLE_ENTRY_LIMIT
             ? parseLimitConstraint(OPERATION, "capacity", failure, {
                 path: input.path,
-                ...fixedAllowanceOptions(
-                  "The binary hardening table-entry allowance",
-                  "parser",
-                  binaryResourceCeiling(failure),
-                ),
+                retryable: false,
+                limit: {
+                  ...binaryHardeningBudgetLimit(
+                    "max_table_entries",
+                    failure.failure.limit.maximum,
+                  ),
+                  ...(typeof failure.failure.limit.required === "number"
+                    ? { required_value: failure.failure.limit.required }
+                    : {}),
+                },
               })
             : undefined),
       fileSize: (failure) =>

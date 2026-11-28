@@ -152,6 +152,8 @@ it("rejects input and cancellation before reading", async () => {
     { path: "relative" },
     { path: "/artifacts/app", extra: true },
     { path: "/artifacts/app", max_file_bytes: 536870913 },
+    { path: "/artifacts/app", max_table_entries: 0 },
+    { path: "/artifacts/app", max_table_entries: 1_048_577 },
   ]) {
     const result = await boundary.inspect(input);
     expect(result.ok).toBe(false);

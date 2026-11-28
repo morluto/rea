@@ -146,7 +146,11 @@ and default; `details.reported_limits.boundary` is `max_structure_bytes`.
 decoded section names against `max_file_bytes` as well. For `inspect_binary_hardening` it
 covers the ELF header tables, section names and dynamic table; Mach-O load
 commands keep the Mach-O command reader's own limit, and the PE headers it reads
-are bounded by the PE format.
+are bounded by the PE format. `inspect_binary_hardening` also accepts
+`max_table_entries` (CLI `--max-table-entries`, 1 to 1,048,576, default
+65,536) for ELF `PT_DYNAMIC` entries, ELF dynamic symbol counts, and Mach-O
+`LC_SYMTAB` symbol scans; an ELF dynamic table above `max_table_entries`
+reports `details.limit` with `required_value`.
 
 For `inspect_native_exports` it also bounds the ELF dynamic, symbol and version
 tables located through PT_DYNAMIC. For `inspect_native_initializers` it also
