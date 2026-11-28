@@ -941,10 +941,13 @@ file's declaration-level imports and records that its CommonJS require calls
 were not examined. Raising `max_heap_mb`, `analysis_timeout_ms` or
 `semantic_precision` alone does not admit the same source.
 
-Byte, entry, path, and graph-shape bounds are hard limits. The parse deadline is
-checked before and between bounded parsing and traversal phases; the synchronous
-Babel and JSON parser calls cannot be preempted mid-call, so their input byte
-bounds remain the hard protection for an individual call.
+Byte, entry, path, and graph-shape bounds are hard limits. In-process deadline
+checks run before and between bounded parsing and traversal phases; they cannot
+interrupt a synchronous Babel or JSON parser call mid-call. The parent process
+can still stop its owned JavaScript analyzer on timeout or cancellation, even
+while Babel is parsing. This stops the analyzer process rather than interrupting
+the parser within it. Input byte bounds remain necessary, including for JSON
+parsed in the CLI/MCP process outside that analyzer.
 
 Byte-identical assets share a content-digest node. Every distinct observation
 and inventoried containment edge is retained. If parsing or artifact safety
