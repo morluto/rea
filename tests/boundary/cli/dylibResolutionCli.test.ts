@@ -19,6 +19,7 @@ import {
 import { dylibResolutionResultSchema } from "../../../src/domain/apple/dylibResolution.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 
 const ENVIRONMENT = { REA_LOG_LEVEL: "silent", REA_ANALYSIS_PROVIDER: "auto" };
@@ -643,7 +644,7 @@ describe("trace-dylib-resolution CLI", () => {
 });
 
 cliTest(
-  "rejects build-version tool records outside their load command",
+  "enforces build-version tool counts for underdeclared and truncated load commands",
   async ({ cli }) => {
     const app = await fixtureApp();
     const withTool = new Uint8Array(32);
@@ -660,6 +661,8 @@ cliTest(
     new DataView(excessiveTools.buffer).setUint32(20, 0xffffffff, true);
     const missingSecondTool = withTool.slice();
     new DataView(missingSecondTool.buffer).setUint32(20, 2, true);
+    const underdeclaredTool = withTool.slice();
+    new DataView(underdeclaredTool.buffer).setUint32(20, 0, true);
     const shortHeader = buildVersionCommand(1).slice(0, 16);
     new DataView(shortHeader.buffer).setUint32(4, 16, true);
     const cases = [
@@ -669,6 +672,7 @@ cliTest(
       ["missing-tool", [missingTool, rpathCommand("x")], "malformed"],
       ["excessive-tools", [excessiveTools], "malformed"],
       ["missing-second-tool", [missingSecondTool], "malformed"],
+      ["underdeclared-tool", [underdeclaredTool], "malformed"],
       ["short-header", [shortHeader], "malformed"],
     ] as const;
     for (const [name, commands] of cases) {
@@ -677,6 +681,11 @@ cliTest(
       });
     }
 
+    const malformedPath = join(app, "Contents/Helpers/underdeclared-tool");
+    const originalBytes = await readFile(malformedPath);
+    const originalSha = createHash("sha256")
+      .update(originalBytes)
+      .digest("hex");
     const result = await cli.run({
       arguments: ["trace-dylib-resolution", app, "--json"],
       environment: ENVIRONMENT,
@@ -685,6 +694,11 @@ cliTest(
     const trace = dylibResolutionResultSchema.parse(
       (result.json as { normalized_result: unknown }).normalized_result,
     );
+    expect(
+      trace.images.find(
+        (image) => image.path === "Contents/Helpers/underdeclared-tool",
+      ),
+    ).toMatchObject({ sha256: originalSha });
     for (const [name, , status] of cases) {
       const path = `Contents/Helpers/${name}`;
       const image = trace.images.find((item) => item.path === path);
@@ -704,6 +718,22 @@ cliTest(
       }
     }
     expect(trace.coverage.status).toBe("partial");
+
+    const { call } = await connectLocalToolsMcp(ENVIRONMENT);
+    const opened = await call("open_binary", { path: app });
+    expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
+    try {
+      const response = await call("trace_dylib_resolution", {});
+      expect(response.isError, JSON.stringify(response)).not.toBe(true);
+      const mcpTrace = dylibResolutionResultSchema.parse(
+        parseEvidence(response.structuredContent).normalized_result,
+      );
+      expect(mcpTrace).toEqual(trace);
+      expect((await readFile(malformedPath)).equals(originalBytes)).toBe(true);
+    } finally {
+      const closed = await call("close_binary", {});
+      expect(closed.isError, JSON.stringify(closed)).not.toBe(true);
+    }
   },
 );
 

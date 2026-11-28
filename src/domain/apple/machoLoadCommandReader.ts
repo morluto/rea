@@ -839,10 +839,10 @@ const decodeCommand = (
       );
     const reader = machoWordReader(body, true);
     const toolCount = reader.u32(20);
-    if (toolCount > Math.floor((body.byteLength - 24) / 8))
+    if (body.byteLength !== 24 + toolCount * 8)
       throw new MachoReadError(
         machoFailure.malformed(
-          `load command ${index} LC_BUILD_VERSION tool records exceed cmdsize`,
+          `load command ${index} LC_BUILD_VERSION cmdsize disagrees with its tool count`,
         ),
       );
     const platform = reader.u32(8);
