@@ -13,7 +13,7 @@ import {
 import {
   boundedViewLimitations,
   completeWithinViewCoverage,
-  pageViewCoverage,
+  selectedViewPage,
 } from "./analysisViewCoverage.js";
 import {
   assertOwnedView,
@@ -382,7 +382,6 @@ export const projectWebPageView = (
     kind: "web-page" as const,
     view: selected,
     section: sectionOf(report, selected.collection),
-    items: rows.rows,
-    coverage: pageViewCoverage(selected.offset, rows.rows.length, rows.total),
+    ...selectedViewPage(selected.offset, rows),
   });
 };

@@ -29,7 +29,7 @@ import {
   analysisViewCoverageSchema,
   boundedViewLimitations,
   completeWithinViewCoverage,
-  pageViewCoverage,
+  selectedViewPage,
 } from "./analysisViewCoverage.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import { pickFields, selectViewRows, filterSet } from "./selectViewRows.js";
@@ -473,11 +473,6 @@ export const projectPlaywrightTraceView = (
     ...context,
     kind: "playwright-trace" as const,
     view,
-    items: selected.rows,
-    coverage: pageViewCoverage(
-      view.offset,
-      selected.rows.length,
-      selected.total,
-    ),
+    ...selectedViewPage(view.offset, selected),
   });
 };
