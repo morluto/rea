@@ -2800,3 +2800,223 @@ html[dir="rtl"] .brand-name {
   --font-sans: var(--font-latin), sans-serif;
   --font-mono: var(--font-code), monospace;
 }
+
+.scroll-progress {
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: 3px;
+  z-index: 20;
+  background: var(--accent);
+  transform-origin: 0 50%;
+  transform: scaleX(0);
+  pointer-events: none;
+}
+html[dir="rtl"] .scroll-progress {
+  transform-origin: 100% 50%;
+}
+
+.anchor-btn {
+  appearance: none;
+  display: inline-grid;
+  place-items: center;
+  vertical-align: middle;
+  margin-inline-start: 0.45rem;
+  min-width: 2rem;
+  min-height: 2rem;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.72em;
+  line-height: 1;
+  opacity: 0;
+  transition:
+    opacity 0.15s,
+    background 0.15s,
+    color 0.15s,
+    border-color 0.15s;
+}
+.article-section h2:hover .anchor-btn,
+.article-section h2:focus-within .anchor-btn,
+.anchor-btn:focus-visible {
+  opacity: 1;
+}
+.anchor-btn:hover {
+  background: var(--soft);
+  border-color: var(--line);
+  color: var(--accent);
+}
+@media (hover: none) {
+  .anchor-btn {
+    opacity: 0.65;
+  }
+}
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: max(1.5rem, env(safe-area-inset-bottom, 0px));
+  z-index: 30;
+  transform: translate(-50%, 12px);
+  opacity: 0;
+  pointer-events: none;
+  background: var(--ink);
+  color: var(--page);
+  padding: 0.55rem 1rem;
+  border-radius: 999px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  transition:
+    opacity 0.2s,
+    transform 0.2s;
+}
+.toast.is-visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.has-toc {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  column-gap: 3rem;
+  align-items: start;
+}
+.has-toc > * {
+  grid-column: 1;
+}
+.has-toc > .translation-notice,
+.has-toc > .page-heading {
+  grid-column: 1 / -1;
+}
+.toc {
+  display: none;
+}
+@media (min-width: 64rem) {
+  .has-toc {
+    grid-template-columns: minmax(0, 760px) 15rem;
+    justify-content: space-between;
+  }
+  .has-toc > .toc {
+    display: block;
+    position: sticky;
+    top: 2rem;
+    grid-column: 2;
+    font-size: 0.875rem;
+    padding-inline-start: 1rem;
+    border-inline-start: 1px solid var(--line);
+  }
+  .toc p {
+    margin: 0 0 0.5rem;
+    font-weight: 600;
+    color: var(--ink);
+  }
+  .toc ol {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .toc li + li {
+    margin-top: 0.25rem;
+  }
+  .toc a {
+    display: block;
+    padding: 0.3rem 0;
+    color: var(--muted);
+    text-decoration: none;
+    line-height: 1.4;
+  }
+  .toc a:hover,
+  .toc a[aria-current="true"] {
+    color: var(--accent);
+  }
+  .toc a[aria-current="true"] {
+    font-weight: 600;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .anchor-btn,
+  .toast {
+    transition: none;
+  }
+}
+
+@media print {
+  :root,
+  :root[data-theme="dark"] {
+    color-scheme: light;
+    --ink: #000;
+    --muted: #333;
+    --line: #ccc;
+    --soft: #f4f6f8;
+    --accent: #000;
+    --page: #fff;
+  }
+  .site-header,
+  .site-footer,
+  .skip-link,
+  .back-to-top,
+  .scroll-progress,
+  .toast,
+  .toc,
+  .anchor-btn {
+    display: none !important;
+  }
+  body {
+    background: #fff;
+    color: #000;
+    font-size: 11pt;
+  }
+  :where(:root[data-theme="dark"]) .article p,
+  :where(:root[data-theme="dark"]) .article li,
+  :where(:root[data-theme="dark"]) .guide-route span,
+  .article p,
+  .article li,
+  .guide-route span {
+    color: #000;
+  }
+  .agent-terminal,
+  :where(:root[data-theme="dark"]) .agent-terminal,
+  :where(:root[data-theme="dark"]) .flow-node,
+  :where(:root[data-theme="dark"]) .code-key,
+  :where(:root[data-theme="dark"]) .notion-channel,
+  :where(:root[data-theme="dark"]) .prose-highlight,
+  :where(:root[data-theme="dark"]) .step-selector button[aria-pressed="true"],
+  :where(:root[data-theme="dark"])
+    .percent-operation
+    button[aria-pressed="true"],
+  :where(:root[data-theme="dark"]) .flow-result,
+  :where(:root[data-theme="dark"]) .home-nav-links a[aria-current="location"],
+  :where(:root[data-theme="dark"]) .step-comparison .is-active,
+  :where(:root[data-theme="dark"]) .button {
+    background: var(--soft);
+    border-color: var(--line);
+    color: var(--ink);
+  }
+  .terminal-header,
+  :where(:root[data-theme="dark"]) .terminal-header {
+    border-bottom-color: var(--line);
+    color: var(--muted);
+  }
+  .terminal-target,
+  .prompt-symbol,
+  .agent-terminal .copy-button {
+    color: var(--muted);
+  }
+  .agent-terminal .terminal-prompt {
+    color: #000;
+  }
+  .terminal-cursor {
+    display: none;
+  }
+  .article-section {
+    border: 0;
+    padding-block: 1rem;
+    break-inside: avoid;
+  }
+  a {
+    color: inherit;
+  }
+}

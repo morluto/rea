@@ -13313,6 +13313,27 @@ msgctxt "runtime"
 msgid "REA on GitHub ({count})"
 msgstr ""
 
+#: website/public/assets/page.js:71
+#, python-brace-format
+msgctxt "runtime"
+msgid "Copy link to section: {heading}"
+msgstr ""
+
+#: website/public/assets/page.js:80
+msgctxt "runtime"
+msgid "Link copied"
+msgstr ""
+
+#: website/public/assets/page.js:81 website/public/assets/page.js:84
+msgctxt "runtime"
+msgid "Link added to address bar"
+msgstr ""
+
+#: website/public/assets/page.js:101
+msgctxt "runtime"
+msgid "On this page"
+msgstr ""
+
 #: website/public/assets/theme.js:52
 msgctxt "runtime"
 msgid "Switch to light mode"
