@@ -62,6 +62,50 @@ fixtures have no entry routine or imports and expose two exported functions.
 The same native snapshot, path-admission and cleanup requirements apply to EXEs
 and DLLs.
 
+## ELF and Mach-O targets on Windows
+
+Windows Ghidra P0 admits native PE, DOS MZ, and explicitly selected raw
+NMOS 6502 targets only. An ELF or Mach-O target is refused by the Ghidra
+provider with `target_format_unsupported` and the reason
+"Windows Ghidra P0 accepts native PE, DOS MZ, and explicitly selected raw
+6502 targets only." With IDA and Kuna unconfigured, every remaining candidate
+then rejects or reports unavailable (Hopper is unsupported on Windows), so the
+whole selection fails. `rea doctor` reports the Ghidra installation healthy, so
+this is the P0 admission boundary, not a broken setup.
+
+A configured IDA provider is the exception: it admits ELF and Mach-O
+executables on supported architectures, including on Windows, so it can analyze
+these targets without any fallback. See the
+[IDA provider guide](ida-provider.md). The fallbacks below apply when no
+configured provider admits the target.
+
+This is not a missing prerequisite that setup can repair. Ghidra itself
+analyzes ELF and Mach-O on a Windows host; only REA's Windows Ghidra launch
+path does not admit those formats. Two host-local fallbacks analyze the target
+without changing the P0 boundary:
+
+- **Headless Ghidra on the same Windows host.** The caller-installed Ghidra
+  distribution runs `support/analyzeHeadless.bat` directly with a post-script
+  (`-postScript`) that exports decompiled C through `DecompInterface`. Use a
+  post-script rather than a pre-script: a pre-script runs before analysis, so an
+  exporter that enumerates functions can miss functions analysis would discover
+  and emit incomplete output. This keeps the analysis on Windows and needs no
+  second environment. Import selects the ELF or Mach-O loader and language
+  automatically.
+- **WSL2.** Install supported Linux Node.js and REA inside WSL2 using the
+  [installation guide](../getting-started/installation.md), along with Ghidra
+  and a supported 64-bit JDK. Set `GHIDRA_INSTALL_DIR` there and run Linux REA
+  from the WSL2 shell, where the Linux Ghidra provider covers these formats.
+  Launching the Windows REA from WSL2 still selects the Windows P0 boundary and
+  refuses ELF and Mach-O.
+
+Neither route is wired through a REA provider on Windows. Widening P0 to admit
+ELF or Mach-O natively requires extending the native process, filesystem, and
+DACL controls verified for PE to those formats, and is a separate design
+decision tracked in
+[#5243](https://github.com/morluto/rea/issues/5243). Until then, use one of the
+host-local fallbacks above.
+
 ## Configuration
 
 ```powershell
