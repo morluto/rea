@@ -433,6 +433,15 @@ describe("browser CSS variables item and summary schemas", () => {
     expect(
       browserCssVariablesSchema.safeParse({
         ...valid,
+        status: "unavailable",
+        total: 1,
+        retained_count: 0,
+        items: [],
+      }).success,
+    ).toBe(true);
+    expect(
+      browserCssVariablesSchema.safeParse({
+        ...valid,
         status: "truncated",
         total: 0,
         retained_count: 1,

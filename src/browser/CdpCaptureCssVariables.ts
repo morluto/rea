@@ -368,10 +368,13 @@ const startsWithUrlBoundary = (token: string, start: number): boolean => {
   const len = token.length;
   if (token.startsWith("//", start)) {
     let seenColon = false;
+    let lastAt = -1;
     let colonBeforeLastAt = false;
+    let authorityEnd = len;
     for (let i = start + 2; i < len; i++) {
       const c = token[i]!;
       if (c === "@") {
+        lastAt = i;
         if (seenColon && i > start + 2) {
           colonBeforeLastAt = true;
         }
@@ -379,6 +382,8 @@ const startsWithUrlBoundary = (token: string, start: number): boolean => {
         seenColon = true;
       } else if (
         c === "/" ||
+        c === "?" ||
+        c === "#" ||
         c === "," ||
         c === " " ||
         c === "\t" ||
@@ -386,10 +391,21 @@ const startsWithUrlBoundary = (token: string, start: number): boolean => {
         c === "\n" ||
         c === "\f"
       ) {
-        return colonBeforeLastAt;
+        authorityEnd = i;
+        break;
       }
     }
-    return colonBeforeLastAt;
+    if (colonBeforeLastAt) return true;
+    if (lastAt <= start + 2) return false;
+    const host = token.slice(lastAt + 1, authorityEnd);
+    const hostWithoutPort = host.startsWith("[")
+      ? host
+      : (host.split(":")[0] ?? host);
+    return (
+      hostWithoutPort.includes(".") ||
+      hostWithoutPort.toLowerCase() === "localhost" ||
+      hostWithoutPort.startsWith("[")
+    );
   }
 
   if (start >= len) return false;
@@ -802,10 +818,9 @@ export const captureCssVariables = async (
       redacted,
     });
     if (parsed.success) {
-      if (
-        validItemsByName.has(parsed.data.name) ||
-        validItemsByName.size < maxIntake
-      ) {
+      if (validItemsByName.has(parsed.data.name)) {
+        malformedProtocolEntries += 1;
+      } else if (validItemsByName.size < maxIntake) {
         validItemsByName.set(parsed.data.name, parsed.data);
       }
     } else {

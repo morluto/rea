@@ -315,13 +315,25 @@ export const browserCssVariablesSchema =
       });
     }
     if (
-      (val.status === "not_approved" || val.status === "unavailable") &&
+      val.status === "not_approved" &&
       (val.items.length > 0 || val.retained_count > 0 || val.total > 0)
     ) {
       ctx.addIssue({
         code: "custom",
         path: ["items"],
-        message: `items, retained_count, and total must be empty/0 when status is "${val.status}"`,
+        message:
+          'items, retained_count, and total must be empty/0 when status is "not_approved"',
+      });
+    }
+    if (
+      val.status === "unavailable" &&
+      (val.items.length > 0 || val.retained_count > 0)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["items"],
+        message:
+          'items and retained_count must be empty/0 when status is "unavailable"',
       });
     }
     if (val.status === "included" && val.total !== val.items.length) {

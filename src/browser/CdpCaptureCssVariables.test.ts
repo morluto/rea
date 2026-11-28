@@ -1225,6 +1225,10 @@ it("redacts credentials from standalone URL custom properties and admits custom 
           value: "https://public.test/a,//bob:two@b.test/y",
         },
         {
+          name: "--asset-scheme-relative-user-only",
+          value: "https://public.test/a,//alice@private.test/y",
+        },
+        {
           name: "--asset-scheme-relative-email-user",
           value:
             "https://public.test/a,//alice@example.org:secret@assets.test/y",
@@ -1314,6 +1318,11 @@ it("redacts credentials from standalone URL custom properties and admits custom 
   expect(byName.get("--asset-scheme-relative-list")).toEqual({
     name: "--asset-scheme-relative-list",
     value: "https://public.test/a,//b.test/y",
+    redacted: true,
+  });
+  expect(byName.get("--asset-scheme-relative-user-only")).toEqual({
+    name: "--asset-scheme-relative-user-only",
+    value: "https://public.test/a,//private.test/y",
     redacted: true,
   });
   expect(byName.get("--asset-scheme-relative-email-user")).toEqual({
