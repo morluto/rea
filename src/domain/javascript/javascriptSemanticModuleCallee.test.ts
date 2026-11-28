@@ -56,6 +56,18 @@ describe("module-rooted callees", () => {
 
   it.each([
     [
+      "a conditional import",
+      'const v = flag ? require("vscode") : fake; v.commands.registerCommand("a");',
+    ],
+    [
+      "a fallback import",
+      'const v = flag || require("vscode"); v.commands.registerCommand("a");',
+    ],
+    [
+      "a conditional alias",
+      'const v = require("vscode"); const w = flag ? v : fake; w.commands.registerCommand("a");',
+    ],
+    [
       "a local require",
       'function g(require) { const v = require("vscode"); v.commands.registerCommand("a"); }',
     ],

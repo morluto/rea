@@ -332,6 +332,7 @@ export const createJavaScriptSemanticGraphProjection = (
     ];
     const graph = factory({
       schema: "JavaScriptSemanticRelationGraph",
+      callee_fact_modules: [CALLEE_FACT_MODULE],
       root_artifact_sha256: rootArtifactSha256,
       application_graph_id: applicationGraph.graph_id,
       root_node_ids: [...state.roots],
@@ -795,6 +796,9 @@ function* createReturnSiteNodes(
   return result;
 }
 
+/** Only the VS Code extension host API is published as a callee fact. */
+const CALLEE_FACT_MODULE = "vscode";
+
 function* createCallSiteNodes(
   file: JavaScriptArtifactFile,
   ir: JavaScriptSemanticIr,
@@ -816,10 +820,9 @@ function* createCallSiteNodes(
       label: call.kind,
       functionNodeId: owner,
     };
-    // Only the VS Code extension host API is published as a callee fact.
     const callee = moduleCallees.get(call.callSiteId);
     const calleeProperties =
-      callee?.specifier === "vscode"
+      callee?.specifier === CALLEE_FACT_MODULE
         ? { module_callee: { ...callee, path: [...callee.path] } }
         : {};
     // Include the complete node and worker JSON envelope before retaining any

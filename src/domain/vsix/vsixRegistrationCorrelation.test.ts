@@ -6,11 +6,12 @@ import { correlateVsixRegistrations } from "./vsixRegistrationCorrelation.js";
 const contributes = (
   commands: readonly string[],
   extra: {
-    menus?: { menu: string; command: string | null }[] | null;
+    menus?: { menu: string; commands: (string | null)[] }[] | null;
     keybindings?: { command: string | null; key: string | null }[] | null;
   } = {},
 ) => ({
   commands: commands.map((command) => ({ command, title: null })),
+  commands_omitted: 0,
   menus: [],
   keybindings: [],
   ...extra,
@@ -24,6 +25,7 @@ const correlate = (
   correlateVsixRegistrations({
     contributes: declared,
     entryPoints,
+    manifestRead: true,
     semanticGraph: graphForJavaScript(source),
   });
 
@@ -80,17 +82,17 @@ describe("VS Code command correlation", () => {
   });
 
   it("links menus and keybindings by command identifier", () => {
-    const [command] = correlate(
+    const result = correlate(
       VSCODE,
       contributes(["demo.a"], {
-        menus: [{ menu: "editor/context", command: "demo.a" }],
+        menus: [{ menu: "editor/context", commands: ["demo.a", null, "x"] }],
         keybindings: [{ command: "demo.a", key: "ctrl+h" }],
       }),
-    ).commands;
-    expect(command).toMatchObject({
-      menus: ["editor/context"],
-      keybindings: ["ctrl+h"],
-    });
+    );
+    expect(result.menus).toEqual([
+      { menu: "editor/context", commands: ["demo.a"] },
+    ]);
+    expect(result.commands[0]).toMatchObject({ keybindings: ["ctrl+h"] });
   });
 
   it("reports unread menus and keybindings as unknown", () => {
@@ -98,10 +100,8 @@ describe("VS Code command correlation", () => {
       VSCODE,
       contributes(["demo.a"], { menus: null, keybindings: null }),
     );
-    expect(result.commands[0]).toMatchObject({
-      menus: null,
-      keybindings: null,
-    });
+    expect(result.menus).toBeNull();
+    expect(result.commands[0]).toMatchObject({ keybindings: null });
   });
 
   it.each([
@@ -138,10 +138,63 @@ describe("VS Code command correlation", () => {
     const result = correlateVsixRegistrations({
       contributes: contributes(["demo.a"]),
       entryPoints: ["app.js"],
+      manifestRead: true,
       semanticGraph: omitted,
     });
     expect(result.entry_points).toEqual([{ path: "app.js", analyzed: false }]);
     expect(result.commands[0]?.status).toBe("undetermined");
     expect(result.summary).toMatchObject({ not_found: 0, undetermined: 1 });
+  });
+
+  const withGraph = (
+    change: (graph: ReturnType<typeof graphForJavaScript>) => unknown,
+  ) =>
+    correlateVsixRegistrations({
+      contributes: contributes(["demo.a"]),
+      entryPoints: ["app.js"],
+      manifestRead: true,
+      semanticGraph: change(
+        graphForJavaScript(VSCODE + "vscode.f();"),
+      ) as ReturnType<typeof graphForJavaScript>,
+    });
+
+  it("makes no absence claim from a graph without callee facts", () => {
+    const result = withGraph(({ callee_fact_modules: _, ...graph }) => graph);
+    expect(result.commands[0]?.status).toBe("undetermined");
+  });
+
+  it("treats a skipped file as not analyzed", () => {
+    const result = withGraph((graph) => ({
+      ...graph,
+      unknowns: [
+        {
+          family: "call-flow",
+          reason: "incomplete-module",
+          evidence: {
+            location: {
+              available: true,
+              value: { kind: "artifact-path", path: "app.js" },
+            },
+          },
+        },
+      ],
+    }));
+    expect(result.entry_points).toEqual([{ path: "app.js", analyzed: false }]);
+    expect(result.commands[0]?.status).toBe("undetermined");
+  });
+
+  it.each([
+    ["omitted commands", { commands_omitted: 3 }, true],
+    ["an unread manifest", {}, false],
+  ])("does not call a command undeclared with %s", (_, extra, manifestRead) => {
+    const result = correlateVsixRegistrations({
+      contributes: { ...contributes([]), ...extra },
+      entryPoints: ["app.js"],
+      manifestRead,
+      semanticGraph: graphForJavaScript(
+        `${VSCODE}vscode.commands.registerCommand("demo.a", f);`,
+      ),
+    });
+    expect(result.commands[0]?.status).toBe("undetermined");
   });
 });
