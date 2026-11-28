@@ -1,4 +1,8 @@
-import { boundedList, describeBoundedList } from "../boundedList.js";
+import {
+  boundedList,
+  describeBoundedList,
+  type BoundedList,
+} from "../boundedList.js";
 import type { Uf2Metadata } from "../formatMetadata/firmwareMetadata.js";
 import { err, ok, type Result } from "../result.js";
 import { mergeArenaRuns, type RunConflict } from "./addressRuns.js";
@@ -86,8 +90,8 @@ interface NumberingGroup {
 /** What block numbering establishes about completeness. */
 interface NumberingFacts {
   readonly missing: number;
-  readonly absent: readonly string[];
-  readonly ambiguous: readonly string[];
+  readonly absent: BoundedList<string>;
+  readonly ambiguous: BoundedList<string>;
 }
 
 const readUint32 = (bytes: Uint8Array, offset: number): number =>
@@ -108,9 +112,8 @@ const familyText = (familyId: number | null): string => {
     : `family ${hex32(familyId)} (${name})`;
 };
 
-/** At most NAMED_GROUPS descriptions, then a count of the rest. */
-const named = (items: readonly string[]): string =>
-  describeBoundedList(boundedList(items, NAMED_GROUPS), "; ");
+const groupText = (group: NumberingGroup): string =>
+  `${familyText(group.familyId)} with ${String(group.declared)} numbered blocks`;
 
 /** Recognize a file only by a complete first block with all three magic numbers. */
 export const hasUf2Block = (prefix: Uint8Array): boolean =>
@@ -138,12 +141,15 @@ const numberingFacts = (groups: Iterable<NumberingGroup>): NumberingFacts => {
   let missing = 0;
   const absent: string[] = [];
   const ambiguous: string[] = [];
+  let absentOmitted = 0;
+  let ambiguousOmitted = 0;
   for (const group of groups) {
     const seen = group.first.size;
-    const name = `${familyText(group.familyId)} with ${String(group.declared)} numbered blocks`;
     if (seen < group.declared) {
       missing += group.declared - seen;
-      absent.push(`${name} has ${String(seen)} of them`);
+      if (absent.length < NAMED_GROUPS)
+        absent.push(`${groupText(group)} has ${String(seen)} of them`);
+      else absentOmitted += 1;
     }
     if (group.further.size === 0) continue;
     // Compare only numbers with an address. Comment values cannot distinguish copies.
@@ -154,12 +160,19 @@ const numberingFacts = (groups: Iterable<NumberingGroup>): NumberingFacts => {
       most = Math.max(most, further.size + 1);
       fewest = Math.min(fewest, further.size + 1);
     }
-    if (most !== fewest)
-      ambiguous.push(
-        `${name} has some numbers at ${String(fewest)} address(es) and others at ${String(most)}`,
-      );
+    if (most !== fewest) {
+      if (ambiguous.length < NAMED_GROUPS)
+        ambiguous.push(
+          `${groupText(group)} has some numbers at ${String(fewest)} address(es) and others at ${String(most)}`,
+        );
+      else ambiguousOmitted += 1;
+    }
   }
-  return { missing, absent, ambiguous };
+  return {
+    missing,
+    absent: boundedList(absent, NAMED_GROUPS, absentOmitted),
+    ambiguous: boundedList(ambiguous, NAMED_GROUPS, ambiguousOmitted),
+  };
 };
 
 class StreamingUf2Decoder implements RegionDecoder<Uf2Image> {
@@ -384,11 +397,11 @@ class StreamingUf2Decoder implements RegionDecoder<Uf2Image> {
       );
     if (numbering.missing > 0)
       unknown.push(
-        `UF2 numbering declares ${String(numbering.missing)} block(s) that are absent: ${named(numbering.absent)}.`,
+        `UF2 numbering declares ${String(numbering.missing)} block(s) that are absent: ${describeBoundedList(numbering.absent, "; ")}.`,
       );
-    if (numbering.ambiguous.length > 0)
+    if (numbering.ambiguous.items.length + numbering.ambiguous.omitted > 0)
       unknown.push(
-        `UF2 numbering cannot show that every copy of a block sequence is complete: ${named(numbering.ambiguous)}.`,
+        `UF2 numbering cannot show that every copy of a block sequence is complete: ${describeBoundedList(numbering.ambiguous, "; ")}.`,
       );
     if (this.#outOfRange > 0)
       unknown.push(
@@ -428,7 +441,8 @@ class StreamingUf2Decoder implements RegionDecoder<Uf2Image> {
       family_name_registry: UF2_FAMILY_REGISTRY,
       numbering_group_count: this.#groups.size,
       missing_block_count: numbering.missing,
-      ambiguous_numbering_group_count: numbering.ambiguous.length,
+      ambiguous_numbering_group_count:
+        numbering.ambiguous.items.length + numbering.ambiguous.omitted,
       repeated_block_count: this.#repeated,
       out_of_order_block_count: this.#outOfOrder,
       block_number_out_of_range_count: this.#outOfRange,
