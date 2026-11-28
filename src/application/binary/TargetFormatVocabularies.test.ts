@@ -124,6 +124,7 @@ const TARGETS: TargetFixtures = {
   asar: { ...archive, format: "asar" },
   ines: { ...archive, format: "ines" },
   nds: { ...archive, format: "nds" },
+  "mega-drive-rom": { ...archive, format: "mega-drive-rom" },
   "n64-rom": { ...archive, format: "n64-rom" },
   "godot-pck": { ...archive, format: "godot-pck" },
   unityfs: { ...archive, format: "unityfs" },
@@ -175,6 +176,7 @@ const TARGETS: TargetFixtures = {
   devicetree: { ...artifact, format: "devicetree" },
   "esp-nvs": { ...artifact, format: "esp-nvs" },
   deb: { ...artifact, format: "deb" },
+  "labview-rsrc": { ...artifact, format: "labview-rsrc" },
 };
 
 const provider = { id: "fixture", name: "Fixture", version: "1" } as const;

@@ -12,7 +12,7 @@ import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
   boundedViewLimitations,
   completeWithinViewCoverage,
-  pageViewCoverage,
+  selectedViewPage,
 } from "./analysisViewCoverage.js";
 import { selectViewRows } from "./selectViewRows.js";
 
@@ -196,11 +196,6 @@ export const projectFirmwareVectorTableView = (
     kind: "firmware-vector-table" as const,
     view,
     vector_table: context,
-    items: selected.rows,
-    coverage: pageViewCoverage(
-      view.offset,
-      selected.rows.length,
-      selected.total,
-    ),
+    ...selectedViewPage(view.offset, selected),
   });
 };

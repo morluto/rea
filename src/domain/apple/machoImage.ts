@@ -29,6 +29,19 @@ import {
 } from "./machoLoadCommands.js";
 import { readByteSourceSlice, type ByteSource } from "../byteSource.js";
 
+/**
+ * The bytes carry no Mach-O magic, so they are not a Mach-O image at all: an
+ * ELF, PE or other file. That is outside this reader, not a broken Mach-O, so
+ * it is `unrecognized`; a recognized header that fails to parse stays
+ * malformed or truncated.
+ */
+export const notMachoImage = (): BinaryFormatFailure =>
+  new BinaryFormatFailure(
+    "unrecognized",
+    "The bytes are not a thin Mach-O image",
+    { format: "macho" },
+  );
+
 /** Read thin Mach-O images, retaining the slice's exact file-backed mappings. */
 export const readMachoImage = (
   bytes: Buffer,
@@ -63,8 +76,7 @@ export const readMachoImageFromReader = async (
   );
   const parsed = readMachoLoadCommandDeclarations(headerPrefix, source.size);
   if (!parsed.ok) throw new BinaryFormatFailure("malformed", parsed.error);
-  if (parsed.value === null)
-    throw new BinaryFormatFailure("malformed", "Unrecognized Mach-O header");
+  if (parsed.value === null) throw notMachoImage();
   const table = parsed.value;
   const issue = machoCommandTableIssue(table, source.size);
   if (issue !== null)
@@ -98,8 +110,7 @@ const readMachoImageCore = (
 ): Extract<BinaryContainer, { format: "macho" }> => {
   const parsed = readMachoLoadCommandDeclarations(bytes, fileBytes);
   if (!parsed.ok) throw new BinaryFormatFailure("malformed", parsed.error);
-  if (parsed.value === null)
-    throw new BinaryFormatFailure("malformed", "Unrecognized Mach-O header");
+  if (parsed.value === null) throw notMachoImage();
   const table = parsed.value;
   const issue = machoCommandTableIssue(table, fileBytes);
   if (issue !== null)

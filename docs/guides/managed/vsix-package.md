@@ -32,6 +32,8 @@ The inline Evidence result contains the artifact path, SHA-256, and byte length.
 
 `vsix_identity` reports `id`, `version`, `publisher`, `target_platform`,
 `display_name`, and `description` as present in `extension.vsixmanifest`.
+The display name and description are reported even when the manifest omits
+its `Identity` element.
 `package_identity` reports `name`, `publisher`, and `version` as present in
 `extension/package.json`. Missing fields are `null`. When a unique
 vsixmanifest or package.json cannot be selected, that identity is `null`.

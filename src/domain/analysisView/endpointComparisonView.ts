@@ -19,7 +19,7 @@ import {
 import {
   boundedViewLimitations,
   completeWithinViewCoverage,
-  pageViewCoverage,
+  selectedViewPage,
 } from "./analysisViewCoverage.js";
 import { pickFields, selectViewRows, filterSet } from "./selectViewRows.js";
 import { invalidAnalysisView } from "./analysisViewErrors.js";
@@ -207,11 +207,6 @@ export const projectEndpointComparisonView = (
     ...context,
     kind: "endpoint-comparison" as const,
     view,
-    items: selected.rows,
-    coverage: pageViewCoverage(
-      view.offset,
-      selected.rows.length,
-      selected.total,
-    ),
+    ...selectedViewPage(view.offset, selected),
   });
 };

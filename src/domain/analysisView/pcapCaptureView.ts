@@ -1,7 +1,6 @@
 import { analysisViewPageFields } from "./analysisViewPageFields.js";
 import { appendToMapList } from "../appendToMapList.js";
 import {
-  analysisViewInputError,
   invalidAnalysisViewSubject,
   invalidAnalysisView,
 } from "./analysisViewErrors.js";
@@ -10,7 +9,7 @@ import { pcapResultSchemas } from "../pcap/pcapAnalysis.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import { err, ok, type Result } from "../result.js";
+import { ok, type Result } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   ownedView,
@@ -284,15 +283,9 @@ const selectRows = (
     case "dns-addresses": {
       const matched = selectDnsQuery(capture, view);
       if (matched === undefined)
-        return err(
-          analysisViewInputError([
-            {
-              path: ["view", "query"],
-              reason: "invalid_value",
-              message:
-                "Select one exact retained DNS question using query_labels_hex or query_index when its display is ambiguous.",
-            },
-          ]),
+        return invalidAnalysisView(
+          "Select one exact retained DNS question using query_labels_hex or query_index when its display is ambiguous.",
+          "query",
         );
       return ok({
         page: {

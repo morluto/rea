@@ -14,6 +14,8 @@ import {
 } from "../../../src/yara/YaraMatchesProvider.js";
 import { yaraMatchesSchema } from "../../../src/domain/yara/yaraMatches.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { YARA_INCLUDE_LEXER_CASES } from "../../fixtures/yara/includeLexerCases.js";
+import { createYaraIncludeScanner } from "../../../src/yara/YaraRuleIncludes.js";
 
 const findYara = (): string | undefined => {
   if (process.platform === "win32") return undefined;
@@ -196,24 +198,22 @@ it.skipIf(yara === undefined)(
 );
 
 it.skipIf(yara === undefined)(
-  "compiles a rule file with a relative include directive against its original directory",
+  "compiles a rule that references a rule from another selected rule file, the recovery for a refused include",
   async () => {
     const { root, sample } = await sampleFile();
     const rulesDir = join(root, "rules");
     await mkdir(rulesDir);
     const common = join(rulesDir, "common.yar");
-    await writeFile(
-      common,
-      'rule CommonRule { strings: $t = "hello" condition: $t }\n',
-    );
-    const mainSource =
-      'include "common.yar"\nrule MainRule { condition: CommonRule }\n';
+    const commonSource =
+      'rule CommonRule { strings: $t = "hello" condition: $t }\n';
+    await writeFile(common, commonSource);
+    const mainSource = "rule MainRule { condition: CommonRule }\n";
     const mainRule = join(rulesDir, "main.yar");
     await writeFile(mainRule, mainSource);
     const service = realService(yara!);
     const result = await service.inspect({
       path: sample,
-      rule_paths: [mainRule],
+      rule_paths: [common, mainRule],
     });
     expect(result.ok, JSON.stringify(result)).toBe(true);
     if (!result.ok) return;
@@ -224,11 +224,42 @@ it.skipIf(yara === undefined)(
     ]);
     expect(report.rule_files).toEqual([
       {
+        path: common,
+        sha256: createHash("sha256").update(commonSource).digest("hex"),
+        bytes: Buffer.byteLength(commonSource),
+      },
+      {
         path: mainRule,
         sha256: createHash("sha256").update(mainSource).digest("hex"),
         bytes: Buffer.byteLength(mainSource),
       },
     ]);
     await service.close();
+  },
+);
+
+// The include scanner against the installed yara: no included file exists, so
+// yara reports the first directive its lexer starts as a missing include.
+it.skipIf(yara === undefined).each(YARA_INCLUDE_LEXER_CASES)(
+  "the include scanner and the installed yara agree: $name",
+  async ({ name, text }) => {
+    const root = await createTestTempDirectory("rea-yara-include-lexer-");
+    const rule = join(root, `${name}.yar`);
+    const sample = join(root, "sample.bin");
+    await writeFile(rule, text);
+    await writeFile(sample, "sample");
+    let stderr = "";
+    try {
+      execFileSync(yara!, [rule, sample], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (cause: unknown) {
+      stderr = String((cause as { stderr?: unknown }).stderr ?? "");
+    }
+    const yaraOpened = /can't open include file: (\S+)/u.exec(stderr)?.[1];
+    const scanner = createYaraIncludeScanner();
+    scanner.push(Buffer.from(text, "utf8"));
+    expect(scanner.finish().directives[0]?.path).toBe(yaraOpened);
   },
 );

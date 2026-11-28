@@ -69,6 +69,17 @@ export const pageViewCoverage = (
   };
 };
 
+/** Pair a page's selected items with coverage over all matching rows. */
+export const selectedViewPage = <
+  Page extends { readonly rows: readonly unknown[]; readonly total: number },
+>(
+  offset: number,
+  { rows, total }: Page,
+): { items: Page["rows"]; coverage: AnalysisViewCoverage } => ({
+  items: rows,
+  coverage: pageViewCoverage(offset, rows.length, total),
+});
+
 /** Per-field repeated MCP message budget, independent of the selected page. */
 export const ANALYSIS_VIEW_MESSAGE_BYTE_LIMIT = 256 * 1024;
 
