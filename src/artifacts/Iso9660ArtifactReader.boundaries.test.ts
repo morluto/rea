@@ -277,15 +277,41 @@ it("reports an unterminated multi-extent file at its last flags byte", async () 
   await rejectsAt(bytes, "malformed", first + 25, "file_flags");
 });
 
-it("rejects a nonzero padding byte after an even-length identifier", async () => {
-  const { bytes, layout } = buildIso9660Image({
-    files: [{ path: "ab", bytes: Buffer.from("x") }],
-  });
-  // "ab;1" has four bytes, so a padding byte follows it.
-  const offset = layout.primaryRecords.get("ab")! + 33 + 4;
-  bytes[offset] = 0x20;
-  await rejectsAt(bytes, "malformed", offset, "padding_field");
-});
+it.each([
+  ["primary", 4],
+  ["joliet", 8],
+] as const)(
+  "lists a record in the %s tree whose padding byte after an even-length identifier is not zero",
+  async (tree, identifierBytes) => {
+    const { bytes, layout } = buildIso9660Image({
+      joliet: tree === "joliet",
+      files: [
+        { path: "ab", bytes: Buffer.from("x") },
+        { path: "cd", bytes: Buffer.from("yz") },
+      ],
+    });
+    // "ab;1" has four bytes, or eight as UCS-2, so a padding byte follows it.
+    const records =
+      tree === "joliet" ? layout.jolietRecords : layout.primaryRecords;
+    bytes[records.get("ab")! + 33 + identifierBytes] = 0x20;
+    const snapshot = await scanCanonicalArtifactInventory(await fixture(bytes));
+    const rows = new Map(
+      snapshot.occurrences.map((row) => [row.logical_path, row]),
+    );
+    // The tree holding the nonzero byte is the one walked.
+    const root = rows.get(".")?.format_metadata;
+    expect(root).toMatchObject({ name_source: tree });
+    // The record and the one after it are listed and read.
+    for (const [listed, size] of [
+      ["ab", 1],
+      ["cd", 2],
+    ] as const)
+      expect(rows.get(listed)).toMatchObject({
+        declared_size: size,
+        hash_status: "verified",
+      });
+  },
+);
 
 it("rejects an odd final record before the sector padding", async () => {
   const { bytes, layout } = buildIso9660Image({
