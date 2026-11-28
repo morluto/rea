@@ -365,35 +365,53 @@ const findCssUrlMatches = (text: string): readonly CssUrlMatch[] => {
 };
 
 const redactStandaloneCssUrl = (value: string): string => {
-  const leadingEnd = value.length - value.trimStart().length;
-  const trailingStart = value.trimEnd().length;
-  if (leadingEnd >= trailingStart) return value;
-  const leadingWs = value.slice(0, leadingEnd);
-  const trailingWs = value.slice(trailingStart);
-  const trimmed = value.slice(leadingEnd, trailingStart);
+  let result = "";
+  let pos = 0;
+  const len = value.length;
 
-  let quote = "";
-  let inner = trimmed;
-  if (trimmed[0] === '"' || trimmed[0] === "'") {
-    const consumed = consumeQuotedString(trimmed, 0, trimmed[0]);
-    if (consumed === undefined || consumed.nextPos !== trimmed.length) {
-      return value;
+  while (pos < len) {
+    const ch = value[pos]!;
+    if (ch === '"' || ch === "'") {
+      const consumed = consumeQuotedString(value, pos, ch);
+      if (consumed === undefined) {
+        result += ch;
+        pos++;
+        continue;
+      }
+      const inner = value.slice(consumed.urlStart, consumed.urlEnd);
+      try {
+        const sanitized = redactCssUrl(inner);
+        result += sanitized.redacted
+          ? `${ch}${sanitized.url}${ch}`
+          : value.slice(pos, consumed.nextPos);
+      } catch {
+        result += value.slice(pos, consumed.nextPos);
+      }
+      pos = consumed.nextPos;
+      continue;
     }
-    quote = trimmed[0];
-    inner = trimmed.slice(consumed.urlStart, consumed.urlEnd);
-  } else if (/\s/u.test(trimmed)) {
-    return value;
+
+    if (/\s|,/u.test(ch)) {
+      result += ch;
+      pos++;
+      continue;
+    }
+
+    let tokenEnd = pos + 1;
+    while (tokenEnd < len && !/[\s,"']/u.test(value[tokenEnd]!)) {
+      tokenEnd++;
+    }
+    const token = value.slice(pos, tokenEnd);
+    try {
+      const sanitized = redactCssUrl(token);
+      result += sanitized.redacted ? sanitized.url : token;
+    } catch {
+      result += token;
+    }
+    pos = tokenEnd;
   }
 
-  try {
-    const sanitized = redactCssUrl(inner);
-    if (sanitized.redacted) {
-      return `${leadingWs}${quote}${sanitized.url}${quote}${trailingWs}`;
-    }
-  } catch {
-    return value;
-  }
-  return value;
+  return result;
 };
 
 export const redactCssUrlCredentials = (

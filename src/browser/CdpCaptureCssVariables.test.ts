@@ -1125,7 +1125,17 @@ it("admits valid Unicode symbol code points such as emoji in custom property nam
   ]);
 });
 
-it("enforces combined CSS variable capture budget at input validation and retains large allowed captures without a hidden cap", async () => {
+it("enforces combined CSS variable capture budget at input validation only when enabled and retains large allowed captures without a hidden cap", async () => {
+  expect(() =>
+    inspectWebPageInputSchema.parse({
+      cdp_endpoint: "http://127.0.0.1:9222",
+      target_id: "target_1",
+      include_css_variables: false,
+      max_css_variables: 500,
+      max_css_variable_value_length: 65_536,
+    }),
+  ).not.toThrow();
+
   expect(() =>
     inspectWebPageInputSchema.parse({
       cdp_endpoint: "http://127.0.0.1:9222",
@@ -1201,6 +1211,11 @@ it("redacts credentials from standalone URL custom properties and admits custom 
           name: "--asset-escaped",
           value: '"https://carol:pw\\40 example.test/c.png"',
         },
+        {
+          name: "--sources",
+          value:
+            '"https://alice:secret@example.test/a.png" 1x, "https://bob:pw@example.test/b.png" 2x',
+        },
         { name: longName, value: "#123456" },
       ],
     },
@@ -1236,6 +1251,11 @@ it("redacts credentials from standalone URL custom properties and admits custom 
   expect(byName.get("--asset-escaped")).toEqual({
     name: "--asset-escaped",
     value: '"https://example.test/c.png"',
+    redacted: true,
+  });
+  expect(byName.get("--sources")).toEqual({
+    name: "--sources",
+    value: '"https://example.test/a.png" 1x, "https://example.test/b.png" 2x',
     redacted: true,
   });
   expect(byName.get(longName)).toEqual({
