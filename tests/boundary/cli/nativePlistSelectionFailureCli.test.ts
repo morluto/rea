@@ -8,16 +8,6 @@ import { z } from "zod";
 import { thinMach } from "../../../src/domain/binaryTarget.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { analysisRefusalRemediation } from "../../../src/domain/analysisRefusal.js";
-import type { FixedAllowanceKind } from "../../../src/domain/fixedAllowanceRemediation.js";
-
-/** Guidance for a 64 MiB plist ceiling, from the refusal's owning formatter. */
-const fixedCeilingRemediation = (name: string, kind: FixedAllowanceKind) =>
-  analysisRefusalRemediation({
-    kind: "fixed_ceiling",
-    operation: "inspect_plist",
-    ceiling: { name, kind, limit: 64 * 1024 * 1024, unit: "bytes" },
-  });
 
 const environment = {
   REA_LOG_LEVEL: "silent",
@@ -425,10 +415,7 @@ describe.skipIf(process.platform !== "darwin")(
           code: "resource_constraint",
           retryable: false,
           remediation: {
-            action: fixedCeilingRemediation(
-              "The native binary plist decode allowance",
-              "parser",
-            ),
+            action: expect.stringContaining("--max-decoded-bytes"),
           },
           details: {
             operation: "inspect_plist",
@@ -437,11 +424,22 @@ describe.skipIf(process.platform !== "darwin")(
               boundary: "plist-decode-bytes",
               maximum: 64 * 1024 * 1024,
             },
+            limit: {
+              control_kind: "parameter",
+              parameter: "max_decoded_bytes",
+              cli_flag: "--max-decoded-bytes",
+              effective_value: 64 * 1024 * 1024,
+              unit: "bytes",
+              minimum: 1,
+              maximum: 64 * 1024 * 1024,
+              default_value: 64 * 1024 * 1024,
+              applies_at: "next_call",
+            },
             refusal: {
-              kind: "fixed_ceiling",
-              allowance: "The native binary plist decode allowance",
-              allowance_kind: "parser",
-              limit: 64 * 1024 * 1024,
+              kind: "adjustable_budget",
+              operation: "inspect_plist",
+              control: "max_decoded_bytes",
+              effective_value: 64 * 1024 * 1024,
               unit: "bytes",
             },
           },
@@ -466,24 +464,105 @@ describe.skipIf(process.platform !== "darwin")(
           code: "resource_constraint",
           retryable: false,
           remediation: {
-            action: fixedCeilingRemediation(
-              "The native plist input allowance",
-              "input",
-            ),
+            action: expect.stringContaining("--max-file-bytes"),
           },
           details: {
             resource: "file-size",
             reported_limits: { maximum_input_bytes: 64 * 1024 * 1024 },
-            refusal: {
-              kind: "fixed_ceiling",
-              allowance: "The native plist input allowance",
-              allowance_kind: "input",
-              limit: 64 * 1024 * 1024,
+            limit: {
+              control_kind: "parameter",
+              parameter: "max_file_bytes",
+              cli_flag: "--max-file-bytes",
+              effective_value: 64 * 1024 * 1024,
               unit: "bytes",
+              minimum: 1,
+              maximum: 64 * 1024 * 1024,
+              default_value: 64 * 1024 * 1024,
+              applies_at: "next_call",
+              required_value: 64 * 1024 * 1024 + 1,
+            },
+            refusal: {
+              kind: "adjustable_budget",
+              operation: "inspect_plist",
+              control: "max_file_bytes",
+              effective_value: 64 * 1024 * 1024,
+              unit: "bytes",
+              required_value: 64 * 1024 * 1024 + 1,
             },
           },
         });
         expect(JSON.stringify(result.json)).not.toMatch(hostMemoryAdvice);
+      },
+    );
+
+    cliTest(
+      "honors explicit --max-file-bytes and --max-decoded-bytes CLI flags and recovers when raised",
+      async ({ cli }) => {
+        const root = await createTestTempDirectory("rea-plist-cli-budgets-");
+        const path = join(root, "small.plist");
+        const source = buildBinary({ name: "rea", payload: "x".repeat(256) });
+        await writeFile(path, source);
+
+        const fileRefused = await cli.run({
+          arguments: [
+            "inspect-plist",
+            path,
+            "--max-file-bytes",
+            "16",
+            "--json",
+          ],
+          environment,
+        });
+        expect(fileRefused.exitCode).toBe(1);
+        expect(fileRefused.json).toMatchObject({
+          code: "resource_constraint",
+          details: {
+            limit: {
+              parameter: "max_file_bytes",
+              cli_flag: "--max-file-bytes",
+              effective_value: 16,
+              required_value: source.length,
+            },
+          },
+        });
+
+        const decodeRefused = await cli.run({
+          arguments: [
+            "inspect-plist",
+            path,
+            "--max-file-bytes",
+            String(source.length),
+            "--max-decoded-bytes",
+            "64",
+            "--json",
+          ],
+          environment,
+        });
+        expect(decodeRefused.exitCode).toBe(1);
+        expect(decodeRefused.json).toMatchObject({
+          code: "resource_constraint",
+          details: {
+            limit: {
+              parameter: "max_decoded_bytes",
+              cli_flag: "--max-decoded-bytes",
+              effective_value: 64,
+            },
+          },
+        });
+
+        const recovered = await cli.run({
+          arguments: [
+            "inspect-plist",
+            path,
+            "--max-file-bytes",
+            String(source.length),
+            "--max-decoded-bytes",
+            "65536",
+            "--json",
+          ],
+          environment,
+        });
+        expect(recovered.exitCode, recovered.stderr).toBe(0);
       },
     );
   },

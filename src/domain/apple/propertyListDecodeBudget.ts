@@ -3,7 +3,12 @@ import {
   readBinaryPlistLayout,
   readBinaryPlistUnsigned64,
 } from "./binaryPlistLayout.js";
-import { decodeXmlPlistText } from "../propertyListXmlText.js";
+import {
+  decodeXmlPlistText,
+  inspectXmlPlistTextEncoding,
+  minimumXmlPlistCodeUnits,
+  type SupportedXmlPlistEncoding,
+} from "../propertyListXmlText.js";
 import { hasBinaryPlistSignature } from "./appleArchiveFormat.js";
 import { PlistNestingLimitError } from "./plistValue.js";
 import {
@@ -62,6 +67,54 @@ export const preflightPropertyListDecode = (
   };
 };
 
+/**
+ * Check encoding, internal DTD refusal, and pre-decode lower bound directly on
+ * bytes before allocating XML text, then reuse the encoding facts for decode
+ * and DOM expansion preflight.
+ */
+export const preflightXmlPlistBytes = (
+  bytes: Uint8Array,
+  maxBytes: number,
+  {
+    numberProjection = false,
+    budget = DEFAULT_PLIST_DECODE_BUDGET,
+    dtdMessage,
+  }: Pick<BinaryPlistExpansionOptions, "numberProjection" | "budget"> & {
+    readonly dtdMessage?: string | undefined;
+  } = {},
+): { readonly text: string; readonly estimatedBytes: number } => {
+  const inspected = inspectXmlPlistTextEncoding(bytes);
+  const minimumEstimate =
+    minimumXmlPlistCodeUnits(inspected.encoding, bytes) * 4;
+  if (minimumEstimate > maxBytes) {
+    // Preserve the fixed DTD classification before refusing on the adjustable
+    // byte budget so callers never receive ineffective retry advice for a DTD.
+    for (const token of xmlPreflightTokens(
+      bytesCodeUnits(bytes, inspected.encoding),
+    )) {
+      if (token.internalSubset)
+        throw decodeLimit(
+          "plist",
+          dtdMessage ?? `XML plist internal entity expansion exceeds ${budget}`,
+          { name: PLIST_INTERNAL_DTD_LIMIT, maximum: 0 },
+        );
+      if (token.kind === "element") break;
+    }
+    throw decodeBudgetExceeded(
+      `plist representation requires at least ${String(minimumEstimate)} bytes, exceeding ${budget}`,
+      maxBytes,
+      minimumEstimate,
+    );
+  }
+  const text = decodeXmlPlistText(bytes, inspected);
+  const estimatedBytes = preflightXmlPropertyListDecode(text, maxBytes, {
+    numberProjection,
+    budget,
+    dtdMessage,
+  });
+  return { text, estimatedBytes };
+};
+
 /** Refuse an XML plist whose decoded representation exceeds the byte allowance. */
 export const preflightXmlPropertyListDecode = (
   xml: string,
@@ -69,13 +122,17 @@ export const preflightXmlPropertyListDecode = (
   {
     numberProjection = false,
     budget = DEFAULT_PLIST_DECODE_BUDGET,
-  }: Pick<BinaryPlistExpansionOptions, "numberProjection" | "budget"> = {},
+    dtdMessage,
+  }: Pick<BinaryPlistExpansionOptions, "numberProjection" | "budget"> & {
+    readonly dtdMessage?: string | undefined;
+  } = {},
 ): number => {
   const estimatedBytes = estimateXmlPlistExpansion(
     xml,
     maxBytes,
     numberProjection,
     budget,
+    dtdMessage,
   );
   if (estimatedBytes > maxBytes)
     throw decodeBudgetExceeded(
@@ -101,6 +158,7 @@ const estimateXmlPlistExpansion = (
   maxBytes: number,
   numberProjection: boolean,
   budget: string,
+  dtdMessage?: string,
 ): number => {
   // The decoded text and the DOM's copies of its character data.
   let estimate = xml.length * 4;
@@ -109,22 +167,127 @@ const estimateXmlPlistExpansion = (
     (numberProjection ? XML_NUMBER_PROJECTION_ELEMENT_BYTES : 0);
   // Value nesting is bounded by the shared plist parser, which counts plist
   // value depth; raw element depth would also count the envelope and keys.
-  for (const token of xmlPreflightTokens(xml)) {
+  let seenElement = false;
+  for (const token of xmlPreflightTokens(stringCodeUnits(xml))) {
     if (token.internalSubset)
       // Only a declaration outside opaque text can introduce an internal
       // subset. Brackets in quoted external identifiers are literal text.
-      throw decodeBudgetExceeded(
-        `XML plist internal entity expansion exceeds ${budget}`,
-        maxBytes,
+      throw decodeLimit(
+        "plist",
+        dtdMessage ?? `XML plist internal entity expansion exceeds ${budget}`,
+        { name: PLIST_INTERNAL_DTD_LIMIT, maximum: 0 },
       );
     if (token.text) estimate += XML_NODE_BYTES;
     estimate += token.references * XML_REFERENCE_BYTES;
-    if (token.kind === "element")
+    if (token.kind === "element") {
+      seenElement = true;
       estimate += elementBytes + token.attributes * XML_NODE_BYTES;
-    else if (token.kind === "node") estimate += XML_NODE_BYTES;
-    if (estimate > maxBytes) return maxBytes + 1;
+    } else if (token.kind === "node") estimate += XML_NODE_BYTES;
+    if (seenElement && estimate > maxBytes) return maxBytes + 1;
   }
   return estimate;
+};
+
+interface XmlCodeUnits {
+  readonly length: number;
+  codeUnitAt(index: number): number;
+}
+
+const stringCodeUnits = (xml: string): XmlCodeUnits => ({
+  length: xml.length,
+  codeUnitAt: (index) => xml.charCodeAt(index),
+});
+
+const bytesCodeUnits = (
+  bytes: Uint8Array,
+  encoding: SupportedXmlPlistEncoding,
+): XmlCodeUnits => {
+  if (encoding === "utf-8") {
+    const start =
+      bytes.length >= 3 &&
+      bytes[0] === 0xef &&
+      bytes[1] === 0xbb &&
+      bytes[2] === 0xbf
+        ? 3
+        : 0;
+    return {
+      length: bytes.length - start,
+      codeUnitAt: (index) => bytes[start + index]!,
+    };
+  }
+  const length = Math.floor(Math.max(0, bytes.length - 2) / 2);
+  return encoding === "utf-16le"
+    ? {
+        length,
+        codeUnitAt: (index) =>
+          bytes[2 + index * 2]! | (bytes[2 + index * 2 + 1]! << 8),
+      }
+    : {
+        length,
+        codeUnitAt: (index) =>
+          (bytes[2 + index * 2]! << 8) | bytes[2 + index * 2 + 1]!,
+      };
+};
+
+const isXmlSpace = (code: number): boolean =>
+  code === 0x20 || code === 0x09 || code === 0x0d || code === 0x0a;
+
+const isAsciiWordCode = (code: number): boolean =>
+  (code >= 0x41 && code <= 0x5a) ||
+  (code >= 0x61 && code <= 0x7a) ||
+  (code >= 0x30 && code <= 0x39) ||
+  code === 0x5f;
+
+const startsWithAscii = (
+  source: XmlCodeUnits,
+  offset: number,
+  literal: string,
+): boolean => {
+  if (offset + literal.length > source.length) return false;
+  for (let index = 0; index < literal.length; index += 1)
+    if (source.codeUnitAt(offset + index) !== literal.charCodeAt(index))
+      return false;
+  return true;
+};
+
+const startsWithDoctype = (source: XmlCodeUnits, offset: number): boolean => {
+  const literal = "<!DOCTYPE";
+  if (offset + literal.length > source.length) return false;
+  for (let index = 0; index < literal.length; index += 1) {
+    const code = source.codeUnitAt(offset + index);
+    const upper = code >= 0x61 && code <= 0x7a ? code - 32 : code;
+    if (upper !== literal.charCodeAt(index)) return false;
+  }
+  return (
+    offset + literal.length === source.length ||
+    !isAsciiWordCode(source.codeUnitAt(offset + literal.length))
+  );
+};
+
+const indexOfCodeUnit = (
+  source: XmlCodeUnits,
+  target: number,
+  from: number,
+): number => {
+  for (let index = from; index < source.length; index += 1)
+    if (source.codeUnitAt(index) === target) return index;
+  return -1;
+};
+
+const indexOfAscii = (
+  source: XmlCodeUnits,
+  literal: string,
+  from: number,
+): number => {
+  const first = literal.charCodeAt(0);
+  const lastStart = source.length - literal.length;
+  for (let index = from; index <= lastStart; index += 1)
+    if (
+      source.codeUnitAt(index) === first &&
+      startsWithAscii(source, index, literal)
+    )
+      return index;
+  return -1;
 };
 
 /**
@@ -133,13 +296,15 @@ const estimateXmlPlistExpansion = (
  * declares nothing, so nothing in it can expand.
  */
 const emptyInternalSubsetEnd = (
-  xml: string,
+  source: XmlCodeUnits,
   open: number,
 ): number | undefined => {
   let close = open + 1;
-  while (close < xml.length && " \t\r\n".includes(xml[close] ?? "x"))
+  while (close < source.length && isXmlSpace(source.codeUnitAt(close)))
     close += 1;
-  return xml[close] === "]" ? close : undefined;
+  return close < source.length && source.codeUnitAt(close) === 0x5d
+    ? close
+    : undefined;
 };
 
 /**
@@ -149,7 +314,7 @@ const emptyInternalSubsetEnd = (
  * the parser expands in that text and in the tag's attribute values. Opaque
  * comment, CDATA, PI and declaration content holds no references.
  */
-function* xmlPreflightTokens(xml: string): Generator<{
+function* xmlPreflightTokens(source: XmlCodeUnits): Generator<{
   readonly kind: "element" | "node" | "none";
   readonly text: boolean;
   /** Unquoted "=" signs; each attribute of a well-formed tag has one. */
@@ -161,33 +326,33 @@ function* xmlPreflightTokens(xml: string): Generator<{
   const textReferences = (from: number, to: number): number => {
     let count = 0;
     for (let index = from; index < to; index += 1)
-      if (xml.charCodeAt(index) === 0x26) count += 1;
+      if (source.codeUnitAt(index) === 0x26) count += 1;
     return count;
   };
   let cursor = 0;
-  while (cursor < xml.length) {
-    const start = xml.indexOf("<", cursor);
+  while (cursor < source.length) {
+    const start = indexOfCodeUnit(source, 0x3c, cursor);
     if (start < 0) {
       yield {
         kind: "none",
         text: true,
         attributes: 0,
-        references: textReferences(cursor, xml.length),
+        references: textReferences(cursor, source.length),
         internalSubset: false,
       };
       return;
     }
     const text = start > cursor;
     const references = textReferences(cursor, start);
-    const opaqueEnd = xml.startsWith("<!--", start)
+    const opaqueEnd = startsWithAscii(source, start, "<!--")
       ? "-->"
-      : xml.startsWith("<![CDATA[", start)
+      : startsWithAscii(source, start, "<![CDATA[")
         ? "]]>"
-        : xml.startsWith("<?", start)
+        : startsWithAscii(source, start, "<?")
           ? "?>"
           : undefined;
     if (opaqueEnd !== undefined) {
-      const end = xml.indexOf(opaqueEnd, start + 2);
+      const end = indexOfAscii(source, opaqueEnd, start + 2);
       if (end < 0) return;
       cursor = end + opaqueEnd.length;
       yield {
@@ -203,30 +368,36 @@ function* xmlPreflightTokens(xml: string): Generator<{
     // other markup starts an element, whatever its name's script. Saxes
     // rejects malformed markup before the DOM is built, so over-counting it
     // is harmless.
-    const doctype = /^<!DOCTYPE\b/iu.test(xml.slice(start, start + 10));
-    const declaration = xml[start + 1] === "!";
-    const endTag = xml[start + 1] === "/";
+    const doctype = startsWithDoctype(source, start);
+    const nextCode =
+      start + 1 < source.length ? source.codeUnitAt(start + 1) : -1;
+    const declaration = nextCode === 0x21; // !
+    const endTag = nextCode === 0x2f; // /
     const element = !declaration && !endTag;
-    let quote: string | undefined;
+    let quote: number | undefined;
     let internalSubset = false;
     let attributes = 0;
     let attributeReferences = 0;
     let end = start + 1;
-    for (; end < xml.length; end += 1) {
-      const character = xml[end];
+    for (; end < source.length; end += 1) {
+      const character = source.codeUnitAt(end);
       if (quote !== undefined) {
         if (character === quote) quote = undefined;
-        else if (element && character === "&") attributeReferences += 1;
-      } else if (character === '"' || character === "'") quote = character;
-      else if (character === ">") break;
-      else if (character === "=") attributes += 1;
-      else if (doctype && character === "[") {
-        const emptySubsetEnd = emptyInternalSubsetEnd(xml, end);
-        if (emptySubsetEnd === undefined) internalSubset = true;
-        else end = emptySubsetEnd;
+        else if (element && character === 0x26) attributeReferences += 1;
+      } else if (character === 0x22 || character === 0x27) quote = character;
+      else if (character === 0x3e) break;
+      else if (character === 0x3d) attributes += 1;
+      else if (doctype && character === 0x5b) {
+        const emptySubsetEnd = emptyInternalSubsetEnd(source, end);
+        if (emptySubsetEnd === undefined) {
+          internalSubset = true;
+          if (indexOfCodeUnit(source, 0x3e, end + 1) >= 0) break;
+          return;
+        }
+        end = emptySubsetEnd;
       }
     }
-    if (end === xml.length) return;
+    if (end === source.length) return;
     cursor = end + 1;
     yield {
       kind: element ? "element" : declaration ? "node" : "none",
@@ -244,20 +415,56 @@ export const MAX_BINARY_PLIST_NESTING_DEPTH = 128;
 /** Limit name of the decoded-representation budget a plist preflight enforces. */
 export const PLIST_DECODE_BYTES_LIMIT = "plist-decode-bytes";
 
+/** Limit name for an XML DOCTYPE internal subset refused unconditionally to prevent entity expansion. */
+export const PLIST_INTERNAL_DTD_LIMIT = "plist-internal-dtd";
+
+class PlistDecodeBudgetError extends ParseFailureError<"limit"> {
+  constructor(
+    detail: string,
+    maximum: number,
+    readonly minimumEstimatedBytes?: number,
+  ) {
+    super({
+      kind: "limit",
+      format: "plist",
+      detail,
+      limit: { name: PLIST_DECODE_BYTES_LIMIT, maximum },
+    });
+  }
+}
+
+/** Diagnostic lower bound from pre-decode byte preflight (never a complete required_value). */
+export const plistDecodeMinimumEstimatedBytes = (
+  cause: unknown,
+): number | undefined =>
+  cause instanceof PlistDecodeBudgetError
+    ? cause.minimumEstimatedBytes
+    : undefined;
+
 /** The decoded representation would exceed the caller's byte budget. */
 const decodeBudgetExceeded = (
   detail: string,
   maximum: number,
+  minimumEstimatedBytes?: number,
 ): ParseFailureError<"limit"> =>
-  decodeLimit("plist", detail, { name: PLIST_DECODE_BYTES_LIMIT, maximum });
+  new PlistDecodeBudgetError(detail, maximum, minimumEstimatedBytes);
 
-/** Whether a plist preflight refused the decode for its byte budget. */
+/** Whether a plist preflight refused an XML internal DTD subset. */
+export const isPlistInternalDtdFailure = (
+  cause: unknown,
+): cause is ParseFailureError<"limit"> =>
+  cause instanceof ParseFailureError &&
+  cause.failure.kind === "limit" &&
+  cause.failure.limit.name === PLIST_INTERNAL_DTD_LIMIT;
+
+/** Whether a plist preflight refused the decode for its byte budget or internal DTD subset. */
 export const isPlistDecodeBudgetFailure = (
   cause: unknown,
 ): cause is ParseFailureError<"limit"> =>
   cause instanceof ParseFailureError &&
   cause.failure.kind === "limit" &&
-  cause.failure.limit.name === PLIST_DECODE_BYTES_LIMIT;
+  (cause.failure.limit.name === PLIST_DECODE_BYTES_LIMIT ||
+    cause.failure.limit.name === PLIST_INTERNAL_DTD_LIMIT);
 
 /** How a caller names its budget and selects binary plist projection. */
 export interface BinaryPlistExpansionOptions {

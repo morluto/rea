@@ -239,6 +239,8 @@ These parameters report that limit:
 | `inspect_elf_notes`, `inspect_elf_debug_link` | `max_file_bytes`                  | 67108864   |    64 |                            536870912 | `src/domain/native/elfReadBudgets.ts`     |
 | `inspect_elf_notes`, `inspect_elf_debug_link` | `max_entries`                     | 128        |     1 |                                  256 | `src/domain/native/elfReadBudgets.ts`     |
 | `inspect_rust_binary`                         | `max_compressed_dependency_bytes` | 1048576    |     1 |        `buffer.constants.MAX_LENGTH` | `src/domain/rust/rustDependencyBudget.ts` |
+| `inspect_plist`                               | `max_file_bytes`                  | 67108864   |     1 |                             67108864 | `src/domain/apple/nativePlistBudgets.ts`  |
+| `inspect_plist`                               | `max_decoded_bytes`               | 67108864   |     1 |                             67108864 | `src/domain/apple/nativePlistBudgets.ts`  |
 | `inspect_rust_binary`                         | `max_inflated_dependency_bytes`   | 8388608    |     1 | `buffer.constants.MAX_STRING_LENGTH` | `src/domain/rust/rustDependencyBudget.ts` |
 | `inspect_rust_binary`                         | `max_dependency_inflate_ratio`    | 64         |     1 |            `Number.MAX_SAFE_INTEGER` | `src/domain/rust/rustDependencyBudget.ts` |
 

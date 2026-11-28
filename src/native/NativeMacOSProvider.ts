@@ -155,6 +155,10 @@ import {
 } from "./NativeUiHelperRuntime.js";
 import { NativeUiInterruptionControl } from "./NativeUiInterruptionControl.js";
 import type { ResolvedAppBundleResourceRoot } from "../domain/apple/bundleResourceRoot.js";
+import {
+  parseNativePlistBudgetParameters,
+  type NativePlistBudgetSelection,
+} from "../domain/apple/nativePlistBudgets.js";
 import { UnsupportedBinaryPlistUidError } from "../domain/apple/plistScalars.js";
 import { NATIVE_COMMAND_OUTPUT_BUDGET_BYTES } from "../domain/native/nativeCommandOutput.js";
 import { errorMessage } from "../kernel/errorMessage.js";
@@ -169,6 +173,8 @@ interface NativePlistReadContext {
   readonly resources: ArtifactResourceScope;
   readonly signal: AbortSignal | undefined;
   readonly timeoutMs: number;
+  readonly maxFileBytes: number;
+  readonly maxDecodedBytes: number;
 }
 
 interface NativePlistSnapshot extends NativePlistReadContext {
@@ -1135,6 +1141,8 @@ class NativeMacOSClient implements AnalysisClient {
       return err(
         new AnalysisOutputError("inspect_plist", "path was not a string"),
       );
+    const budgets = parseNativePlistBudgetParameters(parameters);
+    if (!budgets.ok) return budgets;
     try {
       return await this.#plistResources.run(async () => {
         if (
@@ -1142,7 +1150,7 @@ class NativeMacOSClient implements AnalysisClient {
           this.activeTarget.kind !== "executable" ||
           this.activeTarget.bundleInfoPlist === undefined
         )
-          return this.#readPlist(requested, signal, timeoutMs);
+          return this.#readPlist(requested, signal, timeoutMs, budgets.value);
         try {
           const observation = await withArtifactTargetIdentity(
             this.activeTarget,
@@ -1152,6 +1160,7 @@ class NativeMacOSClient implements AnalysisClient {
                 requested,
                 signal,
                 timeoutMs,
+                budgets.value,
               );
               if (!result.ok) throw result.error;
               return result.value;
@@ -1162,15 +1171,21 @@ class NativeMacOSClient implements AnalysisClient {
         } catch (cause: unknown) {
           if (cause instanceof AnalysisError) return err(cause);
           return err(
-            nativePlistFailure(cause, {
-              path: this.activeTarget.path,
-              origin: "selected",
-            }),
+            nativePlistFailure(
+              cause,
+              {
+                path: this.activeTarget.path,
+                origin: "selected",
+              },
+              budgets.value.maxFileBytes,
+            ),
           );
         }
       });
     } catch (cause: unknown) {
-      return err(nativePlistFailure(cause, undefined));
+      return err(
+        nativePlistFailure(cause, undefined, budgets.value.maxFileBytes),
+      );
     }
   }
 
@@ -1178,6 +1193,7 @@ class NativeMacOSClient implements AnalysisClient {
     requested: string | undefined,
     signal: AbortSignal | undefined,
     timeoutMs: number,
+    budgets: NativePlistBudgetSelection,
   ): Promise<Result<NativeObservation, AnalysisError>> {
     try {
       const plist =
@@ -1193,6 +1209,8 @@ class NativeMacOSClient implements AnalysisClient {
         resources: this.#plistResources,
         signal,
         timeoutMs,
+        maxFileBytes: budgets.maxFileBytes,
+        maxDecodedBytes: budgets.maxDecodedBytes,
       };
       const source = await readNativePlistBytes(fileInput);
       if (!source.ok) return source;
@@ -1262,7 +1280,7 @@ class NativeMacOSClient implements AnalysisClient {
     fileInput: NativePlistSnapshot,
     classified: NativeCommandCapture,
   ): Result<NativeObservation, AnalysisError> {
-    const parsed = parsePlistBinary(fileInput.bytes);
+    const parsed = parsePlistBinary(fileInput.bytes, fileInput.maxDecodedBytes);
     if (!parsed.ok) {
       if (parsed.error instanceof UnsupportedBinaryPlistUidError)
         return err(
@@ -1303,7 +1321,7 @@ class NativeMacOSClient implements AnalysisClient {
     let parsed: ReturnType<typeof parsePlistXmlSource>;
     const provenance = [invocation(classified, fileInput.operand, "$PLIST")];
     if (format === "xml") {
-      parsed = parsePlistXmlSource(fileInput.bytes);
+      parsed = parsePlistXmlSource(fileInput.bytes, fileInput.maxDecodedBytes);
       if (parsed.ok) {
         const validated = await this.#run(
           "inspect_plist",
@@ -1416,8 +1434,8 @@ class NativeMacOSClient implements AnalysisClient {
       }
       parsed =
         jsonAttempt === undefined
-          ? parsePlistXml(xml.stdout)
-          : jsonAttempt.project(xml.stdout);
+          ? parsePlistXml(xml.stdout, fileInput.maxDecodedBytes)
+          : jsonAttempt.project(xml.stdout, fileInput.maxDecodedBytes);
     } else {
       parsed = jsonAttempt.project();
     }

@@ -46,11 +46,11 @@ import {
   RegularFileChangedError,
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
-import { NATIVE_MACOS_PROVIDER_IDENTITY as IDENTITY } from "./NativeMacosProviderIdentity.js";
 import {
-  MAX_NATIVE_PLIST_BYTES,
-  nativePlistInputAllowance,
-} from "./parsers/plist.js";
+  DEFAULT_NATIVE_PLIST_FILE_BYTES,
+  nativePlistBudgetLimit,
+} from "../domain/apple/nativePlistBudgets.js";
+import { NATIVE_MACOS_PROVIDER_IDENTITY as IDENTITY } from "./NativeMacosProviderIdentity.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
 /**
@@ -194,12 +194,14 @@ interface PlistFileInput {
   readonly selection: NativePlistSelection;
   readonly resources: ArtifactResourceScope;
   readonly signal: AbortSignal | undefined;
+  readonly maxFileBytes: number;
 }
 
 /** Translate only physical file outcomes, never a later signal or arbitrary abort value. */
 export const nativePlistFailure = (
   cause: unknown,
   selection: NativePlistSelection | undefined,
+  maxFileBytes: number = DEFAULT_NATIVE_PLIST_FILE_BYTES,
 ): AnalysisError => {
   if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {
     const physical =
@@ -208,7 +210,11 @@ export const nativePlistFailure = (
         : undefined;
     const previous =
       physical?.outcome.kind === "failed"
-        ? nativePlistPrimaryFailure(artifactFilePrimaryFacts(cause), selection)
+        ? nativePlistPrimaryFailure(
+            artifactFilePrimaryFacts(cause),
+            selection,
+            maxFileBytes,
+          )
         : physical?.completionCancellation === undefined
           ? undefined
           : cancelledBy(
@@ -233,12 +239,17 @@ export const nativePlistFailure = (
     bindArtifactFileCleanup(cause, failure);
     return failure;
   }
-  return nativePlistPrimaryFailure(artifactFilePrimaryFacts(cause), selection);
+  return nativePlistPrimaryFailure(
+    artifactFilePrimaryFacts(cause),
+    selection,
+    maxFileBytes,
+  );
 };
 
 const nativePlistPrimaryFailure = (
   { cause, origin }: ArtifactFilePrimaryFacts,
   selection: NativePlistSelection | undefined,
+  maxFileBytes: number,
 ): AnalysisError => {
   if (origin === "owned-or-classified") {
     if (cause instanceof AnalysisError) return cause;
@@ -262,15 +273,24 @@ const nativePlistPrimaryFailure = (
       return readerIntegrityFailure("inspect_plist", selection.path, cause);
     if (cause instanceof ArtifactReaderFailure && cause.reason === "limit") {
       const resource = cause.boundary ?? "memory";
+      const requiredBytes =
+        cause.observedBytes === undefined
+          ? undefined
+          : Number(cause.observedBytes);
       return resource === "file-size"
         ? new AnalysisResourceConstraintError(
             "inspect_plist",
             resource,
             cause.message,
-            { maximum_input_bytes: MAX_NATIVE_PLIST_BYTES },
+            { maximum_input_bytes: maxFileBytes },
             {
               cause,
-              ...nativePlistInputAllowance(),
+              retryable: false,
+              limit: nativePlistBudgetLimit(
+                "max_file_bytes",
+                maxFileBytes,
+                requiredBytes,
+              ),
             },
           )
         : new AnalysisResourceConstraintError(
@@ -485,7 +505,7 @@ export const readNativePlistBytes = async (
         : mapArtifactFileFailure(cause, (failure) =>
             classifyBundlePlistChange(failure, selection),
           );
-    return err(nativePlistFailure(primary, selection));
+    return err(nativePlistFailure(primary, selection, input.maxFileBytes));
   }
 };
 
@@ -494,11 +514,12 @@ const readPlistSourceBytes = async (
   file: FileHandle,
   before: BigIntStats,
 ): Promise<Buffer> => {
-  if (before.size > BigInt(MAX_NATIVE_PLIST_BYTES))
+  const { maxFileBytes } = input;
+  if (before.size > BigInt(maxFileBytes))
     throw new ArtifactReaderFailure(
       "limit",
-      `Selected plist exceeds ${String(MAX_NATIVE_PLIST_BYTES)} bytes: ${input.selection.path}. This release has no runtime override for this ${String(MAX_NATIVE_PLIST_BYTES)}-byte allowance.`,
-      { boundary: "file-size" },
+      `Selected plist exceeds ${String(maxFileBytes)} bytes: ${input.selection.path}.`,
+      { boundary: "file-size", observedBytes: before.size },
     );
   const bytes = Buffer.allocUnsafe(Number(before.size));
   let position = 0;
@@ -510,11 +531,11 @@ const readPlistSourceBytes = async (
     position += bytesRead;
   }
   const after = await file.stat({ bigint: true });
-  if (after.size > BigInt(MAX_NATIVE_PLIST_BYTES))
+  if (after.size > BigInt(maxFileBytes))
     throw new ArtifactReaderFailure(
       "limit",
-      `Selected plist grew beyond ${String(MAX_NATIVE_PLIST_BYTES)} bytes: ${input.selection.path}. This release has no runtime override for this ${String(MAX_NATIVE_PLIST_BYTES)}-byte allowance.`,
-      { boundary: "file-size" },
+      `Selected plist grew beyond ${String(maxFileBytes)} bytes: ${input.selection.path}.`,
+      { boundary: "file-size", observedBytes: after.size },
     );
   if (!sameRegularFileState(before, after) || BigInt(position) !== before.size)
     throw new ArtifactReaderFailure(

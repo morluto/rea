@@ -342,3 +342,150 @@ it("keeps refusing a well-formed XML plist with an invalid structure", async () 
   });
   expect(tools).toEqual(["file"]);
 });
+
+it("enforces max_decoded_bytes on direct XML and plutil XML-converted plists and validates budget parameters", async () => {
+  const root = await createTestTempDirectory("rea-plist-xml-budget-");
+  const utf8Path = join(root, "utf8.plist");
+  const latin1Path = join(root, "latin1.plist");
+  const xmlBody = `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>data</key><data>${Buffer.alloc(2048, 0x41).toString("base64")}</data></dict></plist>`;
+  const latin1Body = xmlBody.replace(
+    'encoding="UTF-8"',
+    'encoding="ISO-8859-1"',
+  );
+  await writeFile(utf8Path, xmlBody, "utf8");
+  await writeFile(latin1Path, latin1Body, "latin1");
+
+  const replay = new NativeFixtureRunner({ file: "XML 1.0 document text" });
+  const client = new NativeMacOSProvider(
+    {},
+    {
+      async run(tool, args) {
+        const result = await replay.run(tool, args);
+        if (tool !== "plutil" || !result.ok) return result;
+        if (args[0] === "-lint")
+          return ok({
+            ...result.value,
+            stdout: `${utf8Path}: OK\n`,
+            exitCode: 0,
+          });
+        if (args[1] === "json")
+          return ok({
+            ...result.value,
+            stdout: "",
+            stdoutBytes: 0,
+            stderr: "invalid object in plist for destination format",
+            exitCode: 1,
+          });
+        return ok({
+          ...result.value,
+          stdout: xmlBody,
+          stdoutBytes: Buffer.byteLength(xmlBody),
+          exitCode: 0,
+        });
+      },
+    },
+    "darwin",
+  ).createClient(nativeMachoTarget(join(root, "target")));
+  onTestFinished(async () => {
+    await client.close();
+  });
+
+  const directRefused = await client.execute("inspect_plist", {
+    path: utf8Path,
+    max_decoded_bytes: 1024,
+  });
+  expect(directRefused.ok).toBe(false);
+  if (!directRefused.ok) {
+    expect(directRefused.error).toMatchObject({
+      resource: "memory",
+      limit: { parameter: "max_decoded_bytes", effective_value: 1024 },
+    });
+  }
+
+  const convertedRefused = await client.execute("inspect_plist", {
+    path: latin1Path,
+    max_decoded_bytes: 1024,
+  });
+  expect(convertedRefused.ok).toBe(false);
+  if (!convertedRefused.ok) {
+    expect(convertedRefused.error).toMatchObject({
+      resource: "memory",
+      limit: { parameter: "max_decoded_bytes", effective_value: 1024 },
+    });
+  }
+
+  const convertedRecovered = await client.execute("inspect_plist", {
+    path: latin1Path,
+    max_decoded_bytes: 65_536,
+  });
+  expect(convertedRecovered.ok).toBe(true);
+
+  // Also cover the plutil JSON -> XML number-type projection path (jsonAttempt.project).
+  const unsafeJsonPath = join(root, "unsafe-int.plist");
+  const unsafeXmlBody = `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>big</key><integer>9007199254740993</integer><key>pad</key><string>${"x".repeat(2048)}</string></dict></plist>`;
+  const unsafeJsonBody = `{"big":9007199254740993,"pad":"${"x".repeat(2048)}"}`;
+  await writeFile(
+    unsafeJsonPath,
+    unsafeXmlBody.replace("UTF-8", "ISO-8859-1"),
+    "latin1",
+  );
+  const jsonClient = new NativeMacOSProvider(
+    {},
+    {
+      async run(tool, args) {
+        const result = await replay.run(tool, args);
+        if (tool !== "plutil" || !result.ok) return result;
+        if (args[0] === "-lint")
+          return ok({
+            ...result.value,
+            stdout: `${unsafeJsonPath}: OK\n`,
+            exitCode: 0,
+          });
+        if (args[1] === "json")
+          return ok({
+            ...result.value,
+            stdout: unsafeJsonBody,
+            stdoutBytes: Buffer.byteLength(unsafeJsonBody),
+            exitCode: 0,
+          });
+        return ok({
+          ...result.value,
+          stdout: unsafeXmlBody,
+          stdoutBytes: Buffer.byteLength(unsafeXmlBody),
+          exitCode: 0,
+        });
+      },
+    },
+    "darwin",
+  ).createClient(nativeMachoTarget(join(root, "target-json")));
+  onTestFinished(async () => {
+    await jsonClient.close();
+  });
+  const jsonProjectRefused = await jsonClient.execute("inspect_plist", {
+    path: unsafeJsonPath,
+    max_decoded_bytes: 1024,
+  });
+  expect(jsonProjectRefused.ok).toBe(false);
+  if (!jsonProjectRefused.ok) {
+    expect(jsonProjectRefused.error).toMatchObject({
+      resource: "memory",
+      limit: { parameter: "max_decoded_bytes", effective_value: 1024 },
+    });
+  }
+  const jsonProjectRecovered = await jsonClient.execute("inspect_plist", {
+    path: unsafeJsonPath,
+    max_decoded_bytes: 65_536,
+  });
+  expect(jsonProjectRecovered.ok).toBe(true);
+
+  for (const invalid of [
+    { path: utf8Path, max_file_bytes: "1024" as unknown as number },
+    { path: utf8Path, max_file_bytes: 64 * 1024 * 1024 + 1 },
+    { path: utf8Path, max_decoded_bytes: 0 },
+    { path: utf8Path, max_decoded_bytes: 64 * 1024 * 1024 + 1 },
+  ]) {
+    const rejected = await client.execute("inspect_plist", invalid);
+    expect(rejected.ok).toBe(false);
+    if (!rejected.ok) expect(rejected.error._tag).toBe("AnalysisInputError");
+  }
+});

@@ -797,13 +797,25 @@ their diagnostics and successful validation recorded in provenance. Original
 unknown scalar text, reasons and limitations survive successful validation;
 output-budget omissions remain omissions.
 
-Source input is limited to 64 MiB. Binary and direct XML decoding reserve an
-estimated 64 MiB decode budget before parsing; this is not a hard process-memory
-bound. The XML estimate charges every element and every text, comment or CDATA
-node of the decoder's DOM at a measured upper bound, so a plist made of many
-small elements reaches it at a few MiB of source. JSON decode memory has not
-been measured and has no equivalent decode estimate. A refused input reports non-retryable `resource_constraint` with
-`reported_limits.maximum_input_bytes` for the input ceiling or `reported_limits: { boundary: "plist-decode-bytes", maximum: 67108864 }` for the decode budget (with `details.refusal.unit: "bytes"`).
+Source input defaults to 64 MiB (`max_file_bytes`, CLI `--max-file-bytes`,
+range 1 byte to 64 MiB; whole file read into heap). Binary, direct XML, and `plutil` XML-conversion
+decoding reserve an estimated decode budget defaulting to 64 MiB
+(`max_decoded_bytes`, CLI `--max-decoded-bytes`, range 1 byte to 64 MiB)
+before parsing; this is not a hard process-memory bound. Both XML and binary
+preflights apply a conservative expansion estimate starting at 4x the decoded
+size plus DOM/container overhead, and `plutil` conversions also remain bounded by the fixed
+64 MiB native command output ceiling. The XML estimate
+charges every element and every text, comment or CDATA node of the decoder's
+DOM at a measured upper bound, so a plist made of many small elements reaches
+it at a few MiB of source. JSON decode memory has not been measured and has no
+equivalent decode estimate (except when `plutil` XML conversion is used for
+number types). A refused input reports non-retryable `resource_constraint` with
+`details.limit` naming `max_file_bytes` or `max_decoded_bytes`, its effective
+value, default and range (plus `required_value` when known),
+`details.refusal.kind: "adjustable_budget"`, and `reported_limits.maximum_input_bytes`
+or `reported_limits: { boundary: "plist-decode-bytes", maximum }`. XML DOCTYPE
+internal subsets are refused unconditionally (`reported_limits: { boundary: "plist-internal-dtd", maximum: 0 }`) as a fixed `representation`
+allowance to prevent entity expansion.
 Ordinary direct-source decoding has a ceiling of 997 source nesting levels,
 derived from the existing 1000-level JSON result capacity. Three levels are
 reserved for typed scalar fields, the report value and its Evidence envelope.
@@ -813,8 +825,8 @@ XML admission also requires native validation, which
 can refuse input below this decoding ceiling. Compatibility conversions can
 likewise encounter an earlier native utility refusal; both retain native
 diagnostics. Archive and Interface Builder decoding retain their separate
-128-level allowance. Worker limits and host memory do not raise these fixed
-allowances, and the unchanged request fails the same way.
+128-level allowance. Worker limits and host memory do not raise the fixed
+nesting or DTD allowances, and the unchanged request fails the same way.
 
 A plist explicitly selected through the path input or as the active plist target
 reports an unreadable or malformed selection as `invalid_request`. A missing or

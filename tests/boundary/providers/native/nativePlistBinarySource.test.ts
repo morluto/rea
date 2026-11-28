@@ -12,7 +12,10 @@ import { ArtifactFileCleanupFailure } from "../../../../src/resources/ArtifactFi
 import { ProviderAdapterError } from "../../../../src/domain/providerAdapterError.js";
 import { buildBinary, type PlistValue } from "plist";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
-import { MAX_NATIVE_PLIST_BYTES } from "../../../../src/native/parsers/plist.js";
+import {
+  DEFAULT_NATIVE_PLIST_DECODE_BYTES,
+  DEFAULT_NATIVE_PLIST_FILE_BYTES,
+} from "../../../../src/domain/apple/nativePlistBudgets.js";
 import { MAX_JSON_DEPTH } from "../../../../src/domain/jsonValue.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { analysisRefusalRemediation } from "../../../../src/domain/analysisRefusal.js";
@@ -48,9 +51,9 @@ const binaryClient = (root: string, runner: BinaryNativeRunner) => {
   return client;
 };
 
-it("reports a binary source-size refusal as a typed resource limit", async () => {
+it("reports a binary source-size refusal as a typed parameter limit and honors per-call max_file_bytes", async () => {
   const { root, path } = await binaryPath();
-  await truncate(path, MAX_NATIVE_PLIST_BYTES + 1);
+  await truncate(path, DEFAULT_NATIVE_PLIST_FILE_BYTES + 1);
   const runner = new BinaryNativeRunner({
     file: "Apple binary property list\n",
   });
@@ -61,13 +64,18 @@ it("reports a binary source-size refusal as a typed resource limit", async () =>
   expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
   expect(result.error).toMatchObject({
     resource: "file-size",
-    reportedLimits: { maximum_input_bytes: MAX_NATIVE_PLIST_BYTES },
+    reportedLimits: { maximum_input_bytes: DEFAULT_NATIVE_PLIST_FILE_BYTES },
     retryable: false,
-    fixedAllowance: {
-      name: "The native plist input allowance",
-      kind: "input",
-      limit: MAX_NATIVE_PLIST_BYTES,
+    limit: {
+      control_kind: "parameter",
+      parameter: "max_file_bytes",
+      effective_value: DEFAULT_NATIVE_PLIST_FILE_BYTES,
       unit: "bytes",
+      minimum: 1,
+      maximum: DEFAULT_NATIVE_PLIST_FILE_BYTES,
+      default_value: DEFAULT_NATIVE_PLIST_FILE_BYTES,
+      applies_at: "next_call",
+      required_value: DEFAULT_NATIVE_PLIST_FILE_BYTES + 1,
     },
   });
   const projected = projectAnalysisError(result.error);
@@ -75,104 +83,161 @@ it("reports a binary source-size refusal as a typed resource limit", async () =>
     code: "resource_constraint",
     retryable: false,
     details: {
+      limit: result.error.limit,
       refusal: {
-        kind: "fixed_ceiling",
-        allowance_kind: "input",
-        limit: MAX_NATIVE_PLIST_BYTES,
+        kind: "adjustable_budget",
+        operation: "inspect_plist",
+        control: "max_file_bytes",
+        effective_value: DEFAULT_NATIVE_PLIST_FILE_BYTES,
         unit: "bytes",
+        range: { minimum: 1, maximum: DEFAULT_NATIVE_PLIST_FILE_BYTES },
+        default_value: DEFAULT_NATIVE_PLIST_FILE_BYTES,
+        required_value: DEFAULT_NATIVE_PLIST_FILE_BYTES + 1,
       },
     },
   });
-  // Guidance comes from the refusal's owning formatter, not a fixed sentence.
-  expect(projected.remediation.action).toBe(
-    analysisRefusalRemediation({
-      kind: "fixed_ceiling",
-      operation: "inspect_plist",
-      ceiling: {
-        name: "The native plist input allowance",
-        kind: "input",
-        limit: MAX_NATIVE_PLIST_BYTES,
-        unit: "bytes",
-      },
-    }),
-  );
+  expect(projected.remediation.action).toContain("max_file_bytes");
   expect(runner.tools).toEqual([]);
+
+  const smallSource = Buffer.from(buildBinary({ key: "value" }));
+  await writeFile(path, smallSource);
+  const customRefused = await client.execute("inspect_plist", {
+    path,
+    max_file_bytes: 8,
+  });
+  if (customRefused.ok)
+    throw new Error("Expected custom max_file_bytes refusal");
+  expect(
+    projectAnalysisError(customRefused.error).details?.limit,
+  ).toMatchObject({
+    parameter: "max_file_bytes",
+    effective_value: 8,
+    required_value: smallSource.length,
+  });
+  const customAdmitted = await client.execute("inspect_plist", {
+    path,
+    max_file_bytes: smallSource.length,
+  });
+  expect(customAdmitted.ok).toBe(true);
+
+  const invalidBudget = await client.execute("inspect_plist", {
+    path,
+    max_file_bytes: 0,
+  });
+  if (invalidBudget.ok) throw new Error("Expected invalid max_file_bytes");
+  expect(invalidBudget.error).toBeInstanceOf(AnalysisInputError);
 });
 
 const nested = (depth: number): PlistValue =>
   depth === 0 ? 1 : [nested(depth - 1)];
 
-it.each([
-  {
-    budget: "decode",
-    // Three times the source length exceeds the 64 MiB decode estimate while
-    // the source stays below the separate 64 MiB input ceiling.
-    value: { data: Buffer.alloc(22 * 1024 * 1024, 0x78) },
-    limits: { boundary: "plist-decode-bytes", maximum: 64 * 1024 * 1024 },
-    refusal: {
-      allowance: "The native binary plist decode allowance",
-      limit: 64 * 1024 * 1024,
-      unit: "bytes",
-    },
-  },
-  {
-    budget: "nesting",
-    value: nested(MAX_JSON_DEPTH - 1),
-    limits: { boundary: "plist-nesting-depth", maximum: MAX_JSON_DEPTH - 3 },
-    refusal: {
-      allowance: "The native plist nesting allowance",
-      limit: MAX_JSON_DEPTH - 3,
-      unit: "levels",
-    },
-  },
-])(
-  "names the fixed binary plist $budget allowance instead of host memory",
-  async ({ value, limits, refusal }) => {
-    const { root, path } = await binaryPath();
-    await writeFile(path, buildBinary(value));
-    const runner = new BinaryNativeRunner({
-      file: "Apple binary property list\n",
-    });
-    const client = binaryClient(root, runner);
+it("reports binary plist decode exhaustion with details.limit and honors per-call max_decoded_bytes", async () => {
+  const { root, path } = await binaryPath();
+  const payload = Buffer.from(buildBinary({ data: Buffer.alloc(4096, 0x78) }));
+  await writeFile(path, payload);
+  const runner = new BinaryNativeRunner({
+    file: "Apple binary property list\n",
+  });
+  const client = binaryClient(root, runner);
 
-    const result = await client.execute("inspect_plist", { path });
-    if (result.ok) throw new Error("Expected decode allowance refusal");
-    expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
-    expect(result.error).toMatchObject({
+  const refused = await client.execute("inspect_plist", {
+    path,
+    max_decoded_bytes: 1024,
+  });
+  if (refused.ok) throw new Error("Expected decode budget refusal");
+  expect(refused.error).toBeInstanceOf(AnalysisResourceConstraintError);
+  expect(refused.error).toMatchObject({
+    resource: "memory",
+    reportedLimits: { boundary: "plist-decode-bytes", maximum: 1024 },
+    retryable: false,
+    limit: {
+      control_kind: "parameter",
+      parameter: "max_decoded_bytes",
+      effective_value: 1024,
+      unit: "bytes",
+      minimum: 1,
+      maximum: DEFAULT_NATIVE_PLIST_DECODE_BYTES,
+      default_value: DEFAULT_NATIVE_PLIST_DECODE_BYTES,
+      applies_at: "next_call",
+    },
+  });
+  const projected = projectAnalysisError(refused.error);
+  expect(projected).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    details: {
       resource: "memory",
-      reportedLimits: limits,
-      retryable: false,
-      fixedAllowance: { kind: "parser" },
-    });
-    const projected = projectAnalysisError(result.error);
-    expect(projected).toMatchObject({
-      code: "resource_constraint",
-      retryable: false,
-      details: {
-        resource: "memory",
-        reported_limits: limits,
-        refusal: {
-          kind: "fixed_ceiling",
-          allowance_kind: "parser",
-          ...refusal,
-        },
-      },
-    });
-    expect(projected.remediation.action).toBe(
-      analysisRefusalRemediation({
-        kind: "fixed_ceiling",
+      limit: refused.error.limit,
+      refusal: {
+        kind: "adjustable_budget",
         operation: "inspect_plist",
-        ceiling: {
-          name: refusal.allowance,
-          kind: "parser",
-          limit: refusal.limit,
-          unit: refusal.unit,
-        },
-      }),
-    );
-    expect(runner.tools).toEqual(["file"]);
-  },
-);
+        control: "max_decoded_bytes",
+      },
+    },
+  });
+  expect(projected.remediation.action).toContain("max_decoded_bytes");
+  expect(runner.tools).toEqual(["file"]);
+
+  const admitted = await client.execute("inspect_plist", {
+    path,
+    max_decoded_bytes: 128 * 1024,
+  });
+  expect(admitted.ok).toBe(true);
+});
+
+it("names the fixed binary plist nesting allowance instead of host memory", async () => {
+  const { root, path } = await binaryPath();
+  await writeFile(path, buildBinary(nested(MAX_JSON_DEPTH - 1)));
+  const runner = new BinaryNativeRunner({
+    file: "Apple binary property list\n",
+  });
+  const client = binaryClient(root, runner);
+
+  const result = await client.execute("inspect_plist", { path });
+  if (result.ok) throw new Error("Expected nesting allowance refusal");
+  expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
+  expect(result.error).toMatchObject({
+    resource: "memory",
+    reportedLimits: {
+      boundary: "plist-nesting-depth",
+      maximum: MAX_JSON_DEPTH - 3,
+    },
+    retryable: false,
+    fixedAllowance: { kind: "parser" },
+  });
+  const projected = projectAnalysisError(result.error);
+  expect(projected).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    details: {
+      resource: "memory",
+      reported_limits: {
+        boundary: "plist-nesting-depth",
+        maximum: MAX_JSON_DEPTH - 3,
+      },
+      refusal: {
+        kind: "fixed_ceiling",
+        allowance_kind: "parser",
+        allowance: "The native plist nesting allowance",
+        limit: MAX_JSON_DEPTH - 3,
+        unit: "levels",
+      },
+    },
+  });
+  expect(projected.remediation.action).toBe(
+    analysisRefusalRemediation({
+      kind: "fixed_ceiling",
+      operation: "inspect_plist",
+      ceiling: {
+        name: "The native plist nesting allowance",
+        kind: "parser",
+        limit: MAX_JSON_DEPTH - 3,
+        unit: "levels",
+      },
+    }),
+  );
+  expect(runner.tools).toEqual(["file"]);
+});
 
 it("keeps a malformed binary plist as a selected-input failure", async () => {
   const { root, path } = await binaryPath();

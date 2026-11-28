@@ -373,19 +373,13 @@
     }
   },
   "src/native/parsers/plist.ts": {
-    "\"The native plist input allowance\"": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
+    "\"The native XML plist DTD allowance\"": {
+      "class": "representation",
+      "reason": "XML DOCTYPE internal subsets are refused unconditionally before DOM parsing to block exponential entity expansion; no byte budget makes internal DTD expansion safe."
     },
     "\"The native plist nesting allowance\"": {
       "class": "representation",
       "reason": "The decoded plist value nests inside Evidence JSON, whose depth is bounded by MAX_JSON_DEPTH before recursive result cloning; three levels are reserved for the report envelope (MAX_NATIVE_PLIST_NESTING_DEPTH = MAX_JSON_DEPTH - 3)."
-    },
-    "`The native ${encoding} plist decode allowance`": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
     }
   },
   "src/native/pe/PeCertificatesProvider.ts": {

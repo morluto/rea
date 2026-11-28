@@ -114,13 +114,23 @@ describe("native MCP input contracts", () => {
     const selectedPath = "/tmp/Other.plist";
     const explicit = await client.callTool({
       name: "inspect_plist",
-      arguments: { path: selectedPath },
+      arguments: {
+        path: selectedPath,
+        max_file_bytes: 1024,
+        max_decoded_bytes: 4096,
+      },
     });
     expect(explicit.isError).not.toBe(true);
     expect(calls[1]).toEqual({
       operation: "inspect_plist",
-      parameters: { path: selectedPath },
+      parameters: {
+        path: selectedPath,
+        max_file_bytes: 1024,
+        max_decoded_bytes: 4096,
+      },
     });
+    expect(validate({ max_file_bytes: 0 })).toBe(false);
+    expect(validate({ max_decoded_bytes: 64 * 1024 * 1024 + 1 })).toBe(false);
 
     const beforeTypo = calls.length;
     const rejected = await client.callTool({
