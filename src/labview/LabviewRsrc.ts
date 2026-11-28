@@ -337,8 +337,9 @@ export const parseLabviewRsrc = (
           offset: blockInfo,
         },
       );
-    // The list declares its own extent at infoOffset + 48; it owns the block
-    // headers and section-start tables, and the name list follows it.
+    // The word at infoOffset + 48 is an offset from the info header. It ends
+    // where the name list begins; the block headers and section-start tables
+    // are the records inside that extent.
     const blockInfoBytes = reader.u32(infoOffset + 48);
     // Real containers can declare a list extent that runs past the resource
     // payload's own end, so the declared extent and the container both bound
@@ -347,7 +348,7 @@ export const parseLabviewRsrc = (
       throw truncatedInput(FORMAT, "RSRC block-info list declares no records", {
         offset: infoOffset + 48,
       });
-    const listEnd = Math.min(blockInfo + blockInfoBytes, infoEnd);
+    const listEnd = Math.min(infoOffset + blockInfoBytes, infoEnd);
     const blockCount = reader.u32(blockInfo) + 1;
     const blockHeadersAt = blockInfo + 4;
     const headersEnd = blockHeadersAt + blockCount * BLOCK_HEADER_BYTES;
