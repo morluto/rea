@@ -45,6 +45,7 @@ import { createV8CodeCacheService } from "./v8CodeCache.js";
 import { createMavenGradleMetadataService } from "./mavenGradleMetadata.js";
 import { createModelArtifactService } from "./model.js";
 import { createIl2cppMetadataService } from "./il2cpp.js";
+import { createLabviewArtifactService } from "./labview.js";
 import { createElectronFuseService } from "./electronFuses.js";
 import { createReleaseExposureService } from "./releaseExposure.js";
 import { createPythonPycService } from "./pythonPyc.js";
@@ -96,6 +97,7 @@ import { createRecordedCrashService } from "./binaryDiagnostics/recordedCrash.js
 import { createBinaryLayoutService } from "./binaryDiagnostics/binaryLayout.js";
 import { createDevicetreeService } from "./binaryDiagnostics/devicetree.js";
 import { createEspNvsService } from "./binaryDiagnostics/espNvs.js";
+import { createFirmwareVectorTableService } from "./binaryDiagnostics/firmwareVectorTable.js";
 import { createElfNotesService } from "./binaryDiagnostics/elfNotes.js";
 import { createDwarfUnitsService } from "./binaryDiagnostics/dwarfUnits.js";
 import { createElfDebugLinkService } from "./binaryDiagnostics/elfDebugLink.js";
@@ -410,9 +412,11 @@ const modules = {
     ({ options }) => options.il2cppMetadata ?? createIl2cppMetadataService(),
   ),
   peResources: service(() => createPeResourcesService()),
+  labviewArtifact: service(() => createLabviewArtifactService()),
   nativeExports: service(() => createNativeExportsService()),
   devicetree: service(() => createDevicetreeService()),
   espNvs: service(() => createEspNvsService()),
+  firmwareVectorTable: service(() => createFirmwareVectorTableService()),
   elfNotes: service(() => createElfNotesService()),
   dwarfUnits: service(() => createDwarfUnitsService()),
   elfDebugLink: service(() => createElfDebugLinkService()),

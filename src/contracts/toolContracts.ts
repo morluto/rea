@@ -12,6 +12,7 @@ import { GO_TOOL_CONTRACTS } from "./go/goToolContracts.js";
 import { MODEL_TOOL_CONTRACTS } from "./model/modelToolContracts.js";
 import { IL2CPP_TOOL_CONTRACTS } from "./il2cpp/il2cppToolContracts.js";
 import { RUST_TOOL_CONTRACTS } from "./rust/rustToolContracts.js";
+import { LABVIEW_TOOL_CONTRACTS } from "./labview/labviewToolContracts.js";
 import { PYTHON_PYC_TOOL_CONTRACTS } from "./python/pythonPycToolContracts.js";
 import { DEB_PACKAGE_TOOL_CONTRACTS } from "./deb/debPackageToolContracts.js";
 import { NUGET_NUPKG_TOOL_CONTRACTS } from "./nuget/nupkgToolContracts.js";
@@ -76,6 +77,7 @@ const CATALOG_CONTRACT_GROUPS = {
   MODEL_TOOL_CONTRACTS,
   GPU_TOOL_CONTRACTS,
   RUST_TOOL_CONTRACTS,
+  LABVIEW_TOOL_CONTRACTS,
   PYTHON_PYC_TOOL_CONTRACTS,
   DEB_PACKAGE_TOOL_CONTRACTS,
   NUGET_NUPKG_TOOL_CONTRACTS,

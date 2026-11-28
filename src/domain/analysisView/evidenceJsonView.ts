@@ -4,9 +4,9 @@ import { Budget } from "../budget.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import { DEFAULT_AGENT_RESULT_BUDGET_BYTES } from "../analysisResourceLimits.js";
 import { jsonParts } from "../jsonSerialization.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import { pageViewCoverage } from "./analysisViewCoverage.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 
 /** Room for the view Evidence around a page: identity, source and coverage. */
@@ -311,15 +311,9 @@ export const projectEvidenceJsonView = (
   serializations: EvidenceJsonSerializationCache = sharedSerializations,
 ) => {
   if (parent.evidence === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view", "kind"],
-          reason: "invalid_value",
-          message:
-            "evidence-json pages a complete Evidence record; select a retained, inline or file Evidence source.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "evidence-json pages a complete Evidence record; select a retained, inline or file Evidence source.",
+      "kind",
     );
   const doc = serializations.serialize(
     parent.evidence,
@@ -328,14 +322,9 @@ export const projectEvidenceJsonView = (
   );
   const start = Math.min(view.offset, doc.totalLength);
   if (splitsPair(doc, start))
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view", "offset"],
-          reason: "invalid_value",
-          message: "Evidence JSON offset splits a UTF-16 surrogate pair.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Evidence JSON offset splits a UTF-16 surrogate pair.",
+      "offset",
     );
   const end = pageEnd(doc, start, view.limit);
   return ok({

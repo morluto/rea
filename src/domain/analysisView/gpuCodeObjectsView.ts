@@ -21,7 +21,6 @@ import {
 } from "./analysisViewShape.js";
 import {
   ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
-  analysisViewInputError,
   invalidAnalysisViewSubject,
   invalidAnalysisView,
 } from "./analysisViewErrors.js";
@@ -251,15 +250,9 @@ export const projectGpuCodeObjectsView = (
       (row) => row.object_id === view.object_id,
     );
     if (artifact === undefined)
-      return err(
-        analysisViewInputError([
-          {
-            path: ["view", "object_id"],
-            reason: "invalid_value",
-            message:
-              "No retained PTX artifact exists for this object; inspect a selected PTX payload with analysis kernels",
-          },
-        ]),
+      return invalidAnalysisView(
+        "No retained PTX artifact exists for this object; inspect a selected PTX payload with analysis kernels",
+        "object_id",
       );
     const end = Math.min(artifact.text.length, view.offset + view.limit);
     const split = (offset: number): boolean =>

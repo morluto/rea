@@ -4,7 +4,9 @@ import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
+import { im4p } from "../../../../src/domain/apple/image4.fixture.js";
 import { bfltFile } from "../../../../src/domain/bfltExecutable.fixture.js";
+import { megaDriveRom } from "../../../../src/domain/megaDriveRom.fixture.js";
 import { n64RomImage } from "../../../../src/domain/n64Rom.fixture.js";
 import { windowsShortcutBytes } from "../../../fixtures/binaryDiagnostics/windowsShortcut.js";
 import { createSqliteDatabaseFixture } from "../../../fixtures/sqlite/database.js";
@@ -196,6 +198,40 @@ it("keeps a plain ar archive that is not a Debian package unsupported", async ()
       projectCliAnalysisResult,
     ),
   ).resolves.toMatchObject({ code: "target_unavailable" });
+});
+
+it("inventories an Image4 IM4P payload", async () => {
+  const directory = await createTestTempDirectory("rea-standalone-format-");
+  const path = join(directory, "kernelcache.im4p");
+  await writeFile(path, im4p({ payload: Buffer.from("kernel-bytes") }));
+  const evidence = parseEvidence(
+    await runProviderAnalysis(path, "inspect_artifact", {}).then(
+      projectCliAnalysisResult,
+    ),
+  );
+  const inspection = artifactInspectionResultSchema.parse(
+    evidence.normalized_result,
+  );
+  expect(inspection.subject.root_format).toBe("apple-img4");
+  const inventory = inspection.substeps[0]?.evidence.normalized_result;
+  expect(
+    inventory?.occurrences.some((row) => row.logical_path === "payload"),
+  ).toBe(true);
+});
+
+it("classifies a synthetic Mega Drive ROM", async () => {
+  const directory = await createTestTempDirectory("rea-standalone-format-");
+  const path = await writeBytes("game.bin", () => megaDriveRom())(directory);
+  const evidence = parseEvidence(
+    await runProviderAnalysis(path, "inspect_artifact", {}).then(
+      projectCliAnalysisResult,
+    ),
+  );
+  const inspection = artifactInspectionResultSchema.parse(
+    evidence.normalized_result,
+  );
+
+  expect(inspection.subject.root_format).toBe("mega-drive-rom");
 });
 
 it("inventories a Nintendo 64 ROM in any byte order as n64-rom", async () => {

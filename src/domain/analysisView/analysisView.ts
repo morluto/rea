@@ -18,6 +18,8 @@ import { projectNativeInstructionReferencesView } from "./nativeInstructionRefer
 import { projectNativeValueTraceView } from "./nativeValueTraceView.js";
 import { projectDevicetreeView } from "./devicetreeView.js";
 import { projectEspNvsView } from "./espNvsView.js";
+import { projectFirmwareVectorTableView } from "./firmwareVectorTableView.js";
+import { projectLabviewArtifactView } from "./labviewArtifactView.js";
 import { projectUefiExtractionView } from "./uefiExtractionView.js";
 import { projectUefiFirmwareView } from "./uefiFirmwareView.js";
 import { projectApkSignatureView } from "./apkSignatureView.js";
@@ -211,6 +213,8 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("inspect_erlang_beam", projectErlangBeamView),
   retain("inspect_devicetree", projectDevicetreeView),
   retain("inspect_esp_nvs", projectEspNvsView),
+  retain("inspect_firmware_vector_table", projectFirmwareVectorTableView),
+  retain("inspect_labview_artifact", projectLabviewArtifactView),
   retain("inspect_uefi_firmware", projectUefiFirmwareView),
   retain("extract_uefi_firmware", projectUefiExtractionView),
   retain("inspect_native_exports", projectNativeExportsView),

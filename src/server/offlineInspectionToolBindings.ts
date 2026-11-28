@@ -6,6 +6,7 @@ import type { BinaryHardeningService } from "../application/binaryDiagnostics/Bi
 import type { ByteEntropyService } from "../application/binaryDiagnostics/ByteEntropyService.js";
 import type { DevicetreeService } from "../application/binaryDiagnostics/DevicetreeService.js";
 import type { EspNvsService } from "../application/binaryDiagnostics/EspNvsService.js";
+import type { FirmwareVectorTableService } from "../application/binaryDiagnostics/FirmwareVectorTableService.js";
 import type { DwarfUnitsService } from "../application/binaryDiagnostics/DwarfUnitsService.js";
 import type { ElfDebugLinkService } from "../application/binaryDiagnostics/ElfDebugLinkService.js";
 import type { ElfDependenciesService } from "../application/binaryDiagnostics/ElfDependenciesService.js";
@@ -13,6 +14,7 @@ import type { ElfNotesService } from "../application/binaryDiagnostics/ElfNotesS
 import type { ElfUnwindRangesService } from "../application/binaryDiagnostics/ElfUnwindRangesService.js";
 import type { KernelBuildConfigService } from "../application/binaryDiagnostics/KernelBuildConfigService.js";
 import type { KernelModuleService } from "../application/binaryDiagnostics/KernelModuleService.js";
+import type { LabviewArtifactService } from "../application/labview/LabviewArtifactService.js";
 import type { NativeExportsService } from "../application/binaryDiagnostics/NativeExportsService.js";
 import type { NativeInitializersService } from "../application/binaryDiagnostics/NativeInitializersService.js";
 import type { PeCertificatesService } from "../application/binaryDiagnostics/PeCertificatesService.js";
@@ -69,6 +71,12 @@ export const OFFLINE_INSPECTION_TOOL_BINDINGS = {
       run: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<PeResourcesService>,
+  labviewArtifact: ((service) => ({
+    inspect_labview_artifact: {
+      admission: "application",
+      summary: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<LabviewArtifactService>,
   nativeExports: ((service) => ({
     inspect_native_exports: {
       admission: "application",
@@ -331,4 +339,10 @@ export const OFFLINE_INSPECTION_TOOL_BINDINGS = {
       run: (input, options) => service.inspect(input, options, retention),
     },
   })) satisfies Bind<EspNvsService>,
+  firmwareVectorTable: ((service) => ({
+    inspect_firmware_vector_table: {
+      admission: "application",
+      summary: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<FirmwareVectorTableService>,
 } as const;

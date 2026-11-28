@@ -18,9 +18,9 @@ import {
   type YaraParsedMatches,
 } from "./YaraOutput.js";
 import {
-  createYaraIncludeRewriter,
-  type YaraIncludeRewriter,
-} from "./YaraRuleIncludeRewrite.js";
+  createYaraIncludeScanner,
+  type YaraIncludeScan,
+} from "./YaraRuleIncludes.js";
 import {
   AnalysisCleanupLease,
   ArtifactReaderFailure,
@@ -285,17 +285,70 @@ const pathInputRefusal = (
   );
 };
 
+/**
+ * yara reads an included file while it compiles, outside the hashed snapshot,
+ * so its rules would not be bound to this Evidence. A selected rule file with
+ * an `include` directive is refused before yara starts.
+ */
+const ruleIncludeRefusal = (
+  input: InspectYaraMatchesInput,
+  scans: readonly YaraIncludeScan[],
+): AnalysisInputError | undefined => {
+  const found = scans.flatMap((scan, index) =>
+    scan.total === 0 ? [] : [{ index, scan }],
+  );
+  if (found.length === 0) return undefined;
+  const issues = found.flatMap(({ index, scan }) => {
+    const rulePath = input.rule_paths[index]!;
+    const listed = scan.directives.map((directive) => ({
+      path: ["rule_paths", index],
+      reason: "invalid_value" as const,
+      message: `${rulePath}(${String(directive.line)}:${String(directive.column)}): include ${directive.path === null ? "directive" : JSON.stringify(directive.path)}; included files are not hashed into this Evidence.`,
+    }));
+    const unlisted = scan.total - scan.directives.length;
+    return unlisted === 0
+      ? listed
+      : [
+          ...listed,
+          {
+            path: ["rule_paths", index],
+            reason: "invalid_value" as const,
+            message: `${rulePath}: ${String(unlisted)} more include directives are not listed.`,
+          },
+        ];
+  });
+  return new AnalysisInputError(
+    OPERATION,
+    {
+      conformsToInputContract: true,
+      userMessage: `The selected rules contain include directives, which this tool refuses: ${issues.map((issue) => issue.message).join("; ")}`,
+      remediationAction:
+        "Remove each include directive and pass the included file as another rule_paths entry, or inline its rules into the selected file, so every rule yara compiles is hashed. Then retry.",
+      diagnostics: {
+        include_directives: found.map(({ index, scan }) => ({
+          rule_path_index: index,
+          total: scan.total,
+          listed: scan.directives.map(({ line, column, path }) => ({
+            line,
+            column,
+            path,
+          })),
+        })),
+      },
+    },
+    issues,
+  );
+};
+
 /** The repair each kind of compile error needs, in the order they are reported. */
 const COMPILE_ERROR_REMEDIATION: Readonly<
   Record<YaraCompileErrorKind, string>
 > = {
-  include:
-    "Make each included file exist and be readable; a relative include resolves against the directory of the rule file that includes it. Or remove the include.",
   syntax: "Fix the rule syntax at the reported line.",
   undefined:
     "Define the identifier or string, or import the module that provides it; rules that need external variables or module data cannot be compiled by this tool.",
   duplicate:
-    "Names must be unique in their scope: rule names across all selected files and their includes, and string, tag and metadata identifiers within their rule. Rename or remove the duplicated identifier at the reported source and line.",
+    "Names must be unique in their scope: rule names across all selected files, and string, tag and metadata identifiers within their rule. Rename or remove the duplicated identifier at the reported source and line.",
   unreadable_file:
     "Select a rule file that exists and is readable, or remove it from rule_paths.",
   other: "Fix the reported rule source, or remove that file from rule_paths.",
@@ -530,7 +583,7 @@ const limitations = (
   settings: YaraScanSettings,
 ): string[] => [
   "REA ran the caller-selected yara command; its implementation and version are not observed.",
-  "The scanned file and rule files are copied into an owned snapshot while computing their SHA-256 digests, and yara reads only those snapshot files; files included by rules and module data that yara reads are not bound to this Evidence.",
+  "The scanned file and rule files are copied into an owned snapshot while computing their SHA-256 digests, and yara reads only those snapshot files; rule files with include directives are refused, and module data that yara reads is not bound to this Evidence.",
   "Only matching rules are reported; a rule that is absent did not match this file under these rules.",
   "String data is yara's display text and may be shortened; read file_offset and length from the artifact for the exact bytes.",
   ...(parsed.listedStringMatches < parsed.stringMatches
@@ -630,7 +683,6 @@ export class YaraMatchesProvider implements YaraMatchesPort {
               input,
               settings,
               maxFileBytes,
-              platform,
               signal,
               (next) => {
                 phase = next;
@@ -782,7 +834,8 @@ export class YaraMatchesProvider implements YaraMatchesPort {
     signal: AbortSignal | undefined,
     snapshot: YaraScanSnapshot,
     options?: {
-      readonly transform?: YaraIncludeRewriter;
+      /** Sees every byte staged, unchanged, in order. */
+      readonly observe?: (chunk: Buffer) => void;
       readonly onIdentity?: (identity: {
         readonly path: string;
         readonly sha256: string;
@@ -790,7 +843,7 @@ export class YaraMatchesProvider implements YaraMatchesPort {
       }) => void;
     },
   ): Promise<StagedSnapshotFile> {
-    const transform = options?.transform;
+    const observe = options?.observe;
     const onIdentity = options?.onIdentity;
     let destHandle;
     try {
@@ -832,9 +885,8 @@ export class YaraMatchesProvider implements YaraMatchesPort {
             signal,
             resourceScope: snapshot.files,
             onChunk: async (chunk) => {
-              await writeChunk(
-                transform === undefined ? chunk : transform.push(chunk),
-              );
+              observe?.(chunk);
+              await writeChunk(chunk);
             },
           });
         } catch (cause: unknown) {
@@ -852,7 +904,6 @@ export class YaraMatchesProvider implements YaraMatchesPort {
           sha256: streamed.sha256,
           bytes: streamed.size,
         });
-        if (transform !== undefined) await writeChunk(transform.finish());
         const state = await dest.stat({ bigint: true });
         return {
           callerPath: sourcePath,
@@ -871,7 +922,6 @@ export class YaraMatchesProvider implements YaraMatchesPort {
     input: InspectYaraMatchesInput,
     settings: YaraScanSettings,
     maxFileBytes: number,
-    platform: NodeJS.Platform,
     signal: AbortSignal | undefined,
     setPhase: (phase: ReadPhase) => void,
     completedFiles: CompletedAdmittedFiles,
@@ -887,8 +937,10 @@ export class YaraMatchesProvider implements YaraMatchesPort {
       description: "file",
     };
     const stagedRules: StagedSnapshotFile[] = [];
+    const includeScans: YaraIncludeScan[] = [];
     for (const [index, path] of input.rule_paths.entries()) {
       setPhase(rulePhase(index, path));
+      const includes = createYaraIncludeScanner();
       stagedRules.push(
         await this.#stageFile(
           path,
@@ -897,14 +949,19 @@ export class YaraMatchesProvider implements YaraMatchesPort {
           signal,
           snapshot,
           {
-            transform: createYaraIncludeRewriter(path, platform, maxFileBytes),
+            observe: (chunk) => {
+              includes.push(chunk);
+            },
             onIdentity: (identity) => {
               completedFiles.rules.set(index, identity);
             },
           },
         ),
       );
+      includeScans.push(includes.finish());
     }
+    const includeRefusal = ruleIncludeRefusal(input, includeScans);
+    if (includeRefusal !== undefined) throw includeRefusal;
     setPhase(targetPhase);
     const stagedTarget = await this.#stageFile(
       input.path,

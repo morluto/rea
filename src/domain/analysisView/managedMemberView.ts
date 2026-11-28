@@ -1,15 +1,12 @@
 import { appendToMapList } from "../appendToMapList.js";
-import {
-  analysisViewInputError,
-  invalidAnalysisView,
-} from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import {
   managedMemberInspectionSchema,
   type ManagedMemberInspection,
 } from "../managed/managedArtifact.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   assertOwnedView,
@@ -483,17 +480,11 @@ export const projectManagedMemberView = (
   }
   const selected = collectionPage(report, view);
   if (selected === null)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view", "collection"],
-          reason: "invalid_value",
-          message:
-            view.collection === "unresolved_definitions"
-              ? "The parent Evidence did not record unresolved_definitions. Repeat inspect_managed_members to obtain checked coordinates."
-              : `The parent Evidence did not examine ${view.collection}; repeat inspect_managed_members with the current runtime to record it.`,
-        },
-      ]),
+    return invalidAnalysisView(
+      view.collection === "unresolved_definitions"
+        ? "The parent Evidence did not record unresolved_definitions. Repeat inspect_managed_members to obtain checked coordinates."
+        : `The parent Evidence did not examine ${view.collection}; repeat inspect_managed_members with the current runtime to record it.`,
+      "collection",
     );
   const { page, total } = selected;
   if (

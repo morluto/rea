@@ -18,7 +18,7 @@ import {
  */
 export const YARA_STUB = String.raw`
 const fs = require("node:fs");
-const { dirname, resolve } = require("node:path");
+const { resolve } = require("node:path");
 const args = process.argv.slice(2);
 const target = args.at(-1);
 const ruleArgs = args.filter((value) => value.endsWith(".yar"));
@@ -38,17 +38,6 @@ const collectRuleNames = (filePath) => {
   const text = fs.readFileSync(fullPath, "utf8");
   const names = [];
   for (const line of text.split(/\r?\n/)) {
-    const inc = /^\s*include\s+"([^"]+)"\s*$/.exec(line);
-    if (inc) {
-      const targetInc = resolve(dirname(fullPath), inc[1]);
-      if (!fs.existsSync(targetInc)) {
-        // yara 4.x print_compiler_error, rule-less form.
-        process.stderr.write(filePath + "(1): error: can't open include file: " + inc[1] + "\n");
-        process.exit(1);
-      }
-      names.push(...collectRuleNames(targetInc));
-      continue;
-    }
     const rule = /^\s*rule\s+(\w+)/.exec(line);
     if (rule) names.push(rule[1]);
   }

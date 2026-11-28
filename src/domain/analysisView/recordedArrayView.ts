@@ -9,7 +9,7 @@ import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
 import { err, ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import { pageViewCoverage } from "./analysisViewCoverage.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import type { recordedArrayViewSchema } from "./analysisViewRequest.js";
 
 const PAGE_BYTES = 1024 * 1024;
@@ -55,27 +55,16 @@ export const projectRecordedArrayView = (
       Array.isArray(value) ||
       !Object.hasOwn(value, key)
     )
-      return err(
-        analysisViewInputError([
-          {
-            path: ["view", "path"],
-            reason: "invalid_value",
-            message:
-              "The selected path does not identify an object member in recorded raw data.",
-          },
-        ]),
+      return invalidAnalysisView(
+        "The selected path does not identify an object member in recorded raw data.",
+        "path",
       );
     value = (value as Record<string, unknown>)[key];
   }
   if (!Array.isArray(value))
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view", "path"],
-          reason: "invalid_value",
-          message: "The selected recorded raw value is not an array.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "The selected recorded raw value is not an array.",
+      "path",
     );
   const rows: JsonValue[] = [];
   let result = {

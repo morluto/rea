@@ -1,5 +1,7 @@
 import { expect, it } from "vitest";
 
+import { im4p } from "./apple/image4.fixture.js";
+
 import {
   ESP32C3_APP_SEGMENTS,
   esp8266Image,
@@ -29,6 +31,10 @@ import { espIdfCrc32 } from "./firmware/espNvsItemDecoder.js";
 import { twoVolumeUbiImage } from "./firmware/ubiImage.fixture.js";
 import { buildIso9660Image } from "./iso9660/iso9660.fixture.js";
 import { ISO9660_DESCRIPTOR_OFFSET } from "./iso9660/iso9660Structures.js";
+import {
+  interleaveMegaDriveSmd,
+  megaDriveRom,
+} from "./megaDriveRom.fixture.js";
 import { N64_MAX_ROM_BYTES } from "./n64Rom.js";
 import { n64RomImage } from "./n64Rom.fixture.js";
 
@@ -345,6 +351,12 @@ it("recognizes a UBI image by its erase-counter header", () => {
   });
 });
 
+it("recognizes an Image4 IM4P container", () => {
+  expect(
+    recognize(im4p({ payload: Buffer.from("kernel-bytes") })),
+  ).toMatchObject({ state: "recognized", format: "apple-img4" });
+});
+
 it("recognizes the descriptor signature at sector 16 or asks for it", () => {
   const { bytes } = buildIso9660Image();
   expect(
@@ -477,6 +489,54 @@ it("recognizes a Debian package ar archive whose first member is debian-binary",
     state: "recognized",
     format: "deb",
   });
+});
+
+it("recognizes a Mega Drive image and an SMD dump, and yields to ELF", () => {
+  const plain = megaDriveRom();
+  expect(recognize(plain)).toMatchObject({
+    state: "recognized",
+    format: "mega-drive-rom",
+  });
+  const smd = interleaveMegaDriveSmd(megaDriveRom({ imageBytes: 16 * 1024 }));
+  expect(recognize(smd)).toMatchObject({
+    state: "recognized",
+    format: "mega-drive-rom",
+  });
+  expect(
+    recognizeArtifactFormat({
+      prefix: smd.subarray(0, 4096),
+      fileSize: smd.length,
+      espFlashLayout: false,
+    }),
+  ).toMatchObject({ state: "recognized", format: "mega-drive-rom" });
+  // 233 and 489 blocks put 0xE9, the ESP image magic, in the copier
+  // header's block-count byte. The SMD signature is decided before the ESP
+  // image, and before the ESP flash layout needs another read. The prefix
+  // reaches the ISO 9660 descriptor at 32 KiB, as inventory routes read it.
+  for (const blocks of [233, 489]) {
+    const collides = interleaveMegaDriveSmd(
+      megaDriveRom({ imageBytes: blocks * 16 * 1024 }),
+    );
+    expect(collides[0]).toBe(0xe9);
+    for (const espFlashLayout of [false, undefined])
+      expect(
+        recognizeArtifactFormat({
+          prefix: collides.subarray(0, 0x9000),
+          fileSize: collides.length,
+          espFlashLayout,
+        }),
+      ).toMatchObject({ state: "recognized", format: "mega-drive-rom" });
+  }
+  const elf = megaDriveRom();
+  elf[0] = 0x7f;
+  elf[1] = 0x45;
+  elf[2] = 0x4c;
+  elf[3] = 0x46;
+  expect(recognize(elf)?.format).not.toBe("mega-drive-rom");
+  const mz = megaDriveRom();
+  mz[0] = 0x4d;
+  mz[1] = 0x5a;
+  expect(recognize(mz)?.format).not.toBe("mega-drive-rom");
 });
 
 it("does not recognize a plain ar archive that is not a Debian package", () => {
