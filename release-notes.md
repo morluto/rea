@@ -338,6 +338,7 @@
 * **contracts/mcp:** collapse Evidence wire schemas, project type lists, preserve discover_tools guidance ([#13752](https://github.com/morluto/rea/issues/13752)) ([f6a83f1](https://github.com/morluto/rea/commit/f6a83f1fcf6a1fa95a69ade0b0176f19516015fd))
 * **cutter/ghidra:** fix Cutter DAG limit rejection, guard Ghidra x86-32 SEH scan, and cache referenced address lookups ([#13478](https://github.com/morluto/rea/issues/13478)) ([ccdc887](https://github.com/morluto/rea/commit/ccdc887dc1b640b151e1cd594201a5406d72b8a2))
 * **cyclonedx:** keep recorded tool references unique ([#13425](https://github.com/morluto/rea/issues/13425)) ([7db00e8](https://github.com/morluto/rea/commit/7db00e8fd6306b880a7f25e5418de5a475761485))
+* **deb:** preserve byte-counted PAX values ([#14958](https://github.com/morluto/rea/issues/14958)) ([8ff3570](https://github.com/morluto/rea/commit/8ff3570430ad682061b7932b9953d45b904cb487))
 * **deb:** preserve Unicode separators in md5sums filenames ([#14854](https://github.com/morluto/rea/issues/14854)) ([0a15311](https://github.com/morluto/rea/commit/0a1531145c4eb9e2504f6dafb11937e49b64df8a))
 * **decompile:** keep the functions directory identity on mounts that renumber after chmod ([#14324](https://github.com/morluto/rea/issues/14324)) ([217f498](https://github.com/morluto/rea/commit/217f498945f656cef207118d241f68a80de51d6c))
 * **delivery:** summarize by size only where the summary can be paged ([89919c8](https://github.com/morluto/rea/commit/89919c836d690e62b178880fd0c65e0303a33f3f))
