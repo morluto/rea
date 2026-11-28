@@ -1,5 +1,7 @@
 import { execFile, spawn } from "node:child_process";
+import { constants } from "node:fs";
 import {
+  access,
   chmod,
   mkdir,
   readFile,
@@ -8,7 +10,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { delimiter, isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
 
 import { spawn as spawnPty } from "@lydell/node-pty";
@@ -200,6 +202,45 @@ describe("installer reported version", () => {
       stderr:
         "REA installation failed: the installed REA version could not be read. Reinstall the requested version, then retry.\n",
     });
+  });
+});
+
+describe("installer PATH report", () => {
+  // Both cases run with a fixture-only PATH: a host `rea` in /usr/bin or /bin
+  // would otherwise satisfy the installer's `command -v rea` and the fixture
+  // would stop deciding the outcome. The fixture bin carries every command
+  // install.sh resolves.
+  it("reports the unreachable installed command and its directory", async () => {
+    const fixture = await createFixture();
+    const result = await runInstaller(
+      fixture,
+      ["--version", "0.3.0", "--no-setup"],
+      { PATH: fixture.bin },
+    );
+    expect(result.stdout).toContain("REA 0.3.0 is installed");
+    expect(result.stdout).toContain(
+      `NOTE: the installed command is not on PATH: ${join(fixture.home, ".local/bin/rea")}\n`,
+    );
+    expect(result.stdout).toContain(
+      `Add ${join(fixture.home, ".local/bin")} to PATH to run rea without a path.\n`,
+    );
+    expect(result.stderr).toBe("");
+  });
+
+  it("stays quiet when the installed command already resolves on PATH", async () => {
+    const fixture = await createFixture();
+    const result = await runInstaller(
+      fixture,
+      ["--version", "0.3.0", "--no-setup"],
+      {
+        PATH: `${join(fixture.home, ".local/bin")}:${fixture.bin}`,
+      },
+    );
+    expect(result.stdout).toContain("REA 0.3.0 is installed");
+    expect(result.stdout).not.toContain(
+      "NOTE: the installed command is not on PATH:",
+    );
+    expect(result.stderr).toBe("");
   });
 });
 
@@ -590,11 +631,49 @@ printf '%s\n' "$*" >> "$FAKE_REA_LOG"
 exit 0
 `,
     ),
-    ...["chmod", "cp", "mkdir", "tr"].map((command) =>
-      symlink(`/usr/bin/${command}`, join(bin, command)),
-    ),
+    // Point at the command the host actually has: `chmod` and `cp` live in
+    // /usr/bin on Linux but in /bin on macOS, so a fixed /usr/bin target leaves
+    // a dangling link there and the fixture stops deciding the outcome.
+    ...(await Promise.all(
+      ["chmod", "cp", "dirname", "mkdir", "tr"].map(async (command) => {
+        const target = await hostExecutable(command);
+        if (target === undefined)
+          throw new Error(
+            `The installer test fixture needs ${command} on PATH or in /usr/bin or /bin.`,
+          );
+        await symlink(target, join(bin, command));
+      }),
+    )),
   ]);
   return { home, bin, temporary, npmLog, reaLog, installerStderrLog };
+};
+
+/**
+ * Absolute path of one command the fixture must carry, resolved against the
+ * host PATH first and the standard binary directories second. macOS and Linux
+ * disagree about which of them holds `chmod`, `cp`, `mkdir` and `dirname`.
+ */
+const hostExecutable = async (command: string): Promise<string | undefined> => {
+  const directories = [
+    ...new Set([
+      // A relative PATH entry resolves against the test runner's cwd, and a
+      // fixture symlink to it would later resolve against the home directory
+      // the installer runs in, so only absolute entries can be linked.
+      ...(process.env.PATH ?? "")
+        .split(delimiter)
+        .filter((entry) => entry.length > 0 && isAbsolute(entry)),
+      "/usr/bin",
+      "/bin",
+    ]),
+  ];
+  for (const directory of directories) {
+    const candidate = join(directory, command);
+    try {
+      await access(candidate, constants.X_OK);
+      return candidate;
+    } catch {}
+  }
+  return undefined;
 };
 
 const executable = async (path: string, source: string): Promise<void> => {
