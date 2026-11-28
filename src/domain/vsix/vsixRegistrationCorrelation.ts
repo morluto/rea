@@ -52,6 +52,8 @@ const registrationSchema = z.strictObject({
   column: z.int().nonnegative().nullable(),
   loader_authority: z.literal("candidate").nullable(),
   wrapper: z.literal("unverified").nullable(),
+  replacement: z.literal("possible").nullable(),
+  identity: z.literal("possible").nullable(),
 });
 type Registration = z.output<typeof registrationSchema>;
 
@@ -119,6 +121,8 @@ const calleeSchema = z.object({
   path: z.tuple([z.string(), z.enum(REGISTRATIONS)]),
   loader_authority: z.literal("candidate").optional(),
   wrapper: z.literal("unverified").optional(),
+  replacement: z.literal("possible").optional(),
+  identity: z.literal("possible").optional(),
 });
 const argumentsSchema = z.array(
   z.object({ index: z.number(), value: z.unknown() }),
@@ -140,6 +144,7 @@ const registrationsOf = (graph: JavaScriptSemanticGraph) => {
     custom_editor: new Map(),
   };
   const unresolved: Registration[] = [];
+  const unresolvedKinds = new Set<Kind>();
   for (const node of graph.nodes) {
     if (node.kind !== "call-site") continue;
     const callee = calleeSchema.safeParse(node.properties.module_callee);
@@ -154,11 +159,14 @@ const registrationsOf = (graph: JavaScriptSemanticGraph) => {
       column: start?.column ?? null,
       loader_authority: callee.data.loader_authority ?? null,
       wrapper: callee.data.wrapper ?? null,
+      replacement: callee.data.replacement ?? null,
+      identity: callee.data.identity ?? null,
     };
     const literals = argumentsSchema.safeParse(node.properties.arguments);
     const id = literals.data?.find(({ index }) => index === 0)?.value;
     if (typeof id !== "string") {
       unresolved.push(registration);
+      unresolvedKinds.add(REGISTRATION_KINDS[path]);
       continue;
     }
     const byId = byKind[REGISTRATION_KINDS[path]];
@@ -166,7 +174,7 @@ const registrationsOf = (graph: JavaScriptSemanticGraph) => {
     if (found === undefined) byId.set(id, [registration]);
     else found.push(registration);
   }
-  return { byKind, unresolved };
+  return { byKind, unresolved, unresolvedKinds };
 };
 
 /**
@@ -185,16 +193,21 @@ const joinDeclarations = (
     .sort(compareUnicodeCodePoints)
     .map((id) => {
       const registrations = found.get(id) ?? [];
+      // A call that may not reach the VS Code function proves no registration.
+      const firm = registrations.some(
+        ({ replacement, identity }) =>
+          replacement === null && identity === null,
+      );
       const status: (typeof STATUSES)[number] =
         declared === null
           ? "undetermined"
           : !declared.has(id)
-            ? allDeclared
+            ? allDeclared && firm
               ? "registered_undeclared"
               : "undetermined"
-            : registrations.length > 0
+            : firm
               ? "registered"
-              : complete
+              : complete && registrations.length === 0
                 ? "not_found"
                 : "undetermined";
       return { id, status, text: declared?.get(id) ?? null, registrations };
@@ -293,16 +306,20 @@ export const correlateVsixRegistrations = ({
   manifestRead,
   semanticGraph,
 }: CorrelationInput) => {
-  const { byKind, unresolved } = registrationsOf(semanticGraph);
+  const { byKind, unresolved, unresolvedKinds } =
+    registrationsOf(semanticGraph);
   const declared = firstById(
     contributes.commands.map(({ command, title }) => [command, title]),
   );
   const keys = groupBy(contributes.keybindings, ({ key }) => key);
   const { entries, complete } = callCoverage(semanticGraph, entryPoints);
   // An unread manifest or a capped older list cannot show an ID is undeclared.
-  const allDeclared = manifestRead && contributes.commands_omitted === 0;
+  const allDeclared =
+    manifestRead &&
+    contributes.commands_omitted === 0 &&
+    contributes.commands.every(({ command }) => command !== null);
   const commands = joinDeclarations(declared, byKind.command, {
-    complete,
+    complete: complete && !unresolvedKinds.has("command"),
     allDeclared,
   }).map(({ id, status, text, registrations }) => ({
     command: id,
@@ -321,7 +338,15 @@ export const correlateVsixRegistrations = ({
               .map(({ id, label }) => [id, label]),
           ),
       byKind[kind],
-      { complete, allDeclared: manifestRead },
+      {
+        complete: complete && !unresolvedKinds.has(kind),
+        // A row without a readable identifier may declare any ID of its kind.
+        allDeclared:
+          manifestRead &&
+          contributes.declarations?.every(
+            (row) => row.kind !== kind || row.id !== null,
+          ) === true,
+      },
     ).map(({ id, status, text, registrations }) => ({
       kind,
       id,

@@ -2146,3 +2146,157 @@ it("still resolves slash-separated and extensionless entry points, including bac
     present: true,
   });
 });
+
+it.each([
+  ["a string for commands", { commands: "demo.run" }],
+  ["a non-object contributes", "demo"],
+])("marks %s as declarations that were not read", async (_, contributes) => {
+  const bytes = await vsixPackageFixture({
+    packageJson: JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      contributes,
+    }),
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.contributes.commands_omitted).toBe(1);
+});
+
+it.each(["demo", null, []])(
+  "keeps menus and keybindings unknown when contributes is %j",
+  async (contributes) => {
+    const bytes = await vsixPackageFixture({
+      packageJson: JSON.stringify({
+        name: "hello",
+        publisher: "demo",
+        version: "1.2.3",
+        contributes,
+      }),
+    });
+    const report = vsixPackageSchema.parse(
+      await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+    );
+    expect(report.contributes.menus).toBeNull();
+    expect(report.contributes.keybindings).toBeNull();
+    expect(report.contributes.declarations).toBeNull();
+    expect(report.contributes.settings).toBeNull();
+  },
+);
+
+it.each(["demo", null, 1])(
+  "keeps menus and keybindings declared as %j unknown",
+  async (unsupported) => {
+    const bytes = await vsixPackageFixture({
+      packageJson: JSON.stringify({
+        name: "hello",
+        publisher: "demo",
+        version: "1.2.3",
+        contributes: { menus: unsupported, keybindings: unsupported },
+      }),
+    });
+    const report = vsixPackageSchema.parse(
+      await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+    );
+    expect(report.contributes.menus).toBeNull();
+    expect(report.contributes.keybindings).toBeNull();
+  },
+);
+
+it.each([
+  { menus: { "editor/context": ["demo.a"] }, keybindings: ["ctrl+h"] },
+  { menus: { "editor/context": [null] }, keybindings: [[]] },
+  { menus: { "editor/context": "demo.a" }, keybindings: [{}, 1] },
+  {
+    menus: { "editor/context": [{ command: 7 }] },
+    keybindings: [{ command: "demo.a", key: 7 }],
+  },
+  {
+    menus: { "editor/context": [{ command: null }] },
+    keybindings: [{ command: ["demo.a"], key: "ctrl+h" }],
+  },
+])("keeps unreadable contribution rows unknown: %j", async (contributes) => {
+  const bytes = await vsixPackageFixture({
+    packageJson: JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      contributes,
+    }),
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.contributes.menus).toBeNull();
+  expect(report.contributes.keybindings).toBeNull();
+});
+
+it.each([
+  ["a non-object row", ["demo_tool"]],
+  ["a non-text identifier", [{ name: 7 }]],
+  ["a string instead of rows", "demo_tool"],
+])("keeps readable declarations beside %s", async (_, languageModelTools) => {
+  const bytes = await vsixPackageFixture({
+    packageJson: JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      contributes: {
+        chatParticipants: [{ id: "demo.chat", name: ["bad"] }],
+        languageModelTools,
+      },
+    }),
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.contributes.declarations).toEqual([
+    { kind: "chat_participant", id: "demo.chat", label: null },
+    { kind: "language_model_tool", id: null, label: null },
+  ]);
+});
+
+it.each([
+  ["a string for views", "demo.tree"],
+  ["a string for a view container", { explorer: "demo.tree" }],
+  ["a non-object view", { explorer: ["demo.tree"] }],
+])("keeps %s as an unread view", async (_, views) => {
+  const bytes = await vsixPackageFixture({
+    packageJson: JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      contributes: { views },
+    }),
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.contributes.declarations).toEqual([
+    { kind: "view", id: null, label: null },
+  ]);
+});
+
+it.each([
+  ["a non-object configuration", ["demo", { properties: { "demo.a": {} } }]],
+  [
+    "non-object properties",
+    [{ properties: "demo" }, { properties: { "demo.a": {} } }],
+  ],
+])("reports %s as unread settings", async (_, configuration) => {
+  const bytes = await vsixPackageFixture({
+    packageJson: JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      contributes: { configuration },
+    }),
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.contributes.settings).toEqual([{ key: "demo.a", types: [] }]);
+  expect(report.limitations).toContain(VSIX_LIMITATIONS.unreadSettings);
+});

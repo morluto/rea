@@ -1,4 +1,7 @@
-import type { JavaScriptSemanticIr } from "./javascriptSemanticIr.js";
+import type {
+  JavaScriptModuleOrigin,
+  JavaScriptSemanticIr,
+} from "./javascriptSemanticIr.js";
 import { UNKNOWN_REQUIRE_LOADER_REASON } from "./javascriptSemanticProvenance.js";
 
 /** A call whose callee is a static member chain rooted in one module import. */
@@ -9,93 +12,150 @@ export interface JavaScriptModuleCallee {
   readonly loader_authority?: "candidate";
   /** The module reached the binding through a helper whose effect is unchecked. */
   readonly wrapper?: "unverified";
+  /** The source also writes this member or an object containing it. */
+  readonly replacement?: "possible";
+  /** The callee's binding may hold something other than this module. */
+  readonly identity?: "possible";
 }
 
 /** A default import of a CommonJS host module names the module itself. */
 const withoutDefault = (path: readonly string[]): readonly string[] =>
   path[0] === "default" ? path.slice(1) : path;
 
+/**
+ * An origin's member path. A `default` from an import names the module; one
+ * written on a `require` is a real member.
+ */
+const originPath = ({
+  importedPath,
+  resolutionMode,
+  importSyntax,
+}: JavaScriptModuleOrigin): readonly string[] =>
+  resolutionMode === "require" && importSyntax !== true
+    ? importedPath
+    : withoutDefault(importedPath);
+
 type SemanticBinding = JavaScriptSemanticIr["bindings"][number];
 
-/**
- * Whether the file writes the called member or an object containing it, through
- * the same binding or another binding of the same module.
- */
-const replacedMembers = (
-  ir: Pick<JavaScriptSemanticIr, "objectOperations">,
-  bindings: ReadonlyMap<string, SemanticBinding>,
-) => {
-  const written = new Set<string>();
-  for (const { kind, objectBindingId, propertyPath } of ir.objectOperations) {
-    if (kind !== "write" || objectBindingId === null || propertyPath === null)
-      continue;
-    written.add(JSON.stringify([objectBindingId, ...propertyPath]));
-    for (const origin of bindings.get(objectBindingId)?.provenance.origins ??
-      [])
-      written.add(
-        JSON.stringify([
-          origin.specifier,
-          ...withoutDefault([...origin.importedPath, ...propertyPath]),
-        ]),
-      );
-  }
-  return (root: string, path: readonly string[]): boolean =>
-    path.some((_, end) =>
-      written.has(JSON.stringify([root, ...path.slice(0, end + 1)])),
-    );
+/** Written member paths, one level per property name. */
+interface WrittenSlot {
+  written: boolean;
+  readonly members: Map<string, WrittenSlot>;
+}
+
+const emptySlot = (): WrittenSlot => ({ written: false, members: new Map() });
+
+const childSlot = (
+  slots: Map<string, WrittenSlot>,
+  key: string,
+): WrittenSlot => {
+  const found = slots.get(key);
+  if (found !== undefined) return found;
+  const created = emptySlot();
+  slots.set(key, created);
+  return created;
 };
 
 /**
+ * Whether the source writes a member or an object containing it, through the
+ * same binding or another binding of the module. Write order and execution are
+ * not established, so a write anywhere leaves the member possibly replaced.
+ */
+const writtenMembers = (
+  ir: Pick<JavaScriptSemanticIr, "objectOperations">,
+  bindings: ReadonlyMap<string, SemanticBinding>,
+) => {
+  // Roots are binding IDs and module specifiers.
+  const roots = new Map<string, WrittenSlot>();
+  const record = (root: string, path: readonly string[]) => {
+    let slot = childSlot(roots, root);
+    for (const key of path) slot = childSlot(slot.members, key);
+    slot.written = true;
+  };
+  for (const operation of ir.objectOperations) {
+    const { kind, objectBindingId, requireOrigin, propertyPath } = operation;
+    if (kind !== "write") continue;
+    // A computed key may name any member of the object it is written on.
+    const path = propertyPath ?? [];
+    if (objectBindingId !== null) record(objectBindingId, path);
+    for (const origin of requireOrigin !== undefined
+      ? [requireOrigin]
+      : objectBindingId === null
+        ? []
+        : (bindings.get(objectBindingId)?.provenance.origins ?? []))
+      record(origin.specifier, [...originPath(origin), ...path]);
+  }
+  /** Walks the path once, so long member chains stay linear. */
+  return (root: string, path: readonly string[]): boolean => {
+    let slot = roots.get(root);
+    for (const key of path) {
+      if (slot === undefined || slot.written) break;
+      slot = slot.members.get(key);
+    }
+    return slot?.written === true;
+  };
+};
+
+const POSSIBLE = { replacement: "possible" } as const;
+
+/**
  * Module-rooted callees by call site ID, from the call's recorded access path
- * and its root binding's single module origin. A reassigned binding, several
- * origins or an unrooted callee are omitted.
+ * and its module origin: a direct `require`, or the root binding's. A binding
+ * that may hold something else is marked a possible identity, preferring the
+ * origin of `preferred`. A binding with no known origin and an unrooted callee
+ * are omitted.
  */
 export const semanticModuleCallees = (
   ir: Pick<JavaScriptSemanticIr, "bindings" | "callSites" | "objectOperations">,
+  preferred?: string,
 ): ReadonlyMap<string, JavaScriptModuleCallee> => {
   const bindings = new Map(
     ir.bindings.map((binding) => [binding.bindingId, binding]),
   );
-  const replaced = replacedMembers(ir, bindings);
+  const written = writtenMembers(ir, bindings);
   const callees = new Map<string, JavaScriptModuleCallee>();
   for (const { callSiteId, calleeAccess } of ir.callSites) {
     if (calleeAccess === undefined) continue;
-    const { wrappedSpecifier, path } = calleeAccess;
+    const { bindingId, wrappedSpecifier, requireOrigin, path } = calleeAccess;
     if (wrappedSpecifier !== undefined) {
-      if (replaced(calleeAccess.bindingId, path)) continue;
       callees.set(callSiteId, {
         specifier: wrappedSpecifier,
         path: withoutDefault(path),
         loader_authority: "candidate",
         wrapper: "unverified",
+        ...(bindingId !== null && written(bindingId, path) ? POSSIBLE : {}),
       });
       continue;
     }
-    const binding = bindings.get(calleeAccess.bindingId);
-    if (binding === undefined) continue;
-    const { provenance, definitions } = binding;
-    const [origin, ...others] = provenance.origins;
-    if (origin === undefined || others.length > 0) continue;
-    const candidate = origin.loaderAuthority === "candidate";
-    // Other ambiguity reasons concern the value itself, not only its loader.
-    if (
-      provenance.status !== "module" &&
-      provenance.reason !== UNKNOWN_REQUIRE_LOADER_REASON
-    )
-      continue;
-    if (definitions.some(({ kind }) => kind === "assignment")) continue;
-    // Only the import itself supplies a `default` to drop; one written in the
-    // source is a real member access.
-    const member = [...withoutDefault(origin.importedPath), ...path];
-    if (
-      replaced(calleeAccess.bindingId, path) ||
-      replaced(origin.specifier, member)
-    )
-      continue;
+    let origin = requireOrigin;
+    let uncertain = false;
+    if (bindingId !== null) {
+      const binding = bindings.get(bindingId);
+      if (binding === undefined) continue;
+      const { provenance, definitions } = binding;
+      const { origins } = provenance;
+      origin =
+        origins.find(({ specifier }) => specifier === preferred) ?? origins[0];
+      // Other ambiguity reasons concern the value itself, not only its loader.
+      uncertain =
+        origins.length > 1 ||
+        (provenance.status !== "module" &&
+          provenance.reason !== UNKNOWN_REQUIRE_LOADER_REASON) ||
+        definitions.some(({ kind }) => kind === "assignment");
+    }
+    if (origin === undefined) continue;
+    const member = [...originPath(origin), ...path];
     callees.set(callSiteId, {
       specifier: origin.specifier,
       path: member,
-      ...(candidate ? { loader_authority: "candidate" as const } : {}),
+      ...(origin.loaderAuthority === "candidate"
+        ? { loader_authority: "candidate" as const }
+        : {}),
+      ...((bindingId !== null && written(bindingId, path)) ||
+      written(origin.specifier, member)
+        ? POSSIBLE
+        : {}),
+      ...(uncertain ? { identity: "possible" as const } : {}),
     });
   }
   return callees;
