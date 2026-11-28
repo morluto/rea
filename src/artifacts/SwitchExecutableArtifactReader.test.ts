@@ -178,6 +178,25 @@ it("inventories NRO segments and ASET icon, NACP and RomFS", async () => {
   }
 });
 
+it("keeps NRO assets when bytes follow the last ASET range", async () => {
+  const image = buildNro({ assets: { romfs: Buffer.from("romfs-bytes") } });
+  const suffix = Buffer.from("extra");
+  const path = await writeCarrier(
+    "extended.nro",
+    Buffer.concat([image, suffix]),
+  );
+  const snapshot = await scanCanonicalArtifactInventory(path);
+  expect(snapshot.occurrences.map((row) => row.logical_path)).toContain(
+    "assets/romfs.bin",
+  );
+  expect(snapshot.coverage.status).toBe("unknown");
+  expect(snapshot.limitations).toEqual(
+    expect.arrayContaining([
+      expect.stringContaining(`5 byte(s) at offset ${String(image.length)}`),
+    ]),
+  );
+});
+
 it("marks the NRO asset section absent when no ASET follows", async () => {
   const path = await writeCarrier("plain.nro", buildNro());
   const snapshot = await scanCanonicalArtifactInventory(path);

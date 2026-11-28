@@ -71,7 +71,9 @@ with a `truncated` limitation, and opening it is refused while the rest of the
 inventory is kept. An NRO file shorter than its declared image size adds a
 limitation. Bytes after an NRO image that do not start with `ASET`, and an
 `ASET` header cut short, are reported as uninterpreted; the segments are still
-listed.
+listed. Bytes beyond the end of a valid ASET header and its declared asset
+ranges also leave coverage `unknown`. The inventory reports that suffix's file
+offset and length while retaining the declared assets.
 
 ## CLI
 
