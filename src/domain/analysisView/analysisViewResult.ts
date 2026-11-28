@@ -72,7 +72,7 @@ import {
   espNvsViewRequestSchema,
 } from "./espNvsView.js";
 import {
-  firmwareVectorTablePageContextSchema,
+  firmwareVectorTableSummarySchema,
   firmwareVectorTableViewItemsSchema,
   firmwareVectorTableViewRequestSchema,
 } from "./firmwareVectorTableView.js";
@@ -894,7 +894,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     kind: z.literal("firmware-vector-table"),
     parent_operation: z.literal("inspect_firmware_vector_table"),
     view: firmwareVectorTableViewRequestSchema,
-    vector_table: firmwareVectorTablePageContextSchema,
+    vector_table: firmwareVectorTableSummarySchema,
     items: firmwareVectorTableViewItemsSchema,
   }),
   z.strictObject({

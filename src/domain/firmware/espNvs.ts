@@ -93,13 +93,9 @@ export const inspectEspNvsInputSchema = espNvsProviderInputSchema.extend({
     ),
 });
 
-export type InspectEspNvsInput = z.output<typeof inspectEspNvsInputSchema>;
-
 export const inspectEspNvsRequestSchema = inspectEspNvsInputSchema.extend({
   detail: z.enum(["complete", "summary"]).optional(),
 });
-
-export type InspectEspNvsRequest = z.output<typeof inspectEspNvsRequestSchema>;
 
 /**
  * ESP-IDF `Page::PageState`: UNINITIALIZED (0xffffffff) is reported as
