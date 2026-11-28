@@ -340,12 +340,14 @@ const runSetupCommand = async (
         result.plannedActions,
         result.remediation,
         "Dry run complete. No changes were made.",
+        result.hopperInstallUnavailable,
       );
     else if (result.status === "needs_confirmation")
       renderSetupPlan(
         result.plannedActions,
         result.remediation,
         "No changes were made.",
+        result.hopperInstallUnavailable,
       );
     else renderInteractiveSetupResult(result, environment, journey);
   }
