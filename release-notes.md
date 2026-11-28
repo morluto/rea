@@ -488,6 +488,7 @@
 * **ida:** report the supervisor's open deadline as provider_timeout ([ddf2cd9](https://github.com/morluto/rea/commit/ddf2cd9102ddcc6da901aa37f752223de61b289d)), refs [#13286](https://github.com/morluto/rea/issues/13286)
 * **interface-builder:** preserve budget-omitted destination evidence ([#13674](https://github.com/morluto/rea/issues/13674)) ([e1be55d](https://github.com/morluto/rea/commit/e1be55dcaff944a06ca6eccdca9090f74a246cbb))
 * **iso9660:** read Joliet trees whose .. records name their own directory ([#14817](https://github.com/morluto/rea/issues/14817)) ([55bb5e7](https://github.com/morluto/rea/commit/55bb5e78a38599c408009e0dbd31c12a035427c8))
+* **iso9660:** read the descriptor's root record from its fixed 34-byte field ([#15002](https://github.com/morluto/rea/issues/15002)) ([43e0567](https://github.com/morluto/rea/commit/43e0567ebfeb904a15931526e35a3beb1b3841c4))
 * **java:** classify Maven BOM imports by declaration scope ([#13393](https://github.com/morluto/rea/issues/13393)) ([0482135](https://github.com/morluto/rea/commit/048213525a661f213387f9ad8811383f5fb87540))
 * **java:** enforce format-specific metadata reports at the Evidence boundary ([#13400](https://github.com/morluto/rea/issues/13400)) ([103e1a7](https://github.com/morluto/rea/commit/103e1a71f24c7566d3d05d00409b652cc2874bd1))
 * **java:** preserve Gradle declaration spelling in Evidence ([#13397](https://github.com/morluto/rea/issues/13397)) ([d0f3a48](https://github.com/morluto/rea/commit/d0f3a4858e43ccb80ecbd3d27c0b82405a7c1a31))
