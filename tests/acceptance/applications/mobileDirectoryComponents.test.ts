@@ -18,7 +18,6 @@ import { artifactInspectionResultSchema } from "../../../src/domain/artifactInsp
 import { artifactInventoryResultSchema } from "../../../src/domain/artifactGraph.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { harmonyApplicationProjectionResultSchema } from "../../../src/domain/harmony/harmonyApplication.js";
-import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest, type CliInvocation } from "../../support/cli/cliFixture.js";
 
@@ -143,8 +142,8 @@ cliTest.for(fixtures)(
   "preserves entry kinds in $family projections through CLI and stdio MCP",
   async (fixture, { cli }) => {
     const root = await createTestTempDirectory("rea-mobile-directory-");
-    const environment = { HOME: root, USERPROFILE: root };
-    const { call } = await connectLocalToolsMcp(environment);
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
     for (const mode of ["directories", "files", "nested"] as const) {
       // Keep one fresh dispatcher check per family; reuse later commands.
       const run = (invocation: CliInvocation) =>
@@ -171,7 +170,6 @@ cliTest.for(fixtures)(
 
       const inspected = await run({
         arguments: ["inspect-artifact", path, "--json"],
-        environment,
       });
       expect(inspected.exitCode, inspected.stderr).toBe(0);
       const inventoryEvidence = parseEvidence(inspected.json);
@@ -197,7 +195,6 @@ cliTest.for(fixtures)(
       const originalInput = JSON.stringify(input);
       const projected = await run({
         arguments: [fixture.command, originalInput, "--json"],
-        environment,
       });
       expect(projected.exitCode, projected.stderr).toBe(0);
       const evidence = parseEvidence(projected.json);
@@ -318,8 +315,8 @@ cliTest.for([
   "preserves encrypted $family path facts through CLI and stdio MCP",
   async (fixture, { cli }) => {
     const root = await createTestTempDirectory("rea-mobile-encrypted-paths-");
-    const environment = { HOME: root, USERPROFILE: root };
-    const { call } = await connectLocalToolsMcp(environment);
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
     for (const encrypted of [false, true]) {
       const run = (invocation: CliInvocation) =>
         cli.run({ ...invocation, freshProcess: !encrypted });
@@ -335,14 +332,12 @@ cliTest.for([
       await writeFile(path, bytes);
       const inspected = await run({
         arguments: ["inspect-artifact", path, "--json"],
-        environment,
       });
       expect(inspected.exitCode, inspected.stderr).toBe(0);
       const inventory = parseEvidence(inspected.json);
       const input = { inventory_evidence: [inventory] };
       const projected = await run({
         arguments: [fixture.command, JSON.stringify(input), "--json"],
-        environment,
       });
       expect(projected.exitCode, projected.stderr).toBe(0);
       const evidence = parseEvidence(projected.json);
