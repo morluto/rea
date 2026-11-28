@@ -408,7 +408,7 @@ linuxIt("completes the one-shot CLI on a target that reads stdin", async () => {
   process.exitCode = 0;
   try {
     const result = await rizinCommand(current.launcher).run({
-      formatExplicit: false,
+      structuredOutput: false,
       args: { path: "/usr/bin/cat", command: "dr" },
       options: { inferiorTty: current.terminal.path },
     });
@@ -487,7 +487,7 @@ linuxIt(
     process.exitCode = 0;
     try {
       const result = await rizinCommand(current.launcher).run({
-        formatExplicit: false,
+        structuredOutput: false,
         args: { path: "/usr/bin/cat", command: "dr" },
         options: { inferiorTty: current.terminal.path },
       });

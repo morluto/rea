@@ -1,3 +1,8 @@
+import {
+  fileStatStamp,
+  sameFileStatStamp,
+  type FileStatStamp,
+} from "../filesystem/FileStatStamp.js";
 import type { ProcessInspectionFailure } from "../process/ProcessInspectionCleanup.js";
 import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
@@ -5,6 +10,7 @@ import { processInspectionFailure } from "./OwnedCommandCleanup.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
+import { stat } from "node:fs/promises";
 
 import { err, ok, type Result } from "../domain/result.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -165,6 +171,14 @@ export class XcrunCommandRunner implements NativeCommandRunner {
     ProviderCleanupError
   >();
   #cleanupAttempt: Promise<readonly NativeCommandCleanupFailure[]> | undefined;
+  readonly #digests = new Map<
+    string,
+    {
+      readonly path: string;
+      readonly stamp: FileStatStamp;
+      readonly sha256: string;
+    }
+  >();
   constructor(
     environment: Readonly<NodeJS.ProcessEnv>,
     private readonly resolveTool: NativeToolResolver = (
@@ -172,7 +186,15 @@ export class XcrunCommandRunner implements NativeCommandRunner {
       signal,
       launcher,
       timeoutMs,
-    ) => resolveXcrunTool(tool, this.environment, signal, launcher, timeoutMs),
+    ) =>
+      resolveXcrunTool(
+        tool,
+        this.environment,
+        signal,
+        launcher,
+        timeoutMs,
+        (path, signal) => this.#digestTool(tool, path, signal),
+      ),
     private readonly launcher?: NativeCommandLauncher,
   ) {
     this.environment = snapshotEnvironment(environment, HOST_PLATFORM.platform);
@@ -188,6 +210,35 @@ export class XcrunCommandRunner implements NativeCommandRunner {
         err(new NativeCommandFailure(tool, "unavailable")),
       );
     return this.#runAfterCleanup(tool, arguments_, options);
+  }
+
+  async #digestTool(
+    tool: string,
+    path: string,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    const before = await statExecutable(path);
+    const cached = this.#digests.get(tool);
+    if (
+      signal?.aborted !== true &&
+      before !== undefined &&
+      cached?.path === path &&
+      sameFileStatStamp(cached.stamp, before)
+    )
+      return cached.sha256;
+
+    this.#digests.delete(tool);
+    const sha256 = await hashFile(path, signal);
+    if (before !== undefined) {
+      const after = await statExecutable(path);
+      if (
+        signal?.aborted !== true &&
+        after !== undefined &&
+        sameFileStatStamp(before, after)
+      )
+        this.#digests.set(tool, { path, stamp: after, sha256 });
+    }
+    return sha256;
   }
 
   /** Retry every retained owner; a failed retry prevents another command launch. */
@@ -365,6 +416,18 @@ const ALLOWED_TOOLS = new Set([
   "vtool",
 ]);
 
+const statExecutable = async (
+  filePath: string,
+): Promise<FileStatStamp | undefined> => {
+  try {
+    const info = await stat(filePath, { bigint: true });
+    if (!info.isFile()) return undefined;
+    return fileStatStamp(info);
+  } catch {
+    return undefined;
+  }
+};
+
 /** Locate an Xcode tool through `xcrun --find` and sample its executable digest. */
 export const resolveXcrunTool = async (
   tool: string,
@@ -372,6 +435,7 @@ export const resolveXcrunTool = async (
   signal?: AbortSignal,
   launcher?: NativeCommandLauncher,
   timeoutMs?: number,
+  digest: (path: string, signal?: AbortSignal) => Promise<string> = hashFile,
 ): Promise<Result<ResolvedTool, NativeCommandFailure>> => {
   const found = await captureProcess(
     "/usr/bin/xcrun",
@@ -442,7 +506,7 @@ export const resolveXcrunTool = async (
     const selected = await selectArtifactCommandPath(candidate, signal);
     return ok({
       ...selected,
-      sha256: await hashFile(selected.resolvedPath, signal),
+      sha256: await digest(selected.resolvedPath, signal),
     });
   } catch (cause: unknown) {
     const capture = failureCapture(found.value, false);

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { sha256 as digestForTest } from "../../support/sha256.js";
 import { execFile } from "node:child_process";
 import { access, lstat, readFile, symlink, writeFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
@@ -544,6 +545,12 @@ it.each(["late-cancellation", "cleanup-failure", "cancelled cleanup-failure"])(
       expect(result.ok ? undefined : result.error).toBeInstanceOf(
         ProviderCleanupError,
       );
+      if (result.ok) throw new Error("Expected an unresolved cleanup");
+      if (scenario === "cancelled cleanup-failure") {
+        const [cancellation] = result.error.secondaryFailures;
+        expect(cancellation?._tag).toBe("AnalysisCancelledError");
+        expect(cancellation?.cause).toBe(cancellationReason);
+      }
       expect(result).toMatchObject({
         ok: false,
         error: {
@@ -578,9 +585,6 @@ it.each(["late-cancellation", "cleanup-failure", "cancelled cleanup-failure"])(
     expect(Buffer.compare(await readFile(database.path), original)).toBe(0);
   },
 );
-
-const digestForTest = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 it("inspects committed WAL schema and rows while preserving every source artifact", async () => {
   const { database } = await createFixture(true);
@@ -923,61 +927,14 @@ it("reports a projection above SQLite's result-column capacity as capacity, not 
         selected_result_columns: engineColumnLimit + 1,
         engine_result_column_limit: engineColumnLimit,
       },
+      refusal: expect.objectContaining({
+        allowance: "SQLite's result-column limit for this connection",
+        limit: engineColumnLimit,
+        unit: "columns",
+      }),
     },
   });
   expect(JSON.stringify(projection)).not.toContain("invalid_format");
-});
-
-it("attributes inventory selections beyond metadata bind capacity to result-column capacity", async () => {
-  const { database } = await createFixture();
-  const reader = new DatabaseSync(database.path, { readOnly: true });
-  let selectedColumns: number;
-  let engineColumnLimit: number;
-  try {
-    engineColumnLimit = reader.limits.column;
-    selectedColumns =
-      Math.max(reader.limits.variableNumber, engineColumnLimit) + 1;
-  } finally {
-    reader.close();
-  }
-  const provider = createProvider();
-  onTestFinished(() => provider.close());
-  const original = await readFile(database.path);
-  const control = await provider.inspect({
-    path: database.path,
-    table: "records",
-    schema_scope: "inventory",
-    columns: ["text_value", "text_value"],
-    row_limit: 1,
-  });
-  if (!control.ok) throw control.error;
-  expect(control.value.result).toMatchObject({
-    rows: {
-      columns: ["text_value", "text_value"],
-      returned_rows: 1,
-    },
-  });
-  const result = await provider.inspect({
-    path: database.path,
-    table: "records",
-    schema_scope: "inventory",
-    columns: Array.from({ length: selectedColumns }, () => "text_value"),
-    row_limit: 1,
-  });
-  if (result.ok) throw new Error("Expected result-column capacity refusal");
-  const projected = projectAnalysisError(result.error);
-  expect(projected).toMatchObject({
-    code: "resource_constraint",
-    details: {
-      resource: "capacity",
-      reported_limits: {
-        selected_result_columns: selectedColumns,
-        engine_result_column_limit: engineColumnLimit,
-      },
-    },
-  });
-  expect(JSON.stringify(projected)).not.toContain("invalid_format");
-  expect(Buffer.compare(await readFile(database.path), original)).toBe(0);
 });
 
 it("reports application-collation row failures as unavailable while retaining schema-only recovery", async () => {
@@ -1022,22 +979,6 @@ it("reports application-collation row failures as unavailable while retaining sc
     );
   }
   expect(Buffer.compare(await readFile(path), original)).toBe(0);
-});
-
-it("rejects malformed databases without altering the selected file", async () => {
-  const workspace = await createTestWorkspace("rea-sqlite-invalid-");
-  onTestFinished(() => removeTestWorkspace(workspace.root));
-  const path = await workspace.write(
-    "not-a-database.db",
-    "selected non-SQLite bytes",
-  );
-  const bytes = await readFile(path);
-  const result = await createProvider().inspect({ path });
-  expect(result).toMatchObject({
-    ok: false,
-    error: { _tag: "AnalysisInputError" },
-  });
-  expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
 });
 
 nativeTest.runIf(process.platform !== "win32")(

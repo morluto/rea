@@ -1,33 +1,26 @@
-import { describe, expect, it } from "vitest";
+import { expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { RuleTester } from "oxlint/plugins-dev";
+import { createRuleTester } from "../support/createRuleTester.js";
 import rule from "../../scripts/lint/rules/no-locale-compare.mjs";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { writeRepositoryOxlintConfiguration } from "../fixtures/oxlintConfiguration.js";
 
-RuleTester.describe = describe;
-RuleTester.it = it;
-
-new RuleTester({ languageOptions: { parserOptions: { lang: "ts" } } }).run(
-  "no-locale-compare",
-  rule,
-  {
-    valid: [
-      'const example = "a.localeCompare(b)";',
-      "// a.localeCompare(b)\nconst x = a < b;",
-      "compareUnicodeCodePoints(a, b)",
-    ],
-    invalid: [
-      { code: "a.localeCompare(b)", errors: [{ messageId: "locale" }] },
-      { code: "a.localeCompare (b)", errors: [{ messageId: "locale" }] },
-      { code: 'a["localeCompare"](b)', errors: [{ messageId: "locale" }] },
-      { code: "a[`localeCompare`](b)", errors: [{ messageId: "locale" }] },
-      { code: "a?.localeCompare(b)", errors: [{ messageId: "locale" }] },
-    ],
-  },
-);
+createRuleTester().run("no-locale-compare", rule, {
+  valid: [
+    'const example = "a.localeCompare(b)";',
+    "// a.localeCompare(b)\nconst x = a < b;",
+    "compareUnicodeCodePoints(a, b)",
+  ],
+  invalid: [
+    { code: "a.localeCompare(b)", errors: [{ messageId: "locale" }] },
+    { code: "a.localeCompare (b)", errors: [{ messageId: "locale" }] },
+    { code: 'a["localeCompare"](b)', errors: [{ messageId: "locale" }] },
+    { code: "a[`localeCompare`](b)", errors: [{ messageId: "locale" }] },
+    { code: "a?.localeCompare(b)", errors: [{ messageId: "locale" }] },
+  ],
+});
 
 it("applies the ordering rule to domain production files and excludes tests", async () => {
   const root = await createTestTempDirectory("rea-ordering-lint-");
@@ -42,6 +35,7 @@ it("applies the ordering rule to domain production files and excludes tests", as
     process.execPath,
     [
       resolve("node_modules/oxlint/bin/oxlint"),
+      "--threads=1",
       "-c",
       config,
       "--format",

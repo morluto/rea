@@ -1,9 +1,15 @@
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { analysisViewPageFields } from "./analysisViewPageFields.js";
+import { appendToMapList } from "../appendToMapList.js";
+import {
+  invalidAnalysisViewSubject,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import { z } from "zod";
 import { pcapResultSchemas } from "../pcap/pcapAnalysis.js";
-import { parseAnalysisViewResult } from "./analysisViewParent.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
+import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import { err, ok, type Result } from "../result.js";
+import { ok, type Result } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   ownedView,
@@ -19,11 +25,7 @@ import { evidenceFileTarget } from "../evidence.js";
 
 const captureSchema = pcapResultSchemas.inspect_pcap_capture;
 const fields = captureSchema.shape;
-const pageShape = {
-  kind: z.literal("pcap"),
-  offset: z.int().nonnegative().default(0),
-  limit: z.int().positive().default(64),
-};
+const pageShape = analysisViewPageFields("pcap");
 export const pcapViewRequestSchema = z.discriminatedUnion("facet", [
   z.strictObject({
     ...pageShape,
@@ -119,24 +121,21 @@ export const pcapSummarySchema = captureSchema
       .nullable(),
   });
 type Capture = z.output<typeof captureSchema>;
+type DnsQuery = Capture["dns_queries"][number];
 type PcapView = z.output<typeof pcapViewRequestSchema>;
 type Page = z.output<typeof pcapViewPageSchema>;
+
+const readCaptureParent = createAnalysisViewResultReader(captureSchema);
 
 const parseParent = (
   parent: AnalysisViewParent,
 ): Result<Capture, AnalysisError> => {
-  const parsed = parseAnalysisViewResult(captureSchema, parent);
+  const parsed = readCaptureParent(parent);
   if (!parsed.ok) return parsed;
   const subject = evidenceFileTarget(parent);
   if (subject == null || subject.sha256 !== parsed.value.target.sha256)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message: "Packet parent subject must identify the report's SHA-256.",
-        },
-      ]),
+    return invalidAnalysisViewSubject(
+      "Packet parent subject must identify the report's SHA-256.",
     );
   return ok(parsed.value);
 };
@@ -167,6 +166,65 @@ const summarize = ({
           capinfos: diagnostics.capinfos_stderr.length,
         },
 });
+
+const equalLabelsHex = (
+  left: readonly string[] | null,
+  right: readonly string[] | null,
+): boolean =>
+  left === right ||
+  (left !== null &&
+    right !== null &&
+    left.length === right.length &&
+    left.every((label, index) => label === right[index]));
+
+const dnsQueriesByName = new WeakMap<
+  Capture,
+  ReadonlyMap<string, readonly DnsQuery[]>
+>();
+
+const indexedDnsQueries = (
+  capture: Capture,
+): ReadonlyMap<string, readonly DnsQuery[]> => {
+  let byName = dnsQueriesByName.get(capture);
+  if (byName !== undefined) return byName;
+  const grouped = new Map<string, DnsQuery[]>();
+  for (const entry of capture.dns_queries) {
+    appendToMapList(grouped, entry.query, entry);
+  }
+  byName = grouped;
+  dnsQueriesByName.set(capture, byName);
+  return byName;
+};
+
+const matchesDnsAddressQuery = (
+  candidate: DnsQuery,
+  view: Extract<PcapView, { facet: "dns-addresses" }>,
+): boolean =>
+  candidate.query === view.query &&
+  (view.query_labels_hex === undefined ||
+    equalLabelsHex(candidate.query_labels_hex, view.query_labels_hex));
+
+const selectDnsQuery = (
+  capture: Capture,
+  view: Extract<PcapView, { facet: "dns-addresses" }>,
+): DnsQuery | undefined => {
+  if (view.query_index !== undefined) {
+    const candidate = capture.dns_queries[view.query_index];
+    return candidate !== undefined && matchesDnsAddressQuery(candidate, view)
+      ? candidate
+      : undefined;
+  }
+  const candidates = isImmutableJsonSnapshot(capture)
+    ? (indexedDnsQueries(capture).get(view.query) ?? [])
+    : capture.dns_queries;
+  let matched: DnsQuery | undefined;
+  for (const candidate of candidates) {
+    if (!matchesDnsAddressQuery(candidate, view)) continue;
+    if (matched !== undefined) return undefined;
+    matched = candidate;
+  }
+  return matched;
+};
 
 const selectRows = (
   capture: Capture,
@@ -223,31 +281,18 @@ const selectRows = (
         total: capture.unattributed_dns_addresses.length,
       });
     case "dns-addresses": {
-      const matches = capture.dns_queries.filter(
-        (query, index) =>
-          query.query === view.query &&
-          (view.query_index === undefined || index === view.query_index) &&
-          (view.query_labels_hex === undefined ||
-            JSON.stringify(query.query_labels_hex) ===
-              JSON.stringify(view.query_labels_hex)),
-      );
-      if (matches.length !== 1)
-        return err(
-          analysisViewInputError([
-            {
-              path: ["view", "query"],
-              reason: "invalid_value",
-              message:
-                "Select one exact retained DNS question using query_labels_hex or query_index when its display is ambiguous.",
-            },
-          ]),
+      const matched = selectDnsQuery(capture, view);
+      if (matched === undefined)
+        return invalidAnalysisView(
+          "Select one exact retained DNS question using query_labels_hex or query_index when its display is ambiguous.",
+          "query",
         );
       return ok({
         page: {
           facet: view.facet,
-          items: slice(matches[0]!.response_addresses),
+          items: slice(matched.response_addresses),
         },
-        total: matches[0]!.response_addresses.length,
+        total: matched.response_addresses.length,
       });
     }
   }
@@ -262,15 +307,8 @@ export const projectPcapCaptureView = (
     SummaryAnalysisView | z.output<typeof pcapViewRequestSchema>
   >(admitted, "summary", "pcap");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Packet summary parents support summary and pcap fact pages.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Packet summary parents support summary and pcap fact pages.",
     );
   const parsed = parseParent(parent);
   if (!parsed.ok) return parsed;

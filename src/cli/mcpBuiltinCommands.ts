@@ -1,7 +1,8 @@
 import { mcpRegistrationOptionsSchema } from "../contracts/mcpRegistration.js";
+import { PRODUCT_IDENTITY } from "../identity.js";
 
 import type { CliGlobalArguments } from "../cliBuiltinArguments.js";
-import { readCliOutputArguments, renderCliDocument } from "../cliOutput.js";
+import { readCliOutputArguments, renderCliDocument } from "./cliOutput.js";
 import { jsonLinesErrorRecord } from "./jsonLines.js";
 import { renderFailure } from "./outputEnvelope.js";
 import { suggestCommand } from "./commandSuggestion.js";
@@ -31,6 +32,18 @@ const PRECEDING_BUILTIN_FLAGS: ReadonlySet<string> = new Set([
   "--llms-full",
   "--mcp",
 ]);
+
+/** Whether this invocation targets `rea mcp add` rather than global discovery. */
+export const isMcpRegistrationCommand = (
+  global: CliGlobalArguments,
+): boolean => {
+  const offset = global.command[0] === PRODUCT_IDENTITY.cliBinary ? 1 : 0;
+  if (global.command[offset] !== "mcp" || global.command[offset + 1] !== "add")
+    return false;
+  for (const flag of global.flags)
+    if (PRECEDING_BUILTIN_FLAGS.has(flag)) return false;
+  return true;
+};
 
 /**
  * Report an unknown MCP subcommand through REA's diagnostic renderer, retaining
@@ -107,6 +120,8 @@ export const reportUnknownMcpSubcommand = (
           },
         ),
   );
-  (options.exit ?? ((code: number) => process.exit(code)))(1);
+  // Set the exit code rather than exiting, so piped stdout drains first.
+  if (options.exit !== undefined) options.exit(1);
+  else process.exitCode = 1;
   return true;
 };

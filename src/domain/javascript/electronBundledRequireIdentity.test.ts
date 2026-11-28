@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { runInNewContext } from "node:vm";
 
-import { analyzeJavaScriptStaticSource as analyzeUnknownHostSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
+import {
+  analyzeJavaScriptStaticSource as analyzeUnknownHostSource,
+  analyzeParsedJavaScriptStaticSource,
+} from "../../../tests/fixtures/javascriptStaticAnalysis.js";
+import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { analyzeCommonJsStaticFixture as analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 
 // Webpack 5 standalone bootstrap with an Electron external, as emitted for
@@ -49,6 +53,10 @@ describe("Electron identity through Webpack externals", () => {
     ["const key='45840';delete n.m[key];", 0],
     ["n.m[runtimeKey]=local;", 0],
     ["const key=45841;n.m[key]=local;", 1],
+    ["const key=flag?45841:'45842';n.m[key]=local;", 1],
+    ["const key=flag?45840:'45842';n.m[key]=local;", 0],
+    ["const key=flag?dynamicKey:'45842';n.m[key]=local;", 0],
+    ["const key=flag?'__proto__':'45842';n.m[key]=local;", 0],
   ] as const)(
     "preserves only unmodified external slots after %s",
     (write, expected) => {
@@ -194,6 +202,21 @@ describe("Electron identity through Webpack externals", () => {
   });
 });
 
+it.each([
+  ["45841", 1],
+  ["45840", 0],
+] as const)(
+  "scopes writes to cache slots when one key is %s",
+  (key, expected) => {
+    const source = bootstrap(
+      EXTERNAL,
+      CONSUMER,
+      `n.c=c;const key=flag?${key}:"45842";n.c[key]={exports:local};n(100);`,
+    );
+    expect(electronOf(source).browser_windows).toHaveLength(expected);
+  },
+);
+
 describe("Webpack loader alias bounds", () => {
   const getterSource = (initializers: readonly string[], selection = "") =>
     bootstrap(
@@ -335,6 +358,68 @@ it("reports the alias budget when a destructured external alias chain exceeds it
       semantic_resource_limits: expect.arrayContaining(["alias-selections"]),
     },
   });
+});
+
+describe("exhausted CommonJS delegate-write receiver selections", () => {
+  const writes = "while(flag)receiver=receiver[key];receiver[key]=0;";
+
+  it.each([
+    ["a closed local cycle", `let receiver={};${writes}`, 1],
+    [
+      "a Module stored in a property",
+      `let receiver={host:module};${writes}`,
+      0,
+    ],
+    [
+      "a Module installed through a prior member write",
+      `let receiver={};receiver.host=module;${writes}`,
+      0,
+    ],
+    [
+      "an opaque parameter",
+      `function mutate(receiver){${writes}}mutate(module);`,
+      0,
+    ],
+    [
+      "a mutated prototype",
+      `Object.prototype.host=module;let receiver={};${writes}`,
+      0,
+    ],
+    [
+      "indirect eval that can change inherited members",
+      `(0, eval)(code);let receiver={};${writes}`,
+      0,
+    ],
+    [
+      "constructed code that can change inherited members",
+      `Function(code)();let receiver={};${writes}`,
+      0,
+    ],
+    [
+      "an unfinished source closure",
+      `let receiver=[${Array<string>(24).fill("0").join(",")}];${writes}`,
+      0,
+    ],
+  ] as const)(
+    "preserves the receiver proof for %s",
+    (_name, sideEffect, expected) => {
+      const source = bootstrap(EXTERNAL, CONSUMER, `${sideEffect}n(100);`);
+      const parsed = parseJavaScriptSource(source, "main.cjs");
+      if (parsed === null) throw new Error("Expected a parsed Webpack fixture");
+      const analysis = analyzeParsedJavaScriptStaticSource(source, parsed, {
+        alias_selections: 16,
+      });
+      expect(
+        analysis.analysis_coverage.examination.semantic_resource_limits,
+      ).toContain("alias-selections");
+      expect(analysis.electron.browser_windows).toHaveLength(expected);
+      expect(
+        analysis.electron.ipc.filter(
+          ({ resolution_basis }) => resolution_basis !== "wrapper-substitution",
+        ),
+      ).toHaveLength(expected);
+    },
+  );
 });
 
 describe("Webpack externals with a tampered runtime", () => {

@@ -14,29 +14,19 @@ export const decodeSazMetadata = (bytes: Buffer): JsonValue => {
   try {
     xml = decodeXmlPlistText(bytes);
   } catch (cause: unknown) {
-    if (
-      cause instanceof XmlPlistTextDecodeError &&
-      cause.reason === "unsupported-encoding"
-    )
+    if (!(cause instanceof XmlPlistTextDecodeError)) throw cause;
+    if (cause.reason === "unsupported-encoding")
       throw new CaptureFormatError(
         "unsupported",
         `SAZ metadata declares unsupported XML encoding ${cause.declaredEncoding}.`,
         "",
         cause,
       );
-    if (
-      cause instanceof XmlPlistTextDecodeError &&
-      cause.reason === "encoding-mismatch"
-    )
-      throw new CaptureFormatError(
-        "malformed",
-        "SAZ metadata encoding declaration disagrees with its bytes.",
-        "",
-        cause,
-      );
     throw new CaptureFormatError(
-      "unsupported",
-      "SAZ metadata must use UTF-8 or BOM-marked UTF-16.",
+      "malformed",
+      cause.reason === "encoding-mismatch"
+        ? "SAZ metadata encoding declaration disagrees with its bytes."
+        : "SAZ metadata contains invalid bytes for its detected XML encoding.",
       "",
       cause,
     );

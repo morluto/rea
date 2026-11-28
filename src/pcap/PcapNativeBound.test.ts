@@ -1,7 +1,7 @@
 import { BOUNDED_PRODUCER_LIMITS } from "../domain/producerResourceLimits.js";
 import { chmod, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import type { ArtifactAnalysisResources } from "../process/ArtifactAnalysisResources.js";
 import {
@@ -116,34 +116,24 @@ it("pins capture ceilings through the shared prlimit prefix and keeps 300 CPU se
   expect(prepared.limitations[0]).toContain(String(limits.cpu_seconds));
 });
 
-it("rejects a directory or a command that does not identify as util-linux prlimit", async () => {
+it("rejects a directory before probing the selected limiter", async () => {
   const root = await createTestTempDirectory("rea-invalid-prlimit-");
-  const executable = join(root, "not-prlimit");
-  await writeFile(executable, "#!/bin/sh\nexit 0\n");
-  await chmod(executable, 0o700);
-  for (const [path, output] of [
-    [root, "prlimit from util-linux 2.38"],
-    [executable, ""],
-  ] as const) {
-    await expect(
-      preparePcapNativeBound(
-        "linux",
-        { REA_TSHARK_PRLIMIT_COMMAND: path },
-        resources,
-        async () => probeResult(output),
-      ),
-    ).rejects.toMatchObject({
-      _tag: "AnalysisCapabilityUnavailableError",
-      // The limiter owns the repair; readiness keeps it over Wireshark advice.
-      remediationAction: expect.stringMatching(
-        /REA_TSHARK_PRLIMIT_COMMAND.*\/usr\/bin\/prlimit.*absolute.*executable.*util-linux prlimit/iu,
-      ) as unknown,
-      diagnostics: {
-        configuration_key: "REA_TSHARK_PRLIMIT_COMMAND",
-        configured: path,
-      },
-    });
-  }
+  const probe = vi.fn(async () => probeResult(""));
+  await expect(
+    preparePcapNativeBound(
+      "linux",
+      { REA_TSHARK_PRLIMIT_COMMAND: root },
+      resources,
+      probe,
+    ),
+  ).rejects.toMatchObject({
+    _tag: "AnalysisCapabilityUnavailableError",
+    diagnostics: {
+      configuration_key: "REA_TSHARK_PRLIMIT_COMMAND",
+      configured: root,
+    },
+  });
+  expect(probe).not.toHaveBeenCalled();
 });
 
 it("preserves cancellation and selected-command identity failures during the probe", async () => {
@@ -198,7 +188,7 @@ it("rejects another util-linux command and retains the rejected help output", as
   });
 });
 
-it("retains rejected version output", async () => {
+it("rejects the wrong limiter banner and retains its output", async () => {
   const root = await createTestTempDirectory("rea-prlimit-rejected-version-");
   const selected = join(root, "prlimit");
   await writeFile(selected, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
@@ -208,10 +198,19 @@ it("retains rejected version output", async () => {
       "linux",
       { REA_TSHARK_PRLIMIT_COMMAND: selected },
       resources,
-      async () => output,
+      async (_selection, args) =>
+        args[0] === "--version" ? output : probeResult(help),
     ),
   ).rejects.toMatchObject({
     _tag: "AnalysisCapabilityUnavailableError",
     capturedOutput: output.capturedOutput,
+    // The limiter owns the repair; readiness keeps it over Wireshark advice.
+    remediationAction: expect.stringMatching(
+      /REA_TSHARK_PRLIMIT_COMMAND.*\/usr\/bin\/prlimit.*absolute.*executable.*util-linux prlimit/iu,
+    ) as unknown,
+    diagnostics: {
+      configuration_key: "REA_TSHARK_PRLIMIT_COMMAND",
+      configured: selected,
+    },
   });
 });

@@ -3,7 +3,7 @@ import { Budget } from "../domain/budget.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
 import type { FileHandle } from "node:fs/promises";
 import { setImmediate } from "node:timers/promises";
-import { Readable } from "node:stream";
+import type { Readable } from "node:stream";
 import {
   ArtifactEntryContentUnavailable,
   ArtifactReaderFailure,
@@ -16,27 +16,29 @@ import {
   assertArtifactReadActive,
   ArtifactFileSource,
 } from "../resources/index.js";
-import { ownAsyncArtifactStream } from "./OwnedAsyncArtifactStream.js";
+import { OwnedAsyncArtifactStreams } from "./OwnedAsyncArtifactStreams.js";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
-import type {
-  ArtifactFormatMetadata,
-  UnityFsMetadata,
-} from "../domain/artifactFormatMetadata.js";
+import type { ArtifactFormatMetadata } from "../domain/artifactFormatMetadata.js";
+import type { UnityFsMetadata } from "../domain/formatMetadata/packageAndGameMetadata.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
-import { UNITYFS_COMPRESSION_NONE } from "../domain/unityfsFormat.js";
+import {
+  UNITYFS_COMPRESSION_LZMA,
+  UNITYFS_COMPRESSION_NONE,
+} from "../domain/unityfsFormat.js";
 import {
   decodeUnityFsLz4,
+  decodeUnityFsLzma,
   readUnityFsBlocksInfo,
   readUnityFsHeader,
+  UNITYFS_BLOCK_DECODED_BUDGET_BYTES,
+  UNITYFS_BLOCK_ENCODED_BUDGET_BYTES,
   unityFsFormatFailure,
   type UnityFsBlock,
   type UnityFsNode,
 } from "./UnityFsStructures.js";
 
 const CHUNK_BYTES = 64 * 1024;
-// A decode can retain both encoded and 64 MiB decoded buffers. Bound active
-// decodes/paused block owners as well as the single completed cache entry.
-const MAX_MEMBER_STREAMS = 4;
+
 type UnityFsEntry = ArtifactEntry & {
   readonly declaredSize: number;
   readonly formatMetadata: Extract<
@@ -48,7 +50,8 @@ interface UnityFsEntryState {
   readonly entry: UnityFsEntry;
   readonly firstBlock: number;
   readonly lastBlock: number;
-  readonly unavailableCompression: number | undefined;
+  /** The first block that keeps this member's content unreadable, if any. */
+  readonly unavailableBlock: UnityFsBlock | undefined;
 }
 
 /** One descriptor, one admitted directory and one completed decoded-block cache. */
@@ -56,7 +59,11 @@ export class UnityFsArtifactReader implements ArtifactReader {
   readonly format = "unityfs" as const;
   readonly #scope = new ArtifactResourceScope();
   #entries = new Map<string, UnityFsEntryState>();
-  readonly #streams = new Map<Readable, AbortController>();
+  readonly #streams = new OwnedAsyncArtifactStreams(
+    this.#scope,
+    "UnityFS",
+    CHUNK_BYTES,
+  );
   readonly #source: ArtifactFileSource;
   readonly #preparation = new ArtifactPreparation();
   #header: UnityFsMetadata | undefined;
@@ -141,47 +148,17 @@ export class UnityFsArtifactReader implements ArtifactReader {
           "unavailable",
           "UnityFS directory entries have no file contents",
         );
-      if (state.unavailableCompression !== undefined) {
-        const compression = String(state.unavailableCompression);
-        const limitation = `UnityFS member compression ${compression} is unsupported; no content hash or child artifact was produced.`;
-        throw new ArtifactEntryContentUnavailable(
-          `UnityFS directory entry ${String(state.entry.formatMetadata.index)} requires unsupported compression ${compression}`,
-          limitation,
-          { traversal: { status: "unknown", limitations: [limitation] } },
-        );
-      }
-      if (this.#streams.size >= MAX_MEMBER_STREAMS)
-        throw new ArtifactReaderFailure(
-          "limit",
-          "UnityFS reader already owns four active member streams",
-          { boundary: "capacity" },
-        );
-      const controller = new AbortController();
-      const output = ownAsyncArtifactStream(
-        this.#memberChunks(handle, state, controller.signal),
-        controller,
-        {
-          scope: this.#scope,
-          streams: this.#streams,
-          signal,
-          label: "UnityFS",
-          highWaterMark: CHUNK_BYTES,
-        },
+      if (state.unavailableBlock !== undefined)
+        throw unavailableMember(state.entry, state.unavailableBlock);
+      return this.#streams.open(signal, (active) =>
+        this.#memberChunks(handle, state, active),
       );
-      return output;
     });
   }
 
   async close(): Promise<void> {
     this.#closing = true;
-    for (const [stream, controller] of this.#streams) {
-      const cause = new ArtifactReaderFailure(
-        "unavailable",
-        "UnityFS reader closed",
-      );
-      controller.abort(cause);
-      stream.destroy(cause);
-    }
+    this.#streams.close();
     await this.#scope.close();
     await this.#source.close();
     this.#entries.clear();
@@ -329,7 +306,7 @@ export class UnityFsArtifactReader implements ArtifactReader {
         entry,
         firstBlock,
         lastBlock,
-        unavailableCompression: unavailable?.compression,
+        unavailableBlock: unavailable,
       });
     }
     // Four ordinary passes over admitted blocks, nodes and plaintext chunks,
@@ -376,6 +353,7 @@ export class UnityFsArtifactReader implements ArtifactReader {
         const chunk =
           plain === undefined
             ? await readArtifactFileBytes(
+                "unityfs",
                 handle,
                 this.#dataStart + block.compressedStart + offset,
                 size,
@@ -411,17 +389,17 @@ export class UnityFsArtifactReader implements ArtifactReader {
     this.#reserveMemberRead();
     this.#decodeBytes.charge(block.uncompressedSize, exhausted);
     const encoded = await readArtifactFileBytes(
+      "unityfs",
       handle,
       this.#dataStart + block.compressedStart,
       block.compressedSize,
       this.#dataStart + block.compressedStart + block.compressedSize,
       signal,
     );
-    const bytes = await decodeUnityFsLz4(
-      encoded,
-      block.uncompressedSize,
-      signal,
-    );
+    const bytes =
+      block.compression === UNITYFS_COMPRESSION_LZMA
+        ? await decodeUnityFsLzma(encoded, block.uncompressedSize, signal)
+        : await decodeUnityFsLz4(encoded, block.uncompressedSize, signal);
     this.#assertOpen(signal);
     this.#cachedBlock = { index, bytes };
     return bytes;
@@ -462,6 +440,41 @@ const blockEndingAfter = (
     else high = middle;
   }
   return low < blocks.length ? low : -1;
+};
+
+/** Name the per-block bound that refused a member, with both sizes. */
+const budgetRefusal = (
+  index: string,
+  compression: string,
+  block: UnityFsBlock,
+): readonly [string, string] => {
+  const [side, declared, budget] =
+    block.unavailable === "encoded-budget"
+      ? ["encoded", block.compressedSize, UNITYFS_BLOCK_ENCODED_BUDGET_BYTES]
+      : ["decoded", block.uncompressedSize, UNITYFS_BLOCK_DECODED_BUDGET_BYTES];
+  return [
+    `UnityFS directory entry ${index} lies in a compressed block of ${String(declared)} ${side} bytes, above the ${String(budget)}-byte per-block ${side} budget`,
+    `UnityFS member lies in a compression ${compression} block above the ${String(budget)}-byte per-block ${side} budget; this release has no override, and no content hash or child artifact was produced.`,
+  ];
+};
+
+/** Explain, once, why a member's content was not read. */
+const unavailableMember = (
+  entry: UnityFsEntry,
+  block: UnityFsBlock,
+): ArtifactEntryContentUnavailable => {
+  const index = String(entry.formatMetadata.index);
+  const compression = String(block.compression);
+  const [message, limitation] =
+    block.unavailable === "unsupported-compression"
+      ? [
+          `UnityFS directory entry ${index} requires unsupported compression ${compression}`,
+          `UnityFS member compression ${compression} is unsupported; no content hash or child artifact was produced.`,
+        ]
+      : budgetRefusal(index, compression, block);
+  return new ArtifactEntryContentUnavailable(message, limitation, {
+    traversal: { status: "unknown", limitations: [limitation] },
+  });
 };
 
 /** Prefix counts avoid scanning every block for every small or overlapping node. */

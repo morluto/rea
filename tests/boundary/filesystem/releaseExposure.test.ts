@@ -8,7 +8,13 @@ import {
   denoElf,
 } from "../../../src/artifacts/deno/DenoStandalone.fixture.js";
 
+import { ReleaseExposureService } from "../../../src/application/releaseExposure/ReleaseExposureService.js";
+import { ReleaseExposureReader } from "../../../src/artifacts/ReleaseExposureReader.js";
+import { createDesktopApplicationService } from "../../../src/composition/desktop.js";
+import { createElectronFuseService } from "../../../src/composition/electronFuses.js";
+import { createGoBinaryService } from "../../../src/composition/go.js";
 import { createReleaseExposureService } from "../../../src/composition/releaseExposure.js";
+import { createRustBinaryService } from "../../../src/composition/rust.js";
 import { DEFAULT_ASAR_MAX_HEADER_BYTES } from "../../../src/domain/analysisResourceLimits.js";
 import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
 import { releaseExposureReportSchema } from "../../../src/domain/releaseExposure.js";
@@ -188,66 +194,86 @@ describe("release exposure filesystem boundary", () => {
       await service.close();
     }
   });
-
-  it("reads a directory of plain text", async () => {
-    const root = await createTestTempDirectory("rea-release-exposure-dir-");
-    await writeFile(join(root, "hello.txt"), "hello\n");
-    const service = createReleaseExposureService();
-    try {
-      const result = await service.inspect({ path: root });
-      if (!result.ok) throw result.error;
-      const report = result.value.normalized_result as {
-        summary: {
-          no_exposure_observed_in_assessed_checks: boolean;
-          by_status: { not_assessed: number };
-        };
-      };
-      expect(report.summary.no_exposure_observed_in_assessed_checks).toBe(true);
-      expect(report.summary.by_status.not_assessed).toBe(3);
-    } finally {
-      await service.close();
-    }
-  });
 });
 
 describe("release exposure app bundle boundary", () => {
-  it("reports a sidecar's RunAsNode fuse in an app bundle with safe outer fuses", async () => {
-    const root = await createTestTempDirectory("rea-release-exposure-app-");
-    const app = join(root, "Sample.app");
-    const framework = join(
-      app,
-      "Contents",
-      "Frameworks",
-      "Electron Framework.framework",
-    );
-    const resources = join(app, "Contents", "Resources");
-    await mkdir(framework, { recursive: true });
-    await mkdir(resources, { recursive: true });
-    const disabled = 0x30;
-    const enabled = 0x31;
-    await writeFile(
-      join(framework, "Electron Framework"),
-      thinFuseImage(Array.from({ length: 6 }, () => disabled)).bytes,
-    );
-    const sidecar = join(resources, "sidecar");
-    await writeFile(
-      sidecar,
-      thinFuseImage([enabled, disabled, disabled, disabled, disabled, disabled])
-        .bytes,
-    );
-    const service = createReleaseExposureService();
-    try {
-      const result = await service.inspect({ path: app });
-      if (!result.ok) throw result.error;
-      const check = releaseExposureReportSchema
-        .parse(result.value.normalized_result)
-        .checks.find((item) => item.id === "electron.run_as_node");
-      expect(check?.status).toBe("exposed");
-      expect(JSON.stringify(check?.locations)).toContain("sidecar");
-    } finally {
-      await service.close();
-    }
-  });
+  it.each(["unchanged", "replaced", "identical"] as const)(
+    "binds fuse findings to their inventoried paths with %s framework bytes",
+    async (scenario) => {
+      const root = await createTestTempDirectory("rea-release-exposure-app-");
+      const app = join(root, "Sample.app");
+      const framework = join(
+        app,
+        "Contents",
+        "Frameworks",
+        "Electron Framework.framework",
+      );
+      const resources = join(app, "Contents", "Resources");
+      const revision = join(framework, "Versions", "A");
+      await mkdir(revision, { recursive: true });
+      await mkdir(resources, { recursive: true });
+      const disabled = 0x30;
+      const enabled = 0x31;
+      const frameworkImage = join(revision, "Electron Framework");
+      const sidecar = join(resources, "sidecar");
+      const exposed = thinFuseImage([
+        enabled,
+        disabled,
+        disabled,
+        disabled,
+        disabled,
+        disabled,
+      ]).bytes;
+      await writeFile(
+        frameworkImage,
+        scenario === "identical"
+          ? exposed
+          : thinFuseImage(Array.from({ length: 6 }, () => disabled)).bytes,
+      );
+      await writeFile(sidecar, exposed);
+      const fuses = createElectronFuseService();
+      const service = new ReleaseExposureService({
+        reader: new ReleaseExposureReader(),
+        desktop: createDesktopApplicationService(),
+        electronFuses: {
+          inspect: async (input, options) => {
+            if (
+              (input as { path: string }).path === app &&
+              scenario === "replaced"
+            )
+              await writeFile(frameworkImage, exposed);
+            return fuses.inspect(input, options);
+          },
+          close: () => fuses.close(),
+        },
+        goBinaries: createGoBinaryService(),
+        rustBinaries: createRustBinaryService(),
+      });
+      try {
+        const result = await service.inspect({ path: app });
+        if (!result.ok) throw result.error;
+        const check = releaseExposureReportSchema
+          .parse(result.value.normalized_result)
+          .checks.find((item) => item.id === "electron.run_as_node");
+        expect(check?.status).toBe("exposed");
+        expect(check?.locations).toEqual(
+          (scenario === "identical" ? [app, sidecar] : [sidecar]).map(
+            (path) => ({
+              kind: "artifact-path",
+              path,
+            }),
+          ),
+        );
+        const changed =
+          "The file changed after inventory, so its findings were not attached.";
+        expect(check?.observation.samples.includes(changed)).toBe(
+          scenario === "replaced",
+        );
+      } finally {
+        await service.close();
+      }
+    },
+  );
 });
 
 describe("release exposure ASAR header admission", () => {

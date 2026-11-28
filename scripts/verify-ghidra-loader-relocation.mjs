@@ -13,7 +13,7 @@ import {
   spawnOwnedProviderProcess,
 } from "../dist/process/ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "../dist/process/ProcessOwnership.js";
-import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
+import { inspectVerifierGhidraFromEnvironment } from "./lib/ghidra-installation-inspection.mjs";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 import {
   VerifierFixture,
@@ -33,11 +33,15 @@ const expectedChecks = [
   "got_function_relocation_present",
   "got_data_relocation_present",
   "got_caller_references_loader_relocation",
+  "got_tls_relocation_present",
+  "got_tls_relocation_not_applied_by_importer",
+  "got_tls_slot_shares_applied_got_block",
   "destination_is_loaded_initialized",
   "destination_is_file_backed",
   "destination_is_non_writable",
   "destination_not_volatile_before_protection",
-  "destination_block_is_volatile",
+  "destination_data_is_volatile",
+  "got_tls_slot_data_is_volatile",
   "destination_permissions_preserved",
   "source_filebytes_unchanged",
   "evidence_limitation_represents_loader_uncertainty",
@@ -61,13 +65,7 @@ if (process.env.GHIDRA_INSTALL_DIR === undefined)
     "Set GHIDRA_INSTALL_DIR to a bring-your-own Ghidra installation.",
   );
 
-const installation = await inspectVerifierGhidraInstallation({
-  environment: process.env,
-  installDir: process.env.GHIDRA_INSTALL_DIR,
-  ...(process.env.JAVA_HOME === undefined
-    ? {}
-    : { javaHome: process.env.JAVA_HOME }),
-});
+const installation = await inspectVerifierGhidraFromEnvironment(process.env);
 assert.ok(
   installation.analyzeHeadlessPath !== null &&
     (installation.status === "available" ||

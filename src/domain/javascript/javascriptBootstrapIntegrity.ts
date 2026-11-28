@@ -17,7 +17,7 @@ import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
 
 type Bootstrap = NonNullable<ReturnType<typeof javascriptBootstrapAt>>;
 
-/** Slots a visible literal write may have replaced; the rest stay as declared. */
+/** Slots a visible write may have replaced; the rest stay as declared. */
 export interface JavaScriptBootstrapIntegrity {
   readonly replacedKeys: ReadonlySet<string>;
 }
@@ -38,8 +38,8 @@ interface LoaderShape {
  * `table[key]`: every normal completion of the loader returns the dispatched
  * module's exports or a cache entry it created for that module, the table has
  * only literal keys, and the table and cache are referenced only by the loader
- * or through the runtime's `loader.m`/`loader.c` exposure. Literal-key writes
- * through that exposure replace their slot. Returns undefined when any of this
+ * or through the runtime's `loader.m`/`loader.c` exposure. Writes with finite keys
+ * through that exposure invalidate each affected slot. Returns undefined when any of this
  * is unproven.
  */
 export const proveJavaScriptBootstrapIntegrity = (
@@ -612,7 +612,7 @@ const exposedTableUse = (use: Use): "other" | "contained" | "escaped" => {
   return entryWritten ? "escaped" : "contained";
 };
 
-/** Unknown computed writes may replace any existing slot; fresh installation is unproven. */
+/** Retain all finite written keys. An unknown key leaves every slot uncertain. */
 const exposedSlotWrite = (use: Use, replacedKeys: Set<string>): boolean => {
   const { parent, ancestors, state } = use;
   const slot = ancestors.at(-2);
@@ -632,19 +632,28 @@ const exposedSlotWrite = (use: Use, replacedKeys: Set<string>): boolean => {
     )
   )
     return true;
-  if (!slot.computed) {
-    const key = semanticStaticPropertyKey(slot.property, false);
-    if (key === null) return false;
-    replacedKeys.add(key);
-    return true;
-  }
-  const key = evaluateSemanticExpression(slot.property, state);
+  const key = slot.computed
+    ? evaluateSemanticExpression(slot.property, state)
+    : {
+        status: "literal" as const,
+        value: semanticStaticPropertyKey(slot.property, false),
+      };
+  const keys =
+    key.status === "union"
+      ? key.values
+      : key.status === "literal"
+        ? [key.value]
+        : [];
   if (
-    key.status !== "literal" ||
-    (typeof key.value !== "string" && typeof key.value !== "number")
+    keys.length === 0 ||
+    keys.some(
+      (key) =>
+        (typeof key !== "string" && typeof key !== "number") ||
+        key === "__proto__",
+    )
   )
     return false;
-  replacedKeys.add(String(key.value));
+  for (const key of keys) replacedKeys.add(String(key));
   return true;
 };
 

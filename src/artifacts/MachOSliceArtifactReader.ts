@@ -22,7 +22,6 @@ import {
 import type { MachoSlice } from "../domain/apple/dylibResolution.js";
 import {
   machoArchitectureFamily,
-  machoCpuSubtypeBase,
   machoKnownArm32Subtype,
 } from "../domain/apple/machoCpuIdentity.js";
 import {
@@ -33,6 +32,7 @@ import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import type { ArtifactIntegrityPolicyName } from "../domain/artifactIntegrityPolicy.js";
 import {
+  lipoDescribesCpu,
   parseLipoOutputResult,
   LipoFieldRetentionError,
   type LipoArchitecture,
@@ -138,7 +138,7 @@ export class MachOSliceArtifactReader implements ArtifactReader {
     const parsed = parseLipoOutputResult(captured.value.stdout, this.path);
     if (!parsed.ok)
       throw new ArtifactReaderFailure(
-        parsed.error instanceof LipoFieldRetentionError ? "limit" : "format",
+        parsed.error instanceof LipoFieldRetentionError ? "limit" : "io",
         `lipo did not produce readable architecture records: ${parsed.error.message}`,
         {
           cause: parsed.error,
@@ -156,23 +156,31 @@ export class MachOSliceArtifactReader implements ArtifactReader {
     );
     await this.#source.readSelectedPath();
     this.#assertOpen(signal);
-    if (structural.status === "malformed")
+    if (
+      structural.status === "failed" &&
+      structural.failure.kind !== "unsupported"
+    )
       throw new ArtifactReaderFailure(
         "integrity",
-        `Mach-O structural slice index is malformed: ${structural.reason}`,
-        { integrityCheck: "layout-consistency" },
+        `Mach-O structural slice index is ${structural.failure.kind}: ${structural.failure.detail}`,
+        {
+          integrityCheck:
+            structural.failure.kind === "changed"
+              ? "read-coverage"
+              : "layout-consistency",
+        },
       );
     // A valid universal binary can hold slices REA cannot index, such as
     // big-endian PowerPC. lipo's own ranges still inventory every slice.
     if (
-      structural.status === "unsupported" &&
+      structural.status === "failed" &&
       architectures.some(
         ({ file_offset, size }) => file_offset === null || size === null,
       )
     )
       throw new ArtifactReaderFailure(
         "unavailable",
-        `Mach-O structural slice index is unsupported: ${structural.reason}`,
+        `Mach-O structural slice index is unsupported: ${structural.failure.detail}`,
       );
     // lipo is an independent witness of the FAT table. Under
     // record-and-continue a disagreement is recorded and REA's own FAT parse,
@@ -312,9 +320,9 @@ export class MachOSliceArtifactReader implements ArtifactReader {
           ? [
               "Structural Mach-O facts were unavailable; slice range is based on lipo output.",
             ]
-          : structural.status === "unsupported"
+          : structural.status === "failed"
             ? [
-                `Structural Mach-O facts were unsupported (${structural.reason}); slice range is based on lipo output.`,
+                `Structural Mach-O facts were unsupported (${structural.failure.detail}); slice range is based on lipo output.`,
               ]
             : []),
         ...(architecture.file_offset === null || architecture.size === null
@@ -709,61 +717,27 @@ const lipoMatchesSlice = (
     reported.cpu_subtype_code !== null;
   return (
     (hasPhysicalIdentity || structurallyUnique) &&
-    lipoNameMatches(reported.name, observed) &&
+    (reported.numericName !== undefined ||
+      lipoNameMatches(reported.name, observed)) &&
     (reported.file_offset === null ||
       reported.file_offset === observed.slice_offset) &&
     (reported.size === null || reported.size === observed.slice_size) &&
-    (reported.cpu_type_code === null ||
-      reported.cpu_type_code === observedCpuType) &&
-    lipoSubtypeMatches(reported, observedCpuSubtype) &&
+    lipoDescribesCpu(reported, observedCpuType, observedCpuSubtype) &&
     (reported.alignment === null ||
       observed.fat_alignment_exponent === null ||
       reported.alignment === 2 ** observed.fat_alignment_exponent)
   );
 };
 
-/**
- * Compare the complete subtype when lipo printed its capability byte, and
- * otherwise only the subtype bits its record names.
- */
-const lipoSubtypeMatches = (
-  reported: LipoArchitecture,
-  observedCpuSubtype: number,
-): boolean => {
-  if (reported.cpu_subtype_code !== null)
-    return reported.cpu_subtype_code === observedCpuSubtype;
-  return (
-    reported.cpu_subtype_base === null ||
-    reported.cpu_subtype_base === machoCpuSubtypeBase(observedCpuSubtype)
-  );
-};
-
-/** ARM implementation names from cctools libstuff/arch.c, keyed by lipo spelling. */
-const ARM_SUBTYPES: Readonly<Record<string, number>> = {
-  armv4t: 5,
-  armv5: 7,
-  xscale: 8,
-  armv6: 6,
-  armv7: 9,
-  armv7f: 10,
-  armv7s: 11,
-  armv7k: 12,
-  armv6m: 14,
-  armv7m: 15,
-  armv7em: 16,
-  "armv8m.main": 17,
-  "armv8m.base": 18,
-  "armv8.1m.main": 19,
-};
-
 /** Reconcile lipo's specific name with the structural reader's CPU family. */
 const lipoNameMatches = (reported: string, observed: MachoSlice): boolean => {
   if (reported === observed.architecture) return true;
-  if (observed.cpu_type === 12 && observed.architecture === "arm")
-    return (
-      ARM_SUBTYPES[reported] ===
-      machoCpuSubtypeBase(observed.fat_cpu_subtype ?? observed.cpu_subtype)
+  if (observed.cpu_type === 12 && observed.architecture === "arm") {
+    const subtype = machoKnownArm32Subtype(
+      observed.fat_cpu_subtype ?? observed.cpu_subtype,
     );
+    return (reported === "armv5" ? "armv5tej" : reported) === subtype;
+  }
   if (reported === machoArchitectureFamily(observed.architecture)) return true;
   // Retain lipo's capability-variant spelling; physical identity is checked separately.
   return (

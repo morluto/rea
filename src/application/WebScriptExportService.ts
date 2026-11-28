@@ -7,7 +7,9 @@ import {
   AnalysisCleanupLeaseGroup,
   type AnalysisCleanupLease,
   type ArtifactResourceScope,
-  bindArtifactFileCleanup,
+  withArtifactCleanupFailure,
+  artifactOperationReason,
+  artifactReaderTargetFailure,
 } from "../resources/index.js";
 import { publishWebScripts } from "./PublishWebScripts.js";
 import { selectScriptCapture } from "../domain/webScriptCaptureAdapters.js";
@@ -19,6 +21,8 @@ import {
   carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
+import { WindowsChangeTimeConfigurationError } from "../config/windowsChangeTimeSettle.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -181,29 +185,18 @@ const mapExportFailure = (
   if (cause instanceof AnalysisError) return cause;
   if (cause instanceof ArtifactReaderFailure) {
     const primary =
-      cause.cancellation === undefined
-        ? new WebScriptExportError(
-            cause.reason,
+      cause.cancellation !== undefined
+        ? cancelledBy(OPERATION, carriedReason(cause.cancellation.reason), {
+            partialObservation: cause.partialObservation,
+          })
+        : (artifactReaderTargetFailure(OPERATION, input.capture_path, cause) ??
+          new WebScriptExportError(
+            artifactOperationReason(cause),
             input.output_directory,
             cause.message,
             { cause, partialObservation: cause.partialObservation },
-          )
-        : cancelledBy(OPERATION, carriedReason(cause.cancellation.reason), {
-            partialObservation: cause.partialObservation,
-          });
-    if (cause.cleanup === undefined) return primary;
-    const error = analysisErrorWithCleanupFailure(
-      primary,
-      new ProviderCleanupError(
-        PROVIDER.id,
-        cause.cleanup.resources,
-        { reason: cause.cleanup.reason },
-        { cause, operation: OPERATION },
-      ),
-      OPERATION,
-    );
-    bindArtifactFileCleanup(cause, error);
-    return error;
+          ));
+    return withArtifactCleanupFailure(cause, primary, PROVIDER.id, OPERATION);
   }
   if (cause instanceof z.ZodError)
     return new AnalysisOutputError(OPERATION, cause.message, { cause });
@@ -262,11 +255,10 @@ const readCapture = async (
           ? {}
           : { lease: retry.cleanupLease }),
       };
-      if (retry.outcome.kind === "completed") {
+      if (cause.outcome.kind === "completed") {
         const cancellation =
-          signal?.aborted === true
-            ? { reason: signal.reason }
-            : regularFileCancellation(cause);
+          regularFileCancellation(cause) ??
+          (signal?.aborted === true ? { reason: signal.reason } : undefined);
         if (cancellation !== undefined) {
           const primary = cancelledBy(
             OPERATION,
@@ -278,12 +270,17 @@ const readCapture = async (
               : incompleteCaptureCleanup(primary, path, cleanup),
           );
         }
-        return ok({ bytes: retry.outcome.value as Buffer, cleanup });
+        return ok({ bytes: cause.outcome.value as Buffer, cleanup });
       }
-      const primary = captureReadFailure(
-        path,
-        cause,
-        retry.cleanup === undefined ? { cause: cause.cleanupCause } : undefined,
+      const primary = captureReadErrorWithCancellation(
+        captureReadFailure(
+          path,
+          cause,
+          retry.cleanup === undefined
+            ? { cause: cause.cleanupCause }
+            : undefined,
+        ),
+        signal,
       );
       return err(
         retry.cleanup === undefined
@@ -291,9 +288,19 @@ const readCapture = async (
           : incompleteCaptureCleanup(primary, path, cleanup),
       );
     }
-    return err(captureReadFailure(path, cause));
+    return err(
+      captureReadErrorWithCancellation(captureReadFailure(path, cause), signal),
+    );
   }
 };
+
+const captureReadErrorWithCancellation = (
+  error: AnalysisError,
+  signal: AbortSignal | undefined,
+): AnalysisError =>
+  signal?.aborted === true
+    ? analysisErrorWithCancellation(error, cancelledBy(OPERATION, signal))
+    : error;
 
 const captureReadFailure = (
   path: string,
@@ -320,7 +327,7 @@ const captureReadFailure = (
           "Capture read and file-handle close both failed",
           { cause },
         );
-  if (cause instanceof ConfigurationError) {
+  if (cause instanceof WindowsChangeTimeConfigurationError) {
     if (closeFailure === undefined) return cause;
     return new ConfigurationError(cause.message, {
       cause: causeWithClose,

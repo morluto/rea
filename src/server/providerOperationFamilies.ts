@@ -4,6 +4,10 @@ import { runManagedProviderExecution } from "../application/DirectAnalysis.js";
 import { isManagedToolName } from "../contracts/managed/managedToolContracts.js";
 import { artifactExtractionInputSchema } from "../contracts/artifactToolContracts.js";
 import { createArtifactExtractionDestination } from "../application/artifacts/ArtifactExtractionDestination.js";
+import {
+  executeArtifactPathInspection,
+  type ArtifactPathInspectionDependencies,
+} from "../application/artifacts/ArtifactPathInspection.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -61,13 +65,40 @@ export const managedAnalysisForAdmission = (
   });
 };
 
+/**
+ * Route an `inspect_artifact` call that names a path to the path's own
+ * inspection, independently of the open target; a call without one keeps
+ * inspecting the open target. The path is a selection, not an inventory
+ * parameter, so the provider receives the remaining fields.
+ */
+export const artifactAnalysisForAdmission =
+  (
+    createPathInspection: () => Promise<ArtifactPathInspectionDependencies>,
+  ): ((analysis: AnalysisOperationPort) => AnalysisOperationPort) =>
+  (analysis) => ({
+    execute: async (operation, parameters, executionOptions) => {
+      const { path, ...inventoryParameters } = parameters;
+      if (operation !== "inspect_artifact" || typeof path !== "string")
+        return analysis.execute(operation, parameters, executionOptions);
+      return executeArtifactPathInspection(
+        await createPathInspection(),
+        path,
+        inventoryParameters,
+        executionOptions,
+        analysis.resourceScope,
+      );
+    },
+  });
+
 /** Extraction writes under a destination REA creates for the caller's root. */
 export const artifactExecutionParameters = (
   operation: ProviderOperation,
   parameters: Readonly<Record<string, JsonValue>>,
 ): Readonly<Record<string, JsonValue>> => {
   if (operation !== "extract_artifact") return parameters;
-  const execution = artifactExtractionInputSchema.parse(parameters);
+  const execution = artifactExtractionInputSchema
+    .omit({ detail: true })
+    .parse(parameters);
   return {
     ...execution,
     output_root: createArtifactExtractionDestination(execution.output_root),

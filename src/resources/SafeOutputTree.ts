@@ -1,3 +1,5 @@
+import { invariantViolation } from "../domain/internalInvariant.js";
+import { windowsDestinationPathIssue } from "../domain/portablePathSegment.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
@@ -108,10 +110,13 @@ export class SafeOutputTree {
   readonly #outputRoot: string;
   #rootIdentity: DirectoryIdentity | undefined;
   readonly #nestedDirectories = new Map<string, DirectoryIdentity>();
+  readonly #creatingDirectories = new Map<string, Promise<DirectoryIdentity>>();
   readonly #unknownDirectories = new Set<string>();
   readonly #ownedFiles = new Map<string, FileIdentity>();
-  /** Exclusive files awaiting identity admission; admitted identity and handles have separate owners. */
+  /** Exclusive files whose path is not yet admitted. */
   readonly #pendingFiles = new Map<string, OwnedFileHandle>();
+  /** Identity taken from a pending exclusive handle, before the path check. */
+  readonly #pendingFileIdentity = new Map<string, FileIdentity>();
   readonly #openHandles = new Set<OwnedFileHandle>();
   #published = false;
   #createdRoot = true;
@@ -181,11 +186,19 @@ export class SafeOutputTree {
         throw new SafeOutputTreeDestinationRefusal(
           "Output directory is not empty",
         );
-      if (created)
-        await tree.#secureCreatedDirectory(canonicalOutput, rootIdentity);
-      await assertPathIdentity(canonicalOutput, rootIdentity);
+      if (created) {
+        tree.#rootIdentity = await tree.#secureCreatedDirectory(
+          canonicalOutput,
+          rootIdentity,
+        );
+      }
+      await assertPathIdentity(canonicalOutput, tree.#rootIdentity);
       return tree;
     } catch (cause: unknown) {
+      // The caller still owns this directory. A refusal must not hand back a
+      // tree whose rollback treats the caller's files as an unowned remainder.
+      if (!created && cause instanceof SafeOutputTreeDestinationRefusal)
+        throw cause;
       throw new SafeOutputTreeCreationFailure(cause, tree);
     }
   }
@@ -278,14 +291,13 @@ export class SafeOutputTree {
   async write(
     relativePath: string,
     source: Readable,
-    expected: { readonly sha256: string; readonly bytes: number },
+    expected: { readonly sha256?: string | null; readonly bytes: number },
     signal?: AbortSignal,
   ): Promise<SafeOutputFile> {
     try {
       this.#assertWritable();
       if (!Number.isSafeInteger(expected.bytes) || expected.bytes < 0)
-        throw new ArtifactReaderFailure(
-          "format",
+        throw invariantViolation(
           `Invalid expected extraction size for ${relativePath}`,
         );
       const path = normalizeDestinationPath(relativePath, this.platform);
@@ -315,7 +327,7 @@ export class SafeOutputTree {
       });
       const ownedHandle = this.#trackHandle(handle);
       this.#pendingFiles.set(destination, ownedHandle);
-      const fileIdentity = await readFileIdentity(
+      let fileIdentity = await readFileIdentity(
         ownedHandle.handle,
         destination,
       );
@@ -324,11 +336,24 @@ export class SafeOutputTree {
       this.#pendingFiles.delete(destination);
       if (this.platform !== "win32") {
         await ownedHandle.handle.chmod(0o600);
-        if (((await ownedHandle.handle.stat()).mode & 0o777) !== 0o600)
+        const postFileStat = await ownedHandle.handle.stat({ bigint: true });
+        if (postFileStat.dev !== fileIdentity.dev)
+          throw new ArtifactReaderFailure(
+            "path",
+            `Extraction file identity changed: ${destination}`,
+          );
+        if ((postFileStat.mode & 0o777n) !== 0o600n)
           throw new ArtifactReaderFailure(
             "path",
             "Could not establish private output file permissions",
           );
+        // Bind to the open file handle's post-chmod (dev, ino) so virtualized
+        // mounts that allocate a new inode on fchmod keep ownership.
+        fileIdentity = {
+          dev: postFileStat.dev,
+          ino: postFileStat.ino,
+        };
+        this.#ownedFiles.set(destination, fileIdentity);
       }
       const hash = createHash("sha256");
       let bytes = 0;
@@ -353,7 +378,11 @@ export class SafeOutputTree {
           { integrityCheck: "declared-size" },
         );
       const sha256 = hash.digest("hex");
-      if (sha256 !== expected.sha256)
+      if (
+        expected.sha256 !== undefined &&
+        expected.sha256 !== null &&
+        sha256 !== expected.sha256
+      )
         throw new ArtifactReaderFailure(
           "integrity",
           `Extracted content disagrees with inventory: ${path}`,
@@ -492,9 +521,33 @@ export class SafeOutputTree {
       residualPaths: [basename(this.#outputRoot)],
     };
     let removalFailure: unknown;
+    let admitFailure: unknown;
     try {
       await this.#admitPendingFiles();
-      await this.closeHandles();
+    } catch (cause: unknown) {
+      admitFailure = cause;
+    }
+    let closeFailure: unknown;
+    try {
+      // The exclusive handle is the only safe identity source. Close it only
+      // after that identity is stored. A later rollback checks the path.
+      await (admitFailure === undefined
+        ? this.closeHandles()
+        : this.#closeAdmittedHandles());
+    } catch (cause: unknown) {
+      closeFailure = cause;
+    }
+    if (admitFailure !== undefined) {
+      throw ArtifactReaderFailure.withCleanup(
+        admitFailure,
+        ArtifactReaderFailure.cleanupObservation(
+          closeFailure ?? admitFailure,
+          this.#outputRoot,
+        ),
+      );
+    }
+    try {
+      if (closeFailure !== undefined) throw closeFailure;
       await this.#assertOwnedDirectories();
       await removeOwnedTree({
         outputRoot: this.#outputRoot,
@@ -539,8 +592,8 @@ export class SafeOutputTree {
   async #secureCreatedDirectory(
     path: string,
     identity: DirectoryIdentity,
-  ): Promise<void> {
-    if (this.platform === "win32") return;
+  ): Promise<DirectoryIdentity> {
+    if (this.platform === "win32") return identity;
     const stagingHandle = this.#trackHandle(
       await open(path, constants.O_RDONLY | constants.O_DIRECTORY).catch(
         async (cause: unknown) => {
@@ -560,19 +613,27 @@ export class SafeOutputTree {
       ),
     );
     let setup:
-      | { readonly kind: "ready" }
+      | { readonly kind: "ready"; readonly identity: DirectoryIdentity }
       | {
           readonly kind: "failed";
           readonly cause: unknown;
-        } = { kind: "ready" };
+        } = { kind: "ready", identity };
     try {
       await assertHandleIdentity(stagingHandle.handle, identity, path);
       await stagingHandle.handle.chmod(0o700);
-      if (((await stagingHandle.handle.stat()).mode & 0o777) !== 0o700)
+      const postStat = await stagingHandle.handle.stat({ bigint: true });
+      if (postStat.dev !== identity.dev) throw replacedDirectory(path);
+      if ((postStat.mode & 0o777n) !== 0o700n)
         throw new ArtifactReaderFailure(
           "path",
           "Could not establish owner access to output directory",
         );
+      // Bind to the open directory handle's post-chmod (dev, ino) so
+      // virtualized mounts that mutate ino on fchmod keep ownership.
+      setup = {
+        kind: "ready",
+        identity: { dev: postStat.dev, ino: postStat.ino },
+      };
     } catch (cause: unknown) {
       setup = { kind: "failed", cause };
     }
@@ -587,6 +648,7 @@ export class SafeOutputTree {
       throw closeCause;
     }
     if (setup.kind === "failed") throw setup.cause;
+    return setup.identity;
   }
 
   async #prepareParent(
@@ -609,35 +671,58 @@ export class SafeOutputTree {
         logicalParent.length === 0 ? part : `${logicalParent}/${part}`;
       current = join(current, part);
       await assertPathIdentity(parent.path, parent.identity);
-      const creation = await mkdir(current, { mode: 0o700 }).then(
-        () => ({ kind: "created" }) as const,
-        (cause: unknown) => {
-          if (hasUnrepresentableName(cause))
-            throw new DestinationPathUnrepresentableFailure(logicalPath, {
-              cause,
-            });
-          if (!isAlreadyExists(cause)) throw cause;
-          return { kind: "existing", cause } as const;
-        },
-      );
-      if (creation.kind === "existing") {
-        await throwIfDestinationCaseCollision(
-          parent.path,
-          logicalPath,
-          creation.cause,
-        );
-        const identity = this.#nestedDirectories.get(current);
-        if (identity === undefined) throw replacedDirectory(current);
-        await assertPathIdentity(current, identity);
+      const inflight = this.#creatingDirectories.get(current);
+      if (inflight !== undefined) {
+        await inflight;
+        await throwIfDestinationCaseCollision(parent.path, logicalPath);
+        const existingIdentity = this.#nestedDirectories.get(current);
+        if (existingIdentity === undefined) throw replacedDirectory(current);
+        await assertPathIdentity(current, existingIdentity);
       } else {
-        const identity = await readDirectoryIdentity(current).catch(
-          (cause: unknown) => {
-            this.#unknownDirectories.add(current);
-            throw cause;
-          },
-        );
-        this.#nestedDirectories.set(current, identity);
-        await this.#secureCreatedDirectory(current, identity);
+        const ensureDir = async (): Promise<DirectoryIdentity> => {
+          const creation = await mkdir(current, { mode: 0o700 }).then(
+            () => ({ kind: "created" }) as const,
+            (cause: unknown) => {
+              if (hasUnrepresentableName(cause))
+                throw new DestinationPathUnrepresentableFailure(logicalPath, {
+                  cause,
+                });
+              if (!isAlreadyExists(cause)) throw cause;
+              return { kind: "existing", cause } as const;
+            },
+          );
+          if (creation.kind === "existing") {
+            await throwIfDestinationCaseCollision(
+              parent.path,
+              logicalPath,
+              creation.cause,
+            );
+            const known = this.#nestedDirectories.get(current);
+            if (known === undefined) throw replacedDirectory(current);
+            await assertPathIdentity(current, known);
+            return known;
+          }
+          const createdIdentity = await readDirectoryIdentity(current).catch(
+            (cause: unknown) => {
+              this.#unknownDirectories.add(current);
+              throw cause;
+            },
+          );
+          this.#nestedDirectories.set(current, createdIdentity);
+          const securedIdentity = await this.#secureCreatedDirectory(
+            current,
+            createdIdentity,
+          );
+          this.#nestedDirectories.set(current, securedIdentity);
+          return securedIdentity;
+        };
+        const pending = ensureDir();
+        this.#creatingDirectories.set(current, pending);
+        try {
+          await pending;
+        } finally {
+          this.#creatingDirectories.delete(current);
+        }
       }
       await assertPathIdentity(parent.path, parent.identity);
       const identity = this.#nestedDirectories.get(current);
@@ -715,8 +800,23 @@ export class SafeOutputTree {
 
   /** Release descriptors without deleting an inspectable partial output tree. */
   async closeHandles(): Promise<void> {
+    await this.#closeOpenHandles();
+  }
+
+  /** Close handles whose identity is already known. Unidentified pending files stay open. */
+  async #closeAdmittedHandles(): Promise<void> {
+    const retain = new Set<OwnedFileHandle>();
+    for (const [path, owner] of this.#pendingFiles)
+      if (!this.#pendingFileIdentity.has(path)) retain.add(owner);
+    await this.#closeOpenHandles(retain);
+  }
+
+  async #closeOpenHandles(
+    retain?: ReadonlySet<OwnedFileHandle>,
+  ): Promise<void> {
     const failures: unknown[] = [];
     for (const owner of this.#openHandles) {
+      if (retain?.has(owner) === true) continue;
       try {
         await this.#closeHandle(owner);
       } catch (cause: unknown) {
@@ -731,9 +831,14 @@ export class SafeOutputTree {
     for (const [path, owner] of this.#pendingFiles) {
       let identity = this.#ownedFiles.get(path);
       if (identity === undefined) {
-        identity = await readFileIdentity(owner.handle, path);
+        identity = this.#pendingFileIdentity.get(path);
+        if (identity === undefined) {
+          identity = await readFileIdentity(owner.handle, path);
+          this.#pendingFileIdentity.set(path, identity);
+        }
         await assertFilePathIdentity(path, identity);
         this.#ownedFiles.set(path, identity);
+        this.#pendingFileIdentity.delete(path);
       }
       this.#pendingFiles.delete(path);
     }
@@ -774,21 +879,24 @@ const normalizeDestinationPath = (
   platform: NodeJS.Platform,
 ): string => {
   const path = normalizeArtifactPath(relativePath);
-  if (platform === "win32" && path.includes("\\"))
-    throw new ArtifactReaderFailure(
-      "path",
-      `Windows destination cannot materialize artifact path: ${JSON.stringify(path)}; backslashes denote path separators.`,
-    );
-  if (platform === "win32" && path.includes(":"))
-    throw new ArtifactReaderFailure(
-      "path",
-      `Windows destination cannot materialize artifact path as a regular file: ${path}; ':' denotes alternate data stream syntax.`,
-    );
-  if (platform === "win32" && /[\u0001-\u001f]/u.test(path))
-    throw new ArtifactReaderFailure(
-      "path",
-      `Windows destination cannot materialize artifact path: ${JSON.stringify(path)}; Windows names cannot contain U+0001-U+001F.`,
-    );
+  if (platform === "win32") {
+    const issue = windowsDestinationPathIssue(path);
+    if (issue === "backslash")
+      throw new ArtifactReaderFailure(
+        "path",
+        `Windows destination cannot materialize artifact path: ${JSON.stringify(path)}; backslashes denote path separators.`,
+      );
+    if (issue === "colon")
+      throw new ArtifactReaderFailure(
+        "path",
+        `Windows destination cannot materialize artifact path as a regular file: ${path}; ':' denotes alternate data stream syntax.`,
+      );
+    if (issue === "control")
+      throw new ArtifactReaderFailure(
+        "path",
+        `Windows destination cannot materialize artifact path: ${JSON.stringify(path)}; Windows names cannot contain U+0001-U+001F.`,
+      );
+  }
   return path;
 };
 

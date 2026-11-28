@@ -1,22 +1,48 @@
 // Run from the repository root after `npm run build:cached` on macOS arm64,
 // with Hopper and the Xcode command-line tools installed. No target is executed.
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { access, readFile, writeFile } from "node:fs/promises";
+import { access, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { promisify } from "node:util";
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
+import { runOwnedCommand } from "../dist/process/OwnedCommand.js";
 import { artifactMcpCall } from "./lib/artifact-e2e.mjs";
 import { snapshotHopperRuntime } from "./lib/real-hopper-cleanup.mjs";
 import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
-import { HOPPER_TARGET_LEASE_DIRECTORY } from "../dist/process/HopperLease.js";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import {
-  VerifierFixture,
-  withVerifierFixture,
-} from "./lib/verifier-fixture.mjs";
+  assertVerifierCleanupComplete,
+  completeVerifierRun,
+  createVerifierRun,
+} from "./lib/verifier-run.mjs";
+import { HOPPER_TARGET_LEASE_DIRECTORY } from "../dist/process/HopperLease.js";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import {
+  completeEvidenceClient,
+  completeEvidenceToolArguments,
+} from "./lib/complete-evidence.mjs";
+
+const verifierRun = createVerifierRun();
+// xcrun resolves the compiler before a workspace exists. A failed probe must
+// not allocate a root, so it uses the same short-lived owner as requireLaneToolchain.
+const probeOwnedCommand = async (command, arguments_) => {
+  const snapshot = await runOwnedCommand(
+    {
+      command,
+      arguments: arguments_,
+      cwd: process.cwd(),
+      env: process.env,
+      runId: `rea-hopper-callers-probe-${randomUUID()}`,
+      expectedCommand: null,
+      sweepTokenOwnedProcesses: true,
+    },
+    { timeoutMs: null, diagnosticBytes: 1024 * 1024 },
+  );
+  return snapshot.stdout.text;
+};
 
 assert.equal(process.platform, "darwin", "requires macOS");
 assert.equal(
@@ -48,16 +74,26 @@ await access(
   ),
   constants.X_OK,
 );
-const run = promisify(execFile);
-const clang = (await run("xcrun", ["--find", "clang"])).stdout.trim();
+const clang = (await probeOwnedCommand("xcrun", ["--find", "clang"])).trim();
 const sdk = (
-  await run("xcrun", ["--sdk", "macosx", "--show-sdk-path"])
-).stdout.trim();
+  await probeOwnedCommand("xcrun", ["--sdk", "macosx", "--show-sdk-path"])
+).trim();
+// The command owner is created before the workspace. If allocation fails,
+// the owner is still closed and no root is left behind.
+const commands = await createVerifierCommands();
 // A plain root under /tmp, where this verifier has always built its fixtures.
 const workspace = await VerifierFixture.open({
   prefix: "rea-hopper-callers-verifier-",
   parent: "/tmp",
   private: false,
+}).catch(async (cause) => {
+  await commands.close().catch((closeCause) => {
+    throw new AggregateError(
+      [cause, closeCause],
+      "Hopper caller workspace allocation and command cleanup both failed",
+    );
+  });
+  throw cause;
 });
 const directory = workspace.path;
 const fixture = join(directory, "tail-call");
@@ -65,14 +101,13 @@ const large = join(directory, "long-scan");
 const source = fileURLToPath(
   new URL("./fixtures/hopper-tail-call.c", import.meta.url),
 );
-const digest = async (path) =>
-  createHash("sha256")
-    .update(await readFile(path))
-    .digest("hex");
+
 const sessionsBefore = (
   await snapshotHopperRuntime("/tmp", HOPPER_TARGET_LEASE_DIRECTORY)
 ).paths;
-const client = new Client({ name: "hopper-callers-verifier", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "hopper-callers-verifier", version: "1" }),
+);
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: ["dist/main.js"],
@@ -112,36 +147,9 @@ const matchingRef = (ref, site, from, to) =>
   ref.source_procedure?.address === from &&
   ref.target_procedure?.address === to &&
   ref.call?.classification === "direct";
-// The root is removed only after these cleanups confirm.
-workspace.releaseAfter(async () => {
-  try {
-    await closeVerifierResources([
-      () => client.close(),
-      () => transport.close(),
-      async () => {
-        await new Promise((resolve) => setTimeout(resolve, 500));
-        const leaked = [
-          ...(
-            await snapshotHopperRuntime("/tmp", HOPPER_TARGET_LEASE_DIRECTORY)
-          ).paths,
-        ].filter((path) => !sessionsBefore.has(path));
-        assert.deepEqual(
-          leaked,
-          [],
-          `Hopper resources remain: ${leaked.join(", ")}`,
-        );
-      },
-    ]);
-  } catch (cause) {
-    throw new Error(`Hopper cleanup failed; fixture retained at ${directory}`, {
-      cause,
-    });
-  } finally {
-    if (stderr) process.stderr.write(stderr);
-  }
-});
-await withVerifierFixture(workspace, async () => {
-  await run(clang, [
+let primaryFailure;
+try {
+  await commands.exec(clang, [
     "-isysroot",
     sdk,
     "-arch",
@@ -161,7 +169,7 @@ await withVerifierFixture(workspace, async () => {
   lines.push("int main(void) { return rea_progress_0000(); }");
   const largeSource = join(directory, "long-scan.c");
   await writeFile(largeSource, lines.join("\n"));
-  await run(clang, [
+  await commands.exec(clang, [
     "-isysroot",
     sdk,
     "-arch",
@@ -171,8 +179,8 @@ await withVerifierFixture(workspace, async () => {
     "-o",
     large,
   ]);
-  const before = await digest(fixture),
-    beforeLarge = await digest(large);
+  const before = await sha256File(fixture),
+    beforeLarge = await sha256File(large);
   await client.connect(transport);
   if (transport.pid === null)
     throw new Error("MCP process identity unavailable");
@@ -200,7 +208,7 @@ await withVerifierFixture(workspace, async () => {
   );
   assert(
     (
-      await call("procedure_callees", { procedure: from })
+      await call("procedure_callees", { detail: "complete", procedure: from })
     ).normalized_result.includes(to),
   );
   const callers = await call("procedure_callers", {
@@ -216,7 +224,11 @@ await withVerifierFixture(workspace, async () => {
     "forward caller provenance missing",
   );
   const refs = (
-    await call("procedure_references", { procedure: to, direction: "incoming" })
+    await call("procedure_references", {
+      detail: "complete",
+      procedure: to,
+      direction: "incoming",
+    })
   ).normalized_result.references;
   assert(
     refs.some((x) => matchingRef(x, site, from, to)),
@@ -260,7 +272,7 @@ await withVerifierFixture(workspace, async () => {
     ),
   );
   await call("close_binary", {});
-  assert.equal(await digest(fixture), before);
+  assert.equal(await sha256File(fixture), before);
   console.log(
     JSON.stringify({
       event: "tail_call_verified",
@@ -278,10 +290,17 @@ await withVerifierFixture(workspace, async () => {
     detail: "complete",
   };
   const count = notifications;
-  await call("get_call_graph", query);
+  await call(
+    "get_call_graph",
+    await completeEvidenceToolArguments("get_call_graph", query),
+  );
   assert.equal(notifications, count, "unsolicited progress without token");
   const progress = [];
-  await call("get_call_graph", query, { onprogress: (x) => progress.push(x) });
+  await call(
+    "get_call_graph",
+    await completeEvidenceToolArguments("get_call_graph", query),
+    { onprogress: (x) => progress.push(x) },
+  );
   assert(
     progress.every((x, i) => i === 0 || x.progress > progress[i - 1].progress),
     "progress not monotonic",
@@ -298,7 +317,7 @@ await withVerifierFixture(workspace, async () => {
   try {
     await artifactMcpCall(
       client,
-      { name: "get_call_graph", arguments: query },
+      { name: "get_call_graph", arguments: { ...query, detail: "complete" } },
       {
         timeout: 120000,
         signal: controller.signal,
@@ -322,10 +341,13 @@ await withVerifierFixture(workspace, async () => {
     "did not observe cancellation after partial scan progress; cancellation coverage unavailable on this host",
   );
   await client.ping();
-  const retry = await call("get_call_graph", query);
+  const retry = await call(
+    "get_call_graph",
+    await completeEvidenceToolArguments("get_call_graph", query),
+  );
   assert(retry.normalized_result.graph, "retry did not return graph");
   await call("close_binary", {});
-  assert.equal(await digest(large), beforeLarge);
+  assert.equal(await sha256File(large), beforeLarge);
   console.log(
     JSON.stringify({
       event: "progress_cancel_retry_verified",
@@ -333,4 +355,94 @@ await withVerifierFixture(workspace, async () => {
       sha256: beforeLarge,
     }),
   );
-});
+} catch (cause) {
+  primaryFailure = cause;
+}
+let hopperCleanupFailure;
+try {
+  await workspace.closeEarly([
+    async () => {
+      try {
+        await closeVerifierResources([
+          () => client.close(),
+          () => transport.close(),
+          async () => {
+            await new Promise((resolve) => setTimeout(resolve, 500));
+            const leaked = [
+              ...(
+                await snapshotHopperRuntime(
+                  "/tmp",
+                  HOPPER_TARGET_LEASE_DIRECTORY,
+                )
+              ).paths,
+            ].filter((path) => !sessionsBefore.has(path));
+            assert.deepEqual(
+              leaked,
+              [],
+              `Hopper resources remain: ${leaked.join(", ")}`,
+            );
+          },
+        ]);
+      } catch (cause) {
+        throw new Error(
+          `Hopper cleanup failed; fixture retained at ${directory}`,
+          { cause },
+        );
+      } finally {
+        if (stderr) process.stderr.write(stderr);
+      }
+    },
+  ]);
+} catch (cause) {
+  hopperCleanupFailure = cause;
+}
+if (hopperCleanupFailure !== undefined)
+  primaryFailure =
+    primaryFailure === undefined
+      ? hopperCleanupFailure
+      : new AggregateError(
+          [primaryFailure, hopperCleanupFailure],
+          "Hopper caller verification and Hopper cleanup both failed",
+        );
+let commandCleanupFailure;
+try {
+  await workspace.closeEarly([() => commands.close()]);
+} catch (cause) {
+  commandCleanupFailure = cause;
+}
+if (commandCleanupFailure !== undefined)
+  throw workspace.retainedError(
+    `Hopper caller command cleanup failed; retained diagnostic workspace: ${directory}`,
+    {
+      cause:
+        primaryFailure === undefined
+          ? commandCleanupFailure
+          : new AggregateError(
+              [primaryFailure, commandCleanupFailure],
+              "Hopper caller verification and command cleanup both failed",
+            ),
+    },
+  );
+const completedVerifierRun = await completeVerifierRun(verifierRun);
+try {
+  assertVerifierCleanupComplete(completedVerifierRun.process_lineage);
+} catch (cause) {
+  throw workspace.retainedError(
+    `Cleanup unverified; retained diagnostic workspace: ${directory}`,
+    {
+      cause:
+        primaryFailure === undefined
+          ? cause
+          : new AggregateError(
+              [primaryFailure, cause],
+              "Hopper caller verification failed and cleanup was unverified",
+            ),
+    },
+  );
+}
+if (primaryFailure !== undefined)
+  throw workspace.retainedError(
+    `Hopper caller verification failed; retained workspace: ${directory}`,
+    { cause: primaryFailure },
+  );
+await workspace.release();

@@ -108,7 +108,7 @@ const PROJECT_POLICIES = {
   },
   "process-boundary": {
     pool: "forks" as const,
-    maxWorkers: MAX_TEST_WORKERS,
+    maxWorkers: 1,
     // Process-tree observations share host sampling resources; keep this small
     // lane serial while the independent projects run together.
     fileParallelism: false,
@@ -177,6 +177,13 @@ export default defineConfig({
   test: {
     env: {
       TMPDIR: CANONICAL_TEMPORARY_DIRECTORY,
+      // Tests read analysis facts, so a CLI or server they spawn delivers
+      // complete Evidence, as the in-process harness default does. Delivery
+      // tests set their own budget; this is the largest accepted seed.
+      REA_AGENT_RESULT_BUDGET_BYTES: String(10 * 1024 * 1024),
+      // Nothing a test runs writes to the user's retained-Evidence cache;
+      // retention tests select a temporary cache and their own size.
+      REA_CLI_RETAINED_EVIDENCE_BYTES: "0",
     },
     maxWorkers: MAX_TEST_WORKERS,
     projects,

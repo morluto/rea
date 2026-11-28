@@ -36,7 +36,10 @@ import {
   machoImage,
 } from "../../../src/artifacts/apple/MachoImage.fixture.js";
 import { locateGodotPck } from "../../../src/artifacts/GodotPckLocation.js";
-import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  malformedArtifact,
+} from "../../../src/resources/ArtifactReader.js";
 import { artifactFilePrimaryFacts } from "../../../src/resources/ArtifactFileOperation.js";
 import { DesktopApplicationReader } from "../../../src/artifacts/DesktopApplicationReader.js";
 import { inspectDesktopFile } from "../../../src/artifacts/DesktopFileInspection.js";
@@ -502,6 +505,30 @@ it.each(["Game_Data/Managed", "Contents/Resources/Data/Managed"])(
   },
 );
 
+it("retains PE/CLI evidence without inferring Unity from competing managed table streams", async () => {
+  const root = await createTestTempDirectory("rea-desktop-table-conflict-");
+  const managedPath = "Game_Data/Managed/Assembly-CSharp.dll";
+  await put(
+    root,
+    managedPath,
+    buildManagedPeFixture({
+      references: ["UnityEngine.CoreModule"],
+      competingTableStream: "distinct",
+    }),
+  );
+  const { report } = await inspect(root);
+  expect(report.coverage.status).toBe("partial");
+  expect(report.candidates.map(({ family }) => family)).toEqual(["dotnet"]);
+  const file = report.files.find(({ path }) => path === managedPath);
+  expect(file?.facts.map(({ kind }) => kind)).toContain("pe-cli-directory");
+  expect(file?.facts.map(({ kind }) => kind)).not.toContain(
+    "unity-assembly-reference",
+  );
+  expect(file?.issues).toContainEqual(
+    expect.stringContaining("Metadata row layout is unknown."),
+  );
+});
+
 it("orders member probes for Unity predefined script assemblies before every managed artifact probe", async () => {
   const root = await createTestTempDirectory("rea-desktop-mono-members-");
   const unity = buildManagedPeFixture({
@@ -536,9 +563,17 @@ it("orders member probes for Unity predefined script assemblies before every man
     "inspect_managed_members",
     "inspect_managed_members",
   ]);
+  // UnityEngine.CoreModule is a runtime facade: counted, not probed one by one.
   expect(
     rows.filter(([operation]) => operation === "inspect_managed_artifact"),
-  ).toHaveLength(7);
+  ).toHaveLength(6);
+  expect(report.deferred_probes).toMatchObject([
+    {
+      operation: "inspect_managed_artifact",
+      reason: "runtime-facade",
+      count: 1,
+    },
+  ]);
   for (const probe of report.next_probes)
     if (probe.operation === "inspect_managed_members")
       expect(probe.rationale).toContain(
@@ -1143,10 +1178,7 @@ it.each(
     const primary =
       variant === "physical read"
         ? Object.assign(new Error("physical read denied"), { code: "EACCES" })
-        : new ArtifactReaderFailure(
-            "format",
-            "invalid later format declaration",
-          );
+        : malformedArtifact("pe", "invalid later format declaration");
     const validation = Object.assign(
       new Error("final descriptor stat failed"),
       { code: "EIO" },
@@ -1380,16 +1412,13 @@ it.each([
       metadataOffset,
       image.length - metadataOffset,
     );
-    if (layout.blob === null)
-      throw new Error("Fixture requires a #Blob stream");
-    const blobSize = layout.blob.size;
     const reference = layout.table(35)!;
     // ECMA-335 AssemblyRef: 8 version bytes, 4 flag bytes, then PublicKeyOrToken.
     // Keep its name valid while making that unrelated blob index invalid.
     if (layout.blobIndexSize === 2)
       image.writeUInt16LE(0xffff, reference.offset + 12);
     else image.writeUInt32LE(0xffff_ffff, reference.offset + 12);
-    expect(() => readAssemblyReference(image, layout, 1, blobSize)).toThrow();
+    expect(() => readAssemblyReference(image, layout, 1)).toThrow();
     await put(root, `${managedDirectory}/Assembly-CSharp.dll`, image);
     const { report } = await inspect(root);
     expect(report.candidates.map((candidate) => candidate.family)).toEqual([
@@ -1523,7 +1552,10 @@ it("compares exact signature bytes without masking high bits in engine headers o
   badHeader[0] = badHeader[0]! | 0x80;
   await put(root, "bad-header.exe", Buffer.concat([elf, badHeader, trailer]));
   const { report } = await inspect(root);
-  expect(report.candidates).toEqual([]);
+  // Only the native fallback remains: no engine header was recognised.
+  expect(report.candidates.filter(({ family }) => family !== "native")).toEqual(
+    [],
+  );
   expect(report.files.flatMap((file) => file.facts)).not.toEqual(
     expect.arrayContaining([
       expect.objectContaining({ kind: "godot-pck-header" }),

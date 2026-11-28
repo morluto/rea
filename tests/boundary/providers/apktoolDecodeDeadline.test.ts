@@ -7,7 +7,10 @@ import {
   awaitApktoolOperation,
   createApktoolProcessFixture,
 } from "../../fixtures/apktoolProcessTree.js";
-import { observePosixProcess } from "../../support/process/observePosixProcess.js";
+import {
+  observePosixProcess,
+  waitForPosixObservation,
+} from "../../support/process/observePosixProcess.js";
 import { ApktoolProvider } from "../../../src/apktool/ApktoolProvider.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -35,21 +38,20 @@ it.skipIf(process.platform === "win32")(
         decode_timeout_ms: DECODE_TIMEOUT_MS,
       },
     });
-    let launched: readonly number[] = [];
     try {
-      await expect
-        .poll(
-          async () => {
-            const marker = await fixture.readMarker();
-            if (marker?.ready !== true) return false;
-            launched = [marker.rootPid, marker.childPid];
-            return (await Promise.all(launched.map(observePosixProcess))).every(
-              ({ kind }) => kind === "running",
-            );
-          },
-          { interval: 25 },
-        )
-        .toBe(true);
+      const launched = await waitForPosixObservation(
+        async () => {
+          const marker = await fixture.readMarker();
+          if (marker?.ready !== true) return undefined;
+          const pids = [marker.rootPid, marker.childPid];
+          return (await Promise.all(pids.map(observePosixProcess))).every(
+            ({ kind }) => kind === "running",
+          )
+            ? pids
+            : undefined;
+        },
+        { interval: 25 },
+      );
       const outcome = await awaitApktoolOperation(pending, 15_000);
       const elapsed = performance.now() - started;
       expect(outcome.ok).toBe(false);
@@ -58,23 +60,29 @@ it.skipIf(process.platform === "win32")(
       const projected = projectAnalysisError(outcome.error);
       expect(projected).toMatchObject({
         code: "provider_timeout",
-        details: { timeout_ms: DECODE_TIMEOUT_MS },
+        details: {
+          timeout_ms: DECODE_TIMEOUT_MS,
+          limit: {
+            control_kind: "parameter",
+            parameter: "decode_timeout_ms",
+            effective_value: DECODE_TIMEOUT_MS,
+            unit: "ms",
+            applies_at: "next_call",
+          },
+        },
       });
-      expect(projected.message).toContain(`${String(DECODE_TIMEOUT_MS)} ms`);
-      expect(projected.remediation.action).toContain("decode_timeout_ms");
-      expect(projected.remediation.action).toContain("next decode");
       // Settlement includes the owned-command deadline, so the timer elapsed.
       expect(elapsed).toBeGreaterThanOrEqual(DECODE_TIMEOUT_MS - 50);
       expect(elapsed).toBeLessThan(15_000);
-      await expect
-        .poll(
-          async () =>
-            (await Promise.all(launched.map(observePosixProcess))).every(
-              ({ kind }) => kind !== "running",
-            ),
-          { interval: 25 },
-        )
-        .toBe(true);
+      await waitForPosixObservation(
+        async () =>
+          (await Promise.all(launched.map(observePosixProcess))).every(
+            ({ kind }) => kind !== "running",
+          )
+            ? true
+            : undefined,
+        { interval: 25 },
+      );
     } finally {
       await fixture.cleanup([pending, provider.close()]);
     }

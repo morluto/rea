@@ -108,6 +108,7 @@ test("keeps each Kuna no-pseudocode observation's limitations on its batch item"
 
     const direct = async (procedure: string) =>
       parseEvidence(
+        // One small observation fits the agent result budget unchanged.
         (await call("procedure_pseudo_code", { procedure })).structuredContent,
       );
     const mainDirect = await direct("main");
@@ -136,7 +137,7 @@ test("keeps each Kuna no-pseudocode observation's limitations on its batch item"
     // profile commits only analysis inputs. Composed and retained views must
     // preserve the same warning for agents reading those results.
     const verificationWarning =
-      "Kuna 1.833 is not REA's verified 1.990 release";
+      "Kuna 1.833 is not REA's verified 1.1000 release";
     expect(batch.limitations).toContainEqual(
       expect.stringContaining(verificationWarning),
     );

@@ -40,6 +40,9 @@ import { parseXmlPropertyList } from "../../domain/propertyListKeys.js";
 import {
   decodeNibArchive,
   nibCollectionMembers,
+  nibDataBase64,
+  nibObjectReference,
+  trimTrailingNul,
   type NibArchiveDocument,
 } from "./NibArchive.js";
 import {
@@ -57,7 +60,10 @@ import {
   type InterfaceBuilderAnalysis,
 } from "../../domain/apple/interfaceBuilderGraph.js";
 import { projectNibViewHierarchy } from "./NibViewHierarchy.js";
-import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
+import {
+  ownedJsonValueSchema,
+  type JsonValue,
+} from "../../domain/jsonValue.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 
 import { decodeXmlPlistText } from "../../domain/propertyListXmlText.js";
@@ -269,9 +275,7 @@ const decodeInterfaceBuilderBundle = async (
         documents.push({
           relativePath: entry.path,
           archiveSha256: documentHash,
-          documentKind: entry.path.includes(".storyboardc/")
-            ? "storyboard_scene"
-            : "nib",
+          documentKind: entry.documentKind,
           raw,
           ...(numberLiterals === undefined ? {} : { numberLiterals }),
           ...(nib === null || nib.omitted === 0
@@ -366,6 +370,10 @@ const decodeInterfaceBuilderBundle = async (
   return finalOutcome.value;
 };
 
+type InterfaceBuilderCandidate = ArtifactEntry & {
+  readonly documentKind: InterfaceBuilderDocumentInput["documentKind"];
+};
+
 /** Select lexically earliest document paths independent of host traversal order. */
 const selectInterfaceBuilderCandidates = async (
   reader: DirectoryArtifactReader,
@@ -373,7 +381,7 @@ const selectInterfaceBuilderCandidates = async (
   maximumDocuments: number,
   traversal: ArtifactTraversalObservation,
 ): Promise<{
-  readonly selected: readonly ArtifactEntry[];
+  readonly selected: readonly InterfaceBuilderCandidate[];
   readonly omittedSamples: readonly ArtifactEntry[];
   readonly symlinkSamples: readonly ArtifactEntry[];
   readonly omitted: number;
@@ -382,18 +390,18 @@ const selectInterfaceBuilderCandidates = async (
   readonly unreportedOmitted: number;
 }> => {
   const capacity = maximumDocuments + MAX_REPORTED_OMITTED_ARCHIVES;
-  const candidates: ArtifactEntry[] = [];
+  const candidates: InterfaceBuilderCandidate[] = [];
   const symlinkSamples: ArtifactEntry[] = [];
   let symlinks = 0;
   let unclassifiedSymlinks = 0;
   let firstUnclassifiedSymlink: string | undefined;
   let total = 0;
   for await (const entry of traversal.entries(reader, signal)) {
+    if (entry.kind !== "file" && entry.kind !== "symlink") continue;
+    const normalizedPath = entry.path.toLowerCase();
+    const isNib = normalizedPath.endsWith(".nib");
     if (entry.kind === "symlink") {
-      if (
-        isInterfaceBuilderArchive(entry.path) ||
-        entry.path.toLowerCase().endsWith(".storyboardc")
-      ) {
+      if (isNib || normalizedPath.endsWith(".storyboardc")) {
         symlinks += 1;
         retainCandidate(symlinkSamples, entry, MAX_REPORTED_OMITTED_ARCHIVES);
       } else {
@@ -402,10 +410,12 @@ const selectInterfaceBuilderCandidates = async (
       }
       continue;
     }
-    if (entry.kind !== "file" || !isInterfaceBuilderArchive(entry.path))
-      continue;
+    if (!isNib) continue;
     total += 1;
-    retainCandidate(candidates, entry, capacity);
+    const documentKind = normalizedPath.includes(".storyboardc/")
+      ? "storyboard_scene"
+      : "nib";
+    retainCandidate(candidates, { ...entry, documentKind }, capacity);
   }
   if (unclassifiedSymlinks > 0)
     traversal.record({
@@ -430,9 +440,9 @@ const selectInterfaceBuilderCandidates = async (
 };
 
 /** Keep the earliest bounded path set; directory iteration order is host-defined. */
-const retainCandidate = (
-  candidates: ArtifactEntry[],
-  entry: ArtifactEntry,
+const retainCandidate = <Entry extends ArtifactEntry>(
+  candidates: Entry[],
+  entry: Entry,
   maximum: number,
 ): void => {
   let low = 0;
@@ -534,36 +544,29 @@ const finalizeHierarchyCoverage = (
       ...result.graph,
       coverage: [
         ...result.graph.coverage.map((facet) => {
-          const omittedConnection = unresolvedConnections.get(
-            facet.facet.replace(/^connections:/u, ""),
-          );
           const [kind, ...pathParts] = facet.facet.split(":");
-          const source = (
-            unexaminedSources.get(pathParts.join(":")) ?? []
-          ).find((source) =>
-            source.facets.some((affected) => affected === kind),
-          );
-          if (source !== undefined)
-            return {
-              ...facet,
-              status: "partial" as const,
-              reason: facet.reason ?? source.reason,
-            };
-          return facet.facet.startsWith("connections:") &&
-            omittedConnection !== undefined
-            ? {
-                ...facet,
-                status: "partial" as const,
-                // A connection dropped by the limit is recoverable by raising
-                // it, so that cause keeps the reason the graph already named.
-                // Only a facet with no other cause reports the omission.
-                reason: facet.reason ?? "connection_unresolved",
-                omitted:
-                  facet.omitted === null
-                    ? null
-                    : facet.omitted + omittedConnection,
-              }
-            : facet;
+          const path = pathParts.join(":");
+          const source = unexaminedSources
+            .get(path)
+            ?.find((source) =>
+              source.facets.some((affected) => affected === kind),
+            );
+          const omittedConnections =
+            kind === "connections"
+              ? unresolvedConnections.get(path)
+              : undefined;
+          if (source === undefined && omittedConnections === undefined)
+            return facet;
+          return {
+            ...facet,
+            status: "partial" as const,
+            // A caller can recover a limit omission by raising that limit.
+            reason: facet.reason ?? source?.reason ?? "connection_unresolved",
+            omitted:
+              facet.omitted === null
+                ? null
+                : facet.omitted + (omittedConnections ?? 0),
+          };
         }),
         {
           facet: "archive_decode",
@@ -677,7 +680,7 @@ const projectNibArchive = (
 ) => {
   const unexaminedSources: NibUnexaminedSource[] = [];
   for (const object of archive.objects) {
-    const name = object.class_name.replace(/\0+$/u, "");
+    const name = trimTrailingNul(object.class_name);
     if (
       name === "UINib" &&
       ["UINib.archiveData", "archiveData"].some((key) =>
@@ -701,7 +704,7 @@ const projectNibArchive = (
   const normalizeClassName = (value: string): string => {
     const known = normalizedClassNames.get(value);
     if (known !== undefined) return known;
-    const normalized = value.replace(/\0+$/u, "");
+    const normalized = trimTrailingNul(value);
     normalizedClassNames.set(value, normalized);
     return normalized;
   };
@@ -713,13 +716,8 @@ const projectNibArchive = (
   ): string | null => {
     if (decodedStrings.has(objectId))
       return decodedStrings.get(objectId) ?? null;
-    const data = object.values["NS.bytes"];
-    if (typeof data !== "object" || data === null || Array.isArray(data)) {
-      decodedStrings.set(objectId, null);
-      return null;
-    }
-    const encoded = data.$nib_data_base64;
-    if (typeof encoded !== "string") {
+    const encoded = nibDataBase64(object.values["NS.bytes"]);
+    if (encoded === null) {
       decodedStrings.set(objectId, null);
       return null;
     }
@@ -781,15 +779,13 @@ const projectNibArchive = (
     }
   }
   const dereference = (value: JsonValue | undefined): JsonValue | undefined => {
-    if (typeof value !== "object" || value === null || Array.isArray(value))
-      return value;
-    const encodedData = value.$nib_data_base64;
-    if (typeof encodedData === "string") {
+    const encodedData = nibDataBase64(value);
+    if (encodedData !== null) {
       budget.reserveBase64JsonStringOccurrence(encodedData);
       return value;
     }
-    const ref = value.$nib_object_ref;
-    if (typeof ref !== "number") return value;
+    const ref = nibObjectReference(value);
+    if (ref === null) return value;
     const target = byId.get(ref);
     if (target === undefined) return undefined;
     if (normalizeClassName(target.class_name) === "NSString") {
@@ -802,10 +798,8 @@ const projectNibArchive = (
     return { objectID: String(ref) };
   };
   const referencedString = (value: JsonValue | undefined): string | null => {
-    if (typeof value !== "object" || value === null || Array.isArray(value))
-      return null;
-    const ref = value.$nib_object_ref;
-    if (typeof ref !== "number") return null;
+    const ref = nibObjectReference(value);
+    if (ref === null) return null;
     const target = byId.get(ref);
     if (
       target === undefined ||
@@ -903,13 +897,6 @@ const projectNibArchive = (
   // connection entry, so the omission has to be counted here: the projected
   // dictionary carries no trace of it for a downstream consumer to find.
   let unresolvedConnections = 0;
-  const reference = (value: JsonValue | undefined): number | null => {
-    if (typeof value !== "object" || value === null || Array.isArray(value))
-      return null;
-    return typeof value.$nib_object_ref === "number"
-      ? value.$nib_object_ref
-      : null;
-  };
   for (const object of archive.objects) {
     const className = normalizeClassName(object.class_name);
     // AppKit connectors use NS-prefixed keys; UIKit's runtime outlet and
@@ -920,12 +907,14 @@ const projectNibArchive = (
     // A source-less known AppKit annotation names one object, not a connection.
     // Unknown connectors and annotations with an encoded source remain evidence.
     if (isSourceLessAppKitAnnotationConnector(className, values)) continue;
-    const source = reference(values[connectionFields.source]);
+    const source = nibObjectReference(values[connectionFields.source]);
     if (source === null) {
       unresolvedConnections += 1;
       continue;
     }
-    const destination = reference(values[connectionFields.destination]);
+    const destination = nibObjectReference(
+      values[connectionFields.destination],
+    );
     const label = referencedString(values[connectionFields.label]);
     const type = className.includes("Outlet")
       ? "outlet"
@@ -959,7 +948,7 @@ const projectNibArchive = (
       continue;
     }
     const destinations =
-      members === undefined ? [destination] : members.map(reference);
+      members === undefined ? [destination] : members.map(nibObjectReference);
     for (const [memberIndex, member] of destinations.entries()) {
       if (members !== undefined && member === null) {
         unresolvedConnections += 1;
@@ -1020,7 +1009,7 @@ const projectNibArchive = (
     unresolvedConnections,
     nonFiniteRealCount,
     negativeZeroRealCount,
-    raw: jsonValueSchema.parse({
+    raw: ownedJsonValueSchema.parse({
       "com.apple.ibtool.document.objects": objects,
       "com.apple.ibtool.document.connections": connections,
       "com.apple.ibtool.document.hierarchy": viewHierarchy.hierarchy ?? [],
@@ -1033,11 +1022,6 @@ const projectNibArchive = (
       ),
     }),
   };
-};
-
-const isInterfaceBuilderArchive = (path: string): boolean => {
-  const lower = path.toLowerCase();
-  return lower.endsWith(".nib") || lower.endsWith("/objects.nib");
 };
 
 const readEntry = async (

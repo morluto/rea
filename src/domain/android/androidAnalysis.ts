@@ -16,6 +16,8 @@ import {
   androidJniReportSchema,
 } from "./androidJniBindings.js";
 import { androidJniViewRequestSchema } from "./androidJniQuery.js";
+import { androidReferencesViewSchema } from "./androidReferencesQuery.js";
+import { androidClassViewRequestSchema } from "./androidClassQuery.js";
 
 const target = {
   path: localPathStringSchema.describe(
@@ -34,6 +36,12 @@ const mappingPath = {
     ),
 };
 
+/**
+ * Default page of class-name matches: an empty query lists every class, and
+ * a large APK has tens of thousands.
+ */
+export const ANDROID_CLASS_SEARCH_PAGE = 256;
+
 /** Caller intent for static Android inspection, independent of its engine. */
 export const androidInputSchemas = {
   inspect_android_package: z.strictObject(target),
@@ -43,6 +51,18 @@ export const androidInputSchemas = {
     query: z
       .string()
       .describe("Case-sensitive class-name substring; empty lists all classes"),
+    limit: z
+      .int()
+      .positive()
+      .default(ANDROID_CLASS_SEARCH_PAGE)
+      .describe(
+        `Maximum number of matching class names to return (default ${String(ANDROID_CLASS_SEARCH_PAGE)}); next_offset starts the next page`,
+      ),
+    offset: z
+      .int()
+      .nonnegative()
+      .optional()
+      .describe("Zero-based starting match index; defaults to 0"),
   }),
   inspect_android_class: z.strictObject({ ...classTarget, ...mappingPath }),
   inspect_android_method: z.strictObject({
@@ -90,13 +110,25 @@ export const androidPackageInspectionInputSchema =
 
 /** Delivery is an adapter/application choice, never a provider analysis option. */
 export const androidSymbolInspectionInputSchemas = {
-  inspect_android_class: androidInputSchemas.inspect_android_class.extend({
-    detail: z.enum(["complete", "summary"]).optional(),
-  }),
+  inspect_android_class: androidInputSchemas.inspect_android_class
+    .extend({
+      detail: z.enum(["complete", "summary"]).optional(),
+      view: androidClassViewRequestSchema.optional(),
+    })
+    .superRefine(validateAndroidPackageDelivery),
   inspect_android_method: androidInputSchemas.inspect_android_method.extend({
     detail: z.enum(["complete", "summary"]).optional(),
   }),
 } as const;
+
+/** Reference delivery and its view never reach the engine. */
+export const androidReferencesInspectionInputSchema =
+  androidInputSchemas.trace_android_references
+    .extend({
+      detail: z.enum(["complete", "summary"]).optional(),
+      view: androidReferencesViewSchema.optional(),
+    })
+    .superRefine(validateAndroidPackageDelivery);
 
 /** JNI selection changes analysis; delivery only selects retained views. */
 export const androidJniInspectionInputSchema =
@@ -223,6 +255,14 @@ const engine = z.strictObject({
 const common = { engine };
 
 /** Portable observations with explicit decompiler and identity limitations. */
+const methodInspectionIdentity = {
+  ...common,
+  class_name: z.string(),
+  method,
+  overload_count: z.int().positive(),
+  mapping: androidMappingReportSchema.exactOptional(),
+};
+
 export const androidResultSchemas = {
   inspect_android_jni_bindings: androidJniReportSchema.extend(common),
   inspect_android_package: z.strictObject({
@@ -244,13 +284,20 @@ export const androidResultSchemas = {
     query: z.string(),
     total_classes: z.int().nonnegative(),
     matches: z.array(z.string()),
+    next_offset: z
+      .int()
+      .nonnegative()
+      .nullable()
+      .describe(
+        "Offset of the next page of matches; null when no match follows this page",
+      ),
     duplicate_names: z.array(
       z.strictObject({
         name: z.string(),
         occurrences: z.int().min(2),
       }),
     ),
-    coverage: z.literal("complete"),
+    coverage: knownCoverageStatusSchema,
   }),
   inspect_android_class: z.strictObject({
     ...common,
@@ -267,18 +314,25 @@ export const androidResultSchemas = {
     inner_classes: z.array(z.string()),
     mapping: androidMappingReportSchema.exactOptional(),
   }),
-  inspect_android_method: z.strictObject({
-    ...common,
-    class_name: z.string(),
-    method: method,
-    overload_count: z.int().positive(),
-    representation: z.enum(["java", "smali"]),
-    body_status: z.enum(["available", "not_available"]),
-    fell_back: z.boolean(),
-    markers: z.array(z.string()),
-    source: textCoverage,
-    mapping: androidMappingReportSchema.exactOptional(),
-  }),
+  inspect_android_method: z.union([
+    z.strictObject({
+      ...methodInspectionIdentity,
+      representation: z.enum(["java", "smali"]),
+      body_status: z.enum(["available", "not_available"]),
+      fell_back: z.boolean(),
+      markers: z.array(z.string()),
+      source: textCoverage,
+    }),
+    z.strictObject({
+      ...methodInspectionIdentity,
+      representation: z.null(),
+      body_status: z.literal("not_available"),
+      body_unavailable_reason: z.string().min(1),
+      fell_back: z.literal(false),
+      markers: z.array(z.string()),
+      source: z.null(),
+    }),
+  ]),
   trace_android_references: z.strictObject({
     ...common,
     target_definition: z.enum(["defined", "external"]),

@@ -558,3 +558,89 @@ it("reports truncated target instructions and native callers", async () => {
     `${formatHopperCallerScanReason(result.value.scan)} ${hopperCallerScanRecovery(result.value.scan, hopperCallerScanBudgetForMilliseconds(250))}`,
   );
 });
+
+it("counts UTF-8 JSON bytes on compact pages and shared expanded references against the retention budget", async () => {
+  // Each 4-byte emoji takes 4 UTF-8 JSON bytes while keeping JS string length smaller.
+  const utf8Caller = { ...caller, name: "😀".repeat(200_000) };
+  const refs = Array.from({ length: 6 }, (_, index) => ({
+    ...compactEdge,
+    source_address: `0x${(0x3000 + index * 4).toString(16)}`,
+  }));
+  const callTool = vi.fn().mockImplementation((method: string) =>
+    Promise.resolve(
+      ok(
+        method === "rea_caller_scan_target"
+          ? reply(method)
+          : {
+              start: 0,
+              next: 1,
+              total: 1,
+              oversized: false,
+              items: [
+                {
+                  caller: utf8Caller,
+                  callees: [target.address],
+                  references: refs,
+                },
+              ],
+            },
+      ),
+    ),
+  );
+  // Page fits (~800 KB < 4 MiB), while 6 expanded copies (~4.8 MB > 4 MiB) exceed retention.
+  const result = await reconcileHopperCallers(
+    { callTool } as unknown as HopperClient,
+    "procedure_references",
+    { procedure: "name", direction: "incoming" },
+    ok(referenceResult),
+    undefined,
+    250,
+  );
+  if (result.ok)
+    throw new Error("expected expanded references to exceed retention");
+  expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
+  expect(result.error.partialObservation).toMatchObject({
+    kind: "hopper-caller-reconciliation",
+    scan: {
+      stop: {
+        code: "retention_budget",
+        allowance_bytes: HOPPER_CALLER_SCAN_RETENTION_BYTES,
+      },
+    },
+  });
+
+  // Also verify page-level retention stops before exceeding HOPPER_CALLER_SCAN_RETENTION_BYTES.
+  const hugePageCaller = { ...caller, name: "😀".repeat(1_100_000) };
+  const pageOverCall = vi.fn().mockImplementation((method: string) =>
+    Promise.resolve(
+      ok(
+        method === "rea_caller_scan_target"
+          ? reply(method)
+          : {
+              start: 0,
+              next: 1,
+              total: 1,
+              oversized: false,
+              items: [{ caller: hugePageCaller, callees: [], references: [] }],
+            },
+      ),
+    ),
+  );
+  const pageStop = await reconcileHopperCallers(
+    { callTool: pageOverCall } as unknown as HopperClient,
+    "procedure_callers",
+    { procedure: "name" },
+    ok(base),
+    undefined,
+    250,
+  );
+  if (!pageStop.ok) throw pageStop.error;
+  expect(pageStop.value.scan).toMatchObject({
+    examined_procedures: 0,
+    retained_bytes: 0,
+    stop: {
+      code: "retention_budget",
+      allowance_bytes: HOPPER_CALLER_SCAN_RETENTION_BYTES,
+    },
+  });
+});

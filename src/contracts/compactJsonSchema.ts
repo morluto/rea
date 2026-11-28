@@ -1,13 +1,15 @@
+import { Budget } from "../domain/budget.js";
 import { isRecord } from "../kernel/isRecord.js";
 import {
   JsonSchemaReferences,
   type JsonSchemaScope,
 } from "./jsonSchemaReferences.js";
 import {
+  mapSchemaChildren,
   schemaArrays,
   schemaChildren,
   schemaMaps,
-  schemaLiteralValues,
+  schemaPointerSteps,
 } from "./jsonSchemaKeywords.js";
 
 // Shared compact JSON Schema projection primitives; canonical validation stays separate.
@@ -30,6 +32,15 @@ const jsonValueTypes = [
 // portable advertised dialect has no any-value form, so a compact input that
 // needs this presentation is reduced instead.
 export const jsonValueSchema = () => ({ type: [...jsonValueTypes], items: {} });
+const EMPTY_SCHEMA_JSON = JSON.stringify(jsonValueSchema());
+
+const utf8ByteLength = (text: string): number => {
+  const len = text.length;
+  for (let i = 0; i < len; i++) {
+    if (text.charCodeAt(i) >= 0x80) return Buffer.byteLength(text, "utf8");
+  }
+  return len;
+};
 
 const enumValueTypes = (values: readonly unknown[]): readonly string[] => [
   ...new Set(
@@ -45,234 +56,410 @@ const enumValueTypes = (values: readonly unknown[]): readonly string[] => [
 export const isSchemaObject = isRecord;
 
 export const serializedBytes = (value: unknown): number =>
-  Buffer.byteLength(JSON.stringify(value), "utf8");
+  utf8ByteLength(JSON.stringify(value));
 
 export const schemaDepth = (value: unknown, depth = 0): number => {
-  if (Array.isArray(value))
-    return Math.max(
-      depth,
-      ...value.map((child) => schemaDepth(child, depth + 1)),
-    );
+  if (Array.isArray(value)) {
+    let max = depth;
+    for (let i = 0; i < value.length; i++) {
+      const childDepth = schemaDepth(value[i], depth + 1);
+      if (childDepth > max) max = childDepth;
+    }
+    return max;
+  }
   if (!isSchemaObject(value)) return depth;
-  return Math.max(
-    depth,
-    ...Object.values(value).map((child) => schemaDepth(child, depth + 1)),
-  );
+  let max = depth;
+  for (const key in value) {
+    if (!Object.hasOwn(value, key)) continue;
+    const childDepth = schemaDepth(value[key], depth + 1);
+    if (childDepth > max) max = childDepth;
+  }
+  return max;
 };
 
 /** Strict clients commonly reject advertised schemas deeper than ten nodes. */
 export const COMPACT_SCHEMA_MAX_DEPTH = 10;
 
-/** Rewrite every schema-valued position; literal data stays opaque. */
-const rebuildSchemaPositions = (
-  node: unknown,
-  rebuild: (child: unknown) => unknown,
-): unknown => {
-  if (Array.isArray(node)) return node.map((child) => rebuild(child));
-  if (!isSchemaObject(node)) return node;
-  const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(node)) {
-    if (schemaLiteralValues.has(key)) {
-      out[key] = value;
-      continue;
-    }
-    if (schemaMaps.has(key) && isSchemaObject(value)) {
-      out[key] = Object.fromEntries(
-        Object.entries(value).map(([name, child]) => [name, rebuild(child)]),
-      );
-      continue;
-    }
-    if (schemaArrays.has(key) && Array.isArray(value)) {
-      out[key] = value.map((child) => rebuild(child));
-      continue;
-    }
-    if (schemaChildren.has(key)) {
-      out[key] = Array.isArray(value)
-        ? value.map((child) => rebuild(child))
-        : rebuild(value);
-      continue;
-    }
-    out[key] = value;
+type SchemaPosition = "schema" | "map" | "data";
+type ObjectEmitMode = "normal" | "root" | "siblings" | "root-siblings";
+
+export interface InlineWithinBudgetOptions {
+  readonly stripAnnotations?: boolean;
+  readonly references?: JsonSchemaReferences;
+}
+
+const childSchemaPosition = (
+  key: string,
+  position: SchemaPosition,
+): SchemaPosition => {
+  if (position === "map") return "schema";
+  if (position !== "schema") return "data";
+  if (schemaMaps.has(key)) return "map";
+  return schemaArrays.has(key) || schemaChildren.has(key) ? "schema" : "data";
+};
+
+class BudgetedSchemaSerializer {
+  readonly chunks: string[] = [];
+  resolved = true;
+  private readonly active = new Map<JsonSchemaScope, Set<string>>();
+
+  constructor(
+    private readonly budget: Budget,
+    private readonly references: JsonSchemaReferences,
+    private readonly strip: boolean,
+  ) {}
+
+  private emitAscii(text: string): boolean {
+    if (!this.budget.tryCharge(text.length)) return false;
+    this.chunks.push(text);
+    return true;
   }
-  return out;
+
+  private emitText(text: string): boolean {
+    if (!this.budget.tryCharge(utf8ByteLength(text))) return false;
+    this.chunks.push(text);
+    return true;
+  }
+
+  private isSkippedKey(
+    key: string,
+    position: SchemaPosition,
+    mode: ObjectEmitMode,
+  ): boolean {
+    if (position !== "schema") return false;
+    if ((mode === "siblings" || mode === "root-siblings") && key === "$ref")
+      return true;
+    if (
+      definitionKeys.has(key) ||
+      key === "$id" ||
+      key === "$anchor" ||
+      key === "$schema"
+    )
+      return true;
+    const isRoot = mode === "root" || mode === "root-siblings";
+    return (
+      this.strip &&
+      annotationKeys.has(key) &&
+      !(isRoot && key === "description")
+    );
+  }
+
+  private isEffectivelyEmpty(
+    value: Record<string, unknown>,
+    isRoot: boolean,
+  ): boolean {
+    for (const key in value) {
+      if (!Object.hasOwn(value, key) || value[key] === undefined) continue;
+      if (
+        this.strip &&
+        annotationKeys.has(key) &&
+        !(isRoot && key === "description")
+      )
+        continue;
+      return false;
+    }
+    return true;
+  }
+
+  private hasSiblings(
+    value: Record<string, unknown>,
+    isRoot: boolean,
+  ): boolean {
+    for (const key in value) {
+      if (!Object.hasOwn(value, key) || value[key] === undefined) continue;
+      if (
+        key === "$ref" ||
+        key === "$id" ||
+        key === "$anchor" ||
+        key === "$schema"
+      )
+        continue;
+      if (
+        this.strip &&
+        annotationKeys.has(key) &&
+        !(isRoot && key === "description")
+      )
+        continue;
+      return true;
+    }
+    return false;
+  }
+
+  private isStrippedTarget(
+    scope: JsonSchemaScope,
+    path: readonly string[],
+  ): boolean {
+    const steps = schemaPointerSteps(path);
+    const last = steps[steps.length - 1];
+    return (
+      last?.kind === "value" &&
+      annotationKeys.has(last.keyword) &&
+      !(
+        last.keyword === "description" &&
+        steps.length === 1 &&
+        scope === this.references.rootScope
+      )
+    );
+  }
+
+  visit(
+    value: unknown,
+    position: SchemaPosition,
+    scope: JsonSchemaScope | undefined,
+    isRoot: boolean,
+  ): boolean {
+    if (Array.isArray(value)) {
+      if (!this.emitAscii("[")) return false;
+      for (let i = 0; i < value.length; i++) {
+        if (i > 0 && !this.emitAscii(",")) return false;
+        if (!this.visit(value[i], position, scope, false)) return false;
+      }
+      return this.emitAscii("]");
+    }
+    if (isSchemaObject(value)) {
+      return position === "schema"
+        ? this.visitSchemaObject(value, scope, isRoot)
+        : this.visitObject(value, position, scope, "normal");
+    }
+    const serialized = JSON.stringify(value);
+    return this.emitText(serialized === undefined ? "null" : serialized);
+  }
+
+  private visitSchemaObject(
+    value: Record<string, unknown>,
+    scope: JsonSchemaScope | undefined,
+    isRoot: boolean,
+  ): boolean {
+    const currentScope = this.references.enter(value, scope);
+    if (
+      currentScope === undefined ||
+      currentScope.dialect !== this.references.rootScope.dialect ||
+      Object.hasOwn(value, "$dynamicRef") ||
+      Object.hasOwn(value, "$recursiveRef") ||
+      Object.hasOwn(value, "$dynamicAnchor") ||
+      Object.hasOwn(value, "$recursiveAnchor")
+    ) {
+      this.resolved = false;
+      return false;
+    }
+    if (this.isEffectivelyEmpty(value, isRoot))
+      return this.emitAscii(EMPTY_SCHEMA_JSON);
+    if (Object.hasOwn(value, "$ref") && typeof value.$ref === "string")
+      return this.visitReference(value, value.$ref, currentScope, isRoot);
+    return this.visitObject(
+      value,
+      "schema",
+      currentScope,
+      isRoot ? "root" : "normal",
+    );
+  }
+
+  private visitReference(
+    value: Record<string, unknown>,
+    ref: string,
+    currentScope: JsonSchemaScope,
+    isRoot: boolean,
+  ): boolean {
+    let scopeRefs = this.active.get(currentScope);
+    if (scopeRefs?.has(ref)) {
+      this.resolved = false;
+      return false;
+    }
+    const target = this.references.resolve(currentScope, ref);
+    if (
+      target.kind !== "target" ||
+      (this.strip && this.isStrippedTarget(currentScope, target.path))
+    ) {
+      this.resolved = false;
+      return false;
+    }
+    const siblings = this.hasSiblings(value, isRoot);
+    // Draft 7 ignores siblings, while clients such as Ajv also apply them.
+    // Do not label either interpretation an equivalent inline advertisement.
+    if (currentScope.dialect === "draft-07" && siblings) {
+      this.resolved = false;
+      return false;
+    }
+    if (scopeRefs === undefined) {
+      scopeRefs = new Set();
+      this.active.set(currentScope, scopeRefs);
+    }
+    scopeRefs.add(ref);
+    const ok = !siblings
+      ? this.visit(target.value, "schema", currentScope, false)
+      : this.emitAscii('{"allOf":[') &&
+        this.visit(target.value, "schema", currentScope, false) &&
+        this.emitAscii(",") &&
+        this.visitObject(
+          value,
+          "schema",
+          currentScope,
+          isRoot ? "root-siblings" : "siblings",
+        ) &&
+        this.emitAscii("]}");
+    scopeRefs.delete(ref);
+    return ok;
+  }
+
+  private visitObject(
+    value: Record<string, unknown>,
+    position: SchemaPosition,
+    scope: JsonSchemaScope | undefined,
+    mode: ObjectEmitMode,
+  ): boolean {
+    if (!this.emitAscii("{")) return false;
+    let first = true;
+    for (const key in value) {
+      if (!Object.hasOwn(value, key)) continue;
+      const child = value[key];
+      if (child === undefined) continue;
+      if (this.isSkippedKey(key, position, mode)) continue;
+      if (!first && !this.emitAscii(",")) return false;
+      first = false;
+      if (!this.emitText(JSON.stringify(key)) || !this.emitAscii(":"))
+        return false;
+      // `not: {}` forbids a value; no client infers a type for a value it
+      // must omit, and the any-value list would place `items` beside a
+      // non-array type, which Gemini function declarations reject.
+      if (
+        position === "schema" &&
+        key === "not" &&
+        isSchemaObject(child) &&
+        this.isEffectivelyEmpty(child, false)
+      ) {
+        if (!this.emitAscii("{}")) return false;
+        continue;
+      }
+      const childPosition = childSchemaPosition(key, position);
+      if (!this.visit(child, childPosition, scope, false)) return false;
+    }
+    return this.emitAscii("}");
+  }
+}
+
+const depthPlaceholder = (
+  node: Record<string, unknown>,
+  depth: number,
+): Record<string, unknown> | undefined => {
+  const rawType = node.type;
+  const types =
+    typeof rawType === "string"
+      ? [rawType]
+      : Array.isArray(rawType)
+        ? rawType.filter((type): type is string => typeof type === "string")
+        : [];
+  // Declared types are preserved verbatim (integer included); widening an
+  // integer to number would also be sound, dropping it would not.
+  const deep = depth > COMPACT_SCHEMA_MAX_DEPTH - 3;
+  const arrayBranch = deep
+    ? { type: "array", items: {} }
+    : { type: "array", items: jsonValueSchema() };
+  let placeholder: Record<string, unknown> | undefined;
+  if (types.length === 1)
+    placeholder = types[0] === "array" ? arrayBranch : { type: types[0] };
+  else if (types.length > 1 && !deep)
+    placeholder = {
+      anyOf: types.map((type) => (type === "array" ? arrayBranch : { type })),
+    };
+  else if (types.length === 0) {
+    // Untyped schemas accept every JSON value (properties/items alone do not
+    // imply object/array), so the only sound placeholder is unconstrained.
+    placeholder = {};
+  }
+  return placeholder !== undefined &&
+    depth + schemaDepth(placeholder) <= COMPACT_SCHEMA_MAX_DEPTH
+    ? placeholder
+    : undefined;
 };
 
 /**
- * Drop annotation prose from every subschema while preserving all validation
- * keywords. The root keeps its own description because the root-union
- * projection encodes accepted input groups there; the root's echoed literal
- * examples leave with the rest of the annotation prose.
+ * Replace only the sub-schemas that push past the advertised depth limit with
+ * type-preserving placeholders, instead of reducing the whole schema. The walk
+ * follows schema positions only (literal data such as `enum`, `const` and
+ * `required` stays opaque), keeps branches that already fit, and returns
+ * `undefined` when an over-depth branch sits under `not` or `oneOf`, where
+ * widening a child can make its parent reject valid values — the caller then
+ * keeps the whole-schema reduction. Every replacement widens acceptance, so
+ * canonical validation is unaffected.
  */
-export const stripAnnotations = (
+export const pruneSchemaBeyondDepth = (
   schema: Record<string, unknown>,
-): Record<string, unknown> => {
-  const rebuilt = rebuildSchemaPositions(
-    schema,
-    stripChildAnnotations,
-  ) as Record<string, unknown>;
-  const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(rebuilt)) {
-    if (annotationKeys.has(key) && key !== "description") continue;
-    out[key] = value;
-  }
-  return out;
-};
-
-const stripChildAnnotations = (child: unknown): unknown => {
-  const rebuilt = rebuildSchemaPositions(child, stripChildAnnotations);
-  if (!isSchemaObject(rebuilt)) return rebuilt;
-  const kept: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(rebuilt))
-    if (!annotationKeys.has(key)) kept[key] = value;
-  return kept;
+): Record<string, unknown> | undefined => {
+  let unsafe = false;
+  const prune = (
+    node: unknown,
+    depth: number,
+    unsafeContext: boolean,
+  ): unknown => {
+    if (!isSchemaObject(node)) return node;
+    if (depth + schemaDepth(node) <= COMPACT_SCHEMA_MAX_DEPTH) return node;
+    if (unsafeContext) {
+      unsafe = true;
+      return node;
+    }
+    // Only deep nodes are replaced. Shallow nodes recurse first so fitting
+    // branches and unsafe combinators below them are observed.
+    if (depth >= COMPACT_SCHEMA_MAX_DEPTH - 3) {
+      const placeholder = depthPlaceholder(node, depth);
+      if (placeholder !== undefined) return placeholder;
+    }
+    const mapped = mapSchemaChildren(node, (child, keyword) =>
+      prune(
+        child,
+        depth + (schemaChildren.has(keyword) ? 1 : 2),
+        unsafeContext || keyword === "not" || keyword === "oneOf",
+      ),
+    );
+    if (unsafe) return node;
+    if (depth + schemaDepth(mapped) <= COMPACT_SCHEMA_MAX_DEPTH) return mapped;
+    const placeholder = depthPlaceholder(node, depth);
+    if (placeholder !== undefined) return placeholder;
+    unsafe = true;
+    return node;
+  };
+  const pruned = prune(schema, 0, false);
+  return unsafe ? undefined : (pruned as Record<string, unknown>);
 };
 
 /** Stop serialization at the budget before allocating an expanded schema. */
 export const inlineWithinBudget = (
   root: Record<string, unknown>,
   budgetBytes: number,
+  options?: InlineWithinBudgetOptions,
 ): Record<string, unknown> | undefined => {
-  const references = new JsonSchemaReferences(root);
-  const identity = Object.fromEntries(
-    ["$id", "$anchor", "$schema"].flatMap((key) =>
-      Object.hasOwn(root, key) ? [[key, root[key]]] : [],
-    ),
-  );
-  const identityBytes =
-    Object.keys(identity).length === 0 ? 0 : serializedBytes(identity) - 2;
-  if (identityBytes > budgetBytes) return undefined;
-  let resolved = true;
-  function* serialize(
-    value: unknown,
-    position: "schema" | "map" | "data",
-    scope: JsonSchemaScope | undefined,
-    active: ReadonlyMap<JsonSchemaScope, ReadonlySet<string>>,
-  ): Generator<string> {
-    if (Array.isArray(value)) {
-      yield "[";
-      for (const [index, child] of value.entries()) {
-        if (index > 0) yield ",";
-        yield* serialize(child, position, scope, active);
-      }
-      yield "]";
-    } else if (isSchemaObject(value)) {
-      const currentScope =
-        position === "schema" ? references.enter(value, scope) : scope;
-      if (
-        position === "schema" &&
-        (currentScope === undefined ||
-          currentScope.dialect !== references.rootScope.dialect ||
-          [
-            "$dynamicRef",
-            "$recursiveRef",
-            "$dynamicAnchor",
-            "$recursiveAnchor",
-          ].some((key) => Object.hasOwn(value, key)))
-      ) {
-        resolved = false;
-        return;
-      }
-      if (position === "schema" && Object.keys(value).length === 0) {
-        yield JSON.stringify(jsonValueSchema());
-        return;
-      }
-      if (position === "schema" && typeof value.$ref === "string") {
-        const target = references.resolve(currentScope, value.$ref);
-        if (
-          target.kind !== "target" ||
-          currentScope === undefined ||
-          active.get(currentScope)?.has(value.$ref)
-        ) {
-          resolved = false;
-          return;
-        }
-        const {
-          $ref,
-          $id: _id,
-          $anchor: _anchor,
-          $schema: _schema,
-          ...siblings
-        } = value;
-        const nextActive = new Map(active);
-        nextActive.set(
-          currentScope,
-          new Set([...(active.get(currentScope) ?? []), $ref]),
-        );
-        // Draft 7 ignores siblings, while clients such as Ajv also apply them.
-        // Do not label either interpretation an equivalent inline advertisement.
-        if (
-          currentScope.dialect === "draft-07" &&
-          Object.keys(siblings).length > 0
-        ) {
-          resolved = false;
-          return;
-        }
-        const expanded =
-          Object.keys(siblings).length === 0
-            ? target.value
-            : { allOf: [target.value, siblings] };
-        yield* serialize(expanded, "schema", currentScope, nextActive);
-        return;
-      }
-      yield "{";
-      let first = true;
-      for (const [key, child] of Object.entries(value)) {
-        if (
-          position === "schema" &&
-          (definitionKeys.has(key) ||
-            key === "$id" ||
-            key === "$anchor" ||
-            key === "$schema")
-        )
-          continue;
-        if (!first) yield ",";
-        first = false;
-        yield JSON.stringify(key) + ":";
-        // `not: {}` forbids a value; no client infers a type for a value it
-        // must omit, and the any-value list would place `items` beside a
-        // non-array type, which Gemini function declarations reject.
-        if (
-          position === "schema" &&
-          key === "not" &&
-          isSchemaObject(child) &&
-          Object.keys(child).length === 0
-        ) {
-          yield "{}";
-          continue;
-        }
-        const childPosition =
-          position === "map"
-            ? "schema"
-            : position === "schema" && schemaMaps.has(key)
-              ? "map"
-              : position === "schema" &&
-                  (schemaArrays.has(key) || schemaChildren.has(key))
-                ? "schema"
-                : "data";
-        yield* serialize(child, childPosition, currentScope, active);
-      }
-      yield "}";
-    } else {
-      yield JSON.stringify(value);
+  const limit = Number.isSafeInteger(budgetBytes)
+    ? budgetBytes
+    : budgetBytes > 0
+      ? Number.MAX_SAFE_INTEGER
+      : -1;
+  if (limit < 0) return undefined;
+  const references = options?.references ?? new JsonSchemaReferences(root);
+  const identity: Record<string, unknown> = {};
+  let hasIdentity = false;
+  for (const key of ["$id", "$anchor", "$schema"] as const) {
+    if (Object.hasOwn(root, key) && root[key] !== undefined) {
+      identity[key] = root[key];
+      hasIdentity = true;
     }
   }
-  const chunks: string[] = [];
-  let bytes = identityBytes;
-  for (const chunk of serialize(
-    root,
-    "schema",
-    references.rootScope,
-    new Map(),
-  )) {
-    bytes += Buffer.byteLength(chunk, "utf8");
-    if (bytes > budgetBytes || !resolved) return undefined;
-    chunks.push(chunk);
-  }
-  if (!resolved) return undefined;
-  const expanded: unknown = JSON.parse(chunks.join(""));
+  const identityBytes = hasIdentity ? serializedBytes(identity) - 2 : 0;
+  const budget = new Budget(limit);
+  if (!budget.tryCharge(identityBytes)) return undefined;
+  const serializer = new BudgetedSchemaSerializer(
+    budget,
+    references,
+    options?.stripAnnotations === true,
+  );
+  if (
+    !serializer.visit(root, "schema", references.rootScope, true) ||
+    !serializer.resolved
+  )
+    return undefined;
+  const expanded: unknown = JSON.parse(serializer.chunks.join(""));
   if (!isSchemaObject(expanded)) return undefined;
   // Every emitted dependency is now static and reference-free. Nested resource
   // identifiers/anchors can leave without duplicating identities at call sites.
+  if (!hasIdentity) return expanded;
   const schema = { ...identity, ...expanded };
   return serializedBytes(schema) <= budgetBytes ? schema : undefined;
 };
@@ -396,9 +583,7 @@ const REDUCED_ITEM_MAX_DEPTH = 3;
  * nullable union, and other unions keep the typed branches every surveyed
  * target accepts below the root.
  */
-const typedAlternatives = (
-  types: readonly string[],
-): Record<string, unknown> =>
+const typedAlternatives = (types: readonly string[]): Record<string, unknown> =>
   types.length === 1
     ? { type: types[0] }
     : { anyOf: types.map((type) => ({ type })) };
@@ -470,6 +655,7 @@ const reducedPropertyTypes = (
 export const reduceToShallowProperties = (
   schema: Record<string, unknown>,
   reducedAnnotation: string,
+  references: JsonSchemaReferences = new JsonSchemaReferences(schema),
 ): Record<string, unknown> => {
   const properties = isSchemaObject(schema.properties) ? schema.properties : {};
   const description = [
@@ -478,7 +664,6 @@ export const reduceToShallowProperties = (
   ]
     .filter((text) => text !== undefined)
     .join(" ");
-  const references = new JsonSchemaReferences(schema);
   const shallow = Object.fromEntries(
     Object.entries(properties).map(([name, value]) => {
       const description =

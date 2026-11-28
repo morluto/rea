@@ -4,6 +4,13 @@ import { knownCoverageStatusSchema } from "../coverage.js";
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 import { ELF_OBJECT_TYPE_NAMES } from "./elfNotes.js";
+import { maxStructureBytesSchema } from "./nativeStructureBudget.js";
+import type { AnalysisParameterLimit } from "../analysisSettings.js";
+import {
+  parameterBudgetLimit,
+  parameterBudgetSchema,
+  type ParameterBudget,
+} from "../parameterBudget.js";
 
 const uint = z.number().int().min(0).max(0xffffffff);
 const hexAddress = z.string().regex(/^0x[0-9a-f]+$/u);
@@ -21,9 +28,28 @@ export const MAX_ELF_UNWIND_SYMBOLS = 65536;
 /** Fixed allowance on symbol-name text decoded for one returned page. */
 export const MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES = 16 * 1024 * 1024;
 
+export const ELF_UNWIND_LIMITATION_CODES = [
+  "cfa_not_evaluated",
+  "untrusted_names",
+  "indirect_pointers_not_dereferenced",
+  "eh_frame_hdr_mismatch",
+  "eh_frame_absent",
+  "eh_frame_hdr_absent",
+  "debug_frame_present_undecoded",
+  "debug_frame_absent",
+  "debug_frame_unknown",
+  "debug_frame_outside_file",
+] as const;
+
+export const elfUnwindLimitationCodeSchema = z.enum(
+  ELF_UNWIND_LIMITATION_CODES,
+);
+export type ElfUnwindLimitationCode = z.infer<
+  typeof elfUnwindLimitationCodeSchema
+>;
+
 /**
- * Limitation texts the parser emits and the application layer checks for.
- * One owner keeps the producer and the report validation in step.
+ * Limitation texts the parser emits for user-facing reporting.
  */
 export const ELF_UNWIND_LIMITATIONS = {
   cfa: "CFA instructions are counted but not evaluated.",
@@ -96,27 +122,53 @@ const encodingSchema = z.strictObject({
 
 const tableStatus = z.enum(["present", "absent", "incomplete", "unknown"]);
 
+/** The per-call budgets and page size of `inspect_elf_unwind_ranges`. */
+export const ELF_UNWIND_BUDGETS = {
+  max_file_bytes: {
+    minimum: 64,
+    maximum: MAX_INSPECT_ELF_UNWIND_FILE_BYTES,
+    default_value: 67108864,
+    unit: "bytes",
+  },
+  max_ranges: {
+    minimum: 1,
+    maximum: MAX_INSPECT_ELF_UNWIND_RANGES,
+    default_value: 8192,
+    unit: "count",
+  },
+  // Matches inspect_pe_unwind_ranges: 64 rows of a C++ library's unwind
+  // ranges are about 20 KB, within the default agent result budget.
+  limit: {
+    minimum: 1,
+    maximum: MAX_INSPECT_ELF_UNWIND_PAGE,
+    default_value: 64,
+    unit: "count",
+  },
+} as const satisfies Record<string, ParameterBudget>;
+
+/** The per-call control that stopped an unwind inspection. */
+export const elfUnwindBudgetLimit = (
+  parameter: keyof typeof ELF_UNWIND_BUDGETS,
+  effectiveValue: number,
+): AnalysisParameterLimit =>
+  parameterBudgetLimit(
+    parameter,
+    ELF_UNWIND_BUDGETS[parameter],
+    effectiveValue,
+  );
+
 /** Caller-selected page of ELF unwind function ranges. */
 export const inspectElfUnwindRangesInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to an ELF image",
   ),
-  max_file_bytes: z
-    .number()
-    .int()
-    .min(64)
-    .max(MAX_INSPECT_ELF_UNWIND_FILE_BYTES)
-    .default(67108864)
-    .describe("Maximum stable artifact bytes to read (default 64 MiB)"),
-  max_ranges: z
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_INSPECT_ELF_UNWIND_RANGES)
-    .default(8192)
-    .describe(
-      "Maximum CIE records and, separately, maximum FDEs to decode; exceeding either budget fails without partial success",
-    ),
+  max_structure_bytes: maxStructureBytesSchema,
+  max_file_bytes: parameterBudgetSchema(
+    ELF_UNWIND_BUDGETS.max_file_bytes,
+  ).describe("Maximum stable artifact bytes to read (default 64 MiB)"),
+  max_ranges: parameterBudgetSchema(ELF_UNWIND_BUDGETS.max_ranges).describe(
+    "Maximum CIE records and, separately, maximum FDEs to decode; exceeding either budget fails without partial success",
+  ),
   offset: z
     .number()
     .int()
@@ -124,13 +176,9 @@ export const inspectElfUnwindRangesInputSchema = z.strictObject({
     .max(0xffffffff)
     .default(0)
     .describe("Zero-based index of the first FDE range to return"),
-  limit: z
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_INSPECT_ELF_UNWIND_PAGE)
-    .default(256)
-    .describe("Maximum FDE ranges to return in this page"),
+  limit: parameterBudgetSchema(ELF_UNWIND_BUDGETS.limit).describe(
+    "Maximum FDE ranges to return in this page",
+  ),
 });
 
 const cieSchema = z.strictObject({
@@ -231,6 +279,7 @@ export const elfUnwindRangesSchema = z.strictObject({
     eh_frame_hdr_agreement: z.enum(["agree", "disagree", "unavailable"]),
     examined_records: uint,
   }),
+  limitation_codes: z.array(elfUnwindLimitationCodeSchema),
   limitations: z.array(z.string()),
 });
 

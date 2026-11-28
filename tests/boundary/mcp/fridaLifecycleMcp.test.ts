@@ -1,5 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { setImmediate } from "node:timers/promises";
@@ -47,6 +46,7 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { phaseGate } from "../../support/lifecycleHarness.js";
 import { waitFor } from "../../support/testWait.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const nativeFixture = () => {
   const created: string[] = [];
@@ -1141,8 +1141,7 @@ it("retains cancellation source facts without claiming native creation when no s
 
 it("retains original malformed file identity and decoded representation through a rejected cancelled MCP load", async () => {
   const { fixture, id, held } = await scriptLoadFixture();
-  const directory = await mkdtemp(join(tmpdir(), "rea-frida-file-cancel-"));
-  onTestFinished(() => rm(directory, { recursive: true, force: true }));
+  const directory = await createTestTempDirectory("rea-frida-file-cancel-");
   const path = join(directory, "script.js");
   const bytes = Buffer.from([0x2f, 0x2f, 0xff, 0x0a]);
   await writeFile(path, bytes);

@@ -11,13 +11,14 @@ import {
   createTestWorkspace,
   removeTestWorkspace,
 } from "../tests/support/workspace/workspaceFixture.js";
+import { registrationChildEnvironment } from "../tests/support/cli/registrationEnvironment.js";
 import { createTestProcessRegistry } from "../tests/support/process/processFixture.js";
 
 const require = createRequire(import.meta.url);
 const CHILD_PROGRAM = `
   import { homedir } from 'node:os';
   import { join, relative, isAbsolute, delimiter } from 'node:path';
-  import { mkdir, writeFile, readFile, readdir, realpath, stat } from 'node:fs/promises';
+  import { mkdir, writeFile, readFile, readdir, realpath, stat, symlink } from 'node:fs/promises';
   const ambient = process.env.HOME;
   if (!ambient || await realpath(ambient) !== await realpath(homedir())) throw Error('Actual temporary HOME was not selected before importing writers.');
   const root = process.env.REA_REGISTRATION_FIXTURE_ROOT;
@@ -76,6 +77,18 @@ const CHILD_PROGRAM = `
   let result;
   try {
     const defaultsEnvironment = await environmentFor('defaults');
+    if (process.platform !== 'win32') {
+      const runtimeDirectory = join(defaultsEnvironment.HOME, 'runtime');
+      const runtimeAlias = join(defaultsEnvironment.HOME, 'runtime-alias');
+      const outsideBin = join(defaultsEnvironment.HOME, 'outside-bin');
+      const sessionBin = join(runtimeDirectory, 'bin');
+      await mkdir(sessionBin, { recursive: true });
+      await symlink(process.execPath, join(sessionBin, 'node'));
+      await symlink(runtimeDirectory, runtimeAlias, 'dir');
+      await symlink(sessionBin, outsideBin, 'dir');
+      defaultsEnvironment.PATH = outsideBin + delimiter + bin;
+      defaultsEnvironment.XDG_RUNTIME_DIR = runtimeAlias;
+    }
     const schema = await serve(defaultsEnvironment, ['mcp','add','--schema','--json']);
     const all = await invoke(defaultsEnvironment, [], undefined);
     const native = [];
@@ -187,20 +200,8 @@ const captureRegistration = async () => {
       {
         timeoutMs: 20_000,
         env: {
+          ...registrationChildEnvironment(home),
           PATH: join(root, "bin") + delimiter + process.env.PATH,
-          SystemRoot: process.env.SystemRoot,
-          WINDIR: process.env.WINDIR,
-          TMPDIR: process.env.TMPDIR,
-          TMP: process.env.TMP,
-          TEMP: process.env.TEMP,
-          HOME: home,
-          USERPROFILE: home,
-          XDG_CONFIG_HOME: join(home, "config"),
-          XDG_DATA_HOME: join(home, "data"),
-          XDG_CACHE_HOME: join(home, "cache"),
-          XDG_STATE_HOME: join(home, "state"),
-          APPDATA: join(home, "appdata"),
-          LOCALAPPDATA: join(home, "localappdata"),
           REA_REGISTRATION_FIXTURE_ROOT: root,
           REA_LOG_LEVEL: "silent",
         },

@@ -4,6 +4,8 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { z } from "zod";
 
+import { isDarwinGatedTestSource } from "./darwin-gated-tests.mjs";
+import { compareSelectionShadow } from "./selection-shadow.mjs";
 import { parseTestSelection } from "./test-selection.mjs";
 
 const root = process.cwd();
@@ -48,10 +50,23 @@ const groupResults = [
 const groupsCompleted = groupResults.every((state) =>
   ["success", "failure"].includes(state),
 );
-const passed =
+const failedFiles = files
+  .filter(({ state }) => state === "failed")
+  .map(({ name }) => name)
+  .sort();
+const incompleteFiles = files.filter(
+  ({ state }) => state === "queued" || state === "pending",
+);
+const workflowPassed =
   groupResults.every((state) => state === "success") &&
-  process.env.MERGE_RESULT === "success" &&
-  report.success;
+  process.env.MERGE_RESULT === "success";
+const passed =
+  workflowPassed &&
+  report.success &&
+  (report.reason === undefined || report.reason === "passed") &&
+  incompleteFiles.length === 0 &&
+  failedFiles.length === 0 &&
+  (report.unhandledErrors ?? 0) === 0;
 // Successful shards and merged reports must account for the complete portable
 // inventory, or exactly the selected subset. Coverage thresholds alone cannot
 // prove that every file ran.
@@ -70,6 +85,7 @@ const expected = !verifyInventory
       })
         .split("\0")
         .filter((path) => path.endsWith(".test.ts"));
+let macosOnlySelection = false;
 if (passed && verifyInventory) {
   const actual = files.map(({ name }) => name);
   if (actual.length === 0)
@@ -82,12 +98,82 @@ if (passed && verifyInventory) {
     throw new Error(
       `Incomplete ${selected ? "selected" : "portable"} test inventory: ${JSON.stringify({ missing, unexpected, duplicateFiles: actual.length - actualSet.size })}`,
     );
-  if (files.every(({ state }) => state === "skipped"))
-    throw new Error("Every portable test module was skipped");
+  if (files.every(({ state }) => state === "skipped")) {
+    // The macOS lane runs every module gated to macOS, so a selection of only
+    // such modules is covered there when the plan selected that lane.
+    const gated = await Promise.all(
+      files.map(async ({ name }) =>
+        isDarwinGatedTestSource(await readFile(join(root, name), "utf8")),
+      ),
+    );
+    macosOnlySelection =
+      selected &&
+      process.env.CI_APPLE_SELECTED === "true" &&
+      gated.every(Boolean);
+    if (!macosOnlySelection)
+      throw new Error("Every portable test module was skipped");
+  }
 }
 // A selected subset is not a timing baseline for the complete suite.
 const publishesHistory = passed && !selected;
 const skippedFiles = files.filter(({ state }) => state === "skipped");
+const failureListLimit = 20;
+const failureDetails =
+  !passed || failedFiles.length > 0
+    ? [
+        `Failed test modules reported: ${failedFiles.length}.`,
+        ...(incompleteFiles.length
+          ? [
+              `Queued or pending test modules reported: ${incompleteFiles.length}.`,
+            ]
+          : []),
+        ...failedFiles
+          .slice(0, failureListLimit)
+          .map((name) => `- ${JSON.stringify(name)}`),
+        ...(failedFiles.length > failureListLimit
+          ? [
+              `… ${failedFiles.length - failureListLimit} more in the test report.`,
+            ]
+          : []),
+        ...(report.unhandledErrors === undefined
+          ? []
+          : [`Unhandled Vitest errors reported: ${report.unhandledErrors}.`]),
+      ]
+    : [];
+const shadowNotes = [];
+if (
+  process.env.CI_COMPARE_TEST_SHADOW === "true" &&
+  verifyInventory &&
+  !selected
+) {
+  try {
+    const resultPath = "test-selection-comparison.json";
+    await rm(resultPath, { force: true });
+    const prediction = JSON.parse(
+      await readFile(
+        ".cache/ci-test-shadow/test-selection-shadow.json",
+        "utf8",
+      ),
+    );
+    const comparison = compareSelectionShadow(
+      prediction,
+      process.env.GITHUB_SHA,
+      expected,
+      files,
+    );
+    await writeFile(resultPath, JSON.stringify(comparison), { flag: "wx" });
+    shadowNotes.push(
+      "### Affected-test prediction",
+      "",
+      `Reported ${comparison.observedCandidates} of ${comparison.candidates} predicted files. Full-suite inventory: ${comparison.completeInventory ? "complete" : "partial"}.`,
+      `Observed failing files inside the prediction: ${comparison.capturedFailures.length}. Outside: ${comparison.missedFailures.length}.`,
+      "",
+    );
+  } catch (error) {
+    console.warn("Test selection shadow unavailable:", error);
+    shadowNotes.push("Affected-test prediction unavailable.", "");
+  }
+}
 const summary = [
   groupsCompleted
     ? "## Merged test diagnostics"
@@ -103,7 +189,16 @@ const summary = [
   ...(process.env.SOURCE_REQUIRED === "true"
     ? [`Source result: ${process.env.SOURCE_RESULT ?? "unknown"}.`]
     : []),
+  ...(failureDetails.length > 0
+    ? ["", "```text", ...failureDetails, "```", ""]
+    : []),
+  ...shadowNotes,
   `Skipped test modules: ${skippedFiles.length}. Their skip reasons and required coverage are not established by this report.`,
+  ...(macosOnlySelection
+    ? [
+        "Every selected module is gated to macOS; the selected macOS lane runs them.",
+      ]
+    : []),
   ...(skippedFiles.length ? [""] : []),
   ...skippedFiles.map(({ name }) => `- ${name.replaceAll("|", "\\|")}`),
   "",
@@ -124,9 +219,13 @@ const summary = [
     ),
   "",
 ].join("\n");
-if (process.env.GITHUB_STEP_SUMMARY)
+if (process.env.GITHUB_STEP_SUMMARY) {
   await appendFile(process.env.GITHUB_STEP_SUMMARY, summary);
-else console.log(summary);
+  if (failureDetails.length > 0) console.log(failureDetails.join("\n"));
+} else console.log(summary);
+
+if (workflowPassed && !passed)
+  throw new Error("Merged test report does not confirm successful tests");
 
 if (publishesHistory) {
   await mkdir(historyDirectory, { recursive: true });

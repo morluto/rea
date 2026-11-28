@@ -16,33 +16,48 @@ type Padding = {
   readonly location: Range;
   readonly bytes_base64: string;
 };
+interface NumericSpan {
+  readonly start: bigint;
+  readonly end: bigint;
+}
+
+const ZERO_PADDING_BASE64_PATTERN = /^A*={0,2}$/;
 const align = (size: bigint) => ((size + 3n) / 4n) * 4n;
-const layoutMatches = (note: Note): boolean => {
-  const start = BigInt(note.location.offset);
+
+const layoutMatches = (
+  noteStart: bigint,
+  noteBytes: bigint,
+  note: Note,
+): boolean => {
   const owner = BigInt(note.owner_location.bytes);
   const descriptor = BigInt(note.descriptor_location.bytes);
   return (
-    BigInt(note.owner_location.offset) === start + 12n &&
-    BigInt(note.descriptor_location.offset) === start + 12n + align(owner) &&
-    BigInt(note.location.bytes) === 12n + align(owner) + align(descriptor)
+    BigInt(note.owner_location.offset) === noteStart + 12n &&
+    BigInt(note.descriptor_location.offset) ===
+      noteStart + 12n + align(owner) &&
+    noteBytes === 12n + align(owner) + align(descriptor)
   );
 };
+
 const paddingMatches = (
+  itemStart: bigint,
+  itemBytes: bigint,
   item: Padding,
   segment: Segment | undefined,
 ): boolean => {
-  const bytes = BigInt(item.location.bytes);
   const decodedLength = Buffer.byteLength(item.bytes_base64, "base64");
   return (
-    bytes > 0n &&
-    bytes < 12n &&
-    BigInt(decodedLength) === bytes &&
-    /^A*={0,2}$/.test(item.bytes_base64) &&
+    itemBytes > 0n &&
+    itemBytes < 12n &&
+    BigInt(decodedLength) === itemBytes &&
+    ZERO_PADDING_BASE64_PATTERN.test(item.bytes_base64) &&
     segment !== undefined &&
-    BigInt(item.location.offset) + bytes ===
-      BigInt(segment.offset) + BigInt(segment.file_size)
+    itemStart + itemBytes === BigInt(segment.offset) + BigInt(segment.file_size)
   );
 };
+
+const compareSpans = (left: NumericSpan, right: NumericSpan): number =>
+  left.start < right.start ? -1 : left.start > right.start ? 1 : 0;
 
 /** Require exact aligned note layouts and one complete, nonoverlapping physical coverage. */
 export function recordedNoteCoverageIssues(
@@ -51,50 +66,61 @@ export function recordedNoteCoverageIssues(
   padding: readonly Padding[],
 ): readonly string[] {
   const issues: string[] = [];
-  const bySegment = new Map<number, Range[]>();
-  const all: Range[] = [];
-  const add = (segment: number, range: Range) => {
-    const ranges = bySegment.get(segment) ?? [];
-    ranges.push(range);
-    bySegment.set(segment, ranges);
-    all.push(range);
+  const bySegment = new Map<number, NumericSpan[]>();
+  const all: NumericSpan[] = [];
+  const add = (segment: number, start: bigint, bytes: bigint) => {
+    const span: NumericSpan = { start, end: start + bytes };
+    let ranges = bySegment.get(segment);
+    if (ranges === undefined) {
+      ranges = [];
+      bySegment.set(segment, ranges);
+    }
+    ranges.push(span);
+    all.push(span);
   };
-  for (const note of notes) {
-    if (!layoutMatches(note))
+  for (let i = 0; i < notes.length; i += 1) {
+    const note = notes[i]!;
+    const start = BigInt(note.location.offset);
+    const bytes = BigInt(note.location.bytes);
+    if (!layoutMatches(start, bytes, note))
       issues.push(
         "Recorded note layout differs from its aligned header/owner/descriptor ranges.",
       );
-    add(note.segment_index, note.location);
+    add(note.segment_index, start, bytes);
   }
-  for (const item of padding) {
-    if (!paddingMatches(item, segments[item.segment_index]))
+  for (let i = 0; i < padding.length; i += 1) {
+    const item = padding[i]!;
+    const start = BigInt(item.location.offset);
+    const bytes = BigInt(item.location.bytes);
+    if (!paddingMatches(start, bytes, item, segments[item.segment_index]))
       issues.push(
         "Recorded note padding must be a short zero-filled segment tail.",
       );
-    add(item.segment_index, item.location);
+    add(item.segment_index, start, bytes);
   }
-  const compare = (left: Range, right: Range) =>
-    BigInt(left.offset) < BigInt(right.offset)
-      ? -1
-      : BigInt(left.offset) > BigInt(right.offset)
-        ? 1
-        : 0;
+  all.sort(compareSpans);
   let end = 0n;
-  for (const range of all.sort(compare)) {
-    const start = BigInt(range.offset);
-    if (start < end)
+  for (let i = 0; i < all.length; i += 1) {
+    const span = all[i]!;
+    if (span.start < end)
       issues.push("Physical recorded note/padding ranges overlap or repeat.");
-    if (start + BigInt(range.bytes) > end) end = start + BigInt(range.bytes);
+    if (span.end > end) end = span.end;
   }
-  for (const segment of segments) {
+  for (let i = 0; i < segments.length; i += 1) {
+    const segment = segments[i]!;
     if (segment.type_id !== 4) continue;
     let cursor = BigInt(segment.offset);
-    for (const range of (bySegment.get(segment.index) ?? []).sort(compare)) {
-      if (BigInt(range.offset) !== cursor)
-        issues.push(
-          "Recorded note/padding ranges leave a gap or overlap in their segment.",
-        );
-      cursor = BigInt(range.offset) + BigInt(range.bytes);
+    const ranges = bySegment.get(segment.index);
+    if (ranges !== undefined) {
+      ranges.sort(compareSpans);
+      for (let j = 0; j < ranges.length; j += 1) {
+        const span = ranges[j]!;
+        if (span.start !== cursor)
+          issues.push(
+            "Recorded note/padding ranges leave a gap or overlap in their segment.",
+          );
+        cursor = span.end;
+      }
     }
     if (cursor !== BigInt(segment.offset) + BigInt(segment.file_size))
       issues.push(

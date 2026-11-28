@@ -1,12 +1,7 @@
 import { createHash } from "node:crypto";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 
-/**
- * Streaming SHA-256 over canonical JSON. Hashing owner (avoids assembling
- * aggregate strings); `comparisonSemantics.canonicalJson` (canonicalize lib)
- * is the string-comparison owner. JSON object keys follow RFC 8785's UTF-16
- * code-unit order in both; entity-list ordering is a separate concern.
- */
+/** Streaming SHA-256 over the canonical bytes used by stored REA evidence. */
 export const digestCanonicalValue = (
   value: unknown,
   context = "Comparison",
@@ -45,6 +40,28 @@ export const digestCanonicalValue = (
   return hash.digest("hex");
 };
 
+/** Preserve existing evidence identities, including escaped unpaired UTF-16. */
+export const serializeCanonicalValue = (value: unknown): string | undefined => {
+  let text = "";
+  const encoded = emitCanonical(
+    value,
+    (part) => {
+      text += part;
+    },
+    new Set(),
+  );
+  return encoded ? text : undefined;
+};
+
+/** Serialize a required JSON value with the caller's diagnostic when no text can be produced. */
+export const canonicalJsonSerializer =
+  <Value = unknown>(failureMessage: string) =>
+  (value: Value): string => {
+    const text = serializeCanonicalValue(value);
+    if (text === undefined) throw new TypeError(failureMessage);
+    return text;
+  };
+
 type Emit = (part: string) => void;
 
 /** Canonical-JSON refusal. The code is the stable identity. */
@@ -52,7 +69,13 @@ export class CanonicalDigestError extends Error {
   readonly _tag = "CanonicalDigestError";
 
   constructor(readonly code: "nan" | "infinity" | "circular") {
-    super(code);
+    super(
+      {
+        nan: "NaN is not allowed",
+        infinity: "Infinity is not allowed",
+        circular: "Circular reference detected",
+      }[code],
+    );
     this.name = "CanonicalDigestError";
   }
 }

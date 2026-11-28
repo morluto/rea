@@ -1,6 +1,9 @@
 import { ParseFailureError } from "../domain/parseFailure.js";
 
-/** Existing selected-binary allowance also bounds its retained pointer workspace. */
+/**
+ * Selected-binary file allowance. The ELF pointer index has its own per-call
+ * control, `max_native_index_bytes`.
+ */
 export const IL2CPP_BINARY_BYTES = 1024 * 1024 * 1024;
 
 export const IL2CPP_BINARY_FAILURE_REASONS = {
@@ -15,8 +18,15 @@ export const IL2CPP_BINARY_FAILURE_REASONS = {
     "type-nesting-capacity",
     "native-type-text-capacity",
   ],
-  malformed: [
-    "malformed-container",
+  /** The binary's own container bytes break their format's rules. */
+  malformed: ["malformed-container"],
+  /**
+   * The binary's container parsed, but its registration, pointers, tokens or
+   * types do not agree with the metadata. The pair may come from different
+   * builds, either file may be damaged, or the registration layout may be
+   * outside coverage, so no single file is established as at fault.
+   */
+  linkConflict: [
     "code-gen-modules-not-found",
     "ambiguous-code-gen-module",
     "code-registration-not-found",
@@ -50,6 +60,12 @@ const isUnsupported = (reason: Il2cppBinaryFormatReason) =>
     reason,
   );
 
+/** Whether a link failure is a disagreement between the two files, not one file's bytes. */
+export const isIl2cppLinkConflict = (reason: Il2cppBinaryFailureReason) =>
+  (IL2CPP_BINARY_FAILURE_REASONS.linkConflict as readonly string[]).includes(
+    reason,
+  );
+
 /**
  * A native image REA cannot link, either outside coverage or inconsistent
  * with the metadata. The stable `reason` names the IL2CPP rule; a capacity
@@ -66,12 +82,15 @@ export class Il2cppBinaryFormatFailure extends ParseFailureError<
     message: string,
     maximum: number,
     unit: NativeBudgetUnit,
+    limitName?: string,
   );
   constructor(
     readonly reason: Il2cppBinaryFailureReason,
     message: string,
     maximum?: number,
     unit?: NativeBudgetUnit,
+    /** The exceeded budget's name; defaults to the reason for a fixed budget. */
+    limitName: string = reason,
   ) {
     const detail = `${reason}: ${message}`;
     super(
@@ -80,7 +99,7 @@ export class Il2cppBinaryFormatFailure extends ParseFailureError<
             kind: "limit",
             format: IL2CPP_BINARY_FORMAT,
             detail,
-            limit: { name: reason, maximum },
+            limit: { name: limitName, maximum },
           }
         : isUnsupported(reason as Il2cppBinaryFormatReason)
           ? {

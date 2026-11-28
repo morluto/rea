@@ -12,6 +12,7 @@ import type {
 } from "./javascriptStaticAnalysisTypes.js";
 import {
   readExactJavaScriptLiteral,
+  stringValue,
   semanticStaticPropertyKey,
   semanticStaticPropertyName,
   unwrapJavaScriptExpression,
@@ -22,6 +23,7 @@ import {
   compositeKey,
 } from "../unicodeCodePointOrder.js";
 import { unexaminedJavaScriptStaticCoverage } from "./javascriptStaticCoverage.js";
+import { createSyntheticUrlRoot } from "./javascriptSyntheticUrlRoot.js";
 
 /** Explicit result for source text that Babel cannot parse. */
 export const failedJavaScriptStaticAnalysis = (): JavaScriptStaticAnalysis => ({
@@ -192,11 +194,11 @@ interface StaticPathFact {
   readonly base: "source-directory" | "literal-path" | "unknown";
 }
 
-/** Resolve a path string composed only from inert literal syntax. */
+/** Project path text only after its source-directory or literal base is proven. */
 export const staticPath = (
   node: t.Node,
   pathIntrinsics?: JavaScriptStaticPathIntrinsicQuery,
-): string | undefined => staticPathFact(node, pathIntrinsics)?.path;
+): string | undefined => staticFileExpressionPath(node, pathIntrinsics)?.path;
 
 /** Parse spelling and its source-directory provenance together at the owning boundary. */
 const staticPathFact = (
@@ -367,15 +369,19 @@ export const staticSourceRelativeUrlPath = (
     /%(?:2e|2f|5c)/iu.test(value.split(/[?#]/u, 1)[0] ?? "")
   )
     return undefined;
-  // A sufficiently deep inert anchor preserves any leading parent segments
-  // without using this host's cwd or inventing the application's directory.
-  const directory = `/${"source/".repeat(value.split("/").length + 1)}`;
+  const anchor = createSyntheticUrlRoot(value);
+  const resolve = (root: string): URL =>
+    new URL(value, `file://${root}entry.js`);
   try {
-    const resolved = new URL(value, `file://${directory}entry.js`);
+    const resolved = resolve(anchor.root);
     const path = fileURLToPath(resolved, { windows: false });
     if (value.startsWith("/"))
       return { path, directory: resolved.pathname.endsWith("/") };
-    const relative = posix.relative(directory, path) || ".";
+    const relativePath = anchor.relativePath(path, (root) =>
+      fileURLToPath(resolve(root), { windows: false }),
+    );
+    if (relativePath === null) return undefined;
+    const relative = relativePath || ".";
     // Keep the established explicit source-directory observation spelling.
     return {
       path:
@@ -540,6 +546,28 @@ export const FS_OPEN_FLAGS: ReadonlySet<string> = new Set([
   "xw+",
 ]);
 
+/**
+ * Encodings Node's `Buffer` accepts, so an `encoding` stream option can be decided.
+ *
+ * `Buffer.isEncoding` is the authority, but this module is the pure domain layer and
+ * does not reach for Node globals. The set is the documented list; a value outside it
+ * is one Node rejects at the call site.
+ */
+export const BUFFER_ENCODINGS: ReadonlySet<string> = new Set([
+  "ascii",
+  "base64",
+  "base64url",
+  "binary",
+  "hex",
+  "latin1",
+  "ucs-2",
+  "ucs2",
+  "utf-16le",
+  "utf8",
+  "utf-8",
+  "utf16le",
+]);
+
 /** Reserved browsing-context names (ASCII case-insensitive). */
 const BROWSING_CONTEXT_KEYWORDS = new Set([
   "_blank",
@@ -691,7 +719,15 @@ export const endpointArgument = (
             receiverFact === "extension-state")))
     )
       return undefined;
-    return { kind: "candidate", value };
+    // Method-first clients such as superagent, needle, and Angular
+    // `HttpClient` call `request(method, url)`. When a standard method token
+    // precedes an exact string, that string is the candidate target. With a
+    // computed target, the token itself remains the candidate.
+    const target =
+      method === "request" && XHR_METHODS.has(value.toUpperCase())
+        ? stringValue(args[1])
+        : undefined;
+    return { kind: "candidate", value: target ?? value };
   }
   if (name === "sendBeacon" || name.endsWith(".sendBeacon"))
     return candidate(stringValue(args[0]));
@@ -713,9 +749,34 @@ const storageKind = (
   return undefined;
 };
 
-/** Produce a dotted callee name through type-erased expression wrappers. */
-export const calleeName = (node: t.Node): string => {
+/**
+ * Bundlers call an import as `(0, ns.name)(...)`, which drops only the
+ * receiver. Read the final operand only when every discarded operand is an
+ * exact literal: any other operand may replace the callee before it is read.
+ */
+const receiverlessCallee = (node: t.Node): t.Node => {
   node = unwrapJavaScriptExpression(node).node;
+  while (t.isSequenceExpression(node)) {
+    const final = node.expressions.at(-1);
+    if (
+      final === undefined ||
+      !node.expressions
+        .slice(0, -1)
+        .every((operand) => readExactJavaScriptLiteral(operand).found)
+    )
+      return node;
+    node = unwrapJavaScriptExpression(final).node;
+  }
+  return node;
+};
+
+/**
+ * Produce a dotted callee name through type-erased expression wrappers and
+ * receiverless bundler calls. The name is spelling only; receiver and global
+ * identity proofs read the original callee.
+ */
+export const calleeName = (node: t.Node): string => {
+  node = receiverlessCallee(node);
   const segments: string[] = [];
   while (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
     // Dynamic keys retain their syntax identity instead of inventing a name.
@@ -736,20 +797,6 @@ const memberPropertyName = (
 ): string =>
   semanticStaticPropertyKey(node.property, node.computed) ??
   (node.computed ? `[computed@${String(node.property.start ?? -1)}]` : "");
-
-/**
- * Return a string literal value without evaluating an expression. A template
- * literal without substitutions denotes the same exact string.
- */
-export const stringValue = (
-  node: t.Node | null | undefined,
-): string | undefined => {
-  if (node === null || node === undefined) return undefined;
-  const literal = readExactJavaScriptLiteral(node);
-  return literal.found && typeof literal.value === "string"
-    ? literal.value
-    : undefined;
-};
 
 /** Return a string or numeric argument literal. */
 export const argumentValue = (
@@ -787,15 +834,19 @@ export const range = (node: t.Node): JavaScriptSourceRange => ({
   },
 });
 
-/** Convert exact text offsets into a source range. */
+/** Convert exact text offsets into a source range without slicing/splitting prefixes. */
 export const rangeForOffsets = (
   source: string,
   start: number,
   end: number,
-): JavaScriptSourceRange => ({
-  start: pointForOffset(source, start),
-  end: pointForOffset(source, end),
-});
+): JavaScriptSourceRange => {
+  const startPoint = advancePoint(source, 0, start, 1, 0);
+  const endPoint =
+    end >= start
+      ? advancePoint(source, start, end, startPoint.line, startPoint.column)
+      : advancePoint(source, 0, end, 1, 0);
+  return { start: startPoint, end: endPoint };
+};
 
 /** Compare two exact source ranges. */
 export const sourceRangesEqual = (
@@ -808,11 +859,31 @@ export const sourceRangesEqual = (
   left.end.line === right.end.line &&
   left.end.column === right.end.column;
 
-const pointForOffset = (source: string, offset: number) => {
-  const before = source.slice(0, offset);
-  // Match JavaScript line terminators, treating CRLF as a single newline.
-  const lines = before.split(/\r\n|[\n\r\u2028\u2029]/u);
-  return { line: lines.length, column: lines.at(-1)?.length ?? 0 };
+// Match JavaScript line terminators, treating CRLF as a single newline.
+const advancePoint = (
+  source: string,
+  from: number,
+  to: number,
+  line: number,
+  column: number,
+): { line: number; column: number } => {
+  const limit = Math.max(0, Math.min(to, source.length));
+  let currentLine = line;
+  let currentColumn = column;
+  for (let i = Math.max(0, from); i < limit; i += 1) {
+    const code = source.charCodeAt(i);
+    if (code === 0x0d) {
+      if (i + 1 < limit && source.charCodeAt(i + 1) === 0x0a) i += 1;
+      currentLine += 1;
+      currentColumn = 0;
+    } else if (code === 0x0a || code === 0x2028 || code === 0x2029) {
+      currentLine += 1;
+      currentColumn = 0;
+    } else {
+      currentColumn += 1;
+    }
+  }
+  return { line: currentLine, column: currentColumn };
 };
 
 /** Observe known bundler/framework marker strings without claiming dependency use. */

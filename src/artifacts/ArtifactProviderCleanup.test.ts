@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vitest";
 
 import { ArtifactProvider } from "./ArtifactProvider.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
+import { malformedArtifact } from "../resources/ArtifactReader.js";
 import * as interfaceBuilder from "./apple/InterfaceBuilderAnalysis.js";
 
 it("updates a bundle resource client's returned cleanup error after close retry", async () => {
@@ -20,7 +20,7 @@ it("updates a bundle resource client's returned cleanup error after close retry"
           },
         },
       });
-      throw new ArtifactReaderFailure("format", "controlled decode refusal");
+      throw malformedArtifact("nib-archive", "controlled decode refusal");
     });
   const client = new ArtifactProvider({}, "darwin").createBundleResourceClient({
     callerPath: "/fixture/Demo.app",

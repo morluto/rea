@@ -30,6 +30,7 @@ import { createTestMcp } from "../../support/mcp/mcpFixture.js";
 import {
   startFakeCdpBrowser,
   type FakeCdpBrowser,
+  type FakeOptions,
 } from "../../fixtures/fakeCdpBrowser.js";
 
 const schemaValidation = createMcpSchemaValidation();
@@ -48,7 +49,10 @@ afterAll(async () => {
   }
 });
 
-it("preserves Link parameter order and context through the advertised MCP contract", async () => {
+const linkMetadataEvents: NonNullable<FakeOptions["commandEvents"]> = (
+  command,
+  origin,
+) => {
   const links = [
     '</duplicate-first>; rel="mcp"; rel="preload"; type="application/mcp"; type="application/preload"',
     '</duplicate-last>; rel="preload"; rel="mcp"',
@@ -57,44 +61,48 @@ it("preserves Link parameter order and context through the advertised MCP contra
     '</default-context>; rel="mcp"',
     '</same-context>; rel="mcp"; anchor="/page"',
   ];
+  if (command.method !== "Network.enable") return undefined;
+  const session =
+    command.sessionId === undefined ? {} : { sessionId: command.sessionId };
+  return [
+    {
+      ...session,
+      method: "Network.requestWillBeSent",
+      params: {
+        requestId: "link-metadata",
+        type: "Document",
+        request: { url: `${origin}/page`, method: "GET" },
+        initiator: { type: "parser" },
+      },
+    },
+    {
+      ...session,
+      method: "Network.responseReceived",
+      params: {
+        requestId: "link-metadata",
+        type: "Document",
+        response: {
+          url: `${origin}/page`,
+          status: 200,
+          mimeType: "text/html",
+          headers: {
+            Link: [
+              links.join(", "),
+              `</credential-context>; rel="mcp"; anchor="${new URL(origin).protocol}//other-user:other-pass@${new URL(origin).host}/page"`,
+            ].join("\n"),
+            "Cross-Origin-Opener-Policy": 'same-origin; report-to="coop"',
+            "Cross-Origin-Embedder-Policy": 'require-corp; report-to="coep"',
+          },
+        },
+      },
+    },
+  ];
+};
+
+it("preserves response header facts and Link context through the advertised MCP contract", async () => {
   const browser = await startFakeCdpBrowser({
     eventsBeforeReply: ["Network.enable"],
-    commandEvents(command, origin) {
-      if (command.method !== "Network.enable") return undefined;
-      const session =
-        command.sessionId === undefined ? {} : { sessionId: command.sessionId };
-      return [
-        {
-          ...session,
-          method: "Network.requestWillBeSent",
-          params: {
-            requestId: "link-metadata",
-            type: "Document",
-            request: { url: `${origin}/page`, method: "GET" },
-            initiator: { type: "parser" },
-          },
-        },
-        {
-          ...session,
-          method: "Network.responseReceived",
-          params: {
-            requestId: "link-metadata",
-            type: "Document",
-            response: {
-              url: `${origin}/page`,
-              status: 200,
-              mimeType: "text/html",
-              headers: {
-                Link: [
-                  ...links,
-                  `</credential-context>; rel="mcp"; anchor="${new URL(origin).protocol}//other-user:other-pass@${new URL(origin).host}/page"`,
-                ].join(", "),
-              },
-            },
-          },
-        },
-      ];
-    },
+    commandEvents: linkMetadataEvents,
   });
   retainBrowser(browser);
   const connected = await connectBrowser();
@@ -127,6 +135,10 @@ it("preserves Link parameter order and context through the advertised MCP contra
   expect(normalized.metadata.responses).toContainEqual(
     expect.objectContaining({
       request_id: "link-metadata",
+      policies: expect.objectContaining({
+        coop: "same-origin",
+        coep: "require-corp",
+      }),
       links: [
         expect.objectContaining({
           href: `${browser.allowedOrigin}/duplicate-first`,
@@ -172,12 +184,16 @@ it("preserves Link parameter order and context through the advertised MCP contra
   const linkHints = normalized.metadata.agent_hints.filter(
     ({ mechanism }) => mechanism === "link_rel",
   );
-  expect(linkHints.map(({ url }) => url)).toEqual([
-    `${browser.allowedOrigin}/duplicate-first`,
-    `${browser.allowedOrigin}/escaped-rel`,
-    `${browser.allowedOrigin}/default-context`,
-    `${browser.allowedOrigin}/same-context`,
-  ]);
+  expect(linkHints).toEqual(
+    ["duplicate-first", "escaped-rel", "default-context", "same-context"].map(
+      (path) => ({
+        mechanism: "link_rel",
+        declaration: "mcp",
+        trust: "page-declared-untrusted",
+        url: `${browser.allowedOrigin}/${path}`,
+      }),
+    ),
+  );
 
   const contextless = structuredClone(normalized) as unknown as {
     metadata: { responses: { links: Record<string, unknown>[] }[] };
@@ -1041,7 +1057,7 @@ const artifactOf = (value: unknown): unknown => {
   return normalized.artifact;
 };
 
-it.each([24, 32, "crc"])(
+it.each([24, 32, "crc", "invalid interlace"])(
   "rejects corrupt captured PNG through MCP: %s",
   async (kind) => {
     const bytes = Buffer.from(
@@ -1049,6 +1065,10 @@ it.each([24, 32, "crc"])(
       "base64",
     );
     if (kind === "crc") bytes[29] = (bytes[29] ?? 0) ^ 1;
+    if (kind === "invalid interlace") {
+      bytes[28] = 2;
+      bytes.writeUInt32BE(crc32(bytes.subarray(12, 29)), 29);
+    }
     const data = (
       typeof kind === "number" ? bytes.subarray(0, kind) : bytes
     ).toString("base64");

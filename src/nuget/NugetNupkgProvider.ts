@@ -3,194 +3,182 @@ import {
   ArtifactReaderFailure,
   ArtifactResourceScope,
   artifactFilePrimaryFacts,
-  projectArtifactCloseFailure,
-  projectOwnedArtifactIdentityFailure,
-  projectOwnedArtifactInputFailure,
-  projectSelectedArtifactFileFailure,
+  closeArtifactResources,
   projectStableArtifactFailure,
-  readStableArtifact,
   translateArtifactFailure,
-  type ArtifactFilePrimaryFacts,
-  type StableArtifactSnapshot,
+  withStableArtifactHandle,
 } from "../resources/index.js";
 import {
   isParseLimit,
-  parseFailureAnalysisError,
   parseLimitConstraint,
 } from "../domain/parseFailureAnalysisError.js";
 import { decodeLimit } from "../domain/parseFailure.js";
 import { fixedCeilingConstraint } from "../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
 import {
+  NUGET_NUPKG_BUDGETS,
   NUGET_NUPKG_FORMAT,
-  NUGET_NUPKG_LIMIT_MAXIMA,
+  nugetNupkgBudgetLimit,
   type InspectNugetNupkgInput,
+  type NugetNupkgBudget,
 } from "../domain/nuget/nupkg.js";
 import { err, ok } from "../domain/result.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
+import { offlineArtifactFailureDialect } from "../providers/offlineArtifactFailure.js";
 import { parseNugetNupkg } from "./NugetNupkgParser.js";
 
 const OPERATION = "inspect_nuget_nupkg";
 
-const budgetRecovery = (
-  parameter: keyof typeof NUGET_NUPKG_LIMIT_MAXIMA,
-  selected: number,
-): string =>
-  selected >= NUGET_NUPKG_LIMIT_MAXIMA[parameter]
-    ? `${parameter} is at this operation's maximum of ${String(NUGET_NUPKG_LIMIT_MAXIMA[parameter])}; select a complete artifact within that bound.`
-    : `Raise ${parameter} above ${String(selected)}, up to ${String(NUGET_NUPKG_LIMIT_MAXIMA[parameter])}, or select a smaller artifact. The budget applies on the next call; repeating the unchanged request does not raise it.`;
-
-const nupkgFailurePrimary = (
-  facts: ArtifactFilePrimaryFacts,
-  input: InspectNugetNupkgInput,
-) => {
-  const { cause, origin } = facts;
-  const identityFailure = projectOwnedArtifactIdentityFailure(
-    facts,
-    OPERATION,
-    input.path,
-  );
-  if (identityFailure !== undefined) return identityFailure;
-  if (isParseLimit(cause, NUGET_NUPKG_FORMAT)) {
-    const parameter = (
-      Object.keys(
-        NUGET_NUPKG_LIMIT_MAXIMA,
-      ) as (keyof typeof NUGET_NUPKG_LIMIT_MAXIMA)[]
-    ).find((name) => name === cause.failure.limit.name);
-    return parseLimitConstraint(
-      OPERATION,
-      cause.failure.limit.name === "max_entries" ? "capacity" : "memory",
-      cause,
-      {
-        path: input.path,
-        retryable: false,
-        ...(parameter === undefined
-          ? {}
-          : {
-              remediationAction: budgetRecovery(
-                parameter,
-                cause.failure.limit.maximum,
-              ),
-            }),
-      },
-    );
-  }
-  const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
-  if (formatFailure !== undefined) return formatFailure;
-  const inputFailure = projectOwnedArtifactInputFailure(
-    facts,
-    OPERATION,
-    input.path,
-  );
-  if (inputFailure !== undefined) return inputFailure;
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure
-  ) {
-    if (cause.reason === "limit" && cause.fixedAllowance !== undefined)
-      return fixedCeilingConstraint(
-        OPERATION,
-        cause.boundary ?? "memory",
-        cause.message,
-        cause.fixedAllowance,
-        { cause },
-      );
-    if (cause.reason === "limit" && cause.boundary === "file-size")
-      return parseLimitConstraint(
-        OPERATION,
-        "file-size",
-        decodeLimit(
-          NUGET_NUPKG_FORMAT,
-          cause.message,
-          { name: "max_file_bytes", maximum: input.max_file_bytes },
-          { cause },
-        ),
-        {
-          retryable: false,
-          remediationAction: budgetRecovery(
-            "max_file_bytes",
-            input.max_file_bytes,
-          ),
-        },
-      );
-    return translateArtifactFailure(OPERATION, cause);
-  }
-  const fileFailure = projectSelectedArtifactFileFailure(
-    cause,
-    OPERATION,
-    input.path,
-    "NuGet package",
-  );
-  if (fileFailure !== undefined) return fileFailure;
-  return new ArtifactOperationError(
-    OPERATION,
-    "io",
-    undefined,
-    errorMessage(cause),
-    { cause },
-  );
-};
+/** The refusal options for an exhausted per-call budget. */
+const budgetRecovery = (parameter: NugetNupkgBudget, selected: number) => ({
+  limit: nugetNupkgBudgetLimit(parameter, selected),
+  remediationAction:
+    selected >= NUGET_NUPKG_BUDGETS[parameter].maximum
+      ? `${parameter} is at this operation's maximum of ${String(NUGET_NUPKG_BUDGETS[parameter].maximum)}; select a complete artifact within that bound.`
+      : `Raise ${parameter} above ${String(selected)}, up to ${String(NUGET_NUPKG_BUDGETS[parameter].maximum)}, or select a smaller artifact. The budget applies on the next call; repeating the unchanged request does not raise it.`,
+});
 
 const nupkgFailure = (
   cause: unknown,
   input: InspectNugetNupkgInput,
-  snapshot?: StableArtifactSnapshot,
-) =>
-  projectStableArtifactFailure(
+  identity?: { readonly sha256: string; readonly bytes: number },
+) => {
+  const facts = artifactFilePrimaryFacts(cause);
+  const primary = classifyProviderFailure(
+    facts.cause,
+    offlineArtifactFailureDialect(facts, {
+      providerId: NUGET_NUPKG_PROVIDER_IDENTITY.id,
+      operation: OPERATION,
+      path: input.path,
+      description: "NuGet package",
+      recognise: (failure, origin) => {
+        if (isParseLimit(failure, NUGET_NUPKG_FORMAT)) {
+          const parameter = (
+            Object.keys(NUGET_NUPKG_BUDGETS) as NugetNupkgBudget[]
+          ).find((name) => name === failure.failure.limit.name);
+          return parseLimitConstraint(
+            OPERATION,
+            failure.failure.limit.name === "max_entries"
+              ? "capacity"
+              : "memory",
+            failure,
+            {
+              path: input.path,
+              retryable: false,
+              ...(parameter === undefined
+                ? {}
+                : budgetRecovery(parameter, failure.failure.limit.maximum)),
+            },
+          );
+        }
+        if (
+          origin === "owned-or-classified" &&
+          failure instanceof ArtifactReaderFailure
+        ) {
+          if (
+            failure.reason === "limit" &&
+            failure.fixedAllowance !== undefined
+          )
+            return fixedCeilingConstraint(
+              OPERATION,
+              failure.boundary ?? "memory",
+              failure.message,
+              failure.fixedAllowance,
+              { cause: failure },
+            );
+          if (failure.reason === "limit" && failure.boundary === "file-size")
+            return undefined;
+          if (
+            failure.reason !== "path" &&
+            failure.reason !== "integrity" &&
+            failure.reason !== "cancelled"
+          )
+            return translateArtifactFailure(OPERATION, input.path, failure);
+        }
+        return undefined;
+      },
+      fileSize: (failure) =>
+        parseLimitConstraint(
+          OPERATION,
+          "file-size",
+          decodeLimit(
+            NUGET_NUPKG_FORMAT,
+            failure.message,
+            { name: "max_file_bytes", maximum: input.max_file_bytes },
+            { cause: failure },
+          ),
+          {
+            retryable: false,
+            ...budgetRecovery("max_file_bytes", input.max_file_bytes),
+          },
+        ),
+      unclassified: (failure) =>
+        new ArtifactOperationError(
+          OPERATION,
+          "io",
+          undefined,
+          errorMessage(failure),
+          { cause: failure },
+        ),
+    }),
+  );
+  return projectStableArtifactFailure(
     cause,
-    nupkgFailurePrimary(artifactFilePrimaryFacts(cause), input),
+    primary,
     input.path,
     NUGET_NUPKG_PROVIDER_IDENTITY.id,
     OPERATION,
-    snapshot,
+    identity,
   );
+};
 
 /** Portable parser over one bounded, identity-checked regular file. */
 export class NugetNupkgProvider {
   readonly identity = NUGET_NUPKG_PROVIDER_IDENTITY;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        NUGET_NUPKG_PROVIDER_IDENTITY.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      NUGET_NUPKG_PROVIDER_IDENTITY,
+      OPERATION,
+    );
   }
 
   async inspect(
     input: InspectNugetNupkgInput,
     options?: { readonly signal?: AbortSignal },
   ) {
-    let snapshot: StableArtifactSnapshot | undefined;
+    let identity:
+      | { readonly sha256: string; readonly bytes: number }
+      | undefined;
     try {
-      return await this.#resources.run(async () => {
-        snapshot = await readStableArtifact(
+      return await this.#resources.run(async () =>
+        withStableArtifactHandle(
           input.path,
           input.max_file_bytes,
-          options?.signal,
-          undefined,
-          this.#resources,
-        );
-        return ok(
-          await parseNugetNupkg(
-            snapshot.bytes,
-            {
-              path: input.path,
-              sha256: snapshot.sha256,
-              bytes: snapshot.bytes.length,
+          {
+            retainBytes: () => 4,
+            signal: options?.signal,
+            resourceScope: this.#resources,
+            onIdentity: (verified) => {
+              identity = verified;
             },
-            input,
-            options?.signal,
-          ),
-        );
-      });
+          },
+          async ({ prefix, size, sha256, readRange }) =>
+            ok(
+              await parseNugetNupkg(
+                { prefix, size, readRange },
+                { path: input.path, sha256, bytes: size },
+                input,
+                options?.signal,
+              ),
+            ),
+        ),
+      );
     } catch (cause) {
-      return err(nupkgFailure(cause, input, snapshot));
+      return err(nupkgFailure(cause, input, identity));
     }
   }
 }

@@ -1,3 +1,4 @@
+import { write16 } from "../BinaryInteger.fixture.js";
 /** Hand-assembled ELF images with .eh_frame CIE/FDE records and .eh_frame_hdr. */
 
 export const UNWIND_FN_A = 0x400100;
@@ -68,6 +69,8 @@ export interface ElfUnwindFixtureOptions {
    * a `.dynamic` DT_PLTGOT entry.
    */
   readonly datarel?: "got" | "none" | "dynamic";
+  /** With `datarel: "dynamic"`, also declare `.got.plt` at the same GOT address. */
+  readonly gotPlt?: boolean;
   /**
    * First CIE and first FDE use the 0xffffffff extended (64-bit) length
    * escape; their CIE ID / CIE pointer stays 4 bytes, as `.eh_frame` requires.
@@ -92,6 +95,11 @@ export interface ElfUnwindFixtureOptions {
    * declare the dynamic table.
    */
   readonly dynamicSection?: boolean;
+  /**
+   * `.dynamic` rows as `[d_tag, d_un]` pairs, written in order with no
+   * implied DT_NULL. Without it, `.dynamic` is DT_PLTGOT then DT_NULL.
+   */
+  readonly dynamicEntries?: readonly (readonly [tag: number, value: number])[];
   /** `.symtab` and `.dynsym` each under 65536 entries, together over it. */
   readonly symbolCap?: boolean;
   /** Second FDE stores a raw zero pcrel LSDA pointer (no LSDA). */
@@ -135,6 +143,11 @@ export interface ElfUnwindFixtureOptions {
   readonly suffixNames?: number;
   /** `alpha` at `UNWIND_FN_A` is a global `STT_GNU_IFUNC` resolver symbol. */
   readonly ifunc?: boolean;
+  /**
+   * Function symbols set bit 0, as ARM Thumb code does, and a local `$t`
+   * mapping symbol marks `UNWIND_FN_A` at the even address.
+   */
+  readonly thumb?: boolean;
   /** Append this many `S` letters to the first CIE's augmentation. */
   readonly longAugmentation?: number;
 }
@@ -243,16 +256,6 @@ class Writer {
 
 const alignTo = (value: number, alignment: number): number =>
   Math.ceil(value / alignment) * alignment;
-
-const write16 = (
-  bytes: Buffer,
-  offset: number,
-  value: number,
-  little: boolean,
-): void => {
-  if (little) bytes.writeUInt16LE(value, offset);
-  else bytes.writeUInt16BE(value, offset);
-};
 
 const write32 = (
   bytes: Buffer,
@@ -545,10 +548,12 @@ const buildSymbolTable = (
   bits: 32 | 64,
   little: boolean,
   ifunc = false,
+  thumb = false,
 ): { readonly symbols: Buffer; readonly strings: Buffer } => {
-  const strings = Buffer.from("\0alpha\0mid\0obj\0", "latin1");
+  const strings = Buffer.from("\0alpha\0mid\0obj\0$t\0", "latin1");
   const width = bits === 64 ? 24 : 16;
-  const symbols = Buffer.alloc(width * 4);
+  const symbols = Buffer.alloc(width * (thumb ? 5 : 4));
+  const code = thumb ? 1 : 0;
   const writeSymbol = (
     index: number,
     name: number,
@@ -571,9 +576,17 @@ const buildSymbolTable = (
     symbols[at + 12] = info;
     write16(symbols, at + 14, section, little);
   };
-  writeSymbol(1, 1, ifunc ? 0x1a : 0x12, 1, UNWIND_FN_A, UNWIND_FN_A_SIZE);
-  writeSymbol(2, 7, 0x12, 1, UNWIND_FN_A + 4, 1);
+  writeSymbol(
+    1,
+    1,
+    ifunc ? 0x1a : 0x12,
+    1,
+    UNWIND_FN_A + code,
+    UNWIND_FN_A_SIZE,
+  );
+  writeSymbol(2, 7, 0x12, 1, UNWIND_FN_A + 4 + code, 1);
   writeSymbol(3, 11, 0x11, 1, UNWIND_FN_A, UNWIND_FN_A_SIZE);
+  if (thumb) writeSymbol(4, 15, 0x00, 1, UNWIND_FN_A, 0);
   return { symbols, strings };
 };
 
@@ -700,7 +713,7 @@ const addOptionalSections = (
   bits: 32 | 64,
   little: boolean,
 ): void => {
-  if (options.datarel === "got")
+  if (options.datarel === "got" || options.gotPlt === true)
     sections.push({
       name: ".got.plt",
       type: 1,
@@ -713,10 +726,15 @@ const addOptionalSections = (
     });
   if (options.datarel === "dynamic") {
     const width = bits === 64 ? 16 : 8;
-    const dynamic = Buffer.alloc(width * 2);
-    // DT_PLTGOT, then DT_NULL.
-    writeWord(dynamic, 0, 3, bits, little);
-    writeWord(dynamic, width / 2, UNWIND_GOT_VA, bits, little);
+    const entries = options.dynamicEntries ?? [
+      [3, UNWIND_GOT_VA],
+      [0, 0],
+    ];
+    const dynamic = Buffer.alloc(width * entries.length);
+    entries.forEach(([tag, value], index) => {
+      writeWord(dynamic, index * width, tag, bits, little);
+      writeWord(dynamic, index * width + width / 2, value, bits, little);
+    });
     sections.push({
       name: ".dynamic",
       type: options.dynamicSection === false ? 1 : 6,
@@ -837,7 +855,12 @@ export const elfUnwindFixture = (
         ? buildSharedNameSymbolTable(bits, little, options.sharedName)
         : options.suffixNames !== undefined
           ? buildSuffixNameSymbolTable(bits, little, options.suffixNames)
-          : buildSymbolTable(bits, little, options.ifunc === true);
+          : buildSymbolTable(
+              bits,
+              little,
+              options.ifunc === true,
+              options.thumb === true,
+            );
   const debug =
     options.debugFrame === false || !unwind ? null : Buffer.alloc(4);
   const sections: SectionSpec[] = [

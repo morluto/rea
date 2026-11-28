@@ -1,19 +1,13 @@
 import { createCommandCli } from "../../support/cli/commandCli.js";
 import { expect, it } from "vitest";
+import { serveInProcessCli } from "../../support/cli/serveInProcessCli.js";
 import { registerElectronCommands } from "../../../src/cli/electronCommands.js";
 import { silentLogger } from "../../../src/logger.js";
 
 const serve = async (argv: readonly string[]): Promise<unknown> => {
   const cli = createCommandCli();
   registerElectronCommands(cli, silentLogger, {});
-  let stdout = "";
-  await cli.serve([...argv, "--json"], {
-    env: {},
-    stdout: (text) => {
-      stdout += text;
-    },
-    exit: () => undefined,
-  });
+  const { stdout } = await serveInProcessCli(cli, [...argv, "--json"]);
   return JSON.parse(stdout);
 };
 

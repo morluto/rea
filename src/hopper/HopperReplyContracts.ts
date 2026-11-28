@@ -111,6 +111,14 @@ const callerScanTargetSchema = z.strictObject({
 });
 
 /**
+ * Present when an explicit address outside every procedure, such as an import
+ * address-table slot, was selected for incoming references. The bridge then
+ * reports Hopper's recorded references to that address; absent, it selected a
+ * procedure.
+ */
+const nonProcedureTargetSchema = z.literal("address").exactOptional();
+
+/**
  * Bridge reply contracts, keyed by method and built from the shared native
  * domain schemas. A reply is validated once here, before any consumer reads it.
  */
@@ -156,6 +164,7 @@ export const hopperReplySchemas = {
     reference_kinds_available: z.boolean(),
     unresolved_calls: z.array(unresolvedCallSchema),
     references: z.array(referenceEdgeSchema),
+    target_kind: nonProcedureTargetSchema,
   }),
   // REA-private lifecycle methods.
   health: healthReplySchema,
@@ -165,6 +174,7 @@ export const hopperReplySchemas = {
   rea_caller_base: callerScanTargetSchema.extend({
     callers: z.array(z.string()),
     callers_complete: z.boolean(),
+    target_kind: nonProcedureTargetSchema,
   }),
   rea_caller_scan_target: callerScanTargetSchema,
   rea_caller_scan_page: z.strictObject({

@@ -22,6 +22,11 @@ const cases = [
   ["escaped duplicate key", `{"val\\u0075e":${arrays},"value":"done"}`, true],
   ["retained deep value", `{"value":${arrays}}`, false],
   [
+    "retained value beyond the native reviver stack",
+    "[".repeat(20_000) + "1" + "]".repeat(20_000),
+    false,
+  ],
+  [
     "retained deep inexact number",
     `{"value":${"[".repeat(600)}9007199254740993${"]".repeat(600)}}`,
     false,

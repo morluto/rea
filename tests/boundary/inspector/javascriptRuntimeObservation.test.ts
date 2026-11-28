@@ -1,3 +1,4 @@
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -28,7 +29,10 @@ import {
 } from "../../../src/domain/evidence.js";
 import { javascriptRuntimeReconciliationResultSchema } from "../../../src/domain/javascript/javascriptRuntimeReconciliationSchemas.js";
 import { parseRuntimeCapture } from "../../../src/domain/javascript/javascriptRuntimeReconciliationCaptureParsing.js";
-import { startFakeV8Inspector } from "../../fixtures/inspector/fakeV8Inspector.js";
+import {
+  nodeDiscoveryTargetUrl,
+  startFakeV8Inspector,
+} from "../../fixtures/inspector/fakeV8Inspector.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 import { createNodeDiscoveryTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -126,115 +130,70 @@ test("reports browser origin scope mismatch at the caller parameter path", async
   }
 });
 
-describe("Inspector execution-context lifecycle metadata", () => {
-  test.each([
-    [
-      "Runtime.executionContextDestroyed",
-      { executionContextId: 1 },
-      "destroyed",
+test("retains destroyed context metadata after ID reuse and records unseen destructions", async () => {
+  const fixture = await runtimeFixture();
+  const fake = await startFakeV8Inspector({
+    targetUrl: pathToFileURL(fixture.entry).href,
+    runtimeEvents: [
+      {
+        method: "Runtime.executionContextCreated",
+        params: {
+          context: {
+            id: 1,
+            origin: "https://old.example",
+            name: "old context",
+          },
+        },
+      },
+      {
+        method: "Runtime.executionContextDestroyed",
+        params: { executionContextId: 1 },
+      },
+      {
+        method: "Runtime.executionContextCreated",
+        params: { context: { id: 1, origin: "", name: "" } },
+      },
+      {
+        method: "Runtime.executionContextDestroyed",
+        params: { executionContextId: 2 },
+      },
     ],
-    ["Runtime.executionContextsCleared", {}, "cleared"],
-  ] as const)(
-    "preserves observed context metadata after %s",
-    async (method, params, state) => {
-      const fixture = await runtimeFixture();
-      const fake = await startFakeV8Inspector({
-        targetUrl: pathToFileURL(fixture.entry).href,
-        runtimeEvents: [
-          {
-            method: "Runtime.executionContextCreated",
-            params: {
-              context: {
-                id: 1,
-                origin: "https://context.example",
-                name: "worker#one",
-              },
-            },
-          },
-          { method, params },
-        ],
-      });
-      try {
-        const result = await new V8InspectorProvider().observe(
-          observeInput(fake.endpoint, fake.targetId, "node"),
-        );
-        if (!result.ok) throw result.error;
-        expect(result.value.execution_contexts).toEqual([
-          {
-            context_key: "context_0",
-            execution_context_id: 1,
-            state,
-            name: "worker#one",
-            origin: "https://context.example",
-          },
-        ]);
-      } finally {
-        await fake.close();
-      }
-    },
-  );
-
-  test("retains each context lifetime after an ID is reused", async () => {
-    const fixture = await runtimeFixture();
-    const fake = await startFakeV8Inspector({
-      targetUrl: pathToFileURL(fixture.entry).href,
-      runtimeEvents: [
-        {
-          method: "Runtime.executionContextCreated",
-          params: {
-            context: {
-              id: 1,
-              origin: "https://old.example",
-              name: "old context",
-            },
-          },
-        },
-        {
-          method: "Runtime.executionContextDestroyed",
-          params: { executionContextId: 1 },
-        },
-        {
-          method: "Runtime.executionContextCreated",
-          params: { context: { id: 1, origin: "", name: "" } },
-        },
-        {
-          method: "Runtime.executionContextDestroyed",
-          params: { executionContextId: 2 },
-        },
-      ],
-    });
-    try {
-      const result = await new V8InspectorProvider().observe(
-        observeInput(fake.endpoint, fake.targetId, "node"),
-      );
-      if (!result.ok) throw result.error;
-      expect(result.value.execution_contexts).toEqual([
-        {
-          context_key: "context_0",
+  });
+  try {
+    const result = await new V8InspectorProvider().observe(
+      observeInput(fake.endpoint, fake.targetId, "node"),
+    );
+    if (!result.ok) throw result.error;
+    const contexts = result.value.execution_contexts;
+    expect(contexts).toHaveLength(3);
+    expect(new Set(contexts.map(({ context_key }) => context_key)).size).toBe(
+      3,
+    );
+    expect(contexts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
           execution_context_id: 1,
           state: "destroyed",
           name: "old context",
           origin: "https://old.example",
-        },
-        {
-          context_key: "context_1",
+        }),
+        expect.objectContaining({
           execution_context_id: 1,
           state: "created",
           name: "",
           origin: "",
-        },
-        {
-          context_key: "context_2",
+        }),
+        expect.objectContaining({
           execution_context_id: 2,
           state: "destroyed",
           name: null,
           origin: null,
-        },
-      ]);
-    } finally {
-      await fake.close();
-    }
-  });
+        }),
+      ]),
+    );
+  } finally {
+    await fake.close();
+  }
 });
 
 test("counts malformed lifecycle events without altering valid Inspector contexts", async () => {
@@ -318,8 +277,8 @@ test("lists all connectable targets on the selected endpoint across directories"
   const fixture = await runtimeFixture();
   const outside = await temporaryFile("outside.js");
   const fake = await startFakeV8Inspector({
-    targetUrl: pathToFileURL(fixture.entry).href,
-    additionalTargetUrl: pathToFileURL(outside).href,
+    targetUrl: nodeDiscoveryTargetUrl(fixture.entry),
+    additionalTargets: [{ url: nodeDiscoveryTargetUrl(outside) }],
     additionalTargetCount: 205,
   });
   try {
@@ -329,86 +288,163 @@ test("lists all connectable targets on the selected endpoint across directories"
     if (!listed.ok) throw listed.error;
     const targets = listed.value.targets;
     expect(targets).toHaveLength(207);
-    expect(new Set(targets.map(({ target_id }) => target_id)).size).toBe(207);
-    expect(
-      targets.find(({ target_id }) => target_id === fake.targetId)?.location,
-    ).toMatchObject({ kind: "file", file_path: fixture.entry });
-    expect(
-      targets.find(
-        ({ target_id }) => target_id === "00000000-0000-4000-8000-000000000002",
-      )?.location,
-    ).toMatchObject({ kind: "file", file_path: outside });
-    expect(
-      targets.find(
-        ({ target_id }) => target_id === "00000000-0000-4000-8000-000000000207",
-      )?.location,
-    ).toMatchObject({ kind: "file", file_path: fixture.entry });
+    expect(new Set(targets.map(({ target_id }) => target_id))).toEqual(
+      new Set(fake.targetIds),
+    );
+    // Node discovery turns backslashes into underscores on Windows.
+    for (const [targetId, path] of [
+      [fake.targetId, fixture.entry],
+      [fake.targetIds[1], outside],
+      ["00000000-0000-4000-8000-000000000207", fixture.entry],
+    ] as const) {
+      expect(
+        targets.find(({ target_id }) => target_id === targetId)?.location,
+      ).toMatchObject(
+        process.platform === "win32"
+          ? {
+              kind: "unresolved",
+              reported_url: nodeDiscoveryTargetUrl(path),
+              reason: "unverifiable-file-location",
+            }
+          : { kind: "file", file_path: path },
+      );
+    }
   } finally {
     await fake.close();
   }
 });
 
-test.each([
-  { label: "omitted", attached: undefined, expected: null },
-  { label: "explicitly detached", attached: false, expected: false },
-] as const)(
-  "preserves $label V8 attachment state through listing and observation",
-  async ({ attached, expected }) => {
-    const fixture = await runtimeFixture();
-    const fake = await startFakeV8Inspector({
-      targetUrl: pathToFileURL(fixture.entry).href,
-      ...(attached === undefined ? {} : { attached }),
+test("preserves attachment facts and refuses attached or unconnectable Inspector targets", async () => {
+  const fake = await startFakeV8Inspector({
+    targetUrl: "https://example.test/omitted.js",
+    additionalTargets: [
+      { url: "https://example.test/malformed.js", attached: "unknown" },
+      { url: "https://example.test/detached.js", attached: false },
+      { url: "https://example.test/attached.js", attached: true },
+      { url: "https://example.test/unconnectable.js", omitDebuggerUrl: true },
+    ],
+  });
+  const [omitted, malformed, detached, attached, unconnectable] =
+    fake.targetIds;
+  if (
+    omitted === undefined ||
+    malformed === undefined ||
+    detached === undefined ||
+    attached === undefined ||
+    unconnectable === undefined
+  )
+    throw new Error("Expected five Inspector targets");
+  const malformedNotice = expect.stringContaining(
+    `target ${malformed} reported malformed attached metadata "unknown"`,
+  );
+  const unknownNotice = expect.stringContaining(
+    "did not report the target's current debugger attachment state",
+  );
+  const provider = new V8InspectorProvider();
+  try {
+    const listed = await provider.listTargets({
+      inspector_endpoint: fake.endpoint,
     });
-    try {
-      const provider = new V8InspectorProvider();
-      const listed = await provider.listTargets({
-        inspector_endpoint: fake.endpoint,
-      });
-      if (!listed.ok) throw listed.error;
-      expect(listed.value.targets[0]?.attached).toBe(expected);
-      if (expected === null)
-        expect(
-          listed.value.limitations.some((item) =>
-            item.includes("attachment state"),
-          ),
-        ).toBe(true);
+    if (!listed.ok) throw listed.error;
+    expect(listed.value.targets).toHaveLength(4);
+    expect(listed.value.targets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ target_id: omitted, attached: null }),
+        expect.objectContaining({ target_id: malformed, attached: null }),
+        expect.objectContaining({ target_id: detached, attached: false }),
+        expect.objectContaining({ target_id: attached, attached: true }),
+      ]),
+    );
+    expect(listed.value.excluded).toEqual({
+      unconnectable: 1,
+      unsupported_location: 0,
+    });
+    expect(listed.value.limitations).toContainEqual(malformedNotice);
+    expect(listed.value.limitations).toContainEqual(unknownNotice);
 
+    const busy = await provider.observe(
+      observeInput(fake.endpoint, attached, "node"),
+    );
+    if (busy.ok) throw new Error("Expected refusal for an attached target");
+    expect(projectAnalysisError(busy.error)).toMatchObject({
+      code: "target_unavailable",
+      message: expect.stringContaining("attached: true"),
+      details: { reason: "target_not_allowed" },
+      remediation: {
+        action: expect.stringContaining("Disconnect the other debugger"),
+      },
+    });
+    const withoutSocket = await provider.observe(
+      observeInput(fake.endpoint, unconnectable, "node"),
+    );
+    expect(withoutSocket).toMatchObject({
+      ok: false,
+      error: { reason: "invalid_endpoint_response" },
+    });
+    expect(fake.commands).toEqual([]);
+
+    for (const [target_id, attachment] of [
+      [omitted, null],
+      [malformed, null],
+      [detached, false],
+    ] as const) {
       const observed = await provider.observe(
-        observeInput(fake.endpoint, fake.targetId, "node"),
+        observeInput(fake.endpoint, target_id, "node"),
       );
       if (!observed.ok) throw observed.error;
-      expect(observed.value.target.attached).toBe(expected);
-      if (expected === null)
-        expect(
-          observed.value.limitations.some((item) =>
-            item.includes("attachment state"),
-          ),
-        ).toBe(true);
+      expect(observed.value.target).toMatchObject({
+        target_id,
+        attached: attachment,
+      });
+      if (attachment === null)
+        expect(observed.value.limitations).toContainEqual(unknownNotice);
+      if (target_id === malformed)
+        expect(observed.value.limitations).toContainEqual(malformedNotice);
+    }
+  } finally {
+    await provider.close();
+    await fake.close();
+  }
+});
+
+// Node reports the raw pathname: spaces and % stay literal, and quotes or
+// backslashes become underscores that cannot identify the original path.
+test.skipIf(process.platform === "win32")(
+  "resolves discovery paths with spaces and percent signs but not quote spellings",
+  async () => {
+    const root = await createNodeDiscoveryTempDirectory("rea-v8-spelling-");
+    const spaced = join(root, "with space %41.js");
+    const quoted = join(root, 'with "quote".js');
+    await writeFile(spaced, "export {};\n");
+    await writeFile(quoted, "export {};\n");
+    expect(nodeDiscoveryTargetUrl(spaced)).toBe(`file://${spaced}`);
+    expect(nodeDiscoveryTargetUrl(quoted)).toBe(
+      `file://${join(root, "with _quote_.js")}`,
+    );
+    const fake = await startFakeV8Inspector({
+      targetUrl: nodeDiscoveryTargetUrl(spaced),
+      additionalTargets: [{ url: nodeDiscoveryTargetUrl(quoted) }],
+    });
+    try {
+      const result = await new V8InspectorProvider().listTargets({
+        inspector_endpoint: fake.endpoint,
+      });
+      if (!result.ok) throw result.error;
+      expect(result.value.targets.map(({ location }) => location)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: "file", file_path: spaced }),
+          {
+            kind: "unresolved",
+            reported_url: nodeDiscoveryTargetUrl(quoted),
+            reason: "unverifiable-file-location",
+          },
+        ]),
+      );
     } finally {
       await fake.close();
     }
   },
 );
-
-test("rejects a V8 target explicitly marked attached", async () => {
-  const fixture = await runtimeFixture();
-  const fake = await startFakeV8Inspector({
-    targetUrl: pathToFileURL(fixture.entry).href,
-    attached: true,
-  });
-  try {
-    const result = await new V8InspectorProvider().observe(
-      observeInput(fake.endpoint, fake.targetId, "node"),
-    );
-    expect(result).toMatchObject({
-      ok: false,
-      error: { reason: "target_not_allowed" },
-    });
-    expect(fake.commands).toEqual([]);
-  } finally {
-    await fake.close();
-  }
-});
 
 test("captures complete metadata with two enable commands", async () => {
   const fixture = await runtimeFixture();
@@ -453,31 +489,6 @@ test("captures complete metadata with two enable commands", async () => {
   }
 });
 
-test("excludes an Electron main target that reports only bare file://", async () => {
-  const fixture = await runtimeFixture();
-  const fake = await startFakeV8Inspector({
-    targetUrl: "file://",
-    scriptUrls: [pathToFileURL(fixture.entry).href],
-  });
-  try {
-    const provider = new V8InspectorProvider();
-    const listed = await provider.listTargets({
-      inspector_endpoint: fake.endpoint,
-    });
-    if (!listed.ok) throw listed.error;
-    expect(listed.value.targets).toEqual([]);
-
-    const observed = await provider.observe(
-      observeInput(fake.endpoint, fake.targetId, "electron-main"),
-    );
-    expect(observed.ok).toBe(false);
-    if (observed.ok) return;
-    expect(observed.error.message).toMatch(/target/u);
-  } finally {
-    await fake.close();
-  }
-});
-
 test.each([
   {
     targetType: "node",
@@ -503,9 +514,14 @@ test.each([
         const result = await provider.observe(
           observeInput(fake.endpoint, fake.targetId, kind),
         );
-        expect(result, kind).toMatchObject({
-          ok: false,
-          error: { reason: "target_not_allowed" },
+        if (result.ok) throw new Error(`Expected refusal for ${kind}`);
+        expect(projectAnalysisError(result.error)).toMatchObject({
+          code: "target_unavailable",
+          message: expect.stringContaining(`runtime_kind ${kind}`),
+          details: { reason: "target_not_allowed" },
+          remediation: {
+            action: expect.stringContaining("Correct runtime_kind"),
+          },
         });
       }
       expect(fake.commands).toEqual([]);

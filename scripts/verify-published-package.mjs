@@ -1,3 +1,4 @@
+import { packageVerifierHomeEnvironment } from "./verify-package-home.mjs";
 import { createPackageVerifierCommands } from "./lib/verify-package-commands.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { readFile, writeFile } from "node:fs/promises";
@@ -34,7 +35,6 @@ const serverEnvironment = {
   ...process.env,
   npm_config_cache: join(canaryRoot, "npm-cache"),
 };
-delete serverEnvironment.HOPPER_TARGET_PATH;
 const commands = await createPackageVerifierCommands({
   // The package command owner releases the fixture after its commands close.
   workspace: { path: canaryRoot, close: () => fixture.release() },
@@ -77,20 +77,7 @@ async function verifyPublishedUpdate({
   const home = join(canaryRoot, "update-home");
   const environment = {
     ...process.env,
-    HOME: home,
-    USERPROFILE: home,
-    APPDATA: join(home, "AppData", "Roaming"),
-    LOCALAPPDATA: join(home, "AppData", "Local"),
-    CLAUDE_CONFIG_DIR: home,
-    CODEX_HOME: join(home, ".codex"),
-    COPILOT_HOME: join(home, ".copilot"),
-    GROK_HOME: join(home, ".grok"),
-    SAND_DATA_ROOT: join(home, ".grokbot"),
-    OMP_PROFILE: undefined,
-    PI_CODING_AGENT_DIR: undefined,
-    PI_CONFIG_DIR: undefined,
-    PI_PROFILE: undefined,
-    XDG_CONFIG_HOME: join(home, ".config"),
+    ...packageVerifierHomeEnvironment(home),
     OPENCODE_CONFIG: join(home, ".config", "opencode", "opencode.json"),
     npm_config_cache: join(canaryRoot, "npm-cache"),
     npm_config_prefix: prefix,
