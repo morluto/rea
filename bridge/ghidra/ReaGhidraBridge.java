@@ -3218,10 +3218,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     // A convention inside the parenthesis, before or after
                     // the stars, does not hide the pointer chain.
                     skipCallingConventions();
-                    innerStars = measureStars();
+                    innerStars += measureStars();
                     skipCallingConventions();
                     observe(base + stars + innerStars);
-                    if (innerStars > 0) break;
+                    // A pointer group may itself group the declarator, as in
+                    // (*(*f)); descend so its stars join the same chain.
+                    if (innerStars > 0 && !at("(")) break;
                 }
                 String name = identifier();
                 int arrays = measureArrays(base + stars + innerStars);

@@ -1540,6 +1540,18 @@ struct rea_after { char c; int i; };`;
           ).code,
           "resource_constraint",
         );
+        // A grouped declarator nested inside a pointer group is descended
+        // into, so its pointer chain cannot hide behind the outer group.
+        assert.equal(
+          requireMcpToolError(
+            await flood.raw("annotate_native_function", {
+              procedure,
+              signature: `int (__stdcall *(__stdcall ${"*".repeat(4000)}f(void)))(void)`,
+              signature_max_utf16: 4096,
+            }),
+          ).code,
+          "resource_constraint",
+        );
         // A trailing comma-separated declarator is measured too, so its
         // over-deep parameter cannot reach the parser behind the first one.
         assert.equal(
