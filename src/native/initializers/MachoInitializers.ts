@@ -30,7 +30,10 @@ import {
   createFileMappingIndex,
   type ImageSection,
 } from "../../domain/binaryContainer.js";
-import { readMachoImage } from "../../domain/apple/machoImage.js";
+import {
+  notMachoImage,
+  readMachoImage,
+} from "../../domain/apple/machoImage.js";
 import {
   joinCoverageStatus,
   type CoverageStatus,
@@ -791,8 +794,8 @@ export const readMachoInitializers = async (
     image.bytes,
     image.bytes.length,
   );
-  if (!header.ok || header.value === null)
-    throw new BinaryFormatFailure("malformed", "Unrecognized Mach-O header");
+  if (!header.ok) throw new BinaryFormatFailure("malformed", header.error);
+  if (header.value === null) throw notMachoImage();
   const little = container.byte_order === "little";
   const scan: MachoScan = {
     reader: new BinaryReader(image.bytes, little, "macho"),

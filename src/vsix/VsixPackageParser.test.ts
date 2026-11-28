@@ -505,6 +505,43 @@ it("inventories a package with no vsixmanifest and leaves vsix identity unknown"
   expect(report.extension_pack.disagreement).toBe(false);
 });
 
+it.each([
+  [
+    "<DisplayName>Demo notes</DisplayName>",
+    { display_name: "Demo notes", description: null },
+  ],
+  [
+    "<Description>Release notes</Description>",
+    { display_name: null, description: "Release notes" },
+  ],
+  [
+    "<DisplayName> </DisplayName><x:Description>Catalog notes</x:Description>",
+    null,
+  ],
+] as const)(
+  "reports %s without a VSIX Identity element",
+  async (field, text) => {
+    const bytes = await vsixPackageFixture({
+      vsixmanifest: `<PackageManifest xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:x="urn:catalog">
+      <Metadata><x:Identity Id="catalog.record"/>${field}</Metadata>
+    </PackageManifest>`,
+    });
+    const report = await parseVsixPackage(bytes, artifactOf(bytes), defaults);
+    expect(report.vsix_identity).toEqual(
+      text === null
+        ? null
+        : {
+            id: null,
+            version: null,
+            publisher: null,
+            target_platform: null,
+            ...text,
+          },
+    );
+    expect(report.identity_disagreements).toEqual([]);
+  },
+);
+
 it("keeps custom XML elements separate from VSIX metadata and assets", async () => {
   const bytes = await vsixPackageFixture({
     vsixmanifest: `<m:PackageManifest xmlns:m="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:x="urn:catalog">

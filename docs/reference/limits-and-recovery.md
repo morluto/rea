@@ -121,9 +121,10 @@ their per-call budgets (`max_file_bytes`, entry, depth and decoded-byte budgets,
 `max_output_bytes`/`max_output_files`, and `block_size` or `length`).
 `inspect_devicetree` bounds its estimated decoded representation with
 `max_decoded_bytes` (default 32 MiB, at most 256 MiB).
-`inspect_elf_dependencies`, `inspect_elf_unwind_ranges`, `inspect_apple_ips`,
+`inspect_elf_dependencies`, `inspect_elf_unwind_ranges`, `inspect_macho_function_starts`,
+`inspect_apple_ips`,
 `inspect_dwarf_units`, `inspect_native_initializers`, `inspect_pe_overlay`,
-`inspect_pe_resources` (`max_entries`), `inspect_api_contract` (`max_file_bytes`),
+`inspect_pe_resources` (`max_entries`), `inspect_kernel_module`, `inspect_api_contract` (`max_file_bytes`),
 `compare_wasm_interfaces` (`max_interface_bytes`),
 `trace_web_source_location` (`source_map_limits.*`),
 `inspect_v8_code_cache` (`max_file_bytes`, `max_strings`) and
@@ -132,7 +133,7 @@ import and lambda rows combined; default 65,536, at most 1,048,576).
 
 ### Native table structure budget
 
-`inspect_elf_unwind_ranges`, `inspect_kernel_module`, `inspect_elf_debug_link`,
+`inspect_elf_unwind_ranges`, `inspect_macho_function_starts`, `inspect_kernel_module`, `inspect_elf_debug_link`,
 `inspect_dwarf_units`, `inspect_binary_hardening`, `inspect_native_initializers`,
 `inspect_gpu_code_objects` and `inspect_native_exports` accept `max_structure_bytes` (CLI
 `--max-structure-bytes`, 64 bytes to 512 MiB, default 16 MiB). It bounds one
@@ -170,7 +171,8 @@ whose declared count exceeds `max_entries` reports that count as
 ### Static reader read allowance
 
 `inspect_pe_imports`, `inspect_pe_resources`, `inspect_pe_load_config`,
-`inspect_pe_certificates`, `inspect_pe_unwind_ranges`, `inspect_binary_hardening` and
+`inspect_pe_certificates`, `inspect_pe_unwind_ranges`, `inspect_macho_function_starts`,
+`inspect_binary_hardening` and
 `inspect_native_exports` bound the bytes they read, not the file size.
 `max_file_bytes` (CLI `--max-file-bytes`) counts each positional read of
 headers, directory tables and the ranges they reference. Defaults are 64 MiB
@@ -185,15 +187,18 @@ It is a lower bound, since later reads depend on structures not yet decoded, so
 the limit reports no `required_value`. Raise `max_file_bytes` and retry;
 `update_analysis_settings` does not change it.
 The identity pass has a fixed whole-file ceiling: 4 GiB minus one byte for the
-PE-only readers, whose file offsets are 32-bit, and 512 MiB for hardening and
-exports. A file above it is a `file-size` refusal naming that fixed allowance,
-which `max_file_bytes` does not raise.
+PE readers and `inspect_macho_function_starts` (their file offsets are 32-bit),
+and 512 MiB for hardening and exports. A file above it is a `file-size`
+refusal naming that fixed allowance, which `max_file_bytes` does not raise.
 
-The PE readers also report `details.limit` for their per-call inventory budgets:
+Those readers also report `details.limit` for their per-call inventory budgets:
 `inspect_pe_imports` `max_dlls`, `max_functions` and `max_text_bytes` (decoded
 names, default 16 MiB, at most 256 MiB); `inspect_pe_load_config`
 `max_callbacks`; `inspect_pe_unwind_ranges` `max_entries` (default 2,097,152, at
-most 16,777,216; the declared count is its `required_value`); and
+most 16,777,216; the declared count is its `required_value`);
+`inspect_macho_function_starts` `max_entries` (default 2,097,152, at most
+16,777,216; the combined start and data-in-code count is its `required_value`);
+and
 `inspect_pe_resources` `max_entries` and `max_metadata_bytes` (the complete
 result, default 8 MiB, at most 256 MiB).
 
@@ -581,6 +586,13 @@ JSON values stop at `MAX_JSON_DEPTH` (1000) in
 "JSON value exceeds maximum nesting depth of 1000. This release has no runtime
 override."
 
+Image4 DER parsing refuses four representation allowances. The Image4 DER depth
+allowance is 32 levels. The Image4 DER element allowance is 4096 elements. The
+Image4 property allowance is 256 properties. The Image4 string allowance is
+4096 bytes. This release has no runtime override for them. A payload octet
+string counts as one element and is not loaded to measure it. See
+[Image4 containers](../guides/apple/image4-containers.md).
+
 ## Typed refusals
 
 A producer that refuses a request types the refusal instead of leaving
@@ -772,7 +784,8 @@ editable setting or active worker telemetry.
 
 `inspect_artifact` and `extract_artifact` accept `bun`, `dotnet_bundle`,
 `node_sea`, `godot`, `iso9660`, `deno`, `wxapkg`, `tar` and
-`android_sparse_image`, `android_vbmeta` and `android_dtbo` groups in `artifact_limits`. Their controls apply when
+`android_sparse_image`, `android_vbmeta`, `media_asset` and `android_dtbo`
+groups in `artifact_limits`. Their controls apply when
 recognition or inventory encounters that format. Supplying a policy does not
 assert the format is present. Unsupported keys are rejected. Each group follows
 one domain-owned default policy. See [.NET bundles](../dotnet-bundles.md),
@@ -780,7 +793,8 @@ one domain-owned default policy. See [.NET bundles](../dotnet-bundles.md),
 [Bun standalone](../bun-standalone.md), [Deno compile](../deno-standalone.md),
 [wxapkg](../wxapkg.md), [tar](../tar-archives.md),
 [Android sparse images](../guides/firmware/android-sparse-image.md),
-[Android vbmeta](../guides/firmware/android-vbmeta.md) and
+[Android vbmeta](../guides/firmware/android-vbmeta.md),
+[media asset headers](../media-asset-headers.md) and
 [Android DTBO partition images](../android-dtbo.md) for format semantics.
 
 `artifact_limits.expanded_bytes` selects aggregate plaintext work for ZIP, Bun,
@@ -794,6 +808,13 @@ fixed 128 MiB in-memory inflation ceiling), including repeated readable logical
 occurrences. Omission retains each archive's encoded-size-derived default. The
 .NET bundle group's own `expanded_bytes` controls its independently enforced
 bundle expansion.
+
+Mega Drive and Genesis ROM inventory admits a linear image of at most 8 MiB
+(`The Mega Drive ROM byte ceiling`, 8388608 bytes) and an SMD copier dump of
+at most 512 blocks of 16 KiB plus the 512-byte copier header (`The Mega Drive
+SMD block ceiling`). Both are fixed format ceilings. This release has no
+runtime override. See
+[Sega Mega Drive ROMs](../guides/firmware/mega-drive-roms.md).
 
 `artifact.member_count` (launch seed `REA_ARTIFACT_MEMBER_COUNT`, default
 100,000, range 1 to 2,147,483,647) is the session default for the per-call

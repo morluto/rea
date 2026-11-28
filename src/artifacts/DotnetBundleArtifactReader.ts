@@ -21,6 +21,7 @@ import {
   ArtifactFileSource,
   unsupportedArtifact,
 } from "../resources/index.js";
+import { ArtifactPreparation } from "./ArtifactPreparation.js";
 import type { DotnetBundleAdmission } from "./dotnet/DotnetBundleAdmission.js";
 import {
   findDotnetBundleHeader,
@@ -35,7 +36,7 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
   readonly #source: ArtifactFileSource;
   readonly #scope = new ArtifactResourceScope();
   #admission: DotnetBundleAdmission | undefined;
-  #bundle: DotnetBundle | undefined;
+  readonly #preparation = new ArtifactPreparation();
   #closed = false;
   readonly #entries = new Map<
     string,
@@ -73,37 +74,54 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
     signal?: AbortSignal,
     options?: ArtifactTraversalOptions,
   ): AsyncIterable<ArtifactEntry> {
-    const bundle = await this.#scope.run(async () => {
+    await this.#scope.run(async () => {
       this.#assertOpen(signal);
-      const source = await this.#source.readSelectedPath(signal);
-      if (this.#bundle === undefined) {
-        const header =
-          this.#admission?.headerOffset ??
-          (await findDotnetBundleHeader(
-            source.handle,
-            source.initial.size,
-            signal,
-          ));
-        if (header === undefined)
-          throw unsupportedArtifact(
-            "dotnet-bundle",
-            "Selected file has no .NET bundle header",
-          );
-        this.#bundle = await readDotnetBundle(
-          source.handle,
-          source.initial.size,
-          header,
-          signal,
-          this.limits,
-        );
-        this.#admission = undefined;
-      }
       await this.#source.readSelectedPath(signal);
-      return this.#bundle;
+      await this.#preparation.run(
+        signal,
+        () => this.#prepare(signal),
+        () => this.#assertOpen(signal),
+      );
     });
-    this.#entries.clear();
-    for (const [index, file] of bundle.files.entries()) {
+    this.#assertOpen(signal);
+    for (const { entry } of this.#entries.values()) {
       this.#assertOpen(signal);
+      yield copyArtifactEntry(entry);
+    }
+    await this.#source.readSelectedPath(signal);
+    this.#assertOpen(signal);
+    options?.onCoverage?.({ status: "complete", limitations: [] });
+  }
+
+  async #prepare(signal?: AbortSignal): Promise<void> {
+    const source = await this.#source.readSelectedPath(signal);
+    const header =
+      this.#admission?.headerOffset ??
+      (await findDotnetBundleHeader(
+        source.handle,
+        source.initial.size,
+        signal,
+      ));
+    if (header === undefined)
+      throw unsupportedArtifact(
+        "dotnet-bundle",
+        "Selected file has no .NET bundle header",
+      );
+    const bundle = await readDotnetBundle(
+      source.handle,
+      source.initial.size,
+      header,
+      signal,
+      this.limits,
+    );
+    await this.#source.readSelectedPath(signal);
+    this.#assertOpen(signal);
+    this.#indexEntries(bundle);
+    this.#admission = undefined;
+  }
+
+  #indexEntries(bundle: DotnetBundle): void {
+    for (const [index, file] of bundle.files.entries()) {
       const entry: ArtifactEntry = {
         path: file.path,
         kind: "file",
@@ -131,15 +149,8 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
             : []),
         ],
       };
-      this.#entries.set(entry.adapterKey, {
-        entry: copyArtifactEntry(entry),
-        file,
-      });
-      yield entry;
+      this.#entries.set(entry.adapterKey, { entry, file });
     }
-    await this.#source.readSelectedPath(signal);
-    // Every manifest file is listed; manifest damage fails the traversal.
-    options?.onCoverage?.({ status: "complete", limitations: [] });
   }
 
   async open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {
@@ -232,7 +243,7 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
     await this.#source.close();
     this.#entries.clear();
     this.#admission = undefined;
-    this.#bundle = undefined;
+    this.#preparation.clear();
   }
 
   #assertOpen(signal?: AbortSignal): void {

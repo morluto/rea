@@ -57,7 +57,7 @@ import {
   buildCpioOdc,
   buildXar,
 } from "./macosPkg/MacosPkg.fixture.js";
-import { parseCpioOdc } from "./macosPkg/CpioOdc.js";
+import { CPIO_ODC_HEADER_BYTES, parseCpioOdc } from "./macosPkg/CpioOdc.js";
 
 const writePkg = (name: string, bytes: Buffer): Promise<string> =>
   createTestTempFile("rea-macos-pkg-", name, bytes);
@@ -383,6 +383,118 @@ it("keeps members read before a damaged cpio tail next to the refusal", async ()
     await reader.close();
   }
 });
+
+it("rejects a cpio trailer that declares a member body", () => {
+  const archive = buildCpioOdc([]);
+  archive.write("00000000001", 65, "ascii");
+  expect(parseCpioOdc(archive)).toMatchObject({
+    ok: false,
+    error: {
+      message: expect.stringContaining("trailer declares a non-zero size"),
+    },
+  });
+});
+
+it.each([
+  { name: "stored", wrap: (bytes: Buffer) => bytes },
+  { name: "gzip", wrap: gzipSync },
+])(
+  "keeps prior package members when a $name cpio has bytes after its trailer",
+  async ({ wrap }) => {
+    const archive = buildCpioOdc([
+      { name: "preinstall", mode: 0o100755, data: Buffer.from("fixture") },
+    ]);
+    const padding = Buffer.alloc(512);
+    const tail = buildCpioOdc([
+      { name: "postinstall", mode: 0o100755, data: Buffer.from("fixture") },
+    ]);
+    const { reader, coverage, entries } = await entriesOf(
+      buildXar({
+        files: [
+          { path: "Payload", bytes: wrap(Buffer.concat([archive, padding])) },
+          {
+            path: "Scripts",
+            bytes: wrap(Buffer.concat([archive, padding, tail])),
+          },
+        ],
+      }),
+      "cpio-tail.pkg",
+    );
+    try {
+      expect(entries.map((entry) => entry.path)).toEqual(
+        expect.arrayContaining(["Payload/preinstall", "Scripts/preinstall"]),
+      );
+      expect(
+        entries.some((entry) => entry.path === "Scripts/postinstall"),
+      ).toBe(false);
+      expect(reader.formatMetadata()?.refusals).toEqual([
+        expect.objectContaining({
+          path: "Scripts",
+          code: "cpio-malformed",
+          message: expect.stringContaining(
+            `non-zero data at offset ${String(archive.length + padding.length)}`,
+          ),
+        }),
+      ]);
+      expect(coverage).toEqual([
+        expect.objectContaining({ status: "unknown" }),
+      ]);
+    } finally {
+      await reader.close();
+    }
+  },
+);
+
+it.each([
+  { name: "stored", wrap: (bytes: Buffer) => bytes },
+  { name: "gzip", wrap: gzipSync },
+])(
+  "keeps prior members when a $name cpio hides bytes in its trailer name",
+  async ({ wrap }) => {
+    const archive = buildCpioOdc([
+      { name: "preinstall", mode: 0o100755, data: Buffer.from("fixture") },
+    ]);
+    const nameOffset = archive.length - Buffer.byteLength("TRAILER!!!\0");
+    const trailerName = Buffer.from("TRAILER!!!\0X");
+    const malformed = Buffer.concat([
+      archive.subarray(0, nameOffset),
+      trailerName,
+    ]);
+    malformed.write(
+      trailerName.length.toString(8).padStart(6, "0"),
+      nameOffset - CPIO_ODC_HEADER_BYTES + 59,
+      "ascii",
+    );
+    const { reader, coverage, entries } = await entriesOf(
+      buildXar({
+        files: [
+          { path: "Payload", bytes: wrap(archive) },
+          { path: "Scripts", bytes: wrap(malformed) },
+        ],
+      }),
+      "cpio-trailer-name.pkg",
+    );
+    try {
+      expect(entries.map((entry) => entry.path)).toEqual(
+        expect.arrayContaining(["Payload/preinstall", "Scripts/preinstall"]),
+      );
+      expect(reader.formatMetadata()?.refusals).toEqual([
+        expect.objectContaining({
+          path: "Scripts",
+          code: "cpio-malformed",
+          message: expect.stringContaining(
+            "trailer name is not exactly NUL-terminated",
+          ),
+        }),
+      ]);
+      expect(coverage).toEqual([
+        expect.objectContaining({ status: "unknown" }),
+      ]);
+    } finally {
+      await reader.close();
+    }
+  },
+);
 
 it("records a cpio name refusal even when it matches the remaining budget", async () => {
   const payload = buildCpioOdc([]);

@@ -1,9 +1,15 @@
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { withEvidenceCallerInputPath } from "../domain/evidence.js";
+import {
+  withEvidenceCallerInputPath,
+  type Evidence,
+} from "../domain/evidence.js";
 import { BYTE_ENTROPY_PROVIDER } from "../domain/investigationProviders.js";
+import { ok } from "../domain/result.js";
 import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../contracts/native/binaryDiagnosticsToolContracts.js";
+import { deliverCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
+import { cliPublicationInvocation } from "./cliEvidencePublication.js";
 import { contractNamed } from "./contractCliDescription.js";
 import {
   callerTargetPath,
@@ -160,6 +166,32 @@ export const registerBinaryDiagnosticsCommands = (
           await import("../composition/binaryDiagnostics/peUnwindRanges.js")
         ).createPeUnwindRangesService(),
       "rea-pe-unwind-ranges",
+    ),
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_macho_function_starts"),
+    {
+      description:
+        "List Mach-O function starts and data-in-code entries without executing the image",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      fields: {
+        path: {
+          description: "Local thin Mach-O or universal Mach-O image",
+        },
+        architecture: {
+          description: UNIVERSAL_SLICE_ARCHITECTURE_HELP,
+        },
+      },
+    },
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/machoFunctionStarts.js")
+        ).createMachoFunctionStartsService(),
+      "rea-macho-function-starts",
     ),
   );
   registerContractCommand(
@@ -537,5 +569,128 @@ export const registerBinaryDiagnosticsCommands = (
         ? withEvidenceCallerInputPath(result.value, callerTargetPath(context))
         : projectAnalysisError(result.error);
     },
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_esp_nvs"),
+    {
+      description:
+        "Decode an ESP-IDF v1/v2 Non-Volatile Storage (NVS) partition or flash slice without executing it",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      evidenceDelivery: true,
+      fields: {
+        path: { description: "Local NVS partition image or ESP flash dump" },
+        partition_offset: {
+          description: "4096-byte aligned NVS start offset inside path",
+        },
+        partition_bytes: {
+          description: "Optional 4096-byte multiple NVS slice length",
+        },
+        max_entries: {
+          description:
+            "Optional inline cap on decoded NVS entries; complete entries remain in --evidence_output",
+        },
+        max_file_bytes: { description: "Maximum input file size in bytes" },
+        max_decoded_bytes: {
+          description:
+            "Maximum estimated decoded NVS representation size in bytes",
+        },
+      },
+    },
+    async (input, context) => {
+      const { createEspNvsService } =
+        await import("../composition/binaryDiagnostics/espNvs.js");
+      const service = createEspNvsService();
+      const retainedSources: Evidence[] = [];
+      const retention =
+        context.delivery?.evidenceOutput !== undefined ||
+        (context.delivery?.detail === undefined &&
+          cliPublicationInvocation().retention !== undefined)
+          ? {
+              recordEvidence: (evidence: Evidence) => {
+                retainedSources.push(evidence);
+                return ok("added" as const);
+              },
+              evidenceById: (id: string) =>
+                retainedSources.find((record) => record.evidence_id === id),
+            }
+          : undefined;
+      return deliverCliAnalysisEvidence({
+        callerInputPath: callerTargetPath(context),
+        run: async () => {
+          const result = await service.inspect(
+            input,
+            { signal: context.signal },
+            retention,
+          );
+          // Summary delivery returns no inline entries; project the summary and
+          // publish its bundle from the uncapped parent Evidence.
+          if (
+            result.ok &&
+            context.delivery?.detail === "summary" &&
+            retainedSources.length > 0
+          ) {
+            return ok(retainedSources.pop()!);
+          }
+          return result;
+        },
+        service,
+        providerId: "rea-esp-nvs",
+        operation: context.operation,
+        signal: context.signal,
+        detail: context.delivery?.detail,
+        evidenceOutput: context.delivery?.evidenceOutput,
+        ...(context.delivery?.view === undefined
+          ? {}
+          : { view: context.delivery.view }),
+        sourceEvidence: retainedSources,
+      });
+    },
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_firmware_vector_table"),
+    {
+      description:
+        "Decode an ARM M-profile or RISC-V mtvec interrupt/trap vector table without executing it",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      evidenceDelivery: true,
+      fields: {
+        path: { description: "Local firmware binary or flash dump" },
+        architecture: {
+          description:
+            "Target profile: an ARM M-profile variant (armv6-m, armv7-m, armv7e-m, armv8-m.base, armv8-m.main, armv8.1-m.main) or riscv",
+        },
+        base_address: {
+          description: "32-bit load base address for file offset 0",
+        },
+        vector_table_offset: {
+          description: "4-byte aligned byte offset of the vector table",
+        },
+        max_entries: { description: "Maximum 32-bit slots to decode" },
+        svd_xml: {
+          description: "Optional CMSIS-SVD XML text for external IRQ names",
+        },
+        max_svd_xml_nodes: {
+          description: "Maximum XML nodes admitted when parsing svd_xml",
+        },
+        max_svd_expanded_chars: {
+          description:
+            "Maximum cumulative CMSIS-SVD interrupt metadata characters",
+        },
+        max_file_bytes: { description: "Maximum input file size in bytes" },
+      },
+    },
+    deliverWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/firmwareVectorTable.js")
+        ).createFirmwareVectorTableService(),
+      "rea-firmware-vector-table",
+    ),
   );
 };

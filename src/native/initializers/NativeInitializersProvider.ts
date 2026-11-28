@@ -132,8 +132,8 @@ const inspectSelected = async (
   }
   if (!hasMachoMagic(container) && !hasMachoMagic(selected.bytes))
     throw new BinaryFormatFailure(
-      "malformed",
-      "Selected file is not an ELF or Mach-O image",
+      "unrecognized",
+      "The file is not an ELF or Mach-O image",
     );
   const selection = selected.selection;
   const slice: NativeInitializerSlice | null =

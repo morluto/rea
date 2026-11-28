@@ -1,5 +1,6 @@
 import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 
 import { afterEach, expect, it } from "vitest";
 
@@ -9,6 +10,7 @@ import {
   DEFAULT_CONTROL_TEXT,
   debPackageFixture,
   notArBytes,
+  paxRecord,
 } from "../../../src/deb/DebPackage.fixture.js";
 import {
   compressXz,
@@ -262,3 +264,35 @@ it("waits for an in-flight async XZ parse before close resolves", async () => {
     await Promise.allSettled([inspectPromise, closePromise ?? service.close()]);
   }
 });
+
+for (const type of ["x", "g"] as const) {
+  it(`refuses a NUL-suffixed ${type} PAX size without losing file identity`, async () => {
+    const root = await createTestTempDirectory("rea-deb-pax-size-");
+    const path = join(root, "size.deb");
+    const bytes = debPackageFixture({
+      dataEntries: [
+        { name: "pax", type, content: paxRecord("size", "3\0junk") },
+        { name: "./actual", content: "abc" },
+      ],
+    });
+    await writeFile(path, bytes);
+    const service = createDebPackageService();
+    try {
+      const result = await service.inspect({ path });
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("Expected malformed PAX size");
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisTargetFailureError",
+        failure: { kind: "malformed", format: "deb" },
+      });
+      expect(result.error.partialObservation).toEqual({
+        kind: "file-snapshot-hash",
+        path,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        bytes: bytes.length,
+      });
+    } finally {
+      await service.close();
+    }
+  });
+}

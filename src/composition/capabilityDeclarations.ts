@@ -7,6 +7,7 @@ import type {
 } from "../contracts/toolContracts.js";
 import { ADB_PROVIDER_IDENTITY } from "../adb/AdbProviderIdentity.js";
 import { JADX_PROVIDER_IDENTITY } from "../android/JadxRelease.js";
+import { LABVIEW_PROVIDER_IDENTITY } from "../labview/LabviewProviderIdentity.js";
 import { APK_SIGNATURE_PROVIDER_IDENTITY } from "../apkSignature/ApkSignatureRelease.js";
 import { APKTOOL_PROVIDER_IDENTITY } from "../apktool/ApktoolProviderIdentity.js";
 import {
@@ -43,6 +44,7 @@ import {
   JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER,
   KERNEL_BUILD_CONFIG_PROVIDER,
   KERNEL_MODULE_PROVIDER,
+  MACHO_FUNCTION_STARTS_PROVIDER,
   MANAGED_STATIC_PROVIDER,
   MANAGED_WORKFLOW_PROVIDER,
   NATIVE_EXPORTS_PROVIDER,
@@ -54,6 +56,8 @@ import {
   PE_OVERLAY_PROVIDER,
   PE_RESOURCES_PROVIDER,
   RELEASE_EXPOSURE_PROVIDER,
+  ESP_NVS_PROVIDER,
+  FIRMWARE_VECTOR_TABLE_PROVIDER,
   WEB_SCRIPT_EXPORT_PROVIDER,
   WINDOWS_SHORTCUT_PROVIDER,
 } from "../domain/investigationProviders.js";
@@ -323,6 +327,16 @@ export const CAPABILITY_DECLARATIONS = {
       providerBinding(UNBLOB_PROVIDER_IDENTITY, ["extract_firmware"]),
     ],
   },
+  espNvs: {
+    providers: [providerBinding(ESP_NVS_PROVIDER, ["inspect_esp_nvs"])],
+  },
+  firmwareVectorTable: {
+    providers: [
+      providerBinding(FIRMWARE_VECTOR_TABLE_PROVIDER, [
+        "inspect_firmware_vector_table",
+      ]),
+    ],
+  },
   uefiAnalysis: {
     providers: [
       providerBinding(UEFI_PROVIDER_IDENTITY, { group: "UEFI_TOOL_CONTRACTS" }),
@@ -432,6 +446,13 @@ export const CAPABILITY_DECLARATIONS = {
   kuna: {
     providers: [providerBinding(KUNA_PROVIDER_IDENTITY, KUNA_OPERATIONS)],
   },
+  machoFunctionStarts: {
+    providers: [
+      providerBinding(MACHO_FUNCTION_STARTS_PROVIDER, [
+        "inspect_macho_function_starts",
+      ]),
+    ],
+  },
   managedStatic: {
     providers: [
       providerBinding(MANAGED_STATIC_PROVIDER, {
@@ -506,6 +527,11 @@ export const CAPABILITY_DECLARATIONS = {
   peResources: {
     providers: [
       providerBinding(PE_RESOURCES_PROVIDER, ["inspect_pe_resources"]),
+    ],
+  },
+  labviewArtifact: {
+    providers: [
+      providerBinding(LABVIEW_PROVIDER_IDENTITY, ["inspect_labview_artifact"]),
     ],
   },
   windowsShortcut: {

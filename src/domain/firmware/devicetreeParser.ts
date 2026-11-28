@@ -4,6 +4,7 @@ import {
   type InspectDevicetreeInput,
 } from "./devicetree.js";
 import { BinaryFormatFailure, BinaryReader } from "../binaryContainer.js";
+import { knownCoverage } from "../coverageAccumulator.js";
 import { readDevicetreeHeader } from "./devicetreeHeader.js";
 import { decodeLimit, type ParseFailureError } from "../parseFailure.js";
 
@@ -274,11 +275,19 @@ export const parseDevicetree = (
       : [
           `FDT structure padding contains ${String(nonzeroPaddingBytes)} nonzero ${nonzeroPaddingBytes === 1 ? "byte" : "bytes"}. The first is at file offset ${String(firstNonzeroPadding)}.`,
         ];
+  // Padding and the capability notes describe examined bytes, so they do not
+  // change coverage. An undecoded property records its limitation and the gap
+  // together.
   const limitations = [
     ...structureLimitations,
     `Raw property previews are limited to ${String(DEVICETREE_PROPERTY_PREVIEW_BYTES)} bytes; offsets and lengths identify complete values in the hashed artifact.`,
     "Phandle references cover only single-cell interrupt-parent, remote-endpoint and msi-parent; binding-specific arrays and overlays are not resolved.",
   ];
+  let coverageComplete = true;
+  const recordUndecoded = (limitation: string) => {
+    limitations.push(limitation);
+    coverageComplete = false;
+  };
   for (const node of nodes) {
     const phandleProperties = [
       prop(node.path, "phandle"),
@@ -294,7 +303,7 @@ export const parseDevicetree = (
     });
     for (const property of malformedPhandles) {
       admit(node.path.length * 2 + 256);
-      limitations.push(
+      recordUndecoded(
         `${property.name} at ${node.path} is not a single cell; this node's reference identity remains unresolved.`,
       );
     }
@@ -302,7 +311,7 @@ export const parseDevicetree = (
     const conflict = declared.length === 2 && declared[0] !== declared[1];
     if (conflict) {
       admit(node.path.length * 2 + 256);
-      limitations.push(
+      recordUndecoded(
         `phandle at ${node.path} conflicts with linux,phandle (0x${declared[0]?.toString(16)} vs 0x${declared[1]?.toString(16)}); references to either value are unresolved.`,
       );
     }
@@ -334,7 +343,7 @@ export const parseDevicetree = (
       reg.bytes % ((addresses + sizes) * 4)
     ) {
       admit(node.path.length * 2 + 256);
-      limitations.push(
+      recordUndecoded(
         `reg at ${node.path} was not decoded: unsupported or malformed parent cell sizes or tuple length.`,
       );
       continue;
@@ -400,7 +409,10 @@ export const parseDevicetree = (
       })),
     },
     coverage: {
-      status: "complete",
+      status: knownCoverage(
+        coverageComplete,
+        "a property was not decoded; see limitations",
+      ),
       examined_nodes: nodes.length,
       examined_properties: properties,
     },

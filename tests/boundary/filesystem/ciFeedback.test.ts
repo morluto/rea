@@ -407,7 +407,10 @@ it("records the actual static task graph with explicit source identity and no am
     script: "check:ci:deep:tasks",
   });
   expect(deep.taskHashes.jscpd).toMatch(/^[a-f0-9]{16}$/u);
-  expect(deep.taskHashes.knip).toMatch(/^[a-f0-9]{16}$/u);
+  // Knip runs in the build job, after the workers it resolves exist.
+  expect(deep.taskHashes).not.toHaveProperty("knip");
+  // The Python producer suite later in the deep job imports the runtime.
+  expect(deep.taskHashes.compile).toMatch(/^[a-f0-9]{16}$/u);
   expect(deep.taskHashes).not.toHaveProperty("lint");
   await expect(
     recordStaticTaskContext({

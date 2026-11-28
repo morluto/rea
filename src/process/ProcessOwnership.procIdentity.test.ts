@@ -654,3 +654,141 @@ it.each([
     }
   },
 );
+
+it.each([
+  ["status", "ENOENT", "exited"],
+  ["status", "ENOENT", "reused"],
+  ["generation", "ESRCH", "exited"],
+  ["generation", "ESRCH", "reused"],
+] as const)(
+  "does not report credentials as readable when the %s read sees %s and the PID was %s",
+  async (read, code, probe) => {
+    const host = createSystemProcessOwnershipHost("linux", {});
+    let statReads = 0;
+    filesystem.readFile.mockImplementation(async (path) => {
+      if (String(path) === "/proc/42/status") {
+        if (read === "status") throw filesystemError(code);
+        return "Uid:\t1010\t1010\t1010\t1010\nGid:\t1010\t1010\t1010\t1010\n";
+      }
+      if (String(path) !== "/proc/42/stat")
+        throw new Error(`unexpected path: ${String(path)}`);
+      statReads += 1;
+      if (statReads > 1) throw filesystemError(code);
+      return procStat(100);
+    });
+    filesystem.stat.mockResolvedValue({ uid: 1010 } as never);
+    const signalProbe = vi.spyOn(process, "kill").mockImplementation(() => {
+      if (probe === "reused") return true;
+      throw filesystemError("ESRCH");
+    });
+
+    try {
+      const identities = await withCaller(1000, 1000, async () =>
+        host.processIdentities?.([entry], undefined, new Set([entry.pid])),
+      );
+
+      // A credential-less readable identity would hide the foreign UID.
+      expect(identities?.get(entry.pid)).toEqual(
+        probe === "exited"
+          ? { state: "absent", reason: "not-found-in-caller-pid-namespace" }
+          : {
+              state: "unavailable",
+              reason: "proc_stat_missing_but_process_signal_probe_succeeded",
+            },
+      );
+      expect(signalProbe).toHaveBeenCalledExactlyOnceWith(entry.pid, 0);
+    } finally {
+      signalProbe.mockRestore();
+      filesystem.stat.mockReset();
+      filesystem.stat.mockRejectedValue(filesystemError("ENOENT"));
+    }
+  },
+);
+
+it("skips an unrelated account's process that exits during its last credential read", async () => {
+  // Reported on a shared Linux host: another account's short-lived processes
+  // started during a token-owned command made its cleanup fail closed.
+  const callerUid = 1000;
+  const foreignUid = 1010;
+  const foreign: ProcessTableEntry = {
+    pid: 300,
+    parentPid: 7,
+    processGroupId: 7,
+    uid: foreignUid,
+    state: "S",
+    command: "d8",
+  };
+  const systemHost = createSystemProcessOwnershipHost("linux", {});
+  const sweep = async (exitAtCredentialRead?: number) => {
+    let credentialReads = 0;
+    let confirming = false;
+    let exited = false;
+    filesystem.readFile.mockImplementation(async (path) => {
+      const requested = String(path);
+      if (exited) throw filesystemError("ENOENT");
+      if (requested === "/proc/300/status") {
+        credentialReads += 1;
+        confirming = credentialReads === exitAtCredentialRead;
+        return `Uid:\t${String(foreignUid)}\t${String(foreignUid)}\t${String(foreignUid)}\t${String(foreignUid)}\nGid:\t1010\t1010\t1010\t1010\n`;
+      }
+      if (requested !== "/proc/300/stat")
+        throw new Error(`unexpected path: ${requested}`);
+      // The process exits after its credentials were read and before the
+      // read that binds them to the same generation.
+      if (confirming) {
+        exited = true;
+        throw filesystemError("ESRCH");
+      }
+      return procStat(100, 7, 7, 300);
+    });
+    filesystem.stat.mockResolvedValue({ uid: foreignUid } as never);
+    filesystem.readlink.mockImplementation(async () => "user:[1]");
+    const signalProbe = vi.spyOn(process, "kill").mockImplementation(() => {
+      if (exited) throw filesystemError("ESRCH");
+      return true;
+    });
+    const host: ProcessOwnershipHost = {
+      ...systemHost,
+      listProcesses: async () => [foreign],
+      runTokens: async () =>
+        new Map([
+          [
+            foreign.pid,
+            exited
+              ? { state: "unavailable", reason: "ENOENT", code: "ENOENT" }
+              : { state: "unavailable", reason: "environment_errno_EACCES" },
+          ],
+        ]),
+    };
+    try {
+      const result = await withCaller(callerUid, 1000, () =>
+        verifyNoTokenOwnedProcesses("owned-run", host, undefined, {
+          leaderPid: 100,
+          processGroupId: 100,
+          evidenceOwner: new ProcessOwnershipEvidenceOwner(),
+        }),
+      );
+      return { result, credentialReads, exited };
+    } finally {
+      signalProbe.mockRestore();
+    }
+  };
+
+  try {
+    const live = await sweep();
+    expect(live.result).toMatchObject({
+      cleaned: true,
+      unverified: [{ pid: 300, diagnostic: "environment_errno_EACCES" }],
+    });
+
+    const exiting = await sweep(live.credentialReads);
+    expect(exiting.exited).toBe(true);
+    expect(exiting.result).toMatchObject({ cleaned: true });
+    expect(exiting.result).not.toHaveProperty("failures");
+  } finally {
+    filesystem.stat.mockReset();
+    filesystem.stat.mockRejectedValue(filesystemError("ENOENT"));
+    filesystem.readlink.mockReset();
+    filesystem.readlink.mockImplementation(async () => "user:[1]");
+  }
+});

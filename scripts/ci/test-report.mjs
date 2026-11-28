@@ -4,6 +4,7 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { z } from "zod";
 
+import { isDarwinGatedTestSource } from "./darwin-gated-tests.mjs";
 import { compareSelectionShadow } from "./selection-shadow.mjs";
 import { parseTestSelection } from "./test-selection.mjs";
 
@@ -84,6 +85,7 @@ const expected = !verifyInventory
       })
         .split("\0")
         .filter((path) => path.endsWith(".test.ts"));
+let macosOnlySelection = false;
 if (passed && verifyInventory) {
   const actual = files.map(({ name }) => name);
   if (actual.length === 0)
@@ -96,8 +98,21 @@ if (passed && verifyInventory) {
     throw new Error(
       `Incomplete ${selected ? "selected" : "portable"} test inventory: ${JSON.stringify({ missing, unexpected, duplicateFiles: actual.length - actualSet.size })}`,
     );
-  if (files.every(({ state }) => state === "skipped"))
-    throw new Error("Every portable test module was skipped");
+  if (files.every(({ state }) => state === "skipped")) {
+    // The macOS lane runs every module gated to macOS, so a selection of only
+    // such modules is covered there when the plan selected that lane.
+    const gated = await Promise.all(
+      files.map(async ({ name }) =>
+        isDarwinGatedTestSource(await readFile(join(root, name), "utf8")),
+      ),
+    );
+    macosOnlySelection =
+      selected &&
+      process.env.CI_APPLE_SELECTED === "true" &&
+      gated.every(Boolean);
+    if (!macosOnlySelection)
+      throw new Error("Every portable test module was skipped");
+  }
 }
 // A selected subset is not a timing baseline for the complete suite.
 const publishesHistory = passed && !selected;
@@ -179,6 +194,11 @@ const summary = [
     : []),
   ...shadowNotes,
   `Skipped test modules: ${skippedFiles.length}. Their skip reasons and required coverage are not established by this report.`,
+  ...(macosOnlySelection
+    ? [
+        "Every selected module is gated to macOS; the selected macOS lane runs them.",
+      ]
+    : []),
   ...(skippedFiles.length ? [""] : []),
   ...skippedFiles.map(({ name }) => `- ${name.replaceAll("|", "\\|")}`),
   "",

@@ -1,5 +1,6 @@
 import { sha256File } from "./verifier-file-sha256.mjs";
 import { canonicalOutputSchema } from "./canonical-output-schema.mjs";
+import { completeEvidenceCliArguments } from "./complete-evidence.mjs";
 import {
   requireMcpToolError,
   mcpTextValue,
@@ -133,13 +134,16 @@ export async function verifyGhidraBoundaries(
       process.execPath,
       [
         entrypoint,
-        command,
-        target.path,
-        value,
-        "--provider",
-        "ghidra",
-        "--json",
-        ...flags,
+        // Compare complete Evidence, not a result-budget summary.
+        ...(await completeEvidenceCliArguments([
+          command,
+          target.path,
+          value,
+          "--provider",
+          "ghidra",
+          "--json",
+          ...flags,
+        ])),
       ],
       { env, timeout: 240000, maxBuffer: 72 * 1024 * 1024 },
     );

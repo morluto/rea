@@ -10,7 +10,7 @@ import {
 import { invalidAnalysisView } from "./analysisViewErrors.js";
 import {
   completeWithinViewCoverage,
-  pageViewCoverage,
+  selectedViewPage,
 } from "./analysisViewCoverage.js";
 import { selectViewRows } from "./selectViewRows.js";
 
@@ -146,11 +146,6 @@ export const projectByteEntropyView = (
     kind: "byte-entropy" as const,
     view,
     entropy: context,
-    items: selected.rows,
-    coverage: pageViewCoverage(
-      view.offset,
-      selected.rows.length,
-      selected.total,
-    ),
+    ...selectedViewPage(view.offset, selected),
   });
 };

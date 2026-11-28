@@ -25,6 +25,7 @@ import {
   ANALYSIS_VIEW_PAGE_BYTES as PAGE_BYTES,
   analysisViewPageTooLarge,
   analysisViewInputError,
+  invalidAnalysisView,
 } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 
@@ -154,15 +155,7 @@ export const projectWebBundleView = (
   selected: AdmittedView,
 ) => {
   if (selected.kind !== "web-bundle" && selected.kind !== "summary")
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view", "kind"],
-          reason: "invalid_value",
-          message: "Select a web-bundle or summary view.",
-        },
-      ]),
-    );
+    return invalidAnalysisView("Select a web-bundle or summary view.", "kind");
 
   assertOwnedView<
     SummaryAnalysisView | z.output<typeof webBundleViewRequestSchema>

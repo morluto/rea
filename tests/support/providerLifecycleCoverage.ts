@@ -1361,6 +1361,38 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     ),
     typedFailures("tests/boundary/filesystem/erlangBeam.test.ts"),
   ),
+  "rea-esp-nvs": inProcess(
+    covered(
+      test(
+        "tests/boundary/mcp/espNvsMcpCli.test.ts",
+        "decodes an NVS slice inside a flash dump with CLI and advertised MCP parity",
+      ),
+    ),
+    covered(
+      test(
+        "src/application/binaryDiagnostics/EspNvsService.test.ts",
+        "honors cancellation before reading and retains completed Evidence on late cancellation",
+      ),
+    ),
+  ),
+  "rea-firmware-vector-table": inProcess(
+    covered(
+      test(
+        "tests/boundary/mcp/firmwareVectorTableMcpCli.test.ts",
+        "decodes an STM32 Cortex-M vector table with CLI and advertised MCP parity and enforces max_file_bytes",
+      ),
+    ),
+    covered(
+      test(
+        "src/firmware/vectorTable/FirmwareVectorTableProvider.test.ts",
+        "returns typed resource, integrity, and cancellation failures",
+      ),
+      test(
+        "src/application/binaryDiagnostics/FirmwareVectorTableService.test.ts",
+        "retains completed Evidence and caller selections on late cancellation",
+      ),
+    ),
+  ),
   "rea-harmony-application": inProcess(
     covered(
       test(
@@ -1471,6 +1503,20 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     ),
     typedFailures("tests/boundary/filesystem/kernelModule.test.ts"),
   ),
+  "rea-labview-rsrc": inProcess(
+    covered(
+      test(
+        "tests/boundary/cli/labviewRsrcCli.test.ts",
+        "inventories a LabVIEW RSRC container through the CLI and stdio MCP",
+      ),
+    ),
+    covered(
+      test(
+        "src/labview/LabviewRsrc.test.ts",
+        "reports cancellation that arrives after the read starts",
+      ),
+    ),
+  ),
   "rea-maven-gradle-metadata": inProcess(
     covered(
       test(
@@ -1566,6 +1612,15 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     ),
     typedFailures("src/native/pe/PeUnwindRangesProvider.test.ts"),
+  ),
+  "rea-macho-function-starts": inProcess(
+    covered(
+      test(
+        "tests/acceptance/machoFunctionStartsCli.test.ts",
+        "reads Mach-O function starts identically over CLI and MCP",
+      ),
+    ),
+    typedFailures("src/native/apple/MachoFunctionStartsProvider.test.ts"),
   ),
   "rea-playwright-browser-scenario": {
     ownership: "process",

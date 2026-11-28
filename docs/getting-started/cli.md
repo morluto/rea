@@ -58,7 +58,9 @@ is supported by the command.
 Command options use the kebab-case spelling that `rea <command> --help`
 lists, such as `--max-rows`. The camelCase spelling of an option, such as
 `--maxRows`, fails with `PARSE_ERROR` and names the documented flag:
-`Unknown flag: --maxRows. Did you mean --max-rows?`
+`Unknown flag: --maxRows. Did you mean --max-rows?` Other unknown flags,
+missing flag values and surplus positional arguments also fail with
+`PARSE_ERROR` before the command runs.
 
 For a numeric option whose `--schema` also accepts decimal strings, the string
 branch carries the same numeric range as the integer branch, so a client that
@@ -532,6 +534,15 @@ rea extract-artifact ./game.nds --json
 See [Nintendo DS ROMs](../guides/firmware/nds-roms.md) for header detection, member paths,
 checksum and range limitations, and what is not decoded.
 
+Inventory and extract a Sega Mega Drive or Genesis ROM, including an SMD dump:
+
+```sh
+rea inspect-artifact ./game.bin --detail summary --json
+rea extract-artifact ./game.smd --json
+```
+
+See [Sega Mega Drive ROMs](../guides/firmware/mega-drive-roms.md) for the vector
+table, checksum, SMD de-interleave, and the raw m68k hand-off.
 Inventory and extract a Nintendo 64 ROM. z64, v64 and n64 dumps all yield a
 big-endian `program.z64`:
 
@@ -552,6 +563,16 @@ rea extract-artifact ./sbl1.mbn --json
 
 See [Qualcomm MBN images](../guides/firmware/qualcomm-mbn-images.md) for header
 recognition, regions, hash segments and what is not verified.
+
+Inventory and extract an Image4 firmware container:
+
+```sh
+rea inspect-artifact ./kernelcache.im4p --json
+rea extract-artifact ./kernelcache.im4p --json
+```
+
+See [Image4 containers](../guides/apple/image4-containers.md) for IM4P, IM4M
+and IMG4 facts, keybag reporting, and what is not decrypted.
 
 Inspect local model declarations without loading weights:
 
@@ -704,6 +725,18 @@ counts ranges that match a symbol, ranges without a symbol, and whether the
 reported present, absent, or incomplete and is not decoded. A missing unwind table is
 observed absence of those declarations. See
 [ELF unwind function ranges](../guides/native/elf-unwind-ranges.md).
+
+List Mach-O function starts and data-in-code entries without executing the
+image:
+
+```bash
+rea inspect-macho-function-starts /absolute/path/to/program --json
+```
+
+The workflow reports `LC_FUNCTION_STARTS` VM addresses and `LC_DATA_IN_CODE`
+entries (offset, length, kind, and the owning start). Universal Mach-O files
+need `--architecture`. Counts cover every entry. See
+[Mach-O function starts and data in code](../guides/native/macho-function-starts.md).
 
 Inspect an Apple `.ips` crash report without executing a target:
 

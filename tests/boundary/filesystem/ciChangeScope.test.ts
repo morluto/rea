@@ -453,6 +453,30 @@ it.for([
   },
 );
 
+// Linux may skip every module of such a selection; the macOS lane runs them.
+it.for([
+  [`it.skipIf(process.platform !== "darwin")("runs", () => {});\n`, true],
+  [`it("runs everywhere", () => {});\n`, false],
+] as const)(
+  "selects the macOS lane when every affected test may be gated to it: %j",
+  async ([gate, apple]) => {
+    const { directory } = await fixture();
+    const source = "src/example/Probe.ts";
+    const test = "tests/boundary/filesystem/probe.test.ts";
+    await change(
+      directory,
+      [test],
+      `import { value } from "../../../src/example/Probe.js";\nvoid value;\n${gate}`,
+    );
+    const base = await change(directory, [source]);
+    const head = await change(directory, [source], "changed\n");
+    expect(await classify(directory, base, head)).toMatchObject({
+      apple,
+      testSelection: { mode: "selected", files: [test] },
+    });
+  },
+);
+
 it("does not select the macOS lane for a deleted macOS-gated test", async () => {
   const { directory } = await fixture();
   const test = "tests/boundary/filesystem/gated.test.ts";

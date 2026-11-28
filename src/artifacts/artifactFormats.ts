@@ -43,9 +43,11 @@ import { FitArtifactReader } from "./FitArtifactReader.js";
 import type { GodotPckAdmission } from "./GodotPckLocation.js";
 import { GodotPckArtifactReader } from "./GodotPckArtifactReader.js";
 import { InesArtifactReader } from "./InesArtifactReader.js";
+import { MegaDriveRomArtifactReader } from "./MegaDriveRomArtifactReader.js";
 import { N64RomArtifactReader } from "./N64RomArtifactReader.js";
 import { NdsRomArtifactReader } from "./NdsRomArtifactReader.js";
 import { Iso9660ArtifactReader } from "./Iso9660ArtifactReader.js";
+import { Image4ArtifactReader } from "./Image4ArtifactReader.js";
 import { QualcommMbnArtifactReader } from "./QualcommMbnArtifactReader.js";
 import { HexRecordArtifactReader } from "./HexRecordArtifactReader.js";
 import { MachOSliceArtifactReader } from "./MachOSliceArtifactReader.js";
@@ -60,6 +62,7 @@ import { Uf2ArtifactReader } from "./Uf2ArtifactReader.js";
 import { NtfsMftArtifactReader } from "./NtfsMftArtifactReader.js";
 import { AuditdLogArtifactReader } from "./AuditdLogArtifactReader.js";
 import { AndroidOtaPayloadArtifactReader } from "./AndroidOtaPayloadArtifactReader.js";
+import { SystemdJournalArtifactReader } from "./SystemdJournalArtifactReader.js";
 import { AndroidSparseImageArtifactReader } from "./AndroidSparseImageArtifactReader.js";
 import { UbiImageArtifactReader } from "./UbiImageArtifactReader.js";
 import { UImageArtifactReader } from "./UImageArtifactReader.js";
@@ -72,6 +75,10 @@ import {
   GpuAssetArtifactReader,
   type GpuAssetFormat,
 } from "./gpuAsset/GpuAssetArtifactReader.js";
+import {
+  MediaAssetArtifactReader,
+  type MediaAssetFormat,
+} from "./mediaAsset/MediaAssetArtifactReader.js";
 
 /** How inventory describes a format when no reader was constructed. */
 export type AbsentInventory = "platform" | "universal" | "unavailable" | "root";
@@ -93,6 +100,11 @@ export interface ArtifactReaderConstruction {
    * and the container's own bytes; universal Mach-O lipo records consume it.
    */
   readonly integrity?: ArtifactIntegrityPolicyName | undefined;
+  /**
+   * First per-record header a windowed reader retains. Only a page of the
+   * `format_record_headers` view sets it; inventory always starts at 0.
+   */
+  readonly recordHeaderStart?: number | undefined;
 }
 
 export interface FormatDescriptor {
@@ -276,6 +288,24 @@ const gpuAsset = <Id extends GpuAssetFormat>(id: Id) =>
       "GPU asset inventory reports declared header fields and the byte regions they name. Texture, mesh and image payloads are not decoded or decompressed.",
     createReader: (path, options) =>
       new GpuAssetArtifactReader(path, id, sourceOf(options)),
+  });
+
+/** Media asset containers: declared header facts and stored regions, nothing decoded. */
+const mediaAsset = <Id extends MediaAssetFormat>(id: Id) =>
+  container(id, {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "Media asset inventory reports declared header fields and the byte regions they name. Audio, video and pipeline-cache payloads are not decoded.",
+    createReader: (path, options) =>
+      new MediaAssetArtifactReader(
+        path,
+        id,
+        sourceOf(options),
+        options.readerLimits?.media_asset,
+      ),
   });
 
 const switchExecutable = <Id extends "nso" | "nro">(id: Id) =>
@@ -466,6 +496,16 @@ const NON_ZIP_FORMATS = {
         options.readerLimits?.expanded_bytes,
       ),
   }),
+  "mega-drive-rom": container("mega-drive-rom", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "Mega Drive ROM inventory reports the 68000 vector table and the header at 0x100, checks the declared checksum against the word sum from 0x200 through the declared ROM end, and serves vectors.bin, header.bin and program.bin. An SMD copier dump is de-interleaved into that program image. 32X and Sega CD strings are reported and not decoded further. Nothing is executed.",
+    createReader: (path, options) =>
+      new MegaDriveRomArtifactReader(path, sourceOf(options)),
+  }),
   "n64-rom": container("n64-rom", {
     roleContainer: true,
     retainClassifiedSource: true,
@@ -484,6 +524,10 @@ const NON_ZIP_FORMATS = {
   glb: gpuAsset("glb"),
   ktx: gpuAsset("ktx"),
   ktx2: gpuAsset("ktx2"),
+  "ogg-opus": mediaAsset("ogg-opus"),
+  "riff-xma2": mediaAsset("riff-xma2"),
+  bink2: mediaAsset("bink2"),
+  "vulkan-pipeline-cache": mediaAsset("vulkan-pipeline-cache"),
   uimage: container("uimage", {
     roleContainer: true,
     retainClassifiedSource: true,
@@ -620,7 +664,9 @@ const NON_ZIP_FORMATS = {
   "windows-shortcut": described("windows-shortcut", plain),
   "python-pyc": described("python-pyc", plain),
   devicetree: described("devicetree", plain),
+  "esp-nvs": described("esp-nvs", plain),
   deb: described("deb", plain),
+  "labview-rsrc": described("labview-rsrc", plain),
   entitlements: described("entitlements", plain),
   directory: container("directory", {
     absentInventory: "unavailable",
@@ -733,6 +779,16 @@ const NON_ZIP_FORMATS = {
     createReader: (path, options) =>
       new FitArtifactReader(path, sourceOf(options), options.integrity),
   }),
+  "apple-img4": container("apple-img4", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "Image4 inventory reports IM4P, IM4M and IMG4 structure. Payload bytes are ranged as stored. Keybags are reported and not decrypted. Signatures and certificates are not checked. Compressed payloads are not expanded.",
+    createReader: (path, options) =>
+      new Image4ArtifactReader(path, sourceOf(options)),
+  }),
   "qualcomm-mbn": container("qualcomm-mbn", {
     roleContainer: true,
     retainClassifiedSource: true,
@@ -750,6 +806,18 @@ const NON_ZIP_FORMATS = {
       "MFT inventory reports whole-stream counts and up to 32 physical FILE record details, including fixup coverage, supported names, timestamps, declared sizes and attributes. Bounded attribute-list links expose verified metadata from acquired extension records, with explicit reference outcomes and omissions. Nonresident list values and file contents are not recovered; full paths and complete change history are not established. Use inspect_ntfs_journal for caller-paired journal events.",
     createReader: (path, options) =>
       new NtfsMftArtifactReader(path, sourceOf(options)),
+  }),
+  "systemd-journal": described("systemd-journal", {
+    ...plain,
+    // A journal is data, not a program: nothing in it is executed.
+    role: "resource",
+    retainClassifiedSource: true,
+    readerLimitation:
+      "Systemd journal inventory reports the file header and the first 32 object headers, including counts by object type, declared header and arena sizes, and object extents; later object headers page through inspect_analysis_view's format_record_headers collection, which re-reads the unchanged file. Object payloads are not decompressed or decoded, so entries, fields, timestamps and boot filters are not available; file integrity and authenticity are not established.",
+    createReader: (path, options) =>
+      new SystemdJournalArtifactReader(path, sourceOf(options), {
+        objectHeaderStart: options.recordHeaderStart ?? 0,
+      }),
   }),
   "auditd-log": described("auditd-log", {
     ...plain,

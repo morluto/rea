@@ -1458,7 +1458,8 @@ struct rea_after { char c; int i; };`;
           errors[3].remediation.action,
           /only fewer nested pointer, array, typedef or member levels does/u,
         );
-        // Pointer, array and typedef chains are refused before Ghidra walks them.
+        // Pointer, array and typedef chains are the depth ceiling. Ghidra's parser
+        // walks them; storage does not.
         assert.deepEqual(outcomes, [
           "invalid_request",
           "invalid_request",
@@ -1476,6 +1477,184 @@ struct rea_after { char c; int i; };`;
             })
           ).status,
           "available",
+        );
+        // A typedef of an anonymous composite is stored as the composite
+        // itself, so 254 pointers behind its int member chain 256 levels and
+        // define; one more pointer chains 257 and is refused.
+        const anonymous = await flood.call("define_native_data_types", {
+          declarations: `typedef struct { int ${"*".repeat(254)} x; } rea_anon;`,
+          declarations_max_utf16: max,
+        });
+        assert.equal(anonymous.types[0].status, "defined");
+        assert.equal(
+          requireMcpToolError(
+            await flood.raw("define_native_data_types", {
+              declarations: `typedef struct { int ${"*".repeat(255)} x; } rea_anon_deep;`,
+              declarations_max_utf16: max,
+            }),
+          ).code,
+          "resource_constraint",
+        );
+        // A grouped signature name carries the same pointer chain.
+        assert.equal(
+          requireMcpToolError(
+            await flood.raw("annotate_native_function", {
+              procedure,
+              signature: `int ${"*".repeat(4000)} (total)(void)`,
+              signature_max_utf16: 4096,
+            }),
+          ).code,
+          "resource_constraint",
+        );
+        // A calling convention inside the function-pointer parenthesis does
+        // not hide the pointer chain behind it.
+        assert.equal(
+          requireMcpToolError(
+            await flood.raw("annotate_native_function", {
+              procedure,
+              signature: `int total(int (__stdcall ${"*".repeat(4000)}p)(void))`,
+              signature_max_utf16: 4096,
+            }),
+          ).code,
+          "resource_constraint",
+        );
+        // Array suffixes on a grouped signature name count toward its chain.
+        assert.equal(
+          requireMcpToolError(
+            await flood.raw("annotate_native_function", {
+              procedure,
+              signature: `int (__stdcall ${"*".repeat(255)}f${"[]".repeat(1900)})(void)`,
+              signature_max_utf16: 4096,
+            }),
+          ).code,
+          "resource_constraint",
+        );
+        // The same chain with no declarator name is still part of the parsed type.
+        assert.equal(
+          requireMcpToolError(
+            await flood.raw("annotate_native_function", {
+              procedure,
+              signature: `int total(int (__stdcall ${"*".repeat(255)}${"[]".repeat(1900)})(void))`,
+              signature_max_utf16: 4096,
+            }),
+          ).code,
+          "resource_constraint",
+        );
+        // Suffix arrays after an inner grouped close count too, so nested
+        // grouping cannot hide the chain behind the first closing paren.
+        assert.equal(
+          requireMcpToolError(
+            await flood.raw("annotate_native_function", {
+              procedure,
+              signature: `int (__stdcall ${"*".repeat(255)}((f)${"[]".repeat(1900)}))(void)`,
+              signature_max_utf16: 4096,
+            }),
+          ).code,
+          "resource_constraint",
+        );
+        // A grouped declarator nested inside a pointer group is part of the
+        // parsed chain.
+        assert.equal(
+          requireMcpToolError(
+            await flood.raw("annotate_native_function", {
+              procedure,
+              signature: `int (__stdcall *(__stdcall ${"*".repeat(4000)}f(void)))(void)`,
+              signature_max_utf16: 4096,
+            }),
+          ).code,
+          "resource_constraint",
+        );
+        // A trailing comma-separated declarator is part of the parsed chain.
+        assert.equal(
+          requireMcpToolError(
+            await flood.raw("annotate_native_function", {
+              procedure,
+              signature: `int first(void), second(int ${"*".repeat(4000)} p)`,
+              signature_max_utf16: 4096,
+            }),
+          ).code,
+          "resource_constraint",
+        );
+        // A function suffix inside a grouped declarator is part of the parsed chain.
+        assert.equal(
+          requireMcpToolError(
+            await flood.raw("annotate_native_function", {
+              procedure,
+              signature: `int (__stdcall *f(int ${"*".repeat(4000)} p))(void)`,
+              signature_max_utf16: 4096,
+            }),
+          ).code,
+          "resource_constraint",
+        );
+        // A missing closing parenthesis is a parser rejection once the
+        // declarator fits the parse stack, and stores nothing.
+        const incomplete = requireMcpToolError(
+          await flood.raw("annotate_native_function", {
+            procedure,
+            signature: `int total(int ${"*".repeat(4000)} p`,
+            signature_max_utf16: 4096,
+          }),
+        );
+        assert.equal(incomplete.code, "invalid_request");
+        assert.equal(
+          incomplete.details?.diagnostics?.remote_code,
+          "invalid_function_signature",
+        );
+        // A tag and an unrelated typedef share a Ghidra name only when they
+        // are one type, so this text conflicts and stores nothing; the
+        // chained case below still measures the tag chain on its own.
+        const shared = requireMcpToolError(
+          await flood.raw("define_native_data_types", {
+            declarations:
+              "struct rea_shared { int x; }; typedef int rea_shared; struct rea_uses { struct rea_shared *p; };",
+            declarations_max_utf16: max,
+          }),
+        );
+        assert.equal(shared.code, "invalid_request");
+        assert.equal(
+          shared.details?.diagnostics?.remote_code,
+          "conflicting_type_definitions",
+        );
+        assert.equal(
+          requireMcpToolError(
+            await flood.raw("define_native_data_types", {
+              declarations: [0, 1, 2]
+                .map(
+                  (index) =>
+                    `struct rea_chain${String(index)} { ${index === 0 ? "int" : `struct rea_chain${String(index - 1)}`} ${"*".repeat(250)} x; }; typedef int rea_chain${String(index)};`,
+                )
+                .join(""),
+              declarations_max_utf16: max,
+            }),
+          ).code,
+          "resource_constraint",
+        );
+        // Measuring a tag body does not make a same-named typedef recursive:
+        // its recorded depth still chains through the member.
+        assert.equal(
+          requireMcpToolError(
+            await flood.raw("define_native_data_types", {
+              declarations: `typedef int ${"*".repeat(250)} rea_in_progress; struct rea_in_progress { rea_in_progress ${"*".repeat(250)} x; };`,
+              declarations_max_utf16: max,
+            }),
+          ).code,
+          "resource_constraint",
+        );
+        // A redundant forward declaration after a definition does not erase
+        // the completed tag depth the next definition chains through.
+        assert.equal(
+          requireMcpToolError(
+            await flood.raw("define_native_data_types", {
+              declarations: [0, 1, 2]
+                .map(
+                  (index) =>
+                    `struct rea_forward${String(index)} { ${index === 0 ? "int" : `struct rea_forward${String(index - 1)}`} ${"*".repeat(250)} x; }; struct rea_forward${String(index)};`,
+                )
+                .join(""),
+              declarations_max_utf16: max,
+            }),
+          ).code,
+          "resource_constraint",
         );
         // A held database lock would fail this close's checkpoint save.
         await flood.call("close_binary");

@@ -540,9 +540,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     /**
-     * Read frames while the handler works. This is the bridge's only second
-     * thread: it never touches the Program or the writer. It cancels the
-     * monitor of the request a `cancel` frame names, cancels read-ahead for
+     * Read frames while the handler works. This reader never touches the
+     * Program or the writer. It cancels the monitor of the request a
+     * `cancel` frame names, cancels read-ahead for
      * an `abandon_decompile_read_ahead` frame without waiting for workers,
      * and queues every other frame in arrival order, so requests still run
      * one at a time.
@@ -667,9 +667,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
             catch (StackOverflowError exhausted) {
                 // Ghidra's data-type code can overflow while holding its database
                 // lock, which then stays held: the Program can no longer be saved
-                // or trusted. Admission bounds caller types (MAX_C_TYPE_DEPTH) so
-                // this is not reachable from caller text; if it happens anyway,
-                // say why and end the session rather than keep serving it.
+                // or trusted. Caller C is parsed on its own stack and a parser
+                // overflow is a type_depth_limit refusal (see parseCallerCText).
+                // An overflow anywhere else still ends the session.
                 writeFailure(writer, request.id, "bridge_exception",
                     "StackOverflowError: Ghidra exhausted its stack and may hold its database lock; this Ghidra session cannot continue");
                 throw exhausted;
@@ -1582,13 +1582,20 @@ public final class ReaGhidraBridge extends HeadlessScript {
             throw new RequestFailure("file_offset_ambiguous", "File offset " + coordinate +
                 " has multiple loaded mappings: " + candidates.stream().map(ReaGhidraBridge::canonicalAddress).toList() +
                 "; select an explicit analysis address");
-        if (candidates.isEmpty())
+        if (candidates.isEmpty()) {
+            String unmapped = " has no loaded source mapping for the admitted target file; Ghidra image base: " +
+                canonicalAddress(currentProgram.getImageBase()) +
+                ". Inspect mappings with rea inspect-native-load-image <path> --provider ghidra --json or MCP inspect_native_load_image.";
+            // A bare number that names no analysis location was an address
+            // request first; the file-offset reading is only its fallback.
+            if (!explicitOffset && !isMappedAnalysisAddress(selector))
+                throw new RequestFailure("procedure_not_found", "No procedure exists at " + coordinate +
+                    ", which is outside every mapped analysis address. Read as a file offset, " + coordinate + unmapped);
             throw new RequestFailure("file_offset_unmapped",
-                (explicitOffset || !isMappedAnalysisAddress(selector) ? "" :
+                (explicitOffset ? "" :
                     coordinate + " is a mapped analysis address that holds no disassembled code and no procedure. Read as a file offset instead: ") +
-                "File offset " + coordinate +
-                " has no loaded source mapping for the admitted target file; Ghidra image base: " + canonicalAddress(currentProgram.getImageBase()) +
-                ". Inspect mappings with rea inspect-native-load-image <path> --provider ghidra --json or MCP inspect_native_load_image.");
+                "File offset " + coordinate + unmapped);
+        }
         Address mapped = candidates.get(0);
         // A file offset names the same location as its mapped analysis
         // address, so it resolves the way that address does, including code
@@ -2428,7 +2435,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
     }
 
-    /** What the tokenizer observed in admitted caller C. */
+    /** What the tokenizer observed in admitted caller C, directives excluded. */
     private record AdmittedCallerC(JsonArray droppedQualifiers, boolean terminated, boolean endsInLineComment,
         Set<String> soleParameterIdentifiers) {}
 
@@ -2851,7 +2858,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
      * (macOS arm64): 1024 levels resolve, 2048 exhaust the stack inside
      * addDataType while its database lock is held, which leaves that lock held
      * and the Program unusable. REA refuses a type deeper than this, a
-     * quarter of the last measured safe depth, before Ghidra walks it.
+     * quarter of the last measured safe depth, before addDataType walks it.
      */
     private static final int MAX_C_TYPE_DEPTH = 256;
 
@@ -2863,7 +2870,14 @@ public final class ReaGhidraBridge extends HeadlessScript {
      * depth, because Ghidra resolves that reference without recursing.
      */
     private static void requireBoundedTypeDepth(DataType root, String name, String field) {
-        Map<DataType, Integer> depths = new IdentityHashMap<>();
+        // The whole chain is measured, so the reported depth is the one compared with the limit.
+        int depth = measuredTypeDepth(root, new IdentityHashMap<>());
+        if (depth > MAX_C_TYPE_DEPTH)
+            throw new RequestFailure("type_depth_limit", field + " defines " + name + ", chained " + depth +
+                " levels deep through pointers, arrays, typedefs, members or existing database types");
+    }
+
+    private static int measuredTypeDepth(DataType root, Map<DataType, Integer> depths) {
         Set<DataType> open = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
         ArrayDeque<DataType> stack = new ArrayDeque<>();
         stack.push(root);
@@ -2890,11 +2904,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             open.remove(type);
             stack.pop();
         }
-        // The whole chain is measured, so the reported depth is the one compared with the limit.
-        int depth = depths.get(root);
-        if (depth > MAX_C_TYPE_DEPTH)
-            throw new RequestFailure("type_depth_limit", field + " defines " + name + ", chained " + depth +
-                " levels deep through pointers, arrays, typedefs, members or existing database types");
+        return depths.get(root);
     }
 
     private static List<DataType> cTypeChildren(DataType type) {
@@ -2916,6 +2926,70 @@ public final class ReaGhidraBridge extends HeadlessScript {
             return children;
         }
         return List.of();
+    }
+
+    /**
+     * Stack for the thread that runs Ghidra's C parser. C.jj Pointer() is
+     * right-recursive, one frame per star, and parse() holds its nested
+     * transaction across that walk. The longest admitted text is 8192 UTF-16
+     * units of one pointer chain. That chain completes on an 8 MiB main-thread
+     * stack (Ghidra 12.2, arm64 macOS) and exhausts HotSpot's 1 MiB default
+     * thread stack (Linux, including WSL2) before the iterative post-parse
+     * walk can refuse it. 16 MiB is twice the stack that completed the maximum
+     * chain, so a fatter frame still reaches that walk. Thread's stackSize is
+     * a suggestion; a JVM that ignores it can still overflow, and that
+     * overflow is the same depth refusal.
+     */
+    private static final long C_PARSE_STACK_BYTES = 16L * 1024 * 1024;
+
+    /**
+     * Parse caller C on C_PARSE_STACK_BYTES. Joined before return:
+     * this worker is the only thread in the parser and its nested transaction.
+     * The handler frame is entered before parse, so the parser's finally,
+     * which ends that nested transaction, runs on the way out of a stack
+     * overflow. The caller's transaction then rolls the edit back. The
+     * overflow is the depth ceiling: admitted text recurses through the
+     * declarator chain that ceiling exists for, and the iterative walk in
+     * requireBoundedTypeDepth remains the authority when parse returns.
+     */
+    private void parseCallerCText(CParser parser, String source, String field)
+            throws ghidra.app.util.cparser.C.ParseException, ghidra.app.util.cparser.C.TokenMgrError {
+        Throwable[] thrown = new Throwable[1];
+        Thread worker = new Thread(null, () -> {
+            try {
+                parser.parse(source);
+            }
+            catch (Throwable failure) {
+                thrown[0] = failure;
+            }
+        }, "rea-ghidra-c-parse", C_PARSE_STACK_BYTES);
+        worker.setDaemon(true);
+        worker.start();
+        // The parser cannot be cancelled. Join even if it has already exited:
+        // join is the happens-before edge for the worker's failure, and the
+        // Program stays exclusive to this worker until it leaves the nested
+        // transaction.
+        boolean interrupted = false;
+        while (true) {
+            try {
+                worker.join();
+                break;
+            }
+            catch (InterruptedException ignored) {
+                interrupted = true;
+            }
+        }
+        if (interrupted) Thread.currentThread().interrupt();
+        Throwable failure = thrown[0];
+        if (failure == null) return;
+        if (failure instanceof StackOverflowError)
+            throw new RequestFailure("type_depth_limit", field + " defines a caller type, chained more than " +
+                MAX_C_TYPE_DEPTH + " levels deep through pointers, arrays, typedefs, members or existing database types");
+        if (failure instanceof ghidra.app.util.cparser.C.ParseException parseException) throw parseException;
+        if (failure instanceof ghidra.app.util.cparser.C.TokenMgrError tokenError) throw tokenError;
+        if (failure instanceof RuntimeException runtime) throw runtime;
+        if (failure instanceof Error error) throw error;
+        throw new IllegalStateException("Ghidra C parser failed", failure);
     }
 
     /** The caller's per-call bound, or its default; the contract owns the range. */
@@ -2961,7 +3035,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             // the end gets a newline first, so a semicolon added for an
             // unterminated prototype is not swallowed.
             String source = admitted.endsInLineComment() ? text + "\n" : text;
-            parser.parse(declarations || admitted.terminated() ? source : source + ";");
+            parseCallerCText(parser, declarations || admitted.terminated() ? source : source + ";", field);
         }
         catch (ghidra.app.util.cparser.C.ParseException | ghidra.app.util.cparser.C.TokenMgrError rejected) {
             throw new RequestFailure(code, "Ghidra's C parser rejected " + field + ": " + cParserReason(rejected.getMessage()));
