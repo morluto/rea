@@ -8,9 +8,9 @@ import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { semanticModuleCallees } from "./javascriptSemanticModuleCallee.js";
 
 const callees = (source: string) =>
-  [...semanticModuleCallees(analyzeJavaScriptSemantics(source)).values()].map(
-    ({ specifier, path }) => `${specifier}:${path.join(".")}`,
-  );
+  [...semanticModuleCallees(analyzeJavaScriptSemantics(source)).values()]
+    .filter(({ identity }) => identity === undefined)
+    .map(({ specifier, path }) => `${specifier}:${path.join(".")}`);
 const REGISTER = "vscode:commands.registerCommand";
 const replacements = (source: string) =>
   [...semanticModuleCallees(analyzeJavaScriptSemantics(source)).values()]
@@ -167,6 +167,37 @@ describe("module-rooted callees", () => {
     ],
   ])("does not resolve %s", (_, source) => {
     expect(callees(source)).not.toContain(REGISTER);
+  });
+});
+
+describe("callees whose module identity is not established", () => {
+  it.each([
+    [
+      "a conditional import",
+      'const v = flag ? require("vscode") : fake; v.commands.registerCommand("a");',
+    ],
+    [
+      "a fallback import",
+      'const v = flag || require("vscode"); v.commands.registerCommand("a");',
+    ],
+    [
+      "one of two modules",
+      'const v = flag ? require("other") : require("vscode"); v.commands.registerCommand("a");',
+    ],
+    [
+      "a module assigned after declaration",
+      'let v; v = require("vscode"); v.commands.registerCommand("a");',
+    ],
+  ])("marks %s as a possible identity", (_, source) => {
+    const found = [
+      ...semanticModuleCallees(
+        analyzeJavaScriptSemantics(source),
+        "vscode",
+      ).values(),
+    ].filter(({ path }) => path.at(-1) === "registerCommand");
+    expect(found).toEqual([
+      expect.objectContaining({ specifier: "vscode", identity: "possible" }),
+    ]);
   });
 });
 

@@ -806,7 +806,7 @@ function* createCallSiteNodes(
   state: BuilderState,
 ): Generator<void, Map<string, JavaScriptSemanticGraphNode>> {
   const result = new Map<string, JavaScriptSemanticGraphNode>();
-  const moduleCallees = semanticModuleCallees(ir);
+  const moduleCallees = semanticModuleCallees(ir, CALLEE_FACT_MODULE);
   for (const [index, call] of ir.callSites.entries()) {
     if (index % 64 === 0) yield;
     const owner =

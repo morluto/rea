@@ -95,6 +95,18 @@ describe("VS Code command correlation", () => {
     ]);
   });
 
+  it("leaves a call on a possible vscode binding undetermined", () => {
+    const result = correlate(
+      `const api = flag ? require("vscode") : fake;
+       api.commands.registerCommand("demo.a", f);`,
+      contributes(["demo.a"]),
+    );
+    expect(result.commands[0]).toMatchObject({
+      status: "undetermined",
+      registrations: [expect.objectContaining({ identity: "possible" })],
+    });
+  });
+
   it("keeps a built-at-run-time identifier unresolved", () => {
     const result = correlate(
       `${VSCODE}vscode.commands.registerCommand(prefix + ".a", f);`,

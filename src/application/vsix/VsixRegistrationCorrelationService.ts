@@ -35,6 +35,7 @@ const LIMITATIONS = [
   "undetermined replaces not_found when a declared entry point or any source was not analyzed, analysis was truncated, a registration identifier is unresolved, or the application graph predates callee facts; it replaces registered_undeclared when declarations were not all read. not_found means no vscode registration with that literal identifier was seen. Identifiers built at run time are listed as unresolved, and unrecognized code or bundler forms can hide a registration.",
   "A registration with loader_authority candidate rests on an unestablished require; wrapper unverified additionally rests on a helper whose effect was not checked.",
   "replacement possible means the source also writes the registration function or an object containing it; write order and execution are not established, so a command with only such calls is undetermined.",
+  "identity possible means the called binding may hold something other than vscode; a command with only such calls is undetermined.",
   "Static source facts only: activation, execution and handler behavior are not observed.",
 ] as const;
 

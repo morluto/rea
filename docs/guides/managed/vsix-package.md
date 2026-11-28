@@ -105,10 +105,11 @@ marks a `require`-based match, and `wrapper: unverified` one that reaches
 checked. `replacement: possible` means the source also writes that function or
 an object containing it, including through a computed name; REA does not
 establish write order or execution, so a command with only such calls is
-`undetermined`. Calls whose identifier is not a string literal appear in
-`unresolved_registrations`. `menus` lists the known commands each menu invokes,
-and each command's `keybindings` lists its keys; both are null when not recorded
-or not all rows could be read.
+`undetermined`. `identity: possible` marks a call on a binding that may hold
+something other than `vscode`, with the same effect. Calls whose identifier is
+not a string literal appear in `unresolved_registrations`. `menus` lists the
+known commands each menu invokes, and each command's `keybindings` lists its
+keys; both are null when not recorded or not all rows could be read.
 
 When the result is larger than the agent result budget, MCP returns a retained
 summary of counts; page the complete record with `inspect_analysis_view` kind
