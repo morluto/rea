@@ -510,6 +510,23 @@ export function planChanges(request, repository) {
       read: (paths) => repository.readFiles("HEAD", paths),
     },
   });
+  // Linux may skip every module of a selection that may all be gated to
+  // macOS; the macOS lane runs each gated module, so the plan selects it.
+  if (
+    !selected.apple &&
+    testSelection.mode === "selected" &&
+    testSelection.files.length > 0
+  ) {
+    const sources = repository.readFiles("HEAD", testSelection.files);
+    if (
+      testSelection.files.every((file) =>
+        mayGateTestToDarwin(sources.get(file) ?? ""),
+      )
+    ) {
+      selected.apple = true;
+      reasons.push("Every selected test may be gated to macOS");
+    }
+  }
   const typedLintFiles =
     event === "pull_request" && tier === "fast" && selected.code
       ? selectTypedLintFiles(files, listCheckedOutFiles)
