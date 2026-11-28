@@ -322,7 +322,7 @@ it("records declared chat participants, tools and MCP providers", async () => {
   const report = vsixPackageSchema.parse(
     await parseVsixPackage(bytes, artifactOf(bytes), defaults),
   );
-  expect(report.contributes.ai).toEqual([
+  expect(report.contributes.declarations).toEqual([
     { kind: "chat_participant", id: "demo.chat", label: "demo" },
     { kind: "language_model_tool", id: "demo_tool", label: "Demo" },
     { kind: "mcp_server_provider", id: "demo.mcp", label: "Demo MCP" },

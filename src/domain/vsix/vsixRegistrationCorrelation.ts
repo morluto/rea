@@ -3,7 +3,7 @@ import { z } from "zod";
 import { evidenceInputSchema } from "../evidenceReference.js";
 import type { JavaScriptSemanticGraph } from "../javascript/javascriptSemanticGraph.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
-import { VSIX_AI_CONTRIBUTION_KINDS, type VsixPackage } from "./vsixPackage.js";
+import { VSIX_CONTRIBUTION_KINDS, type VsixPackage } from "./vsixPackage.js";
 
 /** Inline or exact retained Evidence for both sides of the correlation. */
 export const correlateVsixRegistrationsInputSchema = z.strictObject({
@@ -56,8 +56,8 @@ const commandSchema = z.strictObject({
   keybindings: z.array(z.string()).nullable(),
 });
 
-const aiContributionSchema = z.strictObject({
-  kind: z.enum(VSIX_AI_CONTRIBUTION_KINDS),
+const contributionSchema = z.strictObject({
+  kind: z.enum(VSIX_CONTRIBUTION_KINDS),
   id: z.string(),
   status: z.enum(STATUSES),
   label: z.string().nullable(),
@@ -67,7 +67,7 @@ const aiContributionSchema = z.strictObject({
 const count = z.int().nonnegative();
 const correlationShape = {
   commands: z.array(commandSchema),
-  ai_contributions: z.array(aiContributionSchema),
+  contributions: z.array(contributionSchema),
   unresolved_registrations: z.array(registrationSchema),
   entry_points: z.array(
     z.strictObject({ path: z.string(), analyzed: z.boolean() }),
@@ -95,7 +95,7 @@ export const vsixRegistrationCorrelationSchema = z.strictObject({
 interface CorrelationInput {
   readonly contributes: Pick<
     VsixPackage["contributes"],
-    "commands" | "menus" | "keybindings" | "ai"
+    "commands" | "menus" | "keybindings" | "declarations"
   >;
   /** Entry point member paths declared by the package. */
   readonly entryPoints: readonly string[];
@@ -265,12 +265,12 @@ export const correlateVsixRegistrations = ({
       keybindings: keys === null ? null : (keys.get(id) ?? []),
     }),
   );
-  const aiContributions = VSIX_AI_CONTRIBUTION_KINDS.flatMap((kind) =>
+  const declaredContributions = VSIX_CONTRIBUTION_KINDS.flatMap((kind) =>
     joinDeclarations(
-      contributes.ai === null
+      contributes.declarations === null
         ? null
         : firstById(
-            contributes.ai
+            contributes.declarations
               .filter((row) => row.kind === kind)
               .map(({ id, label }) => [id, label]),
           ),
@@ -288,7 +288,7 @@ export const correlateVsixRegistrations = ({
     commands.filter((command) => command.status === status).length;
   return {
     commands,
-    ai_contributions: aiContributions,
+    contributions: declaredContributions,
     unresolved_registrations: unresolved,
     entry_points: entries,
     summary: {

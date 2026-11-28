@@ -291,15 +291,15 @@ const keybindingSchema = z.strictObject({
   key: nullableText,
 });
 
-export const VSIX_AI_CONTRIBUTION_KINDS = [
+export const VSIX_CONTRIBUTION_KINDS = [
   "chat_participant",
   "language_model_tool",
   "mcp_server_provider",
 ] as const;
 
 /** A declared chat participant, language model tool or MCP server provider. */
-const aiContributionSchema = z.strictObject({
-  kind: z.enum(VSIX_AI_CONTRIBUTION_KINDS),
+const contributionSchema = z.strictObject({
+  kind: z.enum(VSIX_CONTRIBUTION_KINDS),
   id: nullableText,
   label: nullableText,
 });
@@ -394,7 +394,7 @@ export const vsixPackageSchema = z.strictObject({
     /** Null when package.json was not read, or in older Evidence. */
     menus: z.array(menuItemSchema).nullable().default(null),
     keybindings: z.array(keybindingSchema).nullable().default(null),
-    ai: z.array(aiContributionSchema).nullable().default(null),
+    declarations: z.array(contributionSchema).nullable().default(null),
   }),
   extension_dependencies: declaredIdsSchema,
   extension_pack: declaredIdsSchema,

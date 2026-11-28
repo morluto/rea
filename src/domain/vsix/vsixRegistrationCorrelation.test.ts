@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { graphForJavaScript } from "../../../tests/fixtures/javascriptSemanticGraph.js";
 import { correlateVsixRegistrations } from "./vsixRegistrationCorrelation.js";
 
-type AiKind =
+type ContributionKind =
   | "chat_participant"
   | "language_model_tool"
   | "mcp_server_provider";
@@ -13,13 +13,15 @@ const contributes = (
   extra: {
     menus?: { menu: string; command: string | null }[] | null;
     keybindings?: { command: string | null; key: string | null }[] | null;
-    ai?: { kind: AiKind; id: string | null; label: string | null }[] | null;
+    declarations?:
+      | { kind: ContributionKind; id: string | null; label: string | null }[]
+      | null;
   } = {},
 ) => ({
   commands: commands.map((command) => ({ command, title: null })),
   menus: [],
   keybindings: [],
-  ai: [],
+  declarations: [],
   ...extra,
 });
 
@@ -158,14 +160,14 @@ describe("VS Code command correlation", () => {
        vscode.lm.registerTool("demo_hidden", t);
        vscode.lm.registerMcpServerDefinitionProvider(id, p);`,
       contributes([], {
-        ai: [
+        declarations: [
           { kind: "chat_participant", id: "demo.chat", label: "demo" },
           { kind: "language_model_tool", id: "demo_tool", label: null },
         ],
       }),
     );
     expect(
-      result.ai_contributions.map(({ kind, id, status }) => [kind, id, status]),
+      result.contributions.map(({ kind, id, status }) => [kind, id, status]),
     ).toEqual([
       ["chat_participant", "demo.chat", "registered"],
       ["language_model_tool", "demo_hidden", "registered_undeclared"],
@@ -182,8 +184,8 @@ describe("VS Code command correlation", () => {
   it("does not call a registration undeclared when declarations are unread", () => {
     const result = correlate(
       `${VSCODE}vscode.lm.registerTool("demo_tool", t);`,
-      contributes([], { ai: null }),
+      contributes([], { declarations: null }),
     );
-    expect(result.ai_contributions[0]?.status).toBe("undetermined");
+    expect(result.contributions[0]?.status).toBe("undetermined");
   });
 });

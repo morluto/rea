@@ -47,7 +47,7 @@ const report: VsixPackage = {
     commands_omitted: 0,
     menus: [],
     keybindings: [],
-    ai: [],
+    declarations: [],
   },
   extension_dependencies: {
     vsixmanifest: [],

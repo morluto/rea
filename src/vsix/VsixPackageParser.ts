@@ -633,14 +633,16 @@ const menuItems = (menus: unknown) =>
   );
 
 /** Each AI contribution point, with the keys naming its ID and display text. */
-const AI_CONTRIBUTION_POINTS = [
+const CONTRIBUTION_POINTS = [
   ["chat_participant", "chatParticipants", "id", "name"],
   ["language_model_tool", "languageModelTools", "name", "displayName"],
   ["mcp_server_provider", "mcpServerDefinitionProviders", "id", "label"],
 ] as const;
 
-const aiContributions = (contributes: Record<string, unknown> | undefined) =>
-  AI_CONTRIBUTION_POINTS.flatMap(([kind, point, idKey, labelKey]) =>
+const declaredContributions = (
+  contributes: Record<string, unknown> | undefined,
+) =>
+  CONTRIBUTION_POINTS.flatMap(([kind, point, idKey, labelKey]) =>
     contributes?.[point] === undefined
       ? []
       : rowsOf(contributes[point]).map((row) => ({
@@ -668,7 +670,7 @@ const parsePackageJsonDocument = (
       commands_omitted: 0,
       menus: null,
       keybindings: null,
-      ai: null,
+      declarations: null,
     },
     extensionDependencies: null,
     extensionPack: null,
@@ -764,7 +766,7 @@ const parsePackageJsonDocument = (
         command: exactText(row.command),
         key: exactText(row.key),
       })),
-      ai: aiContributions(contributesRaw),
+      declarations: declaredContributions(contributesRaw),
     },
     extensionDependencies: parseExtensionList(record.extensionDependencies),
     extensionPack: parseExtensionList(record.extensionPack),
@@ -1392,7 +1394,7 @@ export const parseVsixPackage = async (
         commands_omitted: 0,
         menus: null,
         keybindings: null,
-        ai: null,
+        declarations: null,
       },
       extension_dependencies: extensionDependencies,
       extension_pack: extensionPack,
