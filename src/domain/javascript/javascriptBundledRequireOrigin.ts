@@ -19,6 +19,7 @@ import {
   resolveSemanticBindingState,
   semanticResolutionBlocked,
   type JavaScriptSemanticAnalysisState,
+  type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import {
   argumentValue,
@@ -172,38 +173,135 @@ const canonicalWebpackInteropBindings = (
   const interop = createSemanticModuleInterop(state);
   const excludesLoader = (node: t.Node): boolean =>
     interop.isFreshObject(node) || readExactJavaScriptLiteral(node).found;
+  /**
+   * Answer "may this write select the loader?" from one forward loader-alias
+   * closure instead of a backward walk from every write. The closure starts
+   * at the proven loader bindings and follows only assignment edges whose
+   * right-hand side is a known loader alias, so unrelated alias graphs —
+   * however large — never consume the alias-selection budget; write checks
+   * below become table lookups against it. The closure is read-site
+   * insensitive: a loader alias assigned after a write still counts, which
+   * fails closed. When the closure itself grows past the alias-selection
+   * budget, it is abandoned and every write is treated as possibly
+   * selecting the loader.
+   */
+  const loaderAliasClosure = (): {
+    readonly aliases: ReadonlySet<string>;
+    readonly exhausted: boolean;
+  } => {
+    const aliases = new Set<string>(loaderBindingIds);
+    // Reverse index: a binding an initializer identifier resolves to maps to
+    // every binding that identifier may initialize.
+    const dependents = new Map<string, string[]>();
+    for (const binding of state.bindingsById.values()) {
+      for (const initializers of [
+        binding.initializers,
+        binding.referenceInitializers,
+      ])
+        for (const source of initializers) {
+          if (source.projection.length !== 0) continue;
+          const next = unwrapJavaScriptExpression(source.node).node;
+          if (!t.isIdentifier(next)) continue;
+          const target = resolveSemanticBindingState(state, next, next.name);
+          if (target === undefined) continue;
+          const list = dependents.get(target.bindingId);
+          if (list === undefined)
+            dependents.set(target.bindingId, [binding.bindingId]);
+          else list.push(binding.bindingId);
+        }
+    }
+    let added = 0;
+    const pending = [...loaderBindingIds];
+    while (pending.length > 0) {
+      const bindingId = pending.pop();
+      if (bindingId === undefined) continue;
+      for (const dependent of dependents.get(bindingId) ?? []) {
+        if (aliases.has(dependent)) continue;
+        aliases.add(dependent);
+        added += 1;
+        if (added > state.precision.alias_selections) {
+          state.observations.valueResourceLimits.add("alias-selections");
+          return { aliases, exhausted: true };
+        }
+        pending.push(dependent);
+      }
+    }
+    return { aliases, exhausted: false };
+  };
+  const closure = loaderAliasClosure();
+  // The backward walk below is shared across every member write in this
+  // bootstrap: a verdict is cached per write root, so a chain shared by
+  // many writes is walked once instead of once per write. The walk
+  // deliberately spends no alias budget: a long non-loader chain must
+  // still resolve exactly, and unrelated walks must not fail the getter
+  // proof — bounding it by the alias-selection budget would break both.
+  const loaderVerdicts = new Map<JavaScriptSemanticBindingState, boolean>();
   const loaderMayOwnReference = (root: t.Node): boolean => {
     const first = unwrapJavaScriptExpression(root).node;
     if (!t.isIdentifier(first)) return !excludesLoader(first);
-    // Only proven separate values are terminals. An unsupported expression
-    // might return the loader, so preserve that uncertainty instead of dropping it.
-    const pending = [first];
-    const seen = new Set<t.Identifier>();
-    while (pending.length > 0) {
-      const node = pending.pop();
-      if (node === undefined || seen.has(node)) continue;
-      seen.add(node);
-      if (seen.size > state.precision.alias_selections) {
-        state.observations.valueResourceLimits.add("alias-selections");
-        return true;
-      }
-      const binding = resolveSemanticBindingState(state, node, node.name);
-      if (binding === undefined) return true;
-      if (loaderBindingIds.has(binding.bindingId)) return true;
-      const selected = semanticBindingAtRead(binding, node, state).binding;
-      for (const initializers of [
-        selected.initializers,
-        selected.referenceInitializers,
-      ])
-        for (const source of initializers) {
-          // A fresh container does not establish the selected property's value.
-          if (source.projection.length !== 0) return true;
-          const next = unwrapJavaScriptExpression(source.node).node;
-          if (t.isIdentifier(next)) pending.push(next);
-          else if (!excludesLoader(next)) return true;
-        }
+    if (closure.exhausted) return true;
+    const binding = resolveSemanticBindingState(state, first, first.name);
+    if (binding === undefined) return true;
+    // A cached verdict is valid for another read of the same root only
+    // when that read selects the binding unchanged: a read that selects a
+    // version of a reassigned binding makes the verdict depend on the
+    // read, so such reads never consult the cache.
+    if (semanticBindingAtRead(binding, first, state).binding === binding) {
+      const cached = loaderVerdicts.get(binding);
+      if (cached !== undefined) return cached;
     }
-    return false;
+    // Follow identifier-initializer edges transitively: a write root may
+    // hold the loader not only when it aliases the loader directly, but
+    // also when any binding on its alias chain holds an uncertain value.
+    // Checking only the root's own initializers accepted a root whose first
+    // resolvable name merely resolved — `const a = flag ? n : {}; const b =
+    // a; b.n = ...` — even though `a` may be the loader. A call,
+    // conditional, member, or unresolvable name may return the loader, and
+    // a projected initializer is unknown.
+    // A verdict is cached only when every selection on the chain returned
+    // its binding unchanged, so the walk is a pure function of the root
+    // binding; a versioned selection makes it depend on the read instead.
+    let versioned = false;
+    const mayOwn = ((): boolean => {
+      const visited = new Set<string>();
+      const pending: {
+        readonly binding: JavaScriptSemanticBindingState;
+        readonly read: t.Node;
+      }[] = [{ binding, read: first }];
+      while (pending.length > 0) {
+        const current = pending.pop();
+        if (current === undefined || visited.has(current.binding.bindingId))
+          continue;
+        visited.add(current.binding.bindingId);
+        if (closure.aliases.has(current.binding.bindingId)) return true;
+        const selected = semanticBindingAtRead(
+          current.binding,
+          current.read,
+          state,
+        ).binding;
+        if (selected !== current.binding) versioned = true;
+        for (const initializers of [
+          selected.initializers,
+          selected.referenceInitializers,
+        ])
+          for (const source of initializers) {
+            if (source.projection.length !== 0) return true;
+            const next = unwrapJavaScriptExpression(source.node).node;
+            if (t.isIdentifier(next)) {
+              const target = resolveSemanticBindingState(
+                state,
+                next,
+                next.name,
+              );
+              if (target === undefined) return true;
+              pending.push({ binding: target, read: next });
+            } else if (!excludesLoader(next)) return true;
+          }
+      }
+      return false;
+    })();
+    if (!versioned) loaderVerdicts.set(binding, mayOwn);
+    return mayOwn;
   };
   completeSemanticSteps(
     collectJavaScriptIdentityWritesSteps(
