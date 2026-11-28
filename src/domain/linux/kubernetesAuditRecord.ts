@@ -28,10 +28,14 @@ type AuditJsonTokenizer = (
   value: string | typeof none,
 ) => Many<Token> | typeof none;
 
+/** Retained list text. A longer list is not stored; the field stays null. */
+const LIST_TEXT_BUDGET = 128 * 1024;
+
 type StringList = {
   readonly kind: "strings";
   readonly target: "sourceIPs" | "groups";
   readonly values: string[];
+  bytes: number;
   invalid: boolean;
 };
 type Frame =
@@ -43,14 +47,19 @@ type Frame =
   | StringList;
 
 export type KubernetesAuditLineParse =
-  | { readonly kind: "event"; readonly value: Record<string, unknown> }
+  | {
+      readonly kind: "event";
+      readonly value: Record<string, unknown>;
+      /** True when the tokenizer stopped before the record's closing brace. */
+      readonly depthLimited: boolean;
+    }
   | { readonly kind: "syntax" }
   | { readonly kind: "nesting" };
 
 const detachedText = (value: string): string =>
   Buffer.from(value, "utf16le").toString("utf16le");
 
-const isTokenizerDepth = (cause: unknown): boolean =>
+export const isTokenizerDepth = (cause: unknown): boolean =>
   cause instanceof Error &&
   cause.name === "RangeError" &&
   cause.message.includes("maxDepth");
@@ -84,7 +93,7 @@ export const parseKubernetesAuditLine = (
   const ownedString = (): boolean => {
     const frame = top();
     if (frame === undefined || frame.kind === "skip") return false;
-    if (frame.kind === "strings") return true;
+    if (frame.kind === "strings") return !frame.invalid;
     if (frame.kind === "root")
       return pendingKey !== undefined && ROOT_STRINGS.has(pendingKey);
     if (frame.kind === "user") return pendingKey === "username";
@@ -95,11 +104,20 @@ export const parseKubernetesAuditLine = (
 
   const takeString = (entry: string): void => {
     const frame = top();
-    const kept = detachedText(entry);
     if (frame?.kind === "strings") {
-      frame.values.push(kept);
+      if (frame.invalid) return;
+      const cost = 2 * entry.length + 32;
+      if (frame.bytes + cost > LIST_TEXT_BUDGET) {
+        frame.invalid = true;
+        frame.values.length = 0;
+        frame.bytes = 0;
+        return;
+      }
+      frame.bytes += cost;
+      frame.values.push(detachedText(entry));
       return;
     }
+    const kept = detachedText(entry);
     if (frame?.kind === "root" && pendingKey !== undefined)
       value[pendingKey] = kept;
     else if (frame?.kind === "user" && pendingKey === "username") {
@@ -132,6 +150,52 @@ export const parseKubernetesAuditLine = (
     }
   };
 
+  /** A container where a scalar or string list was required leaves that field null. */
+  const invalidatePending = (): void => {
+    const frame = top();
+    if (frame?.kind === "strings") {
+      frame.invalid = true;
+      frame.values.length = 0;
+      frame.bytes = 0;
+      return;
+    }
+    if (frame?.kind === "root" && pendingKey === "sourceIPs") {
+      value.sourceIPs = null;
+      return;
+    }
+    if (
+      frame?.kind === "root" &&
+      pendingKey !== undefined &&
+      ROOT_STRINGS.has(pendingKey)
+    ) {
+      value[pendingKey] = null;
+      return;
+    }
+    if (frame?.kind === "user" && pendingKey === "groups") {
+      sawUser = true;
+      user.groups = null;
+      return;
+    }
+    if (frame?.kind === "user" && pendingKey === "username") {
+      sawUser = true;
+      user.username = null;
+      return;
+    }
+    if (
+      frame?.kind === "objectRef" &&
+      pendingKey !== undefined &&
+      OBJECT_REF_STRINGS.has(pendingKey)
+    ) {
+      sawObject = true;
+      objectRef[pendingKey] = null;
+      return;
+    }
+    if (frame?.kind === "responseStatus" && pendingKey === "code") {
+      sawStatus = true;
+      responseStatus.code = null;
+    }
+  };
+
   const pushValue = (token: "object" | "array"): void => {
     const frame = top();
     if (frame === undefined) {
@@ -152,7 +216,10 @@ export const parseKubernetesAuditLine = (
         sawStatus = true;
         delete responseStatus.code;
         stack.push({ kind: "responseStatus" });
-      } else stack.push({ kind: "skip" });
+      } else {
+        invalidatePending();
+        stack.push({ kind: "skip" });
+      }
     } else if (
       token === "array" &&
       frame.kind === "root" &&
@@ -162,6 +229,7 @@ export const parseKubernetesAuditLine = (
         kind: "strings",
         target: "sourceIPs",
         values: [],
+        bytes: 0,
         invalid: false,
       });
     else if (
@@ -173,9 +241,13 @@ export const parseKubernetesAuditLine = (
         kind: "strings",
         target: "groups",
         values: [],
+        bytes: 0,
         invalid: false,
       });
-    else stack.push({ kind: "skip" });
+    else {
+      invalidatePending();
+      stack.push({ kind: "skip" });
+    }
     pendingKey = undefined;
     capture = undefined;
   };
@@ -304,8 +376,8 @@ export const parseKubernetesAuditLine = (
     if (isHostLimitFailure(cause)) throw cause;
     if (!isTokenizerDepth(cause)) return { kind: "syntax" };
     return typeof value.auditID === "string" && typeof value.stage === "string"
-      ? { kind: "event", value: publish() }
+      ? { kind: "event", value: publish(), depthLimited: true }
       : { kind: "nesting" };
   }
-  return { kind: "event", value: publish() };
+  return { kind: "event", value: publish(), depthLimited: false };
 };

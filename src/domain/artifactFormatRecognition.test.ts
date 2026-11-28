@@ -14,6 +14,7 @@ import {
   recognizesArtifactPrefix,
 } from "./artifactFormatRecognition.js";
 import { KubernetesAuditEventProbe } from "./linux/kubernetesAuditEventProbe.js";
+import { KUBERNETES_AUDIT_JSON_DEPTH } from "./linux/kubernetesAuditRecord.js";
 import {
   fullAndroidOtaPayload,
   v1AndroidOtaPayload,
@@ -342,6 +343,14 @@ it("recognizes an audit record after a BOM or blank lines and ignores other padd
   probe.write(head);
   probe.write(tail);
   expect(probe.finish(head.length + tail.length)).toBe(true);
+  const nest = `{"x":${"[".repeat(KUBERNETES_AUDIT_JSON_DEPTH + 8)}1${"]".repeat(KUBERNETES_AUDIT_JSON_DEPTH + 8)}}`;
+  expect(() => recognize(Buffer.from(nest))).not.toThrow();
+  expect(recognize(Buffer.from(nest))).toBeUndefined();
+  const claimed = `{"auditID":"a","stage":"RequestReceived","requestObject":${"[".repeat(KUBERNETES_AUDIT_JSON_DEPTH + 8)}1${"]".repeat(KUBERNETES_AUDIT_JSON_DEPTH + 8)}}`;
+  expect(recognize(Buffer.from(claimed))).toMatchObject({
+    state: "recognized",
+    format: "kubernetes-audit-log",
+  });
 });
 
 it("does not claim JSON with nested or malformed Kubernetes audit fields", () => {

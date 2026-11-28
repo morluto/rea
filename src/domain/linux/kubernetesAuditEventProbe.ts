@@ -1,7 +1,12 @@
 import { getManyValues, isMany, none, type Many } from "stream-chain/defs.js";
 import { jsonParser, type Token } from "stream-json/core/parser.js";
 import { MAX_KUBERNETES_AUDIT_LINE_BYTES } from "../artifactReaderLimits.js";
+import { isHostLimitFailure } from "../parseFailure.js";
 import { strictUtf8Decoder } from "../strictUtf8.js";
+import {
+  isTokenizerDepth,
+  KUBERNETES_AUDIT_JSON_DEPTH,
+} from "./kubernetesAuditRecord.js";
 
 /** The stages one request's `auditID` can pass through, in Kubernetes' order. */
 export const KUBERNETES_AUDIT_STAGES = [
@@ -74,6 +79,7 @@ export class KubernetesAuditEventProbe {
   #lineEnded = false;
   #done = false;
   #failed = false;
+  #depthStopped = false;
   #preamble = true;
   #atLineStart = true;
   #bomMatched = 0;
@@ -124,6 +130,7 @@ export class KubernetesAuditEventProbe {
         packStrings: false,
         packNumbers: false,
         streamValues: true,
+        maxDepth: KUBERNETES_AUDIT_JSON_DEPTH,
       }) as AuditJsonTokenizer;
     }
     try {
@@ -132,10 +139,17 @@ export class KubernetesAuditEventProbe {
           line.subarray(start, start + TOKEN_CHUNK_BYTES),
           { stream: true },
         );
-        this.#feed(decoded);
+        // A depth overflow throws away every token still inside that call.
+        for (let index = 0; index < decoded.length; index += 1)
+          this.#feed(decoded.charAt(index));
       }
-    } catch {
-      this.#failed = true;
+    } catch (cause: unknown) {
+      if (isHostLimitFailure(cause)) throw cause;
+      // Identity already read stays a positive claim. The reader reports the
+      // cutoff. A nest that arrives first is not this format.
+      this.#depthStopped =
+        isTokenizerDepth(cause) && this.#hasAuditId && this.#hasStage;
+      this.#failed = !this.#depthStopped;
       this.#done = true;
     }
   }
@@ -186,6 +200,7 @@ export class KubernetesAuditEventProbe {
   finish(fileSize: number): boolean | undefined {
     if (this.#decoder === undefined) return undefined;
     if (this.#failed) return false;
+    if (this.#depthStopped) return this.#hasAuditId && this.#hasStage;
     if (this.#lineEnded || this.#observed >= fileSize)
       try {
         this.#feed(this.#decoder.decode());

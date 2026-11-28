@@ -81,6 +81,8 @@ export interface KubernetesAuditEventSummary {
   readonly omitted_stage_lines: number;
   /** One or more optional request fields did not fit the sample budget. */
   readonly request_fields_omitted: boolean;
+  /** The tokenizer stopped inside this request, so later fields were not read. */
+  readonly depth_limited: boolean;
   /**
    * True when the event names an API version this reader does not model. Its
    * `auditID` and stage are still joined, but no field of it is interpreted.
@@ -113,6 +115,8 @@ interface KubernetesAuditLines {
   readonly events: readonly KubernetesAuditEventSummary[];
   /** Valid event lines whose auditID was outside the request sample. */
   readonly unsampled_event_line_count: number;
+  /** Lines whose ignored body exceeded the tokenizer's container depth. */
+  readonly depth_limited_line_count: number;
   /** Bytes after the last newline, which no line boundary ended. */
   readonly trailing_bytes: number;
 }
@@ -236,6 +240,7 @@ const summarizeEvent = (
     stages: [stageRecord],
     omitted_stage_lines: 0,
     request_fields_omitted: requestFieldsOmitted,
+    depth_limited: false,
     unsupported_version: unsupported,
   };
 };
@@ -288,6 +293,7 @@ class KubernetesAuditScanner {
   readonly #verbCounts = new Map<string, number>();
   #sampleDuplicateStageLines = 0;
   #unsupportedVersionLineCount = 0;
+  #depthLimitedLines = 0;
 
   constructor(private readonly maxLineBytes: number) {}
 
@@ -346,6 +352,7 @@ class KubernetesAuditScanner {
         unlisted_verb_line_count: this.#unlistedVerbLines,
         events,
         unsampled_event_line_count: this.#unsampledEventLines,
+        depth_limited_line_count: this.#depthLimitedLines,
         trailing_bytes: this.#trailingBytes,
       },
       limitations: this.#limitations(events, sampleWithoutTerminalStage),
@@ -390,6 +397,10 @@ class KubernetesAuditScanner {
     if (this.#unlistedVerbLines > 0)
       limitations.push(
         `${String(this.#unlistedVerbLines)} line(s) carry verbs outside the bounded verb histogram`,
+      );
+    if (this.#depthLimitedLines > 0)
+      limitations.push(
+        `${String(this.#depthLimitedLines)} line(s) contain an ignored value nested deeper than the tokenizer scans; fields after that value on the line were not read`,
       );
     if (events.some((event) => event.request_fields_omitted))
       limitations.push(
@@ -439,15 +450,15 @@ class KubernetesAuditScanner {
     const line = auditRecordText(decoded);
     if (line === undefined) return;
     const parsed = parseKubernetesAuditLine(line);
-    if (parsed.kind !== "event") {
-      this.#diagnose(
-        parsed.kind === "nesting"
-          ? "ignored audit value exceeds the nesting depth the reader will scan"
-          : "line is not JSON",
-        line,
-      );
+    if (parsed.kind === "nesting") {
+      this.#depthLimitedLines += 1;
       return;
     }
+    if (parsed.kind !== "event") {
+      this.#diagnose("line is not JSON", line);
+      return;
+    }
+    if (parsed.depthLimited) this.#depthLimitedLines += 1;
     const { value } = parsed;
     if (typeof value.auditID !== "string") {
       this.#diagnose(
@@ -461,7 +472,7 @@ class KubernetesAuditScanner {
       this.#diagnose("audit event names an unknown stage", line);
       return;
     }
-    this.#record(value, value.auditID, stage);
+    this.#record(value, value.auditID, stage, parsed.depthLimited);
   }
 
   #countVerb(verb: string): void {
@@ -484,6 +495,7 @@ class KubernetesAuditScanner {
     event: Record<string, unknown>,
     auditId: string,
     stage: KubernetesAuditStage,
+    depthLimited: boolean,
   ): void {
     this.#recordCount += 1;
     const unsupported = isUnsupportedVersion(event.apiVersion);
@@ -520,6 +532,11 @@ class KubernetesAuditScanner {
         seenStages: new Set([stage]),
         fieldsRecorded: !unsupported,
       });
+      if (depthLimited) {
+        const created = this.#sample.get(key);
+        if (created !== undefined)
+          created.summary = { ...created.summary, depth_limited: true };
+      }
       return;
     }
 
@@ -564,6 +581,7 @@ class KubernetesAuditScanner {
         1 -
         stages.length,
       unsupported_version: previous.unsupported_version || unsupported,
+      depth_limited: previous.depth_limited || depthLimited,
     };
   }
 

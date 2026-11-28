@@ -516,10 +516,55 @@ it("keeps owned fields when an ignored body exceeds the nesting bound", async ()
     request_uri: "/api/v1/pods",
     verb: "get",
     unsupported_version: false,
+    depth_limited: true,
   });
-  expect(metadata.malformed_line_count).toBe(1);
-  expect(metadata.malformed_lines.map((line) => line.line)).toEqual([2]);
+  expect(metadata.events[1]?.depth_limited).toBe(false);
+  expect(metadata.malformed_line_count).toBe(0);
+  expect(metadata.depth_limited_line_count).toBe(2);
   expect(metadata.event_count).toBe(2);
+});
+
+it("leaves a wrong-shaped version or address list unknown", async () => {
+  const metadata = await metadataOf(
+    [
+      '{"apiVersion":{},"auditID":"shaped","stage":"RequestReceived","verb":"get","requestURI":"/secret"}',
+      '{"apiVersion":"audit.k8s.io/v1","auditID":"addrs","stage":"ResponseComplete","sourceIPs":["10.0.0.1",{}],"verb":"get"}',
+    ].join("\n"),
+  );
+  expect(metadata.events[0]).toMatchObject({
+    audit_id: "shaped",
+    unsupported_version: true,
+    verb: null,
+    request_uri: null,
+  });
+  expect(metadata.events[1]).toMatchObject({
+    audit_id: "addrs",
+    unsupported_version: false,
+    source_ips: null,
+    verb: "get",
+  });
+  expect(metadata.malformed_line_count).toBe(0);
+});
+
+it("does not retain a source address list past the list text budget", async () => {
+  const addresses = Array.from({ length: 5000 }, () => "10.0.0.1");
+  const metadata = await metadataOf(
+    `${JSON.stringify({
+      apiVersion: "audit.k8s.io/v1",
+      auditID: "many-ips",
+      stage: "RequestReceived",
+      verb: "get",
+      requestURI: "/api",
+      sourceIPs: addresses,
+    })}\n`,
+  );
+  expect(metadata.events[0]).toMatchObject({
+    audit_id: "many-ips",
+    request_uri: "/api",
+    verb: "get",
+    source_ips: null,
+    request_fields_omitted: false,
+  });
 });
 
 it("does not read audit identity from inside an ignored body", async () => {

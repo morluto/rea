@@ -571,11 +571,13 @@ export const kubernetesAuditLogMetadataSchema = z.strictObject({
           .max(KUBERNETES_AUDIT_INLINE_STAGE_LIMIT),
         omitted_stage_lines: offset,
         request_fields_omitted: z.boolean(),
+        depth_limited: z.boolean(),
         unsupported_version: z.boolean(),
       }),
     )
     .max(KUBERNETES_AUDIT_INLINE_EVENT_LIMIT),
   unsampled_event_line_count: offset,
+  depth_limited_line_count: offset,
   trailing_bytes: offset,
 });
 
