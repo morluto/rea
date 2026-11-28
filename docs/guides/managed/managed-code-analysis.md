@@ -902,6 +902,21 @@ Tuple operands use these exact projections:
 - signed integer and variable operands: decimal strings; floating-point
   operands: JavaScript's `String` representation of the decoded IEEE value.
 
+Complete `switch` instruction anchors also retain `switch_targets`, an ordered
+array of CIL byte offsets, and `switch_fallthrough`, the offset immediately
+after the complete table. Each signed table displacement is relative to that
+fallthrough offset. Duplicate targets and case order are preserved; an empty
+table is recorded as `[]`. Historical anchors may omit both fields. A malformed
+or truncated table has no complete anchor, while earlier decoded anchors remain
+available. The shared metadata representation limit admits the target array
+before allocation and charges its retained output.
+
+These fields report encoded branch destinations. They do not establish that
+targets are instruction boundaries, are inside the method, or form valid runtime
+control flow. Negative or out-of-body offsets remain observable. They do not
+change the `member-result-v1` normalized fingerprint: its switch operand remains
+the case count, and exact CIL comparison continues to use the raw IL digest.
+
 For `ldtoken` MemberRef operands, `operand_kind` follows the parsed member
 signature (`field` or `method`); if that signature does not establish the kind,
 the anchor keeps the generic `token` classification.

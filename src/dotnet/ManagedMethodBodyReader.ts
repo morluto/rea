@@ -172,9 +172,11 @@ export const methodBody = (
     // separate instruction for every byte. Retained output is charged below.
     const decoded = decodeInstructions(
       il,
-      (start, hasReference) => {
+      (start, hasReference, switchCount) => {
         context.budget.admitTransient(256, ilOffset + start);
         if (hasReference) context.budget.admitTransient(256, ilOffset + start);
+        if (switchCount !== undefined)
+          context.budget.admitTransient(64 + switchCount * 8, ilOffset + start);
       },
       (token) => context.memberRefKinds.get(token),
     );
@@ -189,6 +191,12 @@ export const methodBody = (
       opcode: instruction.opcode,
       operand_kind: instruction.operandKind,
       operand: instruction.operand,
+      ...(instruction.switchTable === undefined
+        ? {}
+        : {
+            switch_targets: instruction.switchTable.targets,
+            switch_fallthrough: instruction.switchTable.fallthrough,
+          }),
     }));
     const normalized = Buffer.from(
       JSON.stringify(
