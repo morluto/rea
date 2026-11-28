@@ -86,14 +86,12 @@ event from that domain or its successful enable acknowledgment. The capture's
 lifecycle start is earlier and does not establish domain readiness. Events
 received before the enable reply remain part of the observation.
 
-Worker output is a final target-inventory snapshot. `attached` describes any
-debugging client, not an REA-owned observing session. The selected page-session
-collector does not collect worker-session requests, console events, or scripts,
-and workers that disappeared before the snapshot may be missing; worker
-coverage is therefore attach-limited. Missing ownership metadata is reported as
-`unattributed_target` with unavailable worker attribution, separately
-from a proven foreign owner excluded as `out_of_target_scope`. A shared origin
-alone establishes neither relationship.
+Worker coverage is attach-limited. With a browser-level CDP connection,
+`inspect_web_page` collects requests, console events and scripts from worker
+sessions in scope. `attached` in the target inventory can refer to any debugging
+client. Missing ownership metadata is recorded as `unattributed_target`, and
+a proven foreign owner as `out_of_target_scope`. See [Worker observations](#worker-observations)
+for ownership, explicit selection and direct page transport coverage.
 
 Passive comparison keeps lookup identity, cross-capture correspondence, content
 evidence, and inventory coverage separate:

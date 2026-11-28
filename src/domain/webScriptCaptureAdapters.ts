@@ -24,6 +24,12 @@ export interface SelectedScriptCapture {
   readonly limitations: readonly string[];
 }
 
+export const unidentifiedWorkerExportLimitation = (
+  unknownWorkers: number,
+  unidentifiedSources: number,
+): string =>
+  `Worker identity was unavailable for ${String(unknownWorkers)} observations; their per-worker coverage and ${String(unidentifiedSources)} sources were omitted from export. The original capture retains those partial facts.`;
+
 /** Built-in adapters; add capture formats here without changing the publisher. */
 export const SCRIPT_CAPTURE_ADAPTERS: readonly ScriptCaptureAdapter[] = [
   {
@@ -63,7 +69,10 @@ export const SCRIPT_CAPTURE_ADAPTERS: readonly ScriptCaptureAdapter[] = [
           ...(unknownWorkers === 0
             ? []
             : [
-                `Worker identity was unavailable for ${String(unknownWorkers)} observations; their per-worker coverage and ${String(unidentifiedSources)} sources were omitted from export. The original capture retains those partial facts.`,
+                unidentifiedWorkerExportLimitation(
+                  unknownWorkers,
+                  unidentifiedSources,
+                ),
               ]),
         ],
       };

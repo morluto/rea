@@ -4,7 +4,10 @@ import { projectAnalysisError } from "../../../src/domain/analysisErrorProjectio
 import { WEB_RUNTIME_LIMITS } from "../../../src/domain/webRuntime.js";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { createHash } from "node:crypto";
-import { selectScriptCapture } from "../../../src/domain/webScriptCaptureAdapters.js";
+import {
+  selectScriptCapture,
+  unidentifiedWorkerExportLimitation,
+} from "../../../src/domain/webScriptCaptureAdapters.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { reconcileJavaScriptRuntimeEvidence } from "../../../src/application/javascript/JavaScriptRuntimeReconciliationService.js";
 import { javascriptRuntimeReconciliationResultSchema } from "../../../src/domain/javascript/javascriptRuntimeReconciliationSchemas.js";
@@ -30,6 +33,7 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import {
   readScopedWorkerSource,
+  workerDirectPageTransportLimitation,
   workerSetupInterruptedLimitation,
 } from "../../../src/browser/CdpWorkerCapture.js";
 import type { CdpEvent } from "../../../src/browser/CdpConnection.js";
@@ -1328,7 +1332,7 @@ it("retains selected worker metadata with explicit coverage limits on direct pag
   expect(worker.completeness.unavailable_sections).toEqual(
     expect.arrayContaining(["scripts", "network_requests"]),
   );
-  expect(worker.limitations.join(" ")).toContain("browser-level CDP WebSocket");
+  expect(worker.limitations).toContain(workerDirectPageTransportLimitation);
   expect(
     browser.commands.some(
       ({ method, sessionId }) =>
@@ -2437,8 +2441,8 @@ it("preserves page-script export from legacy unidentified workers", async () => 
   const selected = selectScriptCapture(legacy);
   expect(selected.workerCoverage).toEqual([]);
   expect(selected.scripts).toHaveLength(legacy.scripts.items.length);
-  expect(selected.limitations.join(" ")).toContain(
-    "Worker identity was unavailable for 1 observations",
+  expect(selected.limitations).toContain(
+    unidentifiedWorkerExportLimitation(1, 0),
   );
 });
 

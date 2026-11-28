@@ -38,6 +38,9 @@ import {
 export const workerSetupInterruptedLimitation =
   "Worker domain setup was interrupted when the session detached or page control ended. Coverage remains incomplete for this observation.";
 
+export const workerDirectPageTransportLimitation =
+  "Worker runtime observation requires a browser-level CDP WebSocket; this endpoint exposes a direct page transport.";
+
 const workerAutoAttachParameters = {
   autoAttach: true,
   waitForDebuggerOnStart: false,
@@ -308,7 +311,7 @@ export class CdpWorkerCapture {
       if (!worker.enabled)
         worker.item.observation.limitations.push(
           this.context.sessionId === undefined
-            ? "Worker runtime observation requires a browser-level CDP WebSocket; this endpoint exposes a direct page transport."
+            ? workerDirectPageTransportLimitation
             : "Worker source and runtime observation unavailable without proven page ownership or explicit target selection.",
         );
       workers.push(worker.item);
