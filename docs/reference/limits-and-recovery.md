@@ -833,7 +833,9 @@ inventory, Playwright trace import, and SAZ decoding have no `artifact_limits`
 field. They admit central-directory records at this session count. A refusal
 stays that count and reports `artifact.member_count` as the limit, with
 `parameter` unset. Raise the count with `update_analysis_settings`, or correct
-`REA_ARTIFACT_MEMBER_COUNT` for a CLI process.
+`REA_ARTIFACT_MEMBER_COUNT` for a CLI process. Android JNI library inventory
+uses the same session count. When that count stops the scan, the report stays
+partial and names the unexamined remainder.
 
 Failures preserve `details.reader_limit` with the exact parameter, effective
 value, units, supported range, required value when known, next-call scope and

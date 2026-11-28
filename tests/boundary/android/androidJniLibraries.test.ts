@@ -222,6 +222,42 @@ it("retains a malformed selected library's exact carrier identity and digest", a
   expect(source.resources.hasPending).toBe(false);
 });
 
+it("returns a partial JNI inventory when the session member count stops the APK", async () => {
+  const source = await fixture([
+    [LIBRARY, jniElfFixture().bytes],
+    ["assets/extra.txt", Buffer.from("x")],
+  ]);
+  const result = await runWithAnalysisOperationSnapshot(
+    { revision: 1, overrides: { "artifact.member_count": 1 } },
+    () => read(source),
+  );
+  expect(result.inventory).toMatchObject({
+    status: "partial",
+    examined_entries: 1,
+    selected_libraries: 1,
+  });
+  expect(result.inventory.unknowns.join("\n")).toContain(
+    "artifact.member_count",
+  );
+  expect(result.libraries).toHaveLength(1);
+});
+
+it("completes the JNI inventory when the session member count admits every entry", async () => {
+  const source = await fixture([
+    [LIBRARY, jniElfFixture().bytes],
+    ["assets/extra.txt", Buffer.from("x")],
+  ]);
+  const result = await runWithAnalysisOperationSnapshot(
+    { revision: 1, overrides: { "artifact.member_count": 2 } },
+    () => read(source),
+  );
+  expect(result.inventory).toMatchObject({
+    status: "complete",
+    examined_entries: 2,
+    selected_libraries: 1,
+  });
+});
+
 it("keeps the ZIP decoder window's recompression advice in the library failure", async () => {
   const directory = await createTestTempDirectory("rea-android-jni-zstd-");
   const snapshot = join(directory, "window.apk");
