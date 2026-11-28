@@ -361,8 +361,9 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           RELEASE_PR: ${{ github.event.pull_request.number }}
+          RELEASE_TARGET_BRANCH: ${{ inputs.release_branch || 'main' }}
         run: |
-          args=(--repository "$GH_REPO" --source "$GITHUB_SHA")
+          args=(--repository "$GH_REPO" --source "$GITHUB_SHA" --target-branch "$RELEASE_TARGET_BRANCH")
           if [[ -n "$RELEASE_PR" ]]; then
             args+=(--pr "$RELEASE_PR")
           fi
@@ -481,8 +482,9 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           RELEASE_PR: ${{ github.event.pull_request.number }}
+          RELEASE_TARGET_BRANCH: ${{ inputs.release_branch || 'main' }}
         run: |
-          args=(--repository "$GH_REPO" --source "$GITHUB_SHA")
+          args=(--repository "$GH_REPO" --source "$GITHUB_SHA" --target-branch "$RELEASE_TARGET_BRANCH")
           if [[ -n "$RELEASE_PR" ]]; then
             args+=(--pr "$RELEASE_PR")
           fi

@@ -72,6 +72,7 @@ async function main() {
       notes: { type: "string", default: "CHANGELOG.md" },
       "pr-body": { type: "string" },
       source: { type: "string" },
+      "target-branch": { type: "string" },
       output: { type: "string" },
       summary: { type: "boolean", default: false },
     },
@@ -83,7 +84,7 @@ async function main() {
         "publication requires --repository and --source; --pr selects the merged release PR",
       );
     process.stdout.write(
-      `${JSON.stringify(await verifyNotesPublication(run, values), null, 2)}\n`,
+      `${JSON.stringify(await verifyNotesPublication(run, { ...values, targetBranch: values["target-branch"] }), null, 2)}\n`,
     );
     return;
   }

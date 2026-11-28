@@ -306,11 +306,19 @@ it("limits recovery to verification and dependent MCP publication from the relea
   const tag = workflow.jobs["tag-release"];
   expect(tag.needs).toBe("verify");
   expect(tag.if).toContain("github_published == 'false'");
-  expect(
-    tag.steps.some(({ uses }) =>
-      uses?.startsWith("googleapis/release-please-action@"),
-    ),
-  ).toBe(true);
+  const tagIndex = tag.steps.findIndex(({ uses }) =>
+    uses?.startsWith("googleapis/release-please-action@"),
+  );
+  const notesIndex = tag.steps.findIndex(({ run }) =>
+    run?.includes("release-notes.mjs publication"),
+  );
+  expect(notesIndex).toBeGreaterThanOrEqual(0);
+  expect(tagIndex).toBeGreaterThan(notesIndex);
+  expect(tag.steps[tagIndex]?.with?.["target-branch"]).toBe("main");
+  expect(tag.steps[notesIndex]?.run).toContain("--target-branch main");
+  expect(tag.steps[notesIndex]?.run).toContain(
+    '--source "$RELEASE_SOURCE" --pr "$RELEASE_PR"',
+  );
   expect(tag.steps.at(-1)?.run).toBe(
     "node scripts/ci/release-attempt.mjs verify-github",
   );
