@@ -644,7 +644,7 @@ it("keeps parsed facts when a relocation count runs past the file", () => {
   expect(file.limitations.map((item) => item.kind)).toEqual(["truncated"]);
 });
 
-it.each([
+const relocationTables = [
   { kind: "reloc32", block: HUNK_RELOC32, width: 4, label: "relocation table" },
   {
     kind: "reloc32short",
@@ -652,7 +652,36 @@ it.each([
     width: 2,
     label: "short relocation table",
   },
-] as const)(
+] as const;
+
+it.each(relocationTables)(
+  "keeps a complete $kind group before a missing terminator",
+  ({ kind, block, width, label }) => {
+    const bytes = amigaLoadFile({
+      hunks: [
+        {
+          type: "code",
+          bytes: CODE,
+          relocs: [{ kind, target: 0, offsets: [0] }],
+        },
+      ],
+    });
+    const terminatorAt = blockAt(bytes, block) + 4 + 3 * width;
+    const file = parseAmigaHunk(bytes.subarray(0, terminatorAt));
+    expect(file.hunks[0]?.relocations).toEqual([
+      { kind, targetHunk: 0, count: 1 },
+    ]);
+    expect(file.limitations).toEqual([
+      {
+        kind: "truncated",
+        offset: terminatorAt,
+        detail: `Truncated Amiga Hunk ${label} at offset ${terminatorAt}.`,
+      },
+    ]);
+  },
+);
+
+it.each(relocationTables)(
   "checks $kind framing before charging the relocation allowance",
   ({ kind, block, width, label }) => {
     const bytes = amigaLoadFile({
@@ -665,9 +694,9 @@ it.each([
       ],
     });
     const countAt = blockAt(bytes, block) + 4;
-    const terminatorAt = countAt + 4 * width;
+    const lastOffsetAt = countAt + 3 * width;
     const limits = { maxRelocations: 1 };
-    const file = parseAmigaHunk(bytes.subarray(0, terminatorAt), limits);
+    const file = parseAmigaHunk(bytes.subarray(0, lastOffsetAt), limits);
     expect(file.hunks).toMatchObject([{ type: "code", relocations: [] }]);
     expect(file.entries.map((entry) => entry.path)).toEqual([
       "hunk-0-code.bin",

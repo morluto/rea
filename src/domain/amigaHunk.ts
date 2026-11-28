@@ -941,7 +941,7 @@ class AmigaHunkParser {
         return;
       }
       if (count === 0) return;
-      if (!this.fits((count + 2) * 4)) {
+      if (!this.fits((count + 1) * 4)) {
         this.failTruncated(at, "relocation table");
         return;
       }
@@ -968,7 +968,7 @@ class AmigaHunkParser {
         this.align4();
         return;
       }
-      if (!this.fits((count + 2) * 2)) {
+      if (!this.fits((count + 1) * 2)) {
         this.failTruncated(at, "short relocation table");
         return;
       }
