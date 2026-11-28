@@ -4,6 +4,7 @@ import {
   MACOS_PKG_MAX_TOC_PATH_BYTES,
   MACOS_PKG_MAX_TOC_XML_NODES,
 } from "../../domain/macosPkgFormat.js";
+import { XML_ELEMENT_DEPTH_LIMIT } from "../../domain/xmlDocument.js";
 import { parseXarTocXml } from "./XarToc.js";
 
 const toc = (body: string): Buffer =>
@@ -30,6 +31,27 @@ it("refuses TOC XML past the node allowance before building a DOM", () => {
       limit: {
         name: "macos_pkg_toc_xml_nodes",
         maximum: MACOS_PKG_MAX_TOC_XML_NODES,
+      },
+    },
+  });
+});
+
+it("returns the syntax depth limit for a TOC instead of a malformed document", () => {
+  const parsed = parseXarTocXml(
+    toc(
+      "<e>".repeat(XML_ELEMENT_DEPTH_LIMIT) +
+        "</e>".repeat(XML_ELEMENT_DEPTH_LIMIT),
+    ),
+  );
+  expect(parsed.ok).toBe(false);
+  if (parsed.ok) return;
+  expect(parsed.error).toMatchObject({
+    kind: "limit",
+    failure: {
+      format: "xml",
+      limit: {
+        name: "xml-element-depth",
+        maximum: XML_ELEMENT_DEPTH_LIMIT,
       },
     },
   });
