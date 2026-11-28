@@ -222,6 +222,7 @@ const zipDescriptor = (id: ZipPackageFormat) =>
         undefined,
         sourceOf(options),
         options.readerLimits?.expanded_bytes,
+        options.readerLimits?.zip.member_count,
       ),
   );
 
