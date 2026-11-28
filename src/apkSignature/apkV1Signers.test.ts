@@ -12,6 +12,7 @@ import {
 } from "../../tests/fixtures/apkSignature/v1SignatureBlock.js";
 import { decodeV1SignatureBlock } from "../domain/apkSignature/apkV1SignatureBlock.js";
 import {
+  decodeV1SignerFromReader,
   projectedV1SignerBytes,
   v1PostureFingerprint,
   v1SignerFacts,
@@ -84,5 +85,51 @@ describe("v1 signers identified by subjectKeyIdentifier", () => {
       bySerial.certificate?.sha256_fingerprint,
     );
     expect(v1SignerNotes([signerOf(LEAF_CERTIFICATE)])).toEqual([]);
+  });
+
+  it("detaches small retained certificates from a much larger v1 block buffer", async () => {
+    const block = signedDataBlock({
+      certificates: [LEAF_CERTIFICATE],
+      signerInfos: [signerInfo({ names: LEAF_CERTIFICATE })],
+    });
+    const paddedBlock = Buffer.concat([block, Buffer.alloc(200_000)]);
+    const name = "META-INF/CERT.RSA";
+    const rawName = Buffer.from(name);
+    const local = Buffer.alloc(30 + rawName.length + paddedBlock.length);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(0, 8);
+    local.writeUInt32LE(paddedBlock.length, 18);
+    local.writeUInt32LE(paddedBlock.length, 22);
+    local.writeUInt16LE(rawName.length, 26);
+    rawName.copy(local, 30);
+    paddedBlock.copy(local, 30 + rawName.length);
+
+    const decoded = await decodeV1SignerFromReader(
+      {
+        size: local.length,
+        readRange: async (offset, length) =>
+          Buffer.from(local.subarray(offset, offset + length)),
+      },
+      {
+        signatureFile: "META-INF/CERT.SF",
+        duplicate: null,
+        block: {
+          name,
+          rawName,
+          flags: 0,
+          method: 0,
+          crc32: 0,
+          compressedSize: paddedBlock.length,
+          uncompressedSize: paddedBlock.length,
+          localHeaderOffset: 0,
+        },
+      },
+      local.length,
+    );
+    expect(decoded.decoded.ok).toBe(true);
+    if (!decoded.decoded.ok) return;
+    const retainedCert = decoded.decoded.value.certificates[0]!;
+    expect(Buffer.from(retainedCert).equals(LEAF_CERTIFICATE)).toBe(true);
+    expect(retainedCert.buffer.byteLength).toBe(LEAF_CERTIFICATE.byteLength);
   });
 });

@@ -1,3 +1,5 @@
+import { APK_SIGNATURE_BUDGETS } from "../domain/apkSignature/apkSignatureBudgets.js";
+
 /** Identity of REA's in-process APK signature reader (no external engine, no device). */
 export const APK_SIGNATURE_PROVIDER_IDENTITY = {
   id: "apk-signature",
@@ -9,15 +11,15 @@ export const APK_SIGNATURE_LIMITS = {
   /** Pending requests retain no APK bytes; process-wide scans are serialized. */
   waitingScans: 8,
   /**
-   * Whole-APK bounded read; the content digest needs the whole file. Above
-   * Play's 200 MB APK ceiling with headroom for sideloaded/system APKs.
+   * Default whole-APK bounded read; the content digest needs the whole file.
+   * Above Play's 200 MB APK ceiling with headroom for sideloaded/system APKs.
    */
-  inputBytes: 512 * 1024 * 1024,
+  inputBytes: APK_SIGNATURE_BUDGETS.max_file_bytes.default_value,
   /**
    * One v1 signature block (PKCS#7) after inflation. Real blocks hold a
    * certificate or a short chain (a few KiB); this bounds each inflation.
    */
   v1BlockBytes: 1024 * 1024,
-  /** Inline result ceiling, projected before materialising and re-checked exactly; refused, not truncated. */
-  outputBytes: 8 * 1024 * 1024,
+  /** Default inline result ceiling, projected before materialising and re-checked exactly; refused, not truncated. */
+  outputBytes: APK_SIGNATURE_BUDGETS.max_output_bytes.default_value,
 } as const;

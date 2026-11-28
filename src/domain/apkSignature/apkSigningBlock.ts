@@ -30,11 +30,13 @@ import {
 import { decodeLimit, type ParseFailureError } from "../parseFailure.js";
 import { type Result, err, ok } from "../result.js";
 import type { PrefixedByteSource } from "../byteSource.js";
+import { APK_SIGNATURE_BUDGETS } from "./apkSignatureBudgets.js";
 
 /** "APK Sig Block 42" — the 16-byte block magic (JAR/APK signing block spec). */
 const BLOCK_MAGIC = "APK Sig Block 42";
 /** A single pair is at least 12 bytes (uint64 length + uint32 id); cap the count. */
-export const APK_SIGNING_BLOCK_MAX_PAIRS = 4096;
+export const APK_SIGNING_BLOCK_MAX_PAIRS =
+  APK_SIGNATURE_BUDGETS.max_signing_block_pairs.default_value;
 
 /** Validate one size-prefixed pair without reading or allocating its value. */
 export const apkSigningPairEnd = (
@@ -153,6 +155,7 @@ const parseApkSigningBlockBytes = (
   blockBytes: Uint8Array,
   blockStart: number,
   trailingSize: number,
+  maxPairs: number = APK_SIGNING_BLOCK_MAX_PAIRS,
 ): Result<ApkSigningBlock, ApkSigningBlockError> => {
   const reader = new BinaryReader(
     Buffer.from(
@@ -186,14 +189,14 @@ const parseApkSigningBlockBytes = (
         offset: blockStart + cursor,
         detail: "pair length out of range",
       });
-    if (pairs.length >= APK_SIGNING_BLOCK_MAX_PAIRS)
+    if (pairs.length >= maxPairs)
       return err(
         decodeLimit(
           "apk-signing-block",
-          `APK Signing Block holds more signing-block-pairs than the ${String(APK_SIGNING_BLOCK_MAX_PAIRS)} limit.`,
+          `APK Signing Block holds more signing-block-pairs than the ${String(maxPairs)} limit.`,
           {
             name: "max_signing_block_pairs",
-            maximum: APK_SIGNING_BLOCK_MAX_PAIRS,
+            maximum: maxPairs,
           },
           { offset: blockStart + cursor },
         ),
@@ -448,6 +451,7 @@ export const parseZipTailFromReader = async (
 export const locateApkSigningBlockFromReader = async (
   source: PrefixedByteSource,
   tail: ZipTail,
+  maxPairs: number = APK_SIGNING_BLOCK_MAX_PAIRS,
 ): Promise<Result<ApkSigningBlock | null, ApkSigningBlockError>> => {
   const cdOffset = tail.centralDirectoryOffset;
   if (cdOffset < 16) return ok(null);
@@ -480,5 +484,10 @@ export const locateApkSigningBlockFromReader = async (
       detail: "block extends before file start",
     });
   const blockBytes = await source.readRange(blockStart, cdOffset - blockStart);
-  return parseApkSigningBlockBytes(blockBytes, blockStart, trailingSize);
+  return parseApkSigningBlockBytes(
+    blockBytes,
+    blockStart,
+    trailingSize,
+    maxPairs,
+  );
 };

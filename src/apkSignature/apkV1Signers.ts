@@ -222,7 +222,24 @@ export const decodeV1SignerFromReader = async (
       `signature block holds ${String(data.length)} bytes, the central directory declares ${String(block.uncompressedSize)}`,
     );
   const signedData = decodeV1SignatureBlock(data);
-  if (signedData.ok) return { entry, declaresEncryption, decoded: signedData };
+  if (signedData.ok) {
+    // Detach retained certificate slices from a much larger inflated block so
+    // discarded trailing/non-certificate bytes are not pinned across signers.
+    const certBytes = signedData.value.certificates.reduce(
+      (sum, cert) => sum + cert.byteLength,
+      0,
+    );
+    const value =
+      certBytes * 2 < data.byteLength
+        ? {
+            ...signedData.value,
+            certificates: signedData.value.certificates.map((cert) =>
+              Uint8Array.from(cert),
+            ),
+          }
+        : signedData.value;
+    return { entry, declaresEncryption, decoded: { ok: true, value } };
+  }
   return fail(
     signedData.error.kind === "malformed-pkcs7"
       ? `malformed PKCS#7: ${signedData.error.detail}`

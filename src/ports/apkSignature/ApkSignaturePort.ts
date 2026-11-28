@@ -3,6 +3,7 @@ import type {
   ExecutionOptions,
 } from "../AnalysisProvider.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import type { ApkSignatureInspectionParameters } from "../../domain/apkSignature/apkSignatureQuery.js";
 import type { EvidenceSubjectTarget } from "../../domain/evidence.js";
 import type { Result } from "../../domain/result.js";
 
@@ -17,7 +18,7 @@ export type ApkSignatureExecution = Omit<AnalysisExecution, "subject"> & {
 export interface ApkSignaturePort {
   close(): Promise<void>;
   inspect(
-    input: { readonly path: string },
+    input: ApkSignatureInspectionParameters,
     options?: ExecutionOptions,
   ): Promise<Result<ApkSignatureExecution, AnalysisError>>;
 }

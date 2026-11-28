@@ -13,7 +13,7 @@
  * `META-INF/` names are decoded (as Java decodes them) and retained, capped at
  * a format-justified count. Duplicate names are found among all records, as
  * apksig rejects a v1 signature for any of them, with 15 bytes of typed-array
- * state per record (up to ~11M records in a 512 MiB Zip64 file) and only a few
+ * state per record (up to ~46.6M records in a 2 GiB Zip64 file) and only a few
  * names decoded.
  */
 import { boundedList } from "../boundedList.js";
@@ -45,6 +45,7 @@ import {
   startsWithV1MetaInfPrefix,
   v1SignatureFileNameForBlock,
 } from "./apkV1MetadataName.js";
+import { APK_SIGNATURE_BUDGETS } from "./apkSignatureBudgets.js";
 
 export type ApkCentralDirectoryError =
   | {
@@ -53,18 +54,6 @@ export type ApkCentralDirectoryError =
       readonly detail: string;
     }
   | ParseFailureError<"limit">;
-
-/**
- * Signing-relevant `META-INF/` entries retained. A signed APK holds a manifest
- * plus one `.SF` and one block per v1 signer; thousands is already pathological.
- */
-const MAX_V1_SIGNATURE_ENTRIES = 4096;
-
-/**
- * v1 signers (signature block + `.SF` pairs) decoded. apksig accepts at most
- * 10; more only multiplies work and output, so the report is refused.
- */
-export const MAX_V1_SIGNERS = 32;
 
 /** Duplicated central-directory names decoded for the report; the rest are counted. */
 const MAX_DUPLICATE_NAME_SAMPLE = 5;
@@ -162,8 +151,8 @@ const compareStoredNames = (
   return al - bl;
 };
 
-/** 2^24 records exceed any central directory in a 512 MiB archive (46 bytes each). */
-const INDEX_BITS = 2 ** 24;
+/** 2^26 records exceed any central directory in a 2 GiB archive (46 bytes each). */
+const INDEX_BITS = 2 ** 26;
 
 /**
  * Names stored more than once, compared as apksig compares the decoded
@@ -189,8 +178,8 @@ const duplicateNames = (
     const canonical = isCanonicalZipName(bytes, start, stop);
     wellFormed[i] = canonical ? 1 : 0;
     const hash = canonicalNameHash(bytes, start, stop, canonical);
-    // 29 hash bits and 24 index bits stay within a double's exact integers.
-    keys[i] = (hash >>> 3) * INDEX_BITS + i;
+    // 27 hash bits and 26 index bits stay within a double's exact integers.
+    keys[i] = (hash >>> 5) * INDEX_BITS + i;
   }
   keys.sort();
   const stored = (i: number): StoredZipName => {
@@ -266,6 +255,8 @@ export const centralDirectoryV1SignatureEntries = (
   totalEntries: number,
   apksigRecords: number = totalEntries,
   baseOffset = 0,
+  maxV1SignatureEntries: number = APK_SIGNATURE_BUDGETS.max_v1_signature_entries
+    .default_value,
 ): Result<ApkCentralDirectoryScan, ApkCentralDirectoryError> => {
   const end = centralDirectoryOffset + centralDirectorySize;
   if (
@@ -322,14 +313,14 @@ export const centralDirectoryV1SignatureEntries = (
       const rawName = bytes.subarray(nameStart, nameStart + nameLength);
       const name = decodeZipName(rawName);
       if (isV1SignatureMetadataName(name)) {
-        if (entries.length >= MAX_V1_SIGNATURE_ENTRIES)
+        if (entries.length >= maxV1SignatureEntries)
           return err(
             decodeLimit(
               "apk-v1-central-directory",
-              `The central directory holds more than ${String(MAX_V1_SIGNATURE_ENTRIES)} META-INF v1 signing entries.`,
+              `The central directory holds more than ${String(maxV1SignatureEntries)} META-INF v1 signing entries.`,
               {
                 name: "max_v1_signature_entries",
-                maximum: MAX_V1_SIGNATURE_ENTRIES,
+                maximum: maxV1SignatureEntries,
               },
               { offset: baseOffset + at },
             ),

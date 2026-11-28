@@ -2,10 +2,34 @@ import { digestSchema } from "../digests.js";
 import { z } from "zod";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 import {
+  parameterBudgetLimitFor,
+  parameterBudgetSchema,
+} from "../parameterBudget.js";
+import {
+  APK_SIGNATURE_BUDGETS,
+  type ApkSignatureBudget,
+} from "./apkSignatureBudgets.js";
+import {
   apkSignerSchema,
   apkSignerV3Schema,
   apkSignatureResultSchema,
 } from "./apkSignatureReport.js";
+
+/** The per-call budget that stopped an APK signature inspection. */
+export const apkSignatureBudgetLimit =
+  parameterBudgetLimitFor<ApkSignatureBudget>(APK_SIGNATURE_BUDGETS);
+
+/** Caller-selected path and optional per-call budgets for APK signature inspection. */
+export interface ApkSignatureInspectionParameters {
+  readonly path: string;
+  readonly max_file_bytes?: number | undefined;
+  readonly max_output_bytes?: number | undefined;
+  readonly max_signing_block_pairs?: number | undefined;
+  readonly max_signers?: number | undefined;
+  readonly max_lineage_nodes?: number | undefined;
+  readonly max_signer_elements?: number | undefined;
+  readonly max_v1_signature_entries?: number | undefined;
+}
 
 export const apkSignatureSchemeSchema = z.enum(["v1", "v2", "v3", "v3.1"]);
 const position = z.int().nonnegative();
@@ -115,6 +139,41 @@ export const inspectApkSignatureInputSchema = z
     ),
     detail: z.enum(["summary", "complete"]).default("summary"),
     view: apkSignatureSelectionSchema.optional(),
+    max_file_bytes: parameterBudgetSchema(
+      APK_SIGNATURE_BUDGETS.max_file_bytes,
+    ).describe(
+      "Maximum whole-APK bytes to admit and hash (default 512 MiB, maximum 2 GiB)",
+    ),
+    max_output_bytes: parameterBudgetSchema(
+      APK_SIGNATURE_BUDGETS.max_output_bytes,
+    ).describe(
+      "Maximum decoded signing report bytes before refusing without truncation (default 8 MiB, maximum 64 MiB)",
+    ),
+    max_signing_block_pairs: parameterBudgetSchema(
+      APK_SIGNATURE_BUDGETS.max_signing_block_pairs,
+    ).describe(
+      "Maximum ID/value pairs in the APK Signing Block (default 4096, maximum 65536)",
+    ),
+    max_signers: parameterBudgetSchema(
+      APK_SIGNATURE_BUDGETS.max_signers,
+    ).describe(
+      "Maximum signers decoded per scheme (v1, v2, v3, v3.1; default 32, maximum 1024)",
+    ),
+    max_lineage_nodes: parameterBudgetSchema(
+      APK_SIGNATURE_BUDGETS.max_lineage_nodes,
+    ).describe(
+      "Maximum v3/v3.1 proof-of-rotation lineage nodes decoded across signers (default 32, maximum 1024)",
+    ),
+    max_signer_elements: parameterBudgetSchema(
+      APK_SIGNATURE_BUDGETS.max_signer_elements,
+    ).describe(
+      "Maximum digests, certificates, signatures, and attributes decoded across v2/v3/v3.1 signers (default 4096, maximum 65536)",
+    ),
+    max_v1_signature_entries: parameterBudgetSchema(
+      APK_SIGNATURE_BUDGETS.max_v1_signature_entries,
+    ).describe(
+      "Maximum META-INF v1 signing entries retained from the central directory (default 4096, maximum 65536)",
+    ),
   })
   .superRefine((input, context) => {
     if (input.detail === "complete" && input.view !== undefined)

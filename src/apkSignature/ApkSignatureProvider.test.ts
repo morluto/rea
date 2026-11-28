@@ -373,13 +373,14 @@ describe("ApkSignatureProvider v1 signers", () => {
     ]);
   });
 
-  it("refuses more v1 signers than a signed archive carries", async () => {
+  it("refuses more v1 signers than the configured budget and accepts a raised max_signers", async () => {
     const names = Array.from({ length: 33 }, (_, i) => [
       { name: `META-INF/S${String(i)}.SF`, data: "x" },
       { name: `META-INF/S${String(i)}.RSA`, data: "x" },
     ]).flat();
+    const archivePath = await write("v1-many.apk", await zipWith(names));
     const result = await provider.inspect({
-      path: await write("v1-many.apk", await zipWith(names)),
+      path: archivePath,
     });
     if (result.ok)
       throw new Error("Accepted an archive above the v1 signer limit");
@@ -388,9 +389,29 @@ describe("ApkSignatureProvider v1 signers", () => {
       retryable: false,
       details: {
         reported_limits: { max_v1_signers: 32 },
-        refusal: { kind: "fixed_ceiling", allowance_kind: "count" },
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_signers",
+          effective_value: 32,
+          minimum: 1,
+          maximum: 1024,
+          default_value: 32,
+          applies_at: "next_call",
+        },
+        refusal: {
+          kind: "adjustable_budget",
+          control: "max_signers",
+        },
       },
     });
+    const raised = await provider.inspect({
+      path: archivePath,
+      max_signers: 33,
+    });
+    if (!raised.ok) throw raised.error;
+    expect(
+      apkSignatureResultSchema.parse(raised.value.result).schemes.v1.signers,
+    ).toHaveLength(33);
   });
 });
 
@@ -607,14 +628,20 @@ const registerSigningStructureFailureCases = () => {
       retryable: false,
       details: {
         reported_limits: { max_output_bytes: APK_SIGNATURE_LIMITS.outputBytes },
-        refusal: {
-          kind: "fixed_ceiling",
-          allowance_kind: "report",
-          limit: APK_SIGNATURE_LIMITS.outputBytes,
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_output_bytes",
+          effective_value: APK_SIGNATURE_LIMITS.outputBytes,
+          default_value: APK_SIGNATURE_LIMITS.outputBytes,
+          maximum: 64 * 1024 * 1024,
           unit: "bytes",
+          applies_at: "next_call",
         },
       },
     });
+    expect(
+      projectAnalysisError(result.error).details?.limit,
+    ).not.toHaveProperty("required_value");
   });
 };
 
@@ -649,13 +676,413 @@ describe("ApkSignatureProvider output budget", () => {
       path: await write("names.apk", await archive(0)),
     });
     expect(fits.ok, fits.ok ? "" : fits.error.message).toBe(true);
+    const overPath = await write("names-noted.apk", await archive(2));
     const over = await provider.inspect({
-      path: await write("names-noted.apk", await archive(2)),
+      path: overPath,
     });
     expect(over.ok).toBe(false);
     if (over.ok) return;
     expect(over.error._tag).toBe("AnalysisResourceConstraintError");
     expect(over.error.message).toContain("output budget");
+    const overProjected = projectAnalysisError(over.error);
+    const required = (
+      overProjected.details?.limit as { required_value?: number } | undefined
+    )?.required_value;
+    expect(typeof required).toBe("number");
+    expect(required).toBeGreaterThan(APK_SIGNATURE_LIMITS.outputBytes);
+    const raised = await provider.inspect({
+      path: overPath,
+      max_output_bytes: required as number,
+    });
+    expect(raised.ok, raised.ok ? "" : raised.error.message).toBe(true);
+  });
+
+  it("enforces small max_output_bytes via the exact serialized size and reports required_value", async () => {
+    const emptyZip = new Uint8Array(22);
+    emptyZip.set([0x50, 0x4b, 0x05, 0x06], 0);
+    const path = await write("empty-small-budget.apk", emptyZip);
+
+    const tooSmall = await provider.inspect({ path, max_output_bytes: 1024 });
+    expect(tooSmall.ok).toBe(false);
+    if (tooSmall.ok) return;
+    const projected = projectAnalysisError(tooSmall.error);
+    expect(projected).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_output_bytes",
+          effective_value: 1024,
+          minimum: 1024,
+          maximum: 64 * 1024 * 1024,
+        },
+      },
+    });
+    const exactBytes = (
+      projected.details?.limit as { required_value?: number } | undefined
+    )?.required_value;
+    expect(typeof exactBytes).toBe("number");
+    expect(exactBytes).toBeGreaterThan(1024);
+    expect(exactBytes).toBeLessThan(4096);
+
+    const fits = await provider.inspect({
+      path,
+      max_output_bytes: exactBytes as number,
+    });
+    expect(fits.ok, fits.ok ? "" : fits.error.message).toBe(true);
+  });
+
+  it("accepts fitting reports when worst-case estimates exceed a smaller max_output_bytes budget", async () => {
+    // 128 distinct 96-char ASCII .SF names: old 6x string projection exceeded
+    // 64 KiB even though actual serialized output is well under 32 KiB.
+    const sfEntries = Array.from({ length: 128 }, (_, index) => ({
+      name: `META-INF/${"a".repeat(80)}_${String(index).padStart(3, "0")}.SF`,
+      data: "",
+      stored: true,
+    }));
+    const sfPath = await write(
+      "many-ascii-sf.apk",
+      await zipWith(sfEntries, { dataDescriptor: false }),
+    );
+    const sfFits = await provider.inspect({
+      path: sfPath,
+      max_output_bytes: 32_768,
+    });
+    expect(sfFits.ok, sfFits.ok ? "" : sfFits.error.message).toBe(true);
+
+    // A 50 KiB undecodable DER certificate has a >200 KiB worst-case
+    // certificateBytes estimate, but materializes to ~2 KiB of JSON.
+    const unreadableCert = new Uint8Array(50 * 1024);
+    const signedData = Buffer.concat([
+      Buffer.from(seq([BOGUS_DIGEST])),
+      lpBuf(lpBuf(unreadableCert)),
+      Buffer.from(seq([])),
+    ]);
+    const certPath = await write(
+      "large-unreadable-cert.apk",
+      syntheticSigned([{ id: V2, value: apkSchemeValue(signedData) }]),
+    );
+    const certFits = await provider.inspect({
+      path: certPath,
+      max_output_bytes: 32_768,
+    });
+    expect(certFits.ok, certFits.ok ? "" : certFits.error.message).toBe(true);
+
+    const certTooSmall = await provider.inspect({
+      path: certPath,
+      max_output_bytes: 1024,
+    });
+    expect(certTooSmall.ok).toBe(false);
+    if (!certTooSmall.ok) {
+      const required = (
+        projectAnalysisError(certTooSmall.error).details?.limit as
+          | { required_value?: number }
+          | undefined
+      )?.required_value;
+      expect(typeof required).toBe("number");
+      expect(required).toBeGreaterThan(1024);
+      expect(required).toBeLessThan(32_768);
+    }
+  });
+
+  it("enforces max_file_bytes, max_v1_signature_entries, and max_signer_elements with typed details.limit", async () => {
+    const v1Path = await write(
+      "v1-budget.apk",
+      await zipWith([
+        { name: "META-INF/MANIFEST.MF", data: "Manifest-Version: 1.0\r\n" },
+        { name: "META-INF/CERT.SF", data: "Signature-Version: 1.0\r\n" },
+        { name: "META-INF/CERT.RSA", data: OPENSSL_BLOCK_ISSUER_SERIAL },
+      ]),
+    );
+    const tooSmallFile = await provider.inspect({
+      path: v1Path,
+      max_file_bytes: 22,
+    });
+    expect(tooSmallFile.ok).toBe(false);
+    if (!tooSmallFile.ok) {
+      const projected = projectAnalysisError(tooSmallFile.error);
+      expect(projected).toMatchObject({
+        code: "resource_constraint",
+        details: {
+          limit: {
+            control_kind: "parameter",
+            parameter: "max_file_bytes",
+            effective_value: 22,
+            minimum: 22,
+            maximum: 2 * 1024 * 1024 * 1024,
+          },
+        },
+      });
+      const fileRequired = (
+        projected.details?.limit as { required_value?: number } | undefined
+      )?.required_value;
+      expect(fileRequired).toBeGreaterThan(22);
+    }
+    const overCeilingFailure = projectAnalysisError(
+      apkSignatureFailure(
+        new ArtifactReaderFailure("limit", "Selected file exceeds budget", {
+          boundary: "file-size",
+          observedBytes: 3_221_225_472n,
+        }),
+        v1Path,
+        undefined,
+        APK_SIGNATURE_LIMITS.inputBytes,
+      ),
+    );
+    expect(overCeilingFailure.details?.limit).toMatchObject({
+      parameter: "max_file_bytes",
+      required_value: 3_221_225_472,
+      maximum: 2 * 1024 * 1024 * 1024,
+    });
+
+    const v1EntriesRefused = await provider.inspect({
+      path: v1Path,
+      max_v1_signature_entries: 1,
+    });
+    expect(v1EntriesRefused.ok).toBe(false);
+    if (!v1EntriesRefused.ok) {
+      expect(projectAnalysisError(v1EntriesRefused.error)).toMatchObject({
+        code: "resource_constraint",
+        details: {
+          limit: {
+            control_kind: "parameter",
+            parameter: "max_v1_signature_entries",
+            effective_value: 1,
+            maximum: 65536,
+          },
+        },
+      });
+    }
+    const v1EntriesOk = await provider.inspect({
+      path: v1Path,
+      max_v1_signature_entries: 3,
+    });
+    expect(
+      v1EntriesOk.ok,
+      v1EntriesOk.ok ? "" : v1EntriesOk.error.message,
+    ).toBe(true);
+
+    const twoDigestSigner = lp([
+      ...lp([
+        ...seq([
+          [...u32(0x0103), ...lp([1, 2, 3])],
+          [...u32(0x0104), ...lp([4, 5, 6])],
+        ]),
+        ...seq([[...LEAF_CERTIFICATE]]),
+        ...seq([]),
+      ]),
+      ...seq([[...u32(0x0103), ...lp([9])]]),
+      ...lp([7, 8]),
+    ]);
+    const v2Path = await write(
+      "v2-elements.apk",
+      withSigningBlock(await zipOf(["classes.dex"]), [
+        {
+          id: APK_SIGNATURE_V2_ID,
+          value: Uint8Array.from(lp(twoDigestSigner)),
+        },
+      ]),
+    );
+    const elementsRefused = await provider.inspect({
+      path: v2Path,
+      max_signer_elements: 1,
+    });
+    expect(elementsRefused.ok).toBe(false);
+    if (!elementsRefused.ok) {
+      expect(projectAnalysisError(elementsRefused.error)).toMatchObject({
+        code: "resource_constraint",
+        details: {
+          limit: {
+            control_kind: "parameter",
+            parameter: "max_signer_elements",
+            effective_value: 1,
+            maximum: 65536,
+          },
+        },
+      });
+    }
+    const elementsTooSmall = await provider.inspect({
+      path: v2Path,
+      max_signer_elements: 3,
+    });
+    expect(elementsTooSmall.ok).toBe(false);
+    if (!elementsTooSmall.ok) {
+      expect(projectAnalysisError(elementsTooSmall.error)).toMatchObject({
+        code: "resource_constraint",
+        details: {
+          limit: {
+            control_kind: "parameter",
+            parameter: "max_signer_elements",
+            effective_value: 3,
+            maximum: 65536,
+          },
+        },
+      });
+    }
+    const elementsOk = await provider.inspect({
+      path: v2Path,
+      max_signer_elements: 4,
+    });
+    expect(elementsOk.ok, elementsOk.ok ? "" : elementsOk.error.message).toBe(
+      true,
+    );
+  });
+
+  it("caps retained signer elements across signers and schemes before output projection", async () => {
+    // 16 signers * 100 empty certificates = 1,600 certificate views; each signer's
+    // projected output is tiny (first certificate only), so without a shared
+    // element allowance across signers this bypasses projectedOutputBytes.
+    const emptyCerts = Array.from({ length: 100 }, () => []);
+    const oneSigner = apkSchemeValue(
+      Uint8Array.from([...seq([]), ...seq(emptyCerts), ...seq([])]),
+    ).subarray(4);
+    const v2ManyEmptyCerts = Buffer.concat([
+      Buffer.from(u32(oneSigner.length * 16)),
+      ...Array.from({ length: 16 }, () => oneSigner),
+    ]);
+    const path = await write(
+      "v2-multi-signer-empty-certs.apk",
+      syntheticSigned([{ id: V2, value: v2ManyEmptyCerts }]),
+    );
+    const refused = await provider.inspect({
+      path,
+      max_signers: 16,
+      max_signer_elements: 250,
+    });
+    expect(refused.ok).toBe(false);
+    if (!refused.ok) {
+      expect(projectAnalysisError(refused.error)).toMatchObject({
+        code: "resource_constraint",
+        details: {
+          limit: {
+            control_kind: "parameter",
+            parameter: "max_signer_elements",
+            effective_value: 250,
+            maximum: 65536,
+          },
+        },
+      });
+    }
+    // Each signer holds 100 empty certificates plus 1 signature from apkSchemeValue (1,616 total).
+    const justBelow = await provider.inspect({
+      path,
+      max_signers: 16,
+      max_signer_elements: 1615,
+    });
+    expect(justBelow.ok).toBe(false);
+    const admitted = await provider.inspect({
+      path,
+      max_signers: 16,
+      max_signer_elements: 1616,
+    });
+    expect(admitted.ok, admitted.ok ? "" : admitted.error.message).toBe(true);
+
+    // Lineage nodes also share one budget across v3 and v3.1 schemes.
+    const lineageNode = lp([
+      ...lp([...lp([1]), ...u32(0x0103)]),
+      ...u32(0),
+      ...u32(0x0103),
+      ...lp([]),
+    ]);
+    const twoNodeAttr = [
+      ...u32(0x3ba06f8c),
+      ...u32(1),
+      ...lineageNode,
+      ...lineageNode,
+    ];
+    const multiSchemePath = await write(
+      "v3-v31-shared-lineage.apk",
+      syntheticSigned([
+        { id: APK_SIGNATURE_V3_ID, value: v3Value([twoNodeAttr]) },
+        { id: V31, value: v3Value([twoNodeAttr]) },
+      ]),
+    );
+    const lineageRefused = await provider.inspect({
+      path: multiSchemePath,
+      max_lineage_nodes: 3,
+    });
+    expect(lineageRefused.ok).toBe(false);
+    if (!lineageRefused.ok) {
+      expect(projectAnalysisError(lineageRefused.error)).toMatchObject({
+        code: "resource_constraint",
+        details: {
+          limit: {
+            control_kind: "parameter",
+            parameter: "max_lineage_nodes",
+            effective_value: 3,
+            maximum: 1024,
+          },
+        },
+      });
+    }
+    const lineageAdmitted = await provider.inspect({
+      path: multiSchemePath,
+      max_lineage_nodes: 4,
+    });
+    expect(
+      lineageAdmitted.ok,
+      lineageAdmitted.ok ? "" : lineageAdmitted.error.message,
+    ).toBe(true);
+
+    // Deterministic v2/v3/v3.1 framing failures surface before v1 output-budget
+    // projection stops, so an over-estimated v1 block never masks a damaged v2 block.
+    const innerPayloadLen = 1_048_000;
+    const innerOctet = new Uint8Array(5 + innerPayloadLen);
+    innerOctet[0] = 0x04;
+    innerOctet[1] = 0x83;
+    innerOctet[2] = (innerPayloadLen >>> 16) & 0xff;
+    innerOctet[3] = (innerPayloadLen >>> 8) & 0xff;
+    innerOctet[4] = innerPayloadLen & 0xff;
+    const bigCert = new Uint8Array(5 + innerOctet.length);
+    bigCert[0] = 0x30;
+    bigCert[1] = 0x83;
+    bigCert[2] = (innerOctet.length >>> 16) & 0xff;
+    bigCert[3] = (innerOctet.length >>> 8) & 0xff;
+    bigCert[4] = innerOctet.length & 0xff;
+    bigCert.set(innerOctet, 5);
+    const bigV1Block = signedDataBlock({
+      certificates: [bigCert],
+      signerInfos: [],
+    });
+    const bigV1Zip = await zipWith([
+      { name: "META-INF/CERT.SF", data: "Signature-Version: 1.0" },
+      { name: "META-INF/CERT.RSA", data: bigV1Block },
+    ]);
+    // Confirm the v1 block alone exceeds the 8 MiB allocation ceiling before testing v2 precedence.
+    const v1AlonePath = await write("v1-big-alone.apk", bigV1Zip);
+    const v1OverBudget = await provider.inspect({ path: v1AlonePath });
+    expect(v1OverBudget.ok).toBe(false);
+    if (!v1OverBudget.ok) {
+      expect(projectAnalysisError(v1OverBudget.error)).toMatchObject({
+        code: "resource_constraint",
+        details: { limit: { parameter: "max_output_bytes" } },
+      });
+    }
+    const maskedPath = await write(
+      "v1-big-v2-malformed.apk",
+      withSigningBlock(bigV1Zip, [
+        {
+          id: APK_SIGNATURE_V2_ID,
+          value: Uint8Array.of(0xff, 0xff, 0xff, 0x7f),
+        },
+      ]),
+    );
+    const malformedV2 = await provider.inspect({ path: maskedPath });
+    expect(malformedV2.ok).toBe(false);
+    if (!malformedV2.ok) {
+      expect(projectAnalysisError(malformedV2.error)).toMatchObject({
+        code: "invalid_request",
+        details: {
+          issues: expect.arrayContaining([
+            expect.objectContaining({
+              message: expect.stringContaining(
+                "Malformed APK Signature Scheme v2",
+              ),
+            }),
+          ]),
+        },
+      });
+    }
   });
 });
 

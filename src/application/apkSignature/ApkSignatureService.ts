@@ -16,7 +16,10 @@ import type { Evidence } from "../../domain/evidence.js";
 import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
-import { parseAnalysisInput } from "../AnalysisInput.js";
+import {
+  callerAnalysisParameters,
+  parseAnalysisInput,
+} from "../AnalysisInput.js";
 
 const OPERATION = "inspect_apk_signature";
 
@@ -44,12 +47,16 @@ export class ApkSignatureService {
       options?.signal,
     );
     if (!input.ok) return input;
-    const { detail, view, ...parameters } = input.value;
+    const { detail, view, ...resolvedParameters } = input.value;
+    const callerParameters = {
+      ...callerAnalysisParameters(rawInput)(resolvedParameters),
+      path: input.value.path,
+    };
     if (detail === "summary") {
       const ready = requireAnalysisViewRetention(OPERATION, retention);
       if (!ready.ok) return ready;
     }
-    const inspected = await this.provider.inspect(parameters, options);
+    const inspected = await this.provider.inspect(callerParameters, options);
     if (!inspected.ok) return inspected;
     const execution = inspected.value;
     const report = apkSignatureResultSchema.safeParse(execution.result);
@@ -68,7 +75,7 @@ export class ApkSignatureService {
     const completed = completeProviderEvidence(
       createAnalysisExecutionEvidence(
         OPERATION,
-        { path: input.value.path },
+        callerParameters,
         { ...execution, result: report.data },
         "observed",
       ),

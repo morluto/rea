@@ -290,4 +290,67 @@ describe("APK proof-of-rotation lineage", () => {
       });
     }
   });
+
+  it("enforces a shared signer-element budget across signers and lineage budget across schemes", () => {
+    // Each signer holds 100 empty certificates (400 bytes), well within
+    // max_signer_elements per list on its own, but 100 signers multiply to
+    // 10,000 retained certificate views without a shared allowance.
+    const emptyCerts = Array.from({ length: 100 }, () => []);
+    const oneSigner = schemeValue([
+      ...seq([]),
+      ...seq(emptyCerts),
+      ...seq([]),
+    ]).subarray(4);
+    const manySigners = Buffer.concat([
+      Buffer.from(u32(oneSigner.length * 100)),
+      ...Array.from({ length: 100 }, () => oneSigner),
+    ]);
+    const sharedRefusal = decodeSigners(manySigners, "v2", {
+      maxSigners: 100,
+      maxElements: 500,
+    });
+    expect(sharedRefusal).toMatchObject({
+      ok: false,
+      error: {
+        kind: "limit",
+        failure: { limit: { name: "signer-elements", maximum: 500 } },
+      },
+    });
+
+    // Shared lineage budget stops accumulation across separate signers/schemes.
+    const node = lp([
+      ...lp([...lp([1]), ...u32(0x0103)]),
+      ...u32(0),
+      ...u32(0x0103),
+      ...lp([]),
+    ]);
+    const twoNodes = Uint8Array.from([...u32(1), ...node, ...node]);
+    const lineageBudget = { used: 0, limit: 3 };
+    expect(decodeRotationLineage(twoNodes, "v3", lineageBudget).ok).toBe(true);
+    expect(lineageBudget.used).toBe(2);
+    expect(
+      decodeRotationLineage(twoNodes, "v3.1", lineageBudget),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        kind: "limit",
+        failure: { limit: { name: "lineage-nodes", maximum: 3 } },
+      },
+    });
+
+    // A malformed lineage does not charge discarded nodes against later signers.
+    const malformedBudget = { used: 0, limit: 2 };
+    const truncatedAfterTwo = Uint8Array.from([...u32(1), ...node, ...node, 1]);
+    expect(
+      decodeRotationLineage(truncatedAfterTwo, "v3", malformedBudget),
+    ).toMatchObject({
+      ok: false,
+      error: { kind: "malformed-signer", detail: "lineage node truncated" },
+    });
+    expect(malformedBudget.used).toBe(0);
+    expect(decodeRotationLineage(twoNodes, "v3.1", malformedBudget).ok).toBe(
+      true,
+    );
+    expect(malformedBudget.used).toBe(2);
+  });
 });

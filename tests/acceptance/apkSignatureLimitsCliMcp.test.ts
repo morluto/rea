@@ -26,7 +26,7 @@ import { cliTest } from "../support/cli/cliFixture.js";
 import { bufferByteSource } from "../../src/domain/byteSource.js";
 
 cliTest(
-  "keeps fixed APK pair refusals nonretryable through CLI and MCP, then accepts a valid input",
+  "reports per-call APK pair refusals nonretryable through CLI and MCP, then accepts raised and valid inputs",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-apk-pair-limit-");
     const archive = await zipWith([
@@ -77,10 +77,14 @@ cliTest(
         resource: "capacity",
         reason: parsed.error.failure.detail,
         reported_limits: { max_signing_block_pairs: 4096 },
-        refusal: {
-          kind: "fixed_ceiling",
-          operation: "inspect_apk_signature",
-          allowance_kind: "count",
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_signing_block_pairs",
+          effective_value: 4096,
+          default_value: 4096,
+          maximum: 65536,
+          unit: "count",
+          applies_at: "next_call",
         },
       },
     };
@@ -89,8 +93,26 @@ cliTest(
     });
     expect(reply.exitCode, reply.stderr).toBe(1);
     const error = analysisErrorProjectionSchema.parse(reply.json);
-    expect(error).toMatchObject(expected);
-    expect(error.remediation.action).toContain("4096");
+    expect(error).toMatchObject({
+      ...expected,
+      details: {
+        ...expected.details,
+        limit: {
+          ...expected.details.limit,
+          cli_flag: "--max-signing-block-pairs",
+        },
+      },
+    });
+    const raisedPairs = await cli.run({
+      arguments: [
+        "inspect-apk-signature",
+        paths.get(4097)!,
+        "--max-signing-block-pairs",
+        "4097",
+        "--json",
+      ],
+    });
+    expect(raisedPairs.exitCode, raisedPairs.stderr).toBe(0);
     const malformedExpected = {
       code: "invalid_request",
       details: {
@@ -136,7 +158,7 @@ cliTest(
 );
 
 cliTest(
-  "preserves the fixed signer and lineage refusals through CLI and MCP",
+  "reports per-call signer and lineage refusals through CLI and MCP",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-apk-scheme-limit-");
     const archive = await zipWith([
@@ -177,21 +199,81 @@ cliTest(
       });
       expect(reply.exitCode, reply.stderr).toBe(1);
       const error = analysisErrorProjectionSchema.parse(reply.json);
-      expect(error).toMatchObject({
+      const expected = {
         code: "resource_constraint",
         retryable: false,
         details: {
           operation: "inspect_apk_signature",
           resource: "capacity",
           reason: `APK Signature Scheme ${scheme} holds more ${boundary} than the 32 limit.`,
+          reported_limits: { [key]: 32 },
+          limit: {
+            control_kind: "parameter",
+            parameter: key,
+            effective_value: 32,
+            default_value: 32,
+            maximum: 1024,
+            unit: "count",
+            applies_at: "next_call",
+          },
+        },
+      };
+      expect(error).toMatchObject({
+        ...expected,
+        details: {
+          ...expected.details,
+          limit: {
+            ...expected.details.limit,
+            cli_flag: `--${key.replaceAll("_", "-")}`,
+          },
         },
       });
-      expect(error.details?.reported_limits).toEqual({ [key]: 32 });
-      expect(error.remediation.action).toBe(
-        `The APK Signature Scheme ${scheme} allowance of 32 ${boundary} (this release has no runtime override) is a fixed count. Waiting for an active analysis to finish does not raise it. Repeating the unchanged request fails the same way.`,
-      );
       const rejected = await call("inspect_apk_signature", { path });
-      expect(parseMcpToolError(rejected).error).toEqual(error);
+      expect(parseMcpToolError(rejected).error).toMatchObject(expected);
+      const raised = await call("inspect_apk_signature", {
+        path,
+        [key]: 33,
+      });
+      expect(raised.isError, JSON.stringify(raised.content)).not.toBe(true);
     }
+  },
+);
+
+cliTest(
+  "keeps omitted budget defaults out of MCP Evidence parameters and records caller-selected budgets",
+  async () => {
+    const root = await createTestTempDirectory("rea-apk-mcp-params-");
+    const path = join(root, "unsigned.apk");
+    await writeFile(
+      path,
+      await zipWith([
+        { name: "AndroidManifest.xml", data: Uint8Array.of(3, 0, 8, 0) },
+      ]),
+    );
+    const { call } = await connectLocalToolsMcp({
+      REA_MCP_OUTPUT_SCHEMA_PROFILE: "off",
+    });
+
+    const omitted = await call("inspect_apk_signature", {
+      path,
+      detail: "complete",
+    });
+    expect(omitted.isError, JSON.stringify(omitted.content)).not.toBe(true);
+    expect(parseEvidence(omitted.structuredContent).parameters).toEqual({
+      path,
+    });
+
+    const explicit = await call("inspect_apk_signature", {
+      path,
+      detail: "complete",
+      max_signers: 40,
+      max_output_bytes: 1024 * 1024,
+    });
+    expect(explicit.isError, JSON.stringify(explicit.content)).not.toBe(true);
+    expect(parseEvidence(explicit.structuredContent).parameters).toEqual({
+      path,
+      max_signers: 40,
+      max_output_bytes: 1024 * 1024,
+    });
   },
 );

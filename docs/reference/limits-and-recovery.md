@@ -131,6 +131,11 @@ their per-call budgets (`max_file_bytes`, entry, depth and decoded-byte budgets,
 `inspect_erlang_beam` report it too. The per-page symbol-name text allowance of `inspect_elf_unwind_ranges` is a fixed allowance (`details.refusal.kind` `fixed_ceiling`); its `narrowing` asks for a smaller page `limit` or paging with `offset`. `inspect_erlang_beam` accepts `max_table_rows` (export,
 import and lambda rows combined; default 65,536, at most 1,048,576).
 
+`inspect_apk_signature` reports the same parameter limit for its seven per-call
+budgets (`max_file_bytes`, `max_output_bytes`, `max_signing_block_pairs`,
+`max_signers`, `max_lineage_nodes`, `max_signer_elements` and
+`max_v1_signature_entries`).
+
 ### Native table structure budget
 
 `inspect_elf_unwind_ranges`, `inspect_macho_function_starts`, `inspect_kernel_module`, `inspect_elf_debug_link`,

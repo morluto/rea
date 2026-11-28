@@ -1,7 +1,5 @@
-import {
-  fixedAllowanceOptions,
-  fixedProducerInputAllowance,
-} from "../domain/fixedAllowanceRemediation.js";
+import type { ApkSignatureBudget } from "../domain/apkSignature/apkSignatureBudgets.js";
+import { apkSignatureBudgetLimit } from "../domain/apkSignature/apkSignatureQuery.js";
 import {
   ArtifactReaderFailure,
   stableArtifactInputFailure,
@@ -77,13 +75,17 @@ export const mapApkBlockError = (
       const { name, maximum } = error.failure.limit;
       return parseLimitConstraint(OPERATION, "capacity", error, {
         legacyMaximumKey: name,
-        ...fixedAllowanceOptions(
-          `The APK Signing Block allowance of ${String(maximum)} pairs (this release has no runtime override)`,
-          "count",
-        ),
+        retryable: false,
+        limit: apkSignatureBudgetLimit("max_signing_block_pairs", maximum),
       });
     }
   }
+};
+
+const schemeBudgetParameter = (name: string): ApkSignatureBudget => {
+  if (name === "signers") return "max_signers";
+  if (name === "lineage-nodes") return "max_lineage_nodes";
+  return "max_signer_elements";
 };
 
 /** Map a tagged signer/lineage decoding failure, naming the scheme it came from. */
@@ -98,10 +100,8 @@ export const mapApkSchemeError = (
   const { name, maximum } = error.failure.limit;
   return parseLimitConstraint(OPERATION, "capacity", error, {
     legacyMaximumKey: `max_${name.replace(/-/g, "_")}`,
-    ...fixedAllowanceOptions(
-      `The APK Signature Scheme ${scheme} allowance of ${String(maximum)} ${name} (this release has no runtime override)`,
-      "count",
-    ),
+    retryable: false,
+    limit: apkSignatureBudgetLimit(schemeBudgetParameter(name), maximum),
   });
 };
 
@@ -116,10 +116,8 @@ export const mapCentralDirectoryError = (
   const { name, maximum } = error.failure.limit;
   return parseLimitConstraint(OPERATION, "capacity", error, {
     legacyMaximumKey: name,
-    ...fixedAllowanceOptions(
-      `The APK v1 allowance of ${String(maximum)} META-INF signing entries (this release has no runtime override)`,
-      "count",
-    ),
+    retryable: false,
+    limit: apkSignatureBudgetLimit("max_v1_signature_entries", maximum),
   });
 };
 
@@ -130,27 +128,30 @@ export const v1SignerCapacityError = (limit: number): AnalysisError =>
     "capacity",
     `The archive pairs more than ${String(limit)} v1 signature blocks with .SF files.`,
     { max_v1_signers: limit },
-    fixedAllowanceOptions(
-      `The APK v1 allowance of ${String(limit)} signers (this release has no runtime override)`,
-      "count",
-    ),
+    {
+      retryable: false,
+      limit: apkSignatureBudgetLimit("max_signers", limit),
+    },
   );
 
 /** The decoded result would exceed the inline output budget. */
-export const apkOutputBudgetError = (projectedBytes: number): AnalysisError =>
+export const apkOutputBudgetError = (
+  projectedBytes: number,
+  maxOutputBytes: number = APK_SIGNATURE_LIMITS.outputBytes,
+  exact = false,
+): AnalysisError =>
   new AnalysisResourceConstraintError(
     OPERATION,
     "capacity",
-    `The decoded signing report (${String(projectedBytes)} bytes) exceeds the ${String(APK_SIGNATURE_LIMITS.outputBytes)}-byte output budget.`,
-    { max_output_bytes: APK_SIGNATURE_LIMITS.outputBytes },
-    fixedAllowanceOptions(
-      "The decoded APK signing report allowance",
-      "report",
-      {
-        limit: APK_SIGNATURE_LIMITS.outputBytes,
-        unit: "bytes",
+    `The decoded signing report (${String(projectedBytes)} bytes) exceeds the ${String(maxOutputBytes)}-byte output budget.`,
+    { max_output_bytes: maxOutputBytes },
+    {
+      retryable: false,
+      limit: {
+        ...apkSignatureBudgetLimit("max_output_bytes", maxOutputBytes),
+        ...(exact ? { required_value: projectedBytes } : {}),
       },
-    ),
+    },
   );
 
 /**
@@ -162,10 +163,11 @@ export const apkSignatureFailure = (
   cause: unknown,
   path: string,
   identity?: { readonly sha256: string; readonly bytes: number },
+  maxFileBytes: number = APK_SIGNATURE_LIMITS.inputBytes,
 ): AnalysisError =>
   projectStableArtifactFailure(
     cause,
-    primaryFailure(artifactFilePrimaryFacts(cause), path),
+    primaryFailure(artifactFilePrimaryFacts(cause), path, maxFileBytes),
     path,
     APK_SIGNATURE_PROVIDER_IDENTITY.id,
     OPERATION,
@@ -176,6 +178,7 @@ export const apkSignatureFailure = (
 const primaryFailure = (
   facts: ArtifactFilePrimaryFacts,
   path: string,
+  maxFileBytes: number,
 ): AnalysisError => {
   const { cause, origin } = facts;
   if (origin === "owned-or-classified" && cause instanceof AnalysisError)
@@ -184,7 +187,7 @@ const primaryFailure = (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure
   )
-    return artifactReaderFailure(cause, path);
+    return artifactReaderFailure(cause, path, maxFileBytes);
   if (cause instanceof Error && "code" in cause) {
     if (cause.code === "EACCES" || cause.code === "EPERM")
       return new AnalysisAccessDeniedError(OPERATION, path, cause.code, {
@@ -214,26 +217,36 @@ const primaryFailure = (
 const artifactReaderFailure = (
   cause: ArtifactReaderFailure,
   path: string,
+  maxFileBytes: number,
 ): AnalysisError => {
   switch (cause.reason) {
     case "integrity":
       return readerIntegrityFailure(OPERATION, path, cause);
     case "cancelled":
       return artifactFileCancellationError(OPERATION, cause);
-    case "limit":
+    case "limit": {
+      const requiredValue =
+        cause.observedBytes !== undefined &&
+        cause.observedBytes <= BigInt(Number.MAX_SAFE_INTEGER)
+          ? Number(cause.observedBytes)
+          : undefined;
       return new AnalysisResourceConstraintError(
         OPERATION,
         "file-size",
         cause.message,
-        { max_input_bytes: APK_SIGNATURE_LIMITS.inputBytes },
+        { max_input_bytes: maxFileBytes },
         {
           cause,
-          ...fixedProducerInputAllowance(
-            APK_SIGNATURE_LIMITS.inputBytes,
-            "The APK signature input allowance",
-          ),
+          retryable: false,
+          limit: {
+            ...apkSignatureBudgetLimit("max_file_bytes", maxFileBytes),
+            ...(requiredValue === undefined
+              ? {}
+              : { required_value: requiredValue }),
+          },
         },
       );
+    }
     case "path":
       return stableArtifactInputFailure(cause, OPERATION);
     default:
