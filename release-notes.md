@@ -1960,6 +1960,7 @@
 * fit the binary layout toolchain download into three attempts ([f781e31](https://github.com/morluto/rea/commit/f781e310916e3d93d5fa0671132b9ce29fcf1c51))
 * **limits:** enforce numeric inventory drift on documentation changes ([#12881](https://github.com/morluto/rea/issues/12881)) ([aaf151f](https://github.com/morluto/rea/commit/aaf151f5d6cca927823ac605699e587dfca2c043))
 * measure portable runner time for recorded selection predictions ([#14304](https://github.com/morluto/rea/issues/14304)) ([24f35b4](https://github.com/morluto/rea/commit/24f35b401867904e23869698d3490a1894916fe1))
+* **mutation:** run four Stryker workers on the sweep's 4-vCPU runner ([#15001](https://github.com/morluto/rea/issues/15001)) ([0c7ebd6](https://github.com/morluto/rea/commit/0c7ebd68c4818a55cdd013ac73ccd9b41e141e07))
 * publish the portable build cache only for selected consumers ([#14307](https://github.com/morluto/rea/issues/14307)) ([2b818e0](https://github.com/morluto/rea/commit/2b818e0dbf6df8583cd36307b29406fc0d047f55))
 * record affected-test predictions above the live cutoff ([#14300](https://github.com/morluto/rea/issues/14300)) ([e6bf4af](https://github.com/morluto/rea/commit/e6bf4af1c913dd1b3d04c632298c6db045f1e95f))
 * **release:** preserve unpublished versions and verify npm before tagging ([#12770](https://github.com/morluto/rea/issues/12770)) ([ad2b34c](https://github.com/morluto/rea/commit/ad2b34ca9b30769ec8ff8ef26025a38a9a32c589))
