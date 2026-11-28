@@ -2,6 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { z } from "zod";
 import { readStableArtifact } from "../../resources/index.js";
 import { webNetworkCaptureBudgetsSchema } from "../../domain/webNetworkCapture.js";
+import { MAXIMUM_ARTIFACT_READER_COUNT } from "../../domain/artifactReaderLimits.js";
 import { captureBudgets, withCaptureBudgets } from "./CaptureBudgets.js";
 import { CaptureFormatError } from "./CaptureFormatError.js";
 
@@ -10,6 +11,7 @@ const requestSchema = z.strictObject({
   reply_path: z.string(),
   sensitive_values: z.array(z.string().min(1)),
   budgets: webNetworkCaptureBudgetsSchema,
+  member_count: z.int().min(1).max(MAXIMUM_ARTIFACT_READER_COUNT).optional(),
 });
 
 /** Parse untrusted captures in an owned heap and return one complete bounded reply. */
@@ -41,30 +43,40 @@ const main = async (): Promise<void> => {
         value = await decodeSazCapture(
           request.snapshot_path,
           request.sensitive_values,
+          request.member_count,
         );
       }
       reply = { ok: true, value };
     } catch (cause: unknown) {
       reply =
-        cause instanceof CaptureFormatError
+        cause instanceof CaptureFormatError &&
+        cause.limit?.name === "zip-member-count"
           ? {
               ok: false,
-              reason: cause.replyReason,
+              reason: "member-count" as const,
               message: cause.message,
               pointer: cause.pointer,
-              ...(cause.ceiling === undefined
-                ? {}
-                : {
-                    ceiling: cause.ceiling.fixedAllowance,
-                    boundary: cause.ceiling.boundary,
-                  }),
+              member_count: cause.limit.maximum,
             }
-          : {
-              ok: false,
-              reason: "decoder",
-              message: `Capture decoder failed unexpectedly (${cause instanceof Error ? cause.name : "unknown exception"}).`,
-              pointer: "",
-            };
+          : cause instanceof CaptureFormatError
+            ? {
+                ok: false,
+                reason: cause.replyReason,
+                message: cause.message,
+                pointer: cause.pointer,
+                ...(cause.ceiling === undefined
+                  ? {}
+                  : {
+                      ceiling: cause.ceiling.fixedAllowance,
+                      boundary: cause.boundary,
+                    }),
+              }
+            : {
+                ok: false,
+                reason: "decoder",
+                message: `Capture decoder failed unexpectedly (${cause instanceof Error ? cause.name : "unknown exception"}).`,
+                pointer: "",
+              };
     }
     let text = JSON.stringify(reply);
     if (Buffer.byteLength(text) > captureBudgets().outputBytes)

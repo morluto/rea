@@ -1,6 +1,8 @@
 import { positiveDecimalIntegerSchema } from "./positiveDecimalInteger.js";
 
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
+import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
+import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { currentAnalysisSettingOverride } from "../domain/analysisOperationSnapshot.js";
 import {
   ARTIFACT_MEMBER_COUNT_SETTING,
@@ -9,6 +11,9 @@ import {
   type ArtifactMemberCount,
 } from "../domain/artifactReaderLimits.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
+
+/** The ZIP reader field `artifact.member_count` supplies when a call has no `artifact_limits`. */
+export const ZIP_MEMBER_COUNT_PARAMETER = "artifact_limits.zip.member_count";
 
 const CONSTRAINT = `REA_ARTIFACT_MEMBER_COUNT must be a decimal integer from 1 to ${String(MAXIMUM_ARTIFACT_READER_COUNT)} members; the default is ${String(DEFAULT_ARTIFACT_MEMBER_COUNT)}.`;
 
@@ -49,4 +54,62 @@ export const runtimeArtifactMemberCount = (
       ],
     });
   return { value: parsed.data, source: "setting" };
+};
+
+/**
+ * Member count for a ZIP reader whose caller has no `artifact_limits` field.
+ * Flutter APK inventory, Playwright trace import, and SAZ decoding use this.
+ */
+export const operationZipMemberCount = (): number =>
+  runtimeArtifactMemberCount(process.env).value;
+
+/**
+ * A central-directory count refusal. The reader's message stays a count.
+ * Recovery names `artifact.member_count`, the setting that supplied the cap.
+ */
+export const zipMemberCountRefusal = (
+  operation: string,
+  message: string,
+  effectiveValue: number,
+  cause?: unknown,
+): AnalysisResourceConstraintError => {
+  const resolved = runtimeArtifactMemberCount(process.env);
+  return new AnalysisResourceConstraintError(
+    operation,
+    "capacity",
+    message,
+    { member_count: effectiveValue },
+    {
+      ...(cause === undefined ? {} : { cause }),
+      retryable: false,
+      limit: {
+        ...analysisSettingLimit(
+          ARTIFACT_MEMBER_COUNT_SETTING,
+          effectiveValue,
+          resolved.source,
+        ),
+        parameter: ZIP_MEMBER_COUNT_PARAMETER,
+      },
+    },
+  );
+};
+
+/** The public count refusal when this reader limit is the ZIP member count. */
+export const zipMemberCountConstraint = (
+  operation: string,
+  cause: {
+    readonly message: string;
+    readonly readerLimit?:
+      | { readonly parameter: string; readonly effective_value: number }
+      | undefined;
+  },
+): AnalysisResourceConstraintError | undefined => {
+  const limit = cause.readerLimit;
+  if (limit?.parameter !== ZIP_MEMBER_COUNT_PARAMETER) return undefined;
+  return zipMemberCountRefusal(
+    operation,
+    cause.message,
+    limit.effective_value,
+    cause,
+  );
 };

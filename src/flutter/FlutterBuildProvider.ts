@@ -77,6 +77,10 @@ import { observeDartSnapshot } from "./DartSnapshotProfile.js";
 import { readElfBuildIds } from "./ElfBuildId.js";
 import { privateWorkspaceFailure } from "../process/privateWorkspaceFailure.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import {
+  operationZipMemberCount,
+  zipMemberCountConstraint,
+} from "../config/artifactMemberCount.js";
 
 const IDENTIFIER_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]*$/u;
 
@@ -226,10 +230,11 @@ const mapInputFailure = (
 
 /**
  * Report the ZIP reader ceiling that refused the APK. A ceiling the reader
- * names (the Zstandard decoder window) keeps its name. The archive expansion
- * budget is derived from the APK's size, and Flutter offers no control that
- * raises it, so it is fixed for this request. The ZIP reader's remaining limit
- * is the metadata read budget this provider selects.
+ * names (the Zstandard decoder window) keeps its name. Member count stays a
+ * count and names `artifact.member_count`. The archive expansion budget is
+ * derived from the APK's size, and Flutter offers no control that raises it,
+ * so it is fixed for this request. Any other ZIP limit is the metadata read
+ * budget this provider selects.
  */
 const readerLimitFailure = (
   operation: string,
@@ -244,6 +249,8 @@ const readerLimitFailure = (
       null,
       { cause, retryable: false, fixedAllowance: cause.fixedAllowance },
     );
+  const memberCount = zipMemberCountConstraint(operation, cause);
+  if (memberCount !== undefined) return memberCount;
   if (cause.readerLimit !== undefined) {
     const { effective_value: limit, required_value: required } =
       cause.readerLimit;
@@ -588,7 +595,14 @@ export class FlutterBuildProvider {
   ): ZipArtifactReader {
     return this.ownResource(
       snapshot.root,
-      new ZipArtifactReader(snapshot.path, "apk", limits.metadata_read_bytes),
+      new ZipArtifactReader(
+        snapshot.path,
+        "apk",
+        limits.metadata_read_bytes,
+        undefined,
+        undefined,
+        operationZipMemberCount(),
+      ),
     );
   }
 

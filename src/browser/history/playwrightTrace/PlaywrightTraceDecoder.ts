@@ -32,6 +32,7 @@ import type { FileSnapshotPartialObservation } from "../../../domain/fileSnapsho
 import { TraceInventory } from "./TraceInventory.js";
 import { readTraceStream } from "./TraceStream.js";
 import { traceFailure } from "./TraceFailure.js";
+import { operationZipMemberCount } from "../../../config/artifactMemberCount.js";
 
 type SelectedMember = { entry: ArtifactEntry; member: TraceMember };
 
@@ -175,6 +176,8 @@ class TraceArchiveRead {
       "zip",
       this.limits.metadata_bytes,
       source,
+      undefined,
+      operationZipMemberCount(),
     );
     let outcome:
       | { kind: "completed"; value: PlaywrightTrace }

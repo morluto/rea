@@ -61,6 +61,10 @@ import {
 } from "../../domain/webNetworkCapture.js";
 import { snapshotEnvironment } from "../../process/snapshotEnvironment.js";
 import {
+  operationZipMemberCount,
+  zipMemberCountRefusal,
+} from "../../config/artifactMemberCount.js";
+import {
   OwnedCommandFailure,
   runOwnedCommand,
 } from "../../process/OwnedCommand.js";
@@ -206,6 +210,7 @@ export class HistoricalCaptureDecoder {
               reply_path: replyPath,
               sensitive_values: input.sensitive_values,
               budgets: captureBudgets(),
+              member_count: operationZipMemberCount(),
             }),
             { mode: 0o600, flag: "wx" },
           );
@@ -267,6 +272,12 @@ export class HistoricalCaptureDecoder {
                 reply.boundary,
                 reply.message,
                 reply.ceiling,
+              );
+            if (reply.reason === "member-count")
+              throw zipMemberCountRefusal(
+                OPERATION,
+                reply.message,
+                reply.member_count,
               );
             const limit = captureLimitForReply(reply.reason);
             if (limit !== undefined) {
