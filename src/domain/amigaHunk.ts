@@ -170,10 +170,6 @@ const readWord = (prefix: Uint8Array, at: number): number | undefined => {
   );
 };
 
-/** Longwords a recognizer accepts for one resident-library or unit name. */
-const RECOGNIZED_NAME_LONGWORDS = 64;
-/** Resident-library names a recognizer walks before the hunk table. */
-const RECOGNIZED_LIBRARIES = 16;
 /** Block types that may follow a unit name in an object file. */
 const OBJECT_BLOCKS = new Set<number>([
   HUNK_UNIT,
@@ -191,49 +187,114 @@ const OBJECT_BLOCKS = new Set<number>([
 ]);
 
 /**
- * True when the prefix holds a plausible Hunk header, not just its 4-byte
- * magic. A load file needs a terminated resident-library list and a hunk
- * table whose last hunk indexes inside the table size. An object file needs
- * a bounded unit name followed by a known block, or the end of the file.
- * Other formats whose prefix happens to start with these longwords stay
- * with their own recognizers.
+ * What a bounded prefix can decide about a Hunk header. `needs-prefix` means
+ * the declared name is inside the parser's name allowance and the file, but
+ * the prefix ends before the next structural word.
  */
+export type AmigaHunkPrefixDecision =
+  | { readonly state: "recognized" }
+  | { readonly state: "needs-prefix"; readonly bytes: number };
+
+const spanPastPrefix = (
+  prefix: Uint8Array,
+  fileSize: number,
+  end: number,
+): AmigaHunkPrefixDecision | undefined => {
+  if (!Number.isSafeInteger(end) || end > fileSize) return undefined;
+  if (end > prefix.length) return { state: "needs-prefix", bytes: end };
+  return { state: "recognized" };
+};
+
+/**
+ * A name the parser would retain. A longer declared name is not a Hunk header
+ * this recognizer can distinguish from other bytes.
+ */
+const admittedNameBytes = (
+  nlongs: number,
+  used: number,
+): number | undefined => {
+  const bytes = nlongs * 4;
+  if (
+    !Number.isSafeInteger(bytes) ||
+    bytes > AMIGA_HUNK_MAX_SYMBOL_BYTES - used
+  )
+    return undefined;
+  return bytes;
+};
+
+/**
+ * A load or object header the parser accepts, or the prefix length that
+ * header still needs. Library and unit names share the parser's name
+ * allowance; the recognizer adds no smaller cutoff. A load file also needs
+ * a hunk table whose last hunk indexes inside the table size. An object
+ * file needs the unit name followed by a known block, or the end of the file.
+ */
+export const amigaHunkPrefixDecision = (
+  prefix: Uint8Array,
+  fileSize = prefix.length,
+): AmigaHunkPrefixDecision | undefined => {
+  const magic = readWord(prefix, 0);
+  if (magic === HUNK_HEADER) return loadHeaderDecision(prefix, fileSize);
+  if (magic === HUNK_UNIT) return objectUnitDecision(prefix, fileSize);
+  return undefined;
+};
+
+/** True when the prefix itself holds a plausible Hunk header. */
 export const hasAmigaHunkMagic = (
   prefix: Uint8Array,
   fileSize = prefix.length,
-): boolean => {
-  const magic = readWord(prefix, 0);
-  if (magic === HUNK_HEADER) return plausibleLoadHeader(prefix);
-  if (magic === HUNK_UNIT) return plausibleObjectUnit(prefix, fileSize);
-  return false;
-};
+): boolean => amigaHunkPrefixDecision(prefix, fileSize)?.state === "recognized";
 
-const plausibleLoadHeader = (prefix: Uint8Array): boolean => {
+const loadHeaderDecision = (
+  prefix: Uint8Array,
+  fileSize: number,
+): AmigaHunkPrefixDecision | undefined => {
   let at = 4;
-  for (let library = 0; ; library += 1) {
+  let used = 0;
+  for (;;) {
+    const count = spanPastPrefix(prefix, fileSize, at + 4);
+    if (count?.state !== "recognized") return count;
     const nlongs = readWord(prefix, at);
-    if (nlongs === undefined) return false;
+    if (nlongs === undefined) return undefined;
     at += 4;
     if (nlongs === 0) break;
-    if (library >= RECOGNIZED_LIBRARIES || nlongs > RECOGNIZED_NAME_LONGWORDS)
-      return false;
-    at += nlongs * 4;
+    const nameBytes = admittedNameBytes(nlongs, used);
+    if (nameBytes === undefined) return undefined;
+    used += nameBytes;
+    const name = spanPastPrefix(prefix, fileSize, at + nameBytes);
+    if (name?.state !== "recognized") return name;
+    at += nameBytes;
   }
+  const table = spanPastPrefix(prefix, fileSize, at + 12);
+  if (table?.state !== "recognized") return table;
   const tableSize = readWord(prefix, at);
   const first = readWord(prefix, at + 4);
   const last = readWord(prefix, at + 8);
   if (tableSize === undefined || first === undefined || last === undefined)
-    return false;
-  return first <= last && last < tableSize;
+    return undefined;
+  return first <= last && last < tableSize
+    ? { state: "recognized" }
+    : undefined;
 };
 
-const plausibleObjectUnit = (prefix: Uint8Array, fileSize: number): boolean => {
+const objectUnitDecision = (
+  prefix: Uint8Array,
+  fileSize: number,
+): AmigaHunkPrefixDecision | undefined => {
+  const count = spanPastPrefix(prefix, fileSize, 8);
+  if (count?.state !== "recognized") return count;
   const nlongs = readWord(prefix, 4);
-  if (nlongs === undefined || nlongs > RECOGNIZED_NAME_LONGWORDS) return false;
-  const next = 8 + nlongs * 4;
-  if (next === fileSize) return true;
-  const block = readWord(prefix, next);
-  return block !== undefined && OBJECT_BLOCKS.has(block & HUNK_TYPE_MASK);
+  if (nlongs === undefined) return undefined;
+  const nameBytes = admittedNameBytes(nlongs, 0);
+  if (nameBytes === undefined) return undefined;
+  const nameEnd = 8 + nameBytes;
+  if (nameEnd === fileSize) return spanPastPrefix(prefix, fileSize, nameEnd);
+  const named = spanPastPrefix(prefix, fileSize, nameEnd + 4);
+  if (named?.state !== "recognized") return named;
+  const block = readWord(prefix, nameEnd);
+  return block !== undefined && OBJECT_BLOCKS.has(block & HUNK_TYPE_MASK)
+    ? { state: "recognized" }
+    : undefined;
 };
 
 const latin1Name = (bytes: Uint8Array): string => {
@@ -512,7 +573,15 @@ class AmigaHunkParser {
       return;
     }
     const count = last - first + 1;
-    if (count > this.limits.maxHunks)
+    // One size word per hunk is the smallest table this count can occupy.
+    // A count whose table cannot fit is a truncated header, not an over-limit
+    // file: the hunk ceiling applies only once that table is possible.
+    const minimumTableBytes = count * 4;
+    const tableFits =
+      Number.isSafeInteger(count) &&
+      Number.isSafeInteger(minimumTableBytes) &&
+      minimumTableBytes <= this.bytes.length - this.offset;
+    if (tableFits && count > this.limits.maxHunks)
       throw decodeLimit(
         FORMAT,
         `Amiga Hunk file lists ${count} hunks, above ${this.limits.maxHunks}.`,
@@ -548,10 +617,7 @@ class AmigaHunkParser {
 
   private readSizeTable(first: number, count: number): boolean {
     for (let index = 0; index < count; index += 1) {
-      if (!this.readSizeWord(first + index)) {
-        this.hunks.length = 0;
-        return false;
-      }
+      if (!this.readSizeWord(first + index)) return false;
     }
     return true;
   }
@@ -674,6 +740,9 @@ class AmigaHunkParser {
         this.noteMissingEnd(this.open);
       this.closeUnit(clean ? "clean" : "bounded");
     }
+    // A name belongs to the unit that carried it. The next unit's hunk must
+    // not inherit a name this boundary did not follow with a body.
+    this.retirePendingName();
     this.open = undefined;
     const at = this.offset;
     const nlongs = this.u32();
@@ -1066,18 +1135,24 @@ class AmigaHunkParser {
       blockOffset,
       `Unknown hunk block 0x${type.toString(16)} at offset ${blockOffset}${advisory}.`,
     );
-    if (this.open !== undefined && !this.open.ended)
-      this.noteMissingEnd(this.open);
+    // Bytes after an unsupported block were not examined, so a later
+    // HUNK_END is unknown rather than absent.
     this.aborted = true;
   }
 
+  private retirePendingName(): void {
+    if (this.pendingName === undefined) return;
+    this.note(
+      "header",
+      this.pendingNameOffset,
+      "A hunk name was not followed by a hunk.",
+    );
+    this.pendingName = undefined;
+    this.pendingNameReplaced = false;
+  }
+
   private finish(): void {
-    if (!this.aborted && this.pendingName !== undefined)
-      this.note(
-        "header",
-        this.pendingNameOffset,
-        "A hunk name was not followed by a hunk.",
-      );
+    if (!this.aborted) this.retirePendingName();
     if (!this.aborted && this.open !== undefined && !this.open.ended)
       this.noteMissingEnd(this.open);
     if (

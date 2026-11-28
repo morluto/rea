@@ -58,9 +58,13 @@ it("refuses a file above the file allowance before reading it", async () => {
 });
 
 it("refuses a hunk table above the constructor hunk ceiling", async () => {
-  await expect(
-    read(amigaLoadFile({ firstHunk: 0, lastHunk: 2 }), { maxHunks: 2 }),
-  ).rejects.toMatchObject({
+  const bytes = Buffer.alloc(20 + 3 * 4);
+  bytes.writeUInt32BE(0x3f3, 0);
+  bytes.writeUInt32BE(0, 4);
+  bytes.writeUInt32BE(3, 8);
+  bytes.writeUInt32BE(0, 12);
+  bytes.writeUInt32BE(2, 16);
+  await expect(read(bytes, { maxHunks: 2 })).rejects.toMatchObject({
     reason: "limit",
     boundary: "capacity",
     fixedAllowance: {
@@ -134,8 +138,40 @@ it("keeps the code hunk when a later block type is unknown", async () => {
   expect(result.coverage?.status).toBe("unknown");
   expect(result.metadata?.limitations.map((item) => item.kind)).toEqual([
     "unknown-block",
-    "missing-end",
   ]);
+});
+
+it("keeps a truncated over-count hunk table instead of refusing it", async () => {
+  const header = Buffer.alloc(20);
+  header.writeUInt32BE(0x3f3, 0);
+  header.writeUInt32BE(0, 4);
+  header.writeUInt32BE(1025, 8);
+  header.writeUInt32BE(0, 12);
+  header.writeUInt32BE(1024, 16);
+  const truncated = await read(header);
+  expect(truncated.entries).toEqual([]);
+  expect(truncated.metadata).toMatchObject({
+    table_size: 1025,
+    first_hunk: 0,
+    last_hunk: 1024,
+    hunks: [],
+  });
+  expect(truncated.metadata?.limitations.map((item) => item.kind)).toEqual([
+    "truncated",
+  ]);
+  expect(truncated.coverage).toMatchObject({ status: "unknown" });
+
+  const possible = Buffer.alloc(20 + 1025 * 4);
+  header.copy(possible);
+  await expect(read(possible)).rejects.toMatchObject({
+    reason: "limit",
+    boundary: "capacity",
+    fixedAllowance: {
+      name: "The Amiga Hunk hunk-count allowance",
+      limit: 1024,
+      unit: "hunks",
+    },
+  });
 });
 
 it("reports a relocation that names a hunk the header does not list", async () => {
