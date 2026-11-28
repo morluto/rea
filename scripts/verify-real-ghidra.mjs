@@ -44,6 +44,7 @@ import { hasTypedSwitchEvidence } from "./verify-real-ghidra-switch-assertions.m
 import { verifyGhidraRelocationSymbols } from "./lib/real-ghidra-relocation-symbols.mjs";
 
 import {
+  verifyDecompilerRemovedBlock,
   verifyDenseDefaultReturn,
   verifyJumpTableDenseSwitch,
   verifyMaskedByteSwitch,
@@ -242,6 +243,11 @@ await withVerifierFixture(fixtures, async () => {
           variant: "masked-byte-switch",
           flags: [],
         },
+        {
+          source: "../tests/conformance/ghidra/decompiler-removed-block.S",
+          variant: "removed-block",
+          flags: [],
+        },
       ];
       for (const { source, variant, flags } of switchFixtures) {
         const sourceFile = fileURLToPath(new URL(source, import.meta.url));
@@ -374,6 +380,7 @@ await withVerifierFixture(fixtures, async () => {
       if (
         variant !== "aarch64-jump-table" &&
         variant !== "masked-byte-switch" &&
+        variant !== "removed-block" &&
         !variant.startsWith("relative-")
       )
         assertCrossFixture(result);
@@ -412,6 +419,9 @@ await withVerifierFixture(fixtures, async () => {
       native_value_e2e: debug.native_values,
       selected_project_coverage: projectCoverage,
       relocation_symbols: relocationSymbols,
+      decompiler_removed_blocks: crossResults
+        .filter(({ variant }) => variant === "removed-block")
+        .map(({ target, probes }) => ({ format: target.format, ...probes })),
       custom_target: custom === null ? null : summary(custom),
       cleanup: "complete",
     };
@@ -675,30 +685,32 @@ async function verifyTarget(targetPath, variant, expectedTarget = null) {
     const probes =
       variant === "masked-byte-switch"
         ? await verifyMaskedByteSwitch(client)
-        : variant.startsWith("relative-signed-")
-          ? await verifyRelativeSignedSwitch(
-              client,
-              Number(variant.split("-").at(-1)),
-            )
-          : variant.startsWith("relative-")
-            ? await verifyRelativeSwitch(
+        : variant === "removed-block"
+          ? await verifyDecompilerRemovedBlock(client, expectedTarget.format)
+          : variant.startsWith("relative-signed-")
+            ? await verifyRelativeSignedSwitch(
                 client,
-                procedures,
-                Number(variant.slice(-1)),
+                Number(variant.split("-").at(-1)),
               )
-            : variant === "type-layout"
-              ? await verifyNativeTypeLayout(client, names)
-              : variant === "jump-table"
-                ? await verifyJumpTableDenseSwitch(client, procedures)
-                : variant === "custom" || variant === "aarch64-jump-table"
-                  ? null
-                  : await verifyInventoryOperations({
-                      client,
-                      variant,
-                      procedures,
-                      names,
-                      strings,
-                    });
+            : variant.startsWith("relative-")
+              ? await verifyRelativeSwitch(
+                  client,
+                  procedures,
+                  Number(variant.slice(-1)),
+                )
+              : variant === "type-layout"
+                ? await verifyNativeTypeLayout(client, names)
+                : variant === "jump-table"
+                  ? await verifyJumpTableDenseSwitch(client, procedures)
+                  : variant === "custom" || variant === "aarch64-jump-table"
+                    ? null
+                    : await verifyInventoryOperations({
+                        client,
+                        variant,
+                        procedures,
+                        names,
+                        strings,
+                      });
     const nativeValues =
       variant === "debug"
         ? await verifyNativeValueTrace(client, procedures, parsedTarget.value)

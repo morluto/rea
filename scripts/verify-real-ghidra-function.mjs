@@ -766,6 +766,138 @@ export async function verifyRelativeSwitch(client, procedures, entrySize) {
 }
 
 /**
+ * Oracle for decompiler-removed-block.S. Observed facts keep Ghidra's raw
+ * coordinate, warning link and end: null; the listing block is a separate,
+ * derived fact that contains the reported start.
+ */
+export async function verifyDecompilerRemovedBlock(client, format) {
+  const names = await inventoryCall(client, "list_names", {
+    document: null,
+    address: null,
+  });
+  const analyze = async (name) =>
+    functionCall(client, "analyze_function", {
+      procedure: requireProcedure(names, name).address,
+    });
+  const offset = (base, delta) => {
+    const separator = base.lastIndexOf(":");
+    const prefix = separator === -1 ? "" : base.slice(0, separator + 1);
+    const value = BigInt(base.slice(separator + 1)) + BigInt(delta);
+    return `${prefix}0x${value.toString(16)}`;
+  };
+  const fail = (message, value) => {
+    throw new Error(`${message}: ${JSON.stringify(value)}`);
+  };
+  const observed = (dossier) => {
+    const completeness = dossier.decompiler_completeness;
+    if (
+      completeness?.provenance !== "ghidra-decompiler-warning-observations" ||
+      completeness.warning_count !== completeness.warnings.length
+    )
+      fail("Decompiler completeness is missing or inconsistent", completeness);
+    for (const block of completeness.dropped_blocks) {
+      const warning = completeness.warnings[block.warning_index];
+      if (
+        block.end !== null ||
+        block.reason !== "unreachable" ||
+        typeof block.reported_offset !== "string" ||
+        !warning?.includes(`(${block.address_space},${block.reported_offset})`)
+      )
+        fail("Dropped block does not match its warning", {
+          block,
+          warning,
+        });
+    }
+    return completeness;
+  };
+
+  const removed = await analyze("rea_removed_block");
+  const completeness = observed(removed);
+  const start = offset(removed.procedure.address, 0x10);
+  const end = offset(removed.procedure.address, 0x18);
+  const [block] = completeness.dropped_blocks;
+  const listing = block?.listing_block;
+  if (
+    completeness.status !== "warnings" ||
+    completeness.dropped_blocks.length !== 1 ||
+    block.start !== start ||
+    listing?.relation !== "contains-reported-start" ||
+    listing.start !== start ||
+    listing.end !== end ||
+    listing.assembly.length !== 2 ||
+    !listing.assembly[0].startsWith(`${start}:`) ||
+    !/0x77\b/iu.test(listing.assembly[0])
+  )
+    fail(`Dropped block was not reported at ${start}-${end}`, completeness);
+  if (/0x77\b/iu.test(removed.pseudocode.replace(/\/\*[\s\S]*?\*\//gu, "")))
+    fail(
+      "Pseudocode still contains the removed block's value",
+      removed.pseudocode,
+    );
+  if (
+    !removed.limitations.some((item) =>
+      item.includes("decompiler_completeness.dropped_blocks"),
+    ) ||
+    !removed.limitations.some((item) => item.includes("listing_block"))
+  )
+    fail("Dropped-block limitations are missing", removed.limitations);
+
+  // A dead region spanning two listing blocks: each reported start keeps its
+  // own containing listing block, and none claims to cover the whole region.
+  const region = await analyze("rea_removed_region");
+  const regionBlocks = observed(region).dropped_blocks;
+  const regionStart = offset(region.procedure.address, 0x10);
+  if (
+    regionBlocks.length === 0 ||
+    regionBlocks[0].start !== regionStart ||
+    regionBlocks.some(
+      ({ start: reported, listing_block: containing }) =>
+        containing === undefined ||
+        BigInt(containing.start.split(":").at(-1)) >
+          BigInt(reported.split(":").at(-1)) ||
+        BigInt(containing.end.split(":").at(-1)) <=
+          BigInt(reported.split(":").at(-1)),
+    ) ||
+    regionBlocks[0].listing_block.end === offset(region.procedure.address, 0x24)
+  )
+    fail("Multi-block removed region was not reported per block", regionBlocks);
+
+  const reachable = await analyze("rea_reachable_block");
+  if (observed(reachable).dropped_blocks.length !== 0)
+    fail(
+      "Reachable control reported dropped blocks",
+      reachable.decompiler_completeness,
+    );
+  // Pseudocode text that spells a removal warning is not a decompiler warning.
+  const decoy = await analyze("rea_warning_text");
+  // Ghidra renders the decoy literal for the ELF object; for the unlinked
+  // Mach-O object it shows the string's address, so only ELF must render it.
+  const decoyRendered = decoy.pseudocode.includes("Removing unreachable block");
+  if (format === "elf" && !decoyRendered)
+    fail(
+      "Decoy string is no longer rendered, so the parser check is not exercised",
+      decoy.pseudocode,
+    );
+  if (
+    observed(decoy).dropped_blocks.length !== 0 ||
+    decoy.decompiler_completeness.warnings.some((text) =>
+      text.includes("Removing unreachable block"),
+    )
+  )
+    fail(
+      "Warning text in a string was reported as a warning",
+      decoy.decompiler_completeness,
+    );
+  return {
+    dropped_block: block,
+    region_dropped_blocks: regionBlocks,
+    control_dropped_blocks: 0,
+    decoy_dropped_blocks: 0,
+    decoy_rendered_in_pseudocode: decoyRendered,
+  };
+}
+
+/**
  * Oracle for relative-switch-signed.S: signed halfword byte offsets from a base
  * inside the case bodies, a CBZ route for the zero entry, and a B.CS bound.
  */

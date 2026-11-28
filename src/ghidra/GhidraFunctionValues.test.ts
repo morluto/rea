@@ -1395,3 +1395,132 @@ it("accepts an address outside every function as an incoming-reference target, w
     ),
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
 });
+
+describe("Ghidra decompiler completeness contract", () => {
+  const mapped = {
+    start: "0x401010",
+    end: null,
+    address_space: "ram",
+    reported_offset: "0x00401010",
+    reason: "unreachable",
+    warning_index: 0,
+    // The listing block may begin before the reported start.
+    listing_block: {
+      provenance: "ghidra-listing-basic-block",
+      relation: "contains-reported-start",
+      start: "0x40100c",
+      end: "0x401018",
+      assembly: ["0x40100c: MOV w0, #0x1", "0x401010: MOV w0, #0x77"],
+    },
+  };
+  const unmapped = {
+    // No listing block contains this start, so none is derived.
+    start: "ov1:0x20",
+    end: null,
+    address_space: "ov1",
+    reported_offset: "0x00000020",
+    reason: "unreachable",
+    warning_index: 1,
+  };
+  const warned = {
+    status: "warnings",
+    provenance: "ghidra-decompiler-warning-observations",
+    warning_count: 2,
+    warnings: [
+      "Removing unreachable block (ram,0x00401010)",
+      "Removing unreachable block (ov1,0x00000020)",
+    ],
+    diagnostic: null,
+    dropped_blocks: [mapped, unmapped],
+    disassembly_available: true,
+  };
+  const withCompleteness = (completeness: unknown) => ({
+    ...functionDossierSchema.parse(ghidraFunctionDossier()),
+    decompiler_completeness: completeness,
+  });
+  const parse = (completeness: unknown) =>
+    parseFunctionValueFixture(
+      "analyze_function",
+      jsonValueSchema.parse(withCompleteness(completeness)),
+    );
+
+  it("preserves observed warnings separately from derived listing blocks", () => {
+    const parsed = parse(warned);
+    if (!parsed.ok) throw parsed.error;
+    expect(
+      functionDossierSchema.parse(parsed.value).decompiler_completeness,
+    ).toEqual(warned);
+  });
+
+  it("requires the observation on current Ghidra dossiers", () => {
+    const { decompiler_completeness: _omitted, ...dossier } =
+      functionDossierSchema.parse(ghidraFunctionDossier());
+    expect(
+      parseFunctionValueFixture(
+        "analyze_function",
+        jsonValueSchema.parse(dossier),
+      ),
+    ).toMatchObject({ ok: false });
+  });
+
+  it.each([
+    ["foreign provenance", { ...warned, provenance: "hopper" }],
+    [
+      "a reported end",
+      {
+        ...warned,
+        dropped_blocks: [{ ...unmapped, end: "ov1:0x24" }],
+      },
+    ],
+    ["a stale warning count", { ...warned, warning_count: 1 }],
+    [
+      "warnings under a no-warnings status",
+      { ...warned, status: "no-warnings-reported" },
+    ],
+    [
+      "a warning index past the warnings",
+      {
+        ...warned,
+        dropped_blocks: [{ ...unmapped, warning_index: 2 }],
+      },
+    ],
+    [
+      "a missing reported offset",
+      {
+        ...warned,
+        dropped_blocks: [{ ...unmapped, reported_offset: null }],
+      },
+    ],
+    [
+      "a non-canonical start",
+      {
+        ...warned,
+        dropped_blocks: [{ ...unmapped, start: "0x40101A" }],
+      },
+    ],
+    [
+      "a listing block without an observed start",
+      {
+        ...warned,
+        dropped_blocks: [{ ...mapped, start: null }],
+      },
+    ],
+    [
+      "a listing block claiming another relation",
+      {
+        ...warned,
+        dropped_blocks: [
+          {
+            ...mapped,
+            listing_block: {
+              ...mapped.listing_block,
+              relation: "removed-region",
+            },
+          },
+        ],
+      },
+    ],
+  ])("rejects %s", (_name, completeness) => {
+    expect(parse(completeness)).toMatchObject({ ok: false });
+  });
+});

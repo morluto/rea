@@ -127,6 +127,80 @@ it("projects native procedure and bounded assembly and high-pcode with exact par
   expect(flow.value).toMatchObject({ item: [{ opcode: "COPY" }] });
 });
 
+it("pages decompiler warnings and dropped blocks and marks pseudocode with the omission", () => {
+  const dropped = {
+    start: "0x401010",
+    end: null,
+    address_space: "ram",
+    reported_offset: "0x00401010",
+    reason: "unreachable",
+    warning_index: 1,
+    listing_block: {
+      provenance: "ghidra-listing-basic-block",
+      relation: "contains-reported-start",
+      start: "0x401010",
+      end: "0x401018",
+      assembly: ["0x401010: MOV w0, #0x77"],
+    },
+  };
+  const warned = {
+    ...(ghidraFunctionDossier() as Record<string, unknown>),
+    decompiler_completeness: {
+      status: "warnings",
+      provenance: "ghidra-decompiler-warning-observations",
+      warning_count: 2,
+      warnings: [
+        "Could not recover jumptable at 0x00401020. Too many branches",
+        "Removing unreachable block (ram,0x00401010)",
+      ],
+      diagnostic: null,
+      dropped_blocks: [dropped],
+      disassembly_available: true,
+    },
+  };
+  const project = (facet: string, result: unknown = warned, limit = 64) =>
+    projectAnalysisView(nativeParent(result), {
+      kind: "native",
+      facet,
+      offset: 0,
+      limit,
+    } as Parameters<typeof projectAnalysisView>[1]);
+
+  const summary = project("decompiler_completeness");
+  if (!summary.ok) throw summary.error;
+  expect(summary.value).toMatchObject({
+    item: { status: "warnings", warning_count: 2, dropped_block_count: 1 },
+  });
+  const warnings = project("decompiler_warnings", warned, 1);
+  if (!warnings.ok) throw warnings.error;
+  expect(warnings.value).toMatchObject({
+    coverage: { examined: 1, total: 2, next_offset: 1 },
+    item: [{ warning_index: 0 }],
+  });
+  const blocks = project("decompiler_dropped_blocks");
+  if (!blocks.ok) throw blocks.error;
+  expect(blocks.value).toMatchObject({ item: [dropped] });
+  const pseudocode = project("pseudocode");
+  if (!pseudocode.ok) throw pseudocode.error;
+  expect(pseudocode.value.unknowns).toContain(
+    "pseudocode omits 1 block(s) the decompiler removed as unreachable; see decompiler_dropped_blocks",
+  );
+
+  // A dossier without the observation reports it unrecorded, not empty.
+  const { decompiler_completeness: _omitted, ...unrecorded } =
+    ghidraFunctionDossier() as Record<string, unknown>;
+  for (const facet of [
+    "decompiler_completeness",
+    "decompiler_dropped_blocks",
+  ]) {
+    const absent = project(facet, unrecorded);
+    if (!absent.ok) throw absent.error;
+    expect(absent.value).toMatchObject({
+      item: { available: false, reason: "not recorded" },
+    });
+  }
+});
+
 it("projects a compact analyze_function summary that validates and retains the dossier", () => {
   const parent = nativeParent();
   const summary = projectAnalysisView(parent, { kind: "summary" });
