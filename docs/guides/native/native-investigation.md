@@ -12,8 +12,12 @@ observation complement that analysis when they answer a specific question.
 Intel slices report simulator platforms while device CPU slices keep the
 device platform. A chained-import row ending in `+0x...` is ambiguous in
 dyld's text output: it may be an addend or part of a literal symbol name. REA
-keeps the full expression in `raw_name`, sets `name` and `addend` to null, and
-marks `name_status: "ambiguous"`; it does not synthesize a symbol identity.
+settles it with the name the slice's chained-fixup import table holds at the
+row's ordinal: a row that is that name plus the suffix reports the name and
+the suffix as `addend`, and a row equal to that name keeps the suffix in
+`name`. When the table is unusable or names something else, REA keeps the full
+expression in `raw_name`, sets `name` and `addend` to null, and marks
+`name_status: "ambiguous"`; it does not synthesize a symbol identity.
 Each import and export `name` is the exact symbol-table spelling, such as
 `_main`; `runtime_name` is the derived name LLDB and `dlsym` use, such as `main`,
 and is null when `name` is null. See [native call observation](#native-call-observation) for

@@ -68,5 +68,71 @@ describe.skipIf(process.platform !== "darwin")(
       },
       60_000,
     );
+    cliTest(
+      "names an arm64e typeinfo import whose bind addend dyld_info appends",
+      async ({ cli, processes }) => {
+        const directory = await createTestTempDirectory("rea-macho-addend-");
+        const source = join(directory, "shape.cpp");
+        // A polymorphic class's typeinfo binds 16 bytes into the libc++
+        // class_type_info vtable; arm64e records that in the import table.
+        await writeFile(
+          source,
+          [
+            'struct __attribute__((visibility("default"))) Shape { virtual ~Shape(); };',
+            "Shape::~Shape() {}",
+            "",
+          ].join("\n"),
+        );
+        const library = join(directory, "libshape.dylib");
+        const compiled = await processes.run("/usr/bin/xcrun", [
+          "clang++",
+          "-arch",
+          "arm64e",
+          "-dynamiclib",
+          source,
+          "-o",
+          library,
+        ]);
+        expect(compiled.exitCode, compiled.stderr).toBe(0);
+        const imports = await processes.run("/usr/bin/xcrun", [
+          "dyld_info",
+          "-imports",
+          library,
+        ]);
+        expect(imports.exitCode, imports.stderr).toBe(0);
+        // dyld_info prints one or two spaces after the ordinal.
+        expect(imports.stdout).toMatch(
+          /0x[\dA-Fa-f]+ {1,2}__ZTVN10__cxxabiv117__class_type_infoE\+0x10 {2}\(from libc\+\+\)/u,
+        );
+        const result = await cli.run({
+          arguments: ["inspect-macho", library, "--json"],
+          environment: {
+            REA_LOG_LEVEL: "silent",
+            REA_ANALYSIS_PROVIDER: "auto",
+          },
+        });
+        expect(result.exitCode, result.stdout).toBe(0);
+        expect(result.json).toMatchObject({
+          normalized_result: {
+            imports: {
+              items: expect.arrayContaining([
+                {
+                  name: "__ZTVN10__cxxabiv117__class_type_infoE",
+                  runtime_name: "_ZTVN10__cxxabiv117__class_type_infoE",
+                  raw_name: null,
+                  name_status: "exact",
+                  addend: "0x10",
+                  address: null,
+                  weak: null,
+                  reexport: null,
+                  source: "libc++",
+                },
+              ]),
+            },
+          },
+        });
+      },
+      60_000,
+    );
   },
 );
