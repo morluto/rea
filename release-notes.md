@@ -515,6 +515,7 @@
 * **javascript:** unwrap pure SequenceExpression call targets ([#14396](https://github.com/morluto/rea/issues/14396)) ([c9831a9](https://github.com/morluto/rea/commit/c9831a9d4f256964de2bf7d25700647210d41388))
 * **javascript:** validate literal options.port on net and tls connects ([#14760](https://github.com/morluto/rea/issues/14760)) ([352f608](https://github.com/morluto/rea/commit/352f6085e50325a31185affad68c4f8ec53d5a6f))
 * **javascript:** verify Expo context getter ownership ([#13803](https://github.com/morluto/rea/issues/13803)) ([8c16d7d](https://github.com/morluto/rea/commit/8c16d7d18f71c0057240db4122c5df9a8b907a95))
+* **labview:** read section names past the declared block-info extent ([#14970](https://github.com/morluto/rea/issues/14970)) ([8e057e0](https://github.com/morluto/rea/commit/8e057e08d6e1a9590e745af39ad0d63aa46ba431))
 * **limits:** apply producer.output_bytes within each producer's maximum ([#14668](https://github.com/morluto/rea/issues/14668)) ([05e5c91](https://github.com/morluto/rea/commit/05e5c915263b766dfcdc03319723f2ca40d9b420))
 * **limits:** budget Rust dependency parser ceilings per call ([#14666](https://github.com/morluto/rea/issues/14666)) ([1557159](https://github.com/morluto/rea/commit/155715942e6d8f549bb240529b887e0f86457d2b))
 * **limits:** let apktool and assetutil take producer_limits.output_bytes and type Android and process capture refusals ([#14624](https://github.com/morluto/rea/issues/14624)) ([0eb19a3](https://github.com/morluto/rea/commit/0eb19a395ec42ed40b575663dc8a8b2defce0643))
