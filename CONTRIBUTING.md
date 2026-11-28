@@ -307,7 +307,9 @@ verification prerequisites. Keep the generated addon and manifest uncommitted.
 The general source suite (`npm run test:fast`, `npm run test:changed`, and
 `npm run test:local`) runs on Linux in CI, and Windows CI runs a curated lane.
 On a Windows checkout, some source tests fail because fixtures use POSIX paths,
-`#!/bin/sh` tool stubs, or POSIX rename semantics. Compare failures against the
+`#!/bin/sh` tool stubs, or POSIX rename semantics. Tests that create symbolic
+links also fail with `EPERM` unless Developer Mode is on or the shell is
+elevated. Compare failures against the
 base revision, or run the suite on Linux or WSL, before attributing them to a
 change. The embedded-artifact parent-swap tests exercise the selected-path
 replacement when the rename succeeds; if Windows refuses it while the admitted
