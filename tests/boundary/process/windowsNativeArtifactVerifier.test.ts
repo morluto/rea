@@ -53,6 +53,35 @@ const copyModuleGraph = async (root: string, entry: string): Promise<void> => {
   }
 };
 
+const delayImportFixture = () => {
+  const { bytes: identity, manifest } = windowsNativeArtifactFixture();
+  const optional = 88;
+  const directory = optional + 112 + 13 * 8;
+  const section = optional + 240;
+  const descriptors = 512;
+  const bytes = Buffer.alloc(descriptors + 192);
+  identity.copy(bytes);
+  bytes.writeUInt16LE(1, 70); // NumberOfSections
+  bytes.writeUInt16LE(240, 84); // SizeOfOptionalHeader
+  bytes.writeUInt32LE(16, optional + 108);
+  bytes.writeUInt32LE(0x1000, directory);
+  bytes.writeUInt32LE(64, directory + 4);
+  bytes.writeUInt32LE(192, section + 8); // VirtualSize
+  bytes.writeUInt32LE(0x1000, section + 12);
+  bytes.writeUInt32LE(192, section + 16); // SizeOfRawData
+  bytes.writeUInt32LE(descriptors, section + 20);
+  bytes.writeUInt32LE(0xc000_0040, section + 36);
+  bytes.writeUInt32LE(1, descriptors);
+  bytes.writeUInt32LE(0x10b0, descriptors + 4);
+  bytes.writeUInt32LE(0x1080, descriptors + 12);
+  bytes.writeUInt32LE(0x1040, descriptors + 16);
+  bytes.writeBigUInt64LE(1n, descriptors + 64);
+  bytes.writeBigUInt64LE(2n, descriptors + 72);
+  bytes.writeBigUInt64LE(1n, descriptors + 128);
+  bytes.writeBigUInt64LE(2n, descriptors + 136);
+  return { bytes, manifest, directory, section, descriptors };
+};
+
 for (const mode of ["preinstall source", "packed source-free"]) {
   processTest(
     `verifies native artifact identity from ${mode} without installed dependencies`,
@@ -90,10 +119,17 @@ for (const mode of ["preinstall source", "packed source-free"]) {
       );
       const artifactRoot = join(root, "native/windows/build");
       await mkdir(artifactRoot, { recursive: true });
-      const { bytes, manifest } = windowsNativeArtifactFixture();
-      await writeFile(join(artifactRoot, manifest.artifact), bytes);
+      const { bytes, manifest, directory, section, descriptors } =
+        delayImportFixture();
       const manifestPath = join(artifactRoot, "manifest.json");
-      await writeFile(manifestPath, JSON.stringify(manifest));
+      const writeArtifact = async () => {
+        manifest.artifactSha256 = createHash("sha256")
+          .update(bytes)
+          .digest("hex");
+        await writeFile(join(artifactRoot, manifest.artifact), bytes);
+        await writeFile(manifestPath, JSON.stringify(manifest));
+      };
+      await writeArtifact();
       const run = () =>
         processes.run(
           process.execPath,
@@ -107,6 +143,101 @@ for (const mode of ["preinstall source", "packed source-free"]) {
         ...manifest,
         artifactBytes: bytes.length,
       });
+      bytes.writeUInt32LE(32, directory + 4);
+      await writeArtifact();
+      expect((await run()).exitCode).toBe(0);
+
+      bytes.writeUInt32LE(1, descriptors + 32);
+      await writeArtifact();
+      const unterminated = await run();
+      expect(unterminated.exitCode).not.toBe(0);
+      expect(unterminated.stderr).toContain(
+        "unterminated delay-import directory",
+      );
+      bytes.writeUInt32LE(0, descriptors + 32);
+      bytes.writeUInt32LE(64, directory + 4);
+
+      // The first thunk remains mapped and writable in each refusal below.
+      bytes.writeUInt32LE(136, section + 8);
+      bytes.writeUInt32LE(136, section + 16);
+      await writeArtifact();
+      const unmappedTail = await run();
+      expect(unmappedTail.exitCode).not.toBe(0);
+      expect(unmappedTail.stderr).toContain("outside writable PE data");
+
+      // A second mapping can hold later slots; its permissions matter too.
+      const tailSection = section + 40;
+      bytes.writeUInt16LE(2, 70);
+      bytes.writeUInt32LE(56, tailSection + 8);
+      bytes.writeUInt32LE(0x1088, tailSection + 12);
+      bytes.writeUInt32LE(56, tailSection + 16);
+      bytes.writeUInt32LE(descriptors + 136, tailSection + 20);
+      bytes.writeUInt32LE(0x4000_0040, tailSection + 36);
+      await writeArtifact();
+      const readOnlyTail = await run();
+      expect(readOnlyTail.exitCode).not.toBe(0);
+      expect(readOnlyTail.stderr).toContain("outside writable PE data");
+      // The loader reads a null terminator but does not patch that slot.
+      bytes.writeBigUInt64LE(0n, descriptors + 72);
+      bytes.writeBigUInt64LE(0n, descriptors + 136);
+      await writeArtifact();
+      const readOnlyTerminator = await run();
+      expect(readOnlyTerminator.exitCode, readOnlyTerminator.stderr).toBe(0);
+      bytes.writeBigUInt64LE(2n, descriptors + 72);
+      bytes.writeBigUInt64LE(2n, descriptors + 136);
+
+      bytes.writeUInt32LE(0xc000_0040, tailSection + 36);
+      await writeArtifact();
+      const writableTail = await run();
+      expect(writableTail.exitCode, writableTail.stderr).toBe(0);
+      // Import names can live in read-only data while every function slot
+      // lives in a separate writable mapping.
+      bytes.writeUInt32LE(0x4000_0040, section + 36);
+      bytes.writeUInt32LE(0x1088, descriptors + 12);
+      bytes.writeBigUInt64LE(1n, descriptors + 136);
+      bytes.writeBigUInt64LE(2n, descriptors + 144);
+      await writeArtifact();
+      const readOnlyNames = await run();
+      expect(readOnlyNames.exitCode, readOnlyNames.stderr).toBe(0);
+      bytes.writeUInt32LE(0xc000_0040, section + 36);
+      bytes.writeUInt32LE(0x1080, descriptors + 12);
+      bytes.writeBigUInt64LE(2n, descriptors + 136);
+      bytes.writeBigUInt64LE(0n, descriptors + 144);
+      bytes.writeUInt16LE(1, 70);
+      bytes.fill(0, tailSection, tailSection + 40);
+      bytes.writeUInt32LE(192, section + 8);
+      bytes.writeUInt32LE(192, section + 16);
+
+      bytes.writeBigUInt64LE(3n, descriptors + 144);
+      bytes.writeBigUInt64LE(4n, descriptors + 152);
+      await writeArtifact();
+      const unterminatedIat = await run();
+      expect(unterminatedIat.exitCode).not.toBe(0);
+      expect(unterminatedIat.stderr).toContain("outside writable PE data");
+      bytes.writeBigUInt64LE(0n, descriptors + 144);
+      bytes.writeBigUInt64LE(0n, descriptors + 152);
+
+      bytes.writeBigUInt64LE(0n, descriptors + 136);
+      await writeArtifact();
+      const earlyNullIat = await run();
+      expect(earlyNullIat.exitCode).not.toBe(0);
+      expect(earlyNullIat.stderr).toContain("inconsistent with its name table");
+      bytes.writeBigUInt64LE(2n, descriptors + 136);
+
+      bytes.writeUInt32LE(0x4000_0040, section + 36);
+      await writeArtifact();
+      const readOnlyIat = await run();
+      expect(readOnlyIat.exitCode).not.toBe(0);
+      expect(readOnlyIat.stderr).toContain("outside writable PE data");
+
+      bytes.fill(0, directory, directory + 8);
+      await writeArtifact();
+      const missingDirectory = await run();
+      expect(missingDirectory.exitCode).not.toBe(0);
+      expect(missingDirectory.stderr).toContain(
+        "no valid delay-import directory",
+      );
+
       await writeFile(
         manifestPath,
         JSON.stringify({ ...manifest, extra: true }),

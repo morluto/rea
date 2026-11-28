@@ -26,6 +26,11 @@ its manifest. Release CI builds both, and `prepublishOnly` rejects a missing,
 stale, mismatched, or wrong-architecture artifact. A development tarball built
 without this lane reports Windows native controls as unavailable.
 
+The build and artifact verifier also require a terminated delay-import directory
+and a file-backed, writable address-table slot for every import in its name
+table, with matching terminators. A refusal means the linker output must be
+rebuilt with the required MinGW toolchain before publication.
+
 ## Restore the artifact in a source checkout
 
 The source tree omits `native/windows/build/` from Git. To run Windows

@@ -20,6 +20,7 @@ const {
   WINDOWS_NATIVE_ARTIFACT,
   parseWindowsNativeManifest,
   validateWindowsNativeArtifact,
+  validateWindowsNativeDelayImports,
 } = owner;
 const packageJson = JSON.parse(
   await readFile(new URL("package.json", root), "utf8"),
@@ -37,6 +38,8 @@ const bytes = await readFile(
 );
 const valid = validateWindowsNativeArtifact(manifest, bytes);
 if (!valid.ok) throw valid.error;
+const delayImports = validateWindowsNativeDelayImports(bytes);
+if (!delayImports.ok) throw delayImports.error;
 process.stdout.write(
   `${JSON.stringify({ ok: true, ...manifest, artifactBytes: bytes.length })}\n`,
 );
