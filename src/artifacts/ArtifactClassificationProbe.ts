@@ -27,6 +27,7 @@ import {
   ISO9660_SIGNATURE_BYTES,
 } from "../domain/iso9660/iso9660Structures.js";
 import { gzipTarExtraFieldProbeBytes } from "../domain/tarFormat.js";
+import { amigaHunkPrefixDecision } from "../domain/amigaHunk.js";
 import {
   createAsarHeaderSignatureProbe,
   type FinalAsarHeaderProbeObservation,
@@ -293,11 +294,25 @@ export const createArtifactClassificationProbe = (
     }
     return prefix;
   };
-  const signaturePrefixLimit = (): number =>
-    Math.max(
+  const signaturePrefixLimit = (): number => {
+    const head = blocks[0];
+    // HUNK_HEADER and HUNK_UNIT. A long unit or library name is still inside
+    // the parser's name allowance, so retain through its next structural word.
+    const amiga =
+      head !== undefined &&
+      head.length >= 4 &&
+      head[0] === 0 &&
+      head[1] === 0 &&
+      head[2] === 0x03 &&
+      (head[3] === 0xe7 || head[3] === 0xf3)
+        ? amigaHunkPrefixDecision(retainedPrefix(), Number.MAX_SAFE_INTEGER)
+        : undefined;
+    return Math.max(
       ARTIFACT_CLASSIFICATION_PREFIX_BYTES,
       retainedBytes < 12 ? 0 : gzipTarExtraFieldProbeBytes(blocks[0]!),
+      amiga?.state === "needs-prefix" ? amiga.bytes : 0,
     );
+  };
 
   return {
     get length(): number {

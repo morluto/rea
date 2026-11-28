@@ -28,6 +28,7 @@ import * as desktopApplicationModule from "./cli/desktopApplicationCommands.js";
 import * as releaseExposureModule from "./cli/releaseExposureCommands.js";
 import * as goModule from "./cli/goCommands.js";
 import * as il2cppModule from "./cli/il2cppCommands.js";
+import * as labviewModule from "./cli/labviewCommands.js";
 import * as modelModule from "./cli/modelCommands.js";
 import * as gpuModule from "./cli/gpuCommands.js";
 import * as rustModule from "./cli/rustCommands.js";
@@ -36,6 +37,7 @@ import * as debPackageModule from "./cli/debPackageCommands.js";
 import * as nugetNupkgModule from "./cli/nugetNupkgCommands.js";
 import * as vsixPackageModule from "./cli/vsixPackageCommands.js";
 import * as ociImageLayoutModule from "./cli/ociImageLayoutCommands.js";
+import * as yaraModule from "./cli/yaraCommands.js";
 import * as erlangModule from "./cli/erlangCommands.js";
 import * as v8CodeCacheModule from "./cli/v8CodeCacheCommands.js";
 import * as mavenGradleMetadataModule from "./cli/mavenGradleMetadataCommands.js";
@@ -93,6 +95,7 @@ const CLI_COMMAND_MODULES: CliCommandModules = {
   releaseExposure: releaseExposureModule,
   go: goModule,
   il2cpp: il2cppModule,
+  labview: labviewModule,
   model: modelModule,
   gpu: gpuModule,
   rust: rustModule,
@@ -101,6 +104,7 @@ const CLI_COMMAND_MODULES: CliCommandModules = {
   nugetNupkg: nugetNupkgModule,
   vsixPackage: vsixPackageModule,
   ociImageLayout: ociImageLayoutModule,
+  yara: yaraModule,
   erlang: erlangModule,
   v8CodeCache: v8CodeCacheModule,
   mavenGradleMetadata: mavenGradleMetadataModule,

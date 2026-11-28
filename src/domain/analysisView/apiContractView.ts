@@ -21,9 +21,9 @@ import {
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
-  pageViewCoverage,
+  selectedViewPage,
 } from "./analysisViewCoverage.js";
 import { pickFields, selectViewRows, filterSet } from "./selectViewRows.js";
 import { invalidAnalysisView } from "./analysisViewErrors.js";
@@ -171,11 +171,7 @@ export const projectApiContractView = (
     parent_evidence_id: parent.evidenceId,
     parent_operation: API_CONTRACT_OPERATION,
     parent_digest: parent.evidenceId.slice(3),
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, limitations),
     unknowns:
       context.source_coverage.status === "partial"
         ? [
@@ -201,11 +197,6 @@ export const projectApiContractView = (
     ...context,
     kind: "api-contract" as const,
     view,
-    items: selected.rows,
-    coverage: pageViewCoverage(
-      view.offset,
-      selected.rows.length,
-      selected.total,
-    ),
+    ...selectedViewPage(view.offset, selected),
   });
 };

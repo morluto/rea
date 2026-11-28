@@ -141,7 +141,7 @@ client's deadline or receive buffer.
 `annotate_native_function` `signature` and `define_native_data_types`
 `declarations` are parsed by Ghidra's C parser, which cannot be cancelled, so
 REA bounds that text before parsing it. Each bound has a per-call parameter;
-`parenthesis_max_depth` applies to `signature`; a `declarations` text admits no parentheses at all.
+`parenthesis_max_depth` applies to `signature`; a `declarations` text admits parentheses only in a function-pointer declarator, `ret (*name)(parameters)`, which nests one level and needs no bound.
 
 | Bound                                         | Default | Floor | Maximum | Slowest measured parse at the maximum      |
 | --------------------------------------------- | ------: | ----: | ------: | ------------------------------------------ |
@@ -251,19 +251,22 @@ repeating `procedure_pseudo_code` or `analyze_function` for one function does
 not run the native decompiler again. A rename, comment or payload-limit change
 discards them.
 
-`decompile-all` names the next functions it will request, up to 32 at a time,
-and the bridge decompiles each such window with up to eight native decompiler
-processes before answering them one by one. Results, per-function failures,
-the journal and file order are the same as a serial export. The gain depends on
-the target: one very large function still bounds its window. The request that
-carries a window waits for it only within its own decompile deadline and
-reports the window's outcome for its function, including a failure or timeout,
-without decompiling it again. Functions still running when that deadline has
-passed are cancelled and decompiled by their own requests, which report any
-failure as a serial export does. Selectors beyond one window are ignored. The
-pooled decompiler processes run on REA's own threads, separate from the
-session's decompiler and Ghidra's shared pools, and are released after 30
-seconds without a window, a Program edit, a payload-limit change or shutdown.
+`decompile-all` and `batch_decompile` name the next functions they will
+request, up to 32 at a time, and the bridge decompiles them in the background
+with up to eight native decompiler processes. Results, per-function failures,
+the journal and file order are the same as a serial run. The request that names
+them decompiles its own function at once on the session's decompiler and never
+waits for a worker to start. Workers start only for the queued functions, one
+per function up to eight, and none for a single function. Each takes the next
+queued function as soon as its decompiler is open. A later request uses a
+finished result for its function, including a failure or timeout, without
+decompiling it again; waits for one still running, whose own decompile deadline
+bounds the wait; or decompiles a queued one itself. Cancelling that request
+cancels the read-ahead. Selectors beyond 32 are ignored. The workers run on
+REA's own threads, separate from Ghidra's shared pools, and close their
+decompiler processes after 30 seconds without work, a Program edit, a
+payload-limit change, cancellation or shutdown. Each worker is a native
+decompiler process, so a large batch uses more CPU and memory while it runs.
 
 If an offset maps to loaded target bytes but no procedure starts at or contains
 the mapped address, the failure preserves both the original file offset and

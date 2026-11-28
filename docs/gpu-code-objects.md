@@ -189,8 +189,9 @@ Kernel representations have different meanings:
     that is not an array, are `malformed`. Note failures preserve earlier parsed
     declarations, including earlier pipelines, and the original failure reason.
 
-Standalone PTX recognition scans up to 16 MiB, allowing leading comments and
-whitespace, after which `.version` must be the first module token. Inventory and
+Standalone PTX recognition scans up to `max_report_bytes` (default and maximum
+16 MiB), allowing leading comments and whitespace, after which `.version` must
+be the first module token. Inventory and
 kernel inspection use strict UTF-8 and reuse a complete, valid scan. Invalid
 encoding can leave a recognizable PTX object with an unknown target. A file
 longer than the scan budget, including one that ends mid-character at the
@@ -250,23 +251,31 @@ workflow. Inventory then reads bounded native directories and bundle headers;
 CCOB requires decompression to find its inner directory. Kernel analysis reads
 selected payloads. `bytes_read` includes hashing and later descriptor reads.
 
-| Resource                                                         | Limit   |
-| ---------------------------------------------------------------- | ------- |
-| Active inspections                                               | 1       |
-| Each input or output buffer                                      | 128 MiB |
-| Payload input, decoded output and AMD note reads, per inspection | 512 MiB |
-| Retained facts, including selected PTX                           | 16 MiB  |
-| Native tables; decoded section names (each)                      | 16 MiB  |
-| AMDGPU ELF note source bytes                                     | 8 MiB   |
-| Standalone PTX recognition scan                                  | 16 MiB  |
-| CUDA ELF record and symbol visits                                | 262,144 |
-| CUDA ELF cumulative metadata section reads                       | 128 MiB |
-| CUDA ELF temporary index facts (serialized-size accounting)      | 16 MiB  |
-| Response page                                                    | 1 MiB   |
+| Resource                                                                                      | Default | Per-call parameter (range)          |
+| --------------------------------------------------------------------------------------------- | ------- | ----------------------------------- |
+| Active inspections                                                                            | 1       | Fixed (`measuredExhaustion`)        |
+| Each input or output buffer                                                                   | 128 MiB | `max_object_bytes` (1..128 MiB)     |
+| Payload input, decoded output, native-section and AMDGPU note/structure reads, per inspection | 512 MiB | `max_work_bytes` (1..512 MiB)       |
+| Retained facts, including selected PTX and Clang directories                                  | 16 MiB  | `max_report_bytes` (1..16 MiB)      |
+| Native tables; decoded section names (each)                                                   | 16 MiB  | `max_structure_bytes` (64..512 MiB) |
+| AMDGPU ELF note source bytes                                                                  | 8 MiB   | `max_metadata_bytes` (1..8 MiB)     |
+| Standalone PTX recognition scan                                                               | 16 MiB  | `max_report_bytes` (1..16 MiB)      |
+| Clang entries, PTX kernels/parameters, AMDGPU container entries                               | 65,536  | `max_parser_entries` (1..65,536)    |
+| Tokens per PTX parameter declaration                                                          | 128     | Fixed syntax limit                  |
+| CUDA ELF record/symbol visits; AMDGPU aggregate values                                        | 262,144 | `max_parser_visits` (1..262,144)    |
+| Clang bundle ID, PTX token, AMDGPU string/binary scalar                                       | 65,536  | `max_token_bytes` (1..65,536)       |
+| CUDA ELF cumulative metadata section reads                                                    | 128 MiB | `max_object_bytes` (1..128 MiB)     |
+| CUDA ELF temporary index facts (serialized-size accounting)                                   | 16 MiB  | `max_report_bytes` (1..16 MiB)      |
+| Container / AMDGPU MessagePack nesting depth                                                  | 8 / 32  | Fixed (`representation` allowance)  |
+| Response page                                                                                 | 1 MiB   | Fixed MCP response page budget      |
 
 Payload work is reserved before reading or allocating, and a capacity refusal
-does not reread an aliased payload. AMD note discovery also bounds depth and
-container and string allocations, and shares one 262,144-value allowance across
+does not reread an aliased payload. Top-level container/report/directory/ID
+refusals fail with `code: "resource_constraint"` and `details.limit`, while
+per-object payload/metadata/visit/nesting limits retain sibling observations and
+record `inspection: "capacity"` with the budget name in `limitations`. AMD note
+discovery also bounds depth and container and string allocations, and shares the
+per-call `max_parser_visits` allowance (default and maximum 262,144) across
 all of a code object's notes, which also bounds the PAL pipeline facts expanded
 from them; standalone AMD targets are read from those
 notes before target selection, and kernel analysis reuses the parsed

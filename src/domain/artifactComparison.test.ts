@@ -19,6 +19,11 @@ import {
 } from "./artifactIdentity.js";
 import { createEvidence } from "./evidence.js";
 import { parseArtifactInventoryEvidence } from "./artifactInventoryEvidence.js";
+import {
+  artifactInventorySummarySchema,
+  projectArtifactInventoryView,
+} from "./analysisView/artifactInventoryView.js";
+import { resolveArtifactReaderLimits } from "./artifactReaderLimits.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 
 const inventoryCarrier = (inventory: ArtifactInventoryResult) =>
@@ -453,8 +458,7 @@ it("compares declared digests without using limitation prose", () => {
   const different = changes(unavailable(claim), unavailable(edited));
   const noted = (
     integrity:
-      | { readonly algorithm: "md5"; readonly digest: string }
-      | undefined,
+      { readonly algorithm: "md5"; readonly digest: string } | undefined,
     limitations: readonly string[],
   ) =>
     observation({
@@ -650,6 +654,64 @@ it("compares NDS overlay RAM addresses with identical member content and ignores
   ).toMatchObject({ status: "unchanged", changes: [] });
 });
 
+it("ignores Nintendo 64 dump-order metadata when the served bytes match", () => {
+  const program = {
+    kind: "n64-rom-entry",
+    role: "program",
+    source_order: "z64",
+    decoded: false,
+  } as const satisfies FormatMetadata;
+  const content = { content: "1" };
+  expect(
+    compareArtifacts(
+      recordObservation(program, content),
+      recordObservation(
+        { ...program, source_order: "v64", decoded: true },
+        content,
+      ),
+    ),
+  ).toMatchObject({ status: "unchanged", changes: [] });
+
+  const root = {
+    kind: "n64-rom",
+    source_order: "z64",
+    rom_bytes: 0x1008,
+    pi_dom1_config: 0x8037_1240,
+    clock_rate: 0x0f,
+    boot_address: 0x8000_0400,
+    libultra_release: 0x20,
+    crc: {
+      status: "match",
+      declared_crc1: 1,
+      declared_crc2: 2,
+      computed_crc1: 1,
+      computed_crc2: 2,
+    },
+    ipl3_crc32: 0,
+    cic: "6102/7101",
+    title_raw_hex: "20".repeat(20),
+    title_ascii: "REA TEST".padEnd(20, " "),
+    media_byte: 0x4e,
+    media_name: "cartridge",
+    cartridge_id: "RE",
+    cartridge_id_hex: "5245",
+    destination_byte: 0x45,
+    destination_code: "E",
+    destination_name: "North America",
+    version: 1,
+  } as const satisfies FormatMetadata;
+  expect(
+    compareArtifacts(
+      declared(root),
+      declared({
+        ...root,
+        source_order: "n64",
+        crc: { ...root.crc, status: "mismatch" },
+      }),
+    ),
+  ).toMatchObject({ status: "unchanged", changes: [] });
+});
+
 it("does not emit a declaration for NDS filesystem files compared against extracted files", () => {
   const fileEntry = {
     kind: "nds-entry",
@@ -748,6 +810,45 @@ const ubiVolume: FormatMetadata = {
   extractable: true,
   source_ranges: [],
 };
+
+const amigaHunkEntry: FormatMetadata = {
+  kind: "amiga-hunk-entry",
+  hunk: 0,
+  role: "code",
+  memory: "any",
+  declared_bytes: 4,
+  stored_bytes: 4,
+};
+
+it("compares an Amiga hunk's memory and allocated size", () => {
+  expect(
+    compareArtifacts(declared(amigaHunkEntry), declared(amigaHunkEntry)),
+  ).toMatchObject({ status: "unchanged", changes: [] });
+  expect(
+    compareArtifacts(
+      declared(amigaHunkEntry),
+      declared({ ...amigaHunkEntry, hunk: 1, stored_bytes: 8 }),
+    ),
+  ).toMatchObject({ status: "unchanged", changes: [] });
+  expect(
+    compareArtifacts(
+      declared(amigaHunkEntry),
+      declared({ ...amigaHunkEntry, memory: "chip" }),
+    ),
+  ).toMatchObject({
+    status: "changed",
+    changes: [{ classification: "changed", dimensions: ["metadata"] }],
+  });
+  expect(
+    compareArtifacts(
+      declared(amigaHunkEntry),
+      declared({ ...amigaHunkEntry, declared_bytes: 16 }),
+    ),
+  ).toMatchObject({
+    status: "changed",
+    changes: [{ classification: "changed", dimensions: ["metadata"] }],
+  });
+});
 
 it("compares a UBI volume declaration without its PEB placement", () => {
   expect(
@@ -1121,6 +1222,62 @@ it("reports stored directory filename spelling changes on symlinks and unavailab
         logical_path: nfc,
         classification: "changed",
         dimensions: ["metadata", "availability"],
+      }),
+    ],
+  });
+});
+
+it("reads, projects, and compares saved inventories whose effective_limits omit android_dtbo", () => {
+  // Every current group except the later android_dtbo policy.
+  const { android_dtbo: _dtbo, ...historicalLimits } =
+    resolveArtifactReaderLimits();
+  const makeHistoricalEvidence = (secondContent: string) => {
+    const base = relationInventory(secondContent);
+    const inventory = artifactInventoryResultSchema.parse({
+      ...base.inventory,
+      effective_limits: historicalLimits,
+    });
+    return commit(inventory);
+  };
+
+  const left = makeHistoricalEvidence("2");
+  const right = makeHistoricalEvidence("3");
+
+  const parsedLeft = parseArtifactInventoryEvidence(left);
+  expect(parsedLeft.inventory.effectiveLimits).toEqual(historicalLimits);
+  expect(
+    Object.hasOwn(parsedLeft.inventory.effectiveLimits!, "android_dtbo"),
+  ).toBe(false);
+
+  const summaryView = projectArtifactInventoryView(
+    {
+      predicateType: left.predicate_type,
+      evidenceId: left.evidence_id,
+      operation: "inventory_artifact",
+      subject: left.subject,
+      normalizedResult: left.normalized_result,
+      limitations: left.limitations,
+    },
+    { kind: "summary" },
+  );
+  expect(summaryView.ok).toBe(true);
+  if (summaryView.ok && summaryView.value.kind === "summary") {
+    const summary = artifactInventorySummarySchema.parse(
+      summaryView.value.summary,
+    );
+    expect(summary.effective_limits).toEqual(historicalLimits);
+    expect(Object.hasOwn(summary.effective_limits!, "android_dtbo")).toBe(
+      false,
+    );
+  }
+
+  const compared = compareArtifacts(left, right);
+  expect(compared).toMatchObject({
+    status: "changed",
+    changes: [
+      expect.objectContaining({
+        logical_path: "two.js",
+        classification: "changed",
       }),
     ],
   });

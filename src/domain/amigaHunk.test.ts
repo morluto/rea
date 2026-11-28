@@ -8,6 +8,8 @@ import {
   HUNKF_ADVISORY,
   HUNKF_CHIP,
   HUNK_EXT,
+  HUNK_NAME,
+  amigaHunkPrefixDecision,
   hasAmigaHunkMagic,
   parseAmigaHunk,
   amigaHunkMetadata,
@@ -35,6 +37,53 @@ const decodeLimitOf = (parse: () => unknown) => {
     throw new Error(`expected a limit, received ${error.kind}`);
   return error.failure;
 };
+
+it("recognizes names and library lists within the parser allowance", () => {
+  const longName = "a".repeat(256);
+  const object = amigaObjectFile([
+    { name: longName, hunks: [{ type: "code", bytes: CODE }] },
+  ]);
+  expect(amigaHunkPrefixDecision(object, object.length)).toEqual({
+    state: "recognized",
+  });
+  expect(parseAmigaHunk(object)).toMatchObject({
+    limitations: [],
+    units: [{ name: longName }],
+  });
+  const libraries = Array.from(
+    { length: 17 },
+    (_, index) => `lib${index}.library`,
+  );
+  const load = amigaLoadFile({
+    libraries,
+    hunks: [{ type: "code", bytes: CODE }],
+  });
+  expect(amigaHunkPrefixDecision(load, load.length)).toEqual({
+    state: "recognized",
+  });
+  expect(parseAmigaHunk(load).residentLibraries).toEqual(libraries);
+  const overAllowance = Buffer.alloc(8);
+  overAllowance.writeUInt32BE(0x3e7, 0);
+  // One longword past the 65536-byte name allowance.
+  overAllowance.writeUInt32BE(65_536 / 4 + 1, 4);
+  expect(
+    amigaHunkPrefixDecision(overAllowance, overAllowance.length + 8),
+  ).toBeUndefined();
+});
+
+it("asks for a unit name the prefix does not yet hold", () => {
+  const object = amigaObjectFile([
+    { name: "a".repeat(300), hunks: [{ type: "code", bytes: CODE }] },
+  ]);
+  const short = amigaHunkPrefixDecision(object.subarray(0, 16), object.length);
+  expect(short?.state).toBe("needs-prefix");
+  if (short?.state !== "needs-prefix") return;
+  expect(short.bytes).toBeGreaterThan(16);
+  expect(short.bytes).toBeLessThanOrEqual(object.length);
+  expect(
+    amigaHunkPrefixDecision(object.subarray(0, short.bytes), object.length),
+  ).toEqual({ state: "recognized" });
+});
 
 it("recognizes load and object files from header structure", () => {
   const load = amigaLoadFile({
@@ -379,7 +428,7 @@ it("stops at an unknown block and names its offset", () => {
     (HUNK_EXT | HUNKF_ADVISORY) >>> 0,
   );
   expect(file.entries).toHaveLength(1);
-  expect(file.limitations.map((item) => item.kind)).toContain("missing-end");
+  expect(file.limitations.map((item) => item.kind)).toEqual(["unknown-block"]);
 });
 
 it("accepts a header allocation larger than the stored block", () => {
@@ -455,6 +504,83 @@ it("records one limitation for a run of replaced hunk names", () => {
   expect(file.hunks[0]?.name).toBe("start");
 });
 
+it("keeps size words decoded before a truncated hunk table", () => {
+  const bytes = Buffer.alloc(24);
+  bytes.writeUInt32BE(0x3f3, 0);
+  bytes.writeUInt32BE(0, 4);
+  bytes.writeUInt32BE(2, 8);
+  bytes.writeUInt32BE(0, 12);
+  bytes.writeUInt32BE(1, 16);
+  bytes.writeUInt32BE((HUNKF_CHIP | 1) >>> 0, 20);
+  const file = parseAmigaHunk(bytes);
+  expect(file.hunks).toMatchObject([
+    { index: 0, memory: "chip", declaredLongwords: 1, type: null },
+  ]);
+  expect(file.limitations.map((item) => item.kind)).toEqual(["truncated"]);
+});
+
+it("treats an impossible hunk table as truncation and a possible one as the hunk ceiling", () => {
+  const header = Buffer.alloc(20);
+  header.writeUInt32BE(0x3f3, 0);
+  header.writeUInt32BE(0, 4);
+  header.writeUInt32BE(1025, 8);
+  header.writeUInt32BE(0, 12);
+  header.writeUInt32BE(1024, 16);
+  const impossible = parseAmigaHunk(header);
+  expect(impossible).toMatchObject({
+    tableSize: 1025,
+    firstHunk: 0,
+    lastHunk: 1024,
+    hunks: [],
+  });
+  expect(impossible.limitations.map((item) => item.kind)).toEqual([
+    "truncated",
+  ]);
+  const possible = Buffer.alloc(20 + 1025 * 4);
+  header.copy(possible);
+  expect(decodeLimitOf(() => parseAmigaHunk(possible))).toMatchObject({
+    kind: "limit",
+    limit: { name: AMIGA_HUNK_HUNK_LIMIT, maximum: 1024 },
+  });
+});
+
+it("retires an unmatched hunk name at the next object unit", () => {
+  const first = amigaObjectFile([
+    { name: "a.o", hunks: [{ type: "code", bytes: CODE }] },
+  ]);
+  const orphan = Buffer.alloc(12);
+  orphan.writeUInt32BE(HUNK_NAME, 0);
+  orphan.writeUInt32BE(1, 4);
+  orphan.write("left", 8, "latin1");
+  const second = amigaObjectFile([
+    { name: "b.o", hunks: [{ type: "code", bytes: CODE }] },
+  ]);
+  const file = parseAmigaHunk(Buffer.concat([first, orphan, second]));
+  expect(file.hunks.map((hunk) => hunk.name)).toEqual([null, null]);
+  expect(file.units.map((unit) => unit.name)).toEqual(["a.o", "b.o"]);
+  expect(file.limitations.map((item) => item.kind)).toEqual(["header"]);
+});
+
+it("reports a missing end only when the walk examines the hunk boundary", () => {
+  const open = parseAmigaHunk(
+    amigaObjectFile([
+      { name: "obj.o", hunks: [{ type: "code", bytes: CODE, omitEnd: true }] },
+    ]),
+  );
+  expect(open.limitations.map((item) => item.kind)).toEqual(["missing-end"]);
+  const unexamined = parseAmigaHunk(
+    amigaObjectFile([
+      {
+        name: "obj.o",
+        hunks: [{ type: "code", bytes: CODE, unknownBeforeEnd: HUNK_EXT }],
+      },
+    ]),
+  );
+  expect(unexamined.limitations.map((item) => item.kind)).toEqual([
+    "unknown-block",
+  ]);
+});
+
 it("returns no hunks when the header is truncated or first follows last", () => {
   const truncated = parseAmigaHunk(Buffer.from([0x00, 0x00, 0x03, 0xf3]));
   expect(truncated.hunks).toEqual([]);
@@ -526,12 +652,14 @@ it("caps relocation records across the file", () => {
 });
 
 it("refuses a hunk table above the hunk ceiling before reading it", () => {
+  const bytes = Buffer.alloc(20 + 3 * 4);
+  bytes.writeUInt32BE(0x3f3, 0);
+  bytes.writeUInt32BE(0, 4);
+  bytes.writeUInt32BE(3, 8);
+  bytes.writeUInt32BE(0, 12);
+  bytes.writeUInt32BE(2, 16);
   expect(
-    decodeLimitOf(() =>
-      parseAmigaHunk(amigaLoadFile({ firstHunk: 0, lastHunk: 2 }), {
-        maxHunks: 2,
-      }),
-    ),
+    decodeLimitOf(() => parseAmigaHunk(bytes, { maxHunks: 2 })),
   ).toMatchObject({
     kind: "limit",
     limit: { name: AMIGA_HUNK_HUNK_LIMIT, maximum: 2 },
@@ -655,7 +783,7 @@ it("lists object units with each hunk's unit and extracts nothing", () => {
     [1, 0],
   ]);
   expect(file.entries).toEqual([]);
-  expect(file.limitations.map((item) => item.kind)).toContain("unknown-block");
+  expect(file.limitations.map((item) => item.kind)).toEqual(["unknown-block"]);
 });
 
 it("rejects a file that is not a hunk image", () => {

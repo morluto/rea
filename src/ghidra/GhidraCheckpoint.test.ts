@@ -20,7 +20,11 @@ import { join } from "node:path";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
-import { acquireOwnedLease } from "../process/OwnedLease.js";
+import {
+  acquireOwnedLease,
+  LEASE_OWNER_PROBE_ABORTED,
+  LEASE_OWNER_RESPONSE_TIMED_OUT,
+} from "../process/OwnedLease.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
@@ -1010,6 +1014,7 @@ it.skipIf(process.platform === "win32")(
 /** A peer that accepts the lease socket and never sends its identity. */
 const silentLeaseHolder = async (
   directory: string,
+  onConnection?: () => void,
 ): Promise<() => Promise<void>> => {
   const canonical = await realpath(directory);
   const key = sha256Hex(
@@ -1027,6 +1032,7 @@ const silentLeaseHolder = async (
   await rm(socketPath, { force: true });
   const server = createServer((socket) => {
     socket.resume();
+    onConnection?.();
   });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
@@ -1036,6 +1042,32 @@ const silentLeaseHolder = async (
     new Promise((resolve) => {
       server.close(() => resolve());
     });
+};
+
+/**
+ * Record each lease probe's budget and every owner-probe failure reason, so a
+ * test can check what bounded the wait instead of timing it.
+ */
+const recordLeaseProbes = async (): Promise<{
+  readonly timeoutsMs: (number | undefined)[];
+  readonly reasons: string[];
+}> => {
+  const leases = await vi.importActual<
+    typeof import("../process/OwnedLease.js")
+  >("../process/OwnedLease.js");
+  const timeoutsMs: (number | undefined)[] = [];
+  const reasons: string[] = [];
+  vi.mocked(acquireOwnedLease).mockImplementation((input) => {
+    timeoutsMs.push(input.probe?.timeoutMs);
+    return leases.acquireOwnedLease({
+      ...input,
+      failure: (reason, cause) => {
+        if (reason.kind === "owner_unverified") reasons.push(reason.reason);
+        return input.failure(reason, cause);
+      },
+    });
+  });
+  return { timeoutsMs, reasons };
 };
 
 it.skipIf(process.platform === "win32")(
@@ -1050,11 +1082,56 @@ it.skipIf(process.platform === "win32")(
     await session.admit("waiter");
     const release = await silentLeaseHolder(f.selection.directory);
     onTestFinished(release);
-    const started = performance.now();
+    const probes = await recordLeaseProbes();
     const busy = await session
       .publish(f.packed)
       .catch((cause: unknown) => cause);
-    expect(performance.now() - started).toBeLessThan(220);
+    expect(busy).toBeInstanceOf(GhidraCheckpointBusyError);
+    expect(busy).toMatchObject({
+      owner: undefined,
+      wait: { waitMs: 50, source: "setting" },
+    });
+    // The probe was given the rest of the wait, not the owner's own
+    // response budget, and the wait ended on its timeout.
+    expect(probes.timeoutsMs[0]).toBeLessThanOrEqual(50);
+    expect(probes.reasons.at(-1)).toBe(LEASE_OWNER_RESPONSE_TIMED_OUT);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "reports a wait-bounded probe timeout as busy even when its timer fires before the deadline reads expired",
+  async () => {
+    const f = await fixture();
+    const session = new GhidraCheckpoint(f.selection, f.resources, {
+      waitMs: 50,
+      source: "setting",
+    });
+    owners.push(session);
+    await session.admit("waiter");
+    // Node timers run on the event loop's cached clock, which lags the
+    // deadline's clock under load, so a probe timer can fire while the
+    // deadline still has time left. Hold the deadline's clock still so the
+    // probe's timeout always arrives with time left on it, then move the
+    // clock past the wait before the save's next poll could observe it.
+    const base = performance.now();
+    let now = base;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    vi.mocked(acquireOwnedLease).mockImplementation((input) => {
+      // Due before the save's 50 ms poll timer, so the wait has ended by the
+      // time that poll checks it.
+      setTimeout(() => {
+        now = base + 1000;
+      }, 0);
+      return Promise.reject(
+        input.failure(
+          { kind: "owner_unverified", reason: LEASE_OWNER_RESPONSE_TIMED_OUT },
+          undefined,
+        ),
+      );
+    });
+    const busy = await session
+      .publish(f.packed)
+      .catch((cause: unknown) => cause);
     expect(busy).toBeInstanceOf(GhidraCheckpointBusyError);
     expect(busy).toMatchObject({
       owner: undefined,
@@ -1070,14 +1147,20 @@ it.skipIf(process.platform === "win32")(
     const session = new GhidraCheckpoint(f.selection, f.resources);
     owners.push(session);
     await session.admit("waiter");
-    const release = await silentLeaseHolder(f.selection.directory);
-    onTestFinished(release);
     const controller = new AbortController();
-    const started = performance.now();
-    const pending = session.publish(f.packed, controller.signal);
-    setTimeout(() => controller.abort({ caller: "stop the probe" }), 30);
-    await expect(pending).rejects.toBeInstanceOf(AnalysisCancelledError);
-    expect(performance.now() - started).toBeLessThan(220);
+    // Cancel once the probe has connected and is waiting for an identity,
+    // rather than after a fixed delay.
+    const release = await silentLeaseHolder(f.selection.directory, () =>
+      controller.abort({ caller: "stop the probe" }),
+    );
+    onTestFinished(release);
+    const probes = await recordLeaseProbes();
+    await expect(
+      session.publish(f.packed, controller.signal),
+    ).rejects.toBeInstanceOf(AnalysisCancelledError);
+    // The cancellation stopped the probe itself; it did not run on to the
+    // owner's response budget.
+    expect(probes.reasons).toEqual([LEASE_OWNER_PROBE_ABORTED]);
   },
 );
 

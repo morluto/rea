@@ -96,7 +96,8 @@ export const toolsListPageBudgetConstraint = (
  *
  * The parser reads the target's bytes, not the request, so every format
  * failure is a target refusal: malformed and truncated bytes are a malformed
- * target and unsupported bytes are an unsupported target. A `limit` and any
+ * target, unsupported bytes an unsupported target, and bytes that are not the
+ * owner's format at all an unrecognized target. A `limit` and any
  * other cause return `undefined`: a limit's recovery names a budget only its
  * producer knows.
  */
@@ -111,6 +112,7 @@ export const parseFailureAnalysisError = (
   switch (failure.kind) {
     case "limit":
       return undefined;
+    case "unrecognized":
     case "unsupported":
     case "malformed":
     case "truncated":

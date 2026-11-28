@@ -72,6 +72,7 @@ export const UNIT_LAYERS = Object.freeze(
       "hopper",
       "ida",
       "il2cpp",
+      "labview",
       "inspector",
       "javascript",
       "java",
@@ -93,6 +94,7 @@ export const UNIT_LAYERS = Object.freeze(
       "uefi",
       "v8",
       "wasm",
+      "yara",
     ]),
     ...units("application", ["application"]),
     ...units("composition", ["composition"]),
@@ -236,6 +238,9 @@ export const ENTRY_FILES = Object.freeze(
         "ArtifactProvider.ts",
         "ArtifactProviderMetadata.ts",
         "DesktopApplicationReader.ts",
+        // inspect_analysis_view's record-header pages re-read a root file
+        // through its format reader under the view's resource scope.
+        "formatRecordHeaderPage.ts",
         "ReleaseExposureReader.ts",
         // JavaScript reconstruction owns one resource scope across the
         // inventory scan, the format reader and the source read.
@@ -302,6 +307,7 @@ export const ENTRY_FILES = Object.freeze(
         "FirmwareProvider.ts",
         "FirmwareProviderIdentities.ts",
         "devicetree/DevicetreeProvider.ts",
+        "espNvs/EspNvsProvider.ts",
       ],
       flutter: ["FlutterBuildProvider.ts", "FlutterProviderIdentity.ts"],
       frida: ["FridaInstrumentationManager.ts", "FridaProviderIdentity.ts"],
@@ -334,6 +340,7 @@ export const ENTRY_FILES = Object.freeze(
         "Il2cppGhidraSeedWriter.ts",
         "Il2cppMetadataProvider.ts",
       ],
+      labview: ["LabviewArtifactProvider.ts", "LabviewProviderIdentity.ts"],
       inspector: ["V8InspectorProvider.ts", "providerIdentity.ts"],
       java: [
         "MavenGradleMetadataProvider.ts",
@@ -356,6 +363,7 @@ export const ENTRY_FILES = Object.freeze(
         "NativeMacOSProviderMetadata.ts",
         "NativeMacosProviderIdentity.ts",
         "apple/AppleIpsProvider.ts",
+        "apple/MachoFunctionStartsProvider.ts",
         "dwarf/DwarfUnitsProvider.ts",
         "elf/ElfDebugLinkProvider.ts",
         "elf/ElfDependenciesProvider.ts",
@@ -409,6 +417,7 @@ export const ENTRY_FILES = Object.freeze(
       sqlite: ["SqliteDatabaseProvider.ts"],
       v8: ["V8CodeCacheProvider.ts", "V8CodeCacheProviderIdentity.ts"],
       wasm: ["WabtArtifactProvider.ts", "WabtRelease.ts"],
+      yara: ["YaraMatchesProvider.ts", "YaraProviderIdentity.ts"],
     }).map(([unit, files]) => [unit, Object.freeze(files)]),
   ),
 );

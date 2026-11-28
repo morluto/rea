@@ -30,8 +30,8 @@ const foreign = (
 export default targetFailureReaders([
   foreign("inspect_python_pyc", "malformed", "python-pyc"),
   foreign("inspect_deb_package", "malformed", "deb"),
-  foreign("inspect_rust_binary", "unsupported", "native-binary"),
-  foreign("inspect_go_binary", "unsupported", "native-binary"),
+  foreign("inspect_rust_binary", "unrecognized", "native-binary"),
+  foreign("inspect_go_binary", "unrecognized", "native-binary"),
   foreign("inspect_elf_notes", "malformed", "elf"),
   foreign("inspect_elf_dependencies", "malformed", "native-binary"),
   foreign("inspect_elf_debug_link", "malformed", "native-binary"),
@@ -44,6 +44,6 @@ export default targetFailureReaders([
   foreign("inspect_pe_certificates", "malformed", "native-binary"),
   foreign("inspect_pe_resources", "malformed", "native-binary"),
   foreign("inspect_native_exports", "unsupported", "native-binary"),
-  foreign("inspect_native_initializers", "malformed", "native-binary"),
+  foreign("inspect_native_initializers", "unrecognized", "native-binary"),
   foreign("inspect_binary_hardening", "unsupported", "native-binary"),
 ]);

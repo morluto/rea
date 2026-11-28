@@ -8,18 +8,19 @@ import {
 import { apktoolResourcesViewRequestSchema } from "../apktool/apktoolResourcesQuery.js";
 import type { JsonValue } from "../jsonValue.js";
 import { isRecord } from "../../kernel/isRecord.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import {
   PLACEHOLDER_COVERAGE,
   selectByteBoundedViewRows,
 } from "./byteBoundedViewRows.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { filterSet } from "./selectViewRows.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import {
   createAnalysisViewResultReader,
   type AnalysisViewParent,
 } from "./analysisViewParent.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
@@ -115,13 +116,6 @@ const summarize = (
   };
 };
 
-const invalid = (path: string, message: string) =>
-  err(
-    analysisViewInputError([
-      { path: ["view", path], reason: "invalid_value", message },
-    ]),
-  );
-
 /** One page of string rows across the selected decoded tables. */
 const stringsPage = <Shared extends object>(
   parent: AnalysisViewParent,
@@ -130,13 +124,12 @@ const stringsPage = <Shared extends object>(
   shared: Shared,
 ) => {
   if (stringsUnread(parent))
-    return invalid(
-      "facet",
+    return invalidAnalysisView(
       "This decode did not read strings (include_strings false); decode again with include_strings true to page them.",
+      "facet",
     );
   const rows = stringRows(report);
-  const locales =
-    view.locales === undefined ? undefined : new Set(view.locales);
+  const locales = filterSet(view.locales);
   if (locales !== undefined) {
     const decoded = new Set(
       (report.string_tables ?? [{ locale: report.locale }]).map(
@@ -145,12 +138,12 @@ const stringsPage = <Shared extends object>(
     );
     const missing = [...locales].filter((locale) => !decoded.has(locale));
     if (missing.length > 0)
-      return invalid(
-        "locales",
+      return invalidAnalysisView(
         `This decode has no string table for ${missing.map((locale) => JSON.stringify(locale)).join(", ")}; decode those locales first. Decoded tables: ${[...decoded].map((locale) => JSON.stringify(locale)).join(", ")}.`,
+        "locales",
       );
   }
-  const exact = view.names === undefined ? undefined : new Set(view.names);
+  const exact = filterSet(view.names);
   const prefixes = view.name_prefixes;
   const matches =
     locales === undefined && exact === undefined && prefixes === undefined
@@ -208,7 +201,10 @@ export const projectApktoolResourcesView = (
   admitted: AdmittedView,
 ) => {
   if (admitted.kind !== "android-resources" && admitted.kind !== "summary")
-    return invalid("kind", "Select an android-resources or summary view.");
+    return invalidAnalysisView(
+      "Select an android-resources or summary view.",
+      "kind",
+    );
   assertOwnedView<SummaryAnalysisView | ResourcesView>(
     admitted,
     "summary",
@@ -222,11 +218,7 @@ export const projectApktoolResourcesView = (
     parent_operation: DECODE_ANDROID_RESOURCES_OPERATION,
     parent_digest: parent.evidenceId.slice(3),
     artifact: { path: report.target.path, sha256: report.target.sha256 },
-    limitations: boundedViewMessages(
-      [...parent.limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent),
     unknowns: [
       "Decoded resources are static declarations; they do not establish which strings or components the app uses at runtime.",
     ],
@@ -242,7 +234,10 @@ export const projectApktoolResourcesView = (
   const view = admitted;
   if (view.facet === "manifest") {
     if (report.manifest === null)
-      return invalid("facet", "This decode recorded no manifest text.");
+      return invalidAnalysisView(
+        "This decode recorded no manifest text.",
+        "facet",
+      );
     const page = analysisTextPage(
       report.manifest,
       view.offset,

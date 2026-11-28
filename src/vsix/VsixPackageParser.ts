@@ -4,7 +4,6 @@ import {
   decodeLimit,
   malformedInput,
   ParseFailureError,
-  unsupportedInput,
 } from "../domain/parseFailure.js";
 import {
   Uint8ArrayReader,
@@ -17,7 +16,7 @@ import {
   ArtifactReaderFailure,
   decodeZipEntryText,
   zipEntryNameLimitations,
-  typedZipFailure,
+  throwZipPackageFailure,
   ZIP_READER_OPTIONS,
   zipEntryPath,
   zipListingCoverage,
@@ -132,26 +131,12 @@ const wrapZipFailure = (
     throw new ArtifactReaderFailure("cancelled", "Artifact read cancelled", {
       cause: signal.reason,
     });
-  if (
-    cause instanceof ArtifactReaderFailure ||
-    cause instanceof ParseFailureError
-  )
-    throw cause;
-  const typed = typedZipFailure(cause, compressionMethod);
-  if (typed instanceof ArtifactReaderFailure && typed.reason === "limit")
-    throw typed;
-  if (typed instanceof ArtifactReaderFailure && typed.reason === "unavailable")
-    throw unsupportedInput(
-      VSIX_PACKAGE_FORMAT,
-      `VS Code extension ZIP uses an unsupported layout: ${typed.message}`,
-      { cause: typed },
-    );
-  if (
-    typed instanceof ArtifactReaderFailure &&
-    typed.parseFailure !== undefined
-  )
-    throw malformedInput(VSIX_PACKAGE_FORMAT, typed.message, { cause: typed });
-  throw cause;
+  return throwZipPackageFailure(
+    cause,
+    VSIX_PACKAGE_FORMAT,
+    "VS Code extension",
+    compressionMethod,
+  );
 };
 
 const readMemberBytes = async (
@@ -577,20 +562,25 @@ const parseVsixManifestDocument = (
     const element = metadataChild(name);
     return element === undefined ? null : xmlTrimmedDirectText(element);
   };
+  const displayName = metadataText("DisplayName");
+  const description = metadataText("Description");
+  const identityAttribute = (name: string) =>
+    identityElement === undefined
+      ? null
+      : xmlTrimmedAttribute(identityElement, name);
   return {
     identity:
-      identityElement === undefined
+      identityElement === undefined &&
+      displayName === null &&
+      description === null
         ? null
         : {
-            id: xmlTrimmedAttribute(identityElement, "Id"),
-            version: xmlTrimmedAttribute(identityElement, "Version"),
-            publisher: xmlTrimmedAttribute(identityElement, "Publisher"),
-            target_platform: xmlTrimmedAttribute(
-              identityElement,
-              "TargetPlatform",
-            ),
-            display_name: metadataText("DisplayName"),
-            description: metadataText("Description"),
+            id: identityAttribute("Id"),
+            version: identityAttribute("Version"),
+            publisher: identityAttribute("Publisher"),
+            target_platform: identityAttribute("TargetPlatform"),
+            display_name: displayName,
+            description,
           },
     engine: propertyById.get("Microsoft.VisualStudio.Code.Engine") ?? null,
     extensionDependencies: parseExtensionList(

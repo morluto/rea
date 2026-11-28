@@ -6,6 +6,8 @@ import { expect, it } from "vitest";
 
 import { amigaLoadFile } from "../../../../src/domain/amigaHunk.fixture.js";
 import { bfltFile } from "../../../../src/domain/bfltExecutable.fixture.js";
+import { megaDriveRom } from "../../../../src/domain/megaDriveRom.fixture.js";
+import { n64RomImage } from "../../../../src/domain/n64Rom.fixture.js";
 import { windowsShortcutBytes } from "../../../fixtures/binaryDiagnostics/windowsShortcut.js";
 import { createSqliteDatabaseFixture } from "../../../fixtures/sqlite/database.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
@@ -17,6 +19,12 @@ import {
 } from "../../../../src/deb/DebPackage.fixture.js";
 import { artifactInspectionResultSchema } from "../../../../src/domain/artifactInspection.js";
 import { parseEvidence } from "../../../../src/domain/evidence.js";
+import {
+  ESP32C3_BOOTLOADER_SEGMENTS,
+  espImage,
+} from "../../../fixtures/espImage.js";
+import { espFlashDump } from "../../../../src/domain/firmware/espFlash.fixture.js";
+import { espIdfCrc32 } from "../../../../src/domain/firmware/espNvsItemDecoder.js";
 
 const { runProviderAnalysis } = createDirectAnalysis({});
 
@@ -52,6 +60,16 @@ const pythonPyc = (): Buffer => {
   bytes.write("\r\n", 2, "latin1");
   bytes.write("N", 16, "latin1");
   return bytes;
+};
+
+/** A 4096-byte active ESP-IDF v2 NVS page with a valid header CRC32. */
+const espNvsPartition = (): Buffer => {
+  const page = Buffer.alloc(4096, 0xff);
+  page.writeUInt32LE(0xffff_fffe, 0);
+  page.writeUInt32LE(1, 4);
+  page[8] = 0xfe;
+  page.writeUInt32LE(espIdfCrc32(page.subarray(4, 28)), 28);
+  return page;
 };
 
 const inspect = async (path: string) => {
@@ -103,6 +121,12 @@ it.each([
     create: writeBytes("board.dtb", devicetreeBlob),
     format: "devicetree",
     operation: "inspect_devicetree",
+  },
+  {
+    name: "an ESP-IDF NVS partition",
+    create: writeBytes("nvs.bin", espNvsPartition),
+    format: "esp-nvs",
+    operation: "inspect_esp_nvs",
   },
   {
     // An NVRAM variable store declares a file-system GUID REA does not walk.
@@ -191,6 +215,60 @@ it("inventories an Amiga Hunk load file without a follow-up probe", async () => 
   });
 });
 
+it("classifies a synthetic Mega Drive ROM", async () => {
+  const directory = await createTestTempDirectory("rea-standalone-format-");
+  const path = await writeBytes("game.bin", () => megaDriveRom())(directory);
+  const evidence = parseEvidence(
+    await runProviderAnalysis(path, "inspect_artifact", {}).then(
+      projectCliAnalysisResult,
+    ),
+  );
+  const inspection = artifactInspectionResultSchema.parse(
+    evidence.normalized_result,
+  );
+
+  expect(inspection.subject.root_format).toBe("mega-drive-rom");
+});
+
+it("inventories a Nintendo 64 ROM in any byte order as n64-rom", async () => {
+  const directory = await createTestTempDirectory("rea-n64-rom-");
+  const path = await writeBytes(
+    "game.v64",
+    () => n64RomImage({ order: "v64" }).encoded,
+  )(directory);
+  const evidence = parseEvidence(
+    await runProviderAnalysis(path, "inspect_artifact", {}).then(
+      projectCliAnalysisResult,
+    ),
+  );
+  const inspection = artifactInspectionResultSchema.parse(
+    evidence.normalized_result,
+  );
+
+  expect(inspection.subject.root_format).toBe("n64-rom");
+  expect(inspection.next_probes).toEqual([]);
+  const inventory = inspection.substeps[0]?.evidence.normalized_result;
+  expect(
+    inventory?.occurrences.find((row) => row.logical_path === ".")
+      ?.format_metadata,
+  ).toMatchObject({
+    kind: "n64-rom",
+    source_order: "v64",
+    cic: "6102/7101",
+    boot_address: 0x8000_0400,
+    crc: { status: "match" },
+  });
+  expect(
+    inventory?.occurrences.find((row) => row.logical_path === "program.z64")
+      ?.format_metadata,
+  ).toMatchObject({
+    kind: "n64-rom-entry",
+    role: "program",
+    source_order: "v64",
+    decoded: true,
+  });
+});
+
 it("routes a bFLT executable's text segment to open_binary", async () => {
   const directory = await createTestTempDirectory("rea-standalone-format-");
   const path = await writeBytes("app.flt", () =>
@@ -219,4 +297,34 @@ it("routes a bFLT executable's text segment to open_binary", async () => {
   expect(inspection.next_probes[0]?.rationale).toMatch(
     /bFLT header, not code/u,
   );
+});
+
+it("routes an ESP flash dump with a populated NVS partition to inspect_esp_nvs", async () => {
+  const directory = await createTestTempDirectory("rea-standalone-format-");
+  const path = await writeBytes("flash.bin", () =>
+    espFlashDump({
+      bootloader: {
+        at: 0,
+        bytes: espImage({ segments: ESP32C3_BOOTLOADER_SEGMENTS }),
+      },
+      parts: [{ at: 0x9000, bytes: espNvsPartition() }],
+    }),
+  )(directory);
+  const evidence = parseEvidence(
+    await runProviderAnalysis(path, "inspect_artifact", {}).then(
+      projectCliAnalysisResult,
+    ),
+  );
+  const inspection = artifactInspectionResultSchema.parse(
+    evidence.normalized_result,
+  );
+
+  expect(inspection.subject.root_format).toBe("esp-flash-image");
+  expect(inspection.next_probes).toEqual([
+    expect.objectContaining({
+      operation: "inspect_esp_nvs",
+      authority: "artifact-bytes",
+      rationale: expect.stringContaining("partition_offset 36864"),
+    }),
+  ]);
 });

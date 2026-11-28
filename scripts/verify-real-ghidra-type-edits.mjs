@@ -306,6 +306,11 @@ int main(void) { struct session one = { 1, "one", 16, 1.5, 0 }; return (int)rea_
         // Each is accepted by Ghidra's parser and applied differently or not at all.
         for (const [refusedSignature, reason] of [
           ["double total(int a, int a)", /repeats parameter name a/u],
+          // A K&R identifier list: Ghidra types each name undefined.
+          [
+            "double total(s, mask)",
+            /signature names parameter s without a type/u,
+          ],
           [
             "double total(int (*callback)(int))",
             /function-pointer declarator at line 1, column 19/u,
@@ -692,7 +697,7 @@ struct rea_after { char c; int i; };`;
         );
         assert.match(builtin.message, /uint \(existing \/uint\)/u);
         // Each is accepted by Ghidra's parser and dropped or stored differently.
-        // A definition admits no parentheses; Ghidra stores none of their forms as written.
+        // A definition admits a parenthesis only as a function pointer, ret (*name)(parameters).
         const parenthesized = await first.refused(
           "define_native_data_types",
           {
@@ -709,9 +714,38 @@ struct rea_after { char c; int i; };`;
             "struct rea_user { struct rea_missing *p; };",
             /rea_missing without members/u,
           ],
+          // Function-pointer forms Ghidra 12.2 stores differently from the text.
           [
-            "struct rea_callbacks { int (*fn)(int); };",
-            /a parenthesis \(a struct, union, enum or typedef definition admits none.*\) at line 1, column 28/u,
+            "struct rea_callbacks { int (*fn)(); };",
+            /an empty parameter list \(Ghidra stores \(\) as \(void\).*at line 1, column 34/u,
+          ],
+          [
+            "struct rea_callbacks { int (__stdcall *fn)(int); };",
+            /calling convention __stdcall inside a function-pointer declarator .* at line 1, column 29/u,
+          ],
+          [
+            "struct rea_callbacks { int (*fn)(int (*inner)(int)); };",
+            /a parenthesis in a function-pointer parameter list .* at line 1, column 38/u,
+          ],
+          [
+            "struct rea_callbacks { int (*fn)(a, b); };",
+            /rea_callbacks\.fn names parameter a without a type/u,
+          ],
+          [
+            "struct rea_callbacks { int (*fn)(int fd, int fd); };",
+            /the function pointer rea_callbacks\.fn repeats parameter name fd/u,
+          ],
+          [
+            "typedef int (*rea_callback)(long value, char value);",
+            /the function pointer rea_callback\.target repeats parameter name value/u,
+          ],
+          [
+            "struct rea_callbacks { _Noreturn void (*fn)(int); };",
+            /_Noreturn \(Ghidra does not store it on a function-pointer type\) at line 1, column 24/u,
+          ],
+          [
+            "typedef int rea_function(int);",
+            /a parenthesis that does not open a function pointer .* at line 1, column 25/u,
           ],
           [
             "struct rea_nested { struct { int a; } inner; };",
@@ -1119,6 +1153,210 @@ struct rea_after { char c; int i; };`;
         return {};
       } finally {
         await bounded.close();
+      }
+    },
+  );
+  await phase(
+    "function-pointer members and typedefs are stored with their prototypes",
+    async () => {
+      const callbacks = await connect();
+      try {
+        await callbacks.call("open_binary", {
+          path: target,
+          provider_id: "ghidra",
+        });
+        const declarations =
+          "typedef long (*rea_cb)(long value);\n" +
+          "struct rea_ops { int (*open)(const char *path, int flags); void (*close)(int fd); " +
+          "char *(*name)(void); int (*log)(const char *format, ...); int __cdecl (*conv)(int); " +
+          "int (*table[4])(int); int (**indirect)(int); rea_cb cb; void (*take)(rea_cb inner); " +
+          "int (*next)(struct rea_ops *self); char tail; };";
+        const defined = await callbacks.call("define_native_data_types", {
+          declarations,
+        });
+        assert.deepEqual(
+          defined.types.map((type) => [type.id, type.kind, type.status]),
+          [
+            ["/rea_caller_defined/rea_cb", "typedef", "defined"],
+            ["/rea_caller_defined/rea_ops", "struct", "defined"],
+          ],
+        );
+        // Parameter qualifiers are reported as dropped, as elsewhere.
+        assert.deepEqual(
+          defined.dropped_qualifiers.map((item) => item.qualifier),
+          ["const", "const"],
+        );
+        const inspect = (type) =>
+          callbacks.call("inspect_native_data_type", { type });
+        const ops = await inspect("/rea_caller_defined/rea_ops");
+        // The fixture is built for the 64-bit host, so pointers are 8 bytes.
+        assert.deepEqual(
+          ops.fields.map((field) => [
+            field.name,
+            field.offset_bytes,
+            field.size_bytes,
+            field.type_id,
+          ]),
+          [
+            ["open", 0, 8, "/rea_caller_defined/rea_ops.open *"],
+            ["close", 8, 8, "/rea_caller_defined/rea_ops.close *"],
+            ["name", 16, 8, "/rea_caller_defined/rea_ops.name *"],
+            ["log", 24, 8, "/rea_caller_defined/rea_ops.log *"],
+            ["conv", 32, 8, "/rea_caller_defined/rea_ops.conv *"],
+            ["table", 40, 32, "/rea_caller_defined/rea_ops.table *[4]"],
+            ["indirect", 72, 8, "/rea_caller_defined/rea_ops.indirect * *"],
+            ["cb", 80, 8, "/rea_caller_defined/rea_cb"],
+            ["take", 88, 8, "/rea_caller_defined/rea_ops.take *"],
+            ["next", 96, 8, "/rea_caller_defined/rea_ops.next *"],
+            ["tail", 104, 1, "/char"],
+          ],
+        );
+        assert.equal(ops.size_bytes, 112);
+        const prototype = async (type) => {
+          const inspected = await inspect(type);
+          assert.equal(inspected.kind, "function");
+          assert.equal(inspected.source, "caller-defined");
+          const { total_parameters, parameters_truncated, ...definition } =
+            inspected.function_definition;
+          assert.equal(total_parameters, definition.parameters.length);
+          assert.equal(parameters_truncated, false);
+          return definition;
+        };
+        const unnamed = (type) => ({ name: null, type });
+        assert.deepEqual(await prototype("/rea_caller_defined/rea_ops.open"), {
+          return_type: "/int",
+          parameters: [
+            { name: "path", type: "/char *" },
+            { name: "flags", type: "/int" },
+          ],
+          varargs: false,
+          calling_convention: "unknown",
+        });
+        assert.deepEqual(await prototype("/rea_caller_defined/rea_ops.name"), {
+          return_type: "/char *",
+          parameters: [],
+          varargs: false,
+          calling_convention: "unknown",
+        });
+        assert.deepEqual(await prototype("/rea_caller_defined/rea_ops.log"), {
+          return_type: "/int",
+          parameters: [{ name: "format", type: "/char *" }],
+          varargs: true,
+          calling_convention: "unknown",
+        });
+        assert.deepEqual(await prototype("/rea_caller_defined/rea_ops.conv"), {
+          return_type: "/int",
+          parameters: [unnamed("/int")],
+          varargs: false,
+          calling_convention: "__cdecl",
+        });
+        for (const member of ["table", "indirect"])
+          assert.deepEqual(
+            await prototype(`/rea_caller_defined/rea_ops.${member}`),
+            {
+              return_type: "/int",
+              parameters: [unnamed("/int")],
+              varargs: false,
+              calling_convention: "unknown",
+            },
+          );
+        assert.deepEqual(await prototype("/rea_caller_defined/rea_ops.take"), {
+          return_type: "/void",
+          parameters: [{ name: "inner", type: "/rea_caller_defined/rea_cb" }],
+          varargs: false,
+          calling_convention: "unknown",
+        });
+        assert.deepEqual(await prototype("/rea_caller_defined/rea_ops.next"), {
+          return_type: "/int",
+          parameters: [{ name: "self", type: "/rea_caller_defined/rea_ops *" }],
+          varargs: false,
+          calling_convention: "unknown",
+        });
+        assert.equal(
+          (await inspect("/rea_caller_defined/rea_cb")).referenced_type,
+          "/rea_caller_defined/rea_cb.target *",
+        );
+        assert.deepEqual(await prototype("/rea_caller_defined/rea_cb.target"), {
+          return_type: "/long",
+          parameters: [{ name: "value", type: "/long" }],
+          varargs: false,
+          calling_convention: "unknown",
+        });
+        // The function types are named by declarator, so a repeat is idempotent
+        // and a differing one is refused without changing anything.
+        const repeated = await callbacks.call("define_native_data_types", {
+          declarations,
+        });
+        assert.deepEqual(
+          repeated.types.map((type) => type.status),
+          ["unchanged", "unchanged"],
+        );
+        const changed = await callbacks.refused(
+          "define_native_data_types",
+          {
+            declarations:
+              "struct rea_ops { long (*open)(const char *path, int flags); };",
+          },
+          "declarations",
+        );
+        assert.match(changed.message, /rea_ops\.open/u);
+        assert.equal(
+          (await prototype("/rea_caller_defined/rea_ops.open")).return_type,
+          "/int",
+        );
+        // Comma-separated function-pointer declarators share the return type
+        // and a calling convention written before the first one.
+        const separated = await callbacks.call("define_native_data_types", {
+          declarations:
+            "struct rea_pair { int __cdecl (*open)(int), (*close)(long fd), count; };\n" +
+            "typedef char (*rea_read_cb)(int), (*rea_write_cb)(short);",
+        });
+        assert.deepEqual(
+          separated.types.map((type) => [type.id, type.status]),
+          [
+            ["/rea_caller_defined/rea_pair", "defined"],
+            ["/rea_caller_defined/rea_read_cb", "defined"],
+            ["/rea_caller_defined/rea_write_cb", "defined"],
+          ],
+        );
+        assert.deepEqual(
+          (await inspect("/rea_caller_defined/rea_pair")).fields.map(
+            (field) => [field.name, field.offset_bytes, field.type_id],
+          ),
+          [
+            ["open", 0, "/rea_caller_defined/rea_pair.open *"],
+            ["close", 8, "/rea_caller_defined/rea_pair.close *"],
+            ["count", 16, "/int"],
+          ],
+        );
+        assert.deepEqual(await prototype("/rea_caller_defined/rea_pair.open"), {
+          return_type: "/int",
+          parameters: [unnamed("/int")],
+          varargs: false,
+          calling_convention: "__cdecl",
+        });
+        assert.deepEqual(
+          await prototype("/rea_caller_defined/rea_pair.close"),
+          {
+            return_type: "/int",
+            parameters: [{ name: "fd", type: "/long" }],
+            varargs: false,
+            calling_convention: "__cdecl",
+          },
+        );
+        assert.deepEqual(
+          await prototype("/rea_caller_defined/rea_write_cb.target"),
+          {
+            return_type: "/char",
+            parameters: [unnamed("/short")],
+            varargs: false,
+            calling_convention: "unknown",
+          },
+        );
+        await callbacks.call("close_binary");
+        return { function_pointer_members: ops.fields.length };
+      } finally {
+        await callbacks.close();
       }
     },
   );

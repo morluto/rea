@@ -83,6 +83,7 @@ import {
 } from "../domain/apple/appleArchiveFormat.js";
 import { hasDiskImageSignature } from "../domain/apple/diskImageFormat.js";
 import { recognizeArtifactFormat } from "../domain/artifactFormatRecognition.js";
+import { amigaHunkPrefixDecision } from "../domain/amigaHunk.js";
 import { gzipTarExtraFieldProbeBytes } from "../domain/tarFormat.js";
 import {
   ISO9660_DESCRIPTOR_OFFSET,
@@ -785,7 +786,7 @@ const detectArtifactFormat = async (
     initial.size,
     gzipTarExtraFieldProbeBytes(magic),
   );
-  const recognitionPrefix =
+  let recognitionPrefix =
     gzipProbeBytes > magic.length
       ? Buffer.concat([
           magic,
@@ -833,7 +834,31 @@ const detectArtifactFormat = async (
         ISO9660_SIGNATURE_BYTES,
         signal,
       );
-    else
+    else if (recognition.format === "amiga-hunk") {
+      const decision = amigaHunkPrefixDecision(recognitionPrefix, initial.size);
+      const before = recognitionPrefix.length;
+      if (
+        decision?.state === "needs-prefix" &&
+        decision.bytes > before &&
+        decision.bytes <= initial.size
+      ) {
+        const extra = await readCachedRange(before, decision.bytes - before);
+        if (extra.byteLength > 0)
+          recognitionPrefix = Buffer.concat([
+            recognitionPrefix,
+            Buffer.from(extra),
+          ]);
+      }
+      // A prefix that did not grow cannot answer this claim. Skip it instead
+      // of asking the same recognizer again.
+      if (recognitionPrefix.length === before) {
+        recognition = recognizeArtifactFormat(
+          recognitionInput(),
+          recognition.index + 1,
+        );
+        continue;
+      }
+    } else
       espFlashLayout = (
         await locateEspFlashLayout(
           initial.size,

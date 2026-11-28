@@ -11,6 +11,47 @@ import {
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import { analyzeParsedJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 
+it("parses a class extending a local binding named module", () => {
+  const source = "const module = Array; class Cards extends module {}";
+  const path = "cards.mjs";
+  for (const file of [
+    parseJavaScriptSource(source, path),
+    parseRecoveredJavaScript(source, path, {}).file,
+  ]) {
+    expect(file?.errors).toHaveLength(0);
+    expect(file?.program.body[1]).toMatchObject({
+      type: "ClassDeclaration",
+      superClass: { type: "Identifier", name: "module" },
+    });
+  }
+});
+
+it("keeps omitted call arguments with their own list", () => {
+  const source = 'outer<Pair<A, B>>(, inner(, "a,b"), /* , */ , (1, 2),,)';
+  for (const file of [
+    parseJavaScriptSource(source, "example.ts"),
+    parseRecoveredJavaScript(source, "example.ts", {}).file,
+  ]) {
+    const statement = file?.program.body[0];
+    if (
+      !t.isExpressionStatement(statement) ||
+      !t.isCallExpression(statement.expression)
+    )
+      throw new Error("Expected the outer call");
+    const outer = statement.expression;
+    expect(outer.arguments.map((arg) => arg?.type ?? null)).toStrictEqual([
+      null,
+      "CallExpression",
+      null,
+      "SequenceExpression",
+      null,
+    ]);
+    const inner = outer.arguments[1];
+    if (!t.isCallExpression(inner)) throw new Error("Expected the inner call");
+    expect(inner.arguments).toMatchObject([null, { type: "StringLiteral" }]);
+  }
+});
+
 it.each([
   ["class C extends (this.marker, Object) {}", true],
   ["class C { [this.marker]() {} }", true],

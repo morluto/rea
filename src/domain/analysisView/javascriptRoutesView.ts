@@ -29,7 +29,7 @@ import {
   analysisViewInputError,
 } from "./analysisViewErrors.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
@@ -374,11 +374,7 @@ export const projectJavaScriptRoutesView = (
     source_coverage: { ...inventory.coverage },
     inventory_capacity:
       inventory.capacity === null ? null : { ...inventory.capacity },
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...inventory.limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, inventory.limitations),
     unknowns: [
       "The complete application route set, reachability and runtime permissions remain unknown.",
       ...(inventory.coverage.candidate_enumeration === "partial"

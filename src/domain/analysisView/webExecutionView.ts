@@ -5,14 +5,14 @@ import {
   type WebExecutionObservation,
 } from "../webExecution.js";
 import { webRuntimeSourceMetadataSchema } from "../webRuntime.js";
-import { err, ok } from "../result.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { ok } from "../result.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import {
   createAnalysisViewResultReader,
   type AnalysisViewParent,
 } from "./analysisViewParent.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
@@ -257,17 +257,11 @@ const sourceTextPage = (
     (row) => row.script_id === view.script_id,
   )?.source;
   if (captured?.state !== "captured")
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view", "script_id"],
-          reason: "invalid_value",
-          message:
-            captured === undefined
-              ? "No source with this script_id was observed; list sources first."
-              : `Source text was not captured: ${captured.reason}`,
-        },
-      ]),
+    return invalidAnalysisView(
+      captured === undefined
+        ? "No source with this script_id was observed; list sources first."
+        : `Source text was not captured: ${captured.reason}`,
+      "script_id",
     );
   return analysisTextPage(captured.text, view.offset, view.limit, "Source");
 };
@@ -278,14 +272,9 @@ export const projectWebExecutionView = (
   admitted: AdmittedView,
 ) => {
   if (admitted.kind !== "web-execution" && admitted.kind !== "summary")
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view", "kind"],
-          reason: "invalid_value",
-          message: "Select a web-execution or summary view.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Select a web-execution or summary view.",
+      "kind",
     );
   assertOwnedView<SummaryAnalysisView | WebExecutionView>(
     admitted,
@@ -301,11 +290,7 @@ export const projectWebExecutionView = (
     parent_digest: parent.evidenceId.slice(3),
     artifact: parent.artifact ?? null,
     target_url: report.target.initial_url,
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...report.limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, report.limitations),
     unknowns: [
       "Execution outside the armed window, in workers, or caused by UI actions remains unknown.",
     ],

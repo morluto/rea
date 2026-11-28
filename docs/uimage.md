@@ -24,6 +24,11 @@ ranges and content hashes retain precise provenance. Extraction writes the compl
 payload and every component, so multi-file output can approach twice the input
 size. Compressed payloads remain compressed.
 
+U-Boot does not pad a legacy image, so the image ends at the 64-byte header plus
+the declared payload size. Bytes after that point, such as a root filesystem
+appended after a kernel or partition padding, belong to no entry. Coverage is
+then unknown, and a limitation gives their length and starting offset.
+
 The fixed 32-byte name field is retained as `name_bytes_hex`. `name` contains
 the UTF-8 bytes before the first NUL, or null when those bytes cannot be decoded
 exactly. For example, a producer can truncate a multibyte character at the

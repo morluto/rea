@@ -1,4 +1,5 @@
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
+import { isFormatTargetFailureKind } from "../domain/targetFailure.js";
 import {
   projectZstandardFrameAllowance,
   ZstandardFrameAllowanceError,
@@ -130,15 +131,11 @@ export const artifactReaderTargetFailure = (
 export const artifactOperationReason = (
   cause: ArtifactReaderFailure,
 ): ArtifactOperationError["reason"] => {
-  switch (cause.reason) {
-    case "malformed":
-    case "truncated":
-    case "unsupported":
-      throw new InternalInvariantError(
-        `Artifact reader raised ${cause.reason} without its format facts`,
-        { cause },
-      );
-    default:
-      return cause.reason;
-  }
+  const { reason } = cause;
+  if (isFormatTargetFailureKind(reason))
+    throw new InternalInvariantError(
+      `Artifact reader raised ${reason} without its format facts`,
+      { cause },
+    );
+  return reason;
 };

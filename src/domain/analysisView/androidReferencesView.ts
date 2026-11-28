@@ -5,23 +5,23 @@ import { androidReferencesViewSchema } from "../android/androidReferencesQuery.j
 import { evidenceSubjectTarget } from "../evidence.js";
 import { boundedList } from "../boundedList.js";
 import type { JsonValue } from "../jsonValue.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import {
   PLACEHOLDER_COVERAGE,
   selectByteBoundedViewRows,
   type ByteBoundedPageOwner,
 } from "./byteBoundedViewRows.js";
-import { pickFields } from "./selectViewRows.js";
+import { filterSet, pickFields } from "./selectViewRows.js";
 import {
-  analysisViewInputError,
   invalidAnalysisViewSubject,
+  invalidAnalysisView,
 } from "./analysisViewErrors.js";
 import {
   createAnalysisViewResultReader,
   type AnalysisViewParent,
 } from "./analysisViewParent.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
@@ -164,9 +164,9 @@ const topClassGroups = (trace: Trace): readonly TopClassGroup[] => {
 
 /** Exact filters shared by both facets; undefined fields match everything. */
 const filtersOf = (view: ReferencesView) => ({
-  kinds: view.kinds === undefined ? undefined : new Set(view.kinds),
-  packages: view.packages === undefined ? undefined : new Set(view.packages),
-  tops: view.top_classes === undefined ? undefined : new Set(view.top_classes),
+  kinds: filterSet(view.kinds),
+  packages: filterSet(view.packages),
+  tops: filterSet(view.top_classes),
 });
 
 const matcher = (view: ReferencesView) => {
@@ -234,7 +234,7 @@ const referencesPage = (
   view: Extract<ReferencesView, { facet: "references" }>,
   owner: ByteBoundedPageOwner,
 ) => {
-  const fields = view.fields === undefined ? undefined : new Set(view.fields);
+  const fields = filterSet(view.fields);
   const page = selectByteBoundedViewRows(
     references,
     view,
@@ -264,14 +264,9 @@ export const projectAndroidReferencesView = (
   admitted: AdmittedView,
 ) => {
   if (admitted.kind !== "android-references" && admitted.kind !== "summary")
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view", "kind"],
-          reason: "invalid_value",
-          message: "Select an android-references or summary view.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Select an android-references or summary view.",
+      "kind",
     );
   assertOwnedView<SummaryAnalysisView | ReferencesView>(
     admitted,
@@ -292,11 +287,7 @@ export const projectAndroidReferencesView = (
     parent_operation: TRACE_ANDROID_REFERENCES_OPERATION,
     parent_digest: parent.evidenceId.slice(3),
     artifact: { path: subject.path, sha256: subject.sha256 },
-    limitations: boundedViewMessages(
-      [...parent.limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent),
     unknowns: [
       "Static using nodes do not establish runtime calls, reflection or dynamic dispatch.",
     ],

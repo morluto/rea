@@ -14,16 +14,14 @@ import {
   type BatchDecompileResult,
 } from "../native/batchDecompile.js";
 import { analysisErrorProjectionSchema } from "../analysisErrorProjectionSchema.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import {
+  boundedViewLimitations,
   boundedViewMessages,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
-import {
-  analysisViewInputError,
-  invalidAnalysisView,
-} from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import {
   createAnalysisViewResultReader,
   type AnalysisViewParent,
@@ -37,11 +35,7 @@ import {
   analysisTextPage,
   analysisTextPageItemSchema,
 } from "./analysisViewText.js";
-import {
-  selectIndexedViewRows,
-  selectViewRows,
-  filterSet,
-} from "./selectViewRows.js";
+import { selectViewRows, filterSet } from "./selectViewRows.js";
 
 const OPERATION = "batch_decompile" as const;
 
@@ -310,11 +304,7 @@ const itemRow = (
 };
 
 const pseudocodeRefusal = (message: string) =>
-  err(
-    analysisViewInputError([
-      { path: ["view", "index"], reason: "invalid_value", message },
-    ]),
-  );
+  invalidAnalysisView(message, "index");
 
 /** Select retained batch facts without repeating decompilation or changing its record. */
 export const projectBatchDecompileView = (
@@ -338,11 +328,7 @@ export const projectBatchDecompileView = (
     parent_operation: OPERATION,
     parent_digest: parent.evidenceId.slice(3),
     artifact: parent.artifact ?? null,
-    limitations: boundedViewMessages(
-      parent.limitations,
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent),
     unknowns: boundedViewMessages(
       [],
       parent.evidenceId,
@@ -376,16 +362,13 @@ export const projectBatchDecompileView = (
           entries.has(item.procedure.address)));
     const projectItem = (item: (typeof batch.items)[number], index: number) =>
       itemRow(item, index, view.include_pseudocode);
-    const { rows, total } =
-      indices !== undefined
-        ? selectIndexedViewRows(
-            batch.items,
-            indices,
-            view,
-            matches,
-            projectItem,
-          )
-        : selectViewRows(batch.items, view, matches, projectItem);
+    const { rows, total } = selectViewRows(
+      batch.items,
+      view,
+      matches,
+      projectItem,
+      indices,
+    );
     return ok({
       kind: "batch-decompile" as const,
       view,

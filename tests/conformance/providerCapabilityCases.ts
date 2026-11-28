@@ -81,6 +81,7 @@ export const PROVIDER_CAPABILITY_CONFORMANCE: Readonly<
   },
   elfUnwindRanges: { cases: ["tests/acceptance/elfUnwindRangesCli.test.ts"] },
   erlangBeam: { cases: ["tests/acceptance/erlangBeamCli.test.ts"] },
+  espNvs: { cases: ["tests/boundary/mcp/espNvsMcpCli.test.ts"] },
   evmInterface: { cases: ["tests/boundary/mcp/evmInterfaceMcp.test.ts"] },
   firmwareAnalysis: { cases: ["tests/boundary/mcp/firmwareMcp.test.ts"] },
   uefiAnalysis: { cases: ["tests/acceptance/uefiFirmware.test.ts"] },
@@ -118,6 +119,7 @@ export const PROVIDER_CAPABILITY_CONFORMANCE: Readonly<
   },
   kernelModule: { cases: ["tests/acceptance/kernelModuleCli.test.ts"] },
   kuna: { cases: ["tests/boundary/mcp/kunaCloseRetryMcp.test.ts"] },
+  labviewArtifact: { cases: ["tests/boundary/cli/labviewRsrcCli.test.ts"] },
   managedStatic: { cases: ["tests/acceptance/managedCliOutput.test.ts"] },
   managedWorkflow: {
     cases: ["tests/boundary/mcp/managedWorkflowUnknownIdentityMcp.test.ts"],
@@ -143,6 +145,9 @@ export const PROVIDER_CAPABILITY_CONFORMANCE: Readonly<
   peImports: { cases: ["tests/acceptance/peImportsCli.test.ts"] },
   peLoadConfig: { cases: ["tests/acceptance/peLoadConfigCli.test.ts"] },
   peUnwindRanges: { cases: ["tests/acceptance/peUnwindRangesCli.test.ts"] },
+  machoFunctionStarts: {
+    cases: ["tests/acceptance/machoFunctionStartsCli.test.ts"],
+  },
   peOverlay: { cases: ["tests/acceptance/peOverlayCli.test.ts"] },
   peResources: { cases: ["tests/acceptance/applications/peResources.test.ts"] },
   nugetNupkg: { cases: ["tests/acceptance/nugetNupkgCli.test.ts"] },
@@ -174,4 +179,10 @@ export const PROVIDER_CAPABILITY_CONFORMANCE: Readonly<
     cases: ["tests/acceptance/webSourceLocationCli.test.ts"],
   },
   windowsShortcut: { cases: ["tests/acceptance/windowsShortcutCli.test.ts"] },
+  yaraMatches: {
+    cases: [
+      "tests/acceptance/yaraMatchesCli.test.ts",
+      "tests/boundary/mcp/yaraMatchesMcp.test.ts",
+    ],
+  },
 };

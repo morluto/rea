@@ -4,13 +4,11 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
-import generic.concurrent.GThreadPool;
 import generic.jar.ResourceFile;
 import ghidra.app.decompiler.DecompInterface;
 import ghidra.app.decompiler.DecompileOptions;
 import ghidra.app.decompiler.DecompileProcess.DisposeState;
 import ghidra.app.decompiler.DecompileResults;
-import ghidra.app.decompiler.parallel.DecompilerCallback;
 import ghidra.app.script.GhidraScript;
 import ghidra.app.script.GhidraScriptUtil;
 import ghidra.app.util.headless.HeadlessAnalyzer;
@@ -31,6 +29,7 @@ import java.util.Collections;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Future;
 
 /**
  * Replaces the bridge decompiler after real import and analysis so one procedure's
@@ -111,83 +110,408 @@ public class ReaDecompilerFailureProbe extends GhidraScript {
         return reason == null ? null : reason.getAsString();
     }
 
+    private static String selector(Function function) {
+        return "0x" + Long.toUnsignedString(function.getEntryPoint().getOffset(), 16);
+    }
+
+    /** A decompiler that records what it is asked for and returns an injected timeout. */
+    private static DecompInterface injectedWorker(List<String> pooled, List<String> disposed, long holdMillis) {
+        return new DecompInterface() {
+            @Override
+            public DecompileResults decompileFunction(Function function, int timeout, TaskMonitor taskMonitor) {
+                pooled.add(function.getName());
+                long until = System.nanoTime() + holdMillis * 1_000_000L;
+                // Holds until its time passes or its task is cancelled.
+                while (System.nanoTime() < until && !taskMonitor.isCancelled()) {
+                    try {
+                        Thread.sleep(5);
+                    } catch (InterruptedException stop) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+                return new DecompileResults(function, function.getProgram().getLanguage(),
+                    function.getProgram().getCompilerSpec(), null, INJECTED, null,
+                    taskMonitor.isCancelled() ? DisposeState.DISPOSED_ON_CANCEL : DisposeState.DISPOSED_ON_TIMEOUT);
+            }
+
+            @Override
+            public synchronized void dispose() {
+                disposed.add("worker");
+                super.dispose();
+            }
+        };
+    }
+
+    private static boolean await(java.util.function.BooleanSupplier condition, long millis) throws InterruptedException {
+        long until = System.nanoTime() + millis * 1_000_000L;
+        while (System.nanoTime() < until) {
+            if (condition.getAsBoolean()) return true;
+            Thread.sleep(5);
+        }
+        return condition.getAsBoolean();
+    }
+
     /**
-     * A read-ahead window carries its request's own function first. That
-     * request reports the window's outcome for it instead of decompiling again,
-     * and waits for the window only within its own deadline.
+     * How many workers the bridge starts for {@code queued} functions. The
+     * cap is the bridge's own, so a one-CPU host expects one worker.
+     */
+    private static int readAheadWorkers(Object bridge, int queued) throws Exception {
+        Field cap = bridge.getClass().getDeclaredField("DECOMPILE_AHEAD_WORKERS");
+        cap.setAccessible(true);
+        int limit = Math.max(1, Math.min(Runtime.getRuntime().availableProcessors(), cap.getInt(null)));
+        return Math.min(limit, queued);
+    }
+
+    /** True once every retained read-ahead task has published its outcome. */
+    private static boolean decompileAheadSettled(Field tasks, Object bridge) {
+        try {
+            Map<?, ?> retained = (Map<?, ?>) tasks.get(bridge);
+            if (retained.isEmpty()) return false;
+            for (Object task : retained.values()) {
+                Field done = task.getClass().getDeclaredField("done");
+                done.setAccessible(true);
+                if (!((Future<?>) done.get(task)).isDone()) return false;
+            }
+            return true;
+        } catch (ReflectiveOperationException failed) {
+            throw new IllegalStateException(failed);
+        }
+    }
+
+    /**
+     * Read-ahead runs beside the carrying request: that request decompiles its
+     * own function on the session decompiler without waiting for workers to
+     * start. A later request takes a finished result, waits for a running one
+     * within the worker's own deadline, or decompiles a queued one itself.
      */
     private void readAhead(GhidraScript bridge, Class<?> requestType, Constructor<?> requestConstructor,
         Object flowLimits, Method handleRequest, Field decompiler, Field limit, Function target,
         String procedure, JsonObject pseudocodeQuery) throws Exception {
-        Field workers = bridge.getClass().getDeclaredField("decompileAheadWorkers");
-        workers.setAccessible(true);
+        Field opener = bridge.getClass().getDeclaredField("decompileAheadOpener");
+        opener.setAccessible(true);
+        Field live = bridge.getClass().getDeclaredField("decompileAheadLiveWorkers");
+        live.setAccessible(true);
         Field threads = bridge.getClass().getDeclaredField("decompileAheadThreads");
         threads.setAccessible(true);
         Field retained = bridge.getClass().getDeclaredField("decompileResults");
         retained.setAccessible(true);
+        Field aheadTasks = bridge.getClass().getDeclaredField("decompileAheadTasks");
+        aheadTasks.setAccessible(true);
+        Field requestMonitor = ghidra.program.flatapi.FlatProgramAPI.class.getDeclaredField("monitor");
+        requestMonitor.setAccessible(true);
         Method dispose = bridge.getClass().getDeclaredMethod("disposeDecompileAhead");
         dispose.setAccessible(true);
-        Function sibling = exportedFunction("rea_cross_leaf");
-        String siblingSelector = "0x" + Long.toUnsignedString(sibling.getEntryPoint().getOffset(), 16);
+        Function own = exportedFunction("rea_cross_leaf");
+        Function second = exportedFunction("rea_cross_entry");
+        Function third = exportedFunction("rea_cross_indirect");
+        List<String> window = List.of(selector(own), selector(second), selector(third));
         List<String> pooled = Collections.synchronizedList(new ArrayList<>());
+        List<String> disposed = Collections.synchronizedList(new ArrayList<>());
         List<String> foreground = Collections.synchronizedList(new ArrayList<>());
-        DecompilerCallback<DecompileResults> window = new DecompilerCallback<>(currentProgram, prepared -> {}) {
-            @Override
-            public DecompileResults process(Function function, TaskMonitor taskMonitor) throws Exception {
-                pooled.add(function.getName());
-                if (function.equals(target))
-                    return new DecompileResults(function, function.getProgram().getLanguage(),
-                        function.getProgram().getCompilerSpec(), null, INJECTED, null, DisposeState.DISPOSED_ON_TIMEOUT);
-                // A sibling that never finishes on its own holds the window open.
-                while (!taskMonitor.isCancelled()) Thread.sleep(10);
-                return null;
+        Object previous = decompiler.get(bridge);
+        Object defaultOpener = opener.get(bridge);
+        Object previousMonitor = requestMonitor.get(bridge);
+        DecompInterface realSession = (DecompInterface) previous;
+        DecompInterface recording = new DecompInterface() {
+            {
+                setOptions(new DecompileOptions());
             }
 
             @Override
-            public DecompileResults process(DecompileResults results, TaskMonitor taskMonitor) {
-                return results;
-            }
-        };
-        DecompInterface again = new DecompInterface() {
-            @Override
             public DecompileResults decompileFunction(Function function, int timeout, TaskMonitor taskMonitor) {
                 foreground.add(function.getName());
-                throw new IllegalStateException("Foreground decompiled again after read-ahead");
+                return realSession.decompileFunction(function, timeout, taskMonitor);
             }
         };
-        Object previous = decompiler.get(bridge);
-        try {
-            ((Map<?, ?>) retained.get(bridge)).clear();
-            dispose.invoke(bridge);
-            workers.set(bridge, window);
-            decompiler.set(bridge, again);
-            limit.setInt(bridge, 1);
-            Object request = requestConstructor.newInstance(2, "procedure_pseudo_code", pseudocodeQuery, null, null,
-                flowLimits, List.of(procedure, siblingSelector));
-            long started = System.nanoTime();
+        java.util.function.IntSupplier liveWorkers = () -> {
             try {
-                handleRequest.invoke(bridge, request, null);
+                return live.getInt(bridge);
+            } catch (IllegalAccessException unreadable) {
+                throw new IllegalStateException(unreadable);
+            }
+        };
+        int queuedWorkers = readAheadWorkers(bridge, 2);
+        // Released in finally so a failed check cannot leave workers blocked
+        // in the opener while disposal waits out its stop bound.
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch opening = new java.util.concurrent.CountDownLatch(1);
+        Thread opened = null;
+        try {
+            decompiler.set(bridge, recording);
+
+            // Startup never delays the carrying request, and queued work that
+            // no worker has started is decompiled by its own request at once.
+            opener.set(bridge, (java.util.function.Function<Integer, DecompInterface>) payload -> {
+                try {
+                    release.await();
+                } catch (InterruptedException stop) {
+                    Thread.currentThread().interrupt();
+                }
+                return injectedWorker(pooled, disposed, 0);
+            });
+            ((Map<?, ?>) retained.get(bridge)).clear();
+            long started = System.nanoTime();
+            handleRequest.invoke(bridge, requestConstructor.newInstance(2, "procedure_pseudo_code",
+                pseudocodeFor(pseudocodeQuery, own), null, null, flowLimits, window), null);
+            long carriedMillis = (System.nanoTime() - started) / 1_000_000;
+            require("read_ahead_carrying_request_does_not_wait_for_startup",
+                carriedMillis < 2000 && foreground.equals(List.of(own.getName())));
+            require("read_ahead_workers_match_queued_work", liveWorkers.getAsInt() == queuedWorkers);
+            handleRequest.invoke(bridge, requestConstructor.newInstance(3, "procedure_pseudo_code",
+                pseudocodeFor(pseudocodeQuery, second), null, null, flowLimits, List.of()), null);
+            require("read_ahead_queued_function_taken_back",
+                foreground.contains(second.getName()) && !pooled.contains(second.getName()));
+            release.countDown();
+            require("read_ahead_worker_takes_queued_function",
+                await(() -> pooled.contains(third.getName()), 5000));
+            // The worker's injected timeout is that function's outcome.
+            try {
+                handleRequest.invoke(bridge, requestConstructor.newInstance(4, "procedure_pseudo_code",
+                    pseudocodeFor(pseudocodeQuery, third), null, null, flowLimits, List.of()), null);
                 throw new IllegalStateException("Read-ahead timeout unexpectedly succeeded");
             } catch (InvocationTargetException failure) {
-                require("read_ahead_foreground_timeout_reported",
+                require("read_ahead_result_reported_not_decompiled_again",
                     failureCode(failure.getCause()).equals("decompile_timed_out") &&
-                    failure.getCause().getMessage().contains("exceeded the 1-second configured decompilation limit"));
+                    !foreground.contains(third.getName()));
             }
-            long elapsedMillis = (System.nanoTime() - started) / 1_000_000;
-            require("read_ahead_foreground_not_decompiled_again", foreground.isEmpty() &&
-                pooled.contains(target.getName()) && pooled.contains(sibling.getName()));
-            // One second of deadline plus cancellation and scheduling slack, far
-            // below the deadline elapsing again for the foreground.
-            require("read_ahead_window_within_foreground_deadline", elapsedMillis >= 900 && elapsedMillis < 1900);
-            require("read_ahead_cancelled_sibling_uncached", ((Map<?, ?>) retained.get(bridge)).isEmpty());
-            // GThreadPool registers every pool by name, so isPrivate() cannot
-            // tell; the property is that Ghidra's own decompiler pool is not it.
-            require("read_ahead_private_thread_pool", threads.get(bridge) != null &&
-                threads.get(bridge) != GThreadPool.getSharedThreadPool("Parallel Decompiler"));
-        } finally {
-            limit.setInt(bridge, 0);
-            decompiler.set(bridge, previous);
+            require("read_ahead_failure_uncached", ((Map<?, ?>) retained.get(bridge)).size() == 2);
             dispose.invoke(bridge);
+            require("read_ahead_idle_workers_disposed",
+                liveWorkers.getAsInt() == 0 && disposed.size() == queuedWorkers);
+
+            // A running read-ahead is waited for rather than started again.
+            pooled.clear();
+            foreground.clear();
+            disposed.clear();
+            ((Map<?, ?>) retained.get(bridge)).clear();
+            opener.set(bridge, (java.util.function.Function<Integer, DecompInterface>) payload ->
+                injectedWorker(pooled, disposed, 600));
+            handleRequest.invoke(bridge, requestConstructor.newInstance(5, "procedure_pseudo_code",
+                pseudocodeFor(pseudocodeQuery, own), null, null, flowLimits, window), null);
+            require("read_ahead_running", await(() -> pooled.contains(second.getName()), 5000));
+            started = System.nanoTime();
+            try {
+                handleRequest.invoke(bridge, requestConstructor.newInstance(6, "procedure_pseudo_code",
+                    pseudocodeFor(pseudocodeQuery, second), null, null, flowLimits, List.of()), null);
+                throw new IllegalStateException("Read-ahead timeout unexpectedly succeeded");
+            } catch (InvocationTargetException failure) {
+                long waitedMillis = (System.nanoTime() - started) / 1_000_000;
+                require("read_ahead_running_result_awaited",
+                    failureCode(failure.getCause()).equals("decompile_timed_out") &&
+                    !foreground.contains(second.getName()) && waitedMillis < 1500);
+            }
+
+            // Cancelling a request that waits for a running read-ahead cancels it.
+            dispose.invoke(bridge);
+            pooled.clear();
+            foreground.clear();
+            opener.set(bridge, (java.util.function.Function<Integer, DecompInterface>) payload ->
+                injectedWorker(pooled, disposed, 60_000));
+            handleRequest.invoke(bridge, requestConstructor.newInstance(7, "procedure_pseudo_code",
+                pseudocodeFor(pseudocodeQuery, own), null, null, flowLimits, window), null);
+            require("read_ahead_running_before_cancel", await(() -> pooled.contains(second.getName()), 5000));
+            TaskMonitor cancellable = new ghidra.util.task.TaskMonitorAdapter(true);
+            requestMonitor.set(bridge, cancellable);
+            Thread canceller = new Thread(() -> {
+                try {
+                    Thread.sleep(200);
+                } catch (InterruptedException stop) {
+                    return;
+                }
+                cancellable.cancel();
+            });
+            canceller.start();
+            started = System.nanoTime();
+            try {
+                handleRequest.invoke(bridge, requestConstructor.newInstance(8, "procedure_pseudo_code",
+                    pseudocodeFor(pseudocodeQuery, second), null, null, flowLimits, List.of()), null);
+                throw new IllegalStateException("Cancelled read-ahead wait unexpectedly succeeded");
+            } catch (InvocationTargetException failure) {
+                canceller.join();
+                long waitedMillis = (System.nanoTime() - started) / 1_000_000;
+                require("read_ahead_cancel_reaches_running_worker",
+                    failureCode(failure.getCause()).equals("decompile_cancelled") && waitedMillis < 5000 &&
+                    liveWorkers.getAsInt() == 0);
+            } finally {
+                requestMonitor.set(bridge, previousMonitor);
+            }
+
+            // The handler is blocked on a task it already took. The reader
+            // cancels that task and returns; it does not wait out the stop
+            // bound, so the cancel frame behind it is still read.
+            dispose.invoke(bridge);
+            pooled.clear();
+            foreground.clear();
+            opener.set(bridge, (java.util.function.Function<Integer, DecompInterface>) payload ->
+                injectedWorker(pooled, disposed, 60_000));
+            handleRequest.invoke(bridge, requestConstructor.newInstance(15, "procedure_pseudo_code",
+                pseudocodeFor(pseudocodeQuery, own), null, null, flowLimits, window), null);
+            require("read_ahead_running_before_abandon", await(() -> pooled.contains(second.getName()), 5000));
+            TaskMonitor waiting = new ghidra.util.task.TaskMonitorAdapter(true);
+            requestMonitor.set(bridge, waiting);
+            java.util.concurrent.atomic.AtomicReference<Throwable> handlerFailure =
+                new java.util.concurrent.atomic.AtomicReference<>();
+            Thread handler = new Thread(() -> {
+                try {
+                    handleRequest.invoke(bridge, requestConstructor.newInstance(16, "procedure_pseudo_code",
+                        pseudocodeFor(pseudocodeQuery, second), null, null, flowLimits, List.of()), null);
+                    handlerFailure.set(new IllegalStateException("read-ahead wait succeeded"));
+                } catch (InvocationTargetException failure) {
+                    handlerFailure.set(failure.getCause());
+                } catch (Throwable failure) {
+                    handlerFailure.set(failure);
+                }
+            });
+            handler.start();
+            Thread.sleep(200);
+            Method cancelAhead = bridge.getClass().getDeclaredMethod("cancelDecompileAhead");
+            cancelAhead.setAccessible(true);
+            long abandonStarted = System.nanoTime();
+            try {
+                cancelAhead.invoke(bridge);
+                long cancelMillis = (System.nanoTime() - abandonStarted) / 1_000_000;
+                waiting.cancel();
+                handler.join(2000);
+                long waitedMillis = (System.nanoTime() - abandonStarted) / 1_000_000;
+                Throwable cause = handlerFailure.get();
+                require("read_ahead_abandoned_while_handler_waits",
+                    cancelMillis < 1000 && !handler.isAlive() && waitedMillis < 2000 &&
+                    cause != null && failureCode(cause).equals("decompile_cancelled") &&
+                    await(() -> liveWorkers.getAsInt() == 0, 2000));
+            } finally {
+                waiting.cancel();
+                handler.join(2000);
+                requestMonitor.set(bridge, previousMonitor);
+            }
+
+            // A changed decompile deadline reuses a completed result but not
+            // a timeout produced under the earlier deadline.
+            dispose.invoke(bridge);
+            pooled.clear();
+            foreground.clear();
+            ((Map<?, ?>) retained.get(bridge)).clear();
+            limit.setInt(bridge, 1);
+            opener.set(bridge, (java.util.function.Function<Integer, DecompInterface>) payload -> {
+                DecompInterface real = new DecompInterface() {
+                    @Override
+                    public DecompileResults decompileFunction(Function function, int timeout, TaskMonitor taskMonitor) {
+                        DecompileResults results = super.decompileFunction(function, timeout, taskMonitor);
+                        pooled.add(function.getName());
+                        return results;
+                    }
+                };
+                real.toggleCCode(true);
+                real.toggleSyntaxTree(true);
+                real.openProgram(currentProgram);
+                return real;
+            });
+            handleRequest.invoke(bridge, requestConstructor.newInstance(11, "procedure_pseudo_code",
+                pseudocodeFor(pseudocodeQuery, own), null, null, flowLimits, window), null);
+            require("read_ahead_completed_under_old_deadline",
+                await(() -> pooled.contains(second.getName()) && pooled.contains(third.getName()) &&
+                    decompileAheadSettled(aheadTasks, bridge), 10000));
+            limit.setInt(bridge, 5);
+            handleRequest.invoke(bridge, requestConstructor.newInstance(12, "procedure_pseudo_code",
+                pseudocodeFor(pseudocodeQuery, third), null, null, flowLimits, List.of()), null);
+            require("read_ahead_success_reused_across_deadline_change", !foreground.contains(third.getName()));
+            dispose.invoke(bridge);
+            pooled.clear();
+            foreground.clear();
+            ((Map<?, ?>) retained.get(bridge)).clear();
+            limit.setInt(bridge, 1);
+            opener.set(bridge, (java.util.function.Function<Integer, DecompInterface>) payload ->
+                injectedWorker(pooled, disposed, 0));
+            handleRequest.invoke(bridge, requestConstructor.newInstance(13, "procedure_pseudo_code",
+                pseudocodeFor(pseudocodeQuery, own), null, null, flowLimits, window), null);
+            require("read_ahead_timed_out_under_old_deadline",
+                await(() -> pooled.contains(second.getName()), 5000));
+            limit.setInt(bridge, 5);
+            handleRequest.invoke(bridge, requestConstructor.newInstance(14, "procedure_pseudo_code",
+                pseudocodeFor(pseudocodeQuery, second), null, null, flowLimits, List.of()), null);
+            require("read_ahead_timeout_not_reused_after_deadline_change", foreground.contains(second.getName()));
+            limit.setInt(bridge, 0);
+
+            // A one-function remainder starts no worker.
+            dispose.invoke(bridge);
+            handleRequest.invoke(bridge, requestConstructor.newInstance(9, "procedure_pseudo_code",
+                pseudocodeFor(pseudocodeQuery, own), null, null, flowLimits,
+                List.of(selector(own), selector(second))), null);
+            require("read_ahead_single_remainder_starts_no_worker", liveWorkers.getAsInt() == 0);
+
+            // Workers still opening when read-ahead is disposed close unused.
+            dispose.invoke(bridge);
+            pooled.clear();
+            disposed.clear();
+            ((Map<?, ?>) retained.get(bridge)).clear();
+            opener.set(bridge, (java.util.function.Function<Integer, DecompInterface>) payload -> {
+                try {
+                    opening.await();
+                } catch (InterruptedException stop) {
+                    Thread.currentThread().interrupt();
+                }
+                return injectedWorker(pooled, disposed, 0);
+            });
+            handleRequest.invoke(bridge, requestConstructor.newInstance(10, "procedure_pseudo_code",
+                pseudocodeFor(pseudocodeQuery, own), null, null, flowLimits, window), null);
+            opened = new Thread(() -> {
+                try {
+                    Thread.sleep(200);
+                } catch (InterruptedException stop) {
+                    return;
+                }
+                opening.countDown();
+            });
+            opened.start();
+            dispose.invoke(bridge);
+            opened.join();
+            require("read_ahead_opening_workers_disposed",
+                liveWorkers.getAsInt() == 0 && pooled.isEmpty() && disposed.size() == queuedWorkers);
+
+            // Real decompiler processes open the Program concurrently.
+            opener.set(bridge, defaultOpener);
+            Method open = bridge.getClass().getDeclaredMethod("openDecompileAheadDecompiler", Integer.class);
+            open.setAccessible(true);
+            List<DecompInterface> opened4 = Collections.synchronizedList(new ArrayList<>());
+            List<Thread> openers = new ArrayList<>();
+            long openStarted = System.nanoTime();
+            for (int index = 0; index < 4; index++) {
+                Thread thread = new Thread(() -> {
+                    try {
+                        opened4.add((DecompInterface) open.invoke(bridge, (Integer) null));
+                    } catch (ReflectiveOperationException failed) {
+                        // Reported by the count below.
+                    }
+                });
+                openers.add(thread);
+                thread.start();
+            }
+            for (Thread thread : openers) thread.join();
+            long openMillis = (System.nanoTime() - openStarted) / 1_000_000;
+            boolean usable = opened4.size() == 4;
+            for (DecompInterface each : opened4) {
+                usable &= each.decompileFunction(own, 30, TaskMonitor.DUMMY).decompileCompleted();
+                each.dispose();
+            }
+            println("REA_DECOMPILER_FAILURE_PROBE_OPEN_MILLIS " + openMillis);
+            require("read_ahead_concurrent_open_program", usable);
+            require("read_ahead_private_thread_pool",
+                threads.get(bridge) instanceof java.util.concurrent.ExecutorService);
+        } finally {
+            release.countDown();
+            opening.countDown();
+            try {
+                if (opened != null) opened.join();
+            } finally {
+                try {
+                    dispose.invoke(bridge);
+                } finally {
+                    limit.setInt(bridge, 0);
+                    opener.set(bridge, defaultOpener);
+                    requestMonitor.set(bridge, previousMonitor);
+                    decompiler.set(bridge, previous);
+                }
+            }
         }
 
         // The hint is advisory: a longer one is clamped to one window, never refused.
@@ -208,6 +532,13 @@ public class ReaDecompilerFailureProbe extends GhidraScript {
         List<String> expected = new ArrayList<>();
         for (int index = 0; index < 32; index++) expected.add(selectors.get(index).getAsString());
         require("read_ahead_hint_clamped_to_window", kept.equals(expected));
+    }
+
+    /** The probe's pseudocode query, selecting another function. */
+    private static JsonObject pseudocodeFor(JsonObject query, Function function) {
+        JsonObject selected = query.deepCopy();
+        selected.addProperty("procedure", selector(function));
+        return selected;
     }
 
     private Object parsedRequest(GhidraScript bridge, String method, JsonObject params, JsonElement payload)
