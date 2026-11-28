@@ -27,8 +27,8 @@ export async function runUpdate(previousVersion, host) {
 const prerequisiteProgram = `
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-export const readNpmRelease = async () => ({ status: "published", taggedVersion: "6.9.0", stableVersion: "6.9.0" });
-export const stableUpdateVersion = () => "6.9.0";
+export { stableUpdateVersion } from ${JSON.stringify(pathToFileURL(resolve("scripts/ci/npm-release.mjs")).href)};
+export const readNpmRelease = async () => ({ status: "published", tag: "latest", taggedVersion: "6.9.0", stableVersion: "6.9.0" });
 export const verifyInstalledCanaryPackage = async () => ({ controlled_protocol_prerequisite: true });
 export async function installCanaryPackage(specifier, workspace) {
   const root = join(workspace, "controlled-updater");
@@ -101,9 +101,14 @@ registerHooks({ resolve(specifier, context, next) {
   return { root, controller, hook, selectedNpm, bin };
 };
 
-processTest.skipIf(process.platform === "win32").for([true, false])(
-  "preserves npm selection for all published-update operations (explicit selection: %s)",
-  async (selected, { processes }) => {
+processTest.skipIf(process.platform === "win32").for([
+  { selected: true, recovery: false },
+  { selected: false, recovery: false },
+  { selected: true, recovery: true },
+])(
+  "preserves npm selection for published-update operations (explicit: $selected, recovery: $recovery)",
+  async ({ selected, recovery }, { processes }) => {
+    const version = recovery ? "6.8.5" : "6.9.0";
     const { root, controller, hook, selectedNpm, bin } = await prepare();
     const log = join(root, "npm-operations.jsonl");
     const env = {
@@ -115,7 +120,13 @@ processTest.skipIf(process.platform === "win32").for([true, false])(
     };
     const result = await processes.run(
       process.execPath,
-      ["--import", hook, "scripts/verify-published-package.mjs", "6.9.0"],
+      [
+        "--import",
+        hook,
+        "scripts/verify-published-package.mjs",
+        version,
+        ...(recovery ? ["--recovery"] : []),
+      ],
       { cwd: controller, env },
     );
     expect(result.exitCode, result.stderr).toBe(0);
@@ -160,7 +171,7 @@ processTest.skipIf(process.platform === "win32").for([true, false])(
       ["root", "--global"],
     ]);
     expect(JSON.parse(result.stdout)).toMatchObject({
-      version: "6.9.0",
+      version,
       update: {
         status: "updated",
         previousVersion: "6.8.0",

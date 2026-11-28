@@ -7,6 +7,7 @@ export function readNpmRelease(
 export function stableUpdateVersion(
   version: string,
   published: NpmReleaseState,
+  options?: { allowSuperseded?: boolean },
 ): string;
 export function waitForNpmRelease(
   version: string,
