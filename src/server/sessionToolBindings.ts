@@ -49,6 +49,7 @@ import type { EvidenceWorkflowExecution } from "../application/investigation/Evi
 import { traceApplicationFeatureEvidence } from "../application/javascript/JavaScriptApplicationWorkflowService.js";
 import { traceJavaScriptSemanticsEvidence } from "../application/javascript/JavaScriptSemanticTraceService.js";
 import { compareStaticAndObservedEndpointsEvidence } from "../application/javascript/StaticObservedEndpointComparisonService.js";
+import { inspectEvtxArchiveEvidence } from "../application/evtxArchive/EvtxArchiveService.js";
 import { inspectNtfsJournalEvidence } from "../application/ntfs/NtfsJournalService.js";
 import { evaluateReconstructionCoverage } from "../application/ReconstructionCoverageService.js";
 import { exportEnvironmentBundleTool } from "../application/environment/environmentBundleTool.js";
@@ -305,6 +306,17 @@ export const bindApplicationWorkflowTools = (
         inspectionExecution(
           await inspectNtfsJournalEvidence(input, resources, signal),
         ),
+    },
+    inspect_evtx_archive: {
+      admission: "application",
+      summary: async (input, options) => {
+        const inspected = await inspectEvtxArchiveEvidence(
+          input,
+          resources,
+          options,
+        );
+        return inspected.ok ? ok(inspected.value.evidence) : inspected;
+      },
     },
     inspect_playwright_trace: {
       admission: "sdk",
