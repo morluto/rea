@@ -13,13 +13,20 @@ export const ANALYSIS_VIEW_PAGE_BYTES = 1024 * 1024;
 export const ANALYSIS_VIEW_PAGE_ALLOWANCE =
   "The 1,048,576-byte analysis-view page allowance";
 
-const ANALYSIS_VIEW_PAGE_NARROWING =
-  "For a pageable collection, select fewer fields or a smaller selection; if the error includes details.partial_observation, use that complete parent Evidence, or read or export the parent from its local bundle or retained MCP session.";
+export const ANALYSIS_VIEW_REFUSAL_PARENT_NOTE =
+  "Only the requested view projection was refused; the completed parent Evidence record remains available.";
+
+const ANALYSIS_VIEW_PAGE_NARROWING = `${ANALYSIS_VIEW_REFUSAL_PARENT_NOTE} For a pageable collection, select fewer fields or a smaller selection; if the error includes details.partial_observation, use that complete parent Evidence, or read or export the parent from its local bundle or retained MCP session. Reading the parent does not increase the page allowance.`;
+
+const withParentNote = (narrowing: string): string =>
+  narrowing.startsWith(ANALYSIS_VIEW_REFUSAL_PARENT_NOTE)
+    ? narrowing
+    : `${ANALYSIS_VIEW_REFUSAL_PARENT_NOTE} ${narrowing}`;
 
 /** Recovery belongs to the view projection, not to the MCP transport. */
 export const ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY = fixedAllowanceOptions(
   ANALYSIS_VIEW_PAGE_ALLOWANCE,
-  "report",
+  "bytes",
   {
     limit: ANALYSIS_VIEW_PAGE_BYTES,
     unit: "bytes",
@@ -50,10 +57,10 @@ export const analysisViewPageTooLarge = (
         limit_bytes: ANALYSIS_VIEW_PAGE_BYTES,
         ...selection,
       },
-      fixedAllowanceOptions(ANALYSIS_VIEW_PAGE_ALLOWANCE, "report", {
+      fixedAllowanceOptions(ANALYSIS_VIEW_PAGE_ALLOWANCE, "bytes", {
         limit: ANALYSIS_VIEW_PAGE_BYTES,
         unit: "bytes",
-        narrowing,
+        narrowing: withParentNote(narrowing),
       }),
     ),
   );

@@ -12,6 +12,7 @@ import type { AnalysisViewParent } from "./analysisViewParent.js";
 import { pageViewCoverage } from "./analysisViewCoverage.js";
 import {
   ANALYSIS_VIEW_PAGE_ALLOWANCE,
+  ANALYSIS_VIEW_REFUSAL_PARENT_NOTE,
   invalidAnalysisView,
 } from "./analysisViewErrors.js";
 import type { recordedArrayViewSchema } from "./analysisViewRequest.js";
@@ -38,11 +39,10 @@ const recordedArrayDepthRefusal = () =>
       "memory",
       `Recorded array view exceeds the maximum JSON nesting depth of ${MAX_JSON_DEPTH}.`,
       { maximum_json_depth: MAX_JSON_DEPTH },
-      fixedAllowanceOptions("The Evidence JSON nesting depth limit", "report", {
+      fixedAllowanceOptions("The Evidence JSON nesting depth limit", "count", {
         limit: MAX_JSON_DEPTH,
         unit: "levels",
-        narrowing:
-          "Retrieve or export the complete parent Evidence, or read it from the caller-supplied Evidence file or bundle.",
+        narrowing: `${ANALYSIS_VIEW_REFUSAL_PARENT_NOTE} Retrieve or export the complete parent Evidence, or read it from the caller-supplied Evidence file or bundle.`,
       }),
     ),
   );
@@ -136,11 +136,10 @@ export const projectRecordedArrayView = (
         "memory",
         "Recorded array view exceeds the 1 MiB page allowance.",
         { maximum_page_bytes: PAGE_BYTES },
-        fixedAllowanceOptions(ANALYSIS_VIEW_PAGE_ALLOWANCE, "report", {
+        fixedAllowanceOptions(ANALYSIS_VIEW_PAGE_ALLOWANCE, "bytes", {
           limit: PAGE_BYTES,
           unit: "bytes",
-          narrowing:
-            "Retrieve or export the complete parent Evidence, or read it from the caller-supplied Evidence file or bundle.",
+          narrowing: `${ANALYSIS_VIEW_REFUSAL_PARENT_NOTE} Retrieve or export the complete parent Evidence, or read it from the caller-supplied Evidence file or bundle.`,
         }),
       ),
     );

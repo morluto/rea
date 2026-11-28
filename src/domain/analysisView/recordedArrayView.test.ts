@@ -93,11 +93,31 @@ it("keeps parameters that still fit one level below the Evidence root", () => {
 it("returns a typed depth refusal instead of throwing when a row cannot be nested", () => {
   const projected = project(parent({}, nested(MAX_JSON_DEPTH - 1)));
   if (projected.ok) throw new Error("expected a depth refusal");
-  expect(projectAnalysisError(projected.error)).toMatchObject({
+  const error = projectAnalysisError(projected.error);
+  expect(error).toMatchObject({
     code: "resource_constraint",
     details: { reported_limits: { maximum_json_depth: MAX_JSON_DEPTH } },
-    remediation: { action: expect.stringContaining("JSON depth") },
+    remediation: {
+      action: expect.stringContaining(
+        "Only the requested view projection was refused; the completed parent Evidence record remains available.",
+      ),
+    },
   });
+  expect(error.remediation.action).not.toContain(
+    "does not leave a completed report or Evidence record",
+  );
+});
+
+it("preserves retained-parent semantics in recorded-array page byte refusals", () => {
+  const projected = project(parent({}, "x".repeat(1024 * 1024 + 64)));
+  if (projected.ok) throw new Error("expected a page-size refusal");
+  const error = projectAnalysisError(projected.error);
+  expect(error.remediation.action).toContain(
+    "Only the requested view projection was refused; the completed parent Evidence record remains available.",
+  );
+  expect(error.remediation.action).not.toContain(
+    "does not leave a completed report or Evidence record",
+  );
 });
 
 it("stops before a later row exceeds the output Evidence depth", () => {

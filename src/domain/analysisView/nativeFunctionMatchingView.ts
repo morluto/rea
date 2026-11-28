@@ -13,6 +13,7 @@ import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import { filterSet } from "./selectViewRows.js";
 import {
   ANALYSIS_VIEW_PAGE_ALLOWANCE,
+  ANALYSIS_VIEW_REFUSAL_PARENT_NOTE,
   invalidAnalysisView,
 } from "./analysisViewErrors.js";
 import {
@@ -359,13 +360,13 @@ export const projectNativeFunctionMatchingView = (
                   next_offset: source.next_offset,
                 }),
           },
-          fixedAllowanceOptions(ANALYSIS_VIEW_PAGE_ALLOWANCE, "report", {
+          fixedAllowanceOptions(ANALYSIS_VIEW_PAGE_ALLOWANCE, "bytes", {
             limit: BYTE_SOURCE_PAGE_BYTES,
             unit: "bytes",
             narrowing:
               source === undefined
-                ? "Narrow the selection or inspect the original matching Evidence."
-                : "Inspect the original matching Evidence, or export it if retained; use next_offset to continue after the oversized source.",
+                ? `${ANALYSIS_VIEW_REFUSAL_PARENT_NOTE} Narrow the selection or inspect the original matching Evidence.`
+                : `${ANALYSIS_VIEW_REFUSAL_PARENT_NOTE} Inspect the original matching Evidence, or export it if retained; use next_offset to continue after the oversized source.`,
           }),
         ),
       );
