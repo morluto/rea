@@ -620,6 +620,17 @@ covers direct BrowserWindow instances, stable local aliases, and their
 `webContents`; other receiver-producing APIs remain unmodeled. Complete AST
 traversal does not imply complete API-model coverage.
 
+For a Node child-process candidate, `environment_supplied` is true or false
+only when the effective `env` option is statically known to be truthy or
+falsy. A dynamic value or options object produces null, a candidate
+`supplies-env` relation, and an explicit unknown frontier. This does not
+inspect or persist the inherited environment. A proven intrinsic `new Object()`
+is truthy; other constructor results remain unknown. For `exec` and
+`execFile`, a proven function in the second argument is a callback rather than
+environment options. An `execFile` third-argument function can have enumerable
+properties that are copied as options, so that case is not inferred from its
+function identity alone.
+
 Artifact bytes and AST syntax are observations. Entrypoint resolution, imports,
 loads, calls, and persistence relationships are static inferences and explicitly
 say that syntax does not prove runtime execution. A malformed or unavailable

@@ -138,14 +138,18 @@ describe("child-process options detection", () => {
       ["bigint-zero", `spawn("tool", [], { env: 0n })`, false],
       ["zero-float", `spawn("tool", [], { env: 0.0 })`, false],
       ["nan", `spawn("tool", [], { env: NaN })`, false],
-      ["shadowed-nan", `((NaN) => spawn("tool", [], { env: NaN }))({})`, true],
+      ["shadowed-nan", `((NaN) => spawn("tool", [], { env: NaN }))({})`, null],
       ["empty-string", `spawn("tool", [], { env: "" })`, false],
       ["false", `spawn("tool", [], { env: false })`, false],
       ["empty-object", `spawn("tool", [], { env: {} })`, true],
       ["with-key", `spawn("tool", [], { env: { A: "1" } })`, true],
       ["inline-spread", `spawn("tool", [], { ...{ env: { A: "1" } } })`, true],
-      ["unresolved-value", `spawn("tool", [], { env: input })`, true],
-      ["unresolved-options", `spawn("tool", [], input)`, false],
+      ["unresolved-value", `spawn("tool", [], { env: input })`, null],
+      ["unresolved-options", `spawn("tool", [], input)`, null],
+      ["getter", `spawn("tool", [], { get env() { return input } })`, null],
+      ["later-spread", `spawn("tool", [], { env: {}, ...input })`, null],
+      ["known-last", `spawn("tool", [], { ...input, env: {} })`, true],
+      ["known-null-last", `spawn("tool", [], { ...input, env: null })`, false],
     ] as const;
 
     for (const [label, call, supplied] of cases) {
@@ -158,3 +162,87 @@ describe("child-process options detection", () => {
     }
   });
 });
+
+it.each([
+  ["intrinsic", 'spawn("tool", [], { env: new Object() })', true],
+  [
+    "shadowed",
+    'function f(Object) { spawn("tool", [], { env: new Object() }) }',
+    null,
+  ],
+  [
+    "overwritten",
+    'globalThis.Object = replacement; spawn("tool", [], { env: new Object() })',
+    null,
+  ],
+  [
+    "opaque write",
+    'eval("Object = replacement"); spawn("tool", [], { env: new Object() })',
+    null,
+  ],
+  ["argument", 'spawn("tool", [], { env: new Object(input) })', null],
+  ["custom", 'spawn("tool", [], { env: new Custom() })', null],
+] as const)(
+  "qualifies constructor environment: %s",
+  (_label, code, expected) => {
+    const ir = analyzeJavaScriptSemantics(
+      `import { spawn } from "node:child_process"; ${code};`,
+    );
+    expect(ir.childProcessSpawns[0]?.environmentSupplied).toBe(expected);
+  },
+);
+
+it.each([
+  ["exec callback", 'const cb = () => {}; exec("tool", cb)', false],
+  [
+    "exec alias callback",
+    'const original = () => {}; const cb = original; exec("tool", cb)',
+    false,
+  ],
+  [
+    "exec callback with property",
+    'const cb = () => {}; cb.env = {}; exec("tool", cb)',
+    false,
+  ],
+  [
+    "exec later spread",
+    'const cb = () => {}; exec("tool", cb, ...args)',
+    false,
+  ],
+  ["execFile callback", 'function cb() {} execFile("tool", cb)', false],
+  [
+    "execFile callback with property",
+    'function cb() {} cb.env = {}; execFile("tool", cb)',
+    false,
+  ],
+  [
+    "execFile later spread",
+    'function cb() {} execFile("tool", cb, ...args)',
+    false,
+  ],
+  [
+    "execFile third-slot callback",
+    'function cb() {} cb.env = {}; execFile("tool", [], cb)',
+    null,
+  ],
+  [
+    "reassigned callback",
+    'let cb = () => {}; cb = input; exec("tool", cb)',
+    null,
+  ],
+  [
+    "opaque callback write",
+    'function f() { let cb = () => {}; eval("cb = input"); exec("tool", cb) }',
+    null,
+  ],
+  ["unknown callback", 'function f(cb) { exec("tool", cb) }', null],
+  ["spread before callback", "function cb() {} exec(...args, cb)", null],
+] as const)(
+  "qualifies callback overload environment: %s",
+  (_label, code, expected) => {
+    const ir = analyzeJavaScriptSemantics(
+      `import { exec, execFile } from "node:child_process"; ${code};`,
+    );
+    expect(ir.childProcessSpawns[0]?.environmentSupplied).toBe(expected);
+  },
+);

@@ -296,7 +296,7 @@ export interface JavaScriptSemanticChildProcessSpawn {
   readonly projectedResultBindings: readonly JavaScriptSemanticProjectedResultBinding[];
   readonly command: string | null;
   readonly argvCount: number | null;
-  readonly environmentSupplied: boolean;
+  readonly environmentSupplied: boolean | null;
   readonly stdioMode: string;
   readonly resolution: "complete" | "partial";
 }
