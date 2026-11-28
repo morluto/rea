@@ -973,4 +973,225 @@ describe("client launcher traversal semantics", () => {
       ),
     ).toBe("unknown");
   });
+
+  it("unwraps a path-qualified cmd.exe before recognizing the package runner", () => {
+    expect(
+      classifyClientRegistrationCommand(
+        [
+          "C:\\Windows\\System32\\cmd.exe",
+          "/d",
+          "/c",
+          "npx",
+          "-y",
+          `${PRODUCT_IDENTITY.packageName}@6.10.1`,
+          "mcp",
+        ],
+        undefined,
+      ),
+    ).toBe("owned");
+    expect(
+      classifyClientRegistrationCommand(
+        ["/usr/bin/cmd.exe", "/c", "npx", "-y", "another-package", "mcp"],
+        undefined,
+      ),
+    ).toBe("foreign");
+  });
+
+  it("reads the script an npm rea.cmd shim launches", async () => {
+    const root = await createTestTempDirectory("rea-cmd-shim-");
+    const script = join(
+      root,
+      "node_modules",
+      PRODUCT_IDENTITY.packageName,
+      "scripts",
+      "rea.mjs",
+    );
+    await mkdir(dirname(script), { recursive: true });
+    await writeFile(script, "// owned dispatcher\n");
+    const cmd = join(root, "rea.cmd");
+    await writeFile(
+      cmd,
+      [
+        "@ECHO off",
+        "GOTO start",
+        ":find_dp0",
+        "SET dp0=%~dp0",
+        "EXIT /b",
+        ":start",
+        "SETLOCAL",
+        "CALL :find_dp0",
+        'IF EXIST "%dp0%\\node.exe" (',
+        '  SET "_prog=%dp0%\\node.exe"',
+        ") ELSE (",
+        '  SET "_prog=node"',
+        "  SET PATHEXT=%PATHEXT:;.JS;=;%",
+        ")",
+        `endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\${PRODUCT_IDENTITY.packageName}\\scripts\\rea.mjs" %*`,
+        "",
+      ].join("\r\n"),
+    );
+    expect(classifyClientRegistrationCommand([cmd, "mcp"], script)).toBe(
+      "owned",
+    );
+    expect(classifyClientRegistrationCommand([cmd, "mcp"], undefined)).toBe(
+      "owned",
+    );
+    const foreign = join(root, "other.mjs");
+    await writeFile(foreign, "// foreign\n");
+    expect(classifyClientRegistrationCommand([cmd, "mcp"], foreign)).toBe(
+      "foreign",
+    );
+  });
+
+  it.each(["rem", "@rem"] as const)(
+    "ignores %s comments when reading an npm rea.cmd shim",
+    async (comment) => {
+      const root = await createTestTempDirectory("rea-cmd-rem-");
+      const script = join(
+        root,
+        "node_modules",
+        PRODUCT_IDENTITY.packageName,
+        "scripts",
+        "rea.mjs",
+      );
+      await mkdir(dirname(script), { recursive: true });
+      await writeFile(script, "// owned dispatcher\n");
+      const foreign = join(root, "other.mjs");
+      await writeFile(foreign, "// foreign\n");
+      const cmd = join(root, "rea.cmd");
+      await writeFile(
+        cmd,
+        [
+          "@ECHO off",
+          `${comment} "%dp0%\\node_modules\\${PRODUCT_IDENTITY.packageName}\\scripts\\rea.mjs"`,
+          `endLocal & "%_prog%"  "%dp0%\\other.mjs" %*`,
+          "",
+        ].join("\r\n"),
+      );
+      // Comment names this package, but the launch statement does not.
+      expect(classifyClientRegistrationCommand([cmd, "mcp"], script)).toBe(
+        "unknown",
+      );
+    },
+  );
+
+  it("ignores echoed npm launch text when a later launch is foreign", async () => {
+    const root = await createTestTempDirectory("rea-cmd-echo-");
+    const script = join(
+      root,
+      "node_modules",
+      PRODUCT_IDENTITY.packageName,
+      "scripts",
+      "rea.mjs",
+    );
+    await mkdir(dirname(script), { recursive: true });
+    await writeFile(script, "// owned dispatcher\n");
+    const cmd = join(root, "rea.cmd");
+    await writeFile(
+      cmd,
+      [
+        "@ECHO off",
+        `echo "%_prog%" "%dp0%\\node_modules\\${PRODUCT_IDENTITY.packageName}\\scripts\\rea.mjs" %*`,
+        `endLocal & "%_prog%"  "%dp0%\\other.mjs" %*`,
+        "",
+      ].join("\r\n"),
+    );
+    expect(classifyClientRegistrationCommand([cmd, "mcp"], script)).toBe(
+      "unknown",
+    );
+  });
+
+  it("ignores conditional echo of npm launch text before a foreign launch", async () => {
+    const root = await createTestTempDirectory("rea-cmd-if-echo-");
+    const script = join(
+      root,
+      "node_modules",
+      PRODUCT_IDENTITY.packageName,
+      "scripts",
+      "rea.mjs",
+    );
+    await mkdir(dirname(script), { recursive: true });
+    await writeFile(script, "// owned dispatcher\n");
+    const cmd = join(root, "rea.cmd");
+    await writeFile(
+      cmd,
+      [
+        "@ECHO off",
+        `if errorlevel 1 echo "%_prog%" "%dp0%\\node_modules\\${PRODUCT_IDENTITY.packageName}\\scripts\\rea.mjs" %*`,
+        `endLocal & "%_prog%"  "%dp0%\\other.mjs" %*`,
+        "",
+      ].join("\r\n"),
+    );
+    expect(classifyClientRegistrationCommand([cmd, "mcp"], script)).toBe(
+      "unknown",
+    );
+  });
+
+  it("keeps rea.cmd wrappers unknown when launches are chained or followed by other commands", async () => {
+    const root = await createTestTempDirectory("rea-cmd-chained-");
+    const script = join(
+      root,
+      "node_modules",
+      PRODUCT_IDENTITY.packageName,
+      "scripts",
+      "rea.mjs",
+    );
+    await mkdir(dirname(script), { recursive: true });
+    await writeFile(script, "// owned dispatcher\n");
+    const cmd = join(root, "rea.cmd");
+
+    await writeFile(
+      cmd,
+      [
+        "@ECHO off",
+        "SETLOCAL",
+        'SET "_prog=node"',
+        `endLocal & "%_prog%"  "%dp0%\\node_modules\\${PRODUCT_IDENTITY.packageName}\\scripts\\rea.mjs" %* & "%_prog%"  "%dp0%\\other.mjs" %*`,
+        "",
+      ].join("\r\n"),
+    );
+    expect(classifyClientRegistrationCommand([cmd, "mcp"], script)).toBe(
+      "unknown",
+    );
+
+    await writeFile(
+      cmd,
+      [
+        "@ECHO off",
+        "SETLOCAL",
+        'SET "_prog=node"',
+        `endLocal & "%_prog%"  "%dp0%\\node_modules\\${PRODUCT_IDENTITY.packageName}\\scripts\\rea.mjs" %*`,
+        "node other.mjs",
+        "",
+      ].join("\r\n"),
+    );
+    expect(classifyClientRegistrationCommand([cmd, "mcp"], script)).toBe(
+      "unknown",
+    );
+
+    await writeFile(
+      cmd,
+      [
+        "@ECHO off",
+        "GOTO start",
+        ":find_dp0",
+        'SET "dp0=C:\\other"',
+        "EXIT /b",
+        ":start",
+        "SETLOCAL",
+        "CALL :find_dp0",
+        'IF EXIST "%dp0%\\node.exe" (',
+        '  SET "_prog=%dp0%\\node.exe"',
+        ") ELSE (",
+        '  SET "_prog=node"',
+        "  SET PATHEXT=%PATHEXT:;.JS;=;%",
+        ")",
+        `endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\${PRODUCT_IDENTITY.packageName}\\scripts\\rea.mjs" %*`,
+        "",
+      ].join("\r\n"),
+    );
+    expect(classifyClientRegistrationCommand([cmd, "mcp"], script)).toBe(
+      "unknown",
+    );
+  });
 });

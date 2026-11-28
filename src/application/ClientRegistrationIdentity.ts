@@ -3,10 +3,12 @@ import {
   accessSync,
   constants,
   lstatSync,
+  readFileSync,
   readlinkSync,
   realpathSync,
+  statSync,
 } from "node:fs";
-import { isAbsolute, posix } from "node:path";
+import { isAbsolute, posix, win32 } from "node:path";
 import {
   CURRENT_ENTRYPOINT_PATH,
   normalizeEntrypointPath,
@@ -170,13 +172,105 @@ export const currentClientRegistrationCommand = (
     : [runtime, script, "mcp"];
 };
 
+/** Command spelling may be path-qualified; Windows and POSIX separators both appear in fixtures. */
+const commandFileName = (path: string): string =>
+  (path.split(/[/\\]/u).at(-1) ?? path).toLowerCase();
+
 const unwrapCmdCommand = (command: readonly string[]): readonly string[] => {
-  const executable = command[0]?.toLowerCase();
-  if (executable !== "cmd" && executable !== "cmd.exe") return command;
+  const executable = command[0];
+  if (executable === undefined) return command;
+  const name = commandFileName(executable);
+  if (name !== "cmd" && name !== "cmd.exe") return command;
   if (command[1]?.toLowerCase() === "/c") return command.slice(2);
   if (command[1]?.toLowerCase() === "/d" && command[2]?.toLowerCase() === "/c")
     return command.slice(3);
   return [];
+};
+
+/**
+ * npm's cmd-shim is a short generated batch file. Larger files are not that
+ * format; refuse them before allocating their contents for ownership.
+ */
+const NPM_CMD_SHIM_BYTES = 64 * 1024;
+
+const readBoundedRegularFile = (
+  path: string,
+  maximumBytes: number,
+): string | undefined => {
+  try {
+    const stat = statSync(path);
+    if (!stat.isFile() || stat.size === 0 || stat.size > maximumBytes)
+      return undefined;
+    const contents = readFileSync(path, {
+      flag: constants.O_RDONLY | constants.O_NONBLOCK,
+    });
+    return contents.length <= maximumBytes
+      ? contents.toString("utf8")
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+/**
+ * Exact non-empty preamble lines emitted by npm's `cmd-shim` for a Node CLI
+ * entrypoint (`#!/usr/bin/env node` with no extra shebang arguments).
+ */
+const NPM_CMD_SHIM_PREAMBLE_LINES: readonly RegExp[] = [
+  /^@echo off$/iu,
+  /^goto start$/iu,
+  /^:find_dp0$/iu,
+  /^set dp0=%~dp0$/iu,
+  /^exit \/b$/iu,
+  /^:start$/iu,
+  /^setlocal$/iu,
+  /^call :find_dp0$/iu,
+  /^if exist "%dp0%[\\/]node\.exe" \($/iu,
+  /^set "_prog=%dp0%[\\/]node\.exe"$/iu,
+  /^\) else \($/iu,
+  /^set "_prog=node"$/iu,
+  /^set pathext=%pathext:;\.js;=;%$/iu,
+  /^\)$/iu,
+];
+
+const NPM_CMD_SHIM_LAUNCH =
+  /^endLocal & (?:goto #_undefined_# 2>NUL \|\| title %COMSPEC% & )?"%_prog%"\s+"%dp0%([\\/][^"]+)"\s+%\*$/iu;
+
+/**
+ * Recover the script an npm Windows `rea.cmd` shim launches. Ownership matches
+ * only the generated npm `cmd-shim` wrapper verbatim so customized, commented,
+ * or variable-overridden batch files stay unknown.
+ */
+const windowsReaCmdScript = (cmdPath: string): string | undefined => {
+  if (commandFileName(cmdPath) !== `${PRODUCT_IDENTITY.cliBinary}.cmd`)
+    return undefined;
+  const text = readBoundedRegularFile(cmdPath, NPM_CMD_SHIM_BYTES);
+  if (text === undefined) return undefined;
+  const lines = text
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+  if (lines.length !== NPM_CMD_SHIM_PREAMBLE_LINES.length + 1) return undefined;
+  for (let index = 0; index < NPM_CMD_SHIM_PREAMBLE_LINES.length; index++) {
+    if (!NPM_CMD_SHIM_PREAMBLE_LINES[index]!.test(lines[index]!))
+      return undefined;
+  }
+  const match = NPM_CMD_SHIM_LAUNCH.exec(lines[lines.length - 1]!);
+  if (match === null) return undefined;
+  const relative = match[1]!.replace(/^[\\/]/u, "");
+  const parts = relative.split(/[/\\]/u).map((part) => part.toLowerCase());
+  const modules = parts.indexOf("node_modules");
+  if (
+    modules < 0 ||
+    parts[modules + 1] !== PRODUCT_IDENTITY.packageName.toLowerCase() ||
+    parts.slice(modules + 1).includes("..")
+  )
+    return undefined;
+  // Host path rules: Windows keeps UNC `//server/share` roots; fixtures on
+  // POSIX keep their own separators.
+  if (HOST_PLATFORM.platform === "win32")
+    return win32.join(win32.dirname(cmdPath), relative.replace(/\//gu, "\\"));
+  return posix.join(posix.dirname(cmdPath), relative.replace(/\\/gu, "/"));
 };
 
 /** Preserve the package argument from a supported package-runner command. */
@@ -600,7 +694,25 @@ const inspectDirectRegistrationCommand = (
         entrypoint: managedTarget,
         package: undefined,
       };
-    if (isAbsolute(executable))
+    if (isAbsolute(executable)) {
+      if (commandFileName(executable) === `${PRODUCT_IDENTITY.cliBinary}.cmd`) {
+        const cmdScript = windowsReaCmdScript(executable);
+        if (cmdScript === undefined)
+          return {
+            identity: "unknown",
+            launch: "direct",
+            entrypoint: undefined,
+            package: undefined,
+          };
+        return {
+          launch: "direct",
+          identity: currentPathAvailable
+            ? entrypointIdentity(cmdScript, currentCommandPath)
+            : "owned",
+          entrypoint: cmdScript,
+          package: undefined,
+        };
+      }
       return {
         launch: "direct",
         identity: currentPathAvailable
@@ -609,6 +721,7 @@ const inspectDirectRegistrationCommand = (
         entrypoint: executable,
         package: undefined,
       };
+    }
     if (/[./\\]/u.test(executable))
       return {
         identity: "unknown",
