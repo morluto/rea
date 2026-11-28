@@ -53,6 +53,7 @@ import type { ArtifactResourceScope } from "../resources/index.js";
 
 import {
   clientRegistrationActivation,
+  clientRegistrationCommandLookup,
   parseClientRegistrationPolicy,
   parseClientRegistrationLauncher,
   clientRegistrationOwnershipRemediation,
@@ -359,6 +360,11 @@ export const readClientRegistrationInspections = async (
           ? inspectClientRegistrationCommand(
               [launcher.value.command, ...launcher.value.args],
               currentCommandPath,
+              clientRegistrationCommandLookup(
+                raw,
+                client,
+                options.environment ?? process.env,
+              ) ?? { unresolvedPath: true },
             ).identity
           : "unknown";
         record(
@@ -379,6 +385,11 @@ export const readClientRegistrationInspections = async (
       const commandFacts = inspectClientRegistrationCommand(
         command,
         currentCommandPath,
+        clientRegistrationCommandLookup(
+          raw,
+          client,
+          options.environment ?? process.env,
+        ) ?? { unresolvedPath: true },
       );
       const transientPaths = transientClientLauncherPaths(
         command,
