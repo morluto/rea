@@ -108,17 +108,32 @@ const rootRecord = (
   base: number,
   volume: Iso9660VolumeSetMember,
 ): Iso9660DirectoryRecord => {
-  if (sector[ROOT_RECORD_OFFSET] !== ROOT_RECORD_BYTES)
+  // The descriptor reserves a fixed 34-byte field for the root record, and the
+  // volume set identifier always starts after it, so the field is what this
+  // reader decodes. Images in the wild declare more (a Joliet root storing a
+  // two-byte UCS-2 NUL declares 36, libarchive has seen up to 68); 7-Zip,
+  // libarchive, pycdlib and Linux all read the 34-byte field and ignore the
+  // declared length. A length below 34 cannot hold the fixed fields.
+  const declaredLength = sector[ROOT_RECORD_OFFSET] ?? 0;
+  if (declaredLength < ROOT_RECORD_BYTES)
     throw iso9660Malformed(
-      "root directory record is not 34 bytes",
+      `root directory record declares ${String(declaredLength)} bytes, fewer than the 34 the descriptor reserves`,
       base + ROOT_RECORD_OFFSET,
       "root_directory_record",
     );
+  // Decode the fixed 34-byte field, not the declared length. A Joliet root
+  // stores its NUL identifier as UCS-2 (length 2, bytes 00 00), which the field
+  // holds as the single 0x00 byte this record is required to carry.
+  const field = Buffer.from(
+    sector.subarray(ROOT_RECORD_OFFSET, ROOT_RECORD_OFFSET + ROOT_RECORD_BYTES),
+  );
+  field[0] = ROOT_RECORD_BYTES;
+  if (field[32] === 2 && field[33] === 0) field[32] = 1;
   const root = iso9660DirectoryRecordAt(
-    sector,
-    ROOT_RECORD_OFFSET,
-    base,
-    ROOT_RECORD_OFFSET + ROOT_RECORD_BYTES,
+    field,
+    0,
+    base + ROOT_RECORD_OFFSET,
+    ROOT_RECORD_BYTES,
   );
   if (root.identifier[0] !== 0)
     throw iso9660Malformed(

@@ -711,3 +711,30 @@ it("requires the padding byte an even-length identifier needs to fit its record"
     ),
   ).toBe(true);
 });
+
+/**
+ * The descriptor reserves a fixed 34-byte field for its root record, and common
+ * readers take the record from that field whatever its length byte declares.
+ */
+it("reads a root record from the descriptor's fixed 34-byte field", () => {
+  const { bytes, layout } = buildIso9660Image({ joliet: true });
+  for (const declared of [36, 48]) {
+    const copy = Buffer.from(bytes);
+    copy[ISO9660_DESCRIPTOR_OFFSET + 156] = declared;
+    expect(descriptors(copy).ok).toBe(true);
+  }
+  // A Joliet root stores its NUL identifier as UCS-2: length 2, bytes 00 00.
+  const joliet = layout.primaryDescriptor + ISO9660_SECTOR_BYTES;
+  const jolietCopy = Buffer.from(bytes);
+  jolietCopy[joliet + 156] = 36;
+  jolietCopy[joliet + 156 + 32] = 2;
+  jolietCopy[joliet + 156 + 33] = 0;
+  expect(descriptors(jolietCopy).ok).toBe(true);
+  // A length below 34 cannot hold the fixed fields.
+  const short = Buffer.from(bytes);
+  short[ISO9660_DESCRIPTOR_OFFSET + 156] = 20;
+  expect(descriptors(short)).toMatchObject({
+    ok: false,
+    error: { failure: { kind: "malformed", field: "root_directory_record" } },
+  });
+});
