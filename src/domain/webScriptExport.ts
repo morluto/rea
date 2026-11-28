@@ -1,9 +1,21 @@
+import type { LogicalPathFields } from "./logicalPathRoot.js";
 import { z } from "zod";
 
 import { browserCompletenessSchema } from "./browserCompleteness.js";
 import { browserScenarioCompletenessSchema } from "./browserScenarioCaptureValues.js";
 import { digestSchema, prefixedDigestSchema } from "./digests.js";
 import { absoluteLocalPathStringSchema } from "./localPath.js";
+
+/** Filesystem facts owned by the web-script export contract. */
+export const WEB_SCRIPT_EXPORT_LOGICAL_PATH_FIELDS = {
+  parameters: [["capture_path"], ["output_directory"]],
+  result: [
+    ["capture_path"],
+    ["output_directory"],
+    ["analysis_input", "input_path"],
+    ["manifest", "path"],
+  ],
+} as const satisfies LogicalPathFields;
 
 /** Export already captured scripts into one absent, caller-selected directory. */
 export const exportWebScriptsInputSchema = z.strictObject({

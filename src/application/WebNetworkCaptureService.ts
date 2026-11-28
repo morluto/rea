@@ -16,6 +16,7 @@ import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js"
 import { jsonObjectSchema } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
+  WEB_NETWORK_CAPTURE_LOGICAL_PATH_FIELDS,
   inspectWebNetworkCaptureInputSchema,
   captureSensitiveValues,
   webNetworkCaptureSchema,
@@ -258,6 +259,7 @@ export class WebNetworkCaptureService {
       value.decoder,
       {
         operation: OPERATION,
+        logicalPathFields: WEB_NETWORK_CAPTURE_LOGICAL_PATH_FIELDS,
         parameters,
         result: {
           ...safeValue,

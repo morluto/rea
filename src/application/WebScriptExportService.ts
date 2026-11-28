@@ -32,6 +32,7 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import {
+  WEB_SCRIPT_EXPORT_LOGICAL_PATH_FIELDS,
   exportWebScriptsInputSchema,
   type ExportWebScriptsInput,
 } from "../domain/webScriptExport.js";
@@ -122,6 +123,7 @@ export const exportWebScriptsValidated = async (
         {
           predicateType: "rea.web-script-export",
           operation: OPERATION,
+          logicalPathFields: WEB_SCRIPT_EXPORT_LOGICAL_PATH_FIELDS,
           parameters: {
             capture_path: input.capture_path,
             output_directory: input.output_directory,

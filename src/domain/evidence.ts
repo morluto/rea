@@ -20,6 +20,7 @@ import {
   nonFileTargetIdentitySchema,
   sessionTargetIdentitySchema,
   unknownTargetIdentitySchema,
+  unknownTarget,
   type NonFileTargetIdentity,
   sameTargetIdentity,
   type FileTargetIdentity,
@@ -27,6 +28,14 @@ import {
   type TargetIdentity,
 } from "./targetIdentity.js";
 
+import {
+  DEFAULT_LOGICAL_ROOT_PREFIX,
+  normalizeLogicalPath,
+  normalizeLogicalPrefix,
+  redactEvidenceObservationPathsSteps,
+  type LogicalPathRootMapping,
+  type LogicalPathFields,
+} from "./logicalPathRoot.js";
 import {
   analysisProfileSchema,
   type AnalysisProfileCommitment,
@@ -509,6 +518,8 @@ export interface EvidenceObservationInput {
   readonly operation: string;
   readonly parameters: unknown;
   readonly result: unknown;
+  /** Producer-owned filesystem locations, not names inferred from target data. */
+  readonly logicalPathFields?: LogicalPathFields;
   readonly analysisProfile?: AnalysisProfileCommitment;
   readonly rawResult?: unknown;
   readonly confidence?: "observed" | "derived" | "inferred";
@@ -781,13 +792,15 @@ const rememberImmutableEvidence = (evidence: Evidence): Evidence => {
 /** Ownership policy for the freshly parsed Evidence snapshot. */
 export interface EvidenceCreationOptions {
   readonly immutable?: boolean;
+  /** Opt-in configuration for logical path root redaction at Evidence creation time. */
+  readonly logicalRoot?: LogicalPathRootMapping;
   /** Selected spelling is recorded only when this target matches the subject. */
   readonly callerTarget?: BinaryTarget | null | undefined;
 }
 
 /** Admit payloads into deterministic Evidence bound to an immutable artifact subject. */
 export const createEvidence = (
-  target: EvidenceSubjectInput,
+  target: EvidenceSubjectInput | undefined,
   provider: EvidenceProvider,
   observation: EvidenceObservationInput,
   options?: EvidenceCreationOptions,
@@ -796,7 +809,7 @@ export const createEvidence = (
     target,
     provider,
     observation,
-    options?.callerTarget,
+    options,
   );
   const evidence = {
     ...normalized,
@@ -815,9 +828,10 @@ export const createEvidence = (
 
 /** Create Evidence from owned immutable JSON while exposing cooperative computation steps. */
 export function* createImmutableEvidenceSteps(
-  target: EvidenceSubjectInput,
+  target: EvidenceSubjectInput | undefined,
   provider: EvidenceProvider,
   observation: EvidenceObservation,
+  options?: EvidenceCreationOptions,
 ): Generator<void, Evidence> {
   if (!isImmutableJsonSnapshot(observation.result))
     throw new TypeError(
@@ -826,10 +840,20 @@ export function* createImmutableEvidenceSteps(
   // The envelope parser below retains its usual diagnostics, using the completed
   // immutable validation rather than traversing the payload synchronously again.
   yield* jsonValueValidationSteps(observation.result);
+  const applied =
+    options?.logicalRoot === undefined
+      ? undefined
+      : yield* applyLogicalRootRedactionSteps(
+          target,
+          observation,
+          options.logicalRoot,
+        );
   const { normalized } = normalizeEvidenceObservation(
     target,
     provider,
     observation,
+    options,
+    applied,
   );
   const digest = yield* canonicalJsonDigestSteps(
     evidenceSemanticContent(normalized),
@@ -840,14 +864,95 @@ export function* createImmutableEvidenceSteps(
   });
 }
 
+interface AppliedLogicalPathRootOutcome {
+  readonly effectiveTarget: EvidenceSubjectInput | undefined;
+  readonly effectiveObservation: EvidenceObservationInput;
+  readonly addedLimitations: readonly string[];
+}
+
+const applyLogicalRootRedaction = (
+  target: EvidenceSubjectInput | undefined,
+  observation: EvidenceObservationInput,
+  mapping: LogicalPathRootMapping,
+): AppliedLogicalPathRootOutcome => {
+  const steps = applyLogicalRootRedactionSteps(target, observation, mapping);
+  for (;;) {
+    const step = steps.next();
+    if (step.done) return step.value;
+  }
+};
+
+function* applyLogicalRootRedactionSteps(
+  target: EvidenceSubjectInput | undefined,
+  observation: EvidenceObservationInput,
+  mapping: LogicalPathRootMapping,
+): Generator<void, AppliedLogicalPathRootOutcome> {
+  let outsideCount = 0;
+  let effectiveTarget = target;
+  if (
+    target !== undefined &&
+    "path" in target &&
+    typeof target.path === "string"
+  ) {
+    const res = normalizeLogicalPath(target.path, mapping);
+    if (res.kind === "mapped") {
+      effectiveTarget = {
+        ...target,
+        path: res.path,
+      };
+    } else if (res.kind === "outside-root") {
+      outsideCount += 1;
+    } else if (res.kind === "invalid") {
+      throw new Error(res.reason);
+    }
+  }
+
+  const {
+    observation: effectiveObservation,
+    mappedCount,
+    outsideCount: obsOutsideCount,
+  } = yield* redactEvidenceObservationPathsSteps(observation, mapping);
+
+  const totalOutsideCount = outsideCount + obsOutsideCount;
+  const addedLimitations: string[] = [];
+  addedLimitations.push(
+    observation.logicalPathFields === undefined
+      ? "logical-root redaction incomplete; producer did not declare filesystem field locations."
+      : "logical-root mapping covers only producer-declared filesystem fields; other recorded data may contain host paths.",
+  );
+  const prefix = normalizeLogicalPrefix(
+    mapping.logicalPrefix ?? DEFAULT_LOGICAL_ROOT_PREFIX,
+  );
+  if (
+    mappedCount > 0 ||
+    (target !== undefined &&
+      effectiveTarget !== undefined &&
+      "path" in target &&
+      "path" in effectiveTarget &&
+      effectiveTarget.path !== target.path)
+  ) {
+    addedLimitations.push(
+      `Local filesystem paths under configured logical root were normalized to '${prefix}' before Evidence sealing.`,
+    );
+  }
+  if (totalOutsideCount > 0) {
+    addedLimitations.push(
+      "logical-root redaction incomplete; host-local path retained.",
+    );
+  }
+
+  return { effectiveTarget, effectiveObservation, addedLimitations };
+}
+
 /** Borrow input collections for admission. */
 export const evidenceEnvelopeForAdmission = (
-  target: EvidenceSubjectInput,
+  target: EvidenceSubjectInput | undefined,
   provider: EvidenceProvider,
   observation: EvidenceObservationInput,
   callerTarget?: EvidenceCreationOptions["callerTarget"],
 ) => {
-  const subject = evidenceSubject(target);
+  const resolvedTarget = target ?? unknownTarget("not-observed");
+  const subject = evidenceSubject(resolvedTarget);
   const callerInputPath =
     callerTarget?.callerInputPath !== undefined &&
     isFileSubject(subject) &&
@@ -892,21 +997,34 @@ export const evidenceEnvelopeForAdmission = (
 };
 
 const normalizeEvidenceObservation = (
-  target: EvidenceSubjectInput,
+  target: EvidenceSubjectInput | undefined,
   provider: EvidenceProvider,
   observation: EvidenceObservationInput,
-  callerTarget?: EvidenceCreationOptions["callerTarget"],
+  options?: EvidenceCreationOptions,
+  applied?: AppliedLogicalPathRootOutcome,
 ) => {
+  const { effectiveTarget, effectiveObservation, addedLimitations } =
+    applied ??
+    (options?.logicalRoot !== undefined
+      ? applyLogicalRootRedaction(target, observation, options.logicalRoot)
+      : {
+          effectiveTarget: target,
+          effectiveObservation: observation,
+          addedLimitations: [],
+        });
   const envelope = evidenceEnvelopeForAdmission(
-    target,
+    effectiveTarget,
     provider,
-    observation,
-    callerTarget,
+    effectiveObservation,
+    options?.callerTarget,
   );
+  if (addedLimitations.length > 0) {
+    envelope.limitations = [...envelope.limitations, ...addedLimitations];
+  }
   const sharedResult =
-    typeof observation.result === "object" &&
-    observation.result !== null &&
-    isImmutableJsonSnapshot(observation.result);
+    typeof effectiveObservation.result === "object" &&
+    effectiveObservation.result !== null &&
+    isImmutableJsonSnapshot(effectiveObservation.result);
   const selectedSchema = sharedResult
     ? immutableResultEvidenceSchema
     : evidenceSchema;
