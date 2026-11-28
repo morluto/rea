@@ -10,6 +10,7 @@ import type { KernelBuildConfig } from "./native/kernelBuildConfig.js";
 import type { FirmwareArchitectureCandidates } from "./firmware/firmwareArchitectureCandidates.js";
 import type { KernelModule } from "./native/kernelModule.js";
 import type { EspNvsReport } from "./firmware/espNvs.js";
+import type { FirmwareVectorTable } from "./firmware/firmwareVectorTable.js";
 import type { V8CodeCache } from "./v8/v8CodeCache.js";
 import type { InterfaceBuilderAnalysis } from "./apple/interfaceBuilderGraph.js";
 import type { PartialTaskMeasurement } from "./desktop/taskDifficulty.js";
@@ -810,4 +811,5 @@ export type AnalysisPartialObservation =
   | AdbDisplayPartialObservation
   | EspNvsReport
   | FirmwareArchitectureCandidates
+  | FirmwareVectorTable
   | YaraMatches;

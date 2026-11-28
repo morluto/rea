@@ -278,3 +278,9 @@ export const FIRMWARE_ARCHITECTURE_CANDIDATES_PROVIDER = Object.freeze({
   name: "REA firmware architecture candidate scanner",
   version: "1",
 } as const);
+
+export const FIRMWARE_VECTOR_TABLE_PROVIDER = Object.freeze({
+  id: "rea-firmware-vector-table",
+  name: "REA firmware vector table decoder",
+  version: "1",
+} as const);

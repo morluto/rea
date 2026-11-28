@@ -13,6 +13,10 @@ firmware blob has no known header or load base, run
 [`inspect_firmware_architecture_candidates`](firmware-architecture-candidates.md)
 first to inspect embedded uImage/ELF declarations, Cortex-M vector-table load
 bases, and instruction-signature margins before choosing `open_binary` inputs.
+For bare-metal ARM M-profile and RISC-V images with a known load base, use
+[`inspect_firmware_vector_table`](firmware-vector-tables.md) to decode system
+exception vectors, external IRQ handler addresses, and optional CMSIS-SVD
+interrupt bindings without opening a session.
 
 On Linux, Binwalk and Unblob run as REA-owned processes and require a
 procps-compatible system `ps`; see the shared

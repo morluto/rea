@@ -87,6 +87,9 @@ export const PROVIDER_CAPABILITY_CONFORMANCE: Readonly<
   firmwareArchitectureCandidates: {
     cases: ["tests/boundary/mcp/firmwareArchitectureCandidatesMcpCli.test.ts"],
   },
+  firmwareVectorTable: {
+    cases: ["tests/boundary/mcp/firmwareVectorTableMcpCli.test.ts"],
+  },
   uefiAnalysis: { cases: ["tests/acceptance/uefiFirmware.test.ts"] },
   flutter: { cases: ["tests/boundary/cli/flutterCli.test.ts"] },
   fridaInstrumentation: { cases: ["tests/boundary/cli/fridaCli.test.ts"] },
@@ -122,6 +125,7 @@ export const PROVIDER_CAPABILITY_CONFORMANCE: Readonly<
   },
   kernelModule: { cases: ["tests/acceptance/kernelModuleCli.test.ts"] },
   kuna: { cases: ["tests/boundary/mcp/kunaCloseRetryMcp.test.ts"] },
+  labviewArtifact: { cases: ["tests/boundary/cli/labviewRsrcCli.test.ts"] },
   managedStatic: { cases: ["tests/acceptance/managedCliOutput.test.ts"] },
   managedWorkflow: {
     cases: ["tests/boundary/mcp/managedWorkflowUnknownIdentityMcp.test.ts"],

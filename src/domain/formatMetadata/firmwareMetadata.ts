@@ -1,4 +1,11 @@
 import { z } from "zod";
+import {
+  IMAGE4_COMPRESSIONS,
+  IMAGE4_MAX_ELEMENTS,
+  IMAGE4_MAX_PROPERTIES,
+  IMAGE4_MAX_STRING_BYTES,
+  IMAGE4_PAYLOAD_MAGICS,
+} from "../apple/image4.js";
 import { completeOrUnknownCoverageSchema } from "../coverage.js";
 import { QUALCOMM_MBN_INLINE_SEGMENT_HASH_LIMIT } from "../qualcommMbnImage.js";
 import {
@@ -745,3 +752,94 @@ export const qualcommMbnMetadataSchema = z.strictObject({
     .nullable(),
 });
 export type QualcommMbnMetadata = z.infer<typeof qualcommMbnMetadataSchema>;
+
+const image4Decimal = z.string().regex(/^-?(?:0|[1-9]\d{0,39})$/u);
+const image4UnsignedDecimal = z.string().regex(/^(?:0|[1-9]\d{0,39})$/u);
+const image4DigestHex = z.string().regex(/^(?:[0-9a-f]{2}){0,64}$/u);
+
+/**
+ * One manifest property. Integers are decimal strings so values wider than
+ * the IEEE-754 safe range, such as ECID, survive. Octet strings longer than
+ * 64 bytes are omitted rather than rendered.
+ */
+const image4PropertySchema = z.strictObject({
+  name: z.string().min(1).max(IMAGE4_MAX_STRING_BYTES),
+  value: z.discriminatedUnion("type", [
+    z.strictObject({
+      type: z.literal("integer"),
+      decimal: image4Decimal,
+    }),
+    z.strictObject({
+      type: z.literal("boolean"),
+      value: z.boolean(),
+    }),
+    z.strictObject({
+      type: z.literal("octet"),
+      hex: image4DigestHex,
+    }),
+    z.strictObject({
+      type: z.literal("omitted"),
+      byte_length: offset,
+    }),
+  ]),
+});
+
+const image4ObjectSchema = z.strictObject({
+  name: z.string().min(1).max(IMAGE4_MAX_STRING_BYTES),
+  digest_hex: image4DigestHex.nullable(),
+  properties: z.array(image4PropertySchema).max(IMAGE4_MAX_PROPERTIES),
+});
+
+const image4PayloadSchema = z.strictObject({
+  type: z.string().min(1).max(IMAGE4_MAX_STRING_BYTES),
+  description: z.string().max(IMAGE4_MAX_STRING_BYTES).nullable(),
+  offset,
+  length: offset,
+  compression: z.enum(IMAGE4_COMPRESSIONS),
+  uncompressed_size: offset.nullable(),
+  payload_magic: z.enum(IMAGE4_PAYLOAD_MAGICS).nullable(),
+  encrypted: z.boolean(),
+  keybag_count: z.number().int().min(0).max(IMAGE4_MAX_ELEMENTS).nullable(),
+  keybag_types: z.array(uint32).max(IMAGE4_MAX_ELEMENTS).nullable(),
+});
+
+const image4ManifestSchema = z.strictObject({
+  version: image4UnsignedDecimal.nullable(),
+  properties: z.array(image4PropertySchema).max(IMAGE4_MAX_PROPERTIES),
+  objects: z.array(image4ObjectSchema).max(IMAGE4_MAX_ELEMENTS),
+  signature_size: offset.nullable(),
+  certificate_chain_size: offset.nullable(),
+});
+
+const image4RestoreSchema = z.strictObject({
+  properties_present: z
+    .array(z.string().min(1).max(IMAGE4_MAX_STRING_BYTES))
+    .max(IMAGE4_MAX_PROPERTIES),
+  values: z.literal("redacted"),
+});
+
+/**
+ * Image4 container facts. Keybag IV and key bytes are not fields. IM4R
+ * values are names only. Signature and certificate sizes are not checks.
+ * A manifest version that was not an unsigned decimal is null.
+ * `trailing_bytes` is null when the container end was not found.
+ */
+export const image4MetadataSchema = z.strictObject({
+  kind: z.literal("apple-img4"),
+  magic: z.enum(["IMG4", "IM4P", "IM4M"]),
+  payload: image4PayloadSchema.nullable(),
+  manifest: image4ManifestSchema.nullable(),
+  restore_info: image4RestoreSchema.nullable(),
+  trailing_bytes: offset.nullable(),
+});
+export type Image4Metadata = z.infer<typeof image4MetadataSchema>;
+
+/** Entry role restated beside the stored bytes. `decoded` is always false. */
+export const image4EntryMetadataSchema = z.strictObject({
+  kind: z.literal("apple-img4-entry"),
+  role: z.enum(["payload", "manifest", "restore-info"]),
+  decoded: z.literal(false),
+  encrypted: z.boolean(),
+  compression: z.enum(IMAGE4_COMPRESSIONS),
+});
+export type Image4EntryMetadata = z.infer<typeof image4EntryMetadataSchema>;

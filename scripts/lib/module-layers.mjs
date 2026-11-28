@@ -72,6 +72,7 @@ export const UNIT_LAYERS = Object.freeze(
       "hopper",
       "ida",
       "il2cpp",
+      "labview",
       "inspector",
       "javascript",
       "java",
@@ -237,6 +238,9 @@ export const ENTRY_FILES = Object.freeze(
         "ArtifactProvider.ts",
         "ArtifactProviderMetadata.ts",
         "DesktopApplicationReader.ts",
+        // inspect_analysis_view's record-header pages re-read a root file
+        // through its format reader under the view's resource scope.
+        "formatRecordHeaderPage.ts",
         "ReleaseExposureReader.ts",
         // JavaScript reconstruction owns one resource scope across the
         // inventory scan, the format reader and the source read.
@@ -305,6 +309,7 @@ export const ENTRY_FILES = Object.freeze(
         "architectureCandidates/FirmwareArchitectureCandidatesProvider.ts",
         "devicetree/DevicetreeProvider.ts",
         "espNvs/EspNvsProvider.ts",
+        "vectorTable/FirmwareVectorTableProvider.ts",
       ],
       flutter: ["FlutterBuildProvider.ts", "FlutterProviderIdentity.ts"],
       frida: ["FridaInstrumentationManager.ts", "FridaProviderIdentity.ts"],
@@ -337,6 +342,7 @@ export const ENTRY_FILES = Object.freeze(
         "Il2cppGhidraSeedWriter.ts",
         "Il2cppMetadataProvider.ts",
       ],
+      labview: ["LabviewArtifactProvider.ts", "LabviewProviderIdentity.ts"],
       inspector: ["V8InspectorProvider.ts", "providerIdentity.ts"],
       java: [
         "MavenGradleMetadataProvider.ts",

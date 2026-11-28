@@ -4,11 +4,11 @@ import { androidResultSchemas } from "../android/androidAnalysis.js";
 import { androidClassViewRequestSchema } from "../android/androidClassQuery.js";
 import { evidenceSubjectTarget } from "../evidence.js";
 import { boundedList } from "../boundedList.js";
-import { err, ok, type Result } from "../result.js";
+import { ok, type Result } from "../result.js";
 import { filterSet } from "./selectViewRows.js";
 import {
-  analysisViewInputError,
   invalidAnalysisViewSubject,
+  invalidAnalysisView,
 } from "./analysisViewErrors.js";
 import {
   createAnalysisViewResultReader,
@@ -230,15 +230,9 @@ const selectMembers = (
     }
     case "mapping-symbols": {
       if (value.mapping === undefined)
-        return err(
-          analysisViewInputError([
-            {
-              path: ["view", "facet"],
-              reason: "invalid_value",
-              message:
-                "This inspection selected no mapping; pass mapping_path to inspect_android_class first.",
-            },
-          ]),
+        return invalidAnalysisView(
+          "This inspection selected no mapping; pass mapping_path to inspect_android_class first.",
+          "facet",
         );
       const rows = selectByteBoundedViewRows(
         value.mapping.symbols,
@@ -257,14 +251,9 @@ export const projectAndroidClassView = (
   admitted: AdmittedView,
 ) => {
   if (admitted.kind !== "android-class" && admitted.kind !== "summary")
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view", "kind"],
-          reason: "invalid_value",
-          message: "Select an android-class or summary view.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Select an android-class or summary view.",
+      "kind",
     );
   assertOwnedView<SummaryAnalysisView | ClassView>(
     admitted,
