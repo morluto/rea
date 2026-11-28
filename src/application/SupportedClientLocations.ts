@@ -562,6 +562,47 @@ export const fxLocation = ({
 };
 
 /**
+ * Kiro's global root: an absolute `KIRO_HOME` moves it, including
+ * `settings/mcp.json`. Kiro ignores the variable and falls back to `~/.kiro`
+ * when it is relative (or drive-less on Windows), the filesystem root, the
+ * home folder, or an ancestor of home, so REA does the same instead of
+ * refusing the value.
+ */
+export const kiroLocation = ({
+  home,
+  platform,
+  env,
+}: ClientPathContext): Result<ClientLocation, ClientPathFailure> => {
+  const pathApi = platform === "win32" ? win32 : posix;
+  const fallback = pathApi.join(home, ".kiro");
+  const at = (directory: string): ClientLocation => ({
+    configPath: pathApi.join(directory, "settings", "mcp.json"),
+    markerPath: directory,
+  });
+  const value = env.KIRO_HOME;
+  if (!value || clientPathDependence(value, platform) !== undefined)
+    return ok(at(fallback));
+  const normalized = pathApi.normalize(value);
+  const root = pathApi.parse(normalized).root;
+  const selected =
+    normalized.length > root.length
+      ? normalized.replace(platform === "win32" ? /[\\/]+$/u : /\/+$/u, "")
+      : normalized;
+  const comparable = (path: string): string =>
+    platform === "win32" ? path.toLowerCase() : path;
+  const fromHome = pathApi.relative(
+    comparable(selected),
+    comparable(pathApi.normalize(home)),
+  );
+  const rootOrAncestorOfHome =
+    fromHome === "" ||
+    (fromHome !== ".." &&
+      !fromHome.startsWith(`..${pathApi.sep}`) &&
+      !pathApi.isAbsolute(fromHome));
+  return ok(at(rootOrAncestorOfHome ? fallback : selected));
+};
+
+/**
  * Junie's home: `JUNIE_HOME` for Junie CLI, else `~/.junie`. add-mcp notes the
  * JetBrains plugin always reads `~/.junie`. Junie resolves a relative
  * `JUNIE_HOME` against its own working directory, so REA refuses one.
