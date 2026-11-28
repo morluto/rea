@@ -41,6 +41,7 @@ export type DirectAnalysisTool =
   | "resolve_native_call_targets"
   | "analyze_function"
   | "inspect_native_api"
+  | "inspect_procedure_hardware_instructions"
   | "inspect_native_dispatch_metadata"
   | "search_strings"
   | "search_procedures"

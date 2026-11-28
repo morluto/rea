@@ -14,7 +14,10 @@ import {
 } from "./toolEffects.js";
 import { enhancedOutputSchemas } from "./toolOutputSchemaGroups.js";
 
-type FunctionWorkflowName = "analyze_function" | "inspect_native_api";
+type FunctionWorkflowName =
+  | "analyze_function"
+  | "inspect_native_api"
+  | "inspect_procedure_hardware_instructions";
 
 /**
  * MCP inputs: the provider input plus analyze_function's delivery detail, which
@@ -26,11 +29,14 @@ export const functionWorkflowInputSchemas = {
     detail: analysisDetailSummaryDefaultSchema,
   }),
   inspect_native_api: enhancedInputSchemas.inspect_native_api,
+  inspect_procedure_hardware_instructions:
+    enhancedInputSchemas.inspect_procedure_hardware_instructions,
 } as const;
 
 /** The contracts below that the CLI exposes as commands. */
 const FUNCTION_WORKFLOW_CLI_CONTRACTS: ReadonlySet<string> = new Set([
   "inspect_native_api",
+  "inspect_procedure_hardware_instructions",
 ]);
 
 const functionWorkflow = <Name extends FunctionWorkflowName>(
@@ -76,5 +82,10 @@ export const FUNCTION_WORKFLOW_TOOL_CONTRACTS = [
       changesUiState: true,
     }),
     "Inspect recovered parameter/return boundary types and jump-table dispatch for one native function selected by symbol or address. Returns confidence, supporting Evidence, case/data/target mappings, unsupported facets and residual unknowns. Null case values are unresolved, never known defaults. Use analyze_function for the broader function dossier.",
+  ),
+  functionWorkflow(
+    "inspect_procedure_hardware_instructions",
+    providerUiNetworkEvidenceEffects,
+    "Extract and classify non-MMIO architectural hardware instructions from one disassembled procedure using an explicit hardware_architecture (arm, arm64, riscv, xtensa, mips, x86, or x86_64). Reports system/special registers (MRS/MSR, MCR/MRC, RDMSR/WRMSR, CR0..CR8), RISC-V CSRs (csrr*), Xtensa RSR/WSR/XSR, MIPS CP0, x86 port I/O (in/out), interrupt masks (CPSID/CPSIE, CLI/STI), memory barriers, and privilege/sleep transitions. Register-indirect ports or MSRs (such as DX or ECX) keep target: null with target_basis: unresolved_register.",
   ),
 ] as const satisfies readonly ToolContract[];

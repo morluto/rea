@@ -327,4 +327,35 @@ const registerProcedureSelectorCommands = (
     },
     run,
   );
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(
+      ENHANCED_TOOL_CONTRACTS,
+      "inspect_procedure_hardware_instructions",
+    ),
+    {
+      description: `Extract non-MMIO hardware instructions (system registers, CSRs, port I/O, barriers) from one procedure. ${addressOrProcedureGuidance} ${equalSelectorGuidance}`,
+      sessionTarget: nativeTarget("Local executable or firmware path", true),
+      positionals: ["procedure"],
+      selectorOptions: {
+        procedure: {
+          name: "procedure",
+          description: `Procedure selector; use this option for symbols beginning with a dash. ${addressOrProcedureGuidance}`,
+          kind: "native",
+        },
+      },
+      fields: {
+        procedure: {
+          name: "address",
+          description: `Procedure name or address. ${addressOrProcedureGuidance}`,
+        },
+        hardware_architecture: {
+          description:
+            "Explicit ISA family (arm, arm64, riscv, xtensa, mips, x86, or x86_64)",
+        },
+      },
+    },
+    run,
+  );
 };
