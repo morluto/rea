@@ -270,6 +270,36 @@ it("decides an auditd claim on a multi-megabyte prefix without overflowing the s
   });
 });
 
+it("recognizes a Kubernetes audit log by its first event and leaves other JSON alone", () => {
+  const event = Buffer.from(
+    `${JSON.stringify({
+      kind: "Event",
+      apiVersion: "audit.k8s.io/v1",
+      auditID: "0f5e3b1c-0000-4000-8000-000000000001",
+      stage: "RequestReceived",
+      requestURI: "/api/v1/namespaces/default/pods",
+    })}\n`,
+  );
+  expect(recognize(event)).toMatchObject({
+    state: "recognized",
+    format: "kubernetes-audit-log",
+  });
+  // A JSON object without an auditID, or with a stage the API does not define,
+  // is not a claim this format makes.
+  expect(
+    recognize(
+      Buffer.from(
+        `${JSON.stringify({ kind: "Pod", stage: "RequestReceived" })}\n`,
+      ),
+    ),
+  ).toBeUndefined();
+  expect(
+    recognize(
+      Buffer.from(`${JSON.stringify({ auditID: "a", stage: "Started" })}\n`),
+    ),
+  ).toBeUndefined();
+});
+
 it("recognizes an Android sparse image by its 0xED26FF3A magic", () => {
   expect(recognize(mixedAndroidSparseImage())).toMatchObject({
     state: "recognized",

@@ -61,6 +61,7 @@ import { UefiArtifactReader } from "../uefi/UefiArtifactReader.js";
 import { Uf2ArtifactReader } from "./Uf2ArtifactReader.js";
 import { NtfsMftArtifactReader } from "./NtfsMftArtifactReader.js";
 import { AuditdLogArtifactReader } from "./AuditdLogArtifactReader.js";
+import { KubernetesAuditLogArtifactReader } from "./KubernetesAuditLogArtifactReader.js";
 import { AndroidOtaPayloadArtifactReader } from "./AndroidOtaPayloadArtifactReader.js";
 import { SystemdJournalArtifactReader } from "./SystemdJournalArtifactReader.js";
 import { AndroidSparseImageArtifactReader } from "./AndroidSparseImageArtifactReader.js";
@@ -827,6 +828,15 @@ const NON_ZIP_FORMATS = {
       "auditd log inventory reports record and event totals, per-type counts and a bounded window of events joined on their full audit event identity (node, timestamp and serial), with duplicate, out-of-order and malformed records counted. Per-record identity is retained for a bounded window of recent events; events and records past it are counted in the totals but their duplicate and interleaving status is not established. Record key-value fields, hex and escaped values, argument ordering and decoded syscall or permission meanings are not interpreted; the log is not treated as complete or authentic.",
     createReader: (path, options) =>
       new AuditdLogArtifactReader(path, sourceOf(options)),
+  }),
+  "kubernetes-audit-log": described("kubernetes-audit-log", {
+    ...plain,
+    role: "resource",
+    retainClassifiedSource: true,
+    readerLimitation:
+      "Kubernetes audit log inventory reports line, stage and verb totals and a bounded window of events joined on their auditID, with malformed lines, repeated stages and auditIDs that do not carry every stage counted. Events past the sample are counted but their joined stages and fields are not listed. Request and response object bodies, annotations, impersonation metadata and audit policy are not interpreted; the log is not treated as complete or authentic.",
+    createReader: (path, options) =>
+      new KubernetesAuditLogArtifactReader(path, sourceOf(options)),
   }),
   unknown: described("unknown", plain),
 } satisfies Record<

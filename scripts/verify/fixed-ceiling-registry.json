@@ -72,6 +72,13 @@
       "reason": "The 4 GiB auditd log admission is a resource policy; issue #11345 tracks giving it a control as the reader grows past step 1."
     }
   },
+  "src/artifacts/KubernetesAuditLogArtifactReader.ts": {
+    "\"The Kubernetes audit log file-size ceiling\"": {
+      "class": "pending",
+      "issue": 11352,
+      "reason": "The 4 GiB Kubernetes audit log admission is a resource policy; issue #11352 tracks giving it a control as the reader grows past step 1."
+    }
+  },
   "src/artifacts/AndroidSparseImageArtifactReader.ts": {
     "ceiling.name": {
       "class": "forwarding",
