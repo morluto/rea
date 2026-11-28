@@ -1407,6 +1407,8 @@ export const createSystemProcessOwnershipHost = (
               );
             } catch (cause: unknown) {
               rethrowInspectionFailure(cause);
+              // Without credentials, an exited process would look like a live one.
+              if (procfsEntryVanished(cause)) throw cause;
               return [pid, readableIdentity(parsed)] as const;
             }
             assertProcessOwnershipInspectionActive(signal);
@@ -1476,6 +1478,8 @@ export const createSystemProcessOwnershipHost = (
               );
             } catch (cause: unknown) {
               rethrowInspectionFailure(cause);
+              // The credentials cannot be bound to a generation that exited.
+              if (procfsEntryVanished(cause)) throw cause;
               return [pid, readableIdentity(parsed)] as const;
             }
             assertProcessOwnershipInspectionActive(signal);
