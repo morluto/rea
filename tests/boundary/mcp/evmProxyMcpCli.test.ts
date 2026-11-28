@@ -48,6 +48,9 @@ cliTest(
     });
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
     for (const value of [result.json, response.structuredContent]) {
+      expect(
+        INSPECT_EVM_PROXY_CONTRACT.outputSchema.parse(value).parameters,
+      ).not.toHaveProperty("max_file_bytes");
       const report =
         INSPECT_EVM_PROXY_CONTRACT.outputSchema.parse(value).normalized_result;
       expect(report.pattern).toEqual({

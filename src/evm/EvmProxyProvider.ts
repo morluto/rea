@@ -51,15 +51,29 @@ export class EvmProxyProvider implements EvmProxyPort {
   }
 
   async inspect(input: InspectEvmProxyInput, options?: ExecutionOptions) {
+    // The file being read and, once read, its identity: both name a failure.
     let path = input.path;
+    let observed: { sha256: string; bytes: number } | undefined;
+    const read = async (selected: Parameters<typeof followedAccount>[0]) => {
+      path = selected.path;
+      observed = undefined;
+      const carrier = await readStableArtifact(
+        selected.path,
+        input.max_file_bytes,
+        options?.signal,
+        undefined,
+        this.#resources,
+      );
+      observed = { sha256: carrier.sha256, bytes: carrier.bytes.length };
+      assertArtifactReadActive(options?.signal);
+      return followedAccount(selected, carrier);
+    };
     try {
       return await this.#resources.run(async () => {
-        const root = await this.#readAccount(input, input, options?.signal);
+        const root = await read(input);
         const accounts = [];
-        for (const entry of input.related ?? []) {
-          path = entry.path;
-          accounts.push(await this.#readAccount(entry, input, options?.signal));
-        }
+        for (const entry of input.related ?? [])
+          accounts.push(await read(entry));
         const { chain, reached } = followProxyChain(root, accounts);
         return ok({
           ...root,
@@ -84,37 +98,30 @@ export class EvmProxyProvider implements EvmProxyPort {
           path,
           EVM_PROXY_PROVIDER.id,
           OPERATION,
+          observed,
         ),
       );
     }
   }
-
-  async #readAccount(
-    selected: Pick<InspectEvmProxyInput, "path" | "encoding" | "snapshot">,
-    { max_file_bytes }: Pick<InspectEvmProxyInput, "max_file_bytes">,
-    signal: AbortSignal | undefined,
-  ) {
-    const carrier = await readStableArtifact(
-      selected.path,
-      max_file_bytes,
-      signal,
-      undefined,
-      this.#resources,
-    );
-    assertArtifactReadActive(signal);
-    const code = decodeEvmBytecodeCarrier(carrier.bytes, selected.encoding);
-    return {
-      artifact: {
-        path: selected.path,
-        sha256: carrier.sha256,
-        bytes: carrier.bytes.length,
-        encoding: selected.encoding,
-      },
-      bytecode: { sha256: sha256Hex(code), bytes: code.length },
-      ...deriveProxyFacts(code, selected.snapshot),
-    };
-  }
 }
+
+/** Decode one read carrier into that account's identity and proxy facts. */
+const followedAccount = (
+  selected: Pick<InspectEvmProxyInput, "path" | "encoding" | "snapshot">,
+  carrier: { readonly sha256: string; readonly bytes: Uint8Array },
+) => {
+  const code = decodeEvmBytecodeCarrier(carrier.bytes, selected.encoding);
+  return {
+    artifact: {
+      path: selected.path,
+      sha256: carrier.sha256,
+      bytes: carrier.bytes.length,
+      encoding: selected.encoding,
+    },
+    bytecode: { sha256: sha256Hex(code), bytes: code.length },
+    ...deriveProxyFacts(code, selected.snapshot),
+  };
+};
 
 const evmProxyDialect = (
   facts: ArtifactFilePrimaryFacts,
@@ -134,19 +141,33 @@ const evmProxyDialect = (
             detail: failure.message,
           })
         : undefined,
-    fileSize: (failure) =>
-      parseLimitConstraint(
+    fileSize: (failure) => {
+      // Absent or beyond a safe integer: report no retry value.
+      const observed = Number(failure.observedBytes);
+      const required = Number.isSafeInteger(observed) ? observed : undefined;
+      const limit = evmProxyBudgetLimit("max_file_bytes", input.max_file_bytes);
+      return parseLimitConstraint(
         OPERATION,
         "file-size",
         decodeLimit(
           "evm-bytecode",
           failure.message,
-          { name: "max_file_bytes", maximum: input.max_file_bytes },
+          {
+            name: "max_file_bytes",
+            maximum: input.max_file_bytes,
+            ...(failure.observedBytes === undefined
+              ? {}
+              : { required: failure.observedBytes }),
+          },
           { cause: failure },
         ),
         {
           retryable: false,
-          limit: evmProxyBudgetLimit("max_file_bytes", input.max_file_bytes),
+          limit:
+            required === undefined
+              ? limit
+              : { ...limit, required_value: required },
         },
-      ),
+      );
+    },
   });

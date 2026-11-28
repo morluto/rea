@@ -7,6 +7,7 @@ import {
 import type { Result } from "../../domain/result.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { EvmProxyPort } from "../../ports/evm/EvmProxyPort.js";
+import { callerAnalysisParameters } from "../AnalysisInput.js";
 import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
 
 const OPERATION = "inspect_evm_proxy";
@@ -52,7 +53,7 @@ export class EvmProxyService {
             identity,
             {
               operation: OPERATION,
-              parameters,
+              parameters: callerAnalysisParameters(rawInput)(parameters),
               result: report,
               confidence: "derived",
               limitations: report.limitations,

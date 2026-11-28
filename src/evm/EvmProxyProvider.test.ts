@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -97,6 +98,25 @@ describe("inspect_evm_proxy", () => {
     expect(!failed.ok && failed.error).toMatchObject({
       _tag: "AnalysisTargetFailureError",
       path: broken,
+      partialObservation: { path: broken, bytes: 3 },
+    });
+  });
+
+  it("keeps the identity of a read carrier when its hex is malformed", async () => {
+    const path = await carrier("0x363");
+    const result = await inspect({ path, encoding: "hex" });
+    expect(!result.ok && result.error.partialObservation).toMatchObject({
+      path,
+      sha256: createHash("sha256").update("0x363").digest("hex"),
+      bytes: 5,
+    });
+  });
+
+  it("reports the carrier size a retry needs", async () => {
+    const path = await carrier(CLONE);
+    const result = await inspect({ path, encoding: "hex", max_file_bytes: 89 });
+    expect(!result.ok && result.error).toMatchObject({
+      limit: { required_value: CLONE.length },
     });
   });
 });
