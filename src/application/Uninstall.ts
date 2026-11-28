@@ -1068,7 +1068,9 @@ const readClientConfiguration = async (
     configurationFailure,
   });
   if (typeof original !== "string") return original;
-  const parsed = parseClientConfiguration(original, format);
+  // An uninstall establishes ownership from either table, so an ambiguous Muse
+  // document is read rather than refused before its owned row can be removed.
+  const parsed = parseClientConfiguration(original, format, "preserve");
   if (parsed.ok)
     return {
       kind: "configuration",
@@ -1591,7 +1593,10 @@ const removeClient = async (
     try {
       const text = await fileSystem.readText(publication.path);
       await publication.assertCurrent(text);
-      const parsed = parseClientConfiguration(text, client.format);
+      // Readback uses the removal policy: a Muse document that keeps both tables
+      // after the owned row is gone must not be refused here, or a completed
+      // removal would be rolled back.
+      const parsed = parseClientConfiguration(text, client.format, "preserve");
       if (parsed.ok) {
         const readback = parsed.value;
         if (

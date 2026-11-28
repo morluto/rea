@@ -192,6 +192,8 @@ const CLIENT_CONFIGURATION_READERS = {
   claude_code: { ...STRICT_JSON_READER, bom: "accept" },
   // Kimi, LM Studio and ZCode read their files with JSON.parse; an empty
   // file holds nothing to preserve.
+  // Muse Code reads `settings.json` with a required numeric `schema_version`.
+  muse: STRICT_JSON_READER,
   kimi: STRICT_JSON_READER,
   lm_studio: STRICT_JSON_READER,
   zcode: STRICT_JSON_READER,
@@ -333,6 +335,7 @@ const fxConfigurationServersKey = (
 const readClientDocument = (
   text: string,
   format: Exclude<ClientConfigurationFormat, "unsupported">,
+  ambiguity: "refuse" | "preserve" = "refuse",
 ): ClientConfigurationDocument => {
   // DeepSeek Harness stores a Cordis patch list, not a server table.
   if (format === "zcode_fallback") return parseZcodeFallbackConfiguration(text);
@@ -381,7 +384,29 @@ const readClientDocument = (
   const serversKey =
     format === "fx"
       ? fxConfigurationServersKey(document)
-      : clientConfigurationServersKey(format);
+      : // A Muse document that already uses the legacy table keeps it: writing the
+        // canonical table beside it would leave both present, which is the state that
+        // disables MCP for the session.
+        format === "muse" &&
+          document.mcpServers === undefined &&
+          document.mcp_servers !== undefined
+        ? "mcp_servers"
+        : clientConfigurationServersKey(format);
+  // Muse Code disables MCP for the whole session when both the canonical
+  // `mcpServers` table and the legacy `mcp_servers` table are present, so a
+  // registration written into either one would be ignored without an error the
+  // user could see. Refuse instead of picking a table.
+  // A removal establishes ownership from either table, so it reads the
+  // ambiguous document instead of refusing it; only a write must choose one.
+  if (
+    format === "muse" &&
+    ambiguity === "refuse" &&
+    document.mcpServers !== undefined &&
+    document.mcp_servers !== undefined
+  )
+    throw new ClientConfigurationShapeError(
+      `Muse Code holds both "mcpServers" and the legacy "mcp_servers"; it disables MCP for the session when both exist, so REA will not choose one. Keep a single table (preferably "mcpServers") and run setup again.`,
+    );
   const value = document[serversKey];
   const servers =
     value === undefined ? {} : requireObject(value, `"${serversKey}"`);
@@ -411,7 +436,13 @@ const readClientDocument = (
       native !== null &&
       "type" in native &&
       typeof native.type === "string")
-  )
+  ) {
+    // A removal must see a row that lives only in the other table, so a preserved
+    // Muse document exposes the legacy rows too.
+    const legacyRows =
+      format === "muse" && ambiguity === "preserve"
+        ? document.mcp_servers
+        : undefined;
     return {
       document,
       ...(requiresRewrite === undefined ? {} : { requiresRewrite }),
@@ -419,8 +450,12 @@ const readClientDocument = (
       serversPath: [serversKey],
       dialect: format,
       environmentKey,
-      legacyServers: {},
+      legacyServers:
+        legacyRows === undefined
+          ? {}
+          : requireObject(legacyRows, '"mcp_servers"'),
     };
+  }
   return {
     document,
     servers: requireObject(native, `"${serversKey}.servers"`),
@@ -463,6 +498,8 @@ export type ClientConfigurationParseFailure =
 export const parseClientConfiguration = (
   text: string,
   format: ClientConfigurationFormat | undefined,
+  /** Removal paths keep both tables so an owned row stays removable. */
+  ambiguity: "refuse" | "preserve" = "refuse",
 ): Result<ClientConfigurationDocument, ClientConfigurationParseFailure> => {
   if (format === undefined || format === "unsupported")
     return err({
@@ -470,7 +507,7 @@ export const parseClientConfiguration = (
       detail: "client does not have a supported MCP config format",
     });
   try {
-    return ok(readClientDocument(text, format));
+    return ok(readClientDocument(text, format, ambiguity));
   } catch (cause: unknown) {
     if (isNativeDocumentError(cause))
       return err({ kind: "document", detail: cause.message, cause });
@@ -1163,6 +1200,10 @@ export const clientRegistrationLauncherEntry = (
       return { type: "local", command: [...command] };
     case "goose":
       return { type: "stdio", cmd: executable, args };
+    // Muse Code requires `type: "stdio"` on every registration row, so a fresh
+    // row carries it instead of being written and then rejected by the client.
+    case "muse":
+      return { type: "stdio", command: executable, args };
     case "vscode":
     case "omp":
     case "pi":

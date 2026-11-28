@@ -70,6 +70,7 @@ export const MCP_REGISTRATION_CLIENTS = {
   "kimi-code": "kimi",
   "kiro-cli": "kiro",
   mastracode: "mastracode",
+  "muse-code": "muse",
   mcporter: "mcporter",
   opencode: "opencode",
   pi: "pi",
