@@ -707,15 +707,16 @@ const launcherInstallation = async (
  * cancellation signal, as an outer adapter supplies it. The declared read
  * set travels with it into the 2-parameter registration derivation.
  */
-export interface RetainedProviderRequestBudgetResolver {
+export interface RetainedProviderRequestBudgetResolver extends Pick<
+  ProviderRequestBudgetResolver,
+  "budgetSettings"
+> {
   (
     provider: Parameters<ProviderRequestBudgetResolver>[0],
     environment: Parameters<ProviderRequestBudgetResolver>[1],
     resources: RetainedResourceScope,
     signal: AbortSignal,
   ): ReturnType<ProviderRequestBudgetResolver>;
-  /** Environment settings this resolver may read; see the base contract. */
-  readonly budgetSettings?: ProviderRequestBudgetResolver["budgetSettings"];
 }
 
 /** Optional outer-adapter diagnostics composed without reversing dependencies. */

@@ -4,6 +4,7 @@ import { expect, it } from "vitest";
 import { z } from "zod";
 import { createVerifierHttpServer } from "../../../scripts/lib/verifier-http-server.mjs";
 import { createIdaMcpConnection } from "../../../src/ida/IdaMcpConnection.js";
+import { createBinaryNinjaMcpConnection } from "../../../src/binaryNinja/BinaryNinjaMcpConnection.js";
 import { createStreamableHttpJebMcpConnection } from "../../../src/jeb/JebMcpConnection.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { idaConnectionDependencies } from "../../support/idaConnectionDependencies.js";
@@ -16,10 +17,11 @@ const MARKER = "SOURCE_UTF8_BYTES";
 const payload = {
   success: true,
   text: `caf${MARKER}`,
+  literal_replacement: "\uFFFD",
   source_url: "file:///selected/a%20b.js?query#fragment",
 };
 
-/** Actual HTTP framing and SDK parsing; this server is not an installed IDA/JEB engine. */
+/** Actual HTTP framing and SDK parsing without an installed analysis engine. */
 const startFixture = async (format: "json" | "sse") => {
   let fault: "valid" | "invalid" | "truncated" | "stalled" = "valid";
   let faultMethod = "tools/call";
@@ -133,7 +135,25 @@ const startFixture = async (format: "json" | "sse") => {
   };
 };
 
-const createConnection = (provider: "ida" | "jeb", endpoint: string) => {
+const createConnection = (
+  provider: "ida" | "jeb" | "binary-ninja",
+  endpoint: string,
+) => {
+  if (provider === "binary-ninja") {
+    const connection = createBinaryNinjaMcpConnection({
+      url: endpoint,
+      headers: {},
+      timeoutMs: 1_000,
+      maxInputBytes: 1024,
+    });
+    return {
+      connect: () => connection.connect(),
+      close: () => connection.close(),
+      call: async (signal?: AbortSignal) =>
+        (await connection.call("get_client_information", {}, signal))
+          .structured,
+    };
+  }
   if (provider === "ida") {
     const connection = createIdaMcpConnection(
       {
@@ -166,7 +186,7 @@ const createConnection = (provider: "ida" | "jeb", endpoint: string) => {
 };
 
 it.each(
-  (["ida", "jeb"] as const).flatMap((provider) =>
+  (["ida", "jeb", "binary-ninja"] as const).flatMap((provider) =>
     (["json", "sse"] as const).map((format) => ({ provider, format })),
   ),
 )(
@@ -182,8 +202,8 @@ it.each(
       for (const fault of ["invalid", "truncated"] as const) {
         fixture.setFault(fault);
         await expect(call()).rejects.toThrow("not valid UTF-8");
-        if (provider === "ida") {
-          // IDA's session owner retires failed connections rather than restarting SDK transports.
+        if (provider !== "jeb") {
+          // These session owners retire failed connections rather than restarting SDK transports.
           await connection.close();
           connection = createConnection(provider, fixture.endpoint);
           await connection.connect();
@@ -199,7 +219,7 @@ it.each(
       fixture.setFault("invalid");
       await expect(call()).rejects.toThrow("not valid UTF-8");
       expect(await sibling).toMatchObject({ _tag: "AnalysisProtocolError" });
-      if (provider === "ida") {
+      if (provider !== "jeb") {
         await connection.close();
         connection = createConnection(provider, fixture.endpoint);
         await connection.connect();
@@ -223,7 +243,7 @@ it.each(
 );
 
 it.each(
-  (["ida", "jeb"] as const).flatMap((provider) =>
+  (["ida", "jeb", "binary-ninja"] as const).flatMap((provider) =>
     (["json", "sse"] as const).flatMap((format) =>
       ["initialize", "tools/list"].map((method) => ({
         provider,
@@ -243,7 +263,7 @@ it.each(
         _tag: "AnalysisProtocolError",
       });
       fixture.setFault("valid", method);
-      if (provider === "ida") {
+      if (provider !== "jeb") {
         await connection.close();
         connection = createConnection(provider, fixture.endpoint);
       }

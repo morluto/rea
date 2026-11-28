@@ -159,6 +159,22 @@ export class AnalysisResourceConstraintError extends AnalysisError {
   }
 }
 
+/** Refuse admission using the measured limits available to the operation. */
+export const measuredResourceConstraint = (
+  operation: string,
+  resource: (typeof ANALYSIS_RESOURCE_KINDS)[number],
+  reason: string,
+  reportedLimits: Readonly<Record<string, JsonValue>>,
+  options?: AnalysisErrorOptions & ResourceConstraintRecovery,
+): AnalysisResourceConstraintError =>
+  new AnalysisResourceConstraintError(
+    operation,
+    resource,
+    reason,
+    reportedLimits,
+    options,
+  );
+
 const resourceConstraintRecoveryFrom = (
   options: ResourceConstraintRecovery | undefined,
 ): ResourceConstraintRecovery => {

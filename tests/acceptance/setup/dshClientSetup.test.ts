@@ -32,6 +32,75 @@ afterAll(async () => {
   }
 });
 
+cliTest.for([
+  ["ghidra", "REA_BINARY_NINJA_MCP_CONFIG", true],
+  ["ida", "REA_BINARY_NINJA_MCP_CONFIG", true],
+  ["binary-ninja", "REA_IDA_MCP_CONFIG", true],
+  ["binary-ninja", "REA_BINARY_NINJA_MCP_CONFIG", false],
+  ["auto", "REA_IDA_MCP_CONFIG", false],
+  ["auto", "REA_BINARY_NINJA_MCP_CONFIG", false],
+] as const)(
+  "DSH CLI budgets %s with an expression for %s (usable: %s)",
+  async ([provider, setting, usable], { cli }) => {
+    const home = sharedDshHome;
+    const profile = join(home, ".dsh");
+    const config = join(profile, "cordis.patch.yml");
+    const environment = { HOME: home, USERPROFILE: home, DSH_HOME: profile };
+    const setup = (overrides: NodeJS.ProcessEnv) =>
+      cli.run({
+        arguments: [
+          "setup",
+          "--client",
+          "dsh",
+          "--skill=false",
+          "--yes",
+          "--json",
+        ],
+        cwd: home,
+        environment: { ...environment, ...overrides },
+      });
+    const initial = await setup({ REA_ANALYSIS_PROVIDER: provider });
+    expect(initial.exitCode, initial.stdout).toBe(0);
+    const original = await readFile(config, "utf8");
+    const expression = `${setting}: !!js process.env.${setting}`;
+    const withExpression = original.replace(
+      /^([ \t]*)REA_ANALYSIS_PROVIDER: .*$/m,
+      `$&\n$1${expression}`,
+    );
+    expect(withExpression).not.toBe(original);
+    await writeFile(config, withExpression);
+    const updated = await setup({ REA_MCP_TOOL_FAMILIES: "session" });
+    expect(updated.exitCode).toBe(usable ? 0 : 1);
+    if (usable) {
+      const text = await readFile(config, "utf8");
+      expect(text).toContain(expression);
+      expect(text).toContain("REA_MCP_TOOL_FAMILIES: session");
+    } else {
+      expect(updated.json).toMatchObject({
+        status: "needs_human",
+        appliedActions: [],
+        remediation: expect.stringContaining(setting),
+      });
+      expect(await readFile(config, "utf8")).toBe(withExpression);
+    }
+    const doctor = await cli.run({
+      arguments: ["doctor", "--client", "dsh", "--json"],
+      cwd: home,
+      environment,
+    });
+    expect(doctor.json).toMatchObject({
+      identity: {
+        registrations: expect.arrayContaining([
+          expect.objectContaining({
+            client: "dsh",
+            state: usable ? "aligned" : "invalid",
+          }),
+        ]),
+      },
+    });
+  },
+);
+
 cliTest.for(["setup", "uninstall"] as const)(
   "DSH CLI %s refuses a multi-document patch without losing caller content",
   async (operation, { cli }) => {

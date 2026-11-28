@@ -18,6 +18,7 @@ export const SOURCE_TEST_PROJECTS = [
     name: "adapters",
     group: "source",
     include: [
+      "src/binaryNinja/**/*.test.ts",
       "src/*.test.ts",
       "src/{android,apkSignature,apktool,jeb,adb,artifacts,browser,compression,config,cutter,deb,desktop,dotnet,electron,erlang,evm,firmware,flutter,frida,pcap,ghidra,go,gpu,hopper,hopperPaths,ida,inspector,java,javascript,kuna,labview,main,native,nuget,oci,process,providers,python,reference,resources,rust,server,sqlite,uefi,v8,vsix,wasm,windows,yara}/**/*.test.ts",
     ],

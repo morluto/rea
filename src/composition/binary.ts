@@ -8,6 +8,7 @@ import type { BinarySession } from "../application/binary/BinarySession.js";
 import type { ArtifactPathInspectionDependencies } from "../application/artifacts/ArtifactPathInspection.js";
 import { HopperProvider } from "../hopper/HopperProvider.js";
 import { GhidraProvider } from "../ghidra/GhidraProvider.js";
+import { BinaryNinjaProvider } from "../binaryNinja/BinaryNinjaProvider.js";
 import { createIdaMcpConnection } from "../ida/IdaMcpConnection.js";
 import { IdaProvider } from "../ida/IdaProvider.js";
 import { KunaProvider } from "../kuna/KunaProvider.js";
@@ -89,6 +90,7 @@ const composeDeepBinarySession = (
     regexMatchingDeadline: config.regexMatchingDeadline,
     regexWorkerHeapRequest: config.regexWorkerHeapRequest,
   });
+  const binaryNinja = new BinaryNinjaProvider(config);
   const auxiliaryDeclarations = auxiliaryAnalysisProviderDeclarations(
     environment,
     platform,
@@ -103,7 +105,7 @@ const composeDeepBinarySession = (
     );
   return composeBinarySession(
     new AnalysisProviderRegistry(
-      [hopper, ghidra, ida, kuna],
+      [hopper, ghidra, ida, kuna, binaryNinja],
       config.analysisProvider,
       nativeInspectionAvailable ? isAppleDispatchMetadataTarget : undefined,
     ),

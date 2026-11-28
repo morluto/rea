@@ -130,6 +130,8 @@ it.each([
   ["growth", "denied"],
   ["admission", "cancelled"],
   ["admission", "cancelled-and-denied"],
+  ["growth", "cancelled"],
+  ["growth", "cancelled-and-denied"],
 ] as const)(
   "keeps the 64 KiB rejection from the %s size check through a %s close",
   async (branch, closeOutcome) => {

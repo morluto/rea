@@ -159,6 +159,16 @@
       "reason": "Duplicate-blob verification work is bounded by the carrier's own file size, so the bound grows with the admitted input."
     }
   },
+  "src/binaryNinja/BinaryNinjaOperationRunner.ts": {
+    "\"The Node.js buffer length limit\"": {
+      "class": "representation",
+      "reason": "A declared Binary Ninja string is read into one Node.js Buffer, which cannot represent more than buffer.constants.MAX_LENGTH bytes."
+    },
+    "\"The Node.js string length limit\"": {
+      "class": "representation",
+      "reason": "Each decoded string and each joined rendering must fit in one JavaScript string, whose length is bounded by the running Node.js buffer.constants.MAX_STRING_LENGTH."
+    }
+  },
   "src/browser/WebBundleAnalysisWorker.ts": {
     "\"The web-bundle worker transfer allowance\"": {
       "class": "pending",

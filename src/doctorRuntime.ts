@@ -1,3 +1,8 @@
+import {
+  BINARY_NINJA_DOCTOR_SETTINGS,
+  inspectBinaryNinjaRegistration,
+} from "./binaryNinja/BinaryNinjaDoctor.js";
+import { readBinaryNinjaConfiguration } from "./binaryNinja/BinaryNinjaConfiguration.js";
 import { HOST_PLATFORM, type HostPlatform } from "./platform/HostPlatform.js";
 import {
   systemDoctorHost,
@@ -31,6 +36,7 @@ import {
 import { readIdaConfiguration } from "./ida/IdaConfiguration.js";
 import { selectLinuxPrivateDisplayStrategy } from "./hopper/LinuxPrivateDisplayProbe.js";
 import { ok } from "./domain/result.js";
+import type { AnalysisProviderSelector } from "./domain/providerSelection.js";
 import { cancelledBy, carriedReason } from "./domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "./domain/providerCleanupError.js";
 import {
@@ -234,6 +240,7 @@ const readSelectedRegistration = async (
 const PROVIDER_SETTINGS: Readonly<Record<string, readonly string[]>> = {
   ghidra: GHIDRA_DOCTOR_SETTINGS,
   ida: IDA_DOCTOR_SETTINGS,
+  "binary-ninja": BINARY_NINJA_DOCTOR_SETTINGS,
   jadx: JADX_DOCTOR_SETTINGS,
   kuna: KUNA_DOCTOR_SETTINGS,
 };
@@ -301,6 +308,7 @@ const providerSettingOrigins = (
 const PROVIDER_CONFIGURATION_KEYS: Readonly<Record<string, string>> = {
   ghidra: "GHIDRA_INSTALL_DIR",
   ida: "REA_IDA_MCP_CONFIG",
+  "binary-ninja": BINARY_NINJA_DOCTOR_SETTINGS[0],
   jadx: "REA_JADX_MCP_JAR",
   kuna: "REA_KUNA_COMMAND",
 };
@@ -413,22 +421,6 @@ export const createSystemDoctorHost = (
     }
     return read;
   };
-  const idaBudgetLookup = (
-    analysisProvider: Parameters<RetainedProviderRequestBudgetResolver>[0],
-    registration: Parameters<RetainedProviderRequestBudgetResolver>[1],
-  ) => {
-    if (analysisProvider !== "ida" && analysisProvider !== "auto")
-      return { kind: "none" } as const;
-    const explicit = registrationEnvironmentOverlay(
-      inheritedEnvironment,
-      registration,
-      platform,
-    );
-    const path = explicit.REA_IDA_MCP_CONFIG;
-    return path === undefined
-      ? ({ kind: "saved", environment: explicit } as const)
-      : ({ kind: "explicit", path } as const);
-  };
   const registrationReads = new WeakMap<
     RetainedResourceScope,
     Map<string, ReturnType<typeof readIdaConfiguration>>
@@ -455,6 +447,93 @@ export const createSystemDoctorHost = (
     }
     return registration;
   };
+  const binaryNinjaReads = new WeakMap<
+    RetainedResourceScope,
+    Map<string, ReturnType<typeof readBinaryNinjaConfiguration>>
+  >();
+  const readBinaryNinjaRegistration = (
+    path: string,
+    resourceScope: RetainedResourceScope,
+    signal: AbortSignal,
+  ) => {
+    let byPath = binaryNinjaReads.get(resourceScope);
+    if (byPath === undefined) {
+      byPath = new Map();
+      binaryNinjaReads.set(resourceScope, byPath);
+    }
+    let registration = byPath.get(path);
+    if (registration === undefined) {
+      registration = withProbeResourceScope(resourceScope, path, (probeScope) =>
+        readBinaryNinjaConfiguration(path, {
+          resourceScope: probeScope,
+          signal,
+        }),
+      );
+      byPath.set(path, registration);
+    }
+    return registration;
+  };
+  const budgetProviders = [
+    { id: "ida", setting: IDA_DOCTOR_SETTINGS[0], read: readRegistration },
+    {
+      id: "binary-ninja",
+      setting: BINARY_NINJA_DOCTOR_SETTINGS[0],
+      read: readBinaryNinjaRegistration,
+    },
+  ] as const;
+  const budgetLookups = (
+    selection: AnalysisProviderSelector,
+    registration: Readonly<Record<string, string>>,
+  ) => {
+    const explicit = registrationEnvironmentOverlay(
+      inheritedEnvironment,
+      registration,
+      platform,
+    );
+    return budgetProviders
+      .filter(({ id }) => selection === "auto" || selection === id)
+      .map((provider) => {
+        const path = explicit[provider.setting];
+        return {
+          ...provider,
+          path,
+          savedLookup:
+            provider.id === "ida" && path === undefined ? explicit : undefined,
+        };
+      });
+  };
+  const resolveProviderRequestBudget: RetainedProviderRequestBudgetResolver =
+    async (
+      analysisProvider,
+      registrationEnvironment,
+      resourceScope,
+      inspectionSignal,
+    ) => {
+      let budget: number | undefined;
+      for (const provider of budgetLookups(
+        analysisProvider,
+        registrationEnvironment,
+      )) {
+        let path = provider.path;
+        if (provider.savedLookup !== undefined) {
+          const defaults = await readProviderDefaults(provider.savedLookup);
+          if (!defaults.ok) return defaults;
+          path = defaults.value.REA_IDA_MCP_CONFIG;
+        }
+        if (path === undefined) continue;
+        const registration = await provider.read(
+          path,
+          resourceScope,
+          inspectionSignal,
+        );
+        if (registration.ok)
+          budget = Math.max(budget ?? 0, registration.value.timeoutMs);
+        // Invalid registrations cannot be selected automatically. Explicit
+        // selection still reports the parser-owned error.
+        else if (analysisProvider !== "auto") return registration;
+      }
+      return ok(budget);
+    };
   return systemDoctorHost({
     environment,
     platform,
@@ -462,56 +541,22 @@ export const createSystemDoctorHost = (
     registrationScope,
     savedDefaults,
     ...(signal === undefined ? {} : { signal }),
-    resolveProviderRequestBudget: Object.assign(
-      async (
-        analysisProvider: Parameters<RetainedProviderRequestBudgetResolver>[0],
-        registrationEnvironment: Parameters<RetainedProviderRequestBudgetResolver>[1],
-        resourceScope: Parameters<RetainedProviderRequestBudgetResolver>[2],
-        inspectionSignal: Parameters<RetainedProviderRequestBudgetResolver>[3],
-      ) => {
-        const lookup = idaBudgetLookup(
-          analysisProvider,
-          registrationEnvironment,
-        );
-        if (lookup.kind === "none") return ok(undefined);
-        let path: string | undefined;
-        if (lookup.kind === "explicit") path = lookup.path;
-        else {
-          const defaults = await readProviderDefaults(lookup.environment);
-          if (!defaults.ok) return defaults;
-          path = defaults.value.REA_IDA_MCP_CONFIG;
-        }
-        if (path === undefined) return ok(undefined);
-        const registration = await readRegistration(
-          path,
-          resourceScope,
-          inspectionSignal,
-        );
-        if (registration.ok) return ok(registration.value.timeoutMs);
-        // An invalid IDA registration cannot be selected automatically. Keep it
-        // out of recommendations for another available provider, but surface the
-        // parser-owned error when IDA itself was explicitly selected.
-        return analysisProvider === "ida" ? registration : ok(undefined);
-      },
-      {
-        budgetSettings: (
-          analysisProvider: Parameters<RetainedProviderRequestBudgetResolver>[0],
-          registrationEnvironment: Parameters<RetainedProviderRequestBudgetResolver>[1],
-        ) => {
-          const lookup = idaBudgetLookup(
-            analysisProvider,
-            registrationEnvironment,
-          );
-          if (lookup.kind === "none") return new Set<string>();
-          return new Set([
-            "REA_IDA_MCP_CONFIG",
-            ...(lookup.kind === "saved"
-              ? userConfigLocationSettings(lookup.environment, platform)
-              : []),
-          ]);
-        },
-      },
-    ),
+    resolveProviderRequestBudget: Object.assign(resolveProviderRequestBudget, {
+      budgetSettings: (
+        provider: AnalysisProviderSelector,
+        registration: Readonly<Record<string, string>>,
+      ) =>
+        new Set(
+          budgetLookups(provider, registration).flatMap(
+            ({ setting, savedLookup }) => [
+              setting,
+              ...(savedLookup === undefined
+                ? []
+                : userConfigLocationSettings(savedLookup, platform)),
+            ],
+          ),
+        ),
+    }),
     selectProviderConfiguration: async (
       resourceScope,
       inspectionSignal,
@@ -634,6 +679,12 @@ export const createSystemDoctorHost = (
         inspectionEnvironment,
         platform,
       );
+      const binaryNinjaUnresolved = unresolvedProvider(
+        "binary-ninja",
+        unresolved,
+        inspectionEnvironment,
+        platform,
+      );
       const jadxUnresolved = unresolvedProvider(
         "jadx",
         unresolved,
@@ -674,6 +725,26 @@ export const createSystemDoctorHost = (
                       inspectionSignal,
                     ),
               ),
+            ),
+        binaryNinjaUnresolved !== undefined
+          ? Promise.resolve(binaryNinjaUnresolved)
+          : withProbeResourceScope(
+              resourceScope,
+              "binary-ninja-doctor",
+              (probeScope) =>
+                inspectBinaryNinjaRegistration(
+                  inspectionEnvironment.REA_BINARY_NINJA_MCP_CONFIG,
+                  probeScope,
+                  inspectionSignal,
+                  inspectionEnvironment.REA_BINARY_NINJA_MCP_CONFIG ===
+                    undefined
+                    ? undefined
+                    : readBinaryNinjaRegistration(
+                        inspectionEnvironment.REA_BINARY_NINJA_MCP_CONFIG,
+                        resourceScope,
+                        inspectionSignal,
+                      ),
+                ),
             ),
         jadxUnresolved !== undefined
           ? Promise.resolve(jadxUnresolved)
