@@ -448,7 +448,10 @@ const amigaHunkRecordSchema = z.strictObject({
   unit: uint32.nullable(),
   type: z.enum(["code", "data", "bss"]).nullable(),
   memory: amigaHunkMemorySchema,
-  /** Raw memory-flags longword when `memory` is `extended`; otherwise null. */
+  /**
+   * Raw memory-flags longword when `memory` is `extended`; otherwise null.
+   * Also null when an `extended` row's flags longword is truncated.
+   */
   extended_flags: uint32.nullable(),
   declared_longwords: uint32,
   stored_longwords: uint32.nullable(),

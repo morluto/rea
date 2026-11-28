@@ -667,6 +667,41 @@ it("keeps size words decoded before a truncated hunk table", () => {
   expect(file.limitations.map((item) => item.kind)).toEqual(["truncated"]);
 });
 
+it("keeps a size-table row whose extended memory flags are truncated", () => {
+  const bytes = Buffer.alloc(24);
+  bytes.writeUInt32BE(0x3f3, 0);
+  bytes.writeUInt32BE(0, 4);
+  bytes.writeUInt32BE(1, 8);
+  bytes.writeUInt32BE(0, 12);
+  bytes.writeUInt32BE(0, 16);
+  bytes.writeUInt32BE(0xc0000001, 20);
+  const file = parseAmigaHunk(bytes);
+  expect(file.hunks).toMatchObject([
+    {
+      index: 0,
+      memory: "extended",
+      extendedFlags: null,
+      declaredLongwords: 1,
+      type: null,
+    },
+  ]);
+  expect(amigaHunkMetadata(file).hunks).toMatchObject([
+    {
+      index: 0,
+      memory: "extended",
+      extended_flags: null,
+      declared_longwords: 1,
+    },
+  ]);
+  expect(file.limitations).toMatchObject([
+    {
+      kind: "truncated",
+      offset: 24,
+      detail: expect.stringContaining("extended memory flags"),
+    },
+  ]);
+});
+
 it("caps retained rows in a truncated hunk size table", () => {
   const maxHunks = 4;
   const bytes = Buffer.alloc(20 + 6 * 4);

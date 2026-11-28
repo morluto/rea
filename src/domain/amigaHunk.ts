@@ -667,17 +667,18 @@ class AmigaHunkParser {
       return false;
     }
     const decoded = this.readMemoryFlags(word);
-    if (decoded === undefined) return false;
+    // A truncated extended-flags longword still leaves this row's index,
+    // memory class and allocation known; only the raw flags stay unknown.
     this.hunks.push(
       draftHunk(
         index,
-        decoded.memory,
-        decoded.extendedFlags,
+        decoded?.memory ?? "extended",
+        decoded?.extendedFlags ?? null,
         word & HUNK_SIZE_MASK,
         null,
       ),
     );
-    return true;
+    return decoded !== undefined;
   }
 
   private walk(): void {
