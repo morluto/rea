@@ -151,6 +151,23 @@ const responseCode = (event: Record<string, unknown>): number | null => {
     : null;
 };
 
+const isJsonWhitespace = (code: number): boolean =>
+  code === 0x20 || code === 0x09 || code === 0x0d;
+
+/**
+ * One leading U+FEFF and the JSON whitespace around a record are padding.
+ * Anything else stays in the text so `JSON.parse` rejects it, which is the
+ * same rule the recognizer uses before `{`.
+ */
+const auditRecordText = (line: string): string | undefined => {
+  let start = line.charCodeAt(0) === 0xfeff ? 1 : 0;
+  let end = line.length;
+  while (start < end && isJsonWhitespace(line.charCodeAt(start))) start += 1;
+  while (end > start && isJsonWhitespace(line.charCodeAt(end - 1))) end -= 1;
+  if (start === end) return undefined;
+  return line.slice(start, end);
+};
+
 /** How much of an offending line a diagnostic shows. */
 const DIAGNOSTIC_EXCERPT_UNITS = 160;
 /** An excerpt a diagnostic can show without dumping a whole line. */
@@ -225,6 +242,8 @@ const summarizeEvent = (
 type SampledRequest = {
   summary: KubernetesAuditEventSummary;
   readonly seenStages: Set<KubernetesAuditStage>;
+  /** Request strings come from the first stage with a modelled API version. */
+  fieldsRecorded: boolean;
 };
 
 /** Keep the first observation of each stage. Repeats use the remaining slots. */
@@ -416,8 +435,8 @@ class KubernetesAuditScanner {
       );
       return;
     }
-    const line = decoded.trim();
-    if (line === "") return;
+    const line = auditRecordText(decoded);
+    if (line === undefined) return;
     let value: unknown;
     try {
       value = JSON.parse(line);
@@ -494,6 +513,7 @@ class KubernetesAuditScanner {
           this.#sampleFields,
         ),
         seenStages: new Set([stage]),
+        fieldsRecorded: !unsupported,
       });
       return;
     }
@@ -501,6 +521,29 @@ class KubernetesAuditScanner {
     const alreadySeen = sampled.seenStages.has(stage);
     if (alreadySeen) this.#sampleDuplicateStageLines += 1;
     else sampled.seenStages.add(stage);
+    if (!unsupported && !sampled.fieldsRecorded) {
+      const filled = summarizeEvent(
+        event,
+        sampled.summary.audit_id,
+        stageRecord,
+        false,
+        this.#sampleFields,
+      );
+      sampled.fieldsRecorded = true;
+      sampled.summary = {
+        ...sampled.summary,
+        request_uri: filled.request_uri,
+        verb: filled.verb,
+        username: filled.username,
+        user_groups: filled.user_groups,
+        source_ips: filled.source_ips,
+        user_agent: filled.user_agent,
+        resource: filled.resource,
+        namespace: filled.namespace,
+        object_name: filled.object_name,
+        request_fields_omitted: filled.request_fields_omitted,
+      };
+    }
     const previous = sampled.summary;
     const stages = retainStage(previous.stages, stageRecord, alreadySeen);
     sampled.summary = {

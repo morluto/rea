@@ -13,6 +13,7 @@ import {
   recognizeArtifactFormat,
   recognizesArtifactPrefix,
 } from "./artifactFormatRecognition.js";
+import { KubernetesAuditEventProbe } from "./linux/kubernetesAuditEventProbe.js";
 import {
   fullAndroidOtaPayload,
   v1AndroidOtaPayload,
@@ -298,6 +299,49 @@ it("recognizes a Kubernetes audit log by its first event and leaves other JSON a
       Buffer.from(`${JSON.stringify({ auditID: "a", stage: "Started" })}\n`),
     ),
   ).toBeUndefined();
+});
+
+it("recognizes an audit record after a BOM or blank lines and ignores other padding", () => {
+  const record = JSON.stringify({
+    auditID: "a",
+    stage: "RequestReceived",
+  });
+  expect(recognize(Buffer.from(`\n\n${record}\n`))).toMatchObject({
+    state: "recognized",
+    format: "kubernetes-audit-log",
+  });
+  expect(
+    recognize(
+      Buffer.concat([
+        Buffer.from([0xef, 0xbb, 0xbf]),
+        Buffer.from(`${record}\n`),
+      ]),
+    ),
+  ).toMatchObject({
+    state: "recognized",
+    format: "kubernetes-audit-log",
+  });
+  expect(recognize(Buffer.from(`\u00A0${record}\n`))).toBeUndefined();
+  expect(recognize(Buffer.from(`\n{"payload":${record}}\n`))).toBeUndefined();
+  expect(
+    recognizeArtifactFormat({
+      prefix: Buffer.from("\n"),
+      fileSize: Buffer.byteLength(`\n${record}\n`),
+      espFlashLayout: false,
+    }),
+  ).toMatchObject({
+    state: "needs-input",
+    format: "kubernetes-audit-log",
+  });
+  const probe = new KubernetesAuditEventProbe();
+  const head = Buffer.from([0xef, 0xbb]);
+  const tail = Buffer.concat([
+    Buffer.from([0xbf]),
+    Buffer.from(`\n${record}\n`),
+  ]);
+  probe.write(head);
+  probe.write(tail);
+  expect(probe.finish(head.length + tail.length)).toBe(true);
 });
 
 it("does not claim JSON with nested or malformed Kubernetes audit fields", () => {

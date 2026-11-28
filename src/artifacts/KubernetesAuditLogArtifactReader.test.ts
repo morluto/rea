@@ -9,7 +9,6 @@ import {
   KUBERNETES_AUDIT_INLINE_EVENT_LIMIT,
   KUBERNETES_AUDIT_INLINE_VERB_LIMIT,
 } from "../domain/linux/kubernetesAuditLog.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 interface EventOverrides {
@@ -180,8 +179,13 @@ it("keeps a stage the API does not define out of the inventory as a diagnostic",
   expect(metadata.event_count).toBe(1);
   expect(metadata.malformed_line_count).toBe(2);
   expect(metadata.malformed_lines.map((line) => line.line)).toEqual([2, 3]);
-  expect(metadata.malformed_lines[0]?.reason).toContain("unknown stage");
-  expect(metadata.malformed_lines[1]?.reason).toContain("not JSON");
+  expect(metadata.malformed_lines.map((line) => line.excerpt)).toEqual([
+    JSON.stringify({
+      auditID: "00000000-0000-4000-8000-00000000000c",
+      stage: "Started",
+    }),
+    "not json at all",
+  ]);
 });
 
 it("keeps a malformed line between two valid events from stopping the scan", async () => {
@@ -296,11 +300,92 @@ it.each(["audit.k8s.io/v0", null])(
       response_code: null,
     });
     expect(metadata.verb_counts).toEqual([]);
-    expect(
-      metadata.limitations.some((line) => line.includes("does not model")),
-    ).toBe(true);
   },
 );
+
+it("reads request fields from the first modelled stage of a mixed-version auditID", async () => {
+  const metadata = await metadataOf(
+    [
+      JSON.stringify({
+        apiVersion: "audit.k8s.io/v9",
+        auditID: "mixed-early",
+        stage: "RequestReceived",
+        verb: "delete",
+        requestURI: "/secret",
+        requestReceivedTimestamp: "2026-11-20T10:00:00Z",
+      }),
+      JSON.stringify({
+        apiVersion: "audit.k8s.io/v1",
+        auditID: "mixed-early",
+        stage: "ResponseComplete",
+        verb: "get",
+        requestURI: "/api/v1/pods",
+        responseStatus: { code: 403 },
+        requestReceivedTimestamp: "2026-11-20T10:00:01Z",
+      }),
+      JSON.stringify({
+        apiVersion: "audit.k8s.io/v1",
+        auditID: "mixed-late",
+        stage: "RequestReceived",
+        verb: "list",
+        requestURI: "/api/v1/namespaces",
+      }),
+      JSON.stringify({
+        apiVersion: "audit.k8s.io/v9",
+        auditID: "mixed-late",
+        stage: "ResponseComplete",
+        verb: "delete",
+        requestURI: "/secret",
+        responseStatus: { code: 500 },
+      }),
+    ].join("\n"),
+  );
+  expect(metadata.events.map((event) => event.audit_id)).toEqual([
+    "mixed-early",
+    "mixed-late",
+  ]);
+  expect(metadata.events[0]).toMatchObject({
+    unsupported_version: true,
+    verb: "get",
+    request_uri: "/api/v1/pods",
+    response_code: 403,
+    response_code_line: 2,
+  });
+  expect(metadata.events[0]?.stages).toMatchObject([
+    {
+      stage: "RequestReceived",
+      line: 1,
+      response_code: null,
+      request_received_timestamp: null,
+    },
+    {
+      stage: "ResponseComplete",
+      line: 2,
+      response_code: 403,
+      request_received_timestamp: Date.parse("2026-11-20T10:00:01Z"),
+    },
+  ]);
+  expect(metadata.events[1]).toMatchObject({
+    unsupported_version: true,
+    verb: "list",
+    request_uri: "/api/v1/namespaces",
+    response_code: null,
+  });
+  expect(metadata.verb_counts).toEqual([
+    { label: "get", count: 1 },
+    { label: "list", count: 1 },
+  ]);
+});
+
+it("reads a log that begins with blank lines or a UTF-8 BOM", async () => {
+  const metadata = await metadataOf(`\n\n\uFEFF${auditEvent()}\n`);
+  expect(metadata.line_count).toBe(3);
+  expect(metadata.event_count).toBe(1);
+  expect(metadata.malformed_line_count).toBe(0);
+  expect(metadata.events[0]?.request_uri).toBe(
+    "/api/v1/namespaces/default/pods",
+  );
+});
 
 it("reads an optional field it did not get as null, not as empty text", async () => {
   const metadata = await metadataOf(
@@ -354,11 +439,9 @@ it("samples a bounded window of events while totals cover the whole file", async
   expect(metadata.event_count).toBe(KUBERNETES_AUDIT_INLINE_EVENT_LIMIT + 5);
   expect(metadata.events).toHaveLength(KUBERNETES_AUDIT_INLINE_EVENT_LIMIT);
   expect(metadata.unsampled_event_line_count).toBe(5);
-  expect(
-    metadata.limitations.some((line) =>
-      line.includes(`${KUBERNETES_AUDIT_INLINE_EVENT_LIMIT} auditID(s)`),
-    ),
-  ).toBe(true);
+  expect(metadata.events[0]?.audit_id).toBe(
+    "00000000-0000-4000-8000-000000000000",
+  );
 });
 
 it("bounds retained request text and verb labels while stage totals cover the log", async () => {
@@ -443,13 +526,7 @@ it("counts the full size of an overlong unterminated line without retaining it",
   expect(metadata.malformed_line_count).toBe(0);
   expect(metadata.event_count).toBe(1);
   expect(metadata.line_bytes_limit).toBe(4 * 1024 * 1024);
-  expect(metadata.limitations).toEqual(
-    expect.arrayContaining([
-      expect.stringContaining(
-        `artifact_limits.kubernetes_audit_log.line_bytes to at least ${String(trailing.length)}`,
-      ),
-    ]),
-  );
+  expect(metadata.events).toHaveLength(1);
 });
 
 it("refuses a file whose lines are not audit events as malformed", async () => {
@@ -502,6 +579,6 @@ it("reports no members to open", async () => {
       limitations: [],
       adapterKey: "root",
     }),
-  ).rejects.toBeInstanceOf(ArtifactReaderFailure);
+  ).rejects.toMatchObject({ reason: "unavailable" });
   await reader.close();
 });

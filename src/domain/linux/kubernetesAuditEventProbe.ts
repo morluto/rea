@@ -27,16 +27,7 @@ const IDENTITY_TOKEN_LIMIT = Math.max(
   ...KUBERNETES_AUDIT_STAGES.map((stage) => stage.length),
 );
 
-const firstAuditToken = (bytes: Uint8Array): number => {
-  let index = 0;
-  while (
-    bytes[index] === 0x20 ||
-    bytes[index] === 0x09 ||
-    bytes[index] === 0x0d
-  )
-    index += 1;
-  return index;
-};
+const UTF8_BOM = [0xef, 0xbb, 0xbf] as const;
 
 export const kubernetesAuditNeedsMore = (
   prefix: Uint8Array,
@@ -47,11 +38,9 @@ export const kubernetesAuditNeedsMore = (
     prefix.length >= Math.min(fileSize, AUDIT_PROBE_BYTES)
   )
     return false;
-  const start = firstAuditToken(prefix);
-  return (
-    start === prefix.length ||
-    (prefix[start] === 0x7b && prefix.indexOf(0x0a, start) === -1)
-  );
+  const probe = new KubernetesAuditEventProbe();
+  probe.write(prefix);
+  return probe.pending;
 };
 
 /** Query the same top-level identity from a prefix or an extended source. */
@@ -59,7 +48,6 @@ export const hasKubernetesAuditEvent = (
   prefix: Uint8Array,
   fileSize: number,
 ): boolean => {
-  if (prefix[firstAuditToken(prefix)] !== 0x7b) return false;
   const probe = new KubernetesAuditEventProbe();
   probe.write(prefix);
   return probe.finish(fileSize) === true;
@@ -71,10 +59,13 @@ type AuditJsonTokenizer = (
   value: string | typeof none,
 ) => Many<Token> | typeof none;
 
-/** Inspect the first JSON line without assembling its body or its values.
- * A finished line must be valid JSON; a clipped prefix retains only complete
- * top-level audit fields. The actual reader separately admits and decodes the
- * record under the caller's line allowance.
+/**
+ * Inspect the first non-empty JSON line without assembling its body or its
+ * values. Empty lines, JSON whitespace, and one U+FEFF at the start of a
+ * line are padding, the same bytes the reader ignores. A finished line must
+ * be valid JSON; a clipped
+ * prefix retains only complete top-level audit fields. The reader admits and
+ * decodes the record under the caller's line allowance.
  */
 export class KubernetesAuditEventProbe {
   #decoder: TextDecoder | undefined;
@@ -83,6 +74,9 @@ export class KubernetesAuditEventProbe {
   #lineEnded = false;
   #done = false;
   #failed = false;
+  #preamble = true;
+  #atLineStart = true;
+  #bomMatched = 0;
   #depth = 0;
   #field: AuditIdentityField | undefined;
   #capture: "key" | "stage" | undefined;
@@ -95,6 +89,11 @@ export class KubernetesAuditEventProbe {
     return this.#done ? this.#observed : AUDIT_PROBE_BYTES;
   }
 
+  /** Another byte of this file could still change the format decision. */
+  get pending(): boolean {
+    return !this.#done;
+  }
+
   write(chunk: Uint8Array): void {
     if (this.#done || chunk.length === 0) return;
     const window = chunk.subarray(
@@ -102,27 +101,35 @@ export class KubernetesAuditEventProbe {
       Math.min(chunk.length, this.limit - this.#observed),
     );
     this.#observed += window.length;
-    const newline = window.indexOf(0x0a);
-    this.#lineEnded = newline !== -1;
-    const line = newline === -1 ? window : window.subarray(0, newline);
-    this.#done = this.#lineEnded || this.#observed === AUDIT_PROBE_BYTES;
-    if (this.#decoder === undefined) {
-      const start = firstAuditToken(line);
-      if (start === line.length) return;
-      if (line[start] !== 0x7b) {
-        this.#done = true;
+    let offset = 0;
+    if (this.#preamble) {
+      offset = this.#consumePreamble(window);
+      if (this.#done || this.#preamble) {
+        if (this.#observed === AUDIT_PROBE_BYTES) this.#done = true;
         return;
       }
+    }
+    const rest = window.subarray(offset);
+    const newline = rest.indexOf(0x0a);
+    if (newline !== -1) this.#lineEnded = true;
+    const line = newline === -1 ? rest : rest.subarray(0, newline);
+    if (this.#lineEnded || this.#observed === AUDIT_PROBE_BYTES)
+      this.#done = true;
+    if (line.length === 0) return;
+    if (this.#decoder === undefined) {
       this.#decoder = strictUtf8Decoder("preserve");
       this.#tokens = jsonParser({
         packValues: false,
+        packKeys: false,
+        packStrings: false,
+        packNumbers: false,
         streamValues: true,
       }) as AuditJsonTokenizer;
     }
     try {
-      for (let offset = 0; offset < line.length; offset += TOKEN_CHUNK_BYTES) {
+      for (let start = 0; start < line.length; start += TOKEN_CHUNK_BYTES) {
         const decoded = this.#decoder.decode(
-          line.subarray(offset, offset + TOKEN_CHUNK_BYTES),
+          line.subarray(start, start + TOKEN_CHUNK_BYTES),
           { stream: true },
         );
         this.#feed(decoded);
@@ -131,6 +138,49 @@ export class KubernetesAuditEventProbe {
       this.#failed = true;
       this.#done = true;
     }
+  }
+
+  /**
+   * Skip blank lines and one leading U+FEFF. Return the index of the record's
+   * `{`, or the end of `bytes` while the preamble continues.
+   */
+  #consumePreamble(bytes: Uint8Array): number {
+    for (let index = 0; index < bytes.length; index += 1) {
+      const byte = bytes[index]!;
+      if (this.#bomMatched > 0) {
+        const expected = UTF8_BOM[this.#bomMatched];
+        if (expected === undefined || byte !== expected) {
+          this.#done = true;
+          return index;
+        }
+        this.#bomMatched += 1;
+        if (this.#bomMatched === UTF8_BOM.length) {
+          this.#bomMatched = 0;
+          this.#atLineStart = false;
+        }
+        continue;
+      }
+      if (byte === 0x0a) {
+        this.#atLineStart = true;
+        continue;
+      }
+      if (byte === 0x20 || byte === 0x09 || byte === 0x0d) {
+        this.#atLineStart = false;
+        continue;
+      }
+      if (byte === UTF8_BOM[0] && this.#atLineStart) {
+        this.#bomMatched = 1;
+        continue;
+      }
+      if (byte === 0x7b) {
+        this.#preamble = false;
+        this.#atLineStart = false;
+        return index;
+      }
+      this.#done = true;
+      return index;
+    }
+    return bytes.length;
   }
 
   finish(fileSize: number): boolean | undefined {
