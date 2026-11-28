@@ -283,12 +283,31 @@ that exact frame's reported security origin before selecting a seed. It does
 not infer the origin from a frame URL or serialized storage key. Unresolved
 frame identity or security origin fails initialization rather than silently
 running with an unknown initial state.
-Popup discovery does not establish that its first script was paused by the
-selected page's storage instrumentation. When non-cookie seeds are declared
-and a popup is discovered, the capture retains completed observations and
-marks `storage` coverage missing, with equality ineligible. This applies even
-if popup lifecycle events were not selected. Popup first-script storage
-initialization is not currently guaranteed.
+In launch mode, declared non-cookie seeds are also installed with a single
+synchronous browser-context init script for top-level documents. Playwright
+runs that script after a document is created and before the document's own
+scripts, including a popup opened later in the scenario-owned context, without
+waiting for an asynchronous round trip before writing storage. That includes
+`target="_blank"` popups whose `window.opener` is null under Chromium's default
+noopener behavior. Skip decisions and writes share one ordered path, and
+application `window.name` values are left untouched. Third-party iframes are
+skipped by that init script and continue to be seeded by the CDP path keyed on
+`Storage.getStorageKey`, so a partitioned iframe at origin B does not block a
+later first-party popup at origin B. Once-per-area state stays outside
+application-owned window names: Node tracks first-party local origins and
+refreshes the context init payload before CDP resume when a first-party local
+area is initialized, and each seeded top-level tab records per-tab once flags
+in a filtered `sessionStorage` key and in `history.state` (not `window.name`) so
+a reload after the application deletes or clears seeded keys does not restore
+them. Captured storage inventories omit any legacy bookkeeping key. A storage
+write or access failure inside the init script, a popup that never confirms a
+seed notification, or a failure while refreshing the context seed hook, marks
+popup seed coverage unknown. In connect mode, REA does not install a
+context-wide init script on the caller's shared browser context, so unrelated
+tabs are not mutated; if a popup is discovered when non-cookie seeds are
+declared, the capture retains completed observations and marks `storage`
+coverage missing, with equality ineligible, even when popup lifecycle events
+were not selected.
 
 The result is Evidence with an initial state followed by one record per
 declared action. Each step reports action status, elapsed time, sanitized URLs,

@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import vm from "node:vm";
 
 import { expect, it, onTestFinished, vi } from "vitest";
 
@@ -7,6 +8,14 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { waitFor } from "../../tests/support/testWait.js";
 import { resolveScenarioSecrets } from "../../tests/fixtures/browserScenarioSecrets.js";
+import {
+  applyDeclaredBrowserStorageSeeds,
+  declaredBrowserStorageSeedMark,
+  isDeclaredBrowserStorageSeedMark,
+  type DeclaredBrowserStorageSeed,
+  type DeclaredBrowserStorageSeedOutcome,
+  type DeclaredBrowserStorageSeedScript,
+} from "./declaredBrowserStorageSeed.js";
 import { PlaywrightScenarioStorage } from "./PlaywrightScenarioStorage.js";
 
 class FakeCdp extends EventEmitter {
@@ -444,6 +453,535 @@ it.each(["launch", "connect"] as const)(
     expect(page.listenerCount("popup")).toBe(0);
   },
 );
+
+const memoryStorage = (fail = false) => {
+  const items = new Map<string, string>();
+  return {
+    items,
+    getItem(name: string) {
+      return items.has(name) ? items.get(name)! : null;
+    },
+    setItem(name: string, value: string) {
+      if (fail) throw new Error("storage denied");
+      items.set(name, value);
+    },
+  };
+};
+
+const applySeeds = (
+  origin: string,
+  seeds: readonly DeclaredBrowserStorageSeed[],
+  options: {
+    readonly storage?: {
+      local: ReturnType<typeof memoryStorage>;
+      session: ReturnType<typeof memoryStorage>;
+    };
+    readonly isIframe?: boolean;
+    readonly seedToken?: string;
+    readonly initializedLocalOrigins?: readonly string[];
+  } = {},
+): {
+  local: Map<string, string>;
+  session: Map<string, string>;
+  notifications: readonly {
+    origin: string;
+    local: DeclaredBrowserStorageSeedOutcome;
+    session: DeclaredBrowserStorageSeedOutcome;
+  }[];
+  historyState: () => Record<string, unknown> | null;
+} => {
+  const storage = options.storage ?? {
+    local: memoryStorage(),
+    session: memoryStorage(),
+  };
+  const binding = "__reaStorageSeedTest";
+  const seedToken = options.seedToken ?? "test-seed-token";
+  const notifications: {
+    origin: string;
+    local: DeclaredBrowserStorageSeedOutcome;
+    session: DeclaredBrowserStorageSeedOutcome;
+  }[] = [];
+  let historyState: Record<string, unknown> | null = null;
+  const context = vm.createContext({
+    location: { origin },
+    localStorage: storage.local,
+    sessionStorage: storage.session,
+    history: {
+      get state() {
+        return historyState;
+      },
+      replaceState(data: unknown) {
+        historyState =
+          data && typeof data === "object" && !Array.isArray(data)
+            ? { ...(data as Record<string, unknown>) }
+            : null;
+      },
+    },
+    [binding]: (
+      notifiedOrigin: string,
+      local: DeclaredBrowserStorageSeedOutcome,
+      session: DeclaredBrowserStorageSeedOutcome,
+    ) => {
+      notifications.push({ origin: notifiedOrigin, local, session });
+    },
+  });
+  context.top = options.isIframe === true ? {} : context;
+  vm.runInContext(
+    `(${applyDeclaredBrowserStorageSeeds.toString()})(${JSON.stringify({
+      binding,
+      seedToken,
+      initializedLocalOrigins: options.initializedLocalOrigins ?? [],
+      seeds,
+    })})`,
+    context,
+  );
+  return {
+    local: storage.local.items,
+    session: storage.session.items,
+    notifications,
+    historyState: () => historyState,
+  };
+};
+
+it("writes declared seeds synchronously for top-level popups and skips iframes", () => {
+  const seeds: DeclaredBrowserStorageSeed[] = [
+    {
+      origin: "http://child.example",
+      local: [["probe", "seed-local"]],
+      session: [["probe", "seed-session"]],
+    },
+    {
+      origin: "http://root.example",
+      local: [["probe", "root-local"]],
+      session: [["probe", "root-session"]],
+    },
+  ];
+  const first = applySeeds("http://child.example", seeds);
+  expect(first.local.get("probe")).toBe("seed-local");
+  expect(first.session.get("probe")).toBe("seed-session");
+  expect(first.local.has(declaredBrowserStorageSeedMark)).toBe(false);
+  expect(
+    [...first.session.keys()].some((key) =>
+      isDeclaredBrowserStorageSeedMark(key),
+    ),
+  ).toBe(true);
+  expect(first.notifications).toEqual([
+    { origin: "http://child.example", local: "wrote", session: "wrote" },
+  ]);
+
+  // Third-party iframes must not write or report first-party initialization.
+  const iframe = applySeeds("http://child.example", seeds, { isIframe: true });
+  expect(iframe.local.size).toBe(0);
+  expect(iframe.session.size).toBe(0);
+  expect(iframe.notifications).toEqual([]);
+
+  // Node-reported initialized local origins skip local without a page marker.
+  const rootSkipped = applySeeds("http://child.example", seeds, {
+    initializedLocalOrigins: ["http://child.example"],
+  });
+  expect(rootSkipped.local.size).toBe(0);
+  expect(rootSkipped.session.get("probe")).toBe("seed-session");
+  expect(rootSkipped.notifications).toEqual([
+    { origin: "http://child.example", local: "skipped", session: "wrote" },
+  ]);
+
+  const other = applySeeds("http://other.example", seeds);
+  expect(other.local.size).toBe(0);
+  expect(other.session.size).toBe(0);
+  const opaque = applySeeds("null", seeds);
+  expect(opaque.local.size).toBe(0);
+  expect(opaque.session.size).toBe(0);
+});
+
+it("does not restore deleted seed values on reload of the same popup tab", () => {
+  const seeds: DeclaredBrowserStorageSeed[] = [
+    {
+      origin: "http://child.example",
+      local: [["probe", "seed-local"]],
+      session: [["probe", "seed-session"]],
+    },
+  ];
+  const sharedSession = memoryStorage();
+  const first = applySeeds("http://child.example", seeds, {
+    seedToken: "reload-token",
+    storage: { local: memoryStorage(), session: sharedSession },
+  });
+  expect(first.local.get("probe")).toBe("seed-local");
+  expect(first.session.get("probe")).toBe("seed-session");
+  sharedSession.items.delete("probe");
+  sharedSession.items.delete("seed-local");
+
+  // Application deleted the seeded keys; the same popup tab reloads with the
+  // once flags still present in sessionStorage.
+  const reloaded = applySeeds("http://child.example", seeds, {
+    seedToken: "reload-token",
+    storage: { local: memoryStorage(), session: sharedSession },
+  });
+  expect(reloaded.local.has("probe")).toBe(false);
+  expect(reloaded.session.has("probe")).toBe(false);
+  expect(reloaded.notifications).toEqual([]);
+});
+
+it("does not restore session seeds after sessionStorage.clear on reload", () => {
+  const seeds: DeclaredBrowserStorageSeed[] = [
+    {
+      origin: "http://child.example",
+      local: [["probe", "seed-local"]],
+      session: [["probe", "seed-session"]],
+    },
+  ];
+  const sharedSession = memoryStorage();
+  const first = applySeeds("http://child.example", seeds, {
+    seedToken: "clear-token",
+    storage: { local: memoryStorage(), session: sharedSession },
+  });
+  expect(first.session.get("probe")).toBe("seed-session");
+  const flagKey = [...sharedSession.items.keys()].find((key) =>
+    key.startsWith("\0rea-tab-seed:"),
+  );
+  expect(flagKey).toBeDefined();
+  const historyEnvelope = first.historyState()?.[flagKey!];
+  expect(typeof historyEnvelope).toBe("string");
+  sharedSession.items.clear();
+
+  // history.state still carries once flags after sessionStorage.clear().
+  const cleared = memoryStorage();
+  if (typeof historyEnvelope === "string")
+    cleared.items.set(flagKey!, historyEnvelope);
+  // Simulate reload: sessionStorage empty, history.state restored by the browser.
+  const hostSession = memoryStorage();
+  const binding = "__reaStorageSeedTest";
+  const notifications: unknown[] = [];
+  let historyState: Record<string, unknown> = { [flagKey!]: historyEnvelope };
+  const context = vm.createContext({
+    location: { origin: "http://child.example" },
+    localStorage: memoryStorage(),
+    sessionStorage: hostSession,
+    history: {
+      get state() {
+        return historyState;
+      },
+      replaceState(data: unknown) {
+        historyState =
+          data && typeof data === "object" && !Array.isArray(data)
+            ? { ...(data as Record<string, unknown>) }
+            : {};
+      },
+    },
+    [binding]: () => {
+      notifications.push("notified");
+    },
+  });
+  context.top = context;
+  vm.runInContext(
+    `(${applyDeclaredBrowserStorageSeeds.toString()})(${JSON.stringify({
+      binding,
+      seedToken: "clear-token",
+      initializedLocalOrigins: [],
+      seeds,
+    })})`,
+    context,
+  );
+  expect(hostSession.items.has("probe")).toBe(false);
+  expect(notifications).toEqual([]);
+});
+
+it("seeds top-level documents without relying on window.opener", () => {
+  const seeds: DeclaredBrowserStorageSeed[] = [
+    {
+      origin: "http://child.example",
+      local: [["probe", "seed-local"]],
+      session: [["probe", "seed-session"]],
+    },
+  ];
+  // Chromium's default for target=_blank is noopener (opener stays null).
+  const blank = applySeeds("http://child.example", seeds);
+  expect(blank.local.get("probe")).toBe("seed-local");
+  expect(blank.session.get("probe")).toBe("seed-session");
+  expect(blank.notifications).toEqual([
+    { origin: "http://child.example", local: "wrote", session: "wrote" },
+  ]);
+});
+
+it("seeds a cloned popup session area and reports write failures", () => {
+  const seeds: DeclaredBrowserStorageSeed[] = [
+    {
+      origin: "http://child.example",
+      local: [],
+      session: [["probe", "seed-session"]],
+    },
+  ];
+  const popupStorage = {
+    local: memoryStorage(),
+    session: memoryStorage(),
+  };
+  popupStorage.local.items.set("probe", "opener-edited-local");
+  popupStorage.session.items.set("probe", "opener-edited-session");
+  const popup = applySeeds("http://child.example", seeds, {
+    storage: popupStorage,
+  });
+  expect(popup.local.get("probe")).toBe("opener-edited-local");
+  expect(popup.session.get("probe")).toBe("seed-session");
+  expect(popup.notifications).toEqual([
+    { origin: "http://child.example", local: "skipped", session: "wrote" },
+  ]);
+
+  const failing = applySeeds(
+    "http://child.example",
+    [
+      {
+        origin: "http://child.example",
+        local: [["probe", "seed-local"]],
+        session: [["probe", "seed-session"]],
+      },
+    ],
+    {
+      storage: { local: memoryStorage(true), session: memoryStorage() },
+    },
+  );
+  expect(failing.local.size).toBe(0);
+  expect(failing.session.get("probe")).toBe("seed-session");
+  expect(failing.notifications).toEqual([
+    { origin: "http://child.example", local: "failed", session: "wrote" },
+  ]);
+});
+
+it("installs synchronous popup seeds in launch mode and avoids shared connect contexts", async () => {
+  const launchCdp = new FakeCdp();
+  const { page: launchPage, contextApi: launchContext } = fixture(launchCdp);
+  const pageScripts: { script: unknown; payload: unknown }[] = [];
+  const contextScripts: {
+    script: unknown;
+    payload: DeclaredBrowserStorageSeedScript;
+    disposed: boolean;
+  }[] = [];
+  const bindings: string[] = [];
+  Object.assign(launchPage, {
+    addInitScript: async (script: unknown, payload: unknown) => {
+      pageScripts.push({ script, payload });
+      return { dispose: async () => undefined };
+    },
+  });
+  Object.assign(launchContext, {
+    exposeBinding: async (name: string) => {
+      bindings.push(name);
+    },
+    addInitScript: async (
+      script: unknown,
+      payload: DeclaredBrowserStorageSeedScript,
+    ) => {
+      const entry = { script, payload, disposed: false };
+      contextScripts.push(entry);
+      return {
+        dispose: async () => {
+          entry.disposed = true;
+        },
+      };
+    },
+  });
+  const launchOwner = await createInitializedStorage(launchContext, launchPage);
+  expect(bindings).toHaveLength(1);
+  expect(pageScripts).toHaveLength(0);
+  expect(contextScripts).toHaveLength(1);
+  expect(contextScripts[0]?.script).toBe(applyDeclaredBrowserStorageSeeds);
+  expect(contextScripts[0]?.payload.initializedLocalOrigins).toEqual([]);
+  expect(contextScripts[0]?.payload.seedToken.length).toBeGreaterThan(0);
+  expect(contextScripts[0]?.payload.seeds).toEqual([
+    {
+      origin: "https://storage.example.test",
+      local: [["local-seed", "local-value"]],
+      session: [["session-seed", "session-value"]],
+    },
+  ]);
+  // A discovered popup without a seed notification must not look complete.
+  launchContext.emit("page", new EventEmitter());
+  expect(launchOwner?.limitations()).toEqual([
+    expect.stringContaining("unknown for discovered popup top-level contexts"),
+  ]);
+  await launchOwner?.close();
+  expect(contextScripts[0]?.disposed).toBe(true);
+
+  const connectCdp = new FakeCdp();
+  const { page: connectPage, contextApi: connectContext } = fixture(connectCdp);
+  const connectInstalled: unknown[] = [];
+  Object.assign(connectPage, {
+    addInitScript: async (script: unknown) => {
+      connectInstalled.push(script);
+    },
+  });
+  Object.assign(connectContext, {
+    exposeBinding: async (name: string) => {
+      connectInstalled.push(name);
+    },
+    addInitScript: async (script: unknown) => {
+      connectInstalled.push(script);
+    },
+  });
+  const connectInput = browserScenarioSchema.parse({
+    ...scenario(),
+    browser: {
+      mode: "connect",
+      cdp_endpoint: "http://127.0.0.1:9222",
+      target_id: "root-target",
+    },
+  });
+  const connectOwner = await createInitializedStorage(
+    connectContext,
+    connectPage,
+    connectInput,
+  );
+  expect(connectInstalled).toEqual([]);
+  connectPage.emit("popup", new EventEmitter());
+  expect(connectOwner?.limitations()).toEqual([
+    expect.stringContaining("unknown for discovered popup top-level contexts"),
+  ]);
+  await connectOwner?.close();
+});
+
+it("shares once-per-origin ownership between popup notifications and CDP without colliding across partitions", async () => {
+  const cdp = new FakeCdp();
+  const { page, contextApi } = fixture(cdp);
+  let notify:
+    | ((
+        source: { readonly page: unknown },
+        origin: string,
+        localOutcome: DeclaredBrowserStorageSeedOutcome,
+        sessionOutcome: DeclaredBrowserStorageSeedOutcome,
+      ) => void)
+    | undefined;
+  const contextPayloads: DeclaredBrowserStorageSeedScript[] = [];
+  Object.assign(page, {
+    addInitScript: async () => ({ dispose: async () => undefined }),
+  });
+  Object.assign(contextApi, {
+    exposeBinding: async (
+      _name: string,
+      callback: NonNullable<typeof notify>,
+    ) => {
+      notify = callback;
+    },
+    addInitScript: async (
+      _script: unknown,
+      payload: DeclaredBrowserStorageSeedScript,
+    ) => {
+      contextPayloads.push(payload);
+      return { dispose: async () => undefined };
+    },
+  });
+  const owner = await createInitializedStorage(contextApi, page);
+  expect(notify).toBeTypeOf("function");
+
+  const origin = "https://storage.example.test";
+  // A third-party partitioned iframe uses a distinct StorageKey and must not
+  // remove first-party local seeds from the popup context script.
+  cdp.storageKey = `${origin}/^0https://other-site.example.test`;
+  emitSeedPause(cdp);
+  await owner?.settle();
+  expect(
+    cdp.calls.filter(({ method }) => method === "Debugger.evaluateOnCallFrame"),
+  ).toHaveLength(1);
+  expect(contextPayloads).toHaveLength(1);
+  expect(contextPayloads[0]?.seeds[0]?.local).toEqual([
+    ["local-seed", "local-value"],
+  ]);
+  expect(contextPayloads[0]?.initializedLocalOrigins).toEqual([]);
+
+  // A popup notification marks first-party local storage initialized and
+  // refreshes the single context hook payload (no separate page skip script).
+  const popupPage = { isClosed: () => false };
+  notify?.({ page: popupPage }, origin, "wrote", "wrote");
+  await owner?.settle();
+  expect(contextPayloads.at(-1)?.seeds[0]?.local).toEqual([]);
+  expect(contextPayloads.at(-1)?.initializedLocalOrigins).toEqual([origin]);
+
+  // A later first-party CDP pause at `${origin}/` must not reseed localStorage.
+  cdp.storageKey = `${origin}/`;
+  emitSeedPause(cdp);
+  await owner?.settle();
+  const evals = cdp.calls.filter(
+    ({ method }) => method === "Debugger.evaluateOnCallFrame",
+  );
+  expect(evals).toHaveLength(2);
+  const expression = String(
+    (evals[1]?.params as { expression?: string })?.expression ?? "",
+  );
+  expect(expression).toContain('"local":[]');
+  expect(expression).toContain('"session":[["session-seed","session-value"]]');
+
+  // A popup write failure marks popup coverage unknown.
+  notify?.({ page: popupPage }, origin, "failed", "skipped");
+  expect(owner?.limitations()).toEqual([
+    expect.stringContaining("unknown for discovered popup top-level contexts"),
+  ]);
+  await owner?.close();
+});
+
+it("drops first-party local seeds from the popup script before resuming CDP", async () => {
+  const cdp = new FakeCdp();
+  const { page, contextApi } = fixture(cdp);
+  const contextPayloads: DeclaredBrowserStorageSeedScript[] = [];
+  Object.assign(page, {
+    addInitScript: async () => ({ dispose: async () => undefined }),
+  });
+  Object.assign(contextApi, {
+    exposeBinding: async () => undefined,
+    addInitScript: async (
+      _script: unknown,
+      payload: DeclaredBrowserStorageSeedScript,
+    ) => {
+      contextPayloads.push(payload);
+      return { dispose: async () => undefined };
+    },
+  });
+  const owner = await createInitializedStorage(contextApi, page);
+  const origin = "https://storage.example.test";
+  cdp.storageKey = `${origin}/`;
+  emitSeedPause(cdp);
+  await owner?.settle();
+  expect(
+    cdp.calls.filter(({ method }) => method === "Debugger.evaluateOnCallFrame"),
+  ).toHaveLength(1);
+  expect(contextPayloads.at(-1)?.seeds[0]?.local).toEqual([]);
+  expect(contextPayloads.at(-1)?.seeds[0]?.session).toEqual([
+    ["session-seed", "session-value"],
+  ]);
+
+  emitSeedPause(cdp);
+  await owner?.settle();
+  expect(
+    cdp.calls.filter(({ method }) => method === "Debugger.evaluateOnCallFrame"),
+  ).toHaveLength(1);
+  await owner?.close();
+});
+
+it("seeds session storage once per top-level storage partition", async () => {
+  const cdp = new FakeCdp();
+  const { page, contextApi } = fixture(cdp);
+  const base = scenario();
+  const input = browserScenarioSchema.parse({
+    ...base,
+    storage: {
+      local_storage: [],
+      session_storage: base.storage.session_storage,
+    },
+  });
+  const owner = await createInitializedStorage(contextApi, page, input);
+
+  emitSeedPause(cdp);
+  await owner?.settle();
+  emitSeedPause(cdp);
+  await owner?.settle();
+  cdp.storageKey = "https://storage.example.test/^0https://top-level.example";
+  emitSeedPause(cdp);
+  await owner?.settle();
+  emitSeedPause(cdp);
+  await owner?.settle();
+
+  expect(
+    cdp.calls.filter(({ method }) => method === "Debugger.evaluateOnCallFrame"),
+  ).toHaveLength(2);
+  await owner?.close();
+});
 
 it("retries the owning CDP detach after a failed attempt", async () => {
   const cdp = new FakeCdp();
