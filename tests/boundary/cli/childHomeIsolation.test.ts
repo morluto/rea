@@ -24,13 +24,16 @@ const savedValue = async (
   options: {
     readonly freshProcess?: boolean;
     readonly environment?: NodeJS.ProcessEnv;
+    /** A home outside the test may hold any configuration, even an invalid one. */
+    readonly foreignHome?: boolean;
   } = {},
 ) => {
+  const { foreignHome, ...invocation } = options;
   const result = await cli.run({
     arguments: ["config", "--get", SETTING, "--json"],
-    ...options,
+    ...invocation,
   });
-  expect(result.exitCode, result.stderr).toBe(0);
+  if (foreignHome !== true) expect(result.exitCode, result.stderr).toBe(0);
   const reported = result.json as { value?: unknown; source?: unknown };
   return reported.source === "config" ? reported.value : undefined;
 };
@@ -71,6 +74,7 @@ cliTest(
         await savedValue(cli, {
           freshProcess,
           environment: { HOME: "", USERPROFILE: "" },
+          foreignHome: true,
         }),
       ).not.toBe("/from-owned-home");
   },
