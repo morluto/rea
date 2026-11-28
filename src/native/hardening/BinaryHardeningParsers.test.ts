@@ -9,7 +9,11 @@ import {
 import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
 import { readElfImage } from "../../domain/native/elfImage.js";
 import { readMachoImage } from "../../domain/apple/machoImage.js";
-import { elfNote, elfNoteFixture } from "../elf/ElfNotes.fixture.js";
+import {
+  elfNote,
+  elfNoteFixture,
+  gnuPropertyNote,
+} from "../elf/ElfNotes.fixture.js";
 import {
   elfHardeningFixture,
   fatMachoHardeningFixture,
@@ -42,6 +46,23 @@ const peArtifact = (bytes: Buffer) => ({
   path: "/artifacts/app.exe",
   sha256: "a".repeat(64),
   bytes: bytes.length,
+});
+
+it("requires canonical GNU owner bytes before deriving CET from a property note", () => {
+  const canonical = gnuPropertyNote();
+  const noncanonical = Buffer.from(canonical);
+  noncanonical.writeUInt32LE(3, 0);
+  const extraOwnerBytes = elfNote("GNU\0X", 5, canonical.subarray(16), true, 8);
+  const rowFor = (notes: Buffer) =>
+    findRow(
+      readElfHardening(
+        elfNoteFixture({ notes, ownership: "program", alignment: 8 }),
+      ).rows,
+      "cet_ibt_shstk",
+    );
+  expect(rowFor(canonical).state).toBe("enabled");
+  expect(rowFor(noncanonical).state).toBe("unknown");
+  expect(rowFor(extraOwnerBytes).state).toBe("unknown");
 });
 
 it("reports a default ET_DYN image without treating missing symbols as disabled", () => {

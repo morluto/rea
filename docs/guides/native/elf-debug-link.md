@@ -35,6 +35,8 @@ length. `debuglink` reports the `.gnu_debuglink` file name and CRC32.
 `debugaltlink` reports the `.gnu_debugaltlink` file name and the build-id
 bytes that follow it. `build_id` reports the GNU build-id from `PT_NOTE` and
 `SHT_NOTE` tables. The same build-id from both tables is one observation.
+Only notes with the four declared owner bytes `47 4e 55 00` contribute a GNU
+build-id; lookalike owner names remain raw in `inspect-elf-notes` output.
 Distinct build-ids stay in `ids` and none is selected.
 `sources` lists each contributing GNU build-id note with its table kind and
 index and the note and descriptor file ranges.

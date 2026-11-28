@@ -50,6 +50,59 @@ const parse = (bytes: Buffer, input: typeof defaults = defaults) =>
     async () => {},
   );
 
+it.each([
+  { namesz: 3, name: "GNU", ownerBytes: "474e55" },
+  { namesz: 6, name: "GNU\0X", ownerBytes: "474e55005800" },
+])(
+  "keeps a noncanonical $namesz-byte GNU display owner raw",
+  async ({ namesz, name, ownerBytes }) => {
+    const descriptor = Buffer.from("0123456789abcdef", "hex");
+    const note = elfNote(name, 3, descriptor);
+    note.writeUInt32LE(namesz, 0);
+    const report = await parse(
+      elfNoteFixture({ notes: note, ownership: "program" }),
+    );
+    expect(report.entries).toHaveLength(1);
+    expect(report.entries[0]).toMatchObject({
+      namesz,
+      owner: "GNU",
+      owner_bytes_hex: ownerBytes,
+      type: 3,
+      type_name: "unknown",
+      gnu: null,
+      descriptor: {
+        hex: descriptor.toString("hex"),
+        sha256: createHash("sha256").update(descriptor).digest("hex"),
+      },
+    });
+  },
+);
+
+it.each([
+  { namesz: 4, name: "GNU", admitted: true },
+  { namesz: 3, name: "GNU", admitted: false },
+  { namesz: 6, name: "GNU\0X", admitted: false },
+])(
+  "admits build IDs only from canonical GNU owner ($namesz bytes)",
+  async ({ namesz, name, admitted }) => {
+    const descriptor = Buffer.from("0123456789abcdef", "hex");
+    const note = elfNote(name, 3, descriptor);
+    note.writeUInt32LE(namesz, 0);
+    const bytes = elfNoteFixture({ notes: note, ownership: "program" });
+    const expected = admitted ? [descriptor.toString("hex")] : [];
+    expect(
+      readElfBuildIds(bytes, defaults, 64).sources.map(({ hex }) => hex),
+    ).toEqual(expected);
+    const positional = await readElfBuildIdsFromHandle(
+      bufferByteSource(bytes),
+      defaults,
+      64,
+      async (request) => decodeElfSectionNameRequest(request),
+    );
+    expect(positional.sources.map(({ hex }) => hex)).toEqual(expected);
+  },
+);
+
 const noteTextLimit = (maximum: number) => ({
   failure: {
     kind: "limit",
@@ -1724,24 +1777,27 @@ it("charges TextBudget for scanned and retained Android ident strings", async ()
     noteTextLimit(retained.length),
   );
 
-  // Share one 132-byte descriptor range across a GNU gold-version header
-  // (namesz=24) and a nested Android ident header (namesz=8 at +16) so
-  // `hashed` stays 132 (cached by range) and `used` stays 148, while
-  // `scanned` reaches 132 (GNU) + 128 (Android) = 260 bytes.
-  const identDescriptor = Buffer.alloc(132);
+  // Share one 144-byte descriptor across a CORE AUXV header and a nested
+  // Android ident header. Hashing charges the range once. AUXV reserves
+  // 144 scan bytes before rejecting the contents, and Android reserves 128.
+  const identDescriptor = Buffer.alloc(144);
   identDescriptor.writeUInt32LE(24, 0);
   identDescriptor.write("r27c\0", 4, "latin1");
   identDescriptor.write("1\0", 68, "latin1");
-  const sharedPayload = Buffer.alloc(36 + identDescriptor.length);
-  sharedPayload.writeUInt32LE(24, 0);
+  const androidOffset = 20;
+  const sharedDescriptorOffset = androidOffset + 12 + 8;
+  const sharedPayload = Buffer.alloc(
+    sharedDescriptorOffset + identDescriptor.length,
+  );
+  sharedPayload.writeUInt32LE(sharedDescriptorOffset - 12, 0);
   sharedPayload.writeUInt32LE(identDescriptor.length, 4);
-  sharedPayload.writeUInt32LE(4, 8);
-  sharedPayload.write("GNU\0", 12, "latin1");
-  sharedPayload.writeUInt32LE(8, 16);
-  sharedPayload.writeUInt32LE(identDescriptor.length, 20);
-  sharedPayload.writeUInt32LE(1, 24);
-  sharedPayload.write("Android\0", 28, "latin1");
-  identDescriptor.copy(sharedPayload, 36);
+  sharedPayload.writeUInt32LE(6, 8);
+  sharedPayload.write("CORE\0", 12, "latin1");
+  sharedPayload.writeUInt32LE(8, androidOffset);
+  sharedPayload.writeUInt32LE(identDescriptor.length, androidOffset + 4);
+  sharedPayload.writeUInt32LE(1, androidOffset + 8);
+  sharedPayload.write("Android\0", androidOffset + 12, "latin1");
+  identDescriptor.copy(sharedPayload, sharedDescriptorOffset);
   const programHeaders = Buffer.alloc(56 * 2);
   const payloadOffset = 64 + programHeaders.length;
   programHeaders.writeUInt32LE(4, 0);
@@ -1749,8 +1805,14 @@ it("charges TextBudget for scanned and retained Android ident strings", async ()
   programHeaders.writeBigUInt64LE(BigInt(sharedPayload.length), 32);
   programHeaders.writeBigUInt64LE(4n, 48);
   programHeaders.writeUInt32LE(4, 56);
-  programHeaders.writeBigUInt64LE(BigInt(payloadOffset + 16), 56 + 8);
-  programHeaders.writeBigUInt64LE(BigInt(sharedPayload.length - 16), 56 + 32);
+  programHeaders.writeBigUInt64LE(
+    BigInt(payloadOffset + androidOffset),
+    56 + 8,
+  );
+  programHeaders.writeBigUInt64LE(
+    BigInt(sharedPayload.length - androidOffset),
+    56 + 32,
+  );
   programHeaders.writeBigUInt64LE(4n, 56 + 48);
   const sharedScanImage = Buffer.concat([
     elf64({ phoff: 64, phnum: 2 }),
@@ -1762,7 +1824,7 @@ it("charges TextBudget for scanned and retained Android ident strings", async ()
     sharedScanImage,
     inspectElfNotesInputSchema.parse({
       path: defaults.path,
-      max_file_bytes: 260,
+      max_file_bytes: 272,
     }),
   );
   expect(withinScanBudget.entries[1]?.android).toEqual({
@@ -1772,6 +1834,6 @@ it("charges TextBudget for scanned and retained Android ident strings", async ()
   });
 
   await expect(
-    parse(sharedScanImage, { ...defaults, max_file_bytes: 259 }),
-  ).rejects.toMatchObject(noteTextLimit(259));
+    parse(sharedScanImage, { ...defaults, max_file_bytes: 271 }),
+  ).rejects.toMatchObject(noteTextLimit(271));
 });

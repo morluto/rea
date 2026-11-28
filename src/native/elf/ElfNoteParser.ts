@@ -56,6 +56,7 @@ import type { PrefixedByteSource } from "../../domain/byteSource.js";
 const PT_NOTE = 4;
 const SHT_STRTAB = 3;
 const HEX_DESCRIPTOR_LIMIT = 64;
+const GNU_NOTE_OWNER = Buffer.from("GNU\0", "ascii");
 
 /** The existing Linux note layouts do not establish another declared ABI. */
 const isLinuxCoreProfile = (header: ElfFixedHeader): boolean =>
@@ -177,6 +178,7 @@ interface ParsedNote {
   readonly type: number;
   readonly owner: string;
   readonly owner_bytes_hex: string;
+  readonly gnuOwner: boolean;
   readonly descriptor: Buffer;
   readonly descriptor_offset: number;
 }
@@ -236,6 +238,7 @@ const parseNoteStreamFromTable = (
           ? nameBytes.toString("latin1")
           : nameBytes.subarray(0, ownerEnd).toString("latin1"),
       owner_bytes_hex: nameBytes.toString("hex"),
+      gnuOwner: nameBytes.equals(GNU_NOTE_OWNER),
       descriptor,
       descriptor_offset: offset + descStart,
     });
@@ -247,14 +250,12 @@ const parseNoteStreamFromTable = (
 };
 
 const decodeGnu = (
-  owner: string,
   type: number,
   descriptor: Buffer,
   descriptorOffset: number,
   little: boolean,
   text: TextBudget,
 ): ElfNotes["entries"][number]["gnu"] => {
-  if (owner !== "GNU") return null;
   if (type === 3 && descriptor.length > 0) {
     chargeText(text, descriptor.length * 2);
     return {
@@ -1226,7 +1227,7 @@ const readElfBuildIdSteps = function* (
     input,
     { retainReadableNotes: true },
     (note, table, _header, text) => {
-      if (note.owner !== "GNU" || note.type !== 3 || note.descsz === 0) return;
+      if (!note.gnuOwner || note.type !== 3 || note.descsz === 0) return;
       if (note.descsz > maximumBuildIdBytes) {
         oversized = true;
         return;
@@ -1281,8 +1282,12 @@ const toEntry = (
   fdo: FdoDecodeBudget,
 ): ElfNoteEntry => {
   const little = header.byteOrder === "little";
+  const { gnuOwner } = note;
   const linuxCore = isLinuxCoreProfile(header);
-  const typeName = elfNoteTypeName(note.owner, note.type, linuxCore);
+  const typeName =
+    note.owner === "GNU" && !gnuOwner
+      ? "unknown"
+      : elfNoteTypeName(note.owner, note.type, linuxCore);
   const coreOwner = note.owner === "CORE" && linuxCore;
   const range = `${String(note.descriptor_offset)}:${String(note.descsz)}`;
   let digest = text.hashes.get(range);
@@ -1310,14 +1315,15 @@ const toEntry = (
           ? note.descriptor.toString("hex")
           : null,
     },
-    gnu: decodeGnu(
-      note.owner,
-      note.type,
-      note.descriptor,
-      note.descriptor_offset,
-      little,
-      text,
-    ),
+    gnu: gnuOwner
+      ? decodeGnu(
+          note.type,
+          note.descriptor,
+          note.descriptor_offset,
+          little,
+          text,
+        )
+      : null,
     core: coreOwner
       ? decodeCore(
           note.owner,
@@ -1450,7 +1456,7 @@ export function* readGnuPropertyWordsSteps(
             );
         const nul = bytes.indexOf(0);
         const length = nul < 0 ? bytes.length : nul;
-        if (ownerBytes === 0 && length === 3 && (nul >= 0 || namesz === 3))
+        if (ownerBytes === 0 && namesz === 4 && length === 3 && nul === 3)
           gnu = bytes[0] === 0x47 && bytes[1] === 0x4e && bytes[2] === 0x55;
         chargeText(text, length);
         ownerBytes += length;
