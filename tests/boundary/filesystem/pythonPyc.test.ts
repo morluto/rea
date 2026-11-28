@@ -29,11 +29,26 @@ describe("Python pyc stable filesystem boundary", () => {
     const bytes = pythonPycFixture("py311", { nested: true });
     await writeFile(path, bytes);
     const service = createPythonPycService();
-    for (const [field, maximum, resource] of [
-      ["max_file_bytes", 16, "file-size"],
-      ["max_objects", 1, "memory"],
-      ["max_depth", 1, "capacity"],
-      ["max_string_bytes", 2, "memory"],
+    // Expected ranges are the published schema bounds, written out literally.
+    const ranges = {
+      max_file_bytes: {
+        minimum: 16,
+        maximum: 67108864,
+        default_value: 16777216,
+      },
+      max_objects: { minimum: 1, maximum: 65536, default_value: 16384 },
+      max_depth: { minimum: 1, maximum: 256, default_value: 64 },
+      max_string_bytes: {
+        minimum: 1,
+        maximum: 8388608,
+        default_value: 1048576,
+      },
+    } as const;
+    for (const [field, maximum, resource, unit] of [
+      ["max_file_bytes", 16, "file-size", "bytes"],
+      ["max_objects", 1, "memory", "count"],
+      ["max_depth", 1, "capacity", "count"],
+      ["max_string_bytes", 2, "memory", "bytes"],
     ] as const) {
       const refused = await service.inspect({ path, [field]: maximum });
       if (refused.ok) throw new Error(`Expected ${field} refusal`);
@@ -46,13 +61,23 @@ describe("Python pyc stable filesystem boundary", () => {
             field === "max_file_bytes"
               ? { max_file_bytes: maximum }
               : { boundary: field, maximum },
+          limit: {
+            control_kind: "parameter",
+            parameter: field,
+            effective_value: maximum,
+            unit,
+            ...ranges[field],
+            applies_at: "next_call",
+          },
         },
         remediation: {
-          action: expect.stringContaining(
-            `${field} (--${field.replaceAll("_", "-")})`,
-          ),
+          action: expect.stringContaining(`Raise ${field} above`),
         },
       });
+      // Contract fields only; the CLI adds its own flag spelling.
+      expect(
+        JSON.stringify(projectAnalysisError(refused.error).remediation),
+      ).not.toContain("--");
     }
     const control = await service.inspect({ path });
     if (!control.ok) throw control.error;
