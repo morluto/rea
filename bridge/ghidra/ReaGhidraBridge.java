@@ -540,9 +540,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     /**
-     * Read frames while the handler works. This is the bridge's only second
-     * thread: it never touches the Program or the writer. It cancels the
-     * monitor of the request a `cancel` frame names, cancels read-ahead for
+     * Read frames while the handler works. This reader never touches the
+     * Program or the writer. It cancels the monitor of the request a
+     * `cancel` frame names, cancels read-ahead for
      * an `abandon_decompile_read_ahead` frame without waiting for workers,
      * and queues every other frame in arrival order, so requests still run
      * one at a time.
@@ -667,9 +667,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
             catch (StackOverflowError exhausted) {
                 // Ghidra's data-type code can overflow while holding its database
                 // lock, which then stays held: the Program can no longer be saved
-                // or trusted. Admission bounds caller types (MAX_C_TYPE_DEPTH) so
-                // this is not reachable from caller text; if it happens anyway,
-                // say why and end the session rather than keep serving it.
+                // or trusted. Caller C is parsed on its own stack and a parser
+                // overflow is a type_depth_limit refusal (see parseCallerCText).
+                // An overflow anywhere else still ends the session.
                 writeFailure(writer, request.id, "bridge_exception",
                     "StackOverflowError: Ghidra exhausted its stack and may hold its database lock; this Ghidra session cannot continue");
                 throw exhausted;
@@ -2430,7 +2430,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
     /** What the tokenizer observed in admitted caller C, directives excluded. */
     private record AdmittedCallerC(JsonArray droppedQualifiers, boolean terminated, boolean endsInLineComment,
-        Set<String> soleParameterIdentifiers, List<CToken> tokens) {}
+        Set<String> soleParameterIdentifiers) {}
 
     // Ghidra reads a pack value with Integer.parseInt and, on overflow, keeps the
     // packing already in effect. A decimal literal is admitted only when that parse accepts it.
@@ -2672,8 +2672,6 @@ public final class ReaGhidraBridge extends HeadlessScript {
         // The tokens of the parameter slot being read, of a signature or a function pointer.
         List<CToken> slot = new ArrayList<>();
         Set<String> soleParameters = new HashSet<>();
-        // Every admitted token, so later passes measure these facts instead of re-reading the text.
-        List<CToken> admittedTokens = new ArrayList<>();
         for (CToken next = tokens.next(false); next != null; next = tokens.next(false)) {
             String token = next.text();
             int line = next.line(), column = next.column();
@@ -2681,7 +2679,6 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 admitCallerCDirective(tokens, next, field, declarations, code, packLabels);
                 continue;
             }
-            admittedTokens.add(next);
             if (!declarations && token.equals("typedef"))
                 throw refusedConstruct(code, field, "the specifier typedef", line, column);
             if (declarations && token.equals("_Noreturn"))
@@ -2845,7 +2842,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             throw new RequestFailure("parenthesis_depth_limit", field + " nests parentheses " + deepest +
                 " levels deep, first beyond " + maxParenthesisDepth + " at line " + beyondLine + ", column " + beyondColumn,
                 null, deepest);
-        return new AdmittedCallerC(dropped, ended, tokens.endsInLineComment, soleParameters, admittedTokens);
+        return new AdmittedCallerC(dropped, ended, tokens.endsInLineComment, soleParameters);
     }
 
     /**
@@ -2854,7 +2851,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
      * (macOS arm64): 1024 levels resolve, 2048 exhaust the stack inside
      * addDataType while its database lock is held, which leaves that lock held
      * and the Program unusable. REA refuses a type deeper than this, a
-     * quarter of the last measured safe depth, before Ghidra walks it.
+     * quarter of the last measured safe depth, before addDataType walks it.
      */
     private static final int MAX_C_TYPE_DEPTH = 256;
 
@@ -2925,490 +2922,67 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     /**
-     * Refuse an over-deep caller type before Ghidra's parser walks it. The
-     * parser recurses over a declarator's pointer and array chain, so on a
-     * JVM whose stack it exhausts (measured on Ghidra 12.2 under WSL2) the
-     * post-parse bound in requireBoundedTypeDepth never runs and the failure
-     * surfaces unclassified. This pass measures the same chain from the
-     * admitted tokens: each pointer, array, typedef, bit-field, function and
-     * composite level adds one, a base name resolves through types defined
-     * earlier in the text and then the database, and a reference back into a
-     * composite still being measured adds no depth, as in the post-parse
-     * walk. A forward reference to a type defined later in the text reads as
-     * the empty composite the parser invents for it; that definition is
-     * measured on its own, and the post-parse walk remains the authority for
-     * chains through database types a definition fills in place.
+     * Stack for the thread that runs Ghidra's C parser. C.jj Pointer() is
+     * right-recursive, one frame per star, and parse() holds its nested
+     * transaction across that walk. The longest admitted text is 8192 UTF-16
+     * units of one pointer chain. That chain completes on an 8 MiB main-thread
+     * stack (Ghidra 12.2, arm64 macOS) and exhausts HotSpot's 1 MiB default
+     * thread stack (Linux, including WSL2) before the iterative post-parse
+     * walk can refuse it. 16 MiB is twice the stack that completed the maximum
+     * chain, so a fatter frame still reaches that walk. Thread's stackSize is
+     * a suggestion; a JVM that ignores it can still overflow, and that
+     * overflow is the same depth refusal.
      */
-    private void requireBoundedCallerCTypeDepth(AdmittedCallerC admitted, String field, boolean declarations) {
-        CallerCTypeDepths depths =
-            new CallerCTypeDepths(admitted.tokens(), field, currentProgram.getDataTypeManager());
-        try {
-            if (declarations) depths.measureDefinitions();
-            else depths.measureSignature();
-        } catch (CallerCTypeDepths.Unmeasured unmeasured) {
-            // An incomplete shape may already have measured an over-deep
-            // chain; that count still refuses before the parser walks it.
-            depths.refuseIfOverDeep();
-            // Otherwise admission admitted a shape this pass does not
-            // measure; the post-parse walk remains the bound.
-        }
-    }
+    private static final long C_PARSE_STACK_BYTES = 16L * 1024 * 1024;
 
-    /** Measures caller C type chains from admitted tokens; see requireBoundedCallerCTypeDepth. */
-    private static final class CallerCTypeDepths {
-        /** The admitted text holds a shape this pass does not measure. */
-        private static final class Unmeasured extends RuntimeException { }
-
-        private record Declarator(String name, int depth) { }
-
-        private static final Set<String> BUILTIN_SPECIFIERS = Set.of(
-            "void", "char", "short", "int", "long", "float", "double", "signed", "unsigned", "_Bool");
-
-        private final List<CToken> tokens;
-        private final String field;
-        private final DataTypeManager types;
-        // C keeps tag names and ordinary identifiers in separate namespaces, and
-        // one text may define both under one name; depths are tracked apart.
-        private final Map<String, Integer> tagDepths = new HashMap<>();
-        private final Map<String, Integer> typedefDepths = new HashMap<>();
-        private final Map<DataType, Integer> databaseDepths = new IdentityHashMap<>();
-        /** Tags whose bodies are being measured; ordinary names resolve apart. */
-        private final Set<String> measuringTags = new HashSet<>();
-        /** The tag the last specifiers defined with a body, if any. */
-        private String specifierTag;
-        /** Whether the last specifiers defined an anonymous composite body. */
-        private boolean specifierAnonymousComposite;
-        /** The deepest chain measured so far, including partial declarators. */
-        private int deepestMeasured;
-        private int index;
-
-        CallerCTypeDepths(List<CToken> tokens, String field, DataTypeManager types) {
-            this.tokens = tokens;
-            this.field = field;
-            this.types = types;
-        }
-
-        private boolean at(String text) {
-            return index < tokens.size() && tokens.get(index).is(text);
-        }
-
-        private CToken next() {
-            if (index >= tokens.size()) throw new Unmeasured();
-            return tokens.get(index++);
-        }
-
-        private void expect(String text) {
-            if (!at(text)) throw new Unmeasured();
-            index++;
-        }
-
-        private String identifier() {
-            CToken token = next();
-            if (!token.isIdentifier()) throw new Unmeasured();
-            return token.text();
-        }
-
-        private void refuse(String name, int depth) {
-            if (depth > MAX_C_TYPE_DEPTH)
-                throw new RequestFailure("type_depth_limit", field + " defines " + name + ", chained " + depth +
-                    " levels deep through pointers, arrays, typedefs, members or existing database types");
-        }
-
-        private void observe(int depth) {
-            deepestMeasured = Math.max(deepestMeasured, depth);
-        }
-
-        void refuseIfOverDeep() {
-            if (deepestMeasured > MAX_C_TYPE_DEPTH)
-                throw new RequestFailure("type_depth_limit", field + " defines a caller type, chained at least " +
-                    deepestMeasured + " levels deep through pointers, arrays, typedefs, members or existing " +
-                    "database types");
-        }
-
-        private void recordTag(String name, int depth) {
-            if (name == null) return;
-            refuse(name, depth);
-            // A redundant forward declaration does not erase a completed
-            // tag Ghidra retains, so a tag depth never falls.
-            tagDepths.merge(name, depth, Math::max);
-        }
-
-        private void recordTypedef(String name, int depth) {
-            if (name == null) return;
-            refuse(name, depth);
-            typedefDepths.put(name, depth);
-        }
-
-        /** The depth of a struct, union or enum tag: this text's definition, else the database composite. */
-        private int resolveTag(String name) {
-            if (measuringTags.contains(name)) return 0;
-            Integer depth = tagDepths.get(name);
-            if (depth != null) return depth;
-            List<DataType> found = new ArrayList<>();
-            types.findDataTypes(name, found);
-            int deepest = 1;
-            for (DataType type : found)
-                if (type instanceof ghidra.program.model.data.Composite ||
-                        type instanceof ghidra.program.model.data.Enum)
-                    deepest = Math.max(deepest, measuredTypeDepth(type, databaseDepths));
-            return deepest;
-        }
-
-        /** The depth of an ordinary type name: this text's typedef, else the database typedef it names. */
-        private int resolveTypedef(String name) {
-            Integer depth = typedefDepths.get(name);
-            if (depth != null) return depth;
-            List<DataType> found = new ArrayList<>();
-            types.findDataTypes(name, found);
-            int deepest = 1;
-            boolean aliased = false;
-            for (DataType type : found)
-                if (type instanceof ghidra.program.model.data.TypeDef) {
-                    aliased = true;
-                    deepest = Math.max(deepest, measuredTypeDepth(type, databaseDepths));
-                }
-            // A bare name with no typedef in the database reads as the type itself.
-            if (!aliased)
-                for (DataType type : found) deepest = Math.max(deepest, measuredTypeDepth(type, databaseDepths));
-            return deepest;
-        }
-
-        void measureDefinitions() {
-            while (index < tokens.size()) {
-                if (at(";")) index++;
-                else if (at("typedef")) measureTypedef();
-                else if (at("struct") || at("union") || at("enum")) measureTagDefinition();
-                else throw new Unmeasured();
+    /**
+     * Parse caller C on C_PARSE_STACK_BYTES. Joined before return:
+     * this worker is the only thread in the parser and its nested transaction.
+     * The handler frame is entered before parse, so the parser's finally,
+     * which ends that nested transaction, runs on the way out of a stack
+     * overflow. The caller's transaction then rolls the edit back. The
+     * overflow is the depth ceiling: admitted text recurses through the
+     * declarator chain that ceiling exists for, and the iterative walk in
+     * requireBoundedTypeDepth remains the authority when parse returns.
+     */
+    private void parseCallerCText(CParser parser, String source, String field)
+            throws ghidra.app.util.cparser.C.ParseException, ghidra.app.util.cparser.C.TokenMgrError {
+        Throwable[] thrown = new Throwable[1];
+        Thread worker = new Thread(null, () -> {
+            try {
+                parser.parse(source);
             }
-        }
-
-        private void measureTypedef() {
-            expect("typedef");
-            int base = measureSpecifiers();
-            boolean first = true;
-            while (true) {
-                Declarator declarator = measureDeclarator(base);
-                // A typedef naming its own struct or enum is that tag, and Ghidra
-                // stores a typedef of an anonymous composite as the composite
-                // itself under the typedef name; neither adds a typedef level.
-                boolean namesSpecifier = declarator.depth() == base && declarator.name() != null &&
-                    (declarator.name().equals(specifierTag) || (first && specifierAnonymousComposite));
-                int depth = namesSpecifier ? base : 1 + declarator.depth();
-                recordTypedef(declarator.name(), depth);
-                if (namesSpecifier && specifierAnonymousComposite) recordTag(declarator.name(), base);
-                first = false;
-                if (!at(",")) break;
-                index++;
+            catch (Throwable failure) {
+                thrown[0] = failure;
             }
-            expect(";");
-        }
-
-        private void measureTagDefinition() {
-            boolean enumeration = at("enum");
-            index++;
-            String name = identifier();
-            int depth = 1;
-            if (at("{")) {
-                index++;
-                if (enumeration) skipBody();
-                else depth = measureCompositeBody(name);
-                expect("}");
-            }
-            recordTag(name, depth);
-            expect(";");
-        }
-
-        private int measureCompositeBody(String name) {
-            if (name != null) measuringTags.add(name);
-            int deepest = 0;
-            while (!at("}")) {
-                deepest = Math.max(deepest, measureMember());
-                observe(1 + deepest);
-            }
-            if (name != null) measuringTags.remove(name);
-            return 1 + deepest;
-        }
-
-        private int measureMember() {
-            int base = measureSpecifiers();
-            if (at(":")) {
-                index++;
-                observe(1 + base);
-                skipBitFieldWidth();
-                expect(";");
-                return 1 + base;
-            }
-            int deepest = 0;
-            while (true) {
-                deepest = Math.max(deepest, measureDeclarator(base).depth());
-                if (!at(",")) break;
-                index++;
-            }
-            expect(";");
-            return deepest;
-        }
-
-        private int measureSpecifiers() {
-            specifierTag = null;
-            specifierAnonymousComposite = false;
-            int base = -1;
-            while (index < tokens.size()) {
-                CToken token = tokens.get(index);
-                String text = token.text();
-                if (text.equals("struct") || text.equals("union")) {
-                    index++;
-                    String name = index < tokens.size() && tokens.get(index).isIdentifier() ? identifier() : null;
-                    if (at("{")) {
-                        index++;
-                        int depth = measureCompositeBody(name);
-                        expect("}");
-                        recordTag(name, depth);
-                        specifierTag = name;
-                        specifierAnonymousComposite = name == null;
-                        return depth;
-                    }
-                    if (name == null) throw new Unmeasured();
-                    return resolveTag(name);
-                }
-                if (text.equals("enum")) {
-                    index++;
-                    String name = index < tokens.size() && tokens.get(index).isIdentifier() ? identifier() : null;
-                    if (at("{")) {
-                        index++;
-                        skipBody();
-                        expect("}");
-                        recordTag(name, 1);
-                        specifierTag = name;
-                    }
-                    return 1;
-                }
-                if (BUILTIN_SPECIFIERS.contains(text) || text.matches("__int(?:8|16|32|64)|_*signed_*")) {
-                    base = 1;
-                    index++;
-                    continue;
-                }
-                UnappliedCToken unapplied = unappliedC(text);
-                if ((unapplied != null && !unapplied.refused()) || text.equals("_Noreturn") ||
-                        C_CALLING_CONVENTION.matcher(text).matches()) {
-                    index++;
-                    continue;
-                }
-                if (token.isIdentifier() && base < 0) {
-                    index++;
-                    return resolveTypedef(text);
-                }
+        }, "rea-ghidra-c-parse", C_PARSE_STACK_BYTES);
+        worker.setDaemon(true);
+        worker.start();
+        // The parser cannot be cancelled. Join even if it has already exited:
+        // join is the happens-before edge for the worker's failure, and the
+        // Program stays exclusive to this worker until it leaves the nested
+        // transaction.
+        boolean interrupted = false;
+        while (true) {
+            try {
+                worker.join();
                 break;
             }
-            if (base < 0) throw new Unmeasured();
-            return base;
-        }
-
-        private Declarator measureDeclarator(int base) {
-            int stars = measureStars();
-            while (skipCallingConventions()) stars += measureStars();
-            observe(base + stars);
-            if (at("(")) {
-                // Parentheses either group the declarator or open a function
-                // pointer; stars inside make it the pointer form.
-                int groups = 0;
-                int innerStars = 0;
-                while (at("(")) {
-                    index++;
-                    groups++;
-                    // A convention inside the parenthesis, before or after
-                    // the stars, does not hide the pointer chain.
-                    skipCallingConventions();
-                    innerStars += measureStars();
-                    skipCallingConventions();
-                    observe(base + stars + innerStars);
-                    // A pointer group may itself group the declarator, as in
-                    // (*(*f)); descend so its stars join the same chain.
-                    if (innerStars > 0 && !at("(")) break;
-                }
-                String name = identifier();
-                int arrays = measureArrays(base + stars + innerStars);
-                int depth = stars + arrays + base;
-                boolean nestedSuffix = false;
-                // Suffix arrays may follow each grouped close, as in
-                // ((f)[][]), so measure them before the next close. A
-                // function suffix may also sit inside a group, as in
-                // (*f(parameters))(void); measure it before that close.
-                for (int group = 0; group < groups; group++) {
-                    while (at("(")) {
-                        index++;
-                        int parameters = measureParameters();
-                        depth = 1 + Math.max(depth, parameters);
-                        observe(depth);
-                        nestedSuffix = true;
-                        int suffixArrays = measureArrays(depth);
-                        arrays += suffixArrays;
-                        depth += suffixArrays;
-                        observe(depth);
-                    }
-                    expect(")");
-                    int closeArrays = measureArrays(base + stars + innerStars + arrays);
-                    arrays += closeArrays;
-                    depth += closeArrays;
-                    observe(depth);
-                }
-                if (nestedSuffix) {
-                    depth += innerStars;
-                    observe(depth);
-                    while (at("(")) {
-                        index++;
-                        int parameters = measureParameters();
-                        depth = 1 + Math.max(depth, parameters);
-                        observe(depth);
-                        int suffixArrays = measureArrays(depth);
-                        depth += suffixArrays;
-                        observe(depth);
-                    }
-                    return new Declarator(name, depth);
-                }
-                if (innerStars > 0) {
-                    expect("(");
-                    int parameters = measureParameters();
-                    depth = innerStars + arrays + 1 + Math.max(stars + base, parameters);
-                    observe(depth);
-                    return new Declarator(name, depth);
-                }
-                depth = stars + arrays + base;
-                observe(depth);
-                if (at("(")) {
-                    index++;
-                    int parameters = measureParameters();
-                    depth = 1 + Math.max(depth, parameters);
-                    observe(depth);
-                    return new Declarator(name, depth);
-                }
-                if (at(":")) {
-                    index++;
-                    observe(1 + base);
-                    skipBitFieldWidth();
-                    return new Declarator(name, 1 + base);
-                }
-                return new Declarator(name, depth);
-            }
-            String name = index < tokens.size() && tokens.get(index).isIdentifier() ? identifier() : null;
-            int arrays = measureArrays(base + stars);
-            int depth = stars + arrays + base;
-            observe(depth);
-            if (at("(")) {
-                index++;
-                int parameters = measureParameters();
-                depth = 1 + Math.max(depth, parameters);
-                observe(depth);
-                return new Declarator(name, depth);
-            }
-            if (at(":")) {
-                index++;
-                observe(1 + base);
-                skipBitFieldWidth();
-                return new Declarator(name, 1 + base);
-            }
-            return new Declarator(name, depth);
-        }
-
-        private int measureStars() {
-            int stars = 0;
-            while (index < tokens.size()) {
-                String text = tokens.get(index).text();
-                if (text.equals("*")) {
-                    stars++;
-                    index++;
-                    continue;
-                }
-                UnappliedCToken unapplied = unappliedC(text);
-                if (unapplied != null && !unapplied.refused()) {
-                    index++;
-                    continue;
-                }
-                break;
-            }
-            return stars;
-        }
-
-        /** Consume calling-convention tokens; report whether any were present. */
-        private boolean skipCallingConventions() {
-            boolean skipped = false;
-            while (index < tokens.size() && C_CALLING_CONVENTION.matcher(tokens.get(index).text()).matches()) {
-                index++;
-                skipped = true;
-            }
-            return skipped;
-        }
-
-        private int measureArrays(int lowerBound) {
-            int arrays = 0;
-            while (at("[")) {
-                arrays++;
-                observe(lowerBound + arrays);
-                int nesting = 0;
-                do {
-                    String text = next().text();
-                    if (text.equals("[")) nesting++;
-                    else if (text.equals("]")) nesting--;
-                } while (nesting > 0);
-            }
-            return arrays;
-        }
-
-        /** Consume a parameter list through its closing parenthesis; return its deepest parameter. */
-        private int measureParameters() {
-            int deepest = 0;
-            if (at(")")) {
-                index++;
-                return deepest;
-            }
-            if (at("void") && index + 1 < tokens.size() && tokens.get(index + 1).is(")")) {
-                index += 2;
-                return deepest;
-            }
-            while (true) {
-                if (at(".")) {
-                    while (at(".")) index++;
-                } else {
-                    int base = measureSpecifiers();
-                    deepest = Math.max(deepest, measureDeclarator(base).depth());
-                    observe(1 + deepest);
-                }
-                if (at(",")) {
-                    index++;
-                    continue;
-                }
-                expect(")");
-                return deepest;
+            catch (InterruptedException ignored) {
+                interrupted = true;
             }
         }
-
-        void measureSignature() {
-            int base = measureSpecifiers();
-            Declarator declarator = measureDeclarator(base);
-            refuse(declarator.name() == null ? "a caller type" : declarator.name(), declarator.depth());
-            // A comma-separated declaration is rejected after parsing, but
-            // its declarators must be measured before the parser walks them.
-            while (at(",")) {
-                index++;
-                Declarator trailing = measureDeclarator(base);
-                refuse(trailing.name() == null ? "a caller type" : trailing.name(), trailing.depth());
-            }
-            if (at(";")) index++;
-            if (index < tokens.size()) throw new Unmeasured();
-        }
-
-        private void skipBody() {
-            int nesting = 1;
-            while (nesting > 0) {
-                String text = next().text();
-                if (text.equals("{")) nesting++;
-                else if (text.equals("}")) nesting--;
-            }
-            index--;
-        }
-
-        private void skipBitFieldWidth() {
-            while (!at(",") && !at(";")) next();
-        }
+        if (interrupted) Thread.currentThread().interrupt();
+        Throwable failure = thrown[0];
+        if (failure == null) return;
+        if (failure instanceof StackOverflowError)
+            throw new RequestFailure("type_depth_limit", field + " defines a caller type, chained more than " +
+                MAX_C_TYPE_DEPTH + " levels deep through pointers, arrays, typedefs, members or existing database types");
+        if (failure instanceof ghidra.app.util.cparser.C.ParseException parseException) throw parseException;
+        if (failure instanceof ghidra.app.util.cparser.C.TokenMgrError tokenError) throw tokenError;
+        if (failure instanceof RuntimeException runtime) throw runtime;
+        if (failure instanceof Error error) throw error;
+        throw new IllegalStateException("Ghidra C parser failed", failure);
     }
 
     /** The caller's per-call bound, or its default; the contract owns the range. */
@@ -3445,7 +3019,6 @@ public final class ReaGhidraBridge extends HeadlessScript {
             throw new RequestFailure(declarations ? "declarations_length_limit" : "signature_length_limit",
                 field + " has " + text.length() + " UTF-16 code units", null, text.length());
         AdmittedCallerC admitted = admitCallerC(text, field, declarations, code, maxParenthesisDepth);
-        requireBoundedCallerCTypeDepth(admitted, field, declarations);
         DataTypeManager types = currentProgram.getDataTypeManager();
         CParser parser = new CParser(types, false, new DataTypeManager[] { types });
         try {
@@ -3455,7 +3028,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             // the end gets a newline first, so a semicolon added for an
             // unterminated prototype is not swallowed.
             String source = admitted.endsInLineComment() ? text + "\n" : text;
-            parser.parse(declarations || admitted.terminated() ? source : source + ";");
+            parseCallerCText(parser, declarations || admitted.terminated() ? source : source + ";", field);
         }
         catch (ghidra.app.util.cparser.C.ParseException | ghidra.app.util.cparser.C.TokenMgrError rejected) {
             throw new RequestFailure(code, "Ghidra's C parser rejected " + field + ": " + cParserReason(rejected.getMessage()));

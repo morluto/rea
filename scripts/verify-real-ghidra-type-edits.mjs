@@ -1458,7 +1458,8 @@ struct rea_after { char c; int i; };`;
           errors[3].remediation.action,
           /only fewer nested pointer, array, typedef or member levels does/u,
         );
-        // Pointer, array and typedef chains are refused before Ghidra walks them.
+        // Pointer, array and typedef chains are the depth ceiling. Ghidra's parser
+        // walks them; storage does not.
         assert.deepEqual(outcomes, [
           "invalid_request",
           "invalid_request",
@@ -1540,8 +1541,8 @@ struct rea_after { char c; int i; };`;
           ).code,
           "resource_constraint",
         );
-        // A grouped declarator nested inside a pointer group is descended
-        // into, so its pointer chain cannot hide behind the outer group.
+        // A grouped declarator nested inside a pointer group is part of the
+        // parsed chain.
         assert.equal(
           requireMcpToolError(
             await flood.raw("annotate_native_function", {
@@ -1552,8 +1553,7 @@ struct rea_after { char c; int i; };`;
           ).code,
           "resource_constraint",
         );
-        // A trailing comma-separated declarator is measured too, so its
-        // over-deep parameter cannot reach the parser behind the first one.
+        // A trailing comma-separated declarator is part of the parsed chain.
         assert.equal(
           requireMcpToolError(
             await flood.raw("annotate_native_function", {
@@ -1564,8 +1564,7 @@ struct rea_after { char c; int i; };`;
           ).code,
           "resource_constraint",
         );
-        // A function suffix inside a grouped declarator is measured before
-        // its closing parenthesis, not discarded as an unmeasured shape.
+        // A function suffix inside a grouped declarator is part of the parsed chain.
         assert.equal(
           requireMcpToolError(
             await flood.raw("annotate_native_function", {
@@ -1576,17 +1575,19 @@ struct rea_after { char c; int i; };`;
           ).code,
           "resource_constraint",
         );
-        // A missing closing parenthesis does not discard the over-deep
-        // parameter measured before it.
+        // A missing closing parenthesis is a parser rejection once the
+        // declarator fits the parse stack, and stores nothing.
+        const incomplete = requireMcpToolError(
+          await flood.raw("annotate_native_function", {
+            procedure,
+            signature: `int total(int ${"*".repeat(4000)} p`,
+            signature_max_utf16: 4096,
+          }),
+        );
+        assert.equal(incomplete.code, "invalid_request");
         assert.equal(
-          requireMcpToolError(
-            await flood.raw("annotate_native_function", {
-              procedure,
-              signature: `int total(int ${"*".repeat(4000)} p`,
-              signature_max_utf16: 4096,
-            }),
-          ).code,
-          "resource_constraint",
+          incomplete.details?.diagnostics?.remote_code,
+          "invalid_function_signature",
         );
         // A tag and an unrelated typedef share a Ghidra name only when they
         // are one type, so this text conflicts and stores nothing; the
