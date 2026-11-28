@@ -66,6 +66,8 @@ describe("isPortablePathSegment", () => {
     "lpt9.bin",
     "COM¹.txt",
     "lpt³",
+    "CONIN$",
+    "ConOut$",
     "trailing.",
     "trailing ",
   ])("rejects non-portable segment %j", (segment) => {

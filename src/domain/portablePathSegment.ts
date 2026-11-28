@@ -25,6 +25,9 @@ const WINDOWS_RESERVED_FILENAME_CHARACTER = /[*?"<>|]/u;
 const WINDOWS_RESERVED_DEVICE_NAME =
   /^(?:con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])(?: *\.|$)/iu;
 
+/** Console input/output are also Windows device names. */
+const WINDOWS_RESERVED_CONSOLE_DEVICE_NAME = /^(?:conin|conout)\$/iu;
+
 /**
  * Whether a single path segment is portable across POSIX and Windows
  * destinations: nonempty, not `.` or `..`, free of `/` and NUL, admitted by
@@ -41,4 +44,5 @@ export const isPortablePathSegment = (segment: string): boolean =>
   windowsDestinationPathIssue(segment) === undefined &&
   !WINDOWS_RESERVED_FILENAME_CHARACTER.test(segment) &&
   !WINDOWS_RESERVED_DEVICE_NAME.test(segment) &&
+  !WINDOWS_RESERVED_CONSOLE_DEVICE_NAME.test(segment) &&
   !/[. ]$/u.test(segment);
