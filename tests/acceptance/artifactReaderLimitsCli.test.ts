@@ -476,6 +476,7 @@ test("admits explicit member counts without reading an invalid artifact.member_c
         dotnet_bundle: { entry_count: 2 },
         node_sea: { asset_count: 2 },
         deno: { vfs_entries: 2 },
+        zip: { member_count: 2 },
       }),
     ],
     environment,
