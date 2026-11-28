@@ -65,6 +65,11 @@ REA connects your agent to tools for inspecting native binaries, JavaScript and 
 
 Setup registers REA with your agent and installs matching workflow instructions. Native analysis can use an existing Hopper, Ghidra, IDA or Kuna installation; setup can optionally install Hopper with approval. Static JavaScript analysis needs no native analysis engine.
 
+For new Codex and Claude Code integrations, setup prefers their marketplace
+plugin when the installed client supports it. The plugin supplies both the MCP
+server and skill. Existing direct registrations and custom provider settings
+keep their current setup path; review the plan before approving it.
+
 ## Quick start
 
 **[Get started at rea.tools](https://rea.tools/get-started/)** for step-by-step
@@ -81,7 +86,9 @@ npx rea-agents setup
 
 Choose your agent, review and approve the setup plan, then restart your agent.
 Setup backs up existing configuration and adds REA's MCP connection and
-investigation skill. See the
+investigation skill. New Codex and Claude Code integrations use their
+marketplace plugins. Cursor keeps direct setup by default; `--cursor-plugin`
+opts in to a local plugin with its own pinned runtime and skill. See the
 [installation guide](docs/getting-started/installation.md) for supported clients,
 plugins, manual registration, and troubleshooting.
 

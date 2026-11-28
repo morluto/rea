@@ -207,6 +207,10 @@ export class FakeSetupHost implements SetupHost {
       scope: {
         mode: scope === undefined ? "audit-wide" : "explicit",
         clients: scope?.clients ?? [],
+        ...(scope?.pluginClients === undefined ||
+        scope.pluginClients.length === 0
+          ? {}
+          : { plugin_clients: scope.pluginClients }),
         ...(scope?.skillClients === undefined
           ? {}
           : { skill_clients: scope.skillClients }),

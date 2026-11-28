@@ -32,6 +32,7 @@ const CLI_LAUNCHER_INPUTS = [
   "scripts/rea.mjs",
   "scripts/lib/cli-compiled-runtime.mjs",
   "scripts/lib/cli-process-environment.mjs",
+  "scripts/lib/cli-runtime-files.mjs",
   "scripts/lib/runtime-admission.mjs",
   "scripts/lib/runtime-admission.d.mts",
 ];

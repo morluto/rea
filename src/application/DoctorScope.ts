@@ -15,6 +15,8 @@ import type {
 
 /** Normalized readiness boundary included in every doctor response. */
 export interface DoctorScopeReport {
+  /** Setup verifies these through the client's plugin manager, not MCP files. */
+  readonly plugin_clients?: readonly string[];
   readonly mode: "audit-wide" | "explicit";
   readonly clients: readonly string[];
   readonly skill_clients?: readonly string[];
@@ -44,6 +46,10 @@ export const normalizeDoctorScope = (
 ): DoctorScopeReport => ({
   mode: requested === undefined ? "audit-wide" : "explicit",
   clients: uniqueSorted(requested?.clients ?? []),
+  ...(requested?.pluginClients === undefined ||
+  requested.pluginClients.length === 0
+    ? {}
+    : { plugin_clients: uniqueSorted(requested.pluginClients) }),
   ...(requested?.skillClients === undefined
     ? {}
     : { skill_clients: uniqueSorted(requested.skillClients) }),
@@ -103,7 +109,9 @@ export const scopeDoctorChecks = (
     );
   };
   const exercisesMcpStartup =
-    input.scope.clients.length > 0 || input.scope.providers.length > 0;
+    input.scope.clients.length > 0 ||
+    input.scope.providers.length > 0 ||
+    (input.scope.plugin_clients?.length ?? 0) > 0;
   const startupChecks = (
     exercisesMcpStartup
       ? input.checks.filter(blocksMcpStartup)

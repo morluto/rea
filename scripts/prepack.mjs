@@ -51,6 +51,7 @@ if (await pathExists(join(root, "src"))) {
   for (const path of [
     "scripts/lib/cli-compiled-runtime.mjs",
     "scripts/lib/cli-process-environment.mjs",
+    "scripts/lib/cli-runtime-files.mjs",
     "scripts/lib/runtime-admission.mjs",
     "dist/main.js",
     "dist/mcp/main.js",
