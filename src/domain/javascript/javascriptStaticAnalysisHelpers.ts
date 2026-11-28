@@ -11,6 +11,7 @@ import type {
   JavaScriptStaticStorage,
 } from "./javascriptStaticAnalysisTypes.js";
 import {
+  readExactJavaScriptLiteral,
   stringValue,
   semanticStaticPropertyKey,
   semanticStaticPropertyName,
