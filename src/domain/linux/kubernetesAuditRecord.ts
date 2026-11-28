@@ -10,8 +10,8 @@ import { isHostLimitFailure } from "../parseFailure.js";
 export const KUBERNETES_AUDIT_JSON_DEPTH = 64;
 /** Longer than every owned key. A longer key cannot match and is not stored. */
 const MAX_OWNED_KEY_CHARS = 64;
-/** Enough for a safe integer plus a fractional tail of zeros. Longer lexemes are not status codes. */
-const MAX_NUMBER_CHARS = 64;
+/** Significant digits kept for a status code. Extra fractional zeros do not count. */
+const MAX_NUMBER_CHARS = 24;
 
 const ROOT_STRINGS = new Set([
   "apiVersion",
@@ -55,6 +55,8 @@ export type KubernetesAuditLineParse =
       readonly depthLimited: boolean;
       /** A kept string or list was dropped because it exceeded the text budget. */
       readonly budgetOmitted: boolean;
+      /** The verb was dropped by that budget, so it is an unlisted observation. */
+      readonly verbOmitted: boolean;
     }
   | { readonly kind: "syntax" }
   | { readonly kind: "nesting" };
@@ -91,6 +93,9 @@ export const parseKubernetesAuditLine = (
   let text = "";
   let keyTooLong = false;
   let numberTooLong = false;
+  let numberSawDot = false;
+  let numberSawExp = false;
+  let numberFracDigit = false;
   let stringOverflow = false;
   /** Final fields whose last value was dropped for the text budget. */
   const budgetOmittedFields = new Set<string>();
@@ -451,13 +456,48 @@ export const parseKubernetesAuditLine = (
           capture = "number";
           text = "";
           numberTooLong = false;
+          numberSawDot = false;
+          numberSawExp = false;
+          numberFracDigit = false;
         } else rejectScalar();
         break;
       case "numberChunk":
-        if (capture === "number" && text.length <= MAX_NUMBER_CHARS) {
-          const room = MAX_NUMBER_CHARS + 1 - text.length;
-          text += token.value.slice(0, room);
-          if (text.length > MAX_NUMBER_CHARS) numberTooLong = true;
+        if (capture !== "number" || numberTooLong) break;
+        for (const char of token.value) {
+          if (char === "." && !numberSawDot && !numberSawExp) {
+            numberSawDot = true;
+            continue;
+          }
+          if (
+            (char === "e" || char === "E") &&
+            !numberSawExp &&
+            text.length > 0
+          ) {
+            numberSawExp = true;
+            text += char;
+            continue;
+          }
+          if (
+            numberSawExp &&
+            (char === "+" || char === "-") &&
+            (text.endsWith("e") || text.endsWith("E"))
+          ) {
+            text += char;
+            continue;
+          }
+          // Zeros after the decimal do not change an integer status code.
+          if (numberSawDot && !numberSawExp && char === "0" && !numberFracDigit)
+            continue;
+          if (numberSawDot && !numberSawExp && char !== "0") {
+            numberFracDigit = true;
+            numberTooLong = true;
+            break;
+          }
+          if (text.length >= MAX_NUMBER_CHARS) {
+            numberTooLong = true;
+            break;
+          }
+          text += char;
         }
         break;
       case "endNumber":
@@ -512,6 +552,7 @@ export const parseKubernetesAuditLine = (
           value: publish(),
           depthLimited: true,
           budgetOmitted: budgetOmitted(),
+          verbOmitted: budgetOmittedFields.has("root:verb"),
         }
       : { kind: "nesting" };
   try {
@@ -552,5 +593,6 @@ export const parseKubernetesAuditLine = (
     value: publish(),
     depthLimited: false,
     budgetOmitted: budgetOmitted(),
+    verbOmitted: budgetOmittedFields.has("root:verb"),
   };
 };

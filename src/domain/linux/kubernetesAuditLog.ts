@@ -478,6 +478,7 @@ class KubernetesAuditScanner {
       stage,
       parsed.depthLimited,
       parsed.budgetOmitted,
+      parsed.verbOmitted,
     );
   }
 
@@ -503,6 +504,7 @@ class KubernetesAuditScanner {
     stage: KubernetesAuditStage,
     depthLimited: boolean,
     budgetOmitted: boolean,
+    verbOmitted: boolean,
   ): void {
     this.#recordCount += 1;
     const versionUnexamined =
@@ -511,6 +513,7 @@ class KubernetesAuditScanner {
     const unsupported = isUnsupportedVersion(event.apiVersion);
     const suppressFields = unsupported || versionUnexamined;
     if (unsupported) this.#unsupportedVersionLineCount += 1;
+    else if (verbOmitted) this.#unlistedVerbLines += 1;
     else if (!suppressFields && typeof event.verb === "string")
       this.#countVerb(event.verb);
     this.#stageCounts.set(stage, (this.#stageCounts.get(stage) ?? 0) + 1);

@@ -254,7 +254,13 @@ export class KubernetesAuditEventProbe {
   }
 
   finish(fileSize: number): boolean | undefined {
-    this.#recordSlices.length = 0;
+    const decided =
+      this.#failed ||
+      this.#depthStopped ||
+      this.#lineEnded ||
+      this.#done ||
+      this.#observed >= fileSize;
+    if (decided) this.#recordSlices.length = 0;
     if (this.#decoder === undefined) return undefined;
     if (this.#failed) return false;
     if (this.#depthStopped) return this.#hasAuditId && this.#hasStage;
@@ -265,6 +271,7 @@ export class KubernetesAuditEventProbe {
       } catch {
         return false;
       }
+    else if (!this.#done) return undefined;
     return this.#hasAuditId && this.#hasStage;
   }
 

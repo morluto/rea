@@ -259,6 +259,16 @@ it("treats a recorded Panic as terminal even when earlier stages are absent", as
   ]);
 });
 
+it("reads a safe response code written with a very long zero fraction", async () => {
+  const metadata = await metadataOf(
+    `${auditEvent({
+      stage: "ResponseComplete",
+      responseCode: 200,
+    }).replace('"code":200', `"code":200.${"0".repeat(80)}`)}\n`,
+  );
+  expect(metadata.events[0]?.response_code).toBe(200);
+});
+
 it("reads a safe response code written with a long zero fraction", async () => {
   const metadata = await metadataOf(
     `${auditEvent({
