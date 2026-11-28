@@ -64,7 +64,10 @@ import { recommendedMcpToolTimeoutMs } from "../config/mcpStartupPolicy.js";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { currentClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
-import { resolveClientConfigTransactionPath } from "./ClientConfigPath.js";
+import {
+  isEnoentError,
+  resolveClientConfigTransactionPath,
+} from "./ClientConfigPath.js";
 import { packageReadTargetChanged } from "./MsixPackageStorage.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import {
@@ -195,7 +198,7 @@ const configureClientDocument = async (
     });
   } catch (cause: unknown) {
     if (cause instanceof RegularFileCleanupFailure) throw cause;
-    if (!isMissing(cause)) return { status: "failed", reason: "readback" };
+    if (!isEnoentError(cause)) return { status: "failed", reason: "readback" };
   }
   const original = snapshot?.text;
   const document = parseClientConfiguration(
@@ -501,7 +504,7 @@ const persistClientConfiguration = async ({
         );
       }
     } catch (cause: unknown) {
-      if (isConfigurationConflict(cause) || isMissing(cause))
+      if (isConfigurationConflict(cause) || isEnoentError(cause))
         return conflictFailure(recoveryBackupPath);
       if (cause instanceof RegularFileCleanupFailure) {
         const rollback = await restoreConfig(publication, original);
@@ -583,7 +586,7 @@ const readClientRefresh = async (
       resources === undefined ? {} : { resources },
     );
   } catch (cause: unknown) {
-    if (!isMissing(cause)) throw cause;
+    if (!isEnoentError(cause)) throw cause;
   }
   const document =
     original === undefined
@@ -938,7 +941,7 @@ const inspectClientDocument = async (
     original = await readRegularFileText(transactionPath);
   } catch (cause: unknown) {
     if (cause instanceof RegularFileCleanupFailure) throw cause;
-    if (isMissing(cause)) {
+    if (isEnoentError(cause)) {
       const ownershipBlocker = writeTargetOwnershipBlocker(
         client,
         files.value,
@@ -1096,9 +1099,6 @@ const inspectClientDocument = async (
     backupPath: backupSelection.value.backupPath,
   };
 };
-
-const isMissing = (cause: unknown): boolean =>
-  cause instanceof Error && "code" in cause && cause.code === "ENOENT";
 
 const throwCleanupFailure = (error: ClientConfigurationFileError): void => {
   if (error.cleanupFailure !== undefined) throw error.cleanupFailure;
@@ -1324,7 +1324,7 @@ const restoreConfig = async (
     await publication.restore(original);
     return ok(undefined);
   } catch (cause: unknown) {
-    if (isConfigurationConflict(cause) || isMissing(cause))
+    if (isConfigurationConflict(cause) || isEnoentError(cause))
       return err({ kind: "conflict" });
     return err({
       kind: "restore",

@@ -1,5 +1,9 @@
 import { z } from "zod";
 import {
+  macosPkgEntryMetadataSchema,
+  macosPkgMetadataSchema,
+} from "./formatMetadata/macosPkgMetadata.js";
+import {
   bunStandaloneEntryMetadataSchema,
   bunStandaloneMetadataSchema,
   denoStandaloneEntryMetadataSchema,
@@ -15,8 +19,18 @@ import {
   unityFsMetadataSchema,
   wxapkgEntryMetadataSchema,
   wxapkgMetadataSchema,
+  tarMetadataSchema,
+  tarEntryMetadataSchema,
+  switchExecutableMetadataSchema,
+  switchExecutableEntryMetadataSchema,
+  megaDriveRomMetadataSchema,
+  megaDriveRomEntryMetadataSchema,
+  n64RomEntryMetadataSchema,
+  n64RomMetadataSchema,
 } from "./formatMetadata/packageAndGameMetadata.js";
 import {
+  bfltMetadataSchema,
+  bfltSegmentMetadataSchema,
   dfuSeElementMetadataSchema,
   dfuSeMetadataSchema,
   espFlashImageMetadataSchema,
@@ -28,18 +42,48 @@ import {
   fitMetadataSchema,
   hexRecordRegionMetadataSchema,
   hexRecordsMetadataSchema,
+  image4EntryMetadataSchema,
+  image4MetadataSchema,
+  qualcommMbnMetadataSchema,
   uf2MetadataSchema,
   uf2RegionMetadataSchema,
+  ubiImageMetadataSchema,
+  ubiVolumeMetadataSchema,
   uImageEntryMetadataSchema,
   uImageMetadataSchema,
 } from "./formatMetadata/firmwareMetadata.js";
 import {
   androidBootImageEntryMetadataSchema,
   androidBootImageMetadataSchema,
+  androidDtboEntryMetadataSchema,
+  androidDtboMetadataSchema,
   androidOtaPartitionMetadataSchema,
   androidOtaPayloadMetadataSchema,
+  androidVbmetaEntryMetadataSchema,
+  androidVbmetaDescriptorEntryMetadataSchema,
+  androidVbmetaMetadataSchema,
+  androidSparseImageMetadataSchema,
+  auditdLogMetadataSchema,
+  iso9660EntryMetadataSchema,
+  iso9660MetadataSchema,
   ntfsMftMetadataSchema,
+  systemdJournalMetadataSchema,
 } from "./formatMetadata/androidAndSystemMetadata.js";
+import {
+  ddsMetadataSchema,
+  glbMetadataSchema,
+  gpuAssetRegionMetadataSchema,
+  ktx2MetadataSchema,
+  ktxMetadataSchema,
+} from "./formatMetadata/gpuAssetMetadata.js";
+import {
+  bink2MetadataSchema,
+  mediaAssetRegionMetadataSchema,
+  oggOpusMetadataSchema,
+  riffXma2MetadataSchema,
+  vulkanPipelineCacheMetadataSchema,
+} from "./formatMetadata/mediaAssetMetadata.js";
+import { ndsEntryMetadataSchema, ndsMetadataSchema } from "./ndsRom.js";
 
 export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   godotPckMetadataSchema,
@@ -48,6 +92,10 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   unityFsEntryMetadataSchema,
   wxapkgMetadataSchema,
   wxapkgEntryMetadataSchema,
+  tarMetadataSchema,
+  tarEntryMetadataSchema,
+  switchExecutableMetadataSchema,
+  switchExecutableEntryMetadataSchema,
   pyInstallerMetadataSchema,
   pyInstallerEntryMetadataSchema,
   dotnetBundleEntryMetadataSchema,
@@ -63,20 +111,55 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   uImageEntryMetadataSchema,
   androidOtaPayloadMetadataSchema,
   androidOtaPartitionMetadataSchema,
+  macosPkgMetadataSchema,
+  macosPkgEntryMetadataSchema,
+  androidSparseImageMetadataSchema,
+  ubiImageMetadataSchema,
+  ubiVolumeMetadataSchema,
   espImageMetadataSchema,
   espImageSegmentMetadataSchema,
   espImageSignatureBlockMetadataSchema,
   uf2MetadataSchema,
   uf2RegionMetadataSchema,
   ntfsMftMetadataSchema,
+  systemdJournalMetadataSchema,
+  auditdLogMetadataSchema,
   dfuSeMetadataSchema,
   dfuSeElementMetadataSchema,
+  bfltMetadataSchema,
+  bfltSegmentMetadataSchema,
   espFlashImageMetadataSchema,
   espFlashPartitionMetadataSchema,
   fitMetadataSchema,
   fitImageMetadataSchema,
+  image4EntryMetadataSchema,
+  image4MetadataSchema,
+  qualcommMbnMetadataSchema,
   androidBootImageMetadataSchema,
   androidBootImageEntryMetadataSchema,
+  androidDtboMetadataSchema,
+  androidDtboEntryMetadataSchema,
+  androidVbmetaMetadataSchema,
+  androidVbmetaEntryMetadataSchema,
+  androidVbmetaDescriptorEntryMetadataSchema,
+  iso9660MetadataSchema,
+  iso9660EntryMetadataSchema,
+  ddsMetadataSchema,
+  glbMetadataSchema,
+  ktxMetadataSchema,
+  ktx2MetadataSchema,
+  gpuAssetRegionMetadataSchema,
+  oggOpusMetadataSchema,
+  riffXma2MetadataSchema,
+  bink2MetadataSchema,
+  vulkanPipelineCacheMetadataSchema,
+  mediaAssetRegionMetadataSchema,
+  ndsMetadataSchema,
+  ndsEntryMetadataSchema,
+  megaDriveRomMetadataSchema,
+  megaDriveRomEntryMetadataSchema,
+  n64RomMetadataSchema,
+  n64RomEntryMetadataSchema,
 ]);
 export type ArtifactFormatMetadata = z.infer<
   typeof artifactFormatMetadataSchema
@@ -100,7 +183,7 @@ const declarationsByKind: {
     | {
         readonly declaration: (
           metadata: FormatMetadataByKind[Kind],
-        ) => FormatMetadataDeclaration["facts"];
+        ) => FormatMetadataDeclaration["facts"] | undefined;
         /** Projected fields the producer could not interpret. */
         readonly unreadable?: (
           metadata: FormatMetadataByKind[Kind],
@@ -134,6 +217,22 @@ const declarationsByKind: {
   "wxapkg-entry": {
     notCompared:
       "index is layout. source_path keeps the declared name, including a producer root prefix the occurrence path strips.",
+  },
+  tar: {
+    notCompared:
+      "Its fields come from the archive's own bytes, which content comparison covers.",
+  },
+  /**
+   * What a header declares about a member beyond its bytes: its type, its
+   * permission bits and its link target. Offsets are layout; owners and
+   * times vary between otherwise equal builds.
+   */
+  "tar-entry": {
+    declaration: (metadata) => ({
+      typeflag: metadata.typeflag,
+      mode: metadata.mode,
+      link_name: metadata.link_name,
+    }),
   },
   pyinstaller: {
     notCompared:
@@ -187,6 +286,14 @@ const declarationsByKind: {
     notCompared:
       "start_address and end_address restate the region's path, and length follows from them; record and line counts are layout.",
   },
+  "switch-executable": {
+    notCompared:
+      "Its header facts come from the executable's own bytes, which content comparison covers.",
+  },
+  "switch-executable-entry": {
+    notCompared:
+      "role restates the entry's path, offsets and sizes are layout, and declared and observed hashes come from the executable's bytes, which content comparison covers.",
+  },
   uimage: {
     notCompared:
       "Its header facts come from the image's own bytes, which content comparison covers.",
@@ -203,6 +310,34 @@ const declarationsByKind: {
     notCompared:
       "role and index restate the entry's path, compression is observed from its bytes, and load addresses, names and board IDs come from the image header or vendor ramdisk table, which the image's content comparison covers.",
   },
+  "android-dtbo": {
+    notCompared:
+      "Its header facts come from the image's own bytes, which content comparison covers.",
+  },
+  "android-dtbo-entry": {
+    notCompared:
+      "index, offset, size, id, rev, flags, custom words, compression, and FDT magic observation come from the container's table and stored entry bytes, which container and entry content comparison cover.",
+  },
+  "android-vbmeta": {
+    notCompared:
+      "Its header and descriptor facts come from the image's own bytes, which content comparison covers. Signatures and digests are recorded and not verified.",
+  },
+  "android-vbmeta-entry": {
+    notCompared:
+      "role restates the entry's path; its stored bytes are compared by content.",
+  },
+  "android-vbmeta-descriptor": {
+    notCompared:
+      "index and tag name restate the entry's path; its stored descriptor bytes are compared by content.",
+  },
+  iso9660: {
+    notCompared:
+      "Its fields come from the image's own volume descriptors, which content comparison covers.",
+  },
+  "iso9660-entry": {
+    notCompared:
+      "index, extent location and extent layout are layout; identifier restates the entry's path with its stored version suffix, and flags and dates come from directory records, which the image's content comparison covers.",
+  },
   "android-ota-payload": {
     notCompared:
       "Its header and manifest facts come from the payload's own bytes, which content comparison covers. Signatures are counted, not verified.",
@@ -210,6 +345,38 @@ const declarationsByKind: {
   "android-ota-partition": {
     notCompared:
       "name and index restate the entry's path; reconstructed partition bytes are compared by content when they are extractable.",
+  },
+  "macos-pkg": {
+    notCompared:
+      "Its fields come from the package's own bytes, which content comparison covers.",
+  },
+  "macos-pkg-entry": {
+    notCompared:
+      "role and layout restate the entry; stored bytes are compared by content.",
+  },
+  "android-sparse-image": {
+    notCompared:
+      "Its header and chunk facts come from the image's own bytes, which content comparison covers. Checksums are recorded, not verified.",
+  },
+  "ubi-image": {
+    notCompared:
+      "Its header layout, eraseblock counts and volume table come from the image's own bytes, which content comparison covers.",
+  },
+  /**
+   * How the volume table declares a volume, independent of PEB placement.
+   * The volume ID is a lookup identity, so renumbering is a change.
+   */
+  "ubi-volume": {
+    declaration: (metadata) => ({
+      id: metadata.id,
+      name: metadata.name,
+      name_bytes_hex: metadata.name_bytes_hex,
+      type: metadata.type,
+      reserved_pebs: metadata.reserved_pebs,
+      alignment: metadata.alignment,
+      update_marker: metadata.update_marker,
+      flags: metadata.flags,
+    }),
   },
   "esp-image": {
     notCompared:
@@ -241,6 +408,14 @@ const declarationsByKind: {
     notCompared:
       "Its fields come from the file's own FILE record headers and resident file-name attributes, which content comparison covers.",
   },
+  "systemd-journal": {
+    notCompared:
+      "Its fields come from the file's own header and object headers, which content comparison covers.",
+  },
+  "auditd-log": {
+    notCompared:
+      "Its fields come from the file's own record headers, which content comparison covers.",
+  },
   dfuse: {
     notCompared:
       "Its fields come from the file's own prefix, target headers and suffix, which content comparison covers.",
@@ -251,6 +426,14 @@ const declarationsByKind: {
       alternate_setting: metadata.alternate_setting,
       target_name: metadata.target_name,
     }),
+  },
+  bflt: {
+    notCompared:
+      "Its fields come from the file's own 64-byte header and relocation table, which content comparison covers.",
+  },
+  "bflt-segment": {
+    notCompared:
+      "Its segment name is in its path and its offset and length are layout; content comparison covers its bytes.",
   },
   "esp-flash-image": {
     notCompared:
@@ -273,9 +456,108 @@ const declarationsByKind: {
       unknown_flags: metadata.unknown_flags,
     }),
   },
+  dds: {
+    notCompared:
+      "Its header facts come from the texture's own bytes, which content comparison covers.",
+  },
+  glb: {
+    notCompared:
+      "Its header, chunk and JSON facts come from the model's own bytes, which content comparison covers.",
+  },
+  ktx: {
+    notCompared:
+      "Its header facts come from the texture's own bytes, which content comparison covers.",
+  },
+  ktx2: {
+    notCompared:
+      "Its header and index facts come from the texture's own bytes, which content comparison covers.",
+  },
+  "gpu-asset-region": {
+    notCompared:
+      "role and index restate the region's path; its stored bytes are compared by content.",
+  },
+  "ogg-opus": {
+    notCompared:
+      "Its header facts come from the stream's own bytes, which content comparison covers.",
+  },
+  "riff-xma2": {
+    notCompared:
+      "Its chunk and fmt facts come from the WAVE's own bytes, which content comparison covers.",
+  },
+  bink2: {
+    notCompared:
+      "Its header facts come from the video's own bytes, which content comparison covers.",
+  },
+  "vulkan-pipeline-cache": {
+    notCompared:
+      "Its header facts come from the cache's own bytes, which content comparison covers.",
+  },
+  "media-asset-region": {
+    notCompared:
+      "role and index restate the region's path; its stored bytes are compared by content.",
+  },
+  nds: {
+    notCompared:
+      "Its header and table facts come from the ROM's own bytes, which content comparison covers.",
+  },
+  "n64-rom": {
+    notCompared:
+      "Its header, CIC and CRC facts come from the ROM's own bytes, which content comparison covers. source_order names the dump, not a change in the served image.",
+  },
+  "n64-rom-entry": {
+    notCompared:
+      "role repeats the member path. source_order and decoded name the dump order; the served bytes are compared by content.",
+  },
+  /**
+   * CPU load and entry addresses and overlay RAM and initialization facts.
+   * The role restates the path, and the file and overlay IDs describe layout.
+   * Ordinary filesystem files (`role: "file"`) declare neither CPU nor overlay
+   * facts, so they return no declaration and compare purely by content against
+   * extracted directories.
+   */
+  "nds-entry": {
+    declaration: ({ role, ram_address, entry_address, overlay }) =>
+      role === "file"
+        ? undefined
+        : {
+            ram_address,
+            entry_address,
+            overlay:
+              overlay === null
+                ? null
+                : {
+                    ram_address: overlay.ram_address,
+                    ram_size: overlay.ram_size,
+                    bss_size: overlay.bss_size,
+                    static_init_start: overlay.static_init_start,
+                    static_init_end: overlay.static_init_end,
+                    flags: overlay.flags,
+                  },
+          },
+  },
+  "mega-drive-rom": {
+    notCompared:
+      "Its header and vector facts come from the ROM's own bytes, which content comparison covers.",
+  },
+  "mega-drive-rom-entry": {
+    notCompared:
+      "Its role is in its path and its image offset is layout; content comparison covers its bytes.",
+  },
   fit: {
     notCompared:
       "Its fields come from the FIT's own bytes, which content comparison covers.",
+  },
+  "qualcomm-mbn": {
+    notCompared:
+      "Its header and hash-segment facts come from the image's own bytes, which content comparison covers. Signatures are located, not verified.",
+  },
+  "apple-img4": {
+    notCompared:
+      "Its fields come from the container's own DER, which content comparison covers. Keybag values are not recorded.",
+  },
+  "apple-img4-entry": {
+    notCompared:
+      "Role, encryption and compression restate the entry path and the root facts; decoded is always false.",
   },
   /**
    * Payload interpretation and sharing declarations, independent of FIT
@@ -316,13 +598,15 @@ const declarationOf = <Kind extends FormatMetadataKind>(
   metadata: FormatMetadataByKind[Kind],
 ): FormatMetadataDeclaration | undefined => {
   const entry = declarationsByKind[kind];
-  return "declaration" in entry
-    ? {
+  if (!("declaration" in entry)) return undefined;
+  const facts = entry.declaration(metadata);
+  return facts === undefined
+    ? undefined
+    : {
         kind,
-        facts: entry.declaration(metadata),
+        facts,
         unreadable: entry.unreadable?.(metadata) ?? [],
-      }
-    : undefined;
+      };
 };
 
 /** The compared declaration, or undefined when comparison uses none. */

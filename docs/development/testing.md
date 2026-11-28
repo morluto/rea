@@ -99,7 +99,7 @@ it or select another revision.
 Source typechecking needs no compiled runtime or generated test metadata.
 Typecheck, runtime compilation, and Frida binding verification share
 `scripts/run-typescript.mjs`. The pinned tsrs package supplies Linux x64/arm64
-(GNU and musl) and macOS arm64 compilers. Windows and other unsupported hosts
+(GNU and musl) and macOS x64/arm64 compilers. Windows and other unsupported hosts
 retain the existing stable official TypeScript compiler. Its upstream version
 can differ from tsrs, so both compiler tasks hash the selected package and version
 through `scripts/run-turbo.mjs` before cache lookup. Outputs from different
@@ -166,11 +166,12 @@ no compiled-runtime prerequisite, not a fixed time budget.
 duplication statistics. Complete reports remain in `.cache/static-checks/`.
 The fast gate uploads them as `static-check-reports`. Full qualification
 uploads duplication diagnostics from the deep job as
-`static-deep-check-reports`, including after that gate fails.
+`static-deep-check-reports`, including after that gate fails. On reruns, both
+artifact names end in `-attempt-N`, where `N` is the workflow run attempt.
 Task-graph recording runs `check:ci:fast:tasks` and `check:ci:deep:tasks`
 without the artifacts lock, so it can record hashes while `check:pr` or
 `check:test` already holds that lock. The CI jobs still run the locked
-`check:ci:fast` and `check:ci:deep` commands.
+`check:ci:fast` and `check:ci:deep:job` commands.
 Use `npm run lint:details` or `npm run jscpd:details` for all console diagnostics.
 Both duplicate commands scan production and test code using the limit in
 [`.jscpd.json`](https://github.com/morluto/rea/blob/main/.jscpd.json).
@@ -239,8 +240,9 @@ collected assertions can be awaited later. `import/no-duplicates` warns with
 no escaping for clients: the presentation re-emits every advertised pattern in
 the portable grammar (`src/contracts/portablePattern.ts`).
 
-Fast lint stays syntax-based. `npm run lint:typed` runs serially with pinned
-`oxlint-tsgolint` 7.0.2005 and records native plus typed diagnostics in
+Fast lint stays syntax-based. `npm run lint:typed` defaults to the locked
+`oxlint-tsgolint` executable and honors an explicit `OXLINT_TSGOLINT_PATH`.
+It records native plus typed diagnostics in
 `.cache/static-checks/typed-oxlint.json`. Production `src` treats
 `no-misused-promises` as an error; tests/fixtures warn. `no-floating-promises` is
 an error throughout the lint inventory. `return-await` is an error in
@@ -273,6 +275,8 @@ Routine iterations and rebases need focused regressions and relevant checks.
 Follow the [contributor checks](https://github.com/morluto/rea/blob/main/CONTRIBUTING.md#development-feedback-and-pr-verification)
 before handing off a PR. Use `check:pr` for broad changes or CI diagnosis.
 Architecture guards run in `check`, `check:fast`, and `check:ci:deep`.
+In CI, the required fast static job runs the guards before installing
+dependencies, including on full runs.
 The standalone test-discovery check runs in `check:ci:deep`.
 
 Vitest projects use up to two workers, bounded by host parallelism. GitHub
@@ -1256,19 +1260,24 @@ Required CI retains fresh reverse-tools coverage and preflights both canonical
 Stryker configurations with `--dryRunOnly`. These preflights resolve the owned
 targets, instrument the source, and execute the real initial tests. Invalid
 configuration, target resolution, and initial test failures still fail the job.
+Before the dry runs, the mutation project guard checks that each suite’s resolved
+targets are root files in its configured TypeScript project.
 Preflights execute no mutants and produce no mutation-outcome report. Both fast
 feedback and full qualification, including exact-revision release qualification,
 require coverage and both preflights. A failed, canceled, skipped or missing
 selected quality job still fails the required gate.
 
 The separate **Mutation sweep** workflow runs both complete configurations daily
-and on manual dispatch, in two isolated jobs. It is a maintenance check outside
-the PR and release publication gates. `ci:full` requests full regression,
+and on manual dispatch. Each isolated job has a 90-minute budget and passes
+`--concurrency 4` for its 4-vCPU runner; Stryker divides concurrency between
+TypeScript checkers and test runners, so the configurations' default of 2,
+kept for shared local machines, runs one test runner. The sweep runs
+outside the PR and release publication gates. `ci:full` requests full regression,
 coverage and provider qualification; it does not request a complete mutation
-sweep. Use the Mutation sweep workflow to request that result. Targets,
-checkers, concurrency, deadlines and the existing non-blocking mutation-score
-threshold are unchanged. `npm run test:mutation:reverse-tools` also retains both
-complete passes for local callers.
+sweep. Use the Mutation sweep workflow to request that result. Both jobs use the
+canonical configurations, including their per-mutant timeouts and non-blocking
+mutation-score thresholds. `npm run test:mutation:reverse-tools` runs both
+complete passes locally.
 
 The two passes write separate JSON and HTML reports under `reports/mutation/`:
 `reverse-tools` and `reverse-tools-semantics`. Required CI retains focused
@@ -1300,8 +1309,8 @@ publish timing history. Fast runs publish `test-timings-fast` and full runs
 publish `test-timings-full`. The build job accepts only verified artifacts from
 successful default-branch CI runs that match its tier. It lists one page of
 matching artifacts and checks up to five producer runs individually. When
-eligible artifacts remain, it can check them against one page of successful CI
-runs. A tier with no qualifying artifact leaves history unset. The build
+eligible artifacts remain, it can check them against up to three pages of
+successful CI runs within the shared 20-second lookup budget. A tier with no qualifying artifact leaves history unset. The build
 downloads the small, checkout-relative timing file. Timing weights come from Vitest module
 diagnostics and include tests and hooks, worker preparation, environment,
 imports, and setup. Import timings already include transform waits, which are
@@ -1315,9 +1324,10 @@ for another. Workflow syntax and expression validation runs inside the required
 static-check job when workflow changes select it, avoiding a separate runner.
 Native, provider, fixture, SQLite compatibility, and website lanes wait for
 the fast static checks (typecheck, built lint, and format) to succeed before
-allocating their runners. Knip, duplication, architecture guards, test
-discovery, and the Python producer run in the separate full-tier deep static
-job and do not gate provider admission. On the fast tier, changes to Python
+allocating their runners. Knip runs in the build job on every code change,
+after the build produces the workers that package imports name. Duplication,
+architecture guards, test discovery, and the Python producer run in the
+separate full-tier deep static job and do not gate provider admission. On the fast tier, changes to Python
 bridges, analysis-efficiency inputs, or the Python test runner select a separate
 required Python job. That job installs locked dependencies and prepares the
 compiled runtime before the suite, because analysis-efficiency checks import
@@ -1399,9 +1409,10 @@ rebuilds misses. A restore prefix with the same platform and toolchain permits
 partial task reuse when one generator's inputs change; Turbo still invalidates
 that generator's entry. Native outputs are not stored in this cache.
 
-POSIX native package jobs, documentation checks, Go binary verification, and the
-Apple artifact lane reuse the same workflow's portable Turbo cache
-(`rea-build-cache`) for compiled JavaScript, skills, and catalogs. Windows jobs
+The build job stages and uploads `rea-build-cache` when a selected POSIX native
+package, Apple artifact, or reusable provider job consumes it. Portable test
+shards download `rea-test-runtime`. Documentation checks restore the
+cross-run Turbo cache. Windows jobs
 (`windows-curated` and Windows `package-e2e`) compile with `typescript` rather
 than Linux's accelerated `tsrs` checker, so they restore and publish a separate
 Windows `.turbo/cache/` family (`rea-windows-build-v1-Windows-X64-*`, pruned to
@@ -1458,11 +1469,13 @@ public registry, and checks both the primary failure and live descendant absence
 ## Pull-request test selection
 
 CI on a pull request runs static checks, the build and the portable tests the
-change affects. The complete portable suite runs on every push to `main`, on
-the scheduled and manual qualification runs, in release qualification, and on a
-PR labelled `ci:full`. Those complete runs catch a consumer that selection
-missed, after it has merged. Add `ci:full` to a PR when its effect reaches
-further than its imports show, such as runtime registration, generated files,
+change affects. By default, a push to `main` warms the shared static and build
+caches. Scheduled fast sweeps run the complete portable suite to catch
+consumers that PR selection missed. Full qualification also runs the suite on
+manual dispatch, for release qualification, and on a PR labelled `ci:full`.
+See [the CI schedule](../testing-lanes.md#native-platform-baseline-in-ci) for
+when a scheduled run can reuse an earlier result. Add `ci:full` to a PR when its
+effect reaches further than its imports show, such as runtime registration, generated files,
 subprocesses or bridges. Adding the label starts full qualification at once,
 and later pushes stay on the full tier while the label remains.
 

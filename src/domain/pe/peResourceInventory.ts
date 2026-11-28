@@ -16,30 +16,27 @@ import { setImmediate } from "node:timers/promises";
 import type { ArtifactLimitBoundary } from "../artifactOperationError.js";
 import { BinaryReader } from "../binaryContainer.js";
 import { jsonParts } from "../jsonSerialization.js";
-import type {
-  InspectPeResourcesInput,
-  PeResourceIdentity,
-  PeResources,
+import {
+  PE_RESOURCE_METADATA_BUDGET,
+  type InspectPeResourcesInput,
+  type PeResourceIdentity,
+  type PeResources,
 } from "../native/peResources.js";
 import { decodeLimit, type LimitRef } from "../parseFailure.js";
 import { peFailure, requirePeExtent } from "./peImageHeaders.js";
-import {
-  readPeResourceLayout,
-  readPeResourceLayoutAt,
-} from "./peResourceLayout.js";
+import { peDirectorySizeAnomaly } from "../native/peHeaderAnomalies.js";
+import { readPeResourceLayoutAt } from "./peResourceLayout.js";
 import type { PrefixedByteSource } from "../byteSource.js";
 import { bufferByteSource } from "../byteSource.js";
 
-type PeResourceLayout = ReturnType<typeof readPeResourceLayout>;
+type PeResourceLayout = Awaited<ReturnType<typeof readPeResourceLayoutAt>>;
 type PeResourceInventory = Omit<PeResources, "artifact">;
 
 type Range = { offset: number; bytes: number };
 type OccupiedRange = Range & {
   kind: "directory" | "name" | "data-entry" | "payload";
 };
-/** Complete PE resource result retained before a refusal. */
-const METADATA_BYTES = 8 * 1024 * 1024;
-/** The fixed allowance for retained resource metadata. */
+/** Limit name of the retained resource metadata budget (`max_metadata_bytes`). */
 const METADATA_LIMIT = "pe_resource_metadata_bytes";
 const limit = (message: string, name: string, maximum: number): never => {
   throw decodeLimit("pe", message, { name, maximum });
@@ -66,26 +63,6 @@ const jsonBytes = (value: unknown, maximum: number): number => {
 const identityKey = (id: PeResourceIdentity): string =>
   id.kind === "id" ? `id:${String(id.id)}` : `name:${id.utf16le_hex}`;
 
-/** Attach the selected carrier identity for the public PE resource report. */
-export const parsePeResources = async (
-  bytes: Buffer,
-  artifact: PeResources["artifact"],
-  input: InspectPeResourcesInput,
-  signal?: AbortSignal,
-): Promise<PeResources> =>
-  boundedResourceResult(
-    {
-      artifact,
-      ...(await parsePeResourceInventory(
-        bufferByteSource(bytes),
-        input.max_entries,
-        signal,
-        readPeResourceLayout(bytes),
-      )),
-    },
-    signal,
-  );
-
 /**
  * Decode PE resources from a verified random-access source without buffering
  * the full PE image in memory.
@@ -110,9 +87,11 @@ export const parsePeResourcesFromSource = async (
         input.max_entries,
         signal,
         layout,
+        input.max_metadata_bytes,
       )),
     },
     signal,
+    input.max_metadata_bytes,
   );
 };
 
@@ -129,8 +108,10 @@ export const readPeResourceEntries = async (
       maxEntries,
       signal,
       layout,
+      PE_RESOURCE_METADATA_BUDGET.default_value,
     ),
     signal,
+    PE_RESOURCE_METADATA_BUDGET.default_value,
   ).resources;
 
 /**
@@ -144,6 +125,7 @@ const parsePeResourceInventory = async (
   maxEntries: number,
   signal: AbortSignal | undefined,
   layout: PeResourceLayout,
+  metadataBudget: number,
 ): Promise<PeResourceInventory> => {
   signal?.throwIfAborted();
   const readBytes = (offset: number, length: number): Promise<Buffer> =>
@@ -157,11 +139,11 @@ const parsePeResourceInventory = async (
   let examined = 0;
   let metadataBytes = 0;
   const ensureCapacity = (projectedBytes: number): void => {
-    if (metadataBytes + projectedBytes > METADATA_BYTES)
+    if (metadataBytes + projectedBytes > metadataBudget)
       limit(
-        "PE resource metadata exceeds the 8 MiB complete-result allocation budget.",
+        `PE resource metadata exceeds max_metadata_bytes (${String(metadataBudget)}).`,
         METADATA_LIMIT,
-        METADATA_BYTES,
+        metadataBudget,
       );
   };
   const accountBytes = (projectedBytes: number): void => {
@@ -170,7 +152,7 @@ const parsePeResourceInventory = async (
   };
   const account = (value: unknown): void => {
     // Rows are retained in arrays; reserve a separator along with each row.
-    accountBytes(jsonBytes(value, METADATA_BYTES - metadataBytes - 1) + 1);
+    accountBytes(jsonBytes(value, metadataBudget - metadataBytes - 1) + 1);
   };
   const reserveDecodedName = (utf16Units: number): void => {
     // A JSON string can need six ASCII bytes per UTF-16 code unit (for example,
@@ -180,12 +162,15 @@ const parsePeResourceInventory = async (
     ensureCapacity(projectedBytes);
   };
   const root = layout.size === 0 ? 0 : layout.map(layout.rva, layout.size);
+  // Farthest tree byte read, relative to the root, to compare with Size.
+  let walked = 0;
   const relative = (at: number, length: number): number => {
     if (!peResourceRangeFits(at, length, layout.size))
       peFailure(
-        "Resource directory offset leaves the declared resource interval.",
+        "Resource directory offset leaves the file-backed resource interval.",
       );
     requirePeExtent(source.size, root + at, length);
+    walked = Math.max(walked, at + length);
     return root + at;
   };
   const recordRange = (
@@ -376,12 +361,19 @@ const parsePeResourceInventory = async (
   return {
     format: layout.format,
     machine: layout.machine,
+    image_base: layout.imageBase,
     directory:
-      layout.size === 0
+      layout.size === 0 || layout.directoryAt === null
         ? null
         : {
             rva: layout.rva,
-            location: { offset: root, bytes: layout.size },
+            location: {
+              offset: root,
+              bytes: Math.max(
+                walked,
+                Math.min(layout.declaredSize, layout.size),
+              ),
+            },
             data_directory_location: { offset: layout.directoryAt, bytes: 8 },
           },
     directories,
@@ -392,6 +384,13 @@ const parsePeResourceInventory = async (
       examined_entries: examined,
       resources: resources.length,
     },
+    header_anomalies:
+      walked > layout.declaredSize
+        ? [
+            ...layout.headerAnomalies,
+            peDirectorySizeAnomaly("resource", 2, layout.declaredSize, walked),
+          ]
+        : [...layout.headerAnomalies],
     limitations: [
       "Static PE32/PE32+ type/name/language resource inventory; payloads other than RT_GROUP_ICON remain opaque.",
       "Icon candidates are resource-table relationships. Language fallback, image decoding and actual shell/window loading are not observed.",
@@ -403,13 +402,14 @@ const parsePeResourceInventory = async (
 const boundedResourceResult = <Report extends PeResourceInventory>(
   report: Report,
   signal: AbortSignal | undefined,
+  metadataBudget: number,
 ): Report => {
   signal?.throwIfAborted();
-  if (jsonBytes(report, METADATA_BYTES) > METADATA_BYTES)
+  if (jsonBytes(report, metadataBudget) > metadataBudget)
     limit(
-      "PE resource result exceeds the 8 MiB allocation budget.",
+      `PE resource result exceeds max_metadata_bytes (${String(metadataBudget)}).`,
       METADATA_LIMIT,
-      METADATA_BYTES,
+      metadataBudget,
     );
   return report;
 };

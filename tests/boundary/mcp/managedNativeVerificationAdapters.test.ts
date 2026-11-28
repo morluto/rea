@@ -14,7 +14,10 @@ import { managedApplicationGraphReferenceInputSchema } from "../../../src/domain
 import { managedNativeVerificationResultSchema } from "../../../src/domain/managed/managedNativeVerificationSchemas.js";
 import { buildManagedPeFixture } from "../../../src/dotnet/ManagedPe.fixture.js";
 import { fileLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
-import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import {
+  expectAdapterErrorParity,
+  parseMcpToolError,
+} from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
@@ -126,7 +129,11 @@ cliTest(
       ],
     });
     expect(wrongCommand.exitCode, wrongCommand.stderr).toBe(1);
-    expect(wrongCommand.json).toMatchObject(wrongError);
+    expectAdapterErrorParity(
+      wrongError,
+      wrongCommand.json,
+      "project_managed_application_graph",
+    );
 
     const control = await fileMcp.client.callTool({
       name: "project_managed_application_graph",

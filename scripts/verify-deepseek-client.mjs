@@ -10,6 +10,8 @@ import { pathExists } from "./lib/verify-package-core.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { bindVerifierCommandInterruption } from "./lib/verifier-command-interruption.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import { readClientVersion } from "./verify/clients/version.mjs";
+import { receiptContext, publishReceipt } from "./verify/clients/receipt.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
 import {
   CLIENT_JAVASCRIPT_FIXTURE_SOURCE,
@@ -29,7 +31,10 @@ import {
   hasDeepSeekFinalEvent,
   hasDeepSeekSkillBody,
 } from "./verify/clients/deepseek-evidence.mjs";
-import { createOpenAiModelFixture } from "./verify/clients/model-fixture.mjs";
+import {
+  createOpenAiModelFixture,
+  toolCallMessage,
+} from "./verify/clients/model-fixture.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 const expectedFinal = "REA_CLIENT_COMPATIBILITY_OK";
@@ -105,14 +110,9 @@ await withVerifierCleanup(async () => {
       },
     );
     await writeFile(join(target, "app.js"), CLIENT_JAVASCRIPT_FIXTURE_SOURCE);
-    clientVersion = (
-      await commands.exec(command, ["--version"], {
-        env: environment,
-        cwd: workspace,
-        timeout: 30_000,
-        stdin: "pipe",
-      })
-    ).stdout.trim();
+    clientVersion = await readClientVersion(commands, command, environment, {
+      cwd: workspace,
+    });
     const runRea = async (args, artifact) => {
       const result = await commands.exec(
         process.execPath,
@@ -211,17 +211,8 @@ await withVerifierCleanup(async () => {
           finalSeen = true;
           return { role: "assistant", content: expectedFinal };
         }
-        const call = (name, args) => ({
-          role: "assistant",
-          content: null,
-          tool_calls: [
-            {
-              id: `call_rea_${requestIndex}`,
-              type: "function",
-              function: { name, arguments: JSON.stringify(args) },
-            },
-          ],
-        });
+        const call = (name, args) =>
+          toolCallMessage(`call_rea_${requestIndex}`, name, args);
         if (!skillRequested) {
           assert(tools.some((tool) => tool.name === "skill"));
           skillRequested = true;
@@ -401,13 +392,7 @@ await withVerifierCleanup(async () => {
       lifecycle,
       passed: passed && reason === undefined,
       interruption: reason?.message,
-      artifacts: lab,
-      runtimeRoot,
-      host: {
-        platform: process.platform,
-        architecture: process.arch,
-        node: process.versions.node,
-      },
+      ...receiptContext(lab, runtimeRoot),
       modelFixture:
         "loopback custom OpenAI-compatible adapter; no live DeepSeek provider claim",
       modelContextWindow: 1000000,
@@ -425,15 +410,6 @@ await withVerifierCleanup(async () => {
       fixtureFailure: fixture?.failure,
       verifier: completed,
     };
-    const publishReceipt = () =>
-      withVerifierCleanup(
-        () =>
-          writeFile(
-            join(lab, "receipt.json"),
-            JSON.stringify(receipt, null, 2),
-          ),
-        [() => console.log(JSON.stringify(receipt))],
-      );
     await withVerifierCleanup(() => {
       if (!receipt.passed) return;
       try {
@@ -442,7 +418,7 @@ await withVerifierCleanup(async () => {
         receipt.passed = false;
         throw cause;
       }
-    }, [publishReceipt]);
+    }, [() => publishReceipt(receipt)]);
   },
   () => {
     const reason = commands.finish();

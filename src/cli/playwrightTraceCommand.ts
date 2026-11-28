@@ -33,6 +33,7 @@ export const registerPlaywrightTraceCommand = (
       callerPaths: ["path"],
       evidenceDelivery: true,
       viewDelivery: { invalidJson: "view must be valid JSON" },
+      jsonText: ["trace_limits"],
       fields: {
         path: { description: "Local Playwright trace ZIP path" },
         view: {

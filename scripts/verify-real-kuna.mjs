@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
 import { inspectKunaInstallation } from "../dist/kuna/KunaInstallation.js";
 import { HOST_PLATFORM } from "../dist/platform/HostPlatform.js";
 import {
@@ -45,6 +46,7 @@ import {
 } from "./lib/verifier-run.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 const { values } = parseArgs({
   options: {
     targets: { type: "string" },
@@ -217,7 +219,9 @@ const openServer = async (provider, kunaSettings = {}) => {
     },
     stderr: "ignore",
   });
-  const client = new Client({ name: "rea-real-kuna", version: "1" });
+  const client = completeEvidenceClient(
+    new Client({ name: "rea-real-kuna", version: "1" }),
+  );
   let peakKiB = 0;
   const cpu = new Map();
   const sampleOnce = async () => {
@@ -337,9 +341,7 @@ const openServer = async (provider, kunaSettings = {}) => {
 
 /** Verify a forced inventory timeout can be retried without changing jobs. */
 const verifyProjectTimeoutRecovery = async (path, address) => {
-  const before = createHash("sha256")
-    .update(await readFile(path))
-    .digest("hex");
+  const before = await sha256File(path);
   const settings = {
     REA_KUNA_JOBS: "2",
     REA_KUNA_TIMEOUT_MS: "60000",
@@ -378,9 +380,7 @@ const verifyProjectTimeoutRecovery = async (path, address) => {
     await retry.close(retryFailure);
   }
   assert.equal(
-    createHash("sha256")
-      .update(await readFile(path))
-      .digest("hex"),
+    await sha256File(path),
     before,
     "Kuna timeout recovery changed the target",
   );
@@ -406,9 +406,7 @@ const verifyKuna = async (
     minimumTraceReferences = {},
   } = {},
 ) => {
-  const sha256 = createHash("sha256")
-    .update(await readFile(path))
-    .digest("hex");
+  const sha256 = await sha256File(path);
   const cold = await openServer({ path, id: "kuna" });
   const answers = [];
   let coldFailure;
@@ -478,6 +476,7 @@ const verifyKuna = async (
       assert.ok(missing.message.includes("rea_missing_xref_inventory_name"));
       assert.equal(missing.recovery, undefined);
       const procedure = await cold.callError("procedure_address", {
+        detail: "complete",
         procedure: "rea_missing_procedure_name",
       });
       assert.equal(procedure.code, "invalid_request");
@@ -489,6 +488,7 @@ const verifyKuna = async (
         ),
       );
       const missingAddress = await cold.callError("procedure_address", {
+        detail: "complete",
         procedure: "0x00000001",
       });
       assert.equal(missingAddress.code, "invalid_request");
@@ -525,6 +525,7 @@ const verifyKuna = async (
           }),
       });
       const pseudocode = await cold.call("procedure_pseudo_code", {
+        detail: "complete",
         procedure: address,
       });
       assert.equal(pseudocode.structured.subject.identity.sha256, sha256);
@@ -546,6 +547,7 @@ const verifyKuna = async (
       );
       assert.match(assembly.value, new RegExp(`:  ; ${address}\\n`, "u"));
       const exported = await cold.call("procedure_pseudo_code", {
+        detail: "complete",
         procedure: address,
       });
       const recorded = exported.structured.raw_result.source;
@@ -640,6 +642,7 @@ const verifyKuna = async (
     for (const answer of answers)
       if (answer.address !== undefined) {
         const reread = await warm.call("procedure_pseudo_code", {
+          detail: "complete",
           procedure: answer.address,
         });
         assert.equal(
@@ -664,9 +667,11 @@ const measureGhidra = async (path, functions) => {
   try {
     for (const [name, address] of functions) {
       const cold = await server.call("procedure_pseudo_code", {
+        detail: "complete",
         procedure: address,
       });
       const warm = await server.call("procedure_pseudo_code", {
+        detail: "complete",
         procedure: address,
       });
       answers.push({

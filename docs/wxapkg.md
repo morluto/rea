@@ -27,18 +27,28 @@ that exceed the file, truncated rows, invalid UTF-8 names, and counts that
 cannot fit their table are malformed-input errors. All member extents must
 fit the data region declared by one index-length convention.
 
+Coverage is complete only when the header, the parsed rows and the members
+account for every file byte. Members may share one stored range, so their
+union is measured. Unused index bytes after the last row, gaps between members
+and bytes after the last member belong to no entry. Coverage is then unknown,
+and a limitation gives their total length, range count and first offset.
+
 ## Resource bounds
 
-These are resource policies, not format maxima. The encoded member table is
-limited to 16 MiB and its buffer, parsed rows, retained entries and escaped
-path projections share a conservative 64 MiB admission budget, reserved
-before allocation; a declared member name is limited to 64 KiB. A reader
-admits four active member streams. The shared archive plaintext-work ceiling
-is the larger of 256 MiB and 500 times carrier size: every declared member
-extent is charged, including aliases that overlap one stored range. A
-separate member-I/O budget allows four times the larger of 1,024 and the sum
-of the member count and declared 64 KiB plaintext chunks, bounding repeated
-tiny-member reads independently of output bytes.
+These are resource policies, not format maxima, and each is a per-call field
+of `artifact_limits` on `inspect_artifact` and `extract_artifact`; a refusal
+reports the field in `details.reader_limit`
+([artifact reader admission](reference/limits-and-recovery.md#artifact-reader-admission)).
+`wxapkg.table_bytes` (default 16 MiB) bounds the encoded member table, and its
+buffer, parsed rows, retained entries and escaped path projections share
+`wxapkg.directory_bytes` (default 64 MiB), reserved before allocation. A
+declared member name is limited to 64 KiB. A reader admits four active member
+streams. `artifact_limits.expanded_bytes` bounds archive plaintext work;
+omitted, it is the larger of 256 MiB and 500 times carrier size. Every declared
+member extent is charged, including aliases that overlap one stored range. A
+separate member-I/O budget, derived from that admission, allows four times the
+larger of 1,024 and the sum of the member count and declared 64 KiB plaintext
+chunks, bounding repeated tiny-member reads independently of output bytes.
 
 ## CLI
 
@@ -59,7 +69,7 @@ Synthetic fixtures cover plaintext headers, multiple members, empty members,
 chunked reads, unicode and dotted names, malformed marks, truncated tables,
 invalid UTF-8, table and directory-budget admission, member extents inside
 the header, the index, or beyond the declared data region, a data region
-declared past the file, a one-byte member whose table length includes the
+declared past the file, unused index bytes and bytes after the last member, a one-byte member whose table length includes the
 member count, an overstated first row consuming its successor, V1MMWX
 packages, cancellation inside member reads, paused iteration, close during
 I/O, cleanup retry, stream capacity and carrier freshness. Compiled

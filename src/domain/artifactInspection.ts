@@ -6,6 +6,7 @@ import {
   immutableJsonSnapshotMember,
 } from "./immutableJson.js";
 import {
+  artifactCrc32PairSchema,
   artifactDfuCrc32PairSchema,
   artifactIntegrityPairOf,
   artifactSha256PairSchema,
@@ -25,7 +26,12 @@ import {
   type StandaloneArtifactFormat,
 } from "./artifactFormatRecognition.js";
 import { uniqueSorted } from "./canonicalOrdering.js";
-import { evidenceSchema, parseEvidence, type Evidence } from "./evidence.js";
+import {
+  evidenceSchema,
+  immutableEvidence,
+  isImmutableEvidence,
+  type Evidence,
+} from "./evidence.js";
 import { offsetText } from "./firmware/espImageStructures.js";
 import { jsonValueSchema } from "./jsonValue.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
@@ -67,6 +73,7 @@ const inspectionContradictionSchema = z.union([
   inspectionContradictionBaseSchema.extend(artifactSha256PairSchema.shape),
   inspectionContradictionBaseSchema.extend(artifactMd5PairSchema.shape),
   inspectionContradictionBaseSchema.extend(artifactDfuCrc32PairSchema.shape),
+  inspectionContradictionBaseSchema.extend(artifactCrc32PairSchema.shape),
 ]);
 
 const nextProbeSchema = z.strictObject({
@@ -89,6 +96,13 @@ const unexploredBranchSchema = z.strictObject({
 });
 
 /** Provider-neutral inspection result with its atomic source Evidence. */
+const inspectionSubstepFields = {
+  substep_id: prefixedDigestSchema("ais"),
+  operation: z.literal("inventory_artifact"),
+  status: z.literal("completed"),
+  evidence_id: evidenceIdSchema,
+} as const;
+
 export const artifactInspectionResultSchema = z.strictObject({
   inspection_id: prefixedDigestSchema("ai"),
   subject: z.strictObject({
@@ -100,10 +114,7 @@ export const artifactInspectionResultSchema = z.strictObject({
   substeps: z
     .array(
       z.strictObject({
-        substep_id: prefixedDigestSchema("ais"),
-        operation: z.literal("inventory_artifact"),
-        status: z.literal("completed"),
-        evidence_id: evidenceIdSchema,
+        ...inspectionSubstepFields,
         evidence: evidenceSchema.safeExtend({
           operation: z.literal("inventory_artifact"),
           normalized_result: artifactInventoryResultSchema,
@@ -231,14 +242,41 @@ export const createArtifactInspection = (
       "Inspection derives bounded static hypotheses and next probes; it does not execute the artifact or claim format-specific semantics.",
     ]),
   };
-  return artifactInspectionResultSchema.parse({
+  return constructedInspectionSchema.parse({
     ...semantic,
     inspection_id: `ai_${digestCanonicalValue(semantic, "Artifact inspection")}`,
   });
 };
 
+/**
+ * The result as constructed here: each substep holds the sealed inventory
+ * Evidence authenticated above. Checking it by seal keeps that snapshot
+ * instead of parsing and copying the complete inventory again, so a session
+ * that records it as a source borrows it too.
+ */
+const constructedInspectionSchema = artifactInspectionResultSchema.safeExtend({
+  substeps: z
+    .array(
+      z.strictObject({
+        ...inspectionSubstepFields,
+        evidence: z.custom<
+          z.infer<
+            typeof artifactInspectionResultSchema
+          >["substeps"][number]["evidence"]
+        >(
+          (value) =>
+            isImmutableEvidence(value as Evidence) &&
+            (value as Evidence).operation === "inventory_artifact",
+          "Expected the sealed inventory_artifact Evidence",
+        ),
+      }),
+    )
+    .min(1),
+});
+
 const parseInventoryEvidence = (input: unknown): Evidence => {
-  const evidence = parseEvidence(input);
+  // Authenticate once and seal, borrowing an already sealed snapshot.
+  const evidence = immutableEvidence(input);
   if (evidence.operation !== "inventory_artifact")
     throw new TypeError(
       "Artifact inspection substep requires inventory_artifact Evidence",
@@ -337,7 +375,10 @@ const contradictions = (
       statement:
         value.logical_path === "."
           ? "The container's declared integrity contradicts its observed bytes."
-          : `Declared integrity for ${value.logical_path} contradicts observed bytes.`,
+          : "signing_explanation" in value &&
+              value.signing_explanation !== undefined
+            ? `Declared integrity for ${value.logical_path} contradicts observed bytes; removing the Authenticode certificate table restores the declared SHA-256.`
+            : `Declared integrity for ${value.logical_path} contradicts observed bytes.`,
       occurrence_id: value.occurrence_id,
       ...artifactIntegrityPairOf(value),
       evidence_id: evidenceId,
@@ -425,13 +466,62 @@ const formatProbes = (
           },
         ]
       : [];
+  if (format === "bflt") return bfltProbes(inventory);
   if (format === "esp-image") return espFlashDumpProbes(inventory);
+  if (format === "esp-flash-image") return espFlashImageProbes(inventory);
+  if (format === "zip") return zipPackageProbes(inventory);
   if (format === "fit") return fitProbes(inventory);
+  if (format === "android-dtbo") return androidDtboProbes(inventory);
   if (format === "directory") return directoryProbes(inventory);
   if (format === "pe")
     return nativeImageProbes({ format, managed: rootImage?.managed });
   return probesForFormat(format);
 };
+
+// text.bin starts with the 64-byte bFLT header at file offset 0 and the
+// header names no CPU. Only ARM M-profile (with architecture_variant)
+// accepts a separate base_address; other raw-binary loads map offset 0 and
+// start analysis at entry_point, in the header rather than at base + entry.
+const bfltProbes = (
+  inventory: ArtifactInventoryResult,
+): ArtifactInspectionResult["next_probes"] => {
+  const root = inventory.occurrences.find(
+    ({ logical_path }) => logical_path === ".",
+  )?.format_metadata;
+  const text = inventory.occurrences.some(
+    (row) =>
+      row.format_metadata?.kind === "bflt-segment" &&
+      row.format_metadata.segment === "text",
+  );
+  if (root?.kind !== "bflt" || !text) return [];
+  const entryOffset = offsetText(root.entry);
+  return [
+    {
+      operation: "open_binary",
+      rationale: `Extract text.bin with extract_artifact (the bFLT header names no CPU; relocations are not applied). For ARM M-profile (Cortex-M) targets, open it with format raw-binary, architecture arm, an architecture_variant, base_address set to a chosen load base and entry_point set to that base plus ${entryOffset}. For other CPUs, raw-binary maps file offset 0 at entry_point and starts analysis there, which is the bFLT header, not code; the program entry is the chosen base plus ${entryOffset}, so code starts there.`,
+      authority: "native-analysis-provider",
+    },
+  ];
+};
+
+// A ZIP whose root holds `extension.vsixmanifest` is a VS Code extension
+// package; the VSIX reader decodes its manifests without installing it.
+const zipPackageProbes = (
+  inventory: ArtifactInventoryResult,
+): ArtifactInspectionResult["next_probes"] =>
+  inventory.occurrences.some(
+    ({ logical_path, entry_kind }) =>
+      logical_path === "extension.vsixmanifest" && entry_kind === "file",
+  )
+    ? [
+        {
+          operation: "inspect_vsix_package",
+          rationale:
+            "Decode the VS Code extension manifests, activation events and native members without installing or running the extension.",
+          authority: "artifact-bytes",
+        },
+      ]
+    : [];
 
 // An ESP image that its reader found at the start of a flash dump read from
 // a later address is better read as that dump.
@@ -449,6 +539,39 @@ const espFlashDumpProbes = (
     {
       operation: "open_binary",
       rationale: `Reopen the file with format esp-flash-image and flash_offset ${offset}, then inspect_artifact: it is a flash dump read from flash ${offset}, with a partition table at file offset ${offsetText(dump.table_file_offset)}.`,
+      authority: "artifact-bytes",
+    },
+  ];
+};
+
+// A flash dump holding a non-erased NVS partition can be decoded directly in
+// place at its 4096-byte aligned file offset, or from its extracted slice.
+const espFlashImageProbes = (
+  inventory: ArtifactInventoryResult,
+): ArtifactInspectionResult["next_probes"] => {
+  const nvs = inventory.occurrences.find(
+    (row) =>
+      row.artifact_format === "esp-nvs" ||
+      (row.format_metadata?.kind === "esp-flash-partition" &&
+        row.format_metadata.type_name === "data" &&
+        row.format_metadata.subtype_name === "nvs" &&
+        (row.format_metadata.written_bytes ?? 0) > 0 &&
+        row.source_location !== null &&
+        row.source_location.length >= 4096),
+  );
+  if (nvs === undefined) return [];
+  const loc = nvs.source_location;
+  const rationale =
+    loc !== null &&
+    loc.offset % 4096 === 0 &&
+    loc.length >= 4096 &&
+    loc.length % 4096 === 0
+      ? `Decode ${JSON.stringify(nvs.logical_path)} with inspect_esp_nvs using partition_offset ${String(loc.offset)} and partition_bytes ${String(loc.length)}, or extract_artifact first.`
+      : `Extract ${JSON.stringify(nvs.logical_path)} with extract_artifact, then decode it with inspect_esp_nvs.`;
+  return [
+    {
+      operation: "inspect_esp_nvs",
+      rationale,
       authority: "artifact-bytes",
     },
   ];
@@ -476,10 +599,11 @@ const fitProbes = (
       entryPoint: image.load,
       fileBytes: row.declared_size,
     });
-    if (!admitted.ok) continue;
+    // A selected entry never leaves admission waiting on a vector-table read.
+    if (!admitted.ok || "admit" in admitted.value) continue;
     rawProbe = {
       operation: "open_binary",
-      rationale: `Extract ${JSON.stringify(row.logical_path)} with extract_artifact, then open those uncompressed, unciphered bytes with format raw-binary, architecture ${admitted.value.architecture} and entry_point ${admitted.value.entryPoint}. This maps offset 0 and seeds analysis at that address; the declared entry is absent or equal to load.`,
+      rationale: `Extract ${JSON.stringify(row.logical_path)} with extract_artifact, then open those uncompressed, unciphered bytes with format raw-binary, architecture ${admitted.value.architecture} and entry_point ${admitted.value.load.entryPoint}. This maps offset 0 and seeds analysis at that address; the declared entry is absent or equal to load.`,
       authority: "native-analysis-provider",
     };
     break;
@@ -497,6 +621,34 @@ const fitProbes = (
       : []),
     ...(rawProbe === undefined ? [] : [rawProbe]),
   ];
+};
+
+const androidDtboProbes = (
+  inventory: ArtifactInventoryResult,
+): ArtifactInspectionResult["next_probes"] => {
+  const entries = inventory.occurrences.flatMap((row) =>
+    row.format_metadata?.kind === "android-dtbo-entry"
+      ? [{ row, entry: row.format_metadata }]
+      : [],
+  );
+  if (entries.length === 0) return [];
+  const probes: ArtifactInspectionResult["next_probes"][number][] = [
+    {
+      operation: "extract_artifact",
+      rationale:
+        "Extract DTBO entry payloads with extract_artifact into a fresh owned directory to inspect individual .dtbo blobs or decompress compressed entries separately.",
+      authority: "artifact-bytes",
+    },
+  ];
+  if (entries.some(({ entry }) => entry.fdt_magic_valid)) {
+    probes.push({
+      operation: "inspect_devicetree",
+      rationale:
+        "Extract uncompressed DTBO entries starting with 0xd00dfeed using extract_artifact, then inspect those extracted .dtbo files with inspect_devicetree.",
+      authority: "artifact-bytes",
+    });
+  }
+  return probes;
 };
 
 // An application bundle directory is only a container, so its probes follow
@@ -622,6 +774,21 @@ const STANDALONE_FORMAT_READERS = {
     operation: "inspect_devicetree",
     rationale:
       "Decode the flattened devicetree header, reservations and node tree.",
+  },
+  "esp-nvs": {
+    operation: "inspect_esp_nvs",
+    rationale:
+      "Decode ESP-IDF Non-Volatile Storage pages, CRC32 checksums, namespaces, keys and values without executing code.",
+  },
+  deb: {
+    operation: "inspect_deb_package",
+    rationale:
+      "Read the ar container, control metadata, maintainer scripts and data.tar inventory without installing or executing the package.",
+  },
+  "labview-rsrc": {
+    operation: "inspect_labview_artifact",
+    rationale:
+      "Inventory RSRC blocks, section codings and heap presence without executing the artifact.",
   },
 } as const satisfies Record<
   "uefi" | StandaloneArtifactFormat,

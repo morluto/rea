@@ -284,12 +284,13 @@ export const projectSemanticReturnValues = (
   for (const callable of context.ir.callables)
     for (const site of callable.returnSites) {
       const returnNode = context.returnSiteNodes.get(site.returnSiteId);
+      const valueLocation = site.valueExpressionLocation ?? site.location;
       const references =
         site.valueExpressionLocation !== null &&
         expressions.has(javascriptSourceRangeKey(site.valueExpressionLocation))
           ? []
           : context
-              .referenceNodesWithin(site.location)
+              .referenceNodesWithin(valueLocation)
               .filter(
                 (reference) =>
                   reference.function_node_id === returnNode?.function_node_id,

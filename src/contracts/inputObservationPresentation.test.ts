@@ -11,8 +11,7 @@ import {
   COMPLETE_OBSERVATION_GUIDANCE,
   toolOutputSchemaWithMetadata,
 } from "./toolSchemaMetadata.js";
-import { compareBrowserScenariosInputSchema } from "../domain/browserScenarioDiffValues.js";
-import { captureSnapshotSchema } from "../domain/webCaptureDiffSchemas.js";
+import { browserCaptureComparisonRequestSchema } from "../domain/browserCaptureComparison.js";
 
 const browserContract = (name: string) => {
   const found = BROWSER_TOOL_CONTRACTS.find(
@@ -33,19 +32,27 @@ it("advertises complete observations as opaque objects only on the wire", () => 
       .filter((text) => text !== undefined)
       .join(" "),
   });
+  // Each capture is the opaque observation or its exact retained reference.
+  const orRetained = (description: string | undefined) => ({
+    anyOf: [
+      expect.objectContaining({ required: ["kind", "evidence_id"] }),
+      declared(undefined),
+    ],
+    description,
+  });
+  const passive = browserCaptureComparisonRequestSchema.options[0].shape;
+  const scenario = browserCaptureComparisonRequestSchema.options[1].shape;
   expect(advertised).toHaveProperty(
     "properties.before.properties.inspection",
-    declared(captureSnapshotSchema.shape.inspection.description),
+    orRetained(passive.before.shape.inspection.description),
   );
   expect(advertised).toHaveProperty(
     "properties.before.properties.webmcp.anyOf.0",
-    declared(undefined),
+    orRetained(passive.before.shape.webmcp.unwrap().unwrap().description),
   );
   expect(advertised).toHaveProperty(
     "properties.before_scenario",
-    declared(
-      compareBrowserScenariosInputSchema.shape.before_scenario.description,
-    ),
+    orRetained(scenario.before_scenario.description),
   );
   // Analyst-authored controls stay explicit.
   expect(advertised).toHaveProperty(

@@ -63,6 +63,15 @@ import {
   DEFAULT_ZSTD_MAX_FRAMES,
   MINIMUM_ZSTD_MAX_FRAMES,
   MAXIMUM_ZSTD_MAX_FRAMES,
+  DEFAULT_BROWSER_TIMELINE_RETAINED_BYTES,
+  MINIMUM_BROWSER_TIMELINE_RETAINED_BYTES,
+  MAXIMUM_BROWSER_TIMELINE_RETAINED_BYTES,
+  DEFAULT_AGENT_RESULT_BUDGET_BYTES,
+  DEFAULT_CLI_RETAINED_EVIDENCE_BYTES,
+  MAXIMUM_CLI_RETAINED_EVIDENCE_BYTES,
+  MINIMUM_CLI_RETAINED_EVIDENCE_BYTES,
+  MINIMUM_AGENT_RESULT_BUDGET_BYTES,
+  MAXIMUM_AGENT_RESULT_BUDGET_BYTES,
 } from "./analysisResourceLimits.js";
 import {
   JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS,
@@ -70,6 +79,13 @@ import {
   JAVASCRIPT_WORKER_HEAP_MIB_MAXIMUM,
 } from "./javascript/javascriptAnalysisResourceControls.js";
 import { DEFAULT_WASM_COMMAND_TIMEOUT_MS } from "./wasm/wasmArtifact.js";
+import { YARA_SETTING_BOUNDS } from "./yara/yaraMatches.js";
+import { BOUNDED_PRODUCER_LIMITS } from "./producerResourceLimits.js";
+import {
+  DEFAULT_ARTIFACT_MEMBER_COUNT,
+  MAXIMUM_ARTIFACT_READER_COUNT,
+} from "./artifactReaderLimits.js";
+import { AGENT_BUDGET_OPERATIONS } from "./agentBudgetOperations.js";
 interface SettingDefinition {
   readonly environment?: string;
   readonly defaultValue: number | null;
@@ -165,6 +181,7 @@ const hopperAndGhidraBridgeOperations = [
   "inspect_native_load_image",
   "search_bytes",
   "annotate_native_function",
+  "define_native_data_types",
   "inspect_native_data_type",
   "inspect_native_instruction",
   "resolve_native_call_targets",
@@ -182,6 +199,17 @@ export const ANALYSIS_SETTINGS = {
     appliesAt: "next_operation",
     provider: "ghidra",
     operations: ghidraDecompileOperations,
+  },
+  "artifact.member_count": {
+    updateMode: "runtime",
+    environment: "REA_ARTIFACT_MEMBER_COUNT",
+    defaultValue: DEFAULT_ARTIFACT_MEMBER_COUNT,
+    minimum: 1,
+    maximum: MAXIMUM_ARTIFACT_READER_COUNT,
+    unit: "count",
+    appliesAt: "next_operation",
+    provider: "rea-artifact-graph",
+    operations: ["inspect_artifact", "inventory_artifact", "extract_artifact"],
   },
   "asar.max_listing_bytes": {
     updateMode: "runtime",
@@ -429,6 +457,52 @@ export const ANALYSIS_SETTINGS = {
     operations: ["inspect_wasm_artifact"],
     parameter: "command_timeout_ms",
   },
+  "yara.command_timeout_ms": {
+    updateMode: "runtime",
+    ...timer,
+    environment: "REA_YARA_COMMAND_TIMEOUT_MS",
+    defaultValue: YARA_SETTING_BOUNDS.command_timeout_ms.default_value,
+    minimum: YARA_SETTING_BOUNDS.command_timeout_ms.minimum,
+    maximum: YARA_SETTING_BOUNDS.command_timeout_ms.maximum,
+    provider: "yara.command",
+    operations: ["inspect_yara_matches"],
+    parameter: "command_timeout_ms",
+  },
+  "yara.max_output_bytes": {
+    updateMode: "runtime",
+    environment: "REA_YARA_MAX_OUTPUT_BYTES",
+    defaultValue: YARA_SETTING_BOUNDS.max_output_bytes.default_value,
+    minimum: YARA_SETTING_BOUNDS.max_output_bytes.minimum,
+    maximum: YARA_SETTING_BOUNDS.max_output_bytes.maximum,
+    unit: "bytes",
+    appliesAt: "next_operation",
+    provider: "yara.command",
+    operations: ["inspect_yara_matches"],
+    parameter: "max_output_bytes",
+  },
+  "yara.max_matches": {
+    updateMode: "runtime",
+    environment: "REA_YARA_MAX_MATCHES",
+    defaultValue: YARA_SETTING_BOUNDS.max_matches.default_value,
+    minimum: YARA_SETTING_BOUNDS.max_matches.minimum,
+    maximum: YARA_SETTING_BOUNDS.max_matches.maximum,
+    unit: "count",
+    appliesAt: "next_operation",
+    provider: "yara.command",
+    operations: ["inspect_yara_matches"],
+    parameter: "max_matches",
+  },
+  "browser.timeline_retained_bytes": {
+    updateMode: "runtime",
+    defaultValue: DEFAULT_BROWSER_TIMELINE_RETAINED_BYTES,
+    minimum: MINIMUM_BROWSER_TIMELINE_RETAINED_BYTES,
+    maximum: MAXIMUM_BROWSER_TIMELINE_RETAINED_BYTES,
+    unit: "bytes",
+    appliesAt: "next_operation",
+    provider: "rea-cdp-browser",
+    operations: ["observe_web_session"],
+    parameter: "timeline_retained_bytes",
+  },
   "native.matching_representation_bytes": {
     updateMode: "runtime",
     environment: "REA_NATIVE_MATCHING_REPRESENTATION_BYTES",
@@ -571,6 +645,33 @@ export const ANALYSIS_SETTINGS = {
     operations: ["inspect_binary_layout", "inspect_recorded_crash"],
     parameter: "producer_limits.input_bytes",
   },
+  // Session default for omitted producer_limits.output_bytes. Producers whose
+  // own default or maximum differs keep that default until this setting is
+  // set, then clamp an explicit value to their maximum.
+  "producer.output_bytes": {
+    updateMode: "runtime",
+    environment: "REA_PRODUCER_OUTPUT_BYTES",
+    defaultValue: BOUNDED_PRODUCER_LIMITS.output_bytes,
+    minimum: 1,
+    maximum: Number.MAX_SAFE_INTEGER,
+    unit: "bytes",
+    appliesAt: "next_operation",
+    provider: "producer",
+    relatedProviders: [
+      "tshark-capture",
+      "sigrok-recording",
+      "apktool",
+      "rea-artifact-graph",
+    ],
+    operations: [
+      "inspect_packet_capture",
+      "decode_signal_recording",
+      "inspect_signal_decoders",
+      "decode_android_resources",
+      "inspect_asset_catalog",
+    ],
+    parameter: "producer_limits.output_bytes",
+  },
   "windows.change_time_drift_ms": {
     updateMode: "runtime",
     environment: "REA_WINDOWS_CHANGE_TIME_DRIFT_MS",
@@ -649,6 +750,30 @@ export const ANALYSIS_SETTINGS = {
       "inspect_android_jni_bindings",
     ],
   },
+  "delivery.agent_result_budget_bytes": {
+    updateMode: "runtime",
+    environment: "REA_AGENT_RESULT_BUDGET_BYTES",
+    defaultValue: DEFAULT_AGENT_RESULT_BUDGET_BYTES,
+    minimum: MINIMUM_AGENT_RESULT_BUDGET_BYTES,
+    maximum: MAXIMUM_AGENT_RESULT_BUDGET_BYTES,
+    unit: "bytes",
+    appliesAt: "next_operation",
+    provider: "rea-delivery",
+    operations: AGENT_BUDGET_OPERATIONS,
+  },
+  // One-shot CLI invocations read only the launch seed; MCP retains
+  // over-budget Evidence in its session instead.
+  "delivery.cli_retained_evidence_bytes": {
+    updateMode: "runtime",
+    environment: "REA_CLI_RETAINED_EVIDENCE_BYTES",
+    defaultValue: DEFAULT_CLI_RETAINED_EVIDENCE_BYTES,
+    minimum: MINIMUM_CLI_RETAINED_EVIDENCE_BYTES,
+    maximum: MAXIMUM_CLI_RETAINED_EVIDENCE_BYTES,
+    unit: "bytes",
+    appliesAt: "next_operation",
+    provider: "rea-delivery",
+    operations: AGENT_BUDGET_OPERATIONS,
+  },
 } as const satisfies Record<AnalysisSettingId, SettingDefinition>;
 export const analysisSettingIds = Object.keys(
   ANALYSIS_SETTINGS,
@@ -686,6 +811,7 @@ export const analysisParameterLimitSchema = z.strictObject({
   maximum: z.number(),
   default_value: z.number(),
   applies_at: z.literal("next_call"),
+  required_value: z.number().exactOptional(),
 }) satisfies z.ZodType<AnalysisParameterLimit>;
 
 /** The control a result records for a refusal: a setting or a request parameter. */

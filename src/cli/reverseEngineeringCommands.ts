@@ -170,6 +170,7 @@ export const registerReverseEngineeringCommands = (
           signal,
           detail: delivery.detail,
           evidenceOutput: delivery.evidenceOutput,
+          rerunRecoversResult: delivery.rerunRecoversResult,
         })
       : result.error;
   };

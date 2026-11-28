@@ -47,10 +47,8 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { writeOrderedZip } from "../../fixtures/artifactEntryOrder.js";
-import {
-  createJadxProtocolFixture,
-  verifyJadxFixtureCleanup,
-} from "../../fixtures/android/jadx.js";
+import { expectProviderLaunchCleanup } from "../../support/process/expectProviderLaunchCleanup.js";
+import { createJadxProtocolFixture } from "../../fixtures/android/jadx.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 async function assertAndroidPackageSelectedFacetContract(options: {
@@ -351,8 +349,15 @@ it.skipIf(process.platform === "win32")(
     expect(view.artifact.sha256).not.toBe(report.engine.artifact_sha256);
     expect(receipt.evidence_id).not.toBe(parent.evidence_id);
     expect(receipt.evidence_links).toEqual([parent.evidence_id]);
-    const { manifest, ...declarations } = report;
+    const { manifest, components, ...declarations } = report;
     expect(view.summary).toMatchObject(declarations);
+    // Component rows page through the components view; the summary counts them.
+    const { items, ...componentFacts } = components;
+    expect(view.summary.components).toMatchObject({
+      ...componentFacts,
+      matching_components: items.length,
+    });
+    expect(view.summary.components).not.toHaveProperty("items");
     expect(view.summary.manifest).toEqual({
       status: manifest.status,
       reported_total_bytes: manifest.reported_total_bytes,
@@ -429,7 +434,7 @@ it.skipIf(process.platform === "win32")(
     ).toEqual(parent);
     expect(launches).toHaveLength(1);
     await harness.close();
-    await verifyJadxFixtureCleanup(launches);
+    await expectProviderLaunchCleanup(launches);
   },
 );
 

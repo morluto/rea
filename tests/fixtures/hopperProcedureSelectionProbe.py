@@ -14,7 +14,13 @@ class Procedure:
         return segment
 class Segment:
     def getNameAtAddress(self, address):
+        if address == 0x40B000:
+            return "CloseHandle"
         return "entry" if address == 0x401000 else "inner"
+    def getReferencesOfAddress(self, address):
+        # Two call sites inside the procedure (one repeated), a data reference
+        # outside it, and Hopper's invalid-address sentinel.
+        return [0x40C000, 0x401010, 0x401010, 0x401020, 0xFFFFFFFFFFFFFFFF] if address == 0x40B000 else []
     def getProcedureAtAddress(self, address):
         # 0x40b000 models an import address-table slot outside every procedure.
         return procedure if 0x401000 <= address < 0x402000 else None
@@ -60,7 +66,18 @@ for selector in [
     "missing_fn",
 ]:
     select(selector, selector)
+# Incoming references answer an explicit address outside every procedure;
+# a name outside every procedure still fails, for REA's selector owner.
+incoming = {}
+for selector in ["0x40b000", "CloseHandle"]:
+    for key, method in [("references", "_procedure_references"), ("callers", "_caller_base")]:
+        try:
+            incoming["%s %s" % (key, selector)] = bridge[method](
+                document, {"procedure": selector, "direction": "incoming"}
+            )
+        except Exception as error:
+            incoming["%s %s" % (key, selector)] = {"diagnostic": bridge["_safe_diagnostic"](error)}
 # An omitted selector reads the cursor, here parked outside every procedure.
 document.cursor = 0x40B000
 select("<cursor>", None)
-print(json.dumps({"results": results, "name_lookups": document.names}))
+print(json.dumps({"results": results, "incoming": incoming, "name_lookups": document.names}))

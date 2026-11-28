@@ -56,6 +56,7 @@ export const registerAndroidCommands = (
         signal,
         detail: delivery.detail,
         evidenceOutput: delivery.evidenceOutput,
+        rerunRecoversResult: delivery.rerunRecoversResult,
         ...(delivery.view === undefined ? {} : { view: delivery.view }),
       });
     };
@@ -129,7 +130,14 @@ export const registerAndroidCommands = (
     {
       description: "Inspect one exact APK class's member inventory",
       positionals: ["path", "class_name"],
+      fields: {
+        view: {
+          description:
+            "JSON android-class methods, fields, inner-classes or mapping-symbols view; requires --detail summary and --evidence_output",
+        },
+      },
       evidenceDelivery: true,
+      viewDelivery: { invalidJson: "view must be valid JSON" },
     },
     run("inspect_android_class"),
   );
@@ -164,7 +172,13 @@ export const registerAndroidCommands = (
           description:
             "Index among defined methods or observed external prototypes listed by an ambiguous query",
         },
+        view: {
+          description:
+            "JSON android-references top-classes or references view; requires --detail summary and --evidence_output",
+        },
       },
+      evidenceDelivery: true,
+      viewDelivery: { invalidJson: "view must be valid JSON" },
     },
     run("trace_android_references"),
   );

@@ -1,6 +1,3 @@
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
-
 import { expect, it } from "vitest";
 
 import {
@@ -12,18 +9,14 @@ import {
   uf2File,
   uf2Image,
 } from "../domain/firmware/uf2.fixture.js";
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { createTestTempFile } from "../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
 
 const INVENTORY_LIMITATION =
   "UF2 inventory decodes main-flash block payloads into address-contiguous regions per familyID. It does not establish CPU, byte order, memory map, or an entry point; a familyID names a target family, and gaps are unwritten, not zero.";
 
-const writeImage = async (name: string, bytes: Uint8Array): Promise<string> => {
-  const directory = await createTestTempDirectory("rea-uf2-");
-  const path = join(directory, name);
-  await writeFile(path, bytes);
-  return path;
-};
+const writeImage = (name: string, bytes: Uint8Array): Promise<string> =>
+  createTestTempFile("rea-uf2-", name, bytes);
 
 const APP = patternBytes(600, 5);
 const ABSOLUTE = uf2Block({

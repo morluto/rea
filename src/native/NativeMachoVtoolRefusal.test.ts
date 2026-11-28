@@ -9,6 +9,7 @@ import {
 import { inspectNativeMacho } from "./NativeMachoInspection.js";
 import {
   inspectionFatContext,
+  inspectionInvocation,
   inspectionReader,
   unreadEncryption,
 } from "./NativeMachoInspection.fixture.js";
@@ -48,16 +49,7 @@ const inspect = async (options: {
         ? ok(refused)
         : err(new AnalysisOutputError("inspect_macho", "vtool failed"));
     },
-    invocation: (value) => ({
-      tool: value.tool,
-      command: [value.executable, ...value.arguments],
-      tool_version: value.toolVersion,
-      version_reason: value.versionReason,
-      executable_sha256: value.executableSha256,
-      exit: { code: value.exitCode, signal: value.signal },
-      stdout_bytes: value.stdoutBytes,
-      stderr_bytes: value.stderrBytes,
-    }),
+    invocation: inspectionInvocation,
   });
 };
 

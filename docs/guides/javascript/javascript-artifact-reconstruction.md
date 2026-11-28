@@ -465,6 +465,11 @@ while locally shadowed receivers can still contribute network endpoint
 candidates. A template recovered with a parser error and no cooked value stays
 dynamic; its raw spelling is not treated as a valid JavaScript string.
 
+Bundled import calls such as `(0, module.fetch)("/api")` are named by their
+final callee when every discarded comma operand is a literal. The comma drops
+the receiver, so such a spelling never establishes a browser network API; it
+contributes at most an endpoint candidate.
+
 Method-first `request` calls, as in superagent, needle, and Angular
 `HttpClient`, pass a standard HTTP method, in any letter case, before the
 target. In both `analyze_javascript_application` and `analyze_web_bundle`,
@@ -633,6 +638,16 @@ Only explicitly present BrowserWindow values are observations. REA does not
 substitute version-dependent Electron defaults for omitted `webPreferences`.
 Unresolved option objects, bridge keys, API objects, and IPC channel expressions
 remain unknown and make coverage partial.
+
+A later spread can replace earlier options. A conditional spread whose
+branches are object literals, such as
+`...(process.platform === "darwin" && { titleBarStyle: "hidden" })` or
+`...(isMac ? { frame: false } : {})`, leaves unknown only the keys a branch
+can copy, so an earlier `webPreferences` stays explicit unless a branch also
+sets it. `&&` copies a falsy left operand itself, so that operand must also be
+bounded, such as a comparison or a `!` negation. A spread of an unresolved
+value, such as an identifier, `isMac && {...}` with an unresolved `isMac`, or
+an `||` or `??` fallback, leaves every earlier option unknown.
 
 BrowserWindow options and `webPreferences` can follow local `const` aliases
 whose initialization precedes the use. The shared lexical and mutation index

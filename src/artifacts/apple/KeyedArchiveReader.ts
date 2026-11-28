@@ -12,7 +12,9 @@ import {
   ArtifactResourceScope,
   DirectoryArtifactReader,
   DirectoryArtifactEntryAccessDenied,
-  translateArtifactFailure,
+  translateArtifactOperationFailure,
+  artifactParseFailure,
+  malformedArtifact,
 } from "../../resources/index.js";
 import {
   decodeLimit,
@@ -33,7 +35,8 @@ import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisInputError,
-  AnalysisUnsupportedTargetError,
+  AnalysisTargetFailureError,
+  unrecognizedTarget,
 } from "../../domain/analysisErrorCore.js";
 import {
   binaryDatePrecisionOverlapLimitation,
@@ -176,16 +179,19 @@ export const decodeKeyedArchiveBytes = (
  * Point to the workflow that reads the selected kind of file on this host.
  * decode_interface_builder is portable; inspect_plist requires macOS.
  */
-const keyedArchiveKindRemediation = (
-  kind: KeyedArchiveKindError["fileKind"],
+/**
+ * The refusal's description. A NIB archive is decoded on its app bundle, and
+ * an ordinary property list needs a macOS host for the plist reader.
+ */
+const keyedArchiveKindDetail = (
+  cause: KeyedArchiveKindError,
   platform: NodeJS.Platform,
-): string => {
-  if (kind === "nib-archive")
-    return "Decode compiled NIBArchive files with decode_interface_builder on the app bundle.";
-  return platform === "darwin"
-    ? "Inspect an ordinary property list with inspect_plist; inspect_keyed_archive decodes keyed archives only."
-    : "Select a keyed archive; inspect_keyed_archive decodes only those. inspect_plist, which reads ordinary property lists, requires a macOS host.";
-};
+): string =>
+  cause.fileKind === "nib-archive"
+    ? `${cause.message}; decode compiled NIBArchive files on their app bundle`
+    : platform === "darwin"
+      ? cause.message
+      : `${cause.message}; the ordinary property list reader requires a macOS host`;
 
 interface BundleKeyedArchiveInput {
   bundlePath: string;
@@ -224,7 +230,7 @@ export const inspectBundleKeyedArchive = (input: BundleKeyedArchiveInput) => {
     });
     if (released.kind === "failed") {
       if (outcome.kind === "failed" && outcome.cause instanceof AnalysisError) {
-        const cleanup = translateArtifactFailure(
+        const cleanup = translateArtifactOperationFailure(
           "inspect_keyed_archive",
           resources.cleanupFailure({ kind: "completed" }, [released]),
         );
@@ -474,37 +480,43 @@ const decodeSelectedArchive = (
     )
       throw cause;
     if (cause instanceof UnsupportedBinaryPlistUidError)
-      throw new AnalysisUnsupportedTargetError(
+      throw new AnalysisTargetFailureError(
         "inspect_keyed_archive",
         input.artifactPath,
-        cause.message,
+        cause.failure,
         { cause },
       );
     // An intact file of another kind is not a damaged archive.
     if (cause instanceof KeyedArchiveKindError)
-      throw new AnalysisUnsupportedTargetError(
+      throw unrecognizedTarget(
         "inspect_keyed_archive",
         input.artifactPath,
-        cause.message,
+        "keyed-archive",
+        keyedArchiveKindDetail(cause, input.platform ?? HOST_PLATFORM.platform),
         {
           cause,
-          remediationAction: keyedArchiveKindRemediation(
-            cause.fileKind,
-            input.platform ?? HOST_PLATFORM.platform,
-          ),
+          related: {
+            operations: [
+              cause.fileKind === "nib-archive"
+                ? "decode_interface_builder"
+                : "inspect_plist",
+            ],
+          },
         },
       );
     const parserLimit =
       cause instanceof ParseFailureError && cause.failure.kind === "limit"
         ? cause.failure.limit
         : undefined;
-    throw new ArtifactReaderFailure(
-      parserLimit !== undefined || isHostLimitFailure(cause)
-        ? "limit"
-        : "format",
-      `Cannot decode selected Foundation keyed archive: ${errorMessage(cause)}`,
-      { cause, ...(parserLimit === undefined ? {} : { parserLimit }) },
-    );
+    const message = `Cannot decode selected Foundation keyed archive: ${errorMessage(cause)}`;
+    if (parserLimit !== undefined || isHostLimitFailure(cause))
+      throw new ArtifactReaderFailure("limit", message, {
+        cause,
+        ...(parserLimit === undefined ? {} : { parserLimit }),
+      });
+    if (cause instanceof ParseFailureError)
+      throw artifactParseFailure(cause, undefined);
+    throw malformedArtifact("keyed-archive", message, { cause });
   }
 };
 

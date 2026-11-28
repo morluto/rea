@@ -151,3 +151,59 @@ it("keeps native JSON separators valid across replaced and emptied collections",
   if (!result.ok) throw new Error("collection edit refused");
   expect(JSON.parse(result.value).mcpServers.rea).toEqual(rea);
 });
+
+const removeRea = (source: string, format: ClientConfigurationFormat) => {
+  const parsed = expectResultValue(parseClientConfiguration(source, format));
+  const { rea: _removed, ...servers } = parsed.servers;
+  const result = serializeClientConfiguration(
+    withClientServers(parsed, servers, HOST_PLATFORM.platform),
+    format,
+    source,
+    [clientServerPath(parsed, "rea")],
+  );
+  if (!result.ok) throw new Error("registration removal refused");
+  return result.value;
+};
+
+it.each([
+  [
+    "last",
+    `{\n  "mcpServers": {\n    "other": {\n      "command": "foo"\n    },\n    "rea": {\n      "command": "rea"\n    }\n  },\n  "theme": "dark"\n}\n`,
+    `{\n  "mcpServers": {\n    "other": {\n      "command": "foo"\n    }\n  },\n  "theme": "dark"\n}\n`,
+  ],
+  [
+    "first",
+    `{\n  "mcpServers": {\n    "rea": {\n      "command": "rea"\n    },\n    "other": {\n      "command": "foo"\n    }\n  }\n}\n`,
+    `{\n  "mcpServers": {\n    "other": {\n      "command": "foo"\n    }\n  }\n}\n`,
+  ],
+  [
+    "only",
+    `{\n  "mcpServers": {\n    "rea": {\n      "command": "rea"\n    }\n  }\n}\n`,
+    `{\n  "mcpServers": {}\n}\n`,
+  ],
+  [
+    "only trailing-comma",
+    `{"mcpServers":{\n  "rea":{},\n}}`,
+    `{"mcpServers":{}}`,
+  ],
+  [
+    "single-line",
+    `{"mcpServers":{"other":{"command":"foo"}, "rea":{"command":"rea"}}}`,
+    `{"mcpServers":{"other":{"command":"foo"}}}`,
+  ],
+] as const)(
+  "removes the %s registration without leaving its indentation",
+  (_position, source, expected) => {
+    expect(removeRea(source, "json")).toBe(expected);
+  },
+);
+
+it("keeps the source gap when a comment precedes the removed registration", () => {
+  const source = `{\n  "mcpServers": {\n    "other": { "command": "foo" },\n    // REA\n    "rea": { "command": "rea" }\n  }\n}\n`;
+  const removed = removeRea(source, "json");
+  expect(removed).toContain(`"other": { "command": "foo" }\n    // REA\n`);
+  expect(removed).not.toContain('"rea"');
+  expect(
+    expectResultValue(parseClientConfiguration(removed, "json")).servers,
+  ).toEqual({ other: { command: "foo" } });
+});

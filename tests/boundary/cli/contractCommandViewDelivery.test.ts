@@ -119,9 +119,7 @@ const harness = () => {
     const registered = cliCommand(cli, command)?.definition;
     if (registered === undefined) throw new Error(`${command} is missing`);
     const parse = (key: "args" | "options", value: unknown) =>
-      (Reflect.get(registered, key) as { parse(v: unknown): unknown }).parse(
-        value,
-      );
+      registered[key]!.parse(value);
     const run = Reflect.get(registered, "run") as (
       value: unknown,
     ) => Promise<unknown>;
@@ -146,8 +144,26 @@ const viewRefusal = {
 
 const view = JSON.stringify({ page: 1 });
 
+// An omitted --detail with a view selects the summary that view pages, so
+// the refusal names the bundle that summary delivery still needs.
 it.each([
-  ["argv", { path: "/missing" }, { view }],
+  ["argv", { path: "/missing" }],
+  ["document", { inputJson: '{"capture":"c"}' }],
+])(
+  "%s treats a view without --detail as summary delivery and refuses it without a bundle before opening its target (%j)",
+  async (command, args) => {
+    const { invoke, opened } = harness();
+    await expect(invoke(command, args, { view })).resolves.toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [{ path: ["evidence_output"], reason: "invalid_value" }],
+      },
+    });
+    expect(opened).toEqual([]);
+  },
+);
+
+it.each([
   ["argv", { path: "/missing" }, { view, detail: "complete" }],
   [
     "argv",
@@ -155,7 +171,6 @@ it.each([
     { view, detail: "complete", evidence_output: "/missing.bundle.json" },
   ],
   ["selects-summary", { path: "/missing" }, { view, detail: "complete" }],
-  ["document", { inputJson: '{"capture":"c"}' }, { view }],
   ["document", { inputJson: '{"capture":"c"}' }, { view, detail: "complete" }],
 ])(
   "%s refuses a view without summary delivery before opening its target (%j %j)",
@@ -186,7 +201,12 @@ it.each([
 // refusal of options the invocation can never use.
 it.each([
   [{ view: "{" }, { path: ["view"], reason: "invalid_format" }],
-  [{ view }, { path: ["view"], reason: "invalid_value" }],
+  // A view selects summary delivery, which still needs a bundle.
+  [{ view }, { path: ["evidence_output"], reason: "invalid_value" }],
+  [
+    { view, detail: "complete" },
+    { path: ["view"], reason: "invalid_value" },
+  ],
   [
     { detail: "summary" },
     { path: ["evidence_output"], reason: "invalid_value" },

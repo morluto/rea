@@ -9,6 +9,10 @@ import {
   requireMatchingNpmRelease,
 } from "./npm-release-state.mjs";
 
+const windowMinutes = 75;
+const windowMs = windowMinutes * 60_000;
+const intervalMs = 30_000;
+
 /** Read-only callers derive the channel through the canonical SemVer owner. */
 export async function readNpmRelease(version, request = fetch) {
   return readQualifiedNpmRelease(version, releaseNpmTag(version), request);
@@ -33,16 +37,29 @@ export function stableUpdateVersion(version, published) {
 /** Retry only confirmed absence during the existing registry propagation window. */
 export async function waitForNpmRelease(
   version,
-  lookup = readNpmRelease,
-  pause = setTimeout,
+  lookup = (candidate, signal) =>
+    readNpmRelease(candidate, (url, init) =>
+      fetch(url, { ...init, signal: AbortSignal.any([init.signal, signal]) }),
+    ),
+  pause = (milliseconds, signal) =>
+    setTimeout(milliseconds, undefined, { signal }),
+  signal = AbortSignal.timeout(windowMs),
 ) {
-  const windowMinutes = 75;
-  const intervalMs = 30_000;
-  const attempts = (windowMinutes * 60_000) / intervalMs + 1;
-  for (let attempt = 1; attempt <= attempts; attempt++) {
-    const published = await lookup(version);
-    if (published.status === "published") return published;
-    if (attempt < attempts) await pause(intervalMs);
+  const attempts = windowMs / intervalMs + 1;
+  try {
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      signal.throwIfAborted();
+      const published = await lookup(version, signal);
+      signal.throwIfAborted();
+      if (published.status === "published") return published;
+      if (attempt < attempts) await pause(intervalMs, signal);
+    }
+  } catch (cause) {
+    if (!signal.aborted) throw cause;
+    throw new Error(
+      `npm registry visibility deadline reached for rea-agents@${version} after ${windowMinutes} minutes. Re-run the failed verification after the version becomes visible.`,
+      { cause },
+    );
   }
   throw new Error(
     `rea-agents@${version} was not visible on npm after ${attempts} attempts over ${windowMinutes} minutes. Re-run the failed verification after the version becomes visible.`,

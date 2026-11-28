@@ -16,6 +16,16 @@ export const isImmutableJsonSnapshot = (value: unknown): value is JsonValue =>
   (typeof value === "number" && Number.isFinite(value)) ||
   (typeof value === "object" && immutableSnapshots.has(value));
 
+const isArrayIndex = (key: string, length: number): boolean => {
+  const index = Number(key);
+  return (
+    Number.isInteger(index) &&
+    index >= 0 &&
+    index < length &&
+    String(index) === key
+  );
+};
+
 /** Borrow one own member of a completed snapshot, carrying its sealing proof. */
 export const immutableJsonSnapshotMember = (
   snapshot: unknown,
@@ -29,6 +39,13 @@ export const immutableJsonSnapshotMember = (
     return undefined;
   const descriptor = Object.getOwnPropertyDescriptor(snapshot, key);
   if (descriptor === undefined || !Object.hasOwn(descriptor, "value"))
+    return undefined;
+  // Sealing visits only JSON members: enumerable object keys and array
+  // indices. Any other own property was never checked or frozen beneath it.
+  if (
+    !descriptor.enumerable ||
+    (Array.isArray(snapshot) && !isArrayIndex(key, snapshot.length))
+  )
     return undefined;
   // Completed sealing checked and froze every reachable member. Register only
   // the selected child; do not traverse it again or add per-node weak entries.
@@ -151,7 +168,9 @@ type OwnedTreeFrame =
 /**
  * Seal a freshly parsed, exclusively owned JSON tree. Its parser has removed
  * aliases, accessors and hidden properties; existing sealed subtrees may be shared.
- * Keep only the active ancestry rather than retaining every completed object.
+ * The only strong set is the active ancestry. Completed identities are
+ * remembered weakly for this call, so a shared subtree is sealed once
+ * without retaining every finished row.
  * Unlike general graph sealing, failure can leave this provisional tree frozen.
  */
 export const freezeOwnedJsonTreeSnapshot = <T extends JsonValue>(
@@ -159,8 +178,11 @@ export const freezeOwnedJsonTreeSnapshot = <T extends JsonValue>(
 ): T => {
   const frames: OwnedTreeFrame[] = [];
   const ancestors = new Set<object>();
+  const completed = new WeakSet<object>();
   const enter = (item: unknown): void => {
     if (isImmutableJsonSnapshot(item)) return;
+    if (typeof item === "object" && item !== null && completed.has(item))
+      return;
     if (typeof item !== "object" || item === null)
       throw new TypeError("Immutable JSON snapshots require JSON values");
     if (isProxy(item))
@@ -199,6 +221,7 @@ export const freezeOwnedJsonTreeSnapshot = <T extends JsonValue>(
       } else {
         Object.freeze(frame.value);
         ancestors.delete(frame.value);
+        completed.add(frame.value);
         frames.pop();
       }
     } else if (frame.index < frame.keys.length) {
@@ -213,6 +236,7 @@ export const freezeOwnedJsonTreeSnapshot = <T extends JsonValue>(
     } else {
       Object.freeze(frame.value);
       ancestors.delete(frame.value);
+      completed.add(frame.value);
       frames.pop();
     }
   }
