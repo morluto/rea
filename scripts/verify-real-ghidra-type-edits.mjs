@@ -1528,6 +1528,18 @@ struct rea_after { char c; int i; };`;
           ).code,
           "resource_constraint",
         );
+        // Suffix arrays after an inner grouped close count too, so nested
+        // grouping cannot hide the chain behind the first closing paren.
+        assert.equal(
+          requireMcpToolError(
+            await flood.raw("annotate_native_function", {
+              procedure,
+              signature: `int (__stdcall ${"*".repeat(255)}((f)${"[]".repeat(1900)}))(void)`,
+              signature_max_utf16: 4096,
+            }),
+          ).code,
+          "resource_constraint",
+        );
         // A missing closing parenthesis does not discard the over-deep
         // parameter measured before it.
         assert.equal(

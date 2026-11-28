@@ -3225,7 +3225,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 }
                 String name = identifier();
                 int arrays = measureArrays(base + stars + innerStars);
-                for (int group = 0; group < groups; group++) expect(")");
+                // Suffix arrays may follow each grouped close, as in
+                // ((f)[][]), so measure them before the next close.
+                for (int group = 0; group < groups; group++) {
+                    expect(")");
+                    arrays += measureArrays(base + stars + innerStars + arrays);
+                }
                 if (innerStars > 0) {
                     expect("(");
                     int parameters = measureParameters();
@@ -3233,7 +3238,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     observe(depth);
                     return new Declarator(name, depth);
                 }
-                int depth = stars + arrays + base + measureArrays(stars + arrays + base);
+                int depth = stars + arrays + base;
                 observe(depth);
                 if (at("(")) {
                     index++;
@@ -3359,10 +3364,13 @@ public final class ReaGhidraBridge extends HeadlessScript {
             observe(base + stars);
             String name = identifier();
             // Array suffixes bind to the grouped name before its closing
-            // parenthesis, so count them before expecting the parameter list.
+            // parenthesis and may follow each grouped close in nested
+            // grouping, so count them before expecting the parameter list.
             int arrays = measureArrays(base + stars);
-            for (int group = 0; group < groups; group++) expect(")");
-            arrays += measureArrays(base + stars + arrays);
+            for (int group = 0; group < groups; group++) {
+                expect(")");
+                arrays += measureArrays(base + stars + arrays);
+            }
             expect("(");
             int parameters = measureParameters();
             refuse(name, 1 + Math.max(stars + arrays + base, parameters));
