@@ -42,6 +42,9 @@ export const devicetreeFixture = (
     ],
   },
   version = 17,
+  memoryReservations: readonly (readonly [bigint, bigint])[] = [
+    [0x80000000n, 0x1000n],
+  ],
 ): Buffer => {
   const names = new Map<string, number>(),
     strings: Buffer[] = [],
@@ -72,11 +75,17 @@ export const devicetreeFixture = (
   structure.push(cells(9));
   const body = Buffer.concat(structure),
     namesBlock = Buffer.concat(strings);
+  const reservations = Buffer.alloc((memoryReservations.length + 1) * 16);
+  memoryReservations.forEach(([address, size], index) => {
+    reservations.writeBigUInt64BE(address, index * 16);
+    reservations.writeBigUInt64BE(size, index * 16 + 8);
+  });
+  const structureOffset = 40 + reservations.length;
   const header = cells(
     0xd00dfeed,
-    72 + body.length + namesBlock.length,
-    72,
-    72 + body.length,
+    structureOffset + body.length + namesBlock.length,
+    structureOffset,
+    structureOffset + body.length,
     40,
     version,
     16,
@@ -84,9 +93,6 @@ export const devicetreeFixture = (
     namesBlock.length,
     body.length,
   );
-  const reservations = Buffer.alloc(32);
-  reservations.writeBigUInt64BE(0x80000000n, 0);
-  reservations.writeBigUInt64BE(0x1000n, 8);
   return Buffer.concat([header, reservations, body, namesBlock]);
 };
 

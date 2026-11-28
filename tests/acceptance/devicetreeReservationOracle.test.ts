@@ -8,6 +8,7 @@ import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../../src/contracts/native/bi
 import { devicetreeFixture } from "../../src/domain/firmware/devicetree.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
+import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
 const devicetreeContract = (() => {
@@ -105,6 +106,79 @@ cliTest(
           response.structuredContent,
         );
         expect(mcp.normalized_result).toEqual(report);
+      }
+      expect((await readFile(path)).equals(bytes)).toBe(true);
+    }
+  },
+);
+
+cliTest.for([16, 17] as const)(
+  "rejects overlapping reservations and preserves adjacent 64-bit entries through CLI and MCP: v%s",
+  async (version, { cli }) => {
+    const root = await createTestTempDirectory("rea-dtb-reservation-overlap-");
+    const { call } = await connectLocalToolsMcp();
+    for (const { label, size, rejected } of [
+      { label: "overlap", size: 9n, rejected: true },
+      { label: "adjacent", size: 8n, rejected: false },
+    ] as const) {
+      const path = join(root, `${label}-${String(version)}.dtb`);
+      const bytes = devicetreeFixture({ name: "" }, version, [
+        [0x20000000000009n, 8n],
+        [0x20000000000001n, size],
+      ]);
+      await writeFile(path, bytes);
+      const result = await cli.run({
+        arguments: ["inspect-devicetree", path, "--json"],
+      });
+      const response = await call("inspect_devicetree", { path });
+      const sha256 = createHash("sha256").update(bytes).digest("hex");
+      if (rejected) {
+        expect(result.exitCode).toBe(1);
+        expect(result.json).toMatchObject({
+          code: "invalid_request",
+          details: {
+            partial_observation: {
+              kind: "file-snapshot-hash",
+              path,
+              bytes: bytes.length,
+              sha256,
+            },
+          },
+        });
+        expect(response.isError).toBe(true);
+        expect(parseMcpToolError(response)).toMatchObject({
+          error: {
+            code: "invalid_request",
+            category: "invalid_input",
+            details: {
+              partial_observation: {
+                kind: "file-snapshot-hash",
+                path,
+                bytes: bytes.length,
+                sha256,
+              },
+            },
+          },
+        });
+      } else {
+        expect(result.exitCode, result.stderr).toBe(0);
+        expect(response.isError, JSON.stringify(response)).not.toBe(true);
+        const cliEvidence = devicetreeContract.outputSchema.parse(result.json);
+        const mcpEvidence = devicetreeContract.outputSchema.parse(
+          response.structuredContent,
+        );
+        expect(mcpEvidence.normalized_result).toEqual(
+          cliEvidence.normalized_result,
+        );
+        const report = cliEvidence.normalized_result;
+        if (!("reservations" in report))
+          throw new Error("Expected complete DTB report");
+        expect(report.artifact).toEqual({ path, bytes: bytes.length, sha256 });
+        expect(report.reservations).toEqual([
+          { offset: 40, address: "0x20000000000009", size: "0x8" },
+          { offset: 56, address: "0x20000000000001", size: "0x8" },
+        ]);
+        expect(report.coverage.status).toBe("complete");
       }
       expect((await readFile(path)).equals(bytes)).toBe(true);
     }
