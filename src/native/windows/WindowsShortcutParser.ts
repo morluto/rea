@@ -265,11 +265,57 @@ const driveType = (
   name: DRIVE_TYPES[raw] ?? null,
 });
 
-const extensionOf = (path: string, ansi: boolean): string | null => {
+/**
+ * The final segment as Win32 opens it.
+ *
+ * Win32 strips trailing spaces and periods from a name before it opens the file, so
+ * `app.exe.` and `app.exe ` both open `app.exe`, while `report.` opens `report`. A
+ * `\\?\` path skips that pass, and an unexpanded `%VAR%` may expand to one, so both
+ * keep their text.
+ */
+const fileNameSegment = (path: string): string => {
+  if (DEVICE_PATH.test(path) || hasUnexpandedVariable(path)) return path;
+  const at = Math.max(path.lastIndexOf("\\"), path.lastIndexOf("/")) + 1;
+  const name = path.slice(at).replace(/[. ]+$/u, "");
+  return name === "" ? path : `${path.slice(0, at)}${name}`;
+};
+
+/**
+ * Text Win32 would open as a path. A URL with an explicit scheme is not one, and text
+ * starting `//` is either a scheme-relative URL or a forward-slash UNC path whose
+ * bytes carry nothing that separates them, so neither takes the Win32 name pass.
+ */
+const isWin32PathText = (path: string): boolean => {
+  // Only a backslash after a drive designator is unambiguously a path; `C://x`
+  // spells the same as a one-letter custom URI, so it stays unknown below.
+  if (/^[A-Za-z]:\\/u.test(path)) return true;
+  // Any other `scheme:` form is a URI, or a drive-relative name the bytes do not
+  // separate from a one-letter scheme, so its name stays as written.
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/u.test(path)) return false;
+  // `//` is either a scheme-relative URL or a forward-slash UNC path.
+  return !path.startsWith("//");
+};
+
+const extensionOf = (
+  path: string,
+  ansi: boolean,
+  win32Names = true,
+): string | null => {
   if (path.length === 0) return null;
   const normalized = path.replaceAll("/", "\\");
-  const slash = normalized.lastIndexOf("\\");
-  const name = slash === -1 ? normalized : normalized.slice(slash + 1);
+  const named = win32Names ? fileNameSegment(normalized) : normalized;
+  const trimmed = named.replace(/^[a-z]:/iu, "");
+  const slash = trimmed.lastIndexOf("\\");
+  const name = slash === -1 ? trimmed : trimmed.slice(slash + 1);
+  // An unexpanded variable leaves the normalization mode unknown: the same text
+  // opens through Win32, which strips a trailing space, or through a `\\?\` verbatim
+  // path, which keeps it. A trailing space therefore names no known extension.
+  if (
+    hasUnexpandedVariable(path) &&
+    !DEVICE_PATH.test(path) &&
+    name.endsWith(" ")
+  )
+    return null;
   const dot = name.lastIndexOf(".");
   if (dot <= 0 || dot === name.length - 1) return null;
   const extension = name.slice(dot);
@@ -346,13 +392,13 @@ type TargetPathUncertainty = {
 const isAscii = (text: string): boolean =>
   [...text].every((char) => char <= "\u007f");
 
-const recorded = (path: string, ansi: boolean) => {
+const recorded = (path: string, ansi: boolean, win32Names: boolean = true) => {
   const nonAscii = !isAscii(path);
   return {
     path,
     ansi: ansi && nonAscii,
     unicode: !ansi && nonAscii,
-    extension: extensionOf(path, ansi),
+    extension: extensionOf(path, ansi, win32Names),
   };
 };
 
@@ -472,7 +518,14 @@ const targetPaths = (
       : linkInfoTargets(report.link_info, uncertainty);
   const relative = report.string_data.relative_path;
   if (relative !== null)
-    values.push(recorded(relative.value, relative.encoding === "ansi"));
+    // A shell item carries a namespace identity, so its name is never trimmed.
+    values.push(
+      recorded(
+        relative.value,
+        relative.encoding === "ansi",
+        isWin32PathText(relative.value),
+      ),
+    );
   if (report.id_list !== null) {
     const lastFile = [...report.id_list.items]
       .reverse()
@@ -480,7 +533,7 @@ const targetPaths = (
     // Type bit 0x04 marks a UTF-16LE name; otherwise the name is ANSI.
     if (lastFile?.kind === "file_entry")
       values.push(
-        recorded(lastFile.short_name, (lastFile.type_byte & 0x04) === 0),
+        recorded(lastFile.short_name, (lastFile.type_byte & 0x04) === 0, false),
       );
   }
   // A stored literal target, never expanded: `%VAR%` text stays as written.
