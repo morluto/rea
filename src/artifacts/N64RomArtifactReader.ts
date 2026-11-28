@@ -30,6 +30,7 @@ import {
 } from "./OwnedArtifactStream.js";
 import {
   PositionalArtifactReader,
+  positionalRegionEntry,
   type PositionalArtifactEntries,
   type PositionalArtifactEntry,
 } from "./PositionalArtifactReader.js";
@@ -118,20 +119,9 @@ export class N64RomArtifactReader extends PositionalArtifactReader<N64RomMetadat
       throw cause;
     }
     this.#order = image.metadata.source_order;
-    const entries = image.entries.map((region): PositionalArtifactEntry => ({
-      path: region.path,
-      kind: "file",
-      declaredSize: region.length,
-      compressedSize: null,
-      executable: false,
-      encrypted: false,
-      byteOffset: region.offset,
-      declaredIntegrity: null,
-      unpacked: false,
-      limitations: [],
-      adapterKey: `n64-rom:${region.path}`,
-      formatMetadata: region.metadata,
-    }));
+    const entries = image.entries.map((region) =>
+      positionalRegionEntry(region, "n64-rom", region.metadata),
+    );
     return {
       entries,
       coverage: {

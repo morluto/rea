@@ -189,7 +189,40 @@ const parseCpioOdcInto = (
         ),
       );
     }
-    if (name === TRAILER) return ok(members);
+    if (name === TRAILER) {
+      if (nul !== nameBytes.length - 1)
+        return err(
+          malformedInput(
+            MACOS_PKG_FORMAT,
+            "cpio odc trailer name is not exactly NUL-terminated",
+            { field: "name", offset: nameOffset },
+          ),
+        );
+      if (filesize.value !== 0)
+        return err(
+          malformedInput(
+            MACOS_PKG_FORMAT,
+            "cpio odc trailer declares a non-zero size",
+            {
+              field: "cpio",
+              offset: cursor,
+            },
+          ),
+        );
+      // Writers may pad the last output block with zeros. Other bytes are
+      // outside the archive we inventoried, even if they form another cpio.
+      let offset = cursor;
+      while (offset < bytes.length && bytes[offset] === 0) offset++;
+      if (offset < bytes.length)
+        return err(
+          malformedInput(
+            MACOS_PKG_FORMAT,
+            `cpio odc has non-zero data at offset ${String(offset)} after its trailer; remaining bytes were not inventoried`,
+            { field: "cpio", offset },
+          ),
+        );
+      return ok(members);
+    }
     if (cursor + filesize.value > bytes.length)
       return err(
         truncatedInput(
@@ -249,7 +282,7 @@ const parseCpioOdcInto = (
 export interface CpioOdcPrefix {
   /** Members read completely before the archive ended or failed. */
   readonly members: readonly CpioMember[];
-  /** Why parsing stopped before the trailer, or null when it reached it. */
+  /** The parse failure, or null when the trailer and padding were valid. */
   readonly failure: MacosPkgParseError | null;
 }
 

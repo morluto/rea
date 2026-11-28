@@ -44,10 +44,9 @@ tools are unaffected.
 
 REA streams each rule file and the scanned file into an owned private temporary
 snapshot directory while computing each file's SHA-256 digest and verifying that
-the source file did not change during acquisition. Relative `include "..."`
-directives in staged rule files are resolved against each selected rule file's
-directory so existing rule sets with relative includes continue to compile. It
-then runs:
+the source file did not change during acquisition. A rule file with an
+`include` directive is refused before yara starts (see [Errors](#errors)), so
+yara compiles only the hashed snapshot files. It then runs:
 
 ```text
 yara -s -L -m -g -q [-f] rea:<snapshot_rule_path>... <snapshot_target_path>
@@ -129,12 +128,22 @@ string; string match counts are then lower bounds.
 
 ## Errors
 
+- A rule file with an `include` directive fails with `invalid_request` before
+  yara starts. yara reads an included file while it compiles, outside the
+  hashed snapshot, so its rules would not be bound to the Evidence. Each issue
+  names the rule file (`rule_paths[i]`), the line and byte column of the
+  directive, and its path; `diagnostics.include_directives` lists them per rule
+  file, up to 32 each, with a `total`. To use the included rules, remove the
+  directive and pass the included file as another `rule_paths` entry, or
+  inline its rules: rules in different selected files can refer to each other.
+  Detection follows yara 4.x's lexer, so `include` inside a comment, string,
+  regular expression or longer identifier is not a directive, while a directive
+  inside a rule body is.
 - A rule file that yara cannot compile fails with `invalid_request`. Each issue
   names the rule file (`rule_paths[i]` when it is one of the selected files, or
-  `rule_paths` for an included file), the line, the rule when yara named one,
-  and yara's message. `diagnostics.compile_errors` records each error with a
-  `kind` read from yara 4.x's message text: `include` (an include file cannot
-  be opened, a circular include, or too many include levels), `syntax`,
+  `rule_paths` when yara named another file), the line, the rule when yara
+  named one, and yara's message. `diagnostics.compile_errors` records each
+  error with a `kind` read from yara 4.x's message text: `syntax`,
   `undefined` (an undefined identifier or string, or an unknown module),
   `duplicate` (a duplicated rule, string, tag, or metadata identifier),
   `unreadable_file`, or `other`. When a file name or message itself contains
@@ -150,6 +159,5 @@ string; string match counts are then lower bounds.
 ## What the Evidence does not establish
 
 - Which yara implementation or version ran.
-- The contents of files that a rule file `include`s, or module data yara read;
-  only the selected rule files are hashed.
+- Module data yara read; only the selected rule files are hashed.
 - Why a rule did not match.

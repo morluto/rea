@@ -4,7 +4,6 @@ import { sortedCountEntries } from "./analysisViewCounts.js";
 import { z } from "zod";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import {
-  analysisViewInputError,
   invalidAnalysisViewSubject,
   invalidAnalysisView,
 } from "./analysisViewErrors.js";
@@ -19,7 +18,7 @@ import {
   nativeInvestigationNodeSchema,
   nativeInvestigationProviderSchema,
 } from "../native/nativeInvestigationGraph.js";
-import { err, ok, type Result } from "../result.js";
+import { ok, type Result } from "../result.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import { selectViewRows } from "./selectViewRows.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
@@ -232,15 +231,9 @@ export const projectInterfaceBuilderView = (
     document !== undefined &&
     !report.documents.some((row) => row.relative_path === document)
   )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view", "document"],
-          reason: "invalid_value",
-          message:
-            "Select an exact documents[].relative_path from this decoded report.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Select an exact documents[].relative_path from this decoded report.",
+      "document",
     );
   const selected =
     view.collection === "documents"

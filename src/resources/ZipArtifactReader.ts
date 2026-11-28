@@ -1,3 +1,8 @@
+import {
+  malformedInput,
+  ParseFailureError,
+  unsupportedInput,
+} from "../domain/parseFailure.js";
 import { OwnerCancellation } from "../domain/analysisErrorCore.js";
 import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import {
@@ -642,7 +647,7 @@ const ZIP_FAILURE_REASONS: ReadonlyMap<string, "malformed" | "unavailable"> =
   ]);
 
 /** Type a zip.js archive fault so consumers do not report it as file I/O. */
-export const typedZipFailure = (
+const typedZipFailure = (
   cause: unknown,
   compressionMethod?: number,
 ): unknown => {
@@ -710,6 +715,32 @@ export const typedZipFailure = (
         `ZIP archive uses an unsupported feature: ${cause.message}`,
         { cause: failureCause },
       );
+};
+
+/** Preserve reader failures and attach the package format to newly classified ZIP faults. */
+export const throwZipPackageFailure = (
+  cause: unknown,
+  format: string,
+  packageName: string,
+  compressionMethod?: number,
+): never => {
+  if (
+    cause instanceof ArtifactReaderFailure ||
+    cause instanceof ParseFailureError
+  )
+    throw cause;
+  const typed = typedZipFailure(cause, compressionMethod);
+  if (!(typed instanceof ArtifactReaderFailure)) throw cause;
+  if (typed.reason === "limit") throw typed;
+  if (typed.reason === "unavailable")
+    throw unsupportedInput(
+      format,
+      `${packageName} ZIP uses an unsupported layout: ${typed.message}`,
+      { cause: typed },
+    );
+  if (typed.parseFailure !== undefined)
+    throw malformedInput(format, typed.message, { cause: typed });
+  throw cause;
 };
 
 async function* typedZipFailures<T>(

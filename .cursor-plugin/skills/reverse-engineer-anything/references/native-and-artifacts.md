@@ -947,7 +947,13 @@ ComLoader rejects records `loader: "BinaryLoader"`, `load_address: "1000:0100"`
 (linear `0x10100`), and `loader_fallback.reason`. Segment context is imposed for
 analysis. PSP contents, stack, and device state remain unmodeled. See [DOS guide](https://github.com/morluto/rea/blob/main/docs/providers/ghidra-dos.md).
 
-Use `inspect_byte_entropy` to triage high- and low-entropy ranges before extraction.
+Use `inspect_byte_entropy` to triage high- and low-entropy ranges before extraction,
+and `inspect_firmware_vector_table` (`rea inspect-firmware-vector-table PATH --architecture ARCH --base-address HEX`)
+to decode ARM M-profile exception/IRQ tables for the raw-image variant names
+(`armv6-m` through `armv8.1-m.main`)
+or RISC-V `mtvec` jump slots, flag clear Thumb bit-0 anomalies and shared dummy
+handlers, and optionally bind CMSIS-SVD `<interrupt>` names via `svd_xml`.
+See [firmware vector tables](https://github.com/morluto/rea/blob/main/docs/guides/firmware/firmware-vector-tables.md).
 For ESP32/ESP8266 flash dumps or carved `partitions/nvs.bin` files (`esp-nvs`), use
 `inspect_esp_nvs` (`rea inspect-esp-nvs PATH [--partition-offset N] [--partition-bytes N]`)
 to decode ESP-IDF v1/v2 Non-Volatile Storage pages, CRC32 checksums, namespaces,
@@ -972,7 +978,10 @@ matters, save your request beside the Evidence, together with its
 `0x0000..0xffff`. 65C02, 65816, cartridge containers, bank switching, and mapper
 semantics are unsupported. `m68k` requires an even entry and decodes the 68040
 superset of the 68000 family; Amiga/Atari containers and vector-table entry
-discovery are unsupported. Windows Ghidra P0 admits raw images only for `6502`. See [raw binary guide](https://github.com/morluto/rea/blob/main/docs/providers/raw-binary.md).
+discovery are unsupported. A Mega Drive or Genesis ROM is a container:
+`inspect_artifact` reads its header, and an `.smd` dump is de-interleaved to
+`program.bin`. Open that file as raw-binary `m68k` with `entry_point` set to
+`rom.bus_start`, the 24-bit ROM start, usually `0x0`. Windows Ghidra P0 admits raw images only for `6502`. See [raw binary guide](https://github.com/morluto/rea/blob/main/docs/providers/raw-binary.md).
 
 Intel HEX, S-record, UF2 and DfuSe files are containers, not raw images:
 `inspect_artifact` lists address regions (UF2 per familyID, DfuSe per element
@@ -1124,6 +1133,26 @@ the file end leaves coverage `unknown`. Secure-area encryption, compressed
 overlays, and NitroARC archives are not decoded. See
 [Nintendo DS ROMs](https://github.com/morluto/rea/blob/main/docs/guides/firmware/nds-roms.md).
 
+Sega Mega Drive and Genesis ROMs (plain `.bin`, `.md`, `.gen`, or an
+interleaved `.smd` copier dump) use the same inspection and extraction
+workflows. Recognition is `SEGA` at file offset `0x100`, or the SMD copier
+mark `0xAA 0xBB` at bytes 8 and 9 with a block count whose de-interleaved
+bytes carry `SEGA`. Root metadata holds the vector table, header strings,
+declared and computed checksum, ROM and RAM ranges, external RAM and region
+codes. Members are `vectors.bin`, `header.bin` and `program.bin`. An SMD
+member has no file offset because its bytes are de-interleaved. A checksum
+mismatch or a ROM range that disagrees with the file leaves coverage
+`unknown`. 32X and Sega CD system strings are reported and not decoded.
+Extract `program.bin` and open it as raw-binary `m68k` with `entry_point`
+set to `rom.bus_start` (usually `0x0`), so file offset 0 maps at that
+address. Raw m68k does not apply the console's 24-bit address aliases, so use
+the bus values, not the stored `rom.start`. `reset_pc_bus` is where code
+begins; raw-binary does not discover
+vectors, and analysis at `entry_point` `0x0` starts on the vector table.
+Windows Ghidra P0 does not admit `m68k`. The image ceiling is 8 MiB, and an
+SMD dump is at most 512 blocks; this release has no runtime override. See
+[Sega Mega Drive ROMs](https://github.com/morluto/rea/blob/main/docs/guides/firmware/mega-drive-roms.md).
+
 Nintendo 64 ROMs (`n64-rom`) are detected from the first word in z64
 (`80 37 12 40`), v64 (`37 80 40 12`) or n64 (`40 12 37 80`) order, plus a
 plausible boot address, and use the same inspection and extraction workflows.
@@ -1149,6 +1178,16 @@ program header hash offsets) but still resolve as ELF for native analysis.
 Signatures and certificates are located, not verified; hashes are not
 recomputed. See
 [Qualcomm MBN images](https://github.com/morluto/rea/blob/main/docs/guides/firmware/qualcomm-mbn-images.md).
+
+Image4 firmware containers (`IMG4`, `IM4P`, `IM4M`) use the same inspection
+and extraction workflows. Recognition is the DER SEQUENCE magic, not the
+filename. `payload` is the stored octet string. `manifest.der` and
+`restore-info.der` are the embedded IM4M and IM4R sequences. Keybags are
+reported as a count and key types; nothing is decrypted, and an encrypted
+payload is refused on open. Signatures and certificates are sized and not
+checked. LZFSE (`bvx2`, `bvx1`, `bvxn`, `bvx-`) and `complzss` payloads stay compressed. IM4R property names
+such as `BNCN` are listed and their values stay redacted. See
+[Image4 containers](https://github.com/morluto/rea/blob/main/docs/guides/apple/image4-containers.md).
 
 Android A/B OTA `payload.bin` files (CrAU v2) use the same
 inspection/extraction workflows. Prefer a retained summary for header,
