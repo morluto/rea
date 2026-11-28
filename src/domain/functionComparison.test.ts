@@ -180,6 +180,34 @@ const rejectsMalformedFacetAvailability = (): void => {
   ).toBe(false);
 };
 
+it("keeps a self-comparison's normalized views unchanged when a coordinate commitment matches it by entry", () => {
+  const value = dossier("void thunk(void) {}", "0x1000");
+  // The procedure's own thunk target is an endpoint the calls dimension does not compare.
+  const thunk = functionDossierSchema.parse({
+    ...value,
+    procedure: {
+      ...value.procedure,
+      classification: {
+        external: false,
+        thunk: true,
+        thunk_target: "0x2000",
+        provenance: "fixture",
+      },
+    },
+    assembly: ["0x1000: JMP 0x2000"],
+  });
+  const snapshot = functionSnapshotFixture(observe("a", thunk));
+  const result = compareFunctions(snapshot, snapshot, {
+    includeNormalizedViews: true,
+  });
+  expect(result.function_match).toMatchObject({ method: "same-entry" });
+  expect(
+    result.normalized_views?.views.find(
+      ({ dimension }) => dimension === "assembly_normalized",
+    ),
+  ).toMatchObject({ status: "unchanged" });
+});
+
 it.each(["imported", null] as const)(
   "preserves same-entry correspondence across a rename from symbol origin %s",
   (origin) => {

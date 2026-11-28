@@ -242,6 +242,12 @@ These parameters report that limit:
 | `inspect_rust_binary`                         | `max_inflated_dependency_bytes`   | 8388608    |     1 | `buffer.constants.MAX_STRING_LENGTH` | `src/domain/rust/rustDependencyBudget.ts` |
 | `inspect_rust_binary`                         | `max_dependency_inflate_ratio`    | 64         |     1 |            `Number.MAX_SAFE_INTEGER` | `src/domain/rust/rustDependencyBudget.ts` |
 
+`compare_functions` also accepts `max_named_symbol_code_units` (default
+1000000, floor 1, maximum `Number.MAX_SAFE_INTEGER`, owner
+`src/domain/functionComparisonAddressProjection.ts`). It does not refuse: a
+normalized view it stops is `unknown`, and its limitations name the parameter,
+its effective value and source, and the next call.
+
 Refusals that still name a per-call control only in prose are counted by
 `scripts/verify/fixed-ceilings.mjs` against
 `scripts/verify/untyped-budget-refusal-baseline.json` and tracked in

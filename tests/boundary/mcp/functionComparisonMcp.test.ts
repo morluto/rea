@@ -2,6 +2,7 @@ import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema } from "ajv";
+import { sessionOutputSchemas } from "../../../src/contracts/toolOutputSchemaGroups.js";
 import { functionSnapshotFixture } from "../../../src/domain/functionDossierEvidence.fixture.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { describe, expect, it } from "vitest";
@@ -550,6 +551,159 @@ it.each([
     await harness.client.ping();
   },
 );
+
+describe("opt-in function comparison normalized views", () => {
+  const relocationPair = () => {
+    const left = FUNCTION_COMPARISON_EXAMPLE.left;
+    const captured = left.normalized_result as {
+      procedure: Record<string, unknown>;
+    } & Record<string, unknown>;
+    return [
+      left,
+      createEvidence(
+        {
+          path: "/tmp/function-relocated",
+          sha256: "3".repeat(64),
+          format: "mach-o",
+        },
+        left.provider,
+        {
+          operation: left.operation,
+          parameters: left.parameters,
+          result: {
+            ...captured,
+            procedure: {
+              ...captured.procedure,
+              address: "0x2000",
+              name: "FUN_00401100",
+            },
+            basic_blocks: [{ start: "0x2000", end: "0x2001", successors: [] }],
+          },
+          confidence: left.confidence,
+          authority: left.authority,
+        },
+      ),
+    ] as const;
+  };
+
+  it("keeps the exact contract when the caller does not opt in", async () => {
+    const [left, right] = relocationPair();
+    const { client } = await createApplicationMcpHarness();
+    const response = await client.callTool({
+      name: "compare_functions",
+      arguments: { left, right },
+    });
+    const evidence = parseEvidence(response.structuredContent);
+    expect(evidence.normalized_result).not.toHaveProperty("normalized_views");
+    expect(evidence.parameters).not.toHaveProperty("include_normalized_views");
+  });
+
+  it("returns labelled views that cite both Evidence records when requested", async () => {
+    const [left, right] = relocationPair();
+    const { client } = await createApplicationMcpHarness();
+    const response = await client.callTool({
+      name: "compare_functions",
+      arguments: { left, right, include_normalized_views: true },
+    });
+    expect(response.isError).not.toBe(true);
+    const exact = client.callTool({
+      name: "compare_functions",
+      arguments: { left, right },
+    });
+    const evidence = parseEvidence(response.structuredContent);
+    const exactResult = sessionOutputSchemas.compare_functions.parse(
+      (await exact).structuredContent,
+    ).normalized_result;
+    expect(evidence.parameters).toMatchObject({
+      left_evidence_id: left.evidence_id,
+      right_evidence_id: right.evidence_id,
+      include_normalized_views: true,
+    });
+    expect(evidence.parameters).not.toHaveProperty(
+      "max_named_symbol_code_units",
+    );
+    expect(evidence.normalized_result).toMatchObject({
+      normalized_views: {
+        policy: "rea-address-normalized-text-v1",
+        views: [
+          {
+            dimension: "pseudocode_normalized",
+            evidence_links: [left.evidence_id, right.evidence_id],
+          },
+          {
+            dimension: "assembly_normalized",
+            evidence_links: [left.evidence_id, right.evidence_id],
+          },
+        ],
+      },
+    });
+    expect(
+      (evidence.normalized_result as { dimensions: unknown }).dimensions,
+    ).toEqual(exactResult.dimensions);
+  });
+
+  it("records a caller-set named-symbol allowance and requires the views for it", async () => {
+    const [left, right] = relocationPair();
+    const { client } = await createApplicationMcpHarness();
+    const response = await client.callTool({
+      name: "compare_functions",
+      arguments: {
+        left,
+        right,
+        include_normalized_views: true,
+        max_named_symbol_code_units: 2_000_000,
+      },
+    });
+    expect(
+      response.isError,
+      JSON.stringify(response.structuredContent),
+    ).not.toBe(true);
+    expect(parseEvidence(response.structuredContent).parameters).toMatchObject({
+      include_normalized_views: true,
+      max_named_symbol_code_units: 2_000_000,
+    });
+    const withoutViews = await client.callTool({
+      name: "compare_functions",
+      arguments: { left, right, max_named_symbol_code_units: 2_000_000 },
+    });
+    expect(withoutViews.isError).toBe(true);
+    expect(JSON.stringify(withoutViews.content)).toContain(
+      "set include_normalized_views to true",
+    );
+  });
+
+  it("returns the same views for retained session references", async () => {
+    const [left, right] = relocationPair();
+    const { client, session } = await createApplicationMcpHarness();
+    for (const evidence of [left, right]) {
+      const recorded = session.recordEvidence(evidence);
+      if (!recorded.ok) throw recorded.error;
+    }
+    const compare = async (inputs: object) => {
+      const response = await client.callTool({
+        name: "compare_functions",
+        arguments: { ...inputs, include_normalized_views: true },
+      });
+      expect(
+        response.isError,
+        JSON.stringify(response.structuredContent),
+      ).not.toBe(true);
+      return parseEvidence(response.structuredContent);
+    };
+    const retained = await compare({
+      left: { kind: "retained-evidence", evidence_id: left.evidence_id },
+      right: { kind: "retained-evidence", evidence_id: right.evidence_id },
+    });
+    const inline = await compare({ left, right });
+    expect(retained.parameters).toMatchObject({
+      left_evidence_id: left.evidence_id,
+      right_evidence_id: right.evidence_id,
+      include_normalized_views: true,
+    });
+    expect(retained.normalized_result).toHaveProperty("normalized_views");
+    expect(retained.normalized_result).toEqual(inline.normalized_result);
+  });
+});
 
 it("advertises Swift literal coverage as a pair through the MCP SDK", async () => {
   const harness = await createApplicationMcpHarness();

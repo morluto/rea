@@ -2558,6 +2558,37 @@ includes all dimension limitations. Equal CFGs establish only equal observed
 block sizes and successor relationships. Text from different provider
 identities remains unknown.
 
+`compare_functions` keeps its eight exact dimensions and summary statuses
+unchanged. Set `include_normalized_views: true` to add separate normalized
+pseudocode and assembly views. These views preserve literals and comments,
+replace recognized address-derived identifiers and evidence-supported address
+operands, and retain exact function-relative offsets. Constants, ambiguous
+operands, and names that the dossier reports with a named symbol origin stay
+visible. An `unchanged` result means the masked text matches; it
+does not establish callee identity or call order. A view is `unknown` when the
+exact calls dimension is unknown and its text masks a listed caller or callee,
+when its text masks an incoming call source, or a call, tail-jump or thunk
+target, that the calls dimension does not compare, when the texts are equal
+but the two sides masked or left visible different numbers of address uses (a
+placeholder then matches literal text on the other side), or when the bounded
+line diff gives up; it then keeps both digests and its masking record, without
+a text delta. The thunk target of a listed caller or callee, or of a referenced
+procedure, counts as uncompared even when it is also a listed endpoint, and a
+comparison of one Evidence record with itself skips both endpoint conditions
+because its two projections are identical. Recognizing named symbols written
+with a qualifier examines at most `max_named_symbol_code_units` code units per
+side (default 1,000,000, shared by its pseudocode and then its assembly
+projection, accepted only with `include_normalized_views: true`). Once either
+side has spent it, as a long chain of repeated qualifiers can, a view is
+`unknown` without projected facts; its limitations name the allowance, its
+effective value and source, and that the next call can raise it. The comparison
+Evidence records the value only when the caller sets it.
+Each view returns its applied masking rules, counts, limitations, and both
+source Evidence links. Reconstruction claims and static/runtime function
+selectors can name `pseudocode_normalized` or `assembly_normalized` only when
+the selected comparison was created with these views; otherwise the request is
+`invalid_request`.
+
 The `calls` and `references` dimensions share endpoint identity and name
 ambiguity rules. Calls retain procedure entry coordinates and direction;
 references retain each edge's raw source and target coordinates, direction and
