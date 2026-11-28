@@ -4,7 +4,6 @@ import {
   protobufViewRequestSchema,
 } from "./protobufCaptureView.js";
 import {
-  analysisViewInputError,
   invalidAnalysisViewSubject,
   invalidAnalysisView,
 } from "./analysisViewErrors.js";
@@ -12,7 +11,7 @@ import { z } from "zod";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { parseAnalysisViewResult } from "./analysisViewParent.js";
 import type { JsonValue } from "../jsonValue.js";
-import { err, ok, type Result } from "../result.js";
+import { ok, type Result } from "../result.js";
 import {
   webNetworkCaptureRecordSchema,
   webNetworkCaptureBinaryDescriptorSchema,
@@ -559,14 +558,9 @@ export const projectWebNetworkCaptureView = (
   }
   if (view.kind === "qlog") {
     if (report.format !== "qlog")
-      return err(
-        analysisViewInputError([
-          {
-            path: ["view", "kind"],
-            reason: "invalid_value",
-            message: "Qlog fact views require retained qlog Evidence.",
-          },
-        ]),
+      return invalidAnalysisView(
+        "Qlog fact views require retained qlog Evidence.",
+        "kind",
       );
     const projected = projectQlogCapturePage(report.qlog, view);
     return projected.ok

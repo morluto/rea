@@ -1,9 +1,11 @@
 import { posix } from "node:path";
 import { parse, type ParserOptions, type ParserPlugin } from "@babel/parser";
 import * as t from "@babel/types";
+import { isRecord } from "../../kernel/isRecord.js";
 import { isJavaScriptSourcePath } from "./javascriptArtifactFiles.js";
 import { ParseFailureError } from "../parseFailure.js";
 import { javaScriptDefinitionExpression } from "./javascriptAstValues.js";
+import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import {
   explicitJavaScriptLoaderMode,
   hasCaseVariantJavaScriptLoaderSuffix,
@@ -255,12 +257,72 @@ const parserOptionsForLoader = (
   return parserOptions;
 };
 
+/** Babel drops omitted arguments from recovered calls but diagnoses their commas. */
+const restoreOmittedArguments = (
+  program: t.Program,
+  errors: readonly { reasonCode: string; details: unknown; pos: number }[],
+): void => {
+  const commas = errors
+    .filter(
+      ({ reasonCode, details }) =>
+        reasonCode === "UnexpectedToken" &&
+        isRecord(details) &&
+        details.unexpected === ",",
+    )
+    .map(({ pos }) => pos - 1)
+    .sort((a, b) => a - b);
+  if (commas.length === 0) return;
+
+  const countBefore = (offset: number): number => {
+    let low = 0;
+    let high = commas.length;
+    while (low < high) {
+      const mid = low + Math.floor((high - low) / 2);
+      if (commas[mid]! < offset) low = mid + 1;
+      else high = mid;
+    }
+    return low;
+  };
+  // Recovery in Babel 8.1.2 represented each omission with an explicit null.
+  const appendOmissions = (slots: (t.Node | null)[], count: number): void => {
+    for (let i = 0; i < count; i++) slots.push(null);
+  };
+  traverseJavaScriptAst(program, {
+    enter(node) {
+      if (
+        !t.isCallExpression(node) &&
+        !t.isOptionalCallExpression(node) &&
+        !t.isNewExpression(node)
+      )
+        return;
+      const start = node.typeArguments?.end ?? node.callee.end;
+      if (start == null || node.end == null) return;
+      let cursor = countBefore(start);
+      const end = countBefore(node.end);
+      if (cursor === end) return;
+
+      // Only gaps between argument spans belong to this list. A diagnostic
+      // inside an argument belongs to a nested expression.
+      const slots: typeof node.arguments = [];
+      for (const argument of node.arguments) {
+        if (argument.start == null || argument.end == null) return;
+        appendOmissions(slots, countBefore(argument.start) - cursor);
+        slots.push(argument);
+        cursor = countBefore(argument.end);
+      }
+      appendOmissions(slots, end - cursor);
+      if (slots.length !== node.arguments.length) node.arguments = slots;
+    },
+  });
+};
+
 /** Keep optional Babel metadata omitted in the parser-owned File representation. */
 const parseBabelFile = (
   source: string,
   options: ParserOptions,
 ): ParsedJavaScriptSource => {
   const { comments, tokens, errors, ...file } = parse(source, options);
+  if (errors.length > 0) restoreOmittedArguments(file.program, errors);
   return {
     ...file,
     // Babel couples the ambiguous generic-arrow diagnostic with a legacy

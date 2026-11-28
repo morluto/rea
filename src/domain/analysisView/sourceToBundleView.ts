@@ -13,11 +13,11 @@ import {
 import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
-import { pickFields, selectViewRows } from "./selectViewRows.js";
+import { pickFields, selectViewRows, filterSet } from "./selectViewRows.js";
 
 const mapping = sourceToBundleComparisonResultSchema.shape.items.element;
 const candidate = mapping.shape.candidates.element;
@@ -95,9 +95,6 @@ export const sourceToBundleViewContextSchema =
 const checkedReport = createAnalysisViewResultReader(
   sourceToBundleComparisonResultSchema,
 );
-const selected = (values: readonly string[] | undefined) =>
-  values === undefined ? undefined : new Set(values);
-
 /** Page facts owned by a complete comparison; page exhaustion does not upgrade source coverage. */
 export const projectSourceToBundleView = (
   parent: AnalysisViewParent,
@@ -130,11 +127,7 @@ export const projectSourceToBundleView = (
     parent_operation: "compare_source_to_bundle" as const,
     parent_digest: parent.evidenceId.slice(3),
     artifact: null,
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...report.limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, report.limitations),
     unknowns: [
       "Candidate correspondence is not behavioral equivalence. Exhausting a selected page does not establish absence outside the examined inputs.",
     ],
@@ -147,9 +140,9 @@ export const projectSourceToBundleView = (
       summary: context,
       coverage: completeWithinViewCoverage(1),
     });
-  const paths = selected(view.source_paths),
-    ids = selected(view.mapping_ids),
-    statuses = selected(view.statuses);
+  const paths = filterSet(view.source_paths),
+    ids = filterSet(view.mapping_ids),
+    statuses = filterSet(view.statuses);
   const filtered =
     paths !== undefined || ids !== undefined || statuses !== undefined;
   const matches = (row: SourceToBundleComparisonResult["items"][number]) =>

@@ -148,6 +148,9 @@ export class GhidraWire {
       ...(options.decompileMaxPayloadMiB === undefined
         ? {}
         : { decompile_max_payload_mib: options.decompileMaxPayloadMiB }),
+      ...(options.decompileReadAhead === undefined
+        ? {}
+        : { decompile_read_ahead: [...options.decompileReadAhead] }),
     };
     const limits =
       options.limits === undefined ? this.admitLimits() : ok(options.limits);
@@ -171,6 +174,10 @@ export class GhidraWire {
       );
     }
     const payload = JSON.stringify(payloadValue);
+    // Ownership of background work moves only with a frame that passed
+    // admission. An oversized hint never reaches the socket and must not
+    // replace the previous owner.
+    options.onAdmitted?.();
     // Only the request being written owns the next reply's ceiling; a
     // refused or still-queued request never changes it.
     this.#replyLimit = replyLimit;
@@ -193,6 +200,20 @@ export class GhidraWire {
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       cancelledValue: () => err(this.#cancelled(options.signal)),
     });
+    // A cancel is a request frame with its own id and no reply: the reply of
+    // the request it names is the acknowledgement.
+    const onInterrupt = (): void => {
+      if (!this.#options.pending.has(id) || socket.destroyed) return;
+      socket.write(
+        `${JSON.stringify({
+          id: this.#options.nextId(),
+          token,
+          method: "cancel",
+          params: { request_id: id },
+        })}\n`,
+      );
+    };
+    options.interrupt?.addEventListener("abort", onInterrupt, { once: true });
     socket.write(`${payload}\n`, (cause) => {
       if (cause !== undefined && cause !== null)
         this.#options.pending.settle(
@@ -206,15 +227,35 @@ export class GhidraWire {
           ),
         );
     });
-    const result = await response.finally(() =>
-      this.#inFlightReplyLimits.delete(id),
-    );
+    const result = await response.finally(() => {
+      options.interrupt?.removeEventListener("abort", onInterrupt);
+      this.#inFlightReplyLimits.delete(id);
+    });
     this.#options.logger[result.ok ? "debug" : "warn"](
       { method, status: result.ok ? "ok" : "error" },
       "Ghidra bridge request completed",
     );
     return result;
   }
+
+  /**
+   * Stop read-ahead workers without waiting for the Program request ahead of
+   * them. Like cancel, this frame has no reply.
+   */
+  abandonReadAhead(): void {
+    const socket = this.#options.getSocket();
+    const token = this.#options.getToken();
+    if (socket === undefined || socket.destroyed || token === undefined) return;
+    socket.write(
+      `${JSON.stringify({
+        id: this.#options.nextId(),
+        token,
+        method: "abandon_decompile_read_ahead",
+        params: {},
+      })}\n`,
+    );
+  }
+
   #cancelled(signal: AbortSignal | undefined): GhidraSessionError {
     return this.#options.failure(
       "cancelled",

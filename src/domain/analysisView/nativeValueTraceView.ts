@@ -10,6 +10,7 @@ import {
 } from "./analysisViewShape.js";
 import { invalidAnalysisView } from "./analysisViewErrors.js";
 import {
+  boundedViewLimitations,
   boundedViewMessages,
   completeWithinViewCoverage,
 } from "./analysisViewCoverage.js";
@@ -71,11 +72,7 @@ export const projectNativeValueTraceView = (
       limitation_count: trace.limitations.length,
     },
     coverage: completeWithinViewCoverage(1),
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...trace.limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, trace.limitations),
     unknowns: boundedViewMessages(
       trace.unknowns.map(
         ({ procedure, address, reason }) =>

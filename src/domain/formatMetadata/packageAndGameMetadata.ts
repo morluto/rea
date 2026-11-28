@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { jsonRecordSchema } from "../jsonRecord.js";
 import { jsonValueSchema } from "../jsonValue.js";
-import { offset, sha256Hex, uint32 } from "./primitives.js";
+import { offset, sha256Hex, uint16, uint32, uint8 } from "./primitives.js";
 
 /** Parsed source fields owned by the PCK adapter, independent of content hashes. */
 export const godotPckMetadataSchema = z.strictObject({
@@ -419,3 +419,212 @@ export const switchExecutableEntryMetadataSchema = z.strictObject({
 export type SwitchExecutableEntryMetadata = z.infer<
   typeof switchExecutableEntryMetadataSchema
 >;
+
+const megaDriveRawHex = z.string().regex(/^(?:[0-9a-f]{2})+$/u);
+
+/** One fixed-width header string: trailing spaces removed, raw bytes kept. */
+const megaDriveTextSchema = z.strictObject({
+  text: z.string(),
+  raw_hex: megaDriveRawHex,
+});
+
+const megaDriveVectorSchema = z.strictObject({
+  index: uint8,
+  /** 68000 exception name. Unassigned slots are `reserved`. */
+  name: z.string(),
+  value: uint32,
+});
+
+const megaDriveChecksumSchema = z.strictObject({
+  /** Big-endian word at header offset 0x18E. */
+  declared: uint16,
+  /** Word sum from image offset 0x200 through the declared ROM end. */
+  computed: uint16,
+  matches: z.boolean(),
+  /** Bytes that were both inside the declared window and inside the image. */
+  summed_bytes: offset,
+});
+
+/**
+ * A declared header range. `start` and `end` are the stored longwords;
+ * `bus_start` and `bus_end` are the 24-bit addresses the 68000 drives for
+ * them, which every check uses and a raw m68k load should use.
+ */
+const megaDriveAddressRangeSchema = z.strictObject({
+  start: uint32,
+  end: uint32,
+  bus_start: uint32,
+  bus_end: uint32,
+});
+
+/**
+ * External RAM descriptor at 0x1B0. Structured fields are set only when the
+ * marker is `RA`; `raw_hex` is the 12 stored bytes either way.
+ */
+const megaDriveExternalRamSchema = z.strictObject({
+  present: z.boolean(),
+  raw_hex: megaDriveRawHex,
+  /** Type byte at 0x1B2 when the marker is present. */
+  type: uint8.nullable(),
+  battery_backed: z.boolean().nullable(),
+  access: z.enum(["word", "byte-even", "byte-odd"]).nullable(),
+  start: uint32.nullable(),
+  end: uint32.nullable(),
+});
+
+/** Sega Mega Drive / Genesis cartridge header and vector table. */
+export const megaDriveRomMetadataSchema = z.strictObject({
+  kind: z.literal("mega-drive-rom"),
+  /** `plain` is a linear image. `smd` is a de-interleaved copier dump. */
+  layout: z.enum(["plain", "smd"]),
+  /**
+   * `32x` and `sega-cd` name the system string only. Their extra structures
+   * are not decoded.
+   */
+  system_kind: z.enum(["mega-drive", "genesis", "32x", "sega-cd", "other"]),
+  system: megaDriveTextSchema,
+  copyright: megaDriveTextSchema,
+  domestic_title: megaDriveTextSchema,
+  overseas_title: megaDriveTextSchema,
+  /** Twelve bytes at 0x180. */
+  serial: megaDriveTextSchema,
+  /** Two bytes at 0x18C. */
+  revision: megaDriveTextSchema,
+  device_support: megaDriveTextSchema,
+  /** Known device letters, in header order, with spaces skipped. */
+  devices: z.array(z.string().regex(/^[046BCFJKLMPRSTV]$/u)),
+  /** Non-space characters outside the known device set. */
+  unknown_device_characters: z.string(),
+  region: megaDriveTextSchema,
+  region_characters: z.array(z.string().length(1)).max(16),
+  /**
+   * `letters` is the classic J/U/E/A/B set. `hex` is one hex digit and sets
+   * `region_mask`. `ambiguous` is a single `A`, `B` or `E`, which is both a
+   * letter and a hex digit: `region_characters` and `region_mask` hold both
+   * readings. `empty` is only padding. Anything else is `other`.
+   */
+  region_style: z.enum(["letters", "hex", "ambiguous", "empty", "other"]),
+  region_mask: uint8.nullable(),
+  modem: megaDriveTextSchema,
+  memo: megaDriveTextSchema,
+  /** Vector 0, initial supervisor stack pointer. */
+  initial_ssp: uint32,
+  /** Vector 1, reset program counter, as stored. */
+  reset_pc: uint32,
+  /** The 24-bit address the 68000 fetches the first instruction from. */
+  reset_pc_bus: uint32,
+  vectors: z.array(megaDriveVectorSchema).length(64),
+  checksum: megaDriveChecksumSchema,
+  rom: megaDriveAddressRangeSchema,
+  ram: megaDriveAddressRangeSchema,
+  external_ram: megaDriveExternalRamSchema,
+  /** Byte length of the linear image, after SMD de-interleave. */
+  image_bytes: offset,
+  /** SMD block count; null for a plain image. */
+  smd_blocks: uint16.nullable(),
+});
+export type MegaDriveRomMetadata = z.infer<typeof megaDriveRomMetadataSchema>;
+
+/** One extracted range of the linear Mega Drive image. */
+export const megaDriveRomEntryMetadataSchema = z.strictObject({
+  kind: z.literal("mega-drive-rom-entry"),
+  role: z.enum(["vectors", "header", "program"]),
+  /** Offset in the linear image. For SMD this is not a file offset. */
+  image_offset: offset,
+});
+export type MegaDriveRomEntryMetadata = z.infer<
+  typeof megaDriveRomEntryMetadataSchema
+>;
+/** Byte order of a Nintendo 64 ROM image, named by its usual extension. */
+export const N64_BYTE_ORDERS = ["z64", "v64", "n64"] as const;
+/**
+ * IPL3/CIC variant named by the CRC32 of bytes 0x40..0x1000. NTSC and PAL
+ * partners share one boot image. `unknown` is a hash outside this table.
+ */
+export const N64_CIC_IDS = [
+  "6101",
+  "6102/7101",
+  "6103/7103",
+  "6105/7105",
+  "6106/7106",
+  "unknown",
+] as const;
+/** Media byte at header 0x3B, when it is one of the documented values. */
+export const N64_MEDIA_NAMES = [
+  "cartridge",
+  "64dd",
+  "expandable-cartridge",
+  "expandable-64dd",
+  "aleck64",
+] as const;
+/** Destination byte at header 0x3E, when it is one of the documented codes. */
+export const N64_DESTINATION_NAMES = [
+  "Asia",
+  "Brazil",
+  "China",
+  "Germany",
+  "North America",
+  "France",
+  "Gateway 64 NTSC",
+  "Netherlands",
+  "Italy",
+  "Japan",
+  "Korea",
+  "Gateway 64 PAL",
+  "Canada",
+  "Europe",
+  "Spain",
+  "Australia",
+  "Scandinavia",
+  "Beta",
+] as const;
+
+const n64CrcSchema = z.strictObject({
+  status: z.enum(["match", "mismatch", "not-checked"]),
+  declared_crc1: uint32,
+  declared_crc2: uint32,
+  computed_crc1: uint32.nullable(),
+  computed_crc2: uint32.nullable(),
+});
+
+/**
+ * Nintendo 64 cartridge header after the image is normalized to big-endian
+ * (z64) order. Title bytes stay in `title_raw_hex`; `title_ascii` renders
+ * printable ASCII and replaces every other byte with `.`.
+ */
+export const n64RomMetadataSchema = z.strictObject({
+  kind: z.literal("n64-rom"),
+  source_order: z.enum(N64_BYTE_ORDERS),
+  rom_bytes: offset,
+  /** First header word. A normalized image carries 0x80371240. */
+  pi_dom1_config: uint32,
+  clock_rate: uint32,
+  boot_address: uint32,
+  /** Raw word at 0x0C. REA does not map it to a libultra version name. */
+  libultra_release: uint32,
+  crc: n64CrcSchema,
+  /** IEEE CRC32 of IPL3 (0x40..0x1000); null when those bytes are absent. */
+  ipl3_crc32: uint32.nullable(),
+  cic: z.enum(N64_CIC_IDS),
+  title_raw_hex: z.string().regex(/^[0-9a-f]{40}$/u),
+  title_ascii: z.string().length(20),
+  media_byte: uint8,
+  media_name: z.enum(N64_MEDIA_NAMES).nullable(),
+  cartridge_id: z.string().length(2),
+  cartridge_id_hex: z.string().regex(/^[0-9a-f]{4}$/u),
+  destination_byte: uint8,
+  destination_code: z.string().length(1),
+  destination_name: z.enum(N64_DESTINATION_NAMES).nullable(),
+  version: uint8,
+});
+export type N64RomMetadata = z.infer<typeof n64RomMetadataSchema>;
+
+/** One normalized range of an N64 ROM: header, IPL3, or the whole image. */
+export const n64RomEntryMetadataSchema = z.strictObject({
+  kind: z.literal("n64-rom-entry"),
+  role: z.enum(["header", "ipl3", "program"]),
+  source_order: z.enum(N64_BYTE_ORDERS),
+  /** True when the served bytes were swapped out of v64 or n64 order. */
+  decoded: z.boolean(),
+});
+export type N64RomEntryMetadata = z.infer<typeof n64RomEntryMetadataSchema>;

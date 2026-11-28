@@ -14,16 +14,14 @@ import {
   type BatchDecompileResult,
 } from "../native/batchDecompile.js";
 import { analysisErrorProjectionSchema } from "../analysisErrorProjectionSchema.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import {
+  boundedViewLimitations,
   boundedViewMessages,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
-import {
-  analysisViewInputError,
-  invalidAnalysisView,
-} from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import {
   createAnalysisViewResultReader,
   type AnalysisViewParent,
@@ -37,7 +35,7 @@ import {
   analysisTextPage,
   analysisTextPageItemSchema,
 } from "./analysisViewText.js";
-import { selectIndexedViewRows, selectViewRows } from "./selectViewRows.js";
+import { selectViewRows, filterSet } from "./selectViewRows.js";
 
 const OPERATION = "batch_decompile" as const;
 
@@ -263,9 +261,6 @@ const batchUnknowns = (items: readonly BatchDecompileItem[]): string[] => {
   ];
 };
 
-const selected = <Value>(values: readonly Value[] | undefined) =>
-  values === undefined ? undefined : new Set(values);
-
 const itemRow = (
   item: BatchDecompileItem,
   index: number,
@@ -309,11 +304,7 @@ const itemRow = (
 };
 
 const pseudocodeRefusal = (message: string) =>
-  err(
-    analysisViewInputError([
-      { path: ["view", "index"], reason: "invalid_value", message },
-    ]),
-  );
+  invalidAnalysisView(message, "index");
 
 /** Select retained batch facts without repeating decompilation or changing its record. */
 export const projectBatchDecompileView = (
@@ -337,11 +328,7 @@ export const projectBatchDecompileView = (
     parent_operation: OPERATION,
     parent_digest: parent.evidenceId.slice(3),
     artifact: parent.artifact ?? null,
-    limitations: boundedViewMessages(
-      parent.limitations,
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent),
     unknowns: boundedViewMessages(
       [],
       parent.evidenceId,
@@ -363,10 +350,10 @@ export const projectBatchDecompileView = (
       coverage: completeWithinViewCoverage(1),
     });
   if (view.collection === "items") {
-    const indices = selected(view.where.indices);
-    const addresses = selected(view.where.addresses);
-    const entries = selected(view.where.procedure_addresses);
-    const statuses = selected<string>(view.where.statuses);
+    const indices = filterSet(view.where.indices);
+    const addresses = filterSet(view.where.addresses);
+    const entries = filterSet(view.where.procedure_addresses);
+    const statuses = filterSet<string>(view.where.statuses);
     const matches = (item: (typeof batch.items)[number]) =>
       (addresses === undefined || addresses.has(item.address)) &&
       (statuses === undefined || statuses.has(item.status)) &&
@@ -375,16 +362,13 @@ export const projectBatchDecompileView = (
           entries.has(item.procedure.address)));
     const projectItem = (item: (typeof batch.items)[number], index: number) =>
       itemRow(item, index, view.include_pseudocode);
-    const { rows, total } =
-      indices !== undefined
-        ? selectIndexedViewRows(
-            batch.items,
-            indices,
-            view,
-            matches,
-            projectItem,
-          )
-        : selectViewRows(batch.items, view, matches, projectItem);
+    const { rows, total } = selectViewRows(
+      batch.items,
+      view,
+      matches,
+      projectItem,
+      indices,
+    );
     return ok({
       kind: "batch-decompile" as const,
       view,

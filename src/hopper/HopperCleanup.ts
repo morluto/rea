@@ -521,13 +521,30 @@ const cleanupOutcome = (
       },
       state.resources.has("hopper-document")
         ? {
-            remediationAction:
-              "Export the Evidence bundle before close_binary clears session records. Let Hopper finish initial analysis or complete its pending dialog, then retry close_binary on this connection so REA can authenticate and close the retained document. If no matching bridge becomes available, manually close the reported document in Hopper, then restart the MCP connection. A helper exit or open:false does not establish that retained cleanup is complete.",
+            remediationAction: retainedDocumentRemediation(input.activeRequest),
+            continuingCallerGuidance: {
+              remediationAction: RETAINED_DOCUMENT_CONTINUING_REMEDIATION,
+            },
           }
         : undefined,
     ),
   );
 };
+
+/** Recovery for a caller whose REA runtime and bridge connection keep running. */
+const RETAINED_DOCUMENT_CONTINUING_REMEDIATION =
+  "Export the Evidence bundle before close_binary clears session records. Let Hopper finish initial analysis or complete its pending dialog, then retry close_binary on this connection so REA can authenticate and close the retained document. If no matching bridge becomes available, manually close the reported document in Hopper, then restart the MCP connection. A helper exit or open:false does not establish that retained cleanup is complete.";
+
+/**
+ * Recovery that holds after the calling invocation has ended: only the user
+ * can act on the Hopper application, and no REA connection remains to retry.
+ */
+const retainedDocumentRemediation = (
+  activeRequest: HopperRequestActivity | null,
+): string =>
+  activeRequest === null
+    ? "Hopper may still hold the document REA opened, running initial analysis or waiting on a dialog. Let it finish or complete the dialog, then close that document in Hopper, or quit Hopper if it has no other work. This command has ended, so no REA connection remains to close the document."
+    : `Hopper is still running ${activeRequest.operation} on the document REA opened (see active_request in details), and REA cannot interrupt it. Let Hopper finish and then close that document in Hopper, or quit Hopper to stop the work now if it has no other work. This command has ended, so no REA connection remains to close the document.`;
 
 const cleanupIssueDetails = (issues: readonly CleanupIssue[]): JsonValue =>
   issues.map((issue) => ({

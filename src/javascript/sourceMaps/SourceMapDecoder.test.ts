@@ -10,6 +10,7 @@ import {
   SourceMapCleanupFailure,
   type SourceMapDecoderDependencies,
 } from "./SourceMapCommand.js";
+import { parseSourceMapReply } from "./SourceMapReply.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
 import { assertProcessOwnershipInspectionActive } from "../../process/ProcessInspectionCancellation.js";
 import { spawnOwnedProviderProcess } from "../../process/ProviderProcess.js";
@@ -470,4 +471,179 @@ it("does not claim an opaque caller reason's Darwin cleanup owner", async () => 
   expect(result.error.cleanupIncomplete).toBe(false);
   await decoder.close();
   expect(ownerClosed).toBe(false);
+});
+
+it("reports details.limit for pre-spawn map_bytes, output_bytes, codec stdout output_bytes, and codec reply limits", async () => {
+  const decoder = new SourceMapDecoder();
+  try {
+    const mapBytesRefusal = await decoder.trace({
+      ...input,
+      limits: { map_bytes: 16 },
+    });
+    if (mapBytesRefusal.ok) throw new Error("expected map_bytes refusal");
+    const mapProjected = projectAnalysisError(mapBytesRefusal.error);
+    expect(mapProjected.details?.limit).toEqual({
+      control_kind: "parameter",
+      parameter: "source_map_limits.map_bytes",
+      effective_value: 16,
+      unit: "bytes",
+      minimum: 1,
+      maximum: 536_870_887,
+      default_value: 8_388_608,
+      applies_at: "next_call",
+      required_value: Buffer.byteLength(input.text),
+    });
+
+    const outputBytesRefusal = await decoder.trace({
+      ...input,
+      limits: { output_bytes: 16 },
+    });
+    if (outputBytesRefusal.ok) throw new Error("expected output_bytes refusal");
+    const outputProjected = projectAnalysisError(outputBytesRefusal.error);
+    expect(outputProjected.details?.limit).toEqual({
+      control_kind: "parameter",
+      parameter: "source_map_limits.output_bytes",
+      effective_value: 16,
+      unit: "bytes",
+      minimum: 1,
+      maximum: 536_870_887,
+      default_value: 33_554_432,
+      applies_at: "next_call",
+    });
+    expect(outputProjected.details?.limit).not.toHaveProperty("required_value");
+  } finally {
+    await decoder.close();
+  }
+
+  const stdoutDecoder = new SourceMapDecoder({
+    prepareOwnership: async () => {},
+    launcher: (options) =>
+      spawnOwnedProviderProcess({
+        ...options,
+        arguments: ["-e", 'process.stdout.write("x".repeat(4096))'],
+      }),
+  });
+  try {
+    const stdoutRefusal = await stdoutDecoder.trace({
+      ...input,
+      limits: { output_bytes: 1024 },
+    });
+    if (stdoutRefusal.ok)
+      throw new Error("expected stdout output_bytes refusal");
+    expect(stdoutRefusal.error._tag).toBe("AnalysisOutputError");
+    expect(projectAnalysisError(stdoutRefusal.error).details?.limit).toEqual({
+      control_kind: "parameter",
+      parameter: "source_map_limits.output_bytes",
+      effective_value: 1024,
+      unit: "bytes",
+      minimum: 1,
+      maximum: 536_870_887,
+      default_value: 33_554_432,
+      applies_at: "next_call",
+    });
+  } finally {
+    await stdoutDecoder.close();
+  }
+
+  const stderrDecoder = new SourceMapDecoder({
+    prepareOwnership: async () => {},
+    launcher: (options) =>
+      spawnOwnedProviderProcess({
+        ...options,
+        arguments: [
+          "-e",
+          'process.stderr.write("x".repeat(1024 * 1024 + 64)); setInterval(() => {}, 1000);',
+        ],
+      }),
+  });
+  try {
+    const stderrRefusal = await stderrDecoder.trace(input);
+    if (stderrRefusal.ok) throw new Error("expected stderr allowance refusal");
+    expect(stderrRefusal.error._tag).toBe("AnalysisOutputError");
+    expect(
+      projectAnalysisError(stderrRefusal.error).details?.limit,
+    ).toBeUndefined();
+  } finally {
+    await stderrDecoder.close();
+  }
+
+  const parsedReply = parseSourceMapReply(
+    JSON.stringify({
+      state: "failure",
+      reason: "limit",
+      message: "record budget exceeded",
+      limit: { field: "decoded_records", maximum: 4 },
+    }),
+    input.path,
+    null,
+  );
+  if (parsedReply.ok) throw new Error("expected decoded_records refusal");
+  expect(projectAnalysisError(parsedReply.error).details?.limit).toEqual({
+    control_kind: "parameter",
+    parameter: "source_map_limits.decoded_records",
+    effective_value: 4,
+    unit: "count",
+    minimum: 1,
+    maximum: 0x7fff_ffff,
+    default_value: 262_144,
+    applies_at: "next_call",
+  });
+
+  const legacyLimitReply = parseSourceMapReply(
+    JSON.stringify({
+      state: "failure",
+      reason: "limit",
+      message: "record budget exceeded without structured limit",
+    }),
+    input.path,
+    null,
+  );
+  if (legacyLimitReply.ok) throw new Error("expected legacy limit refusal");
+  expect(legacyLimitReply.error._tag).toBe("ArtifactOperationError");
+  expect(
+    projectAnalysisError(legacyLimitReply.error).details?.limit,
+  ).toBeUndefined();
+
+  for (const invalidReply of [
+    {
+      state: "failure",
+      reason: "limit",
+      message: "non-codec field",
+      limit: { field: "fetch_bytes", maximum: 1024 },
+    },
+    {
+      state: "failure",
+      reason: "limit",
+      message: "non-codec heap field",
+      limit: { field: "codec_heap_mib", maximum: 192 },
+    },
+    {
+      state: "failure",
+      reason: "limit",
+      message: "below range",
+      limit: { field: "decoded_records", maximum: 0 },
+    },
+    {
+      state: "failure",
+      reason: "limit",
+      message: "above range",
+      limit: { field: "output_bytes", maximum: 536_870_888 },
+    },
+    {
+      state: "failure",
+      reason: "malformed",
+      message: "limit on malformed reply",
+      limit: { field: "decoded_records", maximum: 4 },
+    },
+  ]) {
+    const rejected = parseSourceMapReply(
+      JSON.stringify(invalidReply),
+      input.path,
+      null,
+    );
+    if (rejected.ok) throw new Error("expected malformed codec reply error");
+    expect(rejected.error._tag).toBe("AnalysisOutputError");
+    expect(projectAnalysisError(rejected.error).code).toBe("unreadable_output");
+    expect(projectAnalysisError(rejected.error).details?.limit).toBeUndefined();
+  }
 });

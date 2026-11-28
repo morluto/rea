@@ -15,7 +15,7 @@ import {
   type PlaywrightTrace,
 } from "../playwrightTrace/playwrightTrace.js";
 import { playwrightTraceViewRequestSchema } from "../playwrightTrace/playwrightTraceQuery.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import {
   createAnalysisViewResultReader,
   type AnalysisViewParent,
@@ -27,16 +27,13 @@ import {
 } from "./analysisViewShape.js";
 import {
   analysisViewCoverageSchema,
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
-  pageViewCoverage,
+  selectedViewPage,
 } from "./analysisViewCoverage.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
-import { pickFields, selectViewRows } from "./selectViewRows.js";
-import {
-  analysisViewInputError,
-  invalidAnalysisView,
-} from "./analysisViewErrors.js";
+import { pickFields, selectViewRows, filterSet } from "./selectViewRows.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 
 export const playwrightTraceViewContextSchema = playwrightTraceSchema
   .omit({
@@ -108,8 +105,6 @@ export const playwrightTraceViewItemsSchema = z.union([
   ),
 ]);
 const readReport = createAnalysisViewResultReader(playwrightTraceSchema);
-const values = (selected: readonly string[] | undefined) =>
-  selected === undefined ? undefined : new Set(selected);
 const allows = (
   selection: ReadonlySet<string> | undefined,
   value: string | null,
@@ -226,10 +221,10 @@ const selectRows = (
   view: Exclude<View, { collection: "event-text" }>,
 ) => {
   if (view.collection === "events") {
-    const ids = values(view.event_ids),
-      streams = values(view.stream_ids),
-      kinds = values(view.kinds),
-      calls = values(view.call_ids);
+    const ids = filterSet(view.event_ids),
+      streams = filterSet(view.stream_ids),
+      kinds = filterSet(view.kinds),
+      calls = filterSet(view.call_ids);
     const activeFilters = [ids, streams, kinds, calls].filter(
       (selection) => selection !== undefined,
     );
@@ -262,8 +257,8 @@ const selectRows = (
     return selectViewRows(report.events, view, undefined, projectEvent);
   }
   if (view.collection === "members") {
-    const ids = values(view.member_ids),
-      paths = values(view.paths);
+    const ids = filterSet(view.member_ids),
+      paths = filterSet(view.paths);
     const filtered = ids !== undefined || paths !== undefined;
     const matchMember = (row: PlaywrightTrace["members"][number]): boolean =>
       allows(ids, row.member_id) && allows(paths, row.path);
@@ -300,7 +295,7 @@ const selectRows = (
     return selectViewRows(report.members, view, undefined, projectMember);
   }
   if (view.collection === "streams") {
-    const ids = values(view.stream_ids);
+    const ids = filterSet(view.stream_ids);
     const matchStream = (row: PlaywrightTrace["streams"][number]): boolean =>
       allows(ids, row.stream_id);
     const streamFields = view.fields ?? [
@@ -335,7 +330,7 @@ const selectRows = (
     }
     return selectViewRows(report.streams, view, undefined, projectStream);
   }
-  const codes = values(view.codes);
+  const codes = filterSet(view.codes);
   const matchDiagnostic = (
     row: PlaywrightTrace["diagnostics"][number],
   ): boolean => allows(codes, row.code);
@@ -388,15 +383,9 @@ const selectEventText = (
         : undefined
       : report.events.find((row) => row.event_id === view.event_id);
   if (event === undefined || event.text === null)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view", "event_id"],
-          reason: "invalid_value",
-          message:
-            "Choose a retained event with interpreted text; events without a text value remain unknown.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Choose a retained event with interpreted text; events without a text value remain unknown.",
+      "event_id",
     );
   const page = analysisTextPage(
     event.text,
@@ -449,11 +438,7 @@ export const projectPlaywrightTraceView = (
     parent_evidence_id: parent.evidenceId,
     parent_operation: PLAYWRIGHT_TRACE_OPERATION,
     parent_digest: parent.evidenceId.slice(3),
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, limitations),
     unknowns: [
       "Recording completeness and cross-stream ordering remain unknown. Resource contents are not decoded.",
     ],
@@ -488,11 +473,6 @@ export const projectPlaywrightTraceView = (
     ...context,
     kind: "playwright-trace" as const,
     view,
-    items: selected.rows,
-    coverage: pageViewCoverage(
-      view.offset,
-      selected.rows.length,
-      selected.total,
-    ),
+    ...selectedViewPage(view.offset, selected),
   });
 };

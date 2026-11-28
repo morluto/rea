@@ -1668,16 +1668,73 @@ enabling checkpoint mode requires the startup environment and an MCP restart.
 
 Storage is separated by target SHA-256 and analysis-profile identity, including
 the supported Ghidra version. Identical executable bytes at another path can
-reuse the Program. One live REA session holds the checkpoint's socket lease;
-a competing session reports that owner and must wait until it closes. Only
-REA-owned Programs are checkpointed. Caller-selected existing projects retain
-their separate read-only workflow below.
+reuse the Program. Only REA-owned Programs are checkpointed. Caller-selected
+existing projects retain their separate read-only workflow below.
+
+Several sessions and parallel CLI commands can use one checkpointed target at
+the same time. Each restores the packed Program into its own private project,
+so queries never wait for another session. Two sessions that both open a
+target with no checkpoint both analyze it; the first to finish publishes the
+initial checkpoint and the other keeps its own analysis without publishing a
+second copy.
+
+Saving is not merged. A session saves only onto the checkpoint it started
+from, and holds the checkpoint's socket lease only while it publishes. When
+another session saved first, the later session's `close_binary` fails with
+`cleanup_incomplete`, its remediation states that the edits were not saved,
+and the current checkpoint is unchanged. That refusal is permanent for the
+session: call `close_binary` again to discard its edits and release it, then
+reopen the target and reapply them. That close succeeds with
+`result.checkpoint` set to `{"status": "discarded", "reason": "superseded",
+"directory": ...}`, alongside the snapshot receipt when `snapshot_path` was
+given, so the discard is recorded rather than silent. Only the close that
+releases the edits reports it. If a later cleanup step of that close fails,
+the close reports `cleanup_incomplete` with the same object in
+`details.partial_observation.checkpoint`, and its retry returns no second
+report. Until that close, `open_binary` of another target, opening app
+resources, `reset_investigation` and external mutations refuse with
+`capability_unavailable` instead of releasing the edits unreported; call
+`close_binary` first. To avoid the refusal, make edits to one target from one
+session at a time.
+
+Two related refusals are not configuration faults and leave the checkpoint
+intact. A session whose selected checkpoint was replaced before its Ghidra
+process restored it, or whose initial analysis was overtaken by another
+session's saved edits, reports `capability_unavailable` with
+`retryable: false`; reopen the target. A save that waits its whole save wait
+for another session's publication names that session. During startup it
+reports a retryable `capability_unavailable`; during `close_binary` it reports
+`cleanup_incomplete` with `recovery.kind=retry_cleanup` and keeps the session
+and its edits. Repeat the call.
+
+The save wait is 30,000 ms by default. Set
+`REA_GHIDRA_CHECKPOINT_SAVE_WAIT_MS` to an integer from 50 to 600,000
+milliseconds in the environment that starts REA to change how long
+`close_binary`, or the first save of a startup, waits for another session's
+publication. The floor is one 50 ms poll of the lease; the maximum is ten
+minutes, past which a held lease is a stalled publisher and not a save in
+progress. REA reads the value when it starts and each session keeps the bound
+it opened with, so a change needs a restart; `update_analysis_settings` does
+not change it and `inspect_analysis_settings` does not list it. The busy
+refusal names the control, the value applied, whether it came from the default
+or the launch environment, and the range, and reports them as an environment
+`details.limit`. An empty, malformed or out-of-range value does not fall back
+to the default: `rea doctor` and registration validation report it, REA still
+starts, and a checkpointed Ghidra session refuses to open with
+`configuration_invalid` until it is corrected. Sessions without a checkpoint
+never apply the wait. The control lengthens only this session's wait; it does
+not shorten the other session's save. It also cannot make an MCP client wait
+longer: the client's own request deadline is separate and unknown to REA, so
+keep the wait below it, or the client gives up while the close continues. A
+forced stop, such as a cancelled request escalating a close, ends the wait
+without publishing.
 
 The directory retains the current manifest and packed Program. Publication
 writes and syncs a new packed file before atomically replacing the manifest;
 superseded files are removed after publication. A failed save preserves the
 previous checkpoint and the live session for retry. Correct the reported storage
-problem, then call `close_binary` again. Incomplete cleanup retains its owner.
+problem, then call `close_binary` again; the refused save described above is
+the exception, where the retry discards. Incomplete cleanup retains its owner.
 Corrupt, malformed or changed checkpoints fail explicitly instead of falling
 back to a fresh import. Preserve that directory and repair it or explicitly
 select a new directory to start fresh.
@@ -1709,7 +1766,9 @@ distinguish restored database state from fresh analysis.
 
 Run `npm run verify:ghidra:checkpoints` with your existing Ghidra/JDK installation
 to verify fresh CLI/MCP processes, name/comment/type preservation, competing
-sessions, corruption refusal and explicit recovery. Lifecycle fixtures cover
+sessions, corruption refusal and explicit recovery. `npm run verify:ghidra:type-edits`
+verifies caller-defined types and function signatures, their refusals and
+their restoration from a checkpoint in a new process. Lifecycle fixtures cover
 save failure/retry and cancellation during checkpoint finalization separately.
 
 ### Reuse an existing Ghidra project

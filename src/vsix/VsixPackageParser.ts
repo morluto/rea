@@ -1,29 +1,37 @@
+import { posix } from "node:path";
 import { accountZipMemberRegion } from "../domain/zip/zipMemberRegion.js";
 import {
   decodeLimit,
   malformedInput,
   ParseFailureError,
-  unsupportedInput,
 } from "../domain/parseFailure.js";
 import {
   Uint8ArrayReader,
-  Uint8ArrayWriter,
   ZipReader,
   type Entry,
   type FileEntry,
 } from "@zip.js/zip.js";
-import type { Element, Node } from "@xmldom/xmldom";
 
 import {
   ArtifactReaderFailure,
   decodeZipEntryText,
   zipEntryNameLimitations,
-  typedZipFailure,
+  throwZipPackageFailure,
   ZIP_READER_OPTIONS,
   zipEntryPath,
   zipListingCoverage,
+  isZipFileEntry,
+  readBoundedZipMember,
+  zipMemberSize,
 } from "../resources/index.js";
-import { parseXmlDocumentWithinNodeLimit } from "../domain/xmlDocument.js";
+import {
+  isXmlElement,
+  parseXmlDocumentWithinNodeLimit,
+  xmlChildrenNamed,
+  xmlFirstChildNamed,
+  xmlTrimmedAttribute,
+  xmlTrimmedDirectText,
+} from "../domain/xmlDocument.js";
 import { countJsonValues } from "../domain/jsonValue.js";
 import { decodeXmlPlistText } from "../domain/propertyListXmlText.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
@@ -112,54 +120,7 @@ const emptyKindCounts = (): VsixPackage["member_kind_counts"] => ({
   unknown: 0,
 });
 
-const isElement = (node: Node | null): node is Element =>
-  node !== null && node.nodeType === 1;
-
-const childElements = (element: Element): Element[] => {
-  const children: Element[] = [];
-  for (
-    let child = element.firstChild;
-    child !== null;
-    child = child.nextSibling
-  )
-    if (isElement(child)) children.push(child);
-  return children;
-};
-
-const childrenNamed = (element: Element, local: string): Element[] =>
-  childElements(element).filter((child) => child.localName === local);
-
-const firstNamed = (element: Element, local: string): Element | undefined =>
-  childrenNamed(element, local)[0];
-
-const nonempty = (value: string | null | undefined): string | null => {
-  if (value === null || value === undefined) return null;
-  const trimmed = value.trim();
-  return trimmed === "" ? null : trimmed;
-};
-
-const attribute = (element: Element, name: string): string | null =>
-  nonempty(element.getAttribute(name));
-
-const elementText = (element: Element): string | null => {
-  const parts: string[] = [];
-  for (
-    let child = element.firstChild;
-    child !== null;
-    child = child.nextSibling
-  )
-    if (child.nodeType === 3 || child.nodeType === 4)
-      parts.push(child.nodeValue ?? "");
-  return nonempty(parts.join(""));
-};
-
-const zipSize = (value: number | undefined): number | null =>
-  typeof value === "number" && Number.isSafeInteger(value) && value >= 0
-    ? value
-    : null;
-
-const asFileEntry = (entry: Entry): entry is FileEntry =>
-  !entry.directory && "getData" in entry;
+const nonempty = (value: string): string | null => value.trim() || null;
 
 const wrapZipFailure = (
   cause: unknown,
@@ -170,53 +131,13 @@ const wrapZipFailure = (
     throw new ArtifactReaderFailure("cancelled", "Artifact read cancelled", {
       cause: signal.reason,
     });
-  if (
-    cause instanceof ArtifactReaderFailure ||
-    cause instanceof ParseFailureError
-  )
-    throw cause;
-  const typed = typedZipFailure(cause, compressionMethod);
-  if (typed instanceof ArtifactReaderFailure && typed.reason === "limit")
-    throw typed;
-  if (typed instanceof ArtifactReaderFailure && typed.reason === "unavailable")
-    throw unsupportedInput(
-      VSIX_PACKAGE_FORMAT,
-      `VS Code extension ZIP uses an unsupported layout: ${typed.message}`,
-      { cause: typed },
-    );
-  if (
-    typed instanceof ArtifactReaderFailure &&
-    typed.parseFailure !== undefined
-  )
-    throw malformedInput(VSIX_PACKAGE_FORMAT, typed.message, { cause: typed });
-  throw cause;
+  return throwZipPackageFailure(
+    cause,
+    VSIX_PACKAGE_FORMAT,
+    "VS Code extension",
+    compressionMethod,
+  );
 };
-
-/** Refuse expansion past the metadata budget before buffering more output. */
-class BoundedUint8ArrayWriter extends Uint8ArrayWriter {
-  readonly #budget: Budget;
-
-  constructor(
-    maximum: number,
-    private readonly exceeded: (required: number) => Error,
-  ) {
-    super();
-    this.#budget = new Budget(maximum);
-  }
-
-  override async init(size?: number): Promise<void> {
-    if (size !== undefined && size > this.#budget.maximum)
-      throw this.exceeded(size);
-    await super.init?.(size);
-  }
-
-  override async writeUint8Array(array: Uint8Array): Promise<void> {
-    this.#budget.charge(array.length, () =>
-      this.exceeded(this.#budget.used + array.length),
-    );
-    await super.writeUint8Array(array);
-  }
-}
 
 const readMemberBytes = async (
   entry: FileEntry,
@@ -231,37 +152,19 @@ const readMemberBytes = async (
       `${label} exceeds the ${String(maximum)}-byte budget.`,
       { name: limitName, maximum, required },
     );
-  const declared = zipSize(entry.uncompressedSize);
-  if (declared !== null && declared > maximum) throw exceeded(declared);
   try {
-    return await entry.getData(new BoundedUint8ArrayWriter(maximum, exceeded), {
-      checkSignature: true,
-      ...(signal === undefined ? {} : { signal }),
-    });
+    return await readBoundedZipMember(entry, signal, maximum, exceeded);
   } catch (cause: unknown) {
     return wrapZipFailure(cause, signal, entry.compressionMethod);
   }
 };
 
-const splitCsv = (value: string | null): string[] => {
-  if (value === null) return [];
-  const seen = new Set<string>();
-  const ids: string[] = [];
-  for (const part of value.split(",")) {
-    const id = part.trim();
-    if (id === "" || seen.has(id)) continue;
-    seen.add(id);
-    ids.push(id);
-  }
-  return ids;
-};
-
-const asStringArray = (value: unknown): string[] => {
-  if (typeof value === "string") return splitCsv(value);
-  if (!Array.isArray(value)) return [];
+const parseExtensionList = (value: unknown): string[] => {
+  const items = typeof value === "string" ? value.split(",") : value;
+  if (!Array.isArray(items)) return [];
   const ids: string[] = [];
   const seen = new Set<string>();
-  for (const item of value) {
+  for (const item of items) {
     if (typeof item !== "string") continue;
     const id = item.trim();
     if (id === "" || seen.has(id)) continue;
@@ -381,8 +284,7 @@ const packageJsonEntryDirectoryOnly = (value: unknown): boolean => {
 
 /**
  * Suffixes tried after the declared path, in order. VS Code loads `main`
- * through Node's CommonJS file and directory lookup, and the web extension
- * host adds `.js` to a `browser` entry that lacks it.
+ * through Node's CommonJS file and directory lookup.
  */
 const NODE_FILE_CANDIDATES = ["", ".js", ".json", ".node"] as const;
 const NODE_INDEX_CANDIDATES = [
@@ -390,7 +292,6 @@ const NODE_INDEX_CANDIDATES = [
   "/index.json",
   "/index.node",
 ] as const;
-const BROWSER_ENTRY_CANDIDATES = ["", ".js"] as const;
 
 /**
  * The member an entry point resolves to, or the declared path when none.
@@ -617,65 +518,79 @@ const parseVsixManifestDocument = (
     return empty;
   }
   const root = parsed.value.documentElement;
-  if (!isElement(root) || root.localName !== "PackageManifest") {
+  if (!isXmlElement(root) || root.localName !== "PackageManifest") {
     limitations.push(
       "The selected extension.vsixmanifest root element is not PackageManifest.",
     );
     return empty;
   }
-  const metadata = firstNamed(root, "Metadata");
-  const identityElement =
-    metadata === undefined ? undefined : firstNamed(metadata, "Identity");
-  const properties =
-    metadata === undefined ? undefined : firstNamed(metadata, "Properties");
+  const namespace = root.namespaceURI ?? "";
+  const metadata = xmlFirstChildNamed(root, "Metadata", namespace);
+  const metadataChild = (name: string) =>
+    metadata === undefined
+      ? undefined
+      : xmlFirstChildNamed(metadata, name, namespace);
+  const identityElement = metadataChild("Identity");
+  const properties = metadataChild("Properties");
   const propertyById = new Map<string, string>();
   if (properties !== undefined)
-    for (const property of childrenNamed(properties, "Property")) {
-      const id = attribute(property, "Id");
-      const value = attribute(property, "Value");
+    for (const property of xmlChildrenNamed(
+      properties,
+      "Property",
+      namespace,
+    )) {
+      const id = xmlTrimmedAttribute(property, "Id");
+      const value = xmlTrimmedAttribute(property, "Value");
       if (id !== null && value !== null && !propertyById.has(id))
         propertyById.set(id, value);
     }
-  const assetsElement = firstNamed(root, "Assets");
+  const assetsElement = xmlFirstChildNamed(root, "Assets", namespace);
   const assets: VsixPackage["assets"] =
     assetsElement === undefined
       ? []
-      : childrenNamed(assetsElement, "Asset").map((asset) => {
-          const path = attribute(asset, "Path");
+      : xmlChildrenNamed(assetsElement, "Asset", namespace).map((asset) => {
+          const path = xmlTrimmedAttribute(asset, "Path");
           const logical = path === null ? null : vsixPackageLogicalPath(path);
           return {
-            type: attribute(asset, "Type"),
+            type: xmlTrimmedAttribute(asset, "Type"),
             path,
             present:
               logical === null ? null : presentPaths.has(logical.toLowerCase()),
           };
         });
-  const displayName =
-    metadata === undefined ? null : firstNamed(metadata, "DisplayName");
-  const description =
-    metadata === undefined ? null : firstNamed(metadata, "Description");
+  const metadataText = (name: string) => {
+    const element = metadataChild(name);
+    return element === undefined ? null : xmlTrimmedDirectText(element);
+  };
+  const displayName = metadataText("DisplayName");
+  const description = metadataText("Description");
+  const identityAttribute = (name: string) =>
+    identityElement === undefined
+      ? null
+      : xmlTrimmedAttribute(identityElement, name);
   return {
     identity:
-      identityElement === undefined
+      identityElement === undefined &&
+      displayName === null &&
+      description === null
         ? null
         : {
-            id: attribute(identityElement, "Id"),
-            version: attribute(identityElement, "Version"),
-            publisher: attribute(identityElement, "Publisher"),
-            target_platform: attribute(identityElement, "TargetPlatform"),
-            display_name: displayName == null ? null : elementText(displayName),
-            description: description == null ? null : elementText(description),
+            id: identityAttribute("Id"),
+            version: identityAttribute("Version"),
+            publisher: identityAttribute("Publisher"),
+            target_platform: identityAttribute("TargetPlatform"),
+            display_name: displayName,
+            description,
           },
     engine: propertyById.get("Microsoft.VisualStudio.Code.Engine") ?? null,
-    extensionDependencies: splitCsv(
-      propertyById.get("Microsoft.VisualStudio.Code.ExtensionDependencies") ??
-        null,
+    extensionDependencies: parseExtensionList(
+      propertyById.get("Microsoft.VisualStudio.Code.ExtensionDependencies"),
     ),
-    extensionPack: splitCsv(
-      propertyById.get("Microsoft.VisualStudio.Code.ExtensionPack") ?? null,
+    extensionPack: parseExtensionList(
+      propertyById.get("Microsoft.VisualStudio.Code.ExtensionPack"),
     ),
-    extensionKind: splitCsv(
-      propertyById.get("Microsoft.VisualStudio.Code.ExtensionKind") ?? null,
+    extensionKind: parseExtensionList(
+      propertyById.get("Microsoft.VisualStudio.Code.ExtensionKind"),
     ),
     assets,
   };
@@ -805,9 +720,9 @@ const parsePackageJsonDocument = (
       commands_total: commandRows.length,
       commands_omitted: listedCommands.omitted,
     },
-    extensionDependencies: asStringArray(record.extensionDependencies),
-    extensionPack: asStringArray(record.extensionPack),
-    extensionKind: asStringArray(record.extensionKind),
+    extensionDependencies: parseExtensionList(record.extensionDependencies),
+    extensionPack: parseExtensionList(record.extensionPack),
+    extensionKind: parseExtensionList(record.extensionKind),
     capabilities: {
       untrusted_workspaces: capabilityValue(
         record.capabilities !== null &&
@@ -960,8 +875,7 @@ export const parseVsixPackage = async (
     const pathCounts = new Map<string, number>();
     const caseVariants = new Map<string, Set<string>>();
     for (const entry of entries) {
-      if (entry.directory) continue;
-      if (!asFileEntry(entry)) continue;
+      if (!isZipFileEntry(entry)) continue;
       const sourceName = zipEntryPath(entry);
       const path = vsixPackageLogicalPath(sourceName);
       if (path === "") continue;
@@ -988,8 +902,8 @@ export const parseVsixPackage = async (
       contents.push({
         name: sourceName,
         path,
-        uncompressed_size: zipSize(entry.uncompressedSize),
-        compressed_size: zipSize(entry.compressedSize),
+        uncompressed_size: zipMemberSize(entry.uncompressedSize),
+        compressed_size: zipMemberSize(entry.compressedSize),
         encrypted: entry.encrypted === true,
         kind,
         traverses,
@@ -1114,7 +1028,7 @@ export const parseVsixPackage = async (
       const shouldHash = isVsixInterestingMemberKind(kind) || modeExecutable;
       let hashed: Uint8Array | undefined;
       if (shouldHash && !file.traverses && !file.encrypted) {
-        const declared = zipSize(file.entry.uncompressedSize);
+        const declared = zipMemberSize(file.entry.uncompressedSize);
         const allowance = Math.min(input.max_member_bytes, expansion.remaining);
         const unread = () =>
           allowance < input.max_member_bytes
@@ -1199,7 +1113,7 @@ export const parseVsixPackage = async (
           interestingMembers.push({
             path: file.path,
             kind,
-            bytes: zipSize(file.entry.uncompressedSize),
+            bytes: zipMemberSize(file.entry.uncompressedSize),
             sha256: null,
             classification: "inferred",
           });
@@ -1342,16 +1256,16 @@ export const parseVsixPackage = async (
               mainDirectoryMain,
               mainDirectoryOnly,
             );
+    // The web host fetches one URI, adding .js only when its path lacks
+    // an extension. The same candidate owns exact and case-only matching.
+    const browserSuffix =
+      browserPath !== null && posix.extname(browserPath) === "" ? ".js" : "";
     const browserEntry =
       browserDeclared === null
         ? null
         : browserPath === null
           ? { path: browserDeclared.path, present: false }
-          : resolveEntryPoint(
-              browserPath,
-              BROWSER_ENTRY_CANDIDATES,
-              memberPaths,
-            );
+          : resolveEntryPoint(browserPath, [browserSuffix], memberPaths);
     const foldedMemberPaths = new Map(
       files.map((file) => [file.path.toLowerCase(), file.path]),
     );
@@ -1370,11 +1284,7 @@ export const parseVsixPackage = async (
             : NODE_INDEX_CANDIDATES),
         ],
       ],
-      [
-        browserPath === null ? null : browserEntry,
-        undefined,
-        BROWSER_ENTRY_CANDIDATES,
-      ],
+      [browserPath === null ? null : browserEntry, undefined, [browserSuffix]],
     ] as const) {
       if (entry === null || entry.present) continue;
       const backslashPath = entry.path.includes("\\")

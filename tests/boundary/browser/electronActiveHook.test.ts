@@ -3259,6 +3259,83 @@ it("preserves fatal process termination after recording uncaught exceptions", as
   expect(result.stderr).toContain("fatal-hook-secret");
 });
 
+it("rejects a file URL whose hostname is not empty", async () => {
+  const root = await createTestTempDirectory("rea-electron-file-host-");
+  await writeElectronFixture(root);
+  const script = join(root, "navigate.cjs");
+  await writeFile(
+    script,
+    `
+    (async () => {
+    const electron = require("electron");
+    const window = new electron.BrowserWindow({ webPreferences: {} });
+    const patched = window.webContents.loadURL;
+    const reached = [];
+    window.webContents.loadURL = function observe(url) {
+      return Promise.resolve(patched.call(this, url)).then((value) => {
+        reached.push(url);
+        return value;
+      });
+    };
+    const outcome = async (url) => {
+      try {
+        await window.webContents.loadURL(url);
+        return "allowed";
+      } catch (cause) {
+        return cause instanceof Error ? cause.message : "unknown";
+      }
+    };
+    const remote = await outcome("file://attacker.example/share/a.html");
+    const localhost = await outcome("file://localhost/tmp/a.html");
+    const local = await outcome("file:///tmp/local.html");
+    const loopback = await outcome("http://127.0.0.1/");
+    const data = await outcome("data:text/html,hi");
+    const prevented = {
+      navigateRemote: false,
+      navigateLocal: false,
+      redirectRemote: false,
+      redirectLocal: false,
+    };
+    const emitNavigation = (slot, eventName, url) => {
+      window.webContents.emit(eventName, {
+        preventDefault() { prevented[slot] = true; },
+      }, url);
+    };
+    emitNavigation("navigateRemote", "will-navigate", "file://attacker.example/share/a.html");
+    emitNavigation("navigateLocal", "will-navigate", "file:///tmp/local.html");
+    emitNavigation("redirectRemote", "will-redirect", "file://attacker.example/share/a.html");
+    emitNavigation("redirectLocal", "will-redirect", "file:///tmp/local.html");
+    process.stdout.write(JSON.stringify({ remote, localhost, local, loopback, data, reached, prevented }) + "\\n");
+    })().catch((cause) => {
+      console.error(cause);
+      process.exitCode = 1;
+    });
+    `,
+  );
+  const result = await runNode(script, root);
+  expect(result.code, result.stderr).toBe(0);
+  // The URL standard ignores a localhost file host, so this URL is a local path.
+  expect(JSON.parse(result.stdout)).toEqual({
+    remote: "External navigation is blocked",
+    localhost: "allowed",
+    local: "allowed",
+    loopback: "allowed",
+    data: "allowed",
+    reached: [
+      "file://localhost/tmp/a.html",
+      "file:///tmp/local.html",
+      "http://127.0.0.1/",
+      "data:text/html,hi",
+    ],
+    prevented: {
+      navigateRemote: true,
+      navigateLocal: false,
+      redirectRemote: true,
+      redirectLocal: false,
+    },
+  });
+});
+
 it.each([
   "standard-prefix",
   "sandbox-prefix",

@@ -28,7 +28,7 @@ import {
 } from "../process/OwnedCommand.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
 import { utf8HeadExcerpt } from "../domain/utf8HeadExcerpt.js";
-import { constants, accessSync, statSync } from "node:fs";
+import { isExecutableFileSync } from "../filesystem/regularFileProbe.js";
 import { posix, win32 } from "node:path";
 import { err, ok, type Result } from "../domain/result.js";
 import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
@@ -117,14 +117,6 @@ const capturedProbeOutput = (
   };
 };
 
-const executablePath = (path: string): boolean => {
-  try {
-    accessSync(path, constants.X_OK);
-    return statSync(path).isFile();
-  } catch {
-    return false;
-  }
-};
 export interface GhidraJavaProbeOptions {
   readonly resourceOwner: RetainedResourceScope;
   readonly signal?: AbortSignal;
@@ -404,7 +396,7 @@ export const parseGhidraJavaOutput = (
     ...(reportedBits === null || bits !== null
       ? {}
       : { unparsedBits: reportedBits }),
-    runtime: executablePath(
+    runtime: isExecutableFileSync(
       (HOST_PLATFORM.platform === "win32" ? win32 : posix).join(
         home,
         "bin",

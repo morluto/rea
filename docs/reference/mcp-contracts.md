@@ -163,6 +163,12 @@ APK signing block is accounted for, as is all-zero padding under 4 KiB that
 aligns that block to a 4 KiB boundary); otherwise coverage is `unknown` and a
 limitation gives the unaccounted bytes, which may hold local entries the
 directory does not list.
+Nonempty single-volume classic and Zip64 ZIPs can be recognized after an
+unclaimed prefix, including an inert launch script. The prefix remains part of
+the root identity and unaccounted-byte coverage; it is never executed. Zip64
+recognition follows a complete end record at its declared location, or the
+fixed-size record immediately before its locator when prepended bytes shifted
+the original offsets. Native executable signatures keep their existing route.
 An extent must fit before the directory and agree with the local header's
 size or deferred-size mode, including local Zip64 sizes. A deferred extent
 requires a matching data descriptor. Conflicting or unreadable extent claims
@@ -957,6 +963,17 @@ Unrecognized bytes keep kind `unknown`. Optional `order_by`, with `field`
 and ties keep inventory order. The container's own `.` row has a size, so add
 `path_globs: ["**"]` to rank only its entries.
 These selectors do not reopen the artifact or resolve filesystem paths.
+The exception is `format_record_headers`, which pages the per-record headers a
+root artifact retains only a window of inline, such as a systemd journal's
+object headers past the first 32. The caller names the root file in the view's
+required absolute `artifact_path`; Evidence's subject path is display metadata and never
+selects what is opened. Each page re-reads that file through its format reader,
+starting at `offset`, after binding it to the inventory's root digest. A changed file fails with
+`artifact_integrity_mismatch` (`integrity_check: "container-identity"`) instead
+of returning shifted rows, and an Evidence bundle source cannot reopen it. A
+page holds at most one window; `coverage.next_offset` continues it, and memory
+stays one read chunk plus one window whatever the file size. A format with no
+record window is refused with an `invalid_request` naming the view.
 `source_complete` records whether the available inventory passes the complete
 graph checks. Exhausting a page from a partial source does not establish that
 unreturned paths are absent. Views carry their own Evidence IDs and preserve
@@ -2116,7 +2133,7 @@ when both are omitted, storage is not compared.
 
 `compare_artifacts` also compares the declarations in the `format_metadata` of <!-- BEGIN:compare-artifacts:compared-format-metadata-kinds -->UnityFS members (`unityfs-entry`), PyInstaller entries
 (`pyinstaller-entry`), Node SEA members (`node-sea-entry`),
-ESP image segments (`esp-image-segment`), DfuSe elements (`dfuse-element`),
+UBI volumes (`ubi-volume`), ESP image segments (`esp-image-segment`), DfuSe elements (`dfuse-element`),
 ESP flash partitions (`esp-flash-partition`), Nintendo DS ROM members
 (`nds-entry`), FIT images (`fit-image`) and tar
 members (`tar-entry`)<!-- END:compare-artifacts:compared-format-metadata-kinds -->;
@@ -2389,6 +2406,9 @@ annotations, handlers and client approval rules. Loading does not execute an
 analysis, open a target, or initialize the deferred analysis runtime. A batch
 emits one list-change notification; repeating it emits none. Loaded tools remain
 available until the connection ends. There is no generic execution gateway.
+Calling an in-scope tool before it is loaded returns a JSON-RPC `-32602` error
+that names the `discover_tools` call with that exact name; a tool excluded from
+the server keeps the SDK's `disabled` refusal.
 If a loaded tool does not appear in the client, enable client catalog refresh
 or reconnect using `REA_MCP_TOOL_CATALOG_PROFILE=full`.
 
