@@ -1529,6 +1529,17 @@ struct rea_after { char c; int i; };`;
           ).code,
           "resource_constraint",
         );
+        // The same chain with no declarator name is still part of the parsed type.
+        assert.equal(
+          requireMcpToolError(
+            await flood.raw("annotate_native_function", {
+              procedure,
+              signature: `int total(int (__stdcall ${"*".repeat(255)}${"[]".repeat(1900)})(void))`,
+              signature_max_utf16: 4096,
+            }),
+          ).code,
+          "resource_constraint",
+        );
         // Suffix arrays after an inner grouped close count too, so nested
         // grouping cannot hide the chain behind the first closing paren.
         assert.equal(
