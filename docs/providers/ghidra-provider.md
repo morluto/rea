@@ -403,7 +403,10 @@ An unsuccessful numeric procedure lookup reports the current Ghidra image base
 and gives the CLI commands above alongside the corresponding MCP operations.
 Repeat any target-format, architecture, and entry-point options used to open the
 target. Other procedure operations keep their analysis-address semantics;
-file-offset fallback applies only to decompilation.
+file-offset fallback applies only to decompilation. A bare selector outside
+every mapped analysis address that also has no file-offset mapping fails with
+`procedure_not_found`. An explicit `file-offset:` selector, or a mapped address
+without code, fails with `file_offset_unmapped`.
 
 Overview workflow revision 3 binds this output to snapshot identity. Older
 serialized overview Evidence remains readable; it is not replayed as a current
