@@ -17,6 +17,12 @@ import {
   MACOS_PKG_MAX_TOC_PATH_BYTES,
   MACOS_PKG_MAX_TOTAL_METADATA_XML_BYTES,
 } from "../domain/macosPkgFormat.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import {
+  XML_ELEMENT_DEPTH_ALLOWANCE,
+  XML_ELEMENT_DEPTH_LIMIT,
+} from "../domain/xmlDocument.js";
+import { translateArtifactFailure } from "../resources/index.js";
 import { ArtifactEntryContentUnavailable } from "../resources/ArtifactReader.js";
 import { MacosPkgArtifactReader } from "./MacosPkgArtifactReader.js";
 import { parseXarHeader } from "./macosPkg/XarHeader.js";
@@ -1197,6 +1203,74 @@ it("refuses a TOC whose repeated directory prefix exceeds the expanded path-byte
   } finally {
     await reader.close();
   }
+});
+
+it("reports a deep TOC as the XML element-depth allowance", async () => {
+  const base = buildXar({ files: [] });
+  const parsedHeader = parseXarHeader(base);
+  if (!parsedHeader.ok) throw parsedHeader.error;
+  const { headerSize, tocCompressedLength } = parsedHeader.value;
+  const required = XML_ELEMENT_DEPTH_LIMIT + 1;
+  const uncompressedToc = Buffer.from(
+    `<?xml version="1.0"?><xar><toc>${"<e>".repeat(required)}${"</e>".repeat(required)}</toc></xar>`,
+    "utf8",
+  );
+  const compressedToc = deflateSync(uncompressedToc);
+  const checksum = createHash("sha1").update(compressedToc).digest();
+  const header = Buffer.from(base.subarray(0, headerSize));
+  header.writeBigUInt64BE(BigInt(compressedToc.length), 8);
+  header.writeBigUInt64BE(BigInt(uncompressedToc.length), 16);
+  const heapRest = base.subarray(
+    headerSize + tocCompressedLength + checksum.length,
+  );
+  const path = await writePkg(
+    "deep-toc.pkg",
+    Buffer.concat([header, compressedToc, checksum, heapRest]),
+  );
+  const reader = new MacosPkgArtifactReader(path);
+  let failure: unknown;
+  try {
+    for await (const _entry of reader.entries()) {
+      /* Exhaust the iterator. */
+    }
+  } catch (cause: unknown) {
+    failure = cause;
+  } finally {
+    await reader.close();
+  }
+  expect(failure).toMatchObject({
+    reason: "limit",
+    boundary: "capacity",
+    parserLimit: {
+      name: "xml-element-depth",
+      maximum: XML_ELEMENT_DEPTH_LIMIT,
+      required,
+    },
+    fixedAllowance: XML_ELEMENT_DEPTH_ALLOWANCE,
+  });
+  expect(
+    projectAnalysisError(
+      translateArtifactFailure("inspect_artifact", path, failure),
+    ),
+  ).toMatchObject({
+    code: "partial",
+    details: {
+      boundary: "capacity",
+      reported_limits: {
+        boundary: "xml-element-depth",
+        maximum: XML_ELEMENT_DEPTH_LIMIT,
+        required,
+      },
+      refusal: {
+        kind: "fixed_ceiling",
+        operation: "inspect_artifact",
+        allowance: XML_ELEMENT_DEPTH_ALLOWANCE.name,
+        allowance_kind: "parser",
+        limit: XML_ELEMENT_DEPTH_LIMIT,
+        unit: "levels",
+      },
+    },
+  });
 });
 
 it("keeps intact PackageInfo, payload and signature when an unrelated TOC file record is damaged", async () => {
