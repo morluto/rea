@@ -17,6 +17,14 @@ import {
   applyCompleteEvidenceByDefault,
   type TestDelivery,
 } from "../support/completeEvidenceByDefault.js";
+import {
+  createTestWorkspace,
+  removeTestWorkspace,
+} from "../support/workspace/workspaceFixture.js";
+import {
+  childHomeEnvironment,
+  selectsChildHome,
+} from "../support/cli/childHome.js";
 
 /** Default to native tools while preserving explicit caller configuration. */
 export const localToolsMcpEnvironment = (
@@ -37,6 +45,11 @@ export async function connectLocalToolsMcp(
   jsonSchemaValidator?: NonNullable<ClientOptions["jsonSchemaValidator"]>,
   delivery: TestDelivery = "completeEvidenceByDefault",
 ) {
+  // Without a home the server resolves the account's real home and reads its
+  // saved REA configuration. A caller-selected home, even an empty one, wins.
+  const ownedHome = selectsChildHome(environment)
+    ? undefined
+    : await createTestWorkspace("rea-mcp-home-");
   const transport = new StdioClientTransport({
     ...transportOptions,
     command: process.execPath,
@@ -44,7 +57,10 @@ export async function connectLocalToolsMcp(
       fileURLToPath(new URL("../../scripts/rea.mjs", import.meta.url)),
       "mcp",
     ],
-    env: localToolsMcpEnvironment(environment),
+    env: localToolsMcpEnvironment({
+      ...(ownedHome === undefined ? {} : childHomeEnvironment(ownedHome.root)),
+      ...environment,
+    }),
     stderr: "pipe",
   });
   const validation = createMcpSchemaValidation();
@@ -61,6 +77,8 @@ export async function connectLocalToolsMcp(
       () => transport.close(),
       () => validation.clear(),
     ]);
+    // Reached only after the server closed; a failed close keeps the home.
+    if (ownedHome !== undefined) await removeTestWorkspace(ownedHome.root);
   });
   await client.connect(transport);
   const tools = (await client.listTools()).tools;
