@@ -14,6 +14,10 @@ import {
   unsupportedInput,
 } from "./parseFailure.js";
 import {
+  fixedAllowanceOptions,
+  type FixedAllowance,
+} from "./fixedAllowanceRemediation.js";
+import {
   isParseLimit,
   parseLimitConstraint,
 } from "./parseFailureAnalysisError.js";
@@ -104,6 +108,26 @@ const XML_FORMAT = "xml";
  */
 export const XML_ELEMENT_DEPTH_LIMIT = 1024;
 
+/** The syntax ceiling, reported as one fixed parser allowance. */
+export const XML_ELEMENT_DEPTH_ALLOWANCE = {
+  name: "The XML element depth allowance",
+  kind: "parser",
+  limit: XML_ELEMENT_DEPTH_LIMIT,
+  unit: "levels",
+} as const satisfies FixedAllowance & {
+  readonly limit: number;
+  readonly unit: string;
+};
+
+const xmlDepthRecovery = fixedAllowanceOptions(
+  XML_ELEMENT_DEPTH_ALLOWANCE.name,
+  XML_ELEMENT_DEPTH_ALLOWANCE.kind,
+  {
+    limit: XML_ELEMENT_DEPTH_ALLOWANCE.limit,
+    unit: XML_ELEMENT_DEPTH_ALLOWANCE.unit,
+  },
+);
+
 /** How XML failed: ill-formed syntax, a refused DOCTYPE, or the element-depth ceiling. */
 export type XmlParseFailure =
   | ParseFailureError<"malformed">
@@ -148,25 +172,26 @@ const xmlDepthLimit = (depth: number): ParseFailureError<"limit"> =>
     },
   );
 
+/** The syntax ceiling, as distinct from a later format's own node budget. */
+export const isXmlElementDepthLimit = (
+  cause: unknown,
+): cause is ParseFailureError<"limit"> =>
+  isParseLimit(cause, XML_FORMAT) &&
+  cause.failure.limit.name === "xml-element-depth";
+
 /**
  * Public refusal for the syntax ceiling. Package providers keep their own
- * format limits; this one belongs to the XML check, which has no runtime
- * override.
+ * format limits. `path` is set when the document is the selected artifact.
  */
 export const xmlElementDepthConstraint = (
   operation: string,
-  path: string,
+  path: string | undefined,
   cause: unknown,
 ) => {
-  if (
-    !isParseLimit(cause, XML_FORMAT) ||
-    cause.failure.limit.name !== "xml-element-depth"
-  )
-    return undefined;
+  if (!isXmlElementDepthLimit(cause)) return undefined;
   return parseLimitConstraint(operation, "memory", cause, {
-    path,
-    retryable: false,
-    remediationAction: `Select a document whose XML element depth is within ${String(XML_ELEMENT_DEPTH_LIMIT)}. This release has no runtime override.`,
+    ...(path === undefined ? {} : { path }),
+    ...xmlDepthRecovery,
   });
 };
 

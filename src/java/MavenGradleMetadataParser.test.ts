@@ -13,7 +13,10 @@ import {
 } from "./MavenGradleMetadata.fixture.js";
 import { MavenGradleMetadataProvider } from "./MavenGradleMetadataProvider.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { XML_ELEMENT_DEPTH_LIMIT } from "../domain/xmlDocument.js";
+import {
+  XML_ELEMENT_DEPTH_ALLOWANCE,
+  XML_ELEMENT_DEPTH_LIMIT,
+} from "../domain/xmlDocument.js";
 import { parseMavenGradleMetadata } from "./MavenGradleMetadataParser.js";
 
 const parse = (source: string, path = "/artifacts/pom.xml") => {
@@ -1168,6 +1171,13 @@ it("reports XML element depth from the provider instead of an I/O failure", asyn
           boundary: "xml-element-depth",
           maximum: XML_ELEMENT_DEPTH_LIMIT,
           required: XML_ELEMENT_DEPTH_LIMIT + 1,
+        },
+        refusal: {
+          kind: "fixed_ceiling",
+          allowance: XML_ELEMENT_DEPTH_ALLOWANCE.name,
+          allowance_kind: "parser",
+          limit: XML_ELEMENT_DEPTH_LIMIT,
+          unit: "levels",
         },
       },
       remediation: {

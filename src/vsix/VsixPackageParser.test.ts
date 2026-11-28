@@ -1,5 +1,8 @@
 import { ParseFailureError } from "../domain/parseFailure.js";
-import { XML_ELEMENT_DEPTH_LIMIT } from "../domain/xmlDocument.js";
+import {
+  XML_ELEMENT_DEPTH_ALLOWANCE,
+  XML_ELEMENT_DEPTH_LIMIT,
+} from "../domain/xmlDocument.js";
 import { expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
@@ -839,6 +842,13 @@ it("reports a deep vsixmanifest as the XML element-depth ceiling", async () => {
           boundary: "xml-element-depth",
           maximum: XML_ELEMENT_DEPTH_LIMIT,
           required: XML_ELEMENT_DEPTH_LIMIT + 1,
+        },
+        refusal: {
+          kind: "fixed_ceiling",
+          allowance: XML_ELEMENT_DEPTH_ALLOWANCE.name,
+          allowance_kind: "parser",
+          limit: XML_ELEMENT_DEPTH_LIMIT,
+          unit: "levels",
         },
       },
       remediation: {
