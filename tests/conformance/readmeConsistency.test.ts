@@ -120,6 +120,38 @@ describe("onboarding documentation product facts", () => {
     );
     expect(headingSlug("Updating REA (CLI)")).toBe("updating-rea-cli");
   });
+
+  it("lists Albanian last after Bulgarian in every README", async () => {
+    const inventory = JSON.parse(
+      await readFile(resolve("website/locales/languages.json"), "utf8"),
+    ) as { code: string; readme: string }[];
+    expect(inventory.slice(-3).map(({ code }) => code)).toEqual([
+      "ro",
+      "bg",
+      "sq",
+    ]);
+    for (const { code, readme } of inventory) {
+      const content = await readFile(resolve(readme), "utf8");
+      const link =
+        code === "en"
+          ? "[Shqip](docs/readme/README_sq.md)"
+          : code === "sq"
+            ? "**Shqip**"
+            : "[Shqip](README_sq.md)";
+      expect(content, readme).toContain(link);
+      const navigation = content.split(/\r?\n\r?\n/u)[1];
+      expect(navigation, readme).toMatch(
+        /(?:\[Български\]\([^)]+\)|\*\*Български\*\*)\s*·\s*(?:\[Shqip\]\([^)]+\)|\*\*Shqip\*\*)$/u,
+      );
+    }
+  });
+
+  it("keeps Albanian case-study links in the Albanian edition", async () => {
+    const content = await readFile(resolve("docs/readme/README_sq.md"), "utf8");
+    for (const showcase of ["dx-ball", "notion", "th04"])
+      expect(content).toContain(`https://rea.tools/sq/showcase/${showcase}/`);
+    expect(content).not.toContain("https://rea.tools/showcase/");
+  });
 });
 
 describe("published performance evidence", () => {

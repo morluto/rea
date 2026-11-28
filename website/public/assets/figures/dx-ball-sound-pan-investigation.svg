@@ -46,7 +46,7 @@ svg{background-color:#181825}
       <text x="1545" y="279" font-size="30" fill="#294f82">Reconstructed function</text>
       <text x="1547" y="372" font-size="43">Maintained C</text>
       <text x="418" y="569" font-size="34">Brick-hit caller</text>
-      <text x="418" y="615" font-size="28" fill="#5b6570">20 + 30 × tile_x</text>
+      <text x="418" y="615" font-size="28" fill="#5b6570" translate="no">20 + 30 × tile_x</text>
       <text x="1354" y="632" font-size="30">Original code</text>
       <text x="1354" y="670" font-size="30">comparison</text>
       <text x="1354" y="717" font-size="31" fill="#5b6570">3,205 cases</text>
