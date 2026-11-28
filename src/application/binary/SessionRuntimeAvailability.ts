@@ -6,6 +6,8 @@ import type { CapabilityDescriptor } from "../../ports/AnalysisProvider.js";
 interface Failure {
   readonly dispatch: number;
   readonly reason: string;
+  /** Repair instruction the refusing owner supplied, when it supplied one. */
+  readonly remediation?: string;
 }
 
 interface ProviderFailure extends Failure {
@@ -23,10 +25,22 @@ type RoutedOperation = Pick<
   "operation" | "provider" | "available"
 >;
 
+// Any refusal that publishes a repair can carry one, not only a capability
+// refusal, so read the fact from the error rather than from its tag.
+const publishedRemediation = (error: AnalysisError): string | undefined =>
+  "remediationAction" in error && typeof error.remediationAction === "string"
+    ? error.remediationAction
+    : undefined;
+
 /** Reason recorded for an operation's own refusal or provider-wide failure. */
 const runtimeFailureReason = (failure: AnalysisError): string | undefined => {
   if (failure._tag === "AnalysisCapabilityUnavailableError")
-    return failure.userMessage ?? failure.message;
+    // A provider may build userMessage from the same repair sentence that now
+    // travels in remediation, so prefer the refusal alone when a repair is
+    // published separately.
+    return publishedRemediation(failure) === undefined
+      ? (failure.userMessage ?? failure.message)
+      : failure.message;
   return failure.providerWide
     ? `${failure._tag}: ${failure.message}`
     : undefined;
@@ -59,11 +73,18 @@ const inferredUnavailabilityReason = (
 export class SessionRuntimeAvailability {
   readonly #operations = new Map<string, Outcomes<Failure>>();
   readonly #providers = new Map<string, Outcomes<ProviderFailure>>();
-  #projected: ReadonlyMap<string, { readonly reason: string }> = new Map();
+  /** Observed reason plus the repair instruction the refusal owner supplied. */
+  #projected: ReadonlyMap<
+    string,
+    { readonly reason: string; readonly remediation?: string }
+  > = new Map();
   #dispatched = 0;
 
   /** Current runtime unavailability keyed by operation. */
-  get entries(): ReadonlyMap<string, { readonly reason: string }> {
+  get entries(): ReadonlyMap<
+    string,
+    { readonly reason: string; readonly remediation?: string }
+  > {
     return this.#projected;
   }
 
@@ -108,7 +129,12 @@ export class SessionRuntimeAvailability {
     } else {
       const reason = runtimeFailureReason(result.error);
       if (reason === undefined) return false;
-      operation.failure = newer(operation.failure, { dispatch, reason });
+      const remediation = publishedRemediation(result.error);
+      operation.failure = newer(operation.failure, {
+        dispatch,
+        reason,
+        ...(remediation === undefined ? {} : { remediation }),
+      });
       if (
         result.error instanceof AnalysisCapabilityUnavailableError &&
         result.error.siblingOperations !== undefined
@@ -124,6 +150,7 @@ export class SessionRuntimeAvailability {
           dispatch,
           reason,
           operation: capability.operation,
+          ...(remediation === undefined ? {} : { remediation }),
         });
     }
     return this.#project(route);
@@ -146,12 +173,16 @@ export class SessionRuntimeAvailability {
         const reason =
           activeFailure?.reason ??
           error.siblingReasons?.[sibling] ??
-          (error.remediationAction !== undefined
-            ? `Provider ${error.providerId} cannot execute ${sibling}: ${error.reason}. ${error.remediationAction}`
-            : `Provider ${error.providerId} cannot execute ${sibling}: ${error.reason}`);
+          `Provider ${error.providerId} cannot execute ${sibling}: ${error.reason}`;
+        // The repair is a separate published fact: keep the active failure's own
+        // repair instead of replacing it with the incoming report's, and never
+        // fold either one back into the reason.
+        const remediation =
+          activeFailure?.remediation ?? error.remediationAction;
         siblingOutcomes.failure = newer(siblingOutcomes.failure, {
           dispatch,
           reason,
+          ...(remediation === undefined ? {} : { remediation }),
         });
       }
     }
@@ -167,34 +198,56 @@ export class SessionRuntimeAvailability {
   }
 
   #project(route: Iterable<RoutedOperation>): boolean {
-    const projected = new Map<string, { readonly reason: string }>();
+    const projected = new Map<
+      string,
+      { readonly reason: string; readonly remediation?: string }
+    >();
     for (const descriptor of route) {
-      const reason = this.#unavailableReason(descriptor);
-      if (reason !== undefined) projected.set(descriptor.operation, { reason });
+      const observation = this.#unavailableObservation(descriptor);
+      if (observation !== undefined)
+        projected.set(descriptor.operation, observation);
     }
     const changed =
       projected.size !== this.#projected.size ||
-      [...projected].some(
-        ([operation, { reason }]) =>
-          this.#projected.get(operation)?.reason !== reason,
-      );
+      [...projected].some(([operation, observation]) => {
+        const previous = this.#projected.get(operation);
+        return (
+          previous?.reason !== observation.reason ||
+          previous?.remediation !== observation.remediation
+        );
+      });
     this.#projected = projected;
     return changed;
   }
 
-  #unavailableReason(descriptor: RoutedOperation): string | undefined {
+  #unavailableObservation(
+    descriptor: RoutedOperation,
+  ): { readonly reason: string; readonly remediation?: string } | undefined {
     const operation = this.#operations.get(descriptor.operation);
     if (
       operation?.failure !== undefined &&
       operation.failure.dispatch > operation.succeeded
     )
-      return operation.failure.reason;
+      return {
+        reason: operation.failure.reason,
+        ...(operation.failure.remediation === undefined
+          ? {}
+          : { remediation: operation.failure.remediation }),
+      };
     // A declared refusal already explains its operation and is never dispatched.
     if (!descriptor.available) return undefined;
     const provider = this.#providers.get(descriptor.provider.id);
     return provider?.failure !== undefined &&
       provider.failure.dispatch > provider.succeeded
-      ? inferredUnavailabilityReason(descriptor.provider.id, provider.failure)
+      ? {
+          reason: inferredUnavailabilityReason(
+            descriptor.provider.id,
+            provider.failure,
+          ),
+          ...(provider.failure.remediation === undefined
+            ? {}
+            : { remediation: provider.failure.remediation }),
+        }
       : undefined;
   }
 }
