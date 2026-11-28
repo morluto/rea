@@ -10,8 +10,8 @@ import { isHostLimitFailure } from "../parseFailure.js";
 export const KUBERNETES_AUDIT_JSON_DEPTH = 64;
 /** Longer than every owned key. A longer key cannot match and is not stored. */
 const MAX_OWNED_KEY_CHARS = 64;
-/** Longer than every safe integer's decimal form. */
-const MAX_NUMBER_CHARS = 20;
+/** Enough for a safe integer plus a fractional tail of zeros. Longer lexemes are not status codes. */
+const MAX_NUMBER_CHARS = 64;
 
 const ROOT_STRINGS = new Set([
   "apiVersion",
