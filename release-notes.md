@@ -145,6 +145,7 @@
 * **errors:** add the TargetFailure model, its projection table and conformance registry ([#14247](https://github.com/morluto/rea/issues/14247)) ([40e9a3f](https://github.com/morluto/rea/commit/40e9a3f1a1769f3fbb24ca226aa853f42d78c42e))
 * **evidence:** find direct referrers by linked Evidence ID ([#11709](https://github.com/morluto/rea/issues/11709)) ([b57671c](https://github.com/morluto/rea/commit/b57671cb42ed16687d0b0ea8ff43d3643e045aef))
 * **evidence:** paginate retained evidence discovery summaries ([#9084](https://github.com/morluto/rea/issues/9084)) ([a16669a](https://github.com/morluto/rea/commit/a16669ab2adf8341b0261e9527bb26c98c1d7b21))
+* **firmware:** decode ARM M-profile and RISC-V mtvec interrupt vector tables ([#14421](https://github.com/morluto/rea/issues/14421)) ([a91d9fa](https://github.com/morluto/rea/commit/a91d9fa2b57d8618dd858854c266a56f6a3c03a0))
 * **firmware:** decode ESP-IDF Non-Volatile Storage (NVS) flash partitions ([#14436](https://github.com/morluto/rea/issues/14436)) ([f6cf6a8](https://github.com/morluto/rea/commit/f6cf6a867f2103dd292804e29ab289b9d4c87db9))
 * **firmware:** inspect and extract Android DTBO partition images ([#14398](https://github.com/morluto/rea/issues/14398)) ([b3f7089](https://github.com/morluto/rea/commit/b3f70898e4319e616be23e86d223a0a13bdfb954))
 * **firmware:** inspect Qualcomm MBN image headers and hash segments offline ([#14649](https://github.com/morluto/rea/issues/14649)) ([f78470e](https://github.com/morluto/rea/commit/f78470e36164aa4f84e7154628499bafebccfab4))
