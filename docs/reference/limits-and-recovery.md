@@ -828,7 +828,10 @@ recovery names both routes: the field for one large artifact, then
 `update_analysis_settings` (or the launch seed for a CLI invocation) for
 repeated work. When a non-default session value applies, inventory and
 extraction report the resolved `effective_limits` even if the call selected no
-`artifact_limits`. Other reader fields are per-call only.
+`artifact_limits`. Other reader fields are per-call only. Flutter APK
+inventory, Playwright trace import, and SAZ decoding have no `artifact_limits`
+field. They admit central-directory records at this session count. A refusal
+stays that count and reports `artifact.member_count` as the limit.
 
 Failures preserve `details.reader_limit` with the exact parameter, effective
 value, units, supported range, required value when known, next-call scope and
