@@ -433,6 +433,12 @@ const managedCallEdgeSchema = z.object({
   opcode: z.string(),
   target_token: managedMetadataTokenSchema,
   target_kind: z.enum(["method-def", "member-ref", "method-spec", "unknown"]),
+  generic_method_token: managedMetadataTokenSchema
+    .nullable()
+    .default(null)
+    .describe(
+      "Underlying MethodDef or MemberRef token of a validated MethodSpec; null for direct operands, unresolved instantiations, or historical Evidence. The original instantiation remains in target_token.",
+    ),
   target_name: z
     .string()
     .nullable()

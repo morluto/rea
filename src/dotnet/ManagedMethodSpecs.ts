@@ -192,6 +192,7 @@ const readMethodSpec = (
       ...target,
       token,
       rowResolved: true,
+      genericMethodToken: generic,
       identitySha256:
         target.identitySha256 == null
           ? null

@@ -516,6 +516,12 @@ blobs, and arity mismatches, make coverage partial. A readable MethodSpec
 method column that names a method, or a TypeRef whose resolution scope is
 invalid, keeps its name.
 
+For a validated MethodSpec, `generic_method_token` records its underlying
+MethodDef or MemberRef row separately from the original `target_token` and
+the instantiation-specific `target_identity_sha256`. It is `null` for direct
+operands, unresolved instantiations, and historical Evidence that did not
+record the base row. These are static metadata identities, not runtime binding.
+
 ## Analysis objective
 
 Start by identifying the artifact with `inspect_managed_artifact`, then inspect
@@ -784,18 +790,22 @@ edges for declarations, `imports` edges for P/Invoke declarations, and two
 relation kinds read from method bodies:
 
 - `calls` links two `managed-method` nodes when a `call`, `callvirt`, `newobj`
-  or `jmp` site in the caller targets a MethodDef in the inspected module.
+  or `jmp` site in the caller targets a MethodDef in the inspected module,
+  directly or through a validated MethodSpec instantiation of that MethodDef.
 - `accesses` links a `managed-method` node to a `managed-field` node for each
   field it loads, stores or takes the address of.
 
 Each edge stands for every site between one source and one target. Its
 properties carry `site_count` and per-opcode `opcodes` counts; `accesses`
 edges also list `access` as `read`, `write` and/or `address`. Edge evidence
-links the member Evidence.
+links the member Evidence. Calls to different instantiations of the same
+generic definition share that definition's node; their original operand tokens
+and argument identities remain available in the linked member Evidence.
 
 Some sites are counted rather than projected: calls to MemberRefs (members of
 other assemblies or of generic type instantiations), generic method
-instantiations (`MethodSpec`), unknown targets, `ldftn`/`ldvirtftn` function
+instantiations (`MethodSpec`) whose base is external or unresolved, unknown
+targets, `ldftn`/`ldvirtftn` function
 pointer loads, recursive self-calls (the graph has no self-loops), MemberRef
 fields, and sites whose method or field node is absent, for example under a
 type selection. Limitations name each counted class, and graph coverage is

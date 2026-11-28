@@ -1221,6 +1221,206 @@ describe("managed call and field-access relations", () => {
   });
 });
 
+const genericFixture = (
+  options: Parameters<typeof buildManagedPeFixture>[0] = {},
+) =>
+  buildManagedPeFixture({
+    methodRowCount: 2,
+    methodSignature: Buffer.from([0x10, 1, 0, 1]),
+    memberRefSignature: Buffer.from([0x30, 1, 0, 1]),
+    methodSpecMethods: [2 << 1],
+    ilBody: tinyIl([0x28, 1, 0, 0, 0x2b, 0x2a]),
+    ...options,
+  });
+
+describe("managed generic method call relations", () => {
+  it("links a validated instantiation to its exact in-module method definition", () => {
+    const { members, memberEvidence, graph, result } =
+      memberGraph(genericFixture());
+    expect(members.coverage.state).toBe("complete");
+    expect(members.call_edges).toHaveLength(2);
+    for (const edge of members.call_edges)
+      expect(edge).toMatchObject({
+        target_token: "0x2b000001",
+        target_kind: "method-spec",
+        generic_method_token: "0x06000002",
+        target_row_resolved: true,
+      });
+    // Names deliberately collide: only the metadata row establishes this link.
+    expect(members.methods.map(({ name }) => name)).toEqual(["Main", "Main"]);
+    const tokens = new Map(
+      graph.nodes.map((node) => [
+        node.node_id,
+        node.observations[0]?.properties.token,
+      ]),
+    );
+    const calls = graph.edges.filter(({ relation }) => relation === "calls");
+    expect(calls).toHaveLength(1);
+    expect(tokens.get(calls[0]!.source_node_id)).toBe("0x06000001");
+    expect(tokens.get(calls[0]!.target_node_id)).toBe("0x06000002");
+    expect(calls[0]).toMatchObject({
+      properties: { kind: "managed-call", site_count: 1, opcodes: { call: 1 } },
+      evidence: { evidence_ids: [memberEvidence.evidence_id] },
+    });
+    expect(result.summary.calls).toBe(1);
+    expect(graph.coverage.omitted_count).toBe(1);
+    expect(result.limitations).toContainEqual(
+      expect.stringContaining("1 recursive self-call"),
+    );
+    expect(result.limitations).not.toContainEqual(
+      expect.stringContaining("generic method-instantiation"),
+    );
+  });
+
+  it("aggregates direct and instantiated calls while keeping each operand in source Evidence", () => {
+    const { members, graph } = memberGraph(
+      genericFixture({
+        methodSpecMethods: [2 << 1, 2 << 1],
+        ilBody: tinyIl([
+          0x28, 1, 0, 0, 0x2b, 0x28, 2, 0, 0, 0x2b, 0x28, 2, 0, 0, 0x06, 0x2a,
+        ]),
+      }),
+    );
+    expect(
+      members.call_edges
+        .slice(0, 3)
+        .map(({ target_token, generic_method_token }) => [
+          target_token,
+          generic_method_token,
+        ]),
+    ).toEqual([
+      ["0x2b000001", "0x06000002"],
+      ["0x2b000002", "0x06000002"],
+      ["0x06000002", null],
+    ]);
+    expect(
+      graph.edges
+        .filter(({ relation }) => relation === "calls")
+        .map(({ properties }) => properties),
+    ).toEqual([{ kind: "managed-call", site_count: 3, opcodes: { call: 3 } }]);
+    expect(graph.coverage.omitted_count).toBe(3);
+  });
+
+  it("retains distinct generic argument identities when projecting the same definition", () => {
+    const inspections = [0x08, 0x0e].map((argument) =>
+      memberGraph(
+        genericFixture({
+          methodSpecInstantiation: Buffer.from([0x0a, 1, argument]),
+        }),
+      ),
+    );
+    for (const { members, result } of inspections) {
+      expect(members.call_edges[0]?.generic_method_token).toBe("0x06000002");
+      expect(result.summary.calls).toBe(1);
+    }
+    const identities = inspections.map(
+      ({ members }) => members.call_edges[0]?.target_identity_sha256,
+    );
+    expect(identities[0]).toMatch(/^[a-f0-9]{64}$/u);
+    expect(identities[1]).toMatch(/^[a-f0-9]{64}$/u);
+    expect(identities[0]).not.toBe(identities[1]);
+  });
+});
+
+describe("managed generic method call omissions", () => {
+  it.each([
+    {
+      name: "external base",
+      options: { methodSpecMethods: [3] },
+      token: "0x0a000001",
+    },
+    { name: "missing base", options: { methodSpecMethods: [0] }, token: null },
+    {
+      name: "wrong arity",
+      options: { methodSpecInstantiation: Buffer.from([0x0a, 2, 8, 8]) },
+      token: null,
+    },
+    {
+      name: "malformed instantiation",
+      options: { methodSpecInstantiation: Buffer.from([0x0a, 0]) },
+      token: null,
+    },
+  ])(
+    "keeps $name instantiations as counted omissions",
+    ({ options, token }) => {
+      const { members, result } = memberGraph(genericFixture(options));
+      expect(
+        members.call_edges.map(
+          ({ generic_method_token }) => generic_method_token,
+        ),
+      ).toEqual([token, token]);
+      expect(result.summary.calls).toBe(0);
+      expect(result.limitations).toContainEqual(
+        expect.stringContaining("2 generic method-instantiation"),
+      );
+      expect(result.coverage.status).toBe("partial");
+    },
+  );
+
+  it("keeps generic function-pointer loads as references instead of calls", () => {
+    const { members, result, graph } = memberGraph(
+      genericFixture({
+        ilBody: tinyIl([0xfe, 0x06, 1, 0, 0, 0x2b, 0x26, 0x2a]),
+      }),
+    );
+    expect(members.call_edges[0]?.generic_method_token).toBe("0x06000002");
+    expect(result.summary.calls).toBe(0);
+    expect(graph.coverage.omitted_count).toBe(2);
+    expect(result.limitations).toContainEqual(
+      expect.stringContaining("2 function-pointer"),
+    );
+  });
+
+  it("does not invent a node for a generic definition outside the selected method page", () => {
+    const { members, result } = memberGraph(genericFixture(), {
+      methodLimit: 1,
+    });
+    expect(members.methods.map(({ token }) => token)).toEqual(["0x06000001"]);
+    expect(result.summary.calls).toBe(0);
+    expect(result.coverage.status).toBe("partial");
+    expect(result.limitations).toContainEqual(
+      expect.stringContaining("1 generic method-instantiation"),
+    );
+  });
+
+  it("preserves unknown generic targets in historical member Evidence", () => {
+    const bytes = genericFixture();
+    const { members } = memberGraph(bytes);
+    const historical = {
+      ...members,
+      call_edges: members.call_edges.map(
+        ({ generic_method_token: _token, ...edge }) => edge,
+      ),
+    };
+    expect(
+      managedMemberInspectionSchema
+        .parse(historical)
+        .call_edges.map(({ generic_method_token }) => generic_method_token),
+    ).toEqual([null, null]);
+    const source = createEvidence(
+      managedPeFixtureTarget(bytes),
+      MANAGED_STATIC_PROVIDER,
+      {
+        operation: "inspect_managed_members",
+        parameters: {},
+        result: historical,
+        limitations: historical.limitations,
+      },
+    );
+    const projected = projectManagedApplicationGraphEvidence({
+      managed_members: source,
+    });
+    if (!projected.ok) throw projected.error;
+    const result = managedApplicationGraphResultSchema.parse(
+      parseEvidence(projected.value).normalized_result,
+    );
+    expect(result.summary.calls).toBe(0);
+    expect(result.limitations).toContainEqual(
+      expect.stringContaining("2 generic method-instantiation"),
+    );
+  });
+});
+
 it("keeps unfamiliar field opcodes unknown in managed graph Evidence", () => {
   const bytes = buildManagedPeFixture({
     ilBody: tinyIl([0x02, 0x7b, 0x01, 0, 0, 0x04, 0x26, 0x2a]),

@@ -1,6 +1,8 @@
 import { expect, it } from "vitest";
 import { MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE } from "../../contracts/managed/managedWorkflowExamples.js";
 import { freezeOwnedJsonTreeSnapshot } from "../immutableJson.js";
+import { digestCanonicalValue } from "../canonicalDigest.js";
+import { projectAnalysisView } from "./analysisView.js";
 import { managedMemberInspectionSchema } from "../managed/managedArtifact.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
@@ -271,12 +273,60 @@ it("does not add omitted columns and requires the IL offset of every edge row", 
   });
   expect(calls.rows[0]).not.toHaveProperty("target_identity_sha256");
   expect(calls.rows[0]).not.toHaveProperty("target_declaring_type");
+  expect(calls.rows[0]).not.toHaveProperty("generic_method_token");
   expect(
     managedMembersViewPageSchema.safeParse({
       collection: "call_edges",
       rows: [edge],
     }).success,
   ).toBe(false);
+});
+
+it("preserves call-edge column omission and the sealed view digest", () => {
+  const report = methodFacts();
+  report.call_edges = [
+    {
+      caller_token: "0x06000001",
+      il_offset: 0,
+      target_identity_sha256: null,
+      target_row_resolved: true,
+      caller: "Caller",
+      opcode: "call",
+      target_token: "0x2b000001",
+      target_kind: "method-spec",
+      generic_method_token: "0x06000002",
+      target_name: "Helper",
+      target_declaring_type: "Exact.Type",
+    },
+  ];
+  for (const fields of [[], ["generic_method_token"], undefined]) {
+    const request = managedMembersViewRequestSchema.parse({
+      kind: "managed-members",
+      collection: "call_edges",
+      ...(fields === undefined ? {} : { fields }),
+    });
+    const result = projectAnalysisView(parent(report), request);
+    if (!result.ok) throw result.error;
+    if (result.value.kind !== "managed-members") throw new Error("Wrong view");
+    if (result.value.page.collection !== "call_edges")
+      throw new Error("Wrong collection");
+    const row = result.value.page.rows[0];
+    expect(row).toBeDefined();
+    if (fields?.length === 0)
+      expect(row).not.toHaveProperty("generic_method_token");
+    else expect(row).toHaveProperty("generic_method_token", "0x06000002");
+    const { view_digest, ...content } = result.value;
+    expect(view_digest).toBe(digestCanonicalValue(content, "Analysis view"));
+  }
+  const historical = {
+    ...report,
+    call_edges: report.call_edges.map(
+      ({ generic_method_token: _token, ...edge }) => edge,
+    ),
+  };
+  expect(
+    managedMemberInspectionSchema.parse(historical).call_edges[0],
+  ).toHaveProperty("generic_method_token", null);
 });
 
 it("filters relationship endpoints from recorded facts rather than caller display text", () => {
@@ -293,6 +343,7 @@ it("filters relationship endpoints from recorded facts rather than caller displa
       opcode: "call",
       target_token: "0x0a000001",
       target_kind: "member-ref",
+      generic_method_token: null,
       target_name: "Target",
       target_declaring_type: "Exact.Type",
     },
@@ -305,6 +356,7 @@ it("filters relationship endpoints from recorded facts rather than caller displa
       opcode: "call",
       target_token: "0x0a000002",
       target_kind: "member-ref",
+      generic_method_token: null,
       target_name: "Other",
       target_declaring_type: "Other.Type",
     },
