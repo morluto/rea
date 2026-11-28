@@ -828,12 +828,6 @@ class AmigaHunkParser {
       this.aborted = true;
       return;
     }
-    if (this.hunks.length >= this.limits.maxHunks)
-      throw decodeLimit(
-        FORMAT,
-        `Amiga Hunk file lists more than ${this.limits.maxHunks} hunks.`,
-        { name: AMIGA_HUNK_HUNK_LIMIT, maximum: this.limits.maxHunks },
-      );
     const decoded = this.readMemoryFlags(flags);
     if (decoded === undefined) return;
     if (this.open !== undefined && !this.open.ended)
@@ -845,10 +839,19 @@ class AmigaHunkParser {
       0,
       this.currentUnit.index,
     );
+    this.readBody(hunk, kind);
+    // Report truncation without retaining a partial hunk beyond the allowance.
+    if (this.hunks.length >= this.limits.maxHunks) {
+      if (this.aborted) return;
+      throw decodeLimit(
+        FORMAT,
+        `Amiga Hunk file lists more than ${this.limits.maxHunks} hunks.`,
+        { name: AMIGA_HUNK_HUNK_LIMIT, maximum: this.limits.maxHunks },
+      );
+    }
     this.unitHunk += 1;
     this.hunks.push(hunk);
     this.openHunk(hunk, blockOffset);
-    this.readBody(hunk, kind);
   }
 
   private openHunk(hunk: HunkDraft, blockOffset: number): void {
@@ -924,7 +927,7 @@ class AmigaHunkParser {
         return;
       }
       if (count === 0) return;
-      if (!this.fits((count + 1) * 4)) {
+      if (!this.fits((count + 2) * 4)) {
         this.failTruncated(at, "relocation table");
         return;
       }
@@ -951,7 +954,7 @@ class AmigaHunkParser {
         this.align4();
         return;
       }
-      if (!this.fits((count + 1) * 2)) {
+      if (!this.fits((count + 2) * 2)) {
         this.failTruncated(at, "short relocation table");
         return;
       }

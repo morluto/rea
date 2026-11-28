@@ -10,6 +10,8 @@ import {
   HUNKF_CHIP,
   HUNK_EXT,
   HUNK_NAME,
+  HUNK_RELOC32,
+  HUNK_RELOC32SHORT,
   amigaHunkPrefixDecision,
   amigaHunkPrefixGrowth,
   hasAmigaHunkMagic,
@@ -525,6 +527,53 @@ it("keeps parsed facts when a relocation count runs past the file", () => {
   expect(file.limitations.map((item) => item.kind)).toEqual(["truncated"]);
 });
 
+it.each([
+  { kind: "reloc32", block: HUNK_RELOC32, width: 4, label: "relocation table" },
+  {
+    kind: "reloc32short",
+    block: HUNK_RELOC32SHORT,
+    width: 2,
+    label: "short relocation table",
+  },
+] as const)(
+  "checks $kind framing before charging the relocation allowance",
+  ({ kind, block, width, label }) => {
+    const bytes = amigaLoadFile({
+      hunks: [
+        {
+          type: "code",
+          bytes: CODE,
+          relocs: [{ kind, target: 0, offsets: [0, 0] }],
+        },
+      ],
+    });
+    const countAt = blockAt(bytes, block) + 4;
+    const terminatorAt = countAt + 4 * width;
+    const limits = { maxRelocations: 1 };
+    const file = parseAmigaHunk(bytes.subarray(0, terminatorAt), limits);
+    expect(file.hunks).toMatchObject([{ type: "code", relocations: [] }]);
+    expect(file.entries.map((entry) => entry.path)).toEqual([
+      "hunk-0-code.bin",
+    ]);
+    expect(file.limitations).toEqual([
+      {
+        kind: "truncated",
+        offset: countAt,
+        detail: `Truncated Amiga Hunk ${label} at offset ${countAt}.`,
+      },
+    ]);
+    expect(parseAmigaHunk(bytes).hunks[0]?.relocations).toEqual([
+      { kind, targetHunk: 0, count: 2 },
+    ]);
+    expect(
+      decodeLimitOf(() => parseAmigaHunk(bytes, limits)).limit,
+    ).toMatchObject({
+      name: AMIGA_HUNK_RELOCATION_LIMIT,
+      maximum: 1,
+    });
+  },
+);
+
 it("records one limitation for a run of replaced hunk names", () => {
   const named = amigaLoadFile({
     hunks: [{ type: "code", bytes: CODE, name: "start" }],
@@ -668,6 +717,30 @@ it("refuses object units above the hunk allowance", () => {
   });
 });
 
+it("checks object hunk framing before charging the hunk allowance", () => {
+  const bytes = amigaObjectFile([
+    {
+      name: "obj.o",
+      hunks: [
+        { type: "code", bytes: CODE },
+        { type: "data", bytes: DATA, memory: "extended" },
+      ],
+    },
+  ]);
+  const limits = { maxHunks: 1 };
+  const file = parseAmigaHunk(bytes.subarray(0, bytes.length - 5), limits);
+  expect(file.hunks).toMatchObject([
+    { type: "code", storedBytes: CODE.length },
+  ]);
+  expect(file.limitations.map((item) => item.kind)).toEqual(["truncated"]);
+  expect(
+    decodeLimitOf(() => parseAmigaHunk(bytes, limits)).limit,
+  ).toMatchObject({
+    name: AMIGA_HUNK_HUNK_LIMIT,
+    maximum: 1,
+  });
+});
+
 it("notes a table size that does not cover the last hunk", () => {
   const short = parseAmigaHunk(
     amigaLoadFile({
@@ -715,28 +788,6 @@ it("refuses a hunk table above the hunk ceiling before reading it", () => {
   ).toMatchObject({
     kind: "limit",
     limit: { name: AMIGA_HUNK_HUNK_LIMIT, maximum: 2 },
-  });
-});
-
-it("refuses a relocation group above the per-hunk ceiling", () => {
-  expect(
-    decodeLimitOf(() =>
-      parseAmigaHunk(
-        amigaLoadFile({
-          hunks: [
-            {
-              type: "code",
-              bytes: CODE,
-              relocs: [{ kind: "reloc32", target: 0, offsets: [0, 0] }],
-            },
-          ],
-        }),
-        { maxRelocations: 1 },
-      ),
-    ).limit,
-  ).toMatchObject({
-    name: AMIGA_HUNK_RELOCATION_LIMIT,
-    maximum: 1,
   });
 });
 
