@@ -80,6 +80,8 @@ export class KubernetesAuditEventProbe {
   #done = false;
   #failed = false;
   #depthStopped = false;
+  /** Decoded slices of the first record, kept only to reread a depth overflow. */
+  #recordSlices: string[] = [];
   #preamble = true;
   #atLineStart = true;
   #bomMatched = 0;
@@ -145,6 +147,7 @@ export class KubernetesAuditEventProbe {
         for (let index = 0; index < decoded.length;) {
           const end = Math.min(decoded.length, index + 4096);
           const slice = decoded.slice(index, end);
+          this.#recordSlices.push(slice);
           try {
             this.#feed(slice);
           } catch (cause: unknown) {
@@ -154,8 +157,7 @@ export class KubernetesAuditEventProbe {
               this.#done = true;
               return;
             }
-            if (this.#hasAuditId && this.#hasStage) this.#depthStopped = true;
-            else if (this.#depth === 0) this.#rereadSlice(slice);
+            this.#rereadRecord();
             this.#failed = !this.#depthStopped;
             this.#done = true;
             return;
@@ -171,11 +173,15 @@ export class KubernetesAuditEventProbe {
   }
 
   /**
-   * The chunk's tokens were discarded with the overflow. A new tokenizer can
-   * reread it only at the start of the value, where no earlier container is open.
+   * The overflowed chunk's tokens were discarded. Reread the first record from
+   * its start so identity that shared that chunk is still observed.
    */
-  #rereadSlice(slice: string): void {
+  #rereadRecord(): void {
+    const record = this.#recordSlices.join("");
+    this.#recordSlices.length = 0;
     this.#depth = 0;
+    this.#hasAuditId = false;
+    this.#hasStage = false;
     this.#field = undefined;
     this.#capture = undefined;
     this.#text = "";
@@ -187,9 +193,9 @@ export class KubernetesAuditEventProbe {
       streamValues: true,
       maxDepth: KUBERNETES_AUDIT_JSON_DEPTH,
     }) as AuditJsonTokenizer;
-    for (let index = 0; index < slice.length; index += 1) {
+    for (let index = 0; index < record.length; index += 1) {
       try {
-        this.#feed(slice.charAt(index));
+        this.#feed(record.charAt(index));
       } catch (cause: unknown) {
         if (isHostLimitFailure(cause)) throw cause;
         this.#depthStopped = this.#hasAuditId && this.#hasStage;

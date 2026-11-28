@@ -166,6 +166,9 @@ export const parseKubernetesAuditLine = (
         value[pendingKey] = null;
       else if (ROOT_STRINGS.has(pendingKey)) value[pendingKey] = null;
       else delete value[pendingKey];
+    } else if (frame?.kind === "user" && pendingKey === "groups") {
+      sawUser = true;
+      user.groups = null;
     } else if (frame?.kind === "user" && pendingKey === "username") {
       sawUser = true;
       user.username = null;

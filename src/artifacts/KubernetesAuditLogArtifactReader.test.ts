@@ -593,6 +593,18 @@ it("clears a response object when a later array replaces it", async () => {
   });
 });
 
+it("clears groups when a later scalar replaces the list", async () => {
+  const metadata = await metadataOf(
+    '{"auditID":"groups","stage":"RequestReceived","user":{"username":"ada","groups":["system:authenticated"]},"user":{"username":"ada","groups":null},"verb":"get"}\n',
+  );
+  expect(metadata.events[0]).toMatchObject({
+    audit_id: "groups",
+    username: "ada",
+    user_groups: null,
+    verb: "get",
+  });
+});
+
 it("drops a response object when a later value replaces it", async () => {
   const metadata = await metadataOf(
     '{"auditID":"replaced","stage":"ResponseComplete","responseStatus":{"code":403},"responseStatus":null,"verb":"get"}\n',
