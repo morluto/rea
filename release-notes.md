@@ -533,6 +533,7 @@
 * **macho:** report a FAT header or table cut off by the file's end as truncated ([#14233](https://github.com/morluto/rea/issues/14233)) ([187793b](https://github.com/morluto/rea/commit/187793ba6158b23efe81160ac8ae6334a700bf35))
 * **macho:** report Mach-O read failures as target failures and delete MachoReadIssue ([#14416](https://github.com/morluto/rea/issues/14416)) ([5b79ae5](https://github.com/morluto/rea/commit/5b79ae5d62be355c5f955fe43c42a8e15b891a64))
 * **macho:** select arm64e.x1 slices of universal Mach-O files by exact subtype ([#14881](https://github.com/morluto/rea/issues/14881)) ([92b082b](https://github.com/morluto/rea/commit/92b082bcaf3e224fd0d03d7279728516fcbd45e7))
+* **macho:** validate encryption mapping segment and section bounds against the slice ([#14287](https://github.com/morluto/rea/issues/14287)) ([0b7388e](https://github.com/morluto/rea/commit/0b7388ebe1f54375896eb5897c643406bd1653b2))
 * **managed:** isolate invalid string loads from member coverage ([#13588](https://github.com/morluto/rea/issues/13588)) ([4d507e8](https://github.com/morluto/rea/commit/4d507e861282e8ffa5f0e2e09fc523e40a5dd6e7))
 * **maven:** preserve property value spelling ([#13442](https://github.com/morluto/rea/issues/13442)) ([b43084c](https://github.com/morluto/rea/commit/b43084c7fd892524bce20982719ef08df3310687))
 * **maven:** read Maven 4.1.0 model POMs ([#14089](https://github.com/morluto/rea/issues/14089)) ([0c59c2e](https://github.com/morluto/rea/commit/0c59c2ed4e46ff52c69cb9f216c069e7b703f658))
