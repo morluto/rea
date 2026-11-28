@@ -1,6 +1,8 @@
 import { ParseFailureError } from "../domain/parseFailure.js";
 import { expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import {
   TextReader,
   Uint8ArrayWriter,
@@ -22,6 +24,13 @@ import {
 import { ArtifactReaderFailure } from "../resources/index.js";
 import { NUPKG_LIMITATIONS, parseNugetNupkg } from "./NugetNupkgParser.js";
 import { bufferByteSource } from "../domain/byteSource.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import {
+  XML_ELEMENT_DEPTH_ALLOWANCE,
+  XML_ELEMENT_DEPTH_LIMIT,
+} from "../domain/xmlDocument.js";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { NugetNupkgProvider } from "./NugetNupkgProvider.js";
 
 const defaults = inspectNugetNupkgInputSchema.parse({
   path: "/artifacts/Demo.Package.nupkg",
@@ -269,6 +278,59 @@ it("inventories a package whose .nuspec is not well-formed XML", async () => {
   expect(report.nuspec?.path).toBe("Demo.Package.nuspec");
   expect(report.limitations).toContain(NUPKG_LIMITATIONS.malformedNuspec);
 });
+
+it.each([
+  [
+    "nuspec",
+    {
+      nuspec: `<package>${"<a>".repeat(XML_ELEMENT_DEPTH_LIMIT)}x${"</a>".repeat(XML_ELEMENT_DEPTH_LIMIT)}</package>`,
+      includeRels: false,
+    },
+  ],
+  [
+    "OPC relationships",
+    {
+      relationships: `<Relationships>${"<a>".repeat(XML_ELEMENT_DEPTH_LIMIT)}x${"</a>".repeat(XML_ELEMENT_DEPTH_LIMIT)}</Relationships>`,
+    },
+  ],
+] as const)(
+  "reports XML element depth from the provider for a deep %s",
+  async (_label, fixture) => {
+    const root = await createTestTempDirectory("rea-nupkg-depth-");
+    const path = join(root, "Demo.Package.nupkg");
+    await writeFile(path, await nugetNupkgFixture(fixture));
+    const provider = new NugetNupkgProvider();
+    try {
+      const result = await provider.inspect(
+        inspectNugetNupkgInputSchema.parse({ path }),
+      );
+      if (result.ok) throw new Error("expected the XML depth ceiling");
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "resource_constraint",
+        retryable: false,
+        details: {
+          reported_limits: {
+            boundary: "xml-element-depth",
+            maximum: XML_ELEMENT_DEPTH_LIMIT,
+            required: XML_ELEMENT_DEPTH_LIMIT + 1,
+          },
+          refusal: {
+            kind: "fixed_ceiling",
+            allowance: XML_ELEMENT_DEPTH_ALLOWANCE.name,
+            allowance_kind: "parser",
+            limit: XML_ELEMENT_DEPTH_LIMIT,
+            unit: "levels",
+          },
+        },
+        remediation: {
+          action: expect.stringContaining("no runtime override"),
+        },
+      });
+    } finally {
+      await provider.close();
+    }
+  },
+);
 
 it("stops ZIP enumeration as soon as the entry budget is exceeded", async () => {
   const bytes = await nugetNupkgFixture({

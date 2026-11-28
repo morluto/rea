@@ -20,6 +20,7 @@ import {
 import {
   isXmlElement,
   parseTrueFalseText,
+  isXmlElementDepthLimit,
   parseXmlDocument,
   xmlChildElements,
   xmlChildrenNamed,
@@ -160,6 +161,7 @@ const opcManifestTargets = (
     lineEndings: "normalize",
   });
   if (!parsed.ok) {
+    if (isXmlElementDepthLimit(parsed.error)) throw parsed.error;
     limitations.push(
       parsed.error.kind === "unsupported"
         ? "OPC relationships declare a document type, which is unsupported; the .nuspec was selected by ZIP name when possible."
@@ -290,6 +292,7 @@ const parseNuspecDocument = (
     lineEndings: "normalize",
   });
   if (!parsed.ok) {
+    if (isXmlElementDepthLimit(parsed.error)) throw parsed.error;
     limitations.push(
       parsed.error.kind === "unsupported"
         ? "The selected .nuspec declares a document type, which is unsupported."
