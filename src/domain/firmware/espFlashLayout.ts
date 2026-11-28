@@ -3,6 +3,7 @@ import type { EspBootloaderLocation } from "./espFlashBootloader.js";
 import {
   ESP_PARTITION_TABLE_SECTOR_BYTES,
   espBootPartitions,
+  espBootTableAdmission,
   espPartitionSubtypeName,
   espPartitionTypeName,
   espPrimaryLayoutRole,
@@ -389,7 +390,7 @@ export const finishEspFlashLayout = (
             size: plan.otadata.partition.size,
             records: otadata.records,
           },
-      plan.input.table.md5.status === "invalid",
+      espBootTableAdmission(plan.input.table.md5),
     ),
     undescribed,
     coverage:

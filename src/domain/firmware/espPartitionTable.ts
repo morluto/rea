@@ -64,6 +64,8 @@ export interface EspPartitionTableMd5 {
   readonly computed: string | null;
 }
 
+export type EspBootTableAdmission = "admitted" | "rejected" | "unknown";
+
 export interface EspPartitionTable {
   readonly partitions: readonly EspPartition[];
   readonly md5: EspPartitionTableMd5;
@@ -71,6 +73,16 @@ export interface EspPartitionTable {
   readonly length: number;
   readonly limitations: readonly string[];
 }
+
+/** Classify boot selection from the retained checksum facts. */
+export const espBootTableAdmission = (
+  md5: EspPartitionTableMd5,
+): EspBootTableAdmission =>
+  md5.status === "invalid"
+    ? "rejected"
+    : md5.entriesAfterChecksum > 0
+      ? "unknown"
+      : "admitted";
 
 const partition = (
   entry: Uint8Array,
@@ -168,9 +180,12 @@ export const decodeEspPartitionTable = (
         ...md5,
         entriesAfterChecksum: partitionsAfterMd5,
       };
+      // ESP-IDF limits its raw-slot loop to the number of partition records;
+      // a checksum occupying an earlier slot can hide later declarations.
+      const bootAdmission = espBootTableAdmission(reported);
       if (reported.entryOffset !== null && reported.entriesAfterChecksum > 0)
         limitations.push(
-          `${String(reported.entriesAfterChecksum)} partition entries after the MD5 record at table-relative offset ${offsetText(reported.entryOffset)} are outside its checksum coverage.`,
+          `${String(reported.entriesAfterChecksum)} partition entries after the MD5 record at table-relative offset ${offsetText(reported.entryOffset)} are outside its checksum coverage.${bootAdmission === "unknown" ? " Boot selection is unknown." : ""}`,
         );
       return ok({
         partitions,

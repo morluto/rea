@@ -391,7 +391,7 @@ describe("ESP boot selection without a derivable slot", () => {
             decodeEspOtaRecord(erased, 1),
           ],
         },
-        true,
+        "rejected",
       ),
     ).toEqual({
       basis: "none",
@@ -516,5 +516,16 @@ it("keeps and discloses partitions after a matching prefix MD5", () => {
     first?.label,
     second?.label,
     third?.label,
+  ]);
+  expect(
+    decoded.partitions.map(({ index, entryOffset, label }) => ({
+      index,
+      entryOffset,
+      label,
+    })),
+  ).toEqual([
+    { index: 0, entryOffset: 0, label: first?.label },
+    { index: 1, entryOffset: 64, label: second?.label },
+    { index: 2, entryOffset: 96, label: third?.label },
   ]);
 });
