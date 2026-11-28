@@ -2,6 +2,7 @@ import ghidra.app.cmd.function.CreateFunctionCmd;
 import ghidra.app.script.GhidraScript;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.listing.*;
+import ghidra.program.model.symbol.ExternalLocation;
 import ghidra.program.model.symbol.FlowType;
 import ghidra.program.model.symbol.Reference;
 import ghidra.program.model.pcode.PcodeOp;
@@ -20,7 +21,29 @@ import java.util.TreeSet;
  */
 public final class ReaGhidraNoReturnFix extends GhidraScript {
   private static final Set<String> RETURNING_IMPORTS = Set.of(
-      "malloc", "__tls_get_addr", "memcpy", "memset", "strlen", "__errno_location");
+      "malloc", "__tls_get_addr", "memcpy", "memset", "strlen", "__errno_location",
+      // Itanium C++ ABI runtime entry points that return to their caller. operator
+      // new may throw, which unwinds; it does not make the call non-returning.
+      // Every standard replaceable global operator new and operator delete, for size_t
+      // as unsigned long (m, LP64), unsigned int (j, ILP32) and unsigned long long
+      // (y, LLP64 such as 64-bit MinGW PE); the standard defines no sized nothrow delete.
+      "_Znwm", "_Znam", "_Znwj", "_Znaj", "_Znwy", "_Znay",
+      "_ZnwmRKSt9nothrow_t", "_ZnamRKSt9nothrow_t", "_ZnwjRKSt9nothrow_t", "_ZnajRKSt9nothrow_t",
+      "_ZnwyRKSt9nothrow_t", "_ZnayRKSt9nothrow_t",
+      "_ZnwmSt11align_val_t", "_ZnamSt11align_val_t", "_ZnwjSt11align_val_t", "_ZnajSt11align_val_t",
+      "_ZnwySt11align_val_t", "_ZnaySt11align_val_t",
+      "_ZnwmSt11align_val_tRKSt9nothrow_t", "_ZnamSt11align_val_tRKSt9nothrow_t",
+      "_ZnwjSt11align_val_tRKSt9nothrow_t", "_ZnajSt11align_val_tRKSt9nothrow_t",
+      "_ZnwySt11align_val_tRKSt9nothrow_t", "_ZnaySt11align_val_tRKSt9nothrow_t",
+      "_ZdlPv", "_ZdaPv", "_ZdlPvm", "_ZdaPvm", "_ZdlPvj", "_ZdaPvj", "_ZdlPvy", "_ZdaPvy",
+      "_ZdlPvRKSt9nothrow_t", "_ZdaPvRKSt9nothrow_t",
+      "_ZdlPvSt11align_val_t", "_ZdaPvSt11align_val_t",
+      "_ZdlPvmSt11align_val_t", "_ZdaPvmSt11align_val_t",
+      "_ZdlPvjSt11align_val_t", "_ZdaPvjSt11align_val_t",
+      "_ZdlPvySt11align_val_t", "_ZdaPvySt11align_val_t",
+      "_ZdlPvSt11align_val_tRKSt9nothrow_t", "_ZdaPvSt11align_val_tRKSt9nothrow_t",
+      "__cxa_guard_acquire", "__cxa_guard_release", "__cxa_guard_abort",
+      "__cxa_atexit", "__cxa_allocate_exception", "__cxa_begin_catch", "__cxa_end_catch");
 
   @Override
   public void run() throws Exception {
@@ -99,7 +122,11 @@ public final class ReaGhidraNoReturnFix extends GhidraScript {
   }
 
   private String externalAbiName(Function function) {
-    String name = function.getName();
+    // Ghidra demangles C++ imports (_Znwm becomes operator.new, shared by every
+    // overload); the original imported name keeps the exact ABI symbol.
+    ExternalLocation location = function.getExternalLocation();
+    String original = location == null ? null : location.getOriginalImportedName();
+    String name = original == null ? function.getName() : original;
     // Mach-O stores C-linkage symbols with one object-format underscore prefix.
     if (currentProgram.getExecutableFormat().contains("Mach-O") && name.startsWith("_"))
       return name.substring(1);
