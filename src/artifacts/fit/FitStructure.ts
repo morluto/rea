@@ -29,6 +29,7 @@ import { isParseLimit } from "../../domain/parseFailureAnalysisError.js";
 import {
   ArtifactReaderFailure,
   malformedArtifact,
+  malformedFormatFailure,
 } from "../../resources/index.js";
 import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 
@@ -94,8 +95,7 @@ const CONFIGURATION_REFERENCES = [
 ] as const;
 
 const align4 = (value: number): number => Math.ceil(value / 4) * 4;
-const formatFailure = (detail: string): ArtifactReaderFailure =>
-  malformedArtifact("fit", `FIT is malformed: ${detail}`);
+const formatFailure = malformedFormatFailure("fit", "FIT");
 const capacityFailure = (message: string): ArtifactReaderFailure =>
   new ArtifactReaderFailure("limit", message, { boundary: "capacity" });
 const nodeName = (node: FitNode): string =>

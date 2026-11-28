@@ -15,6 +15,7 @@ import { setImmediate } from "node:timers/promises";
 import {
   ArtifactReaderFailure,
   malformedArtifact,
+  malformedFormatFailure,
   truncatedArtifact,
   assertArtifactReadActive,
   artifactReaderLimitFailure,
@@ -425,8 +426,7 @@ const toSafeOffset = (
     throw formatFailure(`${subject} offset exceeds the pack`);
   return base + Number(offset);
 };
-const formatFailure = (detail: string): ArtifactReaderFailure =>
-  malformedArtifact("godot-pck", `Godot PCK is malformed: ${detail}`);
+const formatFailure = malformedFormatFailure("godot-pck", "Godot PCK");
 const metadataLimit = (
   limits: GodotReaderLimits,
   required: number,

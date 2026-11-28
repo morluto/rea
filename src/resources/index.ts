@@ -56,6 +56,7 @@ export {
   artifactFixedLimitFailure,
   artifactFormatFailure,
   malformedArtifact,
+  malformedFormatFailure,
   truncatedArtifact,
   unsupportedArtifact,
   readFailureError,
