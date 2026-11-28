@@ -616,6 +616,19 @@ export const captureCssVariables = async (
     }
 
     const sanitizedValue = redactCssUrlCredentials(rawValue, maxValueLength);
+    if (sanitizedValue.length > maxValueLength) {
+      rejectedCount += 1;
+      if (rejectedPreviews.length < MAX_REJECTED_PREVIEWS) {
+        const truncatedName = ellipsisExcerpt(
+          sanitizeDiagnosticPreview(name),
+          MAX_PREVIEW_NAME_LENGTH,
+        );
+        rejectedPreviews.push(
+          `${truncatedName} (sanitized value length ${String(sanitizedValue.length)} exceeds max_css_variable_value_length ${String(maxValueLength)})`,
+        );
+      }
+      continue;
+    }
     const redacted = sanitizedValue !== rawValue;
     const parsed = browserCssVariableItemSchema.safeParse({
       name,

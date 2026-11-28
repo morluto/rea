@@ -1035,3 +1035,53 @@ it("excludes invalid_protocol_value and records limitation when DOM root or node
     ),
   ).toBe(true);
 });
+
+it("reapplies max_css_variable_value_length after URL redaction expands length", async () => {
+  const nonAsciiPath = "é".repeat(120);
+  const rawUrlValue = `url("https://alice:secret\\9 @example.test/${nonAsciiPath}")`;
+  expect(rawUrlValue.length).toBeLessThanOrEqual(200);
+
+  const connection = makeMockConnection({
+    "DOM.getDocument": {
+      root: {
+        nodeId: 1,
+        children: [{ nodeId: 2, nodeType: 1, nodeName: "HTML" }],
+      },
+    },
+    "CSS.enable": {},
+    "CSS.getComputedStyleForNode": {
+      computedStyle: [
+        { name: "--expanded-url", value: rawUrlValue },
+        { name: "--short-var", value: "#fff" },
+      ],
+    },
+    "CSS.disable": {},
+  });
+
+  const limitations: string[] = [];
+  const result = await captureCssVariables(
+    {
+      connection,
+      sessionId: undefined,
+      input: inspectWebPageInputSchema.parse({
+        cdp_endpoint: "http://127.0.0.1:9222",
+        target_id: "target_1",
+        include_css_variables: true,
+        max_css_variable_value_length: 200,
+      }),
+    },
+    limitations,
+  );
+
+  expect(result.status).toBe("truncated");
+  expect(result.items).toEqual([
+    { name: "--short-var", value: "#fff", redacted: false },
+  ]);
+  expect(
+    limitations.some(
+      (lim) =>
+        lim.includes("after URL redaction") ||
+        lim.includes("sanitized value length"),
+    ),
+  ).toBe(true);
+});
