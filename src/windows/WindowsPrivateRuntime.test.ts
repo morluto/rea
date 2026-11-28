@@ -10,6 +10,7 @@ import {
 const nativeCall = vi.hoisted(() => vi.fn());
 const nativeInspection = vi.hoisted(() => ({
   runtimeWriteTransient: true as boolean | undefined,
+  runtimeKeepFiles: undefined as boolean | undefined,
 }));
 
 vi.mock("./WindowsNativeLoader.js", async (importOriginal) => {
@@ -26,6 +27,7 @@ vi.mock("./WindowsNativeLoader.js", async (importOriginal) => {
 
 import {
   WindowsPrivateRuntime,
+  WindowsRuntimeKeepFilesUnavailableError,
   WindowsRuntimeWriteTransientUnavailableError,
   WindowsSnapshotCancelledError,
   windowsPrivateRuntime,
@@ -34,6 +36,7 @@ import {
 beforeEach(() => {
   nativeCall.mockReset();
   nativeInspection.runtimeWriteTransient = true;
+  nativeInspection.runtimeKeepFiles = undefined;
 });
 
 const observation = {
@@ -591,4 +594,44 @@ it("keeps runtime cleanup retryable and admission sealed after a file owner rele
   expect(fileCloses).toBe(2);
   expect(rootCloses).toBe(2);
   expect(() => windowsPrivateRuntime(observation.path)).toThrow();
+});
+
+describe("Windows private runtime keep-files release", () => {
+  it("releases handles and registration without deleting the directory", async () => {
+    nativeInspection.runtimeKeepFiles = true;
+    const operations: string[] = [];
+    nativeCall.mockImplementation((operation: string) => {
+      operations.push(operation);
+      if (operation === "runtime_create") return observation;
+      return null;
+    });
+    const runtime = WindowsPrivateRuntime.create("C:\\", "rea-");
+
+    await runtime.keepFiles();
+
+    expect(operations).toEqual(["runtime_create", "runtime_keep_files"]);
+    expect(() => windowsPrivateRuntime(observation.path)).toThrow(
+      /No native private runtime/u,
+    );
+    await runtime.close();
+    expect(operations).toEqual(["runtime_create", "runtime_keep_files"]);
+  });
+
+  it("refuses keep-files on an earlier artifact and keeps the owner registered", async () => {
+    nativeInspection.runtimeKeepFiles = undefined;
+    nativeCall.mockImplementation((operation: string) =>
+      operation === "runtime_create" ? observation : null,
+    );
+    const runtime = WindowsPrivateRuntime.create("C:\\", "rea-");
+
+    await expect(runtime.keepFiles()).rejects.toBeInstanceOf(
+      WindowsRuntimeKeepFilesUnavailableError,
+    );
+    expect(windowsPrivateRuntime(observation.path)).toBe(runtime);
+    expect(nativeCall).not.toHaveBeenCalledWith(
+      "runtime_keep_files",
+      expect.anything(),
+    );
+    await runtime.close();
+  });
 });

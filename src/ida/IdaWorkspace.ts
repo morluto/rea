@@ -246,6 +246,15 @@ export class IdaWorkspace {
     return true;
   }
 
+  /**
+   * Close residual file handles and leave the privately allocated directory in
+   * place so a completed analysis database can be reused after session close.
+   */
+  async retain(): Promise<void> {
+    await this.#files.close();
+    await this.runtime.keepFiles();
+  }
+
   /** Delete only this object's privately allocated directory after worker cleanup. */
   async remove(): Promise<void> {
     await this.#files.close();

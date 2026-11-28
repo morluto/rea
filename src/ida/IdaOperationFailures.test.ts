@@ -68,7 +68,13 @@ it("preserves a rejected headless decompile diagnostic with completed lookup evi
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "unreadable_output",
       details: {
-        diagnostics: { reason: safeReason },
+        diagnostics: {
+          reason: safeReason,
+          retained_database: {
+            workspace: dirname(producer.inputPath),
+            idb_path: `${producer.inputPath}.i64`,
+          },
+        },
         partial_observation: {
           provider: { id: "ida" },
           operation: "procedure_pseudo_code",
@@ -98,12 +104,10 @@ it("preserves a rejected headless decompile diagnostic with completed lookup evi
     const database = producer.database;
     expect((await client.close()).ok).toBe(true);
     expect(producer.calls.filter(({ name }) => name === "idb_close")).toEqual([
-      { name: "idb_close", args: { database, save: false } },
+      { name: "idb_close", args: { database, save: true } },
     ]);
     expect(producer.closes).toBe(1);
-    await expect(stat(dirname(producer.inputPath))).rejects.toMatchObject({
-      code: "ENOENT",
-    });
+    expect((await stat(dirname(producer.inputPath))).isDirectory()).toBe(true);
   }
 });
 
@@ -199,13 +203,14 @@ describe("headless IDA tool diagnostics in partial evidence", () => {
         expect(bindingReason).toContain(callerPath);
         expect.soft(details.diagnostics.reason).toBe(safeReason);
       } finally {
+        const database = producer.database;
         expect((await client.close()).ok).toBe(true);
         expect(
           producer.calls.filter(({ name }) => name === "idb_close"),
-        ).toHaveLength(1);
-        await expect(stat(dirname(producer.inputPath))).rejects.toMatchObject({
-          code: "ENOENT",
-        });
+        ).toEqual([{ name: "idb_close", args: { database, save: true } }]);
+        expect((await stat(dirname(producer.inputPath))).isDirectory()).toBe(
+          true,
+        );
       }
     },
   );
@@ -270,9 +275,22 @@ describe("headless IDA partial operation evidence", () => {
             },
           },
         });
+        expect(result.error.diagnostics).toMatchObject({
+          retained_database: {
+            workspace: dirname(producer.inputPath),
+            save: "not_requested",
+          },
+        });
       }
     } finally {
+      const database = producer.database;
       expect((await client.close()).ok).toBe(true);
+      expect(producer.calls.filter(({ name }) => name === "idb_close")).toEqual(
+        [{ name: "idb_close", args: { database, save: false } }],
+      );
+      expect((await stat(dirname(producer.inputPath))).isDirectory()).toBe(
+        true,
+      );
     }
   });
 

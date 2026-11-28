@@ -1,10 +1,14 @@
-import { createIdaMcpConnection } from "./IdaMcpConnection.js";
+import {
+  createIdaMcpConnection,
+  decodeIdaToolResult,
+} from "./IdaMcpConnection.js";
 import {
   mkdir,
   readFile,
   readdir,
   realpath,
   rm,
+  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -1315,6 +1319,238 @@ describe("headless IDA session ownership and cleanup", () => {
     ).toBe(false);
     expect(await readdir(root)).toEqual(["target.elf"]);
     expect(Buffer.compare(await readFile(target.path), original)).toBe(0);
+  });
+});
+
+describe("headless IDA completed-database retention", () => {
+  it("saves and keeps a completed database when a later truncated tool call fails closed", async () => {
+    const { producer, client, root } = await fixture("headless");
+    expect((await client.execute("health", {})).ok).toBe(true);
+    const workspace = dirname(producer.inputPath);
+    const idbPath = `${producer.inputPath}.i64`;
+    producer.beforeCall = async (name) => {
+      if (name === "list_funcs")
+        decodeIdaToolResult({
+          content: [],
+          structuredContent: { result: [{ name: "main" }] },
+          _meta: { ida_mcp: { output_truncated: true } },
+        });
+    };
+    const result = await client.execute("list_procedures", {});
+    if (result.ok) throw new Error("Expected truncation to fail closed");
+    expect(result.error).toBeInstanceOf(AnalysisProtocolError);
+    expect(result.error.message).toContain("IDA MCP truncated its output");
+    expect(result.error.message).toContain(
+      "the preview cannot establish a complete observation",
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error.diagnostics).toMatchObject({
+      retained_database: {
+        workspace,
+        idb_path: idbPath,
+        save: "pending",
+        reason: expect.stringContaining("keeps the workspace"),
+      },
+    });
+    const database = producer.database;
+    expect((await client.close()).ok).toBe(true);
+    expect(producer.calls.filter(({ name }) => name === "idb_close")).toEqual([
+      { name: "idb_close", args: { database, save: true } },
+    ]);
+    expect(producer.closes).toBe(1);
+    expect(result.error.diagnostics).toMatchObject({
+      retained_database: { save: "saved" },
+    });
+    expect((await stat(workspace)).isDirectory()).toBe(true);
+    expect(await readdir(root)).toEqual(
+      expect.arrayContaining(["target.elf", basename(workspace)]),
+    );
+  });
+
+  it("finishes cleanup after a lost saved-close reply and reports an unknown save", async () => {
+    const { producer, client, root } = await fixture("headless");
+    expect((await client.execute("health", {})).ok).toBe(true);
+    const workspace = dirname(producer.inputPath);
+    producer.beforeCall = async (name) => {
+      if (name === "list_funcs")
+        decodeIdaToolResult({
+          content: [],
+          structuredContent: { result: [{ name: "main" }] },
+          _meta: { ida_mcp: { output_truncated: true } },
+        });
+    };
+    const result = await client.execute("list_procedures", {});
+    if (result.ok) throw new Error("Expected truncation to fail closed");
+    const database = producer.database;
+    if (database === undefined) throw new Error("Expected the owned worker");
+
+    let closeAttempts = 0;
+    producer.beforeCall = async (name) => {
+      if (name !== "idb_close") return;
+      closeAttempts += 1;
+      if (closeAttempts === 1) {
+        producer.database = undefined;
+        throw new AnalysisTimeoutError("idb_close", 1000);
+      }
+    };
+    producer.overrideCall = (name) =>
+      name === "idb_close"
+        ? { error: `Session not found: ${database}` }
+        : undefined;
+
+    const first = await client.close();
+    expect(first.ok).toBe(false);
+    if (first.ok)
+      throw new Error("Expected incomplete cleanup after a lost reply");
+    expect(first.error.cleanupIncomplete).toBe(true);
+    expect(producer.closes).toBe(0);
+    expect((await stat(workspace)).isDirectory()).toBe(true);
+
+    const second = await client.close();
+    expect(second.ok).toBe(false);
+    if (second.ok) throw new Error("Expected an unknown save outcome");
+    expect(second.error.cleanupIncomplete).toBe(false);
+    expect(second.error.message).toContain(
+      "saved state of the retained database is unknown",
+    );
+    expect(second.error.diagnostics).toMatchObject({
+      retained_database: {
+        workspace,
+        save: "unknown",
+      },
+    });
+    expect(result.error.diagnostics).toMatchObject({
+      retained_database: { save: "unknown" },
+    });
+    expect(producer.calls.filter(({ name }) => name === "idb_close")).toEqual([
+      { name: "idb_close", args: { database, save: true } },
+      { name: "idb_close", args: { database, save: true } },
+    ]);
+    expect(producer.closes).toBe(1);
+    expect((await stat(workspace)).isDirectory()).toBe(true);
+    expect(await readdir(root)).toEqual(
+      expect.arrayContaining(["target.elf", basename(workspace)]),
+    );
+    expect((await client.close()).ok).toBe(true);
+  });
+
+  it("still removes the private workspace when auto-analysis never completed", async () => {
+    const { producer, client, root } = await fixture("headless");
+    producer.overrideCall = (name) =>
+      name === "server_health"
+        ? {
+            status: "ok",
+            input_path: producer.inputPath,
+            idb_path: `${producer.inputPath}.i64`,
+            module: "target.elf",
+            imagebase: "0x1000",
+            auto_analysis_ready: false,
+          }
+        : undefined;
+    const result = await client.execute("list_procedures", {});
+    if (result.ok) throw new Error("Expected incomplete auto-analysis refusal");
+    expect(result.error._tag).toBe("AnalysisCapabilityUnavailableError");
+    expect(result.error.diagnostics).not.toHaveProperty("retained_database");
+    const database = producer.database;
+    expect((await client.close()).ok).toBe(true);
+    expect(producer.calls.filter(({ name }) => name === "idb_close")).toEqual([
+      { name: "idb_close", args: { database, save: false } },
+    ]);
+    expect(producer.closes).toBe(1);
+    expect(await readdir(root)).toEqual(["target.elf"]);
+  });
+});
+
+describe("headless IDA retained close after unverified later health", () => {
+  it.each([
+    {
+      label: "times out",
+      failHealth: (producer: RecordingIdaMcp) => {
+        producer.beforeCall = async (name) => {
+          if (name === "server_health")
+            throw new AnalysisTimeoutError("server_health", 1000);
+        };
+      },
+    },
+    {
+      label: "is malformed",
+      failHealth: (producer: RecordingIdaMcp) => {
+        producer.overrideCall = (name) =>
+          name === "server_health" ? { status: "ok" } : undefined;
+      },
+    },
+  ])(
+    "closes unsaved after a later health read $label",
+    async ({ failHealth }) => {
+      const { producer, client, root } = await fixture("headless");
+      expect((await client.execute("health", {})).ok).toBe(true);
+      const workspace = dirname(producer.inputPath);
+      const idbPath = `${producer.inputPath}.i64`;
+      failHealth(producer);
+      const result = await client.execute("list_procedures", {});
+      if (result.ok) throw new Error("Expected a later health failure");
+      expect(result.error.diagnostics).toMatchObject({
+        retained_database: {
+          workspace,
+          idb_path: idbPath,
+          save: "not_requested",
+          reason: expect.stringContaining("identity is unverified"),
+        },
+      });
+      const database = producer.database;
+      expect((await client.close()).ok).toBe(true);
+      expect(producer.calls.filter(({ name }) => name === "idb_close")).toEqual(
+        [{ name: "idb_close", args: { database, save: false } }],
+      );
+      expect(producer.closes).toBe(1);
+      expect((await stat(workspace)).isDirectory()).toBe(true);
+      expect(await readdir(root)).toEqual(
+        expect.arrayContaining(["target.elf", basename(workspace)]),
+      );
+    },
+  );
+
+  it("keeps the recovered database path when a later health read changes the IDB path", async () => {
+    const { producer, client, root } = await fixture("headless");
+    expect((await client.execute("health", {})).ok).toBe(true);
+    const workspace = dirname(producer.inputPath);
+    const idbPath = `${producer.inputPath}.i64`;
+    const rejectedPath = `${producer.inputPath}.changed.i64`;
+    producer.overrideCall = (name) =>
+      name === "server_health"
+        ? {
+            status: "ok",
+            input_path: producer.inputPath,
+            idb_path: rejectedPath,
+            module: "target.elf",
+            imagebase: "0x1000",
+            auto_analysis_ready: true,
+          }
+        : undefined;
+    const result = await client.execute("list_procedures", {});
+    if (result.ok) throw new Error("Expected a session identity refusal");
+    expect(result.error.message).toContain(
+      "target or image base changed during the REA session",
+    );
+    expect(result.error.diagnostics).toMatchObject({
+      retained_database: {
+        workspace,
+        idb_path: idbPath,
+        save: "not_requested",
+      },
+    });
+    expect(result.error.diagnostics).not.toMatchObject({
+      retained_database: { idb_path: rejectedPath },
+    });
+    const database = producer.database;
+    expect((await client.close()).ok).toBe(true);
+    expect(producer.calls.filter(({ name }) => name === "idb_close")).toEqual([
+      { name: "idb_close", args: { database, save: false } },
+    ]);
+    expect((await stat(workspace)).isDirectory()).toBe(true);
+    expect(await readdir(root)).toEqual(
+      expect.arrayContaining(["target.elf", basename(workspace)]),
+    );
   });
 });
 

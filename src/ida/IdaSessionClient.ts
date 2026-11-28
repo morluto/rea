@@ -322,6 +322,18 @@ export class IdaSessionClient implements AnalysisClient {
   // Only a protocol-defined no-worker reply establishes a rejected open.
   #openOutcome: "unverified" | "reply_received" | "no_worker" = "unverified";
   #ready = false;
+  /** True once a verified headless health read reported auto_analysis_ready. */
+  #analysisCompleted = false;
+  /** Set when a later tool call fails after #analysisCompleted in headless mode. */
+  #retainCompletedDatabase = false;
+  /** True only after the latest health observation verified current identity. */
+  #databaseIdentityCurrent = false;
+  #completedDatabasePath: string | undefined;
+  #retainedDatabaseFailure: AnalysisError | undefined;
+  #databaseSaveOutcome: "pending" | "saved" | "not_requested" | "unknown" =
+    "pending";
+  /** True when a retained close requested `save: true` on the supervisor. */
+  #savedCloseRequested = false;
   #blockingSessions: readonly UpstreamSession[] | undefined;
   #callGraphAdvertised = false;
   #surveyAdvertised = false;
@@ -676,7 +688,63 @@ export class IdaSessionClient implements AnalysisClient {
         }),
       );
     }
+    this.#noteCompletedDatabaseRetention(failure);
     return err(failure);
+  }
+
+  /**
+   * After auto-analysis has completed, a later tool-call failure must not
+   * discard the expensive private database. Record the workspace path on the
+   * failure and keep the directory on close.
+   */
+  #noteCompletedDatabaseRetention(failure: AnalysisError): void {
+    if (
+      !this.#analysisCompleted ||
+      this.config.mode !== "headless" ||
+      this.#workspace === undefined
+    )
+      return;
+    this.#retainCompletedDatabase = true;
+    this.#retainedDatabaseFailure = failure;
+    if (!this.#databaseIdentityCurrent)
+      this.#databaseSaveOutcome = "not_requested";
+    this.#publishRetainedDatabase(failure);
+  }
+
+  #requestSavedClose(): boolean {
+    return this.#retainCompletedDatabase && this.#databaseIdentityCurrent;
+  }
+
+  #retainedDatabaseDiagnostic(): {
+    readonly workspace: string;
+    readonly idb_path?: string;
+    readonly save: "pending" | "saved" | "not_requested" | "unknown";
+    readonly reason: string;
+  } {
+    const save = this.#databaseSaveOutcome;
+    return {
+      workspace: this.#workspace!.directory,
+      ...(this.#completedDatabasePath === undefined
+        ? {}
+        : { idb_path: this.#completedDatabasePath }),
+      save,
+      reason:
+        save === "unknown"
+          ? this.#savedCloseRequested
+            ? "Auto-analysis completed before this later tool call failed. The worker was released, but REA could not confirm that the retained database was saved."
+            : "Auto-analysis completed before this later tool call failed. Hex-Rays close_database has no save argument, so the saved state of the retained database is unconfirmed."
+          : save === "not_requested"
+            ? "Auto-analysis completed before this later tool call failed. The current database identity is unverified, so REA keeps the workspace without requesting a save."
+            : "Auto-analysis completed before this later tool call failed. On close, REA saves the private database and keeps the workspace at this path instead of deleting it.",
+    };
+  }
+
+  #publishRetainedDatabase(failure?: AnalysisError): void {
+    const diagnostic = {
+      retained_database: this.#retainedDatabaseDiagnostic(),
+    };
+    failure?.retainDiagnostics(diagnostic);
+    this.#retainedDatabaseFailure?.retainDiagnostics(diagnostic);
   }
 
   async #start(operation: string): Promise<void> {
@@ -961,7 +1029,12 @@ export class IdaSessionClient implements AnalysisClient {
     options?: ExecutionOptions,
     onObserved?: (metadata: JsonValue) => void,
   ): Promise<JsonValue> {
+    // A later health timeout or malformed payload must not leave a previous
+    // verification in place; restore eligibility only after this observation
+    // completes every identity check.
+    if (this.config.mode === "headless") this.#databaseIdentityCurrent = false;
     let identity: string;
+    let completedDatabasePath: string | undefined;
     if (this.config.mode === "attached") {
       const raw = await this.#nativeMetadata(options?.signal);
       const metadata = attachedMetadataSchema.parse(raw);
@@ -1012,12 +1085,14 @@ export class IdaSessionClient implements AnalysisClient {
               metadata.input_sha256.toLowerCase() !==
                 this.#workspace.inputSha256) ||
             !(await this.#workspace.verifyInputUnchanged())
-      )
+      ) {
+        this.#databaseIdentityCurrent = false;
         throw new IdaIdentityRefusal(
           "IDA headless input identity changed after target admission.",
           "Close the REA analysis session, confirm private-worker cleanup, then reopen the selected original target.",
           "headless_input",
         );
+      }
       if (metadata.auto_analysis_ready !== true)
         throw new AnalysisCapabilityUnavailableError(
           "ida",
@@ -1034,6 +1109,8 @@ export class IdaSessionClient implements AnalysisClient {
             diagnostics: { auto_analysis_ready: metadata.auto_analysis_ready },
           },
         );
+      this.#analysisCompleted = true;
+      if (metadata.idb_path !== null) completedDatabasePath = metadata.idb_path;
       identity = JSON.stringify([
         this.#database,
         metadata.input_path,
@@ -1044,13 +1121,20 @@ export class IdaSessionClient implements AnalysisClient {
     if (
       this.#initialIdentity !== undefined &&
       identity !== this.#initialIdentity
-    )
+    ) {
+      this.#databaseIdentityCurrent = false;
       throw new IdaIdentityRefusal(
         "The IDA target or image base changed during the REA session; reopen the target.",
         "Close the REA analysis session and reopen the selected target after confirming the intended input and image base in IDA.",
         "session_identity",
       );
+    }
     this.#initialIdentity = identity;
+    if (this.config.mode === "headless") {
+      this.#databaseIdentityCurrent = true;
+      if (completedDatabasePath !== undefined)
+        this.#completedDatabasePath = completedDatabasePath;
+    }
     return this.#metadata;
   }
 
@@ -1109,7 +1193,7 @@ export class IdaSessionClient implements AnalysisClient {
   }
 
   /** Release the session; false when upstream rejected the release and only inventory can settle it. */
-  async #closeDatabase(database: string): Promise<boolean> {
+  async #closeDatabase(database: string, save = false): Promise<boolean> {
     if (idaCompatibilityProfile(this.config).protocol === "hexrays") {
       try {
         this.#hexRaysCloseReceipt = hexRaysCloseSchema.parse(
@@ -1125,25 +1209,35 @@ export class IdaSessionClient implements AnalysisClient {
         return false;
       }
     }
+    if (save) this.#savedCloseRequested = true;
     const response = await this.connection.call("idb_close", {
       database,
-      save: false,
+      save,
     });
     const closed = closeDatabaseSchema.safeParse(response);
     if (!closed.success) {
       if (!absentDatabaseCloseSchema(database).safeParse(response).success)
         throw closed.error;
+      // The worker is gone, so inventory can confirm release. A requested
+      // save is unconfirmed because this close never received a saved receipt.
+      if (save) this.#databaseSaveOutcome = "unknown";
       return true;
     }
+    const savedAsRequested = save
+      ? closed.data.saved === true
+      : closed.data.saved !== true;
     if (
       closed.data.session_id !== database ||
-      closed.data.saved === true ||
+      !savedAsRequested ||
       closed.data.owned !== true ||
       closed.data.backend !== "worker"
     )
       throw new AnalysisProtocolError(
-        "IDA database close did not confirm the requested owned, unsaved session release.",
+        save
+          ? "IDA database close did not confirm the requested owned, saved session release."
+          : "IDA database close did not confirm the requested owned, unsaved session release.",
       );
+    if (save) this.#databaseSaveOutcome = "saved";
     return true;
   }
 
@@ -1195,7 +1289,10 @@ export class IdaSessionClient implements AnalysisClient {
         if (this.#database !== undefined) {
           if (
             !this.#databaseCloseCompleted &&
-            (await this.#closeDatabase(this.#database))
+            (await this.#closeDatabase(
+              this.#database,
+              this.#requestSavedClose(),
+            ))
           ) {
             this.#databaseCloseCompleted = true;
             this.#forgetReleasedSession(this.#database);
@@ -1228,8 +1325,33 @@ export class IdaSessionClient implements AnalysisClient {
         this.#openAttempted = false;
       }
       await this.connection.close();
-      await this.#workspace?.remove();
+      if (this.#retainCompletedDatabase && this.#workspace !== undefined)
+        await this.#workspace.retain();
+      else await this.#workspace?.remove();
       this.#closed = true;
+      if (
+        this.#retainCompletedDatabase &&
+        this.#databaseSaveOutcome === "pending" &&
+        idaCompatibilityProfile(this.config).protocol === "hexrays"
+      )
+        this.#databaseSaveOutcome = "unknown";
+      if (
+        this.#retainCompletedDatabase &&
+        this.#databaseSaveOutcome === "unknown" &&
+        this.#savedCloseRequested
+      ) {
+        const failure = new AnalysisProtocolError(
+          "IDA released the worker, but the saved state of the retained database is unknown.",
+          {
+            diagnostics: {
+              retained_database: this.#retainedDatabaseDiagnostic(),
+            },
+          },
+        );
+        this.#publishRetainedDatabase(failure);
+        return err(failure);
+      }
+      if (this.#retainCompletedDatabase) this.#publishRetainedDatabase();
       return ok(null);
     } catch (cause: unknown) {
       this.connection.detach();

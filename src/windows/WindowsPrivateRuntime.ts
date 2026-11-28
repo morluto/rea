@@ -75,6 +75,23 @@ export class WindowsRuntimeWriteTransientUnavailableError extends RuntimeControl
   }
 }
 
+/** A retained workspace must not fall back to deleting runtime_close. */
+export class WindowsRuntimeKeepFilesUnavailableError extends RuntimeControlUnavailableError {
+  readonly code = "windows-native-control-unavailable";
+  readonly control = "runtime-keep-files";
+
+  constructor() {
+    super(
+      "The Windows native artifact does not support releasing a private runtime without deleting its directory.",
+      {
+        remediationAction:
+          "Matching package version alone is insufficient for a source checkout. Build the Windows native artifact from this exact source checkout using native/windows/README.md, or use the matching published release's source and artifact together. Repeating this request with the unchanged artifact will not succeed.",
+      },
+    );
+    this.name = "WindowsRuntimeKeepFilesUnavailableError";
+  }
+}
+
 const RUNTIME_CLEANUP_ATTEMPTS = 10;
 const RUNTIME_CLEANUP_RETRY_DELAY_MS = 100;
 
@@ -87,6 +104,7 @@ export class WindowsPrivateRuntime {
   #closed = false;
   #closing = false;
   #closePromise: Promise<void> | undefined;
+  #keepFilesPromise: Promise<void> | undefined;
   // Admitted files whose close failed. Removal retries these wrappers before
   // the native tree walk. Dropping them leaves ancestor handles until GC, and
   // those handles can make runtime_close fail with a sharing violation.
@@ -260,12 +278,27 @@ export class WindowsPrivateRuntime {
 
   /** Remove owned objects by handle, unlinking reparse entries without traversal. */
   close(): Promise<void> {
+    if (this.#keepFilesPromise !== undefined) return this.#keepFilesPromise;
     this.#closing = true;
     this.#closePromise ??= this.#remove().catch((cause: unknown) => {
       this.#closePromise = undefined;
       throw cause;
     });
     return this.#closePromise;
+  }
+
+  /**
+   * Release native handles and drop this runtime from the owner map without
+   * deleting the directory. A later close is a no-op.
+   */
+  keepFiles(): Promise<void> {
+    if (this.#closePromise !== undefined) return this.#closePromise;
+    this.#closing = true;
+    this.#keepFilesPromise ??= this.#keepFiles().catch((cause: unknown) => {
+      this.#keepFilesPromise = undefined;
+      throw cause;
+    });
+    return this.#keepFilesPromise;
   }
 
   #assertOpen(): void {
@@ -281,6 +314,19 @@ export class WindowsPrivateRuntime {
       this.authority.call("runtime_snapshot_cancel", [this.observation.handle]);
     await this.#pending?.catch(() => undefined);
     await this.#closeRuntime();
+    this.#closed = true;
+    runtimes.delete(windowsRuntimeIdentityKey(this.observation));
+  }
+
+  async #keepFiles(): Promise<void> {
+    if (this.#closed) return;
+    if (this.authority.inspection.runtimeKeepFiles !== true)
+      throw new WindowsRuntimeKeepFilesUnavailableError();
+    if (this.#pending !== undefined)
+      this.authority.call("runtime_snapshot_cancel", [this.observation.handle]);
+    await this.#pending?.catch(() => undefined);
+    await this.#releaseAdmittedFiles();
+    this.authority.call("runtime_keep_files", [this.observation.handle]);
     this.#closed = true;
     runtimes.delete(windowsRuntimeIdentityKey(this.observation));
   }

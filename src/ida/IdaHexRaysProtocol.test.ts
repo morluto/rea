@@ -751,3 +751,38 @@ describe("Hex-Rays query bridge bootstrap and predicate pushdown", () => {
     await client.close();
   });
 });
+
+describe("Hex-Rays completed-database retention", () => {
+  it("reports an unconfirmed save after a successful retained close", async () => {
+    const { root, producer, client } = await fixture();
+    expect((await client.execute("health", {})).ok).toBe(true);
+    const workspace = dirname(producer.reads.inputPath);
+    producer.reads.beforeCall = async (name) => {
+      if (name === "list_funcs") throw new Error("fixture later tool failure");
+    };
+    const result = await client.execute("list_procedures", {});
+    if (result.ok) throw new Error("Expected a later tool failure");
+    expect(result.error.diagnostics).toMatchObject({
+      retained_database: {
+        workspace,
+        save: "pending",
+      },
+    });
+    const closed = await client.close();
+    expect(closed.ok).toBe(true);
+    expect(
+      producer.calls.filter(({ name }) => name === "close_database"),
+    ).toEqual([{ name: "close_database", args: { instance_id: "lease1" } }]);
+    expect(result.error.diagnostics).toMatchObject({
+      retained_database: {
+        workspace,
+        save: "unknown",
+        reason: expect.stringContaining("no save argument"),
+      },
+    });
+    expect(JSON.stringify(result.error.diagnostics)).not.toContain(
+      "REA saves the private database",
+    );
+    expect(await workspaces(root)).toHaveLength(1);
+  });
+});

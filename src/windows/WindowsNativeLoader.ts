@@ -45,6 +45,8 @@ const inspectionSchema = z.strictObject({
   jobMemoryLimit: z.literal(true).optional(),
   /** Absent from artifacts built before transient private-runtime writes. */
   runtimeWriteTransient: z.literal(true).optional(),
+  /** Absent from artifacts built before keep-files runtime release. */
+  runtimeKeepFiles: z.literal(true).optional(),
 });
 
 type NativeCall = (

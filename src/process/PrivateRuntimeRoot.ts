@@ -45,6 +45,8 @@ export const privateRuntimeRootCapability = (
  */
 export class PrivateRuntimeRoot {
   #closePromise: Promise<void> | undefined;
+  #keepFilesPromise: Promise<void> | undefined;
+  #keptFiles = false;
 
   private constructor(
     readonly path: string,
@@ -86,6 +88,7 @@ export class PrivateRuntimeRoot {
    * attempt is not cached, so a later close retries the removal.
    */
   close(): Promise<void> {
+    if (this.#keepFilesPromise !== undefined) return this.#keepFilesPromise;
     this.#closePromise ??= (
       this.windowsRuntime === undefined
         ? rm(this.path, { recursive: true, force: true })
@@ -95,5 +98,28 @@ export class PrivateRuntimeRoot {
       throw cause;
     });
     return this.#closePromise;
+  }
+
+  /**
+   * Release owner handles and registration, leaving the directory in place.
+   * A later close is a no-op so retained files are not deleted.
+   */
+  keepFiles(): Promise<void> {
+    if (this.#closePromise !== undefined) return this.#closePromise;
+    if (this.#keptFiles && this.#keepFilesPromise !== undefined)
+      return this.#keepFilesPromise;
+    this.#keepFilesPromise ??= (
+      this.windowsRuntime === undefined
+        ? Promise.resolve()
+        : Promise.resolve().then(() => this.windowsRuntime!.keepFiles())
+    )
+      .then(() => {
+        this.#keptFiles = true;
+      })
+      .catch((cause: unknown) => {
+        this.#keepFilesPromise = undefined;
+        throw cause;
+      });
+    return this.#keepFilesPromise;
   }
 }
