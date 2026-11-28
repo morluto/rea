@@ -257,3 +257,38 @@ user, creates private temporary window-station objects, and launches the test
 inside a kill-on-close fixture job. It does not create accounts, modify host
 policy, or change the caller's token. A real-provider claim must additionally
 verify the packaged CLI and MCP on that ordinary-user token.
+
+### Qualify runtime access across local accounts
+
+Use an isolated, offline Windows x64 qualification VM with the matching native
+artifact and compiled runtime. The hosted ACL readback is not a file-open test
+under another account. This manual check needs three existing sessions on the
+same VM: the ordinary local owner, a different ordinary local user, and SYSTEM.
+The verifier does not create accounts, collect passwords, or elevate a caller.
+
+Stage administrator-owned, read-only copies of `scripts/verify/windows/private-runtime-read.ps1`
+and the matching `process-boundary.exe` fixture described above. In the SYSTEM
+session, run only those copies from a trusted working directory. All sessions and the
+fixture must be under the qualification operator's control. Choose a local
+fixture parent on a supported volume where the owner can create directories
+and both observers can traverse and read ordinary child files, but cannot
+replace the owner's fixtures. Do not use a user's private temp directory or
+grant observers access to the private runtime itself.
+
+1. In the owner's non-elevated session, run `npm run verify:windows-private-runtime -- C:\rea-qualification C:\rea-tools\process-boundary.exe`.
+   Leave it running; it prints the exact runtime path after checking the owner's reads.
+2. In each of the other two Windows PowerShell sessions, run these commands. Paste the printed path at the prompt, not into the command itself.
+
+   ```powershell
+   $root = Read-Host 'Runtime path'
+   & 'C:\rea-tools\private-runtime-read.ps1' -Probe 'C:\rea-tools\process-boundary.exe' -Root $root
+   ```
+
+   The probe requests only `FILE_READ_DATA`; the adjacent control grants the peer exactly that right.
+   Paste each unedited, single-line JSON result into the owner's terminal. The
+   adjacent control file must be readable in both sessions. A missing file,
+   sharing violation, or failed control read does not count as access denied.
+
+3. The owner reports success only after both identities are accounted for and
+   closing the runtime twice leaves no runtime tree or damage to the junction target.
+   EOF before both observations fails the check and releases the fixture.

@@ -2,13 +2,48 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <winioctl.h>
+#include <winternl.h>
 #include <cstdio>
 #include <cstring>
 #include <cwchar>
 #include <string>
 #include <vector>
 
+static int readFixtureData(const std::wstring& path) {
+  if (path.size() < 3 || path[1] != L':' || path[2] != L'\\' ||
+      path.find(L':', 2) != std::wstring::npos) return 1;
+  const std::wstring name = L"\\??\\" + path;
+  if (name.size() > USHRT_MAX / sizeof(wchar_t)) return 1;
+  UNICODE_STRING coordinate{};
+  coordinate.Buffer = const_cast<wchar_t*>(name.data());
+  coordinate.Length = coordinate.MaximumLength = static_cast<USHORT>(name.size() * sizeof(wchar_t));
+  OBJECT_ATTRIBUTES attributes{};
+  InitializeObjectAttributes(&attributes, &coordinate, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
+  SECURITY_QUALITY_OF_SERVICE security{sizeof(security), SecurityAnonymous, SECURITY_STATIC_TRACKING, FALSE};
+  attributes.SecurityQualityOfService = &security;
+  const auto openFile = reinterpret_cast<decltype(&NtOpenFile)>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtOpenFile"));
+  if (!openFile) return 1;
+  HANDLE file = nullptr;
+  IO_STATUS_BLOCK observation{};
+  const NTSTATUS status = openFile(&file, FILE_READ_DATA, &attributes, &observation,
+      FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_NON_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT);
+  if (status == static_cast<NTSTATUS>(0xc0000022u)) { std::puts("5"); return 0; }
+  if (status != 0) { std::fprintf(stderr, "NtOpenFile failed: 0x%08lx\n", static_cast<unsigned long>(status)); return 1; }
+  OVERLAPPED operation{};
+  operation.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+  char bytes[2]{};
+  DWORD length = 0;
+  const bool read = operation.hEvent && (ReadFile(file, bytes, sizeof(bytes), &length, &operation) ||
+      (GetLastError() == ERROR_IO_PENDING && GetOverlappedResult(file, &operation, &length, TRUE)));
+  if (operation.hEvent) CloseHandle(operation.hEvent);
+  CloseHandle(file);
+  if (!read || length != 1 || bytes[0] != 'R') { std::fputs("Unexpected fixture read\n", stderr); return 1; }
+  std::puts("0");
+  return 0;
+}
+
 int wmain(int count, wchar_t** args) {
+  if (count == 3 && std::wstring(args[1]) == L"read-fixture-data") return readFixtureData(args[2]);
   if (count == 2 && std::wstring(args[1]) == L"environment") {
     wchar_t* block = GetEnvironmentStringsW();
     if (!block) return 7;
