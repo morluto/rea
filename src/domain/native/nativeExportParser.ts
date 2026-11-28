@@ -870,6 +870,7 @@ function* parsePeExportSteps(
     const exportNames = namesByFunction.get(index);
     if (exportNames !== undefined)
       for (const name of exportNames) {
+        if (exports.length % 1024 === 0) yield undefined;
         retain.row(target.forwarder);
         exports.push({ name, ordinal, rva, ...target });
       }
