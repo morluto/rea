@@ -148,10 +148,13 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.io.Writer;
+import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -185,6 +188,7 @@ const JAVA_GSON_STUBS = String.raw`
     }
     private static final class JsonArray extends JsonElement implements Iterable<JsonElement> {
         private final List<JsonElement> items = new ArrayList<>();
+        int size() { return items.size(); }
         void add(JsonElement value) { items.add(value == null ? JsonNull.INSTANCE : value); }
         void add(String value) { items.add(value == null ? JsonNull.INSTANCE : new JsonPrimitive(value)); }
         @Override public Iterator<JsonElement> iterator() { return items.iterator(); }
@@ -348,6 +352,11 @@ const JAVA_GSON_STUBS = String.raw`
         void setUseCharArrayWrites(boolean useCharArrayWrites) {
             this.useCharArrayWrites = useCharArrayWrites;
         }
+        JsonArray toJsonTree(List<String> values) {
+            JsonArray array = new JsonArray();
+            for (String value : values) array.add(new JsonPrimitive(value));
+            return array;
+        }
         JsonWriter newJsonWriter(Writer out) {
             return new JsonWriter(out, this);
         }
@@ -447,6 +456,26 @@ const JAVA_GHIDRA_STUBS = String.raw`
         boolean isExternalAddress();
         long getOffset();
         String canonical();
+        default AddressSpace getAddressSpace() { return AddressSpace.BYTES; }
+    }
+    private enum AddressSpace {
+        BYTES;
+        int getAddressableUnitSize() { return 1; }
+    }
+    private record AddressRange(Address address) {
+        Address getMinAddress() { return address; }
+        Address getMaxAddress() { return address; }
+    }
+    private interface AddressRangeIterator extends Iterator<AddressRange> {}
+    private record AddressSet(Address entry) {
+        AddressRangeIterator getAddressRanges(boolean forward) {
+            Iterator<AddressRange> ranges = List.of(new AddressRange(entry)).iterator();
+            return new AddressRangeIterator() {
+                public boolean hasNext() { return ranges.hasNext(); }
+                public AddressRange next() { return ranges.next(); }
+            };
+        }
+        boolean contains(Address address) { return entry.equals(address); }
     }
     private record StubAddress(long offset, boolean external) implements Address {
         @Override public boolean isMemoryAddress() { return !external; }
@@ -506,6 +535,7 @@ const JAVA_GHIDRA_STUBS = String.raw`
         Address getEntryPoint();
         String getName();
         Symbol getSymbol();
+        default AddressSet getBody() { return new AddressSet(getEntryPoint()); }
         Address[] getFunctionThunkAddresses(boolean includeExternal);
     }
     private static final class StubFunction implements Function {
@@ -562,8 +592,35 @@ const JAVA_GHIDRA_STUBS = String.raw`
         StubSymbolTable getSymbolTable() { return symbolTable; }
         StubFunctionManager getFunctionManager() { return functionManager; }
         AddressFactory getAddressFactory() { return addressFactory; }
+        StubProgram getListing() { return this; }
+        List<Instruction> getInstructions(AddressSet body, boolean forward) {
+            return List.of(new Instruction("first caveat"), new Instruction("second caveat"));
+        }
     }
     private final StubProgram currentProgram = new StubProgram();
+    private record Instruction(String caveat) {
+        Reference[] getReferencesFrom() { return new Reference[0]; }
+    }
+    private interface Reference {
+        ReferenceType getReferenceType();
+        Address getToAddress();
+    }
+    private interface ReferenceType { boolean isRead(); }
+    private record LoaderInitializedRelocation(Address address) {}
+    private final List<LoaderInitializedRelocation> loaderInitializedRelocations = List.of();
+    private boolean isX86_32Program() { return false; }
+    private TerminalCall terminalCall(Instruction instruction) {
+        return new TerminalCall(instruction.caveat(), false);
+    }
+    private LoaderInitializedRelocation loaderInitializedRelocationAt(Address address) {
+        throw new AssertionError("No loader relocations in this probe");
+    }
+    private String loaderInitializedRelocationLimitation(LoaderInitializedRelocation relocation) {
+        throw new AssertionError("No loader relocations in this probe");
+    }
+    private String borlandSehHandlerLimitation(Function function, Instruction a, Instruction b, Instruction c) {
+        throw new AssertionError("No x86 instructions in this probe");
+    }
     private final TaskMonitor monitor = new TaskMonitor();
     private List<ProcedureEntry> procedureInventory;
     private Map<String, Object> procedureNameIndex;
@@ -956,6 +1013,22 @@ const JAVA_PROBE_DRIVER = String.raw`
         }
     }
 
+    private void runExportMetadataBudget(int ceiling) throws Exception {
+        List<ProcedureEntry> entries = new ArrayList<>();
+        for (int i = 1; i <= 3; i++) {
+            Address address = new StubAddress(0x1000L * i, false);
+            String name = "work" + i;
+            Function function = new StubFunction(address, name, null);
+            entries.add(new ProcedureEntry(function, address, name, name, true, List.of(),
+                new ProcedureFacts(false, false, null), null));
+        }
+        Map<ProcedureEntry, JsonObject> metadata = exportBodyMetadata(entries, ceiling);
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(bytes, StandardCharsets.UTF_8));
+        writeStreamingSuccess(writer, 1, out -> writeProcedureEntries(out, entries, metadata));
+        System.out.print(Base64.getEncoder().encodeToString(bytes.toByteArray()));
+    }
+
     public static void main(String[] args) throws Exception {
         switch (args[0]) {
             case "fold-char" -> runFoldChar();
@@ -964,6 +1037,8 @@ const JAVA_PROBE_DRIVER = String.raw`
             case "spelling-match" -> runSpellingMatch();
             case "write-response" -> runWriteResponse();
             case "stream-inventory" -> runStreamInventory();
+            case "export-metadata-budget" -> new ReaGhidraBridgeHelperProbe().runExportMetadataBudget(
+                Integer.parseInt(new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8)).readLine()));
             case "surrogate-writer" -> runSurrogateWriterChecks();
             case "write-failures" -> runWriteFailures();
             case "resolve-procedures" -> new ReaGhidraBridgeHelperProbe().runResolveProcedures();
@@ -1027,6 +1102,21 @@ const buildBridgeProbeSource = (bridgeSource: string): string => {
     literalMethods,
     streamingInventoryWriters,
     responseMethods,
+    extractBridgeSlice(
+      bridgeSource,
+      "    private Map<ProcedureEntry, JsonObject> exportBodyMetadata(",
+      "    private JsonArray listSegments(",
+    ),
+    extractBridgeSlice(
+      bridgeSource,
+      "    private final class FunctionBoundaryLimitations {",
+      "    /**\n     * Ghidra's Non-Returning Functions",
+    ),
+    extractBridgeSlice(
+      bridgeSource,
+      "    private static JsonObject functionBody(Function function) {",
+      "    private static String exclusiveEnd(",
+    ),
     requestFailureClass,
     JAVA_PROBE_DRIVER,
   ].join("\n");

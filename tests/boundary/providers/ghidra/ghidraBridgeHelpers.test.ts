@@ -611,3 +611,33 @@ describe.skipIf(jdk === undefined)(
     });
   },
 );
+
+describe.skipIf(jdk === undefined)(
+  "ReaGhidraBridge export metadata budget",
+  () => {
+    it("fits the reply ceiling and retains complete caveats only on enriched rows", async () => {
+      const ceiling = 1_700;
+      const output = await runBridgeProbe(
+        requireProbe(),
+        "export-metadata-budget",
+        String(ceiling),
+      );
+      const reply = Buffer.from(output, "base64");
+      expect(reply.byteLength).toBeLessThanOrEqual(ceiling);
+      const { result } = JSON.parse(reply.toString("utf8"));
+      expect(result.map(({ address }: { address: string }) => address)).toEqual(
+        ["0x1000", "0x2000", "0x3000"],
+      );
+      expect(result[0].export_body_metadata).toEqual({
+        body: expect.objectContaining({
+          ranges: [{ start: "0x1000", end: "0x1000" }],
+          total_bytes: 1,
+          contains_entry: true,
+        }),
+        limitations: ["first caveat", "second caveat"],
+      });
+      expect(result[1]).not.toHaveProperty("export_body_metadata");
+      expect(result[2]).not.toHaveProperty("export_body_metadata");
+    });
+  },
+);
