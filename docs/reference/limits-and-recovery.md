@@ -124,7 +124,7 @@ their per-call budgets (`max_file_bytes`, entry, depth and decoded-byte budgets,
 `inspect_elf_dependencies`, `inspect_elf_unwind_ranges`, `inspect_macho_function_starts`,
 `inspect_apple_ips`,
 `inspect_dwarf_units`, `inspect_native_initializers`, `inspect_pe_overlay`,
-`inspect_pe_resources` (`max_entries`), `inspect_api_contract` (`max_file_bytes`),
+`inspect_pe_resources` (`max_entries`), `inspect_kernel_module`, `inspect_api_contract` (`max_file_bytes`),
 `compare_wasm_interfaces` (`max_interface_bytes`),
 `trace_web_source_location` (`source_map_limits.*`),
 `inspect_v8_code_cache` (`max_file_bytes`, `max_strings`) and

@@ -238,6 +238,8 @@ These parameters report that limit:
 | `inspect_il2cpp_metadata`                     | `max_native_index_bytes`          | 1073741824 |     1 |            `Number.MAX_SAFE_INTEGER` | `src/domain/il2cpp/il2cppMetadata.ts`     |
 | `inspect_elf_notes`, `inspect_elf_debug_link` | `max_file_bytes`                  | 67108864   |    64 |                            536870912 | `src/domain/native/elfReadBudgets.ts`     |
 | `inspect_elf_notes`, `inspect_elf_debug_link` | `max_entries`                     | 128        |     1 |                                  256 | `src/domain/native/elfReadBudgets.ts`     |
+| `inspect_kernel_module`                       | `max_file_bytes`                  | 67108864   |    64 |                            536870912 | `src/domain/native/kernelModule.ts`       |
+| `inspect_kernel_module`                       | `max_entries`                     | 8192       |     1 |                                65536 | `src/domain/native/kernelModule.ts`       |
 | `inspect_rust_binary`                         | `max_compressed_dependency_bytes` | 1048576    |     1 |        `buffer.constants.MAX_LENGTH` | `src/domain/rust/rustDependencyBudget.ts` |
 | `inspect_rust_binary`                         | `max_inflated_dependency_bytes`   | 8388608    |     1 | `buffer.constants.MAX_STRING_LENGTH` | `src/domain/rust/rustDependencyBudget.ts` |
 | `inspect_rust_binary`                         | `max_dependency_inflate_ratio`    | 64         |     1 |            `Number.MAX_SAFE_INTEGER` | `src/domain/rust/rustDependencyBudget.ts` |
