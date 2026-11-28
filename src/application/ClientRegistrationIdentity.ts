@@ -6,6 +6,7 @@ import {
   readFileSync,
   readlinkSync,
   realpathSync,
+  statSync,
 } from "node:fs";
 import { isAbsolute, posix, win32 } from "node:path";
 import {
@@ -187,37 +188,64 @@ const unwrapCmdCommand = (command: readonly string[]): readonly string[] => {
 };
 
 /**
- * Recover the script an npm Windows `rea.cmd` shim launches. The shim is a
- * different program from that script, so path identity alone cannot prove
- * ownership; the quoted `%dp0%…` argument is the nested record to read.
+ * npm's cmd-shim is a short generated batch file. Larger files are not that
+ * format; refuse them before allocating their contents for ownership.
+ */
+const NPM_CMD_SHIM_BYTES = 64 * 1024;
+
+const readBoundedRegularFile = (
+  path: string,
+  maximumBytes: number,
+): string | undefined => {
+  try {
+    const stat = statSync(path);
+    if (!stat.isFile() || stat.size === 0 || stat.size > maximumBytes)
+      return undefined;
+    const contents = readFileSync(path, {
+      flag: constants.O_RDONLY | constants.O_NONBLOCK,
+    });
+    return contents.length <= maximumBytes
+      ? contents.toString("utf8")
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+/**
+ * Recover the script an npm Windows `rea.cmd` shim launches. Ownership follows
+ * the launch statement's script argument (`"%_prog%" "%dp0%\…" %*`), not a
+ * substring elsewhere in the batch file.
  */
 const windowsReaCmdScript = (cmdPath: string): string | undefined => {
   if (commandFileName(cmdPath) !== `${PRODUCT_IDENTITY.cliBinary}.cmd`)
     return undefined;
-  let text: string;
-  try {
-    const bytes = readFileSync(cmdPath);
-    if (bytes.length === 0 || bytes.length > 64 * 1024) return undefined;
-    text = bytes.toString("utf8");
-  } catch {
-    return undefined;
-  }
-  const packageNeedle =
-    `node_modules\\${PRODUCT_IDENTITY.packageName}\\`.toLowerCase();
-  const packageNeedlePosix =
-    `node_modules/${PRODUCT_IDENTITY.packageName}/`.toLowerCase();
+  const text = readBoundedRegularFile(cmdPath, NPM_CMD_SHIM_BYTES);
+  if (text === undefined) return undefined;
+  const packageName = PRODUCT_IDENTITY.packageName.toLowerCase();
   let relative: string | undefined;
-  for (const match of text.matchAll(/"%dp0%([^"]+)"/giu)) {
+  for (const line of text.split(/\r?\n/u)) {
+    const trimmed = line.trim();
+    if (/^(?:rem\b|::)/iu.test(trimmed)) continue;
+    // npm cmd-shim launch: ... & "%_prog%"  "%dp0%\node_modules\<pkg>\…" %*
+    const match =
+      /"%_prog%"\s+"%dp0%([\\/][^"]+)"\s+%*/iu.exec(line) ??
+      /&(?:\s+title\s+%COMSPEC%\s+&)?\s*"%_prog%"\s+"%dp0%([\\/][^"]+)"\s+%*/iu.exec(
+        line,
+      );
+    if (match === null) continue;
     const candidate = match[1]!.replace(/^[\\/]/u, "");
-    const lowered = candidate.toLowerCase();
-    if (lowered.includes(packageNeedle) || lowered.includes(packageNeedlePosix))
+    const parts = candidate.split(/[/\\]/u).map((part) => part.toLowerCase());
+    const modules = parts.indexOf("node_modules");
+    if (modules >= 0 && parts[modules + 1] === packageName)
       relative = candidate;
   }
   if (relative === undefined) return undefined;
-  const windowsSpelling = /[\\:]/u.test(cmdPath);
-  return windowsSpelling
-    ? win32.join(win32.dirname(cmdPath), relative.replace(/\//gu, "\\"))
-    : posix.join(posix.dirname(cmdPath), relative.replace(/\\/gu, "/"));
+  // Host path rules: Windows keeps UNC `//server/share` roots; fixtures on
+  // POSIX keep their own separators.
+  if (HOST_PLATFORM.platform === "win32")
+    return win32.join(win32.dirname(cmdPath), relative.replace(/\//gu, "\\"));
+  return posix.join(posix.dirname(cmdPath), relative.replace(/\\/gu, "/"));
 };
 
 /** Preserve the package argument from a supported package-runner command. */
@@ -642,8 +670,15 @@ const inspectDirectRegistrationCommand = (
         package: undefined,
       };
     if (isAbsolute(executable)) {
-      const cmdScript = windowsReaCmdScript(executable);
-      if (cmdScript !== undefined)
+      if (commandFileName(executable) === `${PRODUCT_IDENTITY.cliBinary}.cmd`) {
+        const cmdScript = windowsReaCmdScript(executable);
+        if (cmdScript === undefined)
+          return {
+            identity: "unknown",
+            launch: "direct",
+            entrypoint: undefined,
+            package: undefined,
+          };
         return {
           launch: "direct",
           identity: currentPathAvailable
@@ -652,6 +687,7 @@ const inspectDirectRegistrationCommand = (
           entrypoint: cmdScript,
           package: undefined,
         };
+      }
       return {
         launch: "direct",
         identity: currentPathAvailable

@@ -1013,8 +1013,9 @@ describe("client launcher traversal semantics", () => {
       cmd,
       [
         "@ECHO off",
+        "SETLOCAL",
         'SET "_prog=node"',
-        `endLocal & "%_prog%"  "%dp0%\\node_modules\\${PRODUCT_IDENTITY.packageName}\\scripts\\rea.mjs" %*`,
+        `endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\${PRODUCT_IDENTITY.packageName}\\scripts\\rea.mjs" %*`,
         "",
       ].join("\r\n"),
     );
@@ -1028,6 +1029,35 @@ describe("client launcher traversal semantics", () => {
     await writeFile(foreign, "// foreign\n");
     expect(classifyClientRegistrationCommand([cmd, "mcp"], foreign)).toBe(
       "foreign",
+    );
+  });
+
+  it("ignores rem comments when reading an npm rea.cmd shim", async () => {
+    const root = await createTestTempDirectory("rea-cmd-rem-");
+    const script = join(
+      root,
+      "node_modules",
+      PRODUCT_IDENTITY.packageName,
+      "scripts",
+      "rea.mjs",
+    );
+    await mkdir(dirname(script), { recursive: true });
+    await writeFile(script, "// owned dispatcher\n");
+    const foreign = join(root, "other.mjs");
+    await writeFile(foreign, "// foreign\n");
+    const cmd = join(root, "rea.cmd");
+    await writeFile(
+      cmd,
+      [
+        "@ECHO off",
+        `rem "%dp0%\\node_modules\\${PRODUCT_IDENTITY.packageName}\\scripts\\rea.mjs"`,
+        `endLocal & "%_prog%"  "%dp0%\\other.mjs" %*`,
+        "",
+      ].join("\r\n"),
+    );
+    // Comment names this package, but the launch statement does not.
+    expect(classifyClientRegistrationCommand([cmd, "mcp"], script)).toBe(
+      "unknown",
     );
   });
 });
