@@ -96,6 +96,46 @@ posixTest(
   },
 );
 
+posixTest(
+  "refuses a rule file with an include directive before yara starts",
+  async ({ mcp }) => {
+    const { client, session, sample, rule } = await connect(mcp, "match");
+    const including = join(rule, "..", "including.yar");
+    await writeFile(
+      including,
+      '// include "comment.yar"\ninclude "packers.yar"\nrule Main { condition: true }\n',
+    );
+    try {
+      const response = await client.callTool({
+        name: "inspect_yara_matches",
+        arguments: { path: sample, rule_paths: [rule, including] },
+      });
+      const { error } = parseMcpToolError(response);
+      expect(error.code).toBe("invalid_request");
+      expect(error.message).toContain(
+        `${including}(2:1): include "packers.yar"`,
+      );
+      expect(error.message).not.toContain("comment.yar");
+      expect(error.remediation.action).toContain(
+        "pass the included file as another rule_paths entry",
+      );
+      expect(error.details).toMatchObject({
+        diagnostics: {
+          include_directives: [
+            {
+              rule_path_index: 1,
+              total: 1,
+              listed: [{ line: 2, column: 1, path: "packers.yar" }],
+            },
+          ],
+        },
+      });
+    } finally {
+      await session.close();
+    }
+  },
+);
+
 mcpTest(
   "reports yara unavailable without affecting other tools",
   async ({ mcp }) => {

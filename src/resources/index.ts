@@ -183,5 +183,5 @@ export {
   zipEntryNameLimitations,
   zipEntryPath,
   zipListingCoverage,
-  typedZipFailure,
+  throwZipPackageFailure,
 } from "./ZipArtifactReader.js";

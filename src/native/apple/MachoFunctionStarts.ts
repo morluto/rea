@@ -1,11 +1,7 @@
 import { setImmediate } from "node:timers/promises";
 
 import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
-import {
-  readMachoHeaderDeclarations,
-  readMachoLinkeditDataCommand,
-} from "../../domain/apple/machoLoadCommands.js";
-import { unrecognizedTarget } from "../../domain/analysisErrorCore.js";
+import { readMachoLinkeditDataCommand } from "../../domain/apple/machoLoadCommands.js";
 import {
   readMachoImageFromReader,
   type MachoLoadCommandVisit,
@@ -217,6 +213,8 @@ const loadTable = async (
   tally: LinkeditCommandTally,
   sliceFileOffset: number,
   linkedit: LinkeditRange | undefined,
+  /** Whether this file type places link-edit data in a __LINKEDIT segment. */
+  expectsLinkedit: boolean,
 ): Promise<LoadedTable> => {
   if (tally.count === 0)
     return {
@@ -235,7 +233,7 @@ const loadTable = async (
   let pastFile = 0;
   for (const [dataOffset, dataSize] of tally.ranges()) {
     const blob = declaredBlob(source.size, dataOffset, dataSize);
-    if (!insideLinkedit(linkedit, blob)) outside += 1;
+    if (expectsLinkedit && !insideLinkedit(linkedit, blob)) outside += 1;
     if (blobPastSlice(source.size, blob)) pastFile += 1;
   }
   if (first === null)
@@ -572,22 +570,6 @@ export const parseMachoFunctionStartsFromHandle = async (
     input.architecture,
   );
   const source = selected.source;
-  // The shared header recognizer returns null for a magic that is not
-  // Mach-O, such as an ELF or PE file passed without `architecture`. That
-  // file is outside this operation, not a malformed Mach-O, so it is reported
-  // as unrecognized before the thin reader would call it malformed. A header
-  // the recognizer rejects for another reason stays a format failure.
-  const header = readMachoHeaderDeclarations(
-    await readByteSourceSlice(source, 0, Math.min(32, source.size)),
-    source.size,
-  );
-  if (header.ok && header.value === null)
-    throw unrecognizedTarget(
-      OPERATION,
-      artifact.path,
-      "macho",
-      "The file is not a thin Mach-O image or a universal Mach-O file.",
-    );
   // The shared image walk hands back the two LINKEDIT data commands, so the
   // load-command table is read and framed once.
   const startsCommands = new LinkeditCommandTally();
@@ -633,17 +615,24 @@ export const parseMachoFunctionStartsFromHandle = async (
       size: segment.memory_size,
     })),
   );
+  // A relocatable object has no __LINKEDIT segment: its link-edit data
+  // follows the sections outside any segment. `in_linkedit: false` stays an
+  // observation there, but only file types that have the segment count a
+  // table outside it as a placement issue.
+  const expectsLinkedit = image.macho_file_type !== MH_OBJECT;
   const startsTable = await loadTable(
     source,
     startsCommands,
     selected.fileOffset,
     linkedit,
+    expectsLinkedit,
   );
   const dataTable = await loadTable(
     source,
     dataCommands,
     selected.fileOffset,
     linkedit,
+    expectsLinkedit,
   );
   const sections: SectionSpan[] = [];
   for (const section of image.sections) {

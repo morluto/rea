@@ -167,6 +167,8 @@ const PATH_SCOPES = {
     "src/artifacts/Image4ArtifactReader*.ts",
     "src/domain/apple/image4*.ts",
     "docs/guides/apple/image4-containers.md",
+    "src/artifacts/MegaDriveRomArtifactReader*.ts",
+    "src/domain/megaDriveRom*.ts",
     "src/artifacts/N64RomArtifactReader*.ts",
     "src/domain/n64Rom*.ts",
     "src/hopper/BridgeLauncher.ts",

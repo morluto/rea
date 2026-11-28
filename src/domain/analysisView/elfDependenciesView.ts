@@ -18,7 +18,7 @@ import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
   boundedViewLimitations,
   completeWithinViewCoverage,
-  pageViewCoverage,
+  selectedViewPage,
 } from "./analysisViewCoverage.js";
 import { filterSet, pickFields, selectViewRows } from "./selectViewRows.js";
 
@@ -242,12 +242,7 @@ export const projectElfDependenciesView = (
       kind: "elf-dependencies" as const,
       view,
       dependencies: summary,
-      items: selected.rows,
-      coverage: pageViewCoverage(
-        view.offset,
-        selected.rows.length,
-        selected.total,
-      ),
+      ...selectedViewPage(view.offset, selected),
     });
   }
   const names = filterSet(view.names);
@@ -292,12 +287,7 @@ export const projectElfDependenciesView = (
       kind: "elf-dependencies" as const,
       view,
       dependencies: summary,
-      items: selected.rows,
-      coverage: pageViewCoverage(
-        view.offset,
-        selected.rows.length,
-        selected.total,
-      ),
+      ...selectedViewPage(view.offset, selected),
     });
   };
   switch (view.collection) {

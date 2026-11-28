@@ -428,6 +428,9 @@
     "@electron/asar": {
       "glob": "14.0.6"
     },
+    "@stryker-mutator/core": {
+      "minimatch": "11.0.9"
+    },
     "typed-rest-client": {
       "qs": "6.17.1"
     },

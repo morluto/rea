@@ -43,6 +43,11 @@ cpio headers become named refusals on the root metadata rather than silent
 zeros. Counts above the fixed TOC and cpio allowances fail as a capacity
 limit.
 
+The cpio trailer must declare a zero size. Zero padding after the trailer is
+accepted. If non-zero bytes follow it, the reader keeps the preceding members,
+reports `unknown` coverage, and names the first non-zero offset in the decoded
+cpio stream.
+
 Extraction writes stored XAR files and expanded gzip-cpio members into the
 existing contained output tree. pbzx payload contents are not decoded.
 

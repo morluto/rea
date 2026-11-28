@@ -19,7 +19,7 @@ import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
   boundedViewLimitations,
   completeWithinViewCoverage,
-  pageViewCoverage,
+  selectedViewPage,
 } from "./analysisViewCoverage.js";
 import { filterSet, pickFields, selectViewRows } from "./selectViewRows.js";
 
@@ -191,12 +191,7 @@ export const projectNativeExportsView = (
       kind: "native-exports" as const,
       view,
       exports: summary,
-      items: selected.rows,
-      coverage: pageViewCoverage(
-        view.offset,
-        selected.rows.length,
-        selected.total,
-      ),
+      ...selectedViewPage(view.offset, selected),
     });
   }
   const allowed =
@@ -229,11 +224,6 @@ export const projectNativeExportsView = (
     kind: "native-exports" as const,
     view,
     exports: summary,
-    items: selected.rows,
-    coverage: pageViewCoverage(
-      view.offset,
-      selected.rows.length,
-      selected.total,
-    ),
+    ...selectedViewPage(view.offset, selected),
   });
 };

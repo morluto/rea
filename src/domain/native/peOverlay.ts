@@ -73,6 +73,7 @@ export const PE_OVERLAY_LEADING_FORMATS = [
   "unrecognized",
   "ines",
   "nds",
+  "mega-drive-rom",
   "n64-rom",
   "zip",
   "godot-pck",
@@ -113,6 +114,7 @@ export const PE_OVERLAY_LEADING_FORMATS = [
   "devicetree",
   "esp-nvs",
   "deb",
+  "labview-rsrc",
   "systemd-journal",
   "auditd-log",
 ] as const;
