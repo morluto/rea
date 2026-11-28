@@ -169,22 +169,84 @@ export const staticArrayValues = (
   };
 };
 
+type JavaScriptStaticPathIntrinsicFact =
+  | "resolve"
+  | "join"
+  | "file-url-to-path"
+  | "source-url"
+  | "source-directory";
+
 /** Classify whether inert path syntax is a module specifier or file expression. */
-export type JavaScriptStaticPathIntrinsicQuery = (
-  node: t.Node,
-  fact?:
-    | "resolve"
-    | "join"
-    | "file-url-to-path"
-    | "source-url"
-    | "source-directory",
-) => boolean;
+export interface JavaScriptStaticPathIntrinsicQuery {
+  (node: t.Node, fact?: JavaScriptStaticPathIntrinsicFact): boolean;
+  /**
+   * Return the initializer of a single `const` binding when it runs before
+   * every evaluation of this read. Other reads remain unknown.
+   */
+  readonly constantInitializer?: (read: t.Identifier) => t.Node | undefined;
+  /**
+   * Whether one expression that has substituted `substituted` constants may
+   * substitute another. A refusal is recorded in the analysis coverage.
+   */
+  readonly admitConstantSubstitution?: (substituted: number) => boolean;
+}
+
+/**
+ * Substitute each constant at most once while interpreting one expression, and
+ * no more than the query admits in all (the semantic expression-depth bound).
+ * Repeated reads such as `const twice = once + once` stay unknown, so
+ * substitution cannot expand syntax or spelling beyond the source text. The
+ * interpreters below recurse once per substituted constant, so the same bound
+ * keeps a long chain of aliases from exhausting the call stack: a read past it
+ * stays unknown.
+ */
+const substitutingConstantsOnce = (
+  pathIntrinsics: JavaScriptStaticPathIntrinsicQuery | undefined,
+): JavaScriptStaticPathIntrinsicQuery | undefined => {
+  const constantInitializer = pathIntrinsics?.constantInitializer;
+  if (pathIntrinsics === undefined || constantInitializer === undefined)
+    return pathIntrinsics;
+  const substituted = new Set<t.Node>();
+  const substitute = (initializer: t.Node): boolean => {
+    if (substituted.has(initializer)) return false;
+    if (pathIntrinsics.admitConstantSubstitution?.(substituted.size) === false)
+      return false;
+    substituted.add(initializer);
+    return true;
+  };
+  // The source-directory proof follows aliases itself. Once it holds, spend
+  // those reads from the same bound, so `path.join(DIR, DIR, "x")` stays unknown.
+  const substituteDirectoryAliases = (node: t.Node): boolean => {
+    let read = unwrapJavaScriptExpression(node).node;
+    while (t.isIdentifier(read)) {
+      const initializer = constantInitializer(read);
+      // The proof ended at the ambient `__dirname`, which no constant holds.
+      if (initializer === undefined) return true;
+      if (!substitute(initializer)) return false;
+      read = unwrapJavaScriptExpression(initializer).node;
+    }
+    return true;
+  };
+  return Object.assign(
+    (node: t.Node, fact?: JavaScriptStaticPathIntrinsicFact) =>
+      pathIntrinsics(node, fact) &&
+      (fact !== "source-directory" || substituteDirectoryAliases(node)),
+    {
+      constantInitializer: (read: t.Identifier) => {
+        const initializer = constantInitializer(read);
+        return initializer !== undefined && substitute(initializer)
+          ? initializer
+          : undefined;
+      },
+    },
+  );
+};
 
 export const staticPathResolutionContext = (
   node: t.Node,
   pathIntrinsics?: JavaScriptStaticPathIntrinsicQuery,
 ): JavaScriptStaticPathContext =>
-  isFilesystemPathExpression(node, pathIntrinsics)
+  isFilesystemPathExpression(node, substitutingConstantsOnce(pathIntrinsics))
     ? "filesystem-expression"
     : "module-specifier";
 
@@ -207,6 +269,13 @@ const staticPathFact = (
   const node = unwrapJavaScriptExpression(raw).node;
   const value = stringValue(node);
   if (value !== undefined) return { path: value, base: "literal-path" };
+  if (t.isIdentifier(node)) {
+    // The initializer keeps its own syntax, so a source-directory base survives.
+    const initializer = pathIntrinsics?.constantInitializer?.(node);
+    return initializer === undefined
+      ? undefined
+      : staticPathFact(initializer, pathIntrinsics);
+  }
   if (t.isBinaryExpression(node, { operator: "+" }))
     return staticConcatenation(node, pathIntrinsics);
   if (t.isCallExpression(node) || t.isNewExpression(node))
@@ -224,7 +293,7 @@ export const staticFileExpressionPath = (
       readonly base: "source-directory" | "literal-path";
     }
   | undefined => {
-  const fact = staticPathFact(node, pathIntrinsics);
+  const fact = staticPathFact(node, substitutingConstantsOnce(pathIntrinsics));
   return fact === undefined || fact.base === "unknown"
     ? undefined
     : { path: fact.path, base: fact.base };
@@ -321,12 +390,14 @@ const staticFileUrlPathFact = (
   if (rawArgument === undefined) return undefined;
   const argument = unwrapJavaScriptExpression(rawArgument).node;
   if (t.isNewExpression(argument) && pathIntrinsics?.(argument, "source-url")) {
-    const resolved = staticSourceRelativeUrlPath(argument);
+    const resolved = staticSourceRelativeUrlPath(argument, pathIntrinsics);
     return resolved === undefined
       ? undefined
       : { path: resolved.path, base: "source-directory" };
   }
-  const value = staticPath(argument, pathIntrinsics);
+  // A URL whose spelling dropped an unproven base names some other path.
+  const fact = staticPathFact(argument, pathIntrinsics);
+  const value = fact?.base === "unknown" ? undefined : fact?.path;
   const rawPath = value?.split(/[?#]/u, 1)[0] ?? "";
   if (
     value === undefined ||
@@ -352,11 +423,36 @@ const staticFileUrlPathFact = (
   }
 };
 
-/** Decode a source-relative URL after the caller proves constructor and base identity. */
+/**
+ * String text of a literal, or of a `const` chain that ends at one. Each read
+ * spends the query's substitution bound; other expressions stay unknown.
+ */
+const constantStringValue = (
+  raw: t.Node | undefined,
+  pathIntrinsics?: JavaScriptStaticPathIntrinsicQuery,
+): string | undefined => {
+  let node =
+    raw === undefined ? undefined : unwrapJavaScriptExpression(raw).node;
+  while (t.isIdentifier(node)) {
+    const initializer = pathIntrinsics?.constantInitializer?.(node);
+    node =
+      initializer === undefined
+        ? undefined
+        : unwrapJavaScriptExpression(initializer).node;
+  }
+  return stringValue(node);
+};
+
+/**
+ * Decode a source-relative URL after the caller proves constructor and base
+ * identity. With a constant query, its first argument may also be a `const`
+ * chain that ends at a string literal.
+ */
 export const staticSourceRelativeUrlPath = (
   node: t.NewExpression,
+  pathIntrinsics?: JavaScriptStaticPathIntrinsicQuery,
 ): JavaScriptStaticSourceUrlPath | undefined => {
-  const value = stringValue(node.arguments[0]);
+  const value = constantStringValue(node.arguments[0], pathIntrinsics);
   if (
     value === undefined ||
     (value.split(/[?#]/u, 1)[0] ?? "") === "" ||
@@ -434,6 +530,13 @@ const isFilesystemPathExpression = (
   node = unwrapJavaScriptExpression(node).node;
   const value = stringValue(node);
   if (value !== undefined) return value.startsWith("/");
+  if (t.isIdentifier(node)) {
+    // A constant is what it holds. The identity checks below only read names,
+    // so a constant that happens to be called `__filename` must not match them.
+    const initializer = pathIntrinsics?.constantInitializer?.(node);
+    if (initializer !== undefined)
+      return isFilesystemPathExpression(initializer, pathIntrinsics);
+  }
   if (isFileIdentity(node) || isDirectoryPath(node, pathIntrinsics))
     return true;
   if (t.isBinaryExpression(node, { operator: "+" }))

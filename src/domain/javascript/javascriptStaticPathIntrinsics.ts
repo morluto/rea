@@ -1,7 +1,11 @@
 import * as t from "@babel/types";
 
 import { builtinDataEffectCallablePath } from "./javascriptSemanticDataEffectHelpers.js";
-import type { JavaScriptBindingIndex } from "./javascriptSemanticState.js";
+import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import {
+  semanticStableInitializer,
+  type JavaScriptBindingIndex,
+} from "./javascriptSemanticState.js";
 import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
 import { evaluateSemanticExpressionProvenance } from "./javascriptSemanticValues.js";
 import {
@@ -42,9 +46,54 @@ export const createStaticPathIntrinsicQuery = (
           path[1] === method))
     );
   };
+  // A read before initialization throws, so only a definite initializer counts.
+  const constantInitializer = (read: t.Identifier): t.Node | undefined => {
+    const binding = index.bindingForReferenceAt(read);
+    const initializer = semanticStableInitializer(binding, index.bindings);
+    if (
+      binding === undefined ||
+      binding.mutable ||
+      binding.declarationKinds.size !== 1 ||
+      !binding.declarationKinds.has("const") ||
+      initializer === undefined ||
+      initializer.projection.length !== 0
+    )
+      return undefined;
+    // Ordering a read in a function against its activations uses member effects.
+    completeSemanticSteps(index.indexMemberMutationFactsSteps());
+    return semanticBindingAtRead(binding, read, index.bindings)
+      .hasDefiniteInitializer
+      ? initializer.node
+      : undefined;
+  };
+  /**
+   * Whether an expression that has substituted `substituted` constants may
+   * substitute one more. Every alias walk spends the semantic expression-depth
+   * bound, and a refusal keeps the analysis coverage limited.
+   */
+  const admitConstantSubstitution = (substituted: number): boolean => {
+    if (substituted < index.bindings.precision.expression_depth) return true;
+    index.bindings.observations.valueResourceLimits.add("expression-depth");
+    return false;
+  };
+  /** Follow constant aliases to the syntax whose identity is proven. */
+  const constantTarget = (input: t.Node): t.Node => {
+    let node = unwrapJavaScriptExpression(input).node;
+    const seen = new Set<t.Node>();
+    while (t.isIdentifier(node) && !seen.has(node)) {
+      seen.add(node);
+      const initializer = constantInitializer(node);
+      if (initializer === undefined) break;
+      // The interpreters' per-expression bound does not reach this proof, so it
+      // needs its own: otherwise every read walks a long chain again in full.
+      if (!admitConstantSubstitution(seen.size - 1)) break;
+      node = unwrapJavaScriptExpression(initializer).node;
+    }
+    return node;
+  };
   const sourceFile = (node: t.Node | undefined): boolean => {
     if (node === undefined) return false;
-    node = unwrapJavaScriptExpression(node).node;
+    node = constantTarget(node);
     if (t.isIdentifier(node, { name: "__filename" }))
       return isUnmodifiedGlobalReference(node, index.bindings, "__filename");
     return (
@@ -54,9 +103,9 @@ export const createStaticPathIntrinsicQuery = (
       isUnmodifiedImportMetaUrl(node.arguments[0], index.bindings)
     );
   };
-  return (callee, fact) => {
+  const query: JavaScriptStaticPathIntrinsicQuery = (callee, fact) => {
     if (fact === "source-directory") {
-      callee = unwrapJavaScriptExpression(callee).node;
+      callee = constantTarget(callee);
       return t.isIdentifier(callee, { name: "__dirname" })
         ? isUnmodifiedGlobalReference(callee, index.bindings, "__dirname")
         : t.isCallExpression(callee) &&
@@ -85,4 +134,8 @@ export const createStaticPathIntrinsicQuery = (
     entry.set(kind, proven);
     return proven;
   };
+  return Object.assign(query, {
+    constantInitializer,
+    admitConstantSubstitution,
+  });
 };
