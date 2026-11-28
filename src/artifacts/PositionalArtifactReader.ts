@@ -31,6 +31,30 @@ export type PositionalArtifactEntry = ArtifactEntry & {
   readonly declaredSize: number;
 };
 
+/** Describe a named, uncompressed file region with the adapter's metadata and key prefix. */
+export const positionalRegionEntry = (
+  region: {
+    readonly path: string;
+    readonly offset: number;
+    readonly length: number;
+  },
+  keyPrefix: string,
+  formatMetadata: ArtifactFormatMetadata,
+): PositionalArtifactEntry => ({
+  path: region.path,
+  kind: "file",
+  declaredSize: region.length,
+  compressedSize: null,
+  executable: false,
+  encrypted: false,
+  byteOffset: region.offset,
+  declaredIntegrity: null,
+  unpacked: false,
+  limitations: [],
+  adapterKey: `${keyPrefix}:${region.path}`,
+  formatMetadata,
+});
+
 /** The entries one preparation established and the coverage to report. */
 export interface PositionalArtifactEntries<
   Metadata = never,

@@ -1,13 +1,13 @@
 import { z } from "zod";
 import { ociImageLayoutSchema } from "../oci/imageLayout.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   ownedView,
   type AdmittedView,
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
   boundedViewLimitations,
@@ -38,14 +38,8 @@ export const projectOciImageLayoutView = (
 ) => {
   const view = ownedView<SummaryAnalysisView>(admitted, "summary");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message: "OCI image layout Evidence supports the summary view.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "OCI image layout Evidence supports the summary view.",
     );
   const parsed = readReport(parent);
   if (!parsed.ok) return parsed;

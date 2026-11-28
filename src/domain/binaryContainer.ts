@@ -8,7 +8,10 @@ import {
 } from "./virtualFileMapping.js";
 import type { PeDataDirectory } from "./peOptionalHeader.js";
 import { decodeLimit, ParseFailureError } from "./parseFailure.js";
-import type { TruncatedExtent } from "./targetFailure.js";
+import type {
+  FormatTargetFailureKind,
+  TruncatedExtent,
+} from "./targetFailure.js";
 
 /** Return whether the leading bytes begin with the 4-byte ELF magic (`\x7fELF`). */
 export const hasElfMagic = (bytes: Uint8Array): boolean =>
@@ -39,11 +42,9 @@ interface BinaryFormatFailureFacts {
 }
 
 /** Distinguish corrupt recognized binaries from containers outside parser coverage. */
-export class BinaryFormatFailure extends ParseFailureError<
-  "malformed" | "truncated" | "unsupported"
-> {
+export class BinaryFormatFailure extends ParseFailureError<FormatTargetFailureKind> {
   constructor(
-    kind: "malformed" | "truncated" | "unsupported",
+    kind: FormatTargetFailureKind,
     message: string,
     facts: BinaryFormatFailureFacts = {},
   ) {

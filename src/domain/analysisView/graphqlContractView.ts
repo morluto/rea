@@ -20,7 +20,7 @@ import {
 import {
   boundedViewLimitations,
   completeWithinViewCoverage,
-  pageViewCoverage,
+  selectedViewPage,
 } from "./analysisViewCoverage.js";
 import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { pickFields, selectViewRows, filterSet } from "./selectViewRows.js";
@@ -270,11 +270,6 @@ export const projectGraphqlContractView = (
     ...shared,
     ...context,
     view,
-    items: selected.rows,
-    coverage: pageViewCoverage(
-      view.offset,
-      selected.rows.length,
-      selected.total,
-    ),
+    ...selectedViewPage(view.offset, selected),
   });
 };

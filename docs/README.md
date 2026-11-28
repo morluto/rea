@@ -109,6 +109,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 ## Firmware
 
 - [Firmware analysis](guides/firmware/firmware-analysis.md)
+- [Firmware interrupt and trap vector tables](guides/firmware/firmware-vector-tables.md)
 - [Android OTA update payloads](guides/firmware/android-ota-payload.md)
 - [Android Verified Boot vbmeta images](guides/firmware/android-vbmeta.md)
 - [Android sparse images](guides/firmware/android-sparse-image.md)
@@ -119,6 +120,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [ESP images](esp-image.md)
 - [U-Boot FIT images](fit-images.md)
 - [Qualcomm MBN images](guides/firmware/qualcomm-mbn-images.md)
+- [Image4 containers](guides/apple/image4-containers.md)
 - [Intel HEX and S-record images](hex-records.md)
 - [UF2 and DfuSe images](uf2-dfuse.md)
 - [U-Boot legacy uImage containers](uimage.md)

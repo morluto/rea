@@ -14,17 +14,14 @@ import {
   type BatchDecompileResult,
 } from "../native/batchDecompile.js";
 import { analysisErrorProjectionSchema } from "../analysisErrorProjectionSchema.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import {
   boundedViewLimitations,
   boundedViewMessages,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
-import {
-  analysisViewInputError,
-  invalidAnalysisView,
-} from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import {
   createAnalysisViewResultReader,
   type AnalysisViewParent,
@@ -307,11 +304,7 @@ const itemRow = (
 };
 
 const pseudocodeRefusal = (message: string) =>
-  err(
-    analysisViewInputError([
-      { path: ["view", "index"], reason: "invalid_value", message },
-    ]),
-  );
+  invalidAnalysisView(message, "index");
 
 /** Select retained batch facts without repeating decompilation or changing its record. */
 export const projectBatchDecompileView = (

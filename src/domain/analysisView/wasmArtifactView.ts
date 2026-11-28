@@ -1,11 +1,10 @@
 import {
-  analysisViewInputError,
   invalidAnalysisViewSubject,
   invalidAnalysisView,
 } from "./analysisViewErrors.js";
 import { z } from "zod";
 import { uniqueSorted } from "../canonicalOrdering.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
   wasmArtifactSchema,
@@ -154,14 +153,9 @@ export const projectWasmArtifactView = (
     });
   if (view.facet === "tool_profile") {
     if (view.offset !== 0)
-      return err(
-        analysisViewInputError([
-          {
-            path: ["view", "offset"],
-            reason: "invalid_value",
-            message: "Singleton tool_profile requires offset 0.",
-          },
-        ]),
+      return invalidAnalysisView(
+        "Singleton tool_profile requires offset 0.",
+        "offset",
       );
     return ok({
       kind: "wasm" as const,

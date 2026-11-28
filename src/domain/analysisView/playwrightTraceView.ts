@@ -15,7 +15,7 @@ import {
   type PlaywrightTrace,
 } from "../playwrightTrace/playwrightTrace.js";
 import { playwrightTraceViewRequestSchema } from "../playwrightTrace/playwrightTraceQuery.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import {
   createAnalysisViewResultReader,
   type AnalysisViewParent,
@@ -29,14 +29,11 @@ import {
   analysisViewCoverageSchema,
   boundedViewLimitations,
   completeWithinViewCoverage,
-  pageViewCoverage,
+  selectedViewPage,
 } from "./analysisViewCoverage.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import { pickFields, selectViewRows, filterSet } from "./selectViewRows.js";
-import {
-  analysisViewInputError,
-  invalidAnalysisView,
-} from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 
 export const playwrightTraceViewContextSchema = playwrightTraceSchema
   .omit({
@@ -386,15 +383,9 @@ const selectEventText = (
         : undefined
       : report.events.find((row) => row.event_id === view.event_id);
   if (event === undefined || event.text === null)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view", "event_id"],
-          reason: "invalid_value",
-          message:
-            "Choose a retained event with interpreted text; events without a text value remain unknown.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Choose a retained event with interpreted text; events without a text value remain unknown.",
+      "event_id",
     );
   const page = analysisTextPage(
     event.text,
@@ -482,11 +473,6 @@ export const projectPlaywrightTraceView = (
     ...context,
     kind: "playwright-trace" as const,
     view,
-    items: selected.rows,
-    coverage: pageViewCoverage(
-      view.offset,
-      selected.rows.length,
-      selected.total,
-    ),
+    ...selectedViewPage(view.offset, selected),
   });
 };

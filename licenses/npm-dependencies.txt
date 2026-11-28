@@ -2,7 +2,7 @@ REA npm dependency inventory
 Prepared from the root package-lock.json; refresh this inventory when locked dependencies change.
 License identifiers are upstream lockfile declarations, not a legal assessment.
 Runtime includes transitive and optional platform packages; development includes build, test and website tooling.
-Locked package entries: 956; runtime: 192.
+Locked package entries: 958; runtime: 192.
 Full runtime copyright/license/NOTICE texts: npm-runtime-notices.txt.
 
 @algolia/abtesting@1.25.0 | development | MIT
@@ -530,11 +530,16 @@ minimatch@11.0.9 | development | BlueOak-1.0.0
   Package: https://www.npmjs.com/package/@fast-check/vitest/v/0.5.0
   Archive: https://registry.npmjs.org/@fast-check/vitest/-/vitest-0.5.0.tgz
   Integrity: sha512-Kgbj2smuq1P4OhGKuPATs5i2fAxNmGbJ/zSmTrzWhQSLUrHREbKWgv9WGbNUOXcx77q6joLVMmTygyXuwP2Bog==
-@google-automations/git-file-utils@3.2.1 | development | Apache-2.0
+@google-automations/git-file-utils@3.2.2 | development | Apache-2.0
   Lockfile path: node_modules/@google-automations/git-file-utils
-  Package: https://www.npmjs.com/package/@google-automations/git-file-utils/v/3.2.1
-  Archive: https://registry.npmjs.org/@google-automations/git-file-utils/-/git-file-utils-3.2.1.tgz
-  Integrity: sha512-LYOjAnGu/xtEkYYh6W3/1RmeK9HB/fV+xMe7nHc+WiDYrnxAJWBfcyUucoJtYS8XAhVUzNWrQvYDPRbxe67DNQ==
+  Package: https://www.npmjs.com/package/@google-automations/git-file-utils/v/3.2.2
+  Archive: https://registry.npmjs.org/@google-automations/git-file-utils/-/git-file-utils-3.2.2.tgz
+  Integrity: sha512-HdCimeY0rkhAhDJMCuS/gugq4K4/8ccH0r2eSxqscXpoCysimjWtLttxVw/LWogHJAUj8aWFwip1hTPGQrJu9Q==
+minimatch@11.0.9 | development | BlueOak-1.0.0
+  Lockfile path: node_modules/@google-automations/git-file-utils/node_modules/minimatch
+  Package: https://www.npmjs.com/package/minimatch/v/11.0.9
+  Archive: https://registry.npmjs.org/minimatch/-/minimatch-11.0.9.tgz
+  Integrity: sha512-KCFkfyjqerNlSstjlhIGNXIKZGA/6O4V4RlhZ+Dsr621SPPw0mzlypE9D9ZOoPiVefHID+j7/XuMMlqfD/F60Q==
 @iarna/toml@3.0.0 | development | ISC
   Lockfile path: node_modules/@iarna/toml
   Package: https://www.npmjs.com/package/@iarna/toml/v/3.0.0
@@ -1605,6 +1610,11 @@ minimatch@11.0.9 | development | BlueOak-1.0.0
   Package: https://www.npmjs.com/package/@stryker-mutator/core/v/10.1.1
   Archive: https://registry.npmjs.org/@stryker-mutator/core/-/core-10.1.1.tgz
   Integrity: sha512-4xJAOCw9utJMLyrTk9gINi434tBxnyuwt8lU/InyoKagKd2/zh/2ui7ncWoD0qZeJrxClYzblg8iUh5ewBAB3Q==
+minimatch@11.0.9 | development | BlueOak-1.0.0
+  Lockfile path: node_modules/@stryker-mutator/core/node_modules/minimatch
+  Package: https://www.npmjs.com/package/minimatch/v/11.0.9
+  Archive: https://registry.npmjs.org/minimatch/-/minimatch-11.0.9.tgz
+  Integrity: sha512-KCFkfyjqerNlSstjlhIGNXIKZGA/6O4V4RlhZ+Dsr621SPPw0mzlypE9D9ZOoPiVefHID+j7/XuMMlqfD/F60Q==
 @stryker-mutator/instrumenter@10.1.1 | development | Apache-2.0
   Lockfile path: node_modules/@stryker-mutator/instrumenter
   Package: https://www.npmjs.com/package/@stryker-mutator/instrumenter/v/10.1.1
@@ -3365,7 +3375,7 @@ minimalistic-assert@1.0.1 | development | ISC
   Package: https://www.npmjs.com/package/minimalistic-assert/v/1.0.1
   Archive: https://registry.npmjs.org/minimalistic-assert/-/minimalistic-assert-1.0.1.tgz
   Integrity: sha512-UtJcAD4yEaGtjPezWuO9wC4nwUnVH/8/Im3yEHQP4b67cXlD/Qr9hdITCU1xDbSEXg2XKNaP8jsReV7vQd00/A==
-minimatch@10.2.5 | runtime | BlueOak-1.0.0
+minimatch@10.2.5 | runtime, optional | BlueOak-1.0.0
   Lockfile path: node_modules/minimatch
   Package: https://www.npmjs.com/package/minimatch/v/10.2.5
   Archive: https://registry.npmjs.org/minimatch/-/minimatch-10.2.5.tgz

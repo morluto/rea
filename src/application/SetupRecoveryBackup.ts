@@ -5,6 +5,7 @@ import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { readRegularFile } from "../process/RegularFileRead.js";
 import type { ArtifactResourceScope } from "../resources/index.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { systemCodeFromError } from "../kernel/reportedSystemCode.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 
 export interface RecoveryBackupSelection {
@@ -18,61 +19,47 @@ export interface RecoveryBackupSelectionFailure {
   readonly detail: string;
 }
 
-const isMissing = (cause: unknown): boolean =>
-  cause instanceof Error && "code" in cause && cause.code === "ENOENT";
-
 /** Select a persistent snapshot only when its bytes match this transaction's original. */
 export const selectCurrentRecoveryBackup = async (
   firstBackupPath: string,
   original: string | Buffer,
   resources?: ArtifactResourceScope,
 ): Promise<Result<RecoveryBackupSelection, RecoveryBackupSelectionFailure>> => {
-  const read = (path: string) =>
-    readRegularFile(path, {
-      symlinks: "reject",
-      ...(resources === undefined ? {} : { resources }),
-    });
   const expected = Buffer.isBuffer(original)
     ? original
     : Buffer.from(original, "utf8");
-  let firstBackup: Buffer | undefined;
-  try {
-    firstBackup = await read(firstBackupPath);
-  } catch (cause: unknown) {
-    if (cause instanceof RegularFileCleanupFailure) throw cause;
-    if (!isMissing(cause))
+  const inspect = async (
+    path: string,
+  ): Promise<
+    Result<RecoveryBackupSelection, RecoveryBackupSelectionFailure>
+  > => {
+    let bytes: Buffer;
+    try {
+      bytes = await readRegularFile(path, {
+        symlinks: "reject",
+        ...(resources === undefined ? {} : { resources }),
+      });
+    } catch (cause: unknown) {
+      if (cause instanceof RegularFileCleanupFailure) throw cause;
+      if (systemCodeFromError(cause) === "ENOENT")
+        return ok({ backupPath: path, present: false });
       return err({
         kind: "unreadable",
-        path: firstBackupPath,
+        path,
         detail: `The recovery backup could not be checked: ${errorMessage(cause)}`,
       });
-  }
-  if (firstBackup === undefined)
-    return ok({ backupPath: firstBackupPath, present: false });
-  if (firstBackup.equals(expected))
-    return ok({ backupPath: firstBackupPath, present: true });
-
-  const digest = sha256Hex(expected);
-  const recoveryPath = `${firstBackupPath}.${digest}.recovery`;
-  let recovery: Buffer | undefined;
-  try {
-    recovery = await read(recoveryPath);
-  } catch (cause: unknown) {
-    if (cause instanceof RegularFileCleanupFailure) throw cause;
-    if (!isMissing(cause))
-      return err({
-        kind: "unreadable",
-        path: recoveryPath,
-        detail: `The recovery backup could not be checked: ${errorMessage(cause)}`,
-      });
-  }
-  if (recovery !== undefined && !recovery.equals(expected))
+    }
+    if (bytes.equals(expected)) return ok({ backupPath: path, present: true });
     return err({
       kind: "occupied",
-      path: recoveryPath,
-      detail: `The recovery path already contains different data: ${recoveryPath}`,
+      path,
+      detail: `The recovery path already contains different data: ${path}`,
     });
-  return ok({ backupPath: recoveryPath, present: recovery !== undefined });
+  };
+
+  const first = await inspect(firstBackupPath);
+  if (first.ok || first.error.kind !== "occupied") return first;
+  return inspect(`${firstBackupPath}.${sha256Hex(expected)}.recovery`);
 };
 
 export interface RecoveryBackupPreservationFailure {
@@ -113,9 +100,7 @@ export const preserveCurrentRecoveryBackup = async (
     try {
       await copy(source, backupPath);
     } catch (cause: unknown) {
-      if (
-        !(cause instanceof Error && "code" in cause && cause.code === "EEXIST")
-      )
+      if (systemCodeFromError(cause) !== "EEXIST")
         return err({
           kind: "copy",
           path: backupPath,

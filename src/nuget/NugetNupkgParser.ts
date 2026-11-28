@@ -1,10 +1,5 @@
 import { accountZipMemberRegion } from "../domain/zip/zipMemberRegion.js";
-import {
-  decodeLimit,
-  malformedInput,
-  ParseFailureError,
-  unsupportedInput,
-} from "../domain/parseFailure.js";
+import { decodeLimit, malformedInput } from "../domain/parseFailure.js";
 import { Reader, ZipReader, type Entry, type FileEntry } from "@zip.js/zip.js";
 import type { Element, Node } from "@xmldom/xmldom";
 
@@ -14,7 +9,7 @@ import {
   malformedArtifact,
   decodeZipEntryText,
   zipEntryNameLimitations,
-  typedZipFailure,
+  throwZipPackageFailure,
   ZIP_READER_OPTIONS,
   zipEntryPath,
   zipListingCoverage,
@@ -97,33 +92,13 @@ const indexedMetadataText = (
   return null;
 };
 
-const wrapZipFailure = (cause: unknown, compressionMethod?: number): never => {
-  if (
-    cause instanceof ArtifactReaderFailure ||
-    cause instanceof ParseFailureError
-  )
-    throw cause;
-  // The shared ZIP reader owns ZIP failure classification, including native
-  // decoder faults: a Zstandard window above its fixed allowance is a
-  // resource limit, and a feature it cannot provide (encryption, split
-  // archives, a Zstandard dictionary) is an unsupported layout. Project its
-  // typed result instead of re-reading the error text here.
-  const typed = typedZipFailure(cause, compressionMethod);
-  if (typed instanceof ArtifactReaderFailure && typed.reason === "limit")
-    throw typed;
-  if (typed instanceof ArtifactReaderFailure && typed.reason === "unavailable")
-    throw unsupportedInput(
-      NUGET_NUPKG_FORMAT,
-      `NuGet package ZIP uses an unsupported layout: ${typed.message}`,
-      { cause: typed },
-    );
-  if (
-    typed instanceof ArtifactReaderFailure &&
-    typed.parseFailure !== undefined
-  )
-    throw malformedInput(NUGET_NUPKG_FORMAT, typed.message, { cause: typed });
-  throw cause;
-};
+const wrapZipFailure = (cause: unknown, compressionMethod?: number): never =>
+  throwZipPackageFailure(
+    cause,
+    NUGET_NUPKG_FORMAT,
+    "NuGet package",
+    compressionMethod,
+  );
 
 /** Read one metadata member under max_nuspec_bytes, declared and expanded. */
 const readMemberBytes = async (

@@ -12,6 +12,7 @@ import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory
 import {
   ArtifactReaderFailure,
   artifactFixedLimitFailure,
+  artifactFormatFailure,
 } from "./ArtifactReader.js";
 import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -35,9 +36,16 @@ import { artifactReaderLimitFailure } from "./index.js";
 import { targetDigestChangedFailure } from "./withArtifactTargetIdentity.js";
 import {
   malformedInput,
+  ParseFailureError,
   truncatedInput,
+  unrecognizedInput,
   unsupportedInput,
 } from "../domain/parseFailure.js";
+import {
+  FORMAT_TARGET_FAILURE_KINDS,
+  type FormatTargetFailure,
+} from "../domain/targetFailure.js";
+import { AnalysisTargetFailureError } from "../domain/analysisErrorCore.js";
 
 it("projects a Zstandard frame-cap as an adjustable artifact limit", () => {
   expect(
@@ -99,6 +107,7 @@ it.each([
   { cause: malformedInput("pe", "bad field") },
   { cause: truncatedInput("pe", "short field") },
   { cause: unsupportedInput("pe", "unsupported image") },
+  { cause: unrecognizedInput("pe", "not a PE image") },
 ])(
   "preserves $cause.kind projection and selected identity through descriptor cleanup",
   async ({ cause }) => {
@@ -624,3 +633,51 @@ it("keeps only a path-kind reader refusal a selection error", () => {
     },
   });
 });
+
+/** One owner failure of each format kind, with every shared fact set. */
+const formatFailure = (
+  kind: (typeof FORMAT_TARGET_FAILURE_KINDS)[number],
+): FormatTargetFailure => {
+  const facts = {
+    format: "macho",
+    detail: `${kind} bytes`,
+    offset: 4,
+    field: "magic",
+  };
+  switch (kind) {
+    case "unsupported":
+      return { kind, ...facts, undecodedContent: false };
+    case "truncated":
+      return {
+        kind,
+        ...facts,
+        extent: { availableBytes: 4, requiredBytes: 32 },
+      };
+    case "unrecognized":
+    case "malformed":
+      return { kind, ...facts };
+  }
+};
+
+it.each(FORMAT_TARGET_FAILURE_KINDS)(
+  "keeps a %s owner failure and its facts through both artifact wrappers",
+  (kind) => {
+    const failure = formatFailure(kind);
+    for (const wrapped of [
+      artifactParseFailure(new ParseFailureError(failure), undefined),
+      artifactFormatFailure(failure),
+    ]) {
+      expect(wrapped).toBeInstanceOf(ArtifactReaderFailure);
+      expect((wrapped as ArtifactReaderFailure).parseFailure).toEqual(failure);
+      const projected = translateArtifactFailure(
+        "inspect_artifact",
+        "/selected/artifact",
+        wrapped,
+      );
+      expect(projected).toBeInstanceOf(AnalysisTargetFailureError);
+      expect((projected as AnalysisTargetFailureError).failure).toEqual(
+        failure,
+      );
+    }
+  },
+);

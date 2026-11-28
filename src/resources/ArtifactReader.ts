@@ -29,9 +29,11 @@ import {
 } from "../domain/analysisErrorBase.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import type { LimitRef } from "../domain/parseFailure.js";
-import type {
-  FormatTargetFailure,
-  TargetFailureOf,
+import {
+  isFormatTargetFailureKind,
+  type FormatTargetFailure,
+  type FormatTargetFailureKind,
+  type TargetFailureOf,
 } from "../domain/targetFailure.js";
 import { ParseFailureError } from "../domain/parseFailure.js";
 
@@ -292,6 +294,7 @@ export interface ArtifactReader {
     | "fit"
     | "compound-file"
     | "qualcomm-mbn"
+    | "apple-img4"
     | "ntfs-mft"
     | "systemd-journal"
     | "auditd-log"
@@ -407,12 +410,9 @@ export class ArtifactReaderFailure extends Error {
     this.parserLimit = options?.parserLimit;
     this.fixedAllowance = options?.fixedAllowance;
     this.integrityCheck = options?.integrityCheck;
-    this.parseFailure =
-      reason === "malformed" ||
-      reason === "truncated" ||
-      reason === "unsupported"
-        ? options?.parseFailure
-        : undefined;
+    this.parseFailure = isFormatTargetFailureKind(reason)
+      ? options?.parseFailure
+      : undefined;
   }
 
   /**
@@ -614,9 +614,7 @@ export const malformedArtifact = (
  */
 export const readFailureError = (
   failure: FormatTargetFailure | TargetFailureOf<"changed">,
-):
-  | ArtifactReaderFailure
-  | ParseFailureError<"malformed" | "truncated" | "unsupported"> =>
+): ArtifactReaderFailure | ParseFailureError<FormatTargetFailureKind> =>
   failure.kind === "changed"
     ? new ArtifactReaderFailure("integrity", failure.detail, {
         integrityCheck: "read-coverage",
