@@ -27,6 +27,7 @@ import { ProcessOwnershipEvidenceOwner } from "../process/ProcessOwnershipEviden
 import * as ownershipObservation from "../process/ProcessOwnershipObservation.js";
 import * as electronActions from "./PlaywrightElectronActiveActions.js";
 import { electronActiveObservationInputSchema } from "../domain/javascript/electronActiveObservation.js";
+import type { ElectronFuseImage } from "../electron/ElectronFuseReader.js";
 import type { PersistentOwnedProcessGroup } from "../process/ProcessOwnership.js";
 import {
   PlaywrightElectronActiveProvider,
@@ -35,9 +36,70 @@ import {
 import { waitFor } from "../../tests/support/testWait.js";
 import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
+beforeEach(() => {
+  vi.spyOn(
+    ownershipObservation,
+    "prepareProcessOwnershipInspection",
+  ).mockResolvedValue(undefined);
+  if (
+    ownershipObservation.systemProcessOwnershipHost.captureBaseline !==
+    undefined
+  ) {
+    vi.spyOn(
+      ownershipObservation.systemProcessOwnershipHost,
+      "captureBaseline",
+    ).mockResolvedValue([]);
+  }
+});
+
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
+});
+
+/** Keep provider lifecycle tests focused on capture behavior, not fuse parsing. */
+const enabledFuseImage = async (): Promise<ElectronFuseImage> => ({
+  sha256: "0".repeat(64),
+  bytes: 0,
+  format: "elf",
+  slices: [
+    {
+      index: 0,
+      file_offset: 0,
+      size: 0,
+      architecture: null,
+      sentinel_count: 1,
+      sentinels: [
+        {
+          sentinel_offset: 0,
+          wire_version: 1,
+          declared_length: 4,
+          complete: true,
+          fuses: [
+            { index: 0, name: "RunAsNode", state: "unknown", raw_byte: 0 },
+            {
+              index: 1,
+              name: "EnableCookieEncryption",
+              state: "unknown",
+              raw_byte: 0,
+            },
+            {
+              index: 2,
+              name: "EnableNodeOptionsEnvironmentVariable",
+              state: "unknown",
+              raw_byte: 0,
+            },
+            {
+              index: 3,
+              name: "EnableNodeCliInspectArguments",
+              state: "enabled",
+              raw_byte: 0x31,
+            },
+          ],
+        },
+      ],
+    },
+  ],
 });
 
 it.each([false, true])(
@@ -369,6 +431,7 @@ it("passes the selected environment and ownership token to Electron launch", asy
       launchedEnvironment = options?.env;
       throw new Error("launch boundary reached");
     },
+    enabledFuseImage,
   );
   const result = await provider.capture({
     ...electronActiveObservationInputSchema.parse({
@@ -612,7 +675,7 @@ it("retains the partial capture without taskkill when Windows lineage is unavail
       application as unknown as Awaited<
         ReturnType<typeof import("playwright-core")._electron.launch>
       >,
-    undefined,
+    enabledFuseImage,
     "win32",
   );
 
@@ -646,6 +709,8 @@ it("retains the partial capture without taskkill when Windows lineage is unavail
 });
 
 it("retains the initial snapshot when the final state read fails", async () => {
+  // The fake application PID has no real process lineage to inspect or clean up.
+  stubVerifiedElectronCleanup();
   const initialState = {
     windows: [],
     metrics: [],
@@ -669,6 +734,7 @@ it("retains the initial snapshot when the final state read fails", async () => {
       application as unknown as Awaited<
         ReturnType<typeof import("playwright-core")._electron.launch>
       >,
+    enabledFuseImage,
   );
 
   const result = await provider.capture({
@@ -696,6 +762,7 @@ it("retains the initial snapshot when the final state read fails", async () => {
 it.each(["initial", "final"] as const)(
   "refuses an application handed off to a running instance at the %s snapshot",
   async (stage) => {
+    stubVerifiedElectronCleanup();
     const state = (refused: boolean) => ({
       windows: [],
       metrics: [],
@@ -769,6 +836,7 @@ it.each(["initial", "final"] as const)(
 );
 
 it("stops pending actions when the lock is refused while they wait", async () => {
+  stubVerifiedElectronCleanup();
   const state = (refused: boolean) => ({
     windows: [],
     metrics: [],
@@ -905,6 +973,7 @@ const captureWithController = async (
       application as unknown as Awaited<
         ReturnType<typeof import("playwright-core")._electron.launch>
       >,
+    enabledFuseImage,
   );
   return provider.capture(
     {
@@ -1388,7 +1457,11 @@ it.each(["process", "transport", "both"] as const)(
           ReturnType<typeof import("playwright-core")._electron.launch>
         >,
     );
-    const provider = new PlaywrightElectronActiveProvider({}, launch);
+    const provider = new PlaywrightElectronActiveProvider(
+      {},
+      launch,
+      enabledFuseImage,
+    );
     const input = {
       ...electronActiveObservationInputSchema.parse({
         executable_path: process.execPath,
@@ -1466,6 +1539,7 @@ it.each(["process", "transport"] as const)(
         application as unknown as Awaited<
           ReturnType<typeof import("playwright-core")._electron.launch>
         >,
+      enabledFuseImage,
     );
     try {
       const result = await provider.capture(
