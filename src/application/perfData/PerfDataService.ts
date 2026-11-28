@@ -154,6 +154,7 @@ export const inspectPerfDataEvidence = async (
   };
   const result = parsePerfData(bytes, artifact, {
     maxEvents: input.max_events,
+    maxIdentifiers: input.max_identifiers,
   });
   if (!result.ok) return result;
   const recording = result.value;
@@ -167,6 +168,7 @@ export const inspectPerfDataEvidence = async (
         path: input.path,
         max_file_bytes: input.max_file_bytes,
         max_events: input.max_events,
+        max_identifiers: input.max_identifiers,
       }),
       result: recording,
       confidence: "observed",

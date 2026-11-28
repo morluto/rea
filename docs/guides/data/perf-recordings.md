@@ -65,6 +65,9 @@ their identifiers may be missing from the count. An identifier above
 ## Limits
 
 A single recording is admitted up to 64 MiB and 20 000 event attribute groups.
-These are resource allowances, not format limits. A recording that exceeds the
-event allowance reports `event-limit-reached` and keeps the groups it already
-read; `source_coverage.status` becomes `partial`.
+A recording that exceeds the event allowance reports `event-limit-reached` and
+keeps the groups it already read. The identifier allowance applies across all
+groups and defaults to 200,000. Increase it to at most 400,000 with
+`--max-identifiers` in the CLI or `max_identifiers` over MCP. A result that reaches
+this limit reports `identifier-inventory-truncated` with the effective allowance.
+Either truncation sets `source_coverage.status` to `partial`.

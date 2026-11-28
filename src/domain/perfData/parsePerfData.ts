@@ -7,6 +7,8 @@ import { ok, type Result } from "../result.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 import {
   PERF_DATA_OPERATION,
+  PERF_DATA_DEFAULT_MAX_IDENTIFIERS,
+  PERF_DATA_MAX_IDENTIFIERS,
   PERF_DATA_MAX_DIAGNOSTICS,
   type PerfData,
   type PerfDataArtifact,
@@ -54,11 +56,6 @@ const ATTR_SIZE_MIN = 64;
 /** Bit 10 of the little-endian flag word is `freq`: sample_period is a frequency. */
 const ATTR_FLAG_FREQ = 0x400n;
 /**
- * Entries may share one ids extent, so the per-entry reading asks the whole
- * file again for each group; the retained list is what bounds the reply.
- */
-const MAX_RETAINED_IDENTIFIERS = 200_000;
-/**
  * `attr_size` is `sizeof(struct perf_event_attr) + sizeof(perf_file_section)`:
  * each entry ends with the offset/size of that event's id array.
  */
@@ -72,14 +69,14 @@ interface DecodeState {
   readonly events: PerfEvent[];
   readonly diagnostics: Diagnostic[];
   readonly maxEvents: number;
+  readonly maxIdentifiers: number;
+  identifierLimitReported: boolean;
   eventLimitReported: boolean;
   diagnosticsSuppressed: boolean;
   /** Some input was left unexamined; an informational diagnostic is not that. */
   incomplete: boolean;
   /** Identifiers read so far; an unusable section leaves a group's count unknown. */
   identifiers: number;
-  /** Every retained identifier, to bound the total across entries. */
-  readonly identified: number[];
   /** False once any entry's ids section could not be read as declared. */
   identifiersPresent: boolean;
 }
@@ -112,15 +109,19 @@ const diagnose = (
   ordinal: number | null,
   code: Diagnostic["code"],
   message: string,
+  limit?: Diagnostic["limit"],
 ): void => {
+  if (code !== "empty-attribute-section") state.incomplete = true;
   if (state.diagnostics.length >= PERF_DATA_MAX_DIAGNOSTICS) {
     state.diagnosticsSuppressed = true;
     return;
   }
-  state.diagnostics.push({ ordinal, code, message });
-  // `empty-attribute-section` states the recording carries no events; nothing
-  // was left unexamined, so it must not turn a complete inventory partial.
-  if (code !== "empty-attribute-section") state.incomplete = true;
+  state.diagnostics.push({
+    ordinal,
+    code,
+    message,
+    ...(limit === undefined ? {} : { limit }),
+  });
 };
 
 /** Endianness-aware fixed-width field readers over the whole file. */
@@ -276,7 +277,6 @@ const readEvents = (
   // Ranges the header already owns. An ids extent inside one of them would
   // decode those bytes as identifiers, so it is rejected instead.
   ownedSections: readonly Section[],
-  featureOwnershipKnown: boolean,
 ): void => {
   const end = section.offset + section.size;
   let cursor = section.offset;
@@ -350,9 +350,8 @@ const readEvents = (
       // The writer places the id arrays outside the attribute entries, so an
       // offset inside the entry is not required; containment in the file is.
       const overlaps = overlapsOwned(ids.offset, ids.size, ownedSections);
-      const unknownOwner = !featureOwnershipKnown && ids.size > 0;
       const invalidExtent = ids.size % 8 !== 0 || !ids.within_file;
-      if (overlaps || unknownOwner) {
+      if (overlaps) {
         // Entries may share one ids extent, which stays legitimate, but bytes
         // the header already assigned to the header, attributes, data or event
         // types are not an identifier array.
@@ -360,9 +359,7 @@ const readEvents = (
           state,
           ordinal,
           "invalid-ids-section",
-          overlaps
-            ? `The entry at ${cursor} declares ids at ${ids.offset} for ${ids.size} bytes, which overlaps a section the header already owns.`
-            : `The entry at ${cursor} declares ids whose ownership cannot be established because the feature sections are unreadable.`,
+          `The entry at ${cursor} declares ids at ${ids.offset} for ${ids.size} bytes, which overlaps a section the header already owns.`,
         );
       } else if (invalidExtent) {
         diagnose(
@@ -375,15 +372,28 @@ const readEvents = (
         // Entries can all point at one large extent, so the retained identifier
         // count is bounded independently of the file and event allowances.
         for (let at = ids.offset; at < ids.offset + ids.size; at += 8) {
-          if (state.identified.length >= MAX_RETAINED_IDENTIFIERS) {
+          if (state.identifiers >= state.maxIdentifiers) {
             idsTruncated = true;
             state.identifiersPresent = false;
-            diagnose(
-              state,
-              ordinal,
-              "identifier-inventory-truncated",
-              `The retained identifier inventory reached its ${String(MAX_RETAINED_IDENTIFIERS)}-identifier allowance, so this and later identifiers in the extent were not retained.`,
-            );
+            if (!state.identifierLimitReported) {
+              state.identifierLimitReported = true;
+              diagnose(
+                state,
+                ordinal,
+                "identifier-inventory-truncated",
+                `Stopped retaining identifiers at max_identifiers=${state.maxIdentifiers}.`,
+                {
+                  control_kind: "parameter",
+                  parameter: "max_identifiers",
+                  effective_value: state.maxIdentifiers,
+                  unit: "count",
+                  minimum: 1,
+                  maximum: PERF_DATA_MAX_IDENTIFIERS,
+                  default_value: PERF_DATA_DEFAULT_MAX_IDENTIFIERS,
+                  applies_at: "next_call",
+                },
+              );
+            }
             break;
           }
           const id = read.u64(bytes, at);
@@ -401,15 +411,13 @@ const readEvents = (
             break;
           }
           idsList.push(id);
-          state.identified.push(id);
+          state.identifiers++;
         }
       }
       // An extent that was rejected rather than decoded leaves this group's
       // identifiers unknown, the same as one that is not a whole number of
       // identifiers, so the summary cannot report a complete inventory.
-      if (invalidExtent || overlaps || unknownOwner)
-        state.identifiersPresent = false;
-      else state.identifiers += idsList.length;
+      if (invalidExtent || overlaps) state.identifiersPresent = false;
     }
     const flags = read.u64Bits(bytes, cursor + ATTR_FLAGS_OFFSET);
     state.events.push({
@@ -482,7 +490,7 @@ const noHeaderRecording = (
   attribute_section: INERT_SECTION,
   data_section: INERT_SECTION,
   events: [],
-  diagnostics: withIds(diagnostics, artifact.sha256, 0),
+  diagnostics: withIds(diagnostics, artifact.sha256, 0, 0),
   summary: {
     events: 0,
     identifiers: 0,
@@ -522,14 +530,16 @@ const emptyRecording = (
 const withIds = (
   diagnostics: readonly Diagnostic[],
   recording: string,
-  allowance: number,
+  maxEvents: number,
+  maxIdentifiers: number,
 ) =>
   diagnostics.map((entry, index) => ({
     ...entry,
     diagnostic_id: digest(
       "perf_diagnostic",
       recording,
-      allowance,
+      maxEvents,
+      maxIdentifiers,
       index,
       entry.code,
     ),
@@ -538,18 +548,19 @@ const withIds = (
 export const parsePerfData = (
   bytes: Buffer,
   artifact: PerfDataArtifact,
-  options: { readonly maxEvents: number },
+  options: { readonly maxEvents: number; readonly maxIdentifiers: number },
 ): Result<PerfData, never> => {
   const state: DecodeState = {
     recording: artifact.sha256,
     events: [],
     diagnostics: [],
     maxEvents: options.maxEvents,
+    maxIdentifiers: options.maxIdentifiers,
+    identifierLimitReported: false,
     eventLimitReported: false,
     diagnosticsSuppressed: false,
     incomplete: false,
     identifiers: 0,
-    identified: [],
     identifiersPresent: true,
   };
   const little = perfDataByteOrder(bytes);
@@ -668,89 +679,59 @@ export const parsePerfData = (
     if (!noInFileBytes)
       return ok(emptyRecording(artifact, state.diagnostics, order));
   }
-  const attributeOverlapsEventTypes =
-    eventTypes !== null &&
-    attributeSection.size > 0 &&
-    eventTypes.size > 0 &&
-    attributeSection.offset < eventTypes.offset + eventTypes.size &&
-    eventTypes.offset < attributeSection.offset + attributeSection.size;
-  const attributeFits =
-    attributeSection.within_file &&
-    // The file header precedes the sections; bytes inside it are not attributes.
-    !attributeInHeader &&
-    !attributeOverlapsEventTypes &&
-    // An empty extent owns no bytes, so it cannot overlap another section:
-    // a zero-length data section between attribute entries is not a conflict.
-    !(
-      attributeSection.size > 0 &&
-      dataSection.size > 0 &&
-      ((attributeSection.offset <= dataSection.offset &&
-        attributeSection.offset + attributeSection.size > dataSection.offset) ||
-        (attributeSection.offset > dataSection.offset &&
-          dataSection.offset + dataSection.size > attributeSection.offset))
-    );
-  // A rejected attribute extent means no entry was examined, so the recording
-  // states no identifier inventory this pass can defend. Reporting `true` with
-  // a zero count would present an unread section as a complete empty one.
-  if (!attributeFits && attributeSection.size > 0)
-    state.identifiersPresent = false;
-  if (!attributeSection.within_file)
+  const features =
+    headerBytes === HEADER_BYTES_WITH_FEATURES
+      ? featureSections(bytes, read, dataSection, state)
+      : [];
+  const attributeConflicts = [
+    { kind: "event-types", ranges: eventTypes === null ? [] : [eventTypes] },
+    { kind: "data", ranges: [dataSection] },
+    { kind: "feature", ranges: features ?? [] },
+  ].find(({ ranges }) =>
+    overlapsOwned(attributeSection.offset, attributeSection.size, ranges),
+  );
+  // Do not publish events whose bytes are assigned to another section or whose
+  // feature ownership is undecidable. An empty extent owns no bytes.
+  if (!attributeSection.within_file) {
     diagnose(
       state,
       null,
       "invalid-attribute-section",
       `The attribute section declares bytes ${attributeSection.offset}..${attributeSection.offset + attributeSection.size}, past the ${bytes.length}-byte file.`,
     );
-  else if (attributeInHeader)
+    if (attributeSection.size > 0) state.identifiersPresent = false;
+  } else if (attributeInHeader) {
     diagnose(
       state,
       null,
       "header-attribute-overlap",
       `The attribute section declares bytes ${attributeSection.offset}..${attributeSection.offset + attributeSection.size} inside the ${String(headerBytes)}-byte file header, so the attribute extent is not trusted.`,
     );
-  else if (!attributeFits)
+    state.identifiersPresent = false;
+  } else if (attributeConflicts !== undefined) {
     diagnose(
       state,
       null,
       "attribute-section-overlap",
-      attributeOverlapsEventTypes
-        ? "The attribute and event-types sections overlap, so the attribute extent is not trusted."
-        : "The attribute and data sections overlap, so neither extent is trusted.",
+      `The attribute and ${attributeConflicts.kind} sections overlap, so the attribute extent is not trusted.`,
     );
-  else {
-    if (attributeSection.size === 0)
-      diagnose(
-        state,
-        null,
-        "empty-attribute-section",
-        "The attribute section is empty; the recording states no events.",
-      );
-    else if (strideFitsEntry) {
-      const features =
-        headerBytes === HEADER_BYTES_WITH_FEATURES
-          ? featureSections(bytes, read, dataSection, state)
-          : [];
-      readEvents(
-        bytes,
-        read,
-        state,
-        attributeSection,
-        stride,
-        [
-          { offset: 0, size: headerBytes, within_file: true },
-          attributeSection,
-          dataSection,
-          ...(eventTypes === null ? [] : [eventTypes]),
-          ...(features ?? []),
-        ],
-        features !== undefined,
-      );
-    }
-    // A section that holds entries but whose stride was rejected never reaches
-    // `readEvents`, so no ids descriptor was examined; leaving the inventory
-    // flagged present would publish an unread section as a complete empty one.
-    else state.identifiersPresent = false;
-  }
+    state.identifiersPresent = false;
+  } else if (attributeSection.size === 0) {
+    diagnose(
+      state,
+      null,
+      "empty-attribute-section",
+      "The attribute section is empty; the recording states no events.",
+    );
+  } else if (features !== undefined && strideFitsEntry) {
+    readEvents(bytes, read, state, attributeSection, stride, [
+      { offset: 0, size: headerBytes, within_file: true },
+      attributeSection,
+      dataSection,
+      ...(eventTypes === null ? [] : [eventTypes]),
+      ...features,
+    ]);
+  } else state.identifiersPresent = false;
   if (state.diagnosticsSuppressed)
     state.diagnostics.push({
       ordinal: null,
@@ -772,7 +753,12 @@ export const parsePerfData = (
     attribute_section: attributeSection,
     data_section: dataSection,
     events: state.events,
-    diagnostics: withIds(state.diagnostics, artifact.sha256, options.maxEvents),
+    diagnostics: withIds(
+      state.diagnostics,
+      artifact.sha256,
+      options.maxEvents,
+      options.maxIdentifiers,
+    ),
     summary: {
       events: state.events.length,
       identifiers: state.identifiers,

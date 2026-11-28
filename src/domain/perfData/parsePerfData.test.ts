@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { perfDataSchema } from "./perfData.js";
+import {
+  PERF_DATA_DEFAULT_MAX_IDENTIFIERS,
+  perfDataSchema,
+} from "./perfData.js";
 import { parsePerfData } from "./parsePerfData.js";
 import type { PerfData } from "./perfData.js";
 import {
@@ -23,6 +26,7 @@ const parse = (bytes: Buffer, options = {}) =>
     { ...artifact, bytes: bytes.length },
     {
       maxEvents: 100,
+      maxIdentifiers: PERF_DATA_DEFAULT_MAX_IDENTIFIERS,
       ...options,
     },
   );
@@ -215,6 +219,44 @@ describe("parsePerfData rejection diagnostics", () => {
       ]);
     },
   );
+
+  it.each(["descriptor", "payload"] as const)(
+    "keeps feature %s bytes out of the event inventory",
+    (range) => {
+      const recording = buildPerfRecording();
+      recording.writeUInt8(1 << 3, PERF_HEADER_BYTES_WITHOUT_FEATURES);
+      const table = Buffer.alloc(16);
+      const contents = Buffer.alloc(PERF_STRIDE);
+      const present = Buffer.concat([recording, table, contents]);
+      if (range === "descriptor") {
+        present.writeBigUInt64LE(BigInt(recording.length), 0x18);
+      } else {
+        present.writeBigUInt64LE(BigInt(PERF_HEADER_BYTES), recording.length);
+        present.writeBigUInt64LE(BigInt(PERF_STRIDE), recording.length + 8);
+      }
+      const archive = parsed(present);
+      expect(archive.events).toEqual([]);
+      expect(archive.summary.identifiers_present).toBe(false);
+      expect(archive.source_coverage.status).toBe("partial");
+      expect(archive.diagnostics).toEqual([
+        expect.objectContaining({
+          code: "attribute-section-overlap",
+          message: expect.stringContaining("feature"),
+        }),
+      ]);
+    },
+  );
+
+  it("does not inventory contested attributes when the feature table is missing", () => {
+    const bytes = buildPerfRecording();
+    bytes.writeUInt8(1 << 3, PERF_HEADER_BYTES_WITHOUT_FEATURES);
+    const archive = parsed(bytes);
+    expect(archive.events).toEqual([]);
+    expect(archive.source_coverage.status).toBe("partial");
+    expect(archive.diagnostics.map(({ code }) => code)).toEqual([
+      "invalid-feature-section",
+    ]);
+  });
 
   it("accepts the pre-feature-bitmap header as absent rather than truncated", () => {
     const archive = parsed(
@@ -484,17 +526,42 @@ describe("parsePerfData section accounting", () => {
     );
   });
 
-  it("marks the identifier inventory incomplete when its allowance truncates it", () => {
-    const ids = Array.from({ length: 200_001 }, (_unused, index) => index + 1);
-    const archive = parsed(
-      buildPerfRecording({ entries: [perfEntry({ ids })] }),
-    );
-    expect(archive.events[0]?.ids_truncated).toBe(true);
-    expect(archive.summary.identifiers_present).toBe(false);
-    expect(archive.diagnostics).toEqual([
-      expect.objectContaining({ code: "identifier-inventory-truncated" }),
+  it("applies and reports a caller-selected total for identifiers across groups", () => {
+    const bytes = buildPerfRecording({
+      entries: [
+        perfEntry({ ids: [7, 8] }),
+        perfEntry({ ids: [9, 10] }),
+        perfEntry({ ids: [11] }),
+      ],
+    });
+    const partial = parsed(bytes, { maxIdentifiers: 3 });
+    expect(
+      partial.events.map(({ ids, ids_truncated }) => [ids, ids_truncated]),
+    ).toEqual([
+      [[7, 8], false],
+      [[9], true],
+      [[], true],
     ]);
-    expect(archive.source_coverage.status).not.toBe("complete-within-scope");
+    expect(partial.summary).toMatchObject({
+      identifiers: 3,
+      identifiers_present: false,
+    });
+    expect(partial.diagnostics).toEqual([
+      expect.objectContaining({
+        code: "identifier-inventory-truncated",
+        limit: expect.objectContaining({
+          parameter: "max_identifiers",
+          effective_value: 3,
+        }),
+      }),
+    ]);
+    expect(partial.source_coverage.status).toBe("partial");
+    const complete = parsed(bytes, { maxIdentifiers: 5 });
+    expect(complete.summary).toMatchObject({
+      identifiers: 5,
+      identifiers_present: true,
+    });
+    expect(complete.source_coverage.status).toBe("complete-within-scope");
   });
 });
 
@@ -551,12 +618,12 @@ describe("parsePerfData attribute widths", () => {
     const first = parsePerfData(
       one,
       { ...artifact, sha256: "a".repeat(64), bytes: one.length },
-      { maxEvents: 100 },
+      { maxEvents: 100, maxIdentifiers: PERF_DATA_DEFAULT_MAX_IDENTIFIERS },
     );
     const second = parsePerfData(
       other,
       { ...artifact, sha256: "b".repeat(64), bytes: other.length },
-      { maxEvents: 100 },
+      { maxEvents: 100, maxIdentifiers: PERF_DATA_DEFAULT_MAX_IDENTIFIERS },
     );
     if (!first.ok || !second.ok) throw new Error("expected parsed recordings");
     expect(first.value.events[0]?.file_offset).toBe(
@@ -573,7 +640,7 @@ describe("parsePerfData attribute widths", () => {
       const result = parsePerfData(
         bytes,
         { ...artifact, sha256, bytes: bytes.length },
-        { maxEvents: 100 },
+        { maxEvents: 100, maxIdentifiers: PERF_DATA_DEFAULT_MAX_IDENTIFIERS },
       );
       if (!result.ok) throw new Error("expected a parsed recording");
       return result.value.diagnostics[0]?.diagnostic_id;

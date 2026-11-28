@@ -58,6 +58,22 @@ it.each(["compact"] as const)(
       ]);
       expect(inventory.summary).toMatchObject({ events: 2, identifiers: 2 });
       expect(inventory.diagnostics).toEqual([]);
+      const bounded = await harness.client.callTool({
+        name: "inspect_perf_data",
+        arguments: { path, max_identifiers: 1 },
+      });
+      expect(bounded.isError, JSON.stringify(bounded)).not.toBe(true);
+      const limited = parseEvidence(bounded.structuredContent);
+      expect(limited.parameters).toMatchObject({ max_identifiers: 1 });
+      expect(perfDataSchema.parse(limited.normalized_result)).toMatchObject({
+        summary: { identifiers: 1, identifiers_present: false },
+        diagnostics: [
+          {
+            code: "identifier-inventory-truncated",
+            limit: { parameter: "max_identifiers", effective_value: 1 },
+          },
+        ],
+      });
       await harness.client.ping();
     } finally {
       await harness.close();

@@ -54,6 +54,27 @@ cliTest(
       summary: { events: 2, identifiers: 2, identifiers_present: true },
       diagnostics: [],
     });
+    const bounded = await cli.run({
+      arguments: [
+        "inspect-perf-data",
+        path,
+        "--max-identifiers",
+        "1",
+        "--json",
+      ],
+    });
+    expect(bounded.exitCode, bounded.stderr).toBe(0);
+    const limited = completePerfEvidenceSchema.parse(bounded.json);
+    expect(limited.parameters).toMatchObject({ max_identifiers: 1 });
+    expect(limited.normalized_result).toMatchObject({
+      summary: { identifiers: 1, identifiers_present: false },
+      diagnostics: [
+        {
+          code: "identifier-inventory-truncated",
+          limit: { parameter: "max_identifiers", effective_value: 1 },
+        },
+      ],
+    });
   },
 );
 

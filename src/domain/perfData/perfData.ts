@@ -1,10 +1,14 @@
 import { z } from "zod";
+import { analysisParameterLimitSchema } from "../analysisSettingDefinitions.js";
 import { digestSchema, prefixedDigestSchema } from "../digests.js";
 import { localPathStringSchema } from "../localPath.js";
 
 /** Resource allowances, not `perf.data` format limits. */
 export const PERF_DATA_MAX_FILE_BYTES = 64 * 1024 * 1024;
 export const PERF_DATA_MAX_EVENTS = 20_000;
+export const PERF_DATA_DEFAULT_MAX_IDENTIFIERS = 200_000;
+/** Keep identifiers alone below 7 MiB of JSON, including a comma per ID. */
+export const PERF_DATA_MAX_IDENTIFIERS = 400_000;
 /**
  * One malformed attribute can consume an arbitrary share of the file, so the
  * count — not the byte allowance — is what bounds the reply.
@@ -88,6 +92,7 @@ export const perfDiagnosticSchema = z.strictObject({
     "unsafe-section-extent",
   ]),
   message: z.string(),
+  limit: analysisParameterLimitSchema.exactOptional(),
 });
 
 export const perfDataSchema = z.strictObject({
