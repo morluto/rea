@@ -18,6 +18,70 @@ import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("inspect_firmware_vector_table CLI and MCP parity", () => {
+  it.each([
+    {
+      name: "a jump after an unrecognized first slot",
+      words: [0x30200073, 0x0080006f],
+      base: "0x80000000",
+      examined: 2,
+      recognized: 1,
+      shape: "single_entry_or_inline",
+      coverage: "complete",
+    },
+    {
+      name: "no complete addressable slots",
+      words: [0x0080006f],
+      base: "0xfffffffd",
+      examined: 0,
+      recognized: 0,
+      shape: "empty_or_unrecognized",
+      coverage: "partial",
+    },
+  ])("reports the RISC-V shape for $name through the CLI", async (fixture) => {
+    const dir = await createTestTempDirectory("rea-riscv-vector-shape-");
+    const path = join(dir, "vectors.bin");
+    const bytes = Buffer.alloc(fixture.words.length * 4);
+    fixture.words.forEach((word, index) =>
+      bytes.writeUInt32LE(word, index * 4),
+    );
+    await writeFile(path, bytes);
+    let stdout = "";
+    let exitCode = 0;
+    await createCli({}).serve(
+      [
+        "inspect-firmware-vector-table",
+        path,
+        "--architecture",
+        "riscv",
+        "--base-address",
+        fixture.base,
+        "--max-entries",
+        String(fixture.words.length),
+        "--format",
+        "json",
+      ],
+      {
+        env: {},
+        exit: (code) => {
+          exitCode = code;
+        },
+        stdout: (chunk) => {
+          stdout += chunk;
+        },
+      },
+    );
+    expect(exitCode).toBe(0);
+    expect(JSON.parse(stdout)).toMatchObject({
+      normalized_result: {
+        examined_entries: fixture.examined,
+        recognized_riscv_slot_count: fixture.recognized,
+        riscv_table_shape: fixture.shape,
+        trap_entry_address: null,
+        coverage: { status: fixture.coverage },
+      },
+    });
+  });
+
   it("decodes an STM32 Cortex-M vector table with CLI and advertised MCP parity and enforces max_file_bytes", async () => {
     const dir = await createTestTempDirectory("rea-fw-vt-");
     const fwPath = join(dir, "stm32.bin");
