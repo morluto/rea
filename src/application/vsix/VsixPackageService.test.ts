@@ -55,6 +55,7 @@ const report: VsixPackage = {
     commands_omitted: 0,
     menus: [],
     keybindings: [],
+    ai: [],
   },
   extension_dependencies: {
     vsixmanifest: ["other.dep"],

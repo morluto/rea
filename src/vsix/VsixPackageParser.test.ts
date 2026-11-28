@@ -305,6 +305,30 @@ it("records the commands that menus and keybindings invoke", async () => {
   ]);
 });
 
+it("records declared chat participants, tools and MCP providers", async () => {
+  const bytes = await vsixPackageFixture({
+    packageJson: JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      engines: { vscode: "^1.74.0" },
+      contributes: {
+        chatParticipants: [{ id: "demo.chat", name: "demo" }],
+        languageModelTools: [{ name: "demo_tool", displayName: "Demo" }],
+        mcpServerDefinitionProviders: { id: "demo.mcp", label: "Demo MCP" },
+      },
+    }),
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.contributes.ai).toEqual([
+    { kind: "chat_participant", id: "demo.chat", label: "demo" },
+    { kind: "language_model_tool", id: "demo_tool", label: "Demo" },
+    { kind: "mcp_server_provider", id: "demo.mcp", label: "Demo MCP" },
+  ]);
+});
+
 it("counts a single contributed command object as one command", async () => {
   const bytes = await vsixPackageFixture({
     packageJson: JSON.stringify({
