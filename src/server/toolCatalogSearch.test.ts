@@ -137,10 +137,31 @@ describe("suggestAdvertisedTools", () => {
     expect(suggestAdvertisedTools("open_binry", SAMPLE_CATALOG)).toEqual([
       "open_binary",
     ]);
-    // Single-word typos (even 1 edit away) return no matches because edit distance is not used.
-    expect(suggestAdvertisedTools("decomplie", SAMPLE_CATALOG)).toEqual([]);
+  });
+
+  it("uses Levenshtein distance as fallback for single-word typos", () => {
+    // Single-word typos now return matches via Levenshtein distance (min 6 chars)
+    expect(suggestAdvertisedTools("decomplie", SAMPLE_CATALOG)).toEqual([
+      "batch_decompile",
+      "decompile_all",
+    ]);
+    // Short names are too noisy for Levenshtein, so no matches
     expect(suggestAdvertisedTools("opne", SAMPLE_CATALOG)).toEqual([]);
+    // Completely unrelated names still return no matches
     expect(suggestAdvertisedTools("zzzzzz", SAMPLE_CATALOG)).toEqual([]);
+  });
+
+  it("ranks Levenshtein suggestions by closest distance first", () => {
+    // Create a catalog where "closer" tool sorts after "zebra_tool" alphabetically
+    // We need to test that distance ranking comes before alphabetical
+    // when two tools have different distances to the typo
+    const catalog: readonly AdvertisedToolDescriptor[] = [
+      { name: "zebra_tool", description: "A zebra tool" },
+      { name: "abc_tool", description: "An ABC tool - closer to xyztool" },
+    ];
+    // "xyztool" is distance 3 from "abc_tool" but distance 5 from "zebra_tool"
+    // So with max distance 3, only "abc_tool" matches
+    expect(suggestAdvertisedTools("xyztool", catalog, 1)).toEqual(["abc_tool"]);
   });
 
   it("enforces bounds, deduplication, and deterministic slicing", () => {
@@ -207,6 +228,26 @@ describe("formatUnknownMcpToolMessage", () => {
       }),
     ).toBe(
       "The requested MCP tool is not advertised by this REA server. Closest advertised tool: open_binary. Select an advertised tool or call discover_tools to find and load other in-scope tools, then retry; do not repeat the unknown tool name.",
+    );
+  });
+
+  it("includes Levenshtein suggestions for single-word typos", () => {
+    expect(
+      formatUnknownMcpToolMessage("decomplie", {
+        tools: SAMPLE_CATALOG,
+        discoveryAvailable: false,
+      }),
+    ).toBe(
+      "The requested MCP tool is not advertised by this REA server. Closest advertised tools: batch_decompile, decompile_all. Select an advertised tool or call tools/list, and retry; do not repeat the unknown tool name.",
+    );
+    // Short names are too noisy for Levenshtein, so no suggestions
+    expect(
+      formatUnknownMcpToolMessage("opne", {
+        tools: SAMPLE_CATALOG,
+        discoveryAvailable: false,
+      }),
+    ).toBe(
+      "The requested MCP tool is not advertised by this REA server. Call tools/list, select an advertised tool, and retry; do not repeat the unknown tool name.",
     );
   });
 });
