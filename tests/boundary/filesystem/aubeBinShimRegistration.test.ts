@@ -354,6 +354,37 @@ it
   },
 );
 
+it.skipIf(process.platform === "win32").each([true, false])(
+  "owns a saved Aube launcher of another runtime only for an installed REA package (manifest=%s)",
+  async (manifest) => {
+    const home = await createTestTempDirectory("rea-aube-other-runtime-");
+    const { entrypoint, shim } = await installWithMise(
+      join(home, "installs", "rea"),
+      "6.7.0",
+    );
+    if (manifest)
+      await writeFile(
+        join(dirname(dirname(entrypoint)), "package.json"),
+        JSON.stringify({ name: "rea-agents", bin: { rea: "scripts/rea.mjs" } }),
+      );
+    await rm(join(dirname(shim), "node"));
+    const runtime = join(home, "old-node", "node");
+    await mkdir(dirname(runtime));
+    await writeFile(runtime, "#!/bin/sh\nexit 44\n", { mode: 0o755 });
+    const saved = oldAubeRegistration(shim, runtime, "saved");
+    expect(classifyClientRegistrationCommand(saved, entrypoint)).toBe(
+      manifest ? "owned" : "unknown",
+    );
+    expect(classifyClientRegistrationCommand([shim, "mcp"], entrypoint)).toBe(
+      manifest ? "owned" : "foreign",
+    );
+    await registerWithClaudeCode(home, saved);
+    expect(await claudeCodeState(home, entrypoint)).toBe(
+      manifest ? "stale" : "unknown",
+    );
+  },
+);
+
 it.skipIf(process.platform === "win32")(
   "executes an Aube host-bound interpreter with no Node on the client PATH",
   async () => {
