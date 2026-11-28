@@ -4,6 +4,7 @@ import { decodeIso9660VolumeDate } from "./iso9660Dates.js";
 import {
   assertIso9660Volume,
   ISO9660_DESCRIPTOR_OFFSET,
+  ISO9660_DIRECTORY_RECORD_HEADER_BYTES,
   ISO9660_FLAG_DIRECTORY,
   ISO9660_FORMAT,
   ISO9660_LIMITS,
@@ -100,20 +101,19 @@ const textField = (bytes: Buffer, start: number, end: number): string =>
     .replace(/[ \0]+$/u, "");
 
 /**
- * The descriptor's 34-byte root record: a directory with the one-byte
- * identifier 0x00, in one extent, on the volume the descriptor declares.
+ * The descriptor's 34-byte root record: a directory with identifier 0x00,
+ * in one extent, on the volume the descriptor declares. A Joliet descriptor
+ * may store that identifier as the UCS-2 bytes 00 00.
  */
 const rootRecord = (
   sector: Buffer,
   base: number,
   volume: Iso9660VolumeSetMember,
+  kind: "primary" | "joliet",
 ): Iso9660DirectoryRecord => {
-  // The descriptor reserves a fixed 34-byte field for the root record, and the
-  // volume set identifier always starts after it, so the field is what this
-  // reader decodes. Images in the wild declare more (a Joliet root storing a
-  // two-byte UCS-2 NUL declares 36, libarchive has seen up to 68); 7-Zip,
-  // libarchive, pycdlib and Linux all read the 34-byte field and ignore the
-  // declared length. A length below 34 cannot hold the fixed fields.
+  // The root field is 34 bytes and the volume set identifier starts on the
+  // next byte, so a longer length byte does not extend the record. Below 34
+  // the fixed fields do not fit.
   const declaredLength = sector[ROOT_RECORD_OFFSET] ?? 0;
   if (declaredLength < ROOT_RECORD_BYTES)
     throw iso9660Malformed(
@@ -121,19 +121,27 @@ const rootRecord = (
       base + ROOT_RECORD_OFFSET,
       "root_directory_record",
     );
-  // Decode the fixed 34-byte field, not the declared length. A Joliet root
-  // stores its NUL identifier as UCS-2 (length 2, bytes 00 00), which the field
-  // holds as the single 0x00 byte this record is required to carry.
-  const field = Buffer.from(
-    sector.subarray(ROOT_RECORD_OFFSET, ROOT_RECORD_OFFSET + ROOT_RECORD_BYTES),
-  );
-  field[0] = ROOT_RECORD_BYTES;
-  if (field[32] === 2 && field[33] === 0) field[32] = 1;
+  // Joliet may store the root NUL as UCS-2: identifier length 2, bytes
+  // 00 00. The second byte is the first byte after the field. That form is
+  // the one-byte identifier 0x00. A primary root must already be that byte.
+  const identifierLengthAt =
+    ROOT_RECORD_OFFSET + ISO9660_DIRECTORY_RECORD_HEADER_BYTES - 1;
+  const identifierAt =
+    ROOT_RECORD_OFFSET + ISO9660_DIRECTORY_RECORD_HEADER_BYTES;
+  const jolietNul =
+    kind === "joliet" &&
+    sector[identifierLengthAt] === 2 &&
+    sector[identifierAt] === 0 &&
+    sector[identifierAt + 1] === 0;
   const root = iso9660DirectoryRecordAt(
-    field,
-    0,
-    base + ROOT_RECORD_OFFSET,
-    ROOT_RECORD_BYTES,
+    sector,
+    ROOT_RECORD_OFFSET,
+    base,
+    ROOT_RECORD_OFFSET + ROOT_RECORD_BYTES,
+    {
+      extent: ROOT_RECORD_BYTES,
+      ...(jolietNul ? { identifierLength: 1 } : {}),
+    },
   );
   if (root.identifier[0] !== 0)
     throw iso9660Malformed(
@@ -233,7 +241,7 @@ const primaryVolume = (sector: Buffer, base: number): PrimaryVolume => {
     volumeSequenceNumber: set.sequence,
     logicalBlockSize: admitBlockSize(sector, base),
     pathTableSize: readBothEndian32(sector, 132, base, "path_table_size"),
-    primaryRoot: rootRecord(sector, base, set),
+    primaryRoot: rootRecord(sector, base, set, "primary"),
     volumeSetIdentifier: textField(sector, 190, 318),
     publisherIdentifier: textField(sector, 318, 446),
     dataPreparerIdentifier: textField(sector, 446, 574),
@@ -359,7 +367,7 @@ const recordDescriptor = (
     volumeSpaceSize: readBothEndian32(sector, 80, base, "volume_space_size"),
     volumeSetSize: set.size,
     volumeSequenceNumber: set.sequence,
-    root: rootRecord(sector, base, set),
+    root: rootRecord(sector, base, set, "joliet"),
   };
 };
 
