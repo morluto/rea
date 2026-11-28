@@ -1469,6 +1469,7 @@ export function* readGnuPropertyWordsSteps(
   const found = new Map<number, GnuPropertyWord>();
   for (const { offset, size } of propertyRanges) {
     let cursor = 0;
+    let previousType: number | undefined;
     let base = 0;
     let window = new BinaryReader(Buffer.alloc(0), little, "elf-notes");
     while (cursor < size) {
@@ -1494,6 +1495,11 @@ export function* readGnuPropertyWordsSteps(
       const step = Math.ceil((8 + dataSize) / propertyAlign) * propertyAlign;
       if (cursor + step > size)
         failTruncated("ELF GNU property record is truncated.");
+      if (previousType !== undefined && type <= previousType)
+        fail(
+          "ELF GNU property types must be strictly increasing within a note.",
+        );
+      previousType = type;
       if (
         type === GNU_PROPERTY_X86_FEATURE_1_AND ||
         type === GNU_PROPERTY_AARCH64_FEATURE_1_AND

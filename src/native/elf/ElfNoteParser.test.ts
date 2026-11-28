@@ -31,8 +31,104 @@ import {
   parseElfNotesFromHandle,
   readElfBuildIds,
   readElfBuildIdsFromHandle,
+  readGnuPropertyWordsSteps,
 } from "./ElfNoteParser.js";
 import { bufferByteSource } from "../../domain/byteSource.js";
+
+it.each([
+  { order: "descending", type: 0xc0000001, little: true },
+  { order: "duplicate", type: 0xc0000002, little: true },
+  { order: "descending", type: 0xc0000001, little: false },
+  { order: "duplicate", type: 0xc0000002, little: false },
+])(
+  "rejects $order GNU property types (little-endian: $little)",
+  ({ type, little }) => {
+    const note = gnuPropertyNote(little);
+    const words = () => {
+      const steps = readGnuPropertyWordsSteps(
+        note.length,
+        little,
+        [{ offset: 0, size: note.length, alignment: 8 }],
+        1,
+        8,
+      );
+      let next = steps.next();
+      while (!next.done)
+        next = steps.next(
+          note.subarray(
+            next.value.offset,
+            next.value.offset + next.value.length,
+          ),
+        );
+      return next.value;
+    };
+    expect(words().get(0xc0000002)?.value).toBe(3);
+    const secondPropertyOffset = note.length - 16;
+    if (little) note.writeUInt32LE(type, secondPropertyOffset);
+    else note.writeUInt32BE(type, secondPropertyOffset);
+    expect(words).toThrow(
+      expect.objectContaining({
+        failure: expect.objectContaining({ format: "elf", kind: "malformed" }),
+      }),
+    );
+  },
+);
+
+it("checks GNU property order across streamed read windows", () => {
+  const descriptor = Buffer.alloc(65552);
+  descriptor.writeUInt32LE(1, 0);
+  descriptor.writeUInt32LE(65528, 4);
+  descriptor.writeUInt32LE(0xc0000002, 65536);
+  descriptor.writeUInt32LE(4, 65540);
+  descriptor.writeUInt32LE(3, 65544);
+  const note = elfNote("GNU", 5, descriptor, true, 8);
+  const reads: number[] = [];
+  const words = () => {
+    const steps = readGnuPropertyWordsSteps(
+      note.length,
+      true,
+      [{ offset: 0, size: note.length, alignment: 8 }],
+      1,
+      8,
+    );
+    let next = steps.next();
+    while (!next.done) {
+      reads.push(next.value.offset);
+      next = steps.next(
+        note.subarray(next.value.offset, next.value.offset + next.value.length),
+      );
+    }
+    return next.value;
+  };
+  expect(words().get(0xc0000002)?.value).toBe(3);
+  expect(reads).toContain(16 + 65536);
+  note.writeUInt32LE(1, 16 + 65536);
+  expect(words).toThrow(
+    expect.objectContaining({
+      failure: expect.objectContaining({ format: "elf", kind: "malformed" }),
+    }),
+  );
+});
+
+it("restarts GNU property ordering for each note", () => {
+  const notes = Buffer.concat([gnuPropertyNote(), gnuPropertyNote()]);
+  const steps = readGnuPropertyWordsSteps(
+    notes.length,
+    true,
+    [{ offset: 0, size: notes.length, alignment: 8 }],
+    2,
+    8,
+  );
+  let next = steps.next();
+  while (!next.done)
+    next = steps.next(
+      notes.subarray(next.value.offset, next.value.offset + next.value.length),
+    );
+  expect(next.value.get(0xc0000002)).toMatchObject({
+    value: 3,
+    conflict: false,
+  });
+});
 
 const defaults = inspectElfNotesInputSchema.parse({
   path: "/artifacts/app",
