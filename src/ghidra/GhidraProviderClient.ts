@@ -900,7 +900,7 @@ export const createGhidraProviderClient = (input: {
     // entry can substantiate the candidate derived from LC_MAIN.
     if (observed.value !== address) return {};
     return {
-      hint: `Retry the same operation at Ghidra procedure address ${address} (Mach-O LC_MAIN file offset ${fileOffset}). For CLI decompile, use --procedure ${address}. For MCP, set procedure to "${address}".`,
+      hint: `Retry the same operation at Ghidra procedure address ${address} (Mach-O LC_MAIN file offset ${fileOffset}) by setting procedure to "${address}".`,
     };
   };
   let projectHistory: Evidence | undefined;

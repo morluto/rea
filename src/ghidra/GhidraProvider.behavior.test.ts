@@ -1977,6 +1977,7 @@ describe("Ghidra missing main on a Mach-O with LC_MAIN", () => {
         code: "invalid_request",
         details: {
           related_operations: ["list_procedures", "search_procedures"],
+          related_parameters: ["procedure"],
           diagnostics: { remote_code: "procedure_not_found" },
         },
       });
@@ -1984,7 +1985,13 @@ describe("Ghidra missing main on a Mach-O with LC_MAIN", () => {
       expect(projected.remediation.action.startsWith(MACHO_MAIN_RETRY)).toBe(
         true,
       );
-      expect(projected.remediation.action).toContain("--procedure 0x100000460");
+      expect(projected.remediation.action).toContain(
+        'by setting procedure to "0x100000460"',
+      );
+      // Recovery names contract fields and operations; each adapter renders its spelling.
+      expect(projected.remediation.action).not.toMatch(
+        /\bCLI\b|\brea \b|MCP|--/u,
+      );
       expect(projected.remediation.action).not.toContain(
         "REA_GHIDRA_SEED_FILE",
       );
@@ -2002,6 +2009,7 @@ describe("Ghidra missing main on a Mach-O with LC_MAIN", () => {
       });
       expect(projected.remediation.action).toContain("search_procedures");
       expect(projected.remediation.action).not.toContain("LC_MAIN");
+      expect(projected.details).not.toHaveProperty("related_parameters");
     },
   );
 

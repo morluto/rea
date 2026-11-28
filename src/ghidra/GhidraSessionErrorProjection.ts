@@ -333,6 +333,8 @@ const projectPrimarySessionError = (
   ) {
     let recovery: string;
     let relatedOperations: readonly string[];
+    // The LC_MAIN entry hint names the procedure value to retry with.
+    let relatedParameters: readonly string[] = [];
     switch (failure.remoteCode) {
       case "file_offset_unmapped":
         recovery =
@@ -352,17 +354,21 @@ const projectPrimarySessionError = (
       default:
         recovery =
           (entryHint === undefined ? "" : `${entryHint} `) +
-          "Choose an observed name or address from the current Ghidra inventory. CLI: rea search <path> . --kind procedures --mode regex --provider ghidra. MCP: use search_procedures or list_procedures. An inventory miss leaves the function's presence in the artifact unknown." +
+          "Choose an observed name or address from the current Ghidra inventory; search_procedures or list_procedures reports them. An inventory miss leaves the function's presence in the artifact unknown." +
           (source === "existing-project"
             ? " The selected project's previous analysis completeness is unknown. To explicitly request a separate fresh import, start a new REA process without REA_GHIDRA_PROJECT_PATH and REA_GHIDRA_PROGRAM_NAME. That separate analysis excludes the selected project's annotations and other edits."
             : "");
         relatedOperations = ["list_procedures", "search_procedures"];
+        if (entryHint !== undefined) relatedParameters = ["procedure"];
     }
     return new AnalysisInputError(
       operation,
       {
         ...context,
-        related: { operations: relatedOperations },
+        related: {
+          operations: relatedOperations,
+          parameters: relatedParameters,
+        },
         // The bridge sends every matching entry for an ambiguous selector.
         ...(failure.cause instanceof GhidraRemoteError &&
         failure.cause.candidates !== undefined
@@ -784,7 +790,7 @@ const GHIDRA_TYPE_EDIT_REFUSALS: Readonly<
     fields: { annotate_native_function: "signature" },
     recovery: {
       action:
-        "Define the named types first (MCP define_native_data_types; CLI rea define-native-data-types), then repeat this call. Nothing in this call was applied.",
+        "Define the named types first with define_native_data_types, then repeat this call. Nothing in this call was applied.",
       operations: ["define_native_data_types"],
     },
   },
@@ -795,7 +801,7 @@ const GHIDRA_TYPE_EDIT_REFUSALS: Readonly<
     },
     recovery: {
       action:
-        "Use a type whose name is unique in the database: inspect the listed types (MCP inspect_native_data_type; CLI rea inspect-native-data-type) and define the intended layout under a new name. This release cannot select a type by category path in C text; nothing in this call was applied.",
+        "Use a type whose name is unique in the database: inspect the listed types with inspect_native_data_type and define the intended layout under a new name with define_native_data_types. This release cannot select a type by category path in C text; nothing in this call was applied.",
       operations: ["inspect_native_data_type", "define_native_data_types"],
     },
   },
@@ -806,7 +812,7 @@ const GHIDRA_TYPE_EDIT_REFUSALS: Readonly<
     fields: { define_native_data_types: "declarations" },
     recovery: {
       action:
-        "Use another type name, or inspect the existing type (MCP inspect_native_data_type; CLI rea inspect-native-data-type) and use it unchanged. REA does not replace an existing type; nothing in this call was stored.",
+        "Use another type name, or inspect the existing type with inspect_native_data_type and use it unchanged. REA does not replace an existing type; nothing in this call was stored.",
       operations: ["inspect_native_data_type"],
     },
   },
@@ -814,7 +820,7 @@ const GHIDRA_TYPE_EDIT_REFUSALS: Readonly<
     fields: { define_native_data_types: "declarations" },
     recovery: {
       action:
-        "Give each distinct type its own name. C keeps a struct, union or enum tag and a typedef in separate namespaces, and Ghidra stores both under one name. Repeat this call (MCP define_native_data_types; CLI rea define-native-data-types) with the renamed text. Nothing in this call was stored.",
+        "Give each distinct type its own name. C keeps a struct, union or enum tag and a typedef in separate namespaces, and Ghidra stores both under one name. Repeat define_native_data_types with the renamed text. Nothing in this call was stored.",
       operations: ["define_native_data_types"],
     },
   },
