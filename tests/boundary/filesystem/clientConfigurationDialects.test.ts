@@ -1013,8 +1013,19 @@ describe("client launcher traversal semantics", () => {
       cmd,
       [
         "@ECHO off",
+        "GOTO start",
+        ":find_dp0",
+        "SET dp0=%~dp0",
+        "EXIT /b",
+        ":start",
         "SETLOCAL",
-        'SET "_prog=node"',
+        "CALL :find_dp0",
+        'IF EXIST "%dp0%\\node.exe" (',
+        '  SET "_prog=%dp0%\\node.exe"',
+        ") ELSE (",
+        '  SET "_prog=node"',
+        "  SET PATHEXT=%PATHEXT:;.JS;=;%",
+        ")",
         `endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\${PRODUCT_IDENTITY.packageName}\\scripts\\rea.mjs" %*`,
         "",
       ].join("\r\n"),
@@ -1108,6 +1119,49 @@ describe("client launcher traversal semantics", () => {
         "@ECHO off",
         `if errorlevel 1 echo "%_prog%" "%dp0%\\node_modules\\${PRODUCT_IDENTITY.packageName}\\scripts\\rea.mjs" %*`,
         `endLocal & "%_prog%"  "%dp0%\\other.mjs" %*`,
+        "",
+      ].join("\r\n"),
+    );
+    expect(classifyClientRegistrationCommand([cmd, "mcp"], script)).toBe(
+      "unknown",
+    );
+  });
+
+  it("keeps rea.cmd wrappers unknown when launches are chained or followed by other commands", async () => {
+    const root = await createTestTempDirectory("rea-cmd-chained-");
+    const script = join(
+      root,
+      "node_modules",
+      PRODUCT_IDENTITY.packageName,
+      "scripts",
+      "rea.mjs",
+    );
+    await mkdir(dirname(script), { recursive: true });
+    await writeFile(script, "// owned dispatcher\n");
+    const cmd = join(root, "rea.cmd");
+
+    await writeFile(
+      cmd,
+      [
+        "@ECHO off",
+        "SETLOCAL",
+        'SET "_prog=node"',
+        `endLocal & "%_prog%"  "%dp0%\\node_modules\\${PRODUCT_IDENTITY.packageName}\\scripts\\rea.mjs" %* & "%_prog%"  "%dp0%\\other.mjs" %*`,
+        "",
+      ].join("\r\n"),
+    );
+    expect(classifyClientRegistrationCommand([cmd, "mcp"], script)).toBe(
+      "unknown",
+    );
+
+    await writeFile(
+      cmd,
+      [
+        "@ECHO off",
+        "SETLOCAL",
+        'SET "_prog=node"',
+        `endLocal & "%_prog%"  "%dp0%\\node_modules\\${PRODUCT_IDENTITY.packageName}\\scripts\\rea.mjs" %*`,
+        "node other.mjs",
         "",
       ].join("\r\n"),
     );
