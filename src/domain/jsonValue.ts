@@ -49,6 +49,48 @@ export const equalJsonValues = (
   return true;
 };
 
+/** Whether a UTF-16 code unit can continue a JSON number or literal token. */
+const jsonTokenUnit = (code: number): boolean =>
+  (code >= 0x30 && code <= 0x39) || // 0-9
+  (code >= 0x41 && code <= 0x5a) || // A-Z
+  (code >= 0x61 && code <= 0x7a) || // a-z
+  code === 0x2b || // +
+  code === 0x2d || // -
+  code === 0x2e; // .
+
+/**
+ * How many values `JSON.parse(source)` would allocate (objects, arrays,
+ * strings including member names, numbers, booleans and nulls), counted in
+ * one scan without building them. Counting stops at `limit + 1`, so a caller
+ * can refuse a document whose decoded tree would outgrow its text before
+ * parsing it. Ill-formed text returns an approximate count; `JSON.parse`
+ * still reports the syntax failure.
+ */
+export const countJsonValues = (source: string, limit: number): number => {
+  let values = 0;
+  let inString = false;
+  let inToken = false;
+  for (let index = 0; index < source.length; index++) {
+    const code = source.charCodeAt(index);
+    if (inString) {
+      if (code === 0x5c) index++;
+      else if (code === 0x22) inString = false;
+      continue;
+    }
+    if (jsonTokenUnit(code)) {
+      if (inToken) continue;
+      inToken = true;
+    } else {
+      inToken = false;
+      if (code === 0x22) inString = true;
+      else if (code !== 0x7b && code !== 0x5b) continue;
+    }
+    values++;
+    if (values > limit) return values;
+  }
+  return values;
+};
+
 const immutableValidation = new WeakMap<object, string | undefined>();
 
 /** Validate JSON meaning and nesting without cloning a trusted immutable value. */
@@ -60,30 +102,60 @@ export const jsonValueValidationIssue = (root: unknown): string | undefined => {
   }
 };
 
-function* ownEnumerableKeys(value: Record<string, unknown>): Generator<string> {
-  for (const key in value) if (Object.hasOwn(value, key)) yield key;
-}
-
-function* jsonObjectValues(
-  record: Record<string, JsonValue>,
-): Generator<JsonValue> {
-  for (const key of ownEnumerableKeys(record)) yield record[key]!;
-}
-
 /** Check a validated value's nesting without queuing whole containers. */
 export const jsonValueExceedsDepth = (
   root: JsonValue,
   limit: number,
 ): boolean => {
-  const levels: Iterator<JsonValue>[] = [[root].values()];
-  for (let level = levels.at(-1); level !== undefined; level = levels.at(-1)) {
-    const next = level.next();
-    if (next.done === true) levels.pop();
-    else if (levels.length - 1 > limit) return true;
-    else if (Array.isArray(next.value)) levels.push(next.value.values());
-    else if (isRecord(next.value)) levels.push(jsonObjectValues(next.value));
+  type DepthFrame =
+    | {
+        readonly kind: "array";
+        readonly value: readonly JsonValue[];
+        index: number;
+      }
+    | {
+        readonly kind: "object";
+        readonly value: Record<string, JsonValue>;
+        readonly keys: readonly string[];
+        index: number;
+      };
+  const frames: DepthFrame[] = [];
+  let value: JsonValue = root;
+  let depth = 0;
+  let inspect = true;
+  for (;;) {
+    if (inspect) {
+      if (depth > limit) return true;
+      if (Array.isArray(value)) {
+        if (value.length > 0) frames.push({ kind: "array", value, index: 0 });
+      } else if (isRecord(value)) {
+        const keys = Object.keys(value);
+        if (keys.length > 0)
+          frames.push({ kind: "object", value, keys, index: 0 });
+      }
+      inspect = false;
+      continue;
+    }
+    const frame = frames[frames.length - 1];
+    if (frame === undefined) return false;
+    if (frame.kind === "array") {
+      if (frame.index >= frame.value.length) {
+        frames.pop();
+        continue;
+      }
+      value = frame.value[frame.index++]!;
+      depth = frames.length;
+      inspect = true;
+      continue;
+    }
+    if (frame.index >= frame.keys.length) {
+      frames.pop();
+      continue;
+    }
+    value = frame.value[frame.keys[frame.index++]!]!;
+    depth = frames.length;
+    inspect = true;
   }
-  return false;
 };
 
 /** Validate JSON in bounded steps; cache only authenticated immutable roots. */
@@ -111,7 +183,8 @@ export function* jsonValueValidationSteps(
         readonly kind: "object";
         readonly value: Record<string, unknown>;
         readonly depth: number;
-        readonly keys: Generator<string>;
+        readonly keys: readonly string[];
+        index: number;
       };
   const pending: Frame[] = [];
   let value = root;
@@ -159,7 +232,8 @@ export function* jsonValueValidationSteps(
           kind: "object",
           value,
           depth,
-          keys: ownEnumerableKeys(value),
+          keys: Object.keys(value),
+          index: 0,
         });
         inspect = false;
       } else return finish("Invalid JSON value");
@@ -185,12 +259,12 @@ export function* jsonValueValidationSteps(
       continue;
     }
 
-    const next = frame.keys.next();
-    if (next.done) {
+    if (frame.index >= frame.keys.length) {
       pending.pop();
       continue;
     }
-    const descriptor = Object.getOwnPropertyDescriptor(frame.value, next.value);
+    const key = frame.keys[frame.index++]!;
+    const descriptor = Object.getOwnPropertyDescriptor(frame.value, key);
     if (descriptor?.enumerable !== true) continue;
     if (!Object.hasOwn(descriptor, "value"))
       return finish("JSON objects cannot contain accessors");
@@ -200,28 +274,45 @@ export function* jsonValueValidationSteps(
   }
 }
 
-const preserveJsonValue = (value: JsonValue): JsonValue => {
+const copyJsonValue = (
+  value: JsonValue,
+  borrowImmutable: boolean,
+): JsonValue => {
   const immutableCandidate: unknown = value;
-  if (isImmutableJsonSnapshot(immutableCandidate)) return value;
+  if (borrowImmutable && isImmutableJsonSnapshot(immutableCandidate))
+    return value;
   if (Array.isArray(value)) {
-    const copy: JsonValue[] = [];
-    for (let index = 0; index < value.length; index += 1)
-      copy.push(preserveJsonValue(value[index]!));
+    const length = value.length;
+    const copy = new Array<JsonValue>(length);
+    for (let index = 0; index < length; index += 1)
+      copy[index] = copyJsonValue(value[index]!, borrowImmutable);
     return copy;
   }
   if (value !== null && typeof value === "object") {
     const copy: Record<string, JsonValue> = {};
-    for (const key of ownEnumerableKeys(value))
-      Object.defineProperty(copy, key, {
-        value: preserveJsonValue(value[key]!),
-        enumerable: true,
-        configurable: true,
-        writable: true,
-      });
+    const keys = Object.keys(value);
+    for (let index = 0; index < keys.length; index += 1) {
+      const key = keys[index]!;
+      const copied = copyJsonValue(value[key]!, borrowImmutable);
+      if (key === "__proto__")
+        Object.defineProperty(copy, key, {
+          value: copied,
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        });
+      else copy[key] = copied;
+    }
     return copy;
   }
   return value;
 };
+
+const preserveJsonValue = (value: JsonValue): JsonValue =>
+  copyJsonValue(value, true);
+
+const detachJsonValue = (value: JsonValue): JsonValue =>
+  copyJsonValue(value, false);
 
 const validatedJsonValue = z
   .unknown()
@@ -242,6 +333,14 @@ export const jsonValueSchema = z
   .transform(preserveJsonValue);
 jsonValueSchema._zod.toJSONSchema = () => ({});
 
+/** Parse bounded JSON into detached mutable copies, cloning sealed subtrees. */
+export const detachedJsonValueSchema = z
+  .unknown()
+  .nonoptional()
+  .pipe(validatedJsonValue)
+  .transform(detachJsonValue);
+detachedJsonValueSchema._zod.toJSONSchema = () => ({});
+
 /** Validate JSON that the current boundary exclusively owns, without a second full-tree copy. */
 export const ownedJsonValueSchema = z
   .unknown()
@@ -259,6 +358,11 @@ objectValidation._zod.toJSONSchema = objectProjection;
 /** JSON object boundary for caller-visible parameter maps. */
 export const jsonObjectSchema = jsonValueSchema.pipe(objectValidation);
 jsonObjectSchema._zod.toJSONSchema = objectProjection;
+
+/** Detached JSON object boundary for mutable caller exports. */
+export const detachedJsonObjectSchema =
+  detachedJsonValueSchema.pipe(objectValidation);
+detachedJsonObjectSchema._zod.toJSONSchema = objectProjection;
 
 /** Validate an exclusively owned JSON object while retaining its existing tree. */
 export const ownedJsonObjectSchema =

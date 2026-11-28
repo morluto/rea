@@ -20,6 +20,7 @@ import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import { UnknownRegistryError } from "../../domain/unknownRegistryError.js";
 import {
   isImmutableEvidence,
+  adoptEvidenceDisplayMetadata,
   evidenceDisplayMetadataAgree,
   evidenceFileTarget,
   type Evidence,
@@ -68,6 +69,11 @@ export interface EvidenceImportDelta {
   readonly replacements: readonly EvidenceMetadataReplacement[];
 }
 
+export interface EvidenceRecordDelta {
+  readonly disposition: "added" | "duplicate";
+  readonly replacements: readonly EvidenceMetadataReplacement[];
+}
+
 type ImportResult = Result<EvidenceImportDelta, AnalysisError>;
 interface RetentionChanges {
   readonly deltaBytes: number;
@@ -79,7 +85,9 @@ export class EvidenceLedger {
   #records = new Map<string, Evidence>();
   #unknownRevisions = new Map<string, ResidualUnknown>();
   #unknownHeads = new Map<string, ResidualUnknown>();
+  #sortedUnknownHeads: readonly ResidualUnknown[] | undefined;
   #recordBytes = new Map<string, number>();
+  #cachedImmutableBundle: EvidenceBundle | undefined;
   readonly #retained: Budget;
   constructor(
     private readonly retentionPolicy: InvestigationRetentionPolicy = {},
@@ -124,6 +132,42 @@ export class EvidenceLedger {
     this.#records.set(evidence.evidence_id, evidence);
     this.#commitAccounting(admitted.value);
     return ok("added");
+  }
+
+  /** Reconcile provenance supplied by an authenticated record, never inferred from a session. */
+  recordWithMetadata(
+    input: Evidence,
+  ): Result<EvidenceRecordDelta, AnalysisError> {
+    const authenticated = this.#readEvidence(
+      input,
+      "Evidence record validation failed",
+    );
+    if (!authenticated.ok) return authenticated;
+    const incoming = authenticated.value;
+    const previous = this.#records.get(incoming.evidence_id);
+    if (previous === undefined) {
+      const recorded = this.record(incoming);
+      return recorded.ok
+        ? ok({ disposition: recorded.value, replacements: [] })
+        : recorded;
+    }
+    if (incoming.provider_selection === undefined)
+      return ok({ disposition: "duplicate", replacements: [] });
+    const current = adoptEvidenceDisplayMetadata(previous, incoming);
+    if (current === previous)
+      return ok({ disposition: "duplicate", replacements: [] });
+    const admitted = this.#admitChanges(
+      "record_evidence",
+      new Map([[current.evidence_id, current]]),
+    );
+    if (!admitted.ok)
+      return err(this.#exposeRefusedEvidence(admitted.error, previous));
+    this.#records.set(current.evidence_id, current);
+    this.#commitAccounting(admitted.value);
+    return ok({
+      disposition: "duplicate",
+      replacements: [{ kind: "metadata", previous, current }],
+    });
   }
 
   /** Validate an entire bundle before atomically merging its records. */
@@ -268,10 +312,11 @@ export class EvidenceLedger {
 
   /** Borrow an authenticated immutable bundle without copying its records. */
   immutableBundle(): EvidenceBundle {
-    return createImmutableEvidenceBundle(
+    this.#cachedImmutableBundle ??= createImmutableEvidenceBundle(
       [...this.#records.values()],
       [...this.#unknownRevisions.values()],
     );
+    return this.#cachedImmutableBundle;
   }
 
   /** Borrow immutable source records without constructing or hashing a bundle. */
@@ -459,20 +504,33 @@ export class EvidenceLedger {
     return this.listUnknownsPage(filters).items;
   }
 
+  #getSortedUnknownHeads(): readonly ResidualUnknown[] {
+    if (this.#sortedUnknownHeads === undefined) {
+      this.#sortedUnknownHeads = [...this.#unknownHeads.values()].sort(
+        (left, right) =>
+          compareUnicodeCodePoints(left.unknown_id, right.unknown_id),
+      );
+    }
+    return this.#sortedUnknownHeads;
+  }
+
   /** Select a stable page of current heads before detaching record payloads. */
   listUnknownsPage(query: UnknownQuery = {}): UnknownPage {
     const offset = query.offset ?? 0;
-    const matching = [...this.#unknownHeads.values()]
-      .filter(
-        (unknown) =>
-          (query.status === undefined || unknown.status === query.status) &&
-          (query.severity === undefined ||
-            unknown.severity === query.severity) &&
-          (query.domain === undefined || unknown.domain === query.domain),
-      )
-      .sort((left, right) =>
-        compareUnicodeCodePoints(left.unknown_id, right.unknown_id),
-      );
+    const sorted = this.#getSortedUnknownHeads();
+    const unfiltered =
+      query.status === undefined &&
+      query.severity === undefined &&
+      query.domain === undefined;
+    const matching = unfiltered
+      ? sorted
+      : sorted.filter(
+          (unknown) =>
+            (query.status === undefined || unknown.status === query.status) &&
+            (query.severity === undefined ||
+              unknown.severity === query.severity) &&
+            (query.domain === undefined || unknown.domain === query.domain),
+        );
     const start = Math.min(offset, matching.length);
     const end =
       query.limit === undefined
@@ -514,7 +572,9 @@ export class EvidenceLedger {
   clear(): void {
     this.#records.clear();
     this.#unknownRevisions.clear();
+    this.#cachedImmutableBundle = undefined;
     this.#unknownHeads.clear();
+    this.#sortedUnknownHeads = undefined;
     this.#retained.restore(0);
     this.#recordBytes.clear();
   }
@@ -571,6 +631,7 @@ export class EvidenceLedger {
     if (unknown !== undefined && unknownKey !== undefined) {
       this.#unknownRevisions.set(unknownKey, unknown);
       this.#unknownHeads.set(unknown.unknown_id, unknown);
+      this.#sortedUnknownHeads = undefined;
     }
     this.#commitAccounting(admitted.value);
     return ok(undefined);
@@ -627,6 +688,7 @@ export class EvidenceLedger {
     this.#records = records;
     this.#unknownRevisions = unknownRevisions;
     this.#unknownHeads = unknownHeads;
+    this.#sortedUnknownHeads = undefined;
   }
 
   #readEvidence(
@@ -703,6 +765,7 @@ export class EvidenceLedger {
   }
 
   #commitAccounting(changes: RetentionChanges): void {
+    this.#cachedImmutableBundle = undefined;
     for (const [id, bytes] of changes.recordBytes)
       this.#recordBytes.set(id, bytes);
     // #admitChanges admitted the delta against the same, unchanged allowance.

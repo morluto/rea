@@ -1,4 +1,4 @@
-import { pipeline, Transform, type Readable } from "node:stream";
+import { pipeline, Readable, Transform } from "node:stream";
 
 import {
   ArtifactReaderFailure,
@@ -65,6 +65,38 @@ export class ArtifactStreamLifecycle {
   }
 }
 
+/** Whether a decoded member's producer is between reads, reading, or failed. */
+export type DecodedMemberReadState = "idle" | "pending" | "failed";
+
+/**
+ * Serve a member whose bytes are produced by decoding. A pending read or
+ * decode owns its own cancellation failure; once the producer is idle (such
+ * as paused on backpressure), caller cancellation destroys the source at once
+ * so pipeline and reader.close() retire promptly.
+ */
+export const decodedArtifactMemberSource = (
+  { signal, cancellationFailure }: ArtifactMemberLifecycle,
+  produce: (
+    onStateChange: (state: DecodedMemberReadState) => void,
+  ) => AsyncIterable<Buffer>,
+): Readable => {
+  let readState: DecodedMemberReadState = "idle";
+  const source = Readable.from(
+    produce((state) => {
+      readState = state;
+    }),
+    { objectMode: false },
+  );
+  const onAbort = (): void => {
+    if (readState === "idle" && !source.destroyed)
+      source.destroy(cancellationFailure(signal.reason));
+  };
+  signal.addEventListener("abort", onAbort, { once: true });
+  source.once("close", () => signal.removeEventListener("abort", onAbort));
+  if (signal.aborted) onAbort();
+  return source;
+};
+
 /** Verify the member's byte count and source before stream completion. */
 export const checkedArtifactMemberStream = (
   entry: ArtifactEntry,
@@ -106,9 +138,11 @@ export const ownArtifactStream = (
     signal,
     cancellationFailure,
     label,
+    decode,
   }: {
     readonly scope: ArtifactResourceScope;
     readonly streams?: Set<Readable>;
+    readonly decode?: Transform;
     readonly signal: AbortSignal | undefined;
     readonly cancellationFailure: (reason: unknown) => Error;
     readonly label: string;
@@ -116,21 +150,58 @@ export const ownArtifactStream = (
 ): void => {
   output.on("error", () => undefined);
   streams?.add(output);
+  if (decode !== undefined) {
+    decode.on("error", () => undefined);
+    streams?.add(decode);
+  }
   let producerComplete = false;
+  let sourceRetired = false;
+  const upstream: Readable = decode ?? source;
+  const cancelRetiredSourceDecode = (): boolean => {
+    // Once the source retires its abort listener is gone, while a decoder
+    // paused by a slow consumer can still hold undelivered output. It has
+    // not ended, so the output's final validation has not started.
+    if (
+      decode === undefined ||
+      !sourceRetired ||
+      signal?.aborted !== true ||
+      decode.destroyed ||
+      decode.readableEnded
+    )
+      return false;
+    decode.destroy(cancellationFailure(signal.reason));
+    return true;
+  };
+  const canRetireOnAbort = (): boolean =>
+    producerComplete ||
+    (upstream.readableEnded && !upstream.errored && output.writableLength > 0);
   const onAbort = (): void => {
+    if (cancelRetiredSourceDecode()) return;
     // Active I/O and validation own failure precedence; cancellation also
-    // retires buffered output after production completes.
-    if (!producerComplete || output.destroyed) return;
+    // retires buffered output after production completes or when upstream
+    // has ended and output is stalled on readable backpressure before flush.
+    if (!canRetireOnAbort() || output.destroyed) return;
     output.destroy(cancellationFailure(signal?.reason));
+  };
+  const onUpstreamEnd = (): void => {
+    if (signal?.aborted) onAbort();
   };
   const retired = new Promise<void>((resolve) => {
     output.once("close", () => {
       streams?.delete(output);
+      if (decode !== undefined) streams?.delete(decode);
       signal?.removeEventListener("abort", onAbort);
+      upstream.removeListener("end", onUpstreamEnd);
       resolve();
     });
   });
+  if (decode !== undefined)
+    source.once("close", () => {
+      sourceRetired = true;
+      cancelRetiredSourceDecode();
+    });
   signal?.addEventListener("abort", onAbort, { once: true });
+  upstream.once("end", onUpstreamEnd);
   if (signal?.aborted) onAbort();
   output.once("finish", () => {
     // A successful writable finish follows the transform's final validation.
@@ -142,11 +213,13 @@ export const ownArtifactStream = (
     .run(async () => {
       await Promise.all([
         new Promise<void>((resolve) => {
-          pipeline(source, output, () => {
+          const onPipeline = (): void => {
             producerComplete = true;
             if (signal?.aborted) onAbort();
             resolve();
-          });
+          };
+          if (decode === undefined) pipeline(source, output, onPipeline);
+          else pipeline(source, decode, output, onPipeline);
         }),
         retired,
       ]);

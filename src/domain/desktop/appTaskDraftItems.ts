@@ -1,15 +1,23 @@
 import type { JsonValue } from "../jsonValue.js";
 import { collapseWhitespace, type DesktopTaskCheckInput } from "./appTask.js";
 import { isStamp } from "./appTaskDraftNoise.js";
-import { elementText, isXmlElement, resolvePointer } from "./viewPointer.js";
+import {
+  elementText,
+  isXmlElement,
+  resolvePointer,
+  xmlParentPointer,
+} from "./viewPointer.js";
 
 /** The fewest characters of an item's text a check looks for, and the kept items a draft guards. */
 const MIN_TEXT = 3;
 const MAX_KEPT = 4;
 
-/** The list a member sits in, and the element holding it. */
-const placeOf = (pointer: string) =>
-  /^(?<owner>.+)\/children\/[^/]+$/u.exec(pointer)?.groups?.owner;
+/** Whether a whole-text selector is stable and fits the draft's text limit. */
+const checkable = (text: string, chars: number): boolean =>
+  text.length >= MIN_TEXT &&
+  text.length <= chars &&
+  !isStamp(text) &&
+  !text.includes("][");
 
 const NUMBER = /^-?\d+(?:\.\d+)?$/u;
 
@@ -36,7 +44,7 @@ export const isPlacedItem = (
     ? (element.name.split(":").at(-1) ?? element.name)
     : "";
   if (TEXT_RUN.test(local)) return false;
-  const owner = placeOf(pointer);
+  const owner = xmlParentPointer(pointer);
   const list =
     owner === undefined
       ? undefined
@@ -98,7 +106,7 @@ export const placedItemCheck = (
     }
   | undefined => {
   const { ends, file } = context;
-  const owner = placeOf(pointer);
+  const owner = xmlParentPointer(pointer);
   const at = owner === undefined ? undefined : context.name(owner);
   const item = resolvePointer(ends.final, pointer, "xml");
   const value = isXmlElement(item) ? collapseWhitespace(elementText(item)) : "";
@@ -109,25 +117,17 @@ export const placedItemCheck = (
     at === undefined ||
     !isXmlElement(item) ||
     !isXmlElement(seed) ||
-    value.length < MIN_TEXT ||
-    value.length > context.chars ||
-    isStamp(value) ||
-    value.includes("][") ||
-    siblingTexts(ends.baseline, owner, item).some(
-      (entry) => entry.text === value,
-    )
+    !checkable(value, context.chars)
   )
     return undefined;
   const kept = new Set(
     siblingTexts(ends.baseline, owner, item).map(({ text }) => text),
   );
+  if (kept.has(value)) return undefined;
   const list = resolvePointer(ends.final, `${owner}/children`, "xml");
   const here = Array.isArray(list) ? list.indexOf(item) : 0;
   const guards = siblingTexts(ends.final, owner, item)
-    .filter(
-      ({ text }) =>
-        text.length >= MIN_TEXT && !text.includes("][") && kept.has(text),
-    )
+    .filter(({ text }) => kept.has(text) && checkable(text, context.chars))
     .toSorted(
       (left, right) =>
         Math.abs(left.index - here) - Math.abs(right.index - here),

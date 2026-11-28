@@ -14,7 +14,7 @@ beforeAll(async () => {
     type: "ecc",
     curve: "curve25519Legacy",
     userIDs: [{ name: "Fixture publisher" }],
-    subkeys: [{ sign: true }, { sign: true }],
+    subkeys: [{ sign: true }, { sign: true, curve: "brainpoolP256r1" }],
     format: "armored",
   });
   const privateKey = await readPrivateKey({ armoredKey: generated.privateKey });
@@ -36,17 +36,25 @@ beforeAll(async () => {
     );
 });
 
+const verify = ({
+  payload = bytes,
+  signature = signatures[0]!,
+  key = publicKey,
+  pin = fingerprint,
+  signal,
+}: {
+  readonly payload?: Uint8Array;
+  readonly signature?: Uint8Array;
+  readonly key?: string;
+  readonly pin?: string;
+  readonly signal?: AbortSignal;
+} = {}) => verifyDetachedPgpSignature(payload, signature, key, pin, signal);
+
 describe("detached binary PGP publisher verification", () => {
-  it("accepts independently selected signing subkeys through one pinned primary", async () => {
+  it("accepts Ed25519 and Brainpool signing subkeys through one pinned primary", async () => {
+    expect(signatures).toHaveLength(2);
     for (const [index, signature] of signatures.entries())
-      expect(
-        await verifyDetachedPgpSignature(
-          bytes,
-          signature,
-          publicKey,
-          fingerprint,
-        ),
-      ).toEqual({
+      expect(await verify({ signature })).toEqual({
         ok: true,
         value: {
           primaryFingerprint: fingerprint,
@@ -55,94 +63,57 @@ describe("detached binary PGP publisher verification", () => {
       });
   });
 
-  it("rejects a valid signature belonging to another primary", async () => {
-    expect(
-      await verifyDetachedPgpSignature(
-        bytes,
-        signatures[0]!,
-        publicKey,
-        "0".repeat(40),
-      ),
-    ).toMatchObject({ ok: false, error: { reason: "wrong_publisher" } });
+  it("rejects a valid signature when the authorized primary differs", async () => {
+    expect(await verify({ pin: "0".repeat(40) })).toMatchObject({
+      ok: false,
+      error: { reason: "wrong_publisher" },
+    });
   });
 
-  it("rejects tampered payload bytes", async () => {
-    const tampered = Buffer.from(bytes);
-    tampered[0] = (tampered[0] ?? 0) ^ 1;
-    expect(
-      await verifyDetachedPgpSignature(
-        tampered,
-        signatures[0]!,
-        publicKey,
-        fingerprint,
-      ),
-    ).toMatchObject({ ok: false, error: { reason: "invalid_signature" } });
+  it("rejects a changed payload with either signing subkey", async () => {
+    const payload = Buffer.from("Binary package fixture\0\xff", "latin1");
+    for (const signature of signatures)
+      expect(await verify({ payload, signature })).toMatchObject({
+        ok: false,
+        error: { reason: "invalid_signature" },
+      });
   });
 
-  it("rejects malformed signatures and public keys", async () => {
-    expect(
-      await verifyDetachedPgpSignature(
-        bytes,
-        new Uint8Array([1, 2, 3]),
-        publicKey,
-        fingerprint,
-      ),
-    ).toMatchObject({ ok: false, error: { reason: "invalid_signature" } });
-    expect(
-      await verifyDetachedPgpSignature(
-        bytes,
-        signatures[0]!,
-        "malformed",
-        fingerprint,
-      ),
-    ).toMatchObject({ ok: false, error: { reason: "invalid_signature" } });
-  });
-
-  it("preserves cancellation", async () => {
-    expect(
-      await verifyDetachedPgpSignature(
-        bytes,
-        signatures[0]!,
-        publicKey,
-        fingerprint,
-        AbortSignal.abort(),
-      ),
-    ).toMatchObject({ ok: false, error: { reason: "cancelled" } });
+  it.each([
+    { defect: "malformed signature", signature: Uint8Array.of(1, 2, 3) },
+    { defect: "malformed public key", key: "malformed" },
+  ])("refuses $defect", async (input) => {
+    expect(await verify(input)).toMatchObject({
+      ok: false,
+      error: { reason: "invalid_signature" },
+    });
   });
 
   it.each([null, "caller stop", { phase: "publisher-key" }])(
-    "preserves the caller's exact abort reason %j as the cancellation cause",
+    "preserves the exact pre-abort reason %j",
     async (reason) => {
-      const controller = new AbortController();
-      controller.abort(reason);
-      const result = await verifyDetachedPgpSignature(
-        bytes,
-        signatures[0]!,
-        publicKey,
-        fingerprint,
-        controller.signal,
-      );
-      expect(result).toMatchObject({
+      const verified = await verify({ signal: AbortSignal.abort(reason) });
+      expect(verified).toMatchObject({
         ok: false,
         error: { reason: "cancelled" },
       });
-      expect(result.ok ? undefined : result.error.cause).toBe(reason);
+      expect(verified.ok ? undefined : verified.error.cause).toBe(reason);
     },
   );
 
-  it("preserves cancellation while loading the publisher key, before classifying its identity", async () => {
+  it("cancels a started verification before classifying a mismatched publisher", async () => {
     const controller = new AbortController();
-    const verification = verifyDetachedPgpSignature(
-      bytes,
-      signatures[0]!,
-      publicKey,
-      "0".repeat(40),
-      controller.signal,
-    );
-    queueMicrotask(() => controller.abort());
-    expect(await verification).toMatchObject({
+    const verification = verify({
+      pin: "0".repeat(40),
+      signal: controller.signal,
+    });
+    const reason = new Error("authored publisher check cancellation");
+    queueMicrotask(() => controller.abort(reason));
+    const verified = await verification;
+    expect(verified).toMatchObject({
       ok: false,
       error: { reason: "cancelled" },
     });
+    expect(verified.ok ? undefined : verified.error.cause).toBe(reason);
   });
 });

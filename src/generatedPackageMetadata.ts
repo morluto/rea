@@ -3,8 +3,11 @@ export const PACKAGE_METADATA = {
   name: "rea-agents",
   version: "6.10.1", // x-release-please-version
   pinnedNodeVersion: "24.22.1",
-  serverSdkVersion: "2.3.1",
-  clientSdkVersion: "2.3.1",
-  coreSdkVersion: "2.3.1",
+  serverSdkVersion: "2.4.0",
+  clientSdkVersion: "2.4.0",
+  coreSdkVersion: "2.4.0",
+  evmoleVersion: "0.10.1",
+  jsoncParserVersion: "3.3.1",
+  losslessJsonVersion: "4.3.4",
   skillVersion: "63",
 } as const;

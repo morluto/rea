@@ -1,7 +1,6 @@
 import { SIMULATED_LINUX_X64 } from "../../fixtures/simulatedHost.js";
 import { createHash } from "node:crypto";
-import { mkdtemp, rm, writeFile, readFile, mkdir } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile, readFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { z } from "zod";
@@ -66,6 +65,7 @@ const makeDecoder = () =>
       identity: PWNTOOLS_PROVIDER_IDENTITY,
       operation: "test_pwntools_artifact_read",
       bridge: new URL("file:///unused-bridge.py"),
+      targetFormat: "elf",
       payloadSchema: z.string(),
       project: () => {
         throw new Error("input read should fail before decoder launch");

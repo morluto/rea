@@ -1,0 +1,1383 @@
+import { posix } from "node:path";
+import { accountZipMemberRegion } from "../domain/zip/zipMemberRegion.js";
+import {
+  decodeLimit,
+  malformedInput,
+  ParseFailureError,
+} from "../domain/parseFailure.js";
+import {
+  Uint8ArrayReader,
+  ZipReader,
+  type Entry,
+  type FileEntry,
+} from "@zip.js/zip.js";
+
+import {
+  ArtifactReaderFailure,
+  decodeZipEntryText,
+  zipEntryNameLimitations,
+  throwZipPackageFailure,
+  ZIP_READER_OPTIONS,
+  zipEntryPath,
+  zipListingCoverage,
+  isZipFileEntry,
+  readBoundedZipMember,
+  zipMemberSize,
+} from "../resources/index.js";
+import {
+  isXmlElement,
+  parseXmlDocumentWithinNodeLimit,
+  xmlChildrenNamed,
+  xmlFirstChildNamed,
+  xmlTrimmedAttribute,
+  xmlTrimmedDirectText,
+} from "../domain/xmlDocument.js";
+import { countJsonValues } from "../domain/jsonValue.js";
+import { decodeXmlPlistText } from "../domain/propertyListXmlText.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import { hasZipSignature } from "../domain/zipPackageFormat.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
+import { Budget } from "../domain/budget.js";
+import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
+import { boundedList } from "../domain/boundedList.js";
+import {
+  MAX_INSPECT_VSIX_PACKAGE_MANIFEST_JSON_VALUES,
+  MAX_INSPECT_VSIX_PACKAGE_MANIFEST_XML_NODES,
+  VSIX_COMMANDS_CAP,
+  VSIX_PACKAGE_FORMAT,
+  isVsixInterestingMemberKind,
+  vsixActivationIsEager,
+  vsixMemberMagicKind,
+  vsixPackageLogicalPath,
+  vsixPackagePathKind,
+  vsixPackagePathTraverses,
+  type InspectVsixPackageInput,
+  type VsixMemberKind,
+  type VsixPackage,
+} from "../domain/vsix/vsixPackage.js";
+
+/** Limitation wording owned by the parser; tests assert delivery through these. */
+export const VSIX_LIMITATIONS = {
+  noExecution:
+    "This workflow reads the .vsix ZIP, extension.vsixmanifest and extension/package.json without installing, executing, or contacting a marketplace.",
+  signaturesUnverified:
+    "Signature files are reported as present or absent; this workflow does not verify signatures.",
+  memberKinds:
+    "Member kinds are derived from ZIP names and, for hashed members, from leading magic bytes; they are not a runtime load inventory.",
+  noVsixmanifest: "No extension.vsixmanifest was selected.",
+  malformedVsixmanifest:
+    "The selected extension.vsixmanifest is not well-formed XML.",
+  noPackageJson: "No extension/package.json was selected.",
+  malformedPackageJson:
+    "The selected extension/package.json is not well-formed JSON.",
+  oversizedMainDirectoryPackageJson: (path: string, limit: number): string =>
+    `Member ${JSON.stringify(path)} exceeds the ${String(limit)}-byte manifest budget and was not read, so the directory main is unresolved; its index files were not used.`,
+  unreadMainDirectoryPackageJson: (path: string): string =>
+    `Member ${JSON.stringify(path)} is encrypted or duplicated and was not read, so the directory main is unresolved; its index files were not used.`,
+  overgrownMainDirectoryPackageJson: (path: string, limit: number): string =>
+    `Member ${JSON.stringify(path)} holds more than ${String(limit)} JSON values and was not parsed, so the directory main is unresolved; its index files were not used.`,
+  malformedMainDirectoryPackageJson: (path: string): string =>
+    `Member ${JSON.stringify(path)} is not a JSON object, so the directory main does not resolve; its index files were not used.`,
+  entryPointCaseOnlyMatch: (path: string, member: string): string =>
+    `Entry point ${JSON.stringify(path)} matches member ${JSON.stringify(member)} only when case is ignored; it is reported absent, as a case-sensitive file system would not load it.`,
+  entryPointBackslash: (path: string): string =>
+    `Entry point ${JSON.stringify(path)} contains a backslash and is reported absent, as Node on POSIX treats "\\" as a literal filename character.`,
+  emptyContributesKey:
+    "extension/package.json contributes has an empty key; it is not listed in contributes.keys.",
+  duplicatePath: (path: string): string =>
+    `ZIP member ${JSON.stringify(path)} appears more than once; later copies were inventoried and not used as the unique manifest path.`,
+  caseOnlyPaths: (paths: readonly string[]): string =>
+    `ZIP members ${paths.map((path) => JSON.stringify(path)).join(", ")} differ only in case; each was inventoried as its own member.`,
+  manifestCaseOnlyMatch: (expected: string, member: string): string =>
+    `ZIP member ${JSON.stringify(member)} matches ${JSON.stringify(expected)} only when case is ignored; it was not used as the manifest, as a case-sensitive file system would not load it.`,
+  traverses: (name: string): string =>
+    `ZIP member ${JSON.stringify(name)} leaves the package root and was not extracted.`,
+  memberOversize: (path: string, maximum: number): string =>
+    `Member ${JSON.stringify(path)} exceeds the ${String(maximum)}-byte hash budget and was listed without a digest.`,
+  packageExpansionSpent: (path: string, maximum: number): string =>
+    `Member ${JSON.stringify(path)} was listed without a digest because the package's ${String(maximum)}-byte total decode budget was spent.`,
+} as const;
+
+const BASE_LIMITATIONS = [
+  VSIX_LIMITATIONS.noExecution,
+  VSIX_LIMITATIONS.memberKinds,
+  VSIX_LIMITATIONS.signaturesUnverified,
+  "Directory ZIP markers are omitted from contents; only file members are listed.",
+] as const;
+
+const emptyKindCounts = (): VsixPackage["member_kind_counts"] => ({
+  vsixmanifest: 0,
+  package_json: 0,
+  content_types: 0,
+  opc: 0,
+  signature: 0,
+  javascript: 0,
+  native_addon: 0,
+  wasm: 0,
+  executable: 0,
+  shell_script: 0,
+  nested_archive: 0,
+  unknown: 0,
+});
+
+const nonempty = (value: string): string | null => value.trim() || null;
+
+const wrapZipFailure = (
+  cause: unknown,
+  signal: AbortSignal | undefined,
+  compressionMethod?: number,
+): never => {
+  if (signal?.aborted === true && Object.is(cause, signal.reason))
+    throw new ArtifactReaderFailure("cancelled", "Artifact read cancelled", {
+      cause: signal.reason,
+    });
+  return throwZipPackageFailure(
+    cause,
+    VSIX_PACKAGE_FORMAT,
+    "VS Code extension",
+    compressionMethod,
+  );
+};
+
+const readMemberBytes = async (
+  entry: FileEntry,
+  signal: AbortSignal | undefined,
+  maximum: number,
+  label: string,
+  limitName: "max_manifest_bytes" | "max_member_bytes",
+): Promise<Uint8Array> => {
+  const exceeded = (required: number) =>
+    decodeLimit(
+      VSIX_PACKAGE_FORMAT,
+      `${label} exceeds the ${String(maximum)}-byte budget.`,
+      { name: limitName, maximum, required },
+    );
+  try {
+    return await readBoundedZipMember(entry, signal, maximum, exceeded);
+  } catch (cause: unknown) {
+    return wrapZipFailure(cause, signal, entry.compressionMethod);
+  }
+};
+
+const parseExtensionList = (value: unknown): string[] => {
+  const items = typeof value === "string" ? value.split(",") : value;
+  if (!Array.isArray(items)) return [];
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const item of items) {
+    if (typeof item !== "string") continue;
+    const id = item.trim();
+    if (id === "" || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
+};
+
+/**
+ * Activation events and API proposal names are matched by VS Code as exact
+ * strings, so keep each declared value literal: no trimming and no comma
+ * splitting. Only empty strings and exact duplicates are dropped.
+ */
+const asLiteralStringArray = (value: unknown): string[] => {
+  const items = typeof value === "string" ? [value] : value;
+  if (!Array.isArray(items)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of items) {
+    if (typeof item !== "string" || item === "" || seen.has(item)) continue;
+    seen.add(item);
+    out.push(item);
+  }
+  return out;
+};
+
+const capabilityValue = (
+  value: unknown,
+): VsixPackage["capabilities"]["untrusted_workspaces"] => {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "boolean")
+    return { supported: value ? "true" : "false", description: null };
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed === "" ? null : { supported: trimmed, description: null };
+  }
+  if (typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const supported =
+    typeof record.supported === "boolean"
+      ? record.supported
+        ? "true"
+        : "false"
+      : typeof record.supported === "string"
+        ? nonempty(record.supported)
+        : null;
+  const description =
+    typeof record.description === "string"
+      ? nonempty(record.description)
+      : null;
+  if (supported === null && description === null) return null;
+  return { supported, description };
+};
+
+const contributeCount = (value: unknown): number => {
+  if (Array.isArray(value)) return value.length;
+  if (value !== null && typeof value === "object")
+    return Object.keys(value).length;
+  return 1;
+};
+
+/**
+ * A package.json entry point as declared. `resolved` holds the package
+ * member path it names; `escaped` holds a path that climbs out of
+ * `extension/`, kept in its unresolved form for display. An escaped entry
+ * point never resolves, even when a traversal member such as
+ * `extension/../outside.js` carries the same string.
+ */
+type PackageJsonEntry =
+  | { readonly kind: "resolved"; readonly path: string }
+  | { readonly kind: "escaped"; readonly path: string };
+
+/**
+ * The package member a package.json entry point names. VS Code resolves it
+ * relative to `extension/`, so `.` and `..` segments are resolved there; a
+ * path that climbs out of `extension/` is tagged `escaped`. A path that
+ * resolves to the package root is `extension`, so the directory lookups that
+ * append `/package.json` or `/index.js` name real members. The declared text
+ * is split only on `/`: Node on POSIX treats `\` as a literal filename
+ * character and does not trim whitespace.
+ */
+const packageJsonEntryPath = (value: unknown): PackageJsonEntry | null => {
+  if (typeof value !== "string" || value === "") return null;
+  const relative = value.replace(/^\/+/u, "");
+  const segments: string[] = [];
+  for (const segment of relative.split("/")) {
+    if (segment === "" || segment === ".") continue;
+    if (segment !== "..") segments.push(segment);
+    else if (segments.pop() === undefined)
+      return { kind: "escaped", path: `extension/${relative}` };
+  }
+  return {
+    kind: "resolved",
+    path:
+      segments.length === 0 ? "extension" : `extension/${segments.join("/")}`,
+  };
+};
+
+/**
+ * True when a package.json entry point can only name a directory: a trailing
+ * `/`, `.`, `..`, or a final `/.` or `/..` segment. Node's loader skips the
+ * file lookup for such a specifier (a trailing `\` is a literal filename
+ * character on POSIX, not a directory marker), so normalizing it to a bare
+ * path must not let a sibling file such as `out.js` match `./out/`.
+ */
+const packageJsonEntryDirectoryOnly = (value: unknown): boolean => {
+  if (typeof value !== "string") return false;
+  return (
+    value.endsWith("/") ||
+    value === "." ||
+    value === ".." ||
+    value.endsWith("/.") ||
+    value.endsWith("/..")
+  );
+};
+
+/**
+ * Suffixes tried after the declared path, in order. VS Code loads `main`
+ * through Node's CommonJS file and directory lookup.
+ */
+const NODE_FILE_CANDIDATES = ["", ".js", ".json", ".node"] as const;
+const NODE_INDEX_CANDIDATES = [
+  "/index.js",
+  "/index.json",
+  "/index.node",
+] as const;
+
+/**
+ * The member an entry point resolves to, or the declared path when none.
+ * Member names match exactly, as on a case-sensitive file system; a match
+ * that holds only when case is ignored is reported separately.
+ */
+const resolveEntryPoint = (
+  declared: string,
+  suffixes: readonly string[],
+  memberPaths: ReadonlySet<string>,
+): { path: string; present: boolean } => {
+  for (const suffix of suffixes) {
+    const candidate = `${declared}${suffix}`;
+    if (memberPaths.has(candidate)) return { path: candidate, present: true };
+  }
+  return { path: declared, present: false };
+};
+
+/**
+ * A member that matches an unresolved entry point only when case is ignored.
+ * A candidate spelled exactly as a member is skipped: the lookup failed for
+ * another reason, so its case is not the cause.
+ */
+const caseOnlyEntryPointMatch = (
+  declared: string,
+  suffixes: readonly string[],
+  foldedMemberPaths: ReadonlyMap<string, string>,
+): string | undefined => {
+  for (const suffix of suffixes) {
+    const candidate = `${declared}${suffix}`;
+    const member = foldedMemberPaths.get(candidate.toLowerCase());
+    if (member !== undefined && member !== candidate) return member;
+  }
+  return undefined;
+};
+
+/**
+ * What a directory's own package.json says about `main`. `directoryOnly` marks
+ * a `main` that resolves to the `extension` root directory, where file
+ * suffixes would name archive-root siblings outside the installed payload.
+ * Node's loader rejects a manifest that is not a JSON object with
+ * ERR_INVALID_PACKAGE_CONFIG instead of falling back to `index.*`, so that
+ * outcome stays distinct from a manifest that names no usable `main`.
+ * `unread` marks a manifest skipped by the byte budget: its `main` is
+ * unknown, so the index files cannot stand in for it either.
+ */
+type DirectoryManifestMain =
+  | {
+      readonly kind: "main";
+      readonly path: string;
+      readonly directoryOnly: boolean;
+    }
+  | { readonly kind: "none" }
+  | { readonly kind: "malformed" }
+  | { readonly kind: "unread" };
+
+/** Whether the directory manifest stops the lookup before `index.*`. */
+const directoryMainStopsLookup = (main: DirectoryManifestMain): boolean =>
+  main.kind === "malformed" || main.kind === "unread";
+
+/**
+ * `main` of a directory's own package.json, joined onto that directory with
+ * its `/`-separated `.` and `..` segments resolved (`\` stays literal), marked
+ * `directoryOnly` when it resolves to the `extension` root; `none` when it
+ * names nothing, is absolute, or climbs out of `extension/`, `malformed` when
+ * the manifest is not a JSON object, `unread` when it holds more values than
+ * the parse allowance.
+ */
+const directoryManifestMain = (
+  directory: string,
+  text: string,
+): DirectoryManifestMain => {
+  if (
+    countJsonValues(text, MAX_INSPECT_VSIX_PACKAGE_MANIFEST_JSON_VALUES) >
+    MAX_INSPECT_VSIX_PACKAGE_MANIFEST_JSON_VALUES
+  )
+    return { kind: "unread" };
+  let record: unknown;
+  try {
+    record = JSON.parse(text);
+  } catch {
+    return { kind: "malformed" };
+  }
+  if (record === null || typeof record !== "object" || Array.isArray(record))
+    return { kind: "malformed" };
+  const main = (record as Record<string, unknown>).main;
+  if (typeof main !== "string" || main === "") return { kind: "none" };
+  // Node resolves this `main` with path.resolve(directory, main), so an
+  // absolute path names a host file outside the package, never a member.
+  if (main.startsWith("/")) return { kind: "none" };
+  // `directory` always starts at the `extension` root; a `..` that would pop
+  // that root names a file outside the installed extension, never a member,
+  // and landing on `extension` itself can only resolve via `extension/index.*`.
+  const segments: string[] = [];
+  const joined = `${directory}/${main}`;
+  for (const segment of joined.split("/")) {
+    if (segment === "" || segment === ".") continue;
+    if (segment !== "..") segments.push(segment);
+    else if (segments.length <= 1) return { kind: "none" };
+    else segments.pop();
+  }
+  return segments.length === 0
+    ? { kind: "none" }
+    : {
+        kind: "main",
+        path: segments.join("/"),
+        directoryOnly: segments.length === 1 && segments[0] === "extension",
+      };
+};
+
+/**
+ * The member a `main` entry resolves to under Node's CommonJS lookup: unless
+ * the specifier is directory-only, the file itself or with an added
+ * extension; then the directory's package.json `main` (index-only when it
+ * names the `extension` root), then the directory's `index.*`. A malformed
+ * directory package.json stops the lookup, as it does in Node; an unread one
+ * stops it too, since its `main` is unknown.
+ */
+const resolveNodeEntryPoint = (
+  declared: string,
+  memberPaths: ReadonlySet<string>,
+  directoryMain: DirectoryManifestMain,
+  directoryOnly: boolean,
+): { path: string; present: boolean } => {
+  if (!directoryOnly) {
+    const asFile = resolveEntryPoint(
+      declared,
+      NODE_FILE_CANDIDATES,
+      memberPaths,
+    );
+    if (asFile.present) return asFile;
+  }
+  if (directoryMainStopsLookup(directoryMain))
+    return { path: declared, present: false };
+  if (directoryMain.kind === "main") {
+    const viaManifest = resolveEntryPoint(
+      directoryMain.path,
+      directoryMain.directoryOnly
+        ? NODE_INDEX_CANDIDATES
+        : [...NODE_FILE_CANDIDATES, ...NODE_INDEX_CANDIDATES],
+      memberPaths,
+    );
+    if (viaManifest.present) return viaManifest;
+  }
+  return resolveEntryPoint(declared, NODE_INDEX_CANDIDATES, memberPaths);
+};
+
+const sameIdSet = (
+  left: readonly string[],
+  right: readonly string[],
+): boolean => {
+  if (left.length !== right.length) return false;
+  const other = new Set(right);
+  return left.every((id) => other.has(id));
+};
+
+const unixExecutable = (entry: FileEntry): boolean => {
+  const attributes =
+    "externalFileAttribute" in entry
+      ? Number(
+          (entry as FileEntry & { readonly externalFileAttribute?: number })
+            .externalFileAttribute,
+        )
+      : "externalFileAttributes" in entry
+        ? Number(
+            (entry as FileEntry & { readonly externalFileAttributes?: number })
+              .externalFileAttributes,
+          )
+        : NaN;
+  if (!Number.isSafeInteger(attributes) || attributes < 0) return false;
+  const mode = (attributes >>> 16) & 0xffff;
+  // Only regular files (or entries with no recorded type) count; a symlink's
+  // 0o120777 mode carries permission bits that say nothing about its target.
+  const type = mode & 0o170000;
+  if (type !== 0 && type !== 0o100000) return false;
+  return (mode & 0o111) !== 0;
+};
+
+interface ParsedVsixManifest {
+  readonly identity: VsixPackage["vsix_identity"];
+  readonly engine: string | null;
+  // null when the document could not be parsed, so its ids are unknown.
+  readonly extensionDependencies: string[] | null;
+  readonly extensionPack: string[] | null;
+  readonly extensionKind: string[];
+  readonly assets: VsixPackage["assets"];
+}
+
+const parseVsixManifestDocument = (
+  xml: string,
+  limitations: string[],
+  presentPaths: ReadonlySet<string>,
+): ParsedVsixManifest => {
+  const empty: ParsedVsixManifest = {
+    identity: null,
+    engine: null,
+    extensionDependencies: null,
+    extensionPack: null,
+    extensionKind: [],
+    assets: [],
+  };
+  // Count nodes as a stream first, so a compressed manifest of many tiny
+  // elements is refused before its document tree is allocated.
+  const parsed = parseXmlDocumentWithinNodeLimit(xml, {
+    maximumNodes: MAX_INSPECT_VSIX_PACKAGE_MANIFEST_XML_NODES,
+    lineEndings: "normalize",
+  });
+  if (!parsed.ok && parsed.error.kind === "node-limit")
+    throw decodeLimit(
+      VSIX_PACKAGE_FORMAT,
+      `Selected extension.vsixmanifest holds more than ${String(parsed.error.maximum)} XML nodes, above the node allowance for its document tree.`,
+      {
+        name: "xml_nodes",
+        maximum: parsed.error.maximum,
+        required: parsed.error.required,
+      },
+    );
+  if (!parsed.ok) {
+    limitations.push(
+      parsed.error.kind === "unsupported"
+        ? "The selected extension.vsixmanifest declares a document type, which is unsupported."
+        : VSIX_LIMITATIONS.malformedVsixmanifest,
+    );
+    return empty;
+  }
+  const root = parsed.value.documentElement;
+  if (!isXmlElement(root) || root.localName !== "PackageManifest") {
+    limitations.push(
+      "The selected extension.vsixmanifest root element is not PackageManifest.",
+    );
+    return empty;
+  }
+  const namespace = root.namespaceURI ?? "";
+  const metadata = xmlFirstChildNamed(root, "Metadata", namespace);
+  const metadataChild = (name: string) =>
+    metadata === undefined
+      ? undefined
+      : xmlFirstChildNamed(metadata, name, namespace);
+  const identityElement = metadataChild("Identity");
+  const properties = metadataChild("Properties");
+  const propertyById = new Map<string, string>();
+  if (properties !== undefined)
+    for (const property of xmlChildrenNamed(
+      properties,
+      "Property",
+      namespace,
+    )) {
+      const id = xmlTrimmedAttribute(property, "Id");
+      const value = xmlTrimmedAttribute(property, "Value");
+      if (id !== null && value !== null && !propertyById.has(id))
+        propertyById.set(id, value);
+    }
+  const assetsElement = xmlFirstChildNamed(root, "Assets", namespace);
+  const assets: VsixPackage["assets"] =
+    assetsElement === undefined
+      ? []
+      : xmlChildrenNamed(assetsElement, "Asset", namespace).map((asset) => {
+          const path = xmlTrimmedAttribute(asset, "Path");
+          const logical = path === null ? null : vsixPackageLogicalPath(path);
+          return {
+            type: xmlTrimmedAttribute(asset, "Type"),
+            path,
+            present:
+              logical === null ? null : presentPaths.has(logical.toLowerCase()),
+          };
+        });
+  const metadataText = (name: string) => {
+    const element = metadataChild(name);
+    return element === undefined ? null : xmlTrimmedDirectText(element);
+  };
+  const displayName = metadataText("DisplayName");
+  const description = metadataText("Description");
+  const identityAttribute = (name: string) =>
+    identityElement === undefined
+      ? null
+      : xmlTrimmedAttribute(identityElement, name);
+  return {
+    identity:
+      identityElement === undefined &&
+      displayName === null &&
+      description === null
+        ? null
+        : {
+            id: identityAttribute("Id"),
+            version: identityAttribute("Version"),
+            publisher: identityAttribute("Publisher"),
+            target_platform: identityAttribute("TargetPlatform"),
+            display_name: displayName,
+            description,
+          },
+    engine: propertyById.get("Microsoft.VisualStudio.Code.Engine") ?? null,
+    extensionDependencies: parseExtensionList(
+      propertyById.get("Microsoft.VisualStudio.Code.ExtensionDependencies"),
+    ),
+    extensionPack: parseExtensionList(
+      propertyById.get("Microsoft.VisualStudio.Code.ExtensionPack"),
+    ),
+    extensionKind: parseExtensionList(
+      propertyById.get("Microsoft.VisualStudio.Code.ExtensionKind"),
+    ),
+    assets,
+  };
+};
+
+interface ParsedPackageJson {
+  readonly identity: VsixPackage["package_identity"];
+  readonly engine: string | null;
+  readonly main: PackageJsonEntry | null;
+  readonly mainDirectoryOnly: boolean;
+  readonly browser: PackageJsonEntry | null;
+  readonly activationEvents: string[];
+  readonly contributes: VsixPackage["contributes"];
+  // null when the document could not be parsed, so its ids are unknown.
+  readonly extensionDependencies: string[] | null;
+  readonly extensionPack: string[] | null;
+  readonly extensionKind: string[];
+  readonly capabilities: VsixPackage["capabilities"];
+  readonly enabledApiProposals: string[];
+}
+
+const parsePackageJsonDocument = (
+  text: string,
+  limitations: string[],
+): ParsedPackageJson => {
+  const empty: ParsedPackageJson = {
+    identity: null,
+    engine: null,
+    main: null,
+    mainDirectoryOnly: false,
+    browser: null,
+    activationEvents: [],
+    contributes: {
+      keys: [],
+      commands: [],
+      commands_total: 0,
+      commands_omitted: 0,
+    },
+    extensionDependencies: null,
+    extensionPack: null,
+    extensionKind: [],
+    capabilities: {
+      untrusted_workspaces: null,
+      virtual_workspaces: null,
+    },
+    enabledApiProposals: [],
+  };
+  let value: unknown;
+  try {
+    value = JSON.parse(text) as unknown;
+  } catch {
+    limitations.push(VSIX_LIMITATIONS.malformedPackageJson);
+    return empty;
+  }
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    limitations.push(VSIX_LIMITATIONS.malformedPackageJson);
+    return empty;
+  }
+  const record = value as Record<string, unknown>;
+  const engines =
+    record.engines !== null &&
+    typeof record.engines === "object" &&
+    !Array.isArray(record.engines)
+      ? (record.engines as Record<string, unknown>)
+      : undefined;
+  const engine =
+    engines !== undefined && typeof engines.vscode === "string"
+      ? nonempty(engines.vscode)
+      : null;
+  const contributesRaw =
+    record.contributes !== null &&
+    typeof record.contributes === "object" &&
+    !Array.isArray(record.contributes)
+      ? (record.contributes as Record<string, unknown>)
+      : undefined;
+  const entries =
+    contributesRaw === undefined ? [] : Object.entries(contributesRaw);
+  // A contribution point is named by its key; an empty key names none.
+  if (entries.some(([name]) => name.length === 0))
+    limitations.push(VSIX_LIMITATIONS.emptyContributesKey);
+  // VS Code accepts `contributes.commands` as one command object or an array.
+  const commandsRaw = contributesRaw?.commands;
+  const commandRows: readonly unknown[] = Array.isArray(commandsRaw)
+    ? commandsRaw
+    : commandsRaw !== null && typeof commandsRaw === "object"
+      ? [commandsRaw]
+      : [];
+  const keys = entries
+    .filter(([name]) => name.length > 0)
+    .map(([name, item]) => ({
+      name,
+      count: name === "commands" ? commandRows.length : contributeCount(item),
+    }));
+  const listedCommands = boundedList(commandRows, VSIX_COMMANDS_CAP);
+  const commands = listedCommands.items.map((item) => {
+    if (item === null || typeof item !== "object" || Array.isArray(item))
+      return { command: null, title: null };
+    const command = item as Record<string, unknown>;
+    // VS Code registers and invokes a command by its exact identifier, as it
+    // matches the onCommand activation event, so keep the declared text.
+    return {
+      command:
+        typeof command.command === "string" && command.command !== ""
+          ? command.command
+          : null,
+      title: typeof command.title === "string" ? nonempty(command.title) : null,
+    };
+  });
+  return {
+    identity: {
+      name: typeof record.name === "string" ? nonempty(record.name) : null,
+      publisher:
+        typeof record.publisher === "string"
+          ? nonempty(record.publisher)
+          : null,
+      version:
+        typeof record.version === "string" ? nonempty(record.version) : null,
+    },
+    engine,
+    main: packageJsonEntryPath(record.main),
+    mainDirectoryOnly: packageJsonEntryDirectoryOnly(record.main),
+    browser: packageJsonEntryPath(record.browser),
+    activationEvents: asLiteralStringArray(record.activationEvents),
+    contributes: {
+      keys,
+      commands,
+      commands_total: commandRows.length,
+      commands_omitted: listedCommands.omitted,
+    },
+    extensionDependencies: parseExtensionList(record.extensionDependencies),
+    extensionPack: parseExtensionList(record.extensionPack),
+    extensionKind: parseExtensionList(record.extensionKind),
+    capabilities: {
+      untrusted_workspaces: capabilityValue(
+        record.capabilities !== null &&
+          typeof record.capabilities === "object" &&
+          !Array.isArray(record.capabilities)
+          ? (record.capabilities as Record<string, unknown>).untrustedWorkspaces
+          : undefined,
+      ),
+      virtual_workspaces: capabilityValue(
+        record.capabilities !== null &&
+          typeof record.capabilities === "object" &&
+          !Array.isArray(record.capabilities)
+          ? (record.capabilities as Record<string, unknown>).virtualWorkspaces
+          : undefined,
+      ),
+    },
+    enabledApiProposals: asLiteralStringArray(record.enabledApiProposals),
+  };
+};
+
+const identityDisagreements = (
+  vsix: VsixPackage["vsix_identity"],
+  pkg: VsixPackage["package_identity"],
+): VsixPackage["identity_disagreements"] => {
+  if (vsix === null || pkg === null) return [];
+  const disagreements: VsixPackage["identity_disagreements"] = [];
+  const expectedId =
+    pkg.publisher !== null && pkg.name !== null
+      ? `${pkg.publisher}.${pkg.name}`
+      : pkg.name;
+  if (
+    vsix.id !== null &&
+    expectedId !== null &&
+    vsix.id !== expectedId &&
+    vsix.id !== pkg.name
+  )
+    disagreements.push({
+      field: "id",
+      vsixmanifest: vsix.id,
+      package_json: expectedId,
+    });
+  if (
+    vsix.publisher !== null &&
+    pkg.publisher !== null &&
+    vsix.publisher !== pkg.publisher
+  )
+    disagreements.push({
+      field: "publisher",
+      vsixmanifest: vsix.publisher,
+      package_json: pkg.publisher,
+    });
+  if (
+    vsix.version !== null &&
+    pkg.version !== null &&
+    vsix.version !== pkg.version
+  )
+    disagreements.push({
+      field: "version",
+      vsixmanifest: vsix.version,
+      package_json: pkg.version,
+    });
+  return disagreements;
+};
+
+const resolveKind = (
+  pathKind: VsixMemberKind,
+  magicKind: VsixMemberKind | undefined,
+): { kind: VsixMemberKind; classification: "observed" | "inferred" } => {
+  if (magicKind === undefined)
+    return { kind: pathKind, classification: "inferred" };
+  if (pathKind === "unknown" || pathKind === magicKind)
+    return { kind: magicKind, classification: "observed" };
+  if (pathKind === "native_addon" && magicKind === "executable")
+    return { kind: "native_addon", classification: "observed" };
+  return { kind: pathKind, classification: "inferred" };
+};
+
+interface InventoriedMember {
+  readonly entry: FileEntry;
+  readonly sourceName: string;
+  readonly path: string;
+  readonly kind: VsixMemberKind;
+  readonly traverses: boolean;
+  readonly encrypted: boolean;
+}
+
+/** Decode one bounded VS Code .vsix without installing, executing, or network. */
+export const parseVsixPackage = async (
+  bytes: Uint8Array,
+  artifact: { path: string; sha256: string; bytes: number },
+  input: InspectVsixPackageInput,
+  signal?: AbortSignal,
+): Promise<VsixPackage> => {
+  if (bytes.length !== artifact.bytes)
+    throw malformedInput(
+      VSIX_PACKAGE_FORMAT,
+      "Selected artifact length disagrees with the retained bytes.",
+    );
+  if (!hasZipSignature(bytes))
+    throw malformedInput(
+      VSIX_PACKAGE_FORMAT,
+      "Selected file is not a ZIP archive (VS Code .vsix).",
+    );
+  const reader = new ZipReader(new Uint8ArrayReader(bytes), ZIP_READER_OPTIONS);
+  const limitations: string[] = [...BASE_LIMITATIONS];
+  try {
+    const entries: Entry[] = [];
+    try {
+      for await (const entry of reader.getEntriesGenerator({
+        decodeText: decodeZipEntryText,
+        ...(signal === undefined ? {} : { signal }),
+      })) {
+        if (entries.length >= input.max_entries)
+          throw decodeLimit(
+            VSIX_PACKAGE_FORMAT,
+            `VS Code extension ZIP exceeds the ${String(input.max_entries)}-entry budget.`,
+            {
+              name: "max_entries",
+              maximum: input.max_entries,
+              required: entries.length + 1,
+            },
+          );
+        entries.push(entry);
+      }
+    } catch (cause: unknown) {
+      return wrapZipFailure(cause, signal);
+    }
+    const directoryOffset = reader.directoryOffset;
+    const listing = zipListingCoverage(
+      directoryOffset === undefined
+        ? undefined
+        : await accountZipMemberRegion(
+            entries.map((entry) => ({
+              offset: entry.offset,
+              compressedSize: entry.compressedSize,
+              uncompressedSize: entry.uncompressedSize,
+              crc32: entry.crc32,
+              zip64: entry.zip64,
+              dataDescriptor: entry.bitFlag?.dataDescriptor ?? false,
+            })),
+            directoryOffset,
+            (at, length) => Promise.resolve(bytes.subarray(at, at + length)),
+          ),
+    );
+    limitations.push(...listing.limitations);
+    const files: InventoriedMember[] = [];
+    const contents: VsixPackage["contents"] = [];
+    // Members are counted by exact path; names that differ only in case are
+    // distinct members on a case-sensitive file system, not duplicates.
+    const pathCounts = new Map<string, number>();
+    const caseVariants = new Map<string, Set<string>>();
+    for (const entry of entries) {
+      if (!isZipFileEntry(entry)) continue;
+      const sourceName = zipEntryPath(entry);
+      const path = vsixPackageLogicalPath(sourceName);
+      if (path === "") continue;
+      for (const limitation of zipEntryNameLimitations(entry))
+        limitations.push(
+          `ZIP member ${JSON.stringify(sourceName)}: ${limitation}`,
+        );
+      const traverses = vsixPackagePathTraverses(sourceName);
+      if (traverses) limitations.push(VSIX_LIMITATIONS.traverses(sourceName));
+      pathCounts.set(path, (pathCounts.get(path) ?? 0) + 1);
+      const folded = path.toLowerCase();
+      const variants = caseVariants.get(folded) ?? new Set<string>();
+      variants.add(path);
+      caseVariants.set(folded, variants);
+      const kind = vsixPackagePathKind(path);
+      files.push({
+        entry,
+        sourceName,
+        path,
+        kind,
+        traverses,
+        encrypted: entry.encrypted === true,
+      });
+      contents.push({
+        name: sourceName,
+        path,
+        uncompressed_size: zipMemberSize(entry.uncompressedSize),
+        compressed_size: zipMemberSize(entry.compressedSize),
+        encrypted: entry.encrypted === true,
+        kind,
+        traverses,
+      });
+    }
+    const duplicatePaths = [...pathCounts.entries()]
+      .filter(([, count]) => count > 1)
+      .map(([path]) => path);
+    for (const path of duplicatePaths)
+      limitations.push(VSIX_LIMITATIONS.duplicatePath(path));
+    for (const variants of caseVariants.values())
+      if (variants.size > 1)
+        limitations.push(VSIX_LIMITATIONS.caseOnlyPaths([...variants]));
+    const presentPaths = new Set(files.map((file) => file.path.toLowerCase()));
+    // A manifest is selected by its exact logical path. A member matching it
+    // only when case is ignored is reported, never parsed in its place.
+    const uniqueByPath = (logical: string): InventoriedMember | undefined => {
+      if (!pathCounts.has(logical))
+        for (const member of caseVariants.get(logical.toLowerCase()) ?? [])
+          limitations.push(
+            VSIX_LIMITATIONS.manifestCaseOnlyMatch(logical, member),
+          );
+      if (pathCounts.get(logical) !== 1) return undefined;
+      return files.find((file) => file.path === logical);
+    };
+    const vsixMember = uniqueByPath("extension.vsixmanifest");
+    const packageMember = uniqueByPath("extension/package.json");
+    let examined = 0;
+    let vsixParsed: ParsedVsixManifest | undefined;
+    let vsixBytes: number | null = null;
+    if (vsixMember === undefined)
+      limitations.push(VSIX_LIMITATIONS.noVsixmanifest);
+    else if (vsixMember.traverses || vsixMember.encrypted) {
+      limitations.push(
+        vsixMember.encrypted
+          ? "Selected extension.vsixmanifest is encrypted and was not extracted."
+          : VSIX_LIMITATIONS.traverses(vsixMember.sourceName),
+      );
+    } else {
+      const decoded = await readMemberBytes(
+        vsixMember.entry,
+        signal,
+        input.max_manifest_bytes,
+        "Selected extension.vsixmanifest",
+        "max_manifest_bytes",
+      );
+      vsixBytes = decoded.length;
+      examined += decoded.length;
+      let vsixText: string | undefined;
+      try {
+        vsixText = decodeXmlPlistText(decoded);
+      } catch {
+        limitations.push(
+          "The selected extension.vsixmanifest is not valid UTF-8 or BOM-marked UTF-16 XML text.",
+        );
+      }
+      if (vsixText !== undefined) {
+        vsixParsed = parseVsixManifestDocument(
+          vsixText,
+          limitations,
+          presentPaths,
+        );
+      }
+    }
+    let packageParsed: ParsedPackageJson | undefined;
+    let packageBytes: number | null = null;
+    if (packageMember === undefined)
+      limitations.push(VSIX_LIMITATIONS.noPackageJson);
+    else if (packageMember.traverses || packageMember.encrypted) {
+      limitations.push(
+        packageMember.encrypted
+          ? "Selected extension/package.json is encrypted and was not extracted."
+          : VSIX_LIMITATIONS.traverses(packageMember.sourceName),
+      );
+    } else {
+      const decoded = await readMemberBytes(
+        packageMember.entry,
+        signal,
+        input.max_manifest_bytes,
+        "Selected extension/package.json",
+        "max_manifest_bytes",
+      );
+      packageBytes = decoded.length;
+      examined += decoded.length;
+      let packageText: string | undefined;
+      try {
+        packageText = decodeXmlPlistText(decoded);
+      } catch {
+        limitations.push(
+          "The selected extension/package.json is not valid UTF-8 or BOM-marked UTF-16 JSON text.",
+        );
+      }
+      if (packageText !== undefined) {
+        // Count values in one scan first, so a compressed manifest of many tiny
+        // values is refused before JSON.parse allocates them.
+        const values = countJsonValues(
+          packageText,
+          MAX_INSPECT_VSIX_PACKAGE_MANIFEST_JSON_VALUES,
+        );
+        if (values > MAX_INSPECT_VSIX_PACKAGE_MANIFEST_JSON_VALUES)
+          throw decodeLimit(
+            VSIX_PACKAGE_FORMAT,
+            `Selected extension/package.json holds more than ${String(MAX_INSPECT_VSIX_PACKAGE_MANIFEST_JSON_VALUES)} JSON values, above the value allowance for its parsed document.`,
+            {
+              name: "json_values",
+              maximum: MAX_INSPECT_VSIX_PACKAGE_MANIFEST_JSON_VALUES,
+              required: values,
+            },
+          );
+        packageParsed = parsePackageJsonDocument(packageText, limitations);
+      }
+    }
+    const interestingMembers: VsixPackage["interesting_members"] = [];
+    const kindCounts = emptyKindCounts();
+    // One package-wide ceiling on decoded member bytes, so many small
+    // compressed members cannot each spend a full per-member budget.
+    const expansion = new Budget(artifactExpansionBudgetBytes(bytes.length));
+    for (const [index, file] of files.entries()) {
+      let kind = file.kind;
+      let classification: "observed" | "inferred" = "inferred";
+      const modeExecutable = kind === "unknown" && unixExecutable(file.entry);
+      const shouldHash = isVsixInterestingMemberKind(kind) || modeExecutable;
+      let hashed: Uint8Array | undefined;
+      if (shouldHash && !file.traverses && !file.encrypted) {
+        const declared = zipMemberSize(file.entry.uncompressedSize);
+        const allowance = Math.min(input.max_member_bytes, expansion.remaining);
+        const unread = () =>
+          allowance < input.max_member_bytes
+            ? VSIX_LIMITATIONS.packageExpansionSpent(
+                file.path,
+                expansion.maximum,
+              )
+            : VSIX_LIMITATIONS.memberOversize(
+                file.path,
+                input.max_member_bytes,
+              );
+        // Once the package ceiling is spent, skip the read outright: a member
+        // declaring zero bytes would otherwise still start its decoder.
+        if (
+          (expansion.remaining === 0 && input.max_member_bytes > 0) ||
+          (declared !== null && declared > allowance)
+        ) {
+          limitations.push(
+            declared !== null && declared > input.max_member_bytes
+              ? VSIX_LIMITATIONS.memberOversize(
+                  file.path,
+                  input.max_member_bytes,
+                )
+              : unread(),
+          );
+        } else {
+          try {
+            hashed = await readMemberBytes(
+              file.entry,
+              signal,
+              allowance,
+              `Member ${file.path}`,
+              "max_member_bytes",
+            );
+            expansion.chargeOverCommitting(hashed.length);
+          } catch (cause: unknown) {
+            if (
+              cause instanceof ParseFailureError &&
+              cause.failure.kind === "limit" &&
+              cause.failure.limit?.name === "max_member_bytes"
+            ) {
+              // A member whose header understates its size decodes its whole
+              // allowance before failing, so that work counts against the
+              // package ceiling as a successful read would.
+              expansion.chargeOverCommitting(allowance);
+              limitations.push(unread());
+            } else throw cause;
+          }
+        }
+      } else if (shouldHash && file.encrypted) {
+        limitations.push(
+          `Member ${JSON.stringify(file.path)} is encrypted and was not hashed.`,
+        );
+      }
+      if (hashed !== undefined) {
+        // Read bytes with no known magic keep the executable kind the Unix
+        // mode implies, so raising the hash budget never drops a helper.
+        const magicKind = vsixMemberMagicKind(hashed);
+        const resolved = resolveKind(
+          modeExecutable && magicKind === undefined ? "executable" : kind,
+          magicKind,
+        );
+        kind = resolved.kind;
+        classification = resolved.classification;
+        contents[index] = { ...contents[index]!, kind };
+        if (isVsixInterestingMemberKind(kind))
+          interestingMembers.push({
+            path: file.path,
+            kind,
+            bytes: hashed.length,
+            sha256: sha256Hex(hashed),
+            classification,
+          });
+      } else {
+        // Unread members keep the executable kind their Unix mode implies,
+        // so oversize, encrypted, or traversing helpers stay inventoried.
+        if (modeExecutable) {
+          kind = "executable";
+          contents[index] = { ...contents[index]!, kind };
+        }
+        if (isVsixInterestingMemberKind(kind))
+          interestingMembers.push({
+            path: file.path,
+            kind,
+            bytes: zipMemberSize(file.entry.uncompressedSize),
+            sha256: null,
+            classification: "inferred",
+          });
+      }
+      kindCounts[kind] += 1;
+    }
+    const vsixIdentity = vsixParsed?.identity ?? null;
+    const packageIdentity = packageParsed?.identity ?? null;
+    const vsixEngine = vsixParsed?.engine ?? null;
+    const packageEngine = packageParsed?.engine ?? null;
+    const mainDeclared = packageParsed?.main ?? null;
+    const browserDeclared = packageParsed?.browser ?? null;
+    // Only a resolved entry point is looked up among members; an escaped one
+    // is reported unresolved below without consulting the inventory.
+    const mainPath =
+      mainDeclared?.kind === "resolved" ? mainDeclared.path : null;
+    const mainDirectoryOnly = packageParsed?.mainDirectoryOnly ?? false;
+    const browserPath =
+      browserDeclared?.kind === "resolved" ? browserDeclared.path : null;
+    const memberPaths = new Set(files.map((file) => file.path));
+    // A `main` naming a directory resolves through that directory's own
+    // package.json before its index files, as Node's loader does.
+    let mainDirectoryMain: DirectoryManifestMain = { kind: "none" };
+    const mainManifestMatches =
+      mainPath === null
+        ? []
+        : files.filter((file) => file.path === `${mainPath}/package.json`);
+    const mainManifest =
+      mainManifestMatches.length === 1 ? mainManifestMatches[0] : undefined;
+    const directoryLookupApplies =
+      mainPath !== null &&
+      (mainDirectoryOnly ||
+        !resolveEntryPoint(mainPath, NODE_FILE_CANDIDATES, memberPaths)
+          .present);
+    if (
+      directoryLookupApplies &&
+      mainManifestMatches.length > 0 &&
+      (mainManifest === undefined ||
+        mainManifest.traverses ||
+        mainManifest.encrypted)
+    ) {
+      // A present directory package.json that cannot be read may name another
+      // file or be invalid, so it stops the lookup as an oversized one does.
+      mainDirectoryMain = { kind: "unread" };
+      limitations.push(
+        VSIX_LIMITATIONS.unreadMainDirectoryPackageJson(
+          `${mainPath}/package.json`,
+        ),
+      );
+    } else if (
+      mainManifest !== undefined &&
+      mainPath !== null &&
+      directoryLookupApplies
+    ) {
+      let decoded: Uint8Array | undefined;
+      try {
+        decoded = await readMemberBytes(
+          mainManifest.entry,
+          signal,
+          input.max_manifest_bytes,
+          `Member ${mainManifest.path}`,
+          "max_manifest_bytes",
+        );
+      } catch (cause: unknown) {
+        if (
+          !(
+            cause instanceof ParseFailureError &&
+            cause.failure.kind === "limit" &&
+            cause.failure.limit?.name === "max_manifest_bytes"
+          )
+        )
+          throw cause;
+        mainDirectoryMain = { kind: "unread" };
+        limitations.push(
+          VSIX_LIMITATIONS.oversizedMainDirectoryPackageJson(
+            mainManifest.path,
+            input.max_manifest_bytes,
+          ),
+        );
+      }
+      if (decoded !== undefined) {
+        examined += decoded.length;
+        // Node reads a directory package.json as UTF-8 only: a UTF-8 BOM is
+        // dropped, while UTF-16 or other invalid bytes fail with
+        // ERR_INVALID_PACKAGE_CONFIG, so they stay malformed here too.
+        let text: string | undefined;
+        try {
+          text = decodeStrictUtf8(decoded, "strip-signature");
+        } catch {
+          text = undefined;
+        }
+        mainDirectoryMain =
+          text === undefined
+            ? { kind: "malformed" }
+            : directoryManifestMain(mainPath, text);
+        if (mainDirectoryMain.kind === "unread")
+          limitations.push(
+            VSIX_LIMITATIONS.overgrownMainDirectoryPackageJson(
+              mainManifest.path,
+              MAX_INSPECT_VSIX_PACKAGE_MANIFEST_JSON_VALUES,
+            ),
+          );
+        if (mainDirectoryMain.kind === "malformed")
+          limitations.push(
+            VSIX_LIMITATIONS.malformedMainDirectoryPackageJson(
+              mainManifest.path,
+            ),
+          );
+      }
+    }
+    // Compare declared ids only when both manifests were read: an unread side
+    // is unknown, not an empty list.
+    const declaredIds = (
+      vsixmanifest: string[] | null,
+      packageJson: string[] | null,
+    ): VsixPackage["extension_dependencies"] => ({
+      vsixmanifest,
+      package_json: packageJson,
+      disagreement:
+        vsixmanifest !== null &&
+        packageJson !== null &&
+        !sameIdSet(vsixmanifest, packageJson),
+    });
+    const extensionDependencies = declaredIds(
+      vsixParsed?.extensionDependencies ?? null,
+      packageParsed?.extensionDependencies ?? null,
+    );
+    const extensionPack = declaredIds(
+      vsixParsed?.extensionPack ?? null,
+      packageParsed?.extensionPack ?? null,
+    );
+    const mainEntry =
+      mainDeclared === null
+        ? null
+        : mainPath === null
+          ? { path: mainDeclared.path, present: false }
+          : resolveNodeEntryPoint(
+              mainPath,
+              memberPaths,
+              mainDirectoryMain,
+              mainDirectoryOnly,
+            );
+    // The web host fetches one URI, adding .js only when its path lacks
+    // an extension. The same candidate owns exact and case-only matching.
+    const browserSuffix =
+      browserPath !== null && posix.extname(browserPath) === "" ? ".js" : "";
+    const browserEntry =
+      browserDeclared === null
+        ? null
+        : browserPath === null
+          ? { path: browserDeclared.path, present: false }
+          : resolveEntryPoint(browserPath, [browserSuffix], memberPaths);
+    const foldedMemberPaths = new Map(
+      files.map((file) => [file.path.toLowerCase(), file.path]),
+    );
+    // Escaped entry points are skipped: no member lookup ran for them, so a
+    // case-only match against a traversal member would be noise.
+    for (const [entry, nestedPath, suffixes] of [
+      [
+        mainPath === null ? null : mainEntry,
+        mainDirectoryMain.kind === "main" ? mainDirectoryMain.path : undefined,
+        // A malformed or unread directory package.json stops the lookup
+        // before the index files, so their case cannot be why main is absent.
+        [
+          ...(mainDirectoryOnly ? [] : NODE_FILE_CANDIDATES),
+          ...(directoryMainStopsLookup(mainDirectoryMain)
+            ? []
+            : NODE_INDEX_CANDIDATES),
+        ],
+      ],
+      [browserPath === null ? null : browserEntry, undefined, [browserSuffix]],
+    ] as const) {
+      if (entry === null || entry.present) continue;
+      const backslashPath = entry.path.includes("\\")
+        ? entry.path
+        : nestedPath?.includes("\\") === true
+          ? nestedPath
+          : undefined;
+      if (backslashPath !== undefined)
+        limitations.push(VSIX_LIMITATIONS.entryPointBackslash(backslashPath));
+      const member = caseOnlyEntryPointMatch(
+        entry.path,
+        suffixes,
+        foldedMemberPaths,
+      );
+      if (member !== undefined)
+        limitations.push(
+          VSIX_LIMITATIONS.entryPointCaseOnlyMatch(entry.path, member),
+        );
+    }
+    const signatures = {
+      p7s: presentPaths.has("extension.signature.p7s"),
+      manifest: presentPaths.has(".signature.manifest"),
+    };
+    return {
+      artifact: {
+        path: artifact.path,
+        sha256: artifact.sha256,
+        bytes: artifact.bytes,
+      },
+      vsix_identity: vsixIdentity,
+      package_identity: packageIdentity,
+      identity_disagreements: identityDisagreements(
+        vsixIdentity,
+        packageIdentity,
+      ),
+      engine: {
+        vsixmanifest: vsixEngine,
+        package_json: packageEngine,
+        disagreement:
+          vsixEngine !== null &&
+          packageEngine !== null &&
+          vsixEngine !== packageEngine,
+      },
+      target_platform: vsixIdentity?.target_platform ?? null,
+      entry_points: {
+        main: mainEntry,
+        browser: browserEntry,
+      },
+      activation_events: (packageParsed?.activationEvents ?? []).map(
+        (event) => ({
+          event,
+          eager: vsixActivationIsEager(event),
+        }),
+      ),
+      contributes: packageParsed?.contributes ?? {
+        keys: [],
+        commands: [],
+        commands_total: 0,
+        commands_omitted: 0,
+      },
+      extension_dependencies: extensionDependencies,
+      extension_pack: extensionPack,
+      extension_kind:
+        (packageParsed?.extensionKind.length ?? 0) > 0
+          ? (packageParsed?.extensionKind ?? [])
+          : (vsixParsed?.extensionKind ?? []),
+      capabilities: packageParsed?.capabilities ?? {
+        untrusted_workspaces: null,
+        virtual_workspaces: null,
+      },
+      enabled_api_proposals: packageParsed?.enabledApiProposals ?? [],
+      assets: vsixParsed?.assets ?? [],
+      signatures,
+      contents,
+      member_kind_counts: kindCounts,
+      interesting_members: interestingMembers,
+      duplicate_paths: duplicatePaths,
+      vsixmanifest:
+        vsixMember === undefined
+          ? null
+          : { path: vsixMember.path, bytes: vsixBytes },
+      package_json:
+        packageMember === undefined
+          ? null
+          : { path: packageMember.path, bytes: packageBytes },
+      coverage: {
+        status: listing.status,
+        entries: contents.length,
+        examined_manifest_bytes: examined,
+      },
+      limitations,
+    };
+  } finally {
+    await reader.close().catch(() => undefined);
+  }
+};

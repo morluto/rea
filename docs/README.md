@@ -32,9 +32,11 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [Go binary build metadata](guides/native/go-binaries.md)
 - [DWARF compile units](guides/native/dwarf-units.md)
 - [Offline binary diagnostics](guides/native/binary-diagnostics.md)
+- [YARA rule matches](guides/native/yara-matches.md)
 - [ELF separate debug files](guides/native/elf-debug-link.md)
 - [ELF and Mach-O initializer functions](guides/native/native-initializers.md)
 - [ELF unwind function ranges](guides/native/elf-unwind-ranges.md)
+- [Mach-O function starts and data in code](guides/native/macho-function-starts.md)
 - [Linux kernel build config](guides/native/kernel-build-config.md)
 - [Recorded crash evidence](guides/native/recorded-crashes.md)
 - [Windows Shell Link shortcuts](guides/native/windows-shortcut.md)
@@ -46,8 +48,11 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [PE Authenticode certificate tables](pe-certificates.md)
 - [PE import and delay-load tables](pe-imports.md)
 - [PE TLS callbacks and load configuration](pe-load-config.md)
+- [PE x64 exception-directory function ranges](guides/native/pe-unwind-ranges.md)
+- [PE overlay](guides/native/pe-overlay.md)
 - [Match native functions across builds](native-function-matching.md)
 - [Rust binary dependency metadata](rust-binaries.md)
+- [LabVIEW RSRC containers](guides/native/labview-analysis.md)
 - [Static CUDA and HIP code objects](gpu-code-objects.md)
 
 ## JavaScript and Electron
@@ -85,6 +90,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [ADB device inspection and acquisition](guides/android/adb-device-analysis.md)
 - [Flutter build identification](guides/android/flutter-analysis.md)
 - [Android boot and vendor_boot images](android-boot-image.md)
+- [Android DTBO partition images](android-dtbo.md)
 - [APK signature schemes](apk-signature.md)
 
 ## Apple applications
@@ -96,6 +102,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 
 - [Managed-code analysis](guides/managed/managed-code-analysis.md)
 - [NuGet packages](guides/managed/nuget-nupkg.md)
+- [VS Code extension packages](guides/managed/vsix-package.md)
 - [.NET single-file bundles](dotnet-bundles.md)
 - [IL2CPP metadata](il2cpp-metadata.md)
 
@@ -103,13 +110,19 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 
 - [Firmware analysis](guides/firmware/firmware-analysis.md)
 - [Android OTA update payloads](guides/firmware/android-ota-payload.md)
+- [Android Verified Boot vbmeta images](guides/firmware/android-vbmeta.md)
+- [Android sparse images](guides/firmware/android-sparse-image.md)
+- [UBI images](guides/firmware/ubi-images.md)
 - [Flattened devicetree inspection](devicetree.md)
 - [ESP flash images](esp-flash-image.md)
+- [ESP-IDF NVS partitions](guides/firmware/esp-nvs.md)
 - [ESP images](esp-image.md)
 - [U-Boot FIT images](fit-images.md)
+- [Qualcomm MBN images](guides/firmware/qualcomm-mbn-images.md)
 - [Intel HEX and S-record images](hex-records.md)
 - [UF2 and DfuSe images](uf2-dfuse.md)
 - [U-Boot legacy uImage containers](uimage.md)
+- [uClinux bFLT flat executables](bflt-executables.md)
 
 ## HarmonyOS packages
 
@@ -122,15 +135,26 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [Offline API contract inventory](api-contracts.md)
 - [CycloneDX dependencies](guides/native/cyclonedx-view.md)
 - [Maven POM and Gradle module metadata](maven-gradle-metadata.md)
+- [OCI image layouts](guides/artifacts/oci-image-layout.md)
 - [Release exposure](release-exposure.md)
 - [Model file declarations](model-artifacts.md)
 - [Python packaged applications](python-packaged-applications.md)
+- [Debian package inspection](deb-package.md)
 - [CPython pyc inspection](python-pyc.md)
 - [Erlang BEAM files](erlang-beam.md)
 - [Godot PCK archives](godot-pck.md)
 - [UnityFS AssetBundle archives](unityfs.md)
 - [iNES containers](ines-containers.md)
+- [Nintendo DS ROMs](guides/firmware/nds-roms.md)
+- [Sega Mega Drive ROMs](guides/firmware/mega-drive-roms.md)
+- [Nintendo 64 ROMs](guides/firmware/n64-roms.md)
 - [WeChat mini-program wxapkg archives](wxapkg.md)
+- [macOS flat installer packages](macos-pkg.md)
+- [ISO 9660 disc images](guides/firmware/iso9660-images.md)
+- [tar and gzip-compressed tar archives](tar-archives.md)
+- [Nintendo Switch NSO and NRO executables](guides/firmware/switch-executables.md)
+- [GPU asset headers: DDS, GLB, KTX and KTX2](gpu-asset-headers.md)
+- [Media asset headers: Ogg Opus, RIFF/XMA2, Bink 2 and Vulkan pipeline cache](media-asset-headers.md)
 
 ## WebAssembly
 
@@ -171,6 +195,8 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 ## Contracts and evidence
 
 - [MCP runtime contracts](reference/mcp-contracts.md)
+- [Target failures](reference/target-failures.md)
+- [Directory identity](reference/directory-identity.md)
 - [Reconstruction obligation ledgers](reference/reconstruction-obligation-ledgers.md)
 - [Reconstruction coverage](reconstruction-coverage.md)
 

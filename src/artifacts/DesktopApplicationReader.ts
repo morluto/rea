@@ -36,7 +36,7 @@ import { createDesktopApplicationEvidence } from "../domain/desktopApplicationEv
 import { ARTIFACT_GRAPH_PROVIDER } from "../domain/investigationProviders.js";
 import {
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
+  AnalysisTargetFailureError,
 } from "../domain/analysisErrorCore.js";
 import type {
   AnalysisError,
@@ -90,6 +90,8 @@ export class DesktopApplicationReader implements DesktopApplicationPort {
           { max_concurrent_inspections: 1 },
           {
             retryable: true,
+            // An occupied admission: the slot frees when the inspection ends.
+            measuredExhaustion: true,
             remediationAction:
               "Wait for this directory inspection to finish before submitting another.",
           },
@@ -103,6 +105,7 @@ export class DesktopApplicationReader implements DesktopApplicationPort {
     } catch (cause: unknown) {
       const error = translateArtifactFailure(
         "inspect_desktop_application",
+        input.path,
         cause,
       );
       return err(error);
@@ -189,9 +192,10 @@ export class DesktopApplicationReader implements DesktopApplicationPort {
 }
 
 /**
- * The root is the caller's selection: a non-directory is an unsupported
- * target, and host failures keep the shared target-unavailable/access-denied
- * classification instead of becoming artifact I/O faults.
+ * The root is the caller's selection: a path that is not a directory is a
+ * selection failure, and host failures keep the shared
+ * target-unavailable/access-denied classification instead of becoming
+ * artifact I/O faults.
  */
 const selectedRootFailure = (
   path: string,
@@ -199,16 +203,15 @@ const selectedRootFailure = (
   partialObservation: AnalysisPartialObservation | undefined,
 ): AnalysisError =>
   failure.reason === "path"
-    ? new AnalysisUnsupportedTargetError(
+    ? new AnalysisTargetFailureError(
         "inspect_desktop_application",
         path,
-        failure.message,
         {
-          cause: failure,
-          partialObservation,
-          remediationAction:
-            "Select the application's local installation directory, such as a macOS .app bundle or the directory containing its executable.",
+          kind: "selection",
+          format: "desktop-application",
+          detail: `${failure.message}. Select the application's local installation directory, such as a macOS .app bundle or the directory containing its executable.`,
         },
+        { cause: failure, partialObservation },
       )
     : new BinaryTargetError(path, failure.message, {
         cause: failure.cause,
@@ -523,8 +526,13 @@ const pathConventions = (path: string, rootName: string) => {
   };
 };
 
+/**
+ * Files whose headers are read. Besides host executable marking, which
+ * Windows cannot apply to ELF or Mach-O files, a bundle's `Contents/MacOS/`
+ * entries and extensionless files at the root name conventional Unix mains.
+ */
 const probeSelected = (entry: DirectoryArtifactEntry): boolean =>
   entry.executable ||
-  /(?:\.(?:exe|dll|so|dylib|pck|utoc|bundle|ab|unity3d)|(?:^|\/)(?:global-metadata\.dat|data\.win|game\.(?:unx|ios)))$/iu.test(
+  /(?:\.(?:exe|dll|so|dylib|pck|utoc|bundle|ab|unity3d)|(?:^|\/)(?:global-metadata\.dat|data\.win|game\.(?:unx|ios))|(?:^|\/)Contents\/MacOS\/[^/]+|^[^/.]+)$/iu.test(
     entry.path,
   );

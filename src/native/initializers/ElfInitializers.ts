@@ -1,3 +1,4 @@
+import { lastAtOrBelow } from "../../domain/virtualFileMapping.js";
 import { readInitializerWord } from "./initializerWord.js";
 import { setImmediate as immediate } from "node:timers/promises";
 import {
@@ -33,9 +34,10 @@ import {
   BinaryFormatFailure,
   BinaryMappingFailure,
   BinaryReader,
-  BinaryResourceFailure,
   createFileMappingIndex,
-  mappedFileOffset,
+  DEFAULT_NATIVE_STRUCTURE_BYTES,
+  nativeStructureFailure,
+  type ElfDynamicSegment,
   type FileMappingIndex,
 } from "../../domain/binaryContainer.js";
 import {
@@ -97,6 +99,7 @@ const EM_ARM = 40;
 interface DynTag {
   readonly value: bigint;
   readonly valueOffset: number;
+  readonly valueAddress: bigint;
 }
 
 interface ArraySlot extends ElfInitializerSlot {
@@ -127,6 +130,8 @@ interface Source {
 }
 
 interface ElfScan {
+  /** `max_structure_bytes` for the dynamic directory and Android packed relocation tables. */
+  readonly structureBytes: number;
   readonly reader: BinaryReader;
   readonly bytes: Buffer;
   readonly bits: 32 | 64;
@@ -160,23 +165,26 @@ const isSentinel = (value: bigint, bits: 32 | 64): boolean =>
 /** Read the consumed DT_* tags. The first duplicate wins. A missing DT_NULL leaves coverage unknown. */
 const readDynamicTags = (
   scan: ElfScan,
-  segment: { readonly offset: bigint; readonly size: bigint } | undefined,
+  segment: ElfDynamicSegment | undefined,
   extra: number,
 ): Map<bigint, DynTag> => {
   const tags = new Map<bigint, DynTag>();
   if (segment === undefined) return tags;
   if (extra > 0)
     throw new BinaryFormatFailure("malformed", "multiple PT_DYNAMIC segments");
-  const table = admitElfDynamicDirectory(scan.bytes.length, segment, scan.bits);
+  const table = admitElfDynamicDirectory(
+    scan.bytes.length,
+    segment,
+    scan.bits,
+    scan.structureBytes,
+  );
   if (!table.ok) {
     if (table.error.kind === "malformed")
       throw new BinaryFormatFailure("malformed", table.error.message);
-    throw new BinaryResourceFailure(
-      "structure",
+    throw nativeStructureFailure(
+      "The ELF dynamic directory",
+      table.error.size,
       table.error.maximum,
-      table.error.message,
-      "structure",
-      "bytes",
     );
   }
   const { offset: start, size, width } = table.value;
@@ -202,9 +210,11 @@ const readDynamicTags = (
       );
       continue;
     }
+    const valueOffset = at + wordOf(scan.bits);
     tags.set(parsed.value.tag, {
       value: parsed.value.value,
-      valueOffset: at + wordOf(scan.bits),
+      valueOffset,
+      valueAddress: segment.virtual_address + BigInt(valueOffset - start),
     });
   }
   if (!terminated)
@@ -240,52 +250,76 @@ const fileOffsetFor = (
 const AMBIGUOUS_MAPPING =
   "An address has ambiguous file mappings (overlapping load segments with different file offsets, or file and zero-fill memory), so its file offset is not reported.";
 
-const vaForFile = (
-  mappings: Parameters<typeof mappedFileOffset>[0],
-  fileOffset: number,
-): bigint | null => {
-  for (const mapping of mappings) {
-    if (
-      fileOffset < mapping.offset ||
-      fileOffset >= mapping.offset + mapping.size
-    )
-      continue;
-    return mapping.address + BigInt(fileOffset - mapping.offset);
-  }
-  return null;
-};
-
-/** Section-name labels, independent of load-address translation. */
 interface ElfSectionIndex {
   /** Name of the smallest SHF_ALLOC section containing `address`; earlier headers win ties. */
   readonly nameAt: (address: bigint) => string | null;
 }
 
-const indexSections = (sections: readonly NativeSection[]): ElfSectionIndex => {
-  const named = buildAddressRangeIndex(
-    sections.flatMap((section) =>
-      section.size !== 0n && (section.flags & 2n) !== 0n
-        ? [
-            {
-              start: section.address,
-              end: section.address + section.size,
-              value: section,
-            },
-          ]
-        : [],
-    ),
-    (left, right) =>
-      left.size < right.size
-        ? -1
-        : left.size > right.size
-          ? 1
-          : left.index - right.index,
+interface ClassifiedSections {
+  readonly index: ElfSectionIndex;
+  readonly byKind: Readonly<
+    Record<
+      "preinit_array" | "init_array" | "fini_array" | "ctors" | "dtors",
+      readonly NativeSection[]
+    >
+  >;
+}
+
+const classifySections = (
+  sections: readonly NativeSection[],
+  namesKnown: boolean,
+): ClassifiedSections => {
+  const allocRanges: {
+    readonly start: bigint;
+    readonly end: bigint;
+    readonly value: NativeSection;
+  }[] = [];
+  const preinit_array: NativeSection[] = [];
+  const init_array: NativeSection[] = [];
+  const fini_array: NativeSection[] = [];
+  const ctors: NativeSection[] = [];
+  const dtors: NativeSection[] = [];
+  for (const section of sections) {
+    if (section.size !== 0n && (section.flags & 2n) !== 0n) {
+      allocRanges.push({
+        start: section.address,
+        end: section.address + section.size,
+        value: section,
+      });
+    }
+    if (
+      section.type === SHT_PREINIT_ARRAY ||
+      (namesKnown && matchesName(section, ".preinit_array"))
+    )
+      preinit_array.push(section);
+    if (
+      section.type === SHT_INIT_ARRAY ||
+      (namesKnown && matchesName(section, ".init_array"))
+    )
+      init_array.push(section);
+    if (
+      section.type === SHT_FINI_ARRAY ||
+      (namesKnown && matchesName(section, ".fini_array"))
+    )
+      fini_array.push(section);
+    if (namesKnown && matchesName(section, ".ctors")) ctors.push(section);
+    if (namesKnown && matchesName(section, ".dtors")) dtors.push(section);
+  }
+  const named = buildAddressRangeIndex(allocRanges, (left, right) =>
+    left.size < right.size
+      ? -1
+      : left.size > right.size
+        ? 1
+        : left.index - right.index,
   );
   return {
-    nameAt(address) {
-      const name = named.at(address)?.value.name;
-      return name == null || name.length === 0 ? null : name;
+    index: {
+      nameAt(address) {
+        const name = named.at(address)?.value.name;
+        return name == null || name.length === 0 ? null : name;
+      },
     },
+    byKind: { preinit_array, init_array, fini_array, ctors, dtors },
   };
 };
 
@@ -341,18 +375,6 @@ const slotsFromSpan = (
 /** Output sections, plus `.name.*` input sections in relocatable objects. */
 const matchesName = (section: NativeSection, name: string): boolean =>
   section.name === name || (section.name?.startsWith(`${name}.`) ?? false);
-
-const findSections = (
-  sections: readonly NativeSection[],
-  type: number | null,
-  name: string,
-  namesKnown: boolean,
-): NativeSection[] =>
-  sections.filter(
-    (section) =>
-      (type !== null && section.type === type) ||
-      (namesKnown && matchesName(section, name)),
-  );
 
 /** File offset of an address inside one file-backed section. */
 const withinSection =
@@ -412,10 +434,9 @@ const sectionSource = (
 };
 
 interface ArrayRequest {
-  readonly kind: NativeInitializerKind;
+  readonly kind: "preinit_array" | "init_array" | "fini_array";
   readonly addressTag: bigint;
   readonly sizeTag: bigint;
-  readonly sectionType: number;
   readonly sectionName: string;
   readonly detail: string;
 }
@@ -424,20 +445,13 @@ interface ArrayRequest {
 const arraySources = (
   scan: ElfScan,
   tags: ReadonlyMap<bigint, DynTag>,
-  sections: readonly NativeSection[],
-  index: ElfSectionIndex,
+  classified: ClassifiedSections,
   request: ArrayRequest,
   locate: (address: bigint) => number | null,
-  namesKnown: boolean,
 ): Source[] => {
   const address = tags.get(request.addressTag);
   if (address === undefined)
-    return findSections(
-      sections,
-      request.sectionType,
-      request.sectionName,
-      namesKnown,
-    ).map((section) =>
+    return classified.byKind[request.kind].map((section) =>
       sectionSource(scan, section, request.kind, false, request.sectionName),
     );
   const size = tags.get(request.sizeTag);
@@ -460,7 +474,7 @@ const arraySources = (
         size.value,
         request.detail,
         locate,
-        index.nameAt(address.value),
+        classified.index.nameAt(address.value),
       ),
     },
   ];
@@ -468,12 +482,11 @@ const arraySources = (
 
 const legacySources = (
   scan: ElfScan,
-  sections: readonly NativeSection[],
+  classified: ClassifiedSections,
   name: ".ctors" | ".dtors",
-  kind: NativeInitializerKind,
-  namesKnown: boolean,
+  kind: "ctors" | "dtors",
 ): Source[] =>
-  findSections(sections, null, name, namesKnown).map((section) =>
+  classified.byKind[kind].map((section) =>
     sectionSource(scan, section, kind, true, name),
   );
 
@@ -481,19 +494,22 @@ const directSource = (
   scan: ElfScan,
   tags: ReadonlyMap<bigint, DynTag>,
   index: ElfSectionIndex,
-  mappings: Parameters<typeof mappedFileOffset>[0],
+  locate: (address: bigint) => number | null,
   tag: bigint,
   kind: NativeInitializerKind,
   detail: string,
 ): Source | null => {
   const entry = tags.get(tag);
   if (entry === undefined) return null;
-  const va = vaForFile(mappings, entry.valueOffset);
-  // DT_INIT / DT_FINI store the target, not a slot pointer, so an unmapped field has no slot address.
+  const va =
+    locate(entry.valueAddress) === entry.valueOffset
+      ? entry.valueAddress
+      : null;
+  // The actual file field still supplies the value even when its declared virtual slot is unproven.
   if (va === null)
     note(
       scan,
-      `${detail} value field is not inside a load segment.`,
+      `${detail} value field is not fully file-backed at its declared PT_DYNAMIC address.`,
       "unknown",
     );
   return {
@@ -516,7 +532,6 @@ const ARRAYS: readonly ArrayRequest[] = [
     kind: "preinit_array",
     addressTag: DT_PREINIT_ARRAY,
     sizeTag: DT_PREINIT_ARRAYSZ,
-    sectionType: SHT_PREINIT_ARRAY,
     sectionName: ".preinit_array",
     detail: "DT_PREINIT_ARRAY",
   },
@@ -524,7 +539,6 @@ const ARRAYS: readonly ArrayRequest[] = [
     kind: "init_array",
     addressTag: DT_INIT_ARRAY,
     sizeTag: DT_INIT_ARRAYSZ,
-    sectionType: SHT_INIT_ARRAY,
     sectionName: ".init_array",
     detail: "DT_INIT_ARRAY",
   },
@@ -532,7 +546,6 @@ const ARRAYS: readonly ArrayRequest[] = [
     kind: "fini_array",
     addressTag: DT_FINI_ARRAY,
     sizeTag: DT_FINI_ARRAYSZ,
-    sectionType: SHT_FINI_ARRAY,
     sectionName: ".fini_array",
     detail: "DT_FINI_ARRAY",
   },
@@ -541,20 +554,17 @@ const ARRAYS: readonly ArrayRequest[] = [
 const collectSources = (
   scan: ElfScan,
   tags: ReadonlyMap<bigint, DynTag>,
-  sections: readonly NativeSection[],
-  index: ElfSectionIndex,
-  mappings: Parameters<typeof mappedFileOffset>[0],
+  classified: ClassifiedSections,
   locate: (address: bigint) => number | null,
-  namesKnown: boolean,
 ): Source[] => {
   const [preinit, initArray, finiArray] = ARRAYS.map((request) =>
-    arraySources(scan, tags, sections, index, request, locate, namesKnown),
+    arraySources(scan, tags, classified, request, locate),
   );
   const init = directSource(
     scan,
     tags,
-    index,
-    mappings,
+    classified.index,
+    locate,
     DT_INIT,
     "init",
     "DT_INIT",
@@ -562,8 +572,8 @@ const collectSources = (
   const fini = directSource(
     scan,
     tags,
-    index,
-    mappings,
+    classified.index,
+    locate,
     DT_FINI,
     "fini",
     "DT_FINI",
@@ -572,10 +582,10 @@ const collectSources = (
     ...(preinit ?? []),
     ...(init === null ? [] : [init]),
     ...(initArray ?? []),
-    ...legacySources(scan, sections, ".ctors", "ctors", namesKnown),
+    ...legacySources(scan, classified, ".ctors", "ctors"),
     ...(fini === null ? [] : [fini]),
     ...(finiArray ?? []),
-    ...legacySources(scan, sections, ".dtors", "dtors", namesKnown),
+    ...legacySources(scan, classified, ".dtors", "dtors"),
   ];
 };
 
@@ -586,26 +596,6 @@ interface WriteLoad {
   readonly clobbered: ReadonlySet<bigint>;
   readonly trustRaw: boolean;
 }
-
-/**
- * Index of the first slot whose word could overlap a write starting at
- * `address`, that is the first slot above `address - word`.
- */
-const firstOverlap = (
-  slots: readonly bigint[],
-  address: bigint,
-  word: number,
-): number => {
-  const from = address - BigInt(word);
-  let low = 0;
-  let high = slots.length;
-  while (low < high) {
-    const mid = (low + high) >>> 1;
-    if ((slots[mid] ?? address) <= from) low = mid + 1;
-    else high = mid;
-  }
-  return low;
-};
 
 /**
  * Drain the shared dynamic-relocation reader, keeping only writes that touch a
@@ -632,7 +622,7 @@ const loadWrites = async (
   const consider = (write: ElfPointerWrite): void => {
     const end = write.address + BigInt(write.width);
     for (
-      let at = firstOverlap(slots, write.address, word);
+      let at = lastAtOrBelow(slots, write.address - BigInt(word)) + 1;
       at < slots.length;
       at += 1
     ) {
@@ -659,6 +649,7 @@ const loadWrites = async (
         dynamicSegments: image.elf.dynamicSegments,
         mappings: image.mappings,
         zeroFills: image.zero_fills,
+        structureBytes: scan.structureBytes,
       },
       { unsupported: "record", wholeExtents: true },
     );
@@ -685,8 +676,9 @@ const loadWrites = async (
     }
     return { writes, clobbered, trustRaw: true };
   } catch (cause) {
-    // A budget stop is not a malformed table; the provider reports it with
-    // the maximum the failing index declared.
+    // A budget stop (`BinaryResourceFailure` for `max_structure_bytes`, or a
+    // limit `ElfPointerRelocationFailure`) is not a malformed table; rethrow it
+    // for the provider to project as a resource constraint.
     if (
       !(cause instanceof ElfPointerRelocationFailure) ||
       cause.kind === "limit"
@@ -981,20 +973,23 @@ export const readElfInitializers = async (
   bytes: Buffer,
   page: InitializerPage,
   signal?: AbortSignal,
+  structureBytes: number = DEFAULT_NATIVE_STRUCTURE_BYTES,
 ): Promise<NativeInitializerInspection> => {
   assertArtifactReadActive(signal);
   const operation = "inspect_native_initializers";
   const directory =
     signal === undefined
-      ? readElfDirectoryFromBuffer(bytes, operation)
+      ? readElfDirectoryFromBuffer(bytes, operation, { structureBytes })
       : await readElfDirectoryFromBufferCooperative(
           bytes,
           () => yieldArtifactRead(signal),
           operation,
+          { structureBytes },
         );
   assertArtifactReadActive(signal);
   const image = readElfImageFromDirectory(bytes, directory);
   const scan: ElfScan = {
+    structureBytes,
     bytes,
     reader: new BinaryReader(bytes, image.byte_order === "little", "elf"),
     bits: image.bits,
@@ -1019,27 +1014,24 @@ export const readElfInitializers = async (
   const namesKnown = directory.section_names_limitation === undefined;
   if (!namesKnown && directory.section_names_limitation !== undefined)
     note(scan, directory.section_names_limitation, "unknown");
-  const index = indexSections(directory.sections);
+  const classified = classifySections(directory.sections, namesKnown);
+  const index = classified.index;
   const mappings = createFileMappingIndex(image.mappings, image.zero_fills);
   const locate = (address: bigint): number | null =>
     fileOffsetFor(scan, mappings, address, wordOf(scan.bits));
   const locateTarget = (address: bigint): number | null =>
     fileOffsetFor(scan, mappings, address, 1);
-  const declaredSources = collectSources(
-    scan,
-    tags,
-    directory.sections,
-    index,
-    image.mappings,
-    locate,
-    namesKnown,
-  );
+  const declaredSources = collectSources(scan, tags, classified, locate);
   const sources = scan.relocatable
     ? declaredSources
     : declaredSources.map((source) => ({
         ...source,
         slots: source.slots.map((slot) => {
-          if (slot.direct !== undefined || slot.fileOffset === null)
+          if (
+            slot.direct !== undefined ||
+            slot.fileOffset === null ||
+            slot.sectionIndex === null
+          )
             return slot;
           let mapped: number | null = null;
           try {

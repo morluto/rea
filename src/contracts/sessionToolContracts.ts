@@ -20,8 +20,8 @@ import {
   closeBinaryInputSchema,
   resetInvestigationInputSchema,
   openBundleResourcesInputSchema,
-  openBinaryInputSchema,
 } from "./sessionLifecycleInputs.js";
+import { OPEN_BINARY_TOOL_CONTRACT } from "./openBinaryToolContract.js";
 import { binarySessionInputSchema } from "./sessionStatusContract.js";
 import { processComparisonInputSchema } from "./processComparisonContracts.js";
 import { artifactComparisonInputSchema } from "./artifactComparisonContracts.js";
@@ -39,6 +39,7 @@ import type { ToolContract } from "./toolContractTypes.js";
 import type { EffectAudit } from "./toolEffects.js";
 import {
   toolContractMetadata,
+  artifactInspectionEffects,
   evidenceEffects,
   providerEffects,
   providerRemoteEffects,
@@ -80,26 +81,7 @@ export const exportEvidenceBundleInputSchema = z.strictObject({
   overwrite: z.boolean().default(false),
 });
 
-/**
- * The contract an MCP client opens a target with. CLI commands that open their
- * target take its fields as options; startup reads it here rather than through
- * the complete catalog.
- */
-export const OPEN_BINARY_TOOL_CONTRACT = session(
-  "open_binary",
-  // Lifecycle transitions can retire an IDA client, including a pending
-  // cleanup from an earlier provider, over its configured MCP transport.
-  // Retiring Ghidra can discard ephemeral edits or save a configured checkpoint.
-  toolEffects({
-    mutatesSession: true,
-    writesFilesystem: true,
-    launchesProcess: true,
-    accessesNetwork: true,
-    mayDiscardData: true,
-  }),
-  "Open a validated local artifact or analysis database and bind its analysis provider. Switching target/provider can discard ephemeral Ghidra edits even if the later open fails; retained investigation Evidence does not restore them. Reopening the same target/profile retains the engine and edits. provider_id selects a provider or deterministic auto routing, with no failure fallback. Omitted format uses headers; format dos-com admits 1..65280 headerless bytes, while raw-binary requires architecture and entry_point and maps file offset 0 there. Optional snapshots must match target, provider and analysis profile; close/reopen before importing into a mutated engine. For Ghidra cross-process edits, set a private absolute REA_GHIDRA_CHECKPOINT_DIR at startup (stock ELF/PE/Mach-O on Linux/macOS); normal opens/closes restore/save metadata. Failed opens report selection_at_failure and target/provider at completion; use binary_session for current state. close_binary releases engine resources; reset_investigation clears retained records.",
-  openBinaryInputSchema,
-);
+export { OPEN_BINARY_TOOL_CONTRACT };
 
 /** Target lifecycle tools available only on the long-lived MCP adapter. */
 export const SESSION_TOOL_CONTRACTS = [
@@ -124,7 +106,7 @@ export const SESSION_TOOL_CONTRACTS = [
       mayDiscardData: true,
       idempotent: false,
     }),
-    "Release the active engine and owned resources while retaining investigation Evidence and complete Unknown history in memory. Drains earlier requests and queues later ones. If cleanup fails, keep this connection and retry close_binary without snapshot_path after the reported condition settles. Optional snapshot_path saves a target-bound snapshot first; resource-only sessions have no snapshot binding, existing files require overwrite, and failed saves keep the engine open. Metadata edits prevent immutable snapshot saves until recreation. Ghidra checkpoint mode saves metadata on normal close and retains the Program for retry if saving fails. Closing does not persist investigation records: export_evidence_bundle to save them, or reset_investigation to clear them.",
+    "Release the active engine and owned resources while retaining investigation Evidence and complete Unknown history in memory. Drains earlier requests and queues later ones. If cleanup fails, keep this connection and retry close_binary without snapshot_path after the reported condition settles. Optional snapshot_path saves a target-bound snapshot first; resource-only sessions have no snapshot binding, existing files require overwrite, and failed saves keep the engine open. Metadata edits prevent immutable snapshot saves until recreation. Ghidra checkpoint mode saves metadata on normal close and retains the Program for retry if saving fails; after a save refused because another session published first, the next close releases the edits unsaved and reports checkpoint.status discarded. Closing does not persist investigation records: export_evidence_bundle to save them, or reset_investigation to clear them.",
     closeBinaryInputSchema,
   ),
   session(
@@ -181,8 +163,8 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "compare_artifacts",
-    evidenceEffects,
-    'Compare complete artifact inventories by occurrence path, content identity, metadata and graph relations; root . identifies the outer container separately. Accepts complete inline Evidence, {kind:"retained-evidence",evidence_id} for inspect_artifact/nested inventory/retained summary, or {kind:"evidence-file",path:"/absolute/bundle.json"} with optional evidence_id. Summaries resolve to their complete parent in that session/source bundle; summary facts alone are insufficient. Returns every delta inline with both source identities; coverage gaps remain truncated or unknown, never equivalence. Includes FIT and legacy uImage components.',
+    artifactInspectionEffects,
+    'Compare complete artifact inventories by occurrence path, content identity, metadata and graph relations; root . identifies the outer container separately. Accepts complete inline Evidence, {kind:"retained-evidence",evidence_id} for inspect_artifact/nested inventory/retained summary, {kind:"evidence-file",path:"/absolute/bundle.json"} with optional evidence_id, or {kind:"path",path:"/absolute/dir"} to inventory a file or directory in place. Summaries resolve to their complete parent in that session/source bundle; summary facts alone are insufficient. Returns every delta inline with both source identities; coverage gaps remain truncated or unknown, never equivalence. Includes FIT and legacy uImage components.',
     artifactComparisonInputSchema,
   ),
   session(
@@ -212,7 +194,7 @@ export const SESSION_TOOL_CONTRACTS = [
   session(
     "build_call_path",
     evidenceEffects,
-    "Build every shortest direct-callee path from complete analyze_function Evidence supplied inline or by exact retained-evidence references. References reuse the complete parent of an analyze_function summary without resending dossiers. Uses exact canonical addresses; missing dossiers and provider mixing remain unknown, and every node and edge cites source Evidence.",
+    "Build the shortest direct-callee paths from complete analyze_function Evidence supplied inline or by exact retained-evidence references. References reuse the complete parent of an analyze_function summary without resending dossiers. Uses exact canonical addresses. max_paths (default 64) is a caller-selected count preference, recorded in Evidence only when the caller selects it; the first shortest path is always returned, and a 2 MiB serialized paths-field budget bounds the paths after it. total_shortest_paths reports how many exist, total_shortest_paths_capped reports when that count only bounds one past the exactly representable range, paths_truncated reports when the returned list is a prefix, and paths_limited_by_bytes identifies byte-budget truncation. Missing dossiers and provider mixing remain unknown; every node and edge cites source Evidence.",
     callPathRequestSchema,
   ),
   session(
@@ -254,7 +236,7 @@ export const SESSION_TOOL_CONTRACTS = [
   session(
     "get_evidence_bundle",
     toolEffects(),
-    "Read retained Evidence and tracked questions without rerunning providers. Default complete returns an importable canonical bundle. detail summary lists record metadata; records pages complete records with unchanged IDs and missing direct evidence_links, but is not an importable bundle. detail links inspects retained/missing links without payloads; traversal retained-closure follows retained links and defaults to missing rows. Summary/records/links filters accept Evidence ID, operation, target SHA-256, analysis-profile digest or canonical procedure address. Metadata keeps retention distinct from truncated/unavailable source coverage. Use a discovered evidence_id with a compatible inspect_analysis_view to read selected facts.",
+    "Read retained Evidence and tracked questions without rerunning providers; detail links with linked_evidence_id finds direct referrers, even if the cited ID is missing here. Default complete returns an importable canonical bundle. detail summary lists record metadata; offset or limit pages matches in canonical Evidence ID order with page.next_offset, while omitting both returns every match. Summary matching-record and link counts cover all filtered records. detail records pages complete records with unchanged IDs and missing direct evidence_links, but is not an importable bundle. detail links inspects retained/missing links without payloads; traversal retained-closure follows retained links; link_status defaults to all with linked_evidence_id, otherwise missing. Summary/records/links source filters accept Evidence ID, operation, target SHA-256, analysis-profile digest or canonical procedure address. Metadata keeps retention distinct from truncated/unavailable source coverage. Use a discovered evidence_id with a compatible inspect_analysis_view to read selected facts.",
     getEvidenceBundleInputSchema,
   ),
   {

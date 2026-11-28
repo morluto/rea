@@ -1,4 +1,6 @@
+import { u16, u32, u64 } from "../../tests/fixtures/apkSignature/integers.js";
 import { createHash } from "node:crypto";
+import { deflateRawSync } from "node:zlib";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,6 +27,7 @@ import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { apkSignatureResultSchema } from "../domain/apkSignature/apkSignatureReport.js";
 import { ApkSignatureProvider } from "./ApkSignatureProvider.js";
 import { APK_SIGNATURE_LIMITS } from "./ApkSignatureRelease.js";
+import { decodeV1SignerFromReader } from "./apkV1Signers.js";
 import { apkSignatureFailure } from "./apkSignatureFailures.js";
 import { apkSchemeValue } from "../../tests/fixtures/apkSignature/signingScheme.js";
 
@@ -34,14 +37,6 @@ const zipOf = async (names: readonly string[]): Promise<Uint8Array> => {
   return writer.close();
 };
 
-const u16 = (v: number): number[] => [v & 0xff, (v >> 8) & 0xff];
-const u32 = (v: number): number[] => [
-  v & 0xff,
-  (v >> 8) & 0xff,
-  (v >> 16) & 0xff,
-  (v >>> 24) & 0xff,
-];
-const u64 = (v: number): number[] => [...u32(v), ...u32(0)];
 const lp = (b: readonly number[]): number[] => [...u32(b.length), ...b];
 const seq = (els: readonly (readonly number[])[]): number[] =>
   lp(els.flatMap((e) => lp(e)));
@@ -406,7 +401,7 @@ const registerSignatureInputAdmissionCases = () => {
     expect(
       tagOf(new ArtifactReaderFailure("path", "Expected a regular file")),
     ).toBe("AnalysisInputError");
-    for (const reason of ["io", "unavailable", "format"] as const)
+    for (const reason of ["io", "unavailable"] as const)
       expect(tagOf(new ArtifactReaderFailure(reason, "reader failed"))).toBe(
         "ProviderAdapterError",
       );
@@ -429,7 +424,7 @@ const registerSignatureInputAdmissionCases = () => {
     });
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.error._tag).toBe("AnalysisUnsupportedTargetError");
+    expect(result.error._tag).toBe("AnalysisTargetFailureError");
   });
 
   it("reports a damaged supported Zip64 end record as input failure while accepting the intact and restored controls", async () => {
@@ -663,3 +658,71 @@ describe("ApkSignatureProvider output budget", () => {
     expect(over.error.message).toContain("output budget");
   });
 });
+
+it.each([
+  { method: 8, padding: 0 },
+  { method: 8, padding: 64 * 1024 },
+  { method: 99, padding: 0 },
+])(
+  "limits V1 payload reads for compression method $method and padding $padding",
+  async ({ method, padding }) => {
+    const name = "META-INF/A.RSA";
+    const rawName = Buffer.from(name);
+    const uncompressedSize = 150_000;
+    const compressed = deflateRawSync(Buffer.alloc(uncompressedSize), {
+      level: 0,
+    });
+    const payload = Buffer.concat([compressed, Buffer.alloc(padding)]);
+    const bytes = Buffer.alloc(30 + rawName.length + payload.length);
+    const dataStart = 30 + rawName.length;
+    bytes.writeUInt32LE(0x04034b50, 0);
+    bytes.writeUInt16LE(method, 8);
+    bytes.writeUInt32LE(payload.length, 18);
+    bytes.writeUInt32LE(uncompressedSize, 22);
+    bytes.writeUInt16LE(rawName.length, 26);
+    rawName.copy(bytes, 30);
+    payload.copy(bytes, dataStart);
+    const reads: number[] = [];
+    const result = await decodeV1SignerFromReader(
+      {
+        size: bytes.length,
+        readRange: async (offset, length) => {
+          if (offset >= dataStart) reads.push(length);
+          return bytes.subarray(offset, offset + length);
+        },
+      },
+      {
+        signatureFile: "META-INF/A.SF",
+        duplicate: null,
+        block: {
+          name,
+          rawName,
+          flags: 0,
+          method,
+          crc32: 0,
+          compressedSize: payload.length,
+          uncompressedSize,
+          localHeaderOffset: 0,
+        },
+      },
+      bytes.length,
+    );
+    if (method === 8) {
+      expect(result.decoded).toMatchObject({
+        ok: false,
+        error: expect.stringContaining("malformed PKCS#7"),
+      });
+      expect(reads.length).toBeGreaterThan(1);
+      expect(Math.max(...reads)).toBeLessThanOrEqual(64 * 1024);
+      const readBytes = reads.reduce((total, count) => total + count, 0);
+      expect(readBytes).toBeGreaterThanOrEqual(compressed.length);
+      expect(readBytes).toBeLessThanOrEqual(payload.length);
+    } else {
+      expect(result.decoded).toEqual({
+        ok: false,
+        error: "compression method 99 is not supported",
+      });
+      expect(reads).toEqual([]);
+    }
+  },
+);

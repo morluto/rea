@@ -1,5 +1,7 @@
+import { appendToMapList } from "../appendToMapList.js";
 import { z } from "zod";
 import { coverageStatusSchema } from "../coverage.js";
+import { CoverageAccumulator } from "../coverageAccumulator.js";
 
 import {
   nativeMetadataEvidenceSchema,
@@ -231,14 +233,12 @@ export const traceNativeInvestigationGraph = (
   for (const edge of graph.edges) {
     const nodeId = direction === "forward" ? edge.from : edge.to;
     if (nodeId === null) continue;
-    const entries = adjacency.get(nodeId);
-    if (entries === undefined) adjacency.set(nodeId, [edge]);
-    else entries.push(edge);
+    appendToMapList(adjacency, nodeId, edge);
   }
 
-  while (queue.length > 0) {
-    const current = queue.shift();
-    if (current === undefined) break;
+  let queueHead = 0;
+  while (queueHead < queue.length) {
+    const current = queue[queueHead++]!;
     const adjacent = adjacency.get(current.id) ?? [];
 
     for (const edge of adjacent) {
@@ -309,6 +309,46 @@ export const traceNativeInvestigationGraph = (
   };
 };
 
+const indexTargetActionEdges = (
+  edges: readonly NativeInvestigationEdge[],
+  nodes: ReadonlyMap<string, NativeInvestigationGraph["nodes"][number]>,
+) => {
+  const selectorNodesByAction = new Map<string, string>();
+  const edgesByAction = new Map<string, NativeInvestigationEdge[]>();
+  for (const edge of edges) {
+    if (edge.resolution !== "observed" || edge.relation !== "target_action")
+      continue;
+    if (nodes.get(edge.to)?.kind === "objc_selector")
+      selectorNodesByAction.set(edge.from, edge.to);
+    appendToMapList(edgesByAction, edge.from, edge);
+  }
+  return { selectorNodesByAction, edgesByAction };
+};
+
+const indexInstanceImplementations = (
+  implementations: ObjcSwiftMetadata["objc_dispatch_implementations"],
+) => {
+  const bySelector = new Map<
+    string,
+    ObjcSwiftMetadata["objc_dispatch_implementations"]
+  >();
+  const bySelectorAndClass = new Map<
+    string,
+    Map<string, ObjcSwiftMetadata["objc_dispatch_implementations"]>
+  >();
+  for (const candidate of implementations) {
+    if (candidate.method_type !== "instance") continue;
+    appendToMapList(bySelector, candidate.selector, candidate);
+    let byClass = bySelectorAndClass.get(candidate.selector);
+    if (byClass === undefined) {
+      byClass = new Map();
+      bySelectorAndClass.set(candidate.selector, byClass);
+    }
+    appendToMapList(byClass, candidate.class_name, candidate);
+  }
+  return { bySelector, bySelectorAndClass };
+};
+
 /** Join authored UI actions to exact Objective-C method symbols when known. */
 export const joinInterfaceBuilderDispatch = (
   graph: NativeInvestigationGraph,
@@ -317,15 +357,13 @@ export const joinInterfaceBuilderDispatch = (
   const nodes = new Map(graph.nodes.map((node) => [node.id, node]));
   const edges = [...graph.edges];
   const existingEdgeIds = new Set(edges.map(({ id }) => id));
-  const selectorNodesByAction = new Map<string, string>();
-  for (const edge of edges) {
-    if (
-      edge.resolution === "observed" &&
-      edge.relation === "target_action" &&
-      nodes.get(edge.to)?.kind === "objc_selector"
-    )
-      selectorNodesByAction.set(edge.from, edge.to);
-  }
+  const { selectorNodesByAction, edgesByAction } = indexTargetActionEdges(
+    edges,
+    nodes,
+  );
+  const { bySelector, bySelectorAndClass } = indexInstanceImplementations(
+    metadata.objc_dispatch_implementations,
+  );
 
   let examined = 0;
   let resolved = 0;
@@ -337,14 +375,12 @@ export const joinInterfaceBuilderDispatch = (
     const selectorNodeId = selectorNodesByAction.get(action.id);
     if (selectorNodeId === undefined) continue;
     examined += 1;
-    const destinationEdge = edges.find(
-      (edge) =>
-        edge.resolution === "observed" &&
-        edge.relation === "target_action" &&
-        edge.from === action.id &&
-        edge.to !== selectorNodeId &&
-        nodes.has(edge.to),
-    );
+    const destinationEdge = edgesByAction
+      .get(action.id)
+      ?.find(
+        (edge) =>
+          edge.to !== selectorNodeId && edge.to !== null && nodes.has(edge.to),
+      );
     if (
       destinationEdge === undefined ||
       destinationEdge.resolution !== "observed"
@@ -376,12 +412,10 @@ export const joinInterfaceBuilderDispatch = (
       owner?.kind !== "external_object"
         ? declaredClass
         : null;
-    const candidates = metadata.objc_dispatch_implementations.filter(
-      (candidate) =>
-        candidate.method_type === "instance" &&
-        candidate.selector === selector &&
-        (className === null || candidate.class_name === className),
-    );
+    const candidates =
+      className === null
+        ? (bySelector.get(selector) ?? [])
+        : (bySelectorAndClass.get(selector)?.get(className) ?? []);
     const implementation = candidates.length === 1 ? candidates[0] : undefined;
     const edgeId = `dispatch:${selectorNodeId}:${className ?? owner?.id ?? "unknown"}:${selector}`;
     if (existingEdgeIds.has(edgeId)) continue;
@@ -465,10 +499,14 @@ export const joinInterfaceBuilderDispatch = (
       ...graph.coverage,
       {
         facet: "ui_to_objc_dispatch",
-        status:
-          examined === resolved && inferredWithoutOwnerClass === 0
-            ? "complete"
-            : "partial",
+        status: (() => {
+          const acc = new CoverageAccumulator().recordComplete();
+          if (examined !== resolved)
+            acc.recordOmission("unresolved native investigation graph entries");
+          if (inferredWithoutOwnerClass !== 0)
+            acc.recordOmission("inferred entries without owner class");
+          return acc.finalizeKnown();
+        })(),
         reason:
           examined === resolved && inferredWithoutOwnerClass === 0
             ? null

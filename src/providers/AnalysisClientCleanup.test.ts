@@ -6,10 +6,13 @@ import {
 } from "../domain/analysisErrorProjection.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { err } from "../domain/result.js";
+import { err, ok } from "../domain/result.js";
 import type { AnalysisClient } from "../ports/AnalysisProvider.js";
 import { closeAnalysisClient } from "./AnalysisClientCleanup.js";
+import { AnalysisClientCreation } from "./AnalysisClientCreation.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 
 const clientClosingWith = (cause: unknown): AnalysisClient => ({
   execute: () => Promise.resolve(err(new ProviderCleanupError("x", [], {}))),
@@ -140,4 +143,115 @@ it("reports distinct failures during final cleanup and reports again on retry", 
     err(final),
   );
   expect(notifications).toEqual([first, final, first, final]);
+});
+
+it("does not reuse a stale cleanup lease across replacement clients after external cleanup settlement", async () => {
+  const innerCleanup = new ProviderCleanupError("fixture", ["client-a"], {});
+  const clientACleanup = new ProviderCleanupError(
+    "fixture",
+    ["client-a"],
+    {},
+  ).bindCleanupDependencies([innerCleanup]);
+  let clientAClosed = 0;
+  let clientBClosed = 0;
+  const clientA: AnalysisClient = {
+    execute: () =>
+      Promise.resolve(err(new ProviderAdapterError("fixture", "execute", {}))),
+    close: async () => {
+      clientAClosed += 1;
+      return err(clientACleanup);
+    },
+  };
+  const clientB: AnalysisClient = {
+    execute: () =>
+      Promise.resolve(err(new ProviderAdapterError("fixture", "execute", {}))),
+    close: async () => {
+      clientBClosed += 1;
+      return ok(null);
+    },
+  };
+  let created = 0;
+  const controller = new AbortController();
+  const creation = new AnalysisClientCreation("fixture", async () => {
+    created += 1;
+    if (created === 1) {
+      controller.abort("cancel first attempt");
+      return clientA;
+    }
+    return clientB;
+  });
+
+  const first = await creation.acquire("op1", controller.signal);
+  expect(first.ok).toBe(false);
+  if (!first.ok) expect(first.error.cleanupIncomplete).toBe(true);
+  expect(clientAClosed).toBe(1);
+
+  // External owner resolves innerCleanup/clientACleanup even though clientLease.released is still false.
+  releaseOwnedCleanup(innerCleanup);
+
+  const second = await creation.acquire("op2");
+  expect(second).toEqual(ok(clientB));
+
+  const closed = await creation.close();
+  expect(closed).toEqual(ok(null));
+  expect(clientBClosed).toBe(1);
+});
+
+it("retains the latest close options across concurrent close() calls", async () => {
+  const gate = phaseGate();
+  const seenOptions: unknown[] = [];
+  const client: AnalysisClient = {
+    execute: () =>
+      Promise.resolve(err(new ProviderAdapterError("fixture", "execute", {}))),
+    close: async (options) => {
+      seenOptions.push(options);
+      return ok(null);
+    },
+  };
+  const creation = new AnalysisClientCreation("fixture", async () => {
+    await gate.hold();
+    return client;
+  });
+  const acquiring = creation.acquire("op1");
+  await gate.reached(acquiring, "client creation");
+  const options1 = { retainDocument: true };
+  const options2 = { retainDocument: false };
+  const close1 = creation.close(options1);
+  const close2 = creation.close(options2);
+  gate.release();
+  await Promise.all([acquiring, close1, close2]);
+  expect(seenOptions).toEqual([options2]);
+});
+
+it("keeps the client's own close advice and limit on the retained close failure", async () => {
+  const advice = "Close again to discard the unsaved edits.";
+  const limit = {
+    control_kind: "environment",
+    environment: "REA_FIXTURE_WAIT_MS",
+    effective_value: 100,
+    unit: "ms",
+    minimum: 50,
+    maximum: 1_000,
+    default_value: 500,
+    applies_at: "next_startup",
+  } as const;
+  const refused = new ProviderCleanupError(
+    "fixture",
+    ["client"],
+    {},
+    { remediationAction: advice, limit },
+  );
+  let closes = 0;
+  const creation = new AnalysisClientCreation("fixture", async () => ({
+    execute: clientClosingWith(refused).execute,
+    close: async () => ((closes += 1) === 1 ? err(refused) : ok(null)),
+  }));
+  expect((await creation.acquire("open")).ok).toBe(true);
+  const closed = await creation.close();
+  if (closed.ok) throw new Error("the refused close unexpectedly succeeded");
+  expect(closed.error).toMatchObject({ remediationAction: advice });
+  const projected = projectAnalysisError(closed.error);
+  expect(projected.remediation.action).toContain(advice);
+  expect(projected.details?.limit).toEqual(limit);
+  expect(await creation.close()).toEqual(ok(null));
 });

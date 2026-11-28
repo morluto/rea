@@ -2,7 +2,6 @@ import { unknownTarget } from "../domain/targetIdentity.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
@@ -21,6 +20,8 @@ import {
 } from "./CutterBridgeClient.js";
 import { CUTTER_PROVIDER_IDENTITY } from "./CutterProviderIdentity.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import type { z } from "zod";
+import { AbortedWait, waitForAbortable } from "../process/AbortablePromise.js";
 
 interface CutterBridgePort {
   listSessions(
@@ -45,6 +46,7 @@ interface CutterBridgePort {
 /** Shared Cutter bridge workflows used by the MCP adapter and CLI. */
 export class CutterBridgeService {
   #cleanupAttempt: Promise<Result<null, AnalysisError>> | undefined;
+  readonly #sessionTurns = new Map<string, Promise<void>>();
   readonly #pendingCleanup = new Map<
     string,
     {
@@ -154,6 +156,42 @@ export class CutterBridgeService {
     if (options.signal?.aborted)
       return err(cancelledBy("cutter_command", options.signal));
     const input = parsed.data;
+    // One command per session at a time: a command whose completion is still
+    // unknown must gate the next one, which a concurrent dispatch would skip.
+    const previous = this.#sessionTurns.get(input.session_id);
+    let release!: () => void;
+    const turn = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = (previous ?? Promise.resolve()).then(() => turn);
+    this.#sessionTurns.set(input.session_id, tail);
+    let acquired = previous === undefined;
+    try {
+      if (previous !== undefined) {
+        const waited = await waitForAbortable(previous, options.signal);
+        if (waited instanceof AbortedWait)
+          return err(cancelledBy("cutter_command", waited));
+        acquired = true;
+      }
+      return await this.#executeInTurn(input, options);
+    } finally {
+      release();
+      const clear = (): void => {
+        if (this.#sessionTurns.get(input.session_id) === tail)
+          this.#sessionTurns.delete(input.session_id);
+      };
+      // A waiter cancelled before its turn leaves a tail that still waits for
+      // its predecessor; keep the gate until that chain settles so a later
+      // command queues behind the running one.
+      if (acquired) clear();
+      else void tail.then(clear);
+    }
+  }
+
+  async #executeInTurn(
+    input: z.output<typeof cutterCommandInputSchema>,
+    options: { readonly signal?: AbortSignal },
+  ): Promise<Result<Evidence, AnalysisError>> {
     const cleanup = await this.retryCleanup();
     if (!cleanup.ok) return cleanup;
     try {
@@ -164,7 +202,6 @@ export class CutterBridgeService {
         json: input.json,
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       });
-      const normalizedOutput = jsonValueSchema.parse(output.output);
       const evidence = createEvidence(
         unknownTarget("not-observed"),
         {
@@ -182,7 +219,7 @@ export class CutterBridgeService {
           },
           result: {
             command: input.command,
-            output: normalizedOutput,
+            output: output.output,
             execution_state: output.executionState,
             error: output.error,
             message: output.message,
@@ -192,7 +229,6 @@ export class CutterBridgeService {
             document_generation: output.documentGeneration,
             identity_status: output.identityStatus,
           },
-          rawResult: normalizedOutput,
           authority: "external-service",
           limitations: [
             "Cutter exposes no verified stable identity for the active unsaved document or tab.",

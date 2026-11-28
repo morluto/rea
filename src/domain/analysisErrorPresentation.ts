@@ -1,15 +1,17 @@
 import { describeResidualUnknownGraphConstraint } from "./residualUnknownGraphError.js";
+import { WABT_RELEASE_LINE } from "./wasm/wasmArtifact.js";
 import { knownArgumentMistakeRemediation } from "./inputArgumentGuidance.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
+  AnalysisTargetFailureError,
   AnalysisOutputError,
-  AnalysisUnsupportedTargetError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
 } from "./analysisErrorCore.js";
+import { targetFailureRecovery } from "./targetFailure.js";
 import { ArtifactOperationError } from "./artifactOperationError.js";
 import {
   INFO_PLIST_DECODE_MIB,
@@ -51,6 +53,34 @@ import {
 } from "./analysisErrorBase.js";
 import type { AnalysisErrorProjection } from "./analysisErrorProjection.js";
 
+/**
+ * How one adapter names the operation in an input-schema refusal. MCP names
+ * the tool and tells the client to refresh its catalog. The CLI names the
+ * command and omits that client-only clause.
+ */
+export interface InputSchemaRemediationSpelling {
+  readonly subject: (operation: string) => string;
+  readonly includeCatalogRefresh: boolean;
+}
+
+/** The MCP spelling, which is also the adapter-independent one in Evidence. */
+export const MCP_INPUT_SCHEMA_SPELLING: InputSchemaRemediationSpelling = {
+  subject: (operation) => operation,
+  includeCatalogRefresh: true,
+};
+
+/** The input-schema refusal, in one adapter's spelling. */
+export const renderInputSchemaRemediation = (
+  operation: string,
+  spelling: InputSchemaRemediationSpelling,
+): string => {
+  const subject = spelling.subject(operation);
+  const refresh = spelling.includeCatalogRefresh
+    ? "; if using MCP and the catalog may be stale, call tools/list"
+    : "";
+  return `Read the declared input schema or CLI usage for ${subject}${refresh}. Correct the listed fields, then retry. Do not repeat the unchanged call.`;
+};
+
 /** Explain how to preserve an observation the session could not retain. */
 export const UNRETAINED_EVIDENCE_EXPORT_GUIDANCE =
   "Unretained Evidence is not included in the exported investigation; if present in this response, save it separately.";
@@ -60,7 +90,10 @@ export const MCP_TRANSPORT_EVIDENCE_EXPORT =
   "Export complete retained session evidence through export_evidence_bundle to a caller-selected path, or use complete CLI JSON output. The connection remains usable.";
 
 /** Next step when one MCP frame cannot carry a complete retained session bundle. */
-export const MCP_TRANSPORT_EVIDENCE_DISCOVERY = `Discover retained records with get_evidence_bundle and detail: summary, then read selected complete records with detail: records and an exact evidence_id, or inspect compatible records through inspect_analysis_view using an exact Evidence reference. ${MCP_TRANSPORT_EVIDENCE_EXPORT}`;
+export const MCP_TRANSPORT_EVIDENCE_DISCOVERY = `Discover retained records with get_evidence_bundle and detail: summary, selecting a limit and following page.next_offset; then read selected complete records with detail: records and an exact evidence_id, or inspect compatible records through inspect_analysis_view using an exact Evidence reference. ${MCP_TRANSPORT_EVIDENCE_EXPORT}`;
+
+/** Next step when one MCP frame cannot carry the selected metadata rows. */
+export const MCP_TRANSPORT_EVIDENCE_SUMMARY = `Request fewer metadata rows with get_evidence_bundle detail: summary, the same filters and offset, and a smaller limit; follow page.next_offset after each successful page. A single metadata row larger than one response still needs export. ${MCP_TRANSPORT_EVIDENCE_EXPORT}`;
 
 /** Next step when one MCP frame cannot carry a selected page of complete records. */
 export const MCP_TRANSPORT_EVIDENCE_RECORDS = `Request fewer records with get_evidence_bundle detail: records, a smaller limit or an exact evidence_id filter; inspect compatible records in pages through inspect_analysis_view. A single record larger than one response needs export. ${MCP_TRANSPORT_EVIDENCE_EXPORT}`;
@@ -96,6 +129,11 @@ export const analysisErrorRemediationAction = (
     error.remediationAction !== undefined
   )
     return error.remediationAction;
+  if (error instanceof BrowserObservationError) {
+    const refusal = analysisErrorRefusal(error);
+    if (refusal !== undefined)
+      return analysisRefusalRemediation(refusal, callerLifetime);
+  }
   if (
     error instanceof BrowserObservationError &&
     error.reason === "service_worker_blocked"
@@ -123,10 +161,11 @@ export const analysisErrorRemediationAction = (
       : "Open an executable analysis target before importing a binary analysis snapshot.";
   if (error instanceof AnalysisSnapshotMismatchError)
     return "Select an artifact, provider, and analysis profile matching the snapshot, or run analysis without it and save a fresh snapshot for the intended binding.";
-  if (error instanceof AnalysisUnsupportedTargetError)
-    return (
-      error.remediationAction ??
-      "Select a target supported by this operation or choose an operation supporting the reported target format."
+  if (error instanceof AnalysisTargetFailureError)
+    return targetFailureRecovery(
+      error.operation,
+      error.failure,
+      analysisErrorRelatedInputs(error),
     );
   if (error instanceof AnalysisResourceConstraintError) {
     if (error.remediationAction !== undefined) return error.remediationAction;
@@ -176,7 +215,7 @@ export const analysisErrorRemediationAction = (
     error instanceof BinaryTargetError &&
     error.constraint === "directory_requires_file"
   )
-    return `For a JavaScript/Electron application directory, call analyze_javascript_application with input_path. For binary analysis, select its executable file or an Apple bundle directory (${OPENABLE_APPLE_BUNDLE_TYPES_TEXT}).`;
+    return `For a desktop installation or native build directory, call inspect_desktop_application or audit_release_exposure with the directory; for a JavaScript/Electron application directory, call analyze_javascript_application with input_path. To analyze one program, select its file or an Apple bundle directory (${OPENABLE_APPLE_BUNDLE_TYPES_TEXT}).`;
   if (
     error instanceof BinaryTargetError &&
     error.constraint === "bundle_type_unsupported"
@@ -206,7 +245,7 @@ export const analysisErrorRemediationAction = (
     error instanceof BinaryTargetError &&
     error.constraint === "load_selection_rejected"
   )
-    return "Correct the reported load argument (format, architecture, or entry_point) and retry.";
+    return "Correct the reported load argument (format, architecture, architecture_variant, entry_point, base_address, or vector_table_address) and retry.";
   if (
     error instanceof BinaryTargetError &&
     error.constraint === "file_format_rejected"
@@ -216,7 +255,7 @@ export const analysisErrorRemediationAction = (
     error instanceof BinaryTargetError &&
     error.constraint === "wasm_requires_static_inspection"
   )
-    return `For static inspection, call inspect_wasm_artifact with ${JSON.stringify({ path: error.path })}. This separate lane requires caller-supplied WABT 1.0.42 via absolute REA_WABT_BIN_DIRECTORY; check its availability in binary_session. REA does not execute WASM or install tools, and the header alone does not establish that the complete module is valid.`;
+    return `For static inspection, call inspect_wasm_artifact with ${JSON.stringify({ path: error.path })}. This separate lane requires caller-supplied ${WABT_RELEASE_LINE} via absolute REA_WABT_BIN_DIRECTORY; check its availability in binary_session. REA does not execute WASM or install tools, and the header alone does not establish that the complete module is valid.`;
   if (
     error instanceof AnalysisAccessDeniedError ||
     (error instanceof BinaryTargetError && error.systemCode !== undefined)
@@ -241,7 +280,7 @@ export const analysisErrorRemediationAction = (
     );
     const baseAction =
       error.remediationAction ??
-      `Read the declared input schema or CLI usage for ${error.operation}; if using MCP and the catalog may be stale, call tools/list. Correct the listed fields, then retry. Do not repeat the unchanged call.`;
+      renderInputSchemaRemediation(error.operation, MCP_INPUT_SCHEMA_SPELLING);
     return mistakeRemediation === undefined
       ? baseAction
       : `${mistakeRemediation} ${baseAction}`;
@@ -410,7 +449,7 @@ export const composedCallerGuidance = (sources: {
 
 const outcomeUserMessage = (error: AnalysisError): string => {
   if (error instanceof AnalysisSnapshotMismatchError) return error.message;
-  if (error instanceof AnalysisUnsupportedTargetError) return error.message;
+  if (error instanceof AnalysisTargetFailureError) return error.message;
   if (error instanceof AnalysisResourceConstraintError) return error.reason;
   if (error instanceof AnalysisAccessDeniedError)
     return "Host filesystem permissions denied read access to the selected path.";
@@ -474,7 +513,7 @@ const outcomeUserMessage = (error: AnalysisError): string => {
     return `${error.message}. Static WebAssembly inspection uses a separate optional WABT lane, not a native analysis engine.`;
   if (error instanceof BinaryTargetError)
     return error.constraint === "directory_requires_file"
-      ? `open_binary accepts files and Apple bundle directories (${OPENABLE_APPLE_BUNDLE_TYPES_TEXT}). This target is another directory; JavaScript/Electron application directories can be analyzed directly with analyze_javascript_application.`
+      ? `This operation opens a file or an Apple bundle directory (${OPENABLE_APPLE_BUNDLE_TYPES_TEXT}); this target is another directory. Directory-capable operations are inspect_desktop_application, audit_release_exposure, and analyze_javascript_application for JavaScript/Electron applications.`
       : error.constraint === undefined
         ? `${error.message}. Check that the path exists, is readable, and points to a supported file.`
         : `${error.message}.`;
@@ -531,9 +570,7 @@ const CANCELLED_TAGS: ReadonlySet<string> = new Set<AnalysisErrorTag>([
 ]);
 
 /** Operations that accept integrity_policy for declared-integrity mismatches. */
-const INTEGRITY_POLICY_OPERATIONS: ReadonlySet<
-  ArtifactOperationError["operation"]
-> = new Set([
+const INTEGRITY_POLICY_OPERATIONS: ReadonlySet<string> = new Set([
   "inventory_artifact",
   "inspect_artifact",
   "extract_artifact",
@@ -553,12 +590,6 @@ const artifactMessage = ({
       detail ??
       "Artifact processing reached a resource limit. Select an artifact within the reported limits and retry."
     );
-  if (reason === "unsupported")
-    return "Artifact structure uses an unsupported format or revision. Use a decoder that supports the reported form.";
-  if (reason === "truncated")
-    return "A declared artifact structure is truncated. Select a complete copy and retry; do not pad or truncate required bytes.";
-  if (reason === "malformed")
-    return "Artifact bytes contain malformed format structure. Review the reported field and select a valid copy.";
   if (reason === "path")
     return (
       detail ??
@@ -574,13 +605,16 @@ const artifactMessage = ({
     INTEGRITY_POLICY_OPERATIONS.has(operation)
   )
     return `${
-      details?.unpacked === true &&
-      "calculatedSha256" in details &&
-      details.calculatedSha256 !== null
-        ? `Declared ASAR integrity for unpacked entry ${details.logicalPath} contradicts its companion file; packaging tools commonly sign or strip unpacked native binaries after writing the archive.`
-        : "Artifact bytes contradict declared integrity."
+      "signingExplanation" in details &&
+      details.signingExplanation?.kind === "signed-after-packing"
+        ? `Declared ASAR integrity for unpacked entry ${details.logicalPath} contradicts its companion file because Authenticode appears to have been applied after packing (stripping IMAGE_DIRECTORY_ENTRY_SECURITY restores the declared SHA-256).`
+        : details.unpacked === true &&
+            "calculatedSha256" in details &&
+            details.calculatedSha256 !== null
+          ? `Declared ASAR integrity for unpacked entry ${details.logicalPath} contradicts its companion file; packaging tools commonly sign or strip unpacked native binaries after writing the archive.`
+          : "Artifact bytes contradict declared integrity."
     } If expected, rerun ${operation === "inventory_artifact" ? "inspect_artifact" : operation} with integrity_policy=record-and-continue to retain observed bytes as untrusted; otherwise get a fresh copy.`;
-  if (reason === "format" || reason === "integrity")
+  if (reason === "integrity")
     return "Artifact is invalid or has changed. Get a fresh copy and try again.";
   return "Artifact could not be read or written. Check file access and try again.";
 };
@@ -598,7 +632,13 @@ const presentedRelatedInputs = (
 ): AnalysisRelatedInputs | undefined => {
   if (error instanceof BinaryTargetError) {
     if (error.constraint === "directory_requires_file")
-      return { operations: ["analyze_javascript_application"] };
+      return {
+        operations: [
+          "inspect_desktop_application",
+          "audit_release_exposure",
+          "analyze_javascript_application",
+        ],
+      };
     if (error.remediationAction !== undefined) return undefined;
     if (
       (error.constraint === "bundle_executable_undeclared" ||
@@ -607,7 +647,16 @@ const presentedRelatedInputs = (
     )
       return { operations: ["inspect_plist"] };
     if (error.constraint === "load_selection_rejected")
-      return { parameters: ["format", "architecture", "entry_point"] };
+      return {
+        parameters: [
+          "format",
+          "architecture",
+          "architecture_variant",
+          "entry_point",
+          "base_address",
+          "vector_table_address",
+        ],
+      };
     if (error.constraint === "wasm_requires_static_inspection")
       return { operations: ["inspect_wasm_artifact"] };
   }
@@ -643,10 +692,17 @@ export const analysisErrorRelatedInputs = (
     error.related?.operations,
     presented?.operations,
   );
-  if (parameters === undefined && operations === undefined) return undefined;
+  const providers = mergeRelatedList(error.related?.providers, undefined);
+  if (
+    parameters === undefined &&
+    operations === undefined &&
+    providers === undefined
+  )
+    return undefined;
   return {
     ...(parameters === undefined ? {} : { parameters }),
     ...(operations === undefined ? {} : { operations }),
+    ...(providers === undefined ? {} : { providers }),
   };
 };
 
@@ -688,7 +744,7 @@ const KNOWN_ERROR_TAGS = {
   AnalysisArtifactChangedError: true,
   AnalysisOutputError: true,
   AnalysisCapabilityUnavailableError: true,
-  AnalysisUnsupportedTargetError: true,
+  AnalysisTargetFailureError: true,
   AnalysisCancelledError: true,
   AnalysisTimeoutError: true,
   AnalysisResourceConstraintError: true,

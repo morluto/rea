@@ -1,3 +1,4 @@
+import { countValues } from "./valueCounts.js";
 import { digestCanonicalValue } from "./canonicalDigest.js";
 import {
   compareUnicodeCodePoints,
@@ -712,9 +713,7 @@ const samplesContained = (
   samples: readonly string[],
   complete: readonly string[],
 ): boolean => {
-  const counts = new Map<string, number>();
-  for (const sample of complete)
-    counts.set(sample, (counts.get(sample) ?? 0) + 1);
+  const counts = countValues(complete);
   for (const sample of samples) {
     const count = counts.get(sample) ?? 0;
     if (count === 0) return false;

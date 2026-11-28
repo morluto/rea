@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
+import { ownedJsonValueSchema } from "../domain/jsonValue.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import { readBoundedControlLines } from "../process/BoundedControlLines.js";
@@ -91,7 +91,7 @@ export class SolveCleanupError extends ProviderCleanupError {
         ...diagnostics,
         ...(report === undefined
           ? {}
-          : { solve_report: jsonValueSchema.parse(report) }),
+          : { solve_report: ownedJsonValueSchema.parse(report) }),
       },
       {
         operation,
@@ -112,7 +112,7 @@ export class SolveCancelledError extends AnalysisCancelledError {
   ) {
     super(operation, {
       cause: reason,
-      diagnostics: { solve_report: jsonValueSchema.parse(report) },
+      diagnostics: { solve_report: ownedJsonValueSchema.parse(report) },
     });
   }
 }
@@ -258,10 +258,18 @@ export const runSolveHelper = async (options: {
   } finally {
     // Clearing the process group closes stdout, so the report is read only after it, and only so long.
     stopped = await supervisor.stop();
-    await Promise.race([
-      reading,
-      new Promise((resolve) => setTimeout(resolve, REPORT_DRAIN_MS)),
-    ]);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        reading,
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, REPORT_DRAIN_MS);
+          timer.unref?.();
+        }),
+      ]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
   }
   let processPending = stopped.status === "incomplete";
   const pending = new Map(

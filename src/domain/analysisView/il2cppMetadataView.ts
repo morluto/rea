@@ -1,5 +1,9 @@
+import { filterSet, selectViewRows } from "./selectViewRows.js";
 import { z } from "zod";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  invalidAnalysisViewSubject,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import type { JsonValue } from "../jsonValue.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
@@ -23,7 +27,7 @@ import {
   il2cppMetadataBinaryCollections,
   il2cppMetadataTypeSchema,
 } from "../il2cpp/il2cppMetadata.js";
-import { err, ok, type Result } from "../result.js";
+import { ok, type Result } from "../result.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
@@ -356,16 +360,6 @@ const parseMetadataReport = (
   return ok(checked);
 };
 
-/** Direct batch lookup visits selected indices only; metadata order is stable. */
-function* rowIndices(length: number, indices: number[] | undefined) {
-  if (indices === undefined) {
-    for (let index = 0; index < length; index++) yield index;
-  } else {
-    for (const index of [...new Set(indices)].sort((a, b) => a - b))
-      if (index < length) yield index;
-  }
-}
-
 const selectFields = (
   row: Row,
   index: number,
@@ -527,15 +521,8 @@ export const projectIl2cppMetadataView = (
     SummaryAnalysisView | z.output<typeof il2cppMetadataViewRequestSchema>
   >(admitted, "summary", "il2cpp-metadata");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "IL2CPP metadata Evidence supports summary and selected sections, images, types, methods, member, parameter, string literal, method address, type reference, generic method instance and generic method issue pages.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "IL2CPP metadata Evidence supports summary and selected sections, images, types, methods, member, parameter, string literal, method address, type reference, generic method instance and generic method issue pages.",
     );
   const parsed = parseMetadataReport(parent);
   if (!parsed.ok) return parsed;
@@ -545,15 +532,8 @@ export const projectIl2cppMetadataView = (
     subject != null &&
     (subject.format !== "file" || subject.sha256 !== report.artifact.sha256)
   )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message:
-            "IL2CPP metadata artifact identity does not match its parent subject.",
-        },
-      ]),
+    return invalidAnalysisViewSubject(
+      "IL2CPP metadata artifact identity does not match its parent subject.",
     );
   const {
     sections,
@@ -678,45 +658,26 @@ export const projectIl2cppMetadataView = (
     ].includes(view.collection);
   const rows = nativeUnavailable ? undefined : allRows[view.collection];
   if (rows === null)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view", "collection"],
-          reason: "invalid_value",
-          message:
-            "Generic method instances were not requested for this Evidence, so they are unknown; inspect again with generic_instances and binary_path.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Generic method instances were not requested for this Evidence, so they are unknown; inspect again with generic_instances and binary_path.",
+      "collection",
     );
   if (rows === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view", "collection"],
-          reason: "invalid_value",
-          message: `Retained Evidence did not collect ${view.collection}; inspect the metadata again to acquire these facts.`,
-        },
-      ]),
+    return invalidAnalysisView(
+      `Retained Evidence did not collect ${view.collection}; inspect the metadata again to acquire these facts.`,
+      "collection",
     );
   const matches = selection(view, report);
-  const selectedFields =
-    view.fields === undefined ? undefined : new Set<string>(view.fields);
-  const items = [];
-  let total = 0;
-  if (matches === undefined && view.indices === undefined) {
-    total = rows.length;
-    const end = Math.min(rows.length, view.offset + view.limit);
-    for (let index = Math.min(view.offset, rows.length); index < end; index++)
-      items.push(selectFields(rows[index]!, index, selectedFields));
-  } else {
-    for (const index of rowIndices(rows.length, view.indices)) {
-      const row = rows[index]!;
-      if (matches !== undefined && !matches(row, index)) continue;
-      if (total >= view.offset && items.length < view.limit)
-        items.push(selectFields(row, index, selectedFields));
-      total++;
-    }
-  }
+  const selectedFields = filterSet<string>(view.fields);
+  const project = (row: Row, index: number) =>
+    selectFields(row, index, selectedFields);
+  const { rows: items, total } = selectViewRows(
+    rows,
+    view,
+    matches,
+    project,
+    filterSet(view.indices),
+  );
   return ok({
     kind: "il2cpp-metadata" as const,
     view,

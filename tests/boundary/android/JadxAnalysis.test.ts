@@ -4,6 +4,7 @@ import {
   analyzeJadxRequest,
   type JadxToolPort,
 } from "../../../src/android/JadxAnalysis.js";
+import { JADX_RELEASE } from "../../../src/android/JadxRelease.js";
 import {
   type AndroidRequest,
   androidInputSchemas,
@@ -48,7 +49,7 @@ const summary = {
 
 const engine = {
   name: "jadx",
-  version: "0.7.1",
+  version: JADX_RELEASE.version,
   artifact_sha256: "a".repeat(64),
   source_revision: null,
   worker_count: 1,
@@ -266,7 +267,7 @@ it("pages filtered matches independently of the examined inventory and preserves
     tools,
     {
       operation: "search_android_classes",
-      input: { path: "/fixture.apk", query: "Target" },
+      input: { path: "/fixture.apk", query: "Target", limit: 10000 },
     },
     {
       loaded: {
@@ -287,8 +288,70 @@ it("pages filtered matches independently of the examined inventory and preserves
   expect(result).toMatchObject({
     total_classes: 10000,
     matches: names,
+    next_offset: null,
     duplicate_names: [{ name: "fixture.TargetDuplicate", occurrences: 2 }],
     coverage: "complete",
+  });
+});
+
+it("stops after the default page and names the next match offset", async () => {
+  const names = Array.from({ length: 1000 }, (_, i) => `fixture.Target${i}`);
+  const calls: Record<string, unknown>[] = [];
+  const tools: JadxToolPort = {
+    json: () => Promise.reject(new Error("unexpected JSON call")),
+    listClasses: (input) => {
+      calls.push({ ...input });
+      const offset = Number(input.offset);
+      const limit = Number(input.limit);
+      return Promise.resolve({
+        scope: "top_level" as const,
+        total_classes: 1000,
+        next_offset: Math.min(offset + limit, 1000),
+        offset,
+        limit,
+        items: names.slice(offset, offset + limit),
+      });
+    },
+    text: () => Promise.reject(new Error("unexpected text call")),
+  };
+  const search = (offset?: number) =>
+    analyzeJadxRequest(
+      tools,
+      {
+        operation: "search_android_classes",
+        input: androidInputSchemas.search_android_classes.parse({
+          path: "/fixture.apk",
+          query: "",
+          ...(offset === undefined ? {} : { offset }),
+        }),
+      },
+      {
+        loaded: {
+          state: "LOADED",
+          apk_path: "/snapshot.apk",
+          class_count: 1000,
+          resource_count: 0,
+          threads: 1,
+          resources: "full",
+        },
+        engine,
+      },
+    );
+  const first = await search();
+  // One row past the page proves another page follows.
+  expect(calls).toEqual([{ query: "", offset: 0, limit: 257 }]);
+  expect(first).toMatchObject({
+    matches: names.slice(0, 256),
+    next_offset: 256,
+    coverage: "partial",
+  });
+  calls.length = 0;
+  const last = await search(768);
+  // The last page still omits earlier matches.
+  expect(last).toMatchObject({
+    matches: names.slice(768),
+    next_offset: null,
+    coverage: "partial",
   });
 });
 
@@ -332,7 +395,8 @@ it.each([
         tools,
         {
           operation: "search_android_classes",
-          input: { path: "/fixture.apk", query },
+          // Exactly one 4096-row provider page, as the fake reports.
+          input: { path: "/fixture.apk", query, limit: 4095 },
         },
         {
           loaded: {
@@ -368,7 +432,7 @@ it("accepts an examined empty inventory without requiring cursor progress", asyn
     tools,
     {
       operation: "search_android_classes",
-      input: { path: "/fixture.apk", query: "Target" },
+      input: { path: "/fixture.apk", query: "Target", limit: 4095 },
     },
     {
       loaded: {

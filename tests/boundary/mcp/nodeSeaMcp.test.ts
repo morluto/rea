@@ -17,21 +17,20 @@ import {
   artifactInventorySummaryViewResultSchema,
 } from "../../../src/domain/analysisView/analysisViewResult.js";
 
-const expectBlobAdmissionFailure = (
+const expectOuterPeWithSeaLimitation = (
   reply: Parameters<typeof parseMcpToolError>[0],
+  pattern: RegExp,
 ) => {
-  expect(parseMcpToolError(reply).error).toMatchObject({
-    code: "truncated",
-    retryable: true,
-    details: {
-      reader_limit: {
-        parameter: "artifact_limits.node_sea.blob_bytes",
-        effective_value: 1,
-        unit: "bytes",
-        can_increase: true,
-      },
-    },
-  });
+  expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
+  const evidence = parseEvidence(reply.structuredContent);
+  const summary = artifactInventorySummaryViewResultSchema.parse(
+    evidence.normalized_result,
+  );
+  expect(summary.summary.manifest.root_format).toBe("pe");
+  expect(evidence.limitations).toContainEqual(
+    expect.stringMatching(/Node SEA recognition remains unknown/iu),
+  );
+  expect(evidence.limitations).toContainEqual(expect.stringMatching(pattern));
 };
 
 // The compiled stdio fixture checks advertised schemas against their dialect and
@@ -48,7 +47,10 @@ it.each(["compact"] as const)(
         mainCodeFormat: 1,
         main: "export const marker = 1;",
         fuse: "set",
-        assets: [{ name: "data.txt", body: "data" }],
+        assets: [
+          { name: "data.txt", body: "data" },
+          { name: "second.txt", body: "second" },
+        ],
       }),
     );
     const { call } = await connectLocalToolsMcp({
@@ -59,12 +61,33 @@ it.each(["compact"] as const)(
       const opened = await call("open_binary", { path });
       expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
       const lowerPolicy = { node_sea: { blob_bytes: 1 } };
-      const refused = await call("inspect_artifact", {
+      const limited = await call("inspect_artifact", {
         detail: "summary",
         artifact_limits: lowerPolicy,
       });
-      expectBlobAdmissionFailure(refused);
-      const selectedPolicy = { node_sea: { blob_bytes: 4096 } };
+      expectOuterPeWithSeaLimitation(limited, /blob_bytes|1 bytes/iu);
+      const assetRefusal = await call("inspect_artifact", {
+        detail: "summary",
+        artifact_limits: { node_sea: { asset_count: 1 } },
+      });
+      expect(parseMcpToolError(assetRefusal).error).toMatchObject({
+        code: "partial",
+        retryable: true,
+        details: {
+          operation: "inspect_artifact",
+          reason: "limit",
+          boundary: "capacity",
+          truncated: true,
+          reader_limit: {
+            parameter: "artifact_limits.node_sea.asset_count",
+            effective_value: 1,
+            required_value: 2,
+            unit: "count",
+            can_increase: true,
+          },
+        },
+      });
+      const selectedPolicy = { node_sea: { blob_bytes: 4096, asset_count: 2 } };
       const reply = await call("inspect_artifact", {
         detail: "summary",
         artifact_limits: selectedPolicy,
@@ -73,7 +96,9 @@ it.each(["compact"] as const)(
       const summary = artifactInventorySummaryViewResultSchema.parse(
         parseEvidence(reply.structuredContent).normalized_result,
       );
-      expect(summary.summary.effective_limits?.node_sea.blob_bytes).toBe(4096);
+      expect(summary.summary.effective_limits?.node_sea).toMatchObject(
+        selectedPolicy.node_sea,
+      );
       expect(summary.summary.root_format_metadata).toMatchObject({
         kind: "node-sea",
         carrier: "pe",
@@ -125,7 +150,10 @@ it.each(["compact"] as const)(
         detail: "summary",
         artifact_limits: lowerPolicy,
       });
-      expectBlobAdmissionFailure(loweredAfterRetention);
+      expectOuterPeWithSeaLimitation(
+        loweredAfterRetention,
+        /blob_bytes|1 bytes/iu,
+      );
       const extracted = await call("extract_artifact", {});
       expect(extracted.isError, JSON.stringify(extracted)).not.toBe(true);
       const result = artifactExtractionResultSchema.parse(
@@ -138,38 +166,9 @@ it.each(["compact"] as const)(
       expect((await call("close_binary", {})).isError).not.toBe(true);
       await writeFile(path, nodeSeaPe({ blob: Buffer.alloc(16) }));
       expect((await call("open_binary", { path })).isError).not.toBe(true);
-      const invalid = await call("inspect_artifact", {});
-      expect(parseMcpToolError(invalid).error).toMatchObject({
-        code: "artifact_operation_failed",
-        details: {
-          operation: "inspect_artifact",
-          reason: "format",
-          detail: expect.stringContaining("magic"),
-        },
-      });
+      const invalid = await call("inspect_artifact", { detail: "summary" });
+      expectOuterPeWithSeaLimitation(invalid, /magic/iu);
       expect((await call("close_binary", {})).isError).not.toBe(true);
-      await writeFile(
-        path,
-        nodeSeaPe({
-          blob: buildNodeSeaBlob({
-            assets: Array.from({ length: 100_001 }, (_, index) => ({
-              name: `a${String(index)}`,
-              body: "",
-            })),
-          }),
-        }),
-      );
-      expect((await call("open_binary", { path })).isError).not.toBe(true);
-      const overLimit = await call("inspect_artifact", {});
-      expect(parseMcpToolError(overLimit).error).toMatchObject({
-        code: "truncated",
-        details: {
-          operation: "inspect_artifact",
-          reason: "limit",
-          boundary: "capacity",
-          truncated: true,
-        },
-      });
     } finally {
       if (outputRoot !== undefined)
         await rm(outputRoot, { recursive: true, force: true });
@@ -206,7 +205,7 @@ it("reports the PE parser budget when Node SEA inventory exhausts it", async () 
   expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
   const reply = await call("inspect_artifact", {});
   expect(parseMcpToolError(reply).error).toMatchObject({
-    code: "truncated",
+    code: "partial",
     retryable: false,
     details: {
       operation: "inspect_artifact",

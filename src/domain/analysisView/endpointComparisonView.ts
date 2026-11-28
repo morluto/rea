@@ -1,6 +1,6 @@
+import { analysisViewPageFields } from "./analysisViewPageFields.js";
 import { z } from "zod";
 import type { StaticObservedEndpointComparison } from "../javascript/staticObservedEndpointSchemas.js";
-import type { JsonValue } from "../jsonValue.js";
 import {
   comparedStaticEndpointSchema,
   comparedObservedGroupSchema,
@@ -17,19 +17,15 @@ import {
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
-  pageViewCoverage,
+  selectedViewPage,
 } from "./analysisViewCoverage.js";
-import { selectViewRows } from "./selectViewRows.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
-import { err, ok } from "../result.js";
+import { pickFields, selectViewRows, filterSet } from "./selectViewRows.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
+import { ok } from "../result.js";
 
-const page = {
-  kind: z.literal("endpoint-comparison"),
-  offset: z.int().nonnegative().default(0),
-  limit: z.int().positive().default(64),
-};
+const page = analysisViewPageFields("endpoint-comparison");
 export const endpointComparisonViewRequestSchema = z.discriminatedUnion(
   "collection",
   [
@@ -81,13 +77,6 @@ export const endpointComparisonViewContextSchema =
 const readReport = createAnalysisViewResultReader(
   staticObservedEndpointComparisonSchema,
 );
-const set = (values: readonly string[] | undefined) =>
-  values === undefined ? undefined : new Set(values);
-const fieldsOf = (row: object, fields: readonly string[]) => {
-  const source = row as Record<string, JsonValue>;
-  return Object.fromEntries(fields.map((field) => [field, source[field]!]));
-};
-
 const selectComparisonRows = (
   report: StaticObservedEndpointComparison,
   view: z.output<typeof endpointComparisonViewRequestSchema>,
@@ -98,66 +87,69 @@ const selectComparisonRows = (
     total: number;
   };
   if (view.collection === "static-endpoints") {
-    const ids = set(view.endpoint_ids),
-      statuses = set(view.statuses);
+    const ids = filterSet(view.endpoint_ids),
+      statuses = filterSet(view.statuses);
+    const fields = view.fields ?? [
+      "method",
+      "method_basis",
+      "origin",
+      "origin_basis",
+      "path",
+      "status",
+      "reason",
+    ];
     selected = selectViewRows(
       static_endpoints,
       view,
-      (row) =>
-        (ids === undefined || ids.has(row.endpoint_id)) &&
-        (statuses === undefined || statuses.has(row.status)),
+      ids === undefined && statuses === undefined
+        ? undefined
+        : (row) =>
+            (ids === undefined || ids.has(row.endpoint_id)) &&
+            (statuses === undefined || statuses.has(row.status)),
       (row) => ({
-        ...fieldsOf(
-          row,
-          view.fields ?? [
-            "method",
-            "method_basis",
-            "origin",
-            "origin_basis",
-            "path",
-            "status",
-            "reason",
-          ],
-        ),
+        ...pickFields(row, fields),
         endpoint_id: row.endpoint_id,
         node_id: row.node_id,
         observation_id: row.observation_id,
       }),
     );
   } else if (view.collection === "observed-groups") {
-    const ids = set(view.group_ids),
-      statuses = set(view.statuses);
+    const ids = filterSet(view.group_ids),
+      statuses = filterSet(view.statuses);
+    const fields = view.fields ?? [
+      "method",
+      "origin",
+      "path_template",
+      "status",
+      "reason",
+    ];
     selected = selectViewRows(
       observed_groups,
       view,
-      (row) =>
-        (ids === undefined || ids.has(row.group_id)) &&
-        (statuses === undefined || statuses.has(row.status)),
+      ids === undefined && statuses === undefined
+        ? undefined
+        : (row) =>
+            (ids === undefined || ids.has(row.group_id)) &&
+            (statuses === undefined || statuses.has(row.status)),
       (row) => ({
-        ...fieldsOf(
-          row,
-          view.fields ?? [
-            "method",
-            "origin",
-            "path_template",
-            "status",
-            "reason",
-          ],
-        ),
+        ...pickFields(row, fields),
         group_id: row.group_id,
       }),
     );
   } else {
-    const endpoints = set(view.endpoint_ids),
-      groups = set(view.group_ids);
+    const endpoints = filterSet(view.endpoint_ids),
+      groups = filterSet(view.group_ids);
+    const fields = view.fields ?? ["basis", "supporting_record_ordinal"];
     selected = selectViewRows(
       matches,
       view,
-      (row) =>
-        (endpoints === undefined || endpoints.has(row.endpoint_id)) &&
-        (groups === undefined || groups.has(row.group_id)),
+      endpoints === undefined && groups === undefined
+        ? undefined
+        : (row) =>
+            (endpoints === undefined || endpoints.has(row.endpoint_id)) &&
+            (groups === undefined || groups.has(row.group_id)),
       (row) => ({
-        ...fieldsOf(row, view.fields ?? ["basis", "supporting_record_ordinal"]),
+        ...pickFields(row, fields),
         match_id: row.match_id,
         endpoint_id: row.endpoint_id,
         group_id: row.group_id,
@@ -176,15 +168,8 @@ export const projectEndpointComparisonView = (
     SummaryAnalysisView | z.output<typeof endpointComparisonViewRequestSchema>
   >(admitted, "summary", "endpoint-comparison");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Endpoint comparisons support summary and endpoint-comparison pages",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Endpoint comparisons support summary and endpoint-comparison pages",
     );
   const parsed = readReport(parent);
   if (!parsed.ok) return parsed;
@@ -200,11 +185,7 @@ export const projectEndpointComparisonView = (
     parent_operation: "compare_static_and_observed_endpoints" as const,
     parent_digest: parent.evidenceId.slice(3),
     artifact: null,
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, limitations),
     unknowns:
       parsed.value.summary.unknown > 0
         ? [
@@ -226,11 +207,6 @@ export const projectEndpointComparisonView = (
     ...context,
     kind: "endpoint-comparison" as const,
     view,
-    items: selected.rows,
-    coverage: pageViewCoverage(
-      view.offset,
-      selected.rows.length,
-      selected.total,
-    ),
+    ...selectedViewPage(view.offset, selected),
   });
 };

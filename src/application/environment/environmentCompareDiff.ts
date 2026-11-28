@@ -410,15 +410,31 @@ class Differ {
 
   /** Arrays of scalars holding the same items in another order differ only in order, as sets an application returns unordered do. */
   sameItems(live: JsonValue[], env: JsonValue[], pointer: string): boolean {
-    const scalar = (item: JsonValue): boolean =>
-      item === null || typeof item !== "object";
-    if (live.length !== env.length || !live.every(scalar) || !env.every(scalar))
-      return false;
-    const key = (items: JsonValue[]): string =>
-      JSON.stringify(items.map((item) => JSON.stringify(item)).sort());
-    if (key(live) !== key(env)) return false;
-    if (JSON.stringify(live) !== JSON.stringify(env))
-      this.add({ category: "order", pointer });
+    if (live.length !== env.length) return false;
+    let sameOrder = true;
+    for (let i = 0; i < live.length; i += 1) {
+      const a = live[i]!;
+      const b = env[i]!;
+      if (
+        (a !== null && typeof a === "object") ||
+        (b !== null && typeof b === "object")
+      )
+        return false;
+      if (a !== b) sameOrder = false;
+    }
+    if (sameOrder) return true;
+    const counts = new Map<JsonValue, number>();
+    for (let i = 0; i < live.length; i += 1) {
+      const item = live[i]!;
+      counts.set(item, (counts.get(item) ?? 0) + 1);
+    }
+    for (let i = 0; i < env.length; i += 1) {
+      const item = env[i]!;
+      const remaining = counts.get(item);
+      if (remaining === undefined || remaining === 0) return false;
+      counts.set(item, remaining - 1);
+    }
+    this.add({ category: "order", pointer });
     return true;
   }
 

@@ -39,7 +39,7 @@ export const managedComparisonCommand = (
     const value = await command.run({
       args: { leftPath, rightPath },
       options,
-      formatExplicit: false,
+      structuredOutput: false,
     });
     if (!isRecord(value))
       throw new Error("Managed comparison did not return a document");

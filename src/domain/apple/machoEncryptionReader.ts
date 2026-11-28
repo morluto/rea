@@ -6,13 +6,17 @@ import type {
   MachoEncryptionFacts,
   MachoSliceEncryption,
 } from "./machoEncryption.js";
-import { validateFatSliceIdentity } from "./machoContainer.js";
+import {
+  validateFatSliceIdentity,
+  type FatSliceRangeFailure,
+} from "./machoContainer.js";
 import {
   isMachoZeroFillSection,
   machoSectionHeaderSize,
   readMachoSectionHeader,
 } from "./machoSectionHeader.js";
 import {
+  machoSegmentFileAddress,
   machoSegmentHeaderSize,
   machoSegmentSectionTableFits,
   readMachoSegmentHeader,
@@ -22,7 +26,7 @@ import {
   readMachoContainer,
   readSliceCommandTable,
   type MachoLoadCommand,
-  type MachoReadIssue,
+  type MachoReadFailed,
   type MachoSliceHeader,
   type ReadAt,
 } from "./machoLoadCommandReader.js";
@@ -58,7 +62,7 @@ export const readMachoEncryption = async (
   const container = await readMachoContainer(readAt, size);
   if (container.kind === "not-mach-o") return { status: "not-mach-o" };
   if (container.kind === "issue")
-    return { status: container.status, reason: container.reason };
+    return { status: "failed", failure: container.failure };
   if (container.kind === "thin")
     return {
       status: "parsed",
@@ -69,7 +73,7 @@ export const readMachoEncryption = async (
   // unknown before any declared slice is read.
   const { hidden } = container;
   if (hidden !== null && hidden.status !== "declared")
-    return { status: hidden.status, reason: hidden.reason };
+    return { status: "failed", failure: hidden.failure };
   const slices: MachoSliceEncryption[] = [];
   for (const [index, declaration] of container.header.slices.entries()) {
     const rangeIssue = container.header.rangeIssues[index] ?? null;
@@ -84,11 +88,7 @@ export const readMachoEncryption = async (
             },
             budget,
           )
-        : unread(
-            declaration,
-            rangeIssue.category === "unsupported" ? "unknown" : "malformed",
-            rangeIssue.reason,
-          ),
+        : unread(declaration, rangeIssue),
     );
   }
   if (hidden !== null)
@@ -103,29 +103,32 @@ export const readMachoEncryption = async (
             },
             budget,
           )
-        : unread(hidden.declaration, "malformed", hidden.rangeIssue),
+        : unread(hidden.declaration, hidden.rangeIssue),
     );
   return { status: "parsed", slices };
 };
 
 type FatDeclaration = Parameters<typeof validateFatSliceIdentity>[0];
 
+/** A FAT row whose own range cannot be read: unsupported layouts stay unknown. */
 const unread = (
   declaration: FatDeclaration,
-  status: "malformed" | "unknown",
-  reason: string,
-): MachoSliceEncryption => ({
-  architecture: null,
-  cpu_type: declaration.cpuType,
-  cpu_subtype: declaration.cpuSubtype,
-  container_file_offset: declaration.offset,
-  size: declaration.size,
-  status,
-  malformed_kind: status === "malformed" ? "structure" : null,
-  reason,
-  commands: [],
-  range: null,
-});
+  failure: FatSliceRangeFailure,
+): MachoSliceEncryption => {
+  const status = failure.kind === "unsupported" ? "unknown" : "malformed";
+  return {
+    architecture: null,
+    cpu_type: declaration.cpuType,
+    cpu_subtype: declaration.cpuSubtype,
+    container_file_offset: declaration.offset,
+    size: declaration.size,
+    status,
+    malformed_kind: status === "malformed" ? "structure" : null,
+    reason: failure.detail,
+    commands: [],
+    range: null,
+  };
+};
 
 const readSlice = async (
   readAt: ReadAt,
@@ -158,14 +161,11 @@ const readSlice = async (
   let segmentRecords = 0;
   // Commands seen before a failure stay as partial facts; an incomplete walk
   // can never prove the command is absent.
-  const incomplete = ({
-    status,
-    reason,
-  }: MachoReadIssue): MachoSliceEncryption => ({
+  const incomplete = ({ failure }: MachoReadFailed): MachoSliceEncryption => ({
     ...base,
-    status: status === "unsupported" ? "unknown" : "malformed",
-    malformed_kind: status === "unsupported" ? null : "structure",
-    reason,
+    status: failure.kind === "unsupported" ? "unknown" : "malformed",
+    malformed_kind: failure.kind === "unsupported" ? null : "structure",
+    reason: failure.detail,
     commands,
     range: null,
   });
@@ -363,15 +363,11 @@ interface SegmentFacts {
   readonly index: number;
   readonly name: string;
   readonly vmAddress: bigint;
+  readonly fileAddress: bigint;
   readonly vmSize: bigint;
   readonly fileOffset: number;
   readonly fileSize: number;
-  readonly sections: readonly {
-    readonly name: string;
-    readonly offset: number;
-    readonly size: number;
-    readonly zerofill: boolean;
-  }[];
+  readonly sections: readonly string[];
 }
 
 const mapRange = (
@@ -387,7 +383,7 @@ const mapRange = (
         status: "unknown",
         reason: `load command ${command.index} ${command.command === LC.SEGMENT_64 ? "LC_SEGMENT_64" : "LC_SEGMENT"} appears in a ${header.wide ? 64 : 32}-bit image`,
       };
-    const segment = decodeSegment(command);
+    const segment = decodeSegment(command, start, end);
     if (typeof segment === "string")
       return { status: "unknown", reason: segment };
     // dyld maps only `vmsize` bytes, so file bytes past it have no address.
@@ -427,26 +423,17 @@ const mapRange = (
       slice_end: to,
       segment: segment.name,
       vm_start: mapped
-        ? hex(segment.vmAddress + BigInt(from - segment.fileOffset))
+        ? hex(segment.fileAddress + BigInt(from - segment.fileOffset))
         : null,
       vm_end: mapped
-        ? hex(segment.vmAddress + BigInt(to - segment.fileOffset))
+        ? hex(segment.fileAddress + BigInt(to - segment.fileOffset))
         : null,
     });
     cursor = Math.max(cursor, to);
   }
   if (cursor < end) fragments.push(unmapped(cursor, end));
-  // A section counts only where the range, the section and its segment's
-  // file-backed bytes all overlap, so names agree with the fragments.
-  const sections = fileBacked.flatMap((segment) =>
-    segment.sections
-      .filter(
-        ({ zerofill, size, offset }) =>
-          !zerofill &&
-          Math.max(start, offset, segment.fileOffset) <
-            Math.min(end, offset + size, segment.fileOffset + segment.fileSize),
-      )
-      .map(({ name }) => ({ segment: segment.name, section: name })),
+  const sections = fileBacked.flatMap(({ name, sections }) =>
+    sections.map((section) => ({ segment: name, section })),
   );
   return { status: "mapped", fragments, sections };
 };
@@ -478,11 +465,11 @@ const mappingRecords = ({ command, body }: MachoLoadCommand): number => {
 };
 
 /** Decode one segment command, or say why its file mapping is unknown. */
-const decodeSegment = ({
-  command,
-  body,
-  index,
-}: MachoLoadCommand): SegmentFacts | string => {
+const decodeSegment = (
+  { command, body, index }: MachoLoadCommand,
+  rangeStart: number,
+  rangeEnd: number,
+): SegmentFacts | string => {
   const wide = command === LC.SEGMENT_64;
   const parsed = readMachoSegmentHeader(body, wide, true);
   if (!parsed.ok)
@@ -495,27 +482,33 @@ const decodeSegment = ({
   const sectionSize = machoSectionHeaderSize(wide);
   if (!machoSegmentSectionTableFits(segment, body.byteLength, wide))
     return `load command ${index} section records exceed cmdsize`;
-  const sections: SegmentFacts["sections"][number][] = [];
-  for (let section = 0; section < segment.sectionCount; section += 1) {
-    const at = segment.headerSize + section * sectionSize;
-    const header = readMachoSectionHeader(
-      body.subarray(at, at + sectionSize),
-      wide,
-      true,
-    );
-    if (!header.ok)
-      return `load command ${index} section records exceed cmdsize`;
-    sections.push({
-      name: fixedName(header.value.nameBytes),
-      offset: header.value.offset,
-      size: Number(header.value.size),
-      zerofill: isMachoZeroFillSection(header.value.flags),
-    });
+  const sections: string[] = [];
+  // Validate the table extent even when none of its sections can contribute.
+  const start = Math.max(rangeStart, fileOffset);
+  const end = Math.min(rangeEnd, fileOffset + fileSize);
+  if (start < end) {
+    for (let section = 0; section < segment.sectionCount; section += 1) {
+      const at = segment.headerSize + section * sectionSize;
+      const header = readMachoSectionHeader(
+        body.subarray(at, at + sectionSize),
+        wide,
+        true,
+      );
+      if (!header.ok)
+        return `load command ${index} section records exceed cmdsize`;
+      const { flags, offset, size, nameBytes } = header.value;
+      if (
+        !isMachoZeroFillSection(flags) &&
+        Math.max(start, offset) < Math.min(end, offset + Number(size))
+      )
+        sections.push(fixedName(nameBytes));
+    }
   }
   return {
     index,
     name: fixedName(segment.nameBytes),
     vmAddress: segment.address,
+    fileAddress: machoSegmentFileAddress(segment),
     vmSize: segment.memorySize,
     fileOffset,
     fileSize,

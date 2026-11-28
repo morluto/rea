@@ -6,6 +6,7 @@ import {
   localPathStringSchema,
 } from "../localPath.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
+import { gpuCodeObjectsBudgetFields } from "./gpuCodeObjectsBudgets.js";
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 /**
  * GPU inventories report known coverage: discovery, note and payload
@@ -19,6 +20,37 @@ export const gpuLocationSchema = z.strictObject({
   section_index: count.nullable(),
   section_name: z.string().nullable(),
 });
+/** Fields keep their amdpal key names because their values are declarations. */
+const gpuAmdPalHardwareStageSchema = z.strictObject({
+  stage: z.string(),
+  entry_point: z.string().nullable(),
+  entry_point_symbol: z.string().nullable(),
+  sgpr_count: count.nullable(),
+  vgpr_count: count.nullable(),
+  agpr_count: count.nullable(),
+  wavefront_size: count.nullable(),
+  lds_size: count.nullable(),
+  scratch_memory_size: count.nullable(),
+});
+const gpuAmdPalPipelineSchema = z.strictObject({
+  index: count,
+  name: z.string().nullable(),
+  type: z.string().nullable(),
+  api: z.string().nullable(),
+  shaders: z.array(
+    z.strictObject({
+      stage: z.string(),
+      hardware_mapping: z.array(z.string()).nullable(),
+    }),
+  ),
+  hardware_stages: z.array(gpuAmdPalHardwareStageSchema),
+  location: gpuLocationSchema,
+});
+export const gpuAmdPalMetadataSchema = z.strictObject({
+  version: z.strictObject({ major: count, minor: count }).nullable(),
+  pipelines: z.array(gpuAmdPalPipelineSchema),
+});
+export type GpuAmdPalMetadata = z.infer<typeof gpuAmdPalMetadataSchema>;
 export const gpuObjectSchema = z.strictObject({
   id: z.string(),
   parent_id: z.string().nullable(),
@@ -45,6 +77,12 @@ export const gpuObjectSchema = z.strictObject({
     .strictObject({
       flags: z.string().regex(/^0x[0-9a-f]{8}$/u),
       processor: z.string().nullable(),
+      os_abi: z.number().int().min(0).max(255),
+      abi: z
+        .enum(["amdhsa", "amdpal", "mesa3d", "unknown"])
+        .describe(
+          "Runtime ABI declared by ELF EI_OSABI; it selects the note metadata schema.",
+        ),
       header_location: gpuLocationSchema,
       note_coverage: knownCoverageStatusSchema.describe(
         "Complete only after all declared ELF note sections were examined within supported AMD metadata coverage; partial retains only examined facts.",
@@ -58,6 +96,11 @@ export const gpuObjectSchema = z.strictObject({
       ),
     })
     .nullable(),
+  amd_pal_metadata: gpuAmdPalMetadataSchema
+    .nullable()
+    .describe(
+      "Declared amdpal.pipelines note facts, decoded by kernel analysis of an AMDGPU PAL-ABI object; null otherwise.",
+    ),
   target_consistency: z.enum([
     "unexamined",
     "single-source",
@@ -270,6 +313,33 @@ export const gpuCodeObjectsSchema = gpuCodeObjectsObjectSchema.superRefine(
             );
         }
       }
+      const pal = row.amd_pal_metadata;
+      if (pal !== null && row.kind !== "amdgpu")
+        issue(
+          ["objects", index, "amd_pal_metadata"],
+          "AMDGPU PAL metadata requires an AMDGPU payload",
+        );
+      for (
+        let pipeline = 0;
+        pipeline < (pal?.pipelines.length ?? 0);
+        pipeline++
+      ) {
+        const path = [
+          "objects",
+          index,
+          "amd_pal_metadata",
+          "pipelines",
+          pipeline,
+          "location",
+        ];
+        const location = pal!.pipelines[pipeline]!.location;
+        if (location.container_id !== row.id)
+          issue(
+            path,
+            "AMDGPU PAL notes must use their payload coordinate space",
+          );
+        else range(location, path);
+      }
       const header = row.cuda_target_header;
       if (header !== null) {
         range(header.location, [
@@ -307,9 +377,16 @@ export const gpuCodeObjectsSchema = gpuCodeObjectsObjectSchema.superRefine(
           "GPU kernels require an inventoried object and its coordinate space",
         );
       range(row.location, ["kernels", index, "location"]);
-      for (const [field, source] of Object.entries(row.sources))
-        if (source !== null)
-          range(source, ["kernels", index, "sources", field]);
+      for (const [field, source] of Object.entries(row.sources)) {
+        if (source === null) continue;
+        const path = ["kernels", index, "sources", field];
+        if (source.container_id !== row.object_id)
+          issue(
+            path,
+            "GPU kernel resource ranges must use their payload coordinate space",
+          );
+        else range(source, path);
+      }
     }
     const artifactIds = new Set<string>();
     for (let index = 0; index < report.ptx_artifacts.length; index++) {
@@ -436,6 +513,7 @@ export const inspectGpuCodeObjectsInputSchema = z
       .describe(
         "Decode only exact target declarations, preserving all inventory rows",
       ),
+    ...gpuCodeObjectsBudgetFields,
     detail: z.enum(["summary", "complete"]).default("summary"),
     view: gpuCodeObjectsSelectionSchema.optional(),
   })
@@ -459,5 +537,17 @@ export type GpuKernel = z.infer<typeof gpuKernelSchema>;
 export type GpuLocation = z.infer<typeof gpuLocationSchema>;
 export type GpuCodeObjectsInput = Pick<
   z.infer<typeof inspectGpuCodeObjectsInputSchema>,
-  "path" | "analysis" | "object_ids" | "targets" | "expected_sha256"
+  | "path"
+  | "analysis"
+  | "object_ids"
+  | "targets"
+  | "expected_sha256"
+  | "max_object_bytes"
+  | "max_work_bytes"
+  | "max_report_bytes"
+  | "max_metadata_bytes"
+  | "max_structure_bytes"
+  | "max_parser_entries"
+  | "max_parser_visits"
+  | "max_token_bytes"
 >;

@@ -20,6 +20,7 @@ import {
 import {
   authenticatedServer,
   writeDescriptor,
+  listenCutterServer,
 } from "../../fixtures/cutterBridgeProtocol.js";
 
 const SESSION = "00000000-0000-4000-8000-000000000001";
@@ -34,17 +35,14 @@ const privateDirectory = async (): Promise<string> => {
 const listen = async (
   server: ReturnType<typeof createServer>,
 ): Promise<number> => {
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const address = server.address();
-  if (address === null || typeof address === "string")
-    throw new Error("Expected an ephemeral IPv4 listener");
+  const port = await listenCutterServer(server);
   onTestFinished(
     () =>
       new Promise<void>((resolve) => {
         server.close(() => resolve());
       }),
   );
-  return address.port;
+  return port;
 };
 
 const clientFor = (directory: string, ceiling: string): CutterBridgeClient => {

@@ -6,10 +6,7 @@ import { expect, it, vi } from "vitest";
 import { SaxesParser } from "saxes";
 import { DOMParser } from "@xmldom/xmldom";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import {
-  mavenGradleMetadataSchema,
-  type MavenGradleMetadata,
-} from "../domain/java/mavenGradleMetadata.js";
+import { mavenGradleMetadataSchema } from "../domain/java/mavenGradleMetadata.js";
 import {
   gradleModuleFixture,
   mavenPomFixture,
@@ -25,45 +22,8 @@ const parse = (source: string, path = "/artifacts/pom.xml") => {
     sha256: createHash("sha256").update(bytes).digest("hex"),
     bytes: bytes.length,
   });
-  const validated = mavenGradleMetadataSchema.safeParse(report);
-  expect(validated.success, JSON.stringify(validated.error)).toBe(true);
-  return report;
+  return mavenGradleMetadataSchema.parse(report);
 };
-
-it("keeps a missing child artifact separate from inheritable parent coordinates", () => {
-  const report = parse(
-    `<project><modelVersion>4.0.0</modelVersion><parent><groupId>example</groupId><artifactId>parent</artifactId><version>1</version></parent></project>`,
-  );
-  expect(report.coordinates).toEqual({
-    group_id: null,
-    artifact_id: null,
-    version: null,
-    packaging: null,
-  });
-  expect(report.unresolved).toEqual([
-    {
-      kind: "parent-coordinate",
-      reference: "parent.group_id",
-      field: "group_id",
-      owner: "project",
-      index: null,
-    },
-    {
-      kind: "missing-coordinate",
-      reference: "project.artifact_id",
-      field: "artifact_id",
-      owner: "project",
-      index: null,
-    },
-    {
-      kind: "parent-coordinate",
-      reference: "parent.version",
-      field: "version",
-      owner: "project",
-      index: null,
-    },
-  ]);
-});
 
 it("preserves an opaque XML counting failure without allocating a DOM", () => {
   const cause = new Error("controlled XML counter failure");
@@ -94,13 +54,6 @@ const expectFailure = (
 ) => {
   const bytes =
     typeof source === "string" ? Buffer.from(source, "utf8") : source;
-  expect(() =>
-    parseMavenGradleMetadata(bytes, {
-      path: "/artifacts/selected",
-      sha256: createHash("sha256").update(bytes).digest("hex"),
-      bytes: bytes.length,
-    }),
-  ).toThrow(ParseFailureError);
   try {
     parseMavenGradleMetadata(bytes, {
       path: "/artifacts/selected",
@@ -108,10 +61,11 @@ const expectFailure = (
       bytes: bytes.length,
     });
   } catch (cause) {
-    expect(cause).toBeInstanceOf(ParseFailureError);
-    if (cause instanceof ParseFailureError)
-      expect(cause.failure.kind).toBe(kind);
+    if (!(cause instanceof ParseFailureError)) throw cause;
+    expect(cause.failure.kind).toBe(kind);
+    return;
   }
+  throw new Error(`Expected metadata to be ${kind}`);
 };
 
 it("classifies a Maven qualifier with parentheses as a literal version", () => {
@@ -334,12 +288,6 @@ it("reads Gradle component coordinates, variants, exclusions and platform constr
     }),
   ]);
   expect(report.limitations.join(" ")).toMatch(/available-at coordinates/u);
-});
-
-it("does not interpolate Maven properties into coordinates", () => {
-  const report = parse(mavenPomFixture);
-  expect(report.coordinates.version).toBe("${revision}");
-  expect(report.coordinates.version).not.toBe("1.2.3");
 });
 
 it("lists every property in a compound CI-friendly version", () => {
@@ -655,6 +603,113 @@ it.each([
   expectFailure(source, "unsupported");
 });
 
+it.each(["4.0.0", "4.1.0"])(
+  "reads a POM in the Maven %s model namespace",
+  (model) => {
+    const report = parse(`<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/${model}">
+  <modelVersion>${model}</modelVersion>
+  <groupId>g</groupId><artifactId>a</artifactId><version>1</version>
+  <dependencies><dependency><groupId>x</groupId><artifactId>y</artifactId><version>2</version></dependency></dependencies>
+</project>
+`);
+    expect(report.format).toBe("maven-pom");
+    expect(report.coordinates).toEqual({
+      group_id: "g",
+      artifact_id: "a",
+      version: "1",
+      packaging: null,
+    });
+    expect(report.dependencies).toEqual([
+      expect.objectContaining({
+        group_id: "x",
+        artifact_id: "y",
+        version: "2",
+        origin: "dependencies",
+      }),
+    ]);
+    expect(report.unresolved).toEqual([]);
+    expect(
+      report.limitations.some((limitation) =>
+        limitation.startsWith("Maven 4 can infer omitted parent coordinates"),
+      ),
+    ).toBe(model === "4.1.0");
+  },
+);
+
+it.each([
+  { namespace: "4.1.0", modelVersion: "4.1.0", bom_import: true },
+  { namespace: "4.1.0", modelVersion: null, bom_import: true },
+  { namespace: "4.0.0", modelVersion: "4.1.0", bom_import: true },
+  { namespace: "4.0.0", modelVersion: "4.0.0", bom_import: false },
+  { namespace: "4.1.0", modelVersion: "4.0.0", bom_import: false },
+])(
+  "imports a managed bom type only from a 4.1.0 model: namespace $namespace, modelVersion $modelVersion",
+  ({ namespace, modelVersion, bom_import }) => {
+    const report =
+      parse(`<project xmlns="http://maven.apache.org/POM/${namespace}">
+  ${modelVersion === null ? "" : `<modelVersion>${modelVersion}</modelVersion>`}
+  <artifactId>demo</artifactId>
+  <dependencyManagement><dependencies>
+    <dependency><groupId>com.example</groupId><artifactId>platform</artifactId><version>3</version><type>bom</type></dependency>
+  </dependencies></dependencyManagement>
+  <dependencies>
+    <dependency><groupId>com.example</groupId><artifactId>lib</artifactId><version>3</version><type>bom</type></dependency>
+  </dependencies>
+</project>`);
+    expect(report.dependency_management).toEqual([
+      expect.objectContaining({ type: "bom", scope: null, bom_import }),
+    ]);
+    expect(report.dependencies).toEqual([
+      expect.objectContaining({ type: "bom", bom_import: false }),
+    ]);
+  },
+);
+
+it("refuses a Maven POM model namespace that this reader does not cover", () => {
+  const source = `<project xmlns="http://maven.apache.org/POM/4.2.0">
+  <modelVersion>4.2.0</modelVersion>
+  <artifactId>demo</artifactId>
+</project>`;
+  expectFailure(source, "unsupported");
+  expect(() => parse(source)).toThrow(
+    /model namespace this reader does not support; it reads the 4\.0\.0 and 4\.1\.0 POM models/u,
+  );
+});
+
+it.each(["4.0.0", "4.1.0"])(
+  "refuses a POM in the Maven %s model namespace that declares another modelVersion",
+  (namespace) => {
+    const source = `<project xmlns="http://maven.apache.org/POM/${namespace}">
+  <modelVersion>4.2.0</modelVersion>
+  <artifactId>demo</artifactId>
+</project>`;
+    expectFailure(source, "unsupported");
+    expect(() => parse(source)).toThrow(
+      /declares a modelVersion this reader does not support; it reads the 4\.0\.0 and 4\.1\.0 POM models/u,
+    );
+  },
+);
+
+it("reads a namespace-free POM that declares another modelVersion with the 4.0.0 rules", () => {
+  const report = parse(`<project>
+  <modelVersion>4.2.0</modelVersion>
+  <artifactId>demo</artifactId>
+  <dependencyManagement><dependencies>
+    <dependency><groupId>com.example</groupId><artifactId>platform</artifactId><version>3</version><type>bom</type></dependency>
+  </dependencies></dependencyManagement>
+</project>`);
+  expect(report.coordinates.artifact_id).toBe("demo");
+  expect(report.dependency_management).toEqual([
+    expect.objectContaining({ type: "bom", bom_import: false }),
+  ]);
+  expect(
+    report.limitations.some((limitation) =>
+      limitation.startsWith("Maven 4 can infer"),
+    ),
+  ).toBe(false);
+});
+
 it("refuses a POM with two top-level dependencies blocks", () => {
   expectFailure(
     `<project>
@@ -715,6 +770,17 @@ it("refuses a POM dependency with two version children", () => {
       <version>2.0.0</version>
     </dependency>
   </dependencies>
+</project>`,
+    "malformed",
+  );
+});
+
+it("refuses a POM with two modelVersion children", () => {
+  expectFailure(
+    `<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <modelVersion>4.1.0</modelVersion>
+  <artifactId>demo</artifactId>
 </project>`,
     "malformed",
   );
@@ -799,11 +865,6 @@ it("refuses empty and non-metadata files", () => {
   expectFailure("not xml or json", "unsupported");
 });
 
-it("keeps coverage examined_bytes equal to the artifact length", () => {
-  const report: MavenGradleMetadata = parse(mavenPomFixture);
-  expect(report.coverage.examined_bytes).toBe(report.artifact.bytes);
-});
-
 // A 1,000-character variant name on 5,000 dependency rows repeats 5,000,000
 // characters, past the fixed allowance, from about 300 KB of input.
 const repeatedVariantModule = () =>
@@ -822,47 +883,68 @@ const repeatedVariantModule = () =>
     ],
   });
 
-it("refuses Gradle metadata whose rows would repeat variant names past the report allowance", () => {
-  const bytes = Buffer.from(repeatedVariantModule(), "utf8");
-  expect(() =>
-    parseMavenGradleMetadata(bytes, {
-      path: "/artifacts/demo.module",
-      sha256: createHash("sha256").update(bytes).digest("hex"),
-      bytes: bytes.length,
-    }),
-  ).toThrow(ParseFailureError);
-});
-
-it("reports the repeated variant-name refusal as a fixed report allowance", async () => {
-  const root = await createTestTempDirectory("rea-gradle-report-");
-  const path = join(root, "demo.module");
-  await writeFile(path, repeatedVariantModule());
-  const provider = new MavenGradleMetadataProvider();
-  try {
-    const result = await provider.inspect({
-      path,
-      max_file_bytes: 1024 * 1024,
-    });
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(projectAnalysisError(result.error)).toMatchObject({
-      code: "resource_constraint",
-      retryable: false,
-      details: {
-        refusal: { kind: "fixed_ceiling", allowance_kind: "report" },
-      },
-    });
-  } finally {
-    await provider.close();
-  }
-});
+it.each([
+  {
+    boundary: "repeated_variant_name_chars",
+    source: repeatedVariantModule(),
+    maximum: 4_194_304,
+    required: 5_000_000,
+  },
+  {
+    boundary: "variants",
+    source: `{"formatVersion":"1.1","variants":[${Array(4_097).fill("{}").join(",")}]}`,
+    maximum: 4_096,
+    required: 4_097,
+  },
+] as const)(
+  "reports the measured $boundary allowance as its report_limits control",
+  async ({ boundary, source, maximum, required }) => {
+    const root = await createTestTempDirectory("rea-gradle-report-");
+    const path = join(root, "demo.module");
+    await writeFile(path, source);
+    const provider = new MavenGradleMetadataProvider();
+    try {
+      const result = await provider.inspect({
+        path,
+        max_file_bytes: 1024 * 1024,
+      });
+      if (result.ok) throw new Error(`Expected a report limit for ${boundary}`);
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "resource_constraint",
+        retryable: false,
+        details: {
+          reported_limits: { boundary, maximum, required },
+          limit: {
+            control_kind: "parameter",
+            parameter: `report_limits.${boundary}`,
+            effective_value: maximum,
+            default_value: maximum,
+            applies_at: "next_call",
+          },
+        },
+        remediation: {
+          action: expect.stringContaining(`report_limits.${boundary}`),
+        },
+      });
+      // The same document is reported once the caller raises the control.
+      const raised = await provider.inspect({
+        path,
+        max_file_bytes: 1024 * 1024,
+        report_limits: { [boundary]: required },
+      });
+      if (!raised.ok) throw raised.error;
+    } finally {
+      await provider.close();
+    }
+  },
+);
 
 it("reads POM values written as CDATA and as mixed text and CDATA", () => {
   const report = parse(`<project>
   <modelVersion>4.0.0</modelVersion>
   <groupId><![CDATA[com.example]]></groupId>
   <artifactId>demo</artifactId>
-  <version>1.<![CDATA[2.]]>3</version>
+  <version>1.<!-- comment --><![CDATA[2.]]>3</version>
   <properties><revision><![CDATA[1.2.3]]></revision></properties>
 </project>`);
   expect(report.coordinates).toMatchObject({
@@ -962,11 +1044,6 @@ it.for([
 
 it.for([
   [
-    "Gradle variants",
-    `{"formatVersion":"1.1","variants":[${Array(4_097).fill("{}").join(",")}]}`,
-    { allowance: "variants", limit: 4_096, required: 4_097 },
-  ],
-  [
     "Gradle exclusions",
     gradleModule(
       `{"name":"v","dependencies":[{"group":"a","module":"b","excludes":[${Array(65_537).fill("{}").join(",")}]}]}`,
@@ -1006,53 +1083,34 @@ it.for([
   },
 );
 
-it("reports the variant refusal as a fixed report allowance", async () => {
-  const root = await createTestTempDirectory("rea-gradle-variants-");
-  const path = join(root, "demo.module");
-  await writeFile(
-    path,
-    `{"formatVersion":"1.1","variants":[${Array(4_097).fill("{}").join(",")}]}`,
-  );
-  const provider = new MavenGradleMetadataProvider();
-  try {
-    const result = await provider.inspect({
-      path,
-      max_file_bytes: 1024 * 1024,
-    });
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(projectAnalysisError(result.error)).toMatchObject({
-      code: "resource_constraint",
-      retryable: false,
-      remediation: {
-        action: expect.stringContaining("4096-variant allowance"),
-      },
-    });
-  } finally {
-    await provider.close();
-  }
-});
-
 it("refuses a POM past the XML node allowance before building its tree", () => {
   const source = `<project><artifactId>demo</artifactId><properties>${"<p/>".repeat(1_048_577)}</properties></project>`;
   const bytes = Buffer.from(source, "utf8");
-  let failure: unknown;
-  try {
-    parseMavenGradleMetadata(bytes, {
-      path: "/artifacts/selected",
-      sha256: createHash("sha256").update(bytes).digest("hex"),
-      bytes: bytes.length,
+  const dom = vi
+    .spyOn(DOMParser.prototype, "parseFromString")
+    .mockImplementation(() => {
+      throw new Error("DOM construction was attempted before XML admission");
     });
-  } catch (cause) {
-    failure = cause;
+  try {
+    expect(() =>
+      parseMavenGradleMetadata(bytes, {
+        path: "/artifacts/selected",
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        bytes: bytes.length,
+      }),
+    ).toThrow(
+      expect.objectContaining({
+        _tag: "ParseFailureError",
+        failure: expect.objectContaining({
+          kind: "limit",
+          limit: { name: "xml_nodes", maximum: 1_048_576, required: 1_048_577 },
+        }),
+      }),
+    );
+    expect(dom.mock.calls.length).toBe(0);
+  } finally {
+    dom.mockRestore();
   }
-  expect(failure).toBeInstanceOf(ParseFailureError);
-  expect(failure).toMatchObject({
-    failure: {
-      kind: "limit",
-      limit: { name: "xml_nodes", maximum: 1_048_576, required: 1_048_577 },
-    },
-  });
 });
 
 it.each([

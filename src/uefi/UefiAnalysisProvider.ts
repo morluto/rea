@@ -3,17 +3,12 @@ import type { UefiDecodeFormat } from "./FfsSections.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 import { hostRangeErrorKind } from "../domain/parseFailure.js";
 import { errorMessage } from "../kernel/errorMessage.js";
-import { randomUUID } from "node:crypto";
-import { writeFile } from "node:fs/promises";
 import { inflate } from "node:zlib";
 import { promisify } from "node:util";
-import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   ArtifactResourceScope,
   readStableArtifact,
-  AnalysisCleanupLease,
-  AnalysisCleanupLeaseGroup,
 } from "../resources/index.js";
 import {
   createAnalysisExecution,
@@ -29,11 +24,11 @@ import {
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
-import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
+import { jsonValueSchema, ownedJsonValueSchema } from "../domain/jsonValue.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Result } from "../domain/result.js";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
+import { Budget } from "../domain/budget.js";
 import {
   uefiResultSchemas,
   type UefiExtractResult,
@@ -41,35 +36,123 @@ import {
   type UefiNvramInspectResult,
   type UefiRequest,
 } from "../domain/uefi/uefiFirmwareAnalysis.js";
-import {
-  OwnedCommandFailure,
-  runOwnedCommand,
-} from "../process/OwnedCommand.js";
-import {
-  processInspectionFailure,
-  retainProcessInspectionCleanup,
-} from "../providers/OwnedCommandCleanup.js";
-import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import type {
   UefiImageScanSummary,
   UefiDecodeResult,
   UefiPayload,
-} from "./UefiImageScan.js";
+} from "./UefiScanContext.js";
 import { scanUefiImage } from "./UefiImageScan.js";
-import { scanAmiNvramStores } from "./UefiNvram.js";
+import {
+  scanEdk2VariableStores,
+  type Edk2NvramStore,
+} from "./UefiEdk2Nvram.js";
+import { scanAmiNvramStores, type AmiNvramStore } from "./UefiNvram.js";
 import { uefiFailureDialect } from "./UefiFailures.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import {
   publishUefiFiles,
   type UefiPublicationEntry,
 } from "./UefiPublication.js";
-
-import { lzmaReplySchema } from "./UefiLzmaProtocol.js";
+import { UefiLzmaSession } from "./UefiLzmaSession.js";
 import { UEFI_PROVIDER_IDENTITY } from "./UefiProviderIdentity.js";
 
 const inflateBounded = promisify(inflate);
 
 const hex = (value: number): string => `0x${value.toString(16)}`;
+
+const dataDigest = (
+  image: Buffer,
+  offset: number,
+  length: number,
+  checkpoint: () => void,
+): string => {
+  checkpoint();
+  return sha256Hex(image.subarray(offset, offset + length));
+};
+
+const mapAmiNvramStores = (
+  stores: readonly AmiNvramStore[],
+  image: Buffer,
+  checkpoint: () => void,
+): UefiNvramInspectResult["stores"] =>
+  stores.map((store) => ({
+    offset: store.offset,
+    name: store.name,
+    variables: store.variables.map((variable) => ({
+      offset: variable.offset,
+      name: variable.name,
+      attributes: variable.attributes,
+      next: variable.next,
+      guid_index: variable.guidIndex,
+      guid: variable.guid,
+      depth: variable.depth,
+      parent_offset: variable.parentOffset,
+      data_offset: variable.dataOffset,
+      data_length: variable.dataLength,
+      data_sha256: dataDigest(
+        image,
+        variable.dataOffset,
+        variable.dataLength,
+        checkpoint,
+      ),
+    })),
+    trailing_padding: store.trailingPadding,
+  }));
+
+const mapEdk2NvramStores = (
+  stores: readonly Edk2NvramStore[],
+  image: Buffer,
+  checkpoint: () => void,
+): NonNullable<UefiNvramInspectResult["edk2_stores"]> =>
+  stores.map((store) => ({
+    offset: store.offset,
+    store_guid: store.storeGuid,
+    size: store.size,
+    store_format: store.storeFormat,
+    store_state: store.storeState,
+    authenticated: store.authenticated,
+    variables: store.variables.map((variable) => ({
+      offset: variable.offset,
+      name: variable.name,
+      state: variable.state,
+      state_raw: variable.stateRaw,
+      attributes: variable.attributes,
+      vendor_guid: variable.vendorGuid,
+      data_offset: variable.dataOffset,
+      data_length: variable.dataLength,
+      data_sha256: dataDigest(
+        image,
+        variable.dataOffset,
+        variable.dataLength,
+        checkpoint,
+      ),
+    })),
+  }));
+
+const AMI_NVRAM_ABSENT =
+  "No AMI NVRAM variable stores (NVAR chains) were found in the image.";
+const EDK2_NVRAM_ABSENT =
+  "No EDK2 variable stores (gEfiVariableGuid / gEfiAuthenticatedVariableGuid) were found in the image.";
+const EDK2_NVRAM_UNESTABLISHED =
+  "No formatted EDK2 variable store was found; the store signatures listed above were examined and rejected, so the image may still hold a damaged store.";
+const EDK2_NVRAM_UNCHECKED =
+  "EDK2 variable-store search did not finish; whether the image holds a store remains unknown.";
+
+const nvramLimitations = (
+  ami: ReturnType<typeof scanAmiNvramStores>,
+  edk2: ReturnType<typeof scanEdk2VariableStores>,
+): string[] => {
+  const limitations = [...ami.limitations, ...edk2.limitations];
+  if (ami.stores.length === 0 && edk2.stores.length === 0) {
+    if (ami.absent) limitations.push(AMI_NVRAM_ABSENT);
+    if (edk2.absent) limitations.push(EDK2_NVRAM_ABSENT);
+    else if (edk2.rejectedSignatures > 0)
+      limitations.push(EDK2_NVRAM_UNESTABLISHED);
+    else if (edk2.coverage === "partial")
+      limitations.push(EDK2_NVRAM_UNCHECKED);
+  }
+  return limitations;
+};
 
 const targetInputError = (message: string): AnalysisInputError =>
   new AnalysisInputError("extract_uefi_firmware", { cause: undefined }, [
@@ -81,6 +164,29 @@ type ExtractInput = Extract<
   { operation: "extract_uefi_firmware" }
 >["input"];
 type ExtractedFile = UefiExtractResult["files"][number];
+
+/**
+ * Map each FFS file and section logical path to the file that owns it. Decoded
+ * streams are named by their carrier section, so they resolve to that file.
+ */
+const ffsFileOwners = (
+  scan: UefiImageScanSummary,
+): ReadonlyMap<string, NonNullable<ExtractedFile["ffs_file"]>> => {
+  const owners = new Map<string, NonNullable<ExtractedFile["ffs_file"]>>();
+  for (const volume of scan.volumes)
+    for (const file of volume.ffs_files) {
+      const owner = {
+        guid: file.guid,
+        ui_string: file.ui_string,
+        type_name: file.type_name,
+        logical_path: file.logical_path,
+      };
+      owners.set(file.logical_path, owner);
+      for (const section of file.sections)
+        owners.set(section.logical_path, owner);
+    }
+  return owners;
+};
 type ExtractionRange = UefiPayload["range"];
 
 /** Offsets are scoped to the scanner's exact stream and may repeat across streams. */
@@ -137,6 +243,9 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
   #tail: Promise<void> = Promise.resolve();
   readonly #resources = new ArtifactResourceScope();
   readonly #workerModulePath: string;
+  #lastScan:
+    | { readonly key: string; readonly summary: UefiImageScanSummary }
+    | undefined;
 
   constructor(
     workerModulePath: string = fileURLToPath(
@@ -161,6 +270,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
   async close(): Promise<void> {
     this.#closing = true;
     await this.#tail.catch(() => undefined);
+    this.#lastScan = undefined;
     await this.#resources.close();
   }
 
@@ -305,19 +415,27 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     signal: AbortSignal,
     checkpoint: () => void,
   ): Promise<AnalysisExecution> {
+    const retainObservation = (
+      failure: AnalysisError,
+      value: AnalysisExecution,
+    ): AnalysisError =>
+      failure.retainPartialObservation({
+        kind: "uefi",
+        result: value.result,
+        provenance: jsonValueSchema.parse(value.subject),
+      });
     const finishObservation = (value: AnalysisExecution): AnalysisExecution => {
       try {
         checkpoint();
         return value;
       } catch (cause: unknown) {
-        throw classifyProviderFailure(
-          cause,
-          uefiFailureDialect(request.operation, request.input.path),
-        ).retainPartialObservation({
-          kind: "uefi",
-          result: value.result,
-          provenance: jsonValueSchema.parse(value.subject),
-        });
+        throw retainObservation(
+          classifyProviderFailure(
+            cause,
+            uefiFailureDialect(request.operation, request.input.path),
+          ),
+          value,
+        );
       }
     };
     return this.#resources.run(async () => {
@@ -339,25 +457,83 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         );
         return finishObservation(value);
       }
-      const scan = await scanUefiImage(
-        snapshot.bytes,
-        {
-          maxDepth: request.input.max_depth,
-          maxVolumes: request.input.max_volumes,
-          maxFiles: request.input.max_files,
-        },
-        ({ payload, format, maxOutputBytes }) =>
-          this.#decodeStream(
-            request.operation,
-            payload,
-            format,
-            maxOutputBytes,
-            signal,
-          ),
-        checkpoint,
-      );
-      checkpoint();
+      const scanKey = `${snapshot.sha256}:${String(request.input.max_depth)}:${String(request.input.max_volumes)}:${String(request.input.max_files)}`;
+      let scan: UefiImageScanSummary;
+      let completedInspection: AnalysisExecution | undefined;
+      if (this.#lastScan?.key === scanKey) {
+        scan = this.#lastScan.summary;
+      } else {
+        const lzmaSession = new UefiLzmaSession(
+          this.#workerModulePath,
+          request.operation,
+          this.#resources,
+        );
+        try {
+          scan = await scanUefiImage(
+            snapshot.bytes,
+            {
+              maxDepth: request.input.max_depth,
+              maxVolumes: request.input.max_volumes,
+              maxFiles: request.input.max_files,
+            },
+            ({ payload, format, maxOutputBytes }) =>
+              this.#decodeStream(
+                lzmaSession,
+                payload,
+                format,
+                maxOutputBytes,
+                signal,
+              ),
+            checkpoint,
+          );
+        } catch (cause: unknown) {
+          const primary = classifyProviderFailure(
+            cause,
+            uefiFailureDialect(request.operation, request.input.path),
+          );
+          await lzmaSession.close(primary);
+          throw primary;
+        }
+        this.#lastScan = { key: scanKey, summary: scan };
+        if (request.operation === "inspect_uefi_firmware") {
+          completedInspection = this.#inspect(request, snapshot.sha256, scan);
+        }
+        try {
+          await lzmaSession.close();
+        } catch (cause: unknown) {
+          let cleanupFailure = classifyProviderFailure(
+            cause,
+            uefiFailureDialect(request.operation, request.input.path),
+          );
+          let interruption: AnalysisError | undefined;
+          try {
+            checkpoint();
+          } catch (abortCause: unknown) {
+            interruption = classifyProviderFailure(
+              abortCause,
+              uefiFailureDialect(request.operation, request.input.path),
+            );
+          }
+          if (interruption !== undefined) {
+            if (completedInspection !== undefined) {
+              interruption = retainObservation(
+                interruption,
+                completedInspection,
+              );
+            }
+            cleanupFailure = analysisErrorWithCleanupDependencies(
+              interruption,
+              cleanupFailure,
+              request.operation,
+            );
+          }
+          throw completedInspection === undefined
+            ? cleanupFailure
+            : retainObservation(cleanupFailure, completedInspection);
+        }
+      }
       if (request.operation === "extract_uefi_firmware") {
+        checkpoint();
         return this.#extract(
           request,
           snapshot.sha256,
@@ -366,7 +542,9 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           checkpoint,
         );
       }
-      return finishObservation(this.#inspect(request, snapshot.sha256, scan));
+      return finishObservation(
+        completedInspection ?? this.#inspect(request, snapshot.sha256, scan),
+      );
     });
   }
 
@@ -431,52 +609,41 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     });
   }
 
-  /** AMI NVRAM stores are parsed from the raw image; no firmware-volume walk needed. */
+  /** AMI NVAR and EDK2 variable stores are parsed from the raw image. */
   #inspectNvram(
     request: Extract<UefiRequest, { operation: "inspect_uefi_nvram" }>,
     imageSha256: string,
     image: Buffer,
     checkpoint: () => void,
   ): AnalysisExecution {
-    const scan = scanAmiNvramStores(
+    // One structural record ceiling covers the whole inspection.
+    const records = new Budget(UEFI_FIRMWARE_LIMITS.scanRecords);
+    const ami = scanAmiNvramStores(
       image,
       request.input.max_stores,
       request.input.max_depth,
       checkpoint,
+      records,
     );
+    const edk2 = scanEdk2VariableStores(
+      image,
+      request.input.max_stores,
+      checkpoint,
+      records,
+    );
+    const limitations = nvramLimitations(ami, edk2);
     const result: UefiNvramInspectResult =
       uefiResultSchemas.inspect_uefi_nvram.parse({
         parser: { name: "rea-uefi", version: UEFI_PROVIDER_IDENTITY.version },
         input_size: image.length,
         image_sha256: imageSha256,
-        stores: scan.stores.map((store) => ({
-          offset: store.offset,
-          name: store.name,
-          variables: store.variables.map((variable) => {
-            checkpoint();
-            return {
-              offset: variable.offset,
-              name: variable.name,
-              attributes: variable.attributes,
-              next: variable.next,
-              guid_index: variable.guidIndex,
-              guid: variable.guid,
-              depth: variable.depth,
-              parent_offset: variable.parentOffset,
-              data_offset: variable.dataOffset,
-              data_length: variable.dataLength,
-              data_sha256: sha256Hex(
-                image.subarray(
-                  variable.dataOffset,
-                  variable.dataOffset + variable.dataLength,
-                ),
-              ),
-            };
-          }),
-          trailing_padding: store.trailingPadding,
-        })),
-        coverage: scan.coverage,
-        limitations: [...scan.limitations],
+        stores: mapAmiNvramStores(ami.stores, image, checkpoint),
+        edk2_stores: mapEdk2NvramStores(edk2.stores, image, checkpoint),
+        coverage:
+          ami.coverage === "partial" || edk2.coverage === "partial"
+            ? "partial"
+            : "complete",
+        limitations,
       });
     return createAnalysisExecution(result, UEFI_PROVIDER_IDENTITY, {
       subject: {
@@ -486,8 +653,8 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       },
       locations: [{ kind: "artifact-path", path: request.input.path }],
       limitations: [
-        ...scan.limitations,
-        "Static AMI NVRAM parsing only; variable bytes are reported, never interpreted or executed.",
+        ...limitations,
+        "Static AMI NVAR and EDK2 variable-store parsing only; variable bytes are reported, never interpreted or executed.",
       ],
     });
   }
@@ -525,6 +692,10 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         detail,
       });
     };
+
+    const owners = ffsFileOwners(scan);
+    const ownerOf = (logicalPath: string): ExtractedFile["ffs_file"] =>
+      owners.get(logicalPath) ?? null;
 
     const stage = (
       logicalPath: string,
@@ -565,6 +736,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           media_type: mediaType,
           source,
           parent_logical_path: parentLogicalPath,
+          ffs_file: ownerOf(logicalPath),
         },
       });
       return relativePath;
@@ -697,7 +869,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     if (publication.failure !== undefined) {
       throw publication.failure.retainPartialObservation({
         kind: "uefi",
-        result: jsonValueSchema.parse(result),
+        result: ownedJsonValueSchema.parse(result),
         provenance: { path: input.path, sha256: imageSha256 },
       });
     }
@@ -709,13 +881,13 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           ? scan.limitations
           : gaps
               .filter(({ kind }) => kind !== "pad-file")
-              .slice(0, 512)
+              .slice(0, UEFI_FIRMWARE_LIMITS.limitationLines)
               .map(({ detail }) => detail),
     });
   }
 
   async #decodeStream(
-    operation: UefiRequest["operation"],
+    lzmaSession: UefiLzmaSession,
     payload: Buffer,
     format: UefiDecodeFormat,
     maxOutputBytes: number,
@@ -733,7 +905,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         if (consumedBytes !== payload.length)
           return {
             ok: false,
-            reason: "format",
+            reason: "malformed",
             message: `AMD zlib stream used ${consumedBytes} of ${payload.length} declared compressed bytes.`,
           };
         return {
@@ -755,177 +927,6 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         };
       }
     }
-    const root = await PrivateRuntimeRoot.create({ prefix: "rea-uefi-lzma-" });
-    const files = new ArtifactResourceScope();
-    let worker: OwnedCommandFailure | undefined;
-    const rootLease = AnalysisCleanupLease.forCloseOwner(
-      {
-        async close() {
-          if (worker?.cleanupOwner !== undefined) {
-            const stopped = await worker.cleanupOwner.stop();
-            if (stopped.status === "incomplete")
-              throw new Error(stopped.reason);
-            worker = undefined;
-          }
-          await files.close();
-          await root.close();
-        },
-        get cleanupResources() {
-          return [
-            ...new Set([
-              ...(worker?.resources ?? []),
-              ...files.cleanupResources,
-              root.path,
-            ]),
-          ];
-        },
-      },
-      root.path,
-    );
-    const workspace = {
-      kind: "lease",
-      resource: root.path,
-      lease: rootLease,
-    } as const;
-    const decode = async (): Promise<UefiDecodeResult> => {
-      const payloadPath = join(root.path, "payload.bin");
-      const outputPath = join(root.path, "output.bin");
-      const replyPath = join(root.path, "reply.json");
-      const requestPath = join(root.path, "request.json");
-      await writeFile(payloadPath, payload, { flag: "wx", mode: 0o600 });
-      await writeFile(
-        requestPath,
-        JSON.stringify({
-          format,
-          payload_path: payloadPath,
-          output_path: outputPath,
-          reply_path: replyPath,
-          max_output_bytes: maxOutputBytes,
-        }),
-        { flag: "wx", mode: 0o600 },
-      );
-      const { NODE_OPTIONS: _ambientNodeOptions, ...environment } = process.env;
-      await runOwnedCommand(
-        {
-          command: process.execPath,
-          arguments: [
-            "--max-old-space-size=256",
-            "--disable-wasm-trap-handler",
-            this.#workerModulePath,
-            requestPath,
-          ],
-          cwd: root.path,
-          expectedCommand: null,
-          runId: `rea-uefi-lzma-${randomUUID()}`,
-          hostEnvironment: environment,
-        },
-        {
-          timeoutMs: UEFI_FIRMWARE_LIMITS.timeoutMs,
-          diagnosticBytes: UEFI_FIRMWARE_LIMITS.diagnosticBytes,
-        },
-        { signal },
-      );
-      const replyFile = await readStableArtifact(
-        replyPath,
-        UEFI_FIRMWARE_LIMITS.diagnosticBytes,
-        signal,
-        undefined,
-        files,
-      );
-      const reply = lzmaReplySchema.parse(
-        JSON.parse(replyFile.bytes.toString("utf8")),
-      );
-      if (!reply.ok) {
-        return reply;
-      }
-      const consumedBytes = reply.input_bytes_consumed;
-      if (consumedBytes > payload.length) {
-        return {
-          ok: false,
-          reason: "decoder",
-          message: `LZMA worker reported consuming ${consumedBytes} bytes from a ${payload.length}-byte input.`,
-        };
-      }
-      signal.throwIfAborted();
-      const decoded = await readStableArtifact(
-        outputPath,
-        maxOutputBytes,
-        signal,
-        undefined,
-        files,
-      );
-      if (
-        decoded.sha256 !== reply.output.sha256 ||
-        decoded.bytes.length !== reply.output.bytes
-      ) {
-        return {
-          ok: false,
-          reason: "decoder",
-          message: `LZMA worker output digest mismatch (${reply.output.sha256}).`,
-        };
-      }
-      return {
-        ok: true,
-        outcome: {
-          bytes: decoded.bytes,
-          decoderVersion: reply.lzma_version,
-          consumedBytes,
-        },
-      };
-    };
-
-    let outcome: UefiDecodeResult | undefined;
-    let primary: AnalysisError | undefined;
-    try {
-      outcome = await decode();
-    } catch (cause: unknown) {
-      primary = classifyProviderFailure(
-        cause,
-        uefiFailureDialect(operation, root.path),
-      );
-      const preparation = processInspectionFailure(cause);
-      if (preparation !== undefined) {
-        primary = retainProcessInspectionCleanup(
-          preparation,
-          primary,
-          this.#resources,
-          operation,
-        );
-      }
-      if (
-        cause instanceof OwnedCommandFailure &&
-        cause.cleanupOwner !== undefined
-      ) {
-        worker = cause;
-        this.#resources.retain(workspace);
-        new AnalysisCleanupLeaseGroup(primary, [rootLease]);
-        throw primary;
-      }
-    }
-    const cleanup = (reason: string, cause?: unknown) => {
-      const failure = new ProviderCleanupError(
-        UEFI_PROVIDER_IDENTITY.id,
-        rootLease.cleanupResources ?? [root.path],
-        { reason },
-        { cause, operation },
-      );
-      new AnalysisCleanupLeaseGroup(failure, [rootLease]);
-      return primary === undefined
-        ? failure
-        : analysisErrorWithCleanupDependencies(primary, failure, operation);
-    };
-    if (files.hasPending) {
-      this.#resources.retain(workspace);
-      throw cleanup(
-        "Worker output descriptors must close before the temporary root can be removed.",
-      );
-    }
-    const released = await this.#resources.release(workspace);
-    if (released.kind === "failed")
-      throw cleanup(errorMessage(released.cause), released.cause);
-    if (primary !== undefined) throw primary;
-    signal.throwIfAborted();
-    if (outcome === undefined) throw new Error("UEFI decoder did not settle.");
-    return outcome;
+    return lzmaSession.decode(payload, format, maxOutputBytes, signal);
   }
 }

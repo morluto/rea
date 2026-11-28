@@ -12,9 +12,10 @@ no-overwrite CLI delivery. It checks the target and project files for changes.
 - `../c/riscv.c` and `riscv-probe.S` produce source-owned RV32/RV64 ELF images
   with double-float ABI declarations and an independently known instruction.
   `../c/riscv-float-abi.c`, `riscv-probe.S` and `riscv-isa-probe.S` produce
-  typed and stripped RV32 ilp32 images whose calls cover every rule of the ilp32
-  policy; `riscv-checks.mjs` holds that policy's expected storage and the
-  call-site oracle. `npm run verify:ghidra:riscv` exercises real CLI/MCP
+  typed and stripped RV32 ilp32 and ilp32f images whose calls cover every rule
+  of the ilp32 and ilp32f policies, and an ilp32f image the bridge must refuse;
+  `riscv-checks.mjs` holds each policy's expected storage and the call-site
+  oracle. `npm run verify:ghidra:riscv` exercises real CLI/MCP
   discovery, decompilation, argument storage, output schemas, profile and
   snapshot identity, admission and refusal diagnostics, immutable source bytes,
   and owned cleanup. It requires BYO Ghidra 12.2/JDK 25+ and RISC-V
@@ -79,7 +80,19 @@ no-overwrite CLI delivery. It checks the target and project files for changes.
   that `analyze_function` still returns that function's assembly, callers,
   callees, references and basic blocks unchanged, marks pseudocode, native API
   and p-code value flow unavailable with the decompiler's reason, and that
-  cancellation still ends the request. Run `npm run build:cached`, then
+  cancellation still ends the request. It also injects read-ahead workers and
+  checks that the carrying request decompiles its own function without waiting
+  for workers to start; that workers match the queued work and none start for a
+  single function; that a queued function is decompiled by its own request; that
+  a finished or running worker result, including a timeout, is reported without
+  decompiling again; that cancelling a waiting request cancels the running
+  worker; that workers still opening are closed when read-ahead is disposed; that
+  four real decompilers open the Program concurrently; that REA's own thread
+  pool is used; and that a longer hint is clamped to one window. It
+  checks that a read without decompiler options keeps the configured payload
+  limit and completed decompiles while an explicit `null` restores the Ghidra
+  default, and that a repeated decompile of code outside every function keeps
+  the body Ghidra widened. Run `npm run build:cached`, then
   `node scripts/verify-real-ghidra-decompiler-failure.mjs` on Linux or macOS
   x64/arm64. The lane also parses the degraded dossier with REA's Ghidra output
   contract and checks the healthy provider path through the real read-only TCP bridge.

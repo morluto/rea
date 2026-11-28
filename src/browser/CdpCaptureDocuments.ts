@@ -284,17 +284,28 @@ export function* captureDom(
       const { nodeType, nodeName, nodeValue, parent, attributes } =
         admitted.value;
       const nodeIndex = baseIndex + index;
-      const attributeNames = [...new Set(attributes.map(([name]) => name))];
+      let attributeSet: Set<string> | undefined;
+      let attributeNames: string[];
+      if (attributes.length === 0) {
+        attributeNames = [];
+      } else {
+        attributeSet = new Set<string>();
+        for (let a = 0; a < attributes.length; a += 1) {
+          attributeSet.add(attributes[a]![0]);
+        }
+        attributeNames = [...attributeSet];
+      }
       const domElement = domXmlElement(ancestry, index);
       const htmlTagName = domHtmlTagName(nodeName, domElement);
       if (domElement.xmlDocument === undefined)
         completeness?.exclude("metadata", "invalid_protocol_value");
       let svgQuery: DomSvgNodeQuery | null | undefined;
       if (
+        attributeSet !== undefined &&
         domElement.xmlDocument === false &&
         nodeType === 1 &&
-        attributeNames.includes("xlink:href") &&
-        !attributeNames.includes("href")
+        attributeSet.has("xlink:href") &&
+        !attributeSet.has("href")
       ) {
         const backendNodeId = backendNodeIds[index];
         svgQuery =

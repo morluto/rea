@@ -71,6 +71,36 @@ const harness = (
   };
 };
 
+it("reports a lower bound for a request whose size scan stopped early", async () => {
+  const method = "search_strings";
+  const params = { pattern: "x".repeat(32_768) };
+  const maximum = 8_192;
+  const { wire, writes, pending } = harness(limit(maximum));
+  const result = await wire.request(method, params, {});
+  if (result.ok) throw new Error("Expected a request ceiling refusal");
+  const cause = result.error.cause;
+  if (!(cause instanceof AnalysisResourceConstraintError))
+    throw new Error("Expected a transport resource constraint");
+  const facts = cause.reportedLimits;
+  const measured = facts?.payload_bytes_at_least;
+  if (typeof measured !== "number")
+    throw new Error("Missing request size lower bound");
+  expect(measured).toBeGreaterThan(maximum);
+  expect(measured).toBeLessThan(
+    Buffer.byteLength(
+      JSON.stringify({
+        id: 1,
+        token: "b".repeat(64),
+        method,
+        params,
+      }),
+    ),
+  );
+  expect(facts).not.toHaveProperty("payload_bytes");
+  expect(writes).toEqual([]);
+  expect(pending.size).toBe(0);
+});
+
 it("admits the exact UTF-8 request boundary without changing reply ownership on refusal", async () => {
   const method = "search_strings";
   const params = { pattern: '前缀"\\\u0000😀\ud800'.repeat(1024) };
@@ -118,7 +148,10 @@ it("admits the exact UTF-8 request boundary without changing reply ownership on 
         AnalysisResourceConstraintError,
       );
       expect(result.error.cause).toMatchObject({
-        reportedLimits: { max_request_bytes: size - 1, payload_bytes: size },
+        reportedLimits: {
+          max_request_bytes: size - 1,
+          payload_bytes_at_least: size,
+        },
         retryable: false,
       });
       expect(
@@ -176,6 +209,7 @@ it("refuses an invalid request seed without sending or leaving a pending reply",
     const result = await request;
     if (result.ok) throw new Error("Expected a configuration refusal");
     expect(result.error.kind).toBe("admission");
+    expect(result.error.configurationFailure).toBe(refusal);
     expect(result.error.cause).toBe(refusal);
   } finally {
     pending.failAll(() => ok(null));
@@ -217,6 +251,7 @@ it("preserves distinct decompile and value-flow options on the wire", async () =
     const second = wire.request(method, params, {
       decompileTimeoutSeconds: null,
       decompileMaxPayloadMiB: 31,
+      decompileReadAhead: ["0x1000", "0x2000"],
     });
     expect(JSON.parse(writes[1]!)).toEqual({
       id: 2,
@@ -225,6 +260,7 @@ it("preserves distinct decompile and value-flow options on the wire", async () =
       params,
       decompile_timeout_seconds: null,
       decompile_max_payload_mib: 31,
+      decompile_read_ahead: ["0x1000", "0x2000"],
     });
     expect(pending.settle(2, ok("second"))).toBe(true);
     await expect(second).resolves.toEqual(ok("second"));
@@ -232,4 +268,98 @@ it("preserves distinct decompile and value-flow options on the wire", async () =
     pending.failAll(() => ok(null));
     await first;
   }
+});
+
+it("writes one authenticated cancel frame for an interrupted request and keeps awaiting its reply", async () => {
+  const { wire, writes, pending } = harness(limit(8_192));
+  const interrupt = new AbortController();
+  const request = wire.request(
+    "procedure_pseudo_code",
+    { procedure: "main" },
+    { interrupt: interrupt.signal },
+  );
+  expect(writes).toHaveLength(1);
+  interrupt.abort("caller stopped");
+  // The cancel is a request frame with its own id; the request stays pending.
+  expect(writes.slice(1).map((line) => JSON.parse(line) as JsonValue)).toEqual([
+    {
+      id: 2,
+      token: "b".repeat(64),
+      method: "cancel",
+      params: { request_id: 1 },
+    },
+  ]);
+  expect(writes[1]?.endsWith("\n")).toBe(true);
+  expect(pending.has(1)).toBe(true);
+  expect(pending.has(2)).toBe(false);
+  pending.settle(1, ok({ answered: true }));
+  await expect(request).resolves.toEqual(ok({ answered: true }));
+});
+
+it("takes read-ahead ownership only after the request passes admission", async () => {
+  const maximum = 8_192;
+  const { wire, writes, pending } = harness(limit(maximum));
+  let admitted = 0;
+  const refused = await wire.request(
+    "procedure_pseudo_code",
+    { procedure: "x".repeat(32_768) },
+    {
+      decompileReadAhead: ["0x1000", "0x1010"],
+      onAdmitted: () => {
+        admitted += 1;
+      },
+    },
+  );
+  expect(refused.ok).toBe(false);
+  if (refused.ok) return;
+  expect(refused.error.kind).toBe("admission");
+  expect(admitted).toBe(0);
+  expect(writes).toEqual([]);
+
+  const accepted = wire.request(
+    "procedure_pseudo_code",
+    { procedure: "0x1000" },
+    {
+      decompileReadAhead: ["0x1000", "0x1010"],
+      onAdmitted: () => {
+        admitted += writes.length === 0 ? 1 : 10;
+      },
+    },
+  );
+  expect(pending.settle(2, ok(null))).toBe(true);
+  await accepted;
+  expect(admitted).toBe(1);
+  expect(writes).toHaveLength(1);
+});
+
+it("writes an abandon frame without registering a reply", () => {
+  const { wire, writes, pending } = harness(limit(8_192));
+  wire.abandonReadAhead();
+  expect(writes.map((line) => JSON.parse(line) as JsonValue)).toEqual([
+    {
+      id: 1,
+      token: "b".repeat(64),
+      method: "abandon_decompile_read_ahead",
+      params: {},
+    },
+  ]);
+  expect(writes[0]?.endsWith("\n")).toBe(true);
+  expect(pending.size).toBe(0);
+});
+
+it("writes no cancel frame once the interrupted request has settled", async () => {
+  const { wire, writes, pending } = harness(limit(8_192));
+  const interrupt = new AbortController();
+  const request = wire.request(
+    "procedure_pseudo_code",
+    {},
+    {
+      interrupt: interrupt.signal,
+    },
+  );
+  pending.settle(1, ok(null));
+  // Before the request's own continuation runs, and after it.
+  interrupt.abort("caller stopped");
+  await request;
+  expect(writes).toHaveLength(1);
 });

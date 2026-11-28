@@ -352,6 +352,27 @@ it("keeps unavailable job inventories at run scope", async () => {
   ]);
 });
 
+it("records failed jobs without fetching artifacts when the PR base is missing", async () => {
+  const input = fixture([20], 1);
+  const getRun = input.api.getRun;
+  input.api.getRun = async (...args) => ({
+    ...(await getRun(...args)),
+    pull_requests: [],
+  });
+
+  const result = await report(input);
+  expect(result.boundedInput.mainCandidateRuns).toBe(1);
+  expect(result.failures).toMatchObject([
+    {
+      runId: 100,
+      job: "Static checks",
+      classification: "unknown",
+      reason: "no_matching_verified_main_failure",
+    },
+  ]);
+  expect(input.artifacts).toEqual([]);
+});
+
 it.each([
   ["request", "github_api_temporarily_unavailable"],
   ["budget", "github_api_request_budget_exhausted"],

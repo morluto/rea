@@ -89,9 +89,7 @@ const target = (change: Partial<MipsElfMetadata> = {}): BinaryTarget => ({
     ...change,
   },
 });
-const abi = (
-  change: Partial<NonNullable<MipsElfMetadata["abiFlags"]>>,
-): Partial<MipsElfMetadata> => {
+const abi = (change: Partial<NonNullable<MipsElfMetadata["abiFlags"]>>) => {
   const base = target();
   if (base.kind !== "executable" || base.architecture !== "mips")
     throw new Error("expected a MIPS fixture target");
@@ -103,6 +101,84 @@ const abi = (
 const softFloat = abi({ cpr1Size: 0, fpAbi: 3 });
 
 describe("bounded Ghidra MIPS admission", () => {
+  it.each(["little", "big"] as const)(
+    "resolves a declared-o32 MIPS32 firmware profile in %s endian",
+    async (byteOrder) => {
+      const ghidra = new GhidraProvider(config, silentLogger, {}, host);
+      const firmware = target({
+        byteOrder,
+        flags: 0x50001007,
+        abiFlags: null,
+      });
+      expect(ghidra.inspectTargetSupport(firmware)).toMatchObject({
+        status: "supported",
+      });
+      const result = await ghidra.resolveAnalysisProfile(firmware);
+      if (!result.ok) throw result.error;
+      expect(result.value.profile?.parameters).toMatchObject({
+        mips_support_lane: "elf32-exec-o32-arch32-standard",
+        language_id: `MIPS:${byteOrder === "little" ? "LE" : "BE"}:32:default`,
+        mips_abi_basis: "declared-o32-header",
+        mips_elf: {
+          flags: 0x50001007,
+          abi_flags: null,
+        },
+      });
+    },
+  );
+  it.each([
+    [{ flags: 0x1005 }, "Explicit o32 requires EF_MIPS_ARCH_32R2"],
+    [{ flags: 0x50001807 }, "only the NOREORDER, PIC and CPIC"],
+    [{ flags: 0x50001107 }, "only the NOREORDER, PIC and CPIC"],
+    [{ flags: 0x50001047 }, "only the NOREORDER, PIC and CPIC"],
+    [{ flags: 0x50001027 }, "requires an explicit o32 ABI"],
+    [{ type: 1 }, "Explicit o32 requires EF_MIPS_ARCH_32R2"],
+    [{ type: 3 }, "Explicit o32 requires EF_MIPS_ARCH_32R2"],
+    [abi({ isaRevision: 1 }), "record-bearing images"],
+    [abi({ isaRevision: 1, cpr1Size: 0, fpAbi: 3 }), "record-bearing images"],
+    [abi({ isaRevision: 2 }), "record-bearing images"],
+    [
+      { gnuAttributes: { fpAbi: 3, msa: null } },
+      "GNU floating-point ABI attribute",
+    ],
+    [
+      {
+        limitations: [
+          { kind: "unexamined_declarations", message: "unread declarations" },
+        ],
+      },
+      "inspection is incomplete",
+    ],
+  ] satisfies [Partial<MipsElfMetadata>, string][])(
+    "does not widen declared MIPS32 admission to %j",
+    (change, reason) => {
+      const ghidra = new GhidraProvider(config, silentLogger, {}, host);
+      const support = ghidra.inspectTargetSupport(
+        target({ flags: 0x50001007, abiFlags: null, ...change }),
+      );
+      // The named refusal pins which rule rejects the case, so a widened
+      // earlier rule cannot be hidden by a later one.
+      expect(support.status).toBe("unsupported");
+      expect(JSON.stringify(support)).toContain(reason);
+    },
+  );
+  it("keeps an uninspected ABI flags record unknown for declared-o32 MIPS32", () => {
+    const ghidra = new GhidraProvider(config, silentLogger, {}, host);
+    const uninspected = target({ flags: 0x50001007 });
+    if (
+      uninspected.kind !== "executable" ||
+      uninspected.architecture !== "mips"
+    )
+      throw new Error("expected a MIPS fixture target");
+    const { abiFlags: _omitted, ...metadata } = uninspected.mips!;
+    const support = ghidra.inspectTargetSupport({
+      ...uninspected,
+      mips: metadata,
+    });
+    expect(support.status).toBe("unsupported");
+    expect(JSON.stringify(support)).toContain("its absence is unknown");
+    expect(JSON.stringify(support)).not.toContain("record-bearing");
+  });
   it("binds a saved project's MIPS metadata without claiming a fresh-import lane", () => {
     const little = target();
     const big = target({ byteOrder: "big" });
@@ -207,8 +283,8 @@ describe("bounded Ghidra MIPS admission", () => {
       expect(resolved).toMatchObject({
         ok: false,
         error: {
-          _tag: "AnalysisUnsupportedTargetError",
-          reason: expect.stringContaining(reason),
+          _tag: "AnalysisTargetFailureError",
+          failure: { detail: expect.stringContaining(reason) },
         },
       });
     },
@@ -240,8 +316,8 @@ describe("recordless legacy MIPS admission", () => {
       expect(resolved).toMatchObject({
         ok: false,
         error: {
-          _tag: "AnalysisUnsupportedTargetError",
-          reason: expect.stringContaining("ET_EXEC"),
+          _tag: "AnalysisTargetFailureError",
+          failure: { detail: expect.stringContaining("ET_EXEC") },
         },
       });
     },
@@ -300,10 +376,6 @@ describe("recordless legacy MIPS admission", () => {
     [{ flags: 0x50000101 }, "EF_MIPS_32BITMODE"],
     [{ flags: 0x00000201 }, "EF_MIPS_FP64"],
     [{ flags: 0x70000101 }, "EF_MIPS_32BITMODE"],
-    [
-      { flags: 0x50001001 },
-      "EF_MIPS_ARCH_32R2 for headers that declare an ABI",
-    ],
     [{ flags: 0x50000201 }, "EF_MIPS_FP64"],
     [{ flags: 0x50000401 }, "EF_MIPS_NAN2008"],
     [{ flags: 0x60000001 }, "32R2"],
@@ -311,7 +383,34 @@ describe("recordless legacy MIPS admission", () => {
       {
         flags: 0x50000001,
         limitations: [
-          "MIPS section header table at file offset 96 extends beyond the captured file: examined 2 of 5 complete headers. ABI declarations in unavailable headers remain unknown.",
+          {
+            kind: "unexamined_declarations",
+            // Even if prose resembles a section-table truncation message, the
+            // typed discriminator governs admission — never string matching.
+            message:
+              "MIPS section header table at file offset 96 extends beyond the captured file: examined 2 of 5 complete headers. ABI declarations in unavailable headers remain unknown.",
+          },
+        ],
+      },
+      "complete ABI-record inspection",
+    ],
+    [
+      {
+        flags: 0x50000001,
+        limitations: [
+          {
+            kind: "truncated_section_table",
+            offset: 96,
+            examined: 2,
+            declared: 5,
+            message:
+              "MIPS section header table at file offset 96 extends beyond the captured file: examined 2 of 5 complete headers. ABI declarations in unavailable headers remain unknown.",
+          },
+          {
+            kind: "unexamined_declarations",
+            message:
+              "MIPS ABI record at file offset 4096 extends beyond the captured file",
+          },
         ],
       },
       "complete ABI-record inspection",
@@ -326,6 +425,63 @@ describe("recordless legacy MIPS admission", () => {
         status: "unsupported",
         reason: expect.stringContaining(reason),
       });
+    },
+  );
+
+  it("admits a recordless legacy MIPS32 ET_EXEC whose only limitation is a truncated section table and propagates it to session limitations", async () => {
+    const limitation = {
+      kind: "truncated_section_table" as const,
+      offset: 96,
+      examined: 2,
+      declared: 5,
+      message:
+        "MIPS section header table at file offset 96 extends beyond the captured file: examined 2 of 5 complete headers. ABI declarations in unavailable headers remain unknown.",
+    };
+    const carved = target({
+      flags: 0x50000001,
+      abiFlags: null,
+      limitations: [limitation],
+    });
+    const ghidra = new GhidraProvider(config, silentLogger, {}, host);
+    expect(ghidra.inspectTargetSupport(carved).status).toBe("supported");
+    const resolved = await ghidra.resolveAnalysisProfile(carved);
+    if (!resolved.ok) throw resolved.error;
+    expect(resolved.value.profile?.parameters).toMatchObject({
+      mips_support_lane: "elf32-exec-arch32-legacy-pinned",
+      mips_abi_basis: "inferred-o32-assumption",
+      language_id: "MIPS:LE:32:default",
+      mips_elf: {
+        abi_flags_limitations: [limitation],
+      },
+    });
+    const { client } = await session(carved, undefined);
+    const health = await client.execute("health", {});
+    if (!health.ok) throw health.error;
+    expect(health.value.limitations).toContain(limitation.message);
+  });
+
+  it.each([
+    ["declared-ABI ET_EXEC", { flags: 0x70001001 }],
+    ["recordless ET_REL", { flags: 0x50000001, type: 1, abiFlags: null }],
+    ["PSP Allegrex", { flags: 0x10a23001 }],
+  ] as const)(
+    "keeps %s fail-closed when the section header table is truncated",
+    (_label, change) => {
+      const ghidra = new GhidraProvider(config, silentLogger, {}, host);
+      const value = target({
+        ...change,
+        limitations: [
+          {
+            kind: "truncated_section_table",
+            offset: 96,
+            examined: 2,
+            declared: 5,
+            message:
+              "MIPS section header table at file offset 96 extends beyond the captured file: examined 2 of 5 complete headers.",
+          },
+        ],
+      });
+      expect(ghidra.inspectTargetSupport(value).status).toBe("unsupported");
     },
   );
 
@@ -600,7 +756,26 @@ describe("MIPS16 shared-image profile", () => {
   });
   it.each([
     { flags: 0x74001045 },
-    { limitations: ["Unexamined section declarations"] },
+    {
+      limitations: [
+        {
+          kind: "unexamined_declarations",
+          message: "Unexamined section declarations",
+        },
+      ],
+    },
+    {
+      limitations: [
+        {
+          kind: "truncated_section_table",
+          offset: 96,
+          examined: 0,
+          declared: 2,
+          message:
+            "MIPS section header table at file offset 96 extends beyond the captured file: examined 0 of 2 complete headers.",
+        },
+      ],
+    },
     {
       sharedLoad: {
         status: "complete",

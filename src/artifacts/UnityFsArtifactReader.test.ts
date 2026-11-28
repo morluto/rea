@@ -1,40 +1,25 @@
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { text } from "node:stream/consumers";
+import { collectEntries } from "../../tests/fixtures/artifactEntries.js";
+import { buffer, text } from "node:stream/consumers";
 
 import { describe, expect, it } from "vitest";
 
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { createTestTempFile } from "../../tests/fixtures/temporaryDirectory.js";
 import {
   buildUnityFs,
+  encodeUnityLzmaWithEndMarker,
   type UnityFsMember,
 } from "../../tests/fixtures/unityfs.js";
 
 import type { ArtifactEntry } from "../resources/ArtifactReader.js";
 import { UnityFsArtifactReader } from "./UnityFsArtifactReader.js";
 
-const writeBundle = async (bytes: Buffer): Promise<string> => {
-  const path = join(
-    await createTestTempDirectory("rea-unityfs-"),
-    "content.bundle",
-  );
-  await writeFile(path, bytes);
-  return path;
-};
-
-const list = async (
-  reader: UnityFsArtifactReader,
-): Promise<ArtifactEntry[]> => {
-  const entries: ArtifactEntry[] = [];
-  for await (const entry of reader.entries()) entries.push(entry);
-  return entries;
-};
-
 const withReader = async <T>(
   bytes: Buffer,
   use: (reader: UnityFsArtifactReader) => Promise<T>,
 ): Promise<T> => {
-  const reader = new UnityFsArtifactReader(await writeBundle(bytes));
+  const reader = new UnityFsArtifactReader(
+    await createTestTempFile("rea-unityfs-", "content.bundle", bytes),
+  );
   try {
     return await use(reader);
   } finally {
@@ -56,7 +41,7 @@ describe("UnityFsArtifactReader", () => {
         { path: "assets/data.bin", data: "bytes", flags: 4 },
       ]),
       async (reader) => {
-        const entries = await list(reader);
+        const entries = await collectEntries(reader);
         expect(entries).toEqual([
           expect.objectContaining({
             path: "assets",
@@ -78,7 +63,7 @@ describe("UnityFsArtifactReader", () => {
     await withReader(
       buildUnityFs([{ path: "data..bin", data: "bytes" }]),
       async (reader) => {
-        const [entry] = await list(reader);
+        const [entry] = await collectEntries(reader);
         expect(entry?.path).toBe("data..bin");
         expect(await text(await reader.open(entry!))).toBe("bytes");
       },
@@ -89,7 +74,7 @@ describe("UnityFsArtifactReader", () => {
     await withReader(
       buildUnityFs(members, { flags: 0x1400 | 0x43 }),
       async (reader) => {
-        await list(reader);
+        await collectEntries(reader);
         expect(reader.formatMetadata()).toMatchObject({
           directory_status: "encrypted",
           block_count: null,
@@ -103,7 +88,7 @@ describe("UnityFsArtifactReader", () => {
     await withReader(
       buildUnityFs(members, { engineVersion: "2019.4.20f1", flags: 0x243 }),
       async (reader) => {
-        expect(await list(reader)).toEqual([]);
+        expect(await collectEntries(reader)).toEqual([]);
         expect(reader.formatMetadata()).toMatchObject({
           directory_status: "encrypted",
         });
@@ -115,7 +100,7 @@ describe("UnityFsArtifactReader", () => {
     await withReader(
       buildUnityFs(members, { engineVersion: "0.0.0", flags: 0x243 }),
       async (reader) => {
-        expect(await list(reader)).toEqual([]);
+        expect(await collectEntries(reader)).toEqual([]);
         expect(reader.formatMetadata()).toMatchObject({
           directory_status: "unsupported-layout",
         });
@@ -137,7 +122,7 @@ describe("UnityFS payloads and malformed declarations", () => {
     ["format 6 without padding alignment", { formatVersion: 6, flags: 3 }],
   ] as const)("lists and reads every member with %s", async (_, options) => {
     await withReader(buildUnityFs(members, options), async (reader) => {
-      const entries = await list(reader);
+      const entries = await collectEntries(reader);
       expect(entries.map(({ path }) => path)).toEqual(
         members.map(({ path }) => path),
       );
@@ -160,19 +145,17 @@ describe("UnityFS payloads and malformed declarations", () => {
     await withReader(
       buildUnityFs([{ path: "big.resS", data: big }]),
       async (reader) => {
-        const [entry] = await list(reader);
+        const [entry] = await collectEntries(reader);
         if (entry === undefined) throw new Error("expected one entry");
         const stream = await reader.open(entry);
-        const chunks: Buffer[] = [];
-        for await (const chunk of stream) chunks.push(chunk as Buffer);
-        expect(Buffer.concat(chunks).equals(big)).toBe(true);
+        expect((await buffer(stream)).equals(big)).toBe(true);
       },
     );
   });
 
   it("preserves format and node metadata facts", async () => {
     await withReader(buildUnityFs(members), async (reader) => {
-      const entries = await list(reader);
+      const entries = await collectEntries(reader);
       const metadata = reader.formatMetadata();
       expect(metadata).toMatchObject({
         signature: "UnityFS",
@@ -236,9 +219,79 @@ describe("UnityFS unavailable and malformed directories", () => {
     );
   });
 
-  it("reports an LZMA blocks-info table as unknown coverage", async () => {
+  it("inventories an LZMA blocks-info table", async () => {
     await withReader(
       buildUnityFs(members, { blocksInfoCompression: 1 }),
+      async (reader) => {
+        const entries = await collectEntries(reader);
+        expect(entries.map((entry) => entry.path)).toEqual(
+          members.map((member) => member.path),
+        );
+        expect(reader.formatMetadata()).toMatchObject({
+          directory_status: "available",
+        });
+      },
+    );
+  });
+
+  it("decodes an LZMA-compressed member block", async () => {
+    await withReader(
+      buildUnityFs(members, { blockCompression: 1 }),
+      async (reader) => {
+        const entries = await collectEntries(reader);
+        expect(entries).toHaveLength(members.length);
+        for (const [index, entry] of entries.entries()) {
+          const stream = await reader.open(entry);
+          expect(await text(stream)).toBe(
+            typeof members[index]!.data === "string"
+              ? members[index]!.data
+              : members[index]!.data.toString("utf8"),
+          );
+        }
+      },
+    );
+  });
+
+  it("decodes an LZMA member block that includes an end marker", async () => {
+    await withReader(
+      buildUnityFs(members, {
+        blockCompression: 1,
+        encodeBlock: encodeUnityLzmaWithEndMarker,
+      }),
+      async (reader) => {
+        const entries = await collectEntries(reader);
+        expect(entries).toHaveLength(members.length);
+        for (const [index, entry] of entries.entries()) {
+          const stream = await reader.open(entry);
+          expect(await text(stream)).toBe(
+            typeof members[index]!.data === "string"
+              ? members[index]!.data
+              : members[index]!.data.toString("utf8"),
+          );
+        }
+      },
+    );
+  });
+
+  it("refuses a malformed LZMA member block", async () => {
+    await withReader(
+      buildUnityFs([{ path: "broken", data: "payload" }], {
+        blockCompression: 1,
+        encodeBlock: () => Buffer.from([0x5d, 0, 0, 0, 1, 0, 0xff]),
+      }),
+      async (reader) => {
+        const [entry] = await collectEntries(reader);
+        if (entry === undefined) throw new Error("expected one entry");
+        await expect(buffer(await reader.open(entry))).rejects.toMatchObject({
+          reason: "malformed",
+        });
+      },
+    );
+  });
+
+  it("reports an LZHAM blocks-info table as unknown coverage", async () => {
+    await withReader(
+      buildUnityFs(members, { blocksInfoCompression: 4 }),
       async (reader) => {
         const entries: ArtifactEntry[] = [];
         const coverage: unknown[] = [];
@@ -253,19 +306,6 @@ describe("UnityFS unavailable and malformed directories", () => {
         expect(coverage).toEqual([
           expect.objectContaining({ status: "unknown" }),
         ]);
-      },
-    );
-  });
-
-  it("refuses an LZMA-compressed member block while retaining the directory", async () => {
-    await withReader(
-      buildUnityFs(members, { blockCompression: 1 }),
-      async (reader) => {
-        const [entry] = await list(reader);
-        if (entry === undefined) throw new Error("expected one entry");
-        await expect(reader.open(entry)).rejects.toMatchObject({
-          reason: "unavailable",
-        });
       },
     );
   });
@@ -288,17 +328,17 @@ describe("UnityFS unavailable and malformed directories", () => {
         bytes.writeBigUInt64BE(1n << 40n, 32);
         return bytes;
       })(),
-      "format",
+      "truncated",
     ],
     [
       "a node count that cannot fit",
       buildUnityFs(members, { declaredNodeCount: 0xffff_ffff }),
-      "format",
+      "malformed",
     ],
-    ["bytes without a bundle", Buffer.from("not a unity bundle"), "format"],
+    ["bytes without a bundle", Buffer.from("not a unity bundle"), "malformed"],
   ])("refuses %s", async (_, bytes, reason) => {
     await withReader(bytes, async (reader) => {
-      await expect(list(reader)).rejects.toMatchObject({ reason });
+      await expect(collectEntries(reader)).rejects.toMatchObject({ reason });
     });
   });
 });
@@ -309,7 +349,7 @@ describe("UnityFsArtifactReader member streams", () => {
     await withReader(
       buildUnityFs([{ path: "big.resS", data }]),
       async (reader) => {
-        const [entry] = await list(reader);
+        const [entry] = await collectEntries(reader);
         if (entry === undefined) throw new Error("expected one entry");
         const controller = new AbortController();
         const stream = await reader.open(entry, controller.signal);
@@ -325,7 +365,7 @@ describe("UnityFsArtifactReader member streams", () => {
 
   it("refuses an entry that did not come from this reader", async () => {
     await withReader(buildUnityFs(members), async (reader) => {
-      const [entry] = await list(reader);
+      const [entry] = await collectEntries(reader);
       if (entry === undefined) throw new Error("expected one entry");
       await expect(
         reader.open({ ...entry, adapterKey: "unityfs-entry:99" }),

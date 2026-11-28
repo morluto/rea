@@ -45,8 +45,9 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
+          package-manager-cache: false
           node-version-file: .nvmrc
       - name: Cache npm package downloads
         id: npm-cache
@@ -65,8 +66,10 @@ jobs:
             gcc-aarch64-linux-gnu gcc-i686-linux-gnu gcc-arm-linux-gnueabi gcc-mips-linux-gnu gcc-mipsel-linux-gnu
             libc6-dev-arm64-cross libc6-dev-i386-cross libc6-dev-armel-cross libc6-dev-mips-cross libc6-dev-mipsel-cross
           install-recommends: "false"
-          # Five toolchains required a 206 MB cold download in hosted CI.
-          download-timeout-seconds: "900"
+          # Five toolchains required a 206 MB cold download in hosted CI. Three
+          # resuming attempts of this length leave the 25-minute job time to
+          # build and verify the fixtures.
+          download-timeout-seconds: "360"
       - name: Acquire exact upstream libraries in an isolated runner environment
         shell: bash
         run: |

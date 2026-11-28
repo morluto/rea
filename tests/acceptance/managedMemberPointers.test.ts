@@ -41,7 +41,11 @@ cliTest(
       });
       if (name === "inspect_managed_artifact") {
         expect(mcpEvidence.normalized_result).toMatchObject({
-          metadata: { stream_names: expect.arrayContaining(["#-"]) },
+          metadata: {
+            status: "complete",
+            stream_names: expect.arrayContaining(["#-"]),
+            table_row_counts: { Module: 1, MethodDef: 2 },
+          },
           attributes: [
             expect.objectContaining({
               parent_token: "0x20000001",
