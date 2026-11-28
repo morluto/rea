@@ -107,7 +107,8 @@ cliTest(
         ?.sha256_fingerprint,
     ).toBe(LEAF_SHA256);
     expect(report.posture.v1_signers_match_block_signers).toBeNull();
-    const { call } = await connectLocalToolsMcp();
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
     const reply = await call("inspect_apk_signature", { path });
     expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
     const summary = apkSignatureSummaryViewResultSchema.parse(
@@ -142,7 +143,8 @@ cliTest(
       signature_bytes: 1,
     });
     const selection = { collection: "signers" as const, fields: [], limit: 1 };
-    const { call } = await connectLocalToolsMcp();
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
     const selected = await call("inspect_apk_signature", {
       path,
       view: selection,
@@ -204,10 +206,11 @@ cliTest(
 
 cliTest(
   "composes signer, digest and lineage pages after source deletion without implying verification",
-  async () => {
+  async ({ cli }) => {
     const root = await createTestTempDirectory("rea-apk-retained-");
-    const path = await signedFixture(root),
-      { call } = await connectLocalToolsMcp();
+    const path = await signedFixture(root);
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
     const reply = await call("inspect_apk_signature", { path });
     expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
     const summary = apkSignatureSummaryViewResultSchema.parse(
@@ -309,7 +312,8 @@ cliTest(
         { name: "META-INF/CERT.EC", data: Uint8Array.of(0x30, 0) },
       ]),
     );
-    const { call } = await connectLocalToolsMcp();
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
     const reply = await call("inspect_apk_signature", { path });
     expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
     const summary = apkSignatureSummaryViewResultSchema.parse(
