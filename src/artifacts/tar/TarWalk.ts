@@ -423,7 +423,10 @@ export const walkTar = async (
           let latin1Bytes = 0;
           const latin1 = pax.latin1.map((key) => {
             const raw = Buffer.from(pax.records.get(key)!, "latin1");
-            const prefix = `tar pax ${key} is not UTF-8 under hdrcharset=BINARY; decoded as Latin-1; raw hex: `;
+            const charset = pax.binary
+              ? "under hdrcharset=BINARY"
+              : "without hdrcharset=BINARY";
+            const prefix = `tar pax ${key} is not UTF-8 ${charset}; decoded as Latin-1; raw hex: `;
             const bytes = prefix.length + 2 * raw.length + 1;
             retained.charge(bytes, metadataLimit);
             latin1Bytes += bytes;

@@ -18,10 +18,11 @@ Each regular file, directory and symbolic link is an occurrence. Names come
 from, in order: a pax `path` record, a GNU `L` long-name record, or the ustar
 `prefix` and `name` fields. A leading `./` is dropped from the logical path
 and kept in `source_path`. A pax `path`, `linkpath`, `uname` or `gname`
-value that is not UTF-8 is read only under `hdrcharset=BINARY`, as Latin-1
-with a limitation giving its raw bytes. Member contents are hashed and
-classified like ZIP members, so an ELF, Godot PCK or UnityFS member inside a
-tarball is named by its format.
+value that is not UTF-8 is read as Latin-1 with a limitation giving its raw
+bytes, whether or not the header declares `hdrcharset=BINARY`; GNU tar
+writes such names without it. Any other pax value must be UTF-8. Member
+contents are hashed and classified like ZIP members, so an ELF, Godot PCK or
+UnityFS member inside a tarball is named by its format.
 
 Directory, symbolic link, device and FIFO headers store no data blocks, as
 POSIX ustar specifies, even when their size field is nonzero. The next header
