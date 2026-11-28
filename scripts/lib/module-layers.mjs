@@ -296,7 +296,11 @@ export const ENTRY_FILES = Object.freeze(
       dotnet: ["ManagedStaticProvider.ts", "ManagedStaticProviderMetadata.ts"],
       electron: ["ElectronFuseProvider.ts", "ElectronFuseProviderIdentity.ts"],
       erlang: ["BeamProvider.ts", "ErlangBeamProviderIdentity.ts"],
-      evm: ["EvmoleInterfaceProvider.ts", "EvmoleProviderIdentity.ts"],
+      evm: [
+        "EvmProxyProvider.ts",
+        "EvmoleInterfaceProvider.ts",
+        "EvmoleProviderIdentity.ts",
+      ],
       uefi: [
         "UefiAnalysisProvider.ts",
         "UefiProviderIdentity.ts",

@@ -1375,6 +1375,15 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     ),
   ),
+  "rea-evm-proxy": inProcess(
+    covered(
+      test(
+        "tests/boundary/mcp/evmProxyMcpCli.test.ts",
+        "reports the same clone facts through CLI and stdio MCP",
+      ),
+    ),
+    typedFailures("src/evm/EvmProxyProvider.test.ts"),
+  ),
   "rea-firmware-vector-table": inProcess(
     covered(
       test(

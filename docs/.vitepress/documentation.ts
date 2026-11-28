@@ -668,6 +668,11 @@ export const documentationSections = [
         source: "guides/evm/evm-bytecode.md",
         route: "/evm-bytecode",
       },
+      {
+        text: "EVM proxy recognition",
+        source: "guides/evm/evm-proxies.md",
+        route: "/evm-proxies",
+      },
     ],
   },
   {

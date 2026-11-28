@@ -29,6 +29,7 @@ import type { WindowsShortcutService } from "../application/binaryDiagnostics/Wi
 import type { DebPackageService } from "../application/deb/DebPackageService.js";
 import type { BeamService } from "../application/erlang/BeamService.js";
 import type { EvmInterfaceService } from "../application/evm/EvmInterfaceService.js";
+import type { EvmProxyService } from "../application/evm/EvmProxyService.js";
 import type { GoBinaryService } from "../application/go/GoBinaryService.js";
 import type { GpuCodeObjectsService } from "../application/gpu/GpuCodeObjectsService.js";
 import type { Il2cppMetadataService } from "../application/il2cpp/Il2cppMetadataService.js";
@@ -209,6 +210,12 @@ export const OFFLINE_INSPECTION_TOOL_BINDINGS = {
       run: (input, options) => service.inspect(input, options, retention),
     },
   })) satisfies Bind<GpuCodeObjectsService>,
+  evmProxy: ((service) => ({
+    inspect_evm_proxy: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<EvmProxyService>,
   evmInterface: ((service) => ({
     inspect_evm_interface: {
       admission: "application",
