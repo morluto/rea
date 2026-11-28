@@ -276,6 +276,160 @@ it("keeps current-file and mixed createRequire bases distinct", () => {
   ).toEqual(["unknown"]);
 });
 
+it.each([
+  ["another directory", ', { paths: [__dirname + "/sub"] }'],
+  ["an empty path list", ", { paths: [] }"],
+])("retains an unresolved application lookup with %s", (_name, options) => {
+  const source = 'require.resolve("./dep.cjs"' + options + ");";
+  expect(analyzeCommonJsStaticFixture(source).references).toEqual([
+    expect.objectContaining({
+      kind: "require",
+      operation: "resolve",
+      specifier: "./dep.cjs",
+      resolution_search_paths: "package-scope",
+    }),
+  ]);
+});
+
+it.each([
+  ["explicit undefined paths", "{ paths: undefined }", undefined],
+  ["void paths", "{ paths: void 0 }", undefined],
+  ["void options", "void 0", undefined],
+  [
+    "normalized current directory",
+    '{ paths: [__dirname + "/."] }',
+    "source-file",
+  ],
+  [
+    "existing parent traversal",
+    '{ paths: [__dirname + "/sub/.."] }',
+    "package-scope",
+  ],
+  [
+    "missing parent traversal",
+    '{ paths: [__dirname + "/missing/.."] }',
+    "package-scope",
+  ],
+  ["another directory", '{ paths: [__dirname + "/sub"] }', "package-scope"],
+  ["parent directory", '{ paths: [__dirname + "/.."] }', "package-scope"],
+  ["process-relative directory", '{ paths: ["."] }', "package-scope"],
+  ["empty paths", "{ paths: [] }", "package-scope"],
+  ["null paths", "{ paths: null }", "unknown"],
+  ["effectful void paths", "{ paths: void effect() }", "unknown"],
+] as const)(
+  "classifies %s without losing its lookup base",
+  (_name, options, expected) => {
+    const source = 'require.resolve("./dep.cjs", ' + options + ");";
+    const [reference] = analyzeCommonJsStaticFixture(source).references;
+    expect(reference?.resolution_search_paths).toBe(expected);
+  },
+);
+
+it("keeps a shadowed undefined paths value unknown", () => {
+  const source =
+    'function f(undefined) { require.resolve("./dep.cjs", { paths: undefined }); }';
+  const [reference] = analyzeCommonJsStaticFixture(source).references;
+  expect(reference?.resolution_search_paths).toBe("unknown");
+});
+
+it.each([
+  ["outer assertion", "{ paths: [__dirname] } as { paths: string[] }"],
+  ["array assertion", "{ paths: ([__dirname] as string[]) }"],
+])("retains source lookup through %s", (_name, options) => {
+  const source = 'require.resolve("./dep.cjs", ' + options + ");";
+  const parsed = parseJavaScriptSource(source, "entry.cts");
+  if (parsed === null) throw new Error("Expected TypeScript fixture");
+  const [reference] = analyzeParsedJavaScriptStaticSource(
+    source,
+    parsed,
+  ).references;
+  expect(reference?.resolution_search_paths).toBe("source-file");
+  expect([
+    ...referenceSourceRequireCalls(parsed, "entry.cts").values(),
+  ]).toMatchObject([{ resolutionBase: "source-file" }]);
+});
+
+it.each([
+  ["omitted options", ""],
+  ["undefined options", ", undefined"],
+  ["null options", ", null"],
+  ["empty options", ", {}"],
+] as const)(
+  "does not assume default search after inherited paths change with %s",
+  (_name, options) => {
+    const source =
+      'Object.prototype.paths = []; require.resolve("./dep.cjs"' +
+      options +
+      ");";
+    expect(
+      analyzeCommonJsStaticFixture(source).references[0]
+        ?.resolution_search_paths,
+    ).toBe("unknown");
+    const parsed = parseJavaScriptSource(source, "entry.cjs");
+    if (parsed === null) throw new Error("Expected fixture");
+    expect([
+      ...referenceSourceRequireCalls(parsed, "entry.cjs").values(),
+    ]).toMatchObject([{ resolutionBase: "unknown" }]);
+  },
+);
+
+it("keeps explicit undefined paths despite an inherited paths change", () => {
+  const source =
+    'Object.prototype.paths = []; require.resolve("./dep.cjs", { paths: undefined });';
+  expect(
+    analyzeCommonJsStaticFixture(source).references[0]?.resolution_search_paths,
+  ).toBeUndefined();
+});
+
+it.each([
+  ["indirect eval", '(0, eval)("Object.prototype.paths = []");'],
+  ["computed prototype", 'Object.prototype["paths"] = [];'],
+])("keeps default search unknown after %s", (_name, effect) => {
+  const source = `${effect} require.resolve("./dep.cjs");`;
+  expect(
+    analyzeCommonJsStaticFixture(source).references[0]?.resolution_search_paths,
+  ).toBe("unknown");
+});
+
+it("preserves earlier default search when the inherited write is later", () => {
+  const source = 'require.resolve("./dep.cjs"); Object.prototype.paths = [];';
+  expect(
+    analyzeCommonJsStaticFixture(source).references[0]?.resolution_search_paths,
+  ).toBeUndefined();
+});
+
+it("preserves builtin resolution when inherited search paths change", () => {
+  const source = 'Object.prototype.paths = []; require.resolve("node:path");';
+  expect(
+    analyzeCommonJsStaticFixture(source).references[0]?.resolution_search_paths,
+  ).toBeUndefined();
+  const parsed = parseJavaScriptSource(source, "entry.cjs");
+  if (parsed === null) throw new Error("Expected fixture");
+  expect([
+    ...referenceSourceRequireCalls(parsed, "entry.cjs").values(),
+  ]).toMatchObject([{ resolutionBase: "source-file" }]);
+});
+
+it.each([
+  ["empty paths", { paths: [] }],
+  ["non-array paths", { paths: 42 }],
+])("preserves builtin lookups with %s", (_name, options) => {
+  const source =
+    'require.resolve("node:path", ' + JSON.stringify(options) + ");";
+  expect(
+    Reflect.apply(createRequire(import.meta.url).resolve, undefined, [
+      "node:path",
+      options,
+    ]),
+  ).toBe("node:path");
+  const [reference] = analyzeCommonJsStaticFixture(source).references;
+  expect(reference).toMatchObject({
+    operation: "resolve",
+    specifier: "node:path",
+  });
+  expect(reference).not.toHaveProperty("resolution_search_paths");
+});
+
 it.each(["require.resolve", "require.resolve?.", "require?.resolve"])(
   "keeps search-path uncertainty for historical %s calls",
   (callee) => {

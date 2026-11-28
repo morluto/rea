@@ -29,6 +29,8 @@ import {
 import {
   artifactPathResolutionProperties,
   resolveArtifactPathByContext,
+  UNKNOWN_MODULE_LOADER_LIMITATION,
+  UNKNOWN_REQUIRE_RESOLVE_SEARCH_PATH_LIMITATION,
   type ArtifactPathResolution,
 } from "./JavaScriptArtifactPathResolution.js";
 import {
@@ -214,10 +216,10 @@ const addReference = (
     limitations: [
       ...(resolved?.limitations ??
         (candidateLoader
-          ? [
-              "The module loader is unknown, so this dependency cannot be resolved against the source file.",
-            ]
-          : [])),
+          ? [UNKNOWN_MODULE_LOADER_LIMITATION]
+          : input.value.resolution_search_paths === "unknown"
+            ? [UNKNOWN_REQUIRE_RESOLVE_SEARCH_PATH_LIMITATION]
+            : [])),
     ],
   };
   if (
@@ -746,7 +748,8 @@ const resolveReference = (
   coverage: JavaScriptArtifactGraphCoverage,
 ): ResolvedReference | null => {
   const specifier = reference.specifier;
-  if (specifier === null) return null;
+  if (specifier === null || reference.resolution_search_paths === "unknown")
+    return null;
   const isWorker =
     reference.kind === "worker" || reference.kind === "service-worker";
   const resolutionSourcePath =
@@ -804,6 +807,12 @@ const resolveReference = (
             declaredPath: specifier,
             sourcePath: resolutionSourcePath,
             context: "module-specifier",
+            ...(reference.resolution_search_paths === "package-scope"
+              ? { packageScopeOnly: true as const }
+              : reference.resolution_search_paths === "source-file" &&
+                  resolutionSourcePath !== sourcePath
+                ? { moduleSearchSourcePath: sourcePath }
+                : {}),
             files: context.filesByPath,
             jsonDocuments: context.analysis.jsonDocuments,
             directoryPaths: context.directoryPaths,

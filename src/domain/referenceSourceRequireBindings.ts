@@ -7,13 +7,12 @@ import {
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascript/javascriptAstValues.js";
-import { isUnmodifiedGlobalReference } from "./javascript/javascriptSemanticGlobalReference.js";
 import {
   indexJavaScriptBindingsWithReceiversSteps,
   type JavaScriptReceiverIndex,
 } from "./javascript/javascriptSemanticAnalysis.js";
-import type { JavaScriptSemanticAnalysisState } from "./javascript/javascriptSemanticState.js";
 import {
+  requireResolveSearchBase,
   semanticRequireCallAt,
   semanticRequireLoaderAt,
   semanticSelectedMemberMayHaveChanged,
@@ -144,16 +143,19 @@ export const referenceSourceRequireCalls = (
               ? "source-file"
               : "unknown";
       const searchBase = requireResolveSearchBase(
-        callFact.operation,
-        callFact.arguments,
+        callFact,
         index.bindings,
-        base,
-        runtimeContext === "commonjs",
+        node,
       );
       candidates.push({
         call: node,
         arguments: callFact.arguments,
-        resolutionBase: searchBase,
+        resolutionBase:
+          searchBase === "loader"
+            ? base
+            : searchBase === "source-file"
+              ? searchBase
+              : "unknown",
         ...(runtimeContext === "unknown"
           ? {
               limitation: `Module context is unknown in ${path}; the requested dependency was retained without a proven loader base.`,
@@ -180,36 +182,6 @@ export const referenceSourceRequireCalls = (
         ] as const,
     ),
   );
-};
-
-/** `require.resolve` options replace the default search paths unless exact current-directory paths are supplied. */
-const requireResolveSearchBase = (
-  operation: JavaScriptRequireCallFact["operation"],
-  callArguments: JavaScriptRequireCallFact["arguments"],
-  bindings: JavaScriptSemanticAnalysisState,
-  loaderBase: ReferenceSourceRequireResolutionBase,
-  hasCommonJsWrapper: boolean,
-): ReferenceSourceRequireResolutionBase => {
-  const arguments_ = callArguments ?? [];
-  if (operation !== "resolve" || arguments_.length < 2) return loaderBase;
-  if (arguments_.length !== 2) return "unknown";
-  const options = t.isExpression(arguments_[1]) ? arguments_[1] : undefined;
-  if (options === undefined || !t.isObjectExpression(options)) return "unknown";
-  if (options.properties.length === 0) return loaderBase;
-  if (options.properties.length !== 1) return "unknown";
-  const property = options.properties[0];
-  if (!t.isObjectProperty(property)) return "unknown";
-  if (semanticStaticPropertyKey(property.key, property.computed) !== "paths")
-    return "unknown";
-  const value = t.isExpression(property.value) ? property.value : undefined;
-  if (!t.isArrayExpression(value) || value.elements.length !== 1)
-    return "unknown";
-  const directory = value.elements[0];
-  return hasCommonJsWrapper &&
-    t.isIdentifier(directory, { name: "__dirname" }) &&
-    isUnmodifiedGlobalReference(directory, bindings, "__dirname")
-    ? "source-file"
-    : "unknown";
 };
 
 const hasPriorMemberMutation = (

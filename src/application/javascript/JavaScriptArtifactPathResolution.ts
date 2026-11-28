@@ -38,6 +38,11 @@ import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { isRecord } from "../../kernel/isRecord.js";
 
+export const UNKNOWN_MODULE_LOADER_LIMITATION =
+  "The module loader is unknown, so this dependency cannot be resolved against the source file.";
+export const UNKNOWN_REQUIRE_RESOLVE_SEARCH_PATH_LIMITATION =
+  "The require.resolve search path is unknown for the supplied options.";
+
 type ArtifactPathResolutionContext =
   | "package-entrypoint"
   | "filesystem-expression"
@@ -98,6 +103,10 @@ export interface ResolveArtifactPathInput {
   readonly htmlBaseHref?: string | null;
   /** Import/require semantics; runtime resource paths omit this provenance. */
   readonly moduleKind?: JavaScriptModuleResolutionMode;
+  /** A proven explicit disk search base. Package scope still uses sourcePath. */
+  readonly moduleSearchSourcePath?: string;
+  /** Consult the enclosing package before declining an unknown disk lookup. */
+  readonly packageScopeOnly?: true;
   /** Runtime paths retain their loader owner independently of source imports. */
   readonly runtimePathKind?:
     | "exact-file"
@@ -383,6 +392,7 @@ const resolvePath = (input: ResolveArtifactPathInput): CandidateResolution => {
     return resolvePackageImportAlias(input, input.declaredPath);
   const candidate = contextualCandidate(input);
   if (typeof candidate !== "string") return candidate;
+  if (input.packageScopeOnly === true) return unknownResolverSearchPath();
   const confined = confineCandidate(candidate);
   if (typeof confined !== "string") return confined;
   if (input.context === "html-reference" || input.context === "url-reference")
@@ -773,7 +783,10 @@ const contextualCandidate = (
       ? exactUrlPathCandidate(declared, candidate, "module URL")
       : candidate;
   }
-  return relativeCandidate(input.sourcePath, declared);
+  return relativeCandidate(
+    input.moduleSearchSourcePath ?? input.sourcePath,
+    declared,
+  );
 };
 
 const decodeModuleUrlPath = (
@@ -881,6 +894,7 @@ const bareModuleCandidate = (
     ]);
   const self = packageSelfCandidate(input, request);
   if (self !== null) return self;
+  if (input.packageScopeOnly === true) return unknownResolverSearchPath();
   // ESM constructs a package.json URL; its parsed identity is not a literal
   // dependency directory. Self resolution above still uses the exact name.
   let dependencyDirectory = posix.join("node_modules", request.packageName);
@@ -950,7 +964,9 @@ const bareModuleCandidate = (
 function* packageLookupDirectories(
   input: ResolveArtifactPathInput,
 ): Generator<string> {
-  let directory = posix.dirname(input.sourcePath);
+  let directory = posix.dirname(
+    input.moduleSearchSourcePath ?? input.sourcePath,
+  );
   while (true) {
     if (
       input.moduleKind !== "require" ||
@@ -2157,6 +2173,11 @@ const fileUrlPath = (value: string): string | null | undefined => {
     return undefined;
   }
 };
+
+const unknownResolverSearchPath = (): CandidateResolution =>
+  unresolvedCandidate("unavailable", [
+    UNKNOWN_REQUIRE_RESOLVE_SEARCH_PATH_LIMITATION,
+  ]);
 
 const unresolvedCandidate = (
   status: UnresolvedArtifactPathStatus,
