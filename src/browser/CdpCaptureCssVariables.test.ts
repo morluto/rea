@@ -786,12 +786,21 @@ it("redacts credentials from quoted and unquoted CSS URLs including opposite quo
         {
           name: "--image-set-urls",
           value:
-            'image-set("https://alice:secret@example.com/a.png" 1x, \'https://bob:pw@example.com/b.png\' 2x)',
+            "image-set(\"https://alice:secret@example.com/a.png\" 1x, 'https://bob:pw@example.com/b.png' 2x)",
         },
         {
           name: "--webkit-image-set-url",
           value:
             '-webkit-image-set("https://alice:secret@example.com/c.png" 1x)',
+        },
+        {
+          name: "--nested-image-set-url",
+          value:
+            'image-set(url("https://alice:secret@example.com/nested.png") 1x)',
+        },
+        {
+          name: "--escaped-backslash-netpath",
+          value: 'url("\\\\\\\\alice:secret@example.com/a")',
         },
       ],
     },
@@ -814,6 +823,11 @@ it("redacts credentials from quoted and unquoted CSS URLs including opposite quo
 
   expect(result.status).toBe("included");
   expect(result.items).toEqual([
+    {
+      name: "--escaped-backslash-netpath",
+      redacted: true,
+      value: 'url("//example.com/a")',
+    },
     {
       name: "--escaped-double-quote",
       redacted: true,
@@ -843,7 +857,12 @@ it("redacts credentials from quoted and unquoted CSS URLs including opposite quo
       name: "--image-set-urls",
       redacted: true,
       value:
-        'image-set("https://example.com/a.png" 1x, \'https://example.com/b.png\' 2x)',
+        "image-set(\"https://example.com/a.png\" 1x, 'https://example.com/b.png' 2x)",
+    },
+    {
+      name: "--nested-image-set-url",
+      redacted: true,
+      value: 'image-set(url("https://example.com/nested.png") 1x)',
     },
     {
       name: "--scheme-relative",
@@ -874,10 +893,50 @@ it("redacts credentials from quoted and unquoted CSS URLs including opposite quo
   expect(
     limitations.some((lim) =>
       lim.includes(
-        "11 root CSS custom property values had transport credentials redacted",
+        "13 root CSS custom property values had transport credentials redacted",
       ),
     ),
   ).toBe(true);
+});
+
+it("scans large non-ASCII CSS values in linear time without stalling", async () => {
+  const nonAsciiPrefix = "あ".repeat(60_000);
+  const value = `${nonAsciiPrefix} url("https://alice:secret@example.com/a")`;
+  const connection = makeMockConnection({
+    "DOM.getDocument": {
+      root: {
+        nodeId: 1,
+        children: [{ nodeId: 2, nodeType: 1, nodeName: "HTML" }],
+      },
+    },
+    "CSS.enable": {},
+    "CSS.getComputedStyleForNode": {
+      computedStyle: [{ name: "--long-non-ascii", value }],
+    },
+    "CSS.disable": {},
+  });
+
+  const limitations: string[] = [];
+  const startMs = Date.now();
+  const result = await captureCssVariables(
+    {
+      connection,
+      sessionId: undefined,
+      input: inspectWebPageInputSchema.parse({
+        cdp_endpoint: "http://127.0.0.1:9222",
+        target_id: "target_1",
+        include_css_variables: true,
+        max_css_variable_value_length: 65_536,
+      }),
+    },
+    limitations,
+  );
+  const elapsedMs = Date.now() - startMs;
+
+  expect(elapsedMs).toBeLessThan(200);
+  expect(result.status).toBe("included");
+  expect(result.items[0]?.redacted).toBe(true);
+  expect(result.items[0]?.value).not.toContain("secret");
 });
 
 it("allows callers to raise max_css_variables and max_css_variable_value_length", async () => {

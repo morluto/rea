@@ -87,6 +87,21 @@ const redactCssUrl = (
   if (sanitized.redacted) {
     return { url: sanitized.url, redacted: true };
   }
+  if (credentials === "ambiguous") {
+    const withBase = URL.parse(decoded, "https://rea.invalid");
+    if (
+      withBase !== null &&
+      (withBase.username !== "" || withBase.password !== "")
+    ) {
+      withBase.username = "";
+      withBase.password = "";
+      const stripped = /^[\\/]{2}/u.test(decoded.trimStart())
+        ? `//${withBase.host}${withBase.pathname}${withBase.search}${withBase.hash}`
+        : withBase.href;
+      return { url: stripped, redacted: true };
+    }
+    return { url: "[redacted-url]", redacted: true };
+  }
   return { url: rawUrl, redacted: false };
 };
 
@@ -138,13 +153,81 @@ interface CssUrlMatch {
   readonly suffix: string;
 }
 
+const consumeQuotedString = (
+  text: string,
+  start: number,
+  quote: string,
+):
+  | {
+      readonly urlStart: number;
+      readonly urlEnd: number;
+      readonly nextPos: number;
+    }
+  | undefined => {
+  let curr = start + 1;
+  const len = text.length;
+  while (curr < len) {
+    const ch = text[curr]!;
+    if (ch === quote) {
+      return { urlStart: start + 1, urlEnd: curr, nextPos: curr + 1 };
+    }
+    if (ch === "\r" || ch === "\n" || ch === "\f") {
+      return undefined;
+    }
+    if (ch === "\\") {
+      curr++;
+      if (curr >= len) return undefined;
+      const [, nextPos] = consumeEscape(text, curr);
+      curr = nextPos;
+      continue;
+    }
+    curr++;
+  }
+  return undefined;
+};
+
 const findCssUrlMatches = (text: string): readonly CssUrlMatch[] => {
   const matches: CssUrlMatch[] = [];
+  const imageSetParens: number[] = [];
+  let parenDepth = 0;
   let pos = 0;
   const len = text.length;
 
   while (pos < len) {
-    if (pos > 0 && /[\w-]/u.test(text[pos - 1]!)) {
+    const ch = text[pos]!;
+    if (ch === "(") {
+      parenDepth++;
+      pos++;
+      continue;
+    }
+    if (ch === ")") {
+      if (imageSetParens.at(-1) === parenDepth) {
+        imageSetParens.pop();
+      }
+      parenDepth = Math.max(0, parenDepth - 1);
+      pos++;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      const quoted = consumeQuotedString(text, pos, ch);
+      if (quoted === undefined) {
+        pos++;
+        continue;
+      }
+      if (imageSetParens.at(-1) === parenDepth) {
+        matches.push({
+          start: pos,
+          end: quoted.nextPos,
+          prefix: ch,
+          rawUrl: text.slice(quoted.urlStart, quoted.urlEnd),
+          suffix: ch,
+        });
+      }
+      pos = quoted.nextPos;
+      continue;
+    }
+
+    if (!(/[\w-]/u.test(ch) || ch.charCodeAt(0) >= 0x80 || ch === "\\")) {
       pos++;
       continue;
     }
@@ -152,20 +235,32 @@ const findCssUrlMatches = (text: string): readonly CssUrlMatch[] => {
     let identName = "";
     let curr = pos;
     while (curr < len) {
-      const ch = text[curr]!;
-      if (ch === "\\") {
+      const identCh = text[curr]!;
+      if (identCh === "\\") {
         const [escapedChar, nextPos] = consumeEscape(text, curr + 1);
         identName += escapedChar;
         curr = nextPos;
-      } else if (/[\w-]/u.test(ch) || ch.charCodeAt(0) >= 0x80) {
-        identName += ch;
+      } else if (/[\w-]/u.test(identCh) || identCh.charCodeAt(0) >= 0x80) {
+        identName += identCh;
         curr++;
       } else {
         break;
       }
     }
 
-    if (identName.toLowerCase() === "url" && curr < len && text[curr] === "(") {
+    const lowerIdent = identName.toLowerCase();
+    if (
+      (lowerIdent === "image-set" || lowerIdent === "-webkit-image-set") &&
+      curr < len &&
+      text[curr] === "("
+    ) {
+      parenDepth++;
+      imageSetParens.push(parenDepth);
+      pos = curr + 1;
+      continue;
+    }
+
+    if (lowerIdent === "url" && curr < len && text[curr] === "(") {
       const start = pos;
       curr++;
 
@@ -177,37 +272,12 @@ const findCssUrlMatches = (text: string): readonly CssUrlMatch[] => {
 
       const firstChar = text[curr]!;
       if (firstChar === '"' || firstChar === "'") {
-        const quote = firstChar;
-        curr++;
-        const urlStart = curr;
-        let closed = false;
-
-        while (curr < len) {
-          const ch = text[curr]!;
-          if (ch === quote) {
-            closed = true;
-            break;
-          }
-          if (ch === "\r" || ch === "\n" || ch === "\f") {
-            break;
-          }
-          if (ch === "\\") {
-            curr++;
-            if (curr >= len) break;
-            const [, nextPos] = consumeEscape(text, curr);
-            curr = nextPos;
-            continue;
-          }
-          curr++;
-        }
-
-        if (!closed) {
-          pos = start + 1;
+        const quoted = consumeQuotedString(text, curr, firstChar);
+        if (quoted === undefined) {
+          pos = curr + 1;
           continue;
         }
-
-        const urlEnd = curr;
-        curr++;
+        curr = quoted.nextPos;
 
         while (curr < len && isWhitespace(text[curr]!)) {
           curr++;
@@ -218,30 +288,29 @@ const findCssUrlMatches = (text: string): readonly CssUrlMatch[] => {
           matches.push({
             start,
             end: curr,
-            prefix: text.slice(start, urlStart),
-            rawUrl: text.slice(urlStart, urlEnd),
-            suffix: text.slice(urlEnd, curr),
+            prefix: text.slice(start, quoted.urlStart),
+            rawUrl: text.slice(quoted.urlStart, quoted.urlEnd),
+            suffix: text.slice(quoted.urlEnd, curr),
           });
           pos = curr;
           continue;
-        } else {
-          pos = start + 1;
-          continue;
         }
+        pos = start + 1;
+        continue;
       } else if (firstChar !== ")") {
         const urlStart = curr;
         let closed = false;
         let urlEnd = curr;
 
         while (curr < len) {
-          const ch = text[curr]!;
-          if (ch === ")") {
+          const urlCh = text[curr]!;
+          if (urlCh === ")") {
             closed = true;
             urlEnd = curr;
             curr++;
             break;
           }
-          if (isWhitespace(ch)) {
+          if (isWhitespace(urlCh)) {
             urlEnd = curr;
             while (curr < len && isWhitespace(text[curr]!)) {
               curr++;
@@ -253,14 +322,14 @@ const findCssUrlMatches = (text: string): readonly CssUrlMatch[] => {
             break;
           }
           if (
-            ch === '"' ||
-            ch === "'" ||
-            ch === "(" ||
-            /[\x00-\x08\x0B\x0E-\x1F\x7F]/u.test(ch)
+            urlCh === '"' ||
+            urlCh === "'" ||
+            urlCh === "(" ||
+            /[\x00-\x08\x0B\x0E-\x1F\x7F]/u.test(urlCh)
           ) {
             break;
           }
-          if (ch === "\\") {
+          if (urlCh === "\\") {
             curr++;
             if (curr >= len) break;
             const [, nextPos] = consumeEscape(text, curr);
@@ -280,84 +349,16 @@ const findCssUrlMatches = (text: string): readonly CssUrlMatch[] => {
           });
           pos = curr;
           continue;
-        } else {
-          pos = start + 1;
-          continue;
         }
+        pos = start + 1;
+        continue;
       } else {
         pos = curr + 1;
         continue;
       }
     }
 
-    const lowerIdent = identName.toLowerCase();
-    if (
-      (lowerIdent === "image-set" || lowerIdent === "-webkit-image-set") &&
-      curr < len &&
-      text[curr] === "("
-    ) {
-      curr++;
-      let depth = 1;
-      while (curr < len && depth > 0) {
-        const ch = text[curr]!;
-        if (ch === "(") {
-          depth++;
-          curr++;
-        } else if (ch === ")") {
-          depth--;
-          curr++;
-        } else if (ch === '"' || ch === "'") {
-          const quote = ch;
-          const strStart = curr;
-          curr++;
-          const urlStart = curr;
-          let closed = false;
-          while (curr < len) {
-            const inner = text[curr]!;
-            if (inner === quote) {
-              closed = true;
-              break;
-            }
-            if (inner === "\r" || inner === "\n" || inner === "\f") {
-              break;
-            }
-            if (inner === "\\") {
-              curr++;
-              if (curr >= len) break;
-              const [, nextPos] = consumeEscape(text, curr);
-              curr = nextPos;
-              continue;
-            }
-            curr++;
-          }
-          if (closed) {
-            const urlEnd = curr;
-            curr++;
-            if (depth === 1) {
-              matches.push({
-                start: strStart,
-                end: curr,
-                prefix: quote,
-                rawUrl: text.slice(urlStart, urlEnd),
-                suffix: quote,
-              });
-            }
-          }
-        } else if (ch === "\\") {
-          curr++;
-          if (curr < len) {
-            const [, nextPos] = consumeEscape(text, curr);
-            curr = nextPos;
-          }
-        } else {
-          curr++;
-        }
-      }
-      pos = curr;
-      continue;
-    }
-
-    pos++;
+    pos = Math.max(pos + 1, curr);
   }
 
   return matches;

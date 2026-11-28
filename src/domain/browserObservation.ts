@@ -276,11 +276,6 @@ export const inspectWebPageShapeSchema = z.strictObject({
   include_script_sources: z.boolean().default(false),
 });
 
-const inspectWebPageWithSourceShapeSchema = z.strictObject({
-  ...inspectWebPageInputFacts,
-  include_script_sources: z.literal(true).default(true),
-});
-
 type InspectWebPageShape = z.output<typeof inspectWebPageShapeSchema>;
 
 export const refineBrowserStorageInput = (
@@ -304,10 +299,6 @@ export const refineInspectWebPageInput = (
 ): void => {
   refineBrowserStorageInput(input, context);
 };
-
-/** Caller schema for source-capturing inspection and bundle analysis. */
-export const inspectWebPageWithSourceInputSchema =
-  inspectWebPageWithSourceShapeSchema.superRefine(refineInspectWebPageInput);
 
 /** Caller-visible schema for one passive inspection. */
 export const inspectWebPageInputSchema = inspectWebPageShapeSchema.superRefine(
