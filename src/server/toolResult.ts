@@ -111,8 +111,15 @@ const ownerFirstPage = (evidence: Evidence): JsonValue | undefined =>
                   offset: 0,
                   limit: 64,
                 }
-              : isNativeInventoryOperation(evidence.operation)
-                ? { kind: "native-inventory", offset: 0, limit: 64 }
-                : isNativeObservationOperation(evidence.operation)
-                  ? { kind: "native-observation", offset: 0, limit: 64 }
-                  : undefined;
+              : evidence.operation === "inspect_labview_artifact"
+                ? {
+                    kind: "labview-artifact",
+                    collection: "blocks",
+                    offset: 0,
+                    limit: 64,
+                  }
+                : isNativeInventoryOperation(evidence.operation)
+                  ? { kind: "native-inventory", offset: 0, limit: 64 }
+                  : isNativeObservationOperation(evidence.operation)
+                    ? { kind: "native-observation", offset: 0, limit: 64 }
+                    : undefined;

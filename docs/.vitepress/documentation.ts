@@ -209,6 +209,11 @@ export const documentationSections = [
         route: "/rust-binaries",
       },
       {
+        text: "LabVIEW RSRC containers",
+        source: "guides/native/labview-analysis.md",
+        route: "/labview-analysis",
+      },
+      {
         text: "Static CUDA and HIP code objects",
         source: "gpu-code-objects.md",
         route: "/gpu-code-objects",
@@ -594,6 +599,11 @@ export const documentationSections = [
         route: "/nds-roms",
       },
       {
+        text: "Sega Mega Drive ROMs",
+        source: "guides/firmware/mega-drive-roms.md",
+        route: "/mega-drive-roms",
+      },
+      {
         text: "Nintendo 64 ROMs",
         source: "guides/firmware/n64-roms.md",
         route: "/n64-roms",
@@ -627,6 +637,11 @@ export const documentationSections = [
         text: "GPU asset headers: DDS, GLB, KTX and KTX2",
         source: "gpu-asset-headers.md",
         route: "/gpu-asset-headers",
+      },
+      {
+        text: "Media and cache asset headers: Ogg Opus, RIFF/XMA2, Bink 2 and Vulkan pipeline caches",
+        source: "media-asset-headers.md",
+        route: "/media-asset-headers",
       },
     ],
   },

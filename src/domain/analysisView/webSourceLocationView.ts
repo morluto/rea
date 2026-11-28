@@ -20,10 +20,7 @@ import {
   type AdmittedView,
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
-import {
-  analysisViewInputError,
-  invalidAnalysisView,
-} from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import {
   boundedViewMessages,
   pageViewCoverage,
@@ -189,14 +186,9 @@ const projectSourceText = (
 ) => {
   const match = matches[view.match_index];
   if (match === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view", "match_index"],
-          reason: "invalid_value",
-          message: "No match exists at this original match index.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "No match exists at this original match index.",
+      "match_index",
     );
   const selected = metadata(match, view.match_index);
   if (match.state === "generated-only" || match.content.state !== "embedded") {

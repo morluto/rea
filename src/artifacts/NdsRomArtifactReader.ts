@@ -22,8 +22,8 @@ import {
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
 import {
   PositionalArtifactReader,
+  positionalRegionEntry,
   type PositionalArtifactEntries,
-  type PositionalArtifactEntry,
 } from "./PositionalArtifactReader.js";
 
 /**
@@ -148,20 +148,9 @@ export class NdsRomArtifactReader extends PositionalArtifactReader<NdsMetadata> 
         declaredBytes,
         "memory",
       );
-    const entries = layout.regions.map((region): PositionalArtifactEntry => ({
-      path: region.path,
-      kind: "file",
-      declaredSize: region.length,
-      compressedSize: null,
-      executable: false,
-      encrypted: false,
-      byteOffset: region.offset,
-      declaredIntegrity: null,
-      unpacked: false,
-      limitations: [],
-      adapterKey: `nds:${region.path}`,
-      formatMetadata: region.metadata,
-    }));
+    const entries = layout.regions.map((region) =>
+      positionalRegionEntry(region, "nds", region.metadata),
+    );
     return {
       entries,
       coverage: {

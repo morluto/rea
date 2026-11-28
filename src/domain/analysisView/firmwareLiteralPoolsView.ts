@@ -9,7 +9,7 @@ import { ok } from "../result.js";
 import {
   boundedViewLimitations,
   completeWithinViewCoverage,
-  pageViewCoverage,
+  selectedViewPage,
 } from "./analysisViewCoverage.js";
 import { invalidAnalysisView } from "./analysisViewErrors.js";
 import {
@@ -170,11 +170,6 @@ export const projectFirmwareLiteralPoolsView = (
     kind: "firmware-literal-pools" as const,
     view,
     literal_pools: context,
-    items: selected.rows,
-    coverage: pageViewCoverage(
-      view.offset,
-      selected.rows.length,
-      selected.total,
-    ),
+    ...selectedViewPage(view.offset, selected),
   });
 };

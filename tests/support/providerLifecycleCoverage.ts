@@ -1499,6 +1499,20 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     ),
     typedFailures("tests/boundary/filesystem/kernelModule.test.ts"),
   ),
+  "rea-labview-rsrc": inProcess(
+    covered(
+      test(
+        "tests/boundary/cli/labviewRsrcCli.test.ts",
+        "inventories a LabVIEW RSRC container through the CLI and stdio MCP",
+      ),
+    ),
+    covered(
+      test(
+        "src/labview/LabviewRsrc.test.ts",
+        "reports cancellation that arrives after the read starts",
+      ),
+    ),
+  ),
   "rea-maven-gradle-metadata": inProcess(
     covered(
       test(

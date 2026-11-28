@@ -72,6 +72,11 @@ import {
   espNvsViewRequestSchema,
 } from "./espNvsView.js";
 import {
+  labviewArtifactPageContextSchema,
+  labviewArtifactViewItemsSchema,
+  labviewArtifactViewRequestSchema,
+} from "./labviewArtifactView.js";
+import {
   elfDependenciesSummarySchema,
   elfDependenciesViewItemsSchema,
   elfDependenciesViewRequestSchema,
@@ -229,6 +234,7 @@ import { dartAotSummaryViewResultSchema } from "./summarySchemas/dartAotSummaryS
 import { desktopApplicationSummaryViewResultSchema } from "./summarySchemas/desktopApplicationSummarySchema.js";
 import { devicetreeSummaryViewResultSchema } from "./summarySchemas/devicetreeSummarySchema.js";
 import { espNvsSummaryViewResultSchema } from "./summarySchemas/espNvsSummarySchema.js";
+import { labviewArtifactSummaryViewResultSchema } from "./summarySchemas/labviewArtifactSummarySchema.js";
 import {
   firmwareLiteralPoolsPageViewResultSchema,
   firmwareLiteralPoolsSummaryViewResultSchema,
@@ -364,6 +370,7 @@ export {
   espNvsSummaryViewResultSchema,
   firmwareLiteralPoolsPageViewResultSchema,
   firmwareLiteralPoolsSummaryViewResultSchema,
+  labviewArtifactSummaryViewResultSchema,
   elfDependenciesSummaryViewResultSchema,
   endpointComparisonPageViewResultSchema,
   endpointComparisonSummaryViewResultSchema,
@@ -444,6 +451,7 @@ const viewResultBase = {
     "inspect_devicetree",
     "inspect_esp_nvs",
     "inspect_firmware_literal_pools",
+    "inspect_labview_artifact",
     "inspect_byte_entropy",
     "inspect_native_exports",
     "inspect_elf_dependencies",
@@ -807,6 +815,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     devicetreeSummaryViewResultSchema,
     espNvsSummaryViewResultSchema,
     firmwareLiteralPoolsSummaryViewResultSchema,
+    labviewArtifactSummaryViewResultSchema,
     uefiFirmwareSummaryViewResultSchema,
     uefiExtractionSummaryViewResultSchema,
     pythonPycSummaryViewResultSchema,
@@ -878,6 +887,14 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     view: espNvsViewRequestSchema,
     nvs: espNvsPageContextSchema,
     items: espNvsViewItemsSchema,
+  }),
+  z.strictObject({
+    ...viewResultBase,
+    kind: z.literal("labview-artifact"),
+    parent_operation: z.literal("inspect_labview_artifact"),
+    view: labviewArtifactViewRequestSchema,
+    labview: labviewArtifactPageContextSchema,
+    items: labviewArtifactViewItemsSchema,
   }),
   uefiFirmwarePageViewResultSchema,
   uefiExtractionPageViewResultSchema,

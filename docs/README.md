@@ -52,6 +52,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [PE overlay](guides/native/pe-overlay.md)
 - [Match native functions across builds](native-function-matching.md)
 - [Rust binary dependency metadata](rust-binaries.md)
+- [LabVIEW RSRC containers](guides/native/labview-analysis.md)
 - [Static CUDA and HIP code objects](gpu-code-objects.md)
 
 ## JavaScript and Electron
@@ -146,6 +147,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [UnityFS AssetBundle archives](unityfs.md)
 - [iNES containers](ines-containers.md)
 - [Nintendo DS ROMs](guides/firmware/nds-roms.md)
+- [Sega Mega Drive ROMs](guides/firmware/mega-drive-roms.md)
 - [Nintendo 64 ROMs](guides/firmware/n64-roms.md)
 - [WeChat mini-program wxapkg archives](wxapkg.md)
 - [macOS flat installer packages](macos-pkg.md)
@@ -153,6 +155,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [tar and gzip-compressed tar archives](tar-archives.md)
 - [Nintendo Switch NSO and NRO executables](guides/firmware/switch-executables.md)
 - [GPU asset headers: DDS, GLB, KTX and KTX2](gpu-asset-headers.md)
+- [Media asset headers: Ogg Opus, RIFF/XMA2, Bink 2 and Vulkan pipeline cache](media-asset-headers.md)
 
 ## WebAssembly
 
