@@ -8,6 +8,7 @@ import {
 import { SaxesParser, type SaxesTagNS } from "saxes";
 import { err, ok, type Result } from "./result.js";
 import {
+  decodeLimit,
   malformedInput,
   ParseFailureError,
   unsupportedInput,
@@ -91,10 +92,19 @@ export const xmlTrimmedDirectText = (element: Element): string | null => {
 
 const XML_FORMAT = "xml";
 
-/** How XML failed: ill-formed syntax, or a DOCTYPE the policy refuses. */
+/**
+ * Open elements `checkXmlSyntax` retains. saxes with `xmlns` walks that stack
+ * for every start tag. 1024 is above the desktop XML view cap of 494 and the
+ * plist nesting cap of 128, so those later guards still see a document they
+ * accept. This release has no runtime override.
+ */
+export const XML_ELEMENT_DEPTH_LIMIT = 1024;
+
+/** How XML failed: ill-formed syntax, a refused DOCTYPE, or the element-depth ceiling. */
 export type XmlParseFailure =
   | ParseFailureError<"malformed">
-  | ParseFailureError<"unsupported">;
+  | ParseFailureError<"unsupported">
+  | ParseFailureError<"limit">;
 
 const notWellFormed = (cause?: unknown): ParseFailureError<"malformed"> =>
   malformedInput(
@@ -119,7 +129,20 @@ const unsupportedDoctype = (
 const isXmlFailure = (cause: unknown): cause is XmlParseFailure =>
   cause instanceof ParseFailureError &&
   cause.failure.format === XML_FORMAT &&
-  (cause.kind === "malformed" || cause.kind === "unsupported");
+  (cause.kind === "malformed" ||
+    cause.kind === "unsupported" ||
+    cause.kind === "limit");
+
+const xmlDepthLimit = (depth: number): ParseFailureError<"limit"> =>
+  decodeLimit(
+    XML_FORMAT,
+    `XML element depth exceeds ${String(XML_ELEMENT_DEPTH_LIMIT)}. This release has no runtime override for this ceiling.`,
+    {
+      name: "xml-element-depth",
+      maximum: XML_ELEMENT_DEPTH_LIMIT,
+      required: depth,
+    },
+  );
 
 /** The failure the syntax check established; any other throw is ill-formed XML. */
 const xmlFailure = (cause: unknown): XmlParseFailure =>
@@ -170,6 +193,8 @@ type DoctypePolicy = "allow" | "reject" | "external";
  * Read XML syntax as a stream, throwing at the first error; it holds only the
  * open elements. Saxes reads a DOCTYPE without checking it, so the policy
  * checks one it admits without an internal subset against XML's grammar.
+ * Element depth is refused here, before a listener or a later format guard
+ * sees the over-deep start tag.
  */
 const checkXmlSyntax = (
   source: string,
@@ -182,6 +207,45 @@ const checkXmlSyntax = (
     defaultXMLVersion: "1.0",
     forceXMLVersion: true,
   });
+  // saxes keeps one handler per event and silently overwrites the previous
+  // one. The depth guard owns opentagstart and closetag, then runs every
+  // handler a caller sets.
+  let depth = 0;
+  const openHandlers: ((tag: SaxesTagNS) => void)[] = [];
+  const closeHandlers: ((...args: readonly unknown[]) => void)[] = [];
+  syntax.on("opentagstart", (tag) => {
+    depth += 1;
+    if (depth > XML_ELEMENT_DEPTH_LIMIT) throw xmlDepthLimit(depth);
+    for (const handler of openHandlers) handler(tag);
+  });
+  syntax.on("closetag", (...args: readonly unknown[]) => {
+    for (const handler of closeHandlers) handler(...args);
+    if (depth > 0) depth -= 1;
+  });
+  const install = syntax.on.bind(syntax);
+  const remove = syntax.off.bind(syntax);
+  syntax.on = ((name, handler) => {
+    if (name === "opentagstart") {
+      openHandlers.push(handler as (tag: SaxesTagNS) => void);
+      return;
+    }
+    if (name === "closetag") {
+      closeHandlers.push(handler as (...args: readonly unknown[]) => void);
+      return;
+    }
+    install(name, handler);
+  }) as typeof syntax.on;
+  syntax.off = ((name) => {
+    if (name === "opentagstart") {
+      openHandlers.length = 0;
+      return;
+    }
+    if (name === "closetag") {
+      closeHandlers.length = 0;
+      return;
+    }
+    remove(name);
+  }) as typeof syntax.off;
   listen?.(syntax);
   const checkName = (name: string) => {
     if (nameSupported !== undefined && !nameSupported(name))
