@@ -158,9 +158,13 @@ export const jsonValueExceedsDepth = (
   }
 };
 
-/** Validate JSON in bounded steps; cache only authenticated immutable roots. */
+/**
+ * Validate JSON in bounded steps. A decoder that exclusively owns an input
+ * graph can identify shared containers for reuse within this traversal.
+ */
 export function* jsonValueValidationSteps(
   root: unknown,
+  sharedContainers?: WeakSet<object>,
 ): Generator<void, string | undefined> {
   const immutable =
     typeof root === "object" && root !== null && isImmutableJsonSnapshot(root)
@@ -177,16 +181,37 @@ export function* jsonValueValidationSteps(
         readonly kind: "array";
         readonly value: unknown[];
         readonly depth: number;
+        deepest: number;
         index: number;
       }
     | {
         readonly kind: "object";
         readonly value: Record<string, unknown>;
         readonly depth: number;
+        deepest: number;
         readonly keys: readonly string[];
         index: number;
       };
   const pending: Frame[] = [];
+  // Only decoder-identified shared containers use cache entries. A null entry
+  // is still on the current path; a completed entry stores relative depth so
+  // a later reference deeper in the document still has to fit the limit.
+  const sharedDepths =
+    sharedContainers === undefined
+      ? undefined
+      : new WeakMap<object, number | null>();
+  const updateParentDepth = (deepest: number): void => {
+    const parent = pending[pending.length - 1];
+    if (parent !== undefined && deepest > parent.deepest)
+      parent.deepest = deepest;
+  };
+  const complete = (frame: Frame): void => {
+    pending.pop();
+    if (sharedContainers?.has(frame.value))
+      sharedDepths?.set(frame.value, frame.deepest - frame.depth);
+    if (sharedContainers !== undefined) updateParentDepth(frame.deepest);
+  };
+  const nestingError = `JSON value exceeds maximum nesting depth of ${MAX_JSON_DEPTH}. This release has no runtime override.`;
   let value = root;
   let depth = 0;
   let inspect = true;
@@ -197,10 +222,25 @@ export function* jsonValueValidationSteps(
         examined = 0;
         yield;
       }
-      if (depth > MAX_JSON_DEPTH)
-        return finish(
-          `JSON value exceeds maximum nesting depth of ${MAX_JSON_DEPTH}. This release has no runtime override.`,
-        );
+      if (depth > MAX_JSON_DEPTH) return finish(nestingError);
+      if (
+        sharedDepths !== undefined &&
+        typeof value === "object" &&
+        value !== null &&
+        sharedContainers?.has(value)
+      ) {
+        const cachedDepth = sharedDepths.get(value);
+        if (cachedDepth === null)
+          return finish("JSON values cannot contain circular references");
+        if (cachedDepth !== undefined) {
+          if (depth + cachedDepth > MAX_JSON_DEPTH) return finish(nestingError);
+          updateParentDepth(depth + cachedDepth);
+          inspect = false;
+          continue;
+        }
+        sharedDepths.set(value, null);
+      }
+      if (sharedContainers !== undefined) updateParentDepth(depth);
       if (typeof value === "object" && value !== null && types.isProxy(value))
         return finish("JSON values cannot contain proxies");
       if (
@@ -218,6 +258,7 @@ export function* jsonValueValidationSteps(
           kind: "array",
           value,
           depth,
+          deepest: depth,
           index: 0,
         });
         inspect = false;
@@ -232,6 +273,7 @@ export function* jsonValueValidationSteps(
           kind: "object",
           value,
           depth,
+          deepest: depth,
           keys: Object.keys(value),
           index: 0,
         });
@@ -244,7 +286,7 @@ export function* jsonValueValidationSteps(
     if (frame === undefined) return finish(undefined);
     if (frame.kind === "array") {
       if (frame.index >= frame.value.length) {
-        pending.pop();
+        complete(frame);
         continue;
       }
       const index = frame.index++;
@@ -260,7 +302,7 @@ export function* jsonValueValidationSteps(
     }
 
     if (frame.index >= frame.keys.length) {
-      pending.pop();
+      complete(frame);
       continue;
     }
     const key = frame.keys[frame.index++]!;

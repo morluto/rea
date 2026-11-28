@@ -14,6 +14,7 @@
   "src/application/apiContract/ApiContractRead.ts": 1,
   "src/application/apiContract/ApiContractService.ts": 1,
   "src/application/apiContract/GraphqlContractImport.ts": 1,
+  "src/application/apiContract/OpenApiYamlDocument.ts": 1,
   "src/application/binaryDiagnostics/ByteEntropyService.ts": 1,
   "src/application/decompileDirectory/exportTree.ts": 1,
   "src/application/desktop/DesktopBuildSolves.ts": 1,
