@@ -4,6 +4,7 @@ import { expect, it, onTestFinished } from "vitest";
 
 import { createServer } from "../../../src/server/createServer.js";
 import { advertisedSchemaPatterns } from "../../../src/contracts/advertisedDialect.js";
+import { schemaSubschemas } from "../../../src/contracts/jsonSchemaKeywords.js";
 import { projectPortablePattern } from "../../../src/contracts/portablePattern.js";
 import {
   BASE64_QUARTET_LENGTH_PATTERN,
@@ -11,6 +12,7 @@ import {
   INVALID_BASE64_PADDING_PATTERN,
   INVALID_CANONICAL_BASE64_PAD_BITS_PATTERN,
 } from "../../../src/domain/stringPatterns.js";
+import { isRecord } from "../../../src/kernel/isRecord.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
@@ -26,32 +28,53 @@ const advertised = (pattern: RegExp): string => {
   return projection.pattern;
 };
 
+// Only schema-valued positions are walked: an `examples`, `default`, `const`
+// or `enum` value is instance data, even when it is shaped like a schema.
 const collectCanonicalBase64Leaves = (
   value: unknown,
   leaves: Record<string, unknown>[],
 ): void => {
-  if (value === null || typeof value !== "object") return;
-  if (Array.isArray(value)) {
-    value.forEach((entry) => collectCanonicalBase64Leaves(entry, leaves));
-    return;
-  }
-  const record = value as Record<string, unknown>;
-  const allOf = record.allOf;
+  if (!isRecord(value)) return;
+  const allOf = value.allOf;
   if (
     Array.isArray(allOf) &&
     allOf.some(
       (entry) =>
-        entry !== null &&
-        typeof entry === "object" &&
-        "pattern" in entry &&
+        isRecord(entry) &&
         entry.pattern === advertised(BASE64_QUARTET_LENGTH_PATTERN),
     )
   )
-    leaves.push(record);
-  Object.values(record).forEach((entry) =>
-    collectCanonicalBase64Leaves(entry, leaves),
-  );
+    leaves.push(value);
+  for (const child of schemaSubschemas(value, { includeDefinitions: true }))
+    collectCanonicalBase64Leaves(child, leaves);
 };
+
+it("collects canonical base64 leaves from schema positions, not instance data", () => {
+  const leaf = {
+    type: "string",
+    allOf: [{ pattern: advertised(BASE64_QUARTET_LENGTH_PATTERN) }],
+  };
+  const literal = { allOf: leaf.allOf };
+  const nested = { ...leaf };
+  const defined = { ...leaf };
+  const leaves: Record<string, unknown>[] = [];
+  collectCanonicalBase64Leaves(
+    {
+      type: "object",
+      properties: {
+        encoded: leaf,
+        chunks: { type: "array", items: nested },
+      },
+      $defs: { bytes: defined },
+      examples: [literal],
+      default: literal,
+      const: literal,
+      enum: [literal],
+    },
+    leaves,
+  );
+  expect(leaves).toEqual([leaf, nested, defined]);
+});
 
 const listAdvertisedTools = async () => {
   const session = createTestBinarySession(() => {
