@@ -4902,6 +4902,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
         JsonArray parameters = new JsonArray();
         result.add("parameters", parameters);
+        result.add("parameter_list", parameterList(function, prototype));
 
         JsonArray jumpTables = new JsonArray();
         result.add("jump_tables", jumpTables);
@@ -5218,6 +5219,29 @@ public final class ReaGhidraBridge extends HeadlessScript {
         conflict.addProperty("instruction_address", canonicalAddress(instruction.getAddress()));
         conflict.addProperty("instruction", renderInstruction(instruction));
         return conflict;
+    }
+
+    /**
+     * Ghidra fixes prototype inputs from a non-default signature: an empty one
+     * reaches the decompiler as a void-input lock (FunctionPrototype), and each
+     * valid parameter is type-locked (LocalSymbolMap). Any other list was
+     * recovered from observed uses and may omit parameters. Variable arguments
+     * are the decompiler prototype's own flag, not text read from pseudocode.
+     */
+    private static JsonObject parameterList(Function function, FunctionPrototype prototype) {
+        int count = prototype.getNumParams();
+        boolean signature = count > 0 || (
+            function.getSignatureSource() != SourceType.DEFAULT &&
+            function.getParameterCount() == 0
+        );
+        for (int index = 0; signature && index < count; index += 1) {
+            HighSymbol parameter = prototype.getParam(index);
+            signature = parameter != null && parameter.isTypeLocked();
+        }
+        JsonObject result = new JsonObject();
+        result.addProperty("basis", signature ? "signature" : "recovered");
+        result.addProperty("variadic", prototype.isVarArg());
+        return result;
     }
 
     private static JsonObject unavailableNativeValueFlow(String reason) {

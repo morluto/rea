@@ -34,6 +34,15 @@ Select an exact name or address from the returned inventory, then use it with
 that every target names its entry function `entry`. MCP uses `open_binary` and
 focused tools such as `list_procedures` and `analyze_function` on the same session.
 
+Ghidra's `native_api.parameter_list` says where `parameters` came from and
+whether the function takes variable arguments. `basis: "signature"` means a
+stored, non-default signature fixes those parameters; `basis: "recovered"`
+means the decompiler inferred them from uses and may have missed some.
+`variadic: true` means the prototype accepts arguments after the listed ones;
+no storage is reported for them, and `inspect_native_api` names them as a
+residual unknown. Evidence recorded before this field existed, and providers
+that do not report it, omit it, so parameter completeness stays unknown.
+
 For analysis-inferred x86-32 Ghidra signatures, `native_api.prototype_conflicts` can
 identify a direct `EBP`-framed stack argument read beyond a zero-parameter
 inference, or an immediate `RET` cleanup (including zero) that disagrees with an

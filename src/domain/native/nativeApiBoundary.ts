@@ -46,6 +46,20 @@ const inferredParameterTypeSchema = z.strictObject({
   ordinal: z.int().min(0),
 });
 
+/** Provider basis of a reported parameter list, and whether it admits variable arguments. */
+export const nativeParameterListSchema = z.strictObject({
+  basis: z
+    .enum(["signature", "recovered"])
+    .describe(
+      "signature: the provider fixed these parameters from the function's stored, non-default signature (see signature_source); that signature has no other fixed parameters. recovered: the decompiler inferred them from observed uses and may omit parameters.",
+    ),
+  variadic: z
+    .boolean()
+    .describe(
+      "Whether the provider's prototype accepts variable arguments after the listed parameters. No storage is reported for them. false reports the selected prototype, not proof that the original source function is fixed-arity.",
+    ),
+});
+
 const jumpTableDataSourceSchema = z
   .object({
     address: z.string().min(1),
@@ -120,6 +134,11 @@ export const availableNativeApiBoundarySchema = z
     calling_convention: z.string().min(1),
     return_type: inferredReturnTypeSchema,
     parameters: z.array(inferredParameterTypeSchema),
+    parameter_list: nativeParameterListSchema
+      .exactOptional()
+      .describe(
+        "Absent when the provider did not report it, as in older Evidence; parameter completeness and variable arguments then remain unknown.",
+      ),
     /** Omitted on older dossiers or providers without an instruction consistency check. */
     prototype_conflicts: z.array(prototypeConflictSchema).exactOptional(),
     jump_tables: z.array(inferredJumpTableSchema),
