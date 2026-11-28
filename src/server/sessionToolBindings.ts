@@ -323,7 +323,9 @@ export const bindApplicationWorkflowTools = (
     },
     correlate_vsix_registrations: {
       admission: "sdk",
-      workflow: async (input, { signal }) =>
+      view: ({ detail }) =>
+        detail === "summary" ? { kind: "summary" } : undefined,
+      workflow: async ({ detail: _detail, ...input }, { signal }) =>
         settledResult(
           correlateVsixRegistrationsExecution(input, evidenceById, { signal }),
         ),

@@ -8,6 +8,7 @@ export const AGENT_BUDGET_OPERATIONS = [
   "analyze_web_bundle",
   "batch_decompile",
   "capture_browser_scenario",
+  "correlate_vsix_registrations",
   "decode_android_resources",
   "decode_interface_builder",
   "extract_artifact",
