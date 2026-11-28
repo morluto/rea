@@ -1188,6 +1188,15 @@ export const reobserveUnavailableTokenFacts = async (
   return current;
 };
 
+/**
+ * Whether a procfs read failed because the process entry is gone. The caller
+ * corroborates exit with a signal-zero probe before reporting absence.
+ */
+const procfsEntryVanished = (cause: unknown): boolean =>
+  cause instanceof Error &&
+  "code" in cause &&
+  (cause.code === "ENOENT" || cause.code === "ESRCH");
+
 /** Create the operating-system process inspector for an explicit host context. */
 export const createSystemProcessOwnershipHost = (
   platform: NodeJS.Platform,
@@ -1491,11 +1500,7 @@ export const createSystemProcessOwnershipHost = (
             ] as const;
           } catch (cause: unknown) {
             rethrowInspectionFailure(cause);
-            if (
-              cause instanceof Error &&
-              "code" in cause &&
-              (cause.code === "ENOENT" || cause.code === "ESRCH")
-            ) {
+            if (procfsEntryVanished(cause)) {
               assertProcessOwnershipInspectionActive(signal);
               let presenceProbeFailure: unknown;
               let presenceProbeSucceeded = false;
