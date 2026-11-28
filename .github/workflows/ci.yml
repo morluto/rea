@@ -1071,7 +1071,9 @@ jobs:
       matrix:
         suite: [capabilities, package]
     runs-on: windows-latest
-    timeout-minutes: 25
+    # Portable preparation and the two shell checks have 25 minutes of bounded
+    # step budgets, in addition to install, native/package and Inspector checks.
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -1208,6 +1210,8 @@ jobs:
           tests/process-global/updateMaintenance.test.ts
           tests/process-global/runnerCancellation.test.ts
           tests/process-global/windowsOwnedCommand.test.ts
+          tests/process-global/portableCommand.test.ts
+          tests/process-global/portableInventory.test.ts
           tests/conformance/providers/ghidra/realGhidraWindowsWorkflow.test.ts
           tests/boundary/filesystem/directoryArtifactReaderOpen.test.ts
           tests/boundary/filesystem/javascriptPackagePrecedence.test.ts
@@ -1222,6 +1226,29 @@ jobs:
       - name: Verify installed Windows package
         if: matrix.suite == 'package'
         run: node scripts/verify-windows-package.mjs
+      - name: Prepare portable runtime
+        if: matrix.suite == 'package'
+        timeout-minutes: 5
+        run: |
+          $runtime = Split-Path -Parent (Get-Command node).Source
+          $portable = Join-Path $env:RUNNER_TEMP 'rea %PATH% & !NAME! 便携包'
+          npm run package:portable:windows -- --node-directory "$runtime" --output-directory "$portable"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify portable runtime with Windows PowerShell 5.1
+        # Hosted 5.1 verification reached MCP after almost five minutes; leave
+        # room for handshake, parity and uninstall while child calls stay bounded.
+        if: matrix.suite == 'package'
+        timeout-minutes: 10
+        run: |
+          $portable = Join-Path $env:RUNNER_TEMP 'rea %PATH% & !NAME! 便携包'
+          node scripts/verify-portable-windows.mjs --directory "$portable"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify portable runtime with PowerShell 7
+        if: matrix.suite == 'package'
+        timeout-minutes: 10
+        run: |
+          $portable = Join-Path $env:RUNNER_TEMP 'rea %PATH% & !NAME! 便携包'
+          node scripts/verify-portable-windows.mjs --directory "$portable" --powershell (Get-Command pwsh).Source
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: matrix.suite == 'package'
         with:

@@ -14,6 +14,11 @@ export const documentationSections = [
         route: "/supported-targets",
       },
       {
+        text: "Windows portable preparation",
+        source: "portable-windows.md",
+        route: "/portable-windows",
+      },
+      {
         text: "Client configuration and troubleshooting",
         source: "getting-started/client-configuration.md",
         route: "/client-configuration",

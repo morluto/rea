@@ -12,6 +12,8 @@ export interface WindowsOwnedCommandOptions {
   readonly cwd: string | undefined;
   readonly environment: NodeJS.ProcessEnv;
   readonly authority?: WindowsNativeAuthority;
+  /** Preserve a caller-supplied command line exactly instead of cross-spawn's. */
+  readonly verbatimArguments?: boolean;
 }
 
 export interface WindowsOwnedProcessLifecycle extends Pick<

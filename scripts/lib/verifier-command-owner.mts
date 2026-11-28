@@ -23,6 +23,8 @@ interface VerifierCommandContext {
   readonly env?: NodeJS.ProcessEnv | undefined;
   readonly timeout?: number | undefined;
   readonly windowsHide?: boolean | undefined;
+  /** Preserve a pre-quoted Windows command-interpreter invocation exactly. */
+  readonly windowsVerbatimArguments?: boolean | undefined;
   /** Acquire a real owned stdin pipe; closed-pipe sends EOF before awaiting output. */
   readonly stdin?: "pipe" | "closed-pipe";
 }
@@ -100,6 +102,7 @@ const launchVerifierCommand = async (
       ...input.env,
       REA_PROCESS_RUN_ID: input.runId,
     },
+    verbatimArguments: input.windowsVerbatimArguments === true,
   });
   // These labels describe the launch; cleanup authority is the exact native job.
   return {
@@ -138,6 +141,10 @@ const commandLimits = (options: VerifierCommandOptions) => {
   if (process.platform === "win32" && options.windowsHide === false)
     throw new Error(
       "Owned verifier commands require hidden Windows process launch",
+    );
+  if (options.windowsVerbatimArguments === true && process.platform !== "win32")
+    throw new Error(
+      "Verbatim Windows arguments are only supported on Windows hosts",
     );
   return {
     timeoutMs: timeout === 0 ? null : timeout,
@@ -215,6 +222,9 @@ class VerifierCommandOwner implements VerifierCommands {
             expectedCommand: null,
             runId: `rea-verifier-command-${randomUUID()}`,
             sweepTokenOwnedProcesses: true,
+            ...(options.windowsVerbatimArguments === true
+              ? { windowsVerbatimArguments: true }
+              : {}),
           },
           limits,
           { signal, launcher: this.launcher },
