@@ -5,6 +5,7 @@ import {
   XML_ELEMENT_DEPTH_ALLOWANCE,
   XML_ELEMENT_DEPTH_LIMIT,
 } from "../../domain/xmlDocument.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { plistUidValue } from "../../domain/apple/plistUid.js";
 import { createPlistNumberProjection } from "../../domain/apple/plistNumbers.js";
@@ -138,6 +139,7 @@ it("reports XML element depth from the native plist parser", () => {
     ),
   );
   if (parsed.ok) throw new Error("Expected XML element-depth refusal");
+  if (!(parsed.error instanceof AnalysisError)) throw parsed.error;
   expect(projectAnalysisError(parsed.error)).toMatchObject({
     code: "resource_constraint",
     retryable: false,
