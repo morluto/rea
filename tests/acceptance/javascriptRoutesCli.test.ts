@@ -646,7 +646,8 @@ cliTest(
           .sort(),
       ).toEqual(expectedPaths);
       expect(selected.artifact).toBeNull();
-      const { call } = await connectLocalToolsMcp();
+      const call = await cli.sharedMcpCall?.();
+      if (call === undefined) throw new Error("Expected a stdio MCP session");
       const observed = await call("analyze_web_bundle", {
         cdp_endpoint: browser.endpoint,
         target_id: "allowed-page",
