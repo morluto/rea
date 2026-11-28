@@ -41,6 +41,7 @@ export interface PackageBundleRecord {
   readonly path: string | null;
   readonly cfBundleIdentifier: string | null;
   readonly cfBundleVersion: string | null;
+  readonly cfBundleShortVersion: string | null;
 }
 
 export interface PackageInfoFacts {
@@ -312,6 +313,7 @@ export const parsePackageInfoXml = (
       path: attributeOf(element, "path"),
       cfBundleIdentifier: attributeOf(element, "CFBundleIdentifier"),
       cfBundleVersion: attributeOf(element, "CFBundleVersion"),
+      cfBundleShortVersion: attributeOf(element, "CFBundleShortVersionString"),
     })),
     preinstall: scriptFile("preinstall"),
     postinstall: scriptFile("postinstall"),

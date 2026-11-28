@@ -965,6 +965,9 @@ export class MacosPkgArtifactReader implements ArtifactReader {
           path: bundle.path,
           cf_bundle_identifier: bundle.cfBundleIdentifier,
           cf_bundle_version: bundle.cfBundleVersion,
+          ...(bundle.cfBundleShortVersion === null
+            ? {}
+            : { cf_bundle_short_version: bundle.cfBundleShortVersion }),
         })),
         preinstall: parsed.value.preinstall,
         postinstall: parsed.value.postinstall,
