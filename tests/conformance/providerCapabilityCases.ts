@@ -84,6 +84,9 @@ export const PROVIDER_CAPABILITY_CONFORMANCE: Readonly<
   espNvs: { cases: ["tests/boundary/mcp/espNvsMcpCli.test.ts"] },
   evmInterface: { cases: ["tests/boundary/mcp/evmInterfaceMcp.test.ts"] },
   firmwareAnalysis: { cases: ["tests/boundary/mcp/firmwareMcp.test.ts"] },
+  firmwareLiteralPools: {
+    cases: ["tests/boundary/mcp/firmwareLiteralPoolsMcpCli.test.ts"],
+  },
   firmwareVectorTable: {
     cases: ["tests/boundary/mcp/firmwareVectorTableMcpCli.test.ts"],
   },

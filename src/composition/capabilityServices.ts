@@ -97,6 +97,7 @@ import { createRecordedCrashService } from "./binaryDiagnostics/recordedCrash.js
 import { createBinaryLayoutService } from "./binaryDiagnostics/binaryLayout.js";
 import { createDevicetreeService } from "./binaryDiagnostics/devicetree.js";
 import { createEspNvsService } from "./binaryDiagnostics/espNvs.js";
+import { createFirmwareLiteralPoolsService } from "./binaryDiagnostics/firmwareLiteralPools.js";
 import { createFirmwareVectorTableService } from "./binaryDiagnostics/firmwareVectorTable.js";
 import { createElfNotesService } from "./binaryDiagnostics/elfNotes.js";
 import { createDwarfUnitsService } from "./binaryDiagnostics/dwarfUnits.js";
@@ -416,6 +417,7 @@ const modules = {
   nativeExports: service(() => createNativeExportsService()),
   devicetree: service(() => createDevicetreeService()),
   espNvs: service(() => createEspNvsService()),
+  firmwareLiteralPools: service(() => createFirmwareLiteralPoolsService()),
   firmwareVectorTable: service(() => createFirmwareVectorTableService()),
   elfNotes: service(() => createElfNotesService()),
   dwarfUnits: service(() => createDwarfUnitsService()),

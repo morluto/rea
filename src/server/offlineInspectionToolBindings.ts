@@ -6,6 +6,7 @@ import type { BinaryHardeningService } from "../application/binaryDiagnostics/Bi
 import type { ByteEntropyService } from "../application/binaryDiagnostics/ByteEntropyService.js";
 import type { DevicetreeService } from "../application/binaryDiagnostics/DevicetreeService.js";
 import type { EspNvsService } from "../application/binaryDiagnostics/EspNvsService.js";
+import type { FirmwareLiteralPoolsService } from "../application/binaryDiagnostics/FirmwareLiteralPoolsService.js";
 import type { FirmwareVectorTableService } from "../application/binaryDiagnostics/FirmwareVectorTableService.js";
 import type { DwarfUnitsService } from "../application/binaryDiagnostics/DwarfUnitsService.js";
 import type { ElfDebugLinkService } from "../application/binaryDiagnostics/ElfDebugLinkService.js";
@@ -339,6 +340,12 @@ export const OFFLINE_INSPECTION_TOOL_BINDINGS = {
       run: (input, options) => service.inspect(input, options, retention),
     },
   })) satisfies Bind<EspNvsService>,
+  firmwareLiteralPools: ((service) => ({
+    inspect_firmware_literal_pools: {
+      admission: "application",
+      summary: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<FirmwareLiteralPoolsService>,
   firmwareVectorTable: ((service) => ({
     inspect_firmware_vector_table: {
       admission: "application",

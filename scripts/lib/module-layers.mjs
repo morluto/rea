@@ -308,6 +308,7 @@ export const ENTRY_FILES = Object.freeze(
         "FirmwareProviderIdentities.ts",
         "devicetree/DevicetreeProvider.ts",
         "espNvs/EspNvsProvider.ts",
+        "literalPools/FirmwareLiteralPoolsProvider.ts",
         "vectorTable/FirmwareVectorTableProvider.ts",
       ],
       flutter: ["FlutterBuildProvider.ts", "FlutterProviderIdentity.ts"],

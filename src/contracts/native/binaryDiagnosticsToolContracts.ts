@@ -5,6 +5,7 @@ import {
 import { binaryLayoutSummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/binaryLayoutSummarySchema.js";
 import { devicetreeSummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/devicetreeSummarySchema.js";
 import { espNvsSummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/espNvsSummarySchema.js";
+import { firmwareLiteralPoolsSummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/firmwareLiteralPoolsSummarySchema.js";
 import { firmwareVectorTableSummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/firmwareVectorTableSummarySchema.js";
 import { elfDependenciesSummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/elfDependenciesSummarySchema.js";
 import { nativeExportsSummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/nativeExportsSummarySchema.js";
@@ -109,6 +110,10 @@ import {
   espNvsReportSchema,
   inspectEspNvsInputSchema,
 } from "../../domain/firmware/espNvs.js";
+import {
+  firmwareLiteralPoolsReportSchema,
+  inspectFirmwareLiteralPoolsInputSchema,
+} from "../../domain/firmware/firmwareLiteralPools.js";
 import {
   firmwareVectorTableSchema,
   inspectFirmwareVectorTableInputSchema,
@@ -625,6 +630,42 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
           path: "/artifacts/esp32_flash.bin",
           partition_offset: 36864,
           partition_bytes: 24576,
+        },
+      },
+    ],
+  },
+  {
+    name: "inspect_firmware_literal_pools",
+    availability: "standalone",
+    cli: true,
+    ...toolContractMetadata("inspect_firmware_literal_pools", evidenceEffects),
+    kind: "native-provider",
+    description:
+      "Disassemble PC-relative literal-pool load instructions (arm-thumb 16-bit LDR Rt,[PC,#imm8*4] and 32-bit Thumb-2 LDR.W Rt,[PC,#+-imm12], arm-a32 LDR<c> Rd,[PC,#+-imm12], and xtensa 24-bit L32R with 16-bit narrow instruction framing) from raw firmware bytes at an explicit base_address without executing code. Resolves in-image 32-bit pool constants, suppresses referenced pool data bytes from linear instruction decoding, and attributes loaded constants to optional CMSIS-SVD <peripheral> address blocks, mapped image bounds, Cortex-M PPB/SCS blocks (SCB, SysTick, NVIC, MPU, SAU, FPU, DWT, FPB, ITM for arm-thumb only), or Cortex-M/Espressif peripheral and SRAM buses; arm-a32 leaves unprofiled SoC addresses unclassified. Complete detail returns all Evidence inline; summary retains complete Evidence for inspect_analysis_view kind firmware-literal-pools, collections mmio_summary and references, with offset/limit pagination.",
+    inputSchema: inspectFirmwareLiteralPoolsInputSchema.extend({
+      detail: analysisDetailSchema,
+    }),
+    outputSchema: analysisDetailOutputSchemaOf(
+      firmwareLiteralPoolsReportSchema,
+      firmwareLiteralPoolsSummaryViewResultSchema,
+    ),
+    examples: [
+      {
+        title: "Scan Cortex-M Thumb firmware for literal-pool MMIO pointers",
+        input: {
+          path: "/artifacts/stm32_app.bin",
+          isa: "arm-thumb",
+          base_address: "0x08000000",
+          detail: "summary",
+        },
+      },
+      {
+        title: "Scan ESP32 Xtensa IROM slice for L32R peripheral references",
+        input: {
+          path: "/artifacts/esp32_irom.bin",
+          isa: "xtensa",
+          base_address: "0x400d0000",
+          max_scan_bytes: 262144,
         },
       },
     ],

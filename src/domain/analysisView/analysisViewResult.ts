@@ -242,6 +242,10 @@ import { espNvsSummaryViewResultSchema } from "./summarySchemas/espNvsSummarySch
 import { firmwareVectorTableSummaryViewResultSchema } from "./summarySchemas/firmwareVectorTableSummarySchema.js";
 import { labviewArtifactSummaryViewResultSchema } from "./summarySchemas/labviewArtifactSummarySchema.js";
 import {
+  firmwareLiteralPoolsPageViewResultSchema,
+  firmwareLiteralPoolsSummaryViewResultSchema,
+} from "./summarySchemas/firmwareLiteralPoolsSummarySchema.js";
+import {
   uefiExtractionPageViewResultSchema,
   uefiExtractionSummaryViewResultSchema,
 } from "./summarySchemas/uefiExtractionSummarySchema.js";
@@ -370,6 +374,8 @@ export {
   desktopApplicationSummaryViewResultSchema,
   devicetreeSummaryViewResultSchema,
   espNvsSummaryViewResultSchema,
+  firmwareLiteralPoolsPageViewResultSchema,
+  firmwareLiteralPoolsSummaryViewResultSchema,
   firmwareVectorTableSummaryViewResultSchema,
   labviewArtifactSummaryViewResultSchema,
   elfDependenciesSummaryViewResultSchema,
@@ -451,6 +457,7 @@ const viewResultBase = {
     "inspect_erlang_beam",
     "inspect_devicetree",
     "inspect_esp_nvs",
+    "inspect_firmware_literal_pools",
     "inspect_firmware_vector_table",
     "inspect_labview_artifact",
     "inspect_byte_entropy",
@@ -815,6 +822,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     erlangBeamSummaryViewResultSchema,
     devicetreeSummaryViewResultSchema,
     espNvsSummaryViewResultSchema,
+    firmwareLiteralPoolsSummaryViewResultSchema,
     firmwareVectorTableSummaryViewResultSchema,
     labviewArtifactSummaryViewResultSchema,
     uefiFirmwareSummaryViewResultSchema,
@@ -907,6 +915,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   }),
   uefiFirmwarePageViewResultSchema,
   uefiExtractionPageViewResultSchema,
+  firmwareLiteralPoolsPageViewResultSchema,
   byteEntropyPageViewResultSchema,
   webSourceLocationMatchesViewResultSchema,
   webSourceLocationTextViewResultSchema,

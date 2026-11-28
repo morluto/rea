@@ -272,6 +272,13 @@ export const ESP_NVS_PROVIDER = Object.freeze({
   version: "1",
 } as const);
 
+/** Provider identity for portable ARM and Xtensa firmware literal-pool MMIO disassembly. */
+export const FIRMWARE_LITERAL_POOLS_PROVIDER = Object.freeze({
+  id: "rea-firmware-literal-pools",
+  name: "REA firmware literal-pool MMIO disassembler",
+  version: "1",
+} as const);
+
 export const FIRMWARE_VECTOR_TABLE_PROVIDER = Object.freeze({
   id: "rea-firmware-vector-table",
   name: "REA firmware vector table decoder",

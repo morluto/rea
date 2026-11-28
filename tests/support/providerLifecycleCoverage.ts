@@ -1375,6 +1375,20 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     ),
   ),
+  "rea-firmware-literal-pools": inProcess(
+    covered(
+      test(
+        "tests/boundary/mcp/firmwareLiteralPoolsMcpCli.test.ts",
+        "disassembles Thumb literal-pool MMIO loads with CLI and advertised MCP parity",
+      ),
+    ),
+    covered(
+      test(
+        "src/firmware/literalPools/FirmwareLiteralPoolsProvider.test.ts",
+        "honors cancellation during literal-pool scanning and returns typed failures",
+      ),
+    ),
+  ),
   "rea-firmware-vector-table": inProcess(
     covered(
       test(
