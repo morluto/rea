@@ -86,8 +86,32 @@ const registrationActivationSchema = registrationSchema
 
 // Codex, Kimi Code and Pi use enabled. Devin uses disabled. Grok reads its
 // disable list. OpenCode's effective document already uses the selected dialect.
-const ignoresDisabledKey = new Set(["codex", "kimi", "pi"]);
+// MiMo Code's MCP schema strips `disabled`; only `enabled: false` turns it off.
+const ignoresDisabledKey = new Set(["codex", "kimi", "pi", "mimo_code"]);
 const ignoresEnabledKey = new Set(["devin"]);
+
+const readsDisabledKey = (client: SetupClient): boolean =>
+  client.format !== "grok" && !ignoresDisabledKey.has(client.name);
+const readsEnabledKey = (client: SetupClient): boolean =>
+  !ignoresEnabledKey.has(client.name);
+// Shared storage also serves ZCode. Its flag binds every reader of the row.
+const readsEnableKey = (
+  client: SetupClient,
+  dialect: ClientConfigurationDocument["dialect"] | undefined,
+): boolean =>
+  dialect === "zcode" ||
+  dialect === "zcode_fallback" ||
+  client.sharedRegistration === true;
+
+/** The entry keys `clientRegistrationActivation` reads for this client. */
+export const clientActivationKeys = (
+  client: SetupClient,
+  parsed: ClientConfigurationDocument | undefined,
+): readonly string[] => [
+  ...(readsDisabledKey(client) ? ["disabled"] : []),
+  ...(readsEnabledKey(client) ? ["enabled"] : []),
+  ...(readsEnableKey(client, parsed?.dialect) ? ["enable"] : []),
+];
 
 /** Interpret activation on the effective, validated registration. */
 export const clientRegistrationActivation = (
@@ -95,17 +119,11 @@ export const clientRegistrationActivation = (
   client: SetupClient,
   parsed: ClientConfigurationDocument,
 ): "enabled" | "disabled" => {
-  // Shared storage also serves ZCode. Its flag binds every reader of the row.
   const sharedDisabled =
-    (parsed.dialect === "zcode" ||
-      parsed.dialect === "zcode_fallback" ||
-      client.sharedRegistration === true) &&
-    registration.enable === false;
-  return (client.format !== "grok" &&
-    !ignoresDisabledKey.has(client.name) &&
-    registration.disabled === true) ||
+    readsEnableKey(client, parsed.dialect) && registration.enable === false;
+  return (readsDisabledKey(client) && registration.disabled === true) ||
     (registration.enabled === false &&
-      !ignoresEnabledKey.has(client.name) &&
+      readsEnabledKey(client) &&
       !clientServerForcedEnabled(parsed, PRODUCT_IDENTITY.mcpServerKey)) ||
     sharedDisabled ||
     clientServerListedDisabled(parsed, PRODUCT_IDENTITY.mcpServerKey)
@@ -174,7 +192,8 @@ export const parseClientRegistrationLauncher = (
     dialect === "opencode" ||
     dialect === "opencode_v2" ||
     dialect === "fx" ||
-    dialect === "kilo"
+    dialect === "kilo" ||
+    dialect === "mimo_code"
       ? arrayLauncherSchema
           .transform(normalizeOpencodeLauncher)
           .safeParse(value)
@@ -254,8 +273,12 @@ export const parseClientRegistrationPolicy = (
       ? ok(parsed.data)
       : err(registrationError(parsed.error));
   }
-  // Kilo keeps OpenCode's launcher and environment shape.
-  if (client.format === "opencode" || client.format === "kilo") {
+  // Kilo and MiMo Code keep OpenCode's launcher and environment shape.
+  if (
+    client.format === "opencode" ||
+    client.format === "kilo" ||
+    client.format === "mimo_code"
+  ) {
     const entry = opencodeLauncherSchema
       .extend({
         environment: jsonRecordSchema(z.string()).optional(),

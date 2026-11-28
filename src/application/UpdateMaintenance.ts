@@ -1,3 +1,4 @@
+import { sameClientConfigurationFile } from "./ClientConfigPath.js";
 import { z } from "zod";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 
@@ -15,7 +16,10 @@ import {
 import type { SetupAction } from "./SetupTypes.js";
 import type { Result } from "../domain/result.js";
 import type { ArtifactResourceScope } from "../resources/index.js";
-import type { ClientSystemPaths } from "./SupportedClients.js";
+import {
+  supportedClients,
+  type ClientSystemPaths,
+} from "./SupportedClients.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
 /**
@@ -113,6 +117,13 @@ const unavailableMaintenance = (
   };
 };
 
+/** Why update leaves a stale entry MiMo Code imports from a file Claude Code's row does not read. */
+const unmaintainedImportRemediation = (
+  { client, config_path }: ClientRegistrationStatus,
+  claudeCodePath: string | undefined,
+): string =>
+  `MiMo Code imports this rea entry from ${config_path}, which update does not refresh${claudeCodePath === undefined ? "" : ` because REA maintains Claude Code's registration in ${claudeCodePath}`}. Run rea setup --client ${client} to give MiMo Code its own entry.`;
+
 /** Where maintenance reads: the caller's resource scope and system layers. */
 export interface MaintenanceInputs {
   /** The platform whose client layout and environment identity apply. */
@@ -154,7 +165,12 @@ export const existingMaintenanceScope = async (
     environment,
   });
   const settings = explicitSetupRegistrationEnvironment(environment);
-  for (const { status: registration, activation, client } of registrations) {
+  for (const {
+    status: registration,
+    activation,
+    client,
+    importedFrom,
+  } of registrations) {
     if (registration.state === "unknown" || registration.state === "invalid") {
       unresolved.push(registration);
       continue;
@@ -165,6 +181,30 @@ export const existingMaintenanceScope = async (
       registration.command_identity !== "owned"
     )
       continue;
+    // Setup here would add MiMo Code's own entry instead, so an imported entry
+    // follows Claude Code's refresh, which reaches it only when Claude Code's
+    // row reads that same file.
+    if (importedFrom !== undefined) {
+      const source = supportedClients(
+        home,
+        platform,
+        environment,
+        systemPaths,
+      ).find(({ name }) => name === importedFrom)?.configPath;
+      if (
+        registration.state === "stale" &&
+        (source === undefined ||
+          !(await sameClientConfigurationFile(
+            source,
+            registration.config_path,
+          )))
+      )
+        unresolved.push({
+          ...registration,
+          remediation: unmaintainedImportRemediation(registration, source),
+        });
+      continue;
+    }
     // One client setup refuses (a client policy, or a read-only inline layer
     // that would override the refreshed entry) blocks the whole setup plan,
     // so ask setup's own refusal check first and report that client instead

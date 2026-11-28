@@ -17,6 +17,7 @@ import {
   ClientRegistrationEnvironmentShapeError,
   clientRegistrationEnvironment,
 } from "./ClientRegistrationEnvironment.js";
+import { clientActivationKeys } from "./ClientRegistration.js";
 import type { ArtifactResourceScope } from "../resources/index.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { mergeEnvironmentOverrides } from "../process/snapshotEnvironment.js";
@@ -28,6 +29,7 @@ import { posix, win32 } from "node:path";
 import { isQualifiedCallerPath } from "../filesystem/callerPath.js";
 import { canonicalCallerPath } from "../filesystem/canonicalCallerPath.js";
 import { isAbsentClientConfigPath, isEnoentError } from "./ClientConfigPath.js";
+import { mimoCodeClaudeCodeImport } from "./MimoCodeClaudeImport.js";
 
 export type ClientRegistrationScope = "user" | "project";
 
@@ -39,11 +41,13 @@ export type ClientConfigurationSource = ClientConfigurationDocument &
   (
     | {
         readonly sourcePath: string;
+        readonly importedFrom?: "claude_code";
         readonly inlineOrigin?: undefined;
         readonly scope?: ClientRegistrationScope;
       }
     | {
         readonly sourcePath?: undefined;
+        readonly importedFrom?: undefined;
         readonly inlineOrigin: ClientInlineConfiguration["origin"];
         readonly scope?: undefined;
       }
@@ -101,6 +105,7 @@ type ClientConfigurationLocation = Pick<
   | "registrationProfile"
   | "configPath"
   | "configPaths"
+  | "claudeCodeImportPath"
   | "configPathError"
   | "readOnlyLowerLayers"
   | "inlineConfiguration"
@@ -109,7 +114,9 @@ type ClientConfigurationLocation = Pick<
 interface ClientConfigurationReadOptions {
   readonly writeOverrides?: Readonly<Record<string, string>>;
   /** The writer's verified snapshot of the selected path, which must not be reopened here. */
-  readonly targetDocument?: ClientConfigurationDocument;
+  readonly targetDocument?: ClientConfigurationDocument | null;
+  /** Native peers already discovered before setup took its target snapshot. */
+  readonly peers?: ReadonlyMap<string, ClientConfigurationDocument>;
 }
 
 const configurationEnvironmentFailure = (
@@ -191,10 +198,20 @@ export const readClientConfigurationFiles = async (
   client: ClientConfigurationLocation,
   resources: ArtifactResourceScope | undefined,
   platform: NodeJS.Platform,
-  { writeOverrides, targetDocument }: ClientConfigurationReadOptions = {},
+  options: ClientConfigurationReadOptions | "peers" = {},
 ): Promise<
   Result<readonly ClientConfigurationSource[], ClientConfigurationFileError>
 > => {
+  // Setup reads independent layers first, then admits them with its physical target snapshot.
+  if (options === "peers") {
+    const paths = new Set(client.configPaths);
+    paths.delete(client.configPath);
+    return readUserConfigurationSources(
+      { ...client, configPaths: [...paths] },
+      resources,
+    );
+  }
+  const { writeOverrides, targetDocument, peers } = options;
   const validateFragment = (
     path: string,
     document: ClientConfigurationDocument,
@@ -217,6 +234,7 @@ export const readClientConfigurationFiles = async (
           path === client.configPath || client.readOnlyLowerLayers !== true
             ? validateFragment(path, document)
             : undefined,
+    peers,
   );
   if (!documents.ok) return documents;
   const effective = mergeClientConfigurationDocuments(
@@ -240,6 +258,47 @@ export const readClientConfigurationFiles = async (
       if (failure !== undefined) return err(failure);
     }
   }
+  // A first native MiMo registration replaces the Claude import. Keep the import
+  // as a separate source so preview and apply use the same settings and owner.
+  const importPath = client.claudeCodeImportPath;
+  if (
+    writeOverrides !== undefined &&
+    importPath !== undefined &&
+    (effective === undefined ||
+      effectiveClientServer(effective, PRODUCT_IDENTITY.mcpServerKey) ===
+        undefined)
+  ) {
+    const text = await readConfigurationText(importPath, resources);
+    if (!text.ok) return text;
+    const entry =
+      text.value === undefined
+        ? undefined
+        : mimoCodeClaudeCodeImport(text.value);
+    if (entry !== undefined) {
+      const importedConfiguration = claudeCodeImportConfiguration(
+        client,
+        platform,
+        {
+          native: undefined,
+          path: importPath,
+          entry,
+          overrides: writeOverrides,
+        },
+      );
+      if (!importedConfiguration.ok) return importedConfiguration;
+      const { document, failure } = importedConfiguration.value;
+      return failure === undefined
+        ? ok([
+            ...documents.value,
+            {
+              ...document,
+              sourcePath: importPath,
+              importedFrom: "claude_code",
+            },
+          ])
+        : err(failure);
+    }
+  }
   const failure = configurationEnvironmentFailure(client, platform, {
     path: client.configPath,
     document: effective,
@@ -252,11 +311,12 @@ export const readClientConfigurationFiles = async (
 const readUserConfigurationSources = async (
   client: ClientConfigurationLocation,
   resources: ArtifactResourceScope | undefined,
-  targetDocument?: ClientConfigurationDocument,
+  targetDocument?: ClientConfigurationDocument | null,
   validate?: (
     path: string,
     document: ClientConfigurationDocument,
   ) => ClientConfigurationFileError | undefined,
+  peers?: ReadonlyMap<string, ClientConfigurationDocument>,
 ): Promise<
   Result<readonly ClientConfigurationSource[], ClientConfigurationFileError>
 > => {
@@ -278,8 +338,10 @@ const readUserConfigurationSources = async (
   for (const path of paths) {
     const document =
       path === client.configPath && targetDocument !== undefined
-        ? ok(targetDocument)
-        : await readConfigurationFile(path, client.format, resources);
+        ? ok(targetDocument ?? undefined)
+        : peers !== undefined
+          ? ok(peers.get(path))
+          : await readConfigurationFile(path, client.format, resources);
     if (!document.ok) return document;
     if (document.value === undefined) continue;
     const failure = validate?.(path, document.value);
@@ -384,10 +446,13 @@ export const effectiveClientConfiguration = (
       }
     | undefined,
   platform: NodeJS.Platform,
-): ClientConfigurationDocument | undefined => {
+):
+  | (ClientConfigurationDocument & { readonly importedFrom?: undefined })
+  | (ClientConfigurationSource & { readonly importedFrom: "claude_code" })
+  | undefined => {
   const documents =
     target === undefined
-      ? sources
+      ? sources.filter((source) => source.importedFrom === undefined)
       : [
           ...(target.client.configPaths ?? [target.client.configPath]).flatMap(
             (path) => {
@@ -400,7 +465,21 @@ export const effectiveClientConfiguration = (
           ),
           ...sources.filter(({ inlineOrigin }) => inlineOrigin !== undefined),
         ];
-  return mergeClientConfigurationDocuments(documents, platform);
+  const native = mergeClientConfigurationDocuments(documents, platform);
+  if (
+    native !== undefined &&
+    effectiveClientServer(native, PRODUCT_IDENTITY.mcpServerKey) !== undefined
+  )
+    return native;
+  return (
+    sources.find(
+      (
+        source,
+      ): source is ClientConfigurationSource & {
+        readonly importedFrom: "claude_code";
+      } => source.importedFrom === "claude_code",
+    ) ?? native
+  );
 };
 
 /** The client's read-only inline layers that set REA's entry. */
@@ -590,6 +669,8 @@ export interface EffectiveClientRegistrationConfiguration {
   }[];
   /** Whether proposed project edits leave the original selected row in effect. */
   readonly preservesOriginalRegistration?: true;
+  /** The effective entry is MiMo Code's import of Claude Code's entry at `configPath`. */
+  readonly importedFrom?: "claude_code";
 }
 
 /** Reading an effective registration does not authorize probes from project settings. */
@@ -624,9 +705,201 @@ export const readEffectiveClientRegistrationConfiguration = async (
 ): Promise<
   Result<EffectiveClientRegistrationConfiguration, ClientConfigurationFileError>
 > => {
+  const native = await readNativeClientRegistrationConfiguration(
+    client,
+    resources,
+    platform,
+    project,
+  );
+  return native.ok && client.claudeCodeImportPath !== undefined
+    ? withClaudeCodeImport(native.value, client, client.claudeCodeImportPath, {
+        resources,
+        platform,
+        projectDirectory: project?.projectDirectory,
+      })
+    : native;
+};
+
+/**
+ * The Claude Code files MiMo Code imports from, in the order a later one
+ * replaces an earlier one. A project file that is the user's file stays the
+ * user's.
+ */
+const claudeCodeImportCandidates = async (
+  userPath: string,
+  scoped: boolean,
+  projectDirectory: string | undefined,
+  platform: NodeJS.Platform,
+): Promise<readonly { path: string; scope?: ClientRegistrationScope }[]> => {
+  const user = {
+    path: userPath,
+    ...(scoped ? { scope: "user" as const } : {}),
+  };
+  if (projectDirectory === undefined) return [user];
+  const path = (platform === "win32" ? win32 : posix).join(
+    projectDirectory,
+    ".claude.json",
+  );
+  return (await physicalPathKey(path, platform)) ===
+    (await physicalPathKey(userPath, platform))
+    ? [user]
+    : [user, { path, scope: "project" }];
+};
+
+/** Apply MiMo Code's converted Claude entry and validate the settings it would use. */
+const claudeCodeImportConfiguration = (
+  client: ClientConfigurationLocation,
+  platform: NodeJS.Platform,
+  {
+    native,
+    path,
+    entry,
+    overrides,
+  }: {
+    readonly native: ClientConfigurationDocument | undefined;
+    readonly path: string;
+    readonly entry: Record<string, unknown>;
+    readonly overrides?: Readonly<Record<string, string>>;
+  },
+) => {
+  const parsed =
+    native === undefined
+      ? parseClientConfiguration("{}", "mimo_code")
+      : ok(native);
+  if (!parsed.ok)
+    return err({
+      kind: "malformed",
+      path,
+      detail: parsed.error.detail,
+    } satisfies ClientConfigurationFileError);
+  const base = parsed.value;
+  const document: ClientConfigurationDocument = {
+    ...base,
+    servers: { ...base.servers, [PRODUCT_IDENTITY.mcpServerKey]: entry },
+  };
+  const failure = configurationEnvironmentFailure(client, platform, {
+    path,
+    document,
+    validation: "effective",
+    overrides,
+  });
+  return ok({ document, failure });
+};
+
+/**
+ * MiMo Code imports Claude Code's `rea` entry only when none of its own
+ * layers declares one: the user's file, then the project's, which replaces
+ * the user import. See `MimoCodeClaudeImport`.
+ */
+const withClaudeCodeImport = async (
+  native: EffectiveClientRegistrationConfiguration,
+  client: SetupClient,
+  userPath: string,
+  {
+    resources,
+    platform,
+    projectDirectory,
+  }: {
+    readonly resources: ArtifactResourceScope | undefined;
+    readonly platform: NodeJS.Platform;
+    readonly projectDirectory: string | undefined;
+  },
+): Promise<
+  Result<EffectiveClientRegistrationConfiguration, ClientConfigurationFileError>
+> => {
+  const name = PRODUCT_IDENTITY.mcpServerKey;
+  if (
+    native.document !== undefined &&
+    effectiveClientServer(native.document, name) !== undefined
+  )
+    return ok(native);
+  const candidates = await claudeCodeImportCandidates(
+    userPath,
+    native.scope !== undefined,
+    projectDirectory,
+    platform,
+  );
+  let imported:
+    | {
+        readonly path: string;
+        readonly scope?: ClientRegistrationScope;
+        readonly entry: Record<string, unknown>;
+      }
+    | undefined;
+  for (const { path, scope } of candidates) {
+    const text = await readConfigurationText(path, resources);
+    if (!text.ok)
+      return err({ ...text.error, ...(scope === undefined ? {} : { scope }) });
+    const entry =
+      text.value === undefined
+        ? undefined
+        : mimoCodeClaudeCodeImport(text.value);
+    if (entry !== undefined)
+      imported = { path, entry, ...(scope === undefined ? {} : { scope }) };
+  }
+  if (imported === undefined) return ok(native);
+  const { path, scope, entry } = imported;
+  const importedConfiguration = claudeCodeImportConfiguration(
+    client,
+    platform,
+    {
+      native: native.document,
+      path,
+      entry,
+    },
+  );
+  if (!importedConfiguration.ok) return importedConfiguration;
+  const { document, failure } = importedConfiguration.value;
+  return ok({
+    document,
+    configPath: path,
+    ...(scope === undefined
+      ? {}
+      : {
+          scope,
+          launcherScope: scope,
+          launcherConfigPath: path,
+          activationScope: scope,
+          activationConfigPath: path,
+        }),
+    declarations: [
+      {
+        source: {
+          ...document,
+          sourcePath: path,
+          ...(scope === undefined ? {} : { scope }),
+        },
+        entry,
+      },
+    ],
+    ...(native.projectInspection === undefined
+      ? {}
+      : { projectInspection: native.projectInspection }),
+    ...(failure === undefined
+      ? {}
+      : {
+          environmentError: {
+            ...failure,
+            ...(scope === undefined ? {} : { scope }),
+          },
+        }),
+    importedFrom: "claude_code",
+  });
+};
+
+const readNativeClientRegistrationConfiguration = async (
+  client: SetupClient,
+  resources: ArtifactResourceScope | undefined,
+  platform: NodeJS.Platform,
+  project?: ProjectConfigurationReadOptions,
+): Promise<
+  Result<EffectiveClientRegistrationConfiguration, ClientConfigurationFileError>
+> => {
   if (
     project === undefined ||
-    (client.format !== "opencode" && client.format !== "pi")
+    (client.format !== "opencode" &&
+      client.format !== "pi" &&
+      client.format !== "mimo_code")
   )
     return readEffectiveUserConfiguration(client, resources, platform);
   if (client.configPathError !== undefined)
@@ -867,13 +1140,12 @@ export const readEffectiveClientRegistrationConfiguration = async (
     );
 
   const launcher = active.findLast(declaresLauncher) ?? last;
+  const activationKeys = clientActivationKeys(client, document);
   const activation =
     active.findLast(
       ({ entry }) =>
         isRecord(entry) &&
-        ["disabled", "enabled", "enable"].some((key) =>
-          Object.hasOwn(entry, key),
-        ),
+        activationKeys.some((key) => Object.hasOwn(entry, key)),
     ) ?? last;
   return ok({
     document,
@@ -890,7 +1162,7 @@ export const readEffectiveClientRegistrationConfiguration = async (
 /** Resolve the native merge for a single set of parsed layers. */
 const projectRegistration = (
   sources: readonly ClientConfigurationSource[],
-  format: "opencode" | "pi",
+  format: "opencode" | "pi" | "mimo_code",
   platform: NodeJS.Platform,
 ): Result<
   {
@@ -1016,6 +1288,13 @@ const filesystemPathKey = (path: string, platform: NodeJS.Platform): string =>
     ? win32.normalize(path).toLowerCase()
     : posix.normalize(path);
 
+const physicalPathKey = async (
+  path: string,
+  platform: NodeJS.Platform,
+  resolvePath: (path: string) => Promise<string> = realpath,
+): Promise<string> =>
+  filesystemPathKey(await resolvePath(path).catch(() => path), platform);
+
 interface PresentProjectSource {
   readonly path: string;
   readonly userPath?: string;
@@ -1033,8 +1312,6 @@ const presentProjectSources = async (
 > => {
   const physicalPath =
     writeTarget === undefined ? realpath : canonicalCallerPath;
-  const keyOf = async (path: string) =>
-    filesystemPathKey(await physicalPath(path).catch(() => path), platform);
   const targetKey =
     writeTarget === undefined
       ? undefined
@@ -1094,7 +1371,7 @@ const presentProjectSources = async (
       if (writeTarget?.allowMissing !== true || candidate !== writeTarget.path)
         continue;
     }
-    const key = await keyOf(candidate);
+    const key = await physicalPathKey(candidate, platform, physicalPath);
     const userPath = user.get(key);
     project.set(candidate, {
       path: candidate,

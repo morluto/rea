@@ -67,6 +67,7 @@ import { currentClientRegistrationCommand } from "./ClientRegistrationIdentity.j
 import {
   isEnoentError,
   resolveClientConfigTransactionPath,
+  sameClientConfigurationFile,
 } from "./ClientConfigPath.js";
 import { packageReadTargetChanged } from "./MsixPackageStorage.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
@@ -149,6 +150,78 @@ const configurationRemediation = (error: ConfigurationError): string =>
     ? error.message
     : `${error.message}: ${error.settings.map(({ setting, constraint }) => `${setting}: ${constraint}`).join("; ")}`;
 
+/** Pair setup decisions, backups and writes with the same target bytes after peer discovery. */
+const readSetupConfigurationSnapshot = async (
+  client: SetupClient,
+  path: string,
+  platform: NodeJS.Platform,
+  writeOverrides: SetupProviderEnvironment,
+  options: Parameters<typeof readRegularFileTextSnapshot>[1] = {},
+) => {
+  const importPath = client.claudeCodeImportPath;
+  if (
+    importPath !== undefined &&
+    (await sameClientConfigurationFile(path, importPath))
+  )
+    return err({
+      kind: "unreadable",
+      path: client.configPath,
+      detail: `The selected MiMo Code configuration resolves to Claude Code's ${importPath}. Choose a separate MiMo Code file before running setup.`,
+    } satisfies ClientConfigurationFileError);
+  const peers = await readClientConfigurationFiles(
+    client,
+    options.resources,
+    platform,
+    "peers",
+  );
+  if (!peers.ok) return peers;
+  let snapshot:
+    | Awaited<ReturnType<typeof readRegularFileTextSnapshot>>
+    | undefined;
+  try {
+    snapshot = await readRegularFileTextSnapshot(path, options);
+  } catch (cause: unknown) {
+    if (cause instanceof RegularFileCleanupFailure) throw cause;
+    if (!isEnoentError(cause))
+      return err({
+        kind: "unreadable",
+        path: client.configPath,
+        detail: `Configuration ${client.configPath} could not be read: ${errorMessage(cause)}`,
+      } satisfies ClientConfigurationFileError);
+  }
+  let document: ClientConfigurationDocument | undefined;
+  if (snapshot !== undefined) {
+    const parsed = parseClientConfiguration(snapshot.text, client.format);
+    if (!parsed.ok)
+      return err({
+        kind: "malformed",
+        path: client.configPath,
+        detail:
+          parsed.error.kind === "document"
+            ? configurationRemediation(parsed.error.cause)
+            : `Configuration ${client.configPath} is malformed: ${parsed.error.detail}`,
+      } satisfies ClientConfigurationFileError);
+    document = parsed.value;
+  }
+  const files = await readClientConfigurationFiles(
+    client,
+    options.resources,
+    platform,
+    {
+      writeOverrides,
+      peers: new Map(
+        peers.value.flatMap((peer) =>
+          peer.sourcePath === undefined
+            ? []
+            : [[peer.sourcePath, peer] as const],
+        ),
+      ),
+      targetDocument: document ?? null,
+    },
+  );
+  return files.ok ? ok({ snapshot, document, sources: files.value }) : files;
+};
+
 const configureClientDocument = async (
   {
     client,
@@ -168,49 +241,32 @@ const configureClientDocument = async (
   const format = client.format;
   if (format === undefined || format === "unsupported")
     return { status: "failed", reason: "readback" };
-  const files = await readClientConfigurationFiles(
+  const configuration = await readSetupConfigurationSnapshot(
     client,
-    undefined,
+    transactionPath,
     platform,
-    { writeOverrides: environment },
+    environment,
+    { symlinks: "reject" },
   );
-  if (!files.ok) {
-    throwCleanupFailure(files.error);
+  if (!configuration.ok) {
+    throwCleanupFailure(configuration.error);
     return { status: "failed", reason: "readback" };
   }
-  const existing = files.value.find(
-    ({ sourcePath }) => sourcePath === client.configPath,
-  );
-  const editabilityError =
-    existing?.dialect === "dsh"
-      ? dshDocument(existing.document).editabilityError
-      : undefined;
-  if (editabilityError !== undefined)
+  const { snapshot, document, sources } = configuration.value;
+  if (dshEditabilityBlocker(client, sources) !== undefined)
     return { status: "failed", reason: "readback" };
-  // Policy admission belongs to the transaction snapshot below, not the
-  // earlier layered discovery document.
-  let snapshot:
-    | Awaited<ReturnType<typeof readRegularFileTextSnapshot>>
-    | undefined;
-  try {
-    snapshot = await readRegularFileTextSnapshot(transactionPath, {
-      symlinks: "reject",
-    });
-  } catch (cause: unknown) {
-    if (cause instanceof RegularFileCleanupFailure) throw cause;
-    if (!isEnoentError(cause)) return { status: "failed", reason: "readback" };
-  }
   const original = snapshot?.text;
-  const document = parseClientConfiguration(
-    original ??
-      (format === "toml" || format === "grok" || format === "dsh" ? "" : "{}"),
-    format,
-  );
-  if (!document.ok) return { status: "failed", reason: "readback" };
-  const writeDocument = clientConfigurationForWrite(
-    document.value,
-    files.value,
-  );
+  const target =
+    document === undefined
+      ? parseClientConfiguration(
+          format === "toml" || format === "grok" || format === "dsh"
+            ? ""
+            : "{}",
+          format,
+        )
+      : ok(document);
+  if (!target.ok) return { status: "failed", reason: "readback" };
+  const writeDocument = clientConfigurationForWrite(target.value, sources);
   if (!writeDocument.ok)
     return {
       status: "failed",
@@ -222,7 +278,7 @@ const configureClientDocument = async (
     client,
     parsed,
     original ?? "",
-    files.value,
+    sources,
     platform,
   );
   if (ownershipBlocker !== undefined)
@@ -236,7 +292,7 @@ const configureClientDocument = async (
     environment,
     command,
     parsed,
-    files.value,
+    sources,
     platform,
     launcherEnvironment,
     resolveProviderRequestBudget,
@@ -269,7 +325,7 @@ const configureClientDocument = async (
       ...parsed,
       servers: { ...fallback.value, ...parsed.servers },
     },
-    files.value,
+    sources,
     platform,
     launcherEnvironment,
     resolveProviderRequestBudget,
@@ -278,12 +334,7 @@ const configureClientDocument = async (
   const desired = desiredResult.value;
   // The settings written now can differ from the ones inspection admitted,
   // for example a Hopper path set by an installation earlier in this setup.
-  const override = inlineOverrideBlocker(
-    client,
-    files.value,
-    desired,
-    platform,
-  );
+  const override = inlineOverrideBlocker(client, sources, desired, platform);
   if (override !== undefined)
     return { status: "failed", reason: "read_only_override", detail: override };
   if (
@@ -569,39 +620,23 @@ const readClientRefresh = async (
     readonly currentCommandPath?: string;
   },
 ): Promise<Result<ClientRefresh, ClientConfigurationFileError>> => {
-  const files = await readClientConfigurationFiles(
+  const configuration = await readSetupConfigurationSnapshot(
     client,
-    resources,
+    client.configPath,
     platform,
-    { writeOverrides: providerEnvironment },
+    providerEnvironment,
+    resources === undefined ? {} : { resources },
   );
-  if (!files.ok) {
-    throwCleanupFailure(files.error);
-    return files;
+  if (!configuration.ok) {
+    throwCleanupFailure(configuration.error);
+    return configuration;
   }
-  let original: string | undefined;
-  try {
-    original = await readRegularFileText(
-      client.configPath,
-      resources === undefined ? {} : { resources },
-    );
-  } catch (cause: unknown) {
-    if (!isEnoentError(cause)) throw cause;
-  }
-  const document =
-    original === undefined
-      ? undefined
-      : parseClientConfiguration(original, client.format);
-  if (document?.ok === false)
-    return err({
-      kind: "malformed",
-      path: client.configPath,
-      detail: document.error.detail,
-    });
+  const { snapshot, document, sources } = configuration.value;
+  const original = snapshot?.text;
   const writeDocument =
     document === undefined
       ? undefined
-      : clientConfigurationForWrite(document.value, files.value);
+      : clientConfigurationForWrite(document, sources);
   if (writeDocument?.ok === false)
     return err({
       kind: "malformed",
@@ -614,7 +649,7 @@ const readClientRefresh = async (
     providerEnvironment,
     command,
     parsed,
-    files.value,
+    sources,
     platform,
     launcherEnvironment,
     resolveProviderRequestBudget,
@@ -627,10 +662,10 @@ const readClientRefresh = async (
     });
   const desired = desiredResult.value;
   const target =
-    dshEditabilityBlocker(client, files.value) ??
+    dshEditabilityBlocker(client, sources) ??
     writeTargetOwnershipBlocker(
       client,
-      files.value,
+      sources,
       parsed,
       original,
       platform,
@@ -641,12 +676,12 @@ const readClientRefresh = async (
       original,
       parsed,
       desired,
-      sources: files.value,
+      sources,
       refusal: target,
     });
   const overrideOrigin = inlineRegistrationOverride(
     client,
-    files.value,
+    sources,
     desired,
     platform,
   );
@@ -655,7 +690,7 @@ const readClientRefresh = async (
       original,
       parsed,
       desired,
-      sources: files.value,
+      sources,
       overrideOrigin,
       refusal: inlineOverrideRemediation(client, overrideOrigin),
     });
@@ -671,7 +706,7 @@ const readClientRefresh = async (
       original,
       parsed,
       desired,
-      sources: files.value,
+      sources,
       refusal: policy.error.detail,
     });
   }
@@ -679,7 +714,7 @@ const readClientRefresh = async (
     original,
     parsed,
     desired,
-    sources: files.value,
+    sources,
     refusal: policy.value,
   });
 };
@@ -911,22 +946,6 @@ const inspectClientDocument = async (
   if (client.configPathError !== undefined)
     return { status: "invalid", remediation: client.configPathError };
   if (client.format === "unsupported") return { status: "already_current" };
-  const files = await readClientConfigurationFiles(
-    client,
-    undefined,
-    platform,
-    { writeOverrides: providerEnvironment },
-  );
-  if (!files.ok) {
-    throwCleanupFailure(files.error);
-    return {
-      status: "invalid",
-      remediation: files.error.detail,
-    };
-  }
-  const editabilityError = dshEditabilityBlocker(client, files.value);
-  if (editabilityError !== undefined)
-    return { status: "invalid", remediation: editabilityError };
   const transactionPath = await resolveClientConfigTransactionPath(
     client.configPath,
   );
@@ -936,97 +955,26 @@ const inspectClientDocument = async (
       remediation:
         "The configuration path is unsafe or unresolved. Check ownership and symbolic links before rerunning setup.",
     };
-  let original: string;
-  try {
-    original = await readRegularFileText(transactionPath);
-  } catch (cause: unknown) {
-    if (cause instanceof RegularFileCleanupFailure) throw cause;
-    if (isEnoentError(cause)) {
-      const ownershipBlocker = writeTargetOwnershipBlocker(
-        client,
-        files.value,
-        undefined,
-        undefined,
-        platform,
-      );
-      if (ownershipBlocker !== undefined)
-        return { status: "invalid", remediation: ownershipBlocker };
-      const desired = await clientConfigurationDesired(
-        client,
-        providerEnvironment,
-        command,
-        undefined,
-        files.value,
-        platform,
-        launcherEnvironment,
-        resolveProviderRequestBudget,
-      );
-      if (!desired.ok)
-        return {
-          status: "invalid",
-          remediation: configurationRemediation(desired.error),
-        };
-      const override = inlineOverrideBlocker(
-        client,
-        files.value,
-        desired.value,
-        platform,
-      );
-      if (override !== undefined)
-        return { status: "invalid", remediation: override };
-      // This read establishes absence; do not reuse an earlier user-file policy.
-      const policy = await readClientPolicyBlock(
-        client,
-        undefined,
-        desired.value,
-      );
-      if (!policy.ok) {
-        throwCleanupFailure(policy.error);
-        return {
-          status: "invalid",
-          remediation: policy.error.detail,
-        };
-      }
-      if (policy.value !== undefined)
-        return { status: "invalid", remediation: policy.value };
-      const fallback = await readZcodeFallbackServers(client, platform);
-      if (!fallback.ok) {
-        if (fallback.error.kind !== "registration_ownership")
-          throwCleanupFailure(fallback.error);
-        return { status: "invalid", remediation: fallback.error.detail };
-      }
-      return { status: "create" };
-    }
-    return {
-      status: "invalid",
-      remediation: `The configuration file could not be read. Check its permissions before rerunning setup. ${errorMessage(cause)}`,
-    };
+  const configuration = await readSetupConfigurationSnapshot(
+    client,
+    transactionPath,
+    platform,
+    providerEnvironment,
+  );
+  if (!configuration.ok) {
+    throwCleanupFailure(configuration.error);
+    return { status: "invalid", remediation: configuration.error.detail };
   }
-  try {
-    const document = parseClientConfiguration(original, client.format);
-    if (!document.ok)
-      return {
-        status: "invalid",
-        remediation:
-          document.error.kind === "document"
-            ? configurationRemediation(document.error.cause)
-            : "The existing configuration is malformed. Repair it before setup applies any other changes.",
-      };
-    const writeDocument = clientConfigurationForWrite(
-      document.value,
-      files.value,
-    );
-    if (!writeDocument.ok)
-      return {
-        status: "invalid",
-        remediation: configurationRemediation(writeDocument.error),
-      };
-    const parsed = writeDocument.value;
+  const { snapshot, document, sources } = configuration.value;
+  const editabilityError = dshEditabilityBlocker(client, sources);
+  if (editabilityError !== undefined)
+    return { status: "invalid", remediation: editabilityError };
+  if (snapshot === undefined || document === undefined) {
     const ownershipBlocker = writeTargetOwnershipBlocker(
       client,
-      files.value,
-      parsed,
-      original,
+      sources,
+      undefined,
+      undefined,
       platform,
     );
     if (ownershipBlocker !== undefined)
@@ -1035,8 +983,8 @@ const inspectClientDocument = async (
       client,
       providerEnvironment,
       command,
-      parsed,
-      files.value,
+      undefined,
+      sources,
       platform,
       launcherEnvironment,
       resolveProviderRequestBudget,
@@ -1048,7 +996,71 @@ const inspectClientDocument = async (
       };
     const override = inlineOverrideBlocker(
       client,
-      files.value,
+      sources,
+      desired.value,
+      platform,
+    );
+    if (override !== undefined)
+      return { status: "invalid", remediation: override };
+    // This read establishes absence; do not reuse an earlier user-file policy.
+    const policy = await readClientPolicyBlock(
+      client,
+      undefined,
+      desired.value,
+    );
+    if (!policy.ok) {
+      throwCleanupFailure(policy.error);
+      return {
+        status: "invalid",
+        remediation: policy.error.detail,
+      };
+    }
+    if (policy.value !== undefined)
+      return { status: "invalid", remediation: policy.value };
+    const fallback = await readZcodeFallbackServers(client, platform);
+    if (!fallback.ok) {
+      if (fallback.error.kind !== "registration_ownership")
+        throwCleanupFailure(fallback.error);
+      return { status: "invalid", remediation: fallback.error.detail };
+    }
+    return { status: "create" };
+  }
+  const original = snapshot.text;
+  try {
+    const writeDocument = clientConfigurationForWrite(document, sources);
+    if (!writeDocument.ok)
+      return {
+        status: "invalid",
+        remediation: configurationRemediation(writeDocument.error),
+      };
+    const parsed = writeDocument.value;
+    const ownershipBlocker = writeTargetOwnershipBlocker(
+      client,
+      sources,
+      parsed,
+      original,
+      platform,
+    );
+    if (ownershipBlocker !== undefined)
+      return { status: "invalid", remediation: ownershipBlocker };
+    const desired = await clientConfigurationDesired(
+      client,
+      providerEnvironment,
+      command,
+      parsed,
+      sources,
+      platform,
+      launcherEnvironment,
+      resolveProviderRequestBudget,
+    );
+    if (!desired.ok)
+      return {
+        status: "invalid",
+        remediation: configurationRemediation(desired.error),
+      };
+    const override = inlineOverrideBlocker(
+      client,
+      sources,
       desired.value,
       platform,
     );
@@ -1196,10 +1208,13 @@ const registrationOwnershipBlocker = (
     entries.push({
       value: effective.servers[name],
       // An inline layer is named by its origin; it has no path.
-      paths: [
-        ...(client.configPaths ?? [client.configPath]),
-        ...inlineRegistrationOrigins(client),
-      ],
+      paths:
+        effective.importedFrom === "claude_code"
+          ? [effective.sourcePath]
+          : [
+              ...(client.configPaths ?? [client.configPath]),
+              ...inlineRegistrationOrigins(client),
+            ],
     });
   const fragment = parsed.servers[name];
   // A layered policy fragment inherits its launcher. Classify the effective
@@ -1470,8 +1485,10 @@ const clientConfigurationDesired = async (
   // Preserve explicitly configured server settings, never the ambient process
   // environment. The effective layered view validates precedence and supplies
   // timeout facts; the target file's fragment remains the value being written.
+  const writeSource =
+    effective?.importedFrom === "claude_code" ? effective : parsed;
   const environment = clientRegistrationEnvironment(
-    parsed,
+    writeSource,
     client,
     platform,
     writeEnvironment,
@@ -1483,9 +1500,9 @@ const clientConfigurationDesired = async (
     format,
     launcher,
     environment.value,
-    parsed === undefined
+    writeSource === undefined
       ? undefined
-      : effectiveClientServer(parsed, PRODUCT_IDENTITY.mcpServerKey),
+      : effectiveClientServer(writeSource, PRODUCT_IDENTITY.mcpServerKey),
     validated.value.timeoutInputs,
     launcherEnvironment,
     platform,

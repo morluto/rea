@@ -177,6 +177,56 @@ it("retains invalid UTF-8 diagnostics and the uninstall read owner when close fa
   }
 });
 
+it.each(["empty", "owned", "unreleased"] as const)(
+  "preserves the MiMo import read outcome across close failures: %s",
+  async (scenario) => {
+    const home = await createTestTempDirectory("rea-mimo-import-close-");
+    await mkdir(join(home, ".config", "mimocode"), { recursive: true });
+    const path = join(home, ".claude.json");
+    const [command, ...args] = currentClientRegistrationCommand();
+    const original = JSON.stringify(
+      scenario === "owned" ? { mcpServers: { rea: { command, args } } } : {},
+    );
+    await writeFile(path, original);
+    const host = systemUninstallHost(
+      home,
+      undefined,
+      { HOME: home, CLAUDE_CONFIG_DIR: join(home, "other-profile") },
+      "linux",
+    );
+    const held = holdReadHandle(
+      path,
+      "held MiMo import descriptor",
+      true,
+      scenario === "unreleased" ? Infinity : 2,
+    );
+    const purgeData = vi.fn(async () => []);
+    try {
+      const result = await runUninstall(true, { ...host, purgeData });
+      expect(new Set(held.closeAttempts).size).toBe(1);
+      expect(result.status).toBe(scenario === "empty" ? "complete" : "failed");
+      expect(purgeData).toHaveBeenCalledTimes(scenario === "empty" ? 1 : 0);
+      if (scenario === "owned")
+        expect(result.items).toContainEqual(
+          expect.objectContaining({
+            name: "mimo_code",
+            status: "failed",
+            detail: expect.stringContaining("would use the enabled rea entry"),
+          }),
+        );
+      if (scenario === "unreleased") {
+        expect(result.cleanup).toBeDefined();
+        await expectCloseReclaimsHandle(host, held.closeAttempts, held.release);
+      }
+      expect(result.cleanup).toBeUndefined();
+      expect(held.closeAttempts[0]!.fd).toBe(-1);
+      expect(await readFile(path, "utf8")).toBe(original);
+    } finally {
+      await cleanupHeldHandle(host, held.release);
+    }
+  },
+);
+
 it("stops uninstall and retains the backup read owner when its close fails", async () => {
   const home = await createTestTempDirectory("rea-uninstall-backup-close-");
   const path = join(home, "client.json");

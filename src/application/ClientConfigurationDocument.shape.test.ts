@@ -29,6 +29,7 @@ describe("parseClientConfiguration shape diagnostics", () => {
     ["vscode", "JSONC"],
     ["opencode", "JSONC"],
     ["kilo", "JSONC"],
+    ["mimo_code", "JSONC"],
     ["zed", "JSONC"],
     ["amp", "JSONC"],
     ["copilot_cli", "JSONC"],

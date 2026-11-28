@@ -119,6 +119,49 @@ it("rechecks registration ownership after preflight before creating any backup",
   });
 });
 
+it.each(["inspect", "configure"] as const)(
+  "%s admits the Claude import when the native MiMo row disappears during discovery",
+  async (operation) => {
+    const home = await createTestTempDirectory("rea-mimo-snapshot-");
+    const client: SetupClient = {
+      name: "mimo_code",
+      registrationProfile: supportedClientRegistrationProfile("mimo_code"),
+      format: "mimo_code",
+      configPath: join(home, "mimocode.jsonc"),
+      claudeCodeImportPath: join(home, ".claude.json"),
+    };
+    await writeFile(
+      client.configPath,
+      '{"mcp":{"rea":{"type":"local","command":["rea","mcp"]}}}',
+    );
+    await writeFile(
+      join(home, ".claude.json"),
+      '{"mcpServers":{"rea":{"command":"other","args":["mcp"]}}}',
+    );
+    refresh.afterDiscovery = () => writeFile(client.configPath, "{}");
+    if (operation === "inspect") {
+      expect(
+        await inspectClientConfiguration(client, {}, ["rea", "mcp"]),
+      ).toMatchObject({
+        status: "invalid",
+        remediation: expect.stringContaining("foreign ownership"),
+      });
+    } else {
+      expect(
+        await configureClientConfiguration(client, {}, ["rea", "mcp"]),
+      ).toMatchObject({
+        status: "failed",
+        reason: "registration_ownership",
+        detail: expect.stringContaining("foreign ownership"),
+      });
+    }
+    expect(await readFile(client.configPath, "utf8")).toBe("{}");
+    await expect(
+      readFile(`${client.configPath}.rea.backup`),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
 it("blocks an inherited foreign row before planning creation of a missing write target", async () => {
   const home = await createTestTempDirectory("rea-setup-inherited-ownership-");
   const lower = join(home, "config.json");
