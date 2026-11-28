@@ -217,7 +217,11 @@ for (const full of [false, true]) {
                   }),
                 ],
               }
-            : { code: "UNKNOWN", message: "Unknown flag: --zzz-bogus" };
+            : {
+                code: "PARSE_ERROR",
+                message: "Unknown flag: --zzz-bogus",
+                retryable: false,
+              };
         expect(JSON.parse(invalid.stdout)).toMatchObject({
           $rea: "jsonl/v1",
           type: "error",

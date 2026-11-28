@@ -585,6 +585,33 @@ describe("tar header edge cases", () => {
     ]);
   });
 
+  it("preserves GNU longlink and PAX binary linkpath target bytes", async () => {
+    const long = "dir/".repeat(40) + "file";
+    const pax = Buffer.from(
+      "21 hdrcharset=BINARY\n16 linkpath=\xe9.x\n",
+      "latin1",
+    );
+    const result = await read(
+      tarFixture([
+        { name: "LongLink", type: "K", dialect: "gnu", data: long + "\0" },
+        { name: "gnu-link", type: "2", linkname: "ignored" },
+        { name: "PaxHeader", type: "x", data: pax },
+        { name: "pax-link", type: "2", linkname: "ignored" },
+        { name: "utf8-link", type: "2", pax: { linkpath: "é.x" } },
+      ]),
+    );
+    expect(
+      result.entries.map(({ path, linkTarget }) => ({ path, linkTarget })),
+    ).toEqual([
+      {
+        path: "gnu-link",
+        linkTarget: { text: long, hex: Buffer.from(long).toString("hex") },
+      },
+      { path: "pax-link", linkTarget: { text: null, hex: "e92e78" } },
+      { path: "utf8-link", linkTarget: { text: "é.x", hex: "c3a92e78" } },
+    ]);
+  });
+
   it("decodes a pax path under hdrcharset=BINARY as Latin-1 and keeps later members", async () => {
     // Python tarfile and libarchive write this for a name that is not UTF-8.
     const pax = Buffer.from(

@@ -237,8 +237,9 @@ describe("lazy CLI execution", () => {
             expect(result.stderr, name).not.toContain(COMPLETE_CLI_IMPORT);
             const diagnostic: unknown = JSON.parse(result.stdout);
             expect(diagnostic, name).toMatchObject({
-              code: "UNKNOWN",
+              code: "PARSE_ERROR",
               message: expect.stringContaining("--rea-test-unknown-option"),
+              retryable: false,
             });
             diagnostics.set(name, diagnostic);
           }),

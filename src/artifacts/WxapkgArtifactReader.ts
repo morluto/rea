@@ -25,6 +25,7 @@ import {
   DEFAULT_WXAPKG_READER_LIMITS,
   type WxapkgReaderLimits,
 } from "../domain/artifactReaderLimits.js";
+import { wxapkgUnaccountedBytes } from "../domain/wxapkgFormat.js";
 import {
   readWxapkgFileTable,
   readWxapkgHeader,
@@ -60,6 +61,7 @@ export class WxapkgArtifactReader implements ArtifactReader {
   readonly #source: ArtifactFileSource;
   readonly #preparation = new ArtifactPreparation();
   #header: WxapkgMetadata | undefined;
+  #coverageLimitations: readonly string[] = [];
   #remainingReadOperations = 0;
   #admittedReadOperations = 0;
   #closing = false;
@@ -119,7 +121,11 @@ export class WxapkgArtifactReader implements ArtifactReader {
     }
     // A close while paused at yield must not turn a cleared map into completion.
     this.#assertOpen(signal);
-    options?.onCoverage?.({ status: "complete", limitations: [] });
+    const limitations = [...this.#coverageLimitations];
+    options?.onCoverage?.({
+      status: limitations.length === 0 ? "complete" : "unknown",
+      limitations,
+    });
   }
 
   async open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {
@@ -183,7 +189,7 @@ export class WxapkgArtifactReader implements ArtifactReader {
       this.#header = metadata;
       return;
     }
-    const { members } = await readWxapkgFileTable(
+    const { members, rowsEnd } = await readWxapkgFileTable(
       handle,
       header,
       initial.size,
@@ -242,10 +248,17 @@ export class WxapkgArtifactReader implements ArtifactReader {
         1024,
         members.length + Math.ceil(Number(declaredBytes) / CHUNK_BYTES),
       );
+    const unaccounted = wxapkgUnaccountedBytes(rowsEnd, initial.size, members);
     await this.#source.read(signal);
     this.#assertOpen(signal);
     this.#header = metadata;
     this.#entries = entries;
+    this.#coverageLimitations =
+      unaccounted.firstOffset === null
+        ? []
+        : [
+            `${String(unaccounted.bytes)} byte(s) in ${String(unaccounted.ranges)} range(s), the first at offset ${String(unaccounted.firstOffset)}, lie outside the member table and every member and were not exposed as entries.`,
+          ];
     this.#admittedReadOperations = admittedReadOperations;
     this.#remainingReadOperations = admittedReadOperations;
   }
