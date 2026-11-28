@@ -10,7 +10,10 @@ import { isHostLimitFailure } from "../parseFailure.js";
 export const KUBERNETES_AUDIT_JSON_DEPTH = 64;
 /** Longer than every owned key. A longer key cannot match and is not stored. */
 const MAX_OWNED_KEY_CHARS = 64;
-/** Significant digits kept for a status code. Extra fractional zeros do not count. */
+/**
+ * Digits retained from a status-code significand. A longer exact integer is
+ * outside the safe integer range, so the extra digits are not stored.
+ */
 const MAX_NUMBER_CHARS = 24;
 
 const ROOT_STRINGS = new Set([
@@ -55,7 +58,7 @@ export type KubernetesAuditLineParse =
       readonly depthLimited: boolean;
       /** A kept string or list was dropped because it exceeded the text budget. */
       readonly budgetOmitted: boolean;
-      /** The verb was dropped by that budget, so it is an unlisted observation. */
+      /** The verb text was dropped by that budget. */
       readonly verbOmitted: boolean;
     }
   | { readonly kind: "syntax" }
@@ -92,10 +95,18 @@ export const parseKubernetesAuditLine = (
   let capture: "key" | "string" | "number" | undefined;
   let text = "";
   let keyTooLong = false;
-  let numberTooLong = false;
+  let numberNegative = false;
+  let numberSawSign = false;
+  let numberSawDigit = false;
   let numberSawDot = false;
   let numberSawExp = false;
-  let numberFracDigit = false;
+  let numberExpSign = 1;
+  let numberExp = 0;
+  let numberExpDigits = 0;
+  let numberScale = 0;
+  let numberDroppedZeros = 0;
+  let numberInexact = false;
+  let numberDigits = "";
   let stringOverflow = false;
   /** Final fields whose last value was dropped for the text budget. */
   const budgetOmittedFields = new Set<string>();
@@ -387,6 +398,32 @@ export const parseKubernetesAuditLine = (
     }
   };
 
+  const statusCode = (): number | null => {
+    if (
+      numberInexact ||
+      !numberSawDigit ||
+      (numberSawExp && numberExpDigits === 0)
+    )
+      return null;
+    if (numberDigits.length === 0) return 0;
+    const shift = numberExpSign * numberExp - numberScale + numberDroppedZeros;
+    // A larger positive shift cannot be a safe integer. A larger negative
+    // shift leaves a fraction.
+    if (shift > 20 || shift < -numberDigits.length) return null;
+    const magnitude = BigInt(numberDigits);
+    const divisor = 10n ** BigInt(Math.abs(shift));
+    const resolved =
+      shift >= 0
+        ? magnitude * divisor
+        : magnitude % divisor === 0n
+          ? magnitude / divisor
+          : null;
+    if (resolved === null || resolved > BigInt(Number.MAX_SAFE_INTEGER))
+      return null;
+    const code = Number(resolved);
+    return numberNegative ? -code : code;
+  };
+
   const consume = (token: Token): void => {
     if (token.name === "startObject") {
       pushValue("object");
@@ -454,58 +491,85 @@ export const parseKubernetesAuditLine = (
       case "startNumber":
         if (top()?.kind === "responseStatus" && pendingKey === "code") {
           capture = "number";
-          text = "";
-          numberTooLong = false;
+          numberNegative = false;
+          numberSawSign = false;
+          numberSawDigit = false;
           numberSawDot = false;
           numberSawExp = false;
-          numberFracDigit = false;
+          numberExpSign = 1;
+          numberExp = 0;
+          numberExpDigits = 0;
+          numberScale = 0;
+          numberDroppedZeros = 0;
+          numberInexact = false;
+          numberDigits = "";
         } else rejectScalar();
         break;
       case "numberChunk":
-        if (capture !== "number" || numberTooLong) break;
+        if (capture !== "number" || numberInexact) break;
         for (const char of token.value) {
-          if (char === "." && !numberSawDot && !numberSawExp) {
+          if (numberSawExp) {
+            if (
+              (char === "+" || char === "-") &&
+              numberExpDigits === 0 &&
+              numberExp === 0
+            ) {
+              numberExpSign = char === "-" ? -1 : 1;
+              continue;
+            }
+            if (char < "0" || char > "9") {
+              numberInexact = true;
+              break;
+            }
+            numberExpDigits += 1;
+            numberExp = numberExp * 10 + (char.charCodeAt(0) - 48);
+            // A shift this large cannot land on a nonzero safe integer.
+            if (numberExp > 40) {
+              numberInexact = true;
+              break;
+            }
+            continue;
+          }
+          if (
+            char === "-" &&
+            !numberSawDigit &&
+            !numberSawDot &&
+            !numberSawSign
+          ) {
+            numberNegative = true;
+            numberSawSign = true;
+            continue;
+          }
+          if (char === "." && !numberSawDot) {
             numberSawDot = true;
             continue;
           }
-          if (
-            (char === "e" || char === "E") &&
-            !numberSawExp &&
-            text.length > 0
-          ) {
+          if ((char === "e" || char === "E") && numberSawDigit) {
             numberSawExp = true;
-            text += char;
             continue;
           }
-          if (
-            numberSawExp &&
-            (char === "+" || char === "-") &&
-            (text.endsWith("e") || text.endsWith("E"))
-          ) {
-            text += char;
-            continue;
-          }
-          // Zeros after the decimal do not change an integer status code.
-          if (numberSawDot && !numberSawExp && char === "0" && !numberFracDigit)
-            continue;
-          if (numberSawDot && !numberSawExp && char !== "0") {
-            numberFracDigit = true;
-            numberTooLong = true;
+          if (char < "0" || char > "9") {
+            numberInexact = true;
             break;
           }
-          if (text.length >= MAX_NUMBER_CHARS) {
-            numberTooLong = true;
-            break;
+          numberSawDigit = true;
+          if (numberSawDot) numberScale += 1;
+          if (char === "0" && numberDigits.length === 0) continue;
+          if (numberDigits.length >= MAX_NUMBER_CHARS) {
+            if (char === "0") numberDroppedZeros += 1;
+            else {
+              numberInexact = true;
+              break;
+            }
+            continue;
           }
-          text += char;
+          numberDigits += char;
         }
         break;
       case "endNumber":
         if (capture === "number") {
-          const code = Number(text);
           sawStatus = true;
-          responseStatus.code =
-            !numberTooLong && Number.isSafeInteger(code) ? code : null;
+          responseStatus.code = statusCode();
         }
         capture = undefined;
         pendingKey = undefined;

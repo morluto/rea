@@ -302,6 +302,11 @@ it("keeps the widest safe integral response code", async () => {
 it.each([
   ["2e2", 200],
   ["-2e2", -200],
+  ["2.01e2", 201],
+  ["0.2e3", 200],
+  ["2.5e2", 250],
+  ["2.010e2", 201],
+  [`200.${"0".repeat(80)}`, 200],
 ])(
   "keeps the safe integer a long number lexeme evaluates to (%s)",
   async (lexeme, expected) => {
@@ -321,6 +326,22 @@ it.each([
     expect(metadata.events[0]?.response_code).toBe(expected);
   },
 );
+
+it("drops a fractional status code whose exponent does not make it integral", async () => {
+  const metadata = await metadataOf(
+    [
+      auditEvent({ stage: "ResponseStarted" }).replace(
+        '"stage":"ResponseStarted"',
+        '"stage":"ResponseStarted","responseStatus":{"code":2.5e0}',
+      ),
+      auditEvent({ stage: "ResponseComplete", responseCode: 403 }),
+    ].join("\n"),
+  );
+  expect(
+    metadata.events[0]?.stages.map((stage) => stage.response_code),
+  ).toEqual([null, 403]);
+  expect(metadata.events[0]?.response_code).toBe(403);
+});
 
 it("drops a status code whose value is not a safe integer", async () => {
   const metadata = await metadataOf(
@@ -898,6 +919,30 @@ it("reports no members to open", async () => {
     }),
   ).rejects.toMatchObject({ reason: "unavailable" });
   await reader.close();
+});
+
+it("does not count a dropped verb when the audit version was not read", async () => {
+  const nest = `${"[".repeat(KUBERNETES_AUDIT_JSON_DEPTH)}1${"]".repeat(KUBERNETES_AUDIT_JSON_DEPTH)}`;
+  const cut = `{"auditID":"cut-verb","stage":"RequestReceived","verb":"${"v".repeat(200_000)}","requestObject":${nest}}`;
+  const metadata = await metadataOf(`${cut}\n${auditEvent({ verb: "get" })}\n`);
+  expect(metadata.depth_limited_line_count).toBe(1);
+  expect(metadata.unlisted_verb_line_count).toBe(0);
+  expect(metadata.verb_counts).toEqual([{ label: "get", count: 1 }]);
+  expect(metadata.events[0]).toMatchObject({
+    audit_id: "cut-verb",
+    verb: null,
+    depth_limited: true,
+  });
+});
+
+it("counts a dropped verb on an interpreted audit line as unlisted", async () => {
+  const metadata = await metadataOf(
+    `${auditEvent({ verb: "v".repeat(200_000) })}\n`,
+  );
+  expect(metadata.unlisted_verb_line_count).toBe(1);
+  expect(metadata.verb_counts).toEqual([]);
+  expect(metadata.events[0]?.verb).toBeNull();
+  expect(metadata.events[0]?.request_fields_omitted).toBe(true);
 });
 
 it("fills request fields from a readable stage after a depth-cut first one", async () => {

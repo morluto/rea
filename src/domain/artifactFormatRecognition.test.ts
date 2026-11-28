@@ -13,6 +13,7 @@ import {
   recognizeArtifactFormat,
   recognizesArtifactPrefix,
 } from "./artifactFormatRecognition.js";
+import { MAX_KUBERNETES_AUDIT_LINE_BYTES } from "./artifactReaderLimits.js";
 import { KubernetesAuditEventProbe } from "./linux/kubernetesAuditEventProbe.js";
 import { KUBERNETES_AUDIT_JSON_DEPTH } from "./linux/kubernetesAuditRecord.js";
 import {
@@ -355,6 +356,17 @@ it("recognizes an audit record after a BOM or blank lines and ignores other padd
   const replaced = `{"auditID":"a","stage":"RequestReceived","pad":"${"y".repeat(5000)}","stage":"Unknown","requestObject":${"[".repeat(KUBERNETES_AUDIT_JSON_DEPTH + 8)}1${"]".repeat(KUBERNETES_AUDIT_JSON_DEPTH + 8)}}`;
   expect(recognize(Buffer.from(replaced))).toBeUndefined();
   expect(recognize(Buffer.from(claimed))).toMatchObject({
+    state: "recognized",
+    format: "kubernetes-audit-log",
+  });
+  const padding = Buffer.alloc(MAX_KUBERNETES_AUDIT_LINE_BYTES, 0x0a);
+  const padded = Buffer.concat([padding, Buffer.from(`${record}\n`)]);
+  const probeAfterPadding = new KubernetesAuditEventProbe();
+  probeAfterPadding.write(padding);
+  expect(probeAfterPadding.pending).toBe(true);
+  probeAfterPadding.write(Buffer.from(`${record}\n`));
+  expect(probeAfterPadding.finish(padded.length)).toBe(true);
+  expect(recognize(padded)).toMatchObject({
     state: "recognized",
     format: "kubernetes-audit-log",
   });

@@ -22,8 +22,10 @@ export const kubernetesAuditStageOf = (
 ): KubernetesAuditStage | null =>
   KUBERNETES_AUDIT_STAGES.find((stage) => stage === value) ?? null;
 
+/** Leading blank lines and JSON whitespace do not shrink the first record. */
+const PREAMBLE_BYTES = MAX_KUBERNETES_AUDIT_LINE_BYTES;
 /** Byte allowance includes the optional newline after the first record. */
-const AUDIT_PROBE_BYTES = MAX_KUBERNETES_AUDIT_LINE_BYTES + 1;
+const RECORD_BYTES = MAX_KUBERNETES_AUDIT_LINE_BYTES + 1;
 /** Each tokenizer call may emit several token fragments per input byte. */
 const TOKEN_CHUNK_BYTES = 64 * 1024;
 const IDENTITY_TOKEN_LIMIT = Math.max(
@@ -38,11 +40,7 @@ export const kubernetesAuditNeedsMore = (
   prefix: Uint8Array,
   fileSize: number,
 ): boolean => {
-  if (
-    prefix.length === 0 ||
-    prefix.length >= Math.min(fileSize, AUDIT_PROBE_BYTES)
-  )
-    return false;
+  if (prefix.length === 0 || prefix.length >= fileSize) return false;
   const probe = new KubernetesAuditEventProbe();
   probe.write(prefix);
   return probe.pending;
@@ -69,13 +67,17 @@ type AuditJsonTokenizer = (
  * values. Empty lines, JSON whitespace, and one U+FEFF at the start of a
  * line are padding, the same bytes the reader ignores. A finished line must
  * be valid JSON; a clipped
- * prefix retains only complete top-level audit fields. The reader admits and
- * decodes the record under the caller's line allowance.
+ * prefix retains only complete top-level audit fields. Padding and the first
+ * record each have their own allowance, so blank lines do not shrink the
+ * record window. The reader admits and decodes the record under the caller's
+ * line allowance.
  */
 export class KubernetesAuditEventProbe {
   #decoder: TextDecoder | undefined;
   #tokens: AuditJsonTokenizer | undefined;
   #observed = 0;
+  /** File offset of the first record's `{`, once padding has ended. */
+  #recordStart: number | undefined;
   #lineEnded = false;
   #done = false;
   #failed = false;
@@ -94,7 +96,9 @@ export class KubernetesAuditEventProbe {
   #hasStage = false;
 
   get limit(): number {
-    return this.#done ? this.#observed : AUDIT_PROBE_BYTES;
+    if (this.#done) return this.#observed;
+    if (this.#recordStart === undefined) return PREAMBLE_BYTES + RECORD_BYTES;
+    return this.#recordStart + RECORD_BYTES;
   }
 
   /** Another byte of this file could still change the format decision. */
@@ -104,24 +108,54 @@ export class KubernetesAuditEventProbe {
 
   write(chunk: Uint8Array): void {
     if (this.#done || chunk.length === 0) return;
-    const window = chunk.subarray(
-      0,
-      Math.min(chunk.length, this.limit - this.#observed),
-    );
-    this.#observed += window.length;
-    let offset = 0;
+    let input = chunk;
     if (this.#preamble) {
-      offset = this.#consumePreamble(window);
-      if (this.#done || this.#preamble) {
-        if (this.#observed === AUDIT_PROBE_BYTES) this.#done = true;
-        return;
+      const room = Math.max(0, PREAMBLE_BYTES - this.#observed);
+      const take = Math.min(input.length, room);
+      if (take > 0) {
+        const window = input.subarray(0, take);
+        const before = this.#observed;
+        this.#observed += window.length;
+        input = input.subarray(take);
+        const offset = this.#consumePreamble(window);
+        if (this.#done) return;
+        if (!this.#preamble) {
+          this.#recordStart = before + offset;
+          this.#consumeRecord(window.subarray(offset));
+        }
       }
+      if (this.#preamble) {
+        if (this.#observed < PREAMBLE_BYTES || input.length === 0) return;
+        if (input[0] !== 0x7b) {
+          this.#done = true;
+          return;
+        }
+        this.#preamble = false;
+        this.#atLineStart = false;
+        this.#recordStart = this.#observed;
+      } else if (this.#done || input.length === 0) return;
     }
-    const rest = window.subarray(offset);
-    const newline = rest.indexOf(0x0a);
+    const room = this.limit - this.#observed;
+    if (room <= 0) {
+      this.#done = true;
+      return;
+    }
+    const rest = input.subarray(0, Math.min(input.length, room));
+    this.#observed += rest.length;
+    this.#consumeRecord(rest);
+  }
+
+  /** Tokenize the first record. `bytes` are already included in `#observed`. */
+  #consumeRecord(bytes: Uint8Array): void {
+    if (this.#done || bytes.length === 0) return;
+    const newline = bytes.indexOf(0x0a);
     if (newline !== -1) this.#lineEnded = true;
-    const line = newline === -1 ? rest : rest.subarray(0, newline);
-    if (this.#lineEnded || this.#observed === AUDIT_PROBE_BYTES)
+    const line = newline === -1 ? bytes : bytes.subarray(0, newline);
+    if (
+      this.#lineEnded ||
+      (this.#recordStart !== undefined &&
+        this.#observed >= this.#recordStart + RECORD_BYTES)
+    )
       this.#done = true;
     if (line.length === 0) return;
     if (this.#decoder === undefined) {

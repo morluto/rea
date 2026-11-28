@@ -512,8 +512,10 @@ class KubernetesAuditScanner {
     // A cutoff before apiVersion is not a declared unmodelled version.
     const unsupported = isUnsupportedVersion(event.apiVersion);
     const suppressFields = unsupported || versionUnexamined;
+    // An unread version leaves every field, including a dropped verb, out of
+    // the histogram. A dropped verb on an interpreted line is unlisted.
     if (unsupported) this.#unsupportedVersionLineCount += 1;
-    else if (verbOmitted) this.#unlistedVerbLines += 1;
+    else if (!suppressFields && verbOmitted) this.#unlistedVerbLines += 1;
     else if (!suppressFields && typeof event.verb === "string")
       this.#countVerb(event.verb);
     this.#stageCounts.set(stage, (this.#stageCounts.get(stage) ?? 0) + 1);
