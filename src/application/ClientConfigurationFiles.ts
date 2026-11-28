@@ -626,7 +626,9 @@ export const readEffectiveClientRegistrationConfiguration = async (
 > => {
   if (
     project === undefined ||
-    (client.format !== "opencode" && client.format !== "pi")
+    (client.format !== "opencode" &&
+      client.format !== "pi" &&
+      client.format !== "copilot_cli")
   )
     return readEffectiveUserConfiguration(client, resources, platform);
   if (client.configPathError !== undefined)
@@ -772,7 +774,11 @@ export const readEffectiveClientRegistrationConfiguration = async (
       const original = candidates.get(path)?.original;
       const configuration =
         original === undefined
-          ? await readConfigurationFile(path, client.format, resources)
+          ? await readConfigurationFile(
+              path,
+              client.projectFormat ?? client.format,
+              resources,
+            )
           : ok(original);
       if (!configuration.ok)
         return err({ ...configuration.error, scope: "project" });
@@ -890,7 +896,7 @@ export const readEffectiveClientRegistrationConfiguration = async (
 /** Resolve the native merge for a single set of parsed layers. */
 const projectRegistration = (
   sources: readonly ClientConfigurationSource[],
-  format: "opencode" | "pi",
+  format: "opencode" | "pi" | "copilot_cli",
   platform: NodeJS.Platform,
 ): Result<
   {
@@ -912,14 +918,16 @@ const projectRegistration = (
       ? ok({ document: withPiOverride(sources, active), active })
       : override;
   }
+  // Pi and Copilot CLI select one whole server definition per name; only
+  // OpenCode overlays fields across layers.
   const document =
-    format === "pi"
-      ? replacedServerConfiguration(sources)
-      : mergeClientConfigurationDocuments(sources, platform);
+    format === "opencode"
+      ? mergeClientConfigurationDocuments(sources, platform)
+      : replacedServerConfiguration(sources);
   return ok({
     active: activeDeclarations(
       declarations,
-      format === "pi" || clientServerRowsReplace(document?.dialect),
+      format !== "opencode" || clientServerRowsReplace(document?.dialect),
     ),
     document,
   });

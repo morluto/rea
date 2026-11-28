@@ -34,6 +34,7 @@ import {
   clientServerPath,
   effectiveClientServer,
   type ClientConfigurationDocument,
+  type ClientConfigurationFormat,
 } from "./ClientConfigurationDocument.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
@@ -1028,6 +1029,8 @@ const readClientConfiguration = async (
    * client reads it, without the write target's ownership check.
    */
   access: "write_target" | "read_only" = "write_target",
+  /** Project documents can use a different dialect than the user document. */
+  format: ClientConfigurationFormat | undefined = client.format,
 ): Promise<ClientConfigurationRead> => {
   const applicabilityUnverified =
     client.applicability === "unverified" && !ownershipEstablished;
@@ -1043,7 +1046,6 @@ const readClientConfiguration = async (
     );
   if (client.configPathError !== undefined)
     return configurationFailure(client.configPathError);
-  const { format } = client;
   if (format === "unsupported")
     return itemRead(
       item(
@@ -1143,7 +1145,12 @@ const resolveProjectUninstallClients = async (
 ): Promise<readonly UninstallClient[]> => {
   const selected: UninstallClient[] = [];
   for (const userClient of supported) {
-    if (userClient.name !== "pi" && userClient.name !== "opencode") continue;
+    if (
+      userClient.name !== "pi" &&
+      userClient.name !== "opencode" &&
+      userClient.name !== "copilot_cli"
+    )
+      continue;
     const localPaths = new Set(
       clientProjectConfigurationPaths(userClient, directory, platform).filter(
         (path) => withinLexicalDirectory(path, directory, platform),
@@ -1241,6 +1248,8 @@ const prepareProjectRemoval = async (
     fileSystem,
     resources,
     false,
+    "write_target",
+    client.projectFormat,
   );
   if (read.kind === "item") return err(read.item);
   const removal = clientRegistrationRemoval(read.parsed, read.original, client);
@@ -1413,6 +1422,8 @@ const verifyProjectRemoval = async (
             fileSystem,
             resources,
             false,
+            "write_target",
+            planned.client.projectFormat,
           );
     if (
       read.kind !== "configuration" ||
@@ -1483,6 +1494,8 @@ const removeClient = async (
     fileSystem,
     resources,
     preflightOwned,
+    "write_target",
+    project === undefined ? undefined : client.projectFormat,
   );
   if (read.kind === "item")
     return project === undefined || read.item.status === "failed"

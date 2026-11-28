@@ -585,3 +585,43 @@ for (const { label, entry, permitsRemoval } of [
     },
   );
 }
+
+cliTest(
+  "project uninstall removes an owned Copilot CLI project registration",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-copilot-project-uninstall-",
+    );
+    const project = join(root, "repository");
+    await mkdir(join(project, ".git"), { recursive: true });
+    const path = join(project, ".mcp.json");
+    const peer = { type: "local", command: "unrelated", args: ["mcp"] };
+    const original = await put(path, {
+      rea: {
+        type: "local",
+        command: "npx",
+        args: ["-y", "rea-agents", "mcp"],
+        tools: ["*"],
+      },
+      peer,
+    });
+    const result = await cli.run({
+      arguments: ["uninstall", "--project", project, "--json"],
+      environment: await registrationEnvironment(join(root, "home")),
+      cwd: root,
+    });
+    expect(result.exitCode, result.stdout).toBe(0);
+    expect(result.json).toMatchObject({
+      status: "complete",
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          name: "copilot_cli",
+          status: "removed",
+          configuration_path: path,
+        }),
+      ]),
+    });
+    expect(JSON.parse(await readFile(path, "utf8"))).toEqual({ peer });
+    expect(await readFile(`${path}.rea.backup`, "utf8")).toBe(original);
+  },
+);
