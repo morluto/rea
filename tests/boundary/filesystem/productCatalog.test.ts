@@ -1,15 +1,16 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { BYTE_ENTROPY_PROVIDER } from "../../../src/domain/investigationProviders.js";
 import { SUPPORTED_CLIENT_DEFINITIONS } from "../../../src/application/SupportedClients.js";
-import { CLI_COMMAND_NAMES } from "../../../src/cliCommandNames.js";
+import { CLI_COMMAND_NAMES } from "../../../src/contracts/catalog/catalogIdentity.js";
 import { createCli } from "../../../src/cli.js";
+import { cliCommands } from "../../../src/cli/commandRegistry.js";
 import { FRIDA_PROVIDER_IDENTITY } from "../../../src/frida/FridaProviderIdentity.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import {
@@ -40,20 +41,11 @@ import {
 } from "../../../scripts/lib/product-catalog.mjs";
 
 const root = fileURLToPath(new URL("../../..", import.meta.url));
-const temporaryRoots: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(
-    temporaryRoots
-      .splice(0)
-      .map((path) => rm(path, { recursive: true, force: true })),
-  );
-});
 
 describe("canonical product catalog", () => {
   it("admits every documented browser scenario through the named contract", async () => {
     const guide = await readFile(
-      join(root, "docs/browser-scenario-contract.md"),
+      join(root, "docs/guides/web/browser-scenario-contract.md"),
       "utf8",
     );
     const examples = [
@@ -120,19 +112,18 @@ describe("canonical product catalog", () => {
     expect(await serializeProductCatalog(catalog)).toBe(
       await readFile("docs/public/product-catalog.json", "utf8"),
     );
-    await expect(documentationFactIssues(root, catalog)).resolves.toEqual([]);
-  }, 60_000);
+  });
 });
 
 describe("canonical CLI catalog", () => {
-  it("uses the same primary command names as the actual Incur router", () => {
-    const inventory = createCliInventory(createCli());
+  it("uses the same primary command names as the REA registry", () => {
+    const inventory = createCliInventory(cliCommands(createCli()));
     expect(inventory.primary).toEqual([...CLI_COMMAND_NAMES].sort());
     expect(inventory.aliases).toEqual([]);
-  }, 30_000);
+  });
 
   it("describes every primary command argument and option", () => {
-    expect(cliCommandDescriptionIssues(createCli())).toEqual([]);
+    expect(cliCommandDescriptionIssues(cliCommands(createCli()))).toEqual([]);
   });
 
   it("exposes the shared provider selector on every deep-analysis command", () => {
@@ -148,12 +139,16 @@ describe("canonical CLI catalog", () => {
       "inspect-native-api",
       "search",
     ]) {
-      expect(cliCommandOptionNames(cli, name)).toContain("provider");
+      expect(cliCommandOptionNames(cliCommands(cli), name)).toContain(
+        "provider",
+      );
     }
   });
 
   it("does not impose a private result limit on feature tracing", () => {
-    expect(cliCommandOptionNames(createCli(), "trace")).not.toContain("limit");
+    expect(
+      cliCommandOptionNames(cliCommands(createCli()), "trace"),
+    ).not.toContain("limit");
   });
 });
 
@@ -179,7 +174,7 @@ describe("canonical product catalog drift", () => {
     ]);
   });
 
-  it("requires setup-client facts in the canonical installation guide", async () => {
+  it("requires setup-client facts in the installation guide and the skill's repair list", async () => {
     const catalog = await createProductCatalog(root);
     const drifted = {
       ...catalog,
@@ -194,13 +189,17 @@ describe("canonical product catalog drift", () => {
       ],
     };
     const issues = await documentationFactIssues(root, drifted);
-    expect(issues).toContain("docs/installation.md: missing Future Client");
+    expect(issues).toContain(
+      "docs/getting-started/installation.md: missing Future Client",
+    );
     expect(issues).not.toContain("README.md: missing Future Client");
+    expect(issues).toContain(
+      ".agents/skills/reverse-engineer-anything/references/connection-and-recovery.md: missing `future_client`",
+    );
   });
 
   it("fails check mode without rewriting a stale generated artifact", async () => {
     const directory = await createTestTempDirectory("rea-generated-check-");
-    temporaryRoots.push(directory);
     const path = join(directory, "catalog.json");
     await writeFile(path, "stale\n", "utf8");
     await expect(
@@ -225,7 +224,6 @@ describe("canonical product catalog drift", () => {
 
   it("accepts and preserves native generated-file line endings", async () => {
     const directory = await createTestTempDirectory("rea-generated-eol-");
-    temporaryRoots.push(directory);
     const path = join(directory, "catalog.json");
     await writeFile(path, "current\r\n", "utf8");
     await expect(

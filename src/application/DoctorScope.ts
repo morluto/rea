@@ -1,16 +1,17 @@
 import { uniqueSorted } from "../domain/canonicalOrdering.js";
 import { blocksProcessStart } from "../config/processStart.js";
-import type {
-  ClientRegistrationStatus,
-  UnhealthyClientRegistrationStatus,
-} from "./ClientRegistrationStatus.js";
+import type { ClientRegistrationStatus } from "./ClientRegistrationStatus.js";
 import { manualRegistrationRemediation } from "./SupportedClients.js";
+import { isDesktopBuildInformationalCheck } from "./DesktopBuildDoctor.js";
+import {
+  DESKTOP_BUILD_PROVIDER_ID,
+  isDesktopBuildCheck,
+} from "../domain/doctorProviderIds.js";
+import type { DoctorScope, DoctorSkillState } from "./Doctor.js";
 import type {
   DoctorCheck,
   DoctorProviderInspection,
-  DoctorScope,
-  DoctorSkillState,
-} from "./Doctor.js";
+} from "../ports/DoctorProviderInspection.js";
 
 /** Normalized readiness boundary included in every doctor response. */
 export interface DoctorScopeReport {
@@ -66,12 +67,14 @@ export const scopeDoctorChecks = (
     ({ name }) =>
       name === "node" || (input.scope.target !== null && name === "target"),
   );
-  const clientChecks = input.scope.clients.map((client) =>
-    selectedRegistrationCheck(
-      client,
-      input.registrations.find((candidate) => candidate.client === client),
-    ),
-  );
+  const clientChecks = input.scope.clients.map((client) => {
+    const status = input.registrations.find(
+      (candidate) => candidate.client === client,
+    );
+    return status === undefined
+      ? undetectedRegistrationCheck(client)
+      : clientRegistrationCheck(status);
+  });
   const environmentChecks = input.checks.filter((check) =>
     registrationEnvironmentInScope(check, input.scope),
   );
@@ -79,7 +82,9 @@ export const scopeDoctorChecks = (
     ? [selectedSkillCheck(input.skillState, input.checks)]
     : [];
   const selectedProviderChecks = input.scope.providers.flatMap((providerId) =>
-    selectedProviderChecksFor(providerId, providerChecks, input.providers),
+    providerId === DESKTOP_BUILD_PROVIDER_ID
+      ? requiredDesktopBuildChecks(input.checks)
+      : selectedProviderChecksFor(providerId, providerChecks, input.providers),
   );
   const hopperHostChecks = input.scope.providers.includes("hopper")
     ? input.checks.filter(({ name }) => name === "host")
@@ -185,46 +190,61 @@ const selectedProviderChecksFor = (
   ];
 };
 
-const selectedRegistrationCheck = (
-  client: string,
-  status: ClientRegistrationStatus | undefined,
-): DoctorCheck => {
-  const manual = manualRegistrationRemediation(client);
-  if (status === undefined && manual !== undefined)
-    return {
-      name: `registration:${client}`,
-      ok: false,
-      classification: "config_drift",
-      detail: `${client} is not registered through a local configuration file.`,
-      remediation: manual,
-    };
-  return status === undefined
-    ? {
-        name: `registration:${client}`,
-        ok: false,
-        classification: "config_drift",
-        detail: `Requested client ${client} was not detected.`,
-        remediation: `Install or select ${client}, then run rea setup --client ${client}.`,
-      }
-    : status.state === "aligned"
-      ? {
-          name: `registration:${client}`,
-          ok: true,
-          classification: "healthy",
-          detail: status.config_path,
-        }
-      : registrationCheck(status);
+/** Informational desktop build checks stay outside the scope that decides health. */
+const requiredDesktopBuildChecks = (
+  checks: readonly DoctorCheck[],
+): readonly DoctorCheck[] => {
+  const required = checks.filter(
+    ({ name }) =>
+      isDesktopBuildCheck(name) && !isDesktopBuildInformationalCheck(name),
+  );
+  return required.length > 0
+    ? required
+    : [
+        {
+          name: `provider:${DESKTOP_BUILD_PROVIDER_ID}`,
+          ok: false,
+          classification: "unknown",
+          detail: "This doctor host does not check desktop build hosts.",
+          remediation: "Run rea doctor --provider desktop_build from the CLI.",
+        },
+      ];
 };
 
-const registrationCheck = (
-  status: UnhealthyClientRegistrationStatus,
-): DoctorCheck => ({
-  name: `registration:${status.client}`,
-  ok: false,
-  classification: status.state === "unknown" ? "unknown" : "config_drift",
-  detail: status.config_path,
-  remediation: status.remediation,
-});
+const undetectedRegistrationCheck = (client: string): DoctorCheck => {
+  const manual = manualRegistrationRemediation(client);
+  return {
+    name: `registration:${client}`,
+    ok: false,
+    classification: "config_drift",
+    detail:
+      manual === undefined
+        ? `Requested client ${client} was not detected.`
+        : `${client} is not registered through a local configuration file.`,
+    remediation:
+      manual ??
+      `Install or select ${client}, then run rea setup --client ${client}.`,
+  };
+};
+
+/** Project a detected registration for either an explicit client check or an audit. */
+export const clientRegistrationCheck = (
+  status: ClientRegistrationStatus,
+): DoctorCheck => {
+  const aligned = status.state === "aligned";
+  return {
+    name: `registration:${status.client}`,
+    ok: aligned,
+    classification: aligned
+      ? "healthy"
+      : status.state === "unknown"
+        ? "unknown"
+        : "config_drift",
+    detail: status.config_path,
+    ...(status.scope === undefined ? {} : { details: { scope: status.scope } }),
+    ...(aligned ? {} : { remediation: status.remediation }),
+  };
+};
 
 const selectedSkillCheck = (
   state: DoctorScopeInput["skillState"],

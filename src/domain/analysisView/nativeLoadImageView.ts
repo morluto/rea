@@ -1,23 +1,29 @@
+import { filterSet } from "./selectViewRows.js";
+import { analysisViewPageFields } from "./analysisViewPageFields.js";
 import { z } from "zod";
 import {
   nativeLoadImageCheckSchema,
   nativeLoadImageObservationSchema,
   nativeLoadImageSchema,
   nativeUnsupportedLoadImageSchema,
-  nativeDosLoadImageSchema,
+  nativeDosMzLoadImageSchema,
+  nativeDosComVerifiedComLoaderLoadImageSchema,
+  nativeDosComVerifiedBinaryLoaderLoadImageSchema,
+  nativeDosComMismatchLoadImageSchema,
   nativeRawLoadImageSchema,
+  nativeSegmentsLoadImageSchema,
   nativeDolLoadImageSchema,
 } from "../native/nativeLoadImage.js";
 import { nativeAddressObservationSchema } from "../native/nativeAddress.js";
 import { jsonValueSchema } from "../jsonValue.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   ownedView,
   type AdmittedView,
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
   boundedViewMessages,
@@ -53,9 +59,7 @@ const defaultFields: Partial<Record<keyof typeof rows, readonly string[]>> = {
     .keyof().options,
 };
 const selection = {
-  kind: z.literal("native-load-image"),
-  offset: z.int().nonnegative().default(0),
-  limit: z.int().positive().default(64),
+  ...analysisViewPageFields("native-load-image"),
   indices: z.array(z.int().nonnegative()).optional(),
 };
 const request = <Name extends keyof typeof rows>(name: Name) =>
@@ -121,12 +125,32 @@ export const nativeLoadImageSummarySchema = z.strictObject({
       observations: true,
       limitations: true,
     }),
-    nativeDosLoadImageSchema.omit({
+    nativeDosMzLoadImageSchema.omit({
+      observations: true,
+      limitations: true,
+      checks: true,
+    }),
+    nativeDosComVerifiedComLoaderLoadImageSchema.omit({
+      observations: true,
+      limitations: true,
+      checks: true,
+    }),
+    nativeDosComVerifiedBinaryLoaderLoadImageSchema.omit({
+      observations: true,
+      limitations: true,
+      checks: true,
+    }),
+    nativeDosComMismatchLoadImageSchema.omit({
       observations: true,
       limitations: true,
       checks: true,
     }),
     nativeRawLoadImageSchema.omit({
+      observations: true,
+      limitations: true,
+      checks: true,
+    }),
+    nativeSegmentsLoadImageSchema.omit({
       observations: true,
       limitations: true,
       checks: true,
@@ -165,8 +189,7 @@ type PageRequest = z.output<typeof nativeLoadImageViewRequestSchema>;
 /** Exact source indices need no inventory scan or persistent lookup index. */
 const selectRows = (source: readonly (Row | string)[], view: PageRequest) => {
   const selectedFields = view.fields ?? defaultFields[view.collection];
-  const fields =
-    selectedFields === undefined ? undefined : new Set<string>(selectedFields);
+  const fields = filterSet<string>(selectedFields);
   const project = (value: Row | string, source_index: number) => {
     const record = typeof value === "string" ? { address: value } : value;
     return {
@@ -198,7 +221,7 @@ const selectRows = (source: readonly (Row | string)[], view: PageRequest) => {
   };
 };
 
-/** Query the owner's parsed historical observations without reopening the target. */
+/** Query the owner's parsed observations without reopening the target. */
 export const projectNativeLoadImageView = (
   parent: AnalysisViewParent,
   admitted: AdmittedView,
@@ -207,15 +230,8 @@ export const projectNativeLoadImageView = (
     SummaryAnalysisView | z.output<typeof nativeLoadImageViewRequestSchema>
   >(admitted, "summary", "native-load-image");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Native load-image Evidence supports summary and native-load-image views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Native load-image Evidence supports summary and native-load-image views.",
     );
   const parsed = readReport(parent);
   if (!parsed.ok) return parsed;
@@ -278,7 +294,7 @@ export const projectNativeLoadImageView = (
           sections: "sections" in report ? report.sections.length : null,
         },
       },
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
 
   const selected =
@@ -292,19 +308,8 @@ export const projectNativeLoadImageView = (
           : undefined
         : observed[view.collection];
   const page = selected === undefined ? undefined : selectRows(selected, view);
-  const symbolUnrecorded =
-    view.collection === "relocations" &&
-    (view.fields === undefined ||
-      view.fields.some((field: string) => field === "symbol")) &&
-    (page?.rows.some(({ record }) => !("symbol" in record)) ?? false);
   return ok({
     ...shared,
-    unknowns: symbolUnrecorded
-      ? [
-          ...shared.unknowns,
-          "The relocation symbol was not recorded for at least one selected row.",
-        ]
-      : shared.unknowns,
     kind: "native-load-image" as const,
     verification_status: report.status,
     view,

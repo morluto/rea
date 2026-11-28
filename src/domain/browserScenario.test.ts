@@ -174,7 +174,7 @@ it("accepts caller-selected safe capture limits and rejects invalid bounds", () 
     ).toBe(false);
 });
 
-it("accepts complete browser inputs beyond former string length caps", () => {
+it("accepts browser inputs with long values, secret names and paths", () => {
   const longValue = "value".repeat(20_000);
   const longToken = "a".repeat(70_000);
   const longEnvironmentVariable = "SECRET_A".repeat(10_000);

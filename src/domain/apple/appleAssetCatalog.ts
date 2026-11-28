@@ -1,8 +1,10 @@
+import { coverageStatusSchema } from "../coverage.js";
 import { z } from "zod";
 import { bundleResourceBoundResultSchema } from "./bundleResourceRoot.js";
 
 import { jsonObjectSchema, jsonValueSchema } from "../jsonValue.js";
 import { AnalysisOutputError } from "../analysisErrorCore.js";
+import type { AnalysisParameterLimit } from "../analysisSettings.js";
 import {
   artifactInventoryCoverageSchema,
   type ArtifactInventoryCoverage,
@@ -32,10 +34,45 @@ export const appleResourceKeyFields = (
       entry[1].length > 0,
   );
 
-/** Caller-controlled page bounds for compiled Apple asset metadata. */
+/** Retained assetutil JSON when producer_limits.output_bytes is omitted. */
+export const DEFAULT_ASSETUTIL_OUTPUT_BYTES = 64 * 1024 * 1024;
+/**
+ * The largest accepted producer_limits.output_bytes. assetutil JSON is
+ * decoded in REA's own process and every catalog's records are retained, so
+ * this bounds that decode; raising it needs a streaming decoder.
+ */
+export const MAX_ASSETUTIL_OUTPUT_BYTES = 128 * 1024 * 1024;
+
+/** The assetutil output control, as the per-call parameter that raises it. */
+export const assetUtilOutputLimit = (
+  effectiveValue: number,
+): AnalysisParameterLimit => ({
+  control_kind: "parameter",
+  parameter: "producer_limits.output_bytes",
+  effective_value: effectiveValue,
+  unit: "bytes",
+  minimum: 1,
+  maximum: MAX_ASSETUTIL_OUTPUT_BYTES,
+  default_value: DEFAULT_ASSETUTIL_OUTPUT_BYTES,
+  applies_at: "next_call",
+});
+
+/** Caller-controlled page bounds and producer budget for compiled Apple asset metadata. */
 export const appleAssetCatalogInputSchema = z.strictObject({
   offset: z.int().min(0).default(0),
   limit: z.int().min(1).max(10_000).default(1_000),
+  producer_limits: z
+    .strictObject({
+      output_bytes: z
+        .int()
+        .positive()
+        .max(MAX_ASSETUTIL_OUTPUT_BYTES)
+        .optional(),
+    })
+    .optional()
+    .describe(
+      `Per-call producer limits in bytes. output_bytes bounds each assetutil stream and the JSON retained across all catalogs (default ${String(DEFAULT_ASSETUTIL_OUTPUT_BYTES)}, at most ${String(MAX_ASSETUTIL_OUTPUT_BYTES)}, the in-process decode bound). Applies on the next call; no restart.`,
+    ),
 });
 
 const catalogSchema = z.strictObject({
@@ -72,7 +109,7 @@ const resourceKeyMatchSchema = z.strictObject({
 });
 
 const analysisCoverageSchema = z.strictObject({
-  status: z.enum(["complete", "partial", "unknown"]),
+  status: coverageStatusSchema,
   reason: z.string().nullable(),
 });
 export type AppleAssetAnalysisCoverage = z.infer<typeof analysisCoverageSchema>;

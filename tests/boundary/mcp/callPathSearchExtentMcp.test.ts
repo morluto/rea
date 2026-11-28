@@ -1,3 +1,7 @@
+import {
+  fileIdentity,
+  fileSubjectDisplay,
+} from "../../fixtures/evidenceSubject.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
 
@@ -13,6 +17,7 @@ import { createFunctionCoordinateContext } from "../../../src/domain/native/func
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const observe = (
   address: string,
@@ -21,14 +26,12 @@ const observe = (
   analysisProfile?: AnalysisProfileCommitment,
 ) => {
   const template = FUNCTION_COMPARISON_EXAMPLE.left;
-  if (template.subject === null)
-    throw new Error("Expected artifact-bound fixture");
   const dossier = functionDossierSchema.parse(template.normalized_result);
   return createEvidence(
     {
-      path: template.subject.local_path,
-      sha256: template.subject.digest.sha256,
-      format: template.subject.format,
+      path: fileSubjectDisplay(template.subject).local_path,
+      sha256: fileIdentity(template.subject).sha256,
+      format: fileIdentity(template.subject).format,
     },
     template.provider,
     {
@@ -65,10 +68,13 @@ it.each([
     throw new Error("Offline call paths must not launch a provider");
   });
   const server = createServer({ kind: "session", session });
-  const client = new Client({
-    name: "call-path-coordinate-identity",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "call-path-coordinate-identity",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   const provider = FUNCTION_COMPARISON_EXAMPLE.left.provider;
@@ -127,9 +133,7 @@ it.each([
         shortest_hops: null,
         search_scope: { exhaustive: false },
         paths: [],
-        limitations: [
-          "No analyze_function Evidence covers reachable function 0x5000",
-        ],
+        limitations: [expect.stringMatching(/no analyze_function.*0x5000/iu)],
       });
       return;
     }
@@ -157,7 +161,10 @@ it("publishes explored extent without the terminal goal's callees", async () => 
     throw new Error("Offline call paths must not launch a provider");
   });
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "call-path-search-extent", version: "1" });
+  const client = new Client(
+    { name: "call-path-search-extent", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -217,7 +224,10 @@ it("preserves unresolved outgoing call caveats and bounds search completeness at
     throw new Error("Offline call paths must not launch a provider");
   });
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "unresolved-call-path", version: "1" });
+  const client = new Client(
+    { name: "unresolved-call-path", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -288,6 +298,61 @@ it("preserves unresolved outgoing call caveats and bounds search completeness at
       );
       expect(result).toMatchObject(scenario.expected);
     }
+  } finally {
+    await Promise.allSettled([session.close(), client.close(), server.close()]);
+  }
+});
+
+it("records an explicit max_paths preference and keeps omission distinct", async () => {
+  const session = createTestBinarySession(() => {
+    throw new Error("Offline call paths must not launch a provider");
+  });
+  const server = createServer({ kind: "session", session });
+  const client = new Client(
+    { name: "call-path-max-paths", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const start = observe("0x1000", ["0x4000"]);
+    expect(session.recordEvidence(start).ok).toBe(true);
+    const recorded: {
+      readonly parameters: unknown;
+      readonly evidenceId: string;
+      readonly paths: number;
+    }[] = [];
+    // Omitted, explicit default, and an explicit smaller count all describe the
+    // same found path, so only the requested preference can distinguish them.
+    for (const selection of [undefined, 64, 1]) {
+      const reply = await client.callTool({
+        name: "build_call_path",
+        arguments: {
+          functions: [start],
+          start: { address: "0x1000" },
+          goal: { address: "0x4000" },
+          ...(selection === undefined ? {} : { max_paths: selection }),
+        },
+      });
+      if (reply.isError) throw new Error(JSON.stringify(reply));
+      const evidence = parseEvidence(reply.structuredContent);
+      const result = callPathResultSchema.parse(evidence.normalized_result);
+      expect(result).toMatchObject({ status: "found", shortest_hops: 1 });
+      recorded.push({
+        parameters: evidence.parameters,
+        evidenceId: evidence.evidence_id,
+        paths: result.paths.length,
+      });
+    }
+    expect(recorded.map(({ parameters }) => parameters)).toEqual([
+      { start: "0x1000", goal: "0x4000" },
+      { start: "0x1000", goal: "0x4000", max_paths: 64 },
+      { start: "0x1000", goal: "0x4000", max_paths: 1 },
+    ]);
+    expect(recorded.map(({ paths }) => paths)).toEqual([1, 1, 1]);
+    expect(new Set(recorded.map(({ evidenceId }) => evidenceId)).size).toBe(3);
   } finally {
     await Promise.allSettled([session.close(), client.close(), server.close()]);
   }

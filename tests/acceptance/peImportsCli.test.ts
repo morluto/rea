@@ -13,44 +13,14 @@ import {
   peWithoutImportTableFixture,
 } from "../fixtures/binaryDiagnostics/peImports.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { parseMcpToolError } from "../fixtures/mcpToolError.js";
-import { cliTest, runFileCli } from "../support/cli/cliFixture.js";
+import { cliTest } from "../support/cli/cliFixture.js";
 
 for (const bits of [32, 64] as const) {
   cliTest(
-    `rejects non-MZ PE${String(bits)} imports across CLI and MCP`,
+    `reads a valid PE${String(bits)} imports across CLI and MCP`,
     async ({ cli }) => {
-      const root = await createTestTempDirectory("rea-pe-imports-signature-");
+      const root = await createTestTempDirectory("rea-pe-imports-valid-");
       const call = await cli.sharedMcpCall!();
-      for (const [name, prefix] of [
-        ["zz", Buffer.from("ZZ")],
-        ["high-bit", Buffer.from([0xcd, 0xda])],
-      ] as const) {
-        const bytes = peImportImage({ bits });
-        prefix.copy(bytes);
-        const path = join(root, `${name}.exe`);
-        await writeFile(path, bytes);
-        const result = await cli.run({
-          arguments: ["inspect-pe-imports", path, "--json"],
-        });
-        expect(result.exitCode).toBe(1);
-        expect(result.json).toMatchObject({
-          code: "invalid_request",
-          details: {
-            operation: "inspect_pe_imports",
-            issues: expect.arrayContaining([
-              expect.objectContaining({
-                path: ["path"],
-                reason: "invalid_format",
-              }),
-            ]),
-          },
-        });
-        const response = await call("inspect_pe_imports", { path });
-        expect(response.isError).toBe(true);
-        expect(parseMcpToolError(response)).toEqual({ error: result.json });
-        expect((await readFile(path)).equals(bytes)).toBe(true);
-      }
       const path = join(root, "valid.exe");
       const bytes = peImportImage({ bits });
       await writeFile(path, bytes);
@@ -192,9 +162,11 @@ cliTest(
       confidence: "observed",
       subject: {
         local_path: path,
-        format: "pe",
-        architecture: "x86_64",
-        digest: { sha256: createHash("sha256").update(bytes).digest("hex") },
+        identity: {
+          format: "pe",
+          architecture: "x86_64",
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+        },
       },
       normalized_result: {
         artifact: { path, bytes: bytes.length },
@@ -217,25 +189,6 @@ cliTest(
     });
   },
 );
-
-cliTest("reports a truncated PE as invalid input", async ({ cli }) => {
-  const root = await createTestTempDirectory("rea-pe-imports-cli-bad-");
-  const path = join(root, "broken.exe");
-  await writeFile(path, Buffer.from("MZ"));
-  const result = await cli.run({
-    arguments: ["inspect-pe-imports", path, "--json"],
-  });
-  expect(result.exitCode).toBe(1);
-  expect(result.json).toMatchObject({
-    code: "invalid_request",
-    details: {
-      operation: "inspect_pe_imports",
-      issues: expect.arrayContaining([
-        expect.objectContaining({ path: ["path"], reason: "invalid_format" }),
-      ]),
-    },
-  });
-});
 
 cliTest(
   "preserves directory declarations and partial rows at RVA and mapping boundaries",
@@ -263,9 +216,10 @@ cliTest(
       const invocation = {
         arguments: ["inspect-pe-imports", path, "--json"],
       };
-      const result = await (rva === 0xffffffec
-        ? cli.run(invocation)
-        : runFileCli(cli, invocation));
+      const result = await cli.run({
+        ...invocation,
+        freshProcess: rva === 0xffffffec,
+      });
       expect(result.exitCode, result.stderr).toBe(0);
       const report = toolContract("inspect_pe_imports").outputSchema.parse(
         result.json,

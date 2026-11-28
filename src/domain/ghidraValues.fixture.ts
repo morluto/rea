@@ -192,6 +192,12 @@ export const ghidraFunctionDossier = (): JsonValue => {
     native_value_flow: {
       available: true,
       provenance: "ghidra-high-pcode",
+      limits: {
+        max_operations: 3_000,
+        max_inputs_per_operation: 64,
+        max_edges: 12_000,
+      },
+      limits_reached: [],
       operations: [
         {
           id: "0x401000#0",
@@ -228,6 +234,10 @@ export const ghidraFunctionDossier = (): JsonValue => {
         "High p-code is a decompiler-derived intra-function representation, not original source or runtime behavior.",
       ],
     },
+    limitation_codes: [
+      "unresolved_computed_or_indirect_flows",
+      "provider_specific_representations",
+    ],
     limitations: [
       "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
       "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",

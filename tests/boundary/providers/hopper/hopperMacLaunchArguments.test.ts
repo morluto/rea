@@ -11,7 +11,7 @@ import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjec
 import {
   HopperStartError,
   type HopperLaunchRejection,
-} from "../../../../src/domain/hopperErrors.js";
+} from "../../../../src/hopper/HopperErrors.js";
 import { execFileOutput } from "../../../../src/process/ExecFileOutput.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 

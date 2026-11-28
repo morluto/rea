@@ -43,7 +43,7 @@ describe("Webpack and Rspack runtime adapters", () => {
       bundler: "webpack",
       runtime_require_name: "__webpack_require__",
       runtime_module_cache_status: "not-observed",
-      entry_module_keys: ["10"],
+      entry_module_keys: ["10", "missing"],
       async_chunk_keys: ["lazy", "missing"],
       unknown_async_chunk_keys: 1,
     });
@@ -106,16 +106,27 @@ describe("Webpack and Rspack runtime adapters", () => {
       }),
     });
 
-    expect(
-      graph.nodes.find((node) =>
-        node.observations.some(
-          ({ properties }) =>
-            properties.semantic_role === "bundler-chunk-reference" &&
-            properties.chunk_key === "missing" &&
-            properties.resolution_status === "not-found",
-        ),
-      ),
-    ).toBeDefined();
+    for (const [kind, relation] of [
+      ["module", "loads"],
+      ["chunk", "imports"],
+    ] as const) {
+      const missing = graph.nodes.find(
+        (node) =>
+          node.kind === `javascript-${kind}` &&
+          node.observations.some(
+            ({ properties }) =>
+              properties.semantic_role === `bundler-${kind}-reference` &&
+              properties[`${kind}_key`] === "missing" &&
+              properties.resolution_status === "not-found",
+          ),
+      );
+      expect(
+        findGraphEdge(graph, webpackEntry, missing, relation),
+      ).toMatchObject({
+        evidence: { confidence: "low" },
+        properties: { resolution_status: "not-found" },
+      });
+    }
     expect(
       graph.edges.some(
         ({ relation, properties }) =>
@@ -125,7 +136,9 @@ describe("Webpack and Rspack runtime adapters", () => {
       ),
     ).toBe(false);
   });
+});
 
+describe("esbuild and Vite runtime adapters", () => {
   it("recovers esbuild wrapper modules and Vite preload dependencies", async () => {
     const root = await esmRuntimeFixture();
     const { graph } = await reconstructJavaScriptFixture(root);
@@ -142,14 +155,31 @@ describe("Webpack and Rspack runtime adapters", () => {
       runtime: "esbuild-esm",
       module_key: "src/core.js",
     });
+    const dependencies = graph.edges.filter(
+      ({ relation, properties }) =>
+        relation === "imports" &&
+        properties.kind === "dynamic-import" &&
+        ["./feature.js", "./main.css"].includes(String(properties.specifier)),
+    );
     expect(
-      graph.edges.filter(
-        ({ relation, properties }) =>
-          relation === "imports" &&
-          properties.kind === "dynamic-import" &&
-          ["./feature.js", "./main.css"].includes(String(properties.specifier)),
-      ),
-    ).toHaveLength(2);
+      dependencies.map(({ properties }) => properties.specifier).sort(),
+    ).toEqual(["./feature.js", "./main.css"]);
+    expect(
+      dependencies.find(
+        ({ properties }) => properties.specifier === "./feature.js",
+      )?.properties,
+    ).toMatchObject({
+      resolution_status: "resolved",
+      resolved_path: "feature.js",
+    });
+    expect(
+      dependencies.find(
+        ({ properties }) => properties.specifier === "./main.css",
+      )?.properties,
+    ).toMatchObject({
+      resolution_status: "unavailable",
+      candidate_path: "main.css",
+    });
   });
 });
 
@@ -176,6 +206,7 @@ const bundlerFixture = async (): Promise<string> => {
         },
         (__webpack_require__) => {
           __webpack_require__.O(0, ["main"], () => __webpack_require__(10));
+          __webpack_require__("missing");
         }
       ]);
       (globalThis["webpackChunkcustomPortal"] = globalThis["webpackChunkcustomPortal"] || []).push([

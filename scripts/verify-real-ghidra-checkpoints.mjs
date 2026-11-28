@@ -1,21 +1,18 @@
 #!/usr/bin/env node
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import { createVerifierMcpOwner } from "./lib/verifier-mcp-owner.mjs";
 
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
 import {
   copyFile,
-  mkdtemp,
   mkdir,
   readFile,
   readdir,
-  rm,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import {
@@ -23,18 +20,28 @@ import {
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
 import {
+  requireCheckpointCliRefusal,
+  assertCheckpointRefusalPreservesManifest,
+} from "./lib/ghidra-checkpoint-refusal.mjs";
+import {
   createVerifierRun,
   completeVerifierRun,
   assertVerifierCleanupComplete,
 } from "./lib/verifier-run.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 if (process.platform === "win32")
   throw new Error(
     "Owned Ghidra checkpoints currently support Linux/macOS only.",
   );
-const run = createVerifierRun(),
-  exec = promisify(execFile);
-const root = await mkdtemp(join(tmpdir(), "rea-ghidra-checkpoints-"));
+const run = createVerifierRun();
+// Ghidra children use the root as HOME and TMPDIR; a plain root admits them on every host.
+const workspace = await VerifierFixture.open({
+  prefix: "rea-ghidra-checkpoints-",
+  private: false,
+});
+const root = workspace.path;
 const runtime = join(root, "runtime"),
   checkpointDirectory = join(root, "checkpoints");
 const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
@@ -61,15 +68,13 @@ for (const name of [
   "REA_GHIDRA_DISABLED_ANALYZERS",
 ])
   delete env[name];
+const compilerCommands = await createVerifierCommands();
 const report = {
   verifier: "ghidra-owned-checkpoints",
   phases: [],
   target: null,
 };
-const sha = async (path) =>
-  createHash("sha256")
-    .update(await readFile(path))
-    .digest("hex");
+
 async function phase(name, operation) {
   const start = performance.now();
   try {
@@ -90,39 +95,41 @@ async function phase(name, operation) {
   }
 }
 async function cli(procedure, flags = [], path = target) {
-  const { stdout } = await exec(
-    process.execPath,
-    [
-      entrypoint,
-      "decompile",
-      path,
-      procedure,
-      "--provider",
-      "ghidra",
-      "--json",
-      ...flags,
-    ],
-    { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
-  );
-  return JSON.parse(stdout);
-}
-async function refuseCli(procedure, flags, expected) {
-  let refusal;
   try {
-    await cli(procedure, flags);
+    const { stdout } = await compilerCommands.exec(
+      process.execPath,
+      [
+        entrypoint,
+        "decompile",
+        "--detail",
+        "complete",
+        path,
+        procedure,
+        "--provider",
+        "ghidra",
+        "--json",
+        ...flags,
+      ],
+      { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
+    );
+    return JSON.parse(stdout);
   } catch (cause) {
-    assert.equal(cause.code, 1, cause.stderr);
-    refusal = JSON.parse(cause.stdout);
+    // The checkpoint refusal helper reads the execFile-shaped stdout and stderr.
+    if (cause instanceof Error && cause.snapshot?.stdout?.text !== undefined) {
+      cause.stdout = cause.snapshot.stdout.text;
+      cause.stderr = cause.snapshot.stderr.text;
+    }
+    throw cause;
   }
-  assert.ok(refusal, "CLI unexpectedly accepted unavailable checkpoint state");
-  assert.equal(refusal.code, expected, JSON.stringify(refusal));
-  return refusal;
 }
 async function connect(environment = {}) {
-  const client = new Client({
-    name: "rea-ghidra-checkpoint-verifier",
-    version: "1",
-  });
+  const owner = createVerifierMcpOwner();
+  const client = completeEvidenceClient(
+    new Client({
+      name: "rea-ghidra-checkpoint-verifier",
+      version: "1",
+    }),
+  );
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [entrypoint, "mcp"],
@@ -130,23 +137,15 @@ async function connect(environment = {}) {
     stderr: "pipe",
   });
   transport.stderr?.on("data", () => {});
-  try {
-    await client.connect(transport);
-  } catch (cause) {
-    await client.close();
-    await transport.close();
-    throw cause;
-  }
+  compilerCommands.adopt(owner, "checkpoint MCP connection");
+  await owner.open(client, transport);
   const raw = (name, args = {}) =>
     client.callTool({ name, arguments: args }, { timeout: 240000 });
   return {
     raw,
     call: async (name, args = {}) =>
       requireMcpOperationResult(await raw(name, args), name),
-    close: async () => {
-      await client.close();
-      await transport.close();
-    },
+    close: () => owner.close(),
   };
 }
 let manifestPath;
@@ -160,19 +159,28 @@ __attribute__((noinline)) int rea_checkpoint_leaf(CheckpointRecord *record) { re
 int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf(&record); }
 `,
   );
-  await exec("cc", [
-    "-O0",
-    "-g",
-    "-gdwarf-4",
-    "-fno-inline",
-    sourcePath,
-    "-o",
-    target,
-  ]);
-  const targetDigest = await sha(target);
+  // The name and type checks read the fixture's DWARF. A linked Mach-O keeps
+  // DWARF only in its objects or a dSYM beside it, and REA imports an
+  // immutable copy of the selected file alone, so on macOS the target is the
+  // object itself, which carries its DWARF.
+  await compilerCommands.exec(
+    "cc",
+    [
+      "-O0",
+      "-g",
+      "-gdwarf-4",
+      "-fno-inline",
+      ...(process.platform === "darwin" ? ["-c"] : []),
+      sourcePath,
+      "-o",
+      target,
+    ],
+    { timeout: 120_000, maxBuffer: 16 * 1024 * 1024 },
+  );
+  const targetDigest = await sha256File(target);
   report.target = {
     sha256: targetDigest,
-    source: "self-built C struct/function fixture; never executed",
+    source: `self-built C struct/function ${process.platform === "darwin" ? "object" : "executable"} fixture; never executed`,
     host: process.platform,
     architecture: process.arch,
   };
@@ -187,6 +195,7 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
       try {
         await cold.call("open_binary", { path: target, provider_id: "ghidra" });
         await cold.call("procedure_pseudo_code", {
+          detail: "complete",
           procedure: "rea_checkpoint_leaf",
         });
         const id = (await cold.call("binary_session")).analysis_run.run_id;
@@ -200,6 +209,7 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
           id,
         );
         const current = await cold.call("procedure_pseudo_code", {
+          detail: "complete",
           procedure: "rea_checkpoint_leaf",
         });
         assert.match(JSON.stringify(current), /cold-session unsaved comment/);
@@ -273,7 +283,7 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
     },
   );
   await phase(
-    "MCP preserves a live run, refuses a concurrent writer, and saves edits",
+    "MCP preserves a live run, shares the target with a second session, and refuses its later save",
     async () => {
       const active = await connect();
       try {
@@ -282,6 +292,7 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
           provider_id: "ghidra",
         });
         await active.call("procedure_pseudo_code", {
+          detail: "complete",
           procedure: "rea_checkpoint_leaf",
         });
         const id = (await active.call("binary_session")).analysis_run.run_id;
@@ -291,29 +302,54 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
             path: target,
             provider_id: "ghidra",
           });
-          const error = requireMcpToolError(await other.raw("list_documents"));
-          assert.equal(error.code, "configuration_invalid");
-          assert.match(error.message, /another REA session/);
+          // Both sessions restore the same generation into private
+          // projects and answer queries while the other is live.
+          const shared = await other.call("procedure_pseudo_code", {
+            detail: "complete",
+            procedure: "rea_checkpoint_leaf",
+          });
+          assert.match(JSON.stringify(shared), /value/);
+          await other.call("annotate_native_function", {
+            procedure: "rea_checkpoint_leaf",
+            comment: "REA checkpoint comment from the later session",
+          });
+          await active.call("open_binary", {
+            path: target,
+            provider_id: "ghidra",
+          });
+          assert.equal(
+            (await active.call("binary_session")).analysis_run.run_id,
+            id,
+          );
+          await active.call("annotate_native_function", {
+            procedure: "rea_checkpoint_leaf",
+            name: "rea_checkpoint_retained",
+            comment: "REA checkpoint first comment",
+          });
+          await active.call("close_binary");
+          const published = await manifest();
+          assert.notDeepEqual(published, initialManifest);
+          // The later session started from the superseded generation: its
+          // save is refused rather than overwriting the first session's.
+          const refused = requireMcpToolError(await other.raw("close_binary"));
+          assert.equal(refused.code, "cleanup_incomplete");
+          assert.deepEqual(refused.recovery, {
+            kind: "retry_cleanup",
+            operation: "close_binary",
+          });
+          assert.match(refused.remediation.action, /edits were not saved/);
+          assert.deepEqual(await manifest(), published);
+          // The refusal is permanent, so the next close discards and releases.
           await other.call("close_binary");
+          assert.deepEqual(await manifest(), published);
         } finally {
           await other.close();
         }
-        await active.call("open_binary", {
-          path: target,
-          provider_id: "ghidra",
-        });
-        assert.equal(
-          (await active.call("binary_session")).analysis_run.run_id,
-          id,
-        );
-        await active.call("annotate_native_function", {
-          procedure: "rea_checkpoint_leaf",
-          name: "rea_checkpoint_retained",
-          comment: "REA checkpoint first comment",
-        });
-        await active.call("close_binary");
-        assert.notDeepEqual(await manifest(), initialManifest);
-        return { same_live_run: true, concurrent_owner_refused: true };
+        return {
+          same_live_run: true,
+          concurrent_session_answered: true,
+          later_save_refused: true,
+        };
       } finally {
         await active.close();
       }
@@ -354,9 +390,8 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
   await phase(
     "an older immutable REA snapshot refuses the changed checkpoint",
     async () => {
-      const refusal = await refuseCli(
-        "rea_checkpoint_leaf",
-        ["--snapshot", snapshotPath],
+      const refusal = await requireCheckpointCliRefusal(
+        () => cli("rea_checkpoint_leaf", ["--snapshot", snapshotPath]),
         "evidence_integrity_mismatch",
       );
       assert.ok(refusal.details.binding_mismatch.profile_digest);
@@ -383,6 +418,7 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
           provider_id: "ghidra",
         });
         const result = await active.call("procedure_pseudo_code", {
+          detail: "complete",
           procedure: "rea_checkpoint_retained",
         });
         assert.match(JSON.stringify(result), /saved during alias switch/);
@@ -398,12 +434,16 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
   await phase(
     "target/profile mismatch is refused without replacing the saved state",
     async () => {
+      const attemptedBytes = Buffer.from(
+        JSON.stringify({ ...current, target_sha256: "0".repeat(64) }),
+      );
       try {
-        await writeFile(
+        await writeFile(manifestPath, attemptedBytes);
+        await assertCheckpointRefusalPreservesManifest(
+          () => cli("rea_checkpoint_retained"),
           manifestPath,
-          JSON.stringify({ ...current, target_sha256: "0".repeat(64) }),
+          attemptedBytes,
         );
-        await refuseCli("rea_checkpoint_retained", [], "configuration_invalid");
       } finally {
         await writeFile(manifestPath, bytes);
       }
@@ -413,9 +453,14 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
   await phase(
     "malformed manifest is refused without a fresh import",
     async () => {
+      const attemptedBytes = Buffer.from("{");
       try {
-        await writeFile(manifestPath, "{");
-        await refuseCli("rea_checkpoint_retained", [], "configuration_invalid");
+        await writeFile(manifestPath, attemptedBytes);
+        await assertCheckpointRefusalPreservesManifest(
+          () => cli("rea_checkpoint_retained"),
+          manifestPath,
+          attemptedBytes,
+        );
       } finally {
         await writeFile(manifestPath, bytes);
       }
@@ -434,7 +479,10 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
       await copyFile(packed, backup);
       try {
         await writeFile(packed, "corrupted packed data");
-        await refuseCli("rea_checkpoint_retained", [], "configuration_invalid");
+        await requireCheckpointCliRefusal(
+          () => cli("rea_checkpoint_retained"),
+          "configuration_invalid",
+        );
       } finally {
         await copyFile(backup, packed);
       }
@@ -446,7 +494,7 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
       return {};
     },
   );
-  assert.equal(await sha(target), targetDigest);
+  assert.equal(await sha256File(target), targetDigest);
   assert.deepEqual(await readdir(runtime), []);
   const checkpointFiles = await readdir(
     join(checkpointDirectory, (await readdir(checkpointDirectory))[0]),
@@ -466,9 +514,10 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
     report.failure_stderr = cause.stderr.slice(-4000);
   process.exitCode = 1;
 } finally {
-  report.run = await completeVerifierRun(run);
   let cleanupVerified = false;
   try {
+    await workspace.closeEarly([() => compilerCommands.close()]);
+    report.run = await completeVerifierRun(run);
     assertVerifierCleanupComplete(report.run.process_lineage);
     cleanupVerified = true;
   } catch (cause) {
@@ -476,14 +525,16 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
     report.retained_workspace = root;
     process.exitCode = 1;
   }
-  if (cleanupVerified) {
+  if (cleanupVerified && report.status === "verified") {
     try {
-      await rm(root, { recursive: true, force: true });
+      await workspace.release();
     } catch (cause) {
       report.cleanup_error = String(cause);
       report.retained_workspace = root;
       process.exitCode = 1;
     }
+  } else if (report.retained_workspace === undefined) {
+    report.retained_workspace = root;
   }
   process.stdout.write(JSON.stringify(report, null, 2) + "\n");
 }

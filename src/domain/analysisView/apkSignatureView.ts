@@ -13,8 +13,9 @@ import {
 } from "../apkSignature/apkSignatureQuery.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import type { JsonValue } from "../jsonValue.js";
-import { err, ok, type Result } from "../result.js";
+import { ok, type Result } from "../result.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
+import { filterSet } from "./selectViewRows.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   assertOwnedView,
@@ -22,12 +23,16 @@ import {
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  invalidAnalysisViewSubject,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import {
   boundedViewMessages,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
+import { evidenceSubjectTarget } from "../evidence.js";
 
 const identityFields = new Set([
   "id",
@@ -99,21 +104,13 @@ const read = (parent: AnalysisViewParent): Result<Checked, AnalysisError> => {
   const reusable = isImmutableJsonSnapshot(report);
   const cached = reusable ? checked.get(report) : undefined;
   // Parent identity is checked on every read, independently of reusable facts.
+  const subject = evidenceSubjectTarget(parent.subject);
   if (
-    parent.subject != null &&
-    !apkSignatureMatchesSubject(report.artifact, {
-      sha256: parent.subject.digest.sha256,
-      format: parent.subject.format,
-    })
+    subject !== undefined &&
+    !apkSignatureMatchesSubject(report.artifact, subject)
   )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message: "APK subject does not match its recorded artifact",
-        },
-      ]),
+    return invalidAnalysisViewSubject(
+      "APK subject does not match its recorded artifact",
     );
   if (cached !== undefined) return ok(cached);
   const unknowns = [
@@ -194,9 +191,8 @@ const read = (parent: AnalysisViewParent): Result<Checked, AnalysisError> => {
 function* records(
   report: ApkSignatureResult,
   selection: Selection,
-): Generator<Record<string, JsonValue>> {
-  const wanted =
-    selection.schemes === undefined ? undefined : new Set(selection.schemes);
+): Generator<Record<string, JsonValue> & { id: string; signer_id?: string }> {
+  const wanted = filterSet(selection.schemes);
   for (const scheme of schemes) {
     if (wanted !== undefined && !wanted.has(scheme)) continue;
     for (const [signerIndex, signer] of report.schemes[
@@ -267,15 +263,8 @@ export const projectApkSignatureView = (
   view: AdmittedView,
 ) => {
   if (view.kind !== "summary" && view.kind !== "apk-signature")
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "APK Evidence supports summary and apk-signature signer/digest/lineage pages",
-        },
-      ]),
+    return invalidAnalysisView(
+      "APK Evidence supports summary and apk-signature signer/digest/lineage pages",
     );
   assertOwnedView<
     SummaryAnalysisView | z.output<typeof apkSignatureViewRequestSchema>
@@ -305,20 +294,18 @@ export const projectApkSignatureView = (
       view,
       ...shared,
       summary,
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
-  const ids = view.ids === undefined ? undefined : new Set(view.ids);
-  const signers =
-    view.signer_ids === undefined ? undefined : new Set(view.signer_ids);
-  const fields =
-    view.fields === undefined ? undefined : new Set<string>(view.fields);
+  const ids = filterSet(view.ids);
+  const signers = filterSet(view.signer_ids);
+  const fields = filterSet<string>(view.fields);
   const items: Record<string, JsonValue>[] = [];
   let total = 0;
   const rows =
     ids?.size === 0 || signers?.size === 0 ? [] : records(report, view);
   for (const row of rows) {
-    if (ids !== undefined && !ids.has(String(row.id))) continue;
-    if (signers !== undefined && !signers.has(String(row.signer_id ?? row.id)))
+    if (ids !== undefined && !ids.has(row.id)) continue;
+    if (signers !== undefined && !signers.has(row.signer_id ?? row.id))
       continue;
     if (total++ < view.offset || items.length >= view.limit) continue;
     const item: Record<string, JsonValue> = {};

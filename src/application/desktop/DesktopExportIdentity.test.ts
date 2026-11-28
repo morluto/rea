@@ -18,11 +18,12 @@ import {
   retained,
   writeCaptureFolder,
 } from "./desktopCapture.fixture.js";
+import { SQLITE_HEADER } from "../../domain/sqliteFormat.js";
 
 const HOSTNAME = "e81232be457d";
 /** Geany's leak: its mail template took the capture user and the container's host name. */
 const CONFIG = `[ui]\npref_template_mail=ada@${HOSTNAME}\npref_template_developer=ada\nlast=${HOME}/Documents/today.txt\n`;
-const DB = `SQLite format 3\0rows from ${HOSTNAME}`;
+const DB = `${SQLITE_HEADER}rows from ${HOSTNAME}`;
 const DCONF_DB = "GVariant database";
 const DCONF = `[org/notes]\nmail='ada@${HOSTNAME}'\nrecent='${HOME}/x'\n`;
 /** A mail setting the user changed from the captured user@host to the value the scrub writes. */
@@ -232,7 +233,7 @@ describe("exportDesktopApplication of a capture that names its host", () => {
 
     if (result instanceof Error) throw result;
     expect(result.normalized_result).toMatchObject({
-      task: { failing_on_seed: ["note"] },
+      tasks: [{ failing_on_seed: ["note"] }],
     });
   });
 
@@ -299,7 +300,7 @@ describe("exportDesktopApplication where names, syntax or an unparsed value spel
 
       if (result instanceof Error) throw result;
       expect(result.normalized_result).toMatchObject({
-        task: { failing_on_seed: ["check-1"] },
+        tasks: [{ failing_on_seed: ["check-1"] }],
       });
     },
   );

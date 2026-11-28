@@ -1,9 +1,9 @@
 import { execFile } from "node:child_process";
-import { rm, symlink, writeFile } from "node:fs/promises";
+import { symlink, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { promisify } from "node:util";
 
-import { afterEach, expect, it } from "vitest";
+import { expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
@@ -13,20 +13,10 @@ import {
 } from "../../fixtures/javascriptRuntimeReconciliation.js";
 
 const execute = promisify(execFile);
-const temporary: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(
-    temporary
-      .splice(0)
-      .map((path) => rm(path, { recursive: true, force: true })),
-  );
-});
 
 const selectedFixture = async () => {
   const physical = await applicationFixture();
   const root = await createTestTempDirectory("rea-verifier-selection-");
-  temporary.push(physical, root);
   const alias = join(root, "selected-app");
   await symlink(
     physical,
@@ -83,7 +73,7 @@ it("retains selected layer paths in runtime verifier parent Evidence", async () 
     verified: true,
     layers: [{ evidence_id: expected.evidence_id }],
   });
-}, 20_000);
+});
 
 it("retains workflow selections while rejecting aliases of the same target", async () => {
   const left = await selectedFixture();
@@ -117,4 +107,4 @@ it("retains workflow selections while rejecting aliases of the same target", asy
   ).rejects.toMatchObject({
     stderr: expect.stringContaining("must resolve to distinct paths"),
   });
-}, 20_000);
+});

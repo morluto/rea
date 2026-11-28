@@ -1,13 +1,11 @@
+import { z } from "zod";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import pino from "pino";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
-import {
-  registerGdbTools,
-  type GdbToolManager,
-} from "../../../src/server/registerGdbTools.js";
-import { registerReverseEngineeringTools } from "../../../src/server/registerReverseEngineeringTools.js";
-import { registerAnalysisViewTool } from "../../../src/server/registerAnalysisViewTool.js";
+import type { GdbToolOptions } from "../../../src/server/debuggerToolBindings.js";
+import { registerServiceTools } from "../../../src/server/serviceToolBindings.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import {
   createEvidence,
@@ -17,7 +15,9 @@ import {
 import { ok } from "../../../src/domain/result.js";
 import { inspectAnalysisView } from "../../../src/application/analysisView/AnalysisViewService.js";
 import { TestReverseEngineeringService } from "../../support/reverseEngineeringService.js";
+import { ownedOutput } from "../../support/reverseEngineeringCompositionFixtures.js";
 import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const sessionId = "00000000-0000-4000-8000-000000000001";
 const capture = {
@@ -43,7 +43,7 @@ const gdbEvidence = (
   parameters = { session_id: sessionId, command: capture.command },
 ) =>
   createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "gdb", name: "GDB", version: null },
     {
       operation: "gdb_console",
@@ -71,7 +71,7 @@ const connect = async (retain = true) => {
   const execute = vi.fn(async () =>
     ok({ result: capture, evidence: gdbEvidence() }),
   );
-  const manager: GdbToolManager = {
+  const manager: GdbToolOptions["manager"] = {
     start: async () =>
       ok({ session_id: sessionId, mi_version: "mi3" as const }),
     execute,
@@ -79,39 +79,28 @@ const connect = async (retain = true) => {
     close: async () => ok({ target_state: "none_observed" as const }),
     retryCleanupFailures: async () => ok(null),
   };
-  const run = vi.fn(async () => ({
-    stdout: "BFD advertised targets\n",
-    stderr: "diagnostic\n",
-  }));
-  const service = new TestReverseEngineeringService({ run });
+  const run = vi.fn(async () =>
+    ownedOutput("BFD advertised targets\n", "diagnostic\n"),
+  );
+  const service = new TestReverseEngineeringService({ runOwned: run });
   const logger = pino({ enabled: false });
-  registerGdbTools(
+  registerServiceTools(
     server,
-    manager,
-    logger,
-    delivery,
-    retain ? record : undefined,
-    undefined,
-    retain ? lookup : undefined,
+    {
+      analysisView: {},
+      gdb: { manager, session: undefined },
+      reverseEngineering: { service, session: undefined },
+    },
+    {
+      logger,
+      evidenceById: retain ? lookup : undefined,
+      recordEvidence: retain ? record : undefined,
+    },
   );
-  registerReverseEngineeringTools(
-    server,
-    service,
-    logger,
-    delivery,
-    retain ? record : undefined,
-    undefined,
-    undefined,
-    undefined,
-    retain ? lookup : undefined,
+  const client = new Client(
+    { name: "command-view-client", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
   );
-  registerAnalysisViewTool(
-    server,
-    logger,
-    retain ? lookup : undefined,
-    retain ? record : undefined,
-  );
-  const client = new Client({ name: "command-view-client", version: "1" });
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -131,29 +120,30 @@ it("delivers ordered GDB records once and queries their retained parent after cl
     "inspect_analysis_view",
   );
   const input = { session_id: sessionId, command: capture.command };
-  const full = await client.callTool({ name: "gdb_console", arguments: input });
-  const summary = await client.callTool({
-    name: "gdb_console",
-    arguments: { ...input, detail: "summary" },
-  });
+  const full = await client.callTool(
+    { name: "gdb_console", arguments: input },
+    { toolDefinition: schemas.toolDefinition },
+  );
+  const summary = await client.callTool(
+    { name: "gdb_console", arguments: { ...input, detail: "summary" } },
+    { toolDefinition: schemas.toolDefinition },
+  );
   for (const reply of [full, summary]) {
     expect(reply.isError).not.toBe(true);
-    expect(
-      schemas.ajv.validate(schemas.outputSchema, reply.structuredContent),
-      JSON.stringify(schemas.ajv.errors),
-    ).toBe(true);
   }
   expect(parseEvidence(full.structuredContent)).toEqual(gdbEvidence());
   const selected = parseEvidence(summary.structuredContent);
   expect(selected.raw_result).toBeNull();
-  expect(selected.subject).toBeNull();
+  expect(selected.subject.identity.kind).toBe("unknown");
   expect(selected.normalized_result).toMatchObject({
     parent_evidence_id: gdbEvidence().evidence_id,
     artifact: null,
     source_provider: gdbEvidence().provider,
     source_parameters: gdbEvidence().parameters,
     summary: {
-      records: capture.records,
+      // The console stream record is reported by size; asynchronous,
+      // unrecognized and result records keep their order.
+      records: ['=thread-created,id="1"', "unrecognized 🧪 record", "7^done"],
       mi: capture.mi,
       completion_status: "unknown",
       output_truncated: true,
@@ -161,6 +151,7 @@ it("delivers ordered GDB records once and queries their retained parent after cl
       process_exit_code: null,
       available_counts: {
         records: 4,
+        stream_records: 1,
         console_utf16_units: capture.console.length,
         target_utf16_units: 0,
         log_utf16_units: 0,
@@ -174,23 +165,19 @@ it("delivers ordered GDB records once and queries their retained parent after cl
     name: "close_gdb_session",
     arguments: { session_id: sessionId },
   });
-  const queried = await client.callTool({
-    name: "inspect_analysis_view",
-    arguments: {
-      source: {
-        kind: "retained-evidence",
-        evidence_id: gdbEvidence().evidence_id,
+  const queried = await client.callTool(
+    {
+      name: "inspect_analysis_view",
+      arguments: {
+        source: {
+          kind: "retained-evidence",
+          evidence_id: gdbEvidence().evidence_id,
+        },
+        view: { kind: "summary" },
       },
-      view: { kind: "summary" },
     },
-  });
-  expect(
-    viewSchemas.ajv.validate(
-      viewSchemas.outputSchema,
-      queried.structuredContent,
-    ),
-    JSON.stringify(viewSchemas.ajv.errors),
-  ).toBe(true);
+    { toolDefinition: viewSchemas.toolDefinition },
+  );
   expect(parseEvidence(queried.structuredContent)).toEqual(selected);
   expect(ledger.get(gdbEvidence().evidence_id)).toEqual(gdbEvidence());
 });
@@ -207,29 +194,38 @@ it("keeps pathless objdump observations subjectless and preserves the default co
       detail: "summary",
     }),
   ).toBe(true);
-  const full = await client.callTool({
-    name: "inspect_with_objdump",
-    arguments: { operation: "architectures" },
-  });
-  const selected = await client.callTool({
-    name: "inspect_with_objdump",
-    arguments: { operation: "architectures", detail: "summary" },
-  });
-  for (const reply of [full, selected])
-    expect(
-      schemas.ajv.validate(schemas.outputSchema, reply.structuredContent),
-      JSON.stringify(schemas.ajv.errors),
-    ).toBe(true);
+  const full = await client.callTool(
+    { name: "inspect_with_objdump", arguments: { operation: "architectures" } },
+    { toolDefinition: schemas.toolDefinition },
+  );
+  const selected = await client.callTool(
+    {
+      name: "inspect_with_objdump",
+      arguments: { operation: "architectures", detail: "summary" },
+    },
+    { toolDefinition: schemas.toolDefinition },
+  );
   const parent = parseEvidence(full.structuredContent);
   const summary = parseEvidence(selected.structuredContent);
+  const { stdout, stderr, ...facts } = z
+    .object({ stdout: z.string(), stderr: z.string() })
+    .passthrough()
+    .parse(parent.normalized_result);
   expect(summary.normalized_result).toMatchObject({
     parent_evidence_id: parent.evidence_id,
     artifact: null,
     source_parameters: { operation: "architectures" },
-    summary: parent.normalized_result,
+    summary: {
+      ...facts,
+      available_counts: {
+        stdout_utf16_units: stdout.length,
+        stderr_utf16_units: stderr.length,
+      },
+    },
   });
+  expect(summary.normalized_result).not.toHaveProperty("summary.stdout");
   expect(summary.raw_result).toBeNull();
-  expect(summary.subject).toBeNull();
+  expect(summary.subject.identity.kind).toBe("unknown");
   expect(ledger.get(parent.evidence_id)).toEqual(parent);
 });
 
@@ -267,11 +263,15 @@ it("rejects malformed historical GDB facts and conflicting source commands", asy
       })
     ).ok,
   ).toBe(false);
-  const malformed = createEvidence(undefined, source.provider, {
-    operation: "gdb_console",
-    parameters: {},
-    result: { ...capture, records: [123] },
-  });
+  const malformed = createEvidence(
+    unknownTarget("not-observed"),
+    source.provider,
+    {
+      operation: "gdb_console",
+      parameters: {},
+      result: { ...capture, records: [123] },
+    },
+  );
   expect(
     (
       await inspectAnalysisView({
@@ -283,10 +283,12 @@ it("rejects malformed historical GDB facts and conflicting source commands", asy
 });
 
 it.each([true, false, null])(
-  "preserves opaque objdump capture and unknown/change facts (%s)",
+  "summarizes opaque objdump capture by its size and keeps unknown/change facts (%s)",
   async (changed) => {
     const report = {
-      stdout: "opaque output 🧪\n",
+      // A whole-binary disassembly can be megabytes; its summary reports only
+      // the output size.
+      stdout: "opaque output 🧪\n".repeat(64 * 1024),
       stderr: "diagnostic",
       exit_code: "ETIMEDOUT",
       signal: "SIGTERM",
@@ -315,9 +317,18 @@ it.each([true, false, null])(
       source: { kind: "inline", evidence: parent },
       view: { kind: "summary" },
     });
-    expect(selected.ok).toBe(true);
     if (!selected.ok) throw selected.error;
-    expect(selected.value.normalized_result).toMatchObject({ summary: report });
+    const { stdout, stderr, ...facts } = report;
+    expect(selected.value.normalized_result).toMatchObject({
+      summary: {
+        ...facts,
+        available_counts: {
+          stdout_utf16_units: stdout.length,
+          stderr_utf16_units: stderr.length,
+        },
+      },
+    });
+    expect(JSON.stringify(selected.value).length).toBeLessThan(8 * 1024);
     if (changed !== null) {
       const conflicting = createEvidence(
         {

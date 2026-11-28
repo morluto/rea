@@ -2,7 +2,7 @@ name: CI timings
 
 on:
   schedule:
-    - cron: "17 * * * *"
+    - cron: "17 */6 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -25,8 +25,12 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+          sparse-checkout: |
+            .github/actions/npm-cache
+            scripts/ci
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
+          package-manager-cache: false
           node-version-file: .nvmrc
       - name: Cache npm package downloads
         id: npm-cache
@@ -49,7 +53,7 @@ jobs:
       - name: Upload CI timing artifacts
         if: always() && hashFiles('.cache/ci-job-timings/*') != ''
         continue-on-error: true
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ci-job-timings-batch
           path: .cache/ci-job-timings/
@@ -57,23 +61,24 @@ jobs:
           if-no-files-found: error
           overwrite: true
           retention-days: 14
-      - name: Install dependencies for static failure attribution
+      - name: Install runtime dependencies for static failure attribution
         id: failure-deps
         if: ${{ !cancelled() && hashFiles('.cache/ci-job-timings/batch-manifest.json') != '' }}
         continue-on-error: true
-        run: npm ci
+        run: npm ci --omit=dev --ignore-scripts
       - name: Attribute supported static failures against main
         if: ${{ !cancelled() && steps.failure-deps.outcome == 'success' && hashFiles('.cache/ci-job-timings/batch-manifest.json') != '' }}
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           CI_REPOSITORY: ${{ github.repository }}
+          CI_COLLECTED_JOBS_DIRECTORY: .cache/ci-job-timings/runs
           CI_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: node scripts/ci/failure-report.mjs
       - name: Upload CI health and failure diagnostics
         if: ${{ !cancelled() }}
         continue-on-error: true
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ci-health-diagnostics
           path: |
@@ -81,4 +86,5 @@ jobs:
             .cache/ci-failures/
           include-hidden-files: true
           if-no-files-found: warn
+          overwrite: true
           retention-days: 14

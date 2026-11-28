@@ -15,7 +15,6 @@ import {
   javaScriptExpressionWrapperTarget,
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
-  unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
   resolveSemanticBindingState,
@@ -26,12 +25,14 @@ import {
   type LocalCallableResolution,
   parameterBindings,
   resolveLocalCallables,
+  unwrapPureSemanticSequenceExpression,
 } from "./javascriptSemanticCallResolution.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import { semanticCallableResultKind } from "./javascriptSemanticCallableResults.js";
 import { assignedSemanticResultBindings } from "./javascriptSemanticDataEffectHelpers.js";
 import { semanticPrimitiveSet } from "./javascriptSemanticPrimitives.js";
+import { isSemanticDirectEvalSite } from "./javascriptSemanticEffectRecord.js";
 
 /** Local call, flow, capture, and unsupported-frontier facts. */
 export interface JavaScriptSemanticCallAnalysis {
@@ -246,7 +247,7 @@ const retainedArguments = (
     if (node === null) continue;
     const valueNode =
       t.isExpression(node) && !t.isSpreadElement(node)
-        ? unwrapJavaScriptExpression(node).node
+        ? unwrapPureSemanticSequenceExpression(node, state)
         : null;
     retained.push({
       index,
@@ -269,13 +270,13 @@ const directLiteral = (
 } => {
   const literal = readExactJavaScriptLiteral(node);
   if (!literal.found) return {};
-  const parsed = semanticPrimitiveSet([literal.value]);
+  const parsed = semanticPrimitiveSet([literal.value], state.precision);
   if (parsed.status === "literal") return { literal: parsed.value };
   if (
     parsed.status === "unknown" &&
     parsed.resourceLimit === "primitive-bytes"
   ) {
-    state.valueResourceLimits.add(parsed.resourceLimit);
+    state.observations.valueResourceLimits.add(parsed.resourceLimit);
     return { literalResourceLimit: parsed.resourceLimit };
   }
   return {};
@@ -454,7 +455,7 @@ const collectDynamicScope = (
 ): void => {
   const reason = t.isWithStatement(node)
     ? "`with` introduces a runtime binding environment; names inside are not statically resolvable."
-    : state.opaqueEffects.sites.has(node)
+    : isSemanticDirectEvalSite(node, state)
       ? "`eval` can change bindings and reachable objects at runtime; its effects are not statically resolvable."
       : null;
   if (reason === null) return;

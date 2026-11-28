@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import type { AnalysisOperationPort } from "../../../src/ports/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { EnhancedTools } from "../../../src/application/EnhancedTools.js";
 import {
   AnalysisCapabilityUnavailableError,
@@ -10,15 +10,12 @@ import {
 import { err, ok } from "../../../src/domain/result.js";
 
 import { closeEnhancedToolResources, connect } from "./enhancedToolsHarness.js";
+import { createFixtureProviderIdentity } from "../../fixtures/analysisExecution.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 
 afterEach(closeEnhancedToolResources);
 
-const PROVIDER = {
-  id: "fixture",
-  name: "Fixture analysis provider",
-  version: "1",
-} as const;
+const PROVIDER = createFixtureProviderIdentity();
 
 type Coverage = boolean | undefined;
 
@@ -137,8 +134,111 @@ const trace = async (analysis: AnalysisOperationPort) => {
     arguments: { query: "hello" },
   });
   expect(result.isError).not.toBe(true);
-  return result.structuredContent as { normalized_result: unknown };
+  return result.structuredContent as {
+    normalized_result: unknown;
+    limitations: string[];
+  };
 };
+
+it("reports known reference-discovery gaps without claiming truncation or a missing edge", async () => {
+  const baseline = provider();
+  const gap =
+    "An unwalked candidate may have outgoing references; its presence does not establish a reference to the selected target.";
+  const output = await trace({
+    execute: (operation, input, options) =>
+      operation === "xrefs" && input.address === "0x10"
+        ? Promise.resolve(
+            ok(
+              createAnalysisExecution([], PROVIDER, {
+                referenceCoverageGaps: [
+                  { code: "unwalked", scope: "observation", description: gap },
+                ],
+              }),
+            ),
+          )
+        : baseline.execute(operation, input, options),
+  });
+  expect(output.normalized_result).toMatchObject({
+    truncated: false,
+    residual_unknowns: [`References to 0x10: ${gap}`],
+    references: [{ target_address: "0x11", source_address: "0x21" }],
+  });
+});
+
+it("deduplicates an image-wide gap without merging target-specific gaps", async () => {
+  const baseline = provider();
+  const output = await trace({
+    execute: async (operation, input, options) => {
+      const result = await baseline.execute(operation, input, options);
+      if (operation !== "xrefs" || !result.ok) return result;
+      return ok({
+        ...result.value,
+        referenceCoverageGaps: [
+          {
+            code: "missing-relocations",
+            scope: "image",
+            description: "Image relocation coverage unavailable.",
+          },
+          {
+            code: "unwalked",
+            scope: "observation",
+            description: "This observation has unwalked sources.",
+          },
+        ],
+      });
+    },
+  });
+  expect(output.normalized_result).toMatchObject({
+    truncated: false,
+    residual_unknowns: [
+      "Image relocation coverage unavailable.",
+      "References to 0x10: This observation has unwalked sources.",
+      "References to 0x11: This observation has unwalked sources.",
+    ],
+  });
+});
+
+it("carries reported pointer classifications without inferring other reference kinds", async () => {
+  const baseline = provider();
+  const output = await trace({
+    execute: (operation, input, options) =>
+      operation === "xrefs" && input.address === "0x10"
+        ? Promise.resolve(
+            ok(
+              createAnalysisExecution(["0x20"], PROVIDER, {
+                referenceClassifications: [
+                  {
+                    sourceAddress: "0x20",
+                    targetAddress: "0x10",
+                    kind: "stored_pointer",
+                    provenance: "chained-fixups",
+                    width: 8,
+                  },
+                  {
+                    sourceAddress: "0x20",
+                    targetAddress: "0x99",
+                    kind: "stored_pointer",
+                    provenance: "other",
+                    width: 4,
+                  },
+                ],
+              }),
+            ),
+          )
+        : baseline.execute(operation, input, options),
+  });
+  expect(output.normalized_result).toMatchObject({
+    references: [
+      {
+        source_address: "0x20",
+        source_classifications: [
+          { kind: "stored_pointer", provenance: "chained-fixups", width: 8 },
+        ],
+      },
+      { source_address: "0x21" },
+    ],
+  });
+});
 
 it("preserves references and explicitly unknown owners without claiming truncation", async () => {
   const baseline = provider();
@@ -330,6 +430,17 @@ it("retains incomplete cleanup when cancellation arrives during owner lookup", a
 });
 
 describe("trace_feature reference coverage", () => {
+  it("reports the address-only scope when a match has no references", async () => {
+    const output = await trace(provider({ emptyXrefsOf: "0x10" }));
+
+    expect(output.normalized_result).toEqual(expectedTrace([], [], ["0x10"]));
+    expect(output.limitations).toContainEqual(
+      expect.stringMatching(
+        /start address.*interior bytes of strings and procedures.*truncated: false/u,
+      ),
+    );
+  });
+
   it("marks the trace truncated for the target whose references the provider capped", async () => {
     const output = await trace(
       provider({ coverage: { "0x10": true, "0x11": false } }),

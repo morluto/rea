@@ -1,8 +1,13 @@
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import { safeParseUtf8Json } from "../domain/safeJson.js";
 import {
   bindArtifactFileCleanup,
-  artifactFileCancellationCause,
-} from "../artifacts/ArtifactFileOperation.js";
+  artifactFileCancellationError,
+  completedStableArtifact,
+  readStableArtifact,
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+} from "../resources/index.js";
 import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -12,12 +17,12 @@ import type {
   AnalysisCapturedOutput,
   AnalysisError,
 } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisCapabilityUnavailableError,
+  AnalysisTargetFailureError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
@@ -26,18 +31,22 @@ import {
   type InspectSqliteDatabaseInput,
 } from "../domain/sqlite/sqliteDatabase.js";
 import {
-  completedStableArtifact,
-  readStableArtifact,
-} from "../artifacts/readStableArtifact.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+  classifyProviderFailure,
+  type ProviderFailureDialect,
+} from "../providers/classifyProviderFailure.js";
 import { runOwnedCommand } from "../process/OwnedCommand.js";
 import type {
   ProviderProcessSupervisor,
   ProviderProcessStopResult,
 } from "../process/ProviderProcess.js";
-import { capturedSqliteOutput } from "./SqliteDatabaseFailures.js";
-import { SQLITE_DATABASE_LIMITS } from "./SqliteDatabaseLimits.js";
+import {
+  SQLITE_DATABASE_LIMITS,
+  SQLITE_INSPECTION_REASONS,
+  SQLITE_STRUCTURED_INSPECTION_REASONS,
+  SQLITE_WORKER_HEAP_BYTES,
+} from "./SqliteDatabaseLimits.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 
 const operation = "inspect_sqlite_database";
 const {
@@ -47,35 +56,30 @@ const {
   ...inspectionShape
 } = sqliteDatabaseSchema.shape;
 const inspectionSchema = z.strictObject(inspectionShape);
-const replySchema = z.union([
+const replySchema = z.discriminatedUnion("ok", [
   z.strictObject({ ok: z.literal(true), inspection: inspectionSchema }),
-  z.strictObject({
-    ok: z.literal(false),
-    reason: z.enum([
-      "format",
-      "selection",
-      "column-selection",
-      "row-evaluation",
-      "unsupported",
-      "unavailable",
-      "output-limit",
-      "memory",
-    ]),
-    message: z.string(),
-  }),
-  z.strictObject({
-    ok: z.literal(false),
-    reason: z.literal("column-evaluation"),
-    message: z.string(),
-    readable_columns: z.array(z.string()),
-  }),
-  z.strictObject({
-    ok: z.literal(false),
-    reason: z.literal("column-limit"),
-    message: z.string(),
-    selected_columns: z.int().positive(),
-    engine_column_limit: z.int().positive(),
-  }),
+  z.discriminatedUnion("reason", [
+    z.strictObject({
+      ok: z.literal(false),
+      reason: z
+        .enum(SQLITE_INSPECTION_REASONS)
+        .exclude(SQLITE_STRUCTURED_INSPECTION_REASONS),
+      message: z.string(),
+    }),
+    z.strictObject({
+      ok: z.literal(false),
+      reason: z.literal("column-evaluation"),
+      message: z.string(),
+      readable_columns: z.array(z.string()),
+    }),
+    z.strictObject({
+      ok: z.literal(false),
+      reason: z.literal("column-limit"),
+      message: z.string(),
+      selected_columns: z.int().positive(),
+      engine_column_limit: z.int().positive(),
+    }),
+  ]),
 ]);
 /** Replaceable launcher retains the shared owned-process supervision boundary. */
 export type SqliteWorkerLauncher = NonNullable<
@@ -90,10 +94,10 @@ interface SqliteWorkerInspection {
 
 // Each input rejection names the caller argument that requires correction.
 const rejectedArgument = {
-  format: "path",
   unsupported: "path",
   selection: "table",
   "column-selection": "columns",
+  "row-offset": "row_offset",
 } as const;
 
 const rejectedReply = (
@@ -117,10 +121,11 @@ const rejectedReply = (
       {
         capturedOutput,
         userMessage: reply.message,
+        related: { parameters: ["columns", "table", "schema_scope"] },
         remediationAction: `The database is readable; only the listed column values failed. REA's SQLite connection loads no extensions or application functions and disables schema trust. ${
           readable.length === 0
             ? "No other readable column was found"
-            : `Select columns whose values were read: columns: ${JSON.stringify(readable)} (CLI: one --column per name)`
+            : `Select columns whose values were read: columns: ${JSON.stringify(readable)}`
         }; omit table and use schema_scope: database to read the stored declarations without evaluating rows. Obtaining the failed values needs a SQLite connection able to evaluate them. Do not repeat the unchanged request.`,
       },
     );
@@ -144,7 +149,7 @@ const rejectedReply = (
       "memory",
       reply.message,
       {
-        javascript_heap_bytes: 256 * 1024 * 1024,
+        javascript_heap_bytes: SQLITE_WORKER_HEAP_BYTES,
       },
       { capturedOutput, diagnostics: { selected_path: selectedPath } },
     );
@@ -161,9 +166,16 @@ const rejectedReply = (
       {
         capturedOutput,
         diagnostics: { selected_path: selectedPath },
-        retryable: false,
-        remediationAction:
-          "The SQLite value/record, SQL statement and worker JSON reply allowances are each fixed at 16 MiB; this refusal does not identify which was exceeded. worker_timeout_ms and client deadlines do not raise them. If it preserves the requested facts, select exact columns, reduce row_limit, or use schema_scope: inventory instead of database. This worker refusal leaves no completed Evidence to retrieve. Do not repeat the unchanged request or truncate required database bytes.",
+        ...fixedAllowanceOptions(
+          "The SQLite value/record, SQL statement and worker reply allowance",
+          "bytes",
+          {
+            limit: SQLITE_DATABASE_LIMITS.outputBytes,
+            unit: "bytes",
+            narrowing:
+              "This refusal does not identify which of the three allowances was exceeded, and worker_timeout_ms does not raise them; if it preserves the requested facts, select exact columns, reduce row_limit, or use schema_scope: inventory instead of database.",
+          },
+        ),
       },
     );
   if (reply.reason === "column-limit")
@@ -178,9 +190,25 @@ const rejectedReply = (
       {
         capturedOutput,
         diagnostics: { selected_path: selectedPath },
-        retryable: false,
-        remediationAction: `The selected database is readable; only the combined projection exceeded this connection's native result-column limit. Request at most ${String(reply.engine_column_limit)} columns per call, splitting wider facts across calls, or omit table to inspect stored declarations with schema_scope: database. The limit belongs to SQLite's connection, so worker_timeout_ms and client deadlines do not raise it. Do not repeat the unchanged request.`,
+        ...fixedAllowanceOptions(
+          "SQLite's result-column limit for this connection",
+          "count",
+          {
+            limit: reply.engine_column_limit,
+            unit: "columns",
+            narrowing: `The database is readable; request at most ${String(reply.engine_column_limit)} columns per call, splitting wider facts across calls, or omit table to inspect stored declarations with schema_scope: database.`,
+          },
+        ),
       },
+    );
+  // SQLite established that the selected snapshot's bytes are not a valid
+  // database: a target refusal at the caller's path, not a bad argument.
+  if (reply.reason === "malformed")
+    return new AnalysisTargetFailureError(
+      operation,
+      selectedPath,
+      { kind: "malformed", format: "sqlite", detail: reply.message },
+      { capturedOutput },
     );
   const argument = rejectedArgument[reply.reason];
   return new AnalysisInputError(operation, { capturedOutput }, [
@@ -229,7 +257,7 @@ export const executeSqliteDatabaseWorker = async (request: {
     {
       command: process.execPath,
       arguments: [
-        "--max-old-space-size=256",
+        `--max-old-space-size=${String(SQLITE_DATABASE_LIMITS.workerHeapMiB)}`,
         fileURLToPath(new URL("./SqliteDatabaseWorker.js", import.meta.url)),
         requestPath,
       ],
@@ -241,6 +269,7 @@ export const executeSqliteDatabaseWorker = async (request: {
     {
       timeoutMs: request.timeoutMs,
       diagnosticBytes: SQLITE_DATABASE_LIMITS.diagnosticBytes,
+      runtime: "v8",
     },
     {
       ...(request.signal === undefined ? {} : { signal: request.signal }),
@@ -250,7 +279,7 @@ export const executeSqliteDatabaseWorker = async (request: {
         : { retainCleanup: request.retainCleanup }),
     },
   );
-  const capturedOutput = capturedSqliteOutput(execution);
+  const capturedOutput = capturedProviderOutput(execution);
   request.captured(capturedOutput);
   let reply: z.output<typeof replySchema>;
   let finalization: AnalysisError | undefined;
@@ -276,7 +305,7 @@ export const executeSqliteDatabaseWorker = async (request: {
     reply = replySchema.parse(decoded.value);
   } catch (cause: unknown) {
     throw sqliteReplyFinalizationFailure(
-      sqliteReplyReadFailure(cause, capturedOutput),
+      classifyProviderFailure(cause, sqliteReplyReadDialect(capturedOutput)),
       finalization,
     );
   }
@@ -288,31 +317,24 @@ export const executeSqliteDatabaseWorker = async (request: {
   return { inspection: reply.inspection, finalization };
 };
 
-const sqliteReplyReadFailure = (
-  cause: unknown,
+/**
+ * How a failed worker-reply read is reported. The shared classifier keeps a
+ * typed failure, the read's cancellation and its unresolved cleanup; anything
+ * else means the owned worker's reply is missing or malformed.
+ */
+const sqliteReplyReadDialect = (
   capturedOutput: AnalysisCapturedOutput,
-): AnalysisError => {
-  const options = {
-    cause,
-    capturedOutput,
-    ...(cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined
-      ? { cleanup: cause.cleanup }
-      : {}),
-  };
-  const error =
-    cause instanceof ArtifactReaderFailure && cause.reason === "cancelled"
-      ? new AnalysisCancelledError(operation, {
-          ...options,
-          cause: artifactFileCancellationCause(cause),
-        })
-      : new AnalysisOutputError(
-          operation,
-          `Owned SQLite worker reply is missing or malformed: ${cause instanceof Error ? cause.message : String(cause)}`,
-          options,
-        );
-  bindArtifactFileCleanup(cause, error);
-  return error;
-};
+): ProviderFailureDialect => ({
+  providerId: "sqlite",
+  operation,
+  observedOutput: capturedOutput,
+  unclassified: (cause, details) =>
+    new AnalysisOutputError(
+      operation,
+      `Owned SQLite worker reply is missing or malformed: ${errorMessage(cause)}`,
+      { ...details, cause, capturedOutput },
+    ),
+});
 
 /** Stable bytes remain usable when only their descriptor's final close failed. */
 const sqliteReplyCompletionFailure = (
@@ -320,7 +342,10 @@ const sqliteReplyCompletionFailure = (
   capturedOutput: AnalysisCapturedOutput,
 ): AnalysisError => {
   if (cause.cleanup === undefined)
-    return sqliteReplyReadFailure(cause, capturedOutput);
+    return classifyProviderFailure(
+      cause,
+      sqliteReplyReadDialect(capturedOutput),
+    );
   const cleanup = new ProviderCleanupError(
     "sqlite",
     cause.cleanup.resources,
@@ -329,15 +354,10 @@ const sqliteReplyCompletionFailure = (
   );
   bindArtifactFileCleanup(cause, cleanup);
   if (cause.reason !== "cancelled") return cleanup;
-  const cancellation = new AnalysisCancelledError(operation, {
-    cause: artifactFileCancellationCause(cause),
+  const cancellation = artifactFileCancellationError(operation, cause, {
     capturedOutput,
   });
-  return analysisErrorWithCleanupFailure(
-    cancellation,
-    cleanup,
-    operation,
-  ).bindCleanupDependencies([cancellation, cleanup]);
+  return analysisErrorWithCleanupDependencies(cancellation, cleanup, operation);
 };
 
 /** A malformed reply or producer refusal stays primary over its later close. */
@@ -348,9 +368,5 @@ export const sqliteReplyFinalizationFailure = (
   finalization === undefined
     ? primary
     : finalization.cleanupIncomplete
-      ? analysisErrorWithCleanupFailure(
-          primary,
-          finalization,
-          operation,
-        ).bindCleanupDependencies([primary, finalization])
+      ? analysisErrorWithCleanupDependencies(primary, finalization, operation)
       : primary.retainSecondaryFailure(finalization);

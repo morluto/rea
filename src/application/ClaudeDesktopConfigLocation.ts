@@ -2,10 +2,12 @@ import { lstatSync, opendirSync, readdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 
 import { err, ok, type Result } from "../domain/result.js";
+import { isAbsentClientConfigPath } from "./ClientConfigPath.js";
 import {
   windowsAppDataRoots,
   type MsixPackageView,
 } from "./MsixPackageStorage.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const CONFIG_FILE = "claude_desktop_config.json";
 
@@ -29,7 +31,7 @@ const PROBES_PER_DIRECTORY = 2;
  * publisher ID Windows derives from `CN="Anthropic, PBC", O="Anthropic, PBC",
  * L=San Francisco, S=California, C=US, …`.
  */
-export const CLAUDE_DESKTOP_PACKAGE_FAMILY = "Claude_pzs8sxrjxfjjc";
+const CLAUDE_DESKTOP_PACKAGE_FAMILY = "Claude_pzs8sxrjxfjjc";
 
 /** Observed Claude package names plus Windows' 13-character publisher ID. */
 const CLAUDE_PACKAGE_FAMILY =
@@ -105,7 +107,7 @@ export const resolveWindowsClaudeDesktopLocation = (
       .readdir(packagesDirectory)
       .filter((name) => CLAUDE_PACKAGE_FAMILY.test(name));
   } catch (cause: unknown) {
-    if (!isMissing(cause))
+    if (!isAbsentClientConfigPath(cause))
       return err({
         path: packagesDirectory,
         message: `MSIX package storage ${packagesDirectory} could not be inspected, so REA cannot establish whether Claude Desktop reads ${appDataConfigPath} or a package-private copy: ${errorMessage(cause)}. Repair access to that directory, then rerun.`,
@@ -237,7 +239,7 @@ const resolveAppData = (
   try {
     return fileSystem.realpath(path);
   } catch (cause: unknown) {
-    return isMissing(cause) ? null : undefined;
+    return isAbsentClientConfigPath(cause) ? null : undefined;
   }
 };
 
@@ -365,18 +367,10 @@ const present = (
     fileSystem.lstat(path);
     return ok(true);
   } catch (cause: unknown) {
-    if (isMissing(cause)) return ok(false);
+    if (isAbsentClientConfigPath(cause)) return ok(false);
     return err({
       path,
       message: `${path} could not be inspected, so REA cannot establish which ${CONFIG_FILE} Claude Desktop's MSIX package reads: ${errorMessage(cause)}. Repair access to that path, then rerun.`,
     });
   }
 };
-
-const isMissing = (cause: unknown): boolean =>
-  cause instanceof Error &&
-  "code" in cause &&
-  (cause.code === "ENOENT" || cause.code === "ENOTDIR");
-
-const errorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);

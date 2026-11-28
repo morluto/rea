@@ -1,14 +1,18 @@
-import { appendFile, lstat, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { appendFile, lstat } from "node:fs/promises";
 import { expect, it, vi } from "vitest";
-import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import { collectEntries } from "../../../tests/fixtures/artifactEntries.js";
+import { createTestTempFile } from "../../../tests/fixtures/temporaryDirectory.js";
 import { withOwnedRegularFile } from "../../filesystem/OwnedRegularFile.js";
+import type { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { ArtifactEmbeddedFormatProbes } from "../ArtifactEmbeddedFormatProbes.js";
-import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { inventoryArtifact } from "../inventory/ArtifactInventory.js";
 import { classifyAndHashRootForInventory } from "../inventory/classify.js";
 import { PyInstallerArtifactReader } from "../PyInstallerArtifactReader.js";
-import { cArchiveExecutable } from "./CArchive.fixture.js";
+import {
+  CARCHIVE_COOKIE_MAGIC,
+  cArchiveExecutable,
+} from "./CArchive.fixture.js";
 import * as layout from "./CArchiveLayout.js";
 
 const fixture = () =>
@@ -38,13 +42,10 @@ it.each([
 ] as const)(
   "retains $carrier carrier dialect at offset $offset through member projection",
   async ({ carrier, offset, dialect, path: memberPath }) => {
-    const root = await createTestTempDirectory(
-      "rea-pyinstaller-carrier-admission-",
-    );
-    const path = join(root, "app");
     const sourceName = String.raw`pkg\data.bin`;
-    await writeFile(
-      path,
+    const path = await createTestTempFile(
+      "rea-pyinstaller-carrier-admission-",
+      "app",
       cArchiveExecutable({
         carrier,
         ...(offset === undefined ? {} : { peHeaderOffset: offset }),
@@ -61,6 +62,7 @@ it.each([
       }),
     );
     const resourceScope = new ArtifactResourceScope();
+    let rootOwner: OwnedFileHandle | undefined;
     try {
       const classified = await classifyAndHashRootForInventory(
         path,
@@ -68,6 +70,7 @@ it.each([
         await lstat(path),
         { resourceScope },
       );
+      rootOwner = classified.rootSource?.owner;
       const admission = classified.readerAdmission;
       if (
         admission === undefined ||
@@ -81,8 +84,7 @@ it.each([
         if (classified.digest === null)
           throw new Error("Missing carrier digest");
         await reader.prepareContainer(classified.digest.sha256);
-        const entries = [];
-        for await (const entry of reader.entries()) entries.push(entry);
+        const entries = await collectEntries(reader);
         expect(entries).toEqual([
           expect.objectContaining({
             path: memberPath,
@@ -95,16 +97,27 @@ it.each([
         await reader.close();
       }
     } finally {
-      await resourceScope.close();
+      try {
+        if (rootOwner !== undefined) {
+          const cleanup = await resourceScope.release({
+            kind: "file-handle",
+            resource: `root artifact descriptor for ${path}`,
+            handle: rootOwner,
+          });
+          if (cleanup.kind === "failed")
+            throw resourceScope.cleanupFailure({ kind: "completed" }, [
+              cleanup,
+            ]);
+        }
+      } finally {
+        await resourceScope.close();
+      }
     }
+    expect(rootOwner?.handle.fd).toBe(-1);
   },
 );
 
 it("preserves backslashes when a standalone archive has no recognized carrier", async () => {
-  const root = await createTestTempDirectory(
-    "rea-pyinstaller-unknown-carrier-",
-  );
-  const path = join(root, "app");
   const sourceName = String.raw`pkg\data.bin`;
   const bytes = cArchiveExecutable({
     layout: "2.1",
@@ -119,11 +132,14 @@ it("preserves backslashes when a standalone archive has no recognized carrier", 
     ],
   });
   bytes.fill(0, 0, 64);
-  await writeFile(path, bytes);
+  const path = await createTestTempFile(
+    "rea-pyinstaller-unknown-carrier-",
+    "app",
+    bytes,
+  );
   const reader = new PyInstallerArtifactReader(path);
   try {
-    const entries = [];
-    for await (const entry of reader.entries()) entries.push(entry);
+    const entries = await collectEntries(reader);
     expect(entries.map((entry) => entry.path)).toEqual([sourceName]);
   } finally {
     await reader.close();
@@ -131,11 +147,11 @@ it("preserves backslashes when a standalone archive has no recognized carrier", 
 });
 
 it("inventories members using the cookie discovered by root classification", async () => {
-  const root = await createTestTempDirectory(
+  const path = await createTestTempFile(
     "rea-pyinstaller-cookie-inventory-",
+    "app",
+    fixture(),
   );
-  const path = join(root, "app");
-  await writeFile(path, fixture());
   const locate = vi.spyOn(layout, "observePyInstallerCookie");
   const resourceScope = new ArtifactResourceScope();
   try {
@@ -158,9 +174,11 @@ it("inventories members using the cookie discovered by root classification", asy
 });
 
 it("rejects changed source before consuming an admitted cookie and leaves the borrowed descriptor open", async () => {
-  const root = await createTestTempDirectory("rea-pyinstaller-cookie-change-");
-  const path = join(root, "app");
-  await writeFile(path, fixture());
+  const path = await createTestTempFile(
+    "rea-pyinstaller-cookie-change-",
+    "app",
+    fixture(),
+  );
   await withOwnedRegularFile(path, {}, async (source) => {
     const cookie = await new ArtifactEmbeddedFormatProbes(
       path,
@@ -191,9 +209,11 @@ it("rejects changed source before consuming an admitted cookie and leaves the bo
 });
 
 it("retains completed cookie facts across unchanged admissions and honors cached cancellation", async () => {
-  const root = await createTestTempDirectory("rea-pyinstaller-cookie-cache-");
-  const path = join(root, "app");
-  await writeFile(path, fixture());
+  const path = await createTestTempFile(
+    "rea-pyinstaller-cookie-cache-",
+    "app",
+    fixture(),
+  );
   const locate = vi.spyOn(layout, "observePyInstallerCookie");
   try {
     await withOwnedRegularFile(path, {}, async (source) => {
@@ -224,13 +244,12 @@ it("retains completed cookie facts across unchanged admissions and honors cached
 });
 
 it("retains rejected magic candidates without classifying their native carrier as PyInstaller", async () => {
-  const root = await createTestTempDirectory("rea-pyinstaller-candidate-");
-  const path = join(root, "app");
-  await writeFile(
-    path,
+  const path = await createTestTempFile(
+    "rea-pyinstaller-candidate-",
+    "app",
     Buffer.concat([
       fixture().subarray(0, 64),
-      layout.PYINSTALLER_COOKIE_MAGIC,
+      CARCHIVE_COOKIE_MAGIC,
       Buffer.alloc(88),
     ]),
   );
@@ -240,7 +259,7 @@ it("retains rejected magic candidates without classifying their native carrier a
     const observed = probes.completedFacts().pyInstaller;
     expect(observed).toMatchObject({
       state: "rejected-candidates",
-      failure: { reason: "format" },
+      failure: { reason: "malformed" },
     });
     const resumed = new ArtifactEmbeddedFormatProbes(
       path,
@@ -264,17 +283,10 @@ it("retains rejected magic candidates without classifying their native carrier a
 });
 
 it("continues past an invalid trailing magic copy to inventory the valid cookie", async () => {
-  const root = await createTestTempDirectory(
+  const path = await createTestTempFile(
     "rea-pyinstaller-candidate-valid-",
-  );
-  const path = join(root, "app");
-  await writeFile(
-    path,
-    Buffer.concat([
-      fixture(),
-      layout.PYINSTALLER_COOKIE_MAGIC,
-      Buffer.alloc(88),
-    ]),
+    "app",
+    Buffer.concat([fixture(), CARCHIVE_COOKIE_MAGIC, Buffer.alloc(88)]),
   );
   const resourceScope = new ArtifactResourceScope();
   try {
@@ -295,9 +307,11 @@ it("continues past an invalid trailing magic copy to inventory the valid cookie"
 });
 
 it("does not cache an incomplete tail read as an absent cookie and can retry", async () => {
-  const root = await createTestTempDirectory("rea-pyinstaller-tail-short-");
-  const path = join(root, "app");
-  await writeFile(path, fixture());
+  const path = await createTestTempFile(
+    "rea-pyinstaller-tail-short-",
+    "app",
+    fixture(),
+  );
   await withOwnedRegularFile(path, {}, async (source) => {
     const probes = new ArtifactEmbeddedFormatProbes(path, source);
     const read = source.handle.read.bind(source.handle);
@@ -313,8 +327,9 @@ it("does not cache an incomplete tail read as an absent cookie and can retry", a
       });
     try {
       await expect(probes.pyInstaller()).rejects.toMatchObject({
-        reason: "format",
-        message: "CArchive tail is truncated",
+        // The tail lies inside the measured size: the file changed.
+        reason: "integrity",
+        integrityCheck: "read-coverage",
       });
       expect(calls).toBe(2);
       expect(Object.hasOwn(probes.completedFacts(), "pyInstaller")).toBe(false);

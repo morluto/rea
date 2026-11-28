@@ -5,16 +5,24 @@ import { jsonValueSchema } from "../jsonValue.js";
 import {
   addressedValueSchema,
   isNativeInventoryOperation,
-  nativeInventoryRowsSchemas,
+  type NativeInventoryOperation,
 } from "../native/nativeInventory.js";
-import { err, ok } from "../result.js";
+import {
+  listNamesFact,
+  listProceduresFact,
+  listStringsFact,
+  searchProceduresFact,
+  searchStringsFact,
+} from "../native/nativeOperationFacts.js";
+import { ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   assertOwnedView,
   type AdmittedView,
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
+import { pickFields } from "./selectViewRows.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
   boundedViewMessages,
@@ -59,12 +67,16 @@ export const nativeInventorySummarySchema = z.strictObject({
   selectable_fields: z.array(fieldSchema),
 });
 
-const readNames = createAnalysisViewResultReader(
-  nativeInventoryRowsSchemas.names,
-);
-const readStrings = createAnalysisViewResultReader(
-  nativeInventoryRowsSchemas.strings,
-);
+/** Retained inventory Evidence reads through its parent operation's contract. */
+const readInventory = {
+  list_names: createAnalysisViewResultReader(listNamesFact.schema),
+  list_procedures: createAnalysisViewResultReader(listProceduresFact.schema),
+  search_procedures: createAnalysisViewResultReader(
+    searchProceduresFact.schema,
+  ),
+  list_strings: createAnalysisViewResultReader(listStringsFact.schema),
+  search_strings: createAnalysisViewResultReader(searchStringsFact.schema),
+} satisfies Record<NativeInventoryOperation, unknown>;
 
 /** Project already completed provider observations without another provider read or sort. */
 export const projectNativeInventoryView = (
@@ -75,15 +87,8 @@ export const projectNativeInventoryView = (
     !isNativeInventoryOperation(parent.operation) ||
     (view.kind !== "summary" && view.kind !== "native-inventory")
   )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Native inventory Evidence supports summary and native-inventory views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Native inventory Evidence supports summary and native-inventory views.",
     );
   assertOwnedView<
     SummaryAnalysisView | z.output<typeof nativeInventoryViewRequestSchema>
@@ -91,7 +96,7 @@ export const projectNativeInventoryView = (
   const strings =
     parent.operation === "list_strings" ||
     parent.operation === "search_strings";
-  const parsed = strings ? readStrings(parent) : readNames(parent);
+  const parsed = readInventory[parent.operation](parent);
   if (!parsed.ok) return parsed;
   const rows: readonly InventoryRecord[] = parsed.value;
   const shared = {
@@ -129,7 +134,7 @@ export const projectNativeInventoryView = (
         discovery_coverage: "unknown" as const,
         selectable_fields: fieldSchema.options,
       },
-      coverage: completeWithinViewCoverage(rows.length, rows.length),
+      coverage: completeWithinViewCoverage(rows.length),
     });
   // Normalize the selection once: repeated caller fields must not multiply
   // work or temporary entries for every retained row. Keep the original view.
@@ -156,11 +161,7 @@ export const projectNativeInventoryView = (
               ...(selectingValue && record.decoding !== undefined
                 ? { decoding: record.decoding }
                 : {}),
-              ...Object.fromEntries(
-                fields
-                  .filter((field) => Object.hasOwn(record, field))
-                  .map((field) => [field, record[field]]),
-              ),
+              ...pickFields(record, fields),
             },
     })),
     coverage: pageViewCoverage(view.offset, selected.length, rows.length),

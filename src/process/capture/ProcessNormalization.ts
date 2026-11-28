@@ -1,6 +1,9 @@
 import { isIP } from "node:net";
 
-import type { ProcessScenario } from "../../domain/process/processScenario.js";
+import {
+  processOutputBytesLimit,
+  type ProcessScenario,
+} from "../../domain/process/processScenario.js";
 
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import type {
@@ -276,7 +279,7 @@ const createProcessTextRules = (
 };
 
 /** Prepare capture-local matchers while retaining a live terminal PID lookup. */
-export const createProcessTextNormalizer = (
+const createProcessTextNormalizer = (
   scenario: ProcessScenario,
   temporaryRoot: string | undefined,
   pid: ProcessIdentifierSource,
@@ -486,7 +489,7 @@ export const normalizeRetainedTerminalFrames = (
     const value = normalize(raw, maximumBytes - bytes);
     if (value.state === "over_budget")
       throw new AnalysisResourceConstraintError(
-        "capture_process",
+        "capture_process_scenario",
         "capacity",
         `Retained terminal text exceeded the selected output budget after ${reason} projection.`,
         {
@@ -498,9 +501,9 @@ export const normalizeRetainedTerminalFrames = (
               : "terminal-sensitive-input-normalization",
         },
         {
+          // Normalization stops at the remaining budget, so the need is unmeasured.
+          limit: processOutputBytesLimit(maximumBytes),
           retryable: false,
-          remediationAction:
-            "Increase limits.output_bytes within its advertised range, or select a narrower scenario. Completed raw PTY chunks remain in partial observations; the corrected normalized representation did not fit.",
         },
       );
     bytes += value.utf8Bytes;

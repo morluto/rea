@@ -1,7 +1,12 @@
-import { rm, writeFile } from "node:fs/promises";
+import {
+  fileIdentity,
+  fileSubjectDisplay,
+} from "../../fixtures/evidenceSubject.js";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import { writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -12,8 +17,15 @@ import {
   traceApplicationFeatureEvidence,
 } from "../../../src/application/javascript/JavaScriptApplicationWorkflowService.js";
 import { reconcileJavaScriptRuntimeEvidence } from "../../../src/application/javascript/JavaScriptRuntimeReconciliationService.js";
-import { createEvidence } from "../../../src/domain/evidence.js";
-import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
+import {
+  createEvidence,
+  evidenceSubjectInput,
+} from "../../../src/domain/evidence.js";
+import {
+  AnalysisCancelledError,
+  AnalysisInputError,
+} from "../../../src/domain/analysisErrorCore.js";
+import { JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE } from "../../../src/contracts/javascript/javascriptApplicationWorkflowExamples.js";
 
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import {
@@ -40,16 +52,6 @@ import { projectManagedApplicationGraphEvidence } from "../../../src/application
 import { MANAGED_APPLICATION_GRAPH_EXAMPLE } from "../../../src/contracts/managed/managedWorkflowExamples.js";
 import { JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE } from "../../../src/contracts/javascript/javascriptRuntimeReconciliationExample.js";
 import { managedApplicationGraphResultSchema } from "../../../src/domain/managed/managedApplicationGraph.js";
-
-const temporary: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(
-    temporary
-      .splice(0)
-      .map(async (path) => rm(path, { recursive: true, force: true })),
-  );
-});
 
 describe("JavaScript application workflows", () => {
   it("preserves source-owned requested native members across trace directions", () => {
@@ -202,7 +204,7 @@ describe("JavaScript application comparison workflows", () => {
     );
     const applicationEvidence = (side: string) =>
       createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         { id: "fixture", name: "Fixture", version: "1" },
         {
           predicateType: "rea.javascript-application-analysis",
@@ -222,12 +224,44 @@ describe("JavaScript application comparison workflows", () => {
   });
 });
 
+describe("JavaScript application workflow cancellation", () => {
+  it("stops resolving retained version-comparison sources when the caller cancels mid-request", () => {
+    const { left, right } = JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE;
+    const sources = [left, right];
+    const controller = new AbortController();
+    const reason = { request: "cancel version comparison" };
+    const looked: string[] = [];
+    const result = compareApplicationVersionsEvidence(
+      {
+        left: {
+          kind: "retained-evidence",
+          evidence_id: left.evidence_id,
+        },
+        right: {
+          kind: "retained-evidence",
+          evidence_id: right.evidence_id,
+        },
+      },
+      (id) => {
+        looked.push(id);
+        controller.abort(reason);
+        return sources.find(({ evidence_id }) => evidence_id === id);
+      },
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("Expected cancellation");
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.cause).toBe(reason);
+    expect(looked).toEqual([left.evidence_id]);
+  });
+});
+
 describe("historical native comparison projections", () => {
   it("keeps historical native member omission distinct through authenticated comparison", async () => {
     const root = await createTestTempDirectory(
       "rea-historical-native-members-",
     );
-    temporary.push(root);
+    await writeFile(join(root, "package.json"), '{"type":"commonjs"}');
     await writeFile(
       join(root, "main.js"),
       'const { open } = require("./addon.node"); open();',
@@ -240,7 +274,7 @@ describe("historical native comparison projections", () => {
     const binding = original.graph.nodes.find(
       ({ kind }) => kind === "native-export",
     );
-    if (binding === undefined || source.subject === null)
+    if (binding === undefined || source.subject.identity.kind !== "file")
       throw new Error("Missing fixture binding");
     const historical = (name: string, explicitEmpty = false) => {
       const artifact = binding.observations[0]!.evidence.artifact;
@@ -283,9 +317,9 @@ describe("historical native comparison projections", () => {
       });
       return createEvidence(
         {
-          path: source.subject!.local_path,
-          sha256: source.subject!.digest.sha256,
-          format: source.subject!.format,
+          path: fileSubjectDisplay(source.subject).local_path,
+          sha256: fileIdentity(source.subject).sha256,
+          format: fileIdentity(source.subject).format,
         },
         source.provider,
         {
@@ -317,7 +351,6 @@ describe("historical native comparison projections", () => {
 describe("complete comparison projections", () => {
   it("matches rechunked modules by exact source and minified modules by structural fingerprint", async () => {
     const root = await createTestTempDirectory("rea-application-versions-");
-    temporary.push(root);
     const fixtures = await writeVersionedJavaScriptApplicationFixtures(root);
     const [left, right] = await Promise.all([
       analyzeFixture(fixtures.left),
@@ -380,7 +413,6 @@ describe("complete comparison projections", () => {
 
   it("pairs source-map originals without promoting the match to exact", async () => {
     const root = await createTestTempDirectory("rea-source-map-versions-");
-    temporary.push(root);
     const fixtures = await writeVersionedJavaScriptApplicationFixtures(root);
     const [left, right] = await Promise.all([
       analyzeFixture(fixtures.left),
@@ -472,22 +504,26 @@ describe("Application graph Evidence envelopes", () => {
             )
           : managedApplicationGraphResultSchema.parse(source.normalized_result);
       const extraLink = `ev_${"f".repeat(64)}`;
-      const malformed = createEvidence(undefined, source.provider, {
-        predicateType: source.predicate_type,
-        operation: source.operation,
-        parameters: source.parameters,
-        result: {
-          ...result,
-          evidence_links: [...result.evidence_links, extraLink],
+      const malformed = createEvidence(
+        evidenceSubjectInput(source.subject),
+        source.provider,
+        {
+          predicateType: source.predicate_type,
+          operation: source.operation,
+          parameters: source.parameters,
+          result: {
+            ...result,
+            evidence_links: [...result.evidence_links, extraLink],
+          },
+          rawResult: source.raw_result,
+          confidence: source.confidence,
+          authority: source.authority,
+          environment: source.environment,
+          limitations: source.limitations,
+          locations: source.locations,
+          evidenceLinks: source.evidence_links,
         },
-        rawResult: source.raw_result,
-        confidence: source.confidence,
-        authority: source.authority,
-        environment: source.environment,
-        limitations: source.limitations,
-        locations: source.locations,
-        evidenceLinks: source.evidence_links,
-      });
+      );
       const workflowInput = {
         application: source,
         seed: { kind: "route" as const, value: "/not-present" },
@@ -521,10 +557,10 @@ describe("JavaScript application workflow error diagnostics", () => {
     const root = await createTestTempDirectory(
       "rea-application-workflow-diagnostics-",
     );
-    temporary.push(root);
     const evidence = await analyzeFixture(root);
     const subject = evidence.subject;
-    if (subject === null) throw new Error("Analysis Evidence subject missing");
+    if (subject.identity.kind !== "file")
+      throw new Error("Analysis Evidence must name its file");
     const inconsistentPath = "/different/application.js";
     const inconsistent = {
       ...evidence,
@@ -553,10 +589,8 @@ describe("JavaScript application workflow error diagnostics", () => {
     const root = await createTestTempDirectory(
       "rea-application-workflow-schema-diagnostics-",
     );
-    temporary.push(root);
     const evidence = await analyzeFixture(root);
     const subject = evidence.subject;
-    if (subject === null) throw new Error("Analysis Evidence subject missing");
     const result = javascriptApplicationAnalysisResultSchema.parse(
       evidence.normalized_result,
     );
@@ -569,9 +603,9 @@ describe("JavaScript application workflow error diagnostics", () => {
     };
     const malformedEvidence = createEvidence(
       {
-        path: subject.local_path,
-        sha256: subject.digest.sha256,
-        format: subject.format,
+        path: fileSubjectDisplay(subject).local_path,
+        sha256: fileIdentity(subject).sha256,
+        format: fileIdentity(subject).format,
       },
       JAVASCRIPT_APPLICATION_PROVIDER,
       {
@@ -597,29 +631,23 @@ describe("JavaScript application workflow error diagnostics", () => {
       runtime_observations: [evidence],
     });
 
-    expect(traced.ok).toBe(false);
-    expect(reconciled.ok).toBe(false);
-    if (!traced.ok && traced.error instanceof AnalysisInputError)
-      expect(traced.error.issues).toContainEqual(
+    for (const result of [traced, reconciled]) {
+      if (result.ok || !(result.error instanceof AnalysisInputError))
+        throw new Error("Expected an input error for the uncommitted graph");
+      expect(result.error.issues).toContainEqual(
         expect.objectContaining({
-          message:
-            "Semantic graph must commit the containing application graph",
+          message: expect.stringMatching(
+            /semantic graph.*commit.*application graph/i,
+          ),
         }),
       );
-    if (!reconciled.ok && reconciled.error instanceof AnalysisInputError)
-      expect(reconciled.error.issues).toContainEqual(
-        expect.objectContaining({
-          message:
-            "Semantic graph must commit the containing application graph",
-        }),
-      );
+    }
   });
 
   it("returns supported-operation constraints from runtime reconciliation", async () => {
     const root = await createTestTempDirectory(
       "rea-runtime-workflow-diagnostics-",
     );
-    temporary.push(root);
     const evidence = await analyzeFixture(root);
 
     const result = reconcileJavaScriptRuntimeEvidence({
@@ -630,13 +658,17 @@ describe("JavaScript application workflow error diagnostics", () => {
     if (result.ok) throw new Error("Expected non-runtime Evidence to fail");
     expect(result.error).toBeInstanceOf(AnalysisInputError);
     if (!(result.error instanceof AnalysisInputError)) return;
-    expect(result.error.issues).toContainEqual(
-      expect.objectContaining({
-        reason: "invalid_value",
-        message:
-          "Runtime reconciliation requires inspect_web_page, inspect_electron_page, observe_javascript_runtime, or capture_electron_scenario Evidence",
-      }),
+    const issue = result.error.issues.find(
+      ({ reason }) => reason === "invalid_value",
     );
+    expect(issue?.message).toMatch(/runtime reconciliation.*requires/i);
+    for (const operation of [
+      "inspect_web_page",
+      "inspect_electron_page",
+      "observe_javascript_runtime",
+      "capture_electron_scenario",
+    ])
+      expect(issue?.message).toContain(operation);
   });
 });
 
@@ -682,25 +714,29 @@ describe("JavaScript runtime reconciliation local paths", () => {
       );
       // Keep target and script coordinates consistent so an unrelated target
       // cannot activate the static layer after its script mapping was rejected.
-      const runtime = createEvidence(undefined, original.provider, {
-        predicateType: original.predicate_type,
-        operation: original.operation,
-        parameters: { ...original.parameters, include_script_sources: false },
-        result: {
-          ...inspection,
-          target: { ...inspection.target, file_path: path },
-          scripts: {
-            ...inspection.scripts,
-            items: inspection.scripts.items.map((script) => ({
-              ...script,
-              file_path: path,
-              source: { included: false, reason: "not-requested" },
-            })),
+      const runtime = createEvidence(
+        evidenceSubjectInput(original.subject),
+        original.provider,
+        {
+          predicateType: original.predicate_type,
+          operation: original.operation,
+          parameters: { ...original.parameters, include_script_sources: false },
+          result: {
+            ...inspection,
+            target: { ...inspection.target, file_path: path },
+            scripts: {
+              ...inspection.scripts,
+              items: inspection.scripts.items.map((script) => ({
+                ...script,
+                file_path: path,
+                source: { included: false, reason: "not-requested" },
+              })),
+            },
           },
+          confidence: original.confidence,
+          authority: original.authority,
         },
-        confidence: original.confidence,
-        authority: original.authority,
-      });
+      );
       const reconciled = reconcileJavaScriptRuntimeEvidence({
         static_layers: base.static_layers.map((layer) => ({
           ...layer,

@@ -1,3 +1,8 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import {
   advertisedMcpToolSchemas,
   assertRecordedMcpEvidence,
@@ -5,6 +10,7 @@ import {
 import { createHash } from "node:crypto";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it, onTestFinished, vi } from "vitest";
+import { phaseArrival } from "../../support/lifecycleHarness.js";
 import { EvmInterfaceService } from "../../../src/application/evm/EvmInterfaceService.js";
 import { WasmArtifactService } from "../../../src/application/wasm/WasmArtifactService.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
@@ -13,14 +19,14 @@ import {
   AnalysisCapabilityUnavailableError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
-import { evmInterfaceSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { evmInterfaceSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { inspectSolidityMetadata } from "../../../src/evm/SolidityMetadata.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
-import { registerEvmTools } from "../../../src/server/registerEvmTools.js";
+import { registerServiceTools } from "../../../src/server/serviceToolBindings.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { mcpTest } from "../../support/mcp/mcpFixture.js";
 import { ownArtifactSession } from "../../support/mcp/artifactSession.js";
@@ -60,23 +66,21 @@ mcpTest(
       undefined,
       createToolResultDelivery(undefined),
     );
-    registerEvmTools(
+    const service = new EvmInterfaceService({ inspect });
+    registerServiceTools(
       server,
-      new EvmInterfaceService({ inspect }),
-      silentLogger,
+      { evmInterface: service },
+      { logger: silentLogger },
     );
     const client = await mcp.connect(server, {
       name: "evm-detail",
       version: "1",
     });
-    const { inputSchema } = await advertisedMcpToolSchemas(
-      client,
-      "inspect_evm_interface",
-    );
+    const { canonicalInputSchema: inputSchema } =
+      await advertisedMcpToolSchemas(client, "inspect_evm_interface");
     expect(inputSchema).toHaveProperty(["properties", "detail"], {
       type: "string",
       enum: ["complete", "summary"],
-      default: "complete",
       description: expect.stringContaining(
         "summary retains that complete Evidence",
       ),
@@ -122,23 +126,29 @@ mcpTest(
         approval: true,
       }),
     ).toBe(false);
-    expect(() => registerEvmTools(server, service, silentLogger)).toThrow(
-      /inspect_evm_interface.*already registered/,
-    );
+    expect(() =>
+      registerServiceTools(
+        server,
+        { evmInterface: service },
+        { logger: silentLogger },
+      ),
+    ).toThrow(/inspect_evm_interface.*already registered/);
     expect(inspect).not.toHaveBeenCalled();
     expect(
       (await client.listTools()).tools.filter(
         (tool) => tool.name === "inspect_evm_interface",
       ),
     ).toHaveLength(1);
-    const response = await client.callTool({
-      name: "inspect_evm_interface",
-      arguments: { path: value.artifact.path, encoding: "hex" },
-    });
+    const response = await client.callTool(
+      {
+        name: "inspect_evm_interface",
+        arguments: { path: value.artifact.path, encoding: "hex" },
+      },
+      { toolDefinition: schemas.toolDefinition },
+    );
     assertRecordedMcpEvidence(
       response,
       "inspect_evm_interface",
-      schemas,
       session,
       value,
       "inferred",
@@ -276,7 +286,7 @@ mcpTest(
 );
 
 it("settles the admitted EVM operation after SDK cancellation and accepts a subsequent request", async () => {
-  const entered = createDeferred<void>();
+  const evmInspection = phaseArrival();
   const stopped = createDeferred<void>();
   let invocations = 0;
   const harness = await createApplicationMcpHarness({
@@ -292,7 +302,7 @@ it("settles the admitted EVM operation after SDK cancellation and accepts a subs
             else
               signal.addEventListener("abort", () => resolve(), { once: true });
           });
-          entered.resolve();
+          evmInspection.arrive();
           await aborted;
           stopped.resolve();
           return err(new AnalysisCancelledError("inspect_evm_interface"));
@@ -312,7 +322,8 @@ it("settles the admitted EVM operation after SDK cancellation and accepts a subs
       () => "completed",
       (error: unknown) => error,
     );
-  await entered.promise;
+  onTestFinished(() => controller.abort());
+  await evmInspection.reached(cancellation, "EVM inspection");
   controller.abort(new Error("SDK EVM cancellation verification"));
   expect(await cancellation).toMatchObject({
     message: expect.stringContaining("SDK EVM cancellation verification"),
@@ -358,40 +369,39 @@ it("returns the exact inferred interface summary while preserving complete defau
   const definition = (await harness.client.listTools()).tools.find(
     (tool) => tool.name === "inspect_evm_interface",
   );
-  if (definition?.outputSchema === undefined)
-    throw new Error("Missing EVM output schema");
+  if (definition === undefined) throw new Error("Missing EVM output schema");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   const inputSchema: Record<string, unknown> = definition.inputSchema;
-  const outputSchema: Record<string, unknown> = definition.outputSchema;
+  const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+    definition.name,
+  );
   expect(ajv.validateSchema(inputSchema)).toBe(true);
   expect(ajv.validateSchema(outputSchema)).toBe(true);
   const input = { path: value.artifact.path, encoding: "hex" };
   let original;
   for (const detail of [undefined, "complete"] as const) {
-    const response = await harness.client.callTool({
-      name: "inspect_evm_interface",
-      arguments: { ...input, ...(detail ? { detail } : {}) },
-    });
+    const response = await harness.client.callTool(
+      {
+        name: "inspect_evm_interface",
+        arguments: { ...input, ...(detail ? { detail } : {}) },
+      },
+      { toolDefinition: withCanonicalOutputSchema(definition) },
+    );
     expect(response.isError).not.toBe(true);
-    expect(
-      ajv.validate(outputSchema, response.structuredContent),
-      JSON.stringify(ajv.errors),
-    ).toBe(true);
     const evidence = parseEvidence(response.structuredContent);
     expect(evidence.normalized_result).toEqual(value);
     expect(evidence.parameters).toEqual(input);
     original = evidence;
   }
   if (original === undefined) throw new Error("No complete control");
-  const response = await harness.client.callTool({
-    name: "inspect_evm_interface",
-    arguments: { ...input, detail: "summary" },
-  });
+  const response = await harness.client.callTool(
+    {
+      name: "inspect_evm_interface",
+      arguments: { ...input, detail: "summary" },
+    },
+    { toolDefinition: withCanonicalOutputSchema(definition) },
+  );
   expect(response.isError).not.toBe(true);
-  expect(
-    ajv.validate(outputSchema, response.structuredContent),
-    JSON.stringify(ajv.errors),
-  ).toBe(true);
   const derived = parseEvidence(response.structuredContent);
   const view = evmInterfaceSummaryViewResultSchema.parse(
     derived.normalized_result,
@@ -470,7 +480,7 @@ it.each(["valid", "wrong-subject", "no-subject"])(
     const { metadata: _metadata, ...historicalBytecode } = value.bytecode;
     const source = createEvidence(
       scenario === "no-subject"
-        ? undefined
+        ? unknownTarget("not-observed")
         : {
             path: value.artifact.path,
             sha256:

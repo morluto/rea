@@ -1,7 +1,6 @@
 import type { z } from "zod";
 import type { AndroidRequest } from "../domain/android/androidAnalysis.js";
 import { androidResultSchemas } from "../domain/android/androidAnalysis.js";
-import { observedAndroidManifestComponentsSchema } from "../domain/android/androidManifestComponents.js";
 import {
   type AndroidMappingQuery,
   type AndroidMappingSource,
@@ -63,11 +62,6 @@ export interface JadxAnalysisContext {
     readonly libraries: () => Promise<AndroidJniLibraries>;
   };
 }
-
-const observedPackageSchema =
-  androidResultSchemas.inspect_android_package.extend({
-    components: observedAndroidManifestComponentsSchema,
-  });
 
 const methodsOf = (summary: Pick<ClassSummary, "methods">) => {
   const seen = new Map<string, number>();
@@ -276,7 +270,7 @@ const inspectPackage = async (
   const manifest = normalizeJadxText(
     await tools.text("get_android_manifest", {}),
   );
-  return observedPackageSchema.parse({
+  return androidResultSchemas.inspect_android_package.parse({
     engine,
     package_name: app.package || null,
     version_name: app.version_name || null,
@@ -303,10 +297,15 @@ const searchClasses = async (
   loaded: z.infer<typeof jadxLoadSchema>,
   engine: Engine,
 ): Promise<JsonValue> => {
+  const matchOffset = request.input.offset ?? 0;
+  const matchLimit = request.input.limit;
+  // One match past the page proves whether another page follows.
+  const stopAfter = matchOffset + matchLimit;
   const matches: string[] = [];
-  const pageSize = 4096;
+  const maximumPageSize = 4096;
   let offset = 0;
   do {
+    const pageSize = Math.min(maximumPageSize, stopAfter - matches.length + 1);
     const page = await tools.listClasses({
       query: request.input.query,
       offset,
@@ -322,7 +321,8 @@ const searchClasses = async (
       page.items.length > page.next_offset - offset ||
       (request.input.query === "" &&
         page.items.length !== page.next_offset - offset) ||
-      page.items.some((name) => !name.includes(request.input.query))
+      (request.input.query !== "" &&
+        page.items.some((name) => !name.includes(request.input.query)))
     )
       throw new AnalysisOutputError(
         request.operation,
@@ -338,9 +338,14 @@ const searchClasses = async (
       );
     matches.push(...page.items);
     offset = page.next_offset;
+    if (matches.length > stopAfter) break;
   } while (offset < loaded.class_count);
+  const pagedMatches = matches.slice(matchOffset, stopAfter);
+  const nextOffset = matches.length > stopAfter ? stopAfter : null;
+  const truncated =
+    pagedMatches.length < matches.length || offset < loaded.class_count;
   const occurrences = new Map<string, number>();
-  for (const name of matches)
+  for (const name of pagedMatches)
     occurrences.set(name, (occurrences.get(name) ?? 0) + 1);
   const duplicateNames = [...occurrences]
     .filter(([, count]) => count > 1)
@@ -349,9 +354,10 @@ const searchClasses = async (
     engine,
     query: request.input.query,
     total_classes: loaded.class_count,
-    matches,
+    matches: pagedMatches,
+    next_offset: nextOffset,
     duplicate_names: duplicateNames,
-    coverage: "complete",
+    coverage: truncated ? "partial" : "complete",
   });
 };
 
@@ -374,11 +380,33 @@ const matchingMethods = (
   return candidates;
 };
 
-const overloadChoices = (
+/** The method name matched several overloads and no overload_index chose one. */
+const ambiguousOverload = (
+  request: AndroidRequest,
   candidates: ReturnType<typeof matchingMethods>,
   external = false,
-): string =>
-  `Select one of ${candidates.length} overloads: ${candidates.map((method) => `${method.overload_index}: ${method.reported_signature}${external ? ` [${method.dex_descriptor}]` : ""}`).join("; ")}`;
+): never => {
+  throw new AnalysisInputError(
+    request.operation,
+    {
+      ambiguousSelector: {
+        field: ["overload_index"],
+        candidates: candidates.map((method) => ({
+          overload_index: method.overload_index,
+          reported_signature: method.reported_signature,
+          dex_descriptor: method.dex_descriptor,
+        })),
+      },
+    },
+    [
+      {
+        path: ["overload_index"],
+        reason: "invalid_value",
+        message: `Select one of ${candidates.length} overloads: ${candidates.map((method) => `${method.overload_index}: ${method.reported_signature}${external ? ` [${method.dex_descriptor}]` : ""}`).join("; ")}`,
+      },
+    ],
+  );
+};
 
 const inspectMethod = async (
   tools: JadxToolPort,
@@ -388,7 +416,7 @@ const inspectMethod = async (
 ): Promise<JsonValue> => {
   const candidates = matchingMethods(summary, request);
   if (candidates.length > 1 && request.input.overload_index === undefined)
-    inputFailure(request, "overload_index", overloadChoices(candidates));
+    ambiguousOverload(request, candidates);
   const index = request.input.overload_index ?? 0;
   const selected =
     candidates[index] ??
@@ -402,7 +430,6 @@ const inspectMethod = async (
       class_name: request.input.class_name,
       method_name: request.input.method_name,
       overload_index: index,
-      smali_fallback: true,
     }),
   );
   if (
@@ -421,11 +448,22 @@ const inspectMethod = async (
     class_name: summary.full_name,
     method: selected,
     overload_count: candidates.length,
-    representation: body.mode,
-    body_status: body.body.length === 0 ? "not_available" : "available",
-    fell_back: body.fell_back,
-    markers: body.markers,
-    source: normalizeJadxText(body.body),
+    ...(body.mode === "unavailable"
+      ? {
+          representation: null,
+          body_status: "not_available",
+          body_unavailable_reason: body.body_unavailable_reason,
+          fell_back: false,
+          markers: ["disassembly_failed"],
+          source: null,
+        }
+      : {
+          representation: body.mode,
+          body_status: body.body.length === 0 ? "not_available" : "available",
+          fell_back: body.fell_back,
+          markers: body.markers,
+          source: normalizeJadxText(body.body),
+        }),
     ...mappingOf(mapping, () => [
       classQuery(summary),
       ...methodQueries(summary).filter(
@@ -531,11 +569,7 @@ const traceReferences = async (
       "Method name is required for an overload index.",
     );
   if (candidates.length > 1 && request.input.overload_index === undefined)
-    inputFailure(
-      request,
-      "overload_index",
-      overloadChoices(candidates, external),
-    );
+    ambiguousOverload(request, candidates, external);
   const index = request.input.overload_index ?? 0;
   const selected = methodName === undefined ? undefined : candidates[index];
   if (methodName !== undefined && selected === undefined)
@@ -557,8 +591,6 @@ const traceReferences = async (
         ...(methodName === undefined
           ? {}
           : { method_name: methodName, overload_index: index }),
-        limit: 2_147_483_647,
-        resolve_line: false,
       },
     ),
   );

@@ -1,11 +1,15 @@
+import {
+  completedOperationEvidence,
+  carrySessionExecutionProvenance,
+  type CompletedOperationEvidenceOptions,
+} from "./binary/SessionEvidenceReuse.js";
 import { parseAnalysisInput } from "./AnalysisInput.js";
 import type {
   AnalysisOperationPort,
   ExecutionOptions,
-} from "./AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { nativeProcedureInputSchema } from "../domain/native/nativeProcedureInput.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
-import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import { parseFunctionDossier } from "../domain/native/functionDossier.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { completeProviderEvidence } from "./ProviderOperationExecution.js";
@@ -27,6 +31,10 @@ export const executeFunctionAnalysisEvidence = async (
   parameters: Readonly<Record<string, JsonValue>>,
   target: BinaryTarget | undefined,
   options?: ExecutionOptions,
+  materialization: Pick<
+    CompletedOperationEvidenceOptions,
+    "admitRecovery" | "evidenceById"
+  > = {},
 ): Promise<AnalysisResultWithSources<Evidence>> => {
   const input = parseAnalysisInput(
     "analyze_function",
@@ -57,30 +65,23 @@ export const executeFunctionAnalysisEvidence = async (
       : {}),
   };
   const dossier = parseFunctionDossier(execution.value.result);
+  const materialized = completedOperationEvidence(
+    "analyze_function",
+    arguments_,
+    carrySessionExecutionProvenance(
+      execution.value,
+      dossier.ok ? { ...observation, result: dossier.value } : observation,
+    ),
+    { target: target ?? null, ...materialization },
+  );
+  if (!materialized.ok) return withEvidenceSources(materialized, sources);
+  const evidence = materialized.value;
   if (!dossier.ok) {
-    dossier.error.retainPartialObservation(
-      createAnalysisExecutionEvidence(
-        "analyze_function",
-        arguments_,
-        observation,
-        "observed",
-      ),
-    );
+    dossier.error.retainPartialObservation(evidence);
     return withEvidenceSources(dossier, sources);
   }
   return withEvidenceSources(
-    completeProviderEvidence(
-      createAnalysisExecutionEvidence(
-        "analyze_function",
-        arguments_,
-        {
-          ...observation,
-          result: dossier.value,
-        },
-        "observed",
-      ),
-      options?.signal,
-    ),
+    completeProviderEvidence(evidence, options?.signal),
     sources,
   );
 };

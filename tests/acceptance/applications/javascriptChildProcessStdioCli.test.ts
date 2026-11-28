@@ -15,6 +15,13 @@ const cases = [
     0,
   ],
   ['spawn("control", [], {stdio:"inherit"})', "control", "inherit", 0],
+  ['spawn("global-nan-env", [], {env:NaN})', "global-nan-env", "default", 0],
+  [
+    '((NaN) => spawn("shadowed-nan-env", [], {env:NaN}))({})',
+    "shadowed-nan-env",
+    "default",
+    0,
+  ],
   [
     'spawn("spread-after", [], {stdio:"pipe",...input})',
     "spread-after",
@@ -26,6 +33,18 @@ const cases = [
     'spawn("spread-before", [], {...input,stdio:"inherit"})',
     "spread-before",
     "inherit",
+    0,
+  ],
+  [
+    'spawn("conditional-spreads", [], {stdio:"inherit",...(!input&&{shell:true}),...(input?{cwd:"/"}:null)})',
+    "conditional-spreads",
+    "inherit",
+    0,
+  ],
+  [
+    'spawn("conditional-override", [], {stdio:"inherit",...(!input&&{stdio:"pipe"})})',
+    "conditional-override",
+    "dynamic",
     0,
   ],
   [
@@ -233,6 +252,12 @@ const exportAssignmentSource = `
   export = argv;
 `;
 
+const environmentCommands = [
+  "named-argv",
+  "execfile-dynamic",
+  "shadowed-nan-env",
+];
+
 // Callback/options ambiguity cannot change exec's effective stdio.
 const opaqueExecCallbackCommands = [
   "eval-callback",
@@ -342,7 +367,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       expect(child.properties.stdio_mode, String(command)).toBe(mode);
       expect(child.properties.argv_count, String(command)).toBe(count);
       expect(child.properties.environment_supplied, String(command)).toBe(
-        ["named-argv", "execfile-dynamic"].includes(String(command)),
+        environmentCommands.includes(String(command)),
       );
       expect(child.identity.source_range).not.toBeNull();
       const stdio = graph.relations.filter(
@@ -352,7 +377,9 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       );
       expect(stdio, String(command)).toHaveLength(1);
       expect(stdio[0]?.resolution).toBe(
-        mode === "dynamic" ? "candidate" : "resolved",
+        mode === "dynamic" || child.properties.builtin_authority === "candidate"
+          ? "candidate"
+          : "resolved",
       );
       expect(nodes.get(stdio[0]!.target_node_id)).toMatchObject({
         kind: "stdio",
@@ -375,9 +402,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
             relation.relation === "supplies-env" &&
             relation.target_node_id === child.node_id,
         ),
-      ).toHaveLength(
-        ["named-argv", "execfile-dynamic"].includes(String(command)) ? 1 : 0,
-      );
+      ).toHaveLength(environmentCommands.includes(String(command)) ? 1 : 0);
       expect(
         graph.relations.filter(
           (relation) =>

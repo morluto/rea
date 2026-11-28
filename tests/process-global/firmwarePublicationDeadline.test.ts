@@ -2,8 +2,9 @@ import { projectCliAnalysisResult } from "../../src/cli/projectCliAnalysisResult
 import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import { phaseGate } from "../support/lifecycleHarness.js";
 import * as firmwareFiles from "../../src/firmware/FirmwareFiles.js";
-import { SafeOutputTree } from "../../src/artifacts/SafeOutputTree.js";
+import { SafeOutputTree } from "../../src/resources/SafeOutputTree.js";
 import { PrivateRuntimeRoot } from "../../src/process/PrivateRuntimeRoot.js";
 import { DEFAULT_FIRMWARE_ANALYSIS_TIMEOUT_MS } from "../../src/domain/firmware/firmwareAnalysis.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
@@ -11,10 +12,8 @@ import { ProviderProcessSupervisor } from "../../src/process/ProviderProcess.js"
 import { finishAnalysisCommand } from "../../src/cli/finishAnalysisCommand.js";
 import { AnalysisOutputError } from "../../src/domain/analysisErrorCore.js";
 import { FIRMWARE_LIMITS } from "../../src/firmware/FirmwareRelease.js";
-import {
-  firmwareFixture,
-  assertFirmwareCleanup,
-} from "../fixtures/firmware/provider.js";
+import { expectProviderLaunchCleanup } from "../support/process/expectProviderLaunchCleanup.js";
+import { firmwareFixture } from "../fixtures/firmware/provider.js";
 
 const test = it.skipIf(process.platform !== "linux" || process.arch !== "x64");
 afterEach(() => vi.restoreAllMocks());
@@ -106,7 +105,7 @@ test("charges inspection workspace cleanup to its selectable analysis budget, wi
     remediation: { action: expect.stringContaining("analysis_timeout_ms") },
   });
   await fixture.close();
-  await assertFirmwareCleanup(fixture.launches);
+  await expectProviderLaunchCleanup(fixture.launches);
 });
 
 test("allows publication after the analysis phase expires", async () => {
@@ -141,7 +140,7 @@ test("allows publication after the analysis phase expires", async () => {
   );
   expect(phase.budgets).toEqual([120_000, 120_000]);
   await fixture.close();
-  await assertFirmwareCleanup(fixture.launches);
+  await expectProviderLaunchCleanup(fixture.launches);
 });
 
 test.each(["signal", "clock"] as const)(
@@ -177,7 +176,7 @@ test.each(["signal", "clock"] as const)(
       code: "ENOENT",
     });
     await fixture.close();
-    await assertFirmwareCleanup(fixture.launches);
+    await expectProviderLaunchCleanup(fixture.launches);
   },
 );
 
@@ -189,14 +188,7 @@ test("keeps each queued request's independent analysis and publication budgets",
     budgets.push(ms);
     return timeout(ms);
   });
-  let enter!: () => void;
-  let release!: () => void;
-  const entered = new Promise<void>((resolve) => {
-    enter = resolve;
-  });
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
+  const publication = phaseGate();
   const publish = firmwareFiles.FirmwareFileAccess.prototype.publish;
   let first = true;
   vi.spyOn(
@@ -208,8 +200,7 @@ test("keeps each queued request's independent analysis and publication budgets",
   ) {
     if (first) {
       first = false;
-      enter();
-      await gate;
+      await publication.hold();
     }
     return publish.apply(this, args);
   });
@@ -219,16 +210,17 @@ test("keeps each queued request's independent analysis and publication budgets",
     publication_timeout_ms: 123_456,
     analysis_timeout_ms: 234_567,
   });
+  let queued: typeof pending | undefined;
   try {
-    await entered;
-    const queued = fixture.service.execute("extract_firmware", {
+    await publication.reached(pending, "firmware publication");
+    queued = fixture.service.execute("extract_firmware", {
       path: fixture.path,
       output_directory: join(fixture.root, "second-output"),
       publication_timeout_ms: 654_321,
       analysis_timeout_ms: 765_432,
     });
     expect(budgets).toEqual([234_567, 123_456]);
-    release();
+    publication.release();
     const results = await Promise.all([pending, queued]);
     expect(
       results.map((result) =>
@@ -245,13 +237,19 @@ test("keeps each queued request's independent analysis and publication budgets",
     ]);
     expect(budgets).toEqual([234_567, 123_456, 765_432, 654_321]);
   } finally {
-    release();
+    publication.release();
+    try {
+      await Promise.allSettled([pending, queued]);
+    } finally {
+      await fixture.close();
+    }
   }
-  await fixture.close();
-  await assertFirmwareCleanup(fixture.launches);
+  await expectProviderLaunchCleanup(fixture.launches);
 });
 
-test("uses the selected phase deadline inside an owned command beyond the former 120-second cap", async () => {
+// A selected analysis_timeout_ms governs the owned command, not the default:
+// time past the default elapses inside the command and analysis completes.
+test("uses a selected analysis deadline above the default inside an owned command", async () => {
   const fixture = await firmwareFixture();
   const advance = phaseClock();
   const wait = ProviderProcessSupervisor.prototype.waitForOutputClose;
@@ -266,18 +264,18 @@ test("uses the selected phase deadline inside an owned command beyond the former
     const closed = await wait.apply(this, args);
     if (!advanced) {
       advanced = true;
-      advance(120_001);
+      advance(DEFAULT_FIRMWARE_ANALYSIS_TIMEOUT_MS + 1);
       return false;
     }
     return closed;
   });
   const result = await fixture.service.execute("inspect_firmware_regions", {
     path: fixture.path,
-    analysis_timeout_ms: 240_000,
+    analysis_timeout_ms: 2 * DEFAULT_FIRMWARE_ANALYSIS_TIMEOUT_MS,
   });
   if (!result.ok) throw result.error;
   expect(result.value.normalized_result).toMatchObject({
-    analysis_timeout_ms: 240_000,
+    analysis_timeout_ms: 2 * DEFAULT_FIRMWARE_ANALYSIS_TIMEOUT_MS,
   });
   expect(fixture.launches).toHaveLength(2);
   expect(
@@ -288,7 +286,7 @@ test("uses the selected phase deadline inside an owned command beyond the former
     ),
   ).toBe(true);
   await fixture.close();
-  await assertFirmwareCleanup(fixture.launches);
+  await expectProviderLaunchCleanup(fixture.launches);
 });
 
 test.each([false, true])(
@@ -369,7 +367,7 @@ test.each([false, true])(
       details: { timeout_ms: 1234 },
     });
     await fixture.close();
-    await assertFirmwareCleanup(fixture.launches);
+    await expectProviderLaunchCleanup(fixture.launches);
   },
 );
 
@@ -449,7 +447,7 @@ test.each(["analysis", "clock", "caller", "prior-failure"] as const)(
     await fixture.close();
     expect(result.error.cleanupIncomplete).toBe(false);
     expect(projectAnalysisError(result.error).code).toBe(expected);
-    await assertFirmwareCleanup(fixture.launches);
+    await expectProviderLaunchCleanup(fixture.launches);
   },
 );
 
@@ -531,7 +529,7 @@ test.each(["none", "caller", "publication", "clock"] as const)(
       });
     }
     await fixture.close();
-    await assertFirmwareCleanup(fixture.launches);
+    await expectProviderLaunchCleanup(fixture.launches);
   },
 );
 
@@ -600,6 +598,6 @@ test.each([
     blocked = false;
     await fixture.close();
     expect(result.error.cleanupIncomplete).toBe(false);
-    await assertFirmwareCleanup(fixture.launches);
+    await expectProviderLaunchCleanup(fixture.launches);
   },
 );

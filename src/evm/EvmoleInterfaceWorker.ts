@@ -1,5 +1,5 @@
+import { EVMOLE_VERSION } from "./EvmoleProviderIdentity.js";
 import { EvmAdmissionError } from "./EvmAdmissionError.js";
-import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { z } from "zod";
 import {
@@ -8,30 +8,48 @@ import {
 } from "./EvmBytecodeCarrier.js";
 import { evmoleInterfaceReplySchema } from "./EvmoleInterfaceAdapter.js";
 import { inspectSolidityMetadata } from "./SolidityMetadata.js";
+import { EVM_FILE_SIZE_FAILURE_EXIT } from "./EvmoleRelease.js";
 import {
-  EVM_INTERFACE_LIMITS,
-  EVM_FILE_SIZE_FAILURE_EXIT,
-} from "./EvmoleRelease.js";
+  evmProducerLimitsSchema,
+  selectedEvmProducerLimits,
+} from "../domain/evm/evmInterface.js";
+import { parseJsonWithDuplicatePolicy } from "../domain/jsonDuplicateMember.js";
+import { readStableArtifact } from "../resources/index.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const requestSchema = z.strictObject({
   snapshot_path: z.string(),
   reply_path: z.string(),
   failure_marker_path: z.string(),
   encoding: z.enum(["raw", "hex"]),
+  producer_limits: evmProducerLimitsSchema,
 });
+/** Maximum UTF-8 byte size of the REA-authored worker request JSON file. */
+const MAX_EVM_WORKER_REQUEST_BYTES = 64 * 1024;
 class UnsupportedContainer extends Error {}
 
 const main = async (): Promise<void> => {
   const requestPath = process.argv[2];
   if (requestPath === undefined)
     throw new EvmAdmissionError("request_path_missing");
-  const request = requestSchema.parse(
-    JSON.parse(await readFile(requestPath, "utf8")),
+  const requestJson = parseJsonWithDuplicatePolicy(
+    (
+      await readStableArtifact(requestPath, MAX_EVM_WORKER_REQUEST_BYTES)
+    ).bytes.toString("utf8"),
+    "reject",
   );
+  if (!requestJson.ok && requestJson.cause !== undefined)
+    throw requestJson.cause;
+  const request = requestSchema.parse(
+    requestJson.ok ? requestJson.value : null,
+  );
+  const limits = selectedEvmProducerLimits(request.producer_limits);
   let reply: unknown;
   try {
     const bytes = decodeEvmBytecodeCarrier(
-      await readFile(request.snapshot_path),
+      (await readStableArtifact(request.snapshot_path, limits.input_bytes))
+        .bytes,
       request.encoding,
     );
     if (bytes[0] === 0xef && bytes[1] === 0x00)
@@ -39,13 +57,14 @@ const main = async (): Promise<void> => {
         "Container marker EF00 is outside the verified flat-bytecode interface profile.",
       );
     const modulePath = import.meta.resolve("evmole/no_tla");
+    const packageJson = parseJsonWithDuplicatePolicy(
+      await readFile(new URL("../package.json", modulePath), "utf8"),
+      "last-wins",
+    );
+    if (!packageJson.ok) throw packageJson.cause;
     const metadata = z
-      .object({ version: z.literal("0.9.3") })
-      .parse(
-        JSON.parse(
-          await readFile(new URL("../package.json", modulePath), "utf8"),
-        ),
-      );
+      .object({ version: z.literal(EVMOLE_VERSION) })
+      .parse(packageJson.value);
     const engine = await import("evmole/no_tla");
     engine.initSync({
       module: await readFile(
@@ -63,7 +82,7 @@ const main = async (): Promise<void> => {
       ok: true,
       version: metadata.version,
       bytecode: {
-        sha256: createHash("sha256").update(bytes).digest("hex"),
+        sha256: sha256Hex(bytes),
         bytes: bytes.length,
         hex: Buffer.from(bytes).toString("hex"),
         metadata: inspectSolidityMetadata(bytes),
@@ -75,19 +94,19 @@ const main = async (): Promise<void> => {
       ok: false,
       reason:
         cause instanceof EvmCarrierFailure
-          ? "format"
+          ? "malformed"
           : cause instanceof UnsupportedContainer
             ? "unsupported"
             : "decoder",
-      message: cause instanceof Error ? cause.message : String(cause),
+      message: errorMessage(cause),
     };
   }
   let encoded = JSON.stringify(reply);
-  if (Buffer.byteLength(encoded) > EVM_INTERFACE_LIMITS.outputBytes)
+  if (Buffer.byteLength(encoded) > limits.output_bytes)
     encoded = JSON.stringify({
       ok: false,
       reason: "output-limit",
-      message: "Complete interface evidence exceeds the 16 MiB reply budget.",
+      message: `Complete interface evidence exceeds producer_limits.output_bytes (${String(limits.output_bytes)} bytes).`,
     });
   try {
     await writeFile(request.reply_path, encoded, { flag: "wx", mode: 0o600 });
@@ -100,7 +119,7 @@ const main = async (): Promise<void> => {
         });
       } catch (markerFailure: unknown) {
         process.stderr.write(
-          `File-size failure marker unavailable: ${markerFailure instanceof Error ? markerFailure.message : String(markerFailure)}\n`,
+          `File-size failure marker unavailable: ${errorMessage(markerFailure)}\n`,
         );
       }
       process.exitCode = EVM_FILE_SIZE_FAILURE_EXIT;

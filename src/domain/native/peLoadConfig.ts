@@ -1,7 +1,15 @@
 import { z } from "zod";
+import { peHeaderAnomaliesSchema } from "./peHeaderAnomalies.js";
+import { peImageBaseSchema } from "./peAddressSpace.js";
 
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
+import type { AnalysisParameterLimit } from "../analysisSettings.js";
+import {
+  parameterBudgetLimit,
+  parameterBudgetSchema,
+  type ParameterBudget,
+} from "../parameterBudget.js";
 
 const uint = z.number().int().min(0).max(0xffffffff);
 const safeCount = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
@@ -16,6 +24,24 @@ export const MAX_INSPECT_PE_LOAD_CONFIG_CALLBACKS = 4096;
 /** IMAGE_TLS_DIRECTORY byte width for each optional-header magic. */
 export const TLS_STRUCT_BYTES = { 32: 24, 64: 40 } as const;
 
+/** `max_callbacks` of `inspect_pe_load_config`. */
+export const PE_LOAD_CONFIG_CALLBACKS = {
+  minimum: 1,
+  maximum: MAX_INSPECT_PE_LOAD_CONFIG_CALLBACKS,
+  default_value: 64,
+  unit: "count",
+} as const satisfies ParameterBudget;
+
+/** The `max_callbacks` control that stopped a TLS callback walk. */
+export const peLoadConfigCallbackLimit = (
+  effectiveValue: number,
+): AnalysisParameterLimit =>
+  parameterBudgetLimit(
+    "max_callbacks",
+    PE_LOAD_CONFIG_CALLBACKS,
+    effectiveValue,
+  );
+
 /** Complete bounded inspection of one PE TLS directory and load configuration. */
 export const inspectPeLoadConfigInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(
@@ -27,16 +53,12 @@ export const inspectPeLoadConfigInputSchema = z.strictObject({
     .min(64)
     .max(MAX_INSPECT_PE_LOAD_CONFIG_FILE_BYTES)
     .default(67108864)
-    .describe("Maximum stable artifact bytes to read (default 64 MiB)"),
-  max_callbacks: z
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_INSPECT_PE_LOAD_CONFIG_CALLBACKS)
-    .default(64)
     .describe(
-      "Maximum non-null TLS callbacks to examine; exceeding the budget fails without partial success",
+      "Maximum bytes this reader reads from the artifact: headers, directories and the ranges they reference (default 64 MiB). The file may be larger; its one hashing pass is not counted",
     ),
+  max_callbacks: parameterBudgetSchema(PE_LOAD_CONFIG_CALLBACKS).describe(
+    "Maximum non-null TLS callbacks to examine; exceeding the budget fails without partial success",
+  ),
 });
 export type InspectPeLoadConfigInput = z.infer<
   typeof inspectPeLoadConfigInputSchema
@@ -327,6 +349,12 @@ export const tlsAlignment = (characteristics: number): number | null =>
 const tlsSchema = z
   .strictObject({
     directory: directorySchema,
+    /**
+     * File span of the IMAGE_TLS_DIRECTORY read at the RVA; it exceeds
+     * `directory` when the declared Size is short. Evidence saved before this
+     * field existed omits it.
+     */
+    structure_location: range.optional(),
     start_address_of_raw_data: hexVa,
     end_address_of_raw_data: hexVa,
     raw_data_size: uint,
@@ -397,9 +425,12 @@ export const peLoadConfigSchema = z.strictObject({
   machine: uint,
   bits: z.union([z.literal(32), z.literal(64)]),
   architecture: z.string().min(1),
+  image_base: peImageBaseSchema,
   tls: tlsSchema,
   load_config: loadConfigSchema,
   examined_callbacks: uint,
+  /** Evidence saved before this field existed omits it. */
+  header_anomalies: peHeaderAnomaliesSchema.optional(),
   limitations: z.array(z.string().min(1)),
 });
 export type PeLoadConfig = z.infer<typeof peLoadConfigSchema>;

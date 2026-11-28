@@ -1,0 +1,6 @@
+$ COMPLETE=bash rea -- rea mcp add -c ""
+exit: 0
+--- stdout
+<end>
+--- stderr
+<end>

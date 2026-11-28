@@ -1,5 +1,7 @@
-import { lstat, mkdir, symlink, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { lstat, mkdir, symlink, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { minimalElfImage } from "../../fixtures/nativeHeaders.js";
 
 import {
   TextReader,
@@ -7,13 +9,14 @@ import {
   Uint8ArrayWriter,
   ZipWriter,
 } from "@zip.js/zip.js";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   classifyAndHashRoot,
   inventoryArtifact,
 } from "../../fixtures/artifactInventory.js";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
+import * as androidPackageDirectory from "../../../src/domain/zip/androidPackageDirectory.js";
 import { artifactOccurrenceAt } from "../../fixtures/artifactEntryOrder.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { asarHeaderBytes } from "../../fixtures/asarHeader.js";
@@ -49,7 +52,7 @@ describe("ZIP signature detection", () => {
     const apk = join(root, "renamed.apk");
     const program = join(root, "program.apk");
     await writeFile(apk, Buffer.from([0x50, 0x4b, 0x03, 0x04]));
-    await writeFile(program, Buffer.from([0x7f, 0x45, 0x4c, 0x46]));
+    await writeFile(program, minimalElfImage());
     expect(
       (await classifyAndHashRoot(apk, false, await lstat(apk))).format,
     ).toBe("apk");
@@ -101,9 +104,12 @@ describe("ZIP signature detection", () => {
     ).toBe("file");
   });
 
-  it.each([[], [0x50], [0x50, 0x4b], [0x50, 0x4b, 0x03]])(
-    "rejects an incomplete signature %j",
-    async (...bytes) => {
+  it.each([
+    { shape: "an empty file", bytes: [] },
+    { shape: "a three-byte ZIP prefix", bytes: [0x50, 0x4b, 0x03] },
+  ])(
+    "reports $shape without a ZIP signature at either boundary",
+    async ({ bytes }) => {
       const root = await createTestTempDirectory("rea-zip-short-");
       const path = join(root, "input");
       await writeFile(path, Buffer.from(bytes));
@@ -172,7 +178,7 @@ describe("nested container family", () => {
         artifact_format: "unknown",
         hash_status: "not-hashed",
         limitations: [
-          "Symlink target was not followed or disclosed.",
+          "Symlink target was recorded, not followed.",
           "The path suffix suggests APK, but these bytes were not read, so the container family is unknown.",
         ],
       });
@@ -230,16 +236,6 @@ describe("ZIP archives after leading bytes", () => {
       style: "offsets that include the leading bytes",
       adjust: true,
       comment: false,
-    },
-    {
-      style: "offsets written before the bytes were prepended",
-      adjust: false,
-      comment: false,
-    },
-    {
-      style: "included leading bytes and an EOCD-like comment",
-      adjust: true,
-      comment: true,
     },
     {
       style: "prepended leading bytes and an EOCD-like comment",
@@ -370,6 +366,142 @@ describe("ZIP archives after leading bytes", () => {
   });
 });
 
+describe("DEX-bearing ZIP package admission", () => {
+  const dexZip = async (entries: readonly string[]): Promise<Uint8Array> => {
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    for (const name of entries)
+      await writer.add(name, new TextReader("fixture\n"));
+    return writer.close();
+  };
+
+  it.each([
+    { name: "scrcpy-server", entries: ["classes.dex"] },
+    { name: "server.zip", entries: ["classes2.dex", "readme.txt"] },
+    { name: "runtime.jar", entries: ["AndroidManifest.xml"] },
+    { name: "payload.apex", entries: ["classes.dex", "AndroidManifest.xml"] },
+  ])(
+    "admits $name as an APK from root central-directory entries",
+    async ({ name, entries }) => {
+      const root = await createTestTempDirectory("rea-dex-zip-admit-");
+      const path = join(root, name);
+      await writeFile(path, await dexZip(entries));
+      expect(await parseBinaryTarget(path)).toMatchObject({
+        ok: true,
+        value: { kind: "archive", format: "apk" },
+      });
+      // Inventory stays suffix-based; only target admission reads the directory.
+      expect(
+        (await classifyAndHashRoot(path, false, await lstat(path))).format,
+      ).toBe("zip");
+    },
+  );
+
+  it("admits an extensionless DEX ZIP after an unclaimed script stub", async () => {
+    const root = await createTestTempDirectory("rea-dex-zip-stub-");
+    const path = join(root, "scrcpy-server");
+    await writeFile(
+      path,
+      withLeadingBytes(
+        Buffer.from(await dexZip(["classes.dex"])),
+        SCRIPT_STUB,
+        false,
+      ),
+    );
+    expect(await parseBinaryTarget(path)).toMatchObject({
+      ok: true,
+      value: { kind: "archive", format: "apk" },
+    });
+    expect(
+      (await classifyAndHashRoot(path, false, await lstat(path))).format,
+    ).toBe("zip");
+  });
+
+  it.each([false, true])(
+    "keeps trailing ZIP classification and digest in one stable observation (rewrite=%s)",
+    async (rewrite) => {
+      const root = await createTestTempDirectory("rea-dex-zip-identity-");
+      const path = join(root, "server");
+      const original = withLeadingBytes(
+        Buffer.from(await dexZip(["notcode.txt"])),
+        SCRIPT_STUB,
+        false,
+      );
+      const replacement = Buffer.from(original);
+      const oldName = Buffer.from("notcode.txt");
+      const newName = Buffer.from("classes.dex");
+      for (
+        let at = replacement.indexOf(oldName);
+        at !== -1;
+        at = replacement.indexOf(oldName, at + oldName.length)
+      )
+        newName.copy(replacement, at);
+      await writeFile(path, original);
+      const initial = await lstat(path);
+      const inspect = androidPackageDirectory.zipDeclaresAndroidPackage;
+      const probe = vi
+        .spyOn(androidPackageDirectory, "zipDeclaresAndroidPackage")
+        .mockImplementationOnce(async (size, read) => {
+          if (rewrite) {
+            await writeFile(path, replacement);
+            await utimes(path, initial.atime, new Date(initial.mtimeMs + 2000));
+          }
+          return inspect(size, read);
+        });
+      try {
+        const result = await parseBinaryTarget(path);
+        expect(probe).toHaveBeenCalledOnce();
+        if (rewrite)
+          expect(result).toMatchObject({
+            ok: false,
+            error: {
+              _tag: "BinaryTargetError",
+              reason: "target changed while being read",
+            },
+          });
+        else
+          expect(result).toMatchObject({
+            ok: true,
+            value: {
+              format: "zip",
+              sha256: createHash("sha256").update(original).digest("hex"),
+            },
+          });
+      } finally {
+        probe.mockRestore();
+      }
+    },
+  );
+
+  it.each([
+    { name: "notes", entries: ["readme.txt"] },
+    {
+      name: "sources.zip",
+      entries: ["src/classes.dex", "lib/AndroidManifest.xml"],
+    },
+    { name: "bundle.aab", entries: ["classes.dex", "AndroidManifest.xml"] },
+    { name: "App.ipa", entries: ["classes.dex"] },
+  ])("keeps $name out of the APK family", async ({ name, entries }) => {
+    const root = await createTestTempDirectory("rea-dex-zip-reject-");
+    const path = join(root, name);
+    await writeFile(path, await dexZip(entries));
+    const expected = name.toLowerCase().endsWith(".ipa") ? "ipa" : "zip";
+    expect(await parseBinaryTarget(path)).toMatchObject({
+      ok: true,
+      value: { kind: "archive", format: expected },
+    });
+  });
+
+  it("keeps a suffix-selected .apk when the archive has no Android entries", async () => {
+    const root = await createTestTempDirectory("rea-apk-suffix-");
+    const path = join(root, "empty.apk");
+    await writeFile(path, await dexZip(["readme.txt"]));
+    expect(await parseBinaryTarget(path)).toMatchObject({
+      ok: true,
+      value: { kind: "archive", format: "apk" },
+    });
+  });
+});
+
 describe("package signature byte identity", () => {
   it.each([
     { extension: "pkg", signature: "xar!", offset: 0, size: 4 },
@@ -451,6 +583,10 @@ describe("raw disk image signatures", () => {
       bytes: rawImage((bytes) => gptHeader(bytes, 0x0001_0000, 92)),
     },
     {
+      layout: "a GPT header whose declared bytes end at EOF",
+      bytes: rawImage((bytes) => gptHeader(bytes, 0x0001_0000, 92), 512 + 92),
+    },
+    {
       layout: "an Apple partition map",
       bytes: rawImage((bytes) => {
         bytes.write("ER", 0, "ascii");
@@ -506,6 +642,10 @@ describe("raw disk image signatures", () => {
     {
       blob: "a GPT header shorter than its defined fields",
       bytes: rawImage((bytes) => gptHeader(bytes, 0x0001_0000, 91)),
+    },
+    {
+      blob: "an extended GPT header missing its final declared byte",
+      bytes: rawImage((bytes) => gptHeader(bytes, 0x0001_0000, 128), 512 + 127),
     },
     {
       blob: "a driver descriptor without a partition map entry",

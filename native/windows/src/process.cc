@@ -346,10 +346,19 @@ static void writeInput(napi_env, void* pointer) {
 static void completeInput(napi_env env, napi_status status, void* pointer) {
   std::unique_ptr<InputWork> work(static_cast<InputWork*>(pointer));
   work->process->inputPending = false;
-  if (work->failure) napi_reject_deferred(env, work->deferred, failureValue(env, *work->failure));
-  else if (status != napi_ok)
-    napi_reject_deferred(env, work->deferred, failureValue(env, Failure("Owned process input worker was cancelled", L"", ERROR_OPERATION_ABORTED)));
-  else napi_resolve_deferred(env, work->deferred, number(env, work->written));
+  try {
+    if (work->failure) deliverFailure(env, work->deferred, *work->failure);
+    else if (status != napi_ok)
+      deliverFailure(env, work->deferred, Failure("Owned process input worker was cancelled", L"", ERROR_OPERATION_ABORTED));
+    else if (!exceptionPending(env))
+      napi_resolve_deferred(env, work->deferred, number(env, work->written));
+  } catch (const Failure& failure) {
+    deliverFailure(env, work->deferred, failure);
+  } catch (const std::exception& failure) {
+    deliverFailure(env, work->deferred, Failure(failure.what(), L"", ERROR_GEN_FAILURE));
+  } catch (...) {
+    deliverFailure(env, work->deferred, Failure("Unknown native input completion failure", L"", ERROR_GEN_FAILURE));
+  }
   napi_delete_reference(env, work->processReference);
   napi_delete_async_work(env, work->work);
 }
@@ -479,7 +488,7 @@ napi_value inspect(napi_env env, std::unique_ptr<Runtime>& pending) {
   createRuntime(std::wstring(temp, length), L"rea-native-probe-", pending);
   napi_value filesystem;
   try {
-    filesystem = identity(env, pending->directory.get(), pending->path);
+    filesystem = identity(env, pending->directory.get(), pending->path, pending->filesystem);
   } catch (Failure& primary) {
     cleanupFailedRuntime(pending, primary);
     throw;
@@ -508,6 +517,7 @@ napi_value inspect(napi_env env, std::unique_ptr<Runtime>& pending) {
   set(env, result, "killOnOwnerClose", boolean(env, true));
   set(env, result, "protocolStdin", boolean(env, true));
   set(env, result, "jobMemoryLimit", boolean(env, true));
+  set(env, result, "runtimeWriteTransient", boolean(env, true));
   return result;
 }
 

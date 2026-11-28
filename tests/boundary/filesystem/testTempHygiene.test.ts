@@ -1,11 +1,13 @@
-import { copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { expect, it } from "vitest";
 
 import { execFileOutput } from "../../../src/process/ExecFileOutput.js";
+import { withoutSearchPermission } from "../../fixtures/permissionDenial.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { copyScriptsWithImports } from "../../support/scriptImportClosure.js";
 import {
   createTestWorkspace,
   removeTestWorkspace,
@@ -25,18 +27,32 @@ it("preserves caller labels and recognizable ownership in both shared factories"
   }
 });
 
+it.skipIf(process.platform === "win32").each(["return", "throw"] as const)(
+  "restores a fixture directory's mode when its callback ends with %s",
+  async (ending) => {
+    const directory = await createTestTempDirectory("rea-permission-restore-");
+    await chmod(directory, 0o1751);
+    const marker = new Error("fixture callback");
+    const pending = withoutSearchPermission(directory, async () => {
+      expect((await stat(directory)).mode & 0o7777).toBe(0);
+      if (ending === "throw") throw marker;
+      return marker;
+    });
+    if (ending === "throw") await expect(pending).rejects.toBe(marker);
+    else await expect(pending).resolves.toBe(marker);
+    expect((await stat(directory)).mode & 0o7777).toBe(0o1751);
+  },
+);
+
 it.each(["clean", "file", "directory", "cache", "symlink", "failed-test"])(
   "verifies shared fixture ownership with a %s producer",
   async (scenario) => {
     const root = await createTestTempDirectory("rea-test-hygiene-boundary-");
-    await mkdir(join(root, "scripts/lib"), { recursive: true });
     await mkdir(join(root, "node_modules/vitest"), { recursive: true });
-    for (const path of [
-      "scripts/verify-test-temp-hygiene.mjs",
-      "scripts/lib/test-temporary-ownership.mjs",
-      "scripts/lib/verifier-cleanup.mjs",
-    ])
-      await copyFile(join(process.cwd(), path), join(root, path));
+    await copyScriptsWithImports(
+      ["scripts/verify-test-temp-hygiene.mjs"],
+      root,
+    );
     await mkdir(join(root, "external"));
     await writeFile(join(root, "external", "evidence"), "preserved");
     const workspaceModule = pathToFileURL(

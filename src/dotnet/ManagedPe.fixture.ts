@@ -1,3 +1,4 @@
+import { uint32LE as u32 } from "../native/BinaryInteger.fixture.js";
 import { createHash } from "node:crypto";
 
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
@@ -85,6 +86,8 @@ interface ManagedPeFixtureOptions {
   }[];
   /** Raw #US stream bytes; omitted means the metadata has no #US stream. */
   readonly userStringHeap?: Buffer;
+  readonly tableStreamName?: "#~" | "#-";
+  readonly competingTableStream?: "distinct" | "alias" | "outside-root";
   readonly virtualSectionSize?: number;
 }
 
@@ -179,12 +182,6 @@ const guidHeap = (mvid: Buffer = DEFAULT_MVID): Buffer => {
 const u16 = (value: number): Buffer => {
   const bytes = Buffer.alloc(2);
   bytes.writeUInt16LE(value, 0);
-  return bytes;
-};
-
-const u32 = (value: number): Buffer => {
-  const bytes = Buffer.alloc(4);
-  bytes.writeUInt32LE(value, 0);
   return bytes;
 };
 
@@ -530,9 +527,14 @@ const metadataRoot = (
     readonly userStrings?: Buffer | undefined;
   },
   tableStreamName: "#~" | "#-" = "#~",
+  competingTableStream?: ManagedPeFixtureOptions["competingTableStream"],
 ): Buffer => {
+  const alternateName = tableStreamName === "#~" ? "#-" : "#~";
   const streams: readonly (readonly [string, Buffer])[] = [
     [tableStreamName, tables],
+    ...(competingTableStream === undefined
+      ? []
+      : [[alternateName, Buffer.alloc(24)] as const]),
     ["#Strings", strings],
     ...(userStrings === undefined ? [] : [["#US", userStrings] as const]),
     ["#GUID", guid],
@@ -560,9 +562,13 @@ const metadataRoot = (
     return { name, data, at };
   });
   const headers = Buffer.concat(
-    placed.map(({ name, data, at }) =>
-      metadataStreamHeader(at, data.length, name),
-    ),
+    placed.map(({ name, data, at }, index) => {
+      if (index === 1 && competingTableStream === "alias")
+        return metadataStreamHeader(placed[0]!.at, tables.length, name);
+      if (index === 1 && competingTableStream === "outside-root")
+        return metadataStreamHeader(offset, data.length, name);
+      return metadataStreamHeader(at, data.length, name);
+    }),
   );
   const root = Buffer.alloc(offset);
   header.copy(root, 0);
@@ -590,18 +596,17 @@ const tablesStream = (
     if (tableRows === undefined) continue;
     counts.push(u32(tableRows.length));
   }
-  const data: Buffer[] = [];
-  for (let index = 0; index <= 44; index += 1) {
-    const tableRows = rows.get(index);
-    if (tableRows === undefined) continue;
-    data.push(...tableRows);
-  }
-  return Buffer.concat([
+  const stream = [
     header,
     ...counts,
     ...(extraData === undefined ? [] : [u32(extraData)]),
-    ...data,
-  ]);
+  ];
+  for (let index = 0; index <= 44; index += 1) {
+    const tableRows = rows.get(index);
+    if (tableRows === undefined) continue;
+    for (const row of tableRows) stream.push(row);
+  }
+  return Buffer.concat(stream);
 };
 
 interface FixtureMetadataRowContext {
@@ -1169,18 +1174,22 @@ const buildManagedFixtureMetadata = (
     (stringSize === 4 ? 0x01 : 0) |
     (guidSize === 4 ? 0x02 : 0) |
     (blobSize === 4 ? 0x04 : 0);
-  const metadata = metadataRoot({
-    tables: tablesStream(
-      rows,
-      options.metadataValidMaskExtra ?? 0n,
-      heapFlags,
-      options.metadataExtraData,
-    ),
-    strings: strings.toBuffer(),
-    guid: guidHeap(options.mvid),
-    blob: blobs.toBuffer(),
-    userStrings: options.userStringHeap,
-  });
+  const metadata = metadataRoot(
+    {
+      tables: tablesStream(
+        rows,
+        options.metadataValidMaskExtra ?? 0n,
+        heapFlags,
+        options.metadataExtraData,
+      ),
+      strings: strings.toBuffer(),
+      guid: guidHeap(options.mvid),
+      blob: blobs.toBuffer(),
+      userStrings: options.userStringHeap,
+    },
+    options.tableStreamName,
+    options.competingTableStream,
+  );
   if (options.corruptMetadataSignature === true) metadata.writeUInt32LE(0, 0);
   return metadata;
 };

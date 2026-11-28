@@ -1,10 +1,14 @@
 import type { AsarHeaderAdmission } from "../config/asarHeaderAdmission.js";
+import type { ArtifactIntegrityPolicyName } from "../domain/artifactIntegrityPolicy.js";
 import {
   ARTIFACT_FORMAT_IDS,
   type ArtifactFormatId,
 } from "../domain/artifactGraph.js";
 import type { EspFlashSelection } from "../domain/firmware/espFlashLocation.js";
+import { ANDROID_OTA_PAYLOAD_LIMITATIONS } from "../domain/firmware/androidOtaPayload.js";
+import { ANDROID_SPARSE_IMAGE_LIMITATIONS } from "../domain/firmware/androidSparseImage.js";
 import { ESP_IMAGE_LIMITATIONS } from "../domain/firmware/espImageFacts.js";
+import { UBI_IMAGE_LIMITATIONS } from "../domain/firmware/ubiImage.js";
 import {
   ZIP_PACKAGE_FORMATS,
   type ZipPackageFormat,
@@ -12,13 +16,21 @@ import {
 import {
   ArtifactReaderFailure,
   type ArtifactReader,
-} from "./ArtifactReader.js";
+  DirectoryArtifactReader,
+  ZipArtifactReader,
+} from "../resources/index.js";
 import type { ArtifactReaderAdmission } from "./ArtifactReaderAdmission.js";
-import { AsarArtifactReader } from "./AsarArtifactReader.js";
+import { AndroidBootImageArtifactReader } from "./AndroidBootImageArtifactReader.js";
+import { AndroidVbmetaArtifactReader } from "./AndroidVbmetaArtifactReader.js";
+import {
+  AsarArtifactReader,
+  type AsarAdmission,
+} from "./AsarArtifactReader.js";
 import type { BunStandaloneAdmission } from "./bun/BunStandaloneAdmission.js";
 import { BunStandaloneArtifactReader } from "./BunStandaloneArtifactReader.js";
+import type { DenoStandaloneAdmission } from "./deno/DenoStandaloneAdmission.js";
+import { DenoStandaloneArtifactReader } from "./DenoStandaloneArtifactReader.js";
 import { DfuSeArtifactReader } from "./DfuSeArtifactReader.js";
-import { DirectoryArtifactReader } from "./DirectoryArtifactReader.js";
 import type { DotnetBundleAdmission } from "./dotnet/DotnetBundleAdmission.js";
 import { DotnetBundleArtifactReader } from "./DotnetBundleArtifactReader.js";
 import {
@@ -29,24 +41,42 @@ import { EspImageArtifactReader } from "./EspImageArtifactReader.js";
 import { FitArtifactReader } from "./FitArtifactReader.js";
 import type { GodotPckAdmission } from "./GodotPckLocation.js";
 import { GodotPckArtifactReader } from "./GodotPckArtifactReader.js";
-import { InesArtifactReader, INES_LIMITATION } from "./InesArtifactReader.js";
+import { InesArtifactReader } from "./InesArtifactReader.js";
+import { NdsRomArtifactReader } from "./NdsRomArtifactReader.js";
+import { Iso9660ArtifactReader } from "./Iso9660ArtifactReader.js";
+import { QualcommMbnArtifactReader } from "./QualcommMbnArtifactReader.js";
 import { HexRecordArtifactReader } from "./HexRecordArtifactReader.js";
 import { MachOSliceArtifactReader } from "./MachOSliceArtifactReader.js";
+import { MacosPkgArtifactReader } from "./MacosPkgArtifactReader.js";
 import { NativeDmgArtifactReader } from "./NativeDmgArtifactReader.js";
 import type { NodeSeaAdmission } from "./nodeSea/NodeSeaAdmission.js";
 import { NodeSeaArtifactReader } from "./NodeSeaArtifactReader.js";
 import type { PyInstallerAdmission } from "./pyinstaller/PyInstallerAdmission.js";
 import { PyInstallerArtifactReader } from "./PyInstallerArtifactReader.js";
+import { UefiArtifactReader } from "../uefi/UefiArtifactReader.js";
 import { Uf2ArtifactReader } from "./Uf2ArtifactReader.js";
+import { NtfsMftArtifactReader } from "./NtfsMftArtifactReader.js";
+import { AndroidOtaPayloadArtifactReader } from "./AndroidOtaPayloadArtifactReader.js";
+import { AndroidSparseImageArtifactReader } from "./AndroidSparseImageArtifactReader.js";
+import { UbiImageArtifactReader } from "./UbiImageArtifactReader.js";
 import { UImageArtifactReader } from "./UImageArtifactReader.js";
+import { BfltArtifactReader } from "./BfltArtifactReader.js";
+import { SwitchExecutableArtifactReader } from "./SwitchExecutableArtifactReader.js";
 import { UnityFsArtifactReader } from "./UnityFsArtifactReader.js";
 import { WxapkgArtifactReader } from "./WxapkgArtifactReader.js";
-import { ZipArtifactReader } from "./ZipArtifactReader.js";
+import { TarArtifactReader } from "./tar/TarArtifactReader.js";
+import {
+  GpuAssetArtifactReader,
+  type GpuAssetFormat,
+} from "./gpuAsset/GpuAssetArtifactReader.js";
 
 /** How inventory describes a format when no reader was constructed. */
 export type AbsentInventory = "platform" | "universal" | "unavailable" | "root";
 
 export interface ArtifactReaderConstruction {
+  readonly readerLimits?:
+    | import("../domain/artifactReaderLimits.js").ArtifactReaderLimits
+    | undefined;
   readonly environment: Readonly<NodeJS.ProcessEnv>;
   readonly unreadableDirectories: "fail" | "omit";
   readonly admission?: ArtifactReaderAdmission | undefined;
@@ -55,12 +85,15 @@ export interface ArtifactReaderConstruction {
   readonly espFlashSelection?: EspFlashSelection | undefined;
   /** Caller-selected root spelling; only ASAR companion lookup consumes this. */
   readonly selectedPath?: string | undefined;
+  /**
+   * Caller choice for a contradiction between a reader's independent witness
+   * and the container's own bytes; universal Mach-O lipo records consume it.
+   */
+  readonly integrity?: ArtifactIntegrityPolicyName | undefined;
 }
 
 export interface FormatDescriptor {
   readonly id: ArtifactFormatId;
-  /** Every ZIP package family shares this row of capabilities. */
-  readonly zipFamily: boolean;
   /** Root occurrence kind is container, including directories and zip packages. */
   readonly occurrenceContainer: boolean;
   /** Path-role classification treats the format as a container of its own. */
@@ -88,6 +121,10 @@ const sourceOf = (options: ArtifactReaderConstruction) => {
 };
 
 function admittedAs(
+  kind: "asar",
+  options: ArtifactReaderConstruction,
+): AsarAdmission | ReturnType<typeof sourceOf>;
+function admittedAs(
   kind: "dotnet-bundle",
   options: ArtifactReaderConstruction,
 ): DotnetBundleAdmission | ReturnType<typeof sourceOf>;
@@ -95,6 +132,10 @@ function admittedAs(
   kind: "bun-standalone",
   options: ArtifactReaderConstruction,
 ): BunStandaloneAdmission | ReturnType<typeof sourceOf>;
+function admittedAs(
+  kind: "deno-standalone",
+  options: ArtifactReaderConstruction,
+): DenoStandaloneAdmission | ReturnType<typeof sourceOf>;
 function admittedAs(
   kind: "godot-pck",
   options: ArtifactReaderConstruction,
@@ -124,8 +165,7 @@ function admittedAs(
 }
 
 /** One capability row for every ZIP-backed package family. */
-export const ZIP_FAMILY_CAPABILITIES = {
-  zipFamily: true,
+const ZIP_FAMILY_CAPABILITIES = {
   occurrenceContainer: true,
   roleContainer: false,
   retainClassifiedSource: true,
@@ -156,7 +196,13 @@ const zipDescriptor = (id: ZipPackageFormat) =>
     id,
     ZIP_FAMILY_CAPABILITIES,
     (path, options) =>
-      new ZipArtifactReader(path, id, undefined, sourceOf(options)),
+      new ZipArtifactReader(
+        path,
+        id,
+        undefined,
+        sourceOf(options),
+        options.readerLimits?.expanded_bytes,
+      ),
   );
 
 function described<Id extends ArtifactFormatId>(
@@ -178,7 +224,6 @@ function described<Id extends ArtifactFormatId>(
 }
 
 const plain = {
-  zipFamily: false,
   occurrenceContainer: false,
   roleContainer: false,
   retainClassifiedSource: false,
@@ -212,6 +257,38 @@ function container<Id extends ArtifactFormatId>(
     : withReader(id, capabilities, createReader);
 }
 
+/** GPU asset containers: declared header facts and stored regions, nothing decoded. */
+const gpuAsset = <Id extends GpuAssetFormat>(id: Id) =>
+  container(id, {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "GPU asset inventory reports declared header fields and the byte regions they name. Texture, mesh and image payloads are not decoded or decompressed.",
+    createReader: (path, options) =>
+      new GpuAssetArtifactReader(path, id, sourceOf(options)),
+  });
+
+const switchExecutable = <Id extends "nso" | "nro">(id: Id) =>
+  container(id, {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      id === "nso"
+        ? "NSO inventory reports header facts and text, rodata and data segments. LZ4-compressed segments are decompressed within artifact_limits.expanded_bytes and hashed against the header; code is not disassembled or executed."
+        : "NRO inventory reports header facts, text, rodata and data segments and the ASET icon, NACP and RomFS ranges. Asset contents are not interpreted, and code is not disassembled or executed.",
+    createReader: (path, options) =>
+      new SwitchExecutableArtifactReader(
+        path,
+        id,
+        sourceOf(options),
+        options.readerLimits?.expanded_bytes,
+      ),
+  });
+
 const NON_ZIP_FORMATS = {
   "dotnet-bundle": container("dotnet-bundle", {
     retainClassifiedSource: true,
@@ -220,6 +297,7 @@ const NON_ZIP_FORMATS = {
       new DotnetBundleArtifactReader(
         path,
         admittedAs("dotnet-bundle", options),
+        options.readerLimits?.dotnet_bundle,
       ),
   }),
   "bun-standalone": container("bun-standalone", {
@@ -229,6 +307,21 @@ const NON_ZIP_FORMATS = {
       new BunStandaloneArtifactReader(
         path,
         admittedAs("bun-standalone", options),
+        options.readerLimits?.bun,
+        options.readerLimits?.expanded_bytes,
+      ),
+  }),
+  "deno-standalone": container("deno-standalone", {
+    retainClassifiedSource: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "Deno compile inventory reports the embedded virtual filesystem, remote modules, and recorded options. Environment-file values and CA certificate bytes are retained in local Evidence with their counts and byte lengths. The npm snapshot is not decoded, and the executable is not run.",
+    createReader: (path, options) =>
+      new DenoStandaloneArtifactReader(
+        path,
+        admittedAs("deno-standalone", options),
+        options.readerLimits?.deno,
+        options.readerLimits?.expanded_bytes,
       ),
   }),
   dmg: container("dmg", {
@@ -237,32 +330,61 @@ const NON_ZIP_FORMATS = {
     createReader: (path, options) =>
       new NativeDmgArtifactReader(path, options.environment),
   }),
-  pkg: container("pkg", { absentInventory: "platform" }),
-  asar: container("asar", {
+  pkg: container("pkg", {
+    roleContainer: true,
+    retainClassifiedSource: true,
     extractable: true,
     absentInventory: "unavailable",
+    readerLimitation:
+      "macOS flat installer inventory reads the XAR header, zlib TOC, Distribution/PackageInfo, gzip cpio Scripts and gzip cpio Payload members. XAR signatures are not verified. pbzx/xz payloads, Bom contents and installer JavaScript are not decoded or executed.",
     createReader: (path, options) =>
-      new AsarArtifactReader(path, {
+      new MacosPkgArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.expanded_bytes,
+      ),
+  }),
+  asar: container("asar", {
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    createReader: (path, options) => {
+      const admission = admittedAs("asar", options);
+      const admitted =
+        admission !== undefined && "kind" in admission
+          ? admission.source
+          : admission;
+      const admittedExtents =
+        admission !== undefined && "kind" in admission
+          ? {
+              extents: admission.extents,
+              headerAdmission: admission.headerAdmission,
+            }
+          : undefined;
+      return new AsarArtifactReader(path, {
         ...(options.asarHeaderAdmission === undefined
           ? {}
           : { headerAdmission: options.asarHeaderAdmission }),
         ...(options.selectedPath === undefined
           ? {}
           : { selectedPath: options.selectedPath }),
-      }),
+        ...(admitted === undefined ? {} : { admitted }),
+        ...(admittedExtents === undefined ? {} : { admittedExtents }),
+      });
+    },
   }),
   ines: container("ines", {
     roleContainer: true,
     retainClassifiedSource: true,
     extractable: true,
     absentInventory: "unavailable",
-    readerLimitation: INES_LIMITATION,
     createReader: (path, options) => {
       const source = sourceOf(options);
       if (source === undefined)
         throw new ArtifactReaderFailure(
           "integrity",
           "iNES inventory requires its admitted source descriptor",
+          { integrityCheck: "inventory-node" },
         );
       return new InesArtifactReader(path, source);
     },
@@ -275,7 +397,12 @@ const NON_ZIP_FORMATS = {
     readerLimitation:
       "PCK inventory establishes packaged bytes and metadata; scenes, binary resources, GDScript bytecode and runtime signal behavior were not decoded.",
     createReader: (path, options) =>
-      new GodotPckArtifactReader(path, admittedAs("godot-pck", options)),
+      new GodotPckArtifactReader(
+        path,
+        admittedAs("godot-pck", options),
+        options.readerLimits?.godot,
+        options.readerLimits?.expanded_bytes,
+      ),
   }),
   unityfs: container("unityfs", {
     roleContainer: true,
@@ -295,8 +422,46 @@ const NON_ZIP_FORMATS = {
     readerLimitation:
       "wxapkg inventory establishes packaged member names and stored bytes; wxml/wxss sources, compiled bundles and runtime behavior are not reconstructed. V1MMWX-encrypted packages are unsupported.",
     createReader: (path, options) =>
-      new WxapkgArtifactReader(path, sourceOf(options)),
+      new WxapkgArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.wxapkg,
+        options.readerLimits?.expanded_bytes,
+      ),
   }),
+  tar: container("tar", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "tar inventory lists ustar, pax and GNU members of a plain or gzip-compressed tar stream. Hard links, devices, FIFOs and sparse members are reported as omissions and not read; member bytes are not interpreted.",
+    createReader: (path, options) =>
+      new TarArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.expanded_bytes,
+        options.readerLimits?.tar,
+      ),
+  }),
+  nds: container("nds", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "Nintendo DS ROM inventory reports cartridge header facts and lists the ARM9 and ARM7 binaries, overlay files and NitroROM filesystem files as stored byte ranges. Secure-area encryption, compression and NitroARC archives inside files are not decoded.",
+    createReader: (path, options) =>
+      new NdsRomArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.expanded_bytes,
+      ),
+  }),
+  dds: gpuAsset("dds"),
+  glb: gpuAsset("glb"),
+  ktx: gpuAsset("ktx"),
+  ktx2: gpuAsset("ktx2"),
   uimage: container("uimage", {
     roleContainer: true,
     retainClassifiedSource: true,
@@ -305,7 +470,80 @@ const NON_ZIP_FORMATS = {
     readerLimitation:
       "uImage inventory establishes the 64-byte legacy header facts and stored payload bytes. Compressed payloads are not decompressed, and the image is not executed.",
     createReader: (path, options) =>
-      new UImageArtifactReader(path, sourceOf(options)),
+      new UImageArtifactReader(path, sourceOf(options), options.integrity),
+  }),
+  nso: switchExecutable("nso"),
+  nro: switchExecutable("nro"),
+  "android-boot-image": container("android-boot-image", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "Android boot image inventory establishes header facts and stored component bytes. Payloads are not decompressed, the v4 signature and AVB footer are not verified, and the image is not executed.",
+    createReader: (path, options) =>
+      new AndroidBootImageArtifactReader(path, sourceOf(options)),
+  }),
+  "android-ota-payload": container("android-ota-payload", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation: ANDROID_OTA_PAYLOAD_LIMITATIONS.inventoryScope,
+    createReader: (path, options) =>
+      new AndroidOtaPayloadArtifactReader(path, sourceOf(options)),
+  }),
+  "android-vbmeta": container("android-vbmeta", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "Android vbmeta inventory exposes the authentication block, public key, public key metadata, and decoded descriptors as stored children. AVB footers on partition images other than boot images are out of scope.",
+    createReader: (path, options) =>
+      new AndroidVbmetaArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.android_vbmeta,
+      ),
+  }),
+  "android-sparse-image": container("android-sparse-image", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation: ANDROID_SPARSE_IMAGE_LIMITATIONS.inventoryScope,
+    createReader: (path, options) =>
+      new AndroidSparseImageArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.android_sparse_image,
+        options.readerLimits?.expanded_bytes,
+      ),
+  }),
+  "ubi-image": container("ubi-image", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation: UBI_IMAGE_LIMITATIONS.inventoryScope,
+    createReader: (path, options) =>
+      new UbiImageArtifactReader(path, sourceOf(options)),
+  }),
+  iso9660: container("iso9660", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "ISO 9660 inventory establishes volume descriptor facts, the directory tree (Joliet names when present) and stored file bytes. Rock Ridge and UDF structures and El Torito boot images are not decoded, and nothing is mounted or executed.",
+    createReader: (path, options) =>
+      new Iso9660ArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.expanded_bytes,
+        options.readerLimits?.iso9660,
+      ),
   }),
   "javascript-bundle": described("javascript-bundle", plain),
   "source-map": described("source-map", plain),
@@ -321,6 +559,7 @@ const NON_ZIP_FORMATS = {
         options.environment,
         undefined,
         sourceOf(options),
+        options.integrity,
       ),
   }),
   "mach-o": described("mach-o", plain),
@@ -332,7 +571,19 @@ const NON_ZIP_FORMATS = {
   "gamecube-dol": described("gamecube-dol", plain),
   hopper: described("hopper", plain),
   "analysis-database": described("analysis-database", plain),
+  uefi: described("uefi", {
+    ...plain,
+    retainClassifiedSource: true,
+    absentInventory: "unavailable",
+    createReader: (path, options) =>
+      new UefiArtifactReader(path, sourceOf(options)),
+  }),
   plist: described("plist", plain),
+  sqlite: described("sqlite", plain),
+  "windows-shortcut": described("windows-shortcut", plain),
+  "python-pyc": described("python-pyc", plain),
+  devicetree: described("devicetree", plain),
+  deb: described("deb", plain),
   entitlements: described("entitlements", plain),
   directory: container("directory", {
     absentInventory: "unavailable",
@@ -351,7 +602,12 @@ const NON_ZIP_FORMATS = {
     readerLimitation:
       "Node SEA inventory establishes the injected blob, flags, fuse sentinel, main script, optional code cache, snapshot, and assets. V8 snapshots and code cache are not deserialized, and the application is not executed.",
     createReader: (path, options) =>
-      new NodeSeaArtifactReader(path, admittedAs("node-sea", options)),
+      new NodeSeaArtifactReader(
+        path,
+        admittedAs("node-sea", options),
+        options.readerLimits?.node_sea,
+        options.readerLimits?.expanded_bytes,
+      ),
   }),
   "intel-hex": container("intel-hex", {
     roleContainer: true,
@@ -402,6 +658,20 @@ const NON_ZIP_FORMATS = {
     createReader: (path, options) =>
       new DfuSeArtifactReader(path, sourceOf(options)),
   }),
+  bflt: container("bflt", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "bFLT inventory reports the flat header and serves text (header included), data and the relocation table at their loader offsets. gzip bodies are inflated in memory under artifact_limits.expanded_bytes (capped at 128 MiB); relocations are not applied, and the executable is not run. The header does not name a CPU.",
+    createReader: (path, options) =>
+      new BfltArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.expanded_bytes,
+      ),
+  }),
   "esp-flash-image": container("esp-flash-image", {
     roleContainer: true,
     retainClassifiedSource: true,
@@ -424,7 +694,25 @@ const NON_ZIP_FORMATS = {
     readerLimitation:
       "FIT inventory reports each /images node's stored bytes and its declared type, architecture, OS, compression, load and entry. Image data is not decompressed or decrypted, signatures are not verified, nothing is executed, and load and entry addresses are declarations.",
     createReader: (path, options) =>
-      new FitArtifactReader(path, sourceOf(options)),
+      new FitArtifactReader(path, sourceOf(options), options.integrity),
+  }),
+  "qualcomm-mbn": container("qualcomm-mbn", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "Qualcomm MBN inventory reports the header fields (40 bytes for v3 and v5, 48 for v6) and the stored code, signature, certificate-chain and metadata ranges. For an ELF image whose program headers declare a Qualcomm hash segment it decodes the hash-segment header, hash count and per-program-header hash positions, listing the first 64 positions inline. Signatures and certificates are located, not verified; hashes are not recomputed and nothing is executed. Ranges outside the file or the ELF hash segment are reported as limitations and omitted from inventory.",
+    createReader: (path, options) =>
+      new QualcommMbnArtifactReader(path, sourceOf(options)),
+  }),
+  "ntfs-mft": described("ntfs-mft", {
+    ...plain,
+    retainClassifiedSource: true,
+    readerLimitation:
+      "MFT inventory reports whole-stream counts and up to 32 physical FILE record details, including fixup coverage, supported names, timestamps, declared sizes and attributes. Bounded attribute-list links expose verified metadata from acquired extension records, with explicit reference outcomes and omissions. Nonresident list values and file contents are not recovered; full paths and complete change history are not established. Use inspect_ntfs_journal for caller-paired journal events.",
+    createReader: (path, options) =>
+      new NtfsMftArtifactReader(path, sourceOf(options)),
   }),
   unknown: described("unknown", plain),
 } satisfies Record<

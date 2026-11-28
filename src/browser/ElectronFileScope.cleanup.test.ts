@@ -1,11 +1,12 @@
 import { createServer } from "node:http";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { afterEach, expect, it, vi } from "vitest";
+import { asarHeaderBytes } from "../../tests/fixtures/asarHeader.js";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 const handleState = vi.hoisted(() => ({
   archive: undefined as string | undefined,
@@ -70,26 +71,23 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { CdpElectronProvider } from "./CdpElectronProvider.js";
 import { V8InspectorProvider } from "../inspector/V8InspectorProvider.js";
 import { observeJavaScriptRuntime } from "../application/javascript/JavaScriptRuntimeObservationService.js";
 import { startFakeV8Inspector } from "../../tests/fixtures/inspector/fakeV8Inspector.js";
-import { prependAsarJsonWhitespace } from "../../tests/fixtures/asarHeader.js";
 import {
   authorizedElectronFile,
+  ElectronFileScope,
   mapElectronFileAuthorizationFailure,
   retryElectronFileCleanup,
 } from "./ElectronFileScope.js";
 
-const roots: string[] = [];
+let scopeRoot: string;
 
 afterEach(async () => {
   await retryElectronFileCleanup();
-  await Promise.all(
-    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
-  );
   handleState.archive = undefined;
   handleState.failCloseCount = 0;
   handleState.closeController = undefined;
@@ -103,31 +101,19 @@ afterEach(async () => {
 });
 
 const asarPage = async (): Promise<string> => {
-  const root = await realpath(
-    await mkdtemp(join(tmpdir(), "rea-electron-file-scope-")),
-  );
-  roots.push(root);
+  const root = await createTestTempDirectory("rea-electron-file-scope-");
+  scopeRoot = root;
   const archive = join(root, "app.asar");
-  const json = Buffer.from(
-    JSON.stringify({ files: { "index.html": { size: 1, offset: "0" } } }),
+  const header = asarHeaderBytes(
+    '{"files":{"index.html":{"size":1,"offset":"0"}}}',
   );
-  const archiveBytes = Buffer.alloc(16 + json.length + 1);
-  const headerBytes = 8 + json.length;
-  archiveBytes.writeUInt32LE(4, 0);
-  archiveBytes.writeUInt32LE(headerBytes, 4);
-  archiveBytes.writeUInt32LE(headerBytes - 4, 8);
-  archiveBytes.writeUInt32LE(json.length, 12);
-  json.copy(archiveBytes, 16);
-  archiveBytes[16 + json.length] = 0;
-  await writeFile(archive, archiveBytes);
+  await writeFile(archive, Buffer.concat([header, Buffer.of(0)]));
   handleState.archive = archive;
   return pathToFileURL(join(archive, "index.html")).href;
 };
 
-it("retains Inspector scripts and contexts when final ASAR authorization cannot close its descriptor", async () => {
+it("retains Inspector Evidence and scopes pending ASAR cleanup to the owning provider", async () => {
   const scriptUrl = await asarPage();
-  const archive = handleState.archive;
-  if (archive === undefined) throw new Error("Missing fixture ASAR");
   const inspector = await startFakeV8Inspector({
     targetUrl: "https://example.test/entry.js",
     scriptUrls: [scriptUrl],
@@ -139,17 +125,8 @@ it("retains Inspector scripts and contexts when final ASAR authorization cannot 
     observation_ms: 0,
   };
   try {
-    const control = await observeJavaScriptRuntime(provider, input);
-    expect(control.ok).toBe(true);
-    if (!control.ok) throw control.error;
-    expect(control.value.normalized_result).toMatchObject({
-      scripts: { observed_total: 1 },
-      execution_contexts: [{ name: "node[fixture]" }],
-    });
-    await prependAsarJsonWhitespace(archive, " ");
     handleState.failCloseCount = 1;
     const result = await observeJavaScriptRuntime(provider, input);
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected descriptor close failure");
     expect(result.error.cleanupIncomplete).toBe(true);
     expect(result.error.partialObservation).toMatchObject({
@@ -163,8 +140,24 @@ it("retains Inspector scripts and contexts when final ASAR authorization cannot 
         execution_contexts: [{ name: "node[fixture]" }],
       },
     });
+    const unrelated = new V8InspectorProvider();
+    try {
+      const listed = await unrelated.listTargets({
+        inspector_endpoint: input.inspector_endpoint,
+      });
+      expect(listed).toMatchObject({
+        ok: true,
+        value: { targets: [{ target_id: inspector.targetId }] },
+      });
+    } finally {
+      await unrelated.close();
+    }
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(handleState.events).toEqual(["open", "close"]);
+
     await provider.close();
     expect(result.error.cleanupIncomplete).toBe(false);
+    expect(handleState.events).toEqual(["open", "close", "close"]);
   } finally {
     handleState.failCloseCount = 0;
     await provider.close();
@@ -210,46 +203,46 @@ it("retains a failed ASAR close through denial and retries before reopening", as
   expect(mapped?.cleanupIncomplete).toBe(false);
 });
 
-it("keeps cancellation primary when ASAR close fails, then retries the same handle", async () => {
-  const location = await asarPage();
-  const controller = new AbortController();
-  const reason = new Error("cancel during ASAR close");
-  handleState.closeController = controller;
-  handleState.closeReason = reason;
-  handleState.failCloseCount = 1;
+it.each([
+  ["close", new Error("cancel during ASAR close")],
+  ["read", { source: "caller", token: 17 }],
+  ["stat", { source: "caller", stage: "descriptor-stat" }],
+] as const)(
+  "preserves cancellation during ASAR %s over a failed close and retries the descriptor",
+  async (stage, reason) => {
+    const location = await asarPage();
+    const controller = new AbortController();
+    handleState[`${stage}Controller`] = controller;
+    handleState[`${stage}Reason`] = reason;
+    handleState.failCloseCount = 1;
 
-  let failure: unknown;
-  try {
-    await authorizedElectronFile(
+    const failure: unknown = await authorizedElectronFile(
       location,
       controller.signal,
+    ).catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+    const mapped = mapElectronFileAuthorizationFailure(
+      failure,
+      "rea-cdp-electron",
       "inspect_electron_page",
     );
-  } catch (cause: unknown) {
-    failure = cause;
-  }
-  expect(failure).toBeInstanceOf(ArtifactReaderFailure);
-  const mapped = mapElectronFileAuthorizationFailure(
-    failure,
-    "rea-cdp-electron",
-    "inspect_electron_page",
-  );
-  expect(mapped?.cleanupIncomplete).toBe(true);
-  expect(mapped?.cleanupPrimary).toBeInstanceOf(AnalysisCancelledError);
-  expect(mapped?.cleanupPrimary?.cause).toBe(reason);
+    expect(mapped?.cleanupIncomplete).toBe(true);
+    expect(mapped?.cleanupPrimary).toBeInstanceOf(AnalysisCancelledError);
+    expect(mapped?.cleanupPrimary?.cause).toBe(reason);
 
-  await expect(authorizedElectronFile(location)).resolves.toBe(
-    `${handleState.archive}/index.html`,
-  );
-  expect(handleState.events).toEqual([
-    "open",
-    "close",
-    "close",
-    "open",
-    "close",
-  ]);
-  expect(mapped?.cleanupIncomplete).toBe(false);
-});
+    await expect(authorizedElectronFile(location)).resolves.toBe(
+      fileURLToPath(location),
+    );
+    expect(handleState.events).toEqual([
+      "open",
+      "close",
+      "close",
+      "open",
+      "close",
+    ]);
+    expect(mapped?.cleanupIncomplete).toBe(false);
+  },
+);
 
 it("keeps an earlier read failure primary over a later abort and close failure", async () => {
   const location = await asarPage();
@@ -277,78 +270,24 @@ it("keeps an earlier read failure primary over a later abort and close failure",
   expect(mapped?.cleanupPrimary?.cause).toBe(readFailure);
 
   await expect(authorizedElectronFile(location)).resolves.toBe(
-    `${handleState.archive}/index.html`,
+    fileURLToPath(location),
   );
   expect(mapped?.cleanupIncomplete).toBe(false);
 });
 
-it("preserves an arbitrary cancellation reason observed during ASAR read", async () => {
-  const location = await asarPage();
-  const controller = new AbortController();
-  const reason = { source: "caller", token: 17 };
-  handleState.readController = controller;
-  handleState.readReason = reason;
-  handleState.failCloseCount = 1;
-
-  let failure: unknown;
-  try {
-    await authorizedElectronFile(location, controller.signal);
-  } catch (cause: unknown) {
-    failure = cause;
-  }
-  const mapped = mapElectronFileAuthorizationFailure(
-    failure,
-    "rea-cdp-electron",
-    "inspect_electron_page",
-  );
-  expect(mapped?.cleanupIncomplete).toBe(true);
-  expect(mapped?.cleanupPrimary).toBeInstanceOf(AnalysisCancelledError);
-  expect(mapped?.cleanupPrimary?.cause).toBe(reason);
-
-  await expect(authorizedElectronFile(location)).resolves.toBe(
-    `${handleState.archive}/index.html`,
-  );
-  expect(mapped?.cleanupIncomplete).toBe(false);
-});
-
-it("preserves cancellation observed after ASAR stat when final close fails", async () => {
-  const location = await asarPage();
-  const controller = new AbortController();
-  const reason = { source: "caller", stage: "descriptor-stat" };
-  handleState.statController = controller;
-  handleState.statReason = reason;
-  handleState.failCloseCount = 1;
-
-  let failure: unknown;
-  try {
-    await authorizedElectronFile(location, controller.signal);
-  } catch (cause: unknown) {
-    failure = cause;
-  }
-  const mapped = mapElectronFileAuthorizationFailure(
-    failure,
-    "rea-cdp-electron",
-    "inspect_electron_page",
-  );
-  expect(mapped?.cleanupIncomplete).toBe(true);
-  expect(mapped?.cleanupPrimary).toBeInstanceOf(AnalysisCancelledError);
-  expect(mapped?.cleanupPrimary?.cause).toBe(reason);
-
-  await expect(authorizedElectronFile(location)).resolves.toBe(
-    `${handleState.archive}/index.html`,
-  );
-  expect(mapped?.cleanupIncomplete).toBe(false);
-});
-
-it("retries a failed ASAR descriptor lease during provider shutdown", async () => {
+it("leaves another owner's retained ASAR descriptor to that owner's retry", async () => {
   const location = await asarPage();
   handleState.failCloseCount = 1;
-  await expect(authorizedElectronFile(location)).rejects.toBeInstanceOf(
-    ArtifactReaderFailure,
-  );
+  const files = new ElectronFileScope();
+  await expect(
+    authorizedElectronFile(location, undefined, undefined, undefined, files),
+  ).rejects.toBeInstanceOf(ArtifactReaderFailure);
 
+  // A provider's shutdown retries only the descriptors it owns.
   await new CdpElectronProvider().close();
+  expect(handleState.events).toEqual(["open", "close"]);
 
+  await files.retryCleanup();
   expect(handleState.events).toEqual(["open", "close", "close"]);
 });
 
@@ -356,7 +295,7 @@ it.each(["completed", "read-failed", "cancelled"] as const)(
   "retains the completed listing prefix after ASAR finalization: %s",
   async (mode) => {
     const archiveUrl = await asarPage();
-    const page = join(roots.at(-1)!, "first.html");
+    const page = join(scopeRoot, "first.html");
     await writeFile(page, "first");
     const controller = new AbortController();
     handleState.failCloseCount = 1;

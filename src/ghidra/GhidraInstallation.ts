@@ -1,6 +1,10 @@
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
-import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+} from "../domain/analysisErrorCore.js";
+import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import {
   probeGhidraJava,
   type GhidraJavaObservation,
@@ -11,22 +15,19 @@ import { ok, type Result } from "../domain/result.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { readGhidraExecutableHeader } from "./GhidraExecutableHeader.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
+import { appendCallerPath } from "../filesystem/callerPath.js";
 import {
-  absoluteCallerPath,
-  appendCallerPath,
-} from "../filesystem/callerPath.js";
+  posixPathCandidates,
+  windowsPathCandidates,
+  type PathSearchCandidate,
+} from "../process/executableSearch.js";
 import {
   readGhidraInstallationProperties,
   type GhidraInstallationFileOptions,
 } from "./GhidraInstallationProperties.js";
-import {
-  constants,
-  accessSync,
-  readdirSync,
-  realpathSync,
-  statSync,
-} from "node:fs";
-import { delimiter as pathDelimiter, dirname, posix, win32 } from "node:path";
+import { readdirSync, realpathSync, statSync } from "node:fs";
+import { dirname, posix, win32 } from "node:path";
+import { isExecutableFileSync } from "../filesystem/regularFileProbe.js";
 
 import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 import {
@@ -344,11 +345,9 @@ export const inspectGhidraInstallation = async (
   host: GhidraInstallationHost = systemGhidraInstallationHost(),
 ): Promise<GhidraInstallationInspection> => {
   if (options.signal?.aborted)
-    throw new AnalysisCancelledError("ghidra:installation", {
-      cause: options.signal.reason,
-    });
-  const platform = options.platform ?? process.platform;
-  const architecture = options.architecture ?? process.arch;
+    throw cancelledBy("ghidra:installation", options.signal);
+  const platform = options.platform ?? HOST_PLATFORM.platform;
+  const architecture = options.architecture ?? HOST_PLATFORM.architecture;
   const coordinates = await installationCoordinates(
     options,
     platform,
@@ -415,8 +414,7 @@ export const inspectGhidraInstallation = async (
       },
     };
   if (options.signal?.aborted)
-    throw new AnalysisCancelledError("ghidra:installation", {
-      cause: options.signal.reason,
+    throw cancelledBy("ghidra:installation", options.signal, {
       diagnostics: ghidraInstallationDiagnostics(
         availableInstallation(coordinates, observation, options.javaHome),
       ),
@@ -563,29 +561,40 @@ const installationCoordinates = async (
           platform,
         ),
       };
-    if (platform !== "darwin")
-      return {
-        source: "default",
-        command: platform === "win32" ? "java.exe" : "java",
-      };
+    if (platform === "win32") {
+      // The owned-process launcher admits only absolute executable paths, so a
+      // JDK that is on PATH without JAVA_HOME must resolve to its launcher here
+      // instead of passing a bare java.exe. Relative PATH entries stay out: the
+      // caller's working directory cannot select the runtime.
+      const search = windowsPathCandidates("java.exe", options.environment, {
+        relativeEntries: "skip",
+      });
+      for (const { path: javaOnPath } of search.ok ? search.value : [])
+        if (host.executable(javaOnPath))
+          return { source: "path", command: javaOnPath };
+      return { source: "default", command: "java.exe" };
+    }
+    if (platform !== "darwin") return { source: "default", command: "java" };
     // Check the caller's PATH, never a file named java in the working directory.
-    const javaOnPath = options.environment.PATH?.split(":")
-      .filter((directory) => path.isAbsolute(directory))
-      .map((directory) => absoluteCallerPath(`${directory}/java`, { platform }))
-      .find((candidate) => host.executable(candidate));
-    if (javaOnPath !== undefined)
-      return { source: "path", command: javaOnPath };
+    for (const { path: javaOnPath } of posixPathCandidates(
+      "java",
+      options.environment.PATH ?? "",
+      { relativeEntries: "skip" },
+    ))
+      if (host.executable(javaOnPath))
+        return { source: "path", command: javaOnPath };
     const homebrew = homebrewJavaCandidates()[0];
     return homebrew === undefined
       ? { source: "default", command: "/usr/bin/java" }
       : { source: "homebrew", command: homebrew };
   })();
   let javaCommand = selectedJava.command;
-  // Java is a prerequisite of a selected installation. Without one, or with a
-  // relative JAVA_HOME, configuration validation refuses Ghidra before Java can
+  // Java is a prerequisite of an existing installation. Missing application
+  // properties or a relative JAVA_HOME already refuse Ghidra before Java can
   // matter, so callers such as setup and doctor must not execute a host JVM.
   let javaProbe =
     installDir !== null &&
+    properties !== undefined &&
     (options.javaHome === undefined || path.isAbsolute(options.javaHome))
       ? await host.probeJava(
           javaCommand,
@@ -837,7 +846,7 @@ export const ghidraInstallationDiagnostics = (
 export const ghidraJavaEnvironment = (
   javaHome: string | undefined,
   environment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): NodeJS.ProcessEnv => {
   const selectedEnvironment = snapshotEnvironment(environment, platform);
   const boundedEnvironment = {
@@ -972,9 +981,28 @@ const nativeDecompilerCheck = ({
     remediation:
       compatibility?.status === "incompatible"
         ? compatibility.remediation
-        : `Provide an executable Ghidra/Features/Decompiler/os/${NATIVE_PLATFORMS[platform]?.[architecture] ?? "<platform>"}/${platform === "win32" ? "decompile.exe" : "decompile"}, or its build/os equivalent. REA does not build or install native tools.`,
+        : `Provide an executable Ghidra/Features/Decompiler/os/${NATIVE_PLATFORMS[platform]?.[architecture] ?? "<platform>"}/${platform === "win32" ? "decompile.exe" : "decompile"}, or its build/os equivalent.${nativeDecompilerBuildHint(platform, architecture)} REA does not build or install native tools.`,
   });
 };
+
+/** The published installation guide; the npm package does not ship `docs/`. */
+const INSTALLATION_GUIDE =
+  "https://github.com/morluto/rea/blob/main/docs/getting-started/installation.md";
+
+/**
+ * Where to get a decompiler that official release archives omit. Ghidra's
+ * official archives ship native binaries only for Windows and Linux x64; the
+ * archive's decompiler source builds the others.
+ */
+const nativeDecompilerBuildHint = (
+  platform: NodeJS.Platform,
+  architecture: NodeJS.Architecture,
+): string =>
+  platform === "darwin" && (architecture === "x64" || architecture === "arm64")
+    ? ` Official Ghidra release archives include no macOS decompiler; build it from the archive's decompiler source as described in ${INSTALLATION_GUIDE}#${architecture === "arm64" ? "macos-arm64-native-decompiler" : "missing-macos-native-decompiler"}.`
+    : platform === "linux" && architecture === "arm64"
+      ? ` Official Ghidra release archives include no Linux arm64 decompiler; build Ghidra's native components for this host as described in ${INSTALLATION_GUIDE}#ghidra.`
+      : "";
 
 /**
  * Whether a JVM os.name value selects the host platform's native OS directory.
@@ -1107,16 +1135,7 @@ export const systemGhidraInstallationHost = (): GhidraInstallationHost => ({
     }
   },
   executableHeader: readGhidraExecutableHeader,
-  executable(path) {
-    try {
-      accessSync(path, constants.X_OK);
-      return statSync(path).isFile();
-    } catch (cause: unknown) {
-      // best-effort cleanup: optional executable probing; failure means missing.
-      void cause;
-      return false;
-    }
-  },
+  executable: isExecutableFileSync,
   probeJava: probeGhidraJava,
   discoverInstallDirOnPath: discoverGhidraInstallationOnPath,
 });
@@ -1126,43 +1145,48 @@ export const discoverGhidraInstallationOnPath = (
   environment: Readonly<NodeJS.ProcessEnv>,
   platform: NodeJS.Platform,
 ): string | undefined => {
-  if (platform !== process.platform) return undefined;
+  if (platform !== HOST_PLATFORM.platform) return undefined;
   const path = platform === "win32" ? win32 : posix;
-  const pathValue = environment.PATH;
-  if (pathValue === undefined) return undefined;
-  const launchers =
+  if (platform !== "win32" && environment.PATH === undefined) return undefined;
+  // Each PATH entry is tried for every launcher name before the next entry.
+  // POSIX empty entries select cwd, including an entirely empty PATH.
+  const windowsSearch =
     platform === "win32"
-      ? ["ghidra.bat", "ghidraRun.bat", "ghidra.exe", "ghidraRun.exe"]
-      : ["ghidra", "ghidraRun"];
-  for (const directory of pathValue.split(pathDelimiter)) {
-    // POSIX empty PATH entries select cwd, including an entirely empty PATH.
-    if (directory.length === 0 && platform === "win32") continue;
-    for (const launcher of launchers) {
-      let resolved: string;
-      try {
-        const candidate = absoluteCallerPath(
-          appendCallerPath(directory, launcher, platform),
-          { platform },
-        );
-        if (!executablePath(candidate)) continue;
-        resolved = realpathSync.native(candidate);
-      } catch (cause: unknown) {
-        void cause;
-        continue;
-      }
-      const root = dirname(resolved);
-      const properties = path.join(root, "Ghidra", "application.properties");
-      const headless = path.join(
-        root,
-        "support",
-        platform === "win32" ? "analyzeHeadless.bat" : "analyzeHeadless",
-      );
-      try {
-        if (statSync(properties).isFile() && executablePath(headless))
-          return stableGhidraInstallationRoot(root, platform);
-      } catch (cause: unknown) {
-        void cause;
-      }
+      ? windowsPathCandidates(
+          ["ghidra.bat", "ghidraRun.bat", "ghidra.exe", "ghidraRun.exe"],
+          environment,
+          { allowBatch: true },
+        )
+      : undefined;
+  const candidates: Iterable<PathSearchCandidate> =
+    windowsSearch === undefined
+      ? posixPathCandidates(["ghidra", "ghidraRun"], environment.PATH ?? "", {
+          relativeEntries: "resolve",
+        })
+      : windowsSearch.ok
+        ? windowsSearch.value
+        : [];
+  for (const { path: candidate } of candidates) {
+    let resolved: string;
+    try {
+      if (!isExecutableFileSync(candidate)) continue;
+      resolved = realpathSync.native(candidate);
+    } catch (cause: unknown) {
+      void cause;
+      continue;
+    }
+    const root = dirname(resolved);
+    const properties = path.join(root, "Ghidra", "application.properties");
+    const headless = path.join(
+      root,
+      "support",
+      platform === "win32" ? "analyzeHeadless.bat" : "analyzeHeadless",
+    );
+    try {
+      if (statSync(properties).isFile() && isExecutableFileSync(headless))
+        return stableGhidraInstallationRoot(root, platform);
+    } catch (cause: unknown) {
+      void cause;
     }
   }
   return undefined;
@@ -1211,7 +1235,7 @@ const stableJavaHome = (
   platform: NodeJS.Platform,
 ): string => {
   // Compare paths only with the matching host filesystem semantics.
-  if (platform !== process.platform) return observedHome;
+  if (platform !== HOST_PLATFORM.platform) return observedHome;
   const sameHome = (candidate: string): boolean => {
     try {
       return (
@@ -1250,15 +1274,4 @@ const stableJavaHome = (
     "libexec/openjdk.jdk/Contents/Home",
   );
   return sameHome(candidate) ? candidate : observedHome;
-};
-
-const executablePath = (path: string): boolean => {
-  try {
-    accessSync(path, constants.X_OK);
-    return statSync(path).isFile();
-  } catch (cause: unknown) {
-    // best-effort cleanup: optional executable probing; failure means missing.
-    void cause;
-    return false;
-  }
 };

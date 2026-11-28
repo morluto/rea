@@ -37,6 +37,7 @@ const inventory = (digit: string) => {
       }),
       artifact_id: artifactId,
       parent_occurrence_id: null,
+      relationship_coverage: "complete",
       logical_path: ".",
       entry_kind: "file",
       artifact_kind: "resource",

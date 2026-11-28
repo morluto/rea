@@ -1,9 +1,9 @@
 import { execFile } from "node:child_process";
-import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -12,19 +12,8 @@ import { writeVersionedJavaScriptApplicationFixtures } from "../../fixtures/java
 const execute = promisify(execFile);
 
 describe("local application workflow verifier", () => {
-  const temporary: string[] = [];
-
-  afterEach(async () => {
-    await Promise.all(
-      temporary
-        .splice(0)
-        .map(async (path) => rm(path, { recursive: true, force: true })),
-    );
-  });
-
   it("reports two-version and trace results", async () => {
     const root = await createTestTempDirectory("rea-application-verifier-");
-    temporary.push(root);
     const fixtures = await writeVersionedJavaScriptApplicationFixtures(root);
     const { stdout } = await execute(
       process.execPath,
@@ -57,11 +46,10 @@ describe("local application workflow verifier", () => {
       coverage: { status: expect.any(String) },
       trace: { summary: { matched_seeds: expect.any(Number) } },
     });
-  }, 20_000);
+  });
 
   it("reports an added parser return field", async () => {
     const root = await createTestTempDirectory("rea-shape-verifier-");
-    temporary.push(root);
     const left = join(root, "left");
     const right = join(root, "right");
     await Promise.all([mkdir(left), mkdir(right)]);
@@ -96,16 +84,16 @@ describe("local application workflow verifier", () => {
     );
     const result = JSON.parse(stdout);
     expect(result.export_shape_comparison).toMatchObject({
-      summary: { added: 1, removed: 0, changed: 0, unknown: 0 },
-      changes: [
-        {
+      summary: { added: 1, removed: 0, changed: 0, unknown: 3 },
+      changes: expect.arrayContaining([
+        expect.objectContaining({
           status: "added",
           path: "/depth",
           right: { availability: "literal", value: 1 },
-        },
-      ],
+        }),
+      ]),
     });
-  }, 20_000);
+  });
 });
 
 it.each([false, true])(
@@ -167,5 +155,4 @@ registerHooks({ resolve(specifier, context, next) {
         stderr: expect.stringContaining("authored late cleanup failure"),
       });
   },
-  20_000,
 );

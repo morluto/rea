@@ -8,7 +8,28 @@
       name="description"
       content="Reverse engineer apps, binaries and browser behavior with your coding agent. Follow clear guides and try interactive examples with REA."
     />
+    <!-- website:theme:start -->
+    <meta name="theme-color" content="#ffffff" />
+    <script>
+      (() => {
+        let theme;
+        try {
+          theme = localStorage.getItem("rea-theme");
+        } catch {}
+        if (theme !== "light" && theme !== "dark")
+          theme = matchMedia("(prefers-color-scheme: dark)").matches
+            ? "dark"
+            : "light";
+        document.documentElement.dataset.theme = theme;
+        document.querySelector('meta[name="theme-color"]').content =
+          theme === "dark" ? "#1e1e2e" : "#ffffff";
+      })();
+    </script>
+    <script defer src="./assets/theme.js"></script>
+    <!-- website:theme:end -->
+    <link rel="stylesheet" href="assets/styles.css" />
     <!-- website:sharing:start -->
+    <meta name="robots" content="max-image-preview:large" />
     <!-- prettier-ignore -->
     <link rel="canonical" href="https://rea.tools/" />
     <!-- website:languages:start -->
@@ -59,11 +80,12 @@
     <!-- prettier-ignore -->
     <link rel="alternate" hreflang="ro" href="https://rea.tools/ro/" />
     <!-- prettier-ignore -->
+    <link rel="alternate" hreflang="bg" href="https://rea.tools/bg/" />
+    <!-- prettier-ignore -->
     <link rel="alternate" hreflang="x-default" href="https://rea.tools/" />
     <!-- website:languages:end -->
-    <!-- prettier-ignore -->
     <meta property="og:type" content="website" />
-    <!-- prettier-ignore -->
+    <link rel="apple-touch-icon" href="./assets/rea-icon.png" />
     <meta property="og:site_name" content="REA" />
     <!-- prettier-ignore -->
     <meta property="og:title" content="REA: Reverse Engineering for Your Coding Agent" />
@@ -82,9 +104,9 @@
     <!-- prettier-ignore -->
     <meta
       property="og:image:alt"
-      content="REA: Find out how software works. Reverse engineering with your coding agent."
+      content="Blue REA lettering beside disassembly, hex data and an agent workflow."
     />
-    <!-- prettier-ignore -->
+    <link rel="icon" sizes="192x192" href="./assets/rea-icon.png" />
     <meta name="twitter:card" content="summary_large_image" />
     <!-- prettier-ignore -->
     <meta name="twitter:title" content="REA: Reverse Engineering for Your Coding Agent" />
@@ -95,16 +117,10 @@
     <!-- prettier-ignore -->
     <meta
       name="twitter:image:alt"
-      content="REA: Find out how software works. Reverse engineering with your coding agent."
+      content="Blue REA lettering beside disassembly, hex data and an agent workflow."
     />
     <!-- website:sharing:end -->
-    <!-- website:theme:start -->
-    <meta name="theme-color" content="#ffffff" />
-    <!-- Apply the saved theme before styles load, to avoid a flash on navigation. -->
-    <script src="./assets/theme.js"></script>
-    <!-- website:theme:end -->
-    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="assets/styles.css" />
+    <link rel="icon" href="assets/favicon.svg?v=2" type="image/svg+xml" />
     <script src="assets/main.js" defer></script>
     <script type="module" src="assets/home.js"></script>
     <script type="module" src="assets/dino-demo.js"></script>
@@ -126,7 +142,7 @@
           <a href="./guides/">Guides</a>
         </nav>
         <div class="header-social">
-          <details class="language-picker" data-i18n-skip><summary><span aria-hidden="true">文 / A</span> <span>English</span></summary><nav aria-label="English"><a href="./" lang="en" dir="ltr" data-language="en" aria-current="true">English</a><a href="./zh-CN/" lang="zh-CN" dir="ltr" data-language="zh-CN">简体中文</a><a href="./zh-TW/" lang="zh-TW" dir="ltr" data-language="zh-TW">繁體中文</a><a href="./ja/" lang="ja" dir="ltr" data-language="ja">日本語</a><a href="./ko/" lang="ko" dir="ltr" data-language="ko">한국어</a><a href="./tr/" lang="tr" dir="ltr" data-language="tr">Türkçe</a><a href="./ru/" lang="ru" dir="ltr" data-language="ru">Русский</a><a href="./vi/" lang="vi" dir="ltr" data-language="vi">Tiếng Việt</a><a href="./th/" lang="th" dir="ltr" data-language="th">ไทย</a><a href="./de/" lang="de" dir="ltr" data-language="de">Deutsch</a><a href="./es/" lang="es" dir="ltr" data-language="es">Español</a><a href="./fr/" lang="fr" dir="ltr" data-language="fr">Français</a><a href="./uk/" lang="uk" dir="ltr" data-language="uk">Українська</a><a href="./pl/" lang="pl" dir="ltr" data-language="pl">Polski</a><a href="./pt-BR/" lang="pt-BR" dir="ltr" data-language="pt-BR">Português (Brasil)</a><a href="./ar/" lang="ar" dir="rtl" data-language="ar">العربية</a><a href="./fa/" lang="fa" dir="rtl" data-language="fa">فارسی</a><a href="./id/" lang="id" dir="ltr" data-language="id">Bahasa Indonesia</a><a href="./it/" lang="it" dir="ltr" data-language="it">Italiano</a><a href="./el/" lang="el" dir="ltr" data-language="el">Ελληνικά</a><a href="./ml/" lang="ml" dir="ltr" data-language="ml">മലയാളം</a><a href="./ur-Latn/" lang="ur-Latn" dir="ltr" data-language="ur-Latn">Roman Urdu</a><a href="./ro/" lang="ro" dir="ltr" data-language="ro">Română</a></nav></details>
+          <details class="language-picker" data-i18n-skip><summary><span aria-hidden="true">文 / A</span> <span>English</span></summary><nav aria-label="English"><a href="./" lang="en" dir="ltr" data-language="en" aria-current="true">English</a><a href="./zh-CN/" lang="zh-CN" dir="ltr" data-language="zh-CN">简体中文</a><a href="./zh-TW/" lang="zh-TW" dir="ltr" data-language="zh-TW">繁體中文</a><a href="./ja/" lang="ja" dir="ltr" data-language="ja">日本語</a><a href="./ko/" lang="ko" dir="ltr" data-language="ko">한국어</a><a href="./tr/" lang="tr" dir="ltr" data-language="tr">Türkçe</a><a href="./ru/" lang="ru" dir="ltr" data-language="ru">Русский</a><a href="./vi/" lang="vi" dir="ltr" data-language="vi">Tiếng Việt</a><a href="./th/" lang="th" dir="ltr" data-language="th">ไทย</a><a href="./de/" lang="de" dir="ltr" data-language="de">Deutsch</a><a href="./es/" lang="es" dir="ltr" data-language="es">Español</a><a href="./fr/" lang="fr" dir="ltr" data-language="fr">Français</a><a href="./uk/" lang="uk" dir="ltr" data-language="uk">Українська</a><a href="./pl/" lang="pl" dir="ltr" data-language="pl">Polski</a><a href="./pt-BR/" lang="pt-BR" dir="ltr" data-language="pt-BR">Português (Brasil)</a><a href="./ar/" lang="ar" dir="rtl" data-language="ar">العربية</a><a href="./fa/" lang="fa" dir="rtl" data-language="fa">فارسی</a><a href="./id/" lang="id" dir="ltr" data-language="id">Bahasa Indonesia</a><a href="./it/" lang="it" dir="ltr" data-language="it">Italiano</a><a href="./el/" lang="el" dir="ltr" data-language="el">Ελληνικά</a><a href="./ml/" lang="ml" dir="ltr" data-language="ml">മലയാളം</a><a href="./ur-Latn/" lang="ur-Latn" dir="ltr" data-language="ur-Latn">Roman Urdu</a><a href="./ro/" lang="ro" dir="ltr" data-language="ro">Română</a><a href="./bg/" lang="bg" dir="ltr" data-language="bg">Български</a></nav></details>
           <button class="theme-toggle" type="button" data-theme-toggle hidden>
             <svg class="theme-moon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
               <path d="M20.9 13a9 9 0 0 1-9.9-9.9A9 9 0 1 0 20.9 13Z" />
@@ -307,7 +323,7 @@
         </div>
       </section>
 
-      <details class="home-page-nav" data-home-nav open>
+      <details class="home-page-nav" data-home-nav>
         <summary class="container">
           <span>On this page</span>
           <span
@@ -513,7 +529,9 @@
                     <img
                       class="expert-illustration"
                       src="assets/figures/analyst-thinking.svg"
-                      alt=""
+                      alt="An analyst thinking at a computer"
+                      title="Illustrative expert reasoning"
+                      loading="lazy"
                       width="160"
                       height="120"
                     />
@@ -1206,7 +1224,7 @@ SPEED: 6</code></pre>
           </div>
           <details class="home-evidence-details" id="project-prompts">
             <summary>Try a larger project</summary>
-            <div class="code-comparison home-project-prompts">
+            <div class="code-comparison">
               <div>
                 <div class="agent-terminal">
                   <div class="terminal-header">

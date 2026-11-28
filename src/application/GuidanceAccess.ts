@@ -1,8 +1,17 @@
-import { createHash } from "node:crypto";
+import {
+  fileStatStamp,
+  sameFileStatStamp,
+  type FileStatStamp,
+} from "../filesystem/FileStatStamp.js";
+import { boundedList, type BoundedList } from "../domain/boundedList.js";
+import { stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import type { z } from "zod";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import {
+  ArtifactResourceScope,
+  AnalysisCleanupLease,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import { MANAGED_SKILL_FILES, readSkillFile } from "./SetupSkill.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import {
@@ -16,29 +25,87 @@ import {
 } from "../contracts/guidanceContracts.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   bindRegularFileCleanup,
   RetainedRegularFileCleanupFailure,
-} from "./RegularFileRead.js";
+} from "../process/RegularFileRead.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   parseGuidanceSections,
   type GuideSection,
 } from "./GuidanceSections.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const SKILL_ROOT = `../../skills/${PRODUCT_IDENTITY.skillName}/`;
 const SOURCE = "installed_rea_guidance" as const;
 const MAX_GUIDE_FILE_BYTES = 1_048_576;
 const MAX_GUIDE_BUNDLE_BYTES = 4_194_304;
-const sha256 = (value: string | Uint8Array): string =>
-  createHash("sha256").update(value).digest("hex");
-
 interface GuidanceBundle {
   readonly digest: string;
   readonly sections: readonly GuideSection[];
+  readonly sectionsByGuide: ReadonlyMap<
+    string,
+    ReadonlyMap<number, GuideSection>
+  >;
+  readonly ownWordsBySection: ReadonlyMap<GuideSection, ReadonlySet<string>>;
+  readonly headingWordsBySection: ReadonlyMap<
+    GuideSection,
+    ReadonlySet<string>
+  >;
 }
+
+const PACKAGED_GUIDE_PATHS: readonly string[] = MANAGED_SKILL_FILES.map(
+  (relativePath) =>
+    fileURLToPath(new URL(`${SKILL_ROOT}${relativePath}`, import.meta.url)),
+);
+
+let cachedPackagedBundle:
+  | {
+      readonly stamps: readonly FileStatStamp[];
+      readonly bundle: GuidanceBundle;
+    }
+  | undefined;
+
+const statPackagedGuides = async (): Promise<
+  readonly FileStatStamp[] | undefined
+> => {
+  try {
+    const stats = await Promise.all(
+      PACKAGED_GUIDE_PATHS.map((filePath) => stat(filePath, { bigint: true })),
+    );
+    const stamps: FileStatStamp[] = [];
+    for (const info of stats) {
+      if (!info.isFile()) return undefined;
+      stamps.push(fileStatStamp(info));
+    }
+    return stamps;
+  } catch {
+    return undefined;
+  }
+};
+
+const sameGuideStamps = (
+  left: readonly FileStatStamp[],
+  right: readonly FileStatStamp[],
+): boolean =>
+  left.length === right.length &&
+  left.every((item, index) => sameFileStatStamp(item, right[index]!));
+
+const indexSectionsByGuide = (
+  sections: readonly GuideSection[],
+): ReadonlyMap<string, ReadonlyMap<number, GuideSection>> => {
+  const byGuide = new Map<string, Map<number, GuideSection>>();
+  for (const section of sections) {
+    let byOrdinal = byGuide.get(section.guide);
+    if (byOrdinal === undefined) {
+      byOrdinal = new Map<number, GuideSection>();
+      byGuide.set(section.guide, byOrdinal);
+    }
+    byOrdinal.set(section.ordinal, section);
+  }
+  return byGuide;
+};
 
 const readPackagedGuide = (
   relativePath: string,
@@ -84,7 +151,17 @@ const readBundle = async (
   readGuide: (relativePath: string) => Promise<string>,
   resources: ArtifactResourceScope,
   operation: string,
+  usePackagedCache: boolean,
 ): Promise<GuidanceBundleRead> => {
+  const preReadStamps = usePackagedCache
+    ? await statPackagedGuides()
+    : undefined;
+  if (
+    preReadStamps !== undefined &&
+    cachedPackagedBundle !== undefined &&
+    sameGuideStamps(preReadStamps, cachedPackagedBundle.stamps)
+  )
+    return { kind: "available", bundle: cachedPackagedBundle.bundle };
   const files = new Map<string, string>();
   let bundleBytes = 0;
   try {
@@ -112,9 +189,9 @@ const readBundle = async (
             "Installed REA guidance is missing or unreadable; no complete bundle could be indexed.",
         };
   }
-  const digest = sha256(
+  const digest = sha256Hex(
     [...files]
-      .map(([path, content]) => `${path}\0${sha256(content)}\n`)
+      .map(([path, content]) => `${path}\0${sha256Hex(content)}\n`)
       .join(""),
   );
   const sections = parseGuidanceSections(files);
@@ -124,7 +201,28 @@ const readBundle = async (
       message:
         "Installed REA guidance exceeds the 4,096-section or 25,165,824 expanded UTF-16-code-unit index allowance; no partial index was used.",
     };
-  return { kind: "available", bundle: { digest, sections } };
+  const ownWordsBySection = new Map<GuideSection, ReadonlySet<string>>();
+  const headingWordsBySection = new Map<GuideSection, ReadonlySet<string>>();
+  for (const section of sections) {
+    ownWordsBySection.set(section, new Set(words(section.ownContent)));
+    headingWordsBySection.set(section, new Set(words(section.heading)));
+  }
+  const bundle: GuidanceBundle = {
+    digest,
+    sections,
+    sectionsByGuide: indexSectionsByGuide(sections),
+    ownWordsBySection,
+    headingWordsBySection,
+  };
+  if (preReadStamps !== undefined) {
+    const postReadStamps = await statPackagedGuides();
+    if (
+      postReadStamps !== undefined &&
+      sameGuideStamps(preReadStamps, postReadStamps)
+    )
+      cachedPackagedBundle = { stamps: postReadStamps, bundle };
+  }
+  return { kind: "available", bundle };
 };
 
 const words = (text: string): string[] => [
@@ -192,7 +290,7 @@ const sectionLocator = (
     bundle: bundle.digest,
     guide: section.guide,
     ordinal: section.ordinal,
-    section: sha256(section.content),
+    section: sha256Hex(section.content),
   });
   return `rea-guide-v1.${Buffer.from(identity).toString("base64url")}`;
 };
@@ -245,7 +343,12 @@ export const searchGuidanceWithReader = (
   resources: ArtifactResourceScope,
 ): Promise<GuidanceResult<SearchGuidanceOutput>> =>
   runGuidanceOperation(resources, "search_guidance", (child) =>
-    searchGuidanceInScope(input, (path) => readGuide(path, child), child),
+    searchGuidanceInScope(
+      input,
+      (path) => readGuide(path, child),
+      child,
+      readGuide === readPackagedGuide,
+    ),
   );
 
 export const readGuidanceSectionWithReader = (
@@ -254,7 +357,12 @@ export const readGuidanceSectionWithReader = (
   resources: ArtifactResourceScope,
 ): Promise<GuidanceResult<ReadGuidanceSectionOutput>> =>
   runGuidanceOperation(resources, "read_guidance_section", (child) =>
-    readGuidanceSectionInScope(input, (path) => readGuide(path, child), child),
+    readGuidanceSectionInScope(
+      input,
+      (path) => readGuide(path, child),
+      child,
+      readGuide === readPackagedGuide,
+    ),
   );
 
 const invalidInput = (
@@ -276,6 +384,7 @@ const searchGuidanceInScope = async (
   input: unknown,
   readGuide: (relativePath: string) => Promise<string>,
   resources: ArtifactResourceScope,
+  usePackagedCache: boolean,
 ): Promise<
   Result<SearchGuidanceOutput, AnalysisInputError | ProviderCleanupError>
 > => {
@@ -294,7 +403,7 @@ const searchGuidanceInScope = async (
         message: "Invalid guidance continuation token",
       },
     ]);
-  const queryDigest = sha256(parsed.data.query);
+  const queryDigest = sha256Hex(parsed.data.query);
   if (cursor !== undefined && cursor.query !== queryDigest)
     return invalidInput("search_guidance", input, [
       {
@@ -303,7 +412,12 @@ const searchGuidanceInScope = async (
         message: "The continuation token belongs to a different query",
       },
     ]);
-  const loaded = await readBundle(readGuide, resources, "search_guidance");
+  const loaded = await readBundle(
+    readGuide,
+    resources,
+    "search_guidance",
+    usePackagedCache,
+  );
   if (loaded.kind === "cleanup") return err(loaded.error);
   if (loaded.kind === "unavailable")
     return ok(
@@ -329,7 +443,7 @@ const searchGuidanceInScope = async (
 
   const queryWords = words(parsed.data.query);
   const { coverage, ranked } = rankSections(
-    bundle.sections,
+    bundle,
     queryWords,
     queryWords.filter((word) => !GENERIC_QUERY_WORDS.has(word)),
   );
@@ -419,14 +533,16 @@ interface SectionRanking {
  * document order, so every subsection is complete before its parent reads it.
  */
 const rankSections = (
-  sections: readonly GuideSection[],
+  bundle: GuidanceBundle,
   queryWords: readonly string[],
   specificWords: readonly string[],
 ): SectionRanking => {
   if (specificWords.length === 0) return { coverage: [], ranked: [] };
   const bySection = new Map<GuideSection, TermCoverage>();
-  const coverage = sections.map((section) => {
-    const own = new Set(words(section.ownContent));
+  const coverage = bundle.sections.map((section) => {
+    const own =
+      bundle.ownWordsBySection.get(section) ??
+      new Set(words(section.ownContent));
     const present = queryWords.filter((word) => own.has(word));
     const fact = {
       section,
@@ -439,7 +555,8 @@ const rankSections = (
   });
   const covers = (terms: ReadonlySet<string>): boolean =>
     specificWords.every((word) => terms.has(word));
-  for (const fact of coverage.toReversed()) {
+  for (let index = coverage.length - 1; index >= 0; index -= 1) {
+    const fact = coverage[index]!;
     const parent =
       fact.section.parent === undefined
         ? undefined
@@ -448,42 +565,43 @@ const rankSections = (
     for (const word of fact.subtree) parent.subtree.add(word);
     if (covers(fact.subtree)) parent.childCovers = true;
   }
-  const ranked = coverage
-    .flatMap((fact, index): RankedSection[] => {
-      if (!covers(fact.subtree)) return [];
-      const own = new Set(fact.own);
-      const focused = covers(own);
-      // A subsection holding every term is already a match of its own.
-      if (!focused && fact.childCovers) return [];
-      const matched = focused
-        ? fact.own
-        : queryWords.filter((word) => fact.subtree.has(word));
-      const headingWords = new Set(words(fact.section.heading));
-      return [
-        {
-          section: fact.section,
-          scope: focused ? "section" : "subsections",
-          matched,
-          score:
-            matched.length +
-            matched.filter((word) => headingWords.has(word)).length * 2,
-          own: fact.own,
-          scattered: specificWords.filter((word) => !own.has(word)),
-          index,
-        },
-      ];
-    })
-    .sort(
-      (left, right) =>
-        // Co-located terms rank before terms gathered across subsections.
-        Number(left.scope === "subsections") -
-          Number(right.scope === "subsections") ||
-        right.score - left.score ||
-        // Prefer a focused recipe over a long overview when term scores tie.
-        left.section.content.length - right.section.content.length ||
-        compareText(left.section.guide, right.section.guide) ||
-        left.section.ordinal - right.section.ordinal,
-    );
+  const ranked: RankedSection[] = [];
+  for (let index = 0; index < coverage.length; index += 1) {
+    const fact = coverage[index]!;
+    if (!covers(fact.subtree)) continue;
+    const own = new Set(fact.own);
+    const focused = covers(own);
+    // A subsection holding every term is already a match of its own.
+    if (!focused && fact.childCovers) continue;
+    const matched = focused
+      ? fact.own
+      : queryWords.filter((word) => fact.subtree.has(word));
+    const headingWords =
+      bundle.headingWordsBySection.get(fact.section) ??
+      new Set(words(fact.section.heading));
+    let headingHits = 0;
+    for (const word of matched) if (headingWords.has(word)) headingHits += 1;
+    ranked.push({
+      section: fact.section,
+      scope: focused ? "section" : "subsections",
+      matched,
+      score: matched.length + headingHits * 2,
+      own: fact.own,
+      scattered: specificWords.filter((word) => !own.has(word)),
+      index,
+    });
+  }
+  ranked.sort(
+    (left, right) =>
+      // Co-located terms rank before terms gathered across subsections.
+      Number(left.scope === "subsections") -
+        Number(right.scope === "subsections") ||
+      right.score - left.score ||
+      // Prefer a focused recipe over a long overview when term scores tie.
+      left.section.content.length - right.section.content.length ||
+      compareText(left.section.guide, right.section.guide) ||
+      left.section.ordinal - right.section.ordinal,
+  );
   return { coverage, ranked };
 };
 
@@ -503,7 +621,7 @@ const isWithin = (section: GuideSection, ancestor: GuideSection): boolean => {
 const subsectionPointers = (
   match: RankedSection,
   coverage: readonly TermCoverage[],
-): { readonly pointers: readonly TermCoverage[]; readonly omitted: number } => {
+): BoundedList<TermCoverage> => {
   const descendants: TermCoverage[] = [];
   // Document order keeps every subsection contiguous after its parent.
   for (let index = match.index + 1; index < coverage.length; index += 1) {
@@ -528,10 +646,7 @@ const subsectionPointers = (
     for (const word of best.own) remaining.delete(word);
     pointers.push(best);
   }
-  return {
-    pointers: pointers.slice(0, MAX_SUBSECTION_POINTERS),
-    omitted: Math.max(0, pointers.length - MAX_SUBSECTION_POINTERS),
-  };
+  return boundedList(pointers, MAX_SUBSECTION_POINTERS);
 };
 
 const presentMatch = (
@@ -554,7 +669,7 @@ const presentMatch = (
       relevance: `Matched ${matched.join(", ")} in this section's own text.`,
       context: contextFor(section.ownContent, matched),
     };
-  const { pointers, omitted } = subsectionPointers(match, coverage);
+  const { items: pointers, omitted } = subsectionPointers(match, coverage);
   return {
     ...common,
     relevance: `Matched ${matched.join(", ")} only across different subsections; no single subsection contains every term.`,
@@ -581,6 +696,7 @@ const readGuidanceSectionInScope = async (
   input: unknown,
   readGuide: (relativePath: string) => Promise<string>,
   resources: ArtifactResourceScope,
+  usePackagedCache: boolean,
 ): Promise<
   Result<ReadGuidanceSectionOutput, AnalysisInputError | ProviderCleanupError>
 > => {
@@ -600,6 +716,7 @@ const readGuidanceSectionInScope = async (
     readGuide,
     resources,
     "read_guidance_section",
+    usePackagedCache,
   );
   if (loaded.kind === "cleanup") return err(loaded.error);
   if (loaded.kind === "unavailable")
@@ -622,12 +739,13 @@ const readGuidanceSectionInScope = async (
           "The installed guidance changed since this locator was issued. Search again for a current locator.",
       }),
     );
-  const section = bundle.sections.find(
-    (candidate) =>
-      candidate.guide === identity.guide &&
-      candidate.ordinal === identity.ordinal &&
-      sha256(candidate.content) === identity.section,
-  );
+  const candidate = bundle.sectionsByGuide
+    .get(identity.guide)
+    ?.get(identity.ordinal);
+  const section =
+    candidate !== undefined && sha256Hex(candidate.content) === identity.section
+      ? candidate
+      : undefined;
   if (section === undefined)
     return ok(
       readGuidanceSectionOutputSchema.parse({

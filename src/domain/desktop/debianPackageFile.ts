@@ -17,7 +17,7 @@ export type PackageFileFields = Omit<
 >;
 
 /** Debian policy's package names: lowercase letters, digits, `+`, `-` and `.`, at least two long. */
-const PACKAGE_NAME = /^[a-z0-9][a-z0-9+.-]+$/u;
+export const DEBIAN_PACKAGE_NAME = /^[a-z0-9][a-z0-9+.\x2d]+$/u;
 
 /** The comma-separated entries of a relationship field, each on one line with its spacing collapsed. */
 const relationEntries = (value: string | undefined): string[] =>
@@ -80,7 +80,7 @@ export const dependencyPackages = (
   const unread: string[] = [];
   for (const entry of [...file.depends, ...file.pre_depends]) {
     const [name = ""] = (entry.split("|")[0] ?? "").trim().split(/[\s(:[<]/u);
-    if (PACKAGE_NAME.test(name)) names.add(name);
+    if (DEBIAN_PACKAGE_NAME.test(name)) names.add(name);
     else unread.push(entry);
   }
   return { names: [...names], unread };

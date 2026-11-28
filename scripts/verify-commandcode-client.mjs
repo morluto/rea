@@ -1,14 +1,16 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
 import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
-import { isPathWithinRoot } from "../dist/domain/localPath.js";
+import { verifyClientSetup } from "./verify/clients/setup.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import { readClientVersion } from "./verify/clients/version.mjs";
+import { receiptContext, publishReceipt } from "./verify/clients/receipt.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
 import {
   CLIENT_JAVASCRIPT_FIXTURE_SOURCE,
@@ -16,6 +18,7 @@ import {
 } from "./verify/clients/javascript-fixture.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { createOpenAiModelFixture } from "./verify/clients/model-fixture.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 assert(
   process.platform !== "win32",
@@ -39,7 +42,10 @@ assert(
   "Usage: verify-commandcode-client.mjs [chat|call]",
 );
 const verifier = createVerifierRun();
-const lab = await mkdtemp(join(account, "rea-commandcode-client-"));
+const { path: lab } = await VerifierFixture.keepArtifacts({
+  prefix: "rea-commandcode-client-",
+  parent: account,
+});
 const workspace = join(lab, "workspace");
 const target = join(workspace, "fixture α测试");
 const profile = join(account, ".commandcode");
@@ -296,68 +302,26 @@ await withVerifierCleanup(async () => {
         2,
       ) + "\n";
     await writeFile(configPath, original);
-    const rea = (args) =>
-      commands.exec(
-        process.execPath,
-        [join(runtimeRoot, "scripts/rea.mjs"), ...args, "--json"],
-        { env: environment, cwd: workspace, timeout: 60_000, stdin: "pipe" },
-      );
-    clientVersion = (
-      await commands.exec(command, ["--version"], {
-        env: environment,
-        cwd: workspace,
-        timeout: 30_000,
-        stdin: "pipe",
-      })
-    ).stdout.trim();
-    for (const args of [
-      ["setup", "--client", "commandcode", "--dry-run"],
-      ["setup", "--client", "commandcode", "--yes"],
-      ["doctor", "--client", "commandcode", "--skill"],
-    ]) {
-      const response = await rea(args);
-      await writeFile(
-        join(
-          lab,
-          `${args[0]}${args.includes("--dry-run") ? "-plan" : ""}.json`,
-        ),
-        response.stdout,
-      );
-      const result = JSON.parse(response.stdout);
-      if (args[0] === "doctor") assert.equal(result.healthy, true);
-      else
-        assert.equal(
-          result.status,
-          args.includes("--dry-run") ? "planned" : "ready",
-        );
-      if (args.includes("--dry-run")) {
-        assert(
-          result.plannedActions.some((action) => action.target === configPath),
-        );
-        assert(
-          result.plannedActions.every(
-            (action) =>
-              action.target === configPath ||
-              (isAbsolute(action.target) &&
-                isPathWithinRoot(skillDirectory, action.target)),
-          ),
-          "Refuse setup writes outside the disposable account's configuration and skill",
-        );
-      }
-    }
-    assert.equal(await readFile(`${configPath}.rea.backup`, "utf8"), original);
-    const configured = await readFile(configPath, "utf8");
-    assert.equal(JSON.parse(configured).preserved, "keep unrelated settings");
-    assert.equal(
-      JSON.parse(configured).mcpServers.other.command,
-      "unrelated-server",
-    );
-    const repeated = JSON.parse(
-      (await rea(["setup", "--client", "commandcode", "--yes"])).stdout,
-    );
-    assert.deepEqual(repeated.appliedActions, []);
-    assert.equal(await readFile(configPath, "utf8"), configured);
-    assert.equal(await readFile(`${configPath}.rea.backup`, "utf8"), original);
+    clientVersion = await readClientVersion(commands, command, environment, {
+      cwd: workspace,
+    });
+    await verifyClientSetup({
+      client: "commandcode",
+      commands,
+      runtimeRoot,
+      environment,
+      workspace,
+      lab,
+      configPath,
+      original,
+      skillDirectory,
+      requiredPlanTargets: [configPath],
+      checkConfigured: (configured) => {
+        const registration = JSON.parse(configured);
+        assert.equal(registration.preserved, "keep unrelated settings");
+        assert.equal(registration.mcpServers.other.command, "unrelated-server");
+      },
+    });
     const installedSkill = await readFile(
       join(skillDirectory, "SKILL.md"),
       "utf8",
@@ -431,18 +395,12 @@ await withVerifierCleanup(async () => {
   passed = true;
 }, [
   async () => {
-    const receipt = {
+    await publishReceipt({
       client: "Command Code",
       clientVersion,
       mode,
       passed,
-      artifacts: lab,
-      runtimeRoot,
-      host: {
-        platform: process.platform,
-        architecture: process.arch,
-        node: process.versions.node,
-      },
+      ...receiptContext(lab, runtimeRoot),
       modelFixture:
         "loopback OpenAI completions/SSE, keyless BYOK, synthetic account-key gate and usage; no hosted authentication or live-model claim",
       discovery:
@@ -463,15 +421,6 @@ await withVerifierCleanup(async () => {
       probes: fixture?.probes,
       fixtureFailure: fixture?.failure,
       verifier: await completeVerifierRun(verifier),
-    };
-    await withVerifierCleanup(
-      () =>
-        writeFile(join(lab, "receipt.json"), JSON.stringify(receipt, null, 2)),
-      [
-        () => {
-          console.log(JSON.stringify(receipt));
-        },
-      ],
-    );
+    });
   },
 ]);

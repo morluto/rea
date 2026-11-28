@@ -3,14 +3,36 @@ import {
   InMemoryTransport,
   type ClientOptions,
 } from "@modelcontextprotocol/client";
-import type { McpServer } from "@modelcontextprotocol/server";
-import { test as base } from "vitest";
+import type { CallToolResult, McpServer } from "@modelcontextprotocol/server";
+import { expect, test as base } from "vitest";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import {
+  applyCompleteEvidenceByDefault,
+  type TestDelivery,
+} from "../completeEvidenceByDefault.js";
 
 /** Client identity used during an in-memory MCP negotiation. */
 export interface McpClientIdentity {
   readonly name: string;
   readonly version: string;
 }
+
+/** Connect an SDK client while leaving teardown with the caller, including a partial handshake. */
+export const connectFixtureClient = async (
+  server: McpServer,
+  identity: McpClientIdentity,
+  resources: Array<{ close(): Promise<void> }>,
+): Promise<Client> => {
+  const client = new Client(identity, {
+    jsonSchemaValidator: createMcpSchemaValidation(),
+  });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  resources.push(client, server);
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  return client;
+};
 
 /** Registry for production MCP servers and SDK clients owned by one test. */
 export interface TestMcp {
@@ -19,6 +41,7 @@ export interface TestMcp {
     server: McpServer,
     identity?: McpClientIdentity,
     jsonSchemaValidator?: NonNullable<ClientOptions["jsonSchemaValidator"]>,
+    delivery?: TestDelivery,
   ): Promise<Client>;
   close(): Promise<void>;
 }
@@ -32,6 +55,7 @@ interface McpConnectionOwner {
   readonly client: Client;
   readonly server: McpServer;
   readonly handshake: AbortController;
+  readonly validation: ReturnType<typeof createMcpSchemaValidation> | undefined;
   clientClosed: boolean;
   serverClosed: boolean;
 }
@@ -69,8 +93,10 @@ export const createTestMcp = (): TestMcp => {
     connection: McpConnectionOwner,
   ): Promise<unknown[]> => {
     const failures = await closeConnection(connection);
-    if (connection.clientClosed && connection.serverClosed)
+    if (connection.clientClosed && connection.serverClosed) {
+      connection.validation?.clear();
       connections.delete(connection);
+    }
     return failures;
   };
 
@@ -79,11 +105,20 @@ export const createTestMcp = (): TestMcp => {
       server,
       identity = DEFAULT_CLIENT_IDENTITY,
       jsonSchemaValidator,
+      delivery = "completeEvidenceByDefault",
     ) => {
       if (closed) return Promise.reject(registryClosed());
-      const client = new Client(
-        identity,
-        jsonSchemaValidator === undefined ? undefined : { jsonSchemaValidator },
+      // Compile shared schema references once per connection instead of
+      // expanding them into each SDK response validator. Caller validators
+      // retain their own policy and lifetime.
+      let validation: ReturnType<typeof createMcpSchemaValidation> | undefined;
+      if (jsonSchemaValidator === undefined) {
+        validation = createMcpSchemaValidation();
+        jsonSchemaValidator = validation;
+      }
+      const client = applyCompleteEvidenceByDefault(
+        new Client(identity, { jsonSchemaValidator }),
+        delivery,
       );
       const [clientTransport, serverTransport] =
         InMemoryTransport.createLinkedPair();
@@ -91,6 +126,7 @@ export const createTestMcp = (): TestMcp => {
         client,
         server,
         handshake: new AbortController(),
+        validation,
         clientClosed: false,
         serverClosed: false,
       };
@@ -162,3 +198,15 @@ export const mcpTest = base.extend<{ mcp: TestMcp }>({
     }
   },
 });
+
+export const successfulTool = async (
+  client: Client,
+  name: string,
+  arguments_: Record<string, unknown> = {},
+): Promise<CallToolResult> => {
+  const reply = await client.callTool({ name, arguments: arguments_ });
+  expect(reply.isError, `${name}: ${JSON.stringify(reply.content)}`).not.toBe(
+    true,
+  );
+  return reply;
+};

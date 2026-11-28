@@ -2,7 +2,7 @@ import {
   DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES,
   MAXIMUM_NATIVE_MATCHING_REPRESENTATION_BYTES,
 } from "../domain/analysisResourceLimits.js";
-import { z } from "zod";
+import { positiveDecimalIntegerSchema } from "./positiveDecimalInteger.js";
 
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -21,20 +21,14 @@ export const DEFAULT_NATIVE_MATCHING_ALLOWANCE: NativeMatchingAllowance = {
   source: "default",
 };
 
-export const nativeMatchingRepresentationBytesConstraint = `${NATIVE_MATCHING_ALLOWANCE_SETTING} must be a positive decimal integer of at most ${String(MAXIMUM_NATIVE_MATCHING_REPRESENTATION_BYTES)} bytes (1 GiB); the default is ${String(DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES)} bytes (96 MiB).`;
+const nativeMatchingRepresentationBytesConstraint = `${NATIVE_MATCHING_ALLOWANCE_SETTING} must be a positive decimal integer of at most ${String(MAXIMUM_NATIVE_MATCHING_REPRESENTATION_BYTES)} bytes (1 GiB); the default is ${String(DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES)} bytes (96 MiB).`;
 
 /** Optional decimal byte count for the native function-matching allowance. */
-const nativeMatchingRepresentationBytesSchema = z
-  .string()
-  .regex(/^[1-9]\d*$/u, {
-    error: nativeMatchingRepresentationBytesConstraint,
-  })
-  .transform(Number)
-  .pipe(
-    z.number().int().max(MAXIMUM_NATIVE_MATCHING_REPRESENTATION_BYTES, {
-      error: nativeMatchingRepresentationBytesConstraint,
-    }),
-  );
+const nativeMatchingRepresentationBytesSchema = positiveDecimalIntegerSchema(
+  1,
+  MAXIMUM_NATIVE_MATCHING_REPRESENTATION_BYTES,
+  nativeMatchingRepresentationBytesConstraint,
+);
 
 /** Resolve the effective allowance from one launch environment. */
 export const parseNativeMatchingAllowance = (

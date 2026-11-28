@@ -1,19 +1,16 @@
 import {
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   artifactFilePrimaryFacts,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
-import {
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+  readStableArtifact,
   projectStableArtifactFailure,
   stableArtifactInputRecovery,
-} from "../../artifacts/StableArtifactFailure.js";
+  readerIntegrityFailure,
+} from "../../resources/index.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
@@ -22,6 +19,7 @@ import {
   API_CONTRACT_OPERATION as operation,
   API_CONTRACT_PROVIDER,
 } from "../../domain/apiContract/apiContract.js";
+import { apiContractFileBytesLimit } from "../../domain/apiContract/apiContractQuery.js";
 import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import { err, ok } from "../../domain/result.js";
 
@@ -63,16 +61,9 @@ const readFailure = (
     cause instanceof ArtifactReaderFailure
   ) {
     if (cause.reason === "cancelled")
-      return new AnalysisCancelledError(operation, {
-        cause: artifactFileCancellationCause(cause),
-      });
+      return artifactFileCancellationError(operation, cause);
     if (cause.reason === "integrity")
-      return new AnalysisArtifactChangedError(
-        operation,
-        input.path,
-        cause.message,
-        { cause },
-      );
+      return readerIntegrityFailure(operation, input.path, cause);
     if (cause.reason === "limit")
       return new AnalysisResourceConstraintError(
         operation,
@@ -82,11 +73,24 @@ const readFailure = (
         {
           cause,
           retryable: false,
-          remediationAction:
-            "Select a complete document within max_file_bytes; increasing reply limits or paging does not change this file admission.",
+          ...(cause.boundary === undefined || cause.boundary === "file-size"
+            ? {
+                limit: apiContractFileBytesLimit(
+                  input.max_file_bytes,
+                  cause.observedBytes !== undefined &&
+                    cause.observedBytes <= BigInt(Number.MAX_SAFE_INTEGER)
+                    ? Number(cause.observedBytes)
+                    : undefined,
+                ),
+              }
+            : {
+                measuredExhaustion: true,
+                remediationAction:
+                  "Reduce the API contract document size or inspect a smaller file before retrying.",
+              }),
         },
       );
-    if (cause.reason === "path" || cause.reason === "format")
+    if (cause.reason === "path")
       return inputFailure(input.path, cause, cause.message, input.parameter);
   }
   if (cause instanceof Error && "code" in cause) {

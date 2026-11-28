@@ -15,6 +15,7 @@ import {
 } from "../process/OwnedCommand.js";
 import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import { ApktoolProvider } from "./ApktoolProvider.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 vi.mock("../process/OwnedCommand.js", async (original) => ({
   ...(await original<typeof import("../process/OwnedCommand.js")>()),
@@ -26,14 +27,18 @@ afterEach(() => {
   vi.mocked(prepareOwnedCommand).mockReset().mockResolvedValue(undefined);
   vi.useRealTimers();
 });
+const AUTHORED_APKTOOL =
+  process.platform === "win32" ? "C:\\authored\\apktool" : "/authored/apktool";
 const provider = () =>
   new ApktoolProvider({
-    environment: { REA_APKTOOL_COMMAND: "/authored/apktool" },
+    environment: { REA_APKTOOL_COMMAND: AUTHORED_APKTOOL },
   });
 const version = {
-  stdout: { text: "2.9.3\n" },
-  stderr: { text: "" },
-} as Awaited<ReturnType<typeof runOwnedCommand>>;
+  stdout: { text: "2.9.3\n", bytes: 6, observedBytes: 6 },
+  stderr: { text: "", bytes: 0, observedBytes: 0 },
+  exitCode: 0,
+  signal: null,
+};
 const inspect = (client: ApktoolProvider, signal?: AbortSignal) =>
   client.execute(
     { operation: "inspect_apktool_client", input: {} },
@@ -59,7 +64,7 @@ it.each(["process", "helper"] as const)(
     );
     const helperClose = vi.fn(async () => {
       if (denied) throw helperCleanup;
-      helperCleanup.resolveCleanup();
+      releaseOwnedCleanup(helperCleanup);
     });
     const compilerOutput = {
       stdout: "authored compiler stdout",
@@ -255,8 +260,8 @@ it("attributes prerequisite cleanup to decode and preserves its live recovery", 
   try {
     const result = await client.execute({
       operation: "decode_android_resources",
-      input: {},
-    } as never);
+      input: { path: "/fixture/input.apk", include_strings: false },
+    });
     if (result.ok) throw new Error("Expected prerequisite failure");
     expect(result.error).toMatchObject({
       operation: "decode_android_resources",
@@ -274,7 +279,7 @@ it("retries failed command peers without repeating successful helper cleanup", a
   const commands = new ApktoolCommandCleanup();
   const helper = new ProviderCleanupError("process-ownership", ["helper"], {});
   const close = vi.fn(async () => {
-    helper.resolveCleanup();
+    releaseOwnedCleanup(helper);
   });
   let denied = true;
   const stop = vi.fn(async () =>
@@ -327,7 +332,7 @@ it("joins preparation during close and retains a late helper handoff", async () 
     {},
   );
   const close = vi.fn(async () => {
-    cleanup.resolveCleanup();
+    releaseOwnedCleanup(cleanup);
   });
   vi.mocked(prepareOwnedCommand).mockImplementationOnce(async () => {
     entered.resolve();
@@ -457,17 +462,17 @@ it.each([
       if (result.ok) throw new Error("Expected authored failure");
       if (kind === "refusal") {
         expect(result.error).toMatchObject({
-          _tag: "AnalysisUnsupportedTargetError",
+          _tag: "AnalysisTargetFailureError",
           path,
         });
         expect(result.error.message).toContain(path);
-        expect(result.error.message).not.toContain("/authored/apktool");
+        expect(result.error.message).not.toContain(AUTHORED_APKTOOL);
       } else
         expect(result.error).toMatchObject({
           _tag: "ProviderAdapterError",
           diagnostics: {
             target_path: path,
-            selected_command: "/authored/apktool",
+            selected_command: AUTHORED_APKTOOL,
           },
         });
       expect(result.error.capturedOutput).toMatchObject(

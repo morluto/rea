@@ -1,3 +1,4 @@
+import { getEventListeners } from "node:events";
 import { expect, it, vi } from "vitest";
 import { AnalysisError } from "../../src/domain/analysisErrorBase.js";
 import { createCli } from "../../src/cli.js";
@@ -5,11 +6,13 @@ import type { ServedEnvironment } from "../../src/server/environment/serveEnviro
 import type { ServeStreamableHttpOptions } from "../../src/server/http/serveStreamableHttp.js";
 import { StreamableHttpListenError } from "../../src/server/http/streamableHttpListenError.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { phaseArrival } from "../support/lifecycleHarness.js";
 import { writeEnvironmentServeFiles } from "../fixtures/environmentServe.js";
 
 const control = vi.hoisted(() => ({
   ready: undefined as (() => void) | undefined,
   served: undefined as ServedEnvironment | undefined,
+  signal: undefined as AbortSignal | undefined,
   onerror: undefined as ServeStreamableHttpOptions["onerror"],
   failClose: false,
   closeCalls: 0,
@@ -33,6 +36,7 @@ vi.mock(
       ...actual,
       serveStreamableHttp: (options: ServeStreamableHttpOptions) => {
         control.onerror = options.onerror;
+        control.signal = options.signal;
         return actual.serveStreamableHttp({
           ...options,
           createMcpServer: async (context) => {
@@ -101,11 +105,8 @@ it.each([
     );
     const originalExitCode = process.exitCode;
     const originalListeners = new Set(process.listeners("SIGINT"));
-    let ready!: () => void;
-    const started = new Promise<void>((resolve) => {
-      ready = resolve;
-    });
-    control.ready = ready;
+    const startup = phaseArrival();
+    control.ready = () => startup.arrive();
     control.served = undefined;
     control.failClose = fails;
     control.closeCalls = 0;
@@ -130,7 +131,7 @@ it.each([
       },
     );
     try {
-      await started;
+      await startup.reached(pending, "environment CLI startup");
       const served = observedEnvironment();
       if (served === undefined) throw new Error("Environment was not admitted");
       if (ending === "signal") {
@@ -149,6 +150,8 @@ it.each([
           ),
         );
       await pending;
+      if (!control.signal) throw new Error("Expected a command signal");
+      expect(getEventListeners(control.signal, "abort")).toHaveLength(0);
       const output: unknown = JSON.parse(stdout);
       expect(control.closeCalls).toBe(1);
       expect(process.exitCode).toBe(ending === "signal" ? 130 : 1);

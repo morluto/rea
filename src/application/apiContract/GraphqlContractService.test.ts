@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { parseEvidence } from "../../domain/evidence.js";
 import { graphqlContractSchema } from "../../domain/apiContract/graphqlContract.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
@@ -84,7 +84,6 @@ it.each(["path", "operations_path"] as const)(
     );
     await withScope(async (resources) => {
       const result = await inspectApiContractEvidence(input, resources);
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected invalid UTF-8");
       expect(result.error._tag).toBe("AnalysisInputError");
       expect(projectAnalysisError(result.error)).toMatchObject({
@@ -148,7 +147,6 @@ it("attributes auxiliary file admission failures to operations_path and retains 
       { ...input, operations_path: join(input.path, "missing") },
       resources,
     );
-    expect(missing.ok).toBe(false);
     if (missing.ok) throw new Error("Expected missing operation file");
     expect(projectAnalysisError(missing.error)).toMatchObject({
       details: { issues: [{ path: ["operations_path"] }] },
@@ -242,6 +240,34 @@ it("applies the selected file allowance to the auxiliary document and retains it
     );
     if (result.ok) throw new Error("Expected auxiliary file capacity refusal");
     expect(result.error._tag).toBe("AnalysisResourceConstraintError");
+    const projected = projectAnalysisError(result.error);
+    expect(projected).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_file_bytes",
+          effective_value: 32,
+          unit: "bytes",
+          minimum: 1,
+          maximum: 33_554_432,
+          default_value: 33_554_432,
+          applies_at: "next_call",
+          required_value: 128,
+        },
+        refusal: {
+          kind: "adjustable_budget",
+          operation: "inspect_api_contract",
+          control: "max_file_bytes",
+          effective_value: 32,
+          unit: "bytes",
+          range: { minimum: 1, maximum: 33_554_432 },
+          default_value: 33_554_432,
+          required_value: 128,
+        },
+      },
+    });
     const partial = reportOf(result.error.partialObservation);
     expect(partial.artifact.path).toBe(input.path);
     expect(partial.operations_artifact).toBeNull();

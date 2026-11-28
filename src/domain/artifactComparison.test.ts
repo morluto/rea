@@ -1,9 +1,9 @@
+import { unknownTarget } from "./targetIdentity.js";
 import { expect, it } from "vitest";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../contracts/artifactComparisonExample.js";
-import {
-  compareArtifacts,
-  FORMAT_DECLARATION_UNKNOWN_LIMITATION,
-} from "./artifactComparison.js";
+import { compareArtifacts } from "./artifactComparison.js";
+import { readComparisonResult } from "./comparisonEvidenceResult.js";
+import { projectAnalysisError } from "./analysisErrorProjection.js";
 import {
   artifactInventoryResultSchema,
   type ArtifactInventoryResult,
@@ -11,27 +11,18 @@ import {
   type ArtifactOccurrence,
 } from "./artifactGraph.js";
 import {
+  artifactEdgeId,
   artifactGraphDigest,
   artifactIdForContent,
   artifactManifestId,
   occurrenceIdForLocation,
 } from "./artifactIdentity.js";
 import { createEvidence } from "./evidence.js";
+import { parseArtifactInventoryEvidence } from "./artifactInventoryEvidence.js";
+import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 
-/** Recommit observation variants so comparisons exercise valid Evidence carriers. */
-const commit = (inventory: ArtifactInventoryResult) => {
-  const graphSha256 = artifactGraphDigest({
-    nodes: inventory.nodes,
-    occurrences: inventory.occurrences,
-    edges: inventory.edges,
-    contradictions: inventory.integrity_contradictions,
-  });
-  inventory.manifest.graph_sha256 = graphSha256;
-  inventory.manifest.manifest_id = artifactManifestId(
-    inventory.manifest.root_artifact_id,
-    graphSha256,
-  );
-  return createEvidence(
+const inventoryCarrier = (inventory: ArtifactInventoryResult) =>
+  createEvidence(
     {
       path: "packing-observation",
       sha256: inventory.manifest.root_sha256,
@@ -46,7 +37,209 @@ const commit = (inventory: ArtifactInventoryResult) => {
       authority: "shipped-artifact",
     },
   );
+
+/** Recommit observation variants so comparisons exercise valid Evidence carriers. */
+const commit = (inventory: ArtifactInventoryResult) => {
+  const graphSha256 = artifactGraphDigest({
+    nodes: inventory.nodes,
+    occurrences: inventory.occurrences,
+    edges: inventory.edges,
+    contradictions: inventory.integrity_contradictions,
+  });
+  inventory.manifest.graph_sha256 = graphSha256;
+  inventory.manifest.manifest_id = artifactManifestId(
+    inventory.manifest.root_artifact_id,
+    graphSha256,
+  );
+  return inventoryCarrier(inventory);
 };
+
+const relationInventory = (
+  secondContent = "2",
+  firstRelation: ArtifactInventoryResult["edges"][number]["relation"] = "contains",
+) => {
+  const inventory = artifactInventoryResultSchema.parse(
+    ARTIFACT_COMPARISON_EXAMPLE.left.normalized_result,
+  );
+  const root = inventory.occurrences[0]!;
+  const rootNode = inventory.nodes[0]!;
+  const rootId = inventory.manifest.root_artifact_id;
+  const members = [
+    { path: "one.js", digit: "1", relation: firstRelation },
+    { path: "two.js", digit: secondContent, relation: "contains" },
+  ] as const;
+  for (const [ordinal, { path, digit, relation }] of members.entries()) {
+    const sha256 = digit.repeat(64);
+    const artifactId = artifactIdForContent(sha256);
+    const occurrence: ArtifactOccurrence = {
+      ...root,
+      occurrence_id: occurrenceIdForLocation({
+        rootArtifactId: rootId,
+        logicalPath: path,
+        entryKind: "file",
+      }),
+      artifact_id: artifactId,
+      parent_occurrence_id: root.occurrence_id,
+      logical_path: path,
+    };
+    const edge = {
+      ordinal,
+      parent_artifact_id: rootId,
+      relation,
+      occurrence_id: occurrence.occurrence_id,
+      producer: null,
+    };
+    inventory.nodes.push({ ...rootNode, artifact_id: artifactId, sha256 });
+    inventory.occurrences.push(occurrence);
+    inventory.edges.push({
+      ...edge,
+      edge_id: artifactEdgeId(edge, occurrence),
+    });
+  }
+  inventory.nodes.sort((left, right) =>
+    compareUnicodeCodePoints(left.artifact_id, right.artifact_id),
+  );
+  inventory.edges.sort((left, right) =>
+    compareUnicodeCodePoints(left.edge_id, right.edge_id),
+  );
+  inventory.coverage = { scope: "container-entries", status: "complete" };
+  inventory.manifest.node_count = inventory.nodes.length;
+  inventory.manifest.occurrence_count = inventory.occurrences.length;
+  inventory.manifest.edge_count = inventory.edges.length;
+  return { inventory, evidence: commit(inventory) };
+};
+
+it.each(["left", "right"] as const)(
+  "does not infer a relation change from an omitted edge on the %s",
+  (partialSide) => {
+    const { inventory, evidence } = relationInventory();
+    const omitted = inventory.occurrences.find(
+      ({ logical_path }) => logical_path === "one.js",
+    )!;
+    const page = inventoryCarrier({
+      ...inventory,
+      edges: inventory.edges.filter(
+        ({ occurrence_id }) => occurrence_id !== omitted.occurrence_id,
+      ),
+    });
+    const result =
+      partialSide === "left"
+        ? compareArtifacts(page, evidence)
+        : compareArtifacts(evidence, page);
+    expect(result).toMatchObject({
+      status: "truncated",
+      summary: { changed: 0 },
+      changes: expect.arrayContaining([
+        expect.objectContaining({
+          logical_path: "one.js",
+          classification: "unknown",
+          dimensions: ["availability"],
+        }),
+      ]),
+    });
+    expect(compareArtifacts(evidence, evidence)).toMatchObject({
+      status: "unchanged",
+      changes: [],
+    });
+  },
+);
+
+it("keeps a proven content change with incomplete relation observations", () => {
+  const left = relationInventory().evidence;
+  const { inventory } = relationInventory("3");
+  const result = compareArtifacts(
+    left,
+    inventoryCarrier({ ...inventory, edges: inventory.edges.slice(0, 1) }),
+  );
+  expect(result).toMatchObject({
+    status: "truncated",
+    changes: expect.arrayContaining([
+      expect.objectContaining({
+        logical_path: "two.js",
+        classification: "changed",
+        dimensions: ["content", "availability"],
+      }),
+    ]),
+  });
+});
+
+it("does not infer a relation change when a retained edge's logical parent is omitted", () => {
+  const { inventory, evidence } = relationInventory();
+  const result = compareArtifacts(
+    evidence,
+    inventoryCarrier({
+      ...inventory,
+      occurrences: inventory.occurrences.slice(1),
+    }),
+  );
+  expect(result).toMatchObject({
+    status: "truncated",
+    summary: { changed: 0 },
+    changes: expect.arrayContaining([
+      expect.objectContaining({
+        logical_path: "one.js",
+        classification: "unknown",
+        dimensions: ["availability"],
+      }),
+    ]),
+  });
+});
+
+it("compares complete relations when an unrelated node is omitted", () => {
+  const left = relationInventory().evidence;
+  const { inventory } = relationInventory("2", "embeds");
+  const unrelated = inventory.occurrences.find(
+    ({ logical_path }) => logical_path === "two.js",
+  )!;
+  const result = compareArtifacts(
+    left,
+    inventoryCarrier({
+      ...inventory,
+      nodes: inventory.nodes.filter(
+        ({ artifact_id }) => artifact_id !== unrelated.artifact_id,
+      ),
+    }),
+  );
+  expect(result).toMatchObject({
+    status: "truncated",
+    changes: expect.arrayContaining([
+      expect.objectContaining({
+        logical_path: "one.js",
+        classification: "changed",
+        dimensions: ["relations"],
+      }),
+    ]),
+  });
+});
+
+it("keeps a historical edge and its Evidence while reporting omitted coverage as unknown", () => {
+  const { inventory, evidence } = relationInventory();
+  const oldInventory = structuredClone(inventory);
+  const occurrence = oldInventory.occurrences.find(
+    ({ logical_path }) => logical_path === "one.js",
+  )!;
+  delete occurrence.relationship_coverage;
+  const historical = commit(oldInventory);
+  const parsed = parseArtifactInventoryEvidence(historical);
+  expect(parsed.evidence[0]).toEqual(historical);
+  expect(parsed.inventory.manifest).toEqual(oldInventory.manifest);
+  expect(parsed.inventory.edges).toEqual(oldInventory.edges);
+  expect(
+    parsed.inventory.occurrences.find(
+      ({ occurrence_id }) => occurrence_id === occurrence.occurrence_id,
+    ),
+  ).not.toHaveProperty("relationship_coverage");
+  expect(compareArtifacts(historical, evidence)).toMatchObject({
+    status: "unknown",
+    changes: [
+      {
+        logical_path: "one.js",
+        classification: "unknown",
+        dimensions: ["availability"],
+      },
+    ],
+  });
+});
 
 const observation = (
   facts: Pick<ArtifactOccurrence, "hash_status"> & Partial<ArtifactOccurrence>,
@@ -236,6 +429,67 @@ it("retains known packing changes when content is unavailable", () => {
   });
 });
 
+it("compares declared digests without using limitation prose", () => {
+  const claim = { algorithm: "md5" as const, digest: "ab".repeat(16) };
+  const edited = { algorithm: "md5" as const, digest: "cd".repeat(16) };
+  const unavailable = (integrity?: {
+    readonly algorithm: "md5";
+    readonly digest: string;
+  }) =>
+    observation({
+      hash_status: "unavailable",
+      limitations: ["same derived note"],
+      ...(integrity === undefined ? {} : { declared_integrity: integrity }),
+    });
+  const changes = (
+    left: ReturnType<typeof unavailable>,
+    right: ReturnType<typeof unavailable>,
+  ) =>
+    compareArtifacts(left, right).changes.map(
+      ({ classification, dimensions }) => ({ classification, dimensions }),
+    );
+  const equal = changes(unavailable(claim), unavailable(claim));
+  const oneSided = changes(unavailable(claim), unavailable());
+  const different = changes(unavailable(claim), unavailable(edited));
+  const noted = (
+    integrity:
+      | { readonly algorithm: "md5"; readonly digest: string }
+      | undefined,
+    limitations: readonly string[],
+  ) =>
+    observation({
+      hash_status: "unavailable",
+      limitations: [...limitations],
+      ...(integrity === undefined ? {} : { declared_integrity: integrity }),
+    });
+  const sameClaimDifferentNotes = changes(
+    noted(claim, ["reader caveat"]),
+    noted(claim, ["different caveat"]),
+  );
+  const absentDifferentNotes = changes(
+    noted(undefined, ["unread container suffix"]),
+    noted(undefined, ["content access failed"]),
+  );
+  expect(equal.length).toBeGreaterThan(0);
+  expect(oneSided).toHaveLength(equal.length);
+  expect(different).toHaveLength(equal.length);
+  expect(equal).toEqual(
+    equal.map(() => ({
+      classification: "unknown",
+      dimensions: ["availability"],
+    })),
+  );
+  expect(sameClaimDifferentNotes).toEqual(equal);
+  expect(absentDifferentNotes).toEqual(equal);
+  for (const result of [oneSided, different])
+    expect(result).toEqual(
+      result.map(() => ({
+        classification: "unknown",
+        dimensions: ["metadata", "availability"],
+      })),
+    );
+});
+
 it("keeps unavailable content unknown when packing declarations agree", () => {
   expect(
     compareArtifacts(
@@ -303,6 +557,7 @@ const recordObservation = (
     }),
     artifact_id: artifactId,
     parent_occurrence_id: root.occurrence_id,
+    relationship_coverage: artifactId === null ? "unknown" : "complete",
     logical_path: "record",
     entry_kind: "metadata",
     artifact_kind: "package-metadata",
@@ -329,6 +584,95 @@ const recordObservation = (
   inventory.manifest.occurrence_count = inventory.occurrences.length;
   return commit(inventory);
 };
+
+it("compares NDS CPU entry addresses with identical member content", () => {
+  const arm9 = {
+    kind: "nds-entry",
+    role: "arm9",
+    file_id: null,
+    ram_address: 0x0200_0000,
+    entry_address: 0x0200_0000,
+    overlay: null,
+  } as const satisfies FormatMetadata;
+  const content = { content: "1" };
+
+  expect(
+    compareArtifacts(
+      recordObservation(arm9, content),
+      recordObservation({ ...arm9, entry_address: 0x0200_0004 }, content),
+    ),
+  ).toMatchObject({
+    status: "changed",
+    changes: [{ classification: "changed", dimensions: ["metadata"] }],
+  });
+});
+
+it("compares NDS overlay RAM addresses with identical member content and ignores FAT IDs", () => {
+  const overlay = {
+    kind: "nds-entry",
+    role: "arm9-overlay",
+    file_id: 2,
+    ram_address: null,
+    entry_address: null,
+    overlay: {
+      overlay_id: 0,
+      ram_address: 0x0220_0000,
+      ram_size: 0x100,
+      bss_size: 0,
+      static_init_start: 0,
+      static_init_end: 0,
+      flags: 0,
+    },
+  } as const satisfies FormatMetadata;
+  const content = { content: "1" };
+  const left = recordObservation(overlay, content);
+
+  expect(
+    compareArtifacts(
+      left,
+      recordObservation(
+        {
+          ...overlay,
+          overlay: { ...overlay.overlay, ram_address: 0x0220_0100 },
+        },
+        content,
+      ),
+    ),
+  ).toMatchObject({
+    status: "changed",
+    changes: [{ classification: "changed", dimensions: ["metadata"] }],
+  });
+  expect(
+    compareArtifacts(
+      left,
+      recordObservation({ ...overlay, file_id: 3 }, content),
+    ),
+  ).toMatchObject({ status: "unchanged", changes: [] });
+});
+
+it("does not emit a declaration for NDS filesystem files compared against extracted files", () => {
+  const fileEntry = {
+    kind: "nds-entry",
+    role: "file",
+    file_id: 2,
+    ram_address: null,
+    entry_address: null,
+    overlay: null,
+  } as const satisfies FormatMetadata;
+  const extractedFile = observation({ hash_status: "verified" });
+
+  for (const [left, right] of [
+    [declared(fileEntry), extractedFile],
+    [extractedFile, declared(fileEntry)],
+    [declared(fileEntry), declared({ ...fileEntry, file_id: 5 })],
+  ] as const) {
+    expect(compareArtifacts(left, right)).toMatchObject({
+      status: "unchanged",
+      changes: [],
+      limitations: [],
+    });
+  }
+});
 
 const espImageSegment: FormatMetadata = {
   kind: "esp-image-segment",
@@ -382,6 +726,48 @@ it("compares an ESP segment declaration without its layout or derived class", ()
   });
 });
 
+const ubiVolume: FormatMetadata = {
+  kind: "ubi-volume",
+  id: 0,
+  name: "rootfs",
+  name_bytes_hex: null,
+  type: "dynamic",
+  reserved_pebs: 4,
+  alignment: 1,
+  data_pad: 0,
+  update_marker: false,
+  flags: 0,
+  autoresize: false,
+  usable_leb_size: 126_976,
+  used_ebs: null,
+  mapped_leb_count: 2,
+  stale_leb_copy_count: 0,
+  missing_leb_count: 0,
+  first_missing_leb: null,
+  data_bytes: 253_952,
+  extractable: true,
+  source_ranges: [],
+};
+
+it("compares a UBI volume declaration without its PEB placement", () => {
+  expect(
+    compareArtifacts(
+      declared(ubiVolume),
+      declared({
+        ...ubiVolume,
+        source_ranges: [{ lnum: 0, peb: 7, offset: 7 * 131_072, length: 64 }],
+      }),
+    ),
+  ).toMatchObject({ status: "unchanged", changes: [] });
+  // A renumbered volume keeps its path and bytes but not its lookup identity.
+  expect(
+    compareArtifacts(declared(ubiVolume), declared({ ...ubiVolume, id: 1 })),
+  ).toMatchObject({
+    status: "changed",
+    changes: [{ classification: "changed", dimensions: ["metadata"] }],
+  });
+});
+
 it("retains a changed declaration when content is unavailable", () => {
   expect(
     compareArtifacts(
@@ -429,7 +815,11 @@ it.each([
     status: "unknown",
     changes: [{ classification: "unknown", dimensions: ["availability"] }],
   });
-  expect(result.limitations).toEqual([FORMAT_DECLARATION_UNKNOWN_LIMITATION]);
+  expect(result.limitations).toEqual([
+    expect.stringMatching(
+      /metadata declarations are missing.*complete declaration unavailable/u,
+    ),
+  ]);
 });
 
 it("does not compare ESP signature block metadata", () => {
@@ -560,7 +950,11 @@ it("compares a node-less record's occurrence fields but not its limitations", ()
       dimensions: ["metadata", "availability"],
     }),
   ]);
-  expect(result.limitations).toEqual([FORMAT_DECLARATION_UNKNOWN_LIMITATION]);
+  expect(result.limitations).toEqual([
+    expect.stringMatching(
+      /metadata declarations are missing.*complete declaration unavailable/u,
+    ),
+  ]);
   // A record's `executable` marking is a declared field like `encrypted`.
   expect(
     compareArtifacts(
@@ -604,5 +998,130 @@ it("compares a node-less record's recorded ASAR storage", () => {
   ).toMatchObject({
     status: "unknown",
     changes: [{ classification: "unknown", dimensions: ["availability"] }],
+  });
+});
+
+it("names the constraint an unchanged comparison with changes violates", () => {
+  const changed = compareArtifacts(
+    ARTIFACT_COMPARISON_EXAMPLE.left,
+    ARTIFACT_COMPARISON_EXAMPLE.right,
+  );
+  const read = readComparisonResult(
+    createEvidence(
+      unknownTarget("not-observed"),
+      ARTIFACT_COMPARISON_EXAMPLE.left.provider,
+      {
+        operation: "compare_artifacts",
+        parameters: {},
+        result: { ...changed, status: "unchanged" },
+      },
+    ),
+    "compare_artifacts",
+  );
+  if (read.ok) throw new Error("Expected the comparison to be refused");
+  expect(projectAnalysisError(read.error)).toMatchObject({
+    code: "evidence_integrity_mismatch",
+    details: { constraint: "unchanged-has-no-changes" },
+  });
+});
+
+it("reports stored directory filename spelling changes on symlinks and unavailable entries", () => {
+  const nfc = "\u00e9.link";
+  const nfd = "e\u0301.link";
+  const directoryWithLink = (options: {
+    readonly sourcePath?: string;
+    readonly hashStatus: ArtifactOccurrence["hash_status"];
+    readonly linkTarget?: { readonly text: string; readonly hex: string };
+  }) => {
+    const inventory = artifactInventoryResultSchema.parse(
+      ARTIFACT_COMPARISON_EXAMPLE.left.normalized_result,
+    );
+    const root = inventory.occurrences[0]!;
+    const rootNode = inventory.nodes[0]!;
+    const rootId = inventory.manifest.root_artifact_id;
+    inventory.manifest.root_format = "directory";
+    inventory.nodes = [{ ...rootNode, format: "directory", size: 0 }];
+    inventory.occurrences = [
+      {
+        ...root,
+        entry_kind: "directory",
+        artifact_kind: "container",
+        artifact_format: "directory",
+        declared_size: 0,
+      },
+      {
+        occurrence_id: occurrenceIdForLocation({
+          rootArtifactId: rootId,
+          logicalPath: nfc,
+          entryKind: "symlink",
+        }),
+        artifact_id: null,
+        parent_occurrence_id: root.occurrence_id,
+        relationship_coverage: "complete",
+        logical_path: nfc,
+        entry_kind: "symlink",
+        artifact_kind: "resource",
+        artifact_format: "file",
+        declared_size: null,
+        compressed_size: null,
+        executable: false,
+        encrypted: false,
+        hash_status: options.hashStatus,
+        source_location: null,
+        ...(options.sourcePath === undefined
+          ? {}
+          : { source_path: options.sourcePath }),
+        ...(options.linkTarget === undefined
+          ? {}
+          : { link_target: options.linkTarget }),
+        limitations: [],
+      },
+    ];
+    inventory.edges = [];
+    inventory.coverage = { scope: "container-entries", status: "complete" };
+    inventory.manifest.node_count = inventory.nodes.length;
+    inventory.manifest.occurrence_count = inventory.occurrences.length;
+    inventory.manifest.edge_count = 0;
+    return commit(inventory);
+  };
+
+  const linkTarget = {
+    text: "target.txt",
+    hex: Buffer.from("target.txt", "utf8").toString("hex"),
+  };
+  expect(
+    compareArtifacts(
+      directoryWithLink({ hashStatus: "not-hashed", linkTarget }),
+      directoryWithLink({
+        sourcePath: nfd,
+        hashStatus: "not-hashed",
+        linkTarget,
+      }),
+    ),
+  ).toMatchObject({
+    status: "changed",
+    changes: [
+      expect.objectContaining({
+        logical_path: nfc,
+        classification: "changed",
+        dimensions: ["metadata"],
+      }),
+    ],
+  });
+
+  expect(
+    compareArtifacts(
+      directoryWithLink({ hashStatus: "unavailable" }),
+      directoryWithLink({ sourcePath: nfd, hashStatus: "unavailable" }),
+    ),
+  ).toMatchObject({
+    status: "changed",
+    changes: [
+      expect.objectContaining({
+        logical_path: nfc,
+        classification: "changed",
+        dimensions: ["metadata", "availability"],
+      }),
+    ],
   });
 });

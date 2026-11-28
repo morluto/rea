@@ -1,11 +1,12 @@
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { unknownTarget } from "../domain/targetIdentity.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
@@ -18,6 +19,9 @@ import {
   type CutterDiscoveryOptions,
 } from "./CutterBridgeClient.js";
 import { CUTTER_PROVIDER_IDENTITY } from "./CutterProviderIdentity.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import type { z } from "zod";
+import { AbortedWait, waitForAbortable } from "../process/AbortablePromise.js";
 
 interface CutterBridgePort {
   listSessions(
@@ -42,12 +46,15 @@ interface CutterBridgePort {
 /** Shared Cutter bridge workflows used by the MCP adapter and CLI. */
 export class CutterBridgeService {
   #cleanupAttempt: Promise<Result<null, AnalysisError>> | undefined;
+  readonly #sessionTurns = new Map<string, Promise<void>>();
   readonly #pendingCleanup = new Map<
     string,
     {
       readonly sessionId: string;
       readonly completionToken?: string;
       readonly failure: AnalysisOutputError;
+      /** Confirmed by the producer's terminal receipt; the failure reads it. */
+      readonly release: AnalysisCleanupRelease;
     }
   >();
 
@@ -75,15 +82,14 @@ export class CutterBridgeService {
       );
       if (!receipt.ok)
         return err(
-          analysisErrorWithCleanupFailure(
+          analysisErrorWithCleanupDependencies(
             pending.failure,
             receipt.error,
             "cutter_command",
-          ).bindCleanupDependencies([pending.failure, receipt.error]),
+          ),
         );
       if (!receipt.value) return err(pending.failure);
-      const { failure } = pending;
-      failure.resolveCleanup();
+      pending.release.confirm();
       this.#pendingCleanup.delete(requestId);
     }
     return ok(null);
@@ -94,19 +100,11 @@ export class CutterBridgeService {
   ): Promise<Result<CutterBridgeDiscovery, AnalysisError>> {
     const { signal } = options;
     if (signal?.aborted)
-      return err(
-        new AnalysisCancelledError("list_cutter_sessions", {
-          cause: signal.reason,
-        }),
-      );
+      return err(cancelledBy("list_cutter_sessions", signal));
     try {
       const discovery = await this.client.listSessions(options);
       if (signal?.aborted)
-        return err(
-          new AnalysisCancelledError("list_cutter_sessions", {
-            cause: signal.reason,
-          }),
-        );
+        return err(cancelledBy("list_cutter_sessions", signal));
       return ok(discovery);
     } catch (cause) {
       if (cause instanceof AnalysisError) return err(cause);
@@ -134,17 +132,17 @@ export class CutterBridgeService {
               "cutter",
               [],
               {
-                reason: cause instanceof Error ? cause.message : String(cause),
+                reason: errorMessage(cause),
               },
               { cause },
             );
       throw pending.ok
         ? failure
-        : analysisErrorWithCleanupFailure(
+        : analysisErrorWithCleanupDependencies(
             pending.error,
             failure,
             "close_cutter",
-          ).bindCleanupDependencies([pending.error, failure]);
+          );
     }
     if (!pending.ok) throw pending.error;
   }
@@ -156,14 +154,46 @@ export class CutterBridgeService {
     const parsed = cutterCommandInputSchema.safeParse(rawInput);
     if (!parsed.success) return err(new AnalysisInputError("cutter_command"));
     if (options.signal?.aborted)
-      return err(
-        new AnalysisCancelledError("cutter_command", {
-          cause: options.signal.reason,
-        }),
-      );
+      return err(cancelledBy("cutter_command", options.signal));
     const input = parsed.data;
+    // One command per session at a time: a command whose completion is still
+    // unknown must gate the next one, which a concurrent dispatch would skip.
+    const previous = this.#sessionTurns.get(input.session_id);
+    let release!: () => void;
+    const turn = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = (previous ?? Promise.resolve()).then(() => turn);
+    this.#sessionTurns.set(input.session_id, tail);
+    let acquired = previous === undefined;
+    try {
+      if (previous !== undefined) {
+        const waited = await waitForAbortable(previous, options.signal);
+        if (waited instanceof AbortedWait)
+          return err(cancelledBy("cutter_command", waited));
+        acquired = true;
+      }
+      return await this.#executeInTurn(input, options);
+    } finally {
+      release();
+      const clear = (): void => {
+        if (this.#sessionTurns.get(input.session_id) === tail)
+          this.#sessionTurns.delete(input.session_id);
+      };
+      // A waiter cancelled before its turn leaves a tail that still waits for
+      // its predecessor; keep the gate until that chain settles so a later
+      // command queues behind the running one.
+      if (acquired) clear();
+      else void tail.then(clear);
+    }
+  }
+
+  async #executeInTurn(
+    input: z.output<typeof cutterCommandInputSchema>,
+    options: { readonly signal?: AbortSignal },
+  ): Promise<Result<Evidence, AnalysisError>> {
     const cleanup = await this.retryCleanup();
-    if (!cleanup.ok) return err(cleanup.error);
+    if (!cleanup.ok) return cleanup;
     try {
       const output = await this.client.execute({
         sessionId: input.session_id,
@@ -172,9 +202,8 @@ export class CutterBridgeService {
         json: input.json,
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       });
-      const normalizedOutput = jsonValueSchema.parse(output.output);
       const evidence = createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         {
           ...CUTTER_PROVIDER_IDENTITY,
           version: output.cutterVersion,
@@ -190,7 +219,7 @@ export class CutterBridgeService {
           },
           result: {
             command: input.command,
-            output: normalizedOutput,
+            output: output.output,
             execution_state: output.executionState,
             error: output.error,
             message: output.message,
@@ -200,21 +229,34 @@ export class CutterBridgeService {
             document_generation: output.documentGeneration,
             identity_status: output.identityStatus,
           },
-          rawResult: normalizedOutput,
-          subjectUnavailableReason:
-            "Cutter exposes no verified stable identity for the active unsaved document or tab.",
+          authority: "external-service",
           limitations: [
+            "Cutter exposes no verified stable identity for the active unsaved document or tab.",
             "Document identity is partial: the bridge uses a plugin instance UUID and observed generation; a same-path tab switch or reload may not be distinguishable.",
             "Cutter command effects depend on the Rizin command and active plugins.",
             "The local IPC protocol is implemented by REA and is not an upstream Cutter API.",
+            ...(input.json
+              ? [
+                  "JSON integer literals outside JavaScript's safe integer range are retained as decimal strings.",
+                ]
+              : []),
             ...(output.executionState === "unknown"
               ? [
                   "Command completion or its output could not be confirmed; do not retry automatically because the command may have produced partial or persistent effects.",
                 ]
               : []),
-            ...(output.outputTruncated
+            ...(output.outputTruncated === true
               ? [
                   "The command completed or may have completed, but output exceeded the bridge transport limit and was omitted.",
+                ]
+              : output.outputTruncated === null
+                ? [
+                    "The bridge did not declare whether output was omitted, so the output may be incomplete.",
+                  ]
+                : []),
+            ...(output.documentGeneration === null
+              ? [
+                  "The bridge did not report the document generation after this command; list Cutter sessions again before selecting an expected_generation.",
                 ]
               : []),
           ],
@@ -231,21 +273,25 @@ export class CutterBridgeService {
               resources: [`cutter-session:${input.session_id}`],
             },
             partialObservation: evidence,
+            ...(output.outputLimit === undefined
+              ? {}
+              : { limit: output.outputLimit }),
           },
         );
+        const release = new AnalysisCleanupRelease();
         this.#pendingCleanup.set(output.requestId, {
           sessionId: input.session_id,
           ...(output.completionToken === undefined
             ? {}
             : { completionToken: output.completionToken }),
-          failure,
+          failure: release.bind(failure),
+          release,
         });
         return err(failure);
       }
       if (options.signal?.aborted)
         return err(
-          new AnalysisCancelledError("cutter_command", {
-            cause: options.signal.reason,
+          cancelledBy("cutter_command", options.signal, {
             partialObservation: evidence,
           }),
         );

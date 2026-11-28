@@ -36,8 +36,12 @@ it.each([
 
 it("explains an unmodeled dynamic call result at the reached argument", () => {
   const result = trace('const url = wrap(base + "/x"); fetch(url);');
-  expect(result.unknowns.map((unknown) => unknown.detail)).toContain(
-    "The dynamic call's return dependency on this argument is unknown.",
+  expect(result.unknowns).toContainEqual(
+    expect.objectContaining({
+      reason: "dynamic-call",
+      family: "data-flow",
+      relation_kinds: ["influences"],
+    }),
   );
 });
 
@@ -48,20 +52,24 @@ it.each([
 ])("keeps nested dynamic call return influence unknown: %s", (body) => {
   const result = trace(body);
   expect(result.status).not.toBe("found");
-  expect(result.unknowns.map((unknown) => unknown.detail)).toContain(
-    "The dynamic call's return dependency on this argument is unknown.",
+  expect(result.unknowns).toContainEqual(
+    expect.objectContaining({
+      reason: "dynamic-call",
+      family: "data-flow",
+      relation_kinds: ["influences"],
+    }),
   );
 });
 
 it("does not report an unused dynamic call result as a missing value", () => {
   const result = trace('consume(base + "/x");');
-  expect(
-    result.unknowns.some(
-      (unknown) =>
-        unknown.detail ===
-        "The dynamic call's return dependency on this argument is unknown.",
-    ),
-  ).toBe(false);
+  expect(result.unknowns).not.toContainEqual(
+    expect.objectContaining({
+      reason: "dynamic-call",
+      family: "data-flow",
+      relation_kinds: ["influences"],
+    }),
+  );
 });
 
 it("bounds operator production before graph admission and reports truncation", () => {
@@ -193,22 +201,237 @@ it("keeps sequence side effects unknown instead of attributing earlier values di
   ).toBe(true);
 });
 
-it("seeds a direct argument at its occurrence and reaches the call", () => {
-  const graph = graphForJavaScript('consume("only-direct");');
-  const result = queryJavaScriptSemanticGraph(
-    graph,
-    javaScriptSemanticQueryInputSchema.parse({
-      seed: { kind: "literal", value: "only-direct" },
-      direction: "forward-influence",
-    }),
+it.each([
+  ["initializer", 'const url = (0, base + "/x"); fetch(url);'],
+  ["argument", 'fetch((0, base + "/x"));'],
+])(
+  "unwraps pure sequence wrappers in %s influence without false unknowns",
+  (_label, body) => {
+    const result = trace(body);
+    expect(result.nodes.map((node) => node.label)).toContain("argument 0");
+    expect(
+      result.relations.some((edge) => edge.relation === "influences"),
+    ).toBe(true);
+    expect(
+      result.unknowns.some(
+        (unknown) =>
+          unknown.detail.includes("operator operand") ||
+          unknown.detail.includes("operator result"),
+      ),
+    ).toBe(false);
+  },
+);
+
+it.each([
+  ["numeric prefix", "fetch((0, base));"],
+  ["undefined prefix", "fetch((undefined, base));"],
+])(
+  "resolves identifier alias and reaches default forward influence across %s sequence argument",
+  (_label, body) => {
+    const graph = graphForJavaScript(
+      `const base = "https://example.test"; ${body}`,
+    );
+    const argumentNode = graph.nodes.find(
+      (node) => node.label === "argument 0",
+    );
+    if (argumentNode === undefined) throw new Error("Expected argument 0 node");
+    const aliasEdges = graph.relations.filter(
+      (edge) =>
+        edge.relation === "aliases" &&
+        edge.target_node_id === argumentNode.node_id,
+    );
+    expect(aliasEdges).toHaveLength(1);
+    const sourceNode = graph.nodes.find(
+      (node) => node.node_id === aliasEdges[0]?.source_node_id,
+    );
+    expect(sourceNode?.label).toBe("base");
+    expect(aliasEdges[0]?.resolution).toBe("resolved");
+    const forward = trace(body);
+    expect(forward.nodes.map((node) => node.label)).toContain("argument 0");
+    expect(forward.unknowns).toEqual([]);
+  },
+);
+
+it("keeps impure sequence call arguments conservative without resolved alias shortcuts", () => {
+  const graph = graphForJavaScript(
+    'const base = "https://example.test"; fetch((sideEffect(), base));',
   );
-  expect(result.summary.total_seed_matches).toBe(1);
+  const argumentNode = graph.nodes.find((node) => node.label === "argument 0");
+  if (argumentNode === undefined) throw new Error("Expected argument 0 node");
   expect(
-    result.nodes.find((node) => node.node_id === result.seed_node_ids[0])
-      ?.label,
-  ).toBe("argument 0");
-  expect(result.nodes.some((node) => node.kind === "call-site")).toBe(true);
+    graph.relations.some(
+      (edge) =>
+        edge.relation === "aliases" &&
+        edge.target_node_id === argumentNode.node_id &&
+        edge.resolution === "resolved",
+    ),
+  ).toBe(false);
+  const forward = trace("fetch((sideEffect(), base));");
+  expect(forward.status).toBe("partial");
+  expect(
+    forward.unknowns.some(
+      (unknown) =>
+        unknown.family === "data-flow" && unknown.reason === "unknown-value",
+    ),
+  ).toBe(true);
 });
+
+it("scopes return aliases to the unwrapped pure sequence value without spurious undefined edges", () => {
+  const graph = graphForJavaScript(
+    "function f(x) { return (undefined, x); } function g(y) { return (sideEffect(), y); }",
+  );
+  const returnNodes = graph.nodes.filter((node) => node.kind === "return-site");
+  expect(returnNodes).toHaveLength(2);
+  const fNode = graph.nodes.find(
+    (node) => node.kind === "function" && node.label === "f",
+  );
+  const gNode = graph.nodes.find(
+    (node) => node.kind === "function" && node.label === "g",
+  );
+  const pureReturn = returnNodes.find(
+    (node) => node.function_node_id === fNode?.node_id,
+  );
+  const impureReturn = returnNodes.find(
+    (node) => node.function_node_id === gNode?.node_id,
+  );
+  if (pureReturn === undefined || impureReturn === undefined)
+    throw new Error("Expected two return nodes");
+  const pureAliases = graph.relations.filter(
+    (edge) =>
+      edge.relation === "aliases" && edge.target_node_id === pureReturn.node_id,
+  );
+  expect(pureAliases).toHaveLength(1);
+  expect(pureAliases[0]?.resolution).toBe("resolved");
+  expect(
+    graph.nodes.find((node) => node.node_id === pureAliases[0]?.source_node_id)
+      ?.label,
+  ).toBe("x");
+  expect(
+    graph.relations.some(
+      (edge) =>
+        edge.relation === "aliases" &&
+        edge.target_node_id === impureReturn.node_id &&
+        edge.resolution === "resolved",
+    ),
+  ).toBe(false);
+});
+
+it.each([
+  ["numeric prefix", "(0, base)"],
+  ["undefined prefix", "(undefined, base)"],
+])(
+  "traces forward influence through unwrapped pure sequence initializer aliases (%s)",
+  (_label, initializer) => {
+    const graph = graphForJavaScript(
+      `const base = "unique"; const alias = ${initializer}; fetch(alias);`,
+    );
+    const baseNode = graph.nodes.find(
+      (node) => node.kind === "binding" && node.label === "base",
+    );
+    const aliasNode = graph.nodes.find(
+      (node) => node.kind === "binding" && node.label === "alias",
+    );
+    if (baseNode === undefined || aliasNode === undefined)
+      throw new Error("Expected base and alias binding nodes");
+    const aliasInputs = graph.relations.filter(
+      (edge) =>
+        edge.relation === "aliases" &&
+        edge.target_node_id === aliasNode.node_id,
+    );
+    expect(aliasInputs).toHaveLength(1);
+    expect(aliasInputs[0]?.resolution).toBe("resolved");
+    expect(
+      graph.nodes.find(
+        (node) => node.node_id === aliasInputs[0]?.source_node_id,
+      )?.label,
+    ).toBe("base");
+    const fromBase = queryJavaScriptSemanticGraph(
+      graph,
+      javaScriptSemanticQueryInputSchema.parse({
+        seed: { kind: "semantic-node", node_id: baseNode.node_id },
+        direction: "forward-influence",
+      }),
+    );
+    expect(fromBase.status).toBe("found");
+    expect(fromBase.unknowns).toEqual([]);
+    expect(fromBase.nodes.map((node) => node.label)).toEqual(
+      expect.arrayContaining(["base", "alias", "argument 0"]),
+    );
+    expect(fromBase.nodes.some((node) => node.label === "undefined")).toBe(
+      false,
+    );
+    const fromLiteral = queryJavaScriptSemanticGraph(
+      graph,
+      javaScriptSemanticQueryInputSchema.parse({
+        seed: { kind: "literal", value: "unique" },
+        direction: "forward-influence",
+      }),
+    );
+    expect(fromLiteral.unknowns).toEqual([]);
+    expect(fromLiteral.nodes.map((node) => node.label)).toEqual(
+      expect.arrayContaining(["alias", "argument 0"]),
+    );
+    const dynamicGraph = graphForJavaScript(
+      `function wrap(base) { const alias = ${initializer}; fetch(alias); }`,
+    );
+    const paramNode = dynamicGraph.nodes.find(
+      (node) => node.kind === "parameter" && node.label === "base",
+    );
+    if (paramNode === undefined) throw new Error("Expected base parameter");
+    const fromParam = queryJavaScriptSemanticGraph(
+      dynamicGraph,
+      javaScriptSemanticQueryInputSchema.parse({
+        seed: { kind: "semantic-node", node_id: paramNode.node_id },
+        direction: "forward-influence",
+      }),
+    );
+    expect(fromParam.nodes.map((node) => node.label)).toEqual(
+      expect.arrayContaining(["alias", "argument 0"]),
+    );
+  },
+);
+
+it.each([
+  [
+    "side-effecting prefix",
+    'const base = "unique"; const alias = (sideEffect(), base); fetch(alias);',
+  ],
+  [
+    "shadowed undefined prefix",
+    'let undefined = "shadow"; const base = "unique"; const alias = (undefined, base); fetch(alias);',
+  ],
+])(
+  "keeps %s sequence initializer aliases conservative without direct alias shortcuts",
+  (_label, source) => {
+    const graph = graphForJavaScript(source);
+    const baseNode = graph.nodes.find(
+      (node) => node.kind === "binding" && node.label === "base",
+    );
+    const aliasNode = graph.nodes.find(
+      (node) => node.kind === "binding" && node.label === "alias",
+    );
+    if (baseNode === undefined || aliasNode === undefined)
+      throw new Error("Expected base and alias binding nodes");
+    expect(
+      graph.relations.some(
+        (edge) =>
+          edge.relation === "aliases" &&
+          edge.target_node_id === aliasNode.node_id,
+      ),
+    ).toBe(false);
+    const fromBase = queryJavaScriptSemanticGraph(
+      graph,
+      javaScriptSemanticQueryInputSchema.parse({
+        seed: { kind: "semantic-node", node_id: baseNode.node_id },
+        direction: "forward-influence",
+      }),
+    );
+    expect(fromBase.status).toBe("partial");
+    expect(
+      fromBase.unknowns.some((unknown) => unknown.reason === "unknown-value"),
+    ).toBe(true);
+  },
+);
 
 it("keeps older call-site literal evidence searchable when argument literals are absent", () => {
   const graph = graphForJavaScript('consume("only-direct");');

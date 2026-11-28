@@ -14,14 +14,19 @@ import {
   resolveOccurrenceParents,
 } from "./ArtifactGraphConstruction.js";
 import { createArtifactClassificationProbe } from "../ArtifactClassificationProbe.js";
-import { createAsarHeaderSignatureProbe } from "../AsarHeader.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
-import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
+import { translateArtifactFailure } from "../../resources/index.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { artifactIdForContent } from "../../domain/artifactIdentity.js";
 import { pe } from "../../domain/binaryTarget.fixture.js";
-import type { ArtifactEntry } from "../ArtifactReader.js";
+import { parseExecutableHeader } from "../../domain/binaryTarget.js";
+import {
+  minimalElfImage,
+  minimalMachoImage,
+} from "../../../tests/fixtures/nativeHeaders.js";
+import type { ArtifactEntry } from "../../resources/ArtifactReader.js";
 import { dfuseFile } from "../../domain/firmware/dfuse.fixture.js";
+import { buildIso9660Image } from "../../domain/iso9660/iso9660.fixture.js";
 import {
   RP2040_FAMILY,
   patternBytes,
@@ -36,8 +41,10 @@ import {
   esp8266Image,
   espImage,
 } from "../../../tests/fixtures/espImage.js";
-import { devicetreeFixture } from "../../firmware/devicetree/Devicetree.fixture.js";
+import { devicetreeFixture } from "../../domain/firmware/devicetree.fixture.js";
 import { fitFixture } from "../fit/FitImage.fixture.js";
+import { twoVolumeUbiImage } from "../../domain/firmware/ubiImage.fixture.js";
+import { sampleAndroidVbmeta } from "../../domain/firmware/androidVbmeta.fixture.js";
 
 it("joins only observed PE signature bytes across stream chunks", () => {
   const bytes = pe(0x8664, 8190);
@@ -63,6 +70,21 @@ it("joins only observed PE signature bytes across stream chunks", () => {
   ).toBe("pe");
 });
 
+it("retains a PE record whose optional header crosses the retained prefix", () => {
+  const bytes = pe(0x8664, 8_000);
+  const probe = createArtifactClassificationProbe();
+  probe.write(bytes.subarray(0, 8_192));
+  const partial = probe.finish(bytes.length);
+  expect(
+    classifyArtifactContent("native.exe", partial, bytes.length).format,
+  ).toBe("unknown");
+  probe.write(bytes.subarray(8_192));
+  const complete = probe.finish(bytes.length);
+  expect(
+    classifyArtifactContent("native.exe", complete, bytes.length).format,
+  ).toBe("pe");
+});
+
 it("classifies original DOS header padding as an executable", () => {
   const bytes = Buffer.alloc(128);
   bytes.write("MZ", 0, "ascii");
@@ -78,27 +100,64 @@ it("classifies original DOS header padding as an executable", () => {
   });
 });
 
+describe("native header admission", () => {
+  const corruptCommands = () => {
+    // #6154: a valid header whose first command is cmd=cmdsize=0xffffffff.
+    const bytes = minimalMachoImage(64);
+    bytes.writeUInt32LE(1, 16);
+    bytes.writeUInt32LE(32, 20);
+    bytes.writeUInt32LE(0xffffffff, 32);
+    bytes.writeUInt32LE(0xffffffff, 36);
+    return bytes;
+  };
+  it.each([
+    { name: "ELF magic alone", bytes: Buffer.from("7f454c46", "hex") },
+    {
+      name: "ELF magic in a header-sized stub",
+      bytes: Buffer.concat([Buffer.from("7f454c46", "hex"), Buffer.alloc(60)]),
+    },
+    { name: "Mach-O magic alone", bytes: Buffer.from("cffaedfe", "hex") },
+    { name: "Mach-O with corrupt load commands", bytes: corruptCommands() },
+  ])("refuses $name as target resolution does", ({ bytes }) => {
+    expect(parseExecutableHeader(bytes, "arm64").ok).toBe(false);
+    expect(classifyArtifactBytesAtPath("program", bytes)).toEqual({
+      kind: "unknown",
+      format: "unknown",
+    });
+  });
+
+  it.each([
+    { format: "elf", bytes: minimalElfImage() },
+    { format: "mach-o", bytes: minimalMachoImage() },
+  ])("admits a decodable $format header", ({ format, bytes }) => {
+    expect(parseExecutableHeader(bytes, "arm64")).toMatchObject({
+      ok: true,
+      value: { format },
+    });
+    expect(classifyArtifactBytesAtPath("program", bytes)).toEqual({
+      kind: "executable",
+      format,
+    });
+  });
+});
+
 it("projects the parsed ASAR header size when admission rejects an archive", () => {
   const bytes = asarHeaderBytes("{}", { padding: Buffer.alloc(8, 0x20) });
   const headerBytes = bytes.readUInt32LE(4);
-  const probe = createAsarHeaderSignatureProbe({
+  const probe = createArtifactClassificationProbe({
     maximumBytes: headerBytes - 1,
     source: "setting",
   });
   probe.write(bytes);
-  const asarHeader = probe.finish(bytes.length);
-  expect(asarHeader).toMatchObject({
+  const evidence = probe.finish(bytes.length);
+  expect(evidence.asarHeader).toMatchObject({
     state: "limit",
     extents: { headerBytes },
   });
 
   let failure: unknown;
   try {
-    classifyArtifactContent(
-      "app.asar",
-      { prefix: bytes, asarHeader },
-      bytes.length,
-    );
+    classifyArtifactContent("app.asar", evidence, bytes.length);
   } catch (cause) {
     failure = cause;
   }
@@ -107,7 +166,7 @@ it("projects the parsed ASAR header size when admission rejects an archive", () 
     throw new Error("ASAR admission failure was not classified");
 
   const projected = projectAnalysisError(
-    translateArtifactFailure("inspect_artifact", failure),
+    translateArtifactFailure("inspect_artifact", "/selected/artifact", failure),
   );
   expect(projected.details?.limit).toMatchObject({
     required_value: headerBytes,
@@ -157,7 +216,7 @@ it.each(["directory", "symlink"] as const)(
   },
 );
 
-it.each(["directory", "zip", "node-sea"] as const)(
+it.each(["directory", "zip", "node-sea", "deno-standalone"] as const)(
   "omits false storage declarations for %s readers",
   (sourceFormat) => {
     const occurrence = createOccurrence(
@@ -260,11 +319,11 @@ describe("source-map artifact relationships", () => {
       );
       sourceMap.artifact_id = contentId("3");
 
-      const result = createArtifactEdges(contentId("4"), [
-        directory,
-        ...targets,
-        sourceMap,
-      ]);
+      const result = createArtifactEdges(
+        contentId("4"),
+        [directory, ...targets, sourceMap],
+        "complete",
+      );
       const edge = result.edges.find(
         ({ occurrence_id }) => occurrence_id === sourceMap.occurrence_id,
       );
@@ -298,11 +357,11 @@ describe("source-map artifact relationships", () => {
     );
     directory.artifact_id = contentId("3");
 
-    const { edges, limitations } = createArtifactEdges(contentId("4"), [
-      archive,
-      script,
-      directory,
-    ]);
+    const { edges, limitations } = createArtifactEdges(
+      contentId("4"),
+      [archive, script, directory],
+      "complete",
+    );
 
     expect(directory).toMatchObject({
       artifact_kind: "container",
@@ -504,6 +563,7 @@ it("keeps byte content format separate from path-specific package role", () => {
     kind: "container",
     format: "apk",
     contentFormat: "zip",
+    contentArchitecture: null,
   });
 });
 
@@ -526,6 +586,32 @@ it("classifies nested HEX and S-record content as containers by bytes", () => {
       Buffer.from(":0300300002337A1F\n"),
     ),
   ).toEqual({ kind: "resource", format: "file" });
+});
+
+it("classifies nested UBI images as containers by a valid UBI# header", () => {
+  const image = twoVolumeUbiImage();
+  expect(classifyArtifactBytesAtPath("nand/rootfs.ubi", image)).toEqual({
+    kind: "container",
+    format: "ubi-image",
+  });
+  image.writeUInt32BE(0, 60);
+  expect(classifyArtifactBytesAtPath("nand/rootfs.ubi", image)).toEqual({
+    kind: "resource",
+    format: "file",
+  });
+});
+
+it("classifies a standalone vbmeta image by AVB0 magic", () => {
+  expect(
+    classifyArtifactBytesAtPath("vbmeta.img", sampleAndroidVbmeta()),
+  ).toEqual({
+    kind: "container",
+    format: "android-vbmeta",
+  });
+  expect(classifyArtifactBytesAtPath("boot.img", Buffer.from("AVBf"))).toEqual({
+    kind: "resource",
+    format: "file",
+  });
 });
 
 it("classifies nested ESP images as containers by bytes", () => {
@@ -576,6 +662,48 @@ it("classifies nested UF2 by block magics and DfuSe by prefix and suffix", () =>
   ).toMatchObject({ format: "file" });
 });
 
+it("classifies an ISO 9660 image by its sector 16 descriptor, under any name", () => {
+  const { bytes } = buildIso9660Image({
+    files: [{ path: "a.txt", bytes: Buffer.from("a") }],
+  });
+  expect(classifyArtifactBytesAtPath("media/disk.bin", bytes)).toEqual({
+    kind: "container",
+    format: "iso9660",
+  });
+  // Routing needs only the signature; parsing reports the truncation.
+  expect(
+    classifyArtifactBytesAtPath("media/disk", bytes.subarray(0, 32_768 + 7)),
+  ).toEqual({ kind: "container", format: "iso9660" });
+  const damaged = Buffer.from(bytes);
+  damaged.write("CD002", 32_769, "latin1");
+  expect(classifyArtifactBytesAtPath("media/disk.iso", damaged)).toEqual({
+    kind: "resource",
+    format: "file",
+  });
+});
+
+it("classifies a $MFT stream by its FILE record header, under any name", () => {
+  const mft = Buffer.alloc(2_048);
+  mft.write("FILE", 0, "latin1");
+  mft.writeUInt32LE(1024, 28);
+  for (const path of ["evidence/$MFT", "evidence/mft.raw", "evidence/records"])
+    expect(classifyArtifactBytesAtPath(path, mft)).toEqual({
+      kind: "executable",
+      format: "ntfs-mft",
+    });
+});
+
+it("leaves plain content beginning with FILE unclassified as MFT", () => {
+  const text = Buffer.from(
+    "FILE is a plain text prefix, not an NTFS record header",
+  );
+  expect(
+    classifyArtifactBytesAtPath("evidence/readme.txt", text),
+  ).toMatchObject({
+    format: "file",
+  });
+});
+
 it("classifies a FIT by a /images node within the first 4 KiB", () => {
   const images = [{ name: "kernel", data: Buffer.from("kernel") }];
   const late = devicetreeFixture({
@@ -595,15 +723,18 @@ it("classifies a FIT by a /images node within the first 4 KiB", () => {
       kind: "container",
       format: "fit",
     });
-  for (const bytes of [
-    devicetreeFixture(),
-    fitFixture({ images, version: 15 }),
-    late,
-  ])
+  for (const bytes of [devicetreeFixture(), late])
     expect(classifyArtifactBytesAtPath("firmware/board.dtb", bytes)).toEqual({
       kind: "resource",
-      format: "file",
+      format: "devicetree",
     });
+  // The devicetree header owner refuses FDT v15, so those bytes stay a file.
+  expect(
+    classifyArtifactBytesAtPath(
+      "firmware/board.dtb",
+      fitFixture({ images, version: 15 }),
+    ),
+  ).toEqual({ kind: "resource", format: "file" });
 });
 
 describe("FAT prefix observation coverage", () => {
@@ -630,12 +761,9 @@ describe("FAT prefix observation coverage", () => {
     probe.write(bytes.subarray(0, 8_192));
     const evidence = probe.finish(bytes.length);
 
-    expect(
-      evidence.fatSliceHeaders?.sliceHeadersByOffset.get(4_096)?.magic,
-    ).toBe(0xcffaedfe);
-    expect(evidence.fatSliceHeaders?.sliceHeadersByOffset.has(8_192)).toBe(
-      false,
-    );
+    expect(evidence.fatHeader.state).toBe("parsed");
+    expect(evidence.fatSliceHeadersByOffset.get(4_096)?.magic).toBe(0xcffaedfe);
+    expect(evidence.fatSliceHeadersByOffset.has(8_192)).toBe(false);
   });
 });
 
@@ -650,6 +778,26 @@ describe("bounded FAT inventory classification", () => {
       });
     },
   );
+});
+
+it("classifies a streamed XML plist whose prolog passes the retained prefix", () => {
+  const prolog = `<?xml version="1.0"?><!--${" ".repeat(9_000)}-->`;
+  const probe = createArtifactClassificationProbe();
+  const plist = Buffer.from(`${prolog}<plist version="1.0"><dict/></plist>`);
+  for (let offset = 0; offset < plist.length; offset += 4_096)
+    probe.write(plist.subarray(offset, offset + 4_096));
+  const evidence = probe.finish(plist.length);
+  expect(evidence.xmlPlistSignature).toBe(true);
+  expect(
+    classifyArtifactContent("state.archive", evidence, plist.length),
+  ).toMatchObject({
+    kind: "plist",
+    format: "plist",
+  });
+  const other = createArtifactClassificationProbe();
+  const root = Buffer.from(`${prolog}<root><plist/></root>`);
+  other.write(root);
+  expect(other.finish(root.length).xmlPlistSignature).toBe(false);
 });
 
 it("preserves path-selected inventory roles for XML content", () => {

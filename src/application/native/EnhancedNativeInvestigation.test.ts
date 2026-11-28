@@ -1,4 +1,4 @@
-import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
 // Fake-backed composition coverage; real provider verification lives in
 // `npm run verify:hopper` and `npm run verify:ghidra`.
 import { describe, expect, it } from "vitest";
@@ -8,7 +8,7 @@ import {
   createAnalysisExecution,
   type AnalysisExecution,
   type AnalysisOperation,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
@@ -642,10 +642,6 @@ describe("native dispatch inventory", () => {
       label: "malformed value with a legacy name",
       entry: { ...methodInventoryEntry, value: 42, name: methodName },
     },
-    {
-      label: "undeclared field",
-      entry: { address: "0x1000", value: methodName, unexpected: true },
-    },
   ])(
     "rejects $label inventory in both dispatch consumers",
     async ({ entry }) => {
@@ -663,12 +659,32 @@ describe("native dispatch inventory", () => {
           error: {
             _tag: "AnalysisOutputError",
             operation: "list_names",
-            reason: "provider returned an invalid inventory",
+            reason: "Provider returned an invalid name inventory",
           },
         });
       }
     },
   );
+
+  it("accepts an inventory row with an undeclared provider field in both dispatch consumers", async () => {
+    const tools = new EnhancedTools(
+      testAnalysis({
+        list_names: () =>
+          execution("list_names", [
+            { ...methodInventoryEntry, provider_rank: 1 },
+          ]),
+      }),
+    );
+    for (const [operation, parameters] of [
+      ["inspect_native_dispatch_metadata", { max_records: 10 }],
+      ["trace_native_ui_action", { action: "buildTapped:" }],
+    ] as const) {
+      const result = await tools.execute(operation, parameters);
+      expect(result.ok ? null : result.error._tag).not.toBe(
+        "AnalysisOutputError",
+      );
+    }
+  });
 });
 
 describe("native UI query outcomes", () => {
@@ -862,7 +878,7 @@ describe("native UI trace boundaries", () => {
     });
   });
 
-  it("matches handlers after the dispatch inventory's former default limit", async () => {
+  it("matches a handler listed after 5,000 unrelated names", async () => {
     const names = Array.from({ length: 5_000 }, (_, index) => ({
       address: `0x${(index + 1).toString(16)}`,
       value: `unrelated_symbol_${index}`,
@@ -941,4 +957,312 @@ it("retains both initial cleanup owners until each lease releases", async () => 
   expect(result.error.cleanupIncomplete).toBe(false);
   expect(result.error.cleanupResources).toEqual([]);
   expect(result.error.cleanupPrimary).toBe(metadata);
+});
+
+it.each([
+  { max_depth: 4, truncated: true, reason: "source_graph_truncated" },
+  { max_depth: 0, truncated: true, reason: "max_depth_reached" },
+  { max_depth: 0, truncated: false, reason: "max_depth_reached" },
+])(
+  "retains decoder coverage alongside $reason (source truncated: $truncated)",
+  async ({ max_depth, truncated, reason }) => {
+    const coverage = {
+      facet: "objects:Main.nib",
+      status: "partial" as const,
+      reason: "object_limit_reached",
+      examined: 2,
+      omitted: 1,
+    };
+    const result = await new EnhancedTools(
+      testAnalysis(
+        {
+          list_names: () => execution("list_names", []),
+        },
+        { ...graph, truncated, coverage: [coverage] },
+      ),
+    ).execute("trace_native_ui_action", {
+      action: "buildTapped:",
+      max_depth,
+    });
+    if (!result.ok) throw result.error;
+    expect(result.value).toMatchObject({ truncated: true, reason });
+    expect(result.value).toHaveProperty(
+      "coverage",
+      expect.arrayContaining([coverage]),
+    );
+    const trace = nativeInvestigationTraceSchema.parse(result.value);
+    if (truncated)
+      expect(trace.limitations).toContain(
+        "The supplied graph was truncated; relationships omitted from that source remain unknown.",
+      );
+    else
+      expect(trace.limitations).not.toContain(
+        "The supplied graph was truncated; relationships omitted from that source remain unknown.",
+      );
+  },
+);
+
+it("retains measured UI output bounds without guessing a source truncation cause", async () => {
+  const result = await new EnhancedTools(
+    testAnalysis({
+      list_names: () => execution("list_names", []),
+    }),
+  ).execute("trace_native_ui_action", { action: "buildTapped:", max_edges: 1 });
+  if (!result.ok) throw result.error;
+  const trace = nativeInvestigationTraceSchema.parse(result.value);
+  expect(trace).toMatchObject({
+    truncated: true,
+    reason: "native_trace_output_bound_reached",
+  });
+  expect(trace.limitations).not.toContain(
+    "The supplied graph was truncated; relationships omitted from that source remain unknown.",
+  );
+  expect(trace.coverage).toContainEqual(
+    expect.objectContaining({
+      facet: "interface_builder_graph",
+      status: "partial",
+      reason: "native_trace_output_bounds_reached",
+    }),
+  );
+  expect(
+    trace.coverage.find(({ facet }) => facet === "interface_builder_graph")
+      ?.omitted,
+  ).toBeGreaterThan(0);
+});
+
+it.each([
+  { extraUiBranch: false, reason: "native_call_traversal_bound_reached" },
+  { extraUiBranch: true, reason: "max_depth_reached" },
+])(
+  "retains measured native and UI cutoffs (UI branch: $extraUiBranch)",
+  async ({ extraUiBranch, reason }) => {
+    const uiGraph = extraUiBranch
+      ? {
+          ...graph,
+          nodes: [
+            ...graph.nodes,
+            ...["nested", "deeper"].map((id) => ({ ...graph.nodes[0]!, id })),
+          ],
+          edges: [
+            ...graph.edges,
+            ...[
+              { from: "controller", to: "nested" },
+              { from: "nested", to: "deeper" },
+            ].map(({ from, to }) => ({
+              ...graph.edges[0]!,
+              id: `${from}:${to}`,
+              from,
+              to,
+              relation: "contains" as const,
+            })),
+          ],
+        }
+      : graph;
+    const result = await new EnhancedTools(
+      testAnalysis(
+        {
+          list_names: () => execution("list_names", [methodInventoryEntry]),
+        },
+        uiGraph,
+      ),
+    ).execute("trace_native_ui_action", {
+      action: "buildTapped:",
+      max_depth: 2,
+    });
+    if (!result.ok) throw result.error;
+    expect(result.value).toMatchObject({ truncated: true, reason });
+    expect(result.value).toHaveProperty(
+      "coverage",
+      expect.arrayContaining([
+        expect.objectContaining({ facet: "static_native_calls", omitted: 1 }),
+      ]),
+    );
+    if (extraUiBranch)
+      expect(result.value).toHaveProperty(
+        "limitations",
+        expect.arrayContaining([
+          "Native call expansion stopped at a traversal bound.",
+        ]),
+      );
+  },
+);
+
+it("keeps a complete UI graph trace untruncated when no bound is reached", async () => {
+  const result = await new EnhancedTools(
+    testAnalysis({
+      list_names: () => execution("list_names", []),
+    }),
+  ).execute("trace_native_ui_action", { action: "buildTapped:" });
+  if (!result.ok) throw result.error;
+  expect(result.value).toMatchObject({ truncated: false, reason: null });
+  expect(result.value).toHaveProperty(
+    "limitations",
+    expect.not.arrayContaining([
+      "The supplied graph was truncated; relationships omitted from that source remain unknown.",
+    ]),
+  );
+});
+
+describe("native UI action archive coverage", () => {
+  it("keeps archive coverage unknown when the decoder did not report it", async () => {
+    const trace = async (
+      coverage: z.input<typeof nativeInvestigationGraphSchema>["coverage"],
+    ) => {
+      const result = await new EnhancedTools(
+        testAnalysis({}, { ...graph, coverage }),
+      ).execute("trace_native_ui_action", { action: "missing-selector" });
+      if (!result.ok) throw result.error;
+      return nativeInvestigationTraceSchema
+        .parse(result.value)
+        .coverage.filter(({ facet }) => facet === "interface_builder_archives");
+    };
+    // One document was found but no archive_decode facet was reported.
+    expect(await trace([])).toEqual([
+      {
+        facet: "interface_builder_archives",
+        status: "unknown",
+        reason: "archive_decode_coverage_not_reported",
+        examined: 1,
+        omitted: null,
+      },
+    ]);
+    const reported = {
+      facet: "archive_decode",
+      status: "partial" as const,
+      reason: "archive_decode_failed",
+      examined: 2,
+      omitted: 1,
+    };
+    expect(await trace([reported])).toEqual([
+      { ...reported, facet: "interface_builder_archives" },
+    ]);
+  });
+});
+
+describe("object-match action resolution and graph node depths", () => {
+  it("resolves an Interface Builder object ID to its action and computes exact DAG expansion depths", async () => {
+    const deepDiamondGraph = {
+      ...graph,
+      nodes: [
+        ...graph.nodes,
+        {
+          id: "native:function:0x1000",
+          kind: "function" as const,
+          name: "BuildViewController buildTapped:",
+          location: { address: "0x1000", file_offset: null },
+          attributes: {},
+          evidence,
+        },
+        {
+          id: "helper-a",
+          kind: "function" as const,
+          name: "helperA",
+          location: { address: "0x2000", file_offset: null },
+          attributes: {},
+          evidence,
+        },
+        {
+          id: "helper-b",
+          kind: "function" as const,
+          name: "helperB",
+          location: { address: "0x3000", file_offset: null },
+          attributes: {},
+          evidence,
+        },
+      ],
+      edges: [
+        ...graph.edges,
+        {
+          id: "dispatch-direct",
+          from: "selector",
+          to: "native:function:0x1000",
+          relation: "objc_dispatch" as const,
+          resolution: "resolved" as const,
+          evidence,
+          limitations: [],
+        },
+        {
+          id: "fn-a",
+          from: "native:function:0x1000",
+          to: "helper-a",
+          relation: "direct_call" as const,
+          resolution: "observed" as const,
+          evidence,
+          limitations: [],
+        },
+        {
+          id: "a-b",
+          from: "helper-a",
+          to: "helper-b",
+          relation: "direct_call" as const,
+          resolution: "observed" as const,
+          evidence,
+          limitations: [],
+        },
+        {
+          // Shortcut makes helper-b reachable at shortest depth 3 instead of 4.
+          id: "selector-a",
+          from: "selector",
+          to: "helper-a",
+          relation: "direct_call" as const,
+          resolution: "observed" as const,
+          evidence,
+          limitations: [],
+        },
+      ],
+    };
+    const atDepth3 = await new EnhancedTools(
+      testAnalysis(
+        {
+          list_names: () => execution("list_names", [methodInventoryEntry]),
+          procedure_callees: (params) =>
+            execution(
+              "procedure_callees",
+              params.procedure === "0x3000" ? ["0x4000"] : [],
+            ),
+        },
+        deepDiamondGraph,
+      ),
+    ).execute("trace_native_ui_action", {
+      action: "button",
+      max_depth: 3,
+    });
+    if (!atDepth3.ok) throw atDepth3.error;
+    const parsed3 = nativeInvestigationTraceSchema.parse(atDepth3.value);
+    expect(parsed3.start).toBe("action");
+    expect(parsed3.truncated).toBe(true);
+    expect(parsed3.nodes.map(({ id }) => id)).toEqual(
+      expect.arrayContaining([
+        "action",
+        "native:function:0x1000",
+        "helper-a",
+        "helper-b",
+      ]),
+    );
+    expect(parsed3.nodes.map(({ id }) => id)).not.toContain(
+      "native:function:0x4000",
+    );
+
+    const atDepth4 = await new EnhancedTools(
+      testAnalysis(
+        {
+          list_names: () => execution("list_names", [methodInventoryEntry]),
+          procedure_callees: (params) =>
+            execution(
+              "procedure_callees",
+              params.procedure === "0x3000" ? ["0x4000"] : [],
+            ),
+        },
+        deepDiamondGraph,
+      ),
+    ).execute("trace_native_ui_action", {
+      action: "button",
+      max_depth: 4,
+    });
+    if (!atDepth4.ok) throw atDepth4.error;
+    const parsed4 = nativeInvestigationTraceSchema.parse(atDepth4.value);
+    expect(parsed4.nodes.map(({ id }) => id)).toContain(
+      "native:function:0x4000",
+    );
+  });
 });

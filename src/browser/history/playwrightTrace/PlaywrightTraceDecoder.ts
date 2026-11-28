@@ -1,24 +1,27 @@
 import type { StableRegularFileDescriptor } from "../../../filesystem/RegularFile.js";
-import type { PlaywrightTracePort } from "../../../application/playwrightTrace/PlaywrightTracePort.js";
-import { ArtifactResourceScope } from "../../../artifacts/ArtifactResourceScope.js";
-import type { ArtifactEntry } from "../../../artifacts/ArtifactReader.js";
-import { ZipArtifactReader } from "../../../artifacts/ZipArtifactReader.js";
+import type { PlaywrightTracePort } from "../../../ports/playwrightTrace/PlaywrightTracePort.js";
 import {
+  ArtifactResourceScope,
+  type ArtifactEntry,
   artifactFilePrimaryFacts,
   assertArtifactReadActive,
   withArtifactRegularFile,
-} from "../../../artifacts/ArtifactFileOperation.js";
-import { projectStableArtifactFailure } from "../../../artifacts/StableArtifactFailure.js";
-import { assertArtifactFileSelectedSource } from "../../../artifacts/ArtifactFileSource.js";
-import { hashStableRootArtifactHandle } from "../../../artifacts/inventory/hashStableRootArtifact.js";
+  projectStableArtifactFailure,
+  hashStableRootArtifactHandle,
+  assertArtifactFileSelectedSource,
+  ZipArtifactReader,
+} from "../../../resources/index.js";
 import {
   AnalysisResourceConstraintError,
-  AnalysisCancelledError,
-  AnalysisUnsupportedTargetError,
+  cancelledBy,
+  unrecognizedTarget,
 } from "../../../domain/analysisErrorCore.js";
+import { analysisErrorWithCancellation } from "../../../domain/analysisErrorCancellation.js";
+import { fixedAllowanceOptions } from "../../../domain/fixedAllowanceRemediation.js";
 import { err, ok } from "../../../domain/result.js";
 import {
-  PLAYWRIGHT_TRACE_LIMITS,
+  playwrightTraceLimitRecovery,
+  type PlaywrightTraceLimits,
   PLAYWRIGHT_TRACE_OPERATION as operation,
   PLAYWRIGHT_TRACE_PROVIDER,
   type PlaywrightTrace,
@@ -38,7 +41,7 @@ const readStreams = async (
   selected: SelectedMember[],
   signal?: AbortSignal,
 ) => {
-  const budget = { decodedBytes: 0 };
+  const budget = { decodedBytes: 0, limits: inventory.limits };
   const profiles = new Map<string, TraceStream[]>();
   for (const { entry, member } of selected.filter((row) =>
     row.member.path.endsWith(".trace"),
@@ -89,6 +92,7 @@ class TraceArchiveRead {
   constructor(
     readonly resources: ArtifactResourceScope,
     readonly path: string,
+    readonly limits: PlaywrightTraceLimits,
     readonly signal?: AbortSignal,
   ) {}
 
@@ -108,6 +112,7 @@ class TraceArchiveRead {
       const error = traceFailure(
         this.primary ?? artifactFilePrimaryFacts(cause).cause,
         this.path,
+        this.limits,
       );
       const partial =
         this.complete ??
@@ -115,6 +120,11 @@ class TraceArchiveRead {
           ? this.inventory.finish(true)
           : this.identity);
       if (partial !== undefined) error.retainPartialObservation(partial);
+      if (this.signal?.aborted)
+        analysisErrorWithCancellation(
+          error,
+          cancelledBy(operation, this.signal),
+        );
       return err(
         projectStableArtifactFailure(
           cause,
@@ -128,15 +138,16 @@ class TraceArchiveRead {
   }
 
   async readSource(source: StableRegularFileDescriptor) {
-    if (source.initial.size > PLAYWRIGHT_TRACE_LIMITS.archiveBytes)
+    if (source.initial.size > this.limits.archive_bytes)
       throw new AnalysisResourceConstraintError(
         operation,
         "file-size",
-        "Trace archive exceeds the 256 MiB input allowance.",
+        `Trace archive exceeds the ${String(this.limits.archive_bytes)}-byte input allowance.`,
         {
           input_bytes: source.initial.size,
-          max_archive_bytes: PLAYWRIGHT_TRACE_LIMITS.archiveBytes,
+          max_archive_bytes: this.limits.archive_bytes,
         },
+        playwrightTraceLimitRecovery("archive_bytes", this.limits),
       );
     const hash = await hashStableRootArtifactHandle(
       this.path,
@@ -150,16 +161,19 @@ class TraceArchiveRead {
       sha256: hash.sha256,
       bytes: hash.bytes,
     };
-    const facts = new TraceInventory({
-      path: this.path,
-      sha256: hash.sha256,
-      bytes: hash.bytes,
-    });
+    const facts = new TraceInventory(
+      {
+        path: this.path,
+        sha256: hash.sha256,
+        bytes: hash.bytes,
+      },
+      this.limits,
+    );
     this.inventory = facts;
     const reader = new ZipArtifactReader(
       this.path,
       "zip",
-      PLAYWRIGHT_TRACE_LIMITS.metadataBytes,
+      this.limits.metadata_bytes,
       source,
     );
     let outcome:
@@ -173,9 +187,10 @@ class TraceArchiveRead {
           selected.push({ entry, member });
       }
       if (selected.length === 0)
-        throw new AnalysisUnsupportedTargetError(
+        throw unrecognizedTarget(
           operation,
           this.path,
+          "playwright-trace",
           "Archive contains no Playwright trace or network stream members.",
         );
       if (!selected.some((row) => row.member.path.endsWith(".network")))
@@ -203,8 +218,7 @@ class TraceArchiveRead {
       reader,
     });
     if (outcome.kind === "completed" && this.signal?.aborted) {
-      const cancellation = new AnalysisCancelledError(operation, {
-        cause: this.signal.reason,
+      const cancellation = cancelledBy(operation, this.signal, {
         partialObservation: this.complete ?? this.identity,
       });
       this.primary = cancellation;
@@ -225,11 +239,12 @@ class TraceArchiveRead {
 export class PlaywrightTraceDecoder implements PlaywrightTracePort {
   #running = false;
   constructor(readonly resources: ArtifactResourceScope) {}
-  async inspect(path: string, signal?: AbortSignal) {
-    if (signal?.aborted)
-      return err(
-        new AnalysisCancelledError(operation, { cause: signal.reason }),
-      );
+  async inspect(
+    path: string,
+    limits: PlaywrightTraceLimits,
+    signal?: AbortSignal,
+  ) {
+    if (signal?.aborted) return err(cancelledBy(operation, signal));
     if (this.#running)
       return err(
         new AnalysisResourceConstraintError(
@@ -239,6 +254,8 @@ export class PlaywrightTraceDecoder implements PlaywrightTracePort {
           { maximum_concurrent_trace_imports: 1 },
           {
             retryable: true,
+            // An occupied admission: the slot frees when the import ends.
+            measuredExhaustion: true,
             remediationAction:
               "Wait for the active import to finish, then retry. Queries against retained Evidence do not need another import.",
           },
@@ -246,7 +263,12 @@ export class PlaywrightTraceDecoder implements PlaywrightTracePort {
       );
     this.#running = true;
     try {
-      return await new TraceArchiveRead(this.resources, path, signal).run();
+      return await new TraceArchiveRead(
+        this.resources,
+        path,
+        limits,
+        signal,
+      ).run();
     } finally {
       this.#running = false;
     }

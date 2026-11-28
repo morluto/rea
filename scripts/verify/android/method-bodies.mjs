@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../../../dist/domain/evidence.js";
-import { hashAndroidFile } from "./digest.mjs";
+import { sha256File } from "../../lib/verifier-file-sha256.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "../../lib/complete-evidence.mjs";
 
 const initializers = [
   {
@@ -98,10 +102,10 @@ export const verifyAndroidMethodBodies = async ({
   environment,
   execute,
 }) => {
-  const digest = await hashAndroidFile(apk);
+  const digest = await sha256File(apk);
   const check = (value, scenario) => {
     const evidence = parseEvidence(value);
-    assert.equal(evidence.subject.digest.sha256, digest);
+    assert.equal(evidence.subject.identity.sha256, digest);
     const result = evidence.normalized_result;
     assert.equal(result.class_name, scenario.class_name);
     assert.equal(result.method.name, scenario.method_name);
@@ -127,14 +131,16 @@ export const verifyAndroidMethodBodies = async ({
       process.execPath,
       [
         entrypoint,
-        "inspect-android-method",
-        apk,
-        scenario.class_name,
-        scenario.method_name,
-        "--overload-index",
-        String(scenario.overload_index),
-        "--format",
-        "json",
+        ...(await completeEvidenceCliArguments([
+          "inspect-android-method",
+          apk,
+          scenario.class_name,
+          scenario.method_name,
+          "--overload-index",
+          String(scenario.overload_index),
+          "--format",
+          "json",
+        ])),
       ],
       {
         cwd: repository,
@@ -156,10 +162,12 @@ export const verifyAndroidMethodBodies = async ({
   transport.stderr?.on("data", (chunk) => {
     stderr += chunk.toString();
   });
-  const client = new Client({
-    name: "rea-real-android-method-bodies",
-    version: "1",
-  });
+  const client = completeEvidenceClient(
+    new Client({
+      name: "rea-real-android-method-bodies",
+      version: "1",
+    }),
+  );
   try {
     await client.connect(transport, { timeout: 30_000 });
     for (const scenario of cases) {
@@ -167,6 +175,7 @@ export const verifyAndroidMethodBodies = async ({
         {
           name: "inspect_android_method",
           arguments: {
+            detail: "complete",
             path: apk,
             class_name: scenario.class_name,
             method_name: scenario.method_name,
@@ -198,7 +207,7 @@ export const verifyAndroidMethodBodies = async ({
     await client.close();
   }
   assert.equal(
-    await hashAndroidFile(apk),
+    await sha256File(apk),
     digest,
     "Static inspection changed fixture bytes",
   );

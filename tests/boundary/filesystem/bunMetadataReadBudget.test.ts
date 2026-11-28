@@ -1,12 +1,13 @@
 import { open, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import {
-  BUN_TRAILER,
-  locateBunStandaloneGraph,
-} from "../../../src/artifacts/bun/BunModuleGraphLayout.js";
 import { decodeBunModuleGraph } from "../../../src/artifacts/bun/BunModuleGraphMembers.js";
-import { elfAppendedBunPayload } from "../../../src/artifacts/bun/BunStandalone.fixture.js";
+import {
+  elfAppendedBunPayload,
+  locateBunGraphFixture,
+  BUN_FIXTURE_TRAILER,
+  observeBunFixtureReads,
+} from "../../../src/artifacts/bun/BunStandalone.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 it("keeps scattered tiny metadata reads proportional to the graph instead of cache pages", async () => {
@@ -33,7 +34,7 @@ it("keeps scattered tiny metadata reads proportional to the graph instead of cac
   offsets.writeUInt32LE(tableAt, 8);
   offsets.writeUInt32LE(count * 52, 12);
   const bytes = elfAppendedBunPayload(
-    Buffer.concat([data, offsets, BUN_TRAILER]),
+    Buffer.concat([data, offsets, BUN_FIXTURE_TRAILER]),
   );
   const path = join(
     await createTestTempDirectory("rea-bun-scattered-metadata-"),
@@ -41,25 +42,17 @@ it("keeps scattered tiny metadata reads proportional to the graph instead of cac
   );
   await writeFile(path, bytes);
   const handle = await open(path, "r");
-  const read = handle.read.bind(handle);
   let bytesRead = 0;
   const guard = bytes.length * 2;
-  const counted = new Proxy(handle, {
-    get: (target, key) =>
-      key === "read"
-        ? async (...args: Parameters<typeof read>) => {
-            const result = await read(...args);
-            bytesRead += result.bytesRead;
-            if (bytesRead > guard)
-              throw new Error(
-                "Metadata read amplification crossed the owned test guard",
-              );
-            return result;
-          }
-        : Reflect.get(target, key),
+  const counted = observeBunFixtureReads(handle, (count) => {
+    bytesRead += count;
+    if (bytesRead > guard)
+      throw new Error(
+        "Metadata read amplification crossed the owned test guard",
+      );
   });
   try {
-    const located = await locateBunStandaloneGraph(counted, bytes.length);
+    const located = await locateBunGraphFixture(counted, bytes.length);
     if (located.status !== "present" || located.graph === undefined)
       throw new Error("Missing graph");
     const decoded = await decodeBunModuleGraph(located.graph);
@@ -79,7 +72,7 @@ it("refuses cumulative uncached metadata work before the next file read", async 
   const offsets = Buffer.alloc(32);
   offsets.writeBigUInt64LE(BigInt(data.length));
   const bytes = elfAppendedBunPayload(
-    Buffer.concat([data, offsets, BUN_TRAILER]),
+    Buffer.concat([data, offsets, BUN_FIXTURE_TRAILER]),
   );
   const path = join(
     await createTestTempDirectory("rea-bun-metadata-work-"),
@@ -99,7 +92,7 @@ it("refuses cumulative uncached metadata work before the next file read", async 
         : Reflect.get(target, key),
   });
   try {
-    const located = await locateBunStandaloneGraph(counted, bytes.length);
+    const located = await locateBunGraphFixture(counted, bytes.length);
     if (located.status !== "present" || located.graph === undefined)
       throw new Error("Missing graph");
     const graph = located.graph;

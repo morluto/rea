@@ -1,7 +1,6 @@
 import * as t from "@babel/types";
 
 import type { JavaScriptSemanticPrimitive } from "./javascriptSemanticValueTypes.js";
-import { SEMANTIC_EXPRESSION_DEPTH_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import { semanticArrayIndex } from "./javascriptSemanticPropertyPaths.js";
 
 /** Computed definition keys use the surrounding evaluation environment. */
@@ -79,6 +78,79 @@ export const unwrapJavaScriptExpression = (
   return { node: current, depth };
 };
 
+/**
+ * Whether evaluating `node` is provably free of runtime side effects and
+ * abrupt errors, admitting only literal expressions, safe unary forms,
+ * nested pure sequences, and caller-verified unshadowed `undefined`.
+ */
+export const isPureJavaScriptLiteralExpression = (
+  node: t.Node,
+  isUnshadowedUndefined?: (node: t.Identifier) => boolean,
+): boolean => {
+  const pending: t.Node[] = [node];
+  while (pending.length > 0) {
+    const current = unwrapJavaScriptExpression(pending.pop()!).node;
+    if (
+      t.isNumericLiteral(current) ||
+      t.isStringLiteral(current) ||
+      t.isBooleanLiteral(current) ||
+      t.isNullLiteral(current) ||
+      t.isBigIntLiteral(current) ||
+      (t.isTemplateLiteral(current) &&
+        current.expressions.length === 0 &&
+        current.quasis.every((quasi) => quasi.value.cooked !== null))
+    )
+      continue;
+    if (
+      t.isIdentifier(current, { name: "undefined" }) &&
+      isUnshadowedUndefined?.(current) === true
+    )
+      continue;
+    if (t.isUnaryExpression(current)) {
+      if (current.operator === "void" || current.operator === "!") {
+        pending.push(current.argument);
+        continue;
+      }
+      const argument = unwrapJavaScriptExpression(current.argument).node;
+      if (
+        (current.operator === "+" || current.operator === "-") &&
+        (t.isNumericLiteral(argument) ||
+          (current.operator === "-" && t.isBigIntLiteral(argument)))
+      )
+        continue;
+    }
+    if (t.isSequenceExpression(current) && current.expressions.length > 0) {
+      for (const expression of current.expressions) pending.push(expression);
+      continue;
+    }
+    return false;
+  }
+  return true;
+};
+
+/**
+ * Unwrap transparent expression wrappers and comma expressions with at least
+ * two operands whose leading expressions (`0 .. n-2`) are provably pure.
+ */
+export const unwrapPureJavaScriptSequenceExpression = (
+  node: t.Node,
+  isUnshadowedUndefined?: (node: t.Identifier) => boolean,
+): t.Node => {
+  let current = unwrapJavaScriptExpression(node).node;
+  while (
+    t.isSequenceExpression(current) &&
+    current.expressions.length >= 2 &&
+    current.expressions
+      .slice(0, -1)
+      .every((expression) =>
+        isPureJavaScriptLiteralExpression(expression, isUnshadowedUndefined),
+      )
+  ) {
+    current = unwrapJavaScriptExpression(current.expressions.at(-1)!).node;
+  }
+  return current;
+};
+
 /** Read one syntax-level primitive only when its value is exact. */
 export const readExactJavaScriptLiteral = (
   node: t.Node,
@@ -113,6 +185,20 @@ export const readExactJavaScriptLiteral = (
       : { found: true, value: cooked };
   }
   return { found: false };
+};
+
+/**
+ * Return a string literal value without evaluating an expression. A template
+ * literal without substitutions denotes the same exact string.
+ */
+export const stringValue = (
+  node: t.Node | null | undefined,
+): string | undefined => {
+  if (node === null || node === undefined) return undefined;
+  const literal = readExactJavaScriptLiteral(node);
+  return literal.found && typeof literal.value === "string"
+    ? literal.value
+    : undefined;
 };
 
 /** Read an identifier or literal property name without evaluating syntax. */
@@ -174,19 +260,29 @@ export const staticJavaScriptTruthiness = (
   if (t.isStringLiteral(value)) return value.value.length > 0;
   if (t.isNumericLiteral(value))
     return value.value !== 0 && !Number.isNaN(value.value);
-  // Babel exposes a BigIntLiteral value as either "0" or 0n depending on version.
-  if (t.isBigIntLiteral(value)) return String(value.value) !== "0";
+  // Babel exposes a BigIntLiteral value as a bigint or, in older versions, its
+  // source digits, which may carry a 0x/0o/0b prefix; BigInt reads both.
+  if (t.isBigIntLiteral(value)) {
+    try {
+      return BigInt(value.value as string | bigint) !== 0n;
+    } catch {
+      return undefined;
+    }
+  }
   if (
     t.isUnaryExpression(value) &&
     value.operator === "-" &&
     t.isNumericLiteral(value.argument)
   )
     return value.argument.value !== 0 && !Number.isNaN(value.argument.value);
+  // Each of these evaluates to a fresh object, and every object is truthy.
   if (
     t.isObjectExpression(value) ||
     t.isArrayExpression(value) ||
     t.isFunctionExpression(value) ||
-    t.isArrowFunctionExpression(value)
+    t.isArrowFunctionExpression(value) ||
+    t.isClassExpression(value) ||
+    t.isRegExpLiteral(value)
   )
     return true;
   return undefined;
@@ -240,7 +336,7 @@ const PROPERTYLESS_BINARY = new Set([
 ]);
 
 /** Operator results are primitive even when their value is not statically known. */
-const primitiveOwnKeys = (
+export const primitiveOwnKeys = (
   node: t.Node,
   isNullish?: (node: t.Node) => boolean,
 ): "indices" | "none" | null => {
@@ -271,17 +367,26 @@ type StaticObjectProperty =
       readonly value: ObjectDataPropertyValue;
     };
 
+type StaticObjectIndexMember =
+  | { readonly kind: "primitive-indices"; readonly length: number | null }
+  | {
+      readonly kind: "array-indices";
+      readonly elements: t.ArrayExpression["elements"];
+      readonly firstSpread: number;
+    };
+
 type StaticObjectMember =
   | { readonly kind: "unknown" }
   | {
       readonly kind: "prototype-setter";
       readonly prototype: "null" | "ignored" | "unknown";
     }
-  | { readonly kind: "primitive-indices"; readonly length: number | null }
+  | StaticObjectIndexMember
   | {
-      readonly kind: "array-indices";
-      readonly elements: t.ArrayExpression["elements"];
-      readonly firstSpread: number;
+      // Keys one branch of a conditional spread may copy; any may stay absent.
+      readonly kind: "conditional-keys";
+      readonly keys: ReadonlySet<string>;
+      readonly indices: readonly StaticObjectIndexMember[];
     }
   | {
       readonly kind: "property";
@@ -293,25 +398,32 @@ const UNKNOWN_STATIC_OBJECT_MEMBER: StaticObjectMember = { kind: "unknown" };
 
 /** Object-literal prototype setters are never ordinary own-property writes. */
 export const isObjectPrototypeSetter = (
-  property: t.ObjectProperty | t.ObjectMethod,
-  key: string | null = semanticStaticPropertyKey(
-    property.key,
-    property.computed,
-  ),
+  property: t.ObjectExpression["properties"][number],
+  key: string | null = t.isSpreadElement(property)
+    ? null
+    : semanticStaticPropertyKey(property.key, property.computed),
 ): boolean =>
   t.isObjectProperty(property) &&
   !property.computed &&
   !property.shorthand &&
   key === "__proto__";
 
-/** Expand only bounded literal spreads, preserving unknown writes in order. */
+/** Iterate literal syntax once, preserving unknown writes and prototype order. */
 const appendStaticObjectMembers = (
   members: StaticObjectMember[],
   object: t.ObjectExpression,
   depth: number,
   isNullish?: (node: t.Node) => boolean,
 ): void => {
-  for (const property of object.properties) {
+  const pending = [{ object, depth, next: 0 }];
+  while (pending.length > 0) {
+    const frame = pending[pending.length - 1]!;
+    const property = frame.object.properties[frame.next++];
+    if (property === undefined) {
+      pending.pop();
+      continue;
+    }
+    const depth = frame.depth;
     if (!t.isSpreadElement(property)) {
       const key = semanticStaticPropertyKey(property.key, property.computed);
       if (
@@ -337,66 +449,148 @@ const appendStaticObjectMembers = (
       members.push({ kind: "property", property, key });
       continue;
     }
-    const { node: spread, depth: wrappers } = unwrapJavaScriptExpression(
+    const nested = appendEnumerableSourceMembers(
+      members,
       property.argument,
+      depth,
+      isNullish,
     );
-    if (t.isObjectExpression(spread)) {
-      const nextDepth = depth + wrappers + 1;
-      // Copying a getter can run code that changes another source key.
-      if (
-        nextDepth > SEMANTIC_EXPRESSION_DEPTH_LIMIT ||
-        spread.properties.some((entry) =>
-          t.isObjectMethod(entry, { kind: "get" }),
-        )
-      ) {
-        members.push(UNKNOWN_STATIC_OBJECT_MEMBER);
+    if (nested !== undefined) pending.push({ ...nested, next: 0 });
+  }
+};
+
+/** Record atomic own-key facts or return literal syntax for iterative copying. */
+const appendEnumerableSourceMembers = (
+  members: StaticObjectMember[],
+  source: t.Node,
+  depth: number,
+  isNullish?: (node: t.Node) => boolean,
+):
+  | { readonly object: t.ObjectExpression; readonly depth: number }
+  | undefined => {
+  const { node: spread, depth: wrappers } = unwrapJavaScriptExpression(source);
+  if (t.isObjectExpression(spread)) {
+    if (
+      spread.properties.some((entry) =>
+        t.isObjectMethod(entry, { kind: "get" }),
+      )
+    ) {
+      members.push(UNKNOWN_STATIC_OBJECT_MEMBER);
+      return undefined;
+    }
+    return { object: spread, depth: depth + wrappers + 1 };
+  }
+  if (t.isArrayExpression(spread)) {
+    let firstSpread = -1;
+    let hasElements = false;
+    for (let index = 0; index < spread.elements.length; index++) {
+      const element = spread.elements[index];
+      if (element == null) continue;
+      hasElements = true;
+      if (t.isSpreadElement(element)) {
+        firstSpread = index;
+        break;
+      }
+    }
+    if (hasElements)
+      members.push({
+        kind: "array-indices",
+        elements: spread.elements,
+        firstSpread,
+      });
+    return undefined;
+  }
+  if (isConditionalSpreadSource(spread)) {
+    appendConditionalSpreadMembers(members, spread, depth, isNullish);
+    return undefined;
+  }
+  const primitive = primitiveOwnKeys(spread, isNullish);
+  if (primitive === "indices") {
+    const length = stringValue(spread)?.length ?? null;
+    if (length !== 0) members.push({ kind: "primitive-indices", length });
+    return undefined;
+  }
+  if (
+    primitive === "none" ||
+    t.isFunctionExpression(spread) ||
+    t.isArrowFunctionExpression(spread) ||
+    t.isRegExpLiteral(spread)
+  )
+    return undefined;
+  members.push(UNKNOWN_STATIC_OBJECT_MEMBER);
+  return undefined;
+};
+
+type ConditionalSpreadSource = t.ConditionalExpression | t.LogicalExpression;
+
+/**
+ * Sources whose branches syntax bounds. `||` and `??` can copy a left operand
+ * whose keys syntax does not bound, so they stay unknown.
+ */
+const isConditionalSpreadSource = (
+  node: t.Node,
+): node is ConditionalSpreadSource =>
+  t.isConditionalExpression(node) ||
+  t.isLogicalExpression(node, { operator: "&&" });
+
+/**
+ * Record the keys any branch may copy, with one worklist so nesting depth never
+ * recurses. The test runs before the branch and cannot reach the object under
+ * construction, so the branches alone bound the copied keys; none of them is
+ * known to be present. A falsy `&&` operand is copied itself and is bounded
+ * like a branch: an unresolved operand may be document.all, the only falsy
+ * object, which can carry expando properties with any key.
+ */
+const appendConditionalSpreadMembers = (
+  members: StaticObjectMember[],
+  spread: ConditionalSpreadSource,
+  depth: number,
+  isNullish?: (node: t.Node) => boolean,
+): void => {
+  const copied: StaticObjectMember[] = [];
+  const keys = new Set<string>();
+  const pending: t.Node[] = [spread];
+  let bounded = true;
+  while (bounded && pending.length > 0) {
+    const { node } = unwrapJavaScriptExpression(pending.pop()!);
+    if (isConditionalSpreadSource(node)) {
+      pending.push(
+        ...(t.isConditionalExpression(node)
+          ? [node.consequent, node.alternate]
+          : [node.left, node.right]),
+      );
+      continue;
+    }
+    const literal = appendEnumerableSourceMembers(
+      copied,
+      node,
+      depth,
+      isNullish,
+    );
+    if (literal === undefined) continue;
+    for (const property of literal.object.properties) {
+      if (t.isSpreadElement(property)) {
+        pending.push(property.argument);
         continue;
       }
-      appendStaticObjectMembers(members, spread, nextDepth, isNullish);
-      continue;
-    }
-    if (t.isArrayExpression(spread)) {
-      let firstSpread = -1;
-      let hasElements = false;
-      for (let index = 0; index < spread.elements.length; index++) {
-        const element = spread.elements[index];
-        if (element == null) continue;
-        hasElements = true;
-        if (t.isSpreadElement(element)) {
-          firstSpread = index;
-          break;
-        }
+      const key = semanticStaticPropertyKey(property.key, property.computed);
+      if (key === null) {
+        bounded = false;
+        break;
       }
-      // Literal arrays own only present indices. A spread can shift later
-      // indices, but never adds named keys to the array under construction.
-      if (hasElements)
-        members.push({
-          kind: "array-indices",
-          elements: spread.elements,
-          firstSpread,
-        });
-      continue;
+      // A prototype setter copied through spread has no effect on the target.
+      if (!isObjectPrototypeSetter(property, key)) keys.add(key);
     }
-    const primitive = primitiveOwnKeys(spread, isNullish);
-    if (primitive === "indices") {
-      const literal = readExactJavaScriptLiteral(spread);
-      const length =
-        literal.found && typeof literal.value === "string"
-          ? literal.value.length
-          : null;
-      // Retain indexed writes without expanding strings or synthesizing properties.
-      if (length !== 0) members.push({ kind: "primitive-indices", length });
-      continue;
-    }
-    if (
-      primitive === "none" ||
-      t.isFunctionExpression(spread) ||
-      t.isArrowFunctionExpression(spread) ||
-      t.isRegExpLiteral(spread)
-    )
-      continue;
-    members.push(UNKNOWN_STATIC_OBJECT_MEMBER);
   }
+  const indices: StaticObjectIndexMember[] = [];
+  for (const member of copied) {
+    if (member.kind === "primitive-indices" || member.kind === "array-indices")
+      indices.push(member);
+    else bounded = false;
+  }
+  if (!bounded) members.push(UNKNOWN_STATIC_OBJECT_MEMBER);
+  else if (keys.size > 0 || indices.length > 0)
+    members.push({ kind: "conditional-keys", keys, indices });
 };
 
 const staticObjectMembers = (
@@ -424,11 +618,23 @@ const staticObjectPropertySource = (
       ? staticObjectMembers(object, 0, isNullish)
       : "dynamic";
 
+/** Whether an index-only spread member may own the array index of a key. */
+const indexMemberMayOwn = (
+  member: StaticObjectIndexMember,
+  index: number | null,
+): boolean =>
+  index !== null &&
+  (member.kind === "primitive-indices"
+    ? member.length === null || index < member.length
+    : (member.firstSpread >= 0 && index >= member.firstSpread) ||
+      (index < member.elements.length && member.elements[index] != null));
+
 const readStaticObjectProperty = (
   source: StaticObjectPropertySource,
   name: string,
 ): StaticObjectProperty => {
   if (typeof source === "string") return { status: source };
+  const nameIndex = semanticArrayIndex(name);
   let prototypeMaySupply = false;
   for (let index = source.length - 1; index >= 0; index--) {
     const member = source[index]!;
@@ -437,18 +643,18 @@ const readStaticObjectProperty = (
       continue;
     }
     if (member.kind === "unknown") return { status: "dynamic" };
-    if (member.kind === "primitive-indices") {
-      const index = semanticArrayIndex(name);
-      if (index !== null && (member.length === null || index < member.length))
-        return { status: "dynamic" };
+    if (
+      member.kind === "primitive-indices" ||
+      member.kind === "array-indices"
+    ) {
+      if (indexMemberMayOwn(member, nameIndex)) return { status: "dynamic" };
       continue;
     }
-    if (member.kind === "array-indices") {
-      const index = semanticArrayIndex(name);
+    if (member.kind === "conditional-keys") {
+      // The untaken branch may leave an earlier definition effective.
       if (
-        index !== null &&
-        ((member.firstSpread >= 0 && index >= member.firstSpread) ||
-          (index < member.elements.length && member.elements[index] != null))
+        member.keys.has(name) ||
+        member.indices.some((entry) => indexMemberMayOwn(entry, nameIndex))
       )
         return { status: "dynamic" };
       continue;
@@ -468,8 +674,25 @@ const readStaticObjectProperty = (
 export const staticObjectPropertyReader = (
   object: t.Node | undefined,
   isNullish?: (node: t.Node) => boolean,
+): ((name: string) => StaticObjectProperty) =>
+  indexStaticObjectProperties(staticObjectPropertySource(object, isNullish));
+
+/** Index values copied by object spread or Object.assign, excluding inheritance. */
+export const staticObjectCopyPropertyReader = (
+  source: t.Node | undefined,
+  isNullish?: (node: t.Node) => boolean,
 ): ((name: string) => StaticObjectProperty) => {
-  const source = staticObjectPropertySource(object, isNullish);
+  if (source === undefined) return indexStaticObjectProperties("missing");
+  const members: StaticObjectMember[] = [];
+  const nested = appendEnumerableSourceMembers(members, source, 0, isNullish);
+  if (nested !== undefined)
+    appendStaticObjectMembers(members, nested.object, nested.depth, isNullish);
+  return indexStaticObjectProperties(members);
+};
+
+const indexStaticObjectProperties = (
+  source: StaticObjectPropertySource,
+): ((name: string) => StaticObjectProperty) => {
   if (typeof source === "string") return () => ({ status: source });
   const properties = new Map<string, StaticObjectProperty>();
   let fallback: "missing" | "dynamic" = "missing";
@@ -483,6 +706,11 @@ export const staticObjectPropertyReader = (
       member.kind === "array-indices"
     ) {
       hasIndexedSpread = true;
+    } else if (member.kind === "conditional-keys") {
+      // A possibly copied key leaves any earlier definition unresolved.
+      for (const key of member.keys)
+        if (!properties.has(key)) properties.set(key, { status: "dynamic" });
+      if (member.indices.length > 0) hasIndexedSpread = true;
     } else if (member.kind === "unknown" || member.key === null) {
       fallback = "dynamic";
       break;
@@ -522,6 +750,12 @@ export const staticObjectOwnMethodReader = (
     const member = members[index]!;
     if (member.kind === "prototype-setter") continue;
     if (member.kind === "unknown") break;
+    if (member.kind === "conditional-keys") {
+      // Neither branch proves which member is effective.
+      for (const key of member.keys)
+        if (!methods.has(key)) methods.set(key, false);
+      continue;
+    }
     if (member.kind !== "property") continue;
     if (member.key === null) break;
     if (!methods.has(member.key))
@@ -552,10 +786,12 @@ export const staticObjectPropertyNames = (
     if (
       member.kind === "unknown" ||
       member.kind === "primitive-indices" ||
-      member.kind === "array-indices"
+      member.kind === "array-indices" ||
+      member.kind === "conditional-keys"
     ) {
       // Indexed spread keys remain unenumerated; never claim a complete name
       // inventory or expand the input into a potentially much larger key set.
+      // Conditionally copied keys are possible, not known, own names.
       complete = false;
       continue;
     }
@@ -583,10 +819,7 @@ export const semanticFinalObjectProperty = (
 export const semanticFinalObjectStringProperty = (
   node: t.ObjectExpression,
   key: string,
-): string | undefined => {
-  const value = semanticFinalObjectProperty(node, key);
-  return t.isStringLiteral(value) ? value.value : undefined;
-};
+): string | undefined => stringValue(semanticFinalObjectProperty(node, key));
 
 /** Read exact consumed object-pattern keys, leaving dynamic keys unknown. */
 export const semanticObjectPatternKeys = (

@@ -5,7 +5,11 @@ import {
   addSemanticGraphRelation,
   addSemanticGraphUnknown,
 } from "./JavaScriptSemanticGraphConstruction.js";
-import { unknownSemanticEvidence } from "./JavaScriptSemanticGraphEvidence.js";
+import {
+  builtinSemanticNode,
+  builtinSemanticRelation,
+  unknownSemanticEvidence,
+} from "./JavaScriptSemanticGraphEvidence.js";
 import type { SemanticFlowProjectionContext } from "./JavaScriptSemanticGraphFlowProjection.js";
 
 /** Project built-in resource acquisition and exact local release handles. */
@@ -20,14 +24,30 @@ export const projectSemanticResources = (
     }),
   );
   for (const operation of context.ir.resourceOperations)
-    if (operation.kind === "acquire")
+    if (operation.kind === "acquire") {
+      const callSite = context.callSiteAt(operation.location);
+      const resource = resourceNodes.get(operation.resourceId);
       addSemanticGraphRelation(context.state, {
-        source: context.callSiteAt(operation.location),
-        target: resourceNodes.get(operation.resourceId),
+        source: callSite,
+        target: resource,
         relation: "acquires",
-        resolution: "resolved",
+        ...builtinSemanticRelation(
+          context.file,
+          operation,
+          operation.resolution === "complete" ? "resolved" : "candidate",
+        ),
       });
-    else projectRelease(context, operation, resourceNodes);
+      if (operation.resolution === "partial")
+        addSemanticGraphUnknown(context.state, {
+          node_id: callSite?.node_id ?? null,
+          family: "resource-lifecycle",
+          relation_kinds: ["acquires"],
+          reason: "ambiguous-target",
+          detail: `Static ${operation.method} resource acquisition is uncertain.`,
+          candidate_node_ids: resource === undefined ? [] : [resource.node_id],
+          evidence: unknownSemanticEvidence(context.file, operation.location),
+        });
+    } else projectRelease(context, operation, resourceNodes);
 };
 
 const addResourceNode = (
@@ -44,7 +64,9 @@ const addResourceNode = (
         ? null
         : (context.callableNodes.get(operation.ownerCallableId)?.node_id ??
           null),
-    properties: { method: operation.method },
+    ...builtinSemanticNode(context.file, operation, {
+      method: operation.method,
+    }),
   });
 
 const projectRelease = (
@@ -62,8 +84,11 @@ const projectRelease = (
       source: callSite,
       target: resource,
       relation: "releases",
-      resolution:
+      ...builtinSemanticRelation(
+        context.file,
+        operation,
         operation.resolution === "complete" ? "resolved" : "candidate",
+      ),
     });
   if (operation.resolution === "complete") return;
   addSemanticGraphUnknown(context.state, {

@@ -1,12 +1,12 @@
 import pino from "pino";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
-import { registerErlangTools } from "../../../src/server/registerErlangTools.js";
+import { registerServiceTools } from "../../../src/server/serviceToolBindings.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { BeamService } from "../../../src/application/erlang/BeamService.js";
 import { BeamProvider } from "../../../src/erlang/BeamProvider.js";
 import {
   erlangBeamSchema,
-  MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS,
+  ERLANG_BEAM_BUDGETS,
 } from "../../../src/domain/erlang/beam.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -16,7 +16,9 @@ import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
+  erlangBeamChunksFixture,
   erlangBeamDeclaredRowsFixture,
+  erlangBeamRowsFixture,
   erlangBeamFixture,
 } from "../../../src/erlang/Beam.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -66,51 +68,51 @@ mcpTest(
 );
 
 mcpTest(
-  "requires an absolute path for inspect_erlang_beam",
-  async ({ mcp }) => {
-    const { client, session } = await connect(mcp);
-    try {
-      const response = await client.callTool({
-        name: "inspect_erlang_beam",
-        arguments: { path: "app.beam" },
-      });
-      expect(response.isError).toBe(true);
-      expect(parseMcpToolError(response).error).toMatchObject({
-        code: "invalid_request",
-        details: { operation: "inspect_erlang_beam" },
-      });
-    } finally {
-      await session.close();
-    }
-  },
-);
-
-mcpTest(
   "returns recovery for the actual exhausted BEAM allowance",
   async ({ mcp }) => {
     const { client, session } = await connect(mcp);
     const root = await createTestTempDirectory("rea-beam-capacity-");
+    const rowLimit = ERLANG_BEAM_BUDGETS.max_table_rows.default_value;
+    const halfRowLimit = Math.floor(rowLimit / 2);
     try {
-      for (const [label, bytes, settings, remediation] of [
+      for (const [label, bytes, settings, budget, remediation] of [
         [
           "atoms",
-          erlangBeamFixture(),
+          erlangBeamChunksFixture([
+            ["AtU8", Buffer.from([0xff, 0xff, 0xff, 0xfe, 0x10, 0x61, 0])],
+          ]),
           { max_atoms: 1 },
-          "Raise max_atoms above 1",
+          { max_atoms: 1 },
+          expect.stringContaining("Pass a larger max_atoms"),
         ],
         [
           "chunks",
           erlangBeamFixture(),
           { max_chunks: 1 },
-          "Raise max_chunks above 1",
+          { max_chunks: 1 },
+          expect.stringContaining("Pass a larger max_chunks"),
         ],
         [
-          "rows",
-          erlangBeamDeclaredRowsFixture([
-            ["ExpT", MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS + 1],
+          "single-table-rows",
+          erlangBeamRowsFixture([["ExpT", rowLimit + 1]]),
+          {},
+          { max_table_rows: rowLimit },
+          expect.stringContaining(
+            `Pass a larger max_table_rows on the next inspect_erlang_beam call (at least ${String(rowLimit + 1)}`,
+          ),
+        ],
+        [
+          "combined-table-rows",
+          erlangBeamRowsFixture([
+            ["ExpT", halfRowLimit],
+            ["ImpT", halfRowLimit],
+            ["FunT", rowLimit - halfRowLimit * 2 + 1],
           ]),
           {},
-          `${String(MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS)}-row ceiling`,
+          { max_table_rows: rowLimit },
+          expect.stringContaining(
+            `Pass a larger max_table_rows on the next inspect_erlang_beam call (at least ${String(rowLimit + 1)}`,
+          ),
         ],
       ] as const) {
         const path = join(root, `${label}.beam`);
@@ -119,14 +121,57 @@ mcpTest(
           name: "inspect_erlang_beam",
           arguments: { path, ...settings },
         });
-        expect(response.isError).toBe(true);
         const error = parseMcpToolError(response).error;
-        expect(error).toMatchObject({
+        const [parameter, effective] = Object.entries(budget)[0]!;
+        expect(error, label).toMatchObject({
           code: "resource_constraint",
           retryable: false,
-          remediation: { action: expect.stringContaining(remediation) },
+          remediation: { action: remediation },
+          details: {
+            resource: "capacity",
+            reported_limits: budget,
+            limit: {
+              control_kind: "parameter",
+              parameter,
+              effective_value: effective,
+              default_value:
+                ERLANG_BEAM_BUDGETS[
+                  parameter as keyof typeof ERLANG_BEAM_BUDGETS
+                ].default_value,
+              applies_at: "next_call",
+            },
+          },
+        });
+        expect(error.details?.refusal, label).toMatchObject({
+          kind: "adjustable_budget",
+          control: parameter,
         });
       }
+      const admitted = join(root, "raised-table-rows.beam");
+      await writeFile(
+        admitted,
+        erlangBeamRowsFixture([["ExpT", rowLimit + 1]]),
+      );
+      const raised = await client.callTool({
+        name: "inspect_erlang_beam",
+        arguments: { path: admitted, max_table_rows: rowLimit + 1 },
+      });
+      expect(raised.isError, JSON.stringify(raised.content)).not.toBe(true);
+      const malformed = join(root, "malformed-atoms.beam");
+      await writeFile(
+        malformed,
+        erlangBeamChunksFixture([
+          ["AtU8", Buffer.from([0xff, 0xff, 0xff, 0xfe, 0x20, 0x61, 0x62])],
+        ]),
+      );
+      const response = await client.callTool({
+        name: "inspect_erlang_beam",
+        arguments: { path: malformed, max_atoms: 1 },
+      });
+      expect(parseMcpToolError(response).error).toMatchObject({
+        code: "unsupported_target",
+        details: { failure_kind: "truncated", format: "beam" },
+      });
     } finally {
       await session.close();
     }
@@ -144,7 +189,11 @@ mcpTest(
       undefined,
       createToolResultDelivery(2 * 1024 * 1024),
     );
-    registerErlangTools(server, service, pino({ enabled: false }));
+    registerServiceTools(
+      server,
+      { erlangBeam: service },
+      { logger: pino({ enabled: false }) },
+    );
     const client = await mcp.connect(server);
     try {
       for (const delivery of [
@@ -174,6 +223,37 @@ mcpTest(
       ).toBe("without_retention");
     } finally {
       await service.close();
+    }
+  },
+);
+
+mcpTest(
+  "reports impossible BEAM table counts as a truncated target",
+  async ({ mcp }) => {
+    const { client, session } = await connect(mcp);
+    const root = await createTestTempDirectory("rea-beam-malformed-rows-");
+    try {
+      const path = join(root, "lambda.beam");
+      await writeFile(
+        path,
+        erlangBeamDeclaredRowsFixture([
+          ["FunT", ERLANG_BEAM_BUDGETS.max_table_rows.default_value + 1],
+        ]),
+      );
+      const response = await client.callTool({
+        name: "inspect_erlang_beam",
+        arguments: { path },
+      });
+      expect(parseMcpToolError(response).error).toMatchObject({
+        code: "unsupported_target",
+        details: {
+          failure_kind: "truncated",
+          format: "beam",
+          reason: expect.stringContaining("lambda table is truncated"),
+        },
+      });
+    } finally {
+      await session.close();
     }
   },
 );

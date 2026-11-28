@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { processMayExist } from "./lib/verifier-cleanup.mjs";
 import { windowsGhidraFixtureOptions } from "./lib/ghidra-windows-fixture-options.mjs";
 
 import { access, readFile } from "node:fs/promises";
@@ -18,7 +19,7 @@ import {
   parseGhidraInventoryInput,
   parseGhidraInventoryResult,
 } from "../dist/ghidra/GhidraInventoryValues.js";
-import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
+import { inspectVerifierGhidraFromEnvironment } from "./lib/ghidra-installation-inspection.mjs";
 import { SUPPORTED_GHIDRA_VERSION } from "../dist/ghidra/GhidraReleasePolicy.js";
 import { GhidraHeadlessLauncher } from "../dist/ghidra/GhidraLauncher.js";
 import { GHIDRA_PROVIDER_IDENTITY } from "../dist/ghidra/GhidraProviderMetadata.js";
@@ -57,15 +58,12 @@ const installDir = process.env.GHIDRA_INSTALL_DIR;
 const { clientOptions } = resolveGhidraVerifierTimeouts(process.env);
 if (installDir === undefined || !isAbsolute(installDir))
   throw new Error(
-    "Set GHIDRA_INSTALL_DIR to the absolute root of Ghidra 12.1.4.",
+    `Set GHIDRA_INSTALL_DIR to the absolute root of Ghidra ${SUPPORTED_GHIDRA_VERSION}.`,
   );
-const installation = await inspectVerifierGhidraInstallation({
-  environment: process.env,
+const installation = await inspectVerifierGhidraFromEnvironment(
+  process.env,
   installDir,
-  ...(process.env.JAVA_HOME === undefined
-    ? {}
-    : { javaHome: process.env.JAVA_HOME }),
-});
+);
 if (
   installation.status !== "available" ||
   installation.analyzeHeadlessPath === null ||
@@ -113,9 +111,7 @@ const client = new GhidraClient({
     configurationDirectoryName: installation.configurationDirectoryName,
     environment: process.env,
     analyzeHeadlessPath: installation.analyzeHeadlessPath,
-    ...(process.env.JAVA_HOME === undefined
-      ? {}
-      : { javaHome: process.env.JAVA_HOME }),
+    javaHome: installation.javaHome,
     bridgeScriptPath: fileURLToPath(
       new URL("../bridge/ghidra/ReaGhidraBridge.java", import.meta.url),
     ),
@@ -327,7 +323,7 @@ try {
     supported_target_architectures: [...WINDOWS_P0_NATIVE_PE_ARCHITECTURES],
     limitations: [
       "approved-non-sensitive-fixtures-only",
-      "windows-x64-local-ntfs-only",
+      "windows-x64-local-ntfs-refs-only",
       "native-pe-applications-and-dlls-only",
       "no-gui-or-mutation-authority",
     ],
@@ -439,7 +435,7 @@ async function assertCleanup(runtime) {
   }
   if (
     typeof runtime.process_id === "number" &&
-    processExists(runtime.process_id)
+    processMayExist(runtime.process_id)
   )
     throw new Error(
       `Windows Ghidra cleanup left process ${String(runtime.process_id)}`,
@@ -452,18 +448,5 @@ async function exists(path) {
     return true;
   } catch {
     return false;
-  }
-}
-
-function processExists(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (cause) {
-    return !(
-      cause instanceof Error &&
-      "code" in cause &&
-      cause.code === "ESRCH"
-    );
   }
 }

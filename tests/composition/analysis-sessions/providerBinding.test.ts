@@ -1,3 +1,4 @@
+import { supportedFixtureTarget } from "../../fixtures/analysisExecution.js";
 import { mkdir, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -5,7 +6,8 @@ import { describe, expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { createStubHopperProject } from "../../fixtures/hopperProjectFile.js";
+import { phaseArrival, phaseGate } from "../../support/lifecycleHarness.js";
 
 import {
   createAnalysisExecution,
@@ -15,7 +17,7 @@ import {
   type AnalysisProviderCandidate,
   type CapabilityDescriptor,
   type ProviderIdentity,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
 import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
@@ -133,12 +135,10 @@ describe("target-bound provider routing", () => {
     const target = await databaseTarget();
     const alpha = deepProvider("alpha");
     const beta = deepProvider("beta");
-    const pending = deferred<ReturnType<typeof successfulExecution>>();
-    const callStarted = deferred<void>();
-    const profileStarted = deferred<void>();
-    alpha.pending = pending.promise;
-    alpha.onPending = () => callStarted.resolve();
-    beta.onProfile = () => profileStarted.resolve();
+    const call = phaseGate<void, ReturnType<typeof successfulExecution>>();
+    const profileResolution = phaseArrival();
+    alpha.pending = () => call.hold();
+    beta.onProfile = () => profileResolution.arrive();
     const session = selectableSession([alpha.provider, beta.provider]);
     const controller = new AbortController();
     const reason = new Error("cancel provider switch");
@@ -146,7 +146,7 @@ describe("target-bound provider routing", () => {
     let switching: ReturnType<typeof session.open> | undefined;
     onTestFinished(async () => {
       controller.abort(reason);
-      pending.resolve(successfulExecution("alpha"));
+      call.release(successfulExecution("alpha"));
       await Promise.allSettled([
         ...(running === undefined ? [] : [running]),
         ...(switching === undefined ? [] : [switching]),
@@ -155,20 +155,16 @@ describe("target-bound provider routing", () => {
     });
     expect((await session.open(target, { providerId: "alpha" })).ok).toBe(true);
     running = session.execute("address_name", { address: "0x1" });
-    await awaitAcknowledgement(callStarted.promise, running, "provider call");
+    await call.reached(running, "provider call");
 
     switching = session.open(target, {
       providerId: "beta",
       signal: controller.signal,
     });
-    await awaitAcknowledgement(
-      profileStarted.promise,
-      switching,
-      "provider profile resolution",
-    );
+    await profileResolution.reached(switching, "provider profile resolution");
     expect(alpha.clients[0]?.closed).toBe(false);
     controller.abort(reason);
-    pending.resolve(successfulExecution("alpha"));
+    call.release(successfulExecution("alpha"));
 
     expect(await running).toMatchObject({ ok: true });
     const cancelled = await switching;
@@ -276,8 +272,8 @@ interface DeepProviderFixture {
   available: boolean;
   fail: boolean;
   onProfile: (() => void) | undefined;
-  onPending: (() => void) | undefined;
-  pending: Promise<ReturnType<typeof successfulExecution>> | undefined;
+  /** Holds each call while set. */
+  pending: (() => Promise<ReturnType<typeof successfulExecution>>) | undefined;
 }
 
 const deepProvider = (id: string): DeepProviderFixture => {
@@ -291,7 +287,6 @@ const deepProvider = (id: string): DeepProviderFixture => {
     available: true,
     fail: false,
     onProfile: undefined,
-    onPending: undefined,
     pending: undefined,
   };
   const provider: AnalysisProviderCandidate = {
@@ -312,12 +307,7 @@ const deepProvider = (id: string): DeepProviderFixture => {
             remediation: "Repair the fixture provider.",
             diagnostics: { executable_path: `/opt/${id}/bin/analyze` },
           },
-    inspectTargetSupport: () => ({
-      status: "supported",
-      code: null,
-      reason: null,
-      diagnostics: {},
-    }),
+    inspectTargetSupport: supportedFixtureTarget,
     resolveAnalysisProfile: () => {
       fixture.onProfile?.();
       return Promise.resolve(
@@ -341,10 +331,7 @@ const deepProvider = (id: string): DeepProviderFixture => {
             return Promise.resolve(
               err(new ProviderAdapterError(id, operation)),
             );
-          if (fixture.pending !== undefined) {
-            fixture.onPending?.();
-            return fixture.pending;
-          }
+          if (fixture.pending !== undefined) return fixture.pending();
           return Promise.resolve(successfulExecution(id, profile?.provider));
         },
         close: () => {
@@ -433,9 +420,7 @@ const capability = (
 });
 
 const databaseTarget = async (): Promise<string> => {
-  const directory = await createTestTempDirectory("rea-provider-binding-");
-  const path = join(directory, "fixture.hop");
-  await writeFile(path, "fixture");
+  const path = await createStubHopperProject("rea-provider-binding-");
   return path;
 };
 
@@ -447,21 +432,3 @@ const bindingStatus = async (session: BinarySession) =>
     })
     .passthrough()
     .parse(await session.status());
-
-interface Deferred<Value> {
-  readonly promise: Promise<Value>;
-  resolve(value: Value): void;
-}
-
-const deferred = <Value>(): Deferred<Value> => {
-  let resolvePromise: ((value: Value) => void) | undefined;
-  const promise = new Promise<Value>((resolve) => {
-    resolvePromise = resolve;
-  });
-  return {
-    promise,
-    resolve(value) {
-      resolvePromise?.(value);
-    },
-  };
-};

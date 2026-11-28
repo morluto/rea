@@ -17,18 +17,24 @@ import {
   spawnOwnedProviderProcess,
   type SpawnedOwnedProviderProcess,
 } from "../process/ProviderProcess.js";
+import {
+  ArtifactFileCleanupFailure,
+  withArtifactFileHandle,
+  type ArtifactResourceScope,
+} from "../resources/index.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import type { ComputerRelease } from "../domain/desktop/computerRelease.js";
+import { AGENTENV_PROVIDER } from "./AgentEnvProviderIdentity.js";
+import { AGENTENV_BRIDGE_SOURCES } from "./AgentEnvBridgeSources.js";
 
 const execFileAsync = promisify(execFile);
 
-export const AGENTENV_PROVIDER = "agentenv";
-const HELPER = fileURLToPath(
-  new URL("../../bridge/agentenv/computer.py", import.meta.url),
-);
+const HELPER = fileURLToPath(AGENTENV_BRIDGE_SOURCES.computer);
 const HANDSHAKE_BYTES = 64 * 1024;
 const STDERR_BYTES = 16 * 1024;
 const TEARDOWN_MS = 120_000;
 const RUNNER_REMEDIATION =
-  "Set REA_AGENT_ENV_COMMAND to the absolute path of the agent-env program of an agentenv-framework install (a venv, uv tool or pipx), then restart REA.";
+  "Put agent-env on PATH, or set REA_AGENT_ENV_COMMAND to the absolute path of the agent-env program of an agentenv-framework install (a venv, uv tool or pipx), then restart REA. rea doctor --provider desktop_build checks the build host.";
 
 const handshakeSchema = z.union([
   z.strictObject({
@@ -41,18 +47,6 @@ const handshakeSchema = z.union([
 ]);
 /** The helper's one JSON line: where the kept computer is, or why there is none. */
 export type Handshake = z.infer<typeof handshakeSchema>;
-
-/** How a computer's teardown ended: confirmed by agentenv or by removing its containers, or not confirmed. */
-export type ComputerRelease =
-  | {
-      readonly verified: true;
-      readonly teardown: "agentenv" | "container_label";
-    }
-  | {
-      readonly verified: false;
-      readonly reason: string;
-      readonly resources: readonly string[];
-    };
 
 const unavailable = (operation: string, reason: string, cause?: unknown) =>
   new AnalysisCapabilityUnavailableError(AGENTENV_PROVIDER, operation, reason, {
@@ -67,15 +61,27 @@ const executable = async (path: string): Promise<boolean> =>
     () => false,
   );
 
-const readHead = async (path: string): Promise<string> => {
-  const file = await open(path, "r");
-  try {
-    const { buffer, bytesRead } = await file.read(Buffer.alloc(512), 0, 512, 0);
-    return buffer.subarray(0, bytesRead).toString("utf8");
-  } finally {
-    await file.close();
-  }
-};
+const readHead = async (
+  path: string,
+  resources?: ArtifactResourceScope,
+): Promise<string> =>
+  // The artifact file owner binds one cleanup lease to both the retained owner
+  // and the failure it reports, so a later successful retry resolves both.
+  withArtifactFileHandle(
+    path,
+    await open(path, "r"),
+    resources,
+    undefined,
+    async (file) => {
+      const { buffer, bytesRead } = await file.read(
+        Buffer.alloc(512),
+        0,
+        512,
+        0,
+      );
+      return buffer.subarray(0, bytesRead).toString("utf8");
+    },
+  );
 
 /**
  * The Python the agentenv runner runs with, so the helper can import
@@ -85,19 +91,21 @@ const readHead = async (path: string): Promise<string> => {
 export const agentEnvInterpreter = async (
   environment: Readonly<NodeJS.ProcessEnv>,
   operation: string,
+  resources?: ArtifactResourceScope,
 ): Promise<string> => {
   const command = environment.REA_AGENT_ENV_COMMAND;
   if (command === undefined || !isAbsolute(command))
     throw unavailable(
       operation,
-      "Build computers need REA_AGENT_ENV_COMMAND, the absolute path of agentenv's agent-env program; REA runs its helper with that runner's Python.",
+      "Build computers need REA_AGENT_ENV_COMMAND, the absolute path of agentenv's agent-env program, or agent-env on PATH; REA runs its helper with that runner's Python.",
     );
   let program: string;
   let head: string;
   try {
     program = await realpath(command);
-    head = await readHead(program);
+    head = await readHead(program, resources);
   } catch (cause: unknown) {
+    if (cause instanceof ArtifactFileCleanupFailure) throw cause;
     throw unavailable(
       operation,
       `REA_AGENT_ENV_COMMAND ${command} cannot be read.`,
@@ -134,7 +142,7 @@ const sandboxFilters = (sandbox: string): readonly string[] => [
 ];
 
 /** Remove the containers of one sandbox REA's helper named, by their exact name and label; undefined once removed. */
-const removeSandbox = async (
+export const removeSandbox = async (
   environment: Readonly<NodeJS.ProcessEnv>,
   sandbox: string,
 ): Promise<string | undefined> => {
@@ -159,7 +167,7 @@ const removeSandbox = async (
       await execFileAsync(docker, ["rm", "-f", ...containers], options);
     return undefined;
   } catch (cause: unknown) {
-    return `Removing sandbox ${sandbox}'s containers failed: ${cause instanceof Error ? cause.message : String(cause)}. ${manual}`;
+    return `Removing sandbox ${sandbox}'s containers failed: ${errorMessage(cause)}. ${manual}`;
   }
 };
 
@@ -258,7 +266,12 @@ export class ComputerHelper {
       if (first !== undefined) continue;
       first = line.ok
         ? parseHandshake(line.value)
-        : { error: "the helper's handshake line is too long" };
+        : {
+            error:
+              line.error._tag === "ControlLineMalformedUtf8"
+                ? "the helper's handshake is not valid UTF-8"
+                : "the helper's handshake line is too long",
+          };
       if ("sandbox_id" in first) {
         this.#sandboxId = first.sandbox_id;
         this.#token = first.control_token;
@@ -268,14 +281,18 @@ export class ComputerHelper {
   }
 
   /** The handshake, or undefined when the helper ended without one; cancellation rejects with its reason. */
-  handshake(signal: AbortSignal): Promise<Handshake | undefined> {
+  async handshake(signal: AbortSignal): Promise<Handshake | undefined> {
     signal.throwIfAborted();
+    let onAbort!: () => void;
     const aborted = new Promise<never>((_, reject) => {
-      signal.addEventListener("abort", () => reject(signal.reason), {
-        once: true,
-      });
+      onAbort = () => reject(signal.reason);
+      signal.addEventListener("abort", onAbort, { once: true });
     });
-    return Promise.race([this.#handshake, aborted]);
+    try {
+      return await Promise.race([this.#handshake, aborted]);
+    } finally {
+      signal.removeEventListener("abort", onAbort);
+    }
   }
 
   /** The helper's stderr tail with the control token removed, and how it exited. */
@@ -325,9 +342,10 @@ export class ComputerHelper {
    * can be retried.
    */
   async release(): Promise<ComputerRelease> {
-    const { exit, stopped } = await (this.#stopped ??= this.#stop());
+    const attempt = (this.#stopped ??= this.#stop());
+    const { exit, stopped } = await attempt;
     if (stopped !== undefined) {
-      this.#stopped = undefined;
+      if (this.#stopped === attempt) this.#stopped = undefined;
       return {
         verified: false,
         reason: `REA's agentenv helper did not stop: ${stopped}`,
@@ -336,6 +354,7 @@ export class ComputerHelper {
         ],
       };
     }
+    await this.#handshake.catch(() => undefined);
     if (exit === 0 || exit === 2)
       return { verified: true, teardown: "agentenv" };
     const sandbox = this.#sandboxId;

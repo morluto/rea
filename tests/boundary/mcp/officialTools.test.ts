@@ -1,13 +1,13 @@
+import { connectFixtureClient } from "../../support/mcp/mcpFixture.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
+import type { AnalysisOperationPort } from "../../../src/ports/AnalysisProvider.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../../../src/contracts/officialToolContracts.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
-import { HopperRemoteError } from "../../../src/domain/hopperErrors.js";
+import { HopperRemoteError } from "../../../src/hopper/HopperErrors.js";
 import { err } from "../../../src/domain/result.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
@@ -75,7 +75,7 @@ it("advertises strict masked-byte arguments and bounded pages", () => {
 });
 
 describe("read_bytes contract", () => {
-  it("accepts lengths above the former arbitrary ceiling and rejects zero", () => {
+  it("accepts any positive read length and rejects zero", () => {
     const contract = OFFICIAL_TOOL_CONTRACTS.find(
       ({ name }) => name === "read_bytes",
     );
@@ -129,13 +129,11 @@ afterEach(async () => {
 
 const connect = async (analysis: AnalysisOperationPort) => {
   const server = createServer({ kind: "fixed", analysis });
-  const client = new Client({ name: "contract-test", version: "1.0.0" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  resources.push(client, server);
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
-  return client;
+  return connectFixtureClient(
+    server,
+    { name: "contract-test", version: "1.0.0" },
+    resources,
+  );
 };
 
 describe("official tool input contracts", () => {

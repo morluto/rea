@@ -60,7 +60,7 @@ export function requireBridgeProgress(updates) {
     );
 }
 
-/** Require one sanitized invalid-request diagnostic from the real bridge. */
+/** Require one sanitized selector-miss diagnostic from the real bridge. */
 export function requireBridgeDiagnostic(chunks) {
   const diagnostics = chunks
     .join("")
@@ -71,7 +71,7 @@ export function requireBridgeDiagnostic(chunks) {
     !diagnostics.some(
       (diagnostic) =>
         diagnostic.type === "bridge-diagnostic" &&
-        diagnostic.category === "invalid_request" &&
+        diagnostic.category === "selector_not_found" &&
         diagnostic.message.includes(
           "Unknown Hopper address or name: __rea_missing_procedure__",
         ),
@@ -148,7 +148,11 @@ export async function verifyRealHopperFixture({
     await client.callTool(
       {
         name: "procedure_references",
-        arguments: { procedure: entry.address, direction: "outgoing" },
+        arguments: {
+          detail: "complete",
+          procedure: entry.address,
+          direction: "outgoing",
+        },
       },
       options,
     ),
@@ -206,13 +210,13 @@ export async function verifyRealHopperFixture({
   );
   return {
     procedures: { main, entry, branch, leaf },
-    entryComments: entryDossier.comments.returned,
-    entryStrings: entryDossier.referenced_strings.returned,
-    entryCallees: entryDossier.callees.returned,
-    branchCallees: branchDossier.callees.returned,
-    branchBlocks: branchDossier.basic_blocks.returned,
-    leafStrings: leafDossier.referenced_strings.returned,
-    leafNames: leafDossier.referenced_names.returned,
+    entryComments: entryDossier.comments.length,
+    entryStrings: entryDossier.referenced_strings.length,
+    entryCallees: entryDossier.callees.length,
+    branchCallees: branchDossier.callees.length,
+    branchBlocks: branchDossier.basic_blocks.length,
+    leafStrings: leafDossier.referenced_strings.length,
+    leafNames: leafDossier.referenced_names.length,
   };
 }
 
@@ -282,6 +286,7 @@ export async function resolveFixtureProcedure(
       {
         name: "search_procedures",
         arguments: {
+          detail: "complete",
           pattern: expectedName,
           mode: "literal",
           case_sensitive: true,
@@ -310,7 +315,7 @@ export async function resolveFixtureProcedure(
 }
 
 /** Request the assembly evidence required by the fixture oracle. */
-export const analyzeFixtureProcedure = async (
+const analyzeFixtureProcedure = async (
   client,
   options,
   procedure,
@@ -324,9 +329,14 @@ export const analyzeFixtureProcedure = async (
     options,
   );
   const dossier = normalizedResult(reply, "analyze_function");
-  assert.deepEqual(reply.structuredContent.relationship_coverage, {
-    status: "complete",
-  });
+  // Hopper declares caller/callee inventories as incomplete for every operation,
+  // so the fixture oracle must accept that declaration instead of demanding
+  // coverage the provider never claims.
+  const coverage = reply.structuredContent.relationship_coverage;
+  assert.equal(coverage?.status, "unknown");
+  assert.deepEqual(coverage.limited_directions, ["callers", "callees"]);
+  assert.equal(typeof coverage.reason, "string");
+  assert(coverage.reason.length > 0);
   for (const facet of [
     "pseudocode",
     "assembly",
@@ -351,6 +361,9 @@ export const analyzeFixtureProcedure = async (
     ),
     "compare_functions",
   );
+  // Unknown caller and callee discovery leaves the compared call sets as
+  // observations over an inventory whose completeness is unestablished, so the
+  // dimension reports that instead of claiming the calls are unchanged.
   assert.deepEqual(
     Object.fromEntries(
       comparison.dimensions.map(({ dimension, status }) => [dimension, status]),
@@ -360,7 +373,7 @@ export const analyzeFixtureProcedure = async (
       pseudocode: "unchanged",
       assembly: "unchanged",
       comments: "unchanged",
-      calls: "unchanged",
+      calls: "unknown",
       references: "unknown",
       strings_names: "unchanged",
       cfg: "unchanged",

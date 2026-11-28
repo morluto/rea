@@ -2,22 +2,25 @@ import {
   primaryAnalysisError,
   type AnalysisError,
 } from "../../domain/analysisErrorBase.js";
-import { isAbsolute } from "node:path";
-import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence } from "../../domain/evidence.js";
-import { err } from "../../domain/result.js";
 import { inspectPlaywrightTraceInputSchema } from "../../domain/playwrightTrace/playwrightTraceQuery.js";
 import {
   PLAYWRIGHT_TRACE_OPERATION as operation,
   PLAYWRIGHT_TRACE_PROVIDER,
+  playwrightTraceLimits,
   playwrightTraceSchema,
   type PlaywrightTrace,
+  type PlaywrightTraceLimitsInput,
 } from "../../domain/playwrightTrace/playwrightTrace.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
-import type { PlaywrightTracePort } from "./PlaywrightTracePort.js";
+import type { PlaywrightTracePort } from "../../ports/playwrightTrace/PlaywrightTracePort.js";
 
-const evidence = (report: PlaywrightTrace) =>
+/** The caller's selection is recorded as given; omitted fields stay omitted. */
+const evidence = (
+  report: PlaywrightTrace,
+  traceLimits: PlaywrightTraceLimitsInput | undefined,
+) =>
   createEvidence(
     {
       path: report.artifact.path,
@@ -31,6 +34,7 @@ const evidence = (report: PlaywrightTrace) =>
       parameters: {
         path: report.artifact.path,
         decoder_profile: "playwright-trace-v10",
+        ...(traceLimits === undefined ? {} : { trace_limits: traceLimits }),
       },
       result: report,
       confidence: "observed",
@@ -49,24 +53,18 @@ export class PlaywrightTraceService {
       signal,
     );
     if (!parsed.ok) return parsed;
-    if (!isAbsolute(parsed.value.path))
-      return err(
-        new AnalysisInputError(operation, undefined, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: "Expected an absolute filesystem trace archive path.",
-          },
-        ]),
-      );
-    const loaded = await this.port.inspect(parsed.value.path, signal);
+    const loaded = await this.port.inspect(
+      parsed.value.path,
+      playwrightTraceLimits(parsed.value.trace_limits),
+      signal,
+    );
     if (!loaded.ok) {
       const source =
         loaded.error.partialObservation ??
         primaryAnalysisError(loaded.error).partialObservation;
       const partial = playwrightTraceSchema.safeParse(source);
       if (partial.success) {
-        const projected = evidence(partial.data);
+        const projected = evidence(partial.data, parsed.value.trace_limits);
         let current: AnalysisError | undefined = loaded.error;
         while (current !== undefined) {
           if (
@@ -79,6 +77,9 @@ export class PlaywrightTraceService {
       }
       return loaded;
     }
-    return completeProviderEvidence(evidence(loaded.value), signal);
+    return completeProviderEvidence(
+      evidence(loaded.value, parsed.value.trace_limits),
+      signal,
+    );
   }
 }

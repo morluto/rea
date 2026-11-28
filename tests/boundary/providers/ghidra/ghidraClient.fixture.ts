@@ -8,6 +8,7 @@ import type {
   GhidraLaunchSession,
   GhidraLauncher,
 } from "../../../../src/ghidra/GhidraLauncher.js";
+import { phaseArrival } from "../../../support/lifecycleHarness.js";
 
 /** Shared real-socket producer for Ghidra client and public MCP regressions. */
 export const ghidraFixturePath = fileURLToPath(
@@ -17,13 +18,22 @@ export const ghidraFixturePath = fileURLToPath(
 type FixtureMode =
   | "checkpoint"
   | "checkpoint_fail_close"
+  | "checkpoint_hang_edit"
   | "checkpoint_hold_startup"
   | "checkpoint_hold_close"
+  | "checkpoint_hold_close_hang_tool"
+  | "checkpoint_hang_tool"
   | "unicode_search"
   | "reject_first_connection"
   | "reject_all_connections"
   | "success"
   | "fragmented"
+  | "invalid_utf8"
+  | "invalid_utf8_split"
+  | "invalid_utf8_end"
+  | "valid_utf8_end"
+  | "valid_then_invalid"
+  | "valid_then_invalid_split"
   | "oversized_result"
   | "wrong_identity"
   | "malformed"
@@ -40,6 +50,8 @@ type FixtureMode =
   | "invalid_shutdown_ack"
   | "hang_after_start"
   | "hang_tools"
+  | "interruptible_tools"
+  | "interruptible_tools_reply_success"
   | "exit_tools"
   | "silent"
   | "exit"
@@ -65,10 +77,8 @@ export class GhidraFixtureLauncher implements GhidraLauncher {
   readonly processes: ChildProcess[] = [];
   readonly requests: string[] = [];
   readonly packedPrograms: GhidraLaunchSession["packedProgram"][] = [];
-  #notifyCheckpointHeld: (() => void) | undefined;
-  readonly checkpointHeld = new Promise<void>((resolve) => {
-    this.#notifyCheckpointHeld = resolve;
-  });
+  /** The fixture child holds its checkpoint request open (an IPC event). */
+  readonly checkpointHold = phaseArrival();
 
   constructor(readonly mode: FixtureMode = "success") {}
 
@@ -102,7 +112,7 @@ export class GhidraFixtureLauncher implements GhidraLauncher {
         "event" in value &&
         value.event === "checkpoint-held"
       )
-        this.#notifyCheckpointHeld?.();
+        this.checkpointHold.arrive();
       if (
         typeof value === "object" &&
         value !== null &&

@@ -1,10 +1,12 @@
 import { z } from "zod";
-import { localPathStringSchema } from "../localPath.js";
+import { absoluteLocalPathStringSchema } from "../localPath.js";
 import {
   traceDiagnosticSchema,
   traceEventSchema,
   traceMemberSchema,
   traceStreamSchema,
+  playwrightTraceLimits,
+  playwrightTraceLimitsSchema,
 } from "./playwrightTrace.js";
 const page = {
   kind: z.literal("playwright-trace"),
@@ -56,10 +58,15 @@ export const playwrightTraceViewRequestSchema = z.discriminatedUnion(
   ],
 );
 export const inspectPlaywrightTraceInputSchema = z.strictObject({
-  path: localPathStringSchema.describe(
+  path: absoluteLocalPathStringSchema.describe(
     "Absolute path to an offline Playwright v10 trace ZIP",
   ),
   detail: z.enum(["summary", "complete"]).default("summary"),
+  trace_limits: playwrightTraceLimitsSchema
+    .optional()
+    .describe(
+      `Import admission for this call; omitted fields use ${JSON.stringify(playwrightTraceLimits())}. archive_bytes bounds the trace ZIP, metadata_bytes its directory reads, decoded_bytes the decoded stream bytes, line_bytes one record line, nesting_depth one record's JSON nesting, and facts_bytes the retained facts (record parser nodes are facts_bytes / 256). A refusal reports the field in details.limit; paging does not raise these.`,
+    ),
   view: playwrightTraceViewRequestSchema
     .optional()
     .describe(

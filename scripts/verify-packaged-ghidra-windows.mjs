@@ -12,15 +12,7 @@ import {
 import { verifyGhidraCompactReferences } from "./lib/real-ghidra-compact-references.mjs";
 import { verifyWindowsGhidraByteSearch } from "./lib/ghidra-windows-byte-search.mjs";
 import { createHash } from "node:crypto";
-import {
-  mkdtemp,
-  mkdir,
-  readFile,
-  readdir,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -31,6 +23,8 @@ import {
   closeVerifierResources,
   withVerifierCleanup,
 } from "./lib/verifier-cleanup.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 if (process.platform !== "win32" || process.arch !== "x64")
   throw new Error(
@@ -48,10 +42,16 @@ const [packageRootArgument, targetArgument, reportArgument] =
 // Windows locks the loaded package-owned addon until the verifier exits.
 // Keep installation cleanup in a parent that never loads that addon.
 if (!internalWorkspace) {
-  const ownedWorkspace = await mkdtemp(join(tmpdir(), "rea-packaged-ghidra-"));
+  // Windows children write beneath the root; a private root's DELETE handle would block them.
+  const workspaceFixture = await VerifierFixture.open({
+    prefix: "rea-packaged-ghidra-",
+    private: false,
+  });
+  const ownedWorkspace = workspaceFixture.path;
+  // The package command owner releases the fixture after its commands close.
   const workspaceOwner = {
     path: ownedWorkspace,
-    close: () => rm(ownedWorkspace, { recursive: true, force: true }),
+    close: () => workspaceFixture.release(),
   };
   let commands;
   let result;
@@ -75,8 +75,10 @@ if (!internalWorkspace) {
         commands === undefined ? workspaceOwner.close() : commands.close(),
     ]);
   } catch (cause) {
-    if (typeof cause.stdout === "string") process.stdout.write(cause.stdout);
-    if (typeof cause.stderr === "string") process.stderr.write(cause.stderr);
+    const stdout = cause?.snapshot?.stdout?.text;
+    const stderr = cause?.snapshot?.stderr?.text;
+    if (typeof stdout === "string") process.stdout.write(stdout);
+    if (typeof stderr === "string") process.stderr.write(stderr);
     throw cause;
   }
   const report = JSON.parse(result.stdout);
@@ -297,10 +299,12 @@ try {
       cwd: callerDirectory,
       stderr: "pipe",
     });
-    const client = new Client({
-      name: "rea-packaged-windows-ghidra",
-      version: "1.0.0",
-    });
+    const client = completeEvidenceClient(
+      new Client({
+        name: "rea-packaged-windows-ghidra",
+        version: "1.0.0",
+      }),
+    );
     const closeClient = async () => {
       try {
         await client.close();
@@ -362,12 +366,13 @@ try {
       );
       report.bundleActivator = "ReaGhidraBundleActivator";
       assert.equal((await call("list_documents", {})).length, 1);
-      await call("list_names", {});
-      const procedures = await call("list_procedures", {});
+      await call("list_names", { detail: "complete" });
+      const procedures = await call("list_procedures", { detail: "complete" });
       assert.ok(procedures.length > 0);
       if (targetArgument === undefined) {
         const calleeAddress = fixture.calleeAddress;
         const calleeCode = await call("procedure_pseudo_code", {
+          detail: "complete",
           procedure: calleeAddress,
         });
         assert.match(calleeCode, /\b(?:42|0x2a)\b/iu);
@@ -375,22 +380,30 @@ try {
           const callerAddress = fixture.callerAddress;
           assert.ok(
             (
-              await call("procedure_callees", { procedure: callerAddress })
+              await call("procedure_callees", {
+                detail: "complete",
+                procedure: callerAddress,
+              })
             ).includes(calleeAddress),
           );
           assert.match(
-            await call("procedure_pseudo_code", { procedure: callerAddress }),
+            await call("procedure_pseudo_code", {
+              detail: "complete",
+              procedure: callerAddress,
+            }),
             /\+\s*1\b/u,
           );
         }
       }
       assert.ok((await call("list_segments", {})).length > 0);
-      await call("list_strings", {});
+      await call("list_strings", { detail: "complete" });
       const procedure =
         procedures.find((item) => item.procedure?.external === false) ??
         procedures[0];
       assert.ok(procedure !== undefined);
-      const loadImage = await call("inspect_native_load_image", {});
+      const loadImage = await call("inspect_native_load_image", {
+        detail: "complete",
+      });
       assert.equal(
         loadImage.status,
         "unsupported",
@@ -415,14 +428,21 @@ try {
       );
       await call("address_name", { address: procedure.address });
       assert.equal(
-        await call("procedure_address", { procedure: procedure.value }),
+        await call("procedure_address", {
+          detail: "complete",
+          procedure: procedure.value,
+        }),
         procedure.address,
       );
       await call("resolve_containing_procedure", {
+        detail: "complete",
         address: procedure.address,
       });
-      await call("search_procedures", { pattern: procedure.value });
-      await call("search_strings", { pattern: "rea" });
+      await call("search_procedures", {
+        detail: "complete",
+        pattern: procedure.value,
+      });
+      await call("search_strings", { detail: "complete", pattern: "rea" });
       report.byteSearch = await verifyWindowsGhidraByteSearch({
         invoke: call,
         sourceBytes,

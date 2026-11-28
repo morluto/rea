@@ -4,6 +4,7 @@ import {
   analyzeJadxRequest,
   type JadxToolPort,
 } from "../../../src/android/JadxAnalysis.js";
+import { JADX_RELEASE } from "../../../src/android/JadxRelease.js";
 import {
   type AndroidRequest,
   androidInputSchemas,
@@ -48,7 +49,7 @@ const summary = {
 
 const engine = {
   name: "jadx",
-  version: "0.7.1",
+  version: JADX_RELEASE.version,
   artifact_sha256: "a".repeat(64),
   source_revision: null,
   worker_count: 1,
@@ -266,7 +267,7 @@ it("pages filtered matches independently of the examined inventory and preserves
     tools,
     {
       operation: "search_android_classes",
-      input: { path: "/fixture.apk", query: "Target" },
+      input: { path: "/fixture.apk", query: "Target", limit: 10000 },
     },
     {
       loaded: {
@@ -287,8 +288,70 @@ it("pages filtered matches independently of the examined inventory and preserves
   expect(result).toMatchObject({
     total_classes: 10000,
     matches: names,
+    next_offset: null,
     duplicate_names: [{ name: "fixture.TargetDuplicate", occurrences: 2 }],
     coverage: "complete",
+  });
+});
+
+it("stops after the default page and names the next match offset", async () => {
+  const names = Array.from({ length: 1000 }, (_, i) => `fixture.Target${i}`);
+  const calls: Record<string, unknown>[] = [];
+  const tools: JadxToolPort = {
+    json: () => Promise.reject(new Error("unexpected JSON call")),
+    listClasses: (input) => {
+      calls.push({ ...input });
+      const offset = Number(input.offset);
+      const limit = Number(input.limit);
+      return Promise.resolve({
+        scope: "top_level" as const,
+        total_classes: 1000,
+        next_offset: Math.min(offset + limit, 1000),
+        offset,
+        limit,
+        items: names.slice(offset, offset + limit),
+      });
+    },
+    text: () => Promise.reject(new Error("unexpected text call")),
+  };
+  const search = (offset?: number) =>
+    analyzeJadxRequest(
+      tools,
+      {
+        operation: "search_android_classes",
+        input: androidInputSchemas.search_android_classes.parse({
+          path: "/fixture.apk",
+          query: "",
+          ...(offset === undefined ? {} : { offset }),
+        }),
+      },
+      {
+        loaded: {
+          state: "LOADED",
+          apk_path: "/snapshot.apk",
+          class_count: 1000,
+          resource_count: 0,
+          threads: 1,
+          resources: "full",
+        },
+        engine,
+      },
+    );
+  const first = await search();
+  // One row past the page proves another page follows.
+  expect(calls).toEqual([{ query: "", offset: 0, limit: 257 }]);
+  expect(first).toMatchObject({
+    matches: names.slice(0, 256),
+    next_offset: 256,
+    coverage: "partial",
+  });
+  calls.length = 0;
+  const last = await search(768);
+  // The last page still omits earlier matches.
+  expect(last).toMatchObject({
+    matches: names.slice(768),
+    next_offset: null,
+    coverage: "partial",
   });
 });
 
@@ -332,7 +395,8 @@ it.each([
         tools,
         {
           operation: "search_android_classes",
-          input: { path: "/fixture.apk", query },
+          // Exactly one 4096-row provider page, as the fake reports.
+          input: { path: "/fixture.apk", query, limit: 4095 },
         },
         {
           loaded: {
@@ -368,7 +432,7 @@ it("accepts an examined empty inventory without requiring cursor progress", asyn
     tools,
     {
       operation: "search_android_classes",
-      input: { path: "/fixture.apk", query: "Target" },
+      input: { path: "/fixture.apk", query: "Target", limit: 4095 },
     },
     {
       loaded: {
@@ -393,12 +457,19 @@ it("accepts an examined empty inventory without requiring cursor progress", asyn
 it("requires explicit direct invoke coverage state in result evidence", () => {
   const result = {
     engine,
+    target_definition: "defined",
     class_name: "fixture.Target",
     method_name: null,
     overload_index: null,
     reported_signature: null,
     dex_descriptor: null,
     total: 1,
+    direct_invokes_coverage: {
+      complete_using_nodes: 0,
+      partial_using_nodes: 0,
+      unknown_using_nodes: 1,
+      recorded_sites: 0,
+    },
     references: [
       {
         kind: "method",
@@ -536,6 +607,7 @@ it("reports DEX static values of static final fields without a static initialize
 
 it.each([
   { type: "long", value: -9223372036854775808 },
+  { type: "long", value: "1.5" },
   { type: "int", value: "1024" },
   { type: "double", value: 0.5 },
   { type: "enum", value: "fixture.Mode.ON" },
@@ -553,7 +625,13 @@ it.each([
           dex_static_value,
         },
       ]),
-    ).rejects.toThrow("JADX class summary failed or was malformed");
+    ).rejects.toMatchObject({
+      _tag: "AnalysisOutputError",
+      operation: "inspect_android_class",
+      message: expect.stringContaining(
+        "JADX class summary failed or was malformed",
+      ),
+    });
   },
 );
 
@@ -910,6 +988,17 @@ it.each([
     traceWithReference({ direct_invokes: [site] }),
   ).rejects.toThrow();
 });
+
+it.each([true, false])(
+  "rejects invoke coverage %s without the direct invoke site list",
+  async (exhaustive) => {
+    // The bridge always emits the list with its coverage; one without the
+    // other must not become a reference that claims coverage over no sites.
+    await expect(
+      traceWithReference({ direct_invokes_exhaustive: exhaustive }),
+    ).rejects.toThrow("Invoke coverage requires a direct invoke site list");
+  },
+);
 
 it("preserves bounded instruction coverage separately from using-node coverage", async () => {
   const result = await traceWithReference({

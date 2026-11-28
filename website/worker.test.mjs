@@ -111,6 +111,9 @@ await test("missing Markdown keeps HTML, and asset redirects and missing routes 
     }),
     assets({ markdownStatus: 404 }),
   );
+  assert.equal(html.status, 200);
+  assert.equal(html.headers.get("Content-Type"), "text/html");
+  assert.equal(html.headers.get("ETag"), '"html"');
   assert.equal(await html.text(), "<h1>Guide</h1>");
   for (const [path, status] of [
     ["/guide", 307],
@@ -124,4 +127,81 @@ await test("missing Markdown keeps HTML, and asset redirects and missing routes 
     );
     assert.equal(response.status, status);
   }
+});
+
+await test("a Markdown-preferring client keeps the HTML validator when the sidecar is missing", async () => {
+  const response = await worker.fetch(
+    new Request("https://rea.tools/guide/", {
+      headers: { Accept: "text/markdown", "If-None-Match": '"html"' },
+    }),
+    assets({ markdownStatus: 404 }),
+  );
+  assert.equal(response.status, 304);
+  assert.equal(response.headers.get("ETag"), '"html"');
+  assert.equal(await response.text(), "");
+});
+
+await test("methods other than GET and HEAD skip Markdown negotiation", async () => {
+  // A probe would take the body. The asset service must see the caller's
+  // method, body and validators exactly once.
+  for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
+    const calls = [];
+    const env = {
+      ASSETS: {
+        async fetch(request) {
+          const body = request.body === null ? null : await request.text();
+          calls.push({
+            method: request.method,
+            ifMatch: request.headers.get("If-Match"),
+            body,
+          });
+          const preconditionFailed =
+            request.headers.get("If-Match") === '"html"';
+          return new Response(preconditionFailed ? null : body, {
+            status: preconditionFailed ? 412 : 200,
+            headers: { ETag: '"html"', Allow: "GET, HEAD" },
+          });
+        },
+      },
+    };
+    const response = await worker.fetch(
+      new Request("https://rea.tools/guide/", {
+        method,
+        body: "payload",
+        headers: {
+          Accept: "text/markdown",
+          "If-Match": '"html"',
+          "Content-Type": "text/plain",
+        },
+      }),
+      env,
+    );
+    assert.equal(response.status, 412, method);
+    assert.equal(response.headers.get("ETag"), '"html"', method);
+    assert.equal(response.headers.get("Allow"), "GET, HEAD", method);
+    assert.equal(await response.text(), "");
+    assert.deepEqual(calls, [{ method, ifMatch: '"html"', body: "payload" }]);
+  }
+});
+
+await test("a Markdown preference keeps validators on responses without a Markdown route", async () => {
+  // The probe drops validators for the Markdown representation. A response
+  // that never reaches Markdown negotiation must still honor them.
+  for (const path of ["/guide/page", "/assets/site.webmanifest"]) {
+    const response = await worker.fetch(
+      new Request(`https://rea.tools${path}`, {
+        headers: { Accept: "text/markdown", "If-None-Match": '"html"' },
+      }),
+      assets(),
+    );
+    assert.equal(response.status, 304, path);
+  }
+  const fresh = await worker.fetch(
+    new Request("https://rea.tools/guide/page", {
+      headers: { Accept: "text/markdown" },
+    }),
+    assets(),
+  );
+  assert.equal(fresh.status, 200);
+  assert.equal(await fresh.text(), "<h1>Guide</h1>");
 });

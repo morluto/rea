@@ -10,6 +10,7 @@ import {
   artifactMcpCall,
   withArtifactMcp,
 } from "../../lib/artifact-e2e.mjs";
+import { requireMcpToolError } from "../../lib/mcp-verifier-results.mjs";
 
 const exec = promisify(execFile);
 
@@ -185,7 +186,15 @@ export async function verifyDylibResolution(app) {
       name: "trace_dylib_resolution",
       arguments: { roots: ["../outside"] },
     });
-    assert.equal(invalid.isError, true);
+    // dylibResolutionInputSchema rejects a root that is not a normalized
+    // relative path. projectInputIssues maps that regex failure to invalid_format.
+    assert.partialDeepStrictEqual(requireMcpToolError(invalid), {
+      code: "invalid_request",
+      details: {
+        operation: "trace_dylib_resolution",
+        issues: [{ path: ["roots", 0], reason: "invalid_format" }],
+      },
+    });
     // Selecting the observed roots removes discovery uncertainty while retaining
     // complete dependency-resolution coverage for this known fixture.
     const roots = [...new Set(trace.roots.map(({ image }) => image))];

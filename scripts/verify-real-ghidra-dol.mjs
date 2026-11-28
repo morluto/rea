@@ -1,21 +1,21 @@
 #!/usr/bin/env node
+import { createGhidraVerifierMcpOperations } from "./lib/ghidra-verifier-mcp.mjs";
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
-import { readFile, mkdtemp, mkdir, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
-import { ArtifactResourceScope } from "../dist/artifacts/ArtifactResourceScope.js";
-import { readGhidraLanguageCatalog } from "../dist/ghidra/GhidraLanguageCatalog.js";
+import { withVerifierArtifactScope } from "./lib/verifier-artifact-scope.mjs";
+import { AnalysisResourceConstraintError } from "../dist/domain/analysisErrorCore.js";
+import {
+  admitGhidraLanguageOverride,
+  readGhidraLanguageCatalog,
+} from "../dist/ghidra/GhidraLanguageCatalog.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
-import { parseAnalysisSnapshot } from "../dist/domain/analysisSnapshot.js";
 import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
-import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
+import { requireVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
 import { buildGameCubeDolFixture } from "../tests/conformance/ghidra/dol-fixture.mjs";
 import {
   GEKKO_LANGUAGE,
@@ -36,6 +36,10 @@ import {
   assertVerifierCleanupComplete,
 } from "./lib/verifier-run.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { requireLaneToolchain } from "../tests/conformance/ghidra/fixture-toolchain.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 // Optional cross-target lane. No tool acquisition and no target execution.
 if (process.argv.length !== 2)
@@ -44,24 +48,18 @@ if (!["linux", "darwin"].includes(process.platform))
   throw new Error(
     "GameCube DOL verification requires a supported Linux/macOS Ghidra host",
   );
-if (process.env.GHIDRA_INSTALL_DIR === undefined)
-  throw new Error("Missing prerequisite: caller-supplied GHIDRA_INSTALL_DIR");
-const installation = await inspectVerifierGhidraInstallation({
-  environment: process.env,
-  installDir: process.env.GHIDRA_INSTALL_DIR,
-  ...(process.env.JAVA_HOME === undefined
-    ? {}
-    : { javaHome: process.env.JAVA_HOME }),
-});
-if (installation.status !== "available")
-  throw new Error(
-    `Ghidra prerequisite unavailable: ${JSON.stringify(installation)}`,
-  );
+const installation = await requireVerifierGhidraInstallation(process.env);
 
-const execute = promisify(execFile);
 const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const run = createVerifierRun();
-const workspace = await mkdtemp(join(tmpdir(), "rea-dol-proof-"));
+// Refuse a host without the fixture toolchain before allocating anything.
+await requireLaneToolchain("dol");
+const workspaceFixture = await VerifierFixture.open({
+  prefix: "rea-dol-proof-",
+  // Ghidra children use the workspace as TMPDIR; a plain root admits them on every host.
+  private: false,
+});
+const workspace = workspaceFixture.path;
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const baseEnv = {
@@ -78,25 +76,28 @@ for (const setting of ["GHIDRA_HEADLESS_MAXMEM", "GHIDRA_MAXMEM"]) {
   if (process.env[setting] !== undefined)
     baseEnv[setting] = process.env[setting];
 }
+// The CLI shares one command owner, created before the lane starts a tool.
+const commands = await createVerifierCommands();
 
 /**
  * True when GhidraProvider would admit the language id as an override: the same
  * installation catalog reader it uses. User extensions are not in that catalog.
  */
 async function languageInstalled(languageId) {
-  const scope = new ArtifactResourceScope();
-  try {
+  return withVerifierArtifactScope(async (scope) => {
     const catalog = await readGhidraLanguageCatalog(
       installation.installDir,
       scope,
     );
-    return catalog.some((definition) => definition.id === languageId);
-  } finally {
-    await scope.close();
-  }
+    const refusal = admitGhidraLanguageOverride(
+      { languageId },
+      catalog,
+      installation.providerVersion,
+    );
+    if (refusal instanceof AnalysisResourceConstraintError) throw refusal;
+    return refusal === null;
+  });
 }
-
-const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
 /** One MCP session plus CLI check. `languageOverride` is set only for the Gekko pass. */
 async function runPass({ fixture, languageOverride, label, layout }) {
@@ -109,17 +110,16 @@ async function runPass({ fixture, languageOverride, label, layout }) {
     env,
     stderr: "pipe",
   });
-  const client = new Client({ name: "rea-real-dol-proof", version: "1" });
+  const client = completeEvidenceClient(
+    new Client({ name: "rea-real-dol-proof", version: "1" }),
+  );
   let stderr = "";
   transport.stderr?.on("data", (chunk) => {
     stderr = (stderr + chunk.toString()).slice(-65536);
   });
-  const call = async (name, args = {}) => {
-    const reply = await client.callTool({ name, arguments: args }, undefined, {
-      timeout: 180000,
-    });
-    return requireMcpOperationResult(reply, name);
-  };
+  const call = createGhidraVerifierMcpOperations(client, {
+    timeout: 180000,
+  }).decodedCall(requireMcpOperationResult);
   const report = { label, language_override: languageOverride ?? null };
   try {
     await withVerifierCleanup(async () => {
@@ -154,6 +154,7 @@ async function runPass({ fixture, languageOverride, label, layout }) {
           "Leaf function missing from real Ghidra inventory",
         );
         const callees = await call("procedure_callees", {
+          detail: "complete",
           procedure: entry.address,
         });
         assert.ok(
@@ -221,7 +222,7 @@ async function runPass({ fixture, languageOverride, label, layout }) {
   }
   if (languageOverride === undefined) {
     // CLI path through the same stock lane, not a private injected provider.
-    const cli = await execute(
+    const cli = await commands.exec(
       process.execPath,
       [
         entrypoint,
@@ -239,14 +240,14 @@ async function runPass({ fixture, languageOverride, label, layout }) {
       { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
     );
     const evidence = parseEvidence(JSON.parse(cli.stdout));
-    assert.equal(evidence.subject?.architecture, "powerpc");
-    assert.equal(evidence.subject?.digest.sha256, fixture.sha256);
+    assert.equal(evidence.subject?.identity.architecture, "powerpc");
+    assert.equal(evidence.subject?.identity.sha256, fixture.sha256);
     const cliDossier = functionDossierSchema.parse(evidence.normalized_result);
     assert.equal(BigInt(cliDossier.procedure.address), layout.entry);
     assert.ok(cliDossier.pseudocode.includes("__start"));
     report.cli = {
       entry: cliDossier.procedure.address,
-      subject_format: evidence.subject?.format ?? null,
+      subject_format: evidence.subject?.identity.format ?? null,
     };
   }
   return report;
@@ -269,7 +270,7 @@ try {
       fixture,
     );
     const resolved = await parseBinaryTarget(fixture.path, {
-      formatHint: "gamecube-dol",
+      loadSelection: { format: "gamecube-dol" },
     });
     if (!resolved.ok) throw resolved.error;
     assert.equal(resolved.value.format, "gamecube-dol");
@@ -308,16 +309,17 @@ try {
     }
   }, [
     async () => {
+      await workspaceFixture.closeEarly([() => commands.close()]);
       completed = await completeVerifierRun(run);
       assertVerifierCleanupComplete(completed.process_lineage);
     },
   ]);
 } catch (cause) {
-  throw new Error(
+  throw workspaceFixture.retainedError(
     `GameCube DOL verification failed; retained workspace: ${workspace}`,
     { cause },
   );
 }
 assert.ok(completed, "Verifier completion was not observed");
-await rm(workspace, { recursive: true, force: true });
+await workspaceFixture.release();
 console.log(JSON.stringify({ ...completed, fixtures: reports }, null, 2));
