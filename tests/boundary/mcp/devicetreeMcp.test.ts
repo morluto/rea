@@ -263,3 +263,55 @@ mcpTest("rejects relative paths and unsupported versions", async ({ mcp }) => {
     await session.close();
   }
 });
+mcpTest(
+  "names the per-call budget that stopped an inspection in details.limit",
+  async ({ mcp }) => {
+    const session = createTestBinarySession(() => {
+      throw new Error("No engine");
+    });
+    const client = await mcp.connect(createDtbServer(session));
+    try {
+      const root = await createTestTempDirectory("rea-dtb-mcp-limit-");
+      const path = join(root, "board.dtb");
+      await writeFile(path, devicetreeFixture());
+      const refusal = async (
+        budgets: Record<string, unknown>,
+      ): Promise<unknown> =>
+        parseMcpToolError(
+          await client.callTool({
+            name: "inspect_devicetree",
+            arguments: { path, ...budgets },
+          }),
+        ).error.details?.limit;
+      expect(await refusal({ max_nodes: 1 })).toEqual({
+        control_kind: "parameter",
+        parameter: "max_nodes",
+        effective_value: 1,
+        unit: "count",
+        minimum: 1,
+        maximum: 65536,
+        default_value: 8192,
+        applies_at: "next_call",
+      });
+      expect(await refusal({ max_file_bytes: 40 })).toMatchObject({
+        parameter: "max_file_bytes",
+        effective_value: 40,
+        unit: "bytes",
+        default_value: 4194304,
+      });
+      expect(await refusal({ max_decoded_bytes: 1024 })).toMatchObject({
+        parameter: "max_decoded_bytes",
+        effective_value: 1024,
+        maximum: 256 * 1024 * 1024,
+        default_value: 32 * 1024 * 1024,
+      });
+      const admitted = await client.callTool({
+        name: "inspect_devicetree",
+        arguments: { path, max_nodes: 65536, detail: "summary" },
+      });
+      expect(admitted.isError, JSON.stringify(admitted)).not.toBe(true);
+    } finally {
+      await session.close();
+    }
+  },
+);

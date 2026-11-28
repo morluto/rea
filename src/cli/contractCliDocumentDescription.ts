@@ -20,12 +20,15 @@ import type {
   ContractCliSessionTarget,
   ContractField,
   DocumentContract,
+  ProjectedContract,
 } from "./contractCliDescriptionTypes.js";
 import {
   admitsOmission,
   core,
+  describeCliOnlyOption,
   describeSessionTarget,
   projectedCommand,
+  selectCliOptionValues,
   viewOptionHelp,
 } from "./contractCliSchemaProjection.js";
 
@@ -192,10 +195,11 @@ const DOCUMENT_KEY = "inputJson";
  * page is selected from a retained summary, so it needs summary delivery.
  */
 const admitDocumentDelivery = (
-  operation: string,
+  contract: Pick<ProjectedContract, "name" | "effects">,
   viewDelivery: (CliViewDelivery & { readonly schema: z.ZodType }) | undefined,
   values: Readonly<Record<string, unknown>>,
 ): Result<CliEvidenceDeliveryChoice, AnalysisInputError> => {
+  const operation = contract.name;
   let view: AnalysisViewRequest | undefined;
   if (viewDelivery !== undefined) {
     const decoded = parseCliJsonOption(
@@ -228,10 +232,11 @@ const admitDocumentDelivery = (
   }
   const detail =
     (values.detail as "complete" | "summary" | undefined) ??
-    (view === undefined ? "complete" : "summary");
+    (view === undefined ? undefined : "summary");
   const delivery: CliEvidenceDeliveryChoice = {
     detail,
     evidenceOutput: values.evidence_output as string | undefined,
+    rerunRecoversResult: contract.effects?.idempotent !== false,
     ...(view === undefined ? {} : { view }),
   };
   const refused = cliEvidenceDeliveryInputError({ ...delivery, operation });
@@ -308,11 +313,7 @@ export const describeContractDocumentCommand = <
       : {
           view: z.string().optional().describe(viewOptionHelp(viewDelivery)),
         }),
-  }).map(([key, schema]: [string, z.ZodType]) => ({
-    key,
-    description: schema.description,
-    schema,
-  }));
+  }).map(describeCliOnlyOption);
   const sessionTarget = describeSessionTarget(projection.sessionTarget);
   const keys = [
     DOCUMENT_KEY,
@@ -353,7 +354,7 @@ export const describeContractDocumentCommand = <
     admitDelivery: (values) =>
       evidenceDelivery
         ? admitDocumentDelivery(
-            contract.name,
+            contract,
             viewDelivery === undefined
               ? undefined
               : { ...viewDelivery, schema: viewSchema },
@@ -361,16 +362,7 @@ export const describeContractDocumentCommand = <
           )
         : ok(undefined),
     sessionTarget,
-    cliOnlyOptions: Object.entries(cliOptions).map(([key, schema]) => ({
-      key,
-      description: schema.description,
-      schema,
-    })),
-    cliOptionValues: (values) =>
-      Object.fromEntries(
-        Object.keys(cliOptions).flatMap((key) =>
-          values[key] === undefined ? [] : [[key, values[key]]],
-        ),
-      ),
+    cliOnlyOptions: Object.entries(cliOptions).map(describeCliOnlyOption),
+    cliOptionValues: (values) => selectCliOptionValues(cliOptions, values),
   };
 };

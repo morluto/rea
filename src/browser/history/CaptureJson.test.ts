@@ -26,7 +26,15 @@ it("keeps trace nesting independent of the selected network capture depth", () =
         }),
       }),
     );
-    expect(parseCaptureJson(text, "Playwright trace")).toEqual([[true]]);
+    // A trace record's nesting is its own trace_limits.nesting_depth.
+    expect(
+      parseCaptureJsonForRetainedTypes(
+        '{"type":"console","args":[[true]]}',
+        "Playwright trace",
+        new Set(["console"]),
+        { maximumDepth: 64 },
+      ),
+    ).toMatchObject({ kind: "value" });
   });
 });
 

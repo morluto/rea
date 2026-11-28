@@ -17,10 +17,7 @@ import {
   isSwiftRuntimeLibrary,
   nativeRuntimeConvention,
 } from "../nativeConvention.js";
-import {
-  hasCompleteInventoryCoverage,
-  type ParsedInventorySet,
-} from "../artifactInventoryEvidence.js";
+import type { ParsedInventorySet } from "../artifactInventoryEvidence.js";
 import { digestSchema, prefixedDigestSchema } from "../digests.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import {
@@ -29,6 +26,8 @@ import {
 } from "../bridgeCandidateProjection.js";
 import {
   projectedComponentSchema,
+  projectionCoverage,
+  projectionCoverageSchema,
   projectionEvidenceIdSchema,
   projectionPathSchema,
   projectedInventoryEntries,
@@ -89,11 +88,7 @@ export const appleApplicationProjectionResultSchema = z.strictObject({
     }),
   ),
   bridge_candidate_coverage: bridgeCandidateCoverageSchema,
-  coverage: z.strictObject({
-    status: z.enum(["complete-within-inventory", "partial"]),
-    // Count completeness is separate from the declared coverage status.
-    inventory_complete: z.boolean(),
-  }),
+  coverage: projectionCoverageSchema,
   limitations: z.array(z.string()),
 });
 
@@ -144,22 +139,23 @@ export const projectAppleInventory = (
     ),
     roots,
   );
-  const inventoryComplete = hasCompleteInventoryCoverage(
+  const { coverage, sourceLimitations, bridgeLimitations } = projectionCoverage(
     inventory,
-    "container-entries",
+    bridgeProjection.coverage,
+    unavailable.all.length,
   );
   const limitations = [
     ...unresolved,
     ...inventory.limitations,
+    ...sourceLimitations,
     ...projectionLimitations({
-      complete: inventoryComplete,
+      bridgeLimitations,
       roots,
       bundles,
       sidecars: entries.some(({ path }) => isSidecar(path)),
       symlinks: entries.some(({ kind }) => kind === "symlink"),
       unattributed: unattributed + unavailable.unattributed,
       unavailable: unavailable.all.length > 0,
-      bridgeCandidateCoverage: bridgeProjection.coverage,
     }),
   ];
   const withoutId = {
@@ -180,15 +176,7 @@ export const projectAppleInventory = (
     runtime_families: runtimeFamilies,
     bridge_candidates: bridgeProjection.candidates,
     bridge_candidate_coverage: bridgeProjection.coverage,
-    coverage: {
-      status:
-        inventoryComplete &&
-        unavailable.all.length === 0 &&
-        bridgeProjection.coverage.status === "complete"
-          ? ("complete-within-inventory" as const)
-          : ("partial" as const),
-      inventory_complete: inventory.complete,
-    },
+    coverage,
     limitations,
   };
   return ok(
@@ -397,18 +385,14 @@ const bridgeBasis = (
 };
 
 const projectionLimitations = (facts: {
-  readonly complete: boolean;
+  readonly bridgeLimitations: readonly string[];
   readonly roots: readonly string[];
   readonly bundles: readonly z.infer<typeof appleBundleSchema>[];
   readonly sidecars: boolean;
   readonly symlinks: boolean;
   readonly unattributed: number;
   readonly unavailable: boolean;
-  readonly bridgeCandidateCoverage: AppleApplicationProjectionResult["bridge_candidate_coverage"];
 }): string[] => [
-  ...(!facts.complete
-    ? ["Source inventory coverage is partial; absence is unknown."]
-    : []),
   ...(facts.roots.length === 0
     ? [
         "No application bundle (Payload/*.app or *.app/Contents) was present in the supplied inventory pages.",
@@ -437,11 +421,7 @@ const projectionLimitations = (facts: {
         "AppleDouble sidecar entries (._* files and __MACOSX/) describe neighbouring files and are excluded from bundle roles.",
       ]
     : []),
-  ...(facts.bridgeCandidateCoverage.status === "partial"
-    ? [
-        `Bridge candidate pairs exceeded the projection safety budget; ${facts.bridgeCandidateCoverage.omitted_candidates} hypotheses are omitted. Component arrays still include every component from the supplied inventory pages.`,
-      ]
-    : []),
+  ...facts.bridgeLimitations,
   ...(facts.unavailable
     ? [
         "Some inventoried files have no authenticated content identity. Their paths and limitations are retained in unavailable_components; component absence is unknown.",

@@ -446,7 +446,7 @@ for (const [name, build, flags, code] of [
     "malformed",
     () => devicetreeFixture().subarray(0, 30),
     [],
-    "invalid_request",
+    "unsupported_target",
   ],
   [
     "unsupported",

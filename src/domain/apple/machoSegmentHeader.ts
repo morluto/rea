@@ -48,7 +48,7 @@ interface MachoSegmentMemoryFields {
 }
 
 /** VM address of a segment's first file byte after its extents are admitted. */
-export const machoSegmentFileAddress = ({
+const machoSegmentFileAddress = ({
   address,
   memorySize,
   fileSize,
@@ -65,12 +65,16 @@ export const admitMachoSegmentMapping = (
 ) => {
   const { address, memorySize, fileSize, protection } = segment;
   const unmapped = memorySize === 0n && protection === 0;
-  if (
-    (!unmapped && fileSize > memorySize) ||
-    address + memorySize > 1n << BigInt(bits)
-  )
+  if (!unmapped && fileSize > memorySize)
     return err({
       kind: "malformed" as const,
+      code: "file-exceeds-vm" as const,
+      message: "Mach-O segment addresses or sizes are invalid",
+    });
+  if (address + memorySize > 1n << BigInt(bits))
+    return err({
+      kind: "malformed" as const,
+      code: "vm-overflow" as const,
       message: "Mach-O segment addresses or sizes are invalid",
     });
   const zeroFillSize = memorySize - fileSize;
@@ -115,6 +119,7 @@ export const admitMachoSegmentCommand = (
   if (!machoSegmentSectionTableFits(segment, commandBytes, bits === 64))
     return err({
       kind: "malformed" as const,
+      code: "section-table-overflow" as const,
       message: "Mach-O section table exceeds its segment command",
     });
   const image = BigInt(imageBytes);
@@ -125,6 +130,7 @@ export const admitMachoSegmentCommand = (
   )
     return err({
       kind: "malformed" as const,
+      code: "file-range-overflow" as const,
       message: "Mach-O segment range is outside the file",
     });
   return mapping;

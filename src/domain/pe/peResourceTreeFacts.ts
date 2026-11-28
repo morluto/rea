@@ -6,6 +6,8 @@ export const PE_RESOURCE_ENTRY_BYTES = 8;
 export const PE_RESOURCE_DATA_ENTRY_BYTES = 16;
 export const PE_RESOURCE_NAME_PREFIX_BYTES = 2;
 export const PE_RESOURCE_ENTRY_LIMIT = "max_entries";
+/** `RT_RCDATA`, `MAKEINTRESOURCE(10)` in winuser.h: raw application data. */
+export const PE_RESOURCE_TYPE_RCDATA = 10;
 
 export const peResourceRangeFits = (
   offset: number,

@@ -1,6 +1,8 @@
 import { readCudaTarget } from "./CudaTarget.js";
 import {
+  type AmdGpuAbi,
   type AmdGpuTargetIdentity,
+  readAmdGpuElfAbi,
   readAmdGpuElfProcessor,
   readAmdGpuNoteTarget,
 } from "./AmdGpuTarget.js";
@@ -17,6 +19,7 @@ import {
   readCudaParameters,
 } from "./CudaInfo.js";
 import type { GpuKernel, GpuLocation } from "../domain/gpu/gpuCodeObjects.js";
+import { AmdPalMetadataReader, type AmdPalNotes } from "./AmdGpuPalMetadata.js";
 import type { ZstandardFramePause } from "../domain/compression/zstandardExactFrame.js";
 import {
   BinaryReader,
@@ -43,7 +46,13 @@ import {
   type GpuSource,
 } from "./GpuSource.js";
 import {
-  AMD_METADATA_BYTES,
+  DEFAULT_GPU_METADATA_BYTES,
+  GPU_METADATA_BYTES_LIMIT,
+  formatGpuByteBudget,
+  type GpuCodeObjectsBudgets,
+} from "../domain/gpu/gpuCodeObjectsBudgets.js";
+import {
+  AmdMetadataValueBudget,
   amdCount,
   amdRecord,
   amdString,
@@ -120,6 +129,7 @@ export const readGpuElfKernels = async (
   pause: ZstandardFramePause,
   preparedAmd?: AmdElfMetadata,
   onTarget?: (target: GpuPayloadTarget) => void,
+  budgets?: GpuCodeObjectsBudgets,
 ): Promise<{
   limitations: string[];
   coverage: "complete" | "partial";
@@ -128,14 +138,20 @@ export const readGpuElfKernels = async (
     return amdKernels(source, preparedAmd, onKernel, onTarget);
   const directory = await readGpuNativeDirectory(
     source,
-    readElfSectionDirectory(source.size),
+    readElfSectionDirectory(
+      source.size,
+      budgets?.maxStructureBytes === undefined
+        ? undefined
+        : { structureBytes: budgets.maxStructureBytes },
+    ),
     pause,
+    budgets?.maxStructureBytes,
   );
   if (directory.machine !== (kind === "cubin" ? 190 : 224))
     rejectGpu("GPU entry kind disagrees with ELF machine");
   if (kind === "cubin") {
     onTarget?.(readCudaTarget(source, directory));
-    const coverage = await cudaKernels(source, directory, onKernel);
+    const coverage = await cudaKernels(source, directory, onKernel, budgets);
     return {
       coverage,
       limitations: [
@@ -152,7 +168,7 @@ export const readGpuElfKernels = async (
       ],
     };
   }
-  const metadata = await readAmdElfMetadata(source, directory);
+  const metadata = await readAmdElfMetadata(source, directory, budgets);
   const parsed = amdKernels(
     source,
     metadata.ok ? metadata.value : metadata.error.partial,
@@ -165,11 +181,12 @@ export const readGpuElfKernels = async (
 const indexCudaMetadata = async (
   source: GpuSource,
   directory: NativeSectionDirectory,
+  budgets?: GpuCodeObjectsBudgets,
 ) => {
   const infosByText = new Map<number, NativeSection[]>(),
     sharedByText = new Map<number, NativeSection[]>();
   const registerFacts = new Map<string, Map<number, GpuLocation>>();
-  const budget = new CudaMetadataBudget(),
+  const budget = new CudaMetadataBudget(budgets),
     seenMetadata = new Set<string>();
   for (const row of directory.sections) {
     const map =
@@ -298,8 +315,9 @@ const cudaKernels = async (
   source: GpuSource,
   directory: NativeSectionDirectory,
   onKernel: (kernel: GpuKernel) => void,
+  budgets?: GpuCodeObjectsBudgets,
 ): Promise<"complete" | "partial"> => {
-  const index = await indexCudaMetadata(source, directory);
+  const index = await indexCudaMetadata(source, directory, budgets);
   const extendedTables = new ElfSymbolSectionIndexTables(directory.sections);
   let complete = index.allNamesKnown;
   let symbolTables = 0;
@@ -414,6 +432,9 @@ export interface AmdElfMetadata {
   readonly targetIdentity: AmdGpuTargetIdentity | null;
   readonly targetMetadata: import("../domain/gpu/gpuCodeObjects.js").GpuObject["amd_target_metadata"];
   readonly limitations: string[];
+  /** PAL-ABI pipeline declarations; null unless the ELF declares the PAL ABI. */
+  readonly pal: AmdPalNotes | null;
+  /** HSA-ABI kernel declaration arrays, retained for selected projection. */
   readonly notes: {
     section: NativeSection;
     noteOffset: number;
@@ -422,21 +443,56 @@ export interface AmdElfMetadata {
     kernels: unknown[];
   }[];
 }
+/** HSA notes declare an optional target and the kernel declaration array. */
+const readHsaNote = (metadata: Record<string, unknown>) => {
+  const target = amdString(metadata["amdhsa.target"]);
+  const kernels = metadata["amdhsa.kernels"];
+  return {
+    target,
+    target_state: !Object.hasOwn(metadata, "amdhsa.target")
+      ? ("absent" as const)
+      : target === null
+        ? ("invalid" as const)
+        : ("declared" as const),
+    kernels: Array.isArray(kernels) ? (kernels as unknown[]) : null,
+  };
+};
+/**
+ * NT_AMD_HSA_METADATA/ISA_NAME (10/11) carry HSA YAML; NT_AMD_PAL_METADATA
+ * (12) is PAL's legacy register-pair blob. Neither is MessagePack.
+ */
+const legacyAmdNoteLimitation = (abi: AmdGpuAbi, type: number) =>
+  abi === "amdhsa" && (type === 10 || type === 11)
+    ? "Legacy AMDGPU YAML metadata is outside MessagePack coverage"
+    : abi === "amdpal" && type === 12
+      ? "Legacy AMDGPU PAL register metadata is outside MessagePack coverage"
+      : null;
 /** One bounded parsed owner for target discovery and later selected kernel projection. */
 export const readAmdElfMetadata = async (
   source: GpuSource,
   directory: NativeSectionDirectory,
+  budgets?: Pick<
+    GpuCodeObjectsBudgets,
+    | "maxMetadataBytes"
+    | "maxParserVisits"
+    | "maxParserEntries"
+    | "maxTokenBytes"
+  >,
 ): Promise<
   Result<
     AmdElfMetadata,
     { kind: "incomplete-amd-metadata"; cause: unknown; partial: AmdElfMetadata }
   >
 > => {
+  const maxMetadataBytes =
+    budgets?.maxMetadataBytes ?? DEFAULT_GPU_METADATA_BYTES;
   const limitations: string[] = [];
   const notes: AmdElfMetadata["notes"] = [];
   let retainedBytes = 0;
   let unsupportedNotes = false;
   let targetMetadata: AmdElfMetadata["targetMetadata"] = null;
+  let pal: AmdPalMetadataReader | null = null;
+  const valueBudget = new AmdMetadataValueBudget();
   const observed = (): AmdElfMetadata => {
     const targets = new Set(
       (targetMetadata?.notes ?? []).flatMap(({ target }) =>
@@ -473,14 +529,25 @@ export const readAmdElfMetadata = async (
         (noteTarget === null && processor !== null
           ? { key: processor, processor }
           : null));
-    return { target, targetIdentity, targetMetadata, limitations, notes };
+    return {
+      target,
+      targetIdentity,
+      targetMetadata,
+      limitations,
+      pal: pal?.result() ?? null,
+      notes,
+    };
   };
   try {
-    if (directory.machine !== 224)
+    if (directory.machine !== 224 || directory.elf_os_abi === null)
       rejectGpu("AMDGPU metadata requires an AMDGPU ELF machine");
+    const osAbi = directory.elf_os_abi!;
+    const abi = readAmdGpuElfAbi(osAbi);
     targetMetadata = {
       flags: `0x${directory.flags.toString(16).padStart(8, "0")}`,
       processor: readAmdGpuElfProcessor(directory.flags),
+      os_abi: osAbi,
+      abi,
       header_location: {
         container_id: source.containerId,
         offset: 0,
@@ -491,15 +558,28 @@ export const readAmdElfMetadata = async (
       note_coverage: "partial",
       notes: [],
     };
+    // Each ABI defines its own note schema. Mesa3D and unrecognized ABIs have
+    // none within coverage, so their notes stay unexamined rather than being
+    // read under another ABI's schema.
+    if (abi === "mesa3d" || abi === "unknown")
+      throw new BinaryFormatFailure(
+        "unsupported",
+        abi === "mesa3d"
+          ? "AMDGPU Mesa3D-ABI metadata is outside HSA kernel and PAL pipeline coverage"
+          : `AMDGPU ELF OS ABI ${String(osAbi)} is not a recognized AMDGPU runtime ABI; its metadata is outside coverage`,
+      );
+    if (abi === "amdpal") pal = new AmdPalMetadataReader();
 
     for (const section of directory.sections) {
       if (elfNoteSectionStorage(section) === "not-note") continue;
       const sectionSize = gpuCount(section.size);
-      if (sectionSize > AMD_METADATA_BYTES - retainedBytes)
+      if (sectionSize > maxMetadataBytes - retainedBytes)
         throw new BinaryResourceFailure(
           "structure",
-          AMD_METADATA_BYTES,
-          "AMDGPU ELF note discovery exceeds the 8 MiB retained metadata budget",
+          maxMetadataBytes,
+          `AMDGPU ELF note discovery exceeds the ${formatGpuByteBudget(maxMetadataBytes)} retained metadata budget`,
+          GPU_METADATA_BYTES_LIMIT,
+          "bytes",
         );
       retainedBytes += sectionSize;
       const bytes = await sectionBytes(source, section);
@@ -529,31 +609,42 @@ export const readAmdElfMetadata = async (
           .toString("latin1")
           .replace(/\0$/u, "");
         if (vendor === "AMDGPU" && type === 32) {
+          const location = site(source, section, desc, size);
           const metadata = amdRecord(
-            readAmdMetadata(bytes.subarray(desc, desc + size)),
+            readAmdMetadata(
+              bytes.subarray(desc, desc + size),
+              // PAL register maps are keyed by unsigned register offsets.
+              pal === null ? "string" : "string-or-unsigned",
+              valueBudget,
+              budgets,
+            ),
           );
           if (metadata === null) rejectGpu("AMDGPU metadata is not a map");
-          const target = amdString(metadata?.["amdhsa.target"]);
-          const target_state = !Object.hasOwn(metadata!, "amdhsa.target")
-            ? "absent"
-            : target === null
-              ? "invalid"
-              : "declared";
-          if (target_state === "invalid") unsupportedNotes = true;
+          // The PAL schema declares no target; e_flags identify the processor.
+          const hsa = pal === null ? readHsaNote(metadata!) : null;
           targetMetadata.notes.push({
-            target,
-            target_state,
-            location: site(source, section, desc, size),
+            target: hsa?.target ?? null,
+            target_state: hsa?.target_state ?? "absent",
+            location,
           });
-          const kernels = metadata?.["amdhsa.kernels"];
-          if (!Array.isArray(kernels))
+          if (hsa?.target_state === "invalid") unsupportedNotes = true;
+          if (hsa === null) pal!.read(metadata!, location);
+          else if (hsa.kernels === null)
             return rejectGpu("AMDGPU metadata has no valid kernel array");
-          notes.push({ section, noteOffset: p, desc, size, kernels });
-        } else if (vendor === "AMD" && (type === 10 || type === 11)) {
-          unsupportedNotes = true;
-          limitations.push(
-            "Legacy AMDGPU YAML metadata is outside MessagePack coverage",
-          );
+          else
+            notes.push({
+              section,
+              noteOffset: p,
+              desc,
+              size,
+              kernels: hsa.kernels,
+            });
+        } else if (vendor === "AMD") {
+          const legacy = legacyAmdNoteLimitation(abi, type);
+          if (legacy !== null) {
+            unsupportedNotes = true;
+            limitations.push(legacy);
+          }
         }
         p += next;
       }
@@ -562,7 +653,13 @@ export const readAmdElfMetadata = async (
       unsupportedNotes || directory.sections.length === 0
         ? "partial"
         : "complete";
-    if (notes.length === 0)
+    if (pal !== null) {
+      if (pal.result() === null)
+        throw new BinaryFormatFailure(
+          "unsupported",
+          "No AMDGPU PAL MessagePack pipeline metadata was available",
+        );
+    } else if (notes.length === 0)
       throw new BinaryFormatFailure(
         "unsupported",
         "No AMDGPU v3+ MessagePack kernel metadata was available",
@@ -583,6 +680,7 @@ const amdKernels = (
     value: prepared.target,
     identity: prepared.targetIdentity,
     amdMetadata: prepared.targetMetadata,
+    amdPal: prepared.pal?.metadata ?? null,
     scope: "amdgpu",
   });
   for (const {
@@ -640,8 +738,12 @@ const amdKernels = (
       onKernel(kernel);
     }
   }
+  const limitations = [
+    ...prepared.limitations,
+    ...(prepared.pal?.limitations ?? []),
+  ];
   return {
-    limitations: prepared.limitations,
-    coverage: prepared.limitations.length === 0 ? "complete" : "partial",
+    limitations,
+    coverage: limitations.length === 0 ? "complete" : "partial",
   };
 };

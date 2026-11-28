@@ -4,6 +4,7 @@ import { Client } from "@modelcontextprotocol/client";
 
 import { createOwnedMcpStdioTransport } from "./owned-mcp-stdio.mjs";
 import { VerifierFixture, withVerifierFixture } from "./verifier-fixture.mjs";
+import { completeEvidenceClient } from "./complete-evidence.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -68,7 +69,9 @@ const listPackagedTools = async (profile, packageRoot) => {
       expectedCommand: null,
       sweepTokenOwnedProcesses: true,
     });
-    const client = new Client({ name: "rea-advertised-catalog", version: "1" });
+    const client = completeEvidenceClient(
+      new Client({ name: "rea-advertised-catalog", version: "1" }),
+    );
     fixture.releaseAfter(() => client.close());
     try {
       await client.connect(transport);

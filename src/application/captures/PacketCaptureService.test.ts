@@ -66,6 +66,7 @@ it("retains provider metadata in a late-cancellation observation", async () => {
   const relationshipCoverage = {
     status: "unknown",
     reason: "Packet relationships are not reported.",
+    limited_directions: ["callers", "callees"] as ["callers", "callees"],
   } as const;
   const execution = createAnalysisExecution(report, provider, {
     subject,

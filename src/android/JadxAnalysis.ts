@@ -299,16 +299,13 @@ const searchClasses = async (
 ): Promise<JsonValue> => {
   const matchOffset = request.input.offset ?? 0;
   const matchLimit = request.input.limit;
-  const stopAfter =
-    matchLimit === undefined ? undefined : matchOffset + matchLimit;
+  // One match past the page proves whether another page follows.
+  const stopAfter = matchOffset + matchLimit;
   const matches: string[] = [];
   const maximumPageSize = 4096;
   let offset = 0;
   do {
-    const pageSize =
-      stopAfter === undefined
-        ? maximumPageSize
-        : Math.min(maximumPageSize, stopAfter - matches.length + 1);
+    const pageSize = Math.min(maximumPageSize, stopAfter - matches.length + 1);
     const page = await tools.listClasses({
       query: request.input.query,
       offset,
@@ -341,14 +338,10 @@ const searchClasses = async (
       );
     matches.push(...page.items);
     offset = page.next_offset;
-    if (stopAfter !== undefined && matches.length > stopAfter) break;
+    if (matches.length > stopAfter) break;
   } while (offset < loaded.class_count);
-  const pagedMatches =
-    matchLimit === undefined
-      ? matchOffset === 0
-        ? matches
-        : matches.slice(matchOffset)
-      : matches.slice(matchOffset, matchOffset + matchLimit);
+  const pagedMatches = matches.slice(matchOffset, stopAfter);
+  const nextOffset = matches.length > stopAfter ? stopAfter : null;
   const truncated =
     pagedMatches.length < matches.length || offset < loaded.class_count;
   const occurrences = new Map<string, number>();
@@ -362,6 +355,7 @@ const searchClasses = async (
     query: request.input.query,
     total_classes: loaded.class_count,
     matches: pagedMatches,
+    next_offset: nextOffset,
     duplicate_names: duplicateNames,
     coverage: truncated ? "partial" : "complete",
   });

@@ -130,8 +130,9 @@ coverage, and executes no bytecode.
 
 The selected file is limited to 64 MiB by default (512 MiB maximum). At most
 64 chunks and 4096 atoms are examined by default, and at most 65536 export,
-import, and lambda rows together. A refusal at this fixed row ceiling reports
-`max_table_rows` in `reported_limits`. It has no caller override.
+import, and lambda rows together (`max_table_rows`, up to 1,048,576). A refusal
+at any of these budgets reports `details.limit` with the field, its effective
+value, range and default; raise it on the next call.
 
 Malformed `FOR1`/`BEAM` headers, truncated
 chunks, and `AtU8` names that are not valid UTF-8 fail without partial success.

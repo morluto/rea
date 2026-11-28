@@ -1,7 +1,10 @@
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  invalidAnalysisViewSubject,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import { z } from "zod";
 import { uniqueSorted } from "../canonicalOrdering.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
   wasmArtifactSchema,
@@ -83,14 +86,8 @@ export const projectWasmArtifactView = (
     SummaryAnalysisView | z.output<typeof wasmViewRequestSchema>
   >(admitted, "summary", "wasm");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message: "WASM Evidence supports summary and wasm views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "WASM Evidence supports summary and wasm views.",
     );
   const parsed = readWasmArtifact(parent);
   if (!parsed.ok) return parsed;
@@ -101,15 +98,8 @@ export const projectWasmArtifactView = (
       evidenceSubjectTarget(parent.subject),
     )
   )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message:
-            "WASM parent Evidence subject must identify the report's file format and SHA-256.",
-        },
-      ]),
+    return invalidAnalysisViewSubject(
+      "WASM parent Evidence subject must identify the report's file format and SHA-256.",
     );
   const limitations = uniqueSorted([
     ...parent.limitations,
@@ -163,14 +153,9 @@ export const projectWasmArtifactView = (
     });
   if (view.facet === "tool_profile") {
     if (view.offset !== 0)
-      return err(
-        analysisViewInputError([
-          {
-            path: ["view", "offset"],
-            reason: "invalid_value",
-            message: "Singleton tool_profile requires offset 0.",
-          },
-        ]),
+      return invalidAnalysisView(
+        "Singleton tool_profile requires offset 0.",
+        "offset",
       );
     return ok({
       kind: "wasm" as const,

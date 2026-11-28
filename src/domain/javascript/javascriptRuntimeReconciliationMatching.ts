@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import { createJavaScriptApplicationEdge } from "./javascriptApplicationGraph.js";
 import type { ApplicationEdge } from "./javascriptApplicationGraphSchemas.js";
 import type { ApplicationGraphEvidence } from "./javascriptApplicationEvidenceSchemas.js";
@@ -285,13 +286,13 @@ const indexCandidates = (
   >();
   for (const candidate of candidates) {
     for (const { sha256 } of candidate.digests)
-      appendIndex(
+      appendToMapList(
         byCategoryDigest,
         categoryDigestKey(candidate.category, sha256),
         candidate,
       );
     for (const path of candidate.paths)
-      appendIndex(
+      appendToMapList(
         byLayerCategoryPath,
         layerCategoryPathKey(candidate.layer.layerId, candidate.category, path),
         candidate,
@@ -300,7 +301,7 @@ const indexCandidates = (
       for (const { path, sourcePath } of candidate.nativeDeclarationPaths[
         style
       ])
-        appendIndex(
+        appendToMapList(
           byNativeDeclarationPath,
           `${style}\0${layerCategoryPathKey(candidate.layer.layerId, candidate.category, path)}`,
           { candidate, sourcePath },
@@ -354,16 +355,6 @@ const indexContainingAssets = (
     }
   }
   return result;
-};
-
-const appendIndex = <Value>(
-  index: Map<string, Value[]>,
-  key: string,
-  candidate: Value,
-): void => {
-  const values = index.get(key);
-  if (values === undefined) index.set(key, [candidate]);
-  else values.push(candidate);
 };
 
 const categoryDigestKey = (category: string, digest: string): string =>

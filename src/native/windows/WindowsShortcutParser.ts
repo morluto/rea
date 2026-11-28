@@ -16,13 +16,16 @@ import {
   BinaryReader,
 } from "../../domain/binaryContainer.js";
 import { malformedInput } from "../../domain/parseFailure.js";
+import {
+  formatWindowsGuid,
+  SHELL_LINK_CLSID,
+  SHELL_LINK_HEADER_BYTES,
+} from "../../domain/windows/windowsShortcutHeader.js";
 import { byteToHex } from "../../kernel/byteToHex.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 type Artifact = WindowsShortcut["artifact"];
 
-export const SHELL_LINK_CLSID = "00021401-0000-0000-C000-000000000046";
-const HEADER_BYTES = 76;
 const ENVIRONMENT_TARGET_SIGNATURE = 0xa0000001;
 const FILETIME_UNIX_EPOCH = 116444736000000000n;
 const UUID_UNIX_EPOCH = 0x01b21dd213814000n;
@@ -168,22 +171,6 @@ const namedBits = (
   raw,
   decoded: names.flatMap(([bit, name]) => ((raw & bit) !== 0 ? [name] : [])),
 });
-
-const formatGuid = (reader: BinaryReader, offset: number): string => {
-  const { bytes } = reader;
-  const d1 = reader.u32(offset).toString(16).padStart(8, "0");
-  const d2 = reader
-    .u16(offset + 4)
-    .toString(16)
-    .padStart(4, "0");
-  const d3 = reader
-    .u16(offset + 6)
-    .toString(16)
-    .padStart(4, "0");
-  const d4 = bytes.subarray(offset + 8, offset + 10).toString("hex");
-  const d5 = bytes.subarray(offset + 10, offset + 16).toString("hex");
-  return `${d1}-${d2}-${d3}-${d4}-${d5}`.toUpperCase();
-};
 
 const fileTime = (raw: bigint): WindowsShortcut["header"]["creation_time"] => {
   if (raw === 0n) return { raw: "0", iso8601: null };
@@ -348,9 +335,11 @@ type RecordedPath = {
 };
 
 type TargetPathUncertainty = {
+  linkInfo: boolean;
   local: boolean;
   network: boolean;
   suffix: boolean;
+  relativePath: boolean;
   environment: boolean;
 };
 
@@ -524,9 +513,11 @@ const observationsOf = (
         : "";
   const targets = targetPaths(report, uncertainty);
   const targetPathUnknown =
+    uncertainty.linkInfo ||
     uncertainty.local ||
     uncertainty.network ||
     uncertainty.suffix ||
+    uncertainty.relativePath ||
     uncertainty.environment;
   const iconDifference = iconDiffersFromTarget(
     report.string_data.icon_location,
@@ -582,7 +573,7 @@ const decodeIdListItem = (
       size,
       type_byte: typeByte,
       sort_index: data[1] ?? 0,
-      folder_id: formatGuid(
+      folder_id: formatWindowsGuid(
         new BinaryReader(data, true, "windows-shortcut"),
         2,
       ),
@@ -981,20 +972,24 @@ const parseLinkInfo = (
       stringOffset,
     ),
   };
+  const missingUnicodeOffsets = declaresUnicodeOffsets && !hasUnicodeOffsets;
   walk.pathUncertainty.local ||=
     (flags & 0x1) !== 0 &&
+    (missingUnicodeOffsets ||
+      selectedPathUnreadable(
+        localOffset,
+        info.local_base_path,
+        localUnicodeOffset,
+        info.local_base_path_unicode,
+      ));
+  walk.pathUncertainty.suffix ||=
+    missingUnicodeOffsets ||
     selectedPathUnreadable(
-      localOffset,
-      info.local_base_path,
-      localUnicodeOffset,
-      info.local_base_path_unicode,
+      suffixOffset,
+      info.common_path_suffix,
+      suffixUnicodeOffset,
+      info.common_path_suffix_unicode,
     );
-  walk.pathUncertainty.suffix ||= selectedPathUnreadable(
-    suffixOffset,
-    info.common_path_suffix,
-    suffixUnicodeOffset,
-    info.common_path_suffix_unicode,
-  );
   walk.pathUncertainty.network ||=
     (flags & 0x2) !== 0 &&
     networkOffset !== 0 &&
@@ -1115,10 +1110,10 @@ const decodeExtra = (
     }
     const machine = latin1Z(payload.subarray(8, 24));
     charge(walk, machine.length);
-    const droid0 = formatGuid(reader, 24);
-    const droid1 = formatGuid(reader, 40);
-    const birth0 = formatGuid(reader, 56);
-    const birth1 = formatGuid(reader, 72);
+    const droid0 = formatWindowsGuid(reader, 24);
+    const droid1 = formatWindowsGuid(reader, 40);
+    const birth0 = formatWindowsGuid(reader, 56);
+    const birth1 = formatWindowsGuid(reader, 72);
     return {
       kind: "tracker",
       machine_id: machine,
@@ -1141,7 +1136,7 @@ const decodeExtra = (
   if (signature === 0xa000000b) {
     return {
       kind: "known_folder",
-      folder_id: formatGuid(reader, 0),
+      folder_id: formatWindowsGuid(reader, 0),
       item_offset: reader.u32(16),
     };
   }
@@ -1351,20 +1346,20 @@ export const parseWindowsShortcut = async (
   signal?: AbortSignal,
 ): Promise<WindowsShortcut> => {
   assertArtifactReadActive(signal);
-  if (bytes.length < HEADER_BYTES)
+  if (bytes.length < SHELL_LINK_HEADER_BYTES)
     throw malformedInput(
       "windows-shortcut",
       `File is ${String(bytes.length)} bytes, below the 76-byte ShellLinkHeader`,
     );
   const reader = new BinaryReader(bytes, true, "windows-shortcut");
   const headerSize = reader.u32(0);
-  if (headerSize !== HEADER_BYTES)
+  if (headerSize !== SHELL_LINK_HEADER_BYTES)
     throw malformedInput(
       "windows-shortcut",
       `HeaderSize ${String(headerSize)} is not 0x4C`,
       { offset: 0, field: "HeaderSize" },
     );
-  const clsid = formatGuid(reader, 4);
+  const clsid = formatWindowsGuid(reader, 4);
   if (clsid !== SHELL_LINK_CLSID)
     throw malformedInput(
       "windows-shortcut",
@@ -1374,7 +1369,7 @@ export const parseWindowsShortcut = async (
   const flags = reader.u32(20);
   const unicode = (flags & 0x00000080) !== 0;
   const header: WindowsShortcut["header"] = {
-    location: { offset: 0, bytes: HEADER_BYTES },
+    location: { offset: 0, bytes: SHELL_LINK_HEADER_BYTES },
     header_size: headerSize,
     clsid,
     link_flags: namedBits(flags, LINK_FLAG_NAMES),
@@ -1388,16 +1383,18 @@ export const parseWindowsShortcut = async (
     hotkey: hotKey(reader.u16(64)),
   };
   const walk: Walk = {
-    offset: HEADER_BYTES,
+    offset: SHELL_LINK_HEADER_BYTES,
     issues: [],
     failingOffset: null,
     stopped: false,
     stringBytes: 0,
     maxStringBytes: input.max_string_bytes,
     pathUncertainty: {
+      linkInfo: false,
       local: false,
       network: false,
       suffix: false,
+      relativePath: false,
       environment: false,
     },
   };
@@ -1409,6 +1406,9 @@ export const parseWindowsShortcut = async (
     (flags & 0x00000002) !== 0 && !walk.stopped
       ? parseLinkInfo(reader, walk)
       : null;
+  if ((flags & 0x00000002) !== 0 && linkInfo === null) {
+    walk.pathUncertainty.linkInfo = true;
+  }
   const stringData: WindowsShortcut["string_data"] = {
     name: null,
     relative_path: null,
@@ -1432,6 +1432,9 @@ export const parseWindowsShortcut = async (
       stringData[key] = field;
       if (field === null) break;
     }
+  }
+  if ((flags & 0x00000008) !== 0 && stringData.relative_path === null) {
+    walk.pathUncertainty.relativePath = true;
   }
   const extraData = !walk.stopped
     ? await parseExtraData(reader, walk, input.max_extra_data_blocks, signal)

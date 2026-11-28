@@ -1,14 +1,14 @@
 import { decodeStrictUtf8 } from "../../../domain/strictUtf8.js";
-import { fixedAllowanceOptions } from "../../../domain/fixedAllowanceRemediation.js";
 import { getHeapStatistics } from "node:v8";
-import { LosslessNumber, isSafeNumber } from "lossless-json";
+import { recordedJsonNumber } from "../../../domain/exactJsonNumber.js";
+import { LosslessNumber } from "lossless-json";
 import type {
   ArtifactEntry,
   ArtifactReader,
 } from "../../../resources/index.js";
 import {
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
+  unsupportedTarget,
 } from "../../../domain/analysisErrorCore.js";
 import {
   isParseLimit,
@@ -16,7 +16,8 @@ import {
 } from "../../../domain/parseFailureAnalysisError.js";
 import {
   PLAYWRIGHT_TRACE_OPERATION,
-  PLAYWRIGHT_TRACE_LIMITS,
+  playwrightTraceLimitRecovery,
+  type PlaywrightTraceLimits,
   type TraceMember,
   type TraceStream,
   type TraceEvent,
@@ -46,9 +47,7 @@ const RETAINED_TRACE_TYPES: ReadonlySet<string> = new Set([
 
 const text = (value: unknown) => (typeof value === "string" ? value : null);
 const number = (value: unknown) =>
-  value instanceof LosslessNumber && isSafeNumber(value.value)
-    ? Number(value.value)
-    : null;
+  value instanceof LosslessNumber ? recordedJsonNumber(value.value) : null;
 
 const ensureTraceHeapHeadroom = (
   inputBytes: number,
@@ -65,7 +64,10 @@ const ensureTraceHeapHeadroom = (
     );
 };
 
-const readRecord = (bytes: Buffer): SelectiveCaptureJsonResult => {
+const readRecord = (
+  bytes: Buffer,
+  limits: PlaywrightTraceLimits,
+): SelectiveCaptureJsonResult => {
   ensureTraceHeapHeadroom(bytes.length, 4);
   let value: string;
   try {
@@ -83,7 +85,9 @@ const readRecord = (bytes: Buffer): SelectiveCaptureJsonResult => {
     "Playwright trace",
     RETAINED_TRACE_TYPES,
     {
-      maximumNodes: PLAYWRIGHT_TRACE_LIMITS.factsBytes / 256,
+      // Each parser node is charged against a share of the retained facts.
+      maximumNodes: Math.floor(limits.facts_bytes / 256),
+      maximumDepth: limits.nesting_depth,
       beforeMaterialize: () => ensureTraceHeapHeadroom(bytes.length, 64),
     },
   );
@@ -144,9 +148,10 @@ class TraceStreamRead {
     }
     const version = number(raw.version);
     if (version !== null && version !== 10)
-      throw new AnalysisUnsupportedTargetError(
+      throw unsupportedTarget(
         PLAYWRIGHT_TRACE_OPERATION,
         inventory.artifact.path,
+        "playwright-trace",
         "Only Playwright trace version 10 is supported.",
       );
     if (version !== 10) {
@@ -170,13 +175,14 @@ class TraceStreamRead {
     const { inventory, member } = this.input;
     let parsed: SelectiveCaptureJsonResult;
     try {
-      parsed = readRecord(line.bytes);
+      parsed = readRecord(line.bytes, inventory.limits);
     } catch (cause) {
       if (!(cause instanceof CaptureFormatError)) throw cause;
       if (isParseLimit(cause, CAPTURE_FORMAT)) {
         const { name, maximum } = cause.failure.limit;
         if (name !== "nesting-depth" && name !== "parser-nodes") throw cause;
         const nesting = name === "nesting-depth";
+        // Parser nodes are derived from facts_bytes, so that field recovers them.
         throw parseLimitConstraint(
           PLAYWRIGHT_TRACE_OPERATION,
           "memory",
@@ -185,15 +191,9 @@ class TraceStreamRead {
             reportedLimitContext: {
               [nesting ? "nesting_levels" : "parser_nodes"]: maximum,
             },
-            ...fixedAllowanceOptions(
-              nesting
-                ? "The Playwright trace record nesting allowance"
-                : "The Playwright trace record parser allowance",
-              "parser",
-              {
-                limit: maximum,
-                unit: CAPTURE_LIMITS[name].unit,
-              },
+            ...playwrightTraceLimitRecovery(
+              nesting ? "nesting_depth" : "facts_bytes",
+              inventory.limits,
             ),
           },
         );
@@ -241,16 +241,20 @@ class TraceStreamRead {
     }
     let event: TraceEvent | undefined;
     try {
-      event = projectTraceEvent(raw, {
-        event_id: traceIdentity("trace_event", [member.member_id, line.line]),
-        stream_id: this.stream.stream_id,
-        ordinal: line.line - 1,
-        source: {
-          member_id: member.member_id,
-          line: line.line,
-          record_pointer: raw.type === "resource-snapshot" ? "/snapshot" : "",
+      event = projectTraceEvent(
+        raw,
+        {
+          event_id: traceIdentity("trace_event", [member.member_id, line.line]),
+          stream_id: this.stream.stream_id,
+          ordinal: line.line - 1,
+          source: {
+            member_id: member.member_id,
+            line: line.line,
+            record_pointer: raw.type === "resource-snapshot" ? "/snapshot" : "",
+          },
         },
-      });
+        inventory.limits.nesting_depth,
+      );
     } catch (cause) {
       if (!(cause instanceof CaptureFormatError)) throw cause;
       this.diagnostic(line.line, "malformed-record", cause.message);

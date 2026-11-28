@@ -20,7 +20,8 @@ requires an absolute filesystem path and preserves that exact selection:
 ```
 
 Pass `--offset` and `--limit` (MCP `offset` and `limit`) to page the ranges.
-The default page starts at 0 and returns at most 256 ranges.
+The default page starts at 0 and returns at most 64 ranges, as
+`inspect_pe_unwind_ranges` does.
 
 ## Observations
 
@@ -85,7 +86,12 @@ address. In `.eh_frame` they are relative to the GOT: `DT_PLTGOT` when the
 dynamic table names it, otherwise the `.got.plt` or `.got` section address.
 A limitation names the base that was used. When no GOT base is declared,
 those values are unresolved: the affected record is not reported and
-`coverage.status` is `partial`.
+`coverage.status` is `partial`. The dynamic table names a base only when its
+rows are read through `DT_NULL` within the first 4096 entries and every
+nonzero `DT_PLTGOT` names the same address. Rows after `DT_NULL` are ignored.
+A table whose bytes lie outside the file, that disagrees, or that is not read
+through `DT_NULL` leaves the base unresolved; the sections are not used in
+its place.
 
 `debug_frame.status` is `present`, `absent`, `incomplete`, or `unknown`. It
 is `unknown` when the image has no section headers or unreadable section

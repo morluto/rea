@@ -384,7 +384,8 @@ it("rejects a short positional read of an admitted frame range", async () => {
       return bytes.subarray(offset, offset + length);
     }),
   ).rejects.toMatchObject({
-    reason: "format",
+    reason: "integrity",
+    integrityCheck: "read-coverage",
     message: expect.stringMatching(/unwind range.*admitted file extent/iu),
   });
   expect(frameReads).toBe(1);
@@ -937,6 +938,100 @@ it("keeps the GOT unknown when compressed dynamic storage resembles decoded entr
     "A DW_EH_PE_datarel .eh_frame value needs a GOT base that could not be determined; that value is unresolved.",
   );
 });
+
+const DT_NULL = 0;
+const DT_PLTGOT = 3;
+const DT_DEBUG = 21;
+const OTHER_GOT_VA = UNWIND_GOT_VA + 0x1000;
+
+it.each([
+  [
+    "a second DT_PLTGOT names another base",
+    [
+      [DT_PLTGOT, UNWIND_GOT_VA],
+      [DT_PLTGOT, OTHER_GOT_VA],
+      [DT_NULL, 0],
+    ],
+  ],
+  [
+    "the table has no DT_NULL terminator",
+    [
+      [DT_PLTGOT, UNWIND_GOT_VA],
+      [DT_DEBUG, 0],
+    ],
+  ],
+  [
+    "the scan bound ends before DT_NULL",
+    [
+      [DT_PLTGOT, UNWIND_GOT_VA],
+      ...Array.from({ length: 4096 }, () => [DT_DEBUG, 0] as const),
+      [DT_PLTGOT, OTHER_GOT_VA],
+      [DT_NULL, 0],
+    ],
+  ],
+] as const)("keeps the GOT unknown when %s", async (_label, dynamicEntries) => {
+  const report = await parse(
+    elfUnwindFixture({ header: "match", datarel: "dynamic", dynamicEntries }),
+  );
+  const starts = report.ranges.map((range) => range.start);
+  expect(starts).not.toContain(address(UNWIND_FN_A));
+  // The second FDE does not depend on the GOT base.
+  expect(starts).toContain(address(UNWIND_FN_B));
+  expect(report.coverage.status).toBe("partial");
+  expect(report.limitations).toContain(GOT_UNKNOWN);
+});
+
+it("keeps the GOT unknown when PT_DYNAMIC lies outside the file, even with a .got.plt section", async () => {
+  const bytes = elfUnwindFixture({
+    header: "match",
+    datarel: "dynamic",
+    gotPlt: true,
+    dynamicPrograms: 1,
+    dynamicSection: false,
+  });
+  // The single Elf64_Phdr ends the file; move its p_offset to end of file.
+  bytes.writeBigUInt64LE(BigInt(bytes.length), bytes.length - 56 + 8);
+  const report = await parse(bytes);
+  expect(report.ranges.map((range) => range.start)).not.toContain(
+    address(UNWIND_FN_A),
+  );
+  expect(report.coverage.status).toBe("partial");
+  expect(report.limitations).toContain(GOT_UNKNOWN);
+});
+
+it.each([
+  [
+    "a repeated DT_PLTGOT names the same base",
+    [
+      [DT_PLTGOT, UNWIND_GOT_VA],
+      [DT_PLTGOT, UNWIND_GOT_VA],
+      [DT_NULL, 0],
+    ],
+  ],
+  [
+    "a conflicting DT_PLTGOT follows DT_NULL",
+    [
+      [DT_PLTGOT, UNWIND_GOT_VA],
+      [DT_NULL, 0],
+      [DT_PLTGOT, OTHER_GOT_VA],
+    ],
+  ],
+] as const)(
+  "resolves the GOT from DT_PLTGOT when %s",
+  async (_label, dynamicEntries) => {
+    const report = await parse(
+      elfUnwindFixture({ header: "match", datarel: "dynamic", dynamicEntries }),
+    );
+    expect(report.ranges.map((range) => range.start)).toEqual([
+      address(UNWIND_FN_A),
+      address(UNWIND_FN_B),
+    ]);
+    expect(report.coverage.status).toBe("complete");
+    expect(report.limitations).toContain(
+      "DW_EH_PE_datarel .eh_frame values were resolved against the GOT base from DT_PLTGOT.",
+    );
+  },
+);
 
 it("caps .eh_frame_hdr rows at the max_ranges budget and marks the comparison incomplete", async () => {
   const report = await parse(elfUnwindFixture({ header: "duplicate-row" }), {

@@ -32,7 +32,8 @@ const scalarArrayInput = (
     throw invariantViolation("binary plist decoder copy lost its trailer");
   const compatibleLayout = compatibleLayoutResult.value;
   const referenceWidth = compatibleLayout.referenceWidth;
-  const objectCount = Number(compatibleLayout.objectCount);
+  // This private table contains only reachable scalars and the synthetic array.
+  const objectCount = objects.length;
   const rootOffset = bytes.length;
   const rootLength = 10 + objects.length * referenceWidth;
   const tableOffset = rootOffset + rootLength;
@@ -42,17 +43,16 @@ const scalarArrayInput = (
   output[rootOffset + 1] = 0x13;
   output.writeBigUInt64BE(BigInt(objects.length), rootOffset + 2);
   for (const [index, object] of objects.entries()) {
-    let reference = BigInt(object);
+    output.writeBigUInt64BE(
+      compatibleLayout.objectOffset(object),
+      tableOffset + index * 8,
+    );
+    let reference = BigInt(index);
     const offset = rootOffset + 10 + index * referenceWidth;
     for (let byte = referenceWidth - 1; byte >= 0; byte -= 1) {
       output[offset + byte] = Number(reference & 0xffn);
       reference >>= 8n;
     }
-  }
-  let object = 0;
-  for (const offset of compatibleLayout.objectOffsets()) {
-    output.writeBigUInt64BE(offset, tableOffset + object * 8);
-    object += 1;
   }
   output.writeBigUInt64BE(BigInt(rootOffset), tableOffset + objectCount * 8);
   const nextTrailer = output.length - 32;

@@ -138,20 +138,198 @@ it.skipIf(process.platform === "win32")(
 
 it("keeps Termux execution support when launching Chromium on Android", async () => {
   vi.stubEnv("PREFIX", "/ambient/termux");
-  const { options } = await rejectedLaunch(launchScenario, {
-    platform: "android",
-    environment: {
+  const prefixRoot = await createTestTempDirectory("rea-android-termux-");
+  const prefixTmp = join(prefixRoot, "tmp");
+  await mkdir(prefixTmp, { recursive: true });
+  try {
+    const { profile, options } = await rejectedLaunch(launchScenario, {
+      platform: "android",
+      environment: {
+        LANG: "selected-language",
+        PREFIX: prefixRoot,
+      },
+    });
+    expect(profile.startsWith(prefixTmp)).toBe(true);
+    expect(options?.chromiumSandbox).toBe(false);
+    expect(options?.args).toEqual([
+      "--single-process",
+      "--disable-dev-shm-usage",
+    ]);
+    expect(options?.artifactsDir).toBe(join(profile, "playwright-artifacts"));
+    expect(options?.env).toEqual({
       LANG: "selected-language",
-      PREFIX: "/data/data/com.termux/files/usr",
+      TMPDIR: `${prefixRoot}/tmp`,
+      LD_PRELOAD: `${prefixRoot}/lib/libtermux-exec.so`,
+      TERMUX_EXEC__PROC_SELF_EXE: process.execPath,
+    });
+    await expect(access(profile)).rejects.toThrow();
+  } finally {
+    await rm(prefixRoot, { recursive: true, force: true });
+  }
+});
+
+it("places Android profiles and Playwright artifacts under caller TMPDIR or Termux PREFIX/tmp", async () => {
+  const explicitTmp = await createTestTempDirectory("rea-android-tmpdir-");
+  const prefixRoot = await createTestTempDirectory("rea-android-prefix-");
+  const prefixTmp = join(prefixRoot, "tmp");
+  await mkdir(prefixTmp, { recursive: true });
+  try {
+    const withTmpdir = await rejectedLaunch(launchScenario, {
+      platform: "android",
+      environment: {
+        TMPDIR: `  ${explicitTmp}  `,
+        PREFIX: `${prefixRoot}///`,
+      },
+    });
+    expect(withTmpdir.profile.startsWith(explicitTmp)).toBe(true);
+    expect(withTmpdir.options?.artifactsDir).toBe(
+      join(withTmpdir.profile, "playwright-artifacts"),
+    );
+    expect(withTmpdir.options?.env?.TMPDIR).toBe(explicitTmp);
+    expect(withTmpdir.options?.env?.LD_PRELOAD).toBe(
+      `${prefixRoot}/lib/libtermux-exec.so`,
+    );
+    await expect(access(withTmpdir.profile)).rejects.toThrow();
+
+    const withBlankTmpdirAndPrefix = await rejectedLaunch(launchScenario, {
+      platform: "android",
+      environment: {
+        TMPDIR: "   ",
+        PREFIX: `${prefixRoot}///`,
+      },
+    });
+    expect(withBlankTmpdirAndPrefix.profile.startsWith(prefixTmp)).toBe(true);
+    expect(withBlankTmpdirAndPrefix.options?.artifactsDir).toBe(
+      join(withBlankTmpdirAndPrefix.profile, "playwright-artifacts"),
+    );
+    expect(withBlankTmpdirAndPrefix.options?.env?.TMPDIR).toBe(
+      `${prefixRoot}/tmp`,
+    );
+    expect(withBlankTmpdirAndPrefix.options?.env?.LD_PRELOAD).toBe(
+      `${prefixRoot}/lib/libtermux-exec.so`,
+    );
+    await expect(access(withBlankTmpdirAndPrefix.profile)).rejects.toThrow();
+
+    const withBlankPrefixOnly = await rejectedLaunch(launchScenario, {
+      platform: "android",
+      environment: {
+        TMPDIR: explicitTmp,
+        PREFIX: "   ",
+      },
+    });
+    expect(withBlankPrefixOnly.profile.startsWith(explicitTmp)).toBe(true);
+    expect(withBlankPrefixOnly.options?.env?.LD_PRELOAD).toBeUndefined();
+    await expect(access(withBlankPrefixOnly.profile)).rejects.toThrow();
+
+    const nonAndroid = await rejectedLaunch(launchScenario, {
+      platform: "linux",
+      environment: {
+        TMPDIR: explicitTmp,
+        PREFIX: prefixRoot,
+      },
+    });
+    expect(nonAndroid.profile.startsWith(explicitTmp)).toBe(false);
+    expect(nonAndroid.profile.startsWith(prefixTmp)).toBe(false);
+    expect(nonAndroid.options?.artifactsDir).toBe(
+      join(nonAndroid.profile, "playwright-artifacts"),
+    );
+    expect(nonAndroid.options?.args).toEqual([]);
+  } finally {
+    await rm(explicitTmp, { recursive: true, force: true });
+    await rm(prefixRoot, { recursive: true, force: true });
+  }
+});
+
+it("supplies and cleans up an Android artifactsDir for connectOverCDP", async () => {
+  const explicitTmp = await createTestTempDirectory("rea-android-cdp-tmp-");
+  const connectScenario = browserScenarioSchema.parse({
+    browser: {
+      mode: "connect",
+      cdp_endpoint: "http://127.0.0.1:9222",
+      target_id: "page-android",
     },
+    start_url: { url: "https://example.test" },
+    actions: [
+      { step_id: "settle", action: "wait_for_timeout", duration_ms: 1 },
+    ],
   });
-  expect(options?.chromiumSandbox).toBe(false);
-  expect(options?.args).toEqual(["--single-process"]);
-  expect(options?.env).toEqual({
-    LANG: "selected-language",
-    LD_PRELOAD: "/data/data/com.termux/files/usr/lib/libtermux-exec.so",
-    TERMUX_EXEC__PROC_SELF_EXE: process.execPath,
-  });
+  let observedFailureArtifactsDir: string | undefined;
+  let observedSuccessArtifactsDir: string | undefined;
+  const connectOverCDPFail = vi.fn(
+    async (_endpoint: string, options?: { artifactsDir?: string }) => {
+      observedFailureArtifactsDir = options?.artifactsDir;
+      await expect(access(options!.artifactsDir!)).resolves.toBeUndefined();
+      throw new Error("cdp handshake failed");
+    },
+  );
+  const page = {
+    url: () => "https://example.test",
+    emulateMedia: async () => undefined,
+    setViewportSize: async () => undefined,
+    bringToFront: async () => undefined,
+  } as unknown as Page;
+  const closeBrowser = vi.fn(async () => undefined);
+  const connectOverCDPSuccess = vi.fn(
+    async (_endpoint: string, options?: { artifactsDir?: string }) => {
+      observedSuccessArtifactsDir = options?.artifactsDir;
+      await expect(access(options!.artifactsDir!)).resolves.toBeUndefined();
+      return {
+        contexts: () => [
+          {
+            pages: () => [page],
+            newCDPSession: async () =>
+              ({
+                send: async () => ({
+                  targetInfo: { targetId: "page-android" },
+                }),
+                detach: async () => undefined,
+              }) as unknown as CDPSession,
+          } as unknown as BrowserContext,
+        ],
+        close: closeBrowser,
+        isConnected: () => true,
+        version: () => "fixture",
+      } as unknown as Browser;
+    },
+  );
+  try {
+    await expect(
+      openPlaywrightScenarioBrowser(
+        connectScenario,
+        { TMPDIR: explicitTmp },
+        {
+          platform: "android",
+          launcher: {
+            launchPersistentContext: vi.fn(),
+            connectOverCDP: connectOverCDPFail,
+          },
+        },
+      ),
+    ).rejects.toThrow("cdp handshake failed");
+    expect(observedFailureArtifactsDir).toBeDefined();
+    expect(observedFailureArtifactsDir!.startsWith(explicitTmp)).toBe(true);
+    await expect(access(observedFailureArtifactsDir!)).rejects.toThrow();
+
+    const opened = await openPlaywrightScenarioBrowser(
+      connectScenario,
+      { TMPDIR: explicitTmp },
+      {
+        platform: "android",
+        launcher: {
+          launchPersistentContext: vi.fn(),
+          connectOverCDP: connectOverCDPSuccess,
+        },
+      },
+    );
+    expect(observedSuccessArtifactsDir).toBeDefined();
+    expect(observedSuccessArtifactsDir!.startsWith(explicitTmp)).toBe(true);
+    await expect(access(observedSuccessArtifactsDir!)).resolves.toBeUndefined();
+    await opened.cleanup.close();
+    expect(closeBrowser).toHaveBeenCalledTimes(1);
+    await expect(access(observedSuccessArtifactsDir!)).rejects.toThrow();
+  } finally {
+    await rm(explicitTmp, { recursive: true, force: true });
+  }
 });
 
 it("does not launch a browser for an already-cancelled opening", async () => {
@@ -1205,6 +1383,7 @@ it("applies command_timeout_ms to primary target lookup when service workers are
     scenario,
     {},
     {
+      platform: "linux",
       launcher: {
         connectOverCDP,
         launchPersistentContext: async () => {
@@ -1330,6 +1509,7 @@ it("closes a browser that connects after its deadline without waiting to report 
     scenario,
     {},
     {
+      platform: "linux",
       retainCleanup: (lease) => leases.push(lease),
       launcher: {
         connectOverCDP,
@@ -1383,6 +1563,161 @@ it("closes a browser that connects after its deadline without waiting to report 
       await Promise.all(leases.map((lease) => lease.release()));
     } finally {
       vi.useRealTimers();
+    }
+  }
+});
+
+it("retries Android artifactsDir removal after a late handshake without re-closing the browser or blocking later attaches", async () => {
+  vi.useFakeTimers();
+  const explicitTmp = await createTestTempDirectory(
+    "rea-android-late-cleanup-",
+  );
+  const handshake = phaseGate();
+  const browser = {
+    close: vi.fn(async () => undefined),
+    contexts: vi.fn(() => []),
+    isConnected: () => true,
+    version: () => "late-connect-android",
+  };
+  let observedArtifactsDir: string | undefined;
+  const connectOverCDP = vi.fn(
+    async (_endpoint: string, options?: { artifactsDir?: string }) => {
+      observedArtifactsDir = options?.artifactsDir;
+      await handshake.hold();
+      return browser;
+    },
+  );
+  const removeFailure = new Error(
+    "controlled artifacts directory removal failure",
+  );
+  let failRemovalOnce = true;
+  const removeDirectory = vi.fn(async (path: string) => {
+    if (failRemovalOnce && path === observedArtifactsDir) {
+      failRemovalOnce = false;
+      throw removeFailure;
+    }
+    await rm(path, { recursive: true, force: true });
+  });
+  const leases: AnalysisCleanupLease[] = [];
+  const scenario = browserScenarioSchema.parse({
+    browser: {
+      mode: "connect",
+      cdp_endpoint: "http://127.0.0.1:9222",
+      target_id: "late-connect-android-target",
+    },
+    start_url: { url: "https://example.test" },
+    environment: { service_workers: "allow" },
+    command_timeout_ms: 40,
+    actions: scenarioActions,
+  });
+  let secondOpened:
+    | Awaited<ReturnType<typeof openPlaywrightScenarioBrowser>>
+    | undefined;
+  const opening = openPlaywrightScenarioBrowser(
+    scenario,
+    { TMPDIR: explicitTmp },
+    {
+      platform: "android",
+      retainCleanup: (lease) => leases.push(lease),
+      removeDirectory,
+      launcher: {
+        connectOverCDP,
+        launchPersistentContext: async () => {
+          throw new Error("Unexpected launch");
+        },
+      },
+    },
+  ).catch((error: unknown) => error);
+  try {
+    await handshake.reached(opening, "late Android CDP handshake");
+    expect(observedArtifactsDir).toBeDefined();
+    expect(observedArtifactsDir!.startsWith(explicitTmp)).toBe(true);
+    await expect(access(observedArtifactsDir!)).resolves.toBeUndefined();
+    await vi.advanceTimersByTimeAsync(40);
+    const failure = await opening;
+    expect(failure).toMatchObject({
+      reason: "timeout",
+      diagnostics: { phase: "handshake", command_timeout_ms: 40 },
+    });
+    expect(leases).toHaveLength(1);
+    expect(leases[0]).toMatchObject({
+      released: false,
+      cleanupResources: ["browser_transport", "browser_profile"],
+    });
+
+    handshake.release();
+    await expect(leases[0]!.release()).rejects.toBe(removeFailure);
+    expect(browser.close).toHaveBeenCalledOnce();
+    expect(leases[0]).toMatchObject({
+      released: false,
+      cleanupResources: ["browser_profile"],
+    });
+    await expect(access(observedArtifactsDir!)).resolves.toBeUndefined();
+
+    const secondPage = {
+      url: () => "https://example.test",
+      emulateMedia: async () => undefined,
+      setViewportSize: async () => undefined,
+      bringToFront: async () => undefined,
+    } as unknown as Page;
+    const secondClose = vi.fn(async () => undefined);
+    secondOpened = await openPlaywrightScenarioBrowser(
+      scenario,
+      { TMPDIR: explicitTmp },
+      {
+        platform: "android",
+        removeDirectory,
+        launcher: {
+          launchPersistentContext: async () => {
+            throw new Error("Unexpected launch");
+          },
+          connectOverCDP: async () =>
+            ({
+              contexts: () => [
+                {
+                  pages: () => [secondPage],
+                  newCDPSession: async () =>
+                    ({
+                      send: async () => ({
+                        targetInfo: { targetId: "late-connect-android-target" },
+                      }),
+                      detach: async () => undefined,
+                    }) as unknown as CDPSession,
+                } as unknown as BrowserContext,
+              ],
+              close: secondClose,
+              isConnected: () => true,
+              version: () => "second-attach",
+            }) as unknown as Browser,
+        },
+      },
+    );
+
+    await leases[0]!.release();
+    expect(browser.close).toHaveBeenCalledOnce();
+    expect(leases[0]).toMatchObject({
+      released: true,
+      cleanupResources: [],
+    });
+    await expect(access(observedArtifactsDir!)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+
+    await secondOpened.cleanup.close();
+    secondOpened = undefined;
+    expect(secondClose).toHaveBeenCalledOnce();
+  } finally {
+    failRemovalOnce = false;
+    handshake.release();
+    try {
+      await opening;
+      await secondOpened?.cleanup.close();
+      await Promise.all(
+        leases.map((lease) => lease.release().catch(() => undefined)),
+      );
+    } finally {
+      vi.useRealTimers();
+      await rm(explicitTmp, { recursive: true, force: true });
     }
   }
 });

@@ -1,10 +1,8 @@
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { text } from "node:stream/consumers";
+import { buffer, text } from "node:stream/consumers";
 
 import { describe, expect, it } from "vitest";
 
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { createTestTempFile } from "../../tests/fixtures/temporaryDirectory.js";
 import {
   buildWxapkg,
   wxapkgEncryptedBytes,
@@ -19,14 +17,8 @@ import {
 import { hasWxapkgHeader } from "../domain/wxapkgFormat.js";
 import { WxapkgArtifactReader } from "./WxapkgArtifactReader.js";
 
-const writePackage = async (bytes: Buffer): Promise<string> => {
-  const path = join(
-    await createTestTempDirectory("rea-wxapkg-"),
-    "package.wxapkg",
-  );
-  await writeFile(path, bytes);
-  return path;
-};
+const writePackage = (bytes: Buffer): Promise<string> =>
+  createTestTempFile("rea-wxapkg-", "package.wxapkg", bytes);
 
 const list = async (
   reader: WxapkgArtifactReader,
@@ -109,10 +101,9 @@ describe("WxapkgArtifactReader", () => {
       buildWxapkg([{ path: "big.bin", data }]),
       async (reader) => {
         const [entry] = await list(reader);
-        const chunks: Buffer[] = [];
-        for await (const chunk of await reader.open(entry!))
-          chunks.push(chunk as Buffer);
-        expect(Buffer.concat(chunks).equals(data)).toBe(true);
+        expect((await buffer(await reader.open(entry!))).equals(data)).toBe(
+          true,
+        );
       },
     );
   });
@@ -192,6 +183,106 @@ describe("WxapkgArtifactReader", () => {
   });
 });
 
+describe("WxapkgArtifactReader coverage", () => {
+  const coverageOf = (bytes: Buffer) =>
+    withReader(bytes, async (reader) => {
+      let observed: { status: string; limitations: readonly string[] } = {
+        status: "none",
+        limitations: [],
+      };
+      await list(reader, {
+        onCoverage: ({ status, limitations }) => {
+          observed = { status, limitations: [...limitations] };
+        },
+      });
+      return observed;
+    });
+  const unaccounted = (bytes: number, ranges: number, first: number) =>
+    `${String(bytes)} byte(s) in ${String(ranges)} range(s), the first at offset ${String(first)}, lie outside the member table and every member and were not exposed as entries.`;
+
+  it("is complete when members tile the data region, including aliases", async () => {
+    for (const bytes of [
+      buildWxapkg(members),
+      buildWxapkg(
+        [
+          { path: "a.js", data: "AAAA" },
+          { path: "b.js", data: "AA" },
+        ],
+        { aliasOffsets: true },
+      ),
+    ])
+      expect(await coverageOf(bytes)).toEqual({
+        status: "complete",
+        limitations: [],
+      });
+  });
+
+  it("stays unknown when bytes follow the last member", async () => {
+    const plain = buildWxapkg(members);
+    expect(
+      await coverageOf(Buffer.concat([plain, Buffer.from("appended")])),
+    ).toEqual({
+      status: "unknown",
+      limitations: [unaccounted(8, 1, plain.length)],
+    });
+  });
+
+  it("finds a gap between members listed out of byte order", async () => {
+    // Rows for "b" then "a" end at offset 44. "a" holds 44-47, three
+    // unaccounted bytes follow, then "b" holds 51-52.
+    const row = (name: string, offset: number, size: number): Buffer => {
+      const bytes = Buffer.alloc(12 + name.length);
+      bytes.writeUInt32BE(name.length, 0);
+      bytes.write(name, 4, "utf8");
+      bytes.writeUInt32BE(offset, 4 + name.length);
+      bytes.writeUInt32BE(size, 8 + name.length);
+      return bytes;
+    };
+    const header = Buffer.alloc(18);
+    header[0] = 0xbe;
+    header.writeUInt32BE(26, 5);
+    header.writeUInt32BE(9, 9);
+    header[13] = 0xed;
+    header.writeUInt32BE(2, 14);
+    const bytes = Buffer.concat([
+      header,
+      row("b", 51, 2),
+      row("a", 44, 4),
+      Buffer.from("AAAA---BB"),
+    ]);
+    await withReader(bytes, async (reader) => {
+      const entries = await list(reader);
+      expect(entries.map(({ path, byteOffset }) => [path, byteOffset])).toEqual(
+        [
+          ["b", 51],
+          ["a", 44],
+        ],
+      );
+    });
+    expect(await coverageOf(bytes)).toEqual({
+      status: "unknown",
+      limitations: [unaccounted(3, 1, 48)],
+    });
+  });
+
+  it("counts unused index bytes and trailing bytes as separate ranges", async () => {
+    // One 13-byte row ends at offset 31; eight unused index bytes follow it.
+    const padded = buildWxapkg([{ path: "a", data: "Z" }], {
+      tablePadding: 8,
+    });
+    expect(await coverageOf(padded)).toEqual({
+      status: "unknown",
+      limitations: [unaccounted(8, 1, 31)],
+    });
+    expect(
+      await coverageOf(Buffer.concat([padded, Buffer.alloc(4, 0xee)])),
+    ).toEqual({
+      status: "unknown",
+      limitations: [unaccounted(12, 2, 31)],
+    });
+  });
+});
+
 describe("WxapkgArtifactReader malformed inputs", () => {
   it.each([
     ["wrong first mark", { firstMark: 0x00 }],
@@ -200,10 +291,12 @@ describe("WxapkgArtifactReader malformed inputs", () => {
     ["index length below the rows", { declaredIndexLength: 10 }],
     ["declared name exceeds the row", { nameLength: 1024 }],
     ["zero-length declared name", { nameLength: 0 }],
-  ])("rejects %s as a typed failure", async (_name, options) => {
+  ])("rejects %s as a typed failure", async (name, options) => {
     await withReader(buildWxapkg(members, options), async (reader) => {
       await expect(list(reader)).rejects.toMatchObject({
-        reason: "format",
+        // Rows past the declared table end before their structure.
+        reason:
+          name === "file count above the row count" ? "truncated" : "malformed",
       });
     });
   });
@@ -213,7 +306,7 @@ describe("WxapkgArtifactReader malformed inputs", () => {
       buildWxapkg([{ path: "evil.bin", data: "x", offset: 4 }]),
       async (reader) => {
         await expect(list(reader)).rejects.toMatchObject({
-          reason: "format",
+          reason: "malformed",
         });
       },
     );
@@ -224,7 +317,7 @@ describe("WxapkgArtifactReader malformed inputs", () => {
       buildWxapkg([{ path: "evil.bin", data: "x", size: 1 << 20 }]),
       async (reader) => {
         await expect(list(reader)).rejects.toMatchObject({
-          reason: "format",
+          reason: "truncated",
         });
       },
     );
@@ -235,7 +328,9 @@ describe("WxapkgArtifactReader malformed inputs", () => {
     await withReader(
       buildWxapkg([{ path: "evil.bin", data: "x", offset: 18, size: 1 }]),
       async (reader) => {
-        await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+        await expect(list(reader)).rejects.toMatchObject({
+          reason: "malformed",
+        });
       },
     );
   });
@@ -250,7 +345,7 @@ describe("WxapkgArtifactReader data region", () => {
     bytes.writeUInt32BE(31, 23);
     bytes.writeUInt32BE(1, 27);
     await withReader(bytes, async (reader) => {
-      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+      await expect(list(reader)).rejects.toMatchObject({ reason: "malformed" });
     });
   });
 
@@ -271,7 +366,9 @@ describe("WxapkgArtifactReader data region", () => {
         declaredDataLength: 5,
       }),
       async (reader) => {
-        await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+        await expect(list(reader)).rejects.toMatchObject({
+          reason: "malformed",
+        });
       },
     );
   });
@@ -288,7 +385,7 @@ describe("WxapkgArtifactReader data region", () => {
     );
     await withReader(bytes, async (reader) => {
       await expect(list(reader)).rejects.toMatchObject({
-        reason: "format",
+        reason: "malformed",
         message:
           "wxapkg is malformed: no single declared data region contains all member extents",
       });
@@ -301,7 +398,9 @@ describe("WxapkgArtifactReader data region", () => {
         declaredDataLength: 1 << 24,
       }),
       async (reader) => {
-        await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+        await expect(list(reader)).rejects.toMatchObject({
+          reason: "truncated",
+        });
       },
     );
   });
@@ -370,7 +469,7 @@ describe("WxapkgArtifactReader index length", () => {
     ]);
     bytes.writeUInt32BE(5, 27);
     await withReader(bytes, async (reader) => {
-      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+      await expect(list(reader)).rejects.toMatchObject({ reason: "malformed" });
     });
   });
 
@@ -394,7 +493,9 @@ describe("WxapkgArtifactReader index length", () => {
         indexLengthIncludesFileCount: true,
       }),
       async (reader) => {
-        await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+        await expect(list(reader)).rejects.toMatchObject({
+          reason: "malformed",
+        });
       },
     );
   });
@@ -409,14 +510,14 @@ describe("WxapkgArtifactReader damaged packages", () => {
     });
     expect(hasWxapkgHeader(bytes)).toBe(true);
     await withReader(bytes, async (reader) => {
-      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+      await expect(list(reader)).rejects.toMatchObject({ reason: "malformed" });
     });
   });
 
   it("rejects a truncated package before the declared table ends", async () => {
     const bytes = buildWxapkg(members);
     await withReader(bytes.subarray(0, 30), async (reader) => {
-      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+      await expect(list(reader)).rejects.toMatchObject({ reason: "truncated" });
     });
   });
 
@@ -424,7 +525,7 @@ describe("WxapkgArtifactReader damaged packages", () => {
     const bytes = buildWxapkg(members);
     bytes[26] = 0xff; // first byte of the first member name
     await withReader(bytes, async (reader) => {
-      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+      await expect(list(reader)).rejects.toMatchObject({ reason: "malformed" });
     });
   });
 

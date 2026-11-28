@@ -5,6 +5,8 @@ import { type Result, err, ok } from "../result.js";
 export const ZIP_CENTRAL_HEADER = {
   signature: 0x02014b50,
   bytes: 46,
+  compressedSizeOffset: 20,
+  uncompressedSizeOffset: 24,
   nameBytesOffset: 28,
   extraBytesOffset: 30,
   commentBytesOffset: 32,

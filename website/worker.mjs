@@ -47,7 +47,8 @@ function advertiseMarkdown(response, path) {
 }
 
 /**
- * Answer with HTML when the Markdown route is absent.
+ * Answer without Markdown: the route is absent or the response is not
+ * negotiable HTML.
  *
  * Reevaluate HTML only when probing removed conditional or range headers.
  * Otherwise the existing response already answers the caller's request.
@@ -60,6 +61,11 @@ const htmlFallback = async (original, request, probeChanged, env) => {
 
 export default {
   async fetch(request, env) {
+    // Markdown exists only as a GET/HEAD representation. A probe request takes
+    // ownership of a body, so any other method must reach the asset service
+    // on the caller's own request, validators included.
+    if (!["GET", "HEAD"].includes(request.method))
+      return env.ASSETS.fetch(request);
     const useMarkdown = prefersMarkdown(request.headers.get("Accept"));
     // HTML validators describe a different representation. Probe the route first,
     // then let the asset service evaluate validators/ranges against the Markdown.
@@ -79,16 +85,15 @@ export default {
       }
     }
     const original = await env.ASSETS.fetch(probe);
+    // Every answer that does not negotiate Markdown must honor the caller's
+    // own validators and ranges, which the probe may have removed.
+    const url = new URL(request.url);
     if (
       ![200, 206, 304].includes(original.status) ||
-      !["GET", "HEAD"].includes(request.method) ||
-      !original.headers.get("Content-Type")?.startsWith("text/html")
+      !original.headers.get("Content-Type")?.startsWith("text/html") ||
+      (!url.pathname.endsWith("/") && !url.pathname.endsWith(".html"))
     )
-      return original;
-
-    const url = new URL(request.url);
-    if (!url.pathname.endsWith("/") && !url.pathname.endsWith(".html"))
-      return original;
+      return htmlFallback(original, request, probeChanged, env);
     const markdown = new URL(url);
     markdown.pathname = url.pathname.endsWith("/")
       ? `${url.pathname}index.md`

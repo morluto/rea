@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createCli } from "../../src/cli.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { createStubHopperProject } from "../fixtures/hopperProjectFile.js";
 
 const initialExitCode = process.exitCode;
 afterEach(() => {
@@ -40,9 +41,7 @@ describe("CLI selected environment", () => {
     const cli = createCli(environment);
     environment.REA_ANALYSIS_PROVIDER = "changed-provider";
     environment.HOPPER_LAUNCHER_PATH = "/changed/hopper";
-    const root = await createTestTempDirectory("rea-cli-selected-env-");
-    const target = join(root, "fixture.hop");
-    await writeFile(target, "fixture");
+    const target = await createStubHopperProject("rea-cli-selected-env-");
 
     for (const command of [
       ["decompile", target, "main"],

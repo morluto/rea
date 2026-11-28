@@ -1,4 +1,9 @@
 import { z } from "zod";
+import type { AnalysisParameterLimit } from "../analysisSettings.js";
+import {
+  parameterBudgetLimit,
+  type ParameterBudget,
+} from "../parameterBudget.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 
 const offsetSchema = z
@@ -8,6 +13,55 @@ const offsetSchema = z
   .max(Number.MAX_SAFE_INTEGER);
 const entropySchema = z.number().min(0).max(8);
 
+/** `block_size` bounds; every admitted value is a power of two. */
+export const BYTE_ENTROPY_BLOCK_SIZE = {
+  minimum: 256,
+  maximum: 65536,
+  default_value: 4096,
+  unit: "bytes",
+} as const satisfies ParameterBudget;
+
+/** Blocks one inspection retains in its Evidence. */
+export const MAX_BYTE_ENTROPY_BLOCKS = 32_768;
+
+/** The smallest admitted power-of-two block size that keeps `length` within the block cap. */
+const smallestAdmittingBlockSize = (length: number): number => {
+  let size: number = BYTE_ENTROPY_BLOCK_SIZE.minimum;
+  while (Math.ceil(length / size) > MAX_BYTE_ENTROPY_BLOCKS) size *= 2;
+  return size;
+};
+
+/**
+ * The control a too-large window should change: `block_size` while a larger
+ * block admits the window, else `length`, whose largest admitted value at the
+ * selected `block_size` is that many blocks. Omitting `length` selects
+ * `omittedLength`.
+ */
+export const byteEntropyWindowLimit = (
+  blockSize: number,
+  length: number,
+  omittedLength: number,
+): AnalysisParameterLimit =>
+  Math.ceil(length / BYTE_ENTROPY_BLOCK_SIZE.maximum) <= MAX_BYTE_ENTROPY_BLOCKS
+    ? {
+        ...parameterBudgetLimit(
+          "block_size",
+          BYTE_ENTROPY_BLOCK_SIZE,
+          blockSize,
+        ),
+        required_value: smallestAdmittingBlockSize(length),
+      }
+    : parameterBudgetLimit(
+        "length",
+        {
+          minimum: 0,
+          maximum: MAX_BYTE_ENTROPY_BLOCKS * blockSize,
+          default_value: omittedLength,
+          unit: "bytes",
+        },
+        length,
+      );
+
 /** Select blocks relative to an explicit byte window; identity remains file-wide. */
 export const inspectByteEntropyInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(
@@ -16,13 +70,13 @@ export const inspectByteEntropyInputSchema = z.strictObject({
   block_size: z
     .number()
     .int()
-    .min(256)
-    .max(65536)
+    .min(BYTE_ENTROPY_BLOCK_SIZE.minimum)
+    .max(BYTE_ENTROPY_BLOCK_SIZE.maximum)
     .refine(
       (value) => (value & (value - 1)) === 0,
       "Block size must be a power of two.",
     )
-    .default(4096),
+    .default(BYTE_ENTROPY_BLOCK_SIZE.default_value),
   offset: offsetSchema.default(0),
   length: offsetSchema.optional(),
 });
@@ -42,7 +96,11 @@ export const byteEntropySchema = z.strictObject({
     bytes: offsetSchema,
     sha256: z.string().regex(/^[a-f0-9]{64}$/),
   }),
-  block_size: z.number().int().min(256).max(65536),
+  block_size: z
+    .number()
+    .int()
+    .min(BYTE_ENTROPY_BLOCK_SIZE.minimum)
+    .max(BYTE_ENTROPY_BLOCK_SIZE.maximum),
   window: z.strictObject({ offset: offsetSchema, length: offsetSchema }),
   file_entropy: entropySchema,
   thresholds: z.strictObject({ high: entropySchema, low: entropySchema }),
@@ -113,6 +171,13 @@ export const createBlockEntropyCalculator = (fileCounts: Float64Array) => {
     countByteValues(bytes, counts);
     return entropyFromCounts(counts, bytes.length, fileCounts);
   };
+};
+
+/** Entropy of one standalone sample, without a whole-file census. */
+export const computeBlockEntropy = (bytes: Uint8Array): number => {
+  const counts = wholeFileByteCounts();
+  countByteValues(bytes, counts);
+  return entropyFromCounts(counts, bytes.length);
 };
 
 /** Merge only adjacent classified blocks, using the reported rounded entropy. */

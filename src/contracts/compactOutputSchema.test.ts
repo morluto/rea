@@ -2,7 +2,10 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 
 import { schemaDepth } from "./compactJsonSchema.js";
-import { compactAdvertisedOutputSchema } from "./compactOutputSchema.js";
+import {
+  compactAdvertisedOutputSchema,
+  presentAdvertisedOutputSchema,
+} from "./compactOutputSchema.js";
 import { COMPACT_OUTPUT_SCHEMA_BUDGET_BYTES } from "./mcpSchemaPresentation.js";
 import { advertisedOutputJsonSchema } from "./toolSchemaMetadata.js";
 import { toolContract } from "./toolContracts.js";
@@ -176,6 +179,30 @@ describe("compact advertised output schema", () => {
 });
 
 describe("compact object-union output schemas", () => {
+  it("uses the listed root type when reducing a wide output union", () => {
+    const branch = {
+      type: "object",
+      properties: Object.fromEntries(
+        Array.from({ length: 40 }, (_, index) => [
+          `field_${index}`,
+          { type: "string", description: `field ${index} `.repeat(30) },
+        ]),
+      ),
+      additionalProperties: false,
+    };
+    const wide = { oneOf: [branch, branch] };
+    const compacted = presentAdvertisedOutputSchema(
+      { type: "object", ...wide },
+      { budgetBytes: 256 },
+    );
+    const unstamped = presentAdvertisedOutputSchema(wide, { budgetBytes: 256 });
+    expect(compacted.type).toBe("object");
+    expect(unstamped).toEqual({
+      type: ["null", "boolean", "object", "array", "number", "string"],
+      items: {},
+    });
+  });
+
   it("keeps an object-stamped union's alternatives when the canonical schema cannot inline", () => {
     // SDK 2.4.0 stamps type:object on a root that is only a $ref union of
     // objects. search_guidance is that shape and does not fit the compact

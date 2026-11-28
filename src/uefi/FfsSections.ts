@@ -1,4 +1,7 @@
-import { BinaryReader } from "../domain/binaryContainer.js";
+import {
+  BinaryReader,
+  createBinaryReaderCache,
+} from "../domain/binaryContainer.js";
 import type { UefiSectionRecord } from "../domain/uefi/uefiFirmwareAnalysis.js";
 import { Buffer } from "node:buffer";
 import {
@@ -78,16 +81,7 @@ function readCommonHeader(reader: BinaryReader, start: number, end: number) {
   };
 }
 
-const sectionReaders = new WeakMap<Buffer, BinaryReader>();
-
-const sectionReaderFor = (buffer: Buffer): BinaryReader => {
-  let reader = sectionReaders.get(buffer);
-  if (reader === undefined) {
-    reader = new BinaryReader(buffer, true, "FFS sections");
-    sectionReaders.set(buffer, reader);
-  }
-  return reader;
-};
+const sectionReaderFor = createBinaryReaderCache(true, "FFS sections");
 
 /** A bounded first frame establishes a section chain regardless of payload validity. */
 export function startsWithSectionFrame(region: ScanRegion): boolean {

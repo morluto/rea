@@ -603,6 +603,15 @@ class LongRunTest(unittest.TestCase):
         self.assertTrue(result["cancelled"])
         supervisors[0].wait(timeout=5)
 
+    def test_run_cancel_returns_absent_again_on_retry_without_polling(self):
+        first = self.command("run-cancel", job=str(self.job), token="owner-token", timeout_s=5)
+        self.assertEqual(first, {"absent": True})
+        started = time.monotonic()
+        second = self.command("run-cancel", job=str(self.job), token="owner-token", timeout_s=5)
+        elapsed = time.monotonic() - started
+        self.assertEqual(second, {"absent": True})
+        self.assertLess(elapsed, 1.0)
+
 
 if __name__ == "__main__":
     unittest.main()
