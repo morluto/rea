@@ -86,7 +86,7 @@ describe("environment manifests from capture_browser_scenario parents", () => {
     );
   });
 
-  it("serves and exports a scenario-built manifest from the same capture", () => {
+  it("serves and exports a scenario-built manifest from the same capture", async () => {
     const source = loadEnvironmentSource(fixture.manifest, fixture.capture);
     if (!source.ok) throw source.error;
     expect(source.value.captureKind).toBe("browser-scenario");
@@ -112,7 +112,7 @@ describe("environment manifests from capture_browser_scenario parents", () => {
       body: Buffer.from([0xff, 0xfe, 0x00, 0x41]).toString("base64"),
       replay: { body_encoding: "base64" },
     });
-    const planned = planEnvironmentBundle(source.value, {
+    const planned = await planEnvironmentBundle(source.value, {
       served: (name) =>
         prepareServedState(source.value, fixture.capture, { name }),
     });

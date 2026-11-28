@@ -438,6 +438,10 @@ describe("Bundled heavy startup controls", () => {
       "guided-workflows",
       "compare-source-to-bundle",
       "compare-static-and-observed-endpoints",
+      "environment-serve",
+      "environment-compare",
+      "environment-export",
+      "environment-build",
     ]) {
       await expect(
         resolvedPackages(
@@ -446,6 +450,92 @@ describe("Bundled heavy startup controls", () => {
         ),
       ).resolves.toEqual(new Set());
     }
+  });
+
+  it("defers AnalysisViewService for artifact inspection, non-summary comparison, Frida, and environment modules", async () => {
+    for (const command of [
+      "inspect-artifact",
+      "compare-artifacts",
+      "frida-devices",
+    ]) {
+      await expect(
+        resolvedPackages(
+          ["scripts/rea.mjs", command, "--help"],
+          HEAVY_SHARED_MODULES,
+        ),
+      ).resolves.not.toContain("analysis-view-service");
+    }
+
+    for (const modulePath of [
+      "./dist/application/environment/environmentState.js",
+      "./dist/application/environment/environmentBuild.js",
+    ]) {
+      await expect(
+        resolvedPackages(
+          evaluate(`await import(${JSON.stringify(modulePath)});`),
+          HEAVY_SHARED_MODULES,
+        ),
+      ).resolves.not.toContain("analysis-view-service");
+    }
+
+    const dir = await createTestTempDirectory("rea-startup-artifact-compare-");
+    const leftDir = join(dir, "left");
+    const rightDir = join(dir, "right");
+    const leftEvidence = join(dir, "left-evidence.json");
+    const rightEvidence = join(dir, "right-evidence.json");
+    await mkdir(leftDir);
+    await mkdir(rightDir);
+    await writeFile(join(leftDir, "a.txt"), "one\n");
+    await writeFile(join(rightDir, "a.txt"), "two\n");
+    const inspectCommands = await createVerifierCommands();
+    onTestFinished(() => inspectCommands.close());
+    const [leftOut, rightOut] = await withVerifierCleanup(
+      () =>
+        Promise.all([
+          inspectCommands.exec(
+            process.execPath,
+            ["scripts/rea.mjs", "inspect-artifact", leftDir, "--json"],
+            {
+              cwd: process.cwd(),
+              maxBuffer: 16 * 1_024 * 1_024,
+              timeout: 15_000,
+            },
+          ),
+          inspectCommands.exec(
+            process.execPath,
+            ["scripts/rea.mjs", "inspect-artifact", rightDir, "--json"],
+            {
+              cwd: process.cwd(),
+              maxBuffer: 16 * 1_024 * 1_024,
+              timeout: 15_000,
+            },
+          ),
+        ]),
+      [() => inspectCommands.close()],
+    );
+    await writeFile(leftEvidence, leftOut.stdout);
+    await writeFile(rightEvidence, rightOut.stdout);
+
+    const inspectResolved = await resolvedPackages(
+      ["scripts/rea.mjs", "inspect-artifact", leftDir, "--json"],
+      HEAVY_SHARED_MODULES,
+    );
+    expect(inspectResolved).not.toContain("analysis-view-service");
+
+    // Exercise resolveEvidenceSource -> resolveArtifactComparisonEvidence on non-summary files.
+    const compareInput = join(dir, "compare.json");
+    await writeFile(
+      compareInput,
+      JSON.stringify({
+        left: { kind: "evidence-file", path: leftEvidence },
+        right: { kind: "evidence-file", path: rightEvidence },
+      }),
+    );
+    const compareResolved = await resolvedPackages(
+      ["scripts/rea.mjs", "compare-artifacts", compareInput, "--json"],
+      HEAVY_SHARED_MODULES,
+    );
+    expect(compareResolved).not.toContain("analysis-view-service");
   });
 });
 

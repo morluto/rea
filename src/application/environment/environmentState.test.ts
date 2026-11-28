@@ -255,16 +255,16 @@ describe("served collection history", () => {
 });
 
 describe("deriveEnvironmentState", () => {
-  it("derives the state inspect-analysis-view projects from the capture with the manifest's rules, under the same Evidence id", () => {
-    const derived = deriveEnvironmentState(source, fixture.capture);
+  it("derives the state inspect-analysis-view projects from the capture with the manifest's rules, under the same Evidence id", async () => {
+    const derived = await deriveEnvironmentState(source, fixture.capture);
     if (!derived.ok) throw derived.error;
     expect(derived.value.evidenceId).toBe(fixture.state.evidence_id);
     expect(derived.value).toEqual(state);
   });
 
-  it("checks the derived state as a supplied one, refusing a capture the manifest was not projected from", () => {
+  it("checks the derived state as a supplied one, refusing a capture the manifest was not projected from", async () => {
     const other = environmentServeFixture();
-    const derived = deriveEnvironmentState(source, other.capture);
+    const derived = await deriveEnvironmentState(source, other.capture);
     if (derived.ok)
       throw new Error("Expected the other capture's state to be refused");
     expect(projectAnalysisError(derived.error)).toMatchObject({
@@ -316,7 +316,7 @@ describe("deriveEnvironmentState", () => {
     if (!manifest.ok) throw manifest.error;
     const large = loadEnvironmentSource(manifest.value, capture);
     if (!large.ok) throw large.error;
-    const derived = deriveEnvironmentState(large.value, capture);
+    const derived = await deriveEnvironmentState(large.value, capture);
     if (!derived.ok) throw derived.error;
     const byHand = retained("environment-state");
     if (!byHand.ok) throw byHand.error;
@@ -325,14 +325,14 @@ describe("deriveEnvironmentState", () => {
 });
 
 describe("prepareServedState", () => {
-  it("reports the served state Evidence", () => {
-    expect(prepareServedState(source, fixture.capture)).toEqual({
+  it("reports the served state Evidence", async () => {
+    expect(await prepareServedState(source, fixture.capture)).toEqual({
       state,
       report: { served: true, evidence_id: fixture.state.evidence_id },
     });
   });
 
-  it("derives a state when a body leaves no room for the state's own nesting", () => {
+  it("derives a state when a body leaves no room for the state's own nesting", async () => {
     let deep: JsonValue = { theme: "dark" };
     for (let level = 0; level < 995; level += 1) deep = { nested: deep };
     const deepFixture = environmentStateServeFixture(
@@ -347,14 +347,14 @@ describe("prepareServedState", () => {
     );
     if (!deepSource.ok) throw deepSource.error;
     expect(
-      prepareServedState(deepSource.value, deepFixture.capture).report,
+      (await prepareServedState(deepSource.value, deepFixture.capture)).report,
     ).toEqual({
       served: true,
       evidence_id: deepFixture.state.evidence_id,
     });
   });
 
-  it("serves replay and reports the code and message when the capture yields a manifest but no state", () => {
+  it("serves replay and reports the code and message when the capture yields a manifest but no state", async () => {
     const headerOnly = scenarioServeFixture(
       scenarioHeaderOnlyCaptureEvidence(),
     );
@@ -363,7 +363,7 @@ describe("prepareServedState", () => {
       headerOnly.capture,
     );
     if (!scenario.ok) throw scenario.error;
-    const served = prepareServedState(scenario.value, headerOnly.capture);
+    const served = await prepareServedState(scenario.value, headerOnly.capture);
     expect(served.state).toBeUndefined();
     expect(served.report).toEqual({
       served: false,

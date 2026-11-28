@@ -17,7 +17,6 @@ import {
 } from "../../domain/analysisView/environmentManifestRules.js";
 import type { EnvironmentBuildReport } from "../../domain/environmentBundleExport.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { inspectAnalysisView } from "../analysisView/AnalysisViewService.js";
 import {
   ENVIRONMENT_EXPORT_OPERATION,
   planEnvironmentBundle,
@@ -265,6 +264,8 @@ export const buildEnvironment = async (
   const capture = evidence.value;
   const templateRules = canonicalTemplateRules(input.templateRules);
   input.progress?.("manifest");
+  const { inspectAnalysisView } =
+    await import("../analysisView/AnalysisViewService.js");
   const projected = await inspectAnalysisView(
     {
       source: { kind: "retained-evidence", evidence_id: capture.evidence_id },
@@ -308,7 +309,7 @@ export const buildEnvironment = async (
   if (beforeState !== undefined) return err(beforeState);
   input.progress?.("state");
   // Prepared as the export prepares it, so its report and the bundle's README match the three-step path.
-  const served = prepareServedState(source.value, input.capture.value, {
+  const served = await prepareServedState(source.value, input.capture.value, {
     name,
     operation: ENVIRONMENT_EXPORT_OPERATION,
   });
@@ -344,7 +345,7 @@ export const buildEnvironment = async (
   if (input.dryRun) {
     const beforePlan = await cancelled(input.signal);
     if (beforePlan !== undefined) return err(beforePlan);
-    const plan = planEnvironmentBundle(source.value, {
+    const plan = await planEnvironmentBundle(source.value, {
       name,
       packageTarball: input.packageTarball,
       served: () => served,

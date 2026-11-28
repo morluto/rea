@@ -1070,11 +1070,10 @@ checkCounted(
 
 // Application services load the analysis-view module only when a summary or
 // view is actually requested (await import), so one-shot CLI chunks do not
-// statically link it. The remaining static importers are the two synchronous
-// view-projection helpers and Frida's synchronous status path, counted here
-// so new static links cannot return silently (see #14112).
+// statically link it. No static importers remain under src/application/
+// outside src/application/analysisView/.
 checkCounted(
-  "static AnalysisViewService import in an application service (load it with await import on the summary branch, or shrink this baseline with its own change)",
+  "static AnalysisViewService import in an application service (load it with await import on the summary or view branch)",
   "static-analysis-view-import",
   files.filter(
     (file) =>

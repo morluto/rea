@@ -49,12 +49,12 @@ const responseCapture = (
   return analysisViewCaptureEvidence(capture);
 };
 
-const compare = (
+const compare = async (
   recorded: ReturnType<typeof analysisViewCaptureEvidence>,
   probe: ReturnType<typeof analysisViewCaptureEvidence>,
 ) => {
   const fixture = environmentStateServeFixture(recorded);
-  const report = compareEnvironment({
+  const report = await compareEnvironment({
     source: environmentServeSource(fixture),
     captureValue: recorded,
     probes: [{ label: "probe", value: probe }],
@@ -65,22 +65,30 @@ const compare = (
 };
 
 describe("environment comparison response representation", () => {
-  it("distinguishes binary byte ff from its base64 spelling as literal text", () => {
+  it("distinguishes binary byte ff from its base64 spelling as literal text", async () => {
     const binary = responseCapture("/w==", "/w==");
     const literal = responseCapture("/w==");
-    const result = compare(binary, literal);
+    const result = await compare(binary, literal);
     expect(result.probes[0]?.results[0]?.equal).toBe(false);
     expect(result.probes[0]?.results[0]?.categories).toEqual(["value"]);
   });
 
-  it("compares equal retained binary bytes and valid UTF-8 base64 as text", () => {
+  it("compares equal retained binary bytes and valid UTF-8 base64 as text", async () => {
     expect(
-      compare(responseCapture("/w==", "/w=="), responseCapture("/w==", "/w=="))
-        .probes[0]?.results[0]?.equal,
+      (
+        await compare(
+          responseCapture("/w==", "/w=="),
+          responseCapture("/w==", "/w=="),
+        )
+      ).probes[0]?.results[0]?.equal,
     ).toBe(true);
     expect(
-      compare(responseCapture("aGVsbG8=", "aGVsbG8="), responseCapture("hello"))
-        .probes[0]?.results[0]?.equal,
+      (
+        await compare(
+          responseCapture("aGVsbG8=", "aGVsbG8="),
+          responseCapture("hello"),
+        )
+      ).probes[0]?.results[0]?.equal,
     ).toBe(true);
   });
 
@@ -91,7 +99,7 @@ describe("environment comparison response representation", () => {
     { representation: "text", status: 503 },
   ] as const)(
     "compares a retained $representation body beyond the replay limit by status only ($status)",
-    ({ representation, status }) => {
+    async ({ representation, status }) => {
       const recorded = responseCapture("different recorded body");
       const text =
         representation === "binary"
@@ -103,7 +111,7 @@ describe("environment comparison response representation", () => {
         representation === "binary" ? "application/octet-stream" : "text/plain",
         status,
       );
-      const result = compare(recorded, probe);
+      const result = await compare(recorded, probe);
       const equal = status === 200;
       expect(result.probes).toMatchObject([
         {
@@ -139,10 +147,12 @@ describe("environment comparison response representation", () => {
     },
   );
 
-  it("does not conflate a JSON string value with identical plain text", () => {
+  it("does not conflate a JSON string value with identical plain text", async () => {
     const json = responseCapture('"hello"', undefined, "application/json");
     const text = responseCapture("hello");
-    expect(compare(json, text).probes[0]?.results[0]?.equal).toBe(false);
+    expect((await compare(json, text)).probes[0]?.results[0]?.equal).toBe(
+      false,
+    );
   });
 });
 

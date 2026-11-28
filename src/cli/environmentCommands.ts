@@ -143,11 +143,13 @@ const loadServeInputs = async (
   const { prepareServedState } =
     await import("../application/environment/environmentState.js");
   if (signal.aborted) return err(cancelledServe(signal));
+  const served = await prepareServedState(source.value, evidence.value, {
+    name: environmentName,
+  });
+  if (signal.aborted) return err(cancelledServe(signal));
   return ok({
     source: source.value,
-    served: prepareServedState(source.value, evidence.value, {
-      name: environmentName,
-    }),
+    served,
   });
 };
 
@@ -611,7 +613,7 @@ const compareEnvironmentCommand = async (
   if (!source.ok) return cliError(source.error);
   const { compareEnvironment } =
     await import("../application/environment/environmentCompare.js");
-  const report = compareEnvironment({
+  const report = await compareEnvironment({
     source: source.value,
     captureValue: evidence.value,
     probes,

@@ -75,7 +75,7 @@ export interface EnvironmentBundleOptions {
   readonly name?: string | undefined;
   readonly packageTarball?: string | undefined;
   /** Prepares the state the bundle's server serves under the checked bundle name, as that server prepares it. */
-  readonly served: (name: string) => PreparedState;
+  readonly served: (name: string) => PreparedState | Promise<PreparedState>;
 }
 
 const nameError = (name: string): AnalysisInputError =>
@@ -348,15 +348,15 @@ Do not publish this bundle without the rights to that content.
 };
 
 /** Derive every file of the bundle from an authenticated source, the state its server derives and the package source. */
-export const planEnvironmentBundle = (
+export const planEnvironmentBundle = async (
   source: EnvironmentSource,
   options: EnvironmentBundleOptions,
-): Result<EnvironmentBundlePlan, AnalysisError> => {
+): Promise<Result<EnvironmentBundlePlan, AnalysisError>> => {
   const name = options.name ?? source.manifest.name;
   const admitted = validateBundleName(name);
   if (!admitted.ok) return admitted;
   // Prepared only after the name checks, under the name the bundle's server serves.
-  const { state, report } = options.served(name);
+  const { state, report } = await options.served(name);
   // The catalog and answers the bundle's server will have, so the verifier and README predict them.
   const catalog = servedCatalog(
     source,

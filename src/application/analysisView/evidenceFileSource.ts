@@ -41,7 +41,7 @@ export interface EvidenceFileSourceContext {
 export type EvidenceFileRecordResolver = (
   selected: Evidence,
   lookup: (evidenceId: string) => Evidence | undefined,
-) => Result<Evidence, AnalysisError>;
+) => Result<Evidence, AnalysisError> | Promise<Result<Evidence, AnalysisError>>;
 
 const ANALYSIS_VIEW_SOURCE: EvidenceFileSourceContext = {
   operation: INSPECT_ANALYSIS_VIEW_OPERATION,
@@ -186,11 +186,13 @@ export const readEvidenceFileSource = async (
       evidenceId,
       site,
     );
-    return selected.ok
-      ? resolveSelected(selected.value, (id) =>
-          bundle.value.records.find((record) => record.evidence_id === id),
-        )
-      : selected;
+    if (!selected.ok) return selected;
+    const resolved = await resolveSelected(selected.value, (id) =>
+      bundle.value.records.find((record) => record.evidence_id === id),
+    );
+    if (!resolved.ok) return resolved;
+    if (signal?.aborted) return err(cancelledBy(operation, signal));
+    return resolved;
   }
   const headroom = requireAuthenticationHeadroom(value, {
     operation,
@@ -218,7 +220,10 @@ export const readEvidenceFileSource = async (
         `Evidence file ${path} holds ${parsed.value.evidence_id}, not selected record ${evidenceId}.`,
       ),
     );
-  return resolveSelected(parsed.value, (id) =>
+  const resolved = await resolveSelected(parsed.value, (id) =>
     parsed.value.evidence_id === id ? parsed.value : undefined,
   );
+  if (!resolved.ok) return resolved;
+  if (signal?.aborted) return err(cancelledBy(operation, signal));
+  return resolved;
 };

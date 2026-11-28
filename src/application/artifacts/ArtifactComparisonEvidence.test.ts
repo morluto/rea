@@ -69,7 +69,7 @@ const recreateSummary = (
 
 it("reports a missing retained parent instead of treating summary facts as inventory", async () => {
   const { summary } = await artifactSummary();
-  const resolved = resolveArtifactComparisonEvidence(summary, undefined);
+  const resolved = await resolveArtifactComparisonEvidence(summary, undefined);
   expect(resolved.ok).toBe(false);
   if (!resolved.ok) {
     expect(resolved.error).toBeInstanceOf(EvidenceReferenceError);
@@ -80,7 +80,7 @@ it("reports a missing retained parent instead of treating summary facts as inven
 it("uses retained Evidence resolution to reject a mismatched parent identity", async () => {
   const { summary } = await artifactSummary();
   const otherParent = ARTIFACT_COMPARISON_EXAMPLE.right;
-  const resolved = resolveArtifactComparisonEvidence(
+  const resolved = await resolveArtifactComparisonEvidence(
     summary,
     () => otherParent,
   );
@@ -101,8 +101,9 @@ it("rejects a summary that declares the wrong parent operation", async () => {
     parent_operation: "inspect_artifact",
   };
   const forged = recreateSummary(summary, normalizedResult);
-  const resolved = resolveArtifactComparisonEvidence(forged, (evidenceId) =>
-    evidenceId === parent.evidence_id ? parent : undefined,
+  const resolved = await resolveArtifactComparisonEvidence(
+    forged,
+    (evidenceId) => (evidenceId === parent.evidence_id ? parent : undefined),
   );
   expect(resolved.ok).toBe(false);
   if (!resolved.ok)
@@ -115,8 +116,9 @@ it("rejects summary parameters that do not identify the projected parent", async
     ...summary.parameters,
     parent_evidence_id: `ev_${"f".repeat(64)}`,
   });
-  const resolved = resolveArtifactComparisonEvidence(forged, (evidenceId) =>
-    evidenceId === parent.evidence_id ? parent : undefined,
+  const resolved = await resolveArtifactComparisonEvidence(
+    forged,
+    (evidenceId) => (evidenceId === parent.evidence_id ? parent : undefined),
   );
   expect(resolved.ok).toBe(false);
   if (!resolved.ok)
@@ -139,8 +141,9 @@ it("rejects summary facts that do not reproject from the complete parent", async
     },
   };
   const forged = recreateSummary(summary, normalizedResult);
-  const resolved = resolveArtifactComparisonEvidence(forged, (evidenceId) =>
-    evidenceId === parent.evidence_id ? parent : undefined,
+  const resolved = await resolveArtifactComparisonEvidence(
+    forged,
+    (evidenceId) => (evidenceId === parent.evidence_id ? parent : undefined),
   );
   expect(resolved.ok).toBe(false);
   if (!resolved.ok)
@@ -158,7 +161,7 @@ it("accepts display-only subject changes excluded from Evidence identity", async
       local_path: "/display-only/renamed.app",
     }),
   });
-  const resolved = resolveArtifactComparisonEvidence(
+  const resolved = await resolveArtifactComparisonEvidence(
     displayOnly,
     (evidenceId) => (evidenceId === parent.evidence_id ? parent : undefined),
   );
@@ -274,7 +277,10 @@ it.each<SummaryEra>(["pre-ce1f4b1bb", "pre-b395190e4"])(
   "refuses the %s summary with recreate guidance",
   async (era) => {
     const { parent, summary } = await summaryAtEra(era);
-    const resolved = resolveArtifactComparisonEvidence(summary, () => parent);
+    const resolved = await resolveArtifactComparisonEvidence(
+      summary,
+      () => parent,
+    );
     expect(resolved.ok).toBe(false);
     if (resolved.ok) return;
     expect(resolved.error).toBeInstanceOf(EvidenceIntegrityError);
@@ -291,7 +297,9 @@ it.each<SummaryEra>(["current"])(
     );
     expect(result.artifact?.path).toBe("/selected/alias.bin");
     expect(parent.subject?.local_path).toBe("historical-inventory");
-    expect(resolveArtifactComparisonEvidence(summary, () => parent)).toEqual({
+    expect(
+      await resolveArtifactComparisonEvidence(summary, () => parent),
+    ).toEqual({
       ok: true,
       value: parent,
     });
@@ -307,7 +315,9 @@ it.each<SummaryEra>(["current"])(
       path: "/selected/alias.bin",
     });
     expect(rebound.evidence_id).toBe(parent.evidence_id);
-    expect(resolveArtifactComparisonEvidence(summary, () => rebound)).toEqual({
+    expect(
+      await resolveArtifactComparisonEvidence(summary, () => rebound),
+    ).toEqual({
       ok: true,
       value: rebound,
     });
@@ -362,7 +372,10 @@ it.each([
         break;
     }
     const forged = recreateSummary(summary, resealSummary(result), parameters);
-    const resolved = resolveArtifactComparisonEvidence(forged, () => parent);
+    const resolved = await resolveArtifactComparisonEvidence(
+      forged,
+      () => parent,
+    );
     expect(resolved.ok).toBe(false);
     if (!resolved.ok)
       expect(resolved.error).toBeInstanceOf(EvidenceIntegrityError);
@@ -376,7 +389,10 @@ it("rejects a recommitted current summary whose authority differs from its proje
     summary.normalized_result,
   );
   expect(forged.evidence_id).not.toBe(summary.evidence_id);
-  const resolved = resolveArtifactComparisonEvidence(forged, () => parent);
+  const resolved = await resolveArtifactComparisonEvidence(
+    forged,
+    () => parent,
+  );
   expect(resolved).toMatchObject({
     ok: false,
     error: { _tag: "EvidenceIntegrityError" },
@@ -385,7 +401,9 @@ it("rejects a recommitted current summary whose authority differs from its proje
 
 it("authenticates a retained parent's content instead of trusting its original ID", async () => {
   const { parent, summary } = await summaryAtEra("current");
-  expect(resolveArtifactComparisonEvidence(summary, () => parent)).toEqual({
+  expect(
+    await resolveArtifactComparisonEvidence(summary, () => parent),
+  ).toEqual({
     ok: true,
     value: parent,
   });
@@ -396,7 +414,7 @@ it("authenticates a retained parent's content instead of trusting its original I
     raw_result: { changed: true },
   };
   expect(
-    resolveArtifactComparisonEvidence(summary, () => tampered),
+    await resolveArtifactComparisonEvidence(summary, () => tampered),
   ).toMatchObject({
     ok: false,
     error: { _tag: "EvidenceIntegrityError", issuePath: ["evidence_id"] },
@@ -413,7 +431,10 @@ it.each<SummaryEra>(["current"])(
       parentResult: JSON.stringify(parent.normalized_result),
       summaryResult: JSON.stringify(summary.normalized_result),
     };
-    const resolved = resolveArtifactComparisonEvidence(summary, () => parent);
+    const resolved = await resolveArtifactComparisonEvidence(
+      summary,
+      () => parent,
+    );
     expect(resolved.ok).toBe(true);
     if (resolved.ok) expect(resolved.value.evidence_id).toBe(before.parentId);
     expect(parent.evidence_id).toBe(before.parentId);
@@ -450,6 +471,6 @@ it("authenticates an alias summary of a selected flash image against its retaine
   // The owner rebinds its retained parent to the alias with the selection, so
   // the reprojected summary names the same path and Evidence ID.
   expect(
-    resolveArtifactComparisonEvidence(summary.value, () => parent),
+    await resolveArtifactComparisonEvidence(summary.value, () => parent),
   ).toEqual({ ok: true, value: parent });
 });
