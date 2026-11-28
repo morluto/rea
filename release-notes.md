@@ -443,6 +443,7 @@
 * **firmware:** mark ESP flash coverage unknown when bootloader region is omitted ([#14285](https://github.com/morluto/rea/issues/14285)) ([00939f9](https://github.com/morluto/rea/commit/00939f9bd2d0596deab4824ec9107eabf6592ab7))
 * **firmware:** report malformed linux,phandle and leave references unresolved ([#13734](https://github.com/morluto/rea/issues/13734)) ([b0216a0](https://github.com/morluto/rea/commit/b0216a0a7ae1c56a5a6d01dc08ca820b5ebdceb3))
 * **firmware:** report partial devicetree coverage when a property was not decoded ([#14966](https://github.com/morluto/rea/issues/14966)) ([689de9d](https://github.com/morluto/rea/commit/689de9deed6e97acdd84d1f1aa4fbfa51fc794a6))
+* **firmware:** summarize RISC-V vectors by decoded jumps ([#15014](https://github.com/morluto/rea/issues/15014)) ([3fad592](https://github.com/morluto/rea/commit/3fad5920b9227a489b3796f373536385d4fd3bf0))
 * **fit:** report unknown coverage when an image field was not decoded ([#14986](https://github.com/morluto/rea/issues/14986)) ([40459f1](https://github.com/morluto/rea/commit/40459f16c33b41108f171025710e0775d6596b3a))
 * **flutter:** distinguish Dart snapshot exports from local symbols ([#13576](https://github.com/morluto/rea/issues/13576)) ([3c74128](https://github.com/morluto/rea/commit/3c741283530bb400531540f96b85134d6a7bd029))
 * **flutter:** preserve build IDs beside invalid note extents ([#13577](https://github.com/morluto/rea/issues/13577)) ([7d6c771](https://github.com/morluto/rea/commit/7d6c77106260b086717ef98e695c31257539b0e4))
