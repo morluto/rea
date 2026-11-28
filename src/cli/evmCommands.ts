@@ -1,6 +1,7 @@
 import type { Logger } from "pino";
 
 import { evmInterfaceModule } from "../composition/evm.js";
+import { INSPECT_EVM_PROXY_CONTRACT } from "../contracts/evm/evmProxyToolContracts.js";
 import { registerContractCommand } from "./contractCommand.js";
 import { inspectWithService } from "./contractCommandRunners.js";
 import { PRODUCER_LIMITS_HELP } from "./producerLimitsOption.js";
@@ -34,5 +35,26 @@ export const registerEvmCommands = (
       },
     },
     inspectWithService(() => service, "evmole-interface"),
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    INSPECT_EVM_PROXY_CONTRACT,
+    {
+      description:
+        "Recognize a standard ERC-1167 clone proxy in local EVM bytecode",
+      positionals: ["path", "encoding"],
+      callerPaths: ["path"],
+      fields: {
+        path: { description: "Local bytecode carrier" },
+        encoding: { description: "Selected carrier representation" },
+        max_file_bytes: { description: "Maximum carrier size in bytes" },
+      },
+    },
+    inspectWithService(
+      async () =>
+        (await import("../composition/evmProxy.js")).createEvmProxyService(),
+      "rea-evm-proxy",
+    ),
   );
 };

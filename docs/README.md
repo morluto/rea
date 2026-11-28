@@ -165,6 +165,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 ## EVM contracts
 
 - [Offline EVM bytecode](guides/evm/evm-bytecode.md)
+- [EVM proxy recognition](guides/evm/evm-proxies.md)
 
 ## Databases and recorded packets
 

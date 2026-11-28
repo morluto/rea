@@ -57,6 +57,7 @@ import {
   PE_RESOURCES_PROVIDER,
   RELEASE_EXPOSURE_PROVIDER,
   ESP_NVS_PROVIDER,
+  EVM_PROXY_PROVIDER,
   FIRMWARE_VECTOR_TABLE_PROVIDER,
   WEB_SCRIPT_EXPORT_PROVIDER,
   WINDOWS_SHORTCUT_PROVIDER,
@@ -318,6 +319,13 @@ export const CAPABILITY_DECLARATIONS = {
     providers: [
       providerBinding(EVMOLE_PROVIDER_IDENTITY, {
         group: "EVM_TOOL_CONTRACTS",
+      }),
+    ],
+  },
+  evmProxy: {
+    providers: [
+      providerBinding(EVM_PROXY_PROVIDER, {
+        group: "EVM_PROXY_TOOL_CONTRACTS",
       }),
     ],
   },

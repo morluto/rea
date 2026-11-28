@@ -277,3 +277,9 @@ export const FIRMWARE_VECTOR_TABLE_PROVIDER = Object.freeze({
   name: "REA firmware vector table decoder",
   version: "1",
 } as const);
+
+export const EVM_PROXY_PROVIDER = Object.freeze({
+  id: "rea-evm-proxy",
+  name: "REA offline EVM proxy reader",
+  version: "1",
+} as const);
