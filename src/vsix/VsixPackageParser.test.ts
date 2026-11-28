@@ -2203,21 +2203,26 @@ it.each([
 });
 
 it.each([
-  { languageModelTools: ["demo_tool"] },
-  { chatParticipants: "demo.chat" },
-  { mcpServerDefinitionProviders: [{ id: 7 }] },
-  { languageModelTools: [{ name: "demo_tool", displayName: [] }] },
-])("keeps unreadable declarations unknown: %j", async (contributes) => {
+  ["a non-object row", ["demo_tool"]],
+  ["a non-text identifier", [{ name: 7 }]],
+  ["a string instead of rows", "demo_tool"],
+])("keeps readable declarations beside %s", async (_, languageModelTools) => {
   const bytes = await vsixPackageFixture({
     packageJson: JSON.stringify({
       name: "hello",
       publisher: "demo",
       version: "1.2.3",
-      contributes,
+      contributes: {
+        chatParticipants: [{ id: "demo.chat", name: ["bad"] }],
+        languageModelTools,
+      },
     }),
   });
   const report = vsixPackageSchema.parse(
     await parseVsixPackage(bytes, artifactOf(bytes), defaults),
   );
-  expect(report.contributes.declarations).toBeNull();
+  expect(report.contributes.declarations).toEqual([
+    { kind: "chat_participant", id: "demo.chat", label: null },
+    { kind: "language_model_tool", id: null, label: null },
+  ]);
 });

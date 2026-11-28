@@ -224,6 +224,14 @@ describe("module members that are not the imported ones", () => {
       "a computed write on a destructured member",
       'const { commands: c } = require("vscode"); c[key] = noop; require("vscode").commands.registerCommand("a", f);',
     ],
+    [
+      "a computed write directly on require",
+      'const key = "registerCommand"; require("vscode").commands[key] = noop; require("vscode").commands.registerCommand("a", f);',
+    ],
+    [
+      "a write below a computed key of require",
+      'require("vscode")[key].registerCommand = noop; const v = require("vscode"); v.commands.registerCommand("a", f);',
+    ],
   ])("marks %s as possibly replaced", (_, source) => {
     expect(replacements(source)).toEqual(["possible"]);
   });
@@ -268,6 +276,14 @@ describe("module members that are not the imported ones", () => {
     expect(
       replacements(
         'const v = require("vscode"); const w = v.window; w[key] = noop; v.commands.registerCommand("a", f);',
+      ),
+    ).toEqual([undefined]);
+  });
+
+  it("keeps a member when a computed write is on a sibling of require", () => {
+    expect(
+      replacements(
+        'require("vscode").window[key] = noop; require("vscode").commands.registerCommand("a", f);',
       ),
     ).toEqual([undefined]);
   });

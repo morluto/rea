@@ -326,7 +326,12 @@ export const correlateVsixRegistrations = ({
       byKind[kind],
       {
         complete: complete && !unresolvedKinds.has(kind),
-        allDeclared: manifestRead,
+        // A row without a readable identifier may declare any ID of its kind.
+        allDeclared:
+          manifestRead &&
+          contributes.declarations?.every(
+            (row) => row.kind !== kind || row.id !== null,
+          ) === true,
       },
     ).map(({ id, status, text, registrations }) => ({
       kind,

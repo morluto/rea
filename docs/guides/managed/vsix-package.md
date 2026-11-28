@@ -127,10 +127,11 @@ model tools and MCP server providers:
 | `languageModelTools[].name`         | `vscode.lm.registerTool`                        |
 | `mcpServerDefinitionProviders[].id` | `vscode.lm.registerMcpServerDefinitionProvider` |
 
-When any of these rows cannot be read, declarations are unknown and no ID is
-called undeclared. The servers an MCP provider returns at run time, their
-commands and prompt handling are not analyzed. `summary` counts commands only,
-apart from `unresolved_registrations`, which covers every kind.
+When a row or its identifier cannot be read, it is kept with a null identifier
+and no ID of that kind is called undeclared. The servers an MCP provider returns
+at run time, their commands and prompt handling are not analyzed. `summary`
+counts commands only, apart from `unresolved_registrations`, which covers every
+kind.
 
 `undetermined` replaces `not_found` when a declared entry point was not
 analyzed, analysis was truncated, or any registration identifier is unresolved,

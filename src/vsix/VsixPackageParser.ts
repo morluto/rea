@@ -663,18 +663,15 @@ const declaredContributions = (
   contributes: Record<string, unknown> | undefined,
 ) =>
   CONTRIBUTION_POINTS.flatMap(([kind, point, idKey, labelKey]) =>
-    rowsOf(contributes?.[point]).map((row) => ({
-      kind,
-      id: exactText(row[idKey]),
-      label: exactText(row[labelKey]),
-    })),
-  );
-
-const unreadableDeclarations = (
-  contributes: Record<string, unknown> | undefined,
-): boolean =>
-  CONTRIBUTION_POINTS.some(([, point, idKey, labelKey]) =>
-    unreadableRows(contributes?.[point], [idKey, labelKey]),
+    // A row that cannot be read stays as a null identifier of its kind.
+    rowList(contributes?.[point]).map((value) => {
+      const row = isRow(value) ? value : {};
+      return {
+        kind,
+        id: exactText(row[idKey]),
+        label: exactText(row[labelKey]),
+      };
+    }),
   );
 
 const parsePackageJsonDocument = (
@@ -805,10 +802,9 @@ const parsePackageJsonDocument = (
               command: exactText(row.command),
               key: exactText(row.key),
             })),
-      declarations:
-        unreadContributes || unreadableDeclarations(contributesRaw)
-          ? null
-          : declaredContributions(contributesRaw),
+      declarations: unreadContributes
+        ? null
+        : declaredContributions(contributesRaw),
     },
     extensionDependencies: parseExtensionList(record.extensionDependencies),
     extensionPack: parseExtensionList(record.extensionPack),

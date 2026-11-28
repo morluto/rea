@@ -235,6 +235,20 @@ describe("VS Code command correlation", () => {
     ]);
   });
 
+  it("limits unread declarations to their own kind", () => {
+    const result = correlate(
+      `${VSCODE}vscode.lm.registerTool("demo_tool", t);
+       vscode.chat.createChatParticipant("demo.chat", f);`,
+      contributes([], {
+        declarations: [{ kind: "language_model_tool", id: null, label: null }],
+      }),
+    );
+    expect(result.contributions.map(({ id, status }) => [id, status])).toEqual([
+      ["demo.chat", "registered_undeclared"],
+      ["demo_tool", "undetermined"],
+    ]);
+  });
+
   const withGraph = (
     change: (graph: ReturnType<typeof graphForJavaScript>) => unknown,
   ) =>
