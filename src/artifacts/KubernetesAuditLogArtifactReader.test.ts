@@ -567,6 +567,32 @@ it("does not retain a source address list past the list text budget", async () =
   });
 });
 
+it("does not interpret fields when the depth cap hides apiVersion", async () => {
+  const nest = `${"[".repeat(KUBERNETES_AUDIT_JSON_DEPTH)}1${"]".repeat(KUBERNETES_AUDIT_JSON_DEPTH)}`;
+  const metadata = await metadataOf(
+    `{"auditID":"cut","stage":"RequestReceived","verb":"delete","requestURI":"/secret","requestObject":${nest},"apiVersion":"audit.k8s.io/v100"}\n`,
+  );
+  expect(metadata.events[0]).toMatchObject({
+    audit_id: "cut",
+    verb: null,
+    request_uri: null,
+    depth_limited: true,
+    unsupported_version: true,
+  });
+  expect(metadata.verb_counts).toEqual([]);
+});
+
+it("clears a response object when a later array replaces it", async () => {
+  const metadata = await metadataOf(
+    '{"auditID":"replaced-array","stage":"ResponseComplete","responseStatus":{"code":403},"responseStatus":[],"verb":"get"}\n',
+  );
+  expect(metadata.events[0]).toMatchObject({
+    audit_id: "replaced-array",
+    verb: "get",
+    response_code: null,
+  });
+});
+
 it("drops a response object when a later value replaces it", async () => {
   const metadata = await metadataOf(
     '{"auditID":"replaced","stage":"ResponseComplete","responseStatus":{"code":403},"responseStatus":null,"verb":"get"}\n',

@@ -75,6 +75,7 @@ export const isTokenizerDepth = (cause: unknown): boolean =>
  */
 export const parseKubernetesAuditLine = (
   line: string,
+  step = 4096,
 ): KubernetesAuditLineParse => {
   const value: Record<string, unknown> = {};
   const user: Record<string, unknown> = {};
@@ -188,6 +189,21 @@ export const parseKubernetesAuditLine = (
       frame.invalid = true;
       frame.values.length = 0;
       frame.bytes = 0;
+      return;
+    }
+    if (frame?.kind === "root" && pendingKey === "user") {
+      sawUser = false;
+      for (const key of Object.keys(user)) delete user[key];
+      return;
+    }
+    if (frame?.kind === "root" && pendingKey === "objectRef") {
+      sawObject = false;
+      for (const key of Object.keys(objectRef)) delete objectRef[key];
+      return;
+    }
+    if (frame?.kind === "root" && pendingKey === "responseStatus") {
+      sawStatus = false;
+      delete responseStatus.code;
       return;
     }
     if (frame?.kind === "root" && pendingKey === "sourceIPs") {
@@ -414,15 +430,18 @@ export const parseKubernetesAuditLine = (
       for (const token of getManyValues(produced)) consume(token);
   };
   try {
-    // One code unit at a time. A larger slice that later exceeds the depth
-    // cap throws away every token in that slice, including identity fields
-    // that were already scanned.
-    for (let index = 0; index < line.length; index += 1)
-      feed(line.charAt(index));
+    for (let index = 0; index < line.length;) {
+      const end = Math.min(line.length, index + step);
+      feed(line.slice(index, end));
+      index = end;
+    }
     feed(none);
   } catch (cause: unknown) {
     if (isHostLimitFailure(cause)) throw cause;
     if (!isTokenizerDepth(cause)) return { kind: "syntax" };
+    // A chunk that overflows drops the tokens inside it. Read that line one
+    // code unit at a time so identity before the cap is kept.
+    if (step !== 1) return parseKubernetesAuditLine(line, 1);
     return typeof value.auditID === "string" && typeof value.stage === "string"
       ? {
           kind: "event",

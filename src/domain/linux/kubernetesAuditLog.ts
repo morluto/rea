@@ -505,7 +505,10 @@ class KubernetesAuditScanner {
     budgetOmitted: boolean,
   ): void {
     this.#recordCount += 1;
-    const unsupported = isUnsupportedVersion(event.apiVersion);
+    const versionUnexamined =
+      depthLimited && !Object.hasOwn(event, "apiVersion");
+    const unsupported =
+      versionUnexamined || isUnsupportedVersion(event.apiVersion);
     if (unsupported) this.#unsupportedVersionLineCount += 1;
     else if (typeof event.verb === "string") this.#countVerb(event.verb);
     this.#stageCounts.set(stage, (this.#stageCounts.get(stage) ?? 0) + 1);

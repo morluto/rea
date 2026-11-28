@@ -139,19 +139,64 @@ export class KubernetesAuditEventProbe {
           line.subarray(start, start + TOKEN_CHUNK_BYTES),
           { stream: true },
         );
-        // A depth overflow throws away every token still inside that call.
-        for (let index = 0; index < decoded.length; index += 1)
-          this.#feed(decoded.charAt(index));
+        // Chunks keep ordinary lines cheap. A depth overflow drops only the
+        // tokens inside the chunk that overflowed; that chunk is reread one
+        // code unit at a time when identity is not already known.
+        for (let index = 0; index < decoded.length;) {
+          const end = Math.min(decoded.length, index + 4096);
+          const slice = decoded.slice(index, end);
+          try {
+            this.#feed(slice);
+          } catch (cause: unknown) {
+            if (isHostLimitFailure(cause)) throw cause;
+            if (!isTokenizerDepth(cause)) {
+              this.#failed = true;
+              this.#done = true;
+              return;
+            }
+            if (this.#hasAuditId && this.#hasStage) this.#depthStopped = true;
+            else if (this.#depth === 0) this.#rereadSlice(slice);
+            this.#failed = !this.#depthStopped;
+            this.#done = true;
+            return;
+          }
+          index = end;
+        }
       }
     } catch (cause: unknown) {
       if (isHostLimitFailure(cause)) throw cause;
-      // Identity already read stays a positive claim. The reader reports the
-      // cutoff. A nest that arrives first is not this format.
-      this.#depthStopped =
-        isTokenizerDepth(cause) && this.#hasAuditId && this.#hasStage;
-      this.#failed = !this.#depthStopped;
+      this.#failed = true;
       this.#done = true;
     }
+  }
+
+  /**
+   * The chunk's tokens were discarded with the overflow. A new tokenizer can
+   * reread it only at the start of the value, where no earlier container is open.
+   */
+  #rereadSlice(slice: string): void {
+    this.#depth = 0;
+    this.#field = undefined;
+    this.#capture = undefined;
+    this.#text = "";
+    this.#tokens = jsonParser({
+      packValues: false,
+      packKeys: false,
+      packStrings: false,
+      packNumbers: false,
+      streamValues: true,
+      maxDepth: KUBERNETES_AUDIT_JSON_DEPTH,
+    }) as AuditJsonTokenizer;
+    for (let index = 0; index < slice.length; index += 1) {
+      try {
+        this.#feed(slice.charAt(index));
+      } catch (cause: unknown) {
+        if (isHostLimitFailure(cause)) throw cause;
+        this.#depthStopped = this.#hasAuditId && this.#hasStage;
+        return;
+      }
+    }
+    this.#depthStopped = this.#hasAuditId && this.#hasStage;
   }
 
   /**
