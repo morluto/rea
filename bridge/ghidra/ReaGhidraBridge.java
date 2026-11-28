@@ -3225,20 +3225,52 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 }
                 String name = identifier();
                 int arrays = measureArrays(base + stars + innerStars);
+                int depth = stars + arrays + base;
+                boolean nestedSuffix = false;
                 // Suffix arrays may follow each grouped close, as in
-                // ((f)[][]), so measure them before the next close.
+                // ((f)[][]), so measure them before the next close. A
+                // function suffix may also sit inside a group, as in
+                // (*f(parameters))(void); measure it before that close.
                 for (int group = 0; group < groups; group++) {
+                    while (at("(")) {
+                        index++;
+                        int parameters = measureParameters();
+                        depth = 1 + Math.max(depth, parameters);
+                        observe(depth);
+                        nestedSuffix = true;
+                        int suffixArrays = measureArrays(depth);
+                        arrays += suffixArrays;
+                        depth += suffixArrays;
+                        observe(depth);
+                    }
                     expect(")");
-                    arrays += measureArrays(base + stars + innerStars + arrays);
+                    int closeArrays = measureArrays(base + stars + innerStars + arrays);
+                    arrays += closeArrays;
+                    depth += closeArrays;
+                    observe(depth);
+                }
+                if (nestedSuffix) {
+                    depth += innerStars;
+                    observe(depth);
+                    while (at("(")) {
+                        index++;
+                        int parameters = measureParameters();
+                        depth = 1 + Math.max(depth, parameters);
+                        observe(depth);
+                        int suffixArrays = measureArrays(depth);
+                        depth += suffixArrays;
+                        observe(depth);
+                    }
+                    return new Declarator(name, depth);
                 }
                 if (innerStars > 0) {
                     expect("(");
                     int parameters = measureParameters();
-                    int depth = innerStars + arrays + 1 + Math.max(stars + base, parameters);
+                    depth = innerStars + arrays + 1 + Math.max(stars + base, parameters);
                     observe(depth);
                     return new Declarator(name, depth);
                 }
-                int depth = stars + arrays + base;
+                depth = stars + arrays + base;
                 observe(depth);
                 if (at("(")) {
                     index++;
@@ -3349,31 +3381,17 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
         void measureSignature() {
             int base = measureSpecifiers();
-            int stars = measureStars();
-            while (skipCallingConventions()) stars += measureStars();
-            // A grouped name, as in int **** (total)(void), carries the same chain.
-            int groups = 0;
-            while (at("(")) {
+            Declarator declarator = measureDeclarator(base);
+            refuse(declarator.name() == null ? "a caller type" : declarator.name(), declarator.depth());
+            // A comma-separated declaration is rejected after parsing, but
+            // its declarators must be measured before the parser walks them.
+            while (at(",")) {
                 index++;
-                groups++;
-                skipCallingConventions();
-                stars += measureStars();
-                skipCallingConventions();
-                observe(base + stars);
+                Declarator trailing = measureDeclarator(base);
+                refuse(trailing.name() == null ? "a caller type" : trailing.name(), trailing.depth());
             }
-            observe(base + stars);
-            String name = identifier();
-            // Array suffixes bind to the grouped name before its closing
-            // parenthesis and may follow each grouped close in nested
-            // grouping, so count them before expecting the parameter list.
-            int arrays = measureArrays(base + stars);
-            for (int group = 0; group < groups; group++) {
-                expect(")");
-                arrays += measureArrays(base + stars + arrays);
-            }
-            expect("(");
-            int parameters = measureParameters();
-            refuse(name, 1 + Math.max(stars + arrays + base, parameters));
+            if (at(";")) index++;
+            if (index < tokens.size()) throw new Unmeasured();
         }
 
         private void skipBody() {

@@ -1540,6 +1540,30 @@ struct rea_after { char c; int i; };`;
           ).code,
           "resource_constraint",
         );
+        // A trailing comma-separated declarator is measured too, so its
+        // over-deep parameter cannot reach the parser behind the first one.
+        assert.equal(
+          requireMcpToolError(
+            await flood.raw("annotate_native_function", {
+              procedure,
+              signature: `int first(void), second(int ${"*".repeat(4000)} p)`,
+              signature_max_utf16: 4096,
+            }),
+          ).code,
+          "resource_constraint",
+        );
+        // A function suffix inside a grouped declarator is measured before
+        // its closing parenthesis, not discarded as an unmeasured shape.
+        assert.equal(
+          requireMcpToolError(
+            await flood.raw("annotate_native_function", {
+              procedure,
+              signature: `int (__stdcall *f(int ${"*".repeat(4000)} p))(void)`,
+              signature_max_utf16: 4096,
+            }),
+          ).code,
+          "resource_constraint",
+        );
         // A missing closing parenthesis does not discard the over-deep
         // parameter measured before it.
         assert.equal(
