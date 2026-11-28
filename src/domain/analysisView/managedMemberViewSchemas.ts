@@ -4,6 +4,7 @@ import { managedMemberInspectionSchema } from "../managed/managedArtifact.js";
 import { unresolvedDefinitionSchema } from "../managed/managedUnresolvedDefinitions.js";
 
 const member = managedMemberInspectionSchema.shape;
+const layouts = member.layout_declarations.unwrap().unwrap();
 
 const rows = {
   types: member.types.element,
@@ -15,6 +16,8 @@ const rows = {
   field_accesses: member.field_accesses.element,
   user_strings: member.user_strings.unwrap().shape.literals.element,
   unresolved_definitions: unresolvedDefinitionSchema,
+  class_layouts: layouts.shape.classes.element,
+  field_layouts: layouts.shape.fields.element,
 };
 const pageRequest = analysisViewPageFields("managed-members");
 const namedRequest = {
@@ -92,6 +95,16 @@ export const managedMembersViewRequestSchema = z.discriminatedUnion(
       ...pageRequest,
       collection: z.literal("unresolved_definitions"),
     }),
+    z.strictObject({
+      ...namedRequest,
+      collection: z.literal("class_layouts"),
+      fields: fieldsOf(rows.class_layouts.keyof()),
+    }),
+    z.strictObject({
+      ...declaredRequest,
+      collection: z.literal("field_layouts"),
+      fields: fieldsOf(rows.field_layouts.keyof()),
+    }),
   ],
 );
 
@@ -158,6 +171,25 @@ export const managedMembersViewPageSchema = z.discriminatedUnion("collection", [
     "user_strings",
     rows.user_strings.partial().required({ token: true, offset: true }),
   ),
+  rowsOf(
+    "class_layouts",
+    rows.class_layouts.partial().required({
+      token: true,
+      row_offset: true,
+      parent_row: true,
+      type_token: true,
+    }),
+  ),
+  rowsOf(
+    "field_layouts",
+    rows.field_layouts.partial().required({
+      token: true,
+      row_offset: true,
+      field_row: true,
+      field_token: true,
+      declaring_type_token: true,
+    }),
+  ),
   z.strictObject({
     collection: z.literal("unresolved_definitions"),
     rows: z.array(rows.unresolved_definitions),
@@ -187,6 +219,10 @@ export const managedMemberSummarySchema = z.strictObject({
       issues: member.user_strings.unwrap().shape.issues,
     })
     .nullable(),
+  layout_declarations: layouts
+    .omit({ classes: true, fields: true })
+    .nullable()
+    .exactOptional(),
   limitations: member.limitations,
   reported_counts: z.strictObject({
     types: z.int().nonnegative(),
@@ -198,6 +234,8 @@ export const managedMemberSummarySchema = z.strictObject({
     field_accesses: z.int().nonnegative(),
     user_strings: nullableCount,
     unresolved_definitions: z.int().nonnegative().exactOptional(),
+    class_layouts: nullableCount.exactOptional(),
+    field_layouts: nullableCount.exactOptional(),
   }),
 });
 

@@ -188,6 +188,35 @@ const collectionPage = (
         },
         view,
       );
+    case "class_layouts":
+      return selectRows(
+        {
+          collection,
+          rows: report.layout_declarations?.classes,
+          identity: ["token", "row_offset", "parent_row", "type_token"],
+          name: "type_name",
+          cacheOwner: report,
+        },
+        view,
+      );
+    case "field_layouts":
+      return selectRows(
+        {
+          collection,
+          rows: report.layout_declarations?.fields,
+          identity: [
+            "token",
+            "row_offset",
+            "field_row",
+            "field_token",
+            "declaring_type_token",
+          ],
+          name: "field_name",
+          declaringType: "declaring_type",
+          cacheOwner: report,
+        },
+        view,
+      );
     case "unresolved_definitions":
       return sliceMemberRows(
         collection,
@@ -381,6 +410,7 @@ const summarizeMembers = (
     field_accesses,
     user_strings,
     unresolved_definitions,
+    layout_declarations,
     ...identity
   } = report;
   return {
@@ -395,6 +425,17 @@ const summarizeMembers = (
       user_strings === null
         ? null
         : { state: user_strings.state, issues: user_strings.issues },
+    ...(layout_declarations === undefined
+      ? {}
+      : {
+          layout_declarations:
+            layout_declarations === null
+              ? null
+              : {
+                  state: layout_declarations.state,
+                  issues: layout_declarations.issues,
+                },
+        }),
     reported_counts: {
       types: types.length,
       exported_types: exported_types?.length ?? null,
@@ -404,6 +445,12 @@ const summarizeMembers = (
       call_edges: call_edges.length,
       field_accesses: field_accesses.length,
       user_strings: user_strings?.literals.length ?? null,
+      ...(layout_declarations === undefined
+        ? {}
+        : {
+            class_layouts: layout_declarations?.classes.length ?? null,
+            field_layouts: layout_declarations?.fields.length ?? null,
+          }),
       ...(unresolved_definitions === undefined
         ? {}
         : { unresolved_definitions: unresolved_definitions.rows.length }),
@@ -524,7 +571,14 @@ export const projectManagedMemberView = (
             state: report.user_strings.state,
             issues: report.user_strings.issues,
           }
-        : report.coverage,
+        : (view.collection === "class_layouts" ||
+              view.collection === "field_layouts") &&
+            report.layout_declarations != null
+          ? {
+              state: report.layout_declarations.state,
+              issues: report.layout_declarations.issues,
+            }
+          : report.coverage,
     coverage: pageViewCoverage(view.offset, page.rows.length, total),
   });
 };

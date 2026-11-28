@@ -213,6 +213,45 @@ const managedExportedTypeSchema = z.object({
   implementation_token: managedMetadataTokenSchema.nullable(),
 });
 
+const managedClassLayoutSchema = z.object({
+  token: managedMetadataTokenSchema,
+  row_offset: offsetSchema,
+  parent_row: z.int().min(0).max(0xffff_ffff),
+  type_token: managedMetadataTokenSchema.nullable(),
+  type_name: z.string().nullable(),
+  packing_size: z
+    .int()
+    .min(0)
+    .max(0xffff)
+    .describe(
+      "Raw PackingSize; zero selects the platform default, not zero-byte packing.",
+    ),
+  class_size: z
+    .int()
+    .min(0)
+    .max(0xffff_ffff)
+    .describe(
+      "Raw ClassSize declaration; zero leaves size unspecified. This is not a computed runtime size.",
+    ),
+});
+
+const managedFieldLayoutSchema = z.object({
+  token: managedMetadataTokenSchema,
+  row_offset: offsetSchema,
+  field_row: z.int().min(0).max(0xffff_ffff),
+  field_token: managedMetadataTokenSchema.nullable(),
+  declaring_type_token: managedMetadataTokenSchema.nullable(),
+  declaring_type: z.string().nullable(),
+  field_name: z.string().nullable(),
+  offset_bytes: z
+    .int()
+    .min(0)
+    .max(0xffff_ffff)
+    .describe(
+      "Raw FieldLayout.Offset, relative to the declared type; not an artifact offset or computed runtime address.",
+    ),
+});
+
 const managedFieldSchema = z.object({
   token: managedMetadataTokenSchema,
   row_offset: offsetSchema,
@@ -602,6 +641,18 @@ export const managedMemberInspectionSchema = z
     // Null means the table was not examined (member decoding exceeded capacity),
     // not that it was empty.
     exported_types: z.array(managedExportedTypeSchema).nullable(),
+    layout_declarations: z
+      .object({
+        state: knownCoverageStatusSchema,
+        classes: z.array(managedClassLayoutSchema),
+        fields: z.array(managedFieldLayoutSchema),
+        issues: z.array(managedParseIssueSchema),
+      })
+      .nullable()
+      .exactOptional()
+      .describe(
+        "ClassLayout and FieldLayout declarations for the selected types, with independent coverage. Null or omission means unexamined; complete empty arrays establish no such declarations. Runtime layout, inherited field offsets, and platform-dependent sizes are not computed.",
+      ),
     fields: z.array(managedFieldSchema),
     methods: z.array(managedMethodSchema),
     member_refs: z.array(managedMemberReferenceSchema),
