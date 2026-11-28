@@ -109,7 +109,12 @@ it.each([undefined, "controlled-replay"] as const)(
   async (authority) => {
     const port: RequestAnalysisPort<AdbRequest> = {
       async inspectAvailability() {
-        return { status: "available", code: null, reason: null, diagnostics: {} };
+        return {
+          status: "available",
+          code: null,
+          reason: null,
+          diagnostics: {},
+        };
       },
       async close() {},
       async execute(request) {
