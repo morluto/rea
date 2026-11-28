@@ -264,6 +264,7 @@ export const createServer = (
       environment.REA_MCP_TOOLS_LIST_PAGE_BYTES,
     );
   server.analysisSettings = analysisSettings;
+  server.capabilityAvailability = capabilities.availability;
   if (options.mcpServer !== undefined) {
     server.attachRuntime(
       session === undefined

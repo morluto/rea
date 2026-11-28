@@ -23,6 +23,10 @@ import {
 } from "../contracts/mcpSchemaPresentation.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
+import {
+  announceDeferredStdioStartup,
+  type AdvertisedCatalog,
+} from "./startupAnnouncement.js";
 
 /**
  * Digests of the selected output profile. The catalog file records the `off`
@@ -164,6 +168,12 @@ export const runDeferred = async (
     config.mcpToolFamilies === undefined
       ? undefined
       : new Set(config.mcpToolFamilies);
+  // What this entry advertises before any analysis runtime exists, which is the
+  // one thing the start-up banner can state without composing anything.
+  const advertisedCatalog: AdvertisedCatalog =
+    config.mcpToolCatalogProfile === "hot-cold"
+      ? { profile: "hot-cold" }
+      : { profile: "full", toolCount: firstCatalog.tools.length };
   const servers = new OwnedMcpServers<DeferredEvidenceMcpServer>();
   let handle: McpServerHandle | undefined;
   let attempt: Promise<void> | undefined;
@@ -291,6 +301,9 @@ export const runDeferred = async (
     dependencies.writeStderr(`${SERVER_START_FAILED}\n`);
     return 1;
   }
+  // A server already asked to close never reports itself ready to a client host.
   if (closing) await close();
+  else
+    announceDeferredStdioStartup(dependencies.writeStderr, advertisedCatalog);
   return 0;
 };

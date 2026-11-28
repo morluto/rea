@@ -114,6 +114,30 @@ const connect = async (
   return { client, stderr: () => stderr };
 };
 
+/**
+ * A healthy server announces itself on stderr and writes nothing else, whatever
+ * `REA_LOG_LEVEL` says; the analysis banner follows once a tool call composes
+ * the runtime, and composes only once.
+ */
+const expectOnlyStartupBanners = (stderr: string): void => {
+  const lines = stderr.split("\n").filter((line) => line !== "");
+  expect(lines.length).toBeGreaterThan(0);
+  for (const line of lines)
+    expect(line).toMatch(
+      /^\[rea\] MCP (?:server ready|analysis runtime ready) — /u,
+    );
+  // A deferred entry announces readiness before anything composes; an eager one
+  // has nothing to announce until its runtime is ready, and composes at startup.
+  const ready = lines.filter((line) =>
+    line.startsWith("[rea] MCP server ready"),
+  );
+  expect(ready.length).toBeLessThanOrEqual(1);
+  if (ready.length === 1) expect(lines[0]).toBe(ready[0]);
+  expect(
+    lines.filter((line) => line.includes("MCP analysis runtime ready")).length,
+  ).toBeLessThanOrEqual(1);
+};
+
 it.each([
   { mode: "legacy", environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: "off" } },
   { mode: "auto", environment: {} },
@@ -252,7 +276,7 @@ it.each([
         initial.tools.length + 2,
       );
     }
-    expect(stderr()).toBe("");
+    expectOnlyStartupBanners(stderr());
   },
 );
 
@@ -356,7 +380,7 @@ it.each([
     expect(await loadedModules()).toEqual(
       new Set(["entrypoint", ...analysisModules]),
     );
-    expect(stderr()).toBe("");
+    expectOnlyStartupBanners(stderr());
   },
 );
 
@@ -403,7 +427,7 @@ it.each(["get", "complete"] as const)(
       new Set(["entrypoint", ...analysisModules]),
     );
     expect(await client.listPrompts()).toEqual(listing);
-    expect(stderr()).toBe("");
+    expectOnlyStartupBanners(stderr());
   },
 );
 
@@ -521,7 +545,7 @@ it.each([
       expect(invalid._meta?.["io.modelcontextprotocol/serverInfo"]).toEqual(
         recorded.info,
       );
-    expect(stderr()).toBe("");
+    expectOnlyStartupBanners(stderr());
   },
 );
 
@@ -553,7 +577,7 @@ it.each(["legacy", "auto"] as const)(
         .status,
     ).toBe("section");
     expect(await client.listTools()).toEqual(before);
-    expect(stderr()).toBe("");
+    expectOnlyStartupBanners(stderr());
   },
 );
 
@@ -589,6 +613,42 @@ globalThis.Date = class extends NativeDate {
   expect(again.structuredContent).toMatchObject({
     result: { server_identity: { server: { started_at: startedAt } } },
   });
+});
+
+it("announces the deferred stdio server with the project tag before any tool call", () => {
+  const child = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "--eval",
+      `
+import assert from "node:assert/strict";
+import { runDeferred } from "./dist/main/deferredRuntime.js";
+import { parseConfig } from "./dist/config/parseConfig.js";
+const config = parseConfig({ HOME: process.env.HOME });
+assert.equal(config.ok, true);
+const result = await runDeferred({
+  env: {},
+  // The banner goes through the injected writer, like every other human line.
+  writeStderr: (text) => process.stderr.write(text),
+  setExitCode: () => {},
+  registerShutdown: () => () => undefined,
+  serve: (factory) => {
+    factory({});
+    return { close: () => Promise.resolve() };
+  },
+}, config.value);
+assert.equal(result, 0);
+`,
+    ],
+    { cwd: process.cwd(), encoding: "utf8", timeout: 20000 },
+  );
+  expect(child.error).toBeUndefined();
+  expect(child.status, child.stderr).toBe(0);
+  expect(child.stdout).toBe("");
+  expect(child.stderr.trim()).toMatch(
+    /^\[rea\] MCP server ready — REA \d+\.\d+\.\d+, \d+ tools, stdio \(analysis runtime deferred\)$/u,
+  );
 });
 
 it.each([
@@ -1236,6 +1296,7 @@ const until = async (predicate) => {
 let entered = false;
 let release;
 const held = new Promise(resolve => { release = resolve; });
+const banners = [];
 let close;
 let hookCloses = 0;
 const result = await runDeferred({
@@ -1247,7 +1308,7 @@ const result = await runDeferred({
   }, { ...options, transport: new StdioServerTransport(input, output) }),
   loadOptionalProviders: async () => { entered = true; await held; return {}; },
   captureShutdown: owned => { close = owned; },
-  registerShutdown: () => () => {}, writeStderr: text => { throw new Error(text); }, setExitCode: () => {},
+  registerShutdown: () => () => {}, writeStderr: text => { banners.push(text); }, setExitCode: () => {},
 }, parsed.value);
 assert.equal(result, 0);
 const send = value => { const bytes = Buffer.from(JSON.stringify(value) + "\\n"); writes.push(bytes); input.write(bytes); };
@@ -1263,6 +1324,8 @@ try {
   await close();
   await close();
   assert.equal(hookCloses, 1);
+  for (const banner of banners)
+    assert.match(banner, /^\\[rea\\] MCP .* ready — /u);
   assert.deepEqual(Buffer.concat(received), Buffer.concat(writes));
   assert.equal(responses.filter(value => value.id === 2).length, 1);
   assert.equal(responses.filter(value => value.id === 3).length, 1);
