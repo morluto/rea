@@ -316,6 +316,7 @@ import {
 } from "./summarySchemas/sourceToBundleSummarySchemas.js";
 import { vsixPackageSummaryViewResultSchema } from "./summarySchemas/vsixPackageSummarySchema.js";
 import { wasmArtifactSummaryViewResultSchema } from "./summarySchemas/wasmArtifactSummarySchema.js";
+import { warcArchiveSummaryViewResultSchema } from "./summarySchemas/warcArchiveSummarySchema.js";
 import {
   webBundlePageViewResultSchema,
   webBundleSummaryViewResultSchema,
@@ -423,6 +424,7 @@ export {
   uefiFirmwareSummaryViewResultSchema,
   vsixPackageSummaryViewResultSchema,
   wasmArtifactSummaryViewResultSchema,
+  warcArchiveSummaryViewResultSchema,
   webBundlePageViewResultSchema,
   webBundleSummaryViewResultSchema,
   webPagePageViewResultSchema,
@@ -489,6 +491,7 @@ const viewResultBase = {
     "trace_native_values",
     "match_native_functions",
     "procedure_references",
+    "inspect_warc_archive",
   ]),
 } as const;
 
@@ -814,6 +817,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     nativeValueTraceSummaryViewResultSchema,
     erlangBeamSummaryViewResultSchema,
     devicetreeSummaryViewResultSchema,
+    warcArchiveSummaryViewResultSchema,
     espNvsSummaryViewResultSchema,
     firmwareVectorTableSummaryViewResultSchema,
     labviewArtifactSummaryViewResultSchema,
