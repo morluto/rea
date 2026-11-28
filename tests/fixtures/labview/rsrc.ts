@@ -13,8 +13,9 @@ const u32 = (value: number): Buffer => {
 
 /**
  * Build one synthetic RSRC container with the header, block-info list, and
- * section data this reader parses. Names are omitted; the container's own
- * offsets are the fact under test, not a producer's naming.
+ * section data this reader parses. The word at info+48 is counted from the
+ * info header and ends where section names begin; those names then run to
+ * the end of the info section.
  */
 export const buildLabviewRsrc = (
   blocks: readonly BlockFixture[],
@@ -60,22 +61,30 @@ export const buildLabviewRsrc = (
     blockHeaders.push(header);
     cursor += sectionArrays[index]?.length ?? 0;
   }
-  const nameParts = names.map((name) => {
-    const bytes = Buffer.from(name, "latin1");
-    return Buffer.concat([Buffer.from([bytes.length]), bytes]);
-  });
+  const nameBytes = Buffer.concat(
+    names.map((name) => {
+      const bytes = Buffer.from(name, "latin1");
+      return Buffer.concat([Buffer.from([bytes.length]), bytes]);
+    }),
+  );
   const blockInfo = Buffer.concat([
     u32(blocks.length - 1),
     ...blockHeaders,
     ...sectionArrays,
-    ...nameParts,
+    nameBytes,
   ]);
   const listHeader = Buffer.alloc(20);
   listHeader.writeUInt32BE(0, 0);
   listHeader.writeUInt32BE(0, 4);
   listHeader.writeUInt32BE(32, 8);
-  listHeader.writeUInt32BE(52, 12);
-  listHeader.writeUInt32BE(blockInfo.length, 16);
+  // Both words are offsets from the info header. The extent ends at the
+  // name list, which follows the block headers and section-start tables.
+  const blockInfoFromInfo = 32 + listHeader.length;
+  listHeader.writeUInt32BE(blockInfoFromInfo, 12);
+  listHeader.writeUInt32BE(
+    blockInfoFromInfo + blockInfo.length - nameBytes.length,
+    16,
+  );
   const infoLength = 32 + listHeader.length + blockInfo.length;
   const header = (): Buffer => {
     const bytes = Buffer.alloc(32);

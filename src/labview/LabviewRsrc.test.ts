@@ -1,11 +1,13 @@
-import { AnalysisTargetFailureError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisTargetFailureError,
+  AnalysisInputError,
+} from "../domain/analysisErrorCore.js";
 import { deflateSync } from "node:zlib";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { peResourceFixture } from "../domain/pe/peResources.fixture.js";
 import { findEmbeddedRsrcContainers } from "./LabviewPeContainer.js";
 import { LABVIEW_DECODE_ALLOWANCES, parseLabviewRsrc } from "./LabviewRsrc.js";
@@ -277,6 +279,51 @@ describe("parseLabviewRsrc", () => {
     expect(parsed.value.blocks.map((block) => block.sections[0]?.name)).toEqual(
       ["shared", "shared"],
     );
+  });
+
+  it("reads a name list that follows LabVIEW's declared list extent", () => {
+    // LabVIEW counts the extent from the info header, so it ends where the
+    // name list begins and the names run to the end of the info section.
+    const name = "MDFBuildDevPartMerger_PopulateMsiDriverPackagesTable.vi";
+    const container = buildLabviewRsrc(
+      [{ ident: "LVSR", sections: [Buffer.from("x")] }],
+      [name],
+    );
+    const infoOffset = container.readUInt32BE(16);
+    const infoBytes = container.readUInt32BE(20);
+    container.writeUInt32BE(infoBytes - 1 - name.length, infoOffset + 48);
+    const parsed = parseLabviewRsrc(container);
+    if (!parsed.ok) throw new Error(parsed.failure.message);
+    expect(parsed.value.blocks[0]?.sections[0]?.name).toBe(name);
+  });
+
+  it("rejects a block-info extent that ends before the section-start tables", () => {
+    // The declared extent stops one byte before the start tables end, while
+    // the trailing name keeps the info section past that table.
+    const name = "MDFBuildDevPartMerger_PopulateMsiDriverPackagesTable.vi";
+    const container = buildLabviewRsrc(
+      [{ ident: "LVSR", sections: [Buffer.from("x")] }],
+      [name],
+    );
+    const infoOffset = container.readUInt32BE(16);
+    const infoEnd = infoOffset + container.readUInt32BE(20);
+    const blockInfo = infoOffset + container.readUInt32BE(infoOffset + 44);
+    const headerAt = blockInfo + 4;
+    const startsAt = blockInfo + container.readUInt32BE(headerAt + 8);
+    const structureEnd = infoOffset + container.readUInt32BE(infoOffset + 48);
+    const declared = structureEnd - infoOffset - 1;
+    expect(blockInfo + declared).toBeGreaterThanOrEqual(structureEnd);
+    expect(infoEnd).toBeGreaterThan(blockInfo + declared);
+    container.writeUInt32BE(declared, infoOffset + 48);
+    const parsed = parseLabviewRsrc(container);
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) return;
+    expect(parsed.failure.failure).toMatchObject({
+      kind: "truncated",
+      format: "labview-rsrc",
+      offset: startsAt,
+      field: "LVSR",
+    });
   });
 
   it("accepts a list extent that runs past the resource payload", () => {

@@ -195,7 +195,7 @@ const decodeSection = (
   return value;
 };
 
-/** Read one Pascal name from a block's name list, bounded by the declared list. */
+/** Read one Pascal name from a block's name list, bounded by the info section. */
 const sectionName = (
   reader: BinaryReader,
   nameBase: number,
@@ -203,7 +203,7 @@ const sectionName = (
   infoEnd: number,
 ): string | null => {
   // Only the sentinel means "this section has no name". A name that leaves
-  // the declared list is malformed input, not an observed omission.
+  // the info section is malformed input, not an observed omission.
   if (nameOffset === 0xffffffff) return null;
   const at = nameBase + nameOffset;
   if (!inside(at, 1, infoEnd))
@@ -337,8 +337,9 @@ export const parseLabviewRsrc = (
           offset: blockInfo,
         },
       );
-    // The list declares its own extent at infoOffset + 48; records outside it
-    // are not part of this container, so it owns the records that follow.
+    // The word at infoOffset + 48 is an offset from the info header. It ends
+    // where the name list begins; the block headers and section-start tables
+    // are the records inside that extent.
     const blockInfoBytes = reader.u32(infoOffset + 48);
     // Real containers can declare a list extent that runs past the resource
     // payload's own end, so the declared extent and the container both bound
@@ -347,7 +348,7 @@ export const parseLabviewRsrc = (
       throw truncatedInput(FORMAT, "RSRC block-info list declares no records", {
         offset: infoOffset + 48,
       });
-    const listEnd = Math.min(blockInfo + blockInfoBytes, infoEnd);
+    const listEnd = Math.min(infoOffset + blockInfoBytes, infoEnd);
     const blockCount = reader.u32(blockInfo) + 1;
     const blockHeadersAt = blockInfo + 4;
     const headersEnd = blockHeadersAt + blockCount * BLOCK_HEADER_BYTES;
@@ -480,7 +481,9 @@ export const parseLabviewRsrc = (
         }
         sections.push({
           index: declaredIndex,
-          name: sectionName(reader, namesBase, nameOffset, listEnd),
+          // LabVIEW counts the declared extent from the info header, so it
+          // ends where the name list begins; the names run to the info end.
+          name: sectionName(reader, namesBase, nameOffset, infoEnd),
           storedBytes,
           decodedBytes: decoded.decodedBytes,
           coding: decoded.coding,
