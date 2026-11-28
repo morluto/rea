@@ -152,7 +152,7 @@ export const registerCoreNativeCommands = (
     contractNamed(ENHANCED_TOOL_CONTRACTS, "trace_native_values"),
     {
       description: "Trace bounded native def-use and call dependencies",
-      sessionTarget: nativeApplication,
+      sessionTarget: nativeTarget("Local native executable or app path", true),
       positionals: ["procedure"],
       evidenceDelivery: true,
       fields: {
