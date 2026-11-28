@@ -2,14 +2,35 @@ import { expect, it } from "vitest";
 
 import { createTestTempFile } from "../../tests/fixtures/temporaryDirectory.js";
 import { amigaLoadFile } from "../domain/amigaHunk.fixture.js";
-import type { AmigaHunkLimits } from "../domain/amigaHunk.js";
+import {
+  hasAmigaHunkMagic,
+  type AmigaHunkLimits,
+} from "../domain/amigaHunk.js";
 import type {
   ArtifactEntry,
   ArtifactReaderTraversal,
 } from "../resources/index.js";
 import { AmigaHunkArtifactReader } from "./AmigaHunkArtifactReader.js";
+import { createArtifactClassificationProbe } from "./ArtifactClassificationProbe.js";
 
 const CODE = Buffer.from([0x4e, 0x75, 0x00, 0x00]);
+
+it("acquires the largest resident-library header in fewer than 40 reads", () => {
+  const file = amigaLoadFile({
+    libraries: Array<string>(16_384).fill("lib"),
+    hunks: [{ type: "code", bytes: CODE }],
+  });
+  const probe = createArtifactClassificationProbe();
+  let reads = 0;
+  while (probe.length < Math.min(probe.limit, file.length)) {
+    probe.write(file.subarray(probe.length, probe.limit));
+    reads++;
+  }
+  expect(hasAmigaHunkMagic(probe.finish(file.length).prefix, file.length)).toBe(
+    true,
+  );
+  expect(reads).toBeLessThan(40);
+});
 
 const read = async (bytes: Buffer, limits?: AmigaHunkLimits) => {
   const reader = new AmigaHunkArtifactReader(

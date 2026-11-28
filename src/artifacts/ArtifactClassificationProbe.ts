@@ -27,7 +27,10 @@ import {
   ISO9660_SIGNATURE_BYTES,
 } from "../domain/iso9660/iso9660Structures.js";
 import { gzipTarExtraFieldProbeBytes } from "../domain/tarFormat.js";
-import { amigaHunkPrefixDecision } from "../domain/amigaHunk.js";
+import {
+  amigaHunkPrefixDecision,
+  amigaHunkPrefixGrowth,
+} from "../domain/amigaHunk.js";
 import {
   createAsarHeaderSignatureProbe,
   type FinalAsarHeaderProbeObservation,
@@ -159,6 +162,7 @@ export const createArtifactClassificationProbe = (
   const blocks: Buffer[] = [];
   let retainedBytes = 0;
   let observedBytes = 0;
+  let amigaPrefixLimit = ARTIFACT_CLASSIFICATION_PREFIX_BYTES;
   let fatTable: FatContainerTable | undefined;
   const fatSliceHeadersByOffset = new Map<number, MachoHeaderPrefixFacts>();
   const partialFatHeaders = new Map<
@@ -295,22 +299,20 @@ export const createArtifactClassificationProbe = (
     return prefix;
   };
   const signaturePrefixLimit = (): number => {
-    const head = blocks[0];
-    // HUNK_HEADER and HUNK_UNIT. A long unit or library name is still inside
-    // the parser's name allowance, so retain through its next structural word.
-    const amiga =
-      head !== undefined &&
-      head.length >= 4 &&
-      head[0] === 0 &&
-      head[1] === 0 &&
-      head[2] === 0x03 &&
-      (head[3] === 0xe7 || head[3] === 0xf3)
-        ? amigaHunkPrefixDecision(retainedPrefix(), Number.MAX_SAFE_INTEGER)
-        : undefined;
+    // Recheck a pending header only after its requested prefix is retained.
+    // Zero ends probing after recognition or rejection.
+    if (amigaPrefixLimit !== 0 && retainedBytes >= amigaPrefixLimit) {
+      const fileSize = Number.MAX_SAFE_INTEGER; // The stream may still grow.
+      const decision = amigaHunkPrefixDecision(retainedPrefix(), fileSize);
+      amigaPrefixLimit =
+        decision?.state === "needs-prefix"
+          ? amigaHunkPrefixGrowth(retainedBytes, decision.bytes, fileSize)
+          : 0;
+    }
     return Math.max(
       ARTIFACT_CLASSIFICATION_PREFIX_BYTES,
       retainedBytes < 12 ? 0 : gzipTarExtraFieldProbeBytes(blocks[0]!),
-      amiga?.state === "needs-prefix" ? amiga.bytes : 0,
+      amigaPrefixLimit,
     );
   };
 

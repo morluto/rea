@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 
 import {
   AMIGA_HUNK_HUNK_LIMIT,
+  AMIGA_HUNK_MAX_HEADER_PREFIX_BYTES,
   AMIGA_HUNK_RELOCATION_LIMIT,
   AMIGA_HUNK_RELOCATION_RECORD_LIMIT,
   AMIGA_HUNK_SYMBOL_LIMIT,
@@ -10,6 +11,7 @@ import {
   HUNK_EXT,
   HUNK_NAME,
   amigaHunkPrefixDecision,
+  amigaHunkPrefixGrowth,
   hasAmigaHunkMagic,
   parseAmigaHunk,
   amigaHunkMetadata,
@@ -20,6 +22,16 @@ import { amigaLoadFile, amigaObjectFile } from "./amigaHunk.fixture.js";
 
 const CODE = Buffer.from([0x4e, 0x75, 0x00, 0x00]);
 const DATA = Buffer.from([0x11, 0x22, 0x33, 0x44]);
+
+it("doubles the prefix while honoring structural, file, and header bounds", () => {
+  const ceiling = AMIGA_HUNK_MAX_HEADER_PREFIX_BYTES;
+  expect(amigaHunkPrefixGrowth(16, 20, ceiling)).toBe(32);
+  expect(amigaHunkPrefixGrowth(16, 48, ceiling)).toBe(48);
+  expect(amigaHunkPrefixGrowth(16, 20, 24)).toBe(24);
+  expect(amigaHunkPrefixGrowth(ceiling - 4, ceiling, ceiling * 2)).toBe(
+    ceiling,
+  );
+});
 
 const limitOf = (parse: () => unknown): ParseFailureError => {
   try {

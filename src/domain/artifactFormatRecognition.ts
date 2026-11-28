@@ -156,8 +156,17 @@ export interface ArtifactRecognitionInput {
  */
 type Recognition =
   | {
-      readonly state: "recognized" | "needs-input";
+      readonly state: "recognized";
       readonly format: RecognizedArtifactFormat;
+    }
+  | {
+      readonly state: "needs-input";
+      readonly format: "amiga-hunk";
+      readonly neededPrefixBytes: number;
+    }
+  | {
+      readonly state: "needs-input";
+      readonly format: "dfuse" | "iso9660" | "esp-flash-image";
     }
   | {
       readonly state: "refused";
@@ -286,7 +295,11 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
       if (claim === undefined) return undefined;
       return claim.state === "recognized"
         ? { state: "recognized", format: "amiga-hunk" }
-        : { state: "needs-input", format: "amiga-hunk" };
+        : {
+            state: "needs-input",
+            format: "amiga-hunk",
+            neededPrefixBytes: claim.bytes,
+          };
     },
     when("bflt", hasBfltMagic),
     ({ prefix, suffix, fileSize }) => {

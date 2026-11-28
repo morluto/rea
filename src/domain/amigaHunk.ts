@@ -35,6 +35,22 @@ const AMIGA_HUNK_MAX_RELOCATION_RECORDS = 65_536;
 /** Resident-library, hunk, symbol and object-file unit name bytes, padded longwords included. */
 const AMIGA_HUNK_MAX_SYMBOL_BYTES = 65_536;
 
+/** Magic, names with at most one count word per name word, terminator, and table fields. */
+export const AMIGA_HUNK_MAX_HEADER_PREFIX_BYTES =
+  4 + 2 * AMIGA_HUNK_MAX_SYMBOL_BYTES + 4 + 12;
+
+/** Grow in geometric steps while honoring the next structural byte requirement. */
+export const amigaHunkPrefixGrowth = (
+  prefixLength: number,
+  neededBytes: number,
+  fileSize: number,
+): number =>
+  Math.min(
+    fileSize,
+    AMIGA_HUNK_MAX_HEADER_PREFIX_BYTES,
+    Math.max(neededBytes, 2 * prefixLength),
+  );
+
 export const AMIGA_HUNK_HUNK_LIMIT = "amiga-hunk.hunks";
 export const AMIGA_HUNK_RELOCATION_LIMIT = "amiga-hunk.relocations";
 export const AMIGA_HUNK_RELOCATION_RECORD_LIMIT =
