@@ -440,6 +440,54 @@ describe("parseOtlpTrace damaged service names", () => {
     const report = parse(document);
     expect(report.resources[0]).toMatchObject({ service_name: "billing" });
   });
+
+  it("does not read an unrelated string attribute as the service name", () => {
+    const document = envelope([span({})]) as {
+      resourceSpans: { resource: { attributes: unknown[] } }[];
+    };
+    document.resourceSpans[0]!.resource.attributes = [
+      { key: "deployment.environment", value: { stringValue: "prod" } },
+      { key: "service.name", value: { stringValue: "checkout" } },
+    ];
+    const report = parse(document);
+    expect(report.resources[0]).toMatchObject({ service_name: "checkout" });
+    expect(
+      report.resources[0]!.attributes.map((attribute) => attribute.key),
+    ).toEqual(["deployment.environment"]);
+  });
+
+  it("reports no service name when only unrelated strings are recorded", () => {
+    const document = envelope([span({})]) as {
+      resourceSpans: { resource: { attributes: unknown[] } }[];
+    };
+    document.resourceSpans[0]!.resource.attributes = [
+      { key: "deployment.environment", value: { stringValue: "prod" } },
+    ];
+    const report = parse(document);
+    expect(report.resources[0]).toMatchObject({ service_name: null });
+    expect(
+      report.resources[0]!.attributes.map((attribute) => attribute.key),
+    ).toEqual(["deployment.environment"]);
+  });
+
+  it("keeps a second string service.name visible as an attribute", () => {
+    // The derived field carries one name; the other is still recorded evidence.
+    const document = envelope([span({})]) as {
+      resourceSpans: { resource: { attributes: unknown[] } }[];
+    };
+    document.resourceSpans[0]!.resource.attributes = [
+      { key: "service.name", value: { stringValue: "checkout" } },
+      { key: "service.name", value: { stringValue: "billing" } },
+    ];
+    const report = parse(document);
+    expect(report.resources[0]).toMatchObject({ service_name: "checkout" });
+    expect(
+      report.resources[0]!.attributes.map((attribute) => attribute.key),
+    ).toEqual(["service.name"]);
+    expect(report.resources[0]!.attributes[0]).toMatchObject({
+      string_value: "billing",
+    });
+  });
 });
 
 describe("parseOtlpTrace defaults and signed integers", () => {

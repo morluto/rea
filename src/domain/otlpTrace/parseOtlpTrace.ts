@@ -527,8 +527,30 @@ const spanAttributes = (
   return parsed;
 };
 
-const isServiceName = (entry: Json): boolean =>
-  isRecord(entry) && entry.key === "service.name";
+const stringServiceName = (entry: Json): string | undefined => {
+  if (!isRecord(entry) || entry.key !== "service.name") return undefined;
+  const value = entry.value;
+  return isRecord(value) && typeof value.stringValue === "string"
+    ? value.stringValue
+    : undefined;
+};
+
+/**
+ * The service.name entry whose string value the resource reports as
+ * `service_name`. Both the derived field and the retained attribute list take
+ * their answer from here, so exactly one entry moves from the list to the
+ * field and any other service.name stays visible as evidence.
+ */
+const selectedServiceName = (resource: Json): Json | undefined => {
+  if (!isRecord(resource) || !Array.isArray(resource.attributes))
+    return undefined;
+  return resource.attributes.find(
+    (entry) => stringServiceName(entry) !== undefined,
+  );
+};
+
+const resourceServiceName = (resource: Json): string | null =>
+  stringServiceName(selectedServiceName(resource)) ?? null;
 
 /** Retain one bounded set of attributes for each inventoried resource. */
 const resourceAttributes = (
@@ -537,39 +559,20 @@ const resourceAttributes = (
 ): { attributes: Attribute[]; dropped: number } => {
   if (!isRecord(resource) || !Array.isArray(resource.attributes))
     return { attributes: [], dropped: 0 };
-  // A service.name that carries a string is the one the resource summarises as
-  // `service_name`, so it is not repeated here. One that does not is evidence
-  // the derived field cannot hold, and dropping it would lose it entirely.
+  // Only the selected entry is repeated by `service_name`. The rest stay here:
+  // a non-string service.name is evidence the derived field cannot hold, and a
+  // second string one is a value the name the field reports does not carry.
+  const selected = selectedServiceName(resource);
+  const selectedIndex =
+    selected === undefined ? -1 : resource.attributes.indexOf(selected);
   const candidates = resource.attributes.filter(
-    (entry) => !isServiceName(entry) || !isStringServiceName(entry),
+    (_, index) => index !== selectedIndex,
   );
   const bounded = boundedList(candidates, OTLP_TRACE_MAX_ATTRIBUTES_PER_SPAN);
   return {
     attributes: spanAttributes(bounded.items, capture),
     dropped: bounded.omitted,
   };
-};
-
-const stringServiceName = (entry: Json): string | undefined =>
-  isRecord(entry) &&
-  isRecord(entry.value) &&
-  typeof entry.value.stringValue === "string"
-    ? entry.value.stringValue
-    : undefined;
-
-const isStringServiceName = (entry: Json): boolean =>
-  stringServiceName(entry) !== undefined;
-
-const resourceServiceName = (resource: Json): string | null => {
-  if (!isRecord(resource) || !Array.isArray(resource.attributes)) return null;
-  // The first string wins on purpose: `resourceAttributes` drops only string
-  // service.name entries, so selecting any non-string entry here would report
-  // null while a later string was filtered out and lost with nothing to say so.
-  for (const entry of resource.attributes) {
-    const name = stringServiceName(entry);
-    if (name !== undefined) return name;
-  }
-  return null;
 };
 
 /** Retain a bounded prefix before constructing diagnostic messages and hashes. */
