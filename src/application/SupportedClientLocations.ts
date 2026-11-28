@@ -128,6 +128,34 @@ export const clientProjectConfigurationPaths = (
   const paths = platform === "win32" ? win32 : posix;
   if (client.format === "pi")
     return [paths.join(projectDirectory, ".pi", "mcp.json")];
+  if (client.format === "copilot_cli") {
+    // Copilot CLI loads `.mcp.json` and `.github/mcp.json` from the working
+    // directory up to the repository root; closer definitions win, and
+    // `.mcp.json` beats `.github/mcp.json` within one directory. Outside a
+    // Git repository only the working directory itself is read.
+    const directories = [projectDirectory];
+    let current = projectDirectory;
+    let rooted = false;
+    for (;;) {
+      try {
+        lstatSync(paths.join(current, ".git"));
+        rooted = true;
+        break;
+      } catch {
+        // No repository marker here; keep walking toward the root.
+      }
+      const parent = paths.dirname(current);
+      if (parent === current) break;
+      current = parent;
+      directories.push(current);
+    }
+    return (rooted ? directories.reverse() : [projectDirectory]).flatMap(
+      (directory) => [
+        paths.join(directory, ".github", "mcp.json"),
+        paths.join(directory, ".mcp.json"),
+      ],
+    );
+  }
   if (client.format !== "opencode") return [];
   const directories: string[] = [];
   let current = projectDirectory;

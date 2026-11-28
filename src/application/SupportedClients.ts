@@ -77,6 +77,8 @@ export interface SetupClient {
   readonly inlineConfiguration?: ClientInlineConfiguration;
   /** The selected Pi profile's persisted project-trust inputs. */
   readonly piSettings?: PiProjectSettings;
+  /** Dialect of this client's project documents when it differs from the user one. */
+  readonly projectFormat?: ClientConfigurationFormat;
   /** Read-only Gemini scopes and trust inputs; never setup write targets. */
   readonly geminiSettings?: {
     readonly systemPath: string;
@@ -1379,6 +1381,9 @@ export const supportedClients = (
         ...(definition.piSettings === undefined
           ? {}
           : { piSettings: definition.piSettings(context) }),
+        ...(definition.mcpAdd?.projectFormat === undefined
+          ? {}
+          : { projectFormat: definition.mcpAdd.projectFormat }),
         ...(definition.junieSettings === undefined
           ? {}
           : {
