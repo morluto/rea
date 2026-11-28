@@ -1,3 +1,17 @@
+export function toolCallMessage(
+  id: string,
+  name: string,
+  args: Record<string, unknown>,
+): {
+  role: "assistant";
+  content: null;
+  tool_calls: {
+    id: string;
+    type: "function";
+    function: { name: string; arguments: string };
+  }[];
+};
+
 export interface OpenAiModelFixture {
   readonly baseUrl: string;
   readonly requests: readonly { readonly path: string }[];

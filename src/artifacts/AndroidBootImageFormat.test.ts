@@ -467,7 +467,7 @@ it("rejects truncated, overlapping, and out-of-range vendor ramdisk rows", () =>
   if (overlapped.ok) return;
   expect(overlapped.error.message).toContain("overlaps entry");
   const overrun = Buffer.from(image);
-  overrun.writeUInt32LE(100, table.offset);
+  overrun.writeUInt32LE(100, table.offset + entrySize);
   const overran = rows(overrun);
   expect(overran.ok).toBe(false);
   if (overran.ok) return;
@@ -549,6 +549,7 @@ it("names unsafe vendor ramdisk paths and reports an uncovered section", () => {
     "vendor_ramdisk/same",
     "vendor_ramdisk/same-3",
   ]);
+  expect(result.value.unexposedSectionBytes).toBe(false);
   const uncovered = parsed(
     buildVendorBootImage({
       version: 4,
@@ -559,6 +560,7 @@ it("names unsafe vendor ramdisk paths and reports an uncovered section", () => {
   expect(uncovered.limitations.join(" ")).toContain(
     "outside the ramdisk table",
   );
+  expect(uncovered.unexposedLayoutBytes).toBe(true);
   const wide = Buffer.alloc(208);
   wide.writeUInt32LE(4, 0);
   const wideRows = parseVendorRamdiskTable(wide, {

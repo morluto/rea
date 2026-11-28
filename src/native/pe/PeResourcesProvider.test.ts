@@ -11,13 +11,13 @@ import {
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { PeResourcesProvider } from "./PeResourcesProvider.js";
 import { peResourceFixture } from "../../domain/pe/peResources.fixture.js";
-import { imageFileSizeRemediation } from "../../resources/StableArtifactFailure.js";
 
 const inspect = async (
   path: string,
   input: {
     readonly max_file_bytes?: number;
     readonly max_entries?: number;
+    readonly max_metadata_bytes?: number;
   } = {},
 ) => {
   const provider = new PeResourcesProvider();
@@ -31,7 +31,7 @@ const inspect = async (
 };
 
 describe("PE resource provider budget reporting", () => {
-  it("reports a file-size budget without memory remediation advice", async () => {
+  it("refuses reads past max_file_bytes with a typed parameter limit", async () => {
     const root = await createTestTempDirectory("rea-pe-budget-advice-");
     const path = join(root, "resource.exe");
     await writeFile(path, peResourceFixture().bytes);
@@ -39,16 +39,30 @@ describe("PE resource provider budget reporting", () => {
     if (result.ok) throw new Error("Expected a refusal");
     expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
     const error = result.error as AnalysisResourceConstraintError;
-    expect(error.reportedLimits).toMatchObject({ max_file_bytes: 64 });
-    expect(error.resource).toBe("file-size");
-    expect(error.remediationAction).toBe(
-      imageFileSizeRemediation(64, MAX_INSPECT_PE_FILE_BYTES),
-    );
-    expect(error.retryable).toBe(false);
+    expect(error).toMatchObject({
+      resource: "capacity",
+      retryable: false,
+      reportedLimits: {
+        max_file_bytes: 64,
+        required_read_bytes: expect.any(Number),
+      },
+    });
     // The projected advice must not send the caller to worker write limits.
     expect(projectAnalysisError(error)).toMatchObject({
       retryable: false,
-      remediation: { action: error.remediationAction },
+      remediation: { action: expect.stringContaining("max_file_bytes") },
+      details: {
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_file_bytes",
+          effective_value: 64,
+          unit: "bytes",
+          minimum: 64,
+          maximum: MAX_INSPECT_PE_FILE_BYTES,
+          default_value: 67108864,
+          applies_at: "next_call",
+        },
+      },
     });
   });
 
@@ -61,10 +75,13 @@ describe("PE resource provider budget reporting", () => {
     const error = result.error as AnalysisResourceConstraintError;
     expect(error.resource).toBe("capacity");
     expect(error.reportedLimits).toMatchObject({ max_entries: 1 });
-    expect(error.remediationAction).toContain("max_entries");
     expect(projectAnalysisError(error)).toMatchObject({
       retryable: false,
-      remediation: { action: error.remediationAction },
+      remediation: {
+        action: expect.stringContaining(
+          "Pass a larger max_entries on the next inspect_pe_resources call",
+        ),
+      },
       details: {
         reported_limits: {
           boundary: "max_entries",
@@ -75,32 +92,23 @@ describe("PE resource provider budget reporting", () => {
     });
   });
 
-  // Avoid reserving a 512 MiB file on filesystems without sparse truncation.
+  // Avoid reserving the file on filesystems without sparse truncation.
   it.skipIf(process.platform === "win32")(
-    "names the file ceiling instead of an impossible bound",
+    "admits a file above max_file_bytes when its headers and directories fit",
     async () => {
-      const root = await createTestTempDirectory("rea-pe-max-budget-");
-      const oversized = join(root, "oversized.exe");
-      await writeFile(oversized, "");
-      await truncate(oversized, MAX_INSPECT_PE_FILE_BYTES + 1);
-      const fileLimit = await inspect(oversized, {
-        max_file_bytes: MAX_INSPECT_PE_FILE_BYTES,
+      // The Godot 4.7.2 editor (181 MB) reads a few MiB of tables; the
+      // allowance bounds those reads, not the file size.
+      const root = await createTestTempDirectory("rea-pe-sparse-");
+      const sparse = join(root, "sparse.exe");
+      const { bytes } = peResourceFixture();
+      await writeFile(sparse, bytes);
+      await truncate(sparse, 67108864 + 4096);
+      const small = await inspect(join(root, "sparse.exe"));
+      if (!small.ok) throw small.error;
+      expect(small.value).toMatchObject({
+        artifact: { bytes: 67108864 + 4096 },
+        coverage: { status: "complete", resources: 5 },
       });
-      if (fileLimit.ok) throw new Error("Expected file-size refusal");
-      expect(fileLimit.error).toMatchObject({
-        resource: "file-size",
-        reportedLimits: { max_file_bytes: MAX_INSPECT_PE_FILE_BYTES },
-        remediationAction: imageFileSizeRemediation(
-          MAX_INSPECT_PE_FILE_BYTES,
-          MAX_INSPECT_PE_FILE_BYTES,
-        ),
-      });
-      expect(
-        inspectPeResourcesInputSchema.safeParse({
-          path: oversized,
-          max_file_bytes: MAX_INSPECT_PE_FILE_BYTES + 1,
-        }).success,
-      ).toBe(false);
     },
   );
 
@@ -134,9 +142,12 @@ describe("PE resource provider budget reporting", () => {
       reportedLimits: { max_entries: MAX_INSPECT_PE_DIRECTORY_ENTRIES },
       retryable: false,
     });
-    expect(typeof entryError.remediationAction).toBe("string");
     expect(projectAnalysisError(entryError)).toMatchObject({
-      remediation: { action: entryError.remediationAction },
+      remediation: {
+        action: expect.stringContaining(
+          "max_entries is already at its maximum",
+        ),
+      },
     });
     expect(
       inspectPeResourcesInputSchema.safeParse({
@@ -160,15 +171,19 @@ describe("PE resource provider budget reporting", () => {
       max_entries: MAX_INSPECT_PE_DIRECTORY_ENTRIES,
     });
     if (result.ok) throw new Error("Expected malformed table refusal");
-    expect(result.error).toMatchObject({ _tag: "AnalysisInputError" });
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisTargetFailureError",
+    });
   });
 });
 
-it("names the fixed PE metadata allowance instead of host memory", async () => {
+it("names max_metadata_bytes instead of host memory", async () => {
   const root = await createTestTempDirectory("rea-pe-metadata-budget-");
   const path = join(root, "resource.exe");
-  const name = "n".repeat(200);
-  const resources = Array.from({ length: 5500 }, (_, index) => ({
+  // Each name is retained as text and hex in both directory and resource rows.
+  // Long names reach the metadata limit with fewer file reads.
+  const name = "n".repeat(12_000);
+  const resources = Array.from({ length: 100 }, (_, index) => ({
     type: 10,
     name: `${name}${String(index).padStart(4, "0")}`,
     language: 1033,
@@ -193,11 +208,18 @@ it("names the fixed PE metadata allowance instead of host memory", async () => {
       maximum: 8 * 1024 * 1024,
       maximum_metadata_bytes: 8 * 1024 * 1024,
     },
-    refusal: {
-      kind: "fixed_ceiling",
-      allowance_kind: "parser",
-      limit: 8 * 1024 * 1024,
-      unit: "bytes",
+    limit: {
+      control_kind: "parameter",
+      parameter: "max_metadata_bytes",
+      effective_value: 8 * 1024 * 1024,
+      default_value: 8 * 1024 * 1024,
     },
+    refusal: { kind: "adjustable_budget", control: "max_metadata_bytes" },
   });
+  expect(projected.details?.limit).not.toHaveProperty("required_value");
+  const raised = await inspect(path, {
+    max_metadata_bytes: 32 * 1024 * 1024,
+    max_entries: 65536,
+  });
+  if (!raised.ok) throw raised.error;
 });

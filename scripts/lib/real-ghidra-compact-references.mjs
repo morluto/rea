@@ -10,6 +10,7 @@ export async function verifyGhidraCompactReferences(call, x86, cli) {
     ["write", x86 ? 0x102a : 0x102d, 0x2004],
   ];
   const full = await call("procedure_references", {
+    detail: "complete",
     procedure: address(0x1020),
   });
   const inspected = {};
@@ -138,7 +139,10 @@ async function verifyDirectCall(call, entry, callee) {
     targets.targets[0].references,
     direct.references.filter((item) => item.call),
   );
-  const full = await call("procedure_references", { procedure: entry });
+  const full = await call("procedure_references", {
+    detail: "complete",
+    procedure: entry,
+  });
   for (const reference of direct.references)
     assertReference(reference, entry, full.references);
   const incoming = await call("inspect_native_instruction", {

@@ -23,7 +23,6 @@ import type {
   ProviderAvailability,
   ProviderIdentity,
   ProviderTargetSupport,
-  RetainedResourceScope,
 } from "../ports/AnalysisProvider.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { AppConfig } from "../config/types.js";
@@ -62,6 +61,8 @@ import {
   reconcileHopperCallers,
   reconciliationChildOptions,
   type HopperCallerNativeReply,
+  hopperAddressReferencesReason,
+  projectHopperAddressReferences,
 } from "./HopperCallerReconciliation.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 
@@ -76,15 +77,7 @@ export class HopperProvider implements AnalysisProviderCandidate {
   readonly #launcherSpelling: string;
   readonly #launcherPath: string;
   readonly #ownedResources = new ArtifactResourceScope();
-  readonly #inspectionOwner: RetainedResourceScope = {
-    retain: (owner, resource) =>
-      this.#ownedResources.retain({
-        kind: "lease",
-        resource,
-        lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
-      }),
-    run: (operation) => this.#ownedResources.run(operation),
-  };
+  readonly #inspectionOwner = this.#ownedResources.forCloseOwners();
 
   /**
    * Host platform, injected so availability and launch-mode decisions can be
@@ -317,7 +310,10 @@ export class HopperProvider implements AnalysisProviderCandidate {
         : "thin";
     const derivedLoaderArgs = hopperLoaderArgsForTarget(
       target,
-      container === "thin" || container === "fat32" || container === "fat64"
+      container === "thin" ||
+        container === "fat" ||
+        container === "fat32" ||
+        container === "fat64"
         ? container
         : undefined,
     );
@@ -522,6 +518,22 @@ export class HopperProvider implements AnalysisProviderCandidate {
                     : await call("procedure_references");
               // A reply outside its contract keeps its raw reply as partial
               // reconciliation Evidence; other failures return directly.
+              // An address outside every procedure has no forward callers to
+              // reconcile: Hopper's recorded references are the observation.
+              if (
+                native.ok &&
+                "target_kind" in native.value &&
+                native.value.target_kind === "address"
+              )
+                return ok(
+                  projectExecution(
+                    operation,
+                    projectHopperAddressReferences(native.value),
+                    // Retain the target identity and completeness facts.
+                    hopperReplyJson(native.value),
+                    hopperAddressReferencesReason(native.value),
+                  ),
+                );
               let nativeReply: Result<
                 HopperCallerNativeReply,
                 HopperReplyContractError

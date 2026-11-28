@@ -81,7 +81,6 @@ mcpTest(
     expect(inputSchema).toHaveProperty(["properties", "detail"], {
       type: "string",
       enum: ["complete", "summary"],
-      default: "complete",
       description: expect.stringContaining(
         "summary retains that complete Evidence",
       ),

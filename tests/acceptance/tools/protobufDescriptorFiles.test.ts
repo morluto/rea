@@ -7,7 +7,7 @@ import {
   FileOptionsSchema,
 } from "@bufbuild/protobuf/wkt";
 import { BinaryWriter, WireType } from "@bufbuild/protobuf/wire";
-import { createHash } from "node:crypto";
+import { sha256 } from "../../support/sha256.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -24,8 +24,6 @@ import {
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
-const sha256 = (bytes: Uint8Array) =>
-  createHash("sha256").update(bytes).digest("hex");
 const body = Buffer.from("0a020801", "hex"); // Message { payload { value=1 } }
 const descriptorDefinition = () =>
   create(FileDescriptorSetSchema, {

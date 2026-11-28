@@ -16,6 +16,7 @@ import {
   rustcPartialCoverage,
   rustDependencySectionName,
 } from "../domain/rust/rustBinary.js";
+import type { RustDependencyBudgets } from "../domain/rust/rustDependencyBudget.js";
 import { RUST_PRODUCER_DEFAULTS } from "../domain/rust/rustResourceLimits.js";
 import {
   readAuditableSectionFromReader,
@@ -25,7 +26,7 @@ import {
   hasWasmPreamble,
   readRustWasmSectionsFromReader,
 } from "./RustWasmImage.js";
-import type { ByteSource } from "../domain/byteSource.js";
+import { readByteSourceSlice, type ByteSource } from "../domain/byteSource.js";
 
 const RUSTC_PREFIX = Buffer.from("/rustc/");
 const HASH_BYTES = 40;
@@ -66,37 +67,32 @@ interface RustImageLayout extends Pick<
   readonly compiler_strings: readonly FileSpan[];
 }
 
-const readSlice = (
-  source: ByteSource,
-  offset: number,
-  length: number,
-): Promise<Buffer> => {
-  if (length <= 0 || offset >= source.size)
-    return Promise.resolve(Buffer.alloc(0));
-  const clamped = Math.min(length, source.size - offset);
-  if (source.prefix !== undefined && offset + clamped <= source.prefix.length)
-    return Promise.resolve(source.prefix.subarray(offset, offset + clamped));
-  return source.readRange(offset, clamped);
-};
-
 /** Stream Rust dependency and compiler-path inspection over a range reader. */
 export const readRustBinaryImageFromHandle = async (
   source: ByteSource,
   maxRustcHashes: number | undefined,
   maxOutputBytes: number | undefined,
   pause: ZstandardFramePause,
+  dependencyBudgets?: RustDependencyBudgets,
+  structureBytes?: number,
+  maxWasmSections?: number,
 ): Promise<RustBinaryImage> => {
   const effectiveMaxHashes = maxRustcHashes ?? DEFAULT_RUSTC_HASH_LIMIT;
   const effectiveMaxOutputBytes =
     maxOutputBytes ?? RUST_PRODUCER_DEFAULTS.output_bytes;
-  const preamble = await readSlice(source, 0, Math.min(source.size, 8));
+  const preamble = await readByteSourceSlice(
+    source,
+    0,
+    Math.min(source.size, 8),
+  );
   const layout: RustImageLayout = hasWasmPreamble(preamble)
-    ? await wasmLayoutFromReader(source, pause)
+    ? await wasmLayoutFromReader(source, pause, maxWasmSections)
     : nativeLayoutFromContainer(
         await readBinaryContainerFromReader(
           source,
           "inspect_rust_binary",
           pause,
+          structureBytes,
         ),
       );
   const { section_name, dependency, compiler_strings, ...identity } = layout;
@@ -106,11 +102,18 @@ export const readRustBinaryImageFromHandle = async (
       : await readAuditableSectionFromReader(
           section_name,
           dependency,
-          (offset, length) => readSlice(source, offset, length),
+          (offset, length) => readByteSourceSlice(source, offset, length),
           pause,
           {
             maxOutputBytes: effectiveMaxOutputBytes,
             peFileAlignment: dependency.peFileAlignment,
+            ...(dependencyBudgets === undefined
+              ? {}
+              : {
+                  compressedBytes: dependencyBudgets.compressedBytes,
+                  inflatedBytes: dependencyBudgets.inflatedBytes,
+                  inflateRatio: dependencyBudgets.inflateRatio,
+                }),
           },
         );
   const rustc_commit = await rustcCommitFromReader(
@@ -130,9 +133,10 @@ export const readRustBinaryImageFromHandle = async (
 const wasmLayoutFromReader = async (
   source: ByteSource,
   pause: ZstandardFramePause,
+  maxSections: number | undefined,
 ): Promise<RustImageLayout> => {
   const { dependency_sections, data_section } =
-    await readRustWasmSectionsFromReader(source, pause);
+    await readRustWasmSectionsFromReader(source, pause, maxSections);
   if (dependency_sections.length > 1) throw duplicateDependencySection();
   return {
     format: "wasm",
@@ -165,7 +169,7 @@ const rustcCommitFromReader = async (
     while (cursor < range.end && retention.reason === undefined) {
       if (cursor > range.offset) await pause();
       const length = Math.min(RUSTC_SCAN_WINDOW_BYTES, range.end - cursor);
-      const chunk = await readSlice(source, cursor, length);
+      const chunk = await readByteSourceSlice(source, cursor, length);
       collectHashesInChunk(chunk, cursor, retention);
       if (cursor + length >= range.end) break;
       cursor += length - RUSTC_SCAN_OVERLAP_BYTES;

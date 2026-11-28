@@ -36,7 +36,11 @@ const browserScenarioBaseUrlSchema = z
     } catch (cause: unknown) {
       // Invalid input is reported through the zod issue.
       void cause;
-      context.addIssue({ code: "custom", message: "Invalid browser URL" });
+      context.addIssue({
+        code: "custom",
+        message:
+          "Browser URLs must be absolute HTTP(S) URLs, such as https://app.example.test/",
+      });
       return z.NEVER;
     }
     if (
@@ -109,13 +113,21 @@ const FORBIDDEN_REQUEST_HEADERS = new Set([
 /** Characters an HTTP field value may carry: visible ASCII, space, tab and obs-text. */
 export const HEADER_FIELD_VALUE = /^[\t\x20-\x7e\x80-\xff]*$/u;
 
-const settableRequestHeader = (name: string): boolean => {
+/**
+ * Why a page's fetch cannot set this header name, or undefined when it can.
+ * The reason names the rule that applies, so one refusal is enough to correct
+ * the request step.
+ */
+const unsettableRequestHeaderReason = (name: string): string | undefined => {
   const lower = name.toLowerCase();
-  return (
-    !FORBIDDEN_REQUEST_HEADERS.has(lower) &&
-    !lower.startsWith("proxy-") &&
-    !lower.startsWith("sec-")
+  if (FORBIDDEN_REQUEST_HEADERS.has(lower))
+    return `A page's fetch cannot set ${name}: the browser controls it. Remove it from the request step.`;
+  const prefix = ["proxy-", "sec-"].find((reserved) =>
+    lower.startsWith(reserved),
   );
+  return prefix === undefined
+    ? undefined
+    : `A page's fetch cannot set ${name}: names starting with Proxy- or Sec- are reserved for the browser. Remove it from the request step.`;
 };
 
 /** A header value a request step reads from the page as it runs; it is redacted like a declared secret. */
@@ -236,8 +248,10 @@ const requestHeaderSchema = z.strictObject({
     .string()
     // Hex escapes retain HTTP token characters in Unicode-set client regexes.
     .regex(/^[!#$%&'*+.^_`\x7C~0-9A-Za-z\x2D]+$/u)
-    .refine(settableRequestHeader, {
-      message: "A page's fetch cannot set this header",
+    .superRefine((name, context) => {
+      const reason = unsettableRequestHeaderReason(name);
+      if (reason !== undefined)
+        context.addIssue({ code: "custom", message: reason });
     }),
   value: z.discriminatedUnion("source", [
     ...browserScenarioValueSchema.options,
@@ -505,8 +519,13 @@ export const browserScenarioSecretSchema = z.strictObject({
   environment_variable: z
     .string()
     .min(1)
-    .refine(
-      (name) => !name.includes("=") && !name.includes("\0"),
+    // A `.refine` states a refusal a caller reads only after sending a request,
+    // and both characters break the child process's environment before any
+    // action runs, so the check is the pattern itself: an anchored complement
+    // class is one portable `pattern` keyword, which the compact presentation
+    // keeps at the leaf instead of reducing it to a plain string.
+    .regex(
+      /^[^=\x00]+$/u,
       "Environment variable names cannot contain '=' or NUL",
     ),
 });

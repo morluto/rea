@@ -17,6 +17,9 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { pe } from "../domain/binaryTarget.fixture.js";
 import { nodeSeaElf } from "./nodeSea/NodeSea.fixture.js";
+import * as nodeSeaLocation from "./nodeSea/NodeSeaLocation.js";
+import * as bunLayout from "./bun/BunModuleGraphLayout.js";
+import { artifactReaderLimitFailure } from "../resources/index.js";
 import {
   bunModuleGraphPayload,
   bunPrefixedPayload,
@@ -30,7 +33,7 @@ import {
 } from "./pyinstaller/CArchive.fixture.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { asarHeaderBytes } from "../../tests/fixtures/asarHeader.js";
-import { binaryPlistObjectTable } from "../../tests/fixtures/binaryPlistObjectTable.js";
+import { binaryPlistFromObjects } from "../../tests/fixtures/binaryPlistObjectTable.js";
 import { javaClassFile } from "../../tests/fixtures/javaClassFile.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { universalMacho } from "../../tests/fixtures/universalMacho.js";
@@ -42,6 +45,7 @@ import {
   ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactReader,
+  malformedArtifact,
 } from "../resources/ArtifactReader.js";
 import {
   assembleReleaseExposureReport,
@@ -2490,24 +2494,12 @@ const bundled = async (
 };
 
 /** One dictionary whose value objects are the given encoded objects. */
-const binaryPlist = (key: string, value: Buffer): Buffer => {
-  const objects = [
+const binaryPlist = (key: string, value: Buffer): Buffer =>
+  binaryPlistFromObjects([
     Buffer.from([0xd1, 1, 2]),
     Buffer.concat([Buffer.from([0x50 | key.length]), Buffer.from(key)]),
     value,
-  ];
-  const table =
-    8 + objects.reduce((length, object) => length + object.length, 0);
-  const bytes = Buffer.alloc(table + objects.length + 32);
-  let cursor = 8;
-  const offsets = objects.map((object) => {
-    const offset = cursor;
-    object.copy(bytes, cursor);
-    cursor += object.length;
-    return offset;
-  });
-  return binaryPlistObjectTable(bytes, offsets, table);
-};
+  ]);
 /** Length-prefixed object body; every test value here exceeds the short form. */
 const plistObject = (type: number, length: number, body: Buffer): Buffer =>
   Buffer.concat([Buffer.from([(type << 4) | 0x0f, 0x10, length]), body]);
@@ -4156,11 +4148,13 @@ describe("ReleaseExposureReader bounded listing and cleanup", () => {
 
 describe("ReleaseExposureReader cleanup-bearing read failures", () => {
   const cleanupFailure = (
-    reason: "limit" | "format",
+    reason: "limit" | "malformed",
     resource: string,
   ): ArtifactReaderFailure =>
     ArtifactReaderFailure.withCleanup(
-      new ArtifactReaderFailure(reason, `${reason} failure: ${resource}`),
+      reason === "malformed"
+        ? malformedArtifact("source-map", `${reason} failure: ${resource}`)
+        : new ArtifactReaderFailure(reason, `${reason} failure: ${resource}`),
       { reason: "close failed", resources: [resource] },
     );
 
@@ -4233,7 +4227,7 @@ describe("ReleaseExposureReader cleanup-bearing read failures", () => {
     const selected = join(root, "app");
     await writeFile(selected, "selected");
     inventoryRead.impl = () =>
-      Promise.reject(cleanupFailure("format", selected));
+      Promise.reject(cleanupFailure("malformed", selected));
     const reader = new ReleaseExposureReader();
     try {
       const result = await reader.inspect(
@@ -6031,3 +6025,77 @@ it.each(["member", "selected artifact"] as const)(
     }
   },
 );
+
+describe("ReleaseExposureReader embedded package recognition limits", () => {
+  it("marks coverage unknown when a directory native image hits the Node SEA blob_bytes limit", async () => {
+    const root = await createTestTempDirectory(
+      "rea-release-exposure-sea-limit-",
+    );
+    const carrier = join(root, "app");
+    await writeFile(carrier, nodeSeaElf({ fuse: "set", ownership: "section" }));
+    const blobLimit = artifactReaderLimitFailure(
+      "artifact_limits.node_sea.blob_bytes",
+      256 * 1024 * 1024,
+      "bytes",
+      256 * 1024 * 1024 + 1,
+      "memory",
+    );
+    const locateSpy = vi
+      .spyOn(nodeSeaLocation, "locateNodeSea")
+      .mockRejectedValueOnce(blobLimit);
+    try {
+      const scanned = await inspect(root);
+      expect(scanned.coverage).toBe("unknown");
+      expect(scanned.limitations).toContainEqual(
+        expect.stringMatching(/Node SEA recognition remains unknown/iu),
+      );
+    } finally {
+      locateSpy.mockRestore();
+    }
+  });
+
+  it("marks coverage unknown when a selected native image has an unrecognized Node SEA blob", async () => {
+    const root = await createTestTempDirectory(
+      "rea-release-exposure-sea-file-",
+    );
+    const carrier = join(root, "app");
+    await writeFile(
+      carrier,
+      nodeSeaElf({ blob: Buffer.from([0x20, 0xda, 0x43]) }),
+    );
+    const scanned = await inspect(carrier);
+    expect(scanned.coverage).toBe("unknown");
+    expect(scanned.limitations).toContainEqual(
+      expect.stringMatching(/Node SEA recognition remains unknown/iu),
+    );
+  });
+
+  it("marks coverage unknown when a directory native image hits a Bun recognition limit", async () => {
+    const root = await createTestTempDirectory(
+      "rea-release-exposure-bun-limit-",
+    );
+    const carrier = join(root, "app");
+    const elf = Buffer.alloc(64);
+    writeMinimalElfHeader(elf);
+    await writeFile(carrier, elf);
+    const bunLimit = artifactReaderLimitFailure(
+      "artifact_limits.bun.recognition_table_bytes",
+      64,
+      "bytes",
+      128,
+      "memory",
+    );
+    const bunSpy = vi
+      .spyOn(bunLayout, "probeBunStandaloneGraph")
+      .mockResolvedValueOnce({ status: "limited", failure: bunLimit });
+    try {
+      const scanned = await inspect(root);
+      expect(scanned.coverage).toBe("unknown");
+      expect(scanned.limitations).toContainEqual(
+        expect.stringMatching(/Bun graph recognition remains unknown/iu),
+      );
+    } finally {
+      bunSpy.mockRestore();
+    }
+  });
+});

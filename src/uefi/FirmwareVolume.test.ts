@@ -1,6 +1,10 @@
 import { Buffer } from "node:buffer";
+import { open, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { expect, it } from "vitest";
 
+import { buildIso9660Image } from "../domain/iso9660/iso9660.fixture.js";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { buildFv } from "../../tests/fixtures/uefiImage.js";
 import { imageRegion } from "./UefiBytes.js";
 import {
@@ -63,21 +67,28 @@ it("counts both accepted and rejected volume candidates toward the scan cap", ()
   });
 });
 
-it("admits a supported aligned volume after an earlier foreign and unaligned volume", async () => {
+it("admits aligned volumes of any file system and leaves unaligned ones inconclusive", async () => {
   const { admitUefiFlashImage } = await import("./UefiFormatProbe.js");
+  // A volume whose file-system GUID REA does not walk, such as an NVRAM
+  // variable store, is still a checksum-valid firmware volume.
   const foreign = buildFv({
     files: [],
     fileSystemGuid: "19111111-2222-3333-4444-555555555555",
   }).buffer;
   const ffs = buildFv({ files: [] }).buffer;
-  expect(
-    admitUefiFlashImage(Buffer.concat([foreign, Buffer.alloc(1), ffs])),
-  ).toBe(false);
+  expect(admitUefiFlashImage(foreign)).toBe(true);
+  expect(admitUefiFlashImage(Buffer.concat([Buffer.alloc(1), ffs]))).toBe(
+    false,
+  );
   expect(
     admitUefiFlashImage(
-      Buffer.concat([foreign, Buffer.alloc(1), ffs, Buffer.alloc(15), ffs]),
+      Buffer.concat([Buffer.alloc(1), ffs, Buffer.alloc(15), ffs]),
     ),
   ).toBe(true);
+
+  const badChecksum = Buffer.from(ffs);
+  badChecksum[55] = 3; // corrupts header checksum while preserving structural framing
+  expect(admitUefiFlashImage(badChecksum)).toBe(true);
 });
 
 it.each([
@@ -103,6 +114,27 @@ it("does not use an FV beyond the signature search boundary to admit the image",
   const image = Buffer.concat([prefix, buildFv({ files: [] }).buffer]);
   expect(admitUefiFlashImage(image, prefix.length)).toBe(false);
   expect(admitUefiFlashImage(image)).toBe(true);
+});
+
+it("yields a whole-file probe to an ISO 9660 image that holds a volume", async () => {
+  const { probeUefiFlashImage } = await import("./UefiFormatProbe.js");
+  const volume = buildFv({ files: [] }).buffer;
+  const { bytes } = buildIso9660Image({
+    files: [{ path: "bios.fd", bytes: volume }],
+  });
+  const directory = await createTestTempDirectory("rea-uefi-probe-");
+  const probe = async (name: string, image: Buffer): Promise<boolean> => {
+    const path = join(directory, name);
+    await writeFile(path, image);
+    const handle = await open(path, "r");
+    try {
+      return await probeUefiFlashImage(handle);
+    } finally {
+      await handle.close();
+    }
+  };
+  expect(await probe("bare.fd", volume)).toBe(true);
+  expect(await probe("media.bin", bytes)).toBe(false);
 });
 
 it.each([false, true])(

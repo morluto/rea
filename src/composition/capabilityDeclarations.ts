@@ -7,6 +7,7 @@ import type {
 } from "../contracts/toolContracts.js";
 import { ADB_PROVIDER_IDENTITY } from "../adb/AdbProviderIdentity.js";
 import { JADX_PROVIDER_IDENTITY } from "../android/JadxRelease.js";
+import { LABVIEW_PROVIDER_IDENTITY } from "../labview/LabviewProviderIdentity.js";
 import { APK_SIGNATURE_PROVIDER_IDENTITY } from "../apkSignature/ApkSignatureRelease.js";
 import { APKTOOL_PROVIDER_IDENTITY } from "../apktool/ApktoolProviderIdentity.js";
 import {
@@ -43,6 +44,7 @@ import {
   JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER,
   KERNEL_BUILD_CONFIG_PROVIDER,
   KERNEL_MODULE_PROVIDER,
+  MACHO_FUNCTION_STARTS_PROVIDER,
   MANAGED_STATIC_PROVIDER,
   MANAGED_WORKFLOW_PROVIDER,
   NATIVE_EXPORTS_PROVIDER,
@@ -50,8 +52,12 @@ import {
   PE_CERTIFICATES_PROVIDER,
   PE_IMPORTS_PROVIDER,
   PE_LOAD_CONFIG_PROVIDER,
+  PE_UNWIND_RANGES_PROVIDER,
+  PE_OVERLAY_PROVIDER,
   PE_RESOURCES_PROVIDER,
   RELEASE_EXPOSURE_PROVIDER,
+  ESP_NVS_PROVIDER,
+  FIRMWARE_VECTOR_TABLE_PROVIDER,
   WEB_SCRIPT_EXPORT_PROVIDER,
   WINDOWS_SHORTCUT_PROVIDER,
 } from "../domain/investigationProviders.js";
@@ -100,7 +106,11 @@ import { PWNTOOLS_PROVIDER_IDENTITY } from "../native/pwntools/PwntoolsProviderI
 import { OBJDUMP_PROVIDER_IDENTITY } from "../objdump/ObjdumpProviderIdentity.js";
 import { PCAP_PROVIDER_IDENTITY } from "../pcap/PcapProviderIdentity.js";
 import { NUGET_NUPKG_PROVIDER_IDENTITY } from "../nuget/NugetNupkgProviderIdentity.js";
+import { VSIX_PACKAGE_PROVIDER_IDENTITY } from "../vsix/VsixPackageProviderIdentity.js";
+import { OCI_IMAGE_LAYOUT_PROVIDER_IDENTITY } from "../oci/OciImageLayoutProviderIdentity.js";
+import { YARA_PROVIDER_IDENTITY } from "../yara/YaraProviderIdentity.js";
 import { PYTHON_PYC_PROVIDER_IDENTITY } from "../python/PythonPycProviderIdentity.js";
+import { DEB_PACKAGE_PROVIDER_IDENTITY } from "../deb/DebPackageProviderIdentity.js";
 import { RIZIN_DEBUGGER_PROVIDER_IDENTITY } from "../rizin/RizinDebuggerProviderIdentity.js";
 import { RIZIN_PROVIDER_IDENTITY } from "../rizin/RizinProviderIdentity.js";
 import { RUST_BINARY_PROVIDER_IDENTITY } from "../rust/RustBinaryProviderIdentity.js";
@@ -317,6 +327,16 @@ export const CAPABILITY_DECLARATIONS = {
       providerBinding(UNBLOB_PROVIDER_IDENTITY, ["extract_firmware"]),
     ],
   },
+  espNvs: {
+    providers: [providerBinding(ESP_NVS_PROVIDER, ["inspect_esp_nvs"])],
+  },
+  firmwareVectorTable: {
+    providers: [
+      providerBinding(FIRMWARE_VECTOR_TABLE_PROVIDER, [
+        "inspect_firmware_vector_table",
+      ]),
+    ],
+  },
   uefiAnalysis: {
     providers: [
       providerBinding(UEFI_PROVIDER_IDENTITY, { group: "UEFI_TOOL_CONTRACTS" }),
@@ -426,6 +446,13 @@ export const CAPABILITY_DECLARATIONS = {
   kuna: {
     providers: [providerBinding(KUNA_PROVIDER_IDENTITY, KUNA_OPERATIONS)],
   },
+  machoFunctionStarts: {
+    providers: [
+      providerBinding(MACHO_FUNCTION_STARTS_PROVIDER, [
+        "inspect_macho_function_starts",
+      ]),
+    ],
+  },
   managedStatic: {
     providers: [
       providerBinding(MANAGED_STATIC_PROVIDER, {
@@ -484,6 +511,14 @@ export const CAPABILITY_DECLARATIONS = {
       providerBinding(PE_LOAD_CONFIG_PROVIDER, ["inspect_pe_load_config"]),
     ],
   },
+  peUnwindRanges: {
+    providers: [
+      providerBinding(PE_UNWIND_RANGES_PROVIDER, ["inspect_pe_unwind_ranges"]),
+    ],
+  },
+  peOverlay: {
+    providers: [providerBinding(PE_OVERLAY_PROVIDER, ["inspect_pe_overlay"])],
+  },
   binaryHardening: {
     providers: [
       providerBinding(BINARY_HARDENING_PROVIDER, ["inspect_binary_hardening"]),
@@ -492,6 +527,11 @@ export const CAPABILITY_DECLARATIONS = {
   peResources: {
     providers: [
       providerBinding(PE_RESOURCES_PROVIDER, ["inspect_pe_resources"]),
+    ],
+  },
+  labviewArtifact: {
+    providers: [
+      providerBinding(LABVIEW_PROVIDER_IDENTITY, ["inspect_labview_artifact"]),
     ],
   },
   windowsShortcut: {
@@ -506,10 +546,38 @@ export const CAPABILITY_DECLARATIONS = {
       }),
     ],
   },
+  debPackage: {
+    providers: [
+      providerBinding(DEB_PACKAGE_PROVIDER_IDENTITY, {
+        group: "DEB_PACKAGE_TOOL_CONTRACTS",
+      }),
+    ],
+  },
   nugetNupkg: {
     providers: [
       providerBinding(NUGET_NUPKG_PROVIDER_IDENTITY, {
         group: "NUGET_NUPKG_TOOL_CONTRACTS",
+      }),
+    ],
+  },
+  vsixPackage: {
+    providers: [
+      providerBinding(VSIX_PACKAGE_PROVIDER_IDENTITY, {
+        group: "VSIX_PACKAGE_TOOL_CONTRACTS",
+      }),
+    ],
+  },
+  ociImageLayout: {
+    providers: [
+      providerBinding(OCI_IMAGE_LAYOUT_PROVIDER_IDENTITY, {
+        group: "OCI_IMAGE_LAYOUT_TOOL_CONTRACTS",
+      }),
+    ],
+  },
+  yaraMatches: {
+    providers: [
+      providerBinding(YARA_PROVIDER_IDENTITY, {
+        group: "YARA_TOOL_CONTRACTS",
       }),
     ],
   },

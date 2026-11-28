@@ -1,21 +1,63 @@
 import { z } from "zod";
+import type { AnalysisParameterLimit } from "../analysisSettings.js";
+import {
+  parameterBudgetLimit,
+  parameterBudgetSchema,
+  type ParameterBudget,
+} from "../parameterBudget.js";
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 const uint = z.number().int().min(0).max(0xffffffff);
 export const MAX_DEVICETREE_FILE_BYTES = 16777216;
 export const DEVICETREE_PROPERTY_PREVIEW_BYTES = 256;
+
+/** The per-call budgets of `inspect_devicetree`. */
+export const DEVICETREE_READ_BUDGETS = {
+  max_file_bytes: {
+    minimum: 40,
+    maximum: MAX_DEVICETREE_FILE_BYTES,
+    default_value: 4194304,
+    unit: "bytes",
+  },
+  max_nodes: { minimum: 1, maximum: 65536, default_value: 8192, unit: "count" },
+  max_properties: {
+    minimum: 1,
+    maximum: 262144,
+    default_value: 32768,
+    unit: "count",
+  },
+  max_depth: { minimum: 1, maximum: 256, default_value: 64, unit: "count" },
+  /** Estimated bytes of the decoded report, accounted before each allocation. */
+  max_decoded_bytes: {
+    minimum: 1024,
+    maximum: 256 * 1024 * 1024,
+    default_value: 32 * 1024 * 1024,
+    unit: "bytes",
+  },
+} as const satisfies Record<string, ParameterBudget>;
+export type DevicetreeReadBudget = keyof typeof DEVICETREE_READ_BUDGETS;
+
 export const inspectDevicetreeInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema,
-  max_file_bytes: z
-    .number()
-    .int()
-    .min(40)
-    .max(MAX_DEVICETREE_FILE_BYTES)
-    .default(4194304),
-  max_nodes: z.number().int().min(1).max(65536).default(8192),
-  max_properties: z.number().int().min(1).max(262144).default(32768),
-  max_depth: z.number().int().min(1).max(256).default(64),
+  max_file_bytes: parameterBudgetSchema(DEVICETREE_READ_BUDGETS.max_file_bytes),
+  max_nodes: parameterBudgetSchema(DEVICETREE_READ_BUDGETS.max_nodes),
+  max_properties: parameterBudgetSchema(DEVICETREE_READ_BUDGETS.max_properties),
+  max_depth: parameterBudgetSchema(DEVICETREE_READ_BUDGETS.max_depth),
+  max_decoded_bytes: parameterBudgetSchema(
+    DEVICETREE_READ_BUDGETS.max_decoded_bytes,
+  ),
 });
+
+/** The per-call budget that stopped a devicetree inspection. */
+export const devicetreeReadBudgetLimit = (
+  parameter: DevicetreeReadBudget,
+  effectiveValue: number,
+): AnalysisParameterLimit =>
+  parameterBudgetLimit(
+    parameter,
+    DEVICETREE_READ_BUDGETS[parameter],
+    effectiveValue,
+  );
 export const devicetreePropertySchema = z.strictObject({
   name: z.string(),
   offset: uint,

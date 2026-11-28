@@ -937,6 +937,10 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
           REVERSE_EDGE_CASES,
           "retains an objdump command's unverified process owner until a later inspection stops it",
         ),
+        test(
+          REVERSE_EDGE_CASES,
+          "stops an owner registered during cleanup retry before admitting another command",
+        ),
       ),
     },
   },
@@ -1239,6 +1243,15 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     },
   },
+  "rea-deb-package": inProcess(
+    covered(
+      test(
+        "tests/acceptance/debPackageCli.test.ts",
+        "inspects a fixture .deb without installing it or running maintainer scripts",
+      ),
+    ),
+    typedFailures("tests/boundary/filesystem/debPackage.test.ts"),
+  ),
   "rea-devicetree": inProcess(
     covered(
       test(
@@ -1347,6 +1360,38 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     ),
     typedFailures("tests/boundary/filesystem/erlangBeam.test.ts"),
+  ),
+  "rea-esp-nvs": inProcess(
+    covered(
+      test(
+        "tests/boundary/mcp/espNvsMcpCli.test.ts",
+        "decodes an NVS slice inside a flash dump with CLI and advertised MCP parity",
+      ),
+    ),
+    covered(
+      test(
+        "src/application/binaryDiagnostics/EspNvsService.test.ts",
+        "honors cancellation before reading and retains completed Evidence on late cancellation",
+      ),
+    ),
+  ),
+  "rea-firmware-vector-table": inProcess(
+    covered(
+      test(
+        "tests/boundary/mcp/firmwareVectorTableMcpCli.test.ts",
+        "decodes an STM32 Cortex-M vector table with CLI and advertised MCP parity and enforces max_file_bytes",
+      ),
+    ),
+    covered(
+      test(
+        "src/firmware/vectorTable/FirmwareVectorTableProvider.test.ts",
+        "returns typed resource, integrity, and cancellation failures",
+      ),
+      test(
+        "src/application/binaryDiagnostics/FirmwareVectorTableService.test.ts",
+        "retains completed Evidence and caller selections on late cancellation",
+      ),
+    ),
   ),
   "rea-harmony-application": inProcess(
     covered(
@@ -1458,6 +1503,20 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     ),
     typedFailures("tests/boundary/filesystem/kernelModule.test.ts"),
   ),
+  "rea-labview-rsrc": inProcess(
+    covered(
+      test(
+        "tests/boundary/cli/labviewRsrcCli.test.ts",
+        "inventories a LabVIEW RSRC container through the CLI and stdio MCP",
+      ),
+    ),
+    covered(
+      test(
+        "src/labview/LabviewRsrc.test.ts",
+        "reports cancellation that arrives after the read starts",
+      ),
+    ),
+  ),
   "rea-maven-gradle-metadata": inProcess(
     covered(
       test(
@@ -1527,6 +1586,15 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     ),
     typedFailures("tests/boundary/filesystem/peLoadConfig.test.ts"),
   ),
+  "rea-pe-overlay": inProcess(
+    covered(
+      test(
+        "tests/boundary/filesystem/peOverlay.test.ts",
+        "retains completed PE acquisition through %s",
+      ),
+    ),
+    typedFailures("tests/boundary/filesystem/peOverlay.test.ts"),
+  ),
   "rea-pe-resources": inProcess(
     covered(
       test(
@@ -1535,6 +1603,24 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     ),
     typedFailures("tests/boundary/filesystem/peResources.test.ts"),
+  ),
+  "rea-pe-unwind-ranges": inProcess(
+    covered(
+      test(
+        "tests/acceptance/peUnwindRangesCli.test.ts",
+        "reads x64 exception-directory ranges identically over CLI and MCP",
+      ),
+    ),
+    typedFailures("src/native/pe/PeUnwindRangesProvider.test.ts"),
+  ),
+  "rea-macho-function-starts": inProcess(
+    covered(
+      test(
+        "tests/acceptance/machoFunctionStartsCli.test.ts",
+        "reads Mach-O function starts identically over CLI and MCP",
+      ),
+    ),
+    typedFailures("src/native/apple/MachoFunctionStartsProvider.test.ts"),
   ),
   "rea-playwright-browser-scenario": {
     ownership: "process",
@@ -1632,6 +1718,34 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     covered(
       test(
         "src/application/nuget/NugetNupkgService.test.ts",
+        "retains completed Evidence and caller selections on late cancellation",
+      ),
+    ),
+  ),
+  "rea-vsix-package": inProcess(
+    covered(
+      test(
+        "tests/boundary/mcp/vsixPackageMcp.test.ts",
+        "advertises inspect_vsix_package and reads package identity",
+      ),
+    ),
+    covered(
+      test(
+        "src/application/vsix/VsixPackageService.test.ts",
+        "retains completed Evidence and caller selections on late cancellation",
+      ),
+    ),
+  ),
+  "rea-oci-image-layout": inProcess(
+    covered(
+      test(
+        "tests/boundary/mcp/ociImageLayoutMcp.test.ts",
+        "advertises inspect_oci_image_layout and reads layout version",
+      ),
+    ),
+    covered(
+      test(
+        "src/application/oci/OciImageLayoutService.test.ts",
         "retains completed Evidence and caller selections on late cancellation",
       ),
     ),
@@ -1838,7 +1952,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       cancel: covered(
         test(
           "tests/composition/reverseEngineeringCancellation.test.ts",
-          "waits for a cancelled Rizin process to exit before returning",
+          "waits for a Rizin process cancelled during its %s to exit before returning",
         ),
       ),
       cleanup: covered(
@@ -2166,6 +2280,42 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
         test(
           "tests/boundary/javascript-recovery/wakaruIntegration.test.ts",
           "retains a setup-failed publication tree for provider cleanup retry",
+        ),
+      ),
+    },
+  },
+  "yara.command": {
+    ownership: "process",
+    stages: {
+      launch: covered(
+        test(
+          "tests/boundary/providers/yaraMatchesProvider.test.ts",
+          "reports a missing yara command as unavailable with remediation",
+        ),
+      ),
+      handshake: ONE_SHOT,
+      operation: covered(
+        test(
+          "tests/boundary/providers/yaraMatchesProvider.test.ts",
+          "binds matches to the file and rule digests and passes argv without a shell",
+        ),
+      ),
+      cancel: covered(
+        test(
+          "tests/boundary/providers/yaraMatchesProvider.test.ts",
+          "cancels a running scan and leaves nothing to clean up",
+        ),
+      ),
+      cleanup: covered(
+        test(
+          "tests/boundary/providers/yaraMatchesProvider.test.ts",
+          "retains a failed process cleanup and retries it before the next scan",
+        ),
+      ),
+      retry: covered(
+        test(
+          "tests/boundary/providers/yaraMatchesProvider.test.ts",
+          "retains a failed process cleanup and retries it before the next scan",
         ),
       ),
     },

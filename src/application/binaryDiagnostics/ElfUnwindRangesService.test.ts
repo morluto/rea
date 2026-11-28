@@ -1,4 +1,5 @@
-import { parseEvidence } from "../../domain/evidence.js";
+import { expectInvalidInspectionInputs } from "../../../tests/support/expectInvalidInspectionInputs.js";
+import { lateCancellationEvidence } from "../../../tests/support/lateCancellationEvidence.js";
 import { expect, it } from "vitest";
 import { ElfUnwindRangesService } from "./ElfUnwindRangesService.js";
 import { ELF_UNWIND_RANGES_PROVIDER } from "../../domain/investigationProviders.js";
@@ -14,11 +15,7 @@ import {
   elfUnwindSectionlessFixture,
 } from "../../native/elf/ElfUnwindTables.fixture.js";
 import { ok } from "../../domain/result.js";
-import {
-  AnalysisCancelledError,
-  AnalysisInputError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { bufferByteSource } from "../../domain/byteSource.js";
 
 const identity = ELF_UNWIND_RANGES_PROVIDER;
@@ -63,26 +60,12 @@ const accept = async (
   }).inspect(input);
 };
 
-it("rejects a relative path and extra arguments before reading", async () => {
-  let calls = 0;
-  const service = new ElfUnwindRangesService({
-    identity,
-    inspect: () => {
-      calls += 1;
-      return Promise.resolve(ok(report));
-    },
-  });
-  const relative = await service.inspect({ path: "app" });
-  const extra = await service.inspect({
-    path: report.artifact.path,
-    extra: true,
-  });
-  expect(relative.ok).toBe(false);
-  expect(extra.ok).toBe(false);
-  if (!relative.ok) expect(relative.error).toBeInstanceOf(AnalysisInputError);
-  if (!extra.ok) expect(extra.error).toBeInstanceOf(AnalysisInputError);
-  expect(calls).toBe(0);
-});
+it("rejects a relative path and extra arguments before reading", () =>
+  expectInvalidInspectionInputs(
+    report,
+    "app",
+    (inspect) => new ElfUnwindRangesService({ identity, inspect }),
+  ));
 
 it("records an absent unwind table for the selected ELF", async () => {
   const result = await accept(report);
@@ -294,10 +277,18 @@ it.each([
     },
   ],
   [
-    "agreement without the mismatch limitation",
+    "agreement without the mismatch limitation code",
     (value: ElfUnwindRanges) => {
-      value.limitations = value.limitations.filter(
-        (text) => !text.includes("does not match"),
+      value.limitation_codes = value.limitation_codes.filter(
+        (code) => code !== "eh_frame_hdr_mismatch",
+      );
+    },
+  ],
+  [
+    "missing cfa limitation code",
+    (value: ElfUnwindRanges) => {
+      value.limitation_codes = value.limitation_codes.filter(
+        (code) => code !== "cfa_not_evaluated",
       );
     },
   ],
@@ -307,6 +298,13 @@ it.each([
   const result = await accept(value);
   expect(result.ok).toBe(false);
   if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisOutputError);
+});
+
+it("validates unwind limitations via typed limitation_codes without matching prose sentences", async () => {
+  const value = structuredClone(await parsed(elfUnwindFixture()));
+  value.limitations = ["Reworded unwind caveat."];
+  const result = await accept(value);
+  expect(result.ok).toBe(true);
 });
 
 it("reports a header capped by max_ranges as an incomplete Result", async () => {
@@ -354,23 +352,12 @@ it("rejects a report that fails the output schema", async () => {
 });
 
 it("retains a completed observation when the caller cancels as the provider completes", async () => {
-  const controller = new AbortController();
-  const reason = { request: "late ElfUnwindRanges cancellation" };
-  const service = new ElfUnwindRangesService({
-    identity,
-    inspect: () => {
-      controller.abort(reason);
-      return Promise.resolve(ok(report));
-    },
-  });
-  const result = await service.inspect(
-    { path: report.artifact.path },
-    { signal: controller.signal },
+  const evidence = await lateCancellationEvidence(
+    report,
+    "late ElfUnwindRanges cancellation",
+    (inspect) => new ElfUnwindRangesService({ identity, inspect }),
   );
-  if (result.ok) throw new Error("Expected late cancellation");
-  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
-  expect(result.error.cause).toBe(reason);
-  expect(parseEvidence(result.error.partialObservation)).toMatchObject({
+  expect(evidence).toMatchObject({
     operation: "inspect_elf_unwind_ranges",
     normalized_result: report,
   });

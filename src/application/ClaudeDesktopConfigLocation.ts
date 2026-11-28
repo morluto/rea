@@ -2,6 +2,7 @@ import { lstatSync, opendirSync, readdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 
 import { err, ok, type Result } from "../domain/result.js";
+import { isAbsentClientConfigPath } from "./ClientConfigPath.js";
 import {
   windowsAppDataRoots,
   type MsixPackageView,
@@ -108,7 +109,7 @@ export const resolveWindowsClaudeDesktopLocation = (
       .readdir(packagesDirectory)
       .filter((name) => CLAUDE_PACKAGE_FAMILY.test(name));
   } catch (cause: unknown) {
-    if (!isMissing(cause))
+    if (!isAbsentClientConfigPath(cause))
       return err({
         path: packagesDirectory,
         message: `MSIX package storage ${packagesDirectory} could not be inspected, so REA cannot establish whether Claude Desktop reads ${appDataConfigPath} or a package-private copy: ${errorMessage(cause)}. Repair access to that directory, then rerun.`,
@@ -373,7 +374,7 @@ const resolveAppData = (
   try {
     return fileSystem.realpath(path);
   } catch (cause: unknown) {
-    return isMissing(cause) ? null : undefined;
+    return isAbsentClientConfigPath(cause) ? null : undefined;
   }
 };
 
@@ -500,7 +501,7 @@ const inspectOptional = <T>(
   try {
     return ok(inspect());
   } catch (cause: unknown) {
-    if (isMissing(cause)) return ok(undefined);
+    if (isAbsentClientConfigPath(cause)) return ok(undefined);
     return err({
       path,
       message: `${path} could not be inspected, so REA cannot establish which ${CONFIG_FILE} Claude Desktop's MSIX package reads: ${errorMessage(cause)}. Repair access to that path, then rerun.`,
@@ -520,8 +521,3 @@ const present = (
   const entry = inspectPath(fileSystem, path);
   return entry.ok ? ok(entry.value !== undefined) : entry;
 };
-
-const isMissing = (cause: unknown): boolean =>
-  cause instanceof Error &&
-  "code" in cause &&
-  (cause.code === "ENOENT" || cause.code === "ENOTDIR");

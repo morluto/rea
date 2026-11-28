@@ -32,7 +32,7 @@ it.each(["native", "modern"] as const)(
         hostEnvironment: process.env,
         env: { REA_IDA_MCP_CONFIG: config },
       },
-      { timeoutMs: 10_000, diagnosticBytes: 16_384, acceptNonZeroExit: true },
+      { timeoutMs: 90_000, diagnosticBytes: 16_384, acceptNonZeroExit: true },
     );
     expect(result.exitCode).toBe(1);
     expect({

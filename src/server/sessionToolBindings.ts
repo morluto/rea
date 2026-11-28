@@ -1,4 +1,4 @@
-import type { AnalysisViewRetention } from "../application/analysisView/AnalysisViewService.js";
+import type { AnalysisViewRetention } from "../application/analysisView/AnalysisViewRetention.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import {
   executeSessionFunctionAnalysis,
@@ -22,6 +22,11 @@ import {
   artifactComparisonExecution,
   resolveArtifactComparisonSources,
 } from "../application/artifacts/ArtifactComparisonEvidence.js";
+import {
+  inventoryArtifactPath,
+  retainedInArtifactScope,
+  type ArtifactPathInspectionDependencies,
+} from "../application/artifacts/ArtifactPathInspection.js";
 import {
   bundleComparisonExecution,
   readBundleComparisonSources,
@@ -73,6 +78,10 @@ import type { ContractToolBindings } from "./contractToolBindings.js";
 export interface SessionDerivedToolOptions {
   readonly session: BinarySessionPort;
   readonly resources: ArtifactResourceScope;
+  /** Inventories a comparison's path sources; absent, they are refused. */
+  readonly createArtifactPathInspection?:
+    | (() => Promise<ArtifactPathInspectionDependencies>)
+    | undefined;
 }
 
 /** The artifact resource scope application workflows read caller-named files under. */
@@ -123,6 +132,7 @@ const settledResult = (
 export const bindSessionDerivedTools = ({
   session,
   resources,
+  createArtifactPathInspection,
 }: SessionDerivedToolOptions): ContractToolBindings => ({
   compare_functions: {
     admission: "sdk",
@@ -171,7 +181,21 @@ export const bindSessionDerivedTools = ({
       const sources = await resolveArtifactComparisonSources(
         input,
         evidenceForAnalysis,
-        { signal, resources },
+        {
+          signal,
+          resources,
+          ...(createArtifactPathInspection === undefined
+            ? {}
+            : {
+                inventoryPath: async (source, sourceSignal) =>
+                  inventoryArtifactPath(
+                    await createArtifactPathInspection(),
+                    source,
+                    sourceSignal,
+                    retainedInArtifactScope(resources),
+                  ),
+              }),
+        },
       );
       return sources.ok
         ? ok(() => artifactComparisonExecution(sources.value))

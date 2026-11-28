@@ -1,29 +1,26 @@
+import { analysisViewPageFields } from "./analysisViewPageFields.js";
 import { z } from "zod";
 import {
   elfDependenciesReportSchema,
   elfDependenciesSchema,
   type ElfDependencies,
 } from "../native/elfDependencies.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   assertOwnedView,
   type AdmittedView,
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { namePrefixesSchema, startsWithAny } from "./namePrefixFilter.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
-  pageViewCoverage,
+  selectedViewPage,
 } from "./analysisViewCoverage.js";
-import {
-  pickFields,
-  selectIndexedViewRows,
-  selectViewRows,
-} from "./selectViewRows.js";
+import { filterSet, pickFields, selectViewRows } from "./selectViewRows.js";
 
 const neededRow = elfDependenciesReportSchema.shape.needed.element;
 const importRow = elfDependenciesReportSchema.shape.imports.element;
@@ -33,11 +30,7 @@ const definitionRow = definitionTable.shape.names.element;
 const maximumRow =
   elfDependenciesReportSchema.shape.derived_version_maxima.element;
 const sourceIndex = { source_index: z.int().nonnegative() };
-const page = {
-  kind: z.literal("elf-dependencies"),
-  offset: z.int().nonnegative().default(0),
-  limit: z.int().positive().default(64),
-};
+const page = analysisViewPageFields("elf-dependencies");
 
 const versionRowSchema = z.strictObject({
   file: z.string().min(1).nullable(),
@@ -177,14 +170,8 @@ export const projectElfDependenciesView = (
   parent: AnalysisViewParent,
   view: AdmittedView,
 ) => {
-  const invalid = (message: string) =>
-    err(
-      analysisViewInputError([
-        { path: ["view"], reason: "invalid_value", message },
-      ]),
-    );
   if (view.kind !== "summary" && view.kind !== "elf-dependencies")
-    return invalid(
+    return invalidAnalysisView(
       "ELF dependency Evidence supports summary and elf-dependencies views.",
     );
   assertOwnedView<
@@ -224,11 +211,7 @@ export const projectElfDependenciesView = (
     parent_operation: "inspect_elf_dependencies" as const,
     parent_digest: parent.evidenceId.slice(3),
     artifact: { path: report.artifact.path, sha256: report.artifact.sha256 },
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...report.limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, report.limitations),
     unknowns:
       report.coverage.status === "complete"
         ? []
@@ -245,38 +228,24 @@ export const projectElfDependenciesView = (
       summary,
       coverage: completeWithinViewCoverage(report.needed.length),
     });
-  const indices =
-    view.indices === undefined ? undefined : new Set(view.indices);
+  const indices = filterSet(view.indices);
   if (view.collection === "issues") {
-    const selected =
-      indices === undefined
-        ? selectViewRows(
-            report.issues,
-            view,
-            undefined,
-            (row, source_index) => ({ ...row, source_index }),
-          )
-        : selectIndexedViewRows(
-            report.issues,
-            indices,
-            view,
-            undefined,
-            (row, source_index) => ({ ...row, source_index }),
-          );
+    const selected = selectViewRows(
+      report.issues,
+      view,
+      undefined,
+      (row, source_index) => ({ ...row, source_index }),
+      indices,
+    );
     return ok({
       ...shared,
       kind: "elf-dependencies" as const,
       view,
       dependencies: summary,
-      items: selected.rows,
-      coverage: pageViewCoverage(
-        view.offset,
-        selected.rows.length,
-        selected.total,
-      ),
+      ...selectedViewPage(view.offset, selected),
     });
   }
-  const names = view.names === undefined ? undefined : new Set(view.names);
+  const names = filterSet(view.names);
   const prefixes = view.name_prefixes;
   const pageRows = <Row extends Record<string, unknown>>(
     rows: readonly Row[],
@@ -287,7 +256,7 @@ export const projectElfDependenciesView = (
   ) => {
     const fields = fieldsOf === undefined ? allowed : [...new Set(fieldsOf)];
     if (fields.some((field) => !allowed.includes(field)))
-      return invalid(
+      return invalidAnalysisView(
         `Selected ${label} fields do not belong to those rows; available fields: ${allowed.join(", ")}.`,
       );
     const columns = new Set<string>(fields);
@@ -306,21 +275,19 @@ export const projectElfDependenciesView = (
               (prefixes === undefined || startsWithAny(name, prefixes))
             );
           };
-    const selected =
-      indices !== undefined
-        ? selectIndexedViewRows(rows, indices, view, matchesName, projectRow)
-        : selectViewRows(rows, view, matchesName, projectRow);
+    const selected = selectViewRows(
+      rows,
+      view,
+      matchesName,
+      projectRow,
+      indices,
+    );
     return ok({
       ...shared,
       kind: "elf-dependencies" as const,
       view,
       dependencies: summary,
-      items: selected.rows,
-      coverage: pageViewCoverage(
-        view.offset,
-        selected.rows.length,
-        selected.total,
-      ),
+      ...selectedViewPage(view.offset, selected),
     });
   };
   switch (view.collection) {

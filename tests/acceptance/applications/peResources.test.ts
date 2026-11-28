@@ -10,7 +10,10 @@ import { peResourcesSchema } from "../../../src/domain/native/peResources.js";
 import { peResourceFixture } from "../../../src/domain/pe/peResources.fixture.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import {
+  expectAdapterErrorParity,
+  parseMcpToolError,
+} from "../../fixtures/mcpToolError.js";
 import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 
 type PeResourceCall = (
@@ -28,18 +31,36 @@ const expectPeInputFailureAcrossAdapters = async (input: {
     arguments: ["inspect-pe-resources", path, "--json"],
   });
   expect(result.exitCode).toBe(1);
-  expect(result.json).toMatchObject({
-    code: "invalid_request",
-    category: "invalid_input",
-    details: {
-      operation: "inspect_pe_resources",
-      issues: [{ path: ["path"], reason }],
-    },
-  });
+  // A missing file is a request-field error; malformed bytes are a target
+  // refusal.
+  expect(result.json).toMatchObject(
+    reason === "invalid_value"
+      ? {
+          code: "invalid_request",
+          category: "invalid_input",
+          details: {
+            operation: "inspect_pe_resources",
+            issues: [{ path: ["path"], reason }],
+          },
+        }
+      : {
+          code: "unsupported_target",
+          category: "unsupported_target",
+          details: {
+            operation: "inspect_pe_resources",
+            path,
+            failure_kind: expect.stringMatching(/^(?:malformed|truncated)$/u),
+          },
+        },
+  );
   const response = await call({ path });
   expect(response.isError).toBe(true);
   expect(response.structuredContent).toBeUndefined();
-  expect(parseMcpToolError(response)).toEqual({ error: result.json });
+  expectAdapterErrorParity(
+    parseMcpToolError(response).error,
+    result.json,
+    "inspect_pe_resources",
+  );
 };
 
 const expectPeInputFailuresAcrossAdapters = async (input: {
@@ -149,7 +170,25 @@ const expectPeResourceNameExtentsAcrossAdapters = async (
     });
     const response = await call({ path });
     expect(response.isError).toBe(true);
-    expect(parseMcpToolError(response)).toEqual({ error: result.json });
+    // Each adapter names the control in its own spelling: the CLI adds the
+    // flag to details.limit and to the generated recovery.
+    const { error } = parseMcpToolError(response);
+    const cliJson = result.json as {
+      readonly remediation: { readonly action: string };
+      readonly details: { readonly limit: { readonly cli_flag?: string } };
+    };
+    expect(cliJson.details.limit.cli_flag).toBe("--max-metadata-bytes");
+    expect(cliJson.remediation.action).toContain("--max-metadata-bytes");
+    expect(error.remediation.action).toContain(
+      "Pass a larger max_metadata_bytes on the next inspect_pe_resources call",
+    );
+    const { cli_flag: _flag, ...cliLimit } = cliJson.details.limit;
+    const { remediation: _mcpRemediation, ...mcpFacts } = error;
+    const { remediation: _cliRemediation, ...cliFacts } = cliJson;
+    expect(mcpFacts).toEqual({
+      ...cliFacts,
+      details: { ...cliJson.details, limit: cliLimit },
+    });
   }
 };
 
@@ -511,7 +550,9 @@ cliTest(
       ).toBe(false);
     }
     const damaged = peResourceFixture();
-    damaged.bytes.writeUInt32LE(17, damaged.directoryAt + 4);
+    // A subdirectory entry pointing back at the root is a cycle. A short
+    // directory Size is not damage: the loader ignores it.
+    damaged.bytes.writeUInt32LE(0x80000000, (damaged.entryOffsets[0] ?? 0) + 4);
     const badPath = join(root, "damaged.exe");
     await writeFile(badPath, damaged.bytes);
     const rejected = await call({ path: badPath });

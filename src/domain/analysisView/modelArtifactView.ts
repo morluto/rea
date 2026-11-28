@@ -12,16 +12,14 @@ import {
   type ModelArtifact,
 } from "../model/modelArtifact.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  invalidAnalysisViewSubject,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
-import type { JsonValue } from "../jsonValue.js";
-import {
-  pickFields,
-  selectIndexedViewRows,
-  selectViewRows,
-} from "./selectViewRows.js";
-import { err, ok, type Result } from "../result.js";
+import { filterSet, pickFields, selectViewRows } from "./selectViewRows.js";
+import { ok, type Result } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   assertOwnedView,
@@ -30,6 +28,7 @@ import {
 } from "./analysisViewShape.js";
 import {
   completeWithinViewCoverage,
+  boundedViewLimitations,
   boundedViewMessages,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
@@ -154,15 +153,8 @@ const read = (parent: AnalysisViewParent): Result<Checked, AnalysisError> => {
   const cached = reusable ? checked.get(report) : undefined;
   const subject = evidenceFileTarget(parent);
   if (subject != null && subject.sha256 !== report.artifact.sha256)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message:
-            "Model full-file subject does not match its recorded artifact",
-        },
-      ]),
+    return invalidAnalysisViewSubject(
+      "Model full-file subject does not match its recorded artifact",
     );
   if (cached !== undefined) return ok(cached);
   const summary = summarizeModel(report);
@@ -193,15 +185,8 @@ export const projectModelArtifactView = (
   view: AdmittedView,
 ) => {
   if (view.kind !== "summary" && view.kind !== "model-artifact")
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Model Evidence supports summary and model-artifact metadata/tensor/type pages",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Model Evidence supports summary and model-artifact metadata/tensor/type pages",
     );
   assertOwnedView<
     SummaryAnalysisView | z.output<typeof modelArtifactViewRequestSchema>
@@ -222,11 +207,7 @@ export const projectModelArtifactView = (
     parent_operation: "inspect_model_artifact" as const,
     parent_digest: parent.evidenceId.slice(3),
     artifact: { path: report.artifact.path, sha256: report.artifact.sha256 },
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...report.limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, report.limitations),
     unknowns: [
       "Tensor values, runtime execution and inference quality were not inspected.",
       ...(report.artifact.sha256 === null
@@ -269,8 +250,7 @@ export const projectModelArtifactView = (
       : view.collection === "metadata"
         ? keys
         : typeIndices;
-  const indices =
-    view.indices === undefined ? undefined : new Set(view.indices);
+  const indices = filterSet(view.indices);
   const types =
     view.collection === "tensors" && view.types !== undefined
       ? new Set(view.types)
@@ -279,8 +259,7 @@ export const projectModelArtifactView = (
     view.collection === "tensors" && view.storage_validation !== undefined
       ? new Set(view.storage_validation)
       : undefined;
-  const fields =
-    view.fields === undefined ? undefined : new Set<string>(view.fields);
+  const fields = filterSet<string>(view.fields);
   const projectRow = (row: (typeof rows)[number], index: number) =>
     fields === undefined
       ? { ...row, index }
@@ -305,16 +284,13 @@ export const projectModelArtifactView = (
   } else if (indices !== undefined) {
     candidateIndices = indices;
   }
-  const paged =
-    candidateIndices !== undefined
-      ? selectIndexedViewRows(
-          rows,
-          candidateIndices,
-          view,
-          matchesRow,
-          projectRow,
-        )
-      : selectViewRows(rows, view, matchesRow, projectRow);
+  const paged = selectViewRows(
+    rows,
+    view,
+    matchesRow,
+    projectRow,
+    candidateIndices,
+  );
   return ok({
     kind: "model-artifact" as const,
     view,

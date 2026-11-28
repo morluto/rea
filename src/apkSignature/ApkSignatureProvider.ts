@@ -8,14 +8,12 @@ import type {
   ApkSignaturePort,
 } from "../ports/apkSignature/ApkSignaturePort.js";
 import {
+  closeArtifactResources,
   withStableArtifactHandle,
-  ArtifactReaderFailure,
   assertArtifactReadActive,
-  bindArtifactFileCleanup,
   ArtifactResourceScope,
   type StableArtifactHandle,
 } from "../resources/index.js";
-import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   APK_BLOCK_ID,
@@ -370,24 +368,12 @@ export class ApkSignatureProvider implements ApkSignaturePort {
   /** Owns the selected file's descriptor, retaining it when closing fails. */
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      if (
-        !(cause instanceof ArtifactReaderFailure) ||
-        cause.cleanup === undefined
-      )
-        throw cause;
-      const error = new ProviderCleanupError(
-        APK_SIGNATURE_PROVIDER_IDENTITY.id,
-        cause.cleanup.resources,
-        { reason: cause.cleanup.reason },
-        { cause, operation: OPERATION },
-      );
-      bindArtifactFileCleanup(cause, error);
-      throw error;
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      APK_SIGNATURE_PROVIDER_IDENTITY,
+      OPERATION,
+    );
   }
 
   async inspect(

@@ -21,7 +21,7 @@ from urllib.request import build_opener, ProxyHandler, urlopen
 import xml.etree.ElementTree as ET
 
 import polib
-from website_i18n import Document, build_translations, checked_catalog, extract_catalogs, languages, prose_units, reading_pages, read_runtime
+from website_i18n import FALLBACK_NOTICE, Document, build_translations, checked_catalog, extract_catalogs, languages, prose_units, reading_pages, read_runtime
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -139,6 +139,25 @@ class WebsiteLinkAuditChecks(unittest.TestCase):
                 )
         self.assertEqual(heads, [{"ref": "refs/heads/topic"}])
         self.assertEqual(tags, [{"ref": "refs/tags/topic/nested"}])
+
+    def test_release_routes_check_the_requested_tag_and_asset(self):
+        cases = (
+            ('tag/series/v1', 'tags/series%2Fv1', 'ok'),
+            ('download/series/v1/tool%20kit.zip', 'tags/series%2Fv1', 'ok'),
+            ('download/series%2Fv1/absent.zip', 'tags/series%2Fv1', 'broken'),
+            ('latest', 'latest', 'ok'),
+            ('latest/download/tool%20kit.zip', 'latest', 'ok'),
+            ('latest/download/absent.zip', 'latest', 'broken'),
+            ('latest/%64ownload/absent.zip', 'latest', 'broken'),
+            ('%64ownload/series/v1/absent.zip', 'tags/series%2Fv1', 'broken'),
+            ('latest/%64ownload/tool%20kit.zip', 'latest', 'ok'),
+        )
+        for route, endpoint, status in cases:
+            with self.subTest(route=route), patch.object(AUDIT, 'github_api', return_value={'assets': [{'name': 'tool kit.zip'}]}) as request:
+                url = 'https://github.com/example/project/releases/' + route
+                report = AUDIT.audit_url((url, ['fixture.html']))
+                self.assertEqual(report['status'], status)
+                request.assert_called_once_with('repos/example/project/releases/' + endpoint)
 
     def test_plain_refs_and_pinned_commits_keep_their_contents_target(self):
         for ref in ("main", "a" * 40):
@@ -371,6 +390,13 @@ class WebsiteSearchChecks(unittest.TestCase):
 
 class WebsiteMaintenanceChecks(unittest.TestCase):
     """Exercise contributor edits and the static preview through real consumers."""
+
+    def test_home_navigation_starts_closed(self):
+        document = Document((ROOT / "website/public/index.html").read_text(encoding="utf-8"))
+        menus = [node for node in document.nodes if "home-page-nav" in node.attrs.get("class", "").split()]
+        self.assertEqual([node.tag for node in menus], ["details"])
+        self.assertNotIn("open", menus[0].attrs)
+        self.assertIn("data-home-nav", menus[0].attrs)
 
     def test_electron_guide_renderer_matches_download(self):
         public = ROOT / "website/public"
@@ -863,6 +889,27 @@ class WebsiteTranslationChecks(unittest.TestCase):
             self.assertIn('href="../assets/styles.css"', (site / "zh-CN/index.html").read_text())
             self.assertIn('hreflang="zh-CN"', (site / "faq/index.html").read_text())
             self.assertIn("https://rea.tools/zh-CN/faq/", (site / "sitemap.xml").read_text())
+
+    def test_fallback_notice_direction_follows_its_own_language(self):
+        with self.translated_project() as root:
+            page = root / "website/public/faq/index.html"
+            page.write_text(page.read_text().replace("How do I install REA?", "How do I install REA today?"))
+            extract_catalogs(root)
+            path = root / "website/locales/ar/messages.po"
+            catalog = polib.pofile(path)
+            notice = catalog.find(FALLBACK_NOTICE, msgctxt="runtime")
+            translated_notice = notice.msgstr
+            self.assertNotEqual(translated_notice, "")
+            site = root / "website/_site"
+            for msgstr, attributes in (
+                ("", 'lang="en" dir="ltr"'),
+                (translated_notice, 'lang="ar" dir="rtl"'),
+            ):
+                notice.msgstr = msgstr
+                catalog.save(path)
+                build_translations(root, site)
+                result = (site / "ar/faq/index.html").read_text()
+                self.assertIn(f'<aside class="container translation-notice" {attributes}>', result)
 
     def test_broken_placeholders_and_inline_markup_fail_before_replacing_preview(self):
         with self.translated_project() as root:

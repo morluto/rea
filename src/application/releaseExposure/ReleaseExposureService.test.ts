@@ -6,7 +6,7 @@ import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
-  AnalysisUnsupportedTargetError,
+  unsupportedTarget,
 } from "../../domain/analysisErrorCore.js";
 import {
   describeElectronFuseFindings,
@@ -99,9 +99,10 @@ const owners = (
   const electronFuses = {
     inspect: vi.fn<OwnerInspect>(async () =>
       err(
-        new AnalysisUnsupportedTargetError(
+        unsupportedTarget(
           "inspect_electron_fuses",
           "/work/app",
+          "fixture",
           "unsupported",
         ),
       ),
@@ -111,9 +112,10 @@ const owners = (
   const goBinaries = {
     inspect: vi.fn<OwnerInspect>(async () =>
       err(
-        new AnalysisUnsupportedTargetError(
+        unsupportedTarget(
           "inspect_go_binary",
           "/work/app",
+          "fixture",
           "unsupported",
         ),
       ),
@@ -123,9 +125,10 @@ const owners = (
   const rustBinaries = {
     inspect: vi.fn<OwnerInspect>(async () =>
       err(
-        new AnalysisUnsupportedTargetError(
+        unsupportedTarget(
           "inspect_rust_binary",
           "/work/app",
+          "fixture",
           "unsupported",
         ),
       ),
@@ -172,9 +175,10 @@ describe("ReleaseExposureService", () => {
     );
     goBinaries.inspect.mockResolvedValue(
       err(
-        new AnalysisUnsupportedTargetError(
+        unsupportedTarget(
           "inspect_go_binary",
           "/work/tree/app",
+          "fixture",
           "not a Go binary",
         ),
       ),
@@ -190,10 +194,12 @@ describe("ReleaseExposureService", () => {
         status: string;
         observation: { samples: string[] };
       }[];
+      coverage: { inapplicable_checks: string[] };
     };
+    expect(report.coverage.inapplicable_checks).toContain("go.build_paths");
     expect(
-      report.checks.find((check) => check.id === "go.build_paths")?.status,
-    ).toBe("not_applicable");
+      report.checks.find((check) => check.id === "go.build_paths"),
+    ).toBeUndefined();
     expect(
       report.checks.find((check) => check.id === "rust.dependency_metadata")
         ?.status,
@@ -666,9 +672,10 @@ describe("ReleaseExposureService fuse image identity", () => {
       (input as { path: string }).path === "/work/app"
         ? ok(evidence(fuseReport([slice(0)])))
         : err(
-            new AnalysisUnsupportedTargetError(
+            unsupportedTarget(
               "inspect_electron_fuses",
               "/work/helper",
+              "fixture",
               "unsupported",
             ),
           ),
@@ -723,9 +730,13 @@ describe("ReleaseExposureService fuse slice coverage", () => {
     electronFuses.inspect.mockResolvedValue(ok(evidence(fuseReport(slices))));
     const result = await service.inspect({ path: "/work/app" });
     if (!result.ok) throw result.error;
-    return releaseExposureReportSchema
-      .parse(result.value.normalized_result)
-      .checks.find((item) => item.id === "electron.run_as_node")?.status;
+    const report = releaseExposureReportSchema.parse(
+      result.value.normalized_result,
+    );
+    return report.coverage.inapplicable_checks.includes("electron.run_as_node")
+      ? "inapplicable"
+      : report.checks.find((item) => item.id === "electron.run_as_node")
+          ?.status;
   };
 
   it("needs every slice to decide before a check is not observed", async () => {
@@ -749,7 +760,7 @@ describe("ReleaseExposureService fuse slice coverage", () => {
   });
 
   it("leaves a file with no sentinel without fuse implications", async () => {
-    expect(await status([slice(0, { sentinels: 0 })])).toBe("not_applicable");
+    expect(await status([slice(0, { sentinels: 0 })])).toBe("inapplicable");
   });
 });
 
@@ -851,9 +862,10 @@ describe("ReleaseExposureService fuse sampling", () => {
     desktop.inspect.mockResolvedValue(ok(evidence(electronDesktopReport())));
     const unsupported = (operation: string) =>
       err(
-        new AnalysisUnsupportedTargetError(
+        unsupportedTarget(
           operation,
           "/work/app/MyApp.exe",
+          "fixture",
           "unsupported",
         ),
       );
@@ -942,9 +954,12 @@ const runAsNode = async (
 ) => {
   const result = await service.inspect({ path });
   if (!result.ok) throw result.error;
-  return releaseExposureReportSchema
-    .parse(result.value.normalized_result)
-    .checks.find((check) => check.id === "electron.run_as_node");
+  const report = releaseExposureReportSchema.parse(
+    result.value.normalized_result,
+  );
+  return report.coverage.inapplicable_checks.includes("electron.run_as_node")
+    ? { status: "inapplicable" as const }
+    : report.checks.find((check) => check.id === "electron.run_as_node");
 };
 
 describe("ReleaseExposureService packaged native images", () => {
@@ -1725,7 +1740,7 @@ describe("ReleaseExposureService Electron applicability", () => {
       directoryScan(["/work/app/one", "/work/app/two"]),
     );
     electronFuses.inspect.mockResolvedValue(noSentinel);
-    expect((await runAsNode(service))?.status).toBe("not_applicable");
+    expect((await runAsNode(service))?.status).toBe("inapplicable");
   });
 
   it.each([
@@ -1775,14 +1790,17 @@ describe("ReleaseExposureService Electron applicability", () => {
       result.value.normalized_result,
     );
     expect(
-      report.checks
-        .filter(({ id }) => id.startsWith("electron."))
-        .map(({ status }) => status),
+      report.checks.filter(({ id }) => id.startsWith("electron.")),
+    ).toEqual([]);
+    expect(
+      report.coverage.inapplicable_checks.filter((id) =>
+        id.startsWith("electron."),
+      ),
     ).toEqual([
-      "not_applicable",
-      "not_applicable",
-      "not_applicable",
-      "not_applicable",
+      "electron.run_as_node",
+      "electron.asar_integrity",
+      "electron.only_load_from_asar",
+      "electron.node_cli_inspect",
     ]);
   });
 
@@ -1861,8 +1879,12 @@ describe("ReleaseExposureService app bundle with a sidecar", () => {
         : safeFramework,
     );
     const check = await runAsNode(service, "/work/App.app");
-    expect(check?.status).toBe("exposed");
-    expect(JSON.stringify(check?.locations)).toContain(SIDECAR);
+    expect(check).toMatchObject({
+      status: "exposed",
+      locations: expect.arrayContaining([
+        expect.objectContaining({ path: SIDECAR }),
+      ]),
+    });
     expect(readPaths(electronFuses.inspect)).toEqual([
       "/work/App.app",
       SIDECAR,
@@ -1874,9 +1896,10 @@ describe("ReleaseExposureService app bundle with a sidecar", () => {
     [
       "unsupported",
       err(
-        new AnalysisUnsupportedTargetError(
+        unsupportedTarget(
           "inspect_electron_fuses",
           "/work/App.app",
+          "fixture",
           "unsupported",
         ),
       ),
@@ -2261,6 +2284,7 @@ const nativeDesktopReport = () => ({
   candidates: [],
   components: [],
   next_probes: [],
+  deferred_probes: [],
   coverage: {
     status: "complete-within-scan",
     entries_examined: 1,
@@ -2393,9 +2417,10 @@ describe("ReleaseExposureService undecoded metadata", () => {
     ] as const)
       owner.inspect.mockResolvedValue(
         err(
-          new AnalysisUnsupportedTargetError(
+          unsupportedTarget(
             operation,
             "/work/app",
+            "fixture",
             "Compressed section",
             { undecodedContent },
           ),
@@ -2403,11 +2428,13 @@ describe("ReleaseExposureService undecoded metadata", () => {
       );
     const result = await service.inspect({ path: "/work/app" });
     if (!result.ok) throw result.error;
-    const { checks } = releaseExposureReportSchema.parse(
+    const { checks, coverage } = releaseExposureReportSchema.parse(
       result.value.normalized_result,
     );
-    return ["go.build_paths", "rust.dependency_metadata"].map(
-      (id) => checks.find((check) => check.id === id)?.status,
+    return (["go.build_paths", "rust.dependency_metadata"] as const).map((id) =>
+      coverage.inapplicable_checks.includes(id)
+        ? "inapplicable"
+        : checks.find((check) => check.id === id)?.status,
     );
   };
 
@@ -2416,7 +2443,7 @@ describe("ReleaseExposureService undecoded metadata", () => {
   });
 
   it("stays not applicable when the target itself is unsupported", async () => {
-    expect(await statuses(false)).toEqual(["not_applicable", "not_applicable"]);
+    expect(await statuses(false)).toEqual(["inapplicable", "inapplicable"]);
   });
 });
 
