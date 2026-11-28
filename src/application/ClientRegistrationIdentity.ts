@@ -226,7 +226,8 @@ const windowsReaCmdScript = (cmdPath: string): string | undefined => {
   let relative: string | undefined;
   for (const line of text.split(/\r?\n/u)) {
     const trimmed = line.trim();
-    if (/^(?:rem\b|::)/iu.test(trimmed)) continue;
+    // Comments and echo are not executed launch statements.
+    if (/^(?:rem\b|::|@?\s*echo\b)/iu.test(trimmed)) continue;
     // npm cmd-shim launch: ... & "%_prog%"  "%dp0%\node_modules\<pkg>\…" %*
     const match =
       /"%_prog%"\s+"%dp0%([\\/][^"]+)"\s+%*/iu.exec(line) ??
@@ -239,6 +240,9 @@ const windowsReaCmdScript = (cmdPath: string): string | undefined => {
     const modules = parts.indexOf("node_modules");
     if (modules >= 0 && parts[modules + 1] === packageName)
       relative = candidate;
+    else
+      // A later non-package "%_prog%" launch means this file does not run REA.
+      return undefined;
   }
   if (relative === undefined) return undefined;
   // Host path rules: Windows keeps UNC `//server/share` roots; fixtures on

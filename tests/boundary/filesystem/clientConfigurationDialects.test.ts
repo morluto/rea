@@ -1060,4 +1060,30 @@ describe("client launcher traversal semantics", () => {
       "unknown",
     );
   });
+
+  it("ignores echoed npm launch text when a later launch is foreign", async () => {
+    const root = await createTestTempDirectory("rea-cmd-echo-");
+    const script = join(
+      root,
+      "node_modules",
+      PRODUCT_IDENTITY.packageName,
+      "scripts",
+      "rea.mjs",
+    );
+    await mkdir(dirname(script), { recursive: true });
+    await writeFile(script, "// owned dispatcher\n");
+    const cmd = join(root, "rea.cmd");
+    await writeFile(
+      cmd,
+      [
+        "@ECHO off",
+        `echo "%_prog%" "%dp0%\\node_modules\\${PRODUCT_IDENTITY.packageName}\\scripts\\rea.mjs" %*`,
+        `endLocal & "%_prog%"  "%dp0%\\other.mjs" %*`,
+        "",
+      ].join("\r\n"),
+    );
+    expect(classifyClientRegistrationCommand([cmd, "mcp"], script)).toBe(
+      "unknown",
+    );
+  });
 });
