@@ -24,6 +24,102 @@ const shortcutContract = (() => {
 })();
 
 cliTest.for([
+  { kind: "environment", field: "ansi", signature: 0xa0000001 },
+  { kind: "environment", field: "unicode", signature: 0xa0000001 },
+  { kind: "icon_environment", field: "ansi", signature: 0xa0000007 },
+  { kind: "icon_environment", field: "unicode", signature: 0xa0000007 },
+  { kind: "tracker", field: "machine", signature: 0xa0000003 },
+] as const)(
+  "preserves unterminated shortcut blocks through CLI and MCP: $kind $field",
+  async ({ kind, field, signature }, { cli }) => {
+    const root = await createTestTempDirectory("rea-shortcut-unterminated-");
+    const path = join(root, `${kind}-${field}.lnk`);
+    const bytes = windowsShortcutBytes({
+      idList: null,
+      linkInfo: { localBasePath: "C:\\Tools\\other.exe", unicode: true },
+      iconLocation: "D:\\Icons\\image.txt",
+      extraData: [{ kind }, { kind: "unknown", signature: 0xa00000fe }],
+    });
+    const marker = Buffer.alloc(4);
+    marker.writeUInt32LE(signature);
+    const signatureOffset = bytes.indexOf(marker);
+    expect(signatureOffset).toBeGreaterThanOrEqual(4);
+    expect(bytes.indexOf(marker, signatureOffset + 1)).toBe(-1);
+    const blockOffset = signatureOffset - 4;
+    const blockSize = bytes.readUInt32LE(blockOffset);
+    const start =
+      blockOffset +
+      8 +
+      (field === "unicode" ? 260 : field === "machine" ? 8 : 0);
+    const length = field === "unicode" ? 520 : field === "machine" ? 16 : 260;
+    bytes.fill(0x41, start, start + length);
+    await writeFile(path, bytes);
+    const result = await cli.run({
+      arguments: ["inspect-windows-shortcut", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
+    const response = await call("inspect_windows_shortcut", { path });
+    expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
+    const report = shortcutContract.outputSchema.parse(
+      result.json,
+    ).normalized_result;
+    const mcpReport = shortcutContract.outputSchema.parse(
+      response.structuredContent,
+    ).normalized_result;
+    expect(mcpReport).toEqual(report);
+    expect(report.artifact).toEqual({
+      path,
+      bytes: bytes.length,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+    });
+    expect(report.coverage).toMatchObject({
+      status: "partial",
+      failing_offset: start,
+    });
+    expect(report.issues).toContainEqual(
+      expect.objectContaining({ code: "malformed_structure", offset: start }),
+    );
+    expect(report.extra_data.blocks[0]?.decoded).toEqual({
+      kind: "raw",
+      bytes: blockSize - 8,
+      sha256: createHash("sha256")
+        .update(bytes.subarray(blockOffset + 8, blockOffset + blockSize))
+        .digest("hex"),
+    });
+    expect(report.extra_data.blocks[1]).toEqual({
+      signature: 0xa00000fe,
+      signature_name: null,
+      offset: blockOffset + blockSize,
+      size: 10,
+      decoded: {
+        kind: "raw",
+        bytes: 2,
+        sha256: createHash("sha256")
+          .update(Buffer.from([0xde, 0xad]))
+          .digest("hex"),
+      },
+    });
+    expect(report.observations).toEqual(
+      expect.arrayContaining([
+        {
+          kind: "icon_location_differs_from_target",
+          evidence_kind: "derived",
+          value: kind === "environment" ? null : true,
+        },
+        {
+          kind: "target_extension",
+          evidence_kind: "derived",
+          extension: kind === "environment" ? null : ".exe",
+        },
+      ]),
+    );
+    expect((await readFile(path)).equals(bytes)).toBe(true);
+  },
+);
+
+cliTest.for([
   { target: "C:\\Tools\\\x83A.exe", icon: "C:\\Tools\\\x83a.exe" },
   { target: "C:\\Tools\\\x82\x60.exe", icon: "C:\\Tools\\\x82\x81.exe" },
 ])(
