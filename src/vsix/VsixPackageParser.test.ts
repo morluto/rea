@@ -2110,3 +2110,22 @@ it.each([
   );
   expect(report.contributes.commands_omitted).toBe(1);
 });
+
+it.each(["demo", null, 1])(
+  "keeps menus and keybindings declared as %j unknown",
+  async (unsupported) => {
+    const bytes = await vsixPackageFixture({
+      packageJson: JSON.stringify({
+        name: "hello",
+        publisher: "demo",
+        version: "1.2.3",
+        contributes: { menus: unsupported, keybindings: unsupported },
+      }),
+    });
+    const report = vsixPackageSchema.parse(
+      await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+    );
+    expect(report.contributes.menus).toBeNull();
+    expect(report.contributes.keybindings).toBeNull();
+  },
+);

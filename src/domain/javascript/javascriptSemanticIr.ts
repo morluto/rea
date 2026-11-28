@@ -14,6 +14,8 @@ export interface JavaScriptModuleOrigin {
   /** An unbound require whose CommonJS wrapper is not established. */
   readonly loaderAuthority?: "candidate";
   readonly resolutionMode?: JavaScriptModuleResolutionMode;
+  /** Static import syntax that this file loads with `require` semantics. */
+  readonly importSyntax?: true;
   readonly specifier: string;
   readonly importedPath: readonly string[];
 }
@@ -420,6 +422,8 @@ export interface JavaScriptSemanticObjectOperation {
   readonly location: JavaScriptSourceRange;
   readonly ownerCallableId: string | null;
   readonly objectBindingId: string | null;
+  /** A write rooted directly in a `require(...)` call. */
+  readonly requireOrigin?: JavaScriptModuleOrigin;
   readonly targetBindingId: string | null;
   readonly propertyPath: readonly string[] | null;
   readonly resolution: "complete" | "partial";

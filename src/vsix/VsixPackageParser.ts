@@ -634,6 +634,10 @@ const menuGroups = (menus: unknown) =>
     ),
   );
 
+/** A declared value that is neither an object nor an array cannot be read. */
+const unreadableShape = (value: unknown): boolean =>
+  value !== undefined && (value === null || typeof value !== "object");
+
 const parsePackageJsonDocument = (
   text: string,
   limitations: string[],
@@ -747,11 +751,18 @@ const parsePackageJsonDocument = (
       commands_total: commandRows.length + (unreadCommands ? 1 : 0),
       // A present but unsupported shape is a declaration that was not read.
       commands_omitted: unreadCommands ? 1 : 0,
-      menus: menuGroups(contributesRaw?.menus),
-      keybindings: rowsOf(contributesRaw?.keybindings).map((row) => ({
-        command: exactText(row.command),
-        key: exactText(row.key),
-      })),
+      // Menus are one object keyed by menu name, so an array is unread too.
+      menus:
+        unreadableShape(contributesRaw?.menus) ||
+        Array.isArray(contributesRaw?.menus)
+          ? null
+          : menuGroups(contributesRaw?.menus),
+      keybindings: unreadableShape(contributesRaw?.keybindings)
+        ? null
+        : rowsOf(contributesRaw?.keybindings).map((row) => ({
+            command: exactText(row.command),
+            key: exactText(row.key),
+          })),
     },
     extensionDependencies: parseExtensionList(record.extensionDependencies),
     extensionPack: parseExtensionList(record.extensionPack),

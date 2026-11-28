@@ -64,6 +64,7 @@ const semanticOriginKey = (origin: JavaScriptModuleOrigin): string =>
     origin.importedPath,
     origin.resolutionMode ?? "import",
     origin.loaderAuthority ?? "proven",
+    origin.importSyntax ?? false,
   ]);
 
 /** Canonically distinguish primitive values across type boundaries. */

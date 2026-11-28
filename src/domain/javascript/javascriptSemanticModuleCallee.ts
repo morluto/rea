@@ -26,8 +26,11 @@ const withoutDefault = (path: readonly string[]): readonly string[] =>
 const originPath = ({
   importedPath,
   resolutionMode,
+  importSyntax,
 }: JavaScriptModuleOrigin): readonly string[] =>
-  resolutionMode === "require" ? importedPath : withoutDefault(importedPath);
+  resolutionMode === "require" && importSyntax !== true
+    ? importedPath
+    : withoutDefault(importedPath);
 
 type SemanticBinding = JavaScriptSemanticIr["bindings"][number];
 
@@ -52,12 +55,19 @@ const replacedMembers = (
     if (earlier === undefined || isBefore(at, earlier)) written.set(key, at);
   };
   for (const operation of ir.objectOperations) {
-    const { kind, objectBindingId, propertyPath, location } = operation;
-    if (kind !== "write" || objectBindingId === null || propertyPath === null)
-      continue;
-    record(JSON.stringify([objectBindingId, ...propertyPath]), location.start);
-    for (const origin of bindings.get(objectBindingId)?.provenance.origins ??
-      [])
+    const { kind, objectBindingId, requireOrigin, propertyPath, location } =
+      operation;
+    if (kind !== "write" || propertyPath === null) continue;
+    if (objectBindingId !== null)
+      record(
+        JSON.stringify([objectBindingId, ...propertyPath]),
+        location.start,
+      );
+    for (const origin of requireOrigin !== undefined
+      ? [requireOrigin]
+      : objectBindingId === null
+        ? []
+        : (bindings.get(objectBindingId)?.provenance.origins ?? []))
       record(
         JSON.stringify([
           origin.specifier,

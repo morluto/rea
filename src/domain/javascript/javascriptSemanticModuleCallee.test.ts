@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
+import {
+  analyzeJavaScriptSemantics,
+  analyzeParsedJavaScriptSemantics,
+} from "./javascriptSemanticAnalysis.js";
+import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { semanticModuleCallees } from "./javascriptSemanticModuleCallee.js";
 
 const callees = (source: string) =>
@@ -208,6 +212,30 @@ describe("module members that are not the imported ones", () => {
     expect(
       callees('require("vscode").commands.registerCommand("a", f);'),
     ).toContain(REGISTER);
+  });
+
+  it.each([
+    [
+      "called through require again",
+      'require("vscode").commands.registerCommand = noop; require("vscode").commands.registerCommand("a", f);',
+    ],
+    [
+      "called through a binding",
+      'require("vscode").commands.registerCommand = noop; const v = require("vscode"); v.commands.registerCommand("a", f);',
+    ],
+  ])("does not resolve a member replaced through require, %s", (_, source) => {
+    expect(callees(source)).not.toContain(REGISTER);
+  });
+
+  it("drops an import's default when the file loads imports with require", () => {
+    const file = parseJavaScriptSource(
+      'import vscode from "vscode"; const w = vscode; w.commands.registerCommand("a", f);',
+    );
+    if (file === null) throw new Error("Expected a parsed source");
+    const ir = analyzeParsedJavaScriptSemantics(file, "require");
+    expect(
+      [...semanticModuleCallees(ir).values()].map(({ path }) => path),
+    ).toEqual([["commands", "registerCommand"]]);
   });
 
   it("keeps a member when only a sibling is written", () => {

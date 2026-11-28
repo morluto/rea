@@ -2546,6 +2546,10 @@ const addBinding = (input: AddBindingInput): void => {
         ? {
             ...directOrigin,
             resolutionMode: state.staticImportResolutionMode,
+            ...(kind === "import" &&
+            state.staticImportResolutionMode === "require"
+              ? { importSyntax: true as const }
+              : {}),
           }
         : directOrigin,
     );
