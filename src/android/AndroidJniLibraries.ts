@@ -29,6 +29,7 @@ import { invariantViolation } from "../domain/internalInvariant.js";
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 import {
   operationZipMemberCount,
+  zipMemberCountReason,
   ZIP_MEMBER_COUNT_PARAMETER,
 } from "../config/artifactMemberCount.js";
 
@@ -86,16 +87,17 @@ export const readAndroidJniLibraries = async (input: {
 }): Promise<AndroidJniLibraries> =>
   input.resources
     .run(async () => {
+      const memberCount = operationZipMemberCount(
+        input.environment ?? process.env,
+        input.settings,
+      );
       const reader = new ZipArtifactReader(
         input.snapshot,
         "apk",
         ANDROID_JNI_LIBRARY_LIMITS.factsBytes,
         undefined,
         undefined,
-        operationZipMemberCount(
-          input.environment ?? process.env,
-          input.settings,
-        ).value,
+        memberCount.value,
       );
       const owner = {
         kind: "reader" as const,
@@ -267,14 +269,18 @@ export const readAndroidJniLibraries = async (input: {
       } catch (cause: unknown) {
         // The entry allowance returns a partial inventory. A session member
         // count is that same stop, so the report stays reachable.
-        if (
-          cause instanceof ArtifactReaderFailure &&
-          cause.reason === "limit" &&
-          cause.readerLimit?.parameter === ZIP_MEMBER_COUNT_PARAMETER
-        ) {
+        const readerLimit =
+          cause instanceof ArtifactReaderFailure && cause.reason === "limit"
+            ? cause.readerLimit
+            : undefined;
+        if (readerLimit?.parameter === ZIP_MEMBER_COUNT_PARAMETER) {
           inventory.status = "partial";
+          const stopped =
+            readerLimit.effective_value === memberCount.value
+              ? memberCount.value
+              : readerLimit.effective_value;
           inventory.unknowns.push(
-            "APK entry inventory reached artifact.member_count; remaining libraries are unknown.",
+            `${zipMemberCountReason(stopped)} Remaining libraries are unknown.`,
           );
         } else {
           failed = true;

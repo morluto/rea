@@ -237,7 +237,10 @@ it("returns a partial JNI inventory when the session member count stops the APK"
     selected_libraries: 1,
   });
   expect(result.inventory.unknowns.join("\n")).toContain(
-    "artifact.member_count",
+    "artifact.member_count at 1 count",
+  );
+  expect(result.inventory.unknowns.join("\n")).toContain(
+    "update_analysis_settings",
   );
   expect(result.libraries).toHaveLength(1);
 });
