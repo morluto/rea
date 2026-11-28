@@ -219,6 +219,39 @@ export interface MipsElfMetadata extends ElfFamilyMetadata {
     | { readonly status: "unavailable"; readonly reason: string };
 }
 
+/** Raw ELF facts for a 32-bit ARM image; recognition does not establish profile support. */
+export interface ArmElfMetadata {
+  readonly elfClass: 32 | 64;
+  readonly byteOrder: "little" | "big";
+  /** Declared ELF header extent, validated against the complete file by the owner. */
+  readonly headerSize: number;
+  readonly type: number;
+  readonly flags: number;
+  /**
+   * Tag_CPU_arch enum declared by .ARM.attributes, or null when the inspected
+   * file declares none; undefined until the section table has been read.
+   */
+  readonly cpuArch?: number | null;
+  /**
+   * Tag_CPU_arch_profile character ("A", "R", "M") from the same File scope,
+   * or null when absent; the arch enum alone does not identify the variant.
+   */
+  readonly cpuArchProfile?: string | null;
+  /**
+   * Tag_DIV_use and Tag_Virtualization_use declarations from any scope, as
+   * declared; undefined until the section table has been read.
+   */
+  readonly extensions?: readonly ArmIsaExtensionDeclaration[];
+  /** Unavailable declaration sources; missing sections there remain unknown. */
+  readonly limitations?: readonly string[];
+}
+
+/** One declared AEABI ISA-extension tag and its value, uninterpreted. */
+export interface ArmIsaExtensionDeclaration {
+  readonly tag: number;
+  readonly value: number;
+}
+
 /** Raw ELF facts; family recognition does not establish ISA or ABI support. */
 export interface RiscvElfMetadata extends ElfFamilyMetadata {
   /** Undefined until `.riscv.attributes` is inspected. */
@@ -361,6 +394,15 @@ export type BinaryTarget =
   | (BinaryTargetIdentity & {
       readonly kind: "executable";
       readonly format: "elf";
+      readonly architecture: "arm";
+      readonly availableArchitectures: readonly "arm"[];
+      readonly arm: ArmElfMetadata;
+      readonly executableRole?: never;
+      readonly managed?: never;
+    })
+  | (BinaryTargetIdentity & {
+      readonly kind: "executable";
+      readonly format: "elf";
       readonly architecture: "riscv";
       readonly availableArchitectures: readonly "riscv"[];
       readonly riscv: RiscvElfMetadata;
@@ -403,7 +445,7 @@ export type BinaryTarget =
       readonly managed?: never;
     })
   | (ExecutableTarget & {
-      readonly format: "mach-o" | "elf" | "dos-mz" | "dos-com";
+      readonly format: "mach-o" | "dos-mz" | "dos-com";
       readonly universalSlice?: never;
       readonly executableRole?: never;
       readonly managed?: never;
@@ -416,6 +458,17 @@ export type BinaryTarget =
       readonly universalSlices?: readonly UniversalMachOSliceIdentity[];
       /** Physical FAT table width observed at target admission. */
       readonly universalContainerKind?: "fat32" | "fat64";
+      readonly executableRole?: never;
+      readonly managed?: never;
+    })
+  | (BinaryTargetIdentity & {
+      readonly kind: "executable";
+      readonly format: "elf";
+      readonly architecture: Exclude<HeaderArchitecture, "arm">;
+      readonly availableArchitectures: readonly Exclude<
+        HeaderArchitecture,
+        "arm"
+      >[];
       readonly executableRole?: never;
       readonly managed?: never;
     })

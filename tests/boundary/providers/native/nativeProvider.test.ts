@@ -17,6 +17,7 @@ import { stopTestChild } from "../../../support/process/stopTestChild.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
+import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
 import {
   NATIVE_FAILURE_DIAGNOSTIC_BYTES,
   NativeCommandFailure,
@@ -1796,12 +1797,23 @@ describe("native macOS provider failures and parsing", () => {
 
   it.each([
     {
-      ...machoTarget("/fixture.dll"),
+      path: "/fixture.dll",
+      sha256: "0".repeat(64),
+      kind: "executable" as const,
       format: "pe" as const,
+      architecture: "arm64" as const,
+      availableArchitectures: ["arm64"] as const,
       executableRole: "shared-library" as const,
       managed: false,
     },
-    { ...machoTarget("/fixture.elf"), format: "elf" as const },
+    {
+      path: "/fixture.elf",
+      sha256: "0".repeat(64),
+      kind: "executable" as const,
+      format: "elf" as const,
+      architecture: "arm64" as const,
+      availableArchitectures: ["arm64"] as const,
+    },
   ])(
     "refuses to list architectures of a $format target without running lipo",
     async (target) => {
@@ -1838,7 +1850,9 @@ describe("native macOS provider failures and parsing", () => {
     expect(!result.ok && result.error._tag).toBe("AnalysisCancelledError");
     expect(runner.calls).toBe(0);
   });
+});
 
+describe("native output parsing", () => {
   it("parses thin and universal lipo fixtures", async () => {
     expect(parseLipoFixture(await fixture("lipo-thin.txt"))).toMatchObject({
       format: "thin",
@@ -1908,20 +1922,18 @@ describe("native signature inspection target scope", () => {
   // This provider's inspect_signature path is scoped to Mach-O targets; on
   // another container a codesign verdict cannot see a format-level signature
   // such as a xar pkg signature.
-  it.each([
-    {
-      path: "/fixture.pkg",
-      sha256: "0".repeat(64),
-      kind: "archive" as const,
-      format: "pkg" as const,
-    },
-    {
-      ...machoTarget("/fixture.elf"),
-      format: "elf" as const,
-    },
-  ])(
-    "refuses inspect_signature on a $format target without running codesign",
-    async (target) => {
+  it.each(["pkg", "elf"] as const)(
+    "refuses inspect_signature on a %s target without running codesign",
+    async (format) => {
+      const target =
+        format === "pkg"
+          ? {
+              path: "/fixture.pkg",
+              sha256: "0".repeat(64),
+              kind: "archive" as const,
+              format: "pkg" as const,
+            }
+          : await nativeElfTarget();
       const runner = new CountingRunner();
       const result = await new NativeMacOSProvider({}, runner, "darwin")
         .createClient(target)
@@ -1935,6 +1947,23 @@ describe("native signature inspection target scope", () => {
     },
   );
 });
+
+const nativeElfTarget = async () => {
+  directory = await createTestTempDirectory("rea-native-elf-target-");
+  const path = join(directory, "fixture.elf");
+  const header = Buffer.alloc(64);
+  header.set([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1]);
+  header.writeUInt16LE(2, 16); // ET_EXEC
+  header.writeUInt16LE(62, 18); // EM_X86_64
+  header.writeUInt32LE(1, 20); // EV_CURRENT
+  header.writeUInt16LE(64, 52); // ELF64 header size
+  await writeFile(path, header);
+  const result = await parseBinaryTarget(path);
+  if (!result.ok) throw result.error;
+  if (result.value.kind !== "executable" || result.value.format !== "elf")
+    throw new Error("Expected an admitted ELF executable target");
+  return result.value;
+};
 
 class FailingRunner implements NativeCommandRunner {
   constructor(private readonly reason: NativeCommandFailure["reason"]) {}

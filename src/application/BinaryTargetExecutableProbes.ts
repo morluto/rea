@@ -55,6 +55,7 @@ import { readRiscvElfDeclarations } from "../domain/riscvIsaDeclaration.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import { readMipsElfMetadata } from "./MipsElfMetadata.js";
+import { readArmElfCpuArch } from "./ArmElfAttributes.js";
 
 export type ExecutableMetadataFailure =
   | string
@@ -269,6 +270,33 @@ const readElfMetadata = async (
         )),
       },
     });
+  if (parsed.value.architecture === "arm") {
+    // Only the little-endian ELF32 shape has a verified consumer; big-endian
+    // declarations stay uninspected and their lanes refuse on byte order.
+    if (
+      parsed.value.arm.elfClass !== 32 ||
+      parsed.value.arm.byteOrder !== "little"
+    )
+      return parsed;
+    const attributes = await readArmElfCpuArch(handle, parsed.value.arm, () =>
+      throwIfTargetResolutionCancelled(signal),
+    );
+    if (!attributes.ok) return attributes;
+    return ok({
+      ...parsed.value,
+      arm: {
+        ...parsed.value.arm,
+        cpuArch: attributes.value.cpuArch,
+        cpuArchProfile: attributes.value.cpuArchProfile,
+        ...(attributes.value.extensions.length === 0
+          ? {}
+          : { extensions: attributes.value.extensions }),
+        ...(attributes.value.limitations.length === 0
+          ? {}
+          : { limitations: attributes.value.limitations }),
+      },
+    });
+  }
   if (!isMips32) return parsed;
   const { sectionTruncation } = ranges.value;
   if (sectionTruncation?.kind === "truncated_section_payload")

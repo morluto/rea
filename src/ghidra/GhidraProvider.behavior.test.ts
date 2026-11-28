@@ -4529,20 +4529,32 @@ describe("Ghidra PDB coverage", () => {
   );
 });
 
-const executableTarget = (
+function executableTarget(
+  format: "elf" | "mach-o",
+  architecture: Exclude<
+    Extract<BinaryTarget, { format: "pe" }>["architecture"],
+    "arm"
+  >,
+): BinaryTarget;
+function executableTarget(
+  format: "pe",
+  architecture: Extract<BinaryTarget, { format: "pe" }>["architecture"],
+): BinaryTarget;
+function executableTarget(
   format: "mach-o" | "elf" | "pe",
   architecture: Extract<BinaryTarget, { format: "pe" }>["architecture"],
-): BinaryTarget =>
-  format === "pe"
+): BinaryTarget {
+  return format === "pe"
     ? peTarget(architecture)
-    : {
+    : ({
         path: "/tmp/fixture",
         sha256: "a".repeat(64),
         kind: "executable",
         format,
         architecture,
         availableArchitectures: [architecture],
-      };
+      } as BinaryTarget);
+}
 
 const peTarget = (
   architecture: Extract<BinaryTarget, { format: "pe" }>["architecture"],

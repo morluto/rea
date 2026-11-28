@@ -6,6 +6,7 @@ import {
 } from "./virtualFileMapping.js";
 import {
   PE_CODEVIEW_PREFIX_BYTES,
+  type ArmElfMetadata,
   type BinaryArchitecture,
   type ElfFamilyMetadata,
   type HeaderArchitecture,
@@ -68,6 +69,12 @@ export type ExecutableMetadata =
     }
   | {
       readonly format: "elf";
+      readonly architecture: "arm";
+      readonly availableArchitectures: readonly "arm"[];
+      readonly arm: ArmElfMetadata;
+    }
+  | {
+      readonly format: "elf";
       readonly architecture: "riscv";
       readonly availableArchitectures: readonly "riscv"[];
       readonly riscv: RiscvElfMetadata;
@@ -95,7 +102,7 @@ export type ExecutableMetadata =
       readonly universalSlice?: never;
     }
   | {
-      readonly format: "mach-o" | "elf" | "dos-mz" | "dos-com";
+      readonly format: "mach-o" | "dos-mz" | "dos-com";
       readonly architecture: HeaderArchitecture;
       readonly availableArchitectures: readonly HeaderArchitecture[];
       readonly universalSlice?: never;
@@ -107,6 +114,14 @@ export type ExecutableMetadata =
       readonly universalSlice: UniversalMachOSlice;
       readonly universalSlices: readonly UniversalMachOSliceIdentity[];
       readonly universalContainerKind: "fat32" | "fat64";
+    }
+  | {
+      readonly format: "elf";
+      readonly architecture: Exclude<HeaderArchitecture, "arm">;
+      readonly availableArchitectures: readonly Exclude<
+        HeaderArchitecture,
+        "arm"
+      >[];
     }
   | {
       readonly format: "pe";
@@ -524,14 +539,22 @@ const parseElf = (
 ): Result<ExecutableMetadata, string> => {
   const fixedHeader = readElfFixedHeader(bytes, fileSize);
   if (!fixedHeader.ok) return fixedHeader;
-  const { elfClass, byteOrder, architecture, machine, type, flags } =
-    fixedHeader.value;
+  const {
+    elfClass,
+    byteOrder,
+    architecture,
+    machine,
+    type,
+    flags,
+    headerSize,
+  } = fixedHeader.value;
   if (architecture === null)
     return err(`unsupported ELF architecture: e_machine ${String(machine)}`);
   if (
     architecture === "mips" ||
     architecture === "riscv" ||
-    architecture === "powerpc"
+    architecture === "powerpc" ||
+    architecture === "arm"
   ) {
     const metadata: ElfFamilyMetadata = {
       elfClass,
@@ -553,12 +576,19 @@ const parseElf = (
           availableArchitectures: [architecture],
           mips: metadata,
         })
-      : ok({
-          format: "elf",
-          architecture,
-          availableArchitectures: [architecture],
-          riscv: metadata,
-        });
+      : architecture === "riscv"
+        ? ok({
+            format: "elf",
+            architecture,
+            availableArchitectures: [architecture],
+            riscv: metadata,
+          })
+        : ok({
+            format: "elf",
+            architecture,
+            availableArchitectures: [architecture],
+            arm: { ...metadata, headerSize },
+          });
   }
   if (architecture === "hexagon")
     return ok({

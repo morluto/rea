@@ -49,6 +49,7 @@ import {
   sameGhidraDisabledAnalyzers,
   sameGhidraLanguageOverride,
 } from "./GhidraAnalysisProfile.js";
+import { ghidraPinnedArmLanguage } from "./GhidraArmProfile.js";
 import {
   ghidraDisabledAnalyzerFailure,
   ghidraDisabledAnalyzerLimitations,
@@ -637,6 +638,18 @@ export const createGhidraProviderClient = (input: {
       : []),
     ...(target.architecture === "mips"
       ? (target.mips.limitations ?? []).map((limitation) => limitation.message)
+      : []),
+    ...(ghidraPinnedArmLanguage(committedProfile.parameters) === undefined
+      ? []
+      : [
+          "The ARM lane pins the ARM:LE:32:v7 import language and checks it after import; Ghidra header auto-selection is not used for this admission.",
+        ]),
+    ...(target.kind === "executable" &&
+    target.architecture === "arm" &&
+    target.format === "elf"
+      ? [
+          "ARM and Thumb-2 interworking is analyzed per instruction set state; the ELF float ABI declaration does not change the modeled calling convention.",
+        ]
       : []),
     ...(committedProfile.parameters.mips_abi_basis === "inferred-o32-assumption"
       ? [
