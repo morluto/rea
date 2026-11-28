@@ -275,11 +275,12 @@ export const parseDevicetree = (
       : [
           `FDT structure padding contains ${String(nonzeroPaddingBytes)} nonzero ${nonzeroPaddingBytes === 1 ? "byte" : "bytes"}. The first is at file offset ${String(firstNonzeroPadding)}.`,
         ];
-  // Only a property this reader could not decode makes the inventory incomplete;
-  // the capability notes below stay in `limitations` without affecting coverage.
-  const unexamined: string[] = [...structureLimitations];
+  // Only a property this reader could not decode makes the inventory incomplete.
+  // Structural padding and the capability notes stay in `limitations` without
+  // changing the status, which is the behaviour the existing reports rely on.
+  const unexamined: string[] = [];
   const limitations = [
-    ...unexamined,
+    ...structureLimitations,
     `Raw property previews are limited to ${String(DEVICETREE_PROPERTY_PREVIEW_BYTES)} bytes; offsets and lengths identify complete values in the hashed artifact.`,
     "Phandle references cover only single-cell interrupt-parent, remote-endpoint and msi-parent; binding-specific arrays and overlays are not resolved.",
   ];
