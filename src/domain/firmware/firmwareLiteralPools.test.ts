@@ -676,6 +676,33 @@ describe("firmwareLiteralPools domain scanner", () => {
       maximum: 500,
       required: 33 * 32,
     });
+
+    // Deep acyclic derivedFrom chain (15,000 hops, reverse-declared) resolves iteratively without stack overflow.
+    const chainDepth = 15_000;
+    const chainParts: string[] = [];
+    for (let idx = chainDepth; idx >= 1; idx -= 1) {
+      chainParts.push(
+        `<peripheral derivedFrom="P_${String(idx - 1)}"><name>P_${String(idx)}</name><baseAddress>0x${(0x4000_0000 + idx * 0x10).toString(16)}</baseAddress></peripheral>`,
+      );
+    }
+    chainParts.push(
+      `<peripheral><name>P_0</name><baseAddress>0x40000000</baseAddress><addressBlock><offset>0x0</offset><size>0x4</size><usage>registers</usage></addressBlock></peripheral>`,
+    );
+    const deepChainRes = parseSvdPeripheralSpans(
+      `<device><peripherals>${chainParts.join("")}</peripherals></device>`,
+      200_000,
+    );
+    expect(deepChainRes.ok).toBe(true);
+    if (!deepChainRes.ok) return;
+    expect(
+      classifyLoadedConstant({
+        value: 0x4000_0000 + chainDepth * 0x10,
+        isa: "arm-thumb",
+        baseAddress: 0x0800_0000,
+        fileBytes: 64,
+        svdProfile: deepChainRes.value,
+      }).svdPeripheral,
+    ).toBe(`P_${String(chainDepth)}`);
   });
 
   it("counts compact self-targeting A32 literal loads and reports exact required_value on max_references refusal", () => {

@@ -14,7 +14,7 @@ const DEFAULTS = {
 } as const;
 
 describe("FirmwareLiteralPoolsProvider", () => {
-  it("honors deterministic mid-scan cancellation and reports required_value on budget refusals", async () => {
+  it("honors cancellation during literal-pool scanning and returns typed failures", async () => {
     const dir = await createTestTempDirectory("rea-literal-pools-provider-");
     const fwPath = join(dir, "large_thumb.bin");
     const image = Buffer.alloc(192 * 1024, 0x00);

@@ -189,36 +189,50 @@ const EMPTY_RESOLVED_SPANS: ResolvedPeripheralSpans = Object.freeze({
 });
 
 const resolvePeripheralDescriptors = (
-  name: string,
+  startName: string,
   byName: ReadonlyMap<string, RawSvdPeripheral>,
-  visiting: Set<string>,
   memo: Map<string, ResolvedPeripheralSpans>,
 ): ResolvedPeripheralSpans => {
-  const cached = memo.get(name);
-  if (cached !== undefined) return cached;
-  const entry = byName.get(name);
-  if (entry === undefined) return EMPTY_RESOLVED_SPANS;
-  if (entry.ownDescriptors.length > 0) {
-    const own: ResolvedPeripheralSpans = {
-      descriptors: entry.ownDescriptors,
-      expandedCount: entry.ownExpandedCount,
-    };
-    memo.set(name, own);
-    return own;
+  const existing = memo.get(startName);
+  if (existing !== undefined) return existing;
+
+  const chain: string[] = [];
+  const inChain = new Set<string>();
+  let current: string | null = startName;
+  let terminal: ResolvedPeripheralSpans = EMPTY_RESOLVED_SPANS;
+
+  while (current !== null) {
+    const cached = memo.get(current);
+    if (cached !== undefined) {
+      terminal = cached;
+      break;
+    }
+    if (inChain.has(current)) {
+      terminal = EMPTY_RESOLVED_SPANS;
+      break;
+    }
+    const entry = byName.get(current);
+    if (entry === undefined) {
+      terminal = EMPTY_RESOLVED_SPANS;
+      break;
+    }
+    if (entry.ownDescriptors.length > 0) {
+      terminal = {
+        descriptors: entry.ownDescriptors,
+        expandedCount: entry.ownExpandedCount,
+      };
+      memo.set(current, terminal);
+      break;
+    }
+    chain.push(current);
+    inChain.add(current);
+    current = entry.derivedFrom;
   }
-  if (entry.derivedFrom === null || visiting.has(name)) {
-    return EMPTY_RESOLVED_SPANS;
+
+  for (let i = chain.length - 1; i >= 0; i -= 1) {
+    memo.set(chain[i]!, terminal);
   }
-  visiting.add(name);
-  const inherited = resolvePeripheralDescriptors(
-    entry.derivedFrom,
-    byName,
-    visiting,
-    memo,
-  );
-  visiting.delete(name);
-  memo.set(name, inherited);
-  return inherited;
+  return terminal;
 };
 
 interface HeapItem {
@@ -439,19 +453,13 @@ function* expandSvdIntervalsSteps(
   rawEntries: readonly RawSvdPeripheral[],
   byName: ReadonlyMap<string, RawSvdPeripheral>,
   memo: Map<string, ResolvedPeripheralSpans>,
-  visiting: Set<string>,
 ): Generator<"step", SvdAddressInterval[], void> {
   const intervals: SvdAddressInterval[] = [];
   // not-an-allowance: cooperative yield step counter during bounded SVD interval materialization
   let emittedSinceYield = 0;
 
   for (const entry of rawEntries) {
-    const resolved = resolvePeripheralDescriptors(
-      entry.name,
-      byName,
-      visiting,
-      memo,
-    );
+    const resolved = resolvePeripheralDescriptors(entry.name, byName, memo);
     for (const desc of resolved.descriptors) {
       for (let idx = 0; idx < desc.count; idx += 1) {
         emittedSinceYield += 1;
@@ -522,7 +530,6 @@ export function* parseSvdPeripheralSpansSteps(
     deviceDefaultBits,
   );
   const memo = new Map<string, ResolvedPeripheralSpans>();
-  const visiting = new Set<string>();
 
   // Account for inherited and array-expanded intervals before allocating them.
   let requiredIntervals = 0;
@@ -531,7 +538,6 @@ export function* parseSvdPeripheralSpansSteps(
     const resolved = resolvePeripheralDescriptors(
       rawEntries[i]!.name,
       byName,
-      visiting,
       memo,
     );
     requiredIntervals += resolved.expandedCount;
@@ -550,12 +556,7 @@ export function* parseSvdPeripheralSpansSteps(
     );
   }
 
-  const intervals = yield* expandSvdIntervalsSteps(
-    rawEntries,
-    byName,
-    memo,
-    visiting,
-  );
+  const intervals = yield* expandSvdIntervalsSteps(rawEntries, byName, memo);
   const segments = yield* buildDisjointSegmentsSteps(intervals);
   return ok({
     peripheralCount: rawEntries.length,
