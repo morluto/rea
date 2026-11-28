@@ -1,3 +1,4 @@
+import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 import type { AnalysisViewRetention } from "../application/analysisView/AnalysisViewRetention.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import {
@@ -87,6 +88,8 @@ export interface SessionDerivedToolOptions {
 /** The artifact resource scope application workflows read caller-named files under. */
 export interface ApplicationWorkflowToolOptions {
   readonly resources: ArtifactResourceScope;
+  readonly environment?: Readonly<Record<string, string | undefined>>;
+  readonly settings?: AnalysisSettingsReader;
 }
 
 /**
@@ -254,11 +257,11 @@ export const bindManagedWorkflowTools = (
 });
 
 export const bindApplicationWorkflowTools = (
-  { resources }: ApplicationWorkflowToolOptions,
+  { resources, environment, settings }: ApplicationWorkflowToolOptions,
   { evidenceById }: AnalysisViewRetention,
 ): ContractToolBindings => {
   const playwright = new PlaywrightTraceService(
-    new PlaywrightTraceDecoder(resources),
+    new PlaywrightTraceDecoder(resources, environment ?? process.env, settings),
   );
   return {
     trace_application_feature: {

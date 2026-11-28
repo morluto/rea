@@ -32,6 +32,9 @@ import type { FileSnapshotPartialObservation } from "../../../domain/fileSnapsho
 import { TraceInventory } from "./TraceInventory.js";
 import { readTraceStream } from "./TraceStream.js";
 import { traceFailure } from "./TraceFailure.js";
+import type { AnalysisSettingsReader } from "../../../domain/analysisSettings.js";
+import type { ArtifactMemberCount } from "../../../domain/artifactReaderLimits.js";
+import { operationZipMemberCount } from "../../../config/artifactMemberCount.js";
 
 type SelectedMember = { entry: ArtifactEntry; member: TraceMember };
 
@@ -89,10 +92,13 @@ class TraceArchiveRead {
   identity: FileSnapshotPartialObservation | undefined;
   primary: unknown;
   complete: PlaywrightTrace | undefined;
+  memberCount: ArtifactMemberCount | undefined = undefined;
   constructor(
     readonly resources: ArtifactResourceScope,
     readonly path: string,
     readonly limits: PlaywrightTraceLimits,
+    readonly environment: Readonly<Record<string, string | undefined>>,
+    readonly settings: AnalysisSettingsReader | undefined,
     readonly signal?: AbortSignal,
   ) {}
 
@@ -113,6 +119,7 @@ class TraceArchiveRead {
         this.primary ?? artifactFilePrimaryFacts(cause).cause,
         this.path,
         this.limits,
+        this.memberCount,
       );
       const partial =
         this.complete ??
@@ -170,11 +177,18 @@ class TraceArchiveRead {
       this.limits,
     );
     this.inventory = facts;
+    const memberCount = operationZipMemberCount(
+      this.environment,
+      this.settings,
+    );
+    this.memberCount = memberCount;
     const reader = new ZipArtifactReader(
       this.path,
       "zip",
       this.limits.metadata_bytes,
       source,
+      undefined,
+      memberCount.value,
     );
     let outcome:
       | { kind: "completed"; value: PlaywrightTrace }
@@ -238,7 +252,13 @@ class TraceArchiveRead {
 /** Offline decoder; failed cleanup stays with the caller's shared scope. */
 export class PlaywrightTraceDecoder implements PlaywrightTracePort {
   #running = false;
-  constructor(readonly resources: ArtifactResourceScope) {}
+  constructor(
+    readonly resources: ArtifactResourceScope,
+    readonly environment: Readonly<
+      Record<string, string | undefined>
+    > = process.env,
+    readonly settings?: AnalysisSettingsReader,
+  ) {}
   async inspect(
     path: string,
     limits: PlaywrightTraceLimits,
@@ -267,6 +287,8 @@ export class PlaywrightTraceDecoder implements PlaywrightTracePort {
         this.resources,
         path,
         limits,
+        this.environment,
+        this.settings,
         signal,
       ).run();
     } finally {

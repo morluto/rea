@@ -30,6 +30,12 @@ export const CAPTURE_LIMITS = {
     reply: "expanded-limit",
     expected: "maximum_expanded_capture_bytes",
   },
+  "zip-member-count": {
+    parameter: null,
+    unit: "count",
+    reply: "member-count",
+    expected: "maximum_member_count",
+  },
   "protobuf-body": {
     parameter: "max_input_bytes",
     unit: "bytes",
@@ -45,16 +51,25 @@ export const CAPTURE_LIMITS = {
 } as const;
 export type CaptureLimitName = keyof typeof CAPTURE_LIMITS;
 
-/** A limit a decoder child can report on the reply wire. */
+/**
+ * A capture budget a decoder child reports with a public parameter.
+ * `zip-member-count` has its own reply and is not one of these budgets.
+ */
 type CaptureReplyLimitName = {
   [
     Name in CaptureLimitName
-  ]: (typeof CAPTURE_LIMITS)[Name]["reply"] extends null ? never : Name;
+  ]: (typeof CAPTURE_LIMITS)[Name]["reply"] extends null
+    ? never
+    : (typeof CAPTURE_LIMITS)[Name]["parameter"] extends null
+      ? never
+      : Name;
 }[CaptureLimitName];
 const CAPTURE_REPLY_LIMITS = (
   Object.keys(CAPTURE_LIMITS) as CaptureLimitName[]
 ).filter(
-  (name): name is CaptureReplyLimitName => CAPTURE_LIMITS[name].reply !== null,
+  (name): name is CaptureReplyLimitName =>
+    CAPTURE_LIMITS[name].reply !== null &&
+    CAPTURE_LIMITS[name].parameter !== null,
 );
 
 /** The limit whose wire reason a decoder child reported, if any. */
@@ -159,6 +174,7 @@ export class CaptureFormatError extends ParseFailureError<
     | "decoder"
     | "input-limit"
     | "expanded-limit"
+    | "member-count"
     | "fixed-limit" {
     if (this.ceiling !== undefined) return "fixed-limit";
     const { limit } = this;

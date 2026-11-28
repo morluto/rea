@@ -10,6 +10,11 @@ import { CaptureFormatError } from "./CaptureFormatError.js";
 import { decodeSazHttp } from "./SazHttp.js";
 import { decodeSazMetadata } from "./SazMetadata.js";
 import { projectSazRecord, type SazValue } from "./SazProjection.js";
+import {
+  operationZipMemberCount,
+  ZIP_MEMBER_COUNT_PARAMETER,
+  zipMemberCountReason,
+} from "../../config/artifactMemberCount.js";
 
 const SESSION_MEMBER_KINDS = {
   "c.txt": "request",
@@ -30,11 +35,15 @@ interface SessionMember {
 export const decodeSazCapture = async (
   snapshotPath: string,
   sensitiveValues: readonly string[],
+  memberCount: number = operationZipMemberCount(process.env).value,
 ) => {
   const reader = new ZipArtifactReader(
     snapshotPath,
     "zip",
     captureBudgets().inputBytes,
+    undefined,
+    undefined,
+    memberCount,
   );
   try {
     const groups = new Map<string, SessionMember[]>();
@@ -192,8 +201,9 @@ export const decodeSazCapture = async (
   } catch (cause: unknown) {
     if (cause instanceof CaptureFormatError) throw cause;
     if (cause instanceof ArtifactReaderFailure && cause.reason === "limit") {
-      // A ceiling the ZIP reader names stays its own; only the metadata read
-      // budget this decoder gave the reader is the expanded-input budget.
+      // A ceiling the ZIP reader names stays its own. Member count stays a
+      // count. The metadata read budget this decoder gave the reader is the
+      // expanded-input budget.
       if (cause.fixedAllowance !== undefined)
         throw new CaptureFormatError(
           {
@@ -201,6 +211,14 @@ export const decodeSazCapture = async (
             boundary: cause.boundary ?? "memory",
           },
           cause.message,
+        );
+      if (cause.readerLimit?.parameter === ZIP_MEMBER_COUNT_PARAMETER)
+        throw new CaptureFormatError(
+          {
+            name: "zip-member-count",
+            maximum: cause.readerLimit.effective_value,
+          },
+          zipMemberCountReason(cause.readerLimit.effective_value),
         );
       throw new CaptureFormatError(
         { name: "expanded-input", maximum: captureBudgets().inputBytes },

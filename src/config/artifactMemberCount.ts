@@ -1,6 +1,11 @@
 import { positiveDecimalIntegerSchema } from "./positiveDecimalInteger.js";
 
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
+import {
+  type AnalysisResourceConstraintError,
+  sessionSettingConstraint,
+} from "../domain/analysisErrorCore.js";
+import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { currentAnalysisSettingOverride } from "../domain/analysisOperationSnapshot.js";
 import {
   ARTIFACT_MEMBER_COUNT_SETTING,
@@ -10,7 +15,12 @@ import {
 } from "../domain/artifactReaderLimits.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 
+/** The ZIP reader field `artifact.member_count` supplies when a call has no `artifact_limits`. */
+export const ZIP_MEMBER_COUNT_PARAMETER = "artifact_limits.zip.member_count";
+
 const CONSTRAINT = `REA_ARTIFACT_MEMBER_COUNT must be a decimal integer from 1 to ${String(MAXIMUM_ARTIFACT_READER_COUNT)} members; the default is ${String(DEFAULT_ARTIFACT_MEMBER_COUNT)}.`;
+
+const memberCountRecovery = `On a running MCP session, call update_analysis_settings for ${ARTIFACT_MEMBER_COUNT_SETTING}, then retry. For CLI or future REA processes, correct REA_ARTIFACT_MEMBER_COUNT in the launch environment.`;
 
 /** Launch seed for `artifact.member_count`, shared with launch admission. */
 export const artifactMemberCountSchema = positiveDecimalIntegerSchema(
@@ -38,7 +48,7 @@ export const runtimeArtifactMemberCount = (
   const parsed = artifactMemberCountSchema.safeParse(raw);
   if (!parsed.success)
     throw new ConfigurationError(CONSTRAINT, {
-      remediationAction: `On a running MCP session, call update_analysis_settings for ${ARTIFACT_MEMBER_COUNT_SETTING}, then retry. For CLI or future REA processes, correct REA_ARTIFACT_MEMBER_COUNT in the launch environment.`,
+      remediationAction: memberCountRecovery,
       settings: [
         {
           setting: "REA_ARTIFACT_MEMBER_COUNT",
@@ -49,4 +59,65 @@ export const runtimeArtifactMemberCount = (
       ],
     });
   return { value: parsed.data, source: "setting" };
+};
+
+/**
+ * Member count for a ZIP reader whose caller has no `artifact_limits` field.
+ * `environment` is the launch environment selected for this runtime.
+ * Flutter APK inventory, Playwright trace import, and SAZ decoding use this.
+ */
+export const operationZipMemberCount = (
+  environment: Readonly<Record<string, string | undefined>>,
+  read?: AnalysisSettingsReader,
+): ArtifactMemberCount => runtimeArtifactMemberCount(environment, read);
+
+/**
+ * The public count sentence for a ZIP reader that has no `artifact_limits`
+ * argument. Recovery names `artifact.member_count`, the setting that supplied
+ * the cap.
+ */
+export const zipMemberCountReason = (effectiveValue: number): string =>
+  `ZIP admission reached ${ARTIFACT_MEMBER_COUNT_SETTING} at ${String(effectiveValue)} count. ${memberCountRecovery}`;
+
+/** A central-directory count refusal for the count admission already resolved. */
+export const zipMemberCountRefusal = (
+  operation: string,
+  resolved: ArtifactMemberCount,
+  cause?: unknown,
+): AnalysisResourceConstraintError =>
+  sessionSettingConstraint(
+    operation,
+    "capacity",
+    zipMemberCountReason(resolved.value),
+    { member_count: resolved.value },
+    {
+      ...(cause === undefined ? {} : { cause }),
+      remediationAction: memberCountRecovery,
+      limit: analysisSettingLimit(
+        ARTIFACT_MEMBER_COUNT_SETTING,
+        resolved.value,
+        resolved.source,
+      ),
+    },
+  );
+
+/** The public count refusal when this reader limit is the ZIP member count. */
+export const zipMemberCountConstraint = (
+  operation: string,
+  cause: {
+    readonly readerLimit?:
+      | { readonly parameter: string; readonly effective_value: number }
+      | undefined;
+  },
+  resolved: ArtifactMemberCount,
+): AnalysisResourceConstraintError | undefined => {
+  const limit = cause.readerLimit;
+  if (limit?.parameter !== ZIP_MEMBER_COUNT_PARAMETER) return undefined;
+  return zipMemberCountRefusal(
+    operation,
+    limit.effective_value === resolved.value
+      ? resolved
+      : { value: limit.effective_value, source: resolved.source },
+    cause,
+  );
 };

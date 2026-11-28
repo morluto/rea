@@ -39,6 +39,12 @@ const replySchema = z.discriminatedUnion("ok", [
       ]),
       ...failureFields,
     }),
+    z.strictObject({
+      ok: z.literal(false),
+      reason: z.literal("member-count"),
+      ...failureFields,
+      member_count: z.int().positive(),
+    }),
     // A fixed ceiling the decoder's reader named, carried with its value.
     z.strictObject({
       ok: z.literal(false),

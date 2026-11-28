@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 
 import {
   DEFAULT_ANDROID_VBMETA_READER_LIMITS,
+  DEFAULT_ZIP_READER_LIMITS,
   artifactReaderLimitsInputSchema,
   artifactReaderLimitsSchema,
   resolveArtifactReaderLimits,
@@ -31,4 +32,10 @@ it("resolves vbmeta admission and still parses Evidence recorded before it", () 
       android_vbmeta: { signature_bytes: 1 },
     }).success,
   ).toBe(false);
+});
+
+it("keeps Evidence recorded before ZIP member admission", () => {
+  const { zip: _omitted, ...recorded } = resolveArtifactReaderLimits();
+  expect(artifactReaderLimitsSchema.parse(recorded)).toEqual(recorded);
+  expect(resolveArtifactReaderLimits().zip).toEqual(DEFAULT_ZIP_READER_LIMITS);
 });

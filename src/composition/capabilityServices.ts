@@ -573,8 +573,9 @@ const modules = {
     }),
   ),
   flutter: service(
-    ({ options }) =>
-      options.flutterAnalysis ?? createFlutterBuildAnalysisProvider(),
+    ({ environment, options, settings }) =>
+      options.flutterAnalysis ??
+      createFlutterBuildAnalysisProvider(environment, settings),
   ),
   fridaInstrumentation: capability(
     ({ options }) =>

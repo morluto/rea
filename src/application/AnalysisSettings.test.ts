@@ -173,6 +173,23 @@ it("keeps accepted operations and their typed provider views stable across concu
   });
 });
 
+it("lists artifact.member_count for the ZIP consumers outside artifact inventory", () => {
+  const store = new AnalysisSettings({});
+  for (const scope of [
+    { provider: "flutter", operation: "identify_flutter_build" },
+    { provider: "flutter", operation: "inspect_dart_aot" },
+    { provider: "rea-playwright-trace", operation: "inspect_playwright_trace" },
+    {
+      provider: "web-network-capture",
+      operation: "inspect_web_network_capture",
+    },
+    { provider: "jadx", operation: "inspect_android_jni_bindings" },
+  ] as const)
+    expect(
+      store.inspect(scope).settings.map(({ setting }) => setting),
+    ).toContain("artifact.member_count");
+});
+
 it("lists zstd.max_frames for every operation that enforces the cap", () => {
   const store = new AnalysisSettings({});
   for (const operation of [

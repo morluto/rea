@@ -29,6 +29,7 @@ import type { OwnedProviderProcessSpawnOptions } from "../process/ProviderProces
 import { analyzeJadxRequest, type JadxToolPort } from "./JadxAnalysis.js";
 import { readAndroidNativeInventory } from "./AndroidNativeInventory.js";
 import type { AndroidNativeDeclarations } from "../domain/android/androidNativeDeclarations.js";
+import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 import {
   readAndroidJniLibraries,
   type AndroidJniLibraries,
@@ -98,6 +99,10 @@ export class JadxSession {
   constructor(
     options: Omit<OwnedProviderProcessSpawnOptions, "runId" | "stdin">,
     launcher?: JadxLauncher,
+    readonly zipEnvironment: Readonly<
+      Record<string, string | undefined>
+    > = process.env,
+    readonly zipSettings?: AnalysisSettingsReader,
   ) {
     this.transport = new JadxMcpTransport(options, launcher);
   }
@@ -256,6 +261,10 @@ export class JadxSession {
                     selection: request.input,
                     resources: context.resources,
                     signal,
+                    environment: this.zipEnvironment,
+                    ...(this.zipSettings === undefined
+                      ? {}
+                      : { settings: this.zipSettings }),
                     onObservation: (checkpoint) => {
                       if (this.#jniObservation !== undefined)
                         this.#jniObservation.libraries = checkpoint;

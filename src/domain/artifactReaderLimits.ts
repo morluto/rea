@@ -207,6 +207,13 @@ export const wxapkgReaderLimitsSchema = z.strictObject({
 });
 export type WxapkgReaderLimits = z.output<typeof wxapkgReaderLimitsSchema>;
 
+export const DEFAULT_ZIP_READER_LIMITS = {
+  member_count: DEFAULT_ARTIFACT_MEMBER_COUNT,
+};
+export const zipReaderLimitsSchema = z.strictObject({
+  member_count: count,
+});
+
 export const DEFAULT_TAR_READER_LIMITS = {
   extended_header_bytes: 1024 * 1024,
   metadata_bytes: 64 * 1024 * 1024,
@@ -380,6 +387,14 @@ export const artifactReaderLimitsInputSchema = z.strictObject({
     .describe(
       `wxapkg admission; omitted fields use ${JSON.stringify(DEFAULT_WXAPKG_READER_LIMITS)}. Table bytes bound the member table read; directory bytes bound its retained representation.`,
     ),
+  zip: z
+    .strictObject({
+      member_count: zipReaderLimitsSchema.shape.member_count.exactOptional(),
+    })
+    .exactOptional()
+    .describe(
+      `ZIP admission; omitted fields use ${JSON.stringify(DEFAULT_ZIP_READER_LIMITS)}. Member count bounds central-directory records retained for one archive, including zero-byte members.`,
+    ),
   tar: z
     .strictObject({
       extended_header_bytes:
@@ -412,6 +427,7 @@ const readerLimitGroups = {
   android_dtbo: androidDtboReaderLimitsSchema,
   deno: denoReaderLimitsSchema,
   wxapkg: wxapkgReaderLimitsSchema,
+  zip: zipReaderLimitsSchema,
   tar: tarReaderLimitsSchema,
 } as const;
 
@@ -423,13 +439,14 @@ export type ArtifactReaderLimits = z.output<
   typeof resolvedArtifactReaderLimitsSchema
 >;
 
-// Earlier Evidence may omit the later vbmeta, sparse-image, media and DTBO policies.
+// Earlier Evidence may omit the later vbmeta, sparse-image, media, DTBO, and ZIP policies.
 export const artifactReaderLimitsSchema =
   resolvedArtifactReaderLimitsSchema.extend({
     android_vbmeta: androidVbmetaReaderLimitsSchema.exactOptional(),
     android_sparse_image: androidSparseImageReaderLimitsSchema.exactOptional(),
     media_asset: mediaAssetReaderLimitsSchema.exactOptional(),
     android_dtbo: androidDtboReaderLimitsSchema.exactOptional(),
+    zip: zipReaderLimitsSchema.exactOptional(),
   });
 
 /**
@@ -441,6 +458,7 @@ export const ARTIFACT_MEMBER_COUNT_PARAMETERS = [
   "artifact_limits.dotnet_bundle.entry_count",
   "artifact_limits.node_sea.asset_count",
   "artifact_limits.deno.vfs_entries",
+  "artifact_limits.zip.member_count",
 ] as const satisfies readonly ArtifactReaderLimitParameter[];
 
 export const resolveArtifactReaderLimits = (
@@ -486,6 +504,11 @@ export const resolveArtifactReaderLimits = (
     ...selected?.deno,
   },
   wxapkg: { ...DEFAULT_WXAPKG_READER_LIMITS, ...selected?.wxapkg },
+  zip: {
+    ...DEFAULT_ZIP_READER_LIMITS,
+    member_count: memberCount,
+    ...selected?.zip,
+  },
   tar: { ...DEFAULT_TAR_READER_LIMITS, ...selected?.tar },
   ...(selected?.expanded_bytes === undefined
     ? {}
@@ -509,6 +532,8 @@ export const artifactMemberCountSelected = (
       return selected?.node_sea?.asset_count !== undefined;
     case "artifact_limits.deno.vfs_entries":
       return selected?.deno?.vfs_entries !== undefined;
+    case "artifact_limits.zip.member_count":
+      return selected?.zip?.member_count !== undefined;
   }
 };
 

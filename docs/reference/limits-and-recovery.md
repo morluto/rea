@@ -819,7 +819,7 @@ runtime override. See
 `artifact.member_count` (launch seed `REA_ARTIFACT_MEMBER_COUNT`, default
 100,000, range 1 to 2,147,483,647) is the session default for the per-call
 member counts `bun.module_count`, `dotnet_bundle.entry_count`,
-`node_sea.asset_count` and `deno.vfs_entries`. An explicit `artifact_limits`
+`node_sea.asset_count`, `deno.vfs_entries`, and `zip.member_count`. An explicit `artifact_limits`
 field wins for that call; otherwise the runtime override, then the launch
 seed, then the default applies (see [precedence](#precedence-and-lifetime)).
 A refusal at one of those fields also reports `details.limit` as that
@@ -828,7 +828,18 @@ recovery names both routes: the field for one large artifact, then
 `update_analysis_settings` (or the launch seed for a CLI invocation) for
 repeated work. When a non-default session value applies, inventory and
 extraction report the resolved `effective_limits` even if the call selected no
-`artifact_limits`. Other reader fields are per-call only.
+`artifact_limits`. Other reader fields are per-call only. Flutter APK
+inventory, Playwright trace import, and SAZ decoding have no `artifact_limits`
+field. They admit central-directory records at this session count. A refusal
+stays that count and reports `artifact.member_count` as the limit, with
+`parameter` unset. Raise the count with `update_analysis_settings`, or correct
+`REA_ARTIFACT_MEMBER_COUNT` for a CLI process. Android JNI library inventory
+uses the same session count. When that count stops the scan, the report stays
+partial and names that count, the unexamined remainder, and recovery through
+`update_analysis_settings` or `REA_ARTIFACT_MEMBER_COUNT`.
+`inspect_analysis_settings` includes this setting for `identify_flutter_build`,
+`inspect_dart_aot`, `inspect_playwright_trace`, `inspect_web_network_capture`,
+and `inspect_android_jni_bindings`.
 
 Failures preserve `details.reader_limit` with the exact parameter, effective
 value, units, supported range, required value when known, next-call scope and

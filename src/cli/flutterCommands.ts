@@ -23,7 +23,10 @@ import { bindCliEvidenceCallerPath } from "./cliEvidenceCallerPath.js";
 export const registerFlutterCommands = (
   cli: CliInstance,
   logger: Logger,
-  provider: RequestAnalysisPort<FlutterRequest> = createFlutterBuildAnalysisProvider(),
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+  provider: RequestAnalysisPort<FlutterRequest> = createFlutterBuildAnalysisProvider(
+    environment,
+  ),
 ): void => {
   /**
    * Run one operation on the APK the caller selected, recording that spelling

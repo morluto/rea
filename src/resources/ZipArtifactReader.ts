@@ -18,6 +18,7 @@ import {
   type ArtifactTraversalOptions,
 } from "./ArtifactReader.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
+import { DEFAULT_ZIP_READER_LIMITS } from "../domain/artifactReaderLimits.js";
 import { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
 import {
   currentDirectoryPrefixLimitation,
@@ -221,6 +222,8 @@ export class ZipArtifactReader implements ArtifactReader {
     string,
     { readonly source: Entry; readonly metadata: ArtifactEntry }
   >();
+  /** Central-directory records this archive may retain. */
+  readonly #memberCount: number;
   /** Optionally bound each metadata read before allocating its backing buffer. */
   constructor(
     path: string,
@@ -228,8 +231,10 @@ export class ZipArtifactReader implements ArtifactReader {
     maximumMetadataReadBytes?: number,
     admitted?: StableRegularFileDescriptor,
     private readonly expandedBytes?: number,
+    memberCount?: number,
   ) {
     this.format = format;
+    this.#memberCount = memberCount ?? DEFAULT_ZIP_READER_LIMITS.member_count;
     this.#source = new NodeFileReader(path, maximumMetadataReadBytes, admitted);
     this.#reader = new ZipReader(this.#source, ZIP_READER_OPTIONS);
   }
@@ -277,6 +282,13 @@ export class ZipArtifactReader implements ArtifactReader {
       for await (const entry of enumeration) {
         await this.#source.verify();
         this.#assertOpen(signal);
+        // Later records are unmeasured, so this refusal names no required_value.
+        if (records.length >= this.#memberCount)
+          throw artifactReaderLimitFailure(
+            "artifact_limits.zip.member_count",
+            this.#memberCount,
+            "count",
+          );
         records.push({
           offset: entry.offset,
           compressedSize: entry.compressedSize,

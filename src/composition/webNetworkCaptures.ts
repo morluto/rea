@@ -20,6 +20,9 @@ export const createWebNetworkCaptureService = (
         new MitmproxyCaptureAdapter(environment),
       ],
       environment,
+      undefined,
+      undefined,
+      settings,
     ),
   );
 };

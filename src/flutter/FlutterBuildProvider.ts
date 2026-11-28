@@ -77,6 +77,12 @@ import { observeDartSnapshot } from "./DartSnapshotProfile.js";
 import { readElfBuildIds } from "./ElfBuildId.js";
 import { privateWorkspaceFailure } from "../process/privateWorkspaceFailure.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
+import type { ArtifactMemberCount } from "../domain/artifactReaderLimits.js";
+import {
+  operationZipMemberCount,
+  zipMemberCountConstraint,
+} from "../config/artifactMemberCount.js";
 
 const IDENTIFIER_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]*$/u;
 
@@ -200,6 +206,7 @@ const mapInputFailure = (
   path: string,
   cause: unknown,
   limits: FlutterApkLimits,
+  memberCount: ArtifactMemberCount,
 ): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
   const cancellation = observedCancellation(cause);
@@ -214,7 +221,7 @@ const mapInputFailure = (
       cause,
     });
   if (cause instanceof ArtifactReaderFailure && cause.reason === "limit")
-    return readerLimitFailure(operation, cause, limits);
+    return readerLimitFailure(operation, cause, limits, memberCount);
   return new AnalysisInputError(operation, { cause }, [
     {
       path: ["path"],
@@ -226,15 +233,17 @@ const mapInputFailure = (
 
 /**
  * Report the ZIP reader ceiling that refused the APK. A ceiling the reader
- * names (the Zstandard decoder window) keeps its name. The archive expansion
- * budget is derived from the APK's size, and Flutter offers no control that
- * raises it, so it is fixed for this request. The ZIP reader's remaining limit
- * is the metadata read budget this provider selects.
+ * names (the Zstandard decoder window) keeps its name. Member count stays a
+ * count and names `artifact.member_count`. The archive expansion budget is
+ * derived from the APK's size, and Flutter offers no control that raises it,
+ * so it is fixed for this request. Any other ZIP limit is the metadata read
+ * budget this provider selects.
  */
 const readerLimitFailure = (
   operation: string,
   cause: ArtifactReaderFailure,
   limits: FlutterApkLimits,
+  memberCount: ArtifactMemberCount,
 ): AnalysisError => {
   if (cause.fixedAllowance !== undefined)
     return new AnalysisResourceConstraintError(
@@ -244,6 +253,8 @@ const readerLimitFailure = (
       null,
       { cause, retryable: false, fixedAllowance: cause.fixedAllowance },
     );
+  const count = zipMemberCountConstraint(operation, cause, memberCount);
+  if (count !== undefined) return count;
   if (cause.readerLimit !== undefined) {
     const { effective_value: limit, required_value: required } =
       cause.readerLimit;
@@ -328,10 +339,11 @@ const mapPackageFailure = (
   path: string,
   cause: unknown,
   limits: FlutterApkLimits,
+  memberCount: ArtifactMemberCount,
 ): unknown =>
   cause instanceof Error && "code" in cause && typeof cause.code === "string"
     ? cause
-    : mapInputFailure(operation, path, cause, limits);
+    : mapInputFailure(operation, path, cause, limits, memberCount);
 
 interface FlutterLibrary {
   readonly entry: ArtifactEntry;
@@ -346,6 +358,7 @@ const collectFlutterLibraries = async (
   path: string,
   signal: AbortSignal | undefined,
   limits: FlutterApkLimits,
+  memberCount: ArtifactMemberCount,
 ): Promise<FlutterLibrary[]> => {
   const libraries: FlutterLibrary[] = [];
   const paths = new Set<string>();
@@ -395,7 +408,7 @@ const collectFlutterLibraries = async (
     }
     return libraries;
   } catch (cause) {
-    throw mapPackageFailure(operation, path, cause, limits);
+    throw mapPackageFailure(operation, path, cause, limits, memberCount);
   }
 };
 
@@ -407,11 +420,12 @@ async function* openEntrySafely(
   path: string,
   signal: AbortSignal | undefined,
   limits: FlutterApkLimits,
+  memberCount: ArtifactMemberCount,
 ): AsyncGenerator<Buffer> {
   try {
     yield* await reader.open(entry, signal);
   } catch (cause) {
-    throw mapPackageFailure(operation, path, cause, limits);
+    throw mapPackageFailure(operation, path, cause, limits, memberCount);
   }
 }
 
@@ -446,7 +460,12 @@ export class FlutterBuildProvider {
   private readonly rootLeases = new Map<string, AnalysisCleanupLease>();
   private readonly operations = new ArtifactResourceScope();
 
-  constructor() {
+  constructor(
+    private readonly environment: Readonly<
+      Record<string, string | undefined>
+    > = process.env,
+    private readonly settings?: AnalysisSettingsReader,
+  ) {
     this.operations.addCloseHook(() => this.closeRoots());
   }
 
@@ -461,6 +480,7 @@ export class FlutterBuildProvider {
     path: string,
     signal: AbortSignal | undefined,
     limits: FlutterApkLimits,
+    memberCount: ArtifactMemberCount,
   ): Promise<OwnedSnapshot> {
     let root: string;
     try {
@@ -482,7 +502,7 @@ export class FlutterBuildProvider {
       try {
         return await read();
       } catch (cause) {
-        throw mapInputFailure(operation, path, cause, limits);
+        throw mapInputFailure(operation, path, cause, limits, memberCount);
       }
     };
     try {
@@ -501,9 +521,15 @@ export class FlutterBuildProvider {
       } catch (cause) {
         if (cause instanceof RegularFileAdmissionFailure) {
           this.ownResource(root, cause.owner);
-          throw mapInputFailure(operation, path, cause.cause, limits);
+          throw mapInputFailure(
+            operation,
+            path,
+            cause.cause,
+            limits,
+            memberCount,
+          );
         }
-        throw mapInputFailure(operation, path, cause, limits);
+        throw mapInputFailure(operation, path, cause, limits, memberCount);
       }
       const before = await readSource(() =>
         source.handle.stat({ bigint: true }),
@@ -545,7 +571,7 @@ export class FlutterBuildProvider {
             "code" in cause &&
             (cause.code === "EACCES" || cause.code === "EPERM")
           )
-            throw mapInputFailure(operation, path, cause, limits);
+            throw mapInputFailure(operation, path, cause, limits, memberCount);
           throw new AnalysisArtifactChangedError(
             operation,
             path,
@@ -585,10 +611,18 @@ export class FlutterBuildProvider {
   private readerFor(
     snapshot: OwnedSnapshot,
     limits: FlutterApkLimits,
+    memberCount: ArtifactMemberCount,
   ): ZipArtifactReader {
     return this.ownResource(
       snapshot.root,
-      new ZipArtifactReader(snapshot.path, "apk", limits.metadata_read_bytes),
+      new ZipArtifactReader(
+        snapshot.path,
+        "apk",
+        limits.metadata_read_bytes,
+        undefined,
+        undefined,
+        memberCount.value,
+      ),
     );
   }
 
@@ -771,19 +805,25 @@ export class FlutterBuildProvider {
     let result: Result<AnalysisExecution, AnalysisError>;
     try {
       const limits = flutterApkLimits(request.input.apk_limits);
+      const memberCount = operationZipMemberCount(
+        this.environment,
+        this.settings,
+      );
       snapshot = await this.ownSnapshot(
         request.operation,
         path,
         signal,
         limits,
+        memberCount,
       );
-      const reader = this.readerFor(snapshot, limits);
+      const reader = this.readerFor(snapshot, limits, memberCount);
       const libraries = await collectFlutterLibraries(
         reader,
         request.operation,
         path,
         signal,
         limits,
+        memberCount,
       );
       result =
         request.operation === "inspect_dart_aot"
@@ -796,6 +836,7 @@ export class FlutterBuildProvider {
               libraries,
               dartPoolPolicy(request.input.pool_policy),
               limits,
+              memberCount,
             )
           : await this.identifyFlutterBuild(
               path,
@@ -804,6 +845,7 @@ export class FlutterBuildProvider {
               reader,
               libraries,
               limits,
+              memberCount,
             );
     } catch (cause) {
       result = err(
@@ -875,6 +917,7 @@ export class FlutterBuildProvider {
     reader: ZipArtifactReader,
     flutterEntries: readonly FlutterLibrary[],
     limits: FlutterApkLimits,
+    memberCount: ArtifactMemberCount,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     const operation = "identify_flutter_build";
     for (const { entry } of flutterEntries) {
@@ -930,6 +973,7 @@ export class FlutterBuildProvider {
         path,
         signal,
         limits,
+        memberCount,
       );
       const hash = createHash("sha256");
       const snapshotScanner = new SnapshotHashScanner(
@@ -1177,6 +1221,7 @@ export class FlutterBuildProvider {
     libraries: readonly FlutterLibrary[],
     poolPolicy: DartPoolPolicy,
     limits: FlutterApkLimits,
+    memberCount: ArtifactMemberCount,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     const candidates = libraries.filter((library) => library.kind === "libapp");
     if (candidates.length === 0)
@@ -1235,6 +1280,7 @@ export class FlutterBuildProvider {
         path,
         signal,
         limits,
+        memberCount,
       );
       let total = 0;
       for await (const chunk of stream) {

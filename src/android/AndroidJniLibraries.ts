@@ -26,6 +26,12 @@ import { analysisClientFailureForOperation } from "../providers/AnalysisClientFa
 import { errorMessage } from "../kernel/errorMessage.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
+import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
+import {
+  operationZipMemberCount,
+  zipMemberCountReason,
+  ZIP_MEMBER_COUNT_PARAMETER,
+} from "../config/artifactMemberCount.js";
 
 /** Bounds cover the live library buffer, completed scan work and retained JSON separately. */
 export const ANDROID_JNI_LIBRARY_LIMITS = Object.freeze({
@@ -76,13 +82,22 @@ export const readAndroidJniLibraries = async (input: {
   readonly signal: AbortSignal;
   readonly interruption: (reason: unknown) => AnalysisError;
   readonly onObservation: (checkpoint: AndroidJniLibraryCheckpoint) => void;
+  readonly environment?: Readonly<Record<string, string | undefined>>;
+  readonly settings?: AnalysisSettingsReader;
 }): Promise<AndroidJniLibraries> =>
   input.resources
     .run(async () => {
+      const memberCount = operationZipMemberCount(
+        input.environment ?? process.env,
+        input.settings,
+      );
       const reader = new ZipArtifactReader(
         input.snapshot,
         "apk",
         ANDROID_JNI_LIBRARY_LIMITS.factsBytes,
+        undefined,
+        undefined,
+        memberCount.value,
       );
       const owner = {
         kind: "reader" as const,
@@ -252,14 +267,31 @@ export const readAndroidJniLibraries = async (input: {
         inventory.selected_libraries = libraries.length;
         throwIfJadxInterrupted(input.signal);
       } catch (cause: unknown) {
-        failed = true;
-        primary =
-          cause instanceof JadxInterruption
-            ? input.interruption(cause.reason)
-            : cause instanceof ArtifactReaderFailure &&
-                cause.reason === "cancelled"
-              ? input.interruption(input.signal.reason)
-              : cause;
+        // The entry allowance returns a partial inventory. A session member
+        // count is that same stop, so the report stays reachable.
+        const readerLimit =
+          cause instanceof ArtifactReaderFailure && cause.reason === "limit"
+            ? cause.readerLimit
+            : undefined;
+        if (readerLimit?.parameter === ZIP_MEMBER_COUNT_PARAMETER) {
+          inventory.status = "partial";
+          const stopped =
+            readerLimit.effective_value === memberCount.value
+              ? memberCount.value
+              : readerLimit.effective_value;
+          inventory.unknowns.push(
+            `${zipMemberCountReason(stopped)} Remaining libraries are unknown.`,
+          );
+        } else {
+          failed = true;
+          primary =
+            cause instanceof JadxInterruption
+              ? input.interruption(cause.reason)
+              : cause instanceof ArtifactReaderFailure &&
+                  cause.reason === "cancelled"
+                ? input.interruption(input.signal.reason)
+                : cause;
+        }
       }
       if (failed) {
         inventory.status = "partial";
