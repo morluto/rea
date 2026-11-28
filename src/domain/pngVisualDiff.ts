@@ -16,6 +16,7 @@ import {
   readPngIhdrFacts,
 } from "./pngHeader.js";
 import { BinaryReader } from "./binaryContainer.js";
+import { nodeCodecResult } from "../kernel/nodeCodecResult.js";
 
 interface DecodedPng {
   readonly width: number;
@@ -348,10 +349,18 @@ const pngWorkingMemoryError = (
 
 const inflatePng = (compressed: Buffer, maxOutputLength: number): Buffer => {
   try {
-    return inflateSync(compressed, {
-      maxOutputLength,
-      chunkSize: PNG_INFLATE_CHUNK_BYTES,
-    });
+    const result = nodeCodecResult(
+      inflateSync(compressed, {
+        info: true,
+        maxOutputLength,
+        chunkSize: PNG_INFLATE_CHUNK_BYTES,
+      }),
+    );
+    if (result.consumedBytes !== compressed.length)
+      throw new TypeError(
+        "PNG image data contains bytes after its zlib stream",
+      );
+    return result.buffer;
   } catch (cause: unknown) {
     if (
       cause instanceof Error &&
