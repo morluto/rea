@@ -1,11 +1,12 @@
-import type { z } from "zod";
 import { requireAuthenticationHeadroom } from "../JsonAuthenticationHeadroom.js";
-import { authenticateEvidenceBundleValue } from "../EvidenceBundleFiles.js";
+import {
+  authenticateEvidenceBundleValue,
+  boundedEvidenceContentIssues,
+} from "../EvidenceBundleFiles.js";
 import type { ArtifactResourceScope } from "../../resources/index.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisInputError,
-  type AnalysisInputIssue,
   cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import { INSPECT_ANALYSIS_VIEW_OPERATION } from "../../domain/analysisView/analysisViewErrors.js";
@@ -17,7 +18,6 @@ import {
 } from "../../domain/evidenceValidation.js";
 import { isUnsupportedEvidenceFormat } from "../../domain/evidenceFormat.js";
 import { EvidenceFileError } from "../../domain/evidenceErrors.js";
-import { projectInputIssuesBounded } from "../../domain/inputIssueProjection.js";
 import { readJsonFile } from "../JsonFiles.js";
 import {
   evidenceFileEnvelopeKind,
@@ -128,33 +128,6 @@ const listRecordIds = (records: readonly Evidence[]): string => {
   return omitted > 0 ? `${listed} and ${String(omitted)} more` : listed;
 };
 
-/**
- * Budget for projected field-level diagnostics. A malformed file can carry tens
- * of thousands of issues, and projecting all of them pushes the error past the
- * MCP response budget, which then hides the typed file error and its path. Keep
- * the leading issues that fit and say how many were omitted.
- */
-const EVIDENCE_CONTENT_ISSUE_BUDGET_BYTES = 65_536;
-
-const boundedContentIssues = (
-  issues: readonly z.core.$ZodIssue[],
-  input: unknown,
-): readonly AnalysisInputIssue[] => {
-  const bounded = projectInputIssuesBounded(
-    issues,
-    input,
-    EVIDENCE_CONTENT_ISSUE_BUDGET_BYTES,
-  );
-  if (bounded.omittedIssueCount === 0) return bounded.issues;
-  return [
-    ...bounded.issues,
-    {
-      path: [],
-      reason: "invalid_value",
-      message: `${String(bounded.omittedIssueCount)} of ${String(issues.length)} validator issues were omitted because they do not fit the response budget; repair the reported fields and retry.`,
-    },
-  ];
-};
 /** Read one Evidence record or select from an authenticated bundle without rereading the file. */
 export const readEvidenceFileSource = async (
   path: string,
@@ -206,7 +179,10 @@ export const readEvidenceFileSource = async (
         : new EvidenceFileError("read", "wrong-kind", {
             path,
             cause: parsed.error,
-            contentIssues: boundedContentIssues(parsed.error.issues, value),
+            contentIssues: boundedEvidenceContentIssues(
+              parsed.error.issues,
+              value,
+            ),
             userMessage:
               "The selected file does not contain valid Evidence. Repair or recreate the file and try again.",
           }),

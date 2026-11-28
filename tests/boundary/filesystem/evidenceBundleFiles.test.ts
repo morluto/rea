@@ -23,13 +23,18 @@ import { createArtifactInspection } from "../../../src/domain/artifactInspection
 import {
   readEvidenceBundle,
   readImmutableEvidenceBundle,
+  readStandaloneEvidenceRecord,
   writeEvidenceBundle,
 } from "../../../src/application/EvidenceBundleFiles.js";
-import { publishEvidenceDelivery } from "../../../src/application/EvidenceBundleCommands.js";
+import {
+  packEvidenceBundleCommand,
+  publishEvidenceDelivery,
+} from "../../../src/application/EvidenceBundleCommands.js";
 import { EvidenceLedger } from "../../../src/application/investigation/EvidenceLedger.js";
 import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { OwnedStagedOutput } from "../../../src/filesystem/OwnedStagedOutput.js";
+import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import {
   createEvidence,
@@ -1141,6 +1146,179 @@ describe("standalone Evidence bundle inputs", () => {
         userMessage: expect.stringContaining(
           "does not match the bundle schema",
         ),
+      },
+    });
+  });
+});
+
+describe("standalone Evidence record intake", () => {
+  it("authenticates standalone Evidence and enforces heap headroom and issue bounds", async () => {
+    const directory = await createTestTempDirectory("rea-standalone-record-");
+    const record = bundle().records[0];
+    if (record === undefined) throw new Error("Expected fixture record");
+    const recordPath = join(directory, "record.json");
+    await writeFile(recordPath, JSON.stringify(record));
+
+    const loaded = await readStandaloneEvidenceRecord(recordPath);
+    if (!loaded.ok) throw loaded.error;
+    expect(loaded.value).toEqual(record);
+
+    const heapSpy = vi.mocked(getHeapStatistics);
+    const actual = heapSpy();
+    heapSpy.mockReturnValue({ ...actual, total_available_size: 0 });
+    let constrained: Awaited<ReturnType<typeof readStandaloneEvidenceRecord>>;
+    try {
+      constrained = await readStandaloneEvidenceRecord(recordPath);
+    } finally {
+      heapSpy.mockReset();
+    }
+    expect(constrained).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisResourceConstraintError",
+        operation: "pack_evidence_bundle",
+        resource: "memory",
+      },
+    });
+
+    const bloatedNonEvidence = join(directory, "bloated.json");
+    await writeFile(
+      bloatedNonEvidence,
+      JSON.stringify({
+        not_evidence: true,
+        extra: Array.from({ length: 100 }, (_unused, index) => index),
+      }),
+    );
+    const wrongKind = await readStandaloneEvidenceRecord(bloatedNonEvidence);
+    expect(wrongKind).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "EvidenceFileError",
+        reason: "wrong-kind",
+        path: bloatedNonEvidence,
+      },
+    });
+
+    const longKey = "k".repeat(80 * 1024);
+    const oversizedCallerKeyPath = join(directory, "oversized-caller-key.json");
+    await writeFile(
+      oversizedCallerKeyPath,
+      JSON.stringify({
+        ...record,
+        caller_input_paths: { [longKey]: false },
+      }),
+    );
+    const callerKeyFailure = await readStandaloneEvidenceRecord(
+      oversizedCallerKeyPath,
+    );
+    if (callerKeyFailure.ok)
+      throw new Error("Expected EvidenceIntegrityError for caller_input_paths");
+    expect(callerKeyFailure.error).toMatchObject({
+      _tag: "EvidenceIntegrityError",
+      issuePath: ["caller_input_paths"],
+    });
+    const callerKeyProjected = projectAnalysisError(
+      callerKeyFailure.error,
+      "invocation",
+    );
+    const callerKeyEncoded = JSON.stringify(callerKeyProjected);
+    expect(Buffer.byteLength(callerKeyEncoded, "utf8")).toBeLessThanOrEqual(
+      65_536,
+    );
+    expect(callerKeyEncoded).not.toContain(longKey);
+
+    const oversizedStrictKeyPath = join(directory, "oversized-strict-key.json");
+    await writeFile(
+      oversizedStrictKeyPath,
+      JSON.stringify({
+        ...record,
+        provider: { ...record.provider, [longKey]: false },
+      }),
+    );
+    const strictKeyFailure = await readStandaloneEvidenceRecord(
+      oversizedStrictKeyPath,
+    );
+    if (strictKeyFailure.ok)
+      throw new Error("Expected EvidenceIntegrityError for strict provider");
+    expect(strictKeyFailure.error).toMatchObject({
+      _tag: "EvidenceIntegrityError",
+      issuePath: ["provider"],
+    });
+    const strictKeyEncoded = JSON.stringify(
+      projectAnalysisError(strictKeyFailure.error, "invocation"),
+    );
+    expect(Buffer.byteLength(strictKeyEncoded, "utf8")).toBeLessThanOrEqual(
+      65_536,
+    );
+    expect(strictKeyEncoded).not.toContain(longKey);
+
+    const record2 = createEvidence(
+      unknownTarget("not-observed"),
+      { id: "fixture-a", name: "Fixture A", version: "1" },
+      {
+        operation: "first",
+        parameters: {},
+        result: { blob: "x".repeat(80_000) },
+      },
+    );
+    const distinctRecord = createEvidence(
+      unknownTarget("not-observed"),
+      { id: "fixture-b", name: "Fixture B", version: "2" },
+      {
+        operation: "second",
+        parameters: {},
+        result: { blob: "y".repeat(80_000) },
+      },
+    );
+    const firstPath = join(directory, "pack-first.json");
+    const secondPath = join(directory, "pack-second.json");
+    const combinedOutPath = join(directory, "combined-out.json");
+    await Promise.all([
+      writeFile(firstPath, JSON.stringify(record2)),
+      writeFile(secondPath, JSON.stringify(distinctRecord)),
+    ]);
+    const singleProbe = await packEvidenceBundleCommand(
+      [firstPath],
+      combinedOutPath,
+      false,
+      undefined,
+      { availableBytes: 0 },
+    );
+    if (
+      singleProbe.ok ||
+      !(singleProbe.error instanceof AnalysisResourceConstraintError)
+    )
+      throw new Error("Expected AnalysisResourceConstraintError probe");
+    const oneRecordBundleBudget =
+      singleProbe.error.reportedLimits?.authentication_bytes;
+    if (typeof oneRecordBundleBudget !== "number")
+      throw new Error("Expected numeric authentication_bytes");
+    heapSpy.mockReturnValue({
+      ...actual,
+      total_available_size: oneRecordBundleBudget,
+    });
+    let liveCombinedRefusal: Awaited<
+      ReturnType<typeof packEvidenceBundleCommand>
+    >;
+    try {
+      liveCombinedRefusal = await packEvidenceBundleCommand(
+        [firstPath, secondPath],
+        combinedOutPath,
+        false,
+      );
+    } finally {
+      heapSpy.mockReset();
+    }
+    expect(liveCombinedRefusal).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisResourceConstraintError",
+        operation: "pack_evidence_bundle",
+        resource: "memory",
+        reportedLimits: {
+          input_path: secondPath,
+          available_heap_bytes: oneRecordBundleBudget,
+        },
       },
     });
   });

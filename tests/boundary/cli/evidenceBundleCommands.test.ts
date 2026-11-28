@@ -19,11 +19,17 @@ import { z } from "zod";
 
 import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
-import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
+import {
+  createEvidenceBundle,
+  serializeEvidenceBundle,
+} from "../../../src/domain/evidenceBundle.js";
 import {
   createResidualUnknown,
   updateResidualUnknown,
 } from "../../../src/domain/residualUnknown.js";
+import { createBrowserEvidence } from "../../../src/application/BrowserEvidence.js";
+import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
+import { passiveNetworkCapture } from "../../fixtures/passiveNetworkCapture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
@@ -73,13 +79,17 @@ cliTest(
     const root = await createTestTempDirectory("rea-empty-evidence-path-");
     const encoded = JSON.stringify(revisionBundle());
     await writeFile(join(root, "bundle.json"), encoded);
-    for (const [args, field] of [
-      [["evidence-import", ""], "path"],
-      [["evidence-export", "", "refused.json"], "source"],
-      [["evidence-export", "bundle.json", ""], "output"],
-      [["compare", "", "bundle.json"], "left"],
-      [["compare", "bundle.json", ""], "right"],
-      [["evidence-export", "missing.json", ""], "output"],
+    for (const [args, field, missing] of [
+      [["evidence-import", ""], "path", false],
+      [["evidence-export", "", "refused.json"], "source", false],
+      [["evidence-export", "bundle.json", ""], "output", false],
+      [["evidence-pack", "", "bundle.json"], "output", false],
+      [["evidence-pack", "packed.json"], "sources", true],
+      [["evidence-pack", "packed.json", ""], "sources.0", false],
+      [["evidence-pack", "packed.json", "bundle.json", ""], "sources.1", false],
+      [["compare", "", "bundle.json"], "left", false],
+      [["compare", "bundle.json", ""], "right", false],
+      [["evidence-export", "missing.json", ""], "output", false],
     ] as const) {
       const result = await cli.run({
         arguments: [...args, "--json"],
@@ -89,7 +99,13 @@ cliTest(
       expect(result.stderr).toBe("");
       expect(result.json).toMatchObject({
         code: "VALIDATION_ERROR",
-        fieldErrors: [{ path: field, code: "too_small", missing: false }],
+        fieldErrors: [
+          {
+            path: field,
+            code: missing ? "invalid_type" : "too_small",
+            missing,
+          },
+        ],
       });
       expect(result.json).not.toHaveProperty("details.path");
     }
@@ -197,6 +213,22 @@ cliTest(
           false,
         );
     }
+
+    const packSchema = await cli.run({
+      arguments: ["evidence-pack", "--schema", "--json"],
+    });
+    expect(packSchema.exitCode, packSchema.stderr).toBe(0);
+    const { args: packArgs } = z
+      .object({ args: z.record(z.string(), z.unknown()) })
+      .parse(packSchema.json);
+    expect(ajv.validateSchema(packArgs), ajv.errorsText()).toBe(true);
+    const validatePack = ajv.compile(packArgs);
+    expect(
+      validatePack({ output: " bundle.json", sources: [" record.json"] }),
+    ).toBe(true);
+    expect(validatePack({ output: "", sources: ["record.json"] })).toBe(false);
+    expect(validatePack({ output: "bundle.json", sources: [] })).toBe(false);
+    expect(validatePack({ output: "bundle.json", sources: [""] })).toBe(false);
   },
 );
 
@@ -288,21 +320,30 @@ cliTest(
 
 cliTest.for([
   "export_evidence_bundle",
+  "pack_evidence_bundle",
   "compare_bundles",
   "get_evidence_bundle",
 ])("attributes an early heap refusal to $0", async (operation, { cli }) => {
   const root = await createTestTempDirectory("rea-bundle-operation-");
   const path = join(root, "parent.json");
   const output = join(root, "output.json");
-  await writeFile(path, JSON.stringify(revisionBundle()));
+  const bundle = revisionBundle();
+  await writeFile(
+    path,
+    JSON.stringify(
+      operation === "pack_evidence_bundle" ? bundle.records[0] : bundle,
+    ),
+  );
   const preload =
     "import v8 from 'node:v8';import {syncBuiltinESMExports} from 'node:module';const read=v8.getHeapStatistics;v8.getHeapStatistics=()=>({...read(),total_available_size:0});syncBuiltinESMExports();";
   const arguments_ =
     operation === "export_evidence_bundle"
       ? ["evidence-export", path, output]
-      : operation === "compare_bundles"
-        ? ["compare", path, path]
-        : ["inspect-evidence-bundle", JSON.stringify({ path })];
+      : operation === "pack_evidence_bundle"
+        ? ["evidence-pack", output, path]
+        : operation === "compare_bundles"
+          ? ["compare", path, path]
+          : ["inspect-evidence-bundle", JSON.stringify({ path })];
   const result = await cli.run({
     arguments: [...arguments_, "--json"],
     environment: {
@@ -450,5 +491,363 @@ cliTest(
         message: expect.stringContaining(RECREATE_EVIDENCE_GUIDANCE),
       });
     }
+  },
+);
+
+cliTest(
+  "packs 1..N standalone Evidence files for downstream bundle workflows and enforces overwrite and conflict checks",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-evidence-pack-cli-");
+    const appDir = join(root, "app");
+    await mkdir(appDir);
+    await writeFile(
+      join(appDir, "package.json"),
+      JSON.stringify({
+        name: "packed-fixture",
+        type: "module",
+        main: "main.mjs",
+      }),
+    );
+    await writeFile(
+      join(appDir, "main.mjs"),
+      'export const greet = () => "hello";\n',
+    );
+
+    const staticAnalysis = await cli.run({
+      arguments: [
+        "analyze-javascript-application",
+        appDir,
+        "--artifact-format",
+        "directory",
+        "--json",
+      ],
+    });
+    expect(staticAnalysis.exitCode, staticAnalysis.stderr).toBe(0);
+    const staticRecord = jsonValueSchema.parse(staticAnalysis.json);
+
+    const inspection = passiveNetworkCapture([]);
+    const origin = inspection.target.origin;
+    inspection.frames = [
+      { frame_id: "frame-main", parent_frame_id: null, url: origin, origin },
+    ];
+    inspection.scripts = {
+      total: 1,
+      items: [
+        {
+          script_key: `scr_${"0".repeat(64)}`,
+          frame_id: "frame-main",
+          url: `${origin}/assets/main.mjs`,
+          origin,
+          cdp_hash: null,
+          length: null,
+          is_module: true,
+          language: "JavaScript",
+          source_map_url: null,
+          resource_reconciliation: {
+            status: "unmatched",
+            reason: "no_exact_sanitized_url",
+          },
+          source: { included: false, reason: "not-requested" },
+        },
+      ],
+    };
+    const runtimeRecord = createBrowserEvidence(
+      "inspect_web_page",
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: "http://127.0.0.1:9222",
+        target_id: "page",
+        allowed_origins: [origin],
+        observation_ms: 0,
+        include_script_sources: false,
+      }),
+      { source: jsonValueSchema.parse(inspection), facts: inspection },
+      {
+        id: "rea-cdp-browser",
+        name: "REA Chrome DevTools Protocol observation provider",
+        version: "2",
+      },
+    );
+
+    const staticName = " static record.json";
+    const runtimeName = " runtime record.json";
+    const packedName = " packed bundle.json";
+    const packedPath = join(root, packedName);
+    const canonicalPath = join(root, "canonical.json");
+
+    await writeFile(
+      join(root, staticName),
+      JSON.stringify(staticRecord, null, 2),
+    );
+    await writeFile(join(root, runtimeName), JSON.stringify(runtimeRecord));
+
+    const packed = await cli.run({
+      arguments: [
+        "evidence-pack",
+        packedName,
+        staticName,
+        runtimeName,
+        staticName,
+        "--json",
+      ],
+      cwd: root,
+    });
+    expect(packed.exitCode, packed.stderr).toBe(0);
+    const packedBytes = await readFile(packedPath);
+    const expectedReceipt = {
+      path: packedPath,
+      bytes: packedBytes.length,
+      records: 2,
+      unknowns: 0,
+    };
+    expect(packed.json).toEqual(expectedReceipt);
+
+    // Canonical bundle works directly with evidence-export and compare.
+    const exported = await cli.run({
+      arguments: ["evidence-export", packedPath, canonicalPath, "--json"],
+    });
+    expect(exported.exitCode, exported.stderr).toBe(0);
+    expect((await readFile(canonicalPath)).equals(packedBytes)).toBe(true);
+    const compared = await cli.run({
+      arguments: ["compare", packedPath, canonicalPath, "--json"],
+    });
+    expect(compared.exitCode, compared.stderr).toBe(0);
+    expect(compared.json).toMatchObject({ status: "unchanged" });
+
+    // Packed bundle works with build-reconstruction-obligation-ledger.
+    const ledgerInput = join(root, "ledger.json");
+    await writeFile(
+      ledgerInput,
+      JSON.stringify({
+        evidence_bundle: JSON.parse(packedBytes.toString("utf8")),
+        reviewed_obligations: [],
+        manifest: { bindings: [], contradictions: [] },
+      }),
+    );
+    const ledger = await cli.run({
+      arguments: [
+        "build-reconstruction-obligation-ledger",
+        ledgerInput,
+        "--json",
+      ],
+    });
+    expect(ledger.exitCode, ledger.stderr).toBe(0);
+
+    // Packed bundle works with reconcile-javascript-runtime via --evidence-bundle.
+    const reconcileInput = join(root, "reconcile.json");
+    const staticId = (staticRecord as { evidence_id: string }).evidence_id;
+    await writeFile(
+      reconcileInput,
+      JSON.stringify({
+        static_layers: [
+          {
+            role: "application",
+            analysis: { kind: "retained-evidence", evidence_id: staticId },
+            runtime_mappings: [
+              {
+                kind: "url-prefix",
+                prefix: `${origin}/assets/`,
+                artifact_prefix: "",
+              },
+            ],
+          },
+        ],
+        runtime_observations: [
+          { kind: "retained-evidence", evidence_id: runtimeRecord.evidence_id },
+        ],
+      }),
+    );
+    const reconciled = await cli.run({
+      arguments: [
+        "reconcile-javascript-runtime",
+        reconcileInput,
+        "--evidence-bundle",
+        packedPath,
+        "--json",
+      ],
+    });
+    expect(reconciled.exitCode, reconciled.stderr).toBe(0);
+
+    // Overwrite protection and replacement.
+    await writeFile(packedPath, "stale\n");
+    const collision = await cli.run({
+      arguments: ["evidence-pack", packedName, staticName, "--json"],
+      cwd: root,
+    });
+    expect(collision.exitCode).toBe(1);
+    expect(collision.json).toMatchObject({
+      code: "invalid_request",
+      details: { operation: "write", reason: "exists", path: packedPath },
+    });
+    expect(await readFile(packedPath, "utf8")).toBe("stale\n");
+
+    const overwritten = await cli.run({
+      arguments: [
+        "evidence-pack",
+        packedName,
+        staticName,
+        runtimeName,
+        "--overwrite",
+        "--json",
+      ],
+      cwd: root,
+    });
+    expect(overwritten.exitCode, overwritten.stderr).toBe(0);
+    expect(overwritten.json).toEqual(expectedReceipt);
+    expect((await readFile(packedPath)).equals(packedBytes)).toBe(true);
+
+    // Help mentions variadic sources and --overwrite.
+    const help = await cli.run({
+      arguments: ["evidence-pack", "--help"],
+    });
+    expect(help.exitCode).toBe(0);
+    expect(help.stdout).toContain(
+      "Usage: rea evidence-pack <output> <sources...> [options]",
+    );
+    expect(help.stdout).toContain("--overwrite");
+  },
+);
+
+cliTest(
+  "refuses invalid, BOM-prefixed, wrong-kind, and conflicting records in evidence-pack",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-evidence-pack-errors-");
+    const valid = createEvidence(
+      {
+        path: join(root, "one.bin"),
+        sha256: "d".repeat(64),
+        format: "raw-binary",
+      },
+      { id: "fixture", name: "Fixture", version: "1" },
+      { operation: "observe", parameters: {}, result: { ok: true } },
+    );
+    const relocated = createEvidence(
+      {
+        path: join(root, "two.bin"),
+        sha256: "d".repeat(64),
+        format: "raw-binary",
+      },
+      { id: "fixture", name: "Fixture", version: "1" },
+      { operation: "observe", parameters: {}, result: { ok: true } },
+    );
+    const validPath = join(root, "valid.json");
+    const relocatedPath = join(root, "relocated.json");
+    const bundlePath = join(root, "bundle.json");
+    const bomPath = join(root, "bom.json");
+    const tamperedPath = join(root, "tampered.json");
+    const legacyPath = join(root, "legacy.json");
+    const outPath = join(root, "out.json");
+    const dirOutPath = join(root, "dir-out");
+    await mkdir(dirOutPath);
+
+    await Promise.all([
+      writeFile(validPath, JSON.stringify(valid)),
+      writeFile(relocatedPath, JSON.stringify(relocated)),
+      writeFile(
+        bundlePath,
+        serializeEvidenceBundle(createEvidenceBundle([valid])),
+      ),
+      writeFile(bomPath, `\uFEFF${JSON.stringify(valid)}`),
+      writeFile(
+        tamperedPath,
+        JSON.stringify({ ...valid, normalized_result: "altered" }),
+      ),
+      writeFile(legacyPath, JSON.stringify(PRE_66_NULL_COVERAGE_EVIDENCE)),
+    ]);
+
+    const conflict = await cli.run({
+      arguments: ["evidence-pack", outPath, validPath, relocatedPath, "--json"],
+    });
+    expect(conflict.exitCode).toBe(1);
+    expect(conflict.json).toMatchObject({
+      code: "evidence_integrity_mismatch",
+      details: {
+        diagnostics: {
+          evidence_id: valid.evidence_id,
+          paths: [validPath, relocatedPath],
+        },
+      },
+    });
+
+    const wrongKindBundle = await cli.run({
+      arguments: ["evidence-pack", outPath, bundlePath, "--json"],
+    });
+    expect(wrongKindBundle.exitCode).toBe(1);
+    expect(wrongKindBundle.json).toMatchObject({
+      code: "invalid_request",
+      details: {
+        operation: "read",
+        reason: "wrong-kind",
+        detected_kind: "evidence-bundle",
+        path: bundlePath,
+      },
+    });
+
+    const bom = await cli.run({
+      arguments: ["evidence-pack", outPath, bomPath, "--json"],
+    });
+    expect(bom.exitCode).toBe(1);
+    expect(bom.json).toMatchObject({
+      code: "evidence_integrity_mismatch",
+      details: { path: bomPath, reason: "invalid-json" },
+    });
+
+    const tampered = await cli.run({
+      arguments: ["evidence-pack", outPath, tamperedPath, "--json"],
+    });
+    expect(tampered.exitCode).toBe(1);
+    expect(tampered.json).toMatchObject({
+      code: "evidence_integrity_mismatch",
+    });
+
+    const legacy = await cli.run({
+      arguments: ["evidence-pack", outPath, legacyPath, "--json"],
+    });
+    expect(legacy.exitCode).toBe(1);
+    expect(legacy.json).toMatchObject({
+      code: "evidence_integrity_mismatch",
+      message: expect.stringContaining(RECREATE_EVIDENCE_GUIDANCE),
+    });
+
+    const dirOut = await cli.run({
+      arguments: [
+        "evidence-pack",
+        dirOutPath,
+        validPath,
+        "--overwrite",
+        "--json",
+      ],
+    });
+    expect(dirOut.exitCode).toBe(1);
+    expect(dirOut.json).toMatchObject({
+      code: "invalid_request",
+      details: { operation: "write", reason: "not-file", path: dirOutPath },
+    });
+
+    const longKey = "k".repeat(80 * 1024);
+    const oversizedKeyPath = join(root, "oversized-key-record.json");
+    await writeFile(
+      oversizedKeyPath,
+      JSON.stringify({
+        ...valid,
+        caller_input_paths: { [longKey]: false },
+      }),
+    );
+    const oversizedKey = await cli.run({
+      arguments: ["evidence-pack", outPath, oversizedKeyPath, "--json"],
+    });
+    expect(oversizedKey.exitCode).toBe(1);
+    expect(oversizedKey.json).toMatchObject({
+      code: "evidence_integrity_mismatch",
+      details: {
+        issue_path: ["caller_input_paths"],
+        diagnostics: { path: oversizedKeyPath },
+      },
+    });
+    expect(Buffer.byteLength(oversizedKey.stdout, "utf8")).toBeLessThanOrEqual(
+      65_536,
+    );
+    expect(oversizedKey.stdout).not.toContain(longKey);
+
+    await expect(access(outPath)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );

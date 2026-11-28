@@ -10,6 +10,7 @@ import {
   compareEvidenceBundlesCommand,
   exportEvidenceBundleCommand,
   importEvidenceBundleCommand,
+  packEvidenceBundleCommand,
 } from "../application/EvidenceBundleCommands.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
@@ -59,6 +60,32 @@ export const registerEvidenceCommands = (
             signal,
           );
           return exported.ok ? exported.value : cliError(exported.error);
+        }),
+      ),
+  });
+  registerCliCommand(cli, CLI_COMMANDS.evidencePack, {
+    description:
+      "Assemble standalone Evidence JSON files into a canonical Evidence bundle",
+    args: z.object({
+      output: localPathStringSchema.describe("Canonical output JSON path"),
+      sources: z
+        .array(localPathStringSchema)
+        .min(1)
+        .describe("Standalone Evidence JSON paths"),
+    }),
+    options: z.object({
+      overwrite: z.boolean().default(false).describe("Replace output file"),
+    }),
+    run: ({ args, options }) =>
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, CLI_COMMANDS.evidencePack, async () => {
+          const packed = await packEvidenceBundleCommand(
+            args.sources,
+            args.output,
+            options.overwrite,
+            signal,
+          );
+          return packed.ok ? packed.value : cliError(packed.error);
         }),
       ),
   });

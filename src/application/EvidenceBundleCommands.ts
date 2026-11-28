@@ -1,8 +1,11 @@
+import { isDeepStrictEqual } from "node:util";
 import { resolveInvestigationEvidenceClosure } from "./investigation/InvestigationEvidence.js";
 import { dispatchQueuedInterrupts } from "../process/queuedInterrupts.js";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
 
 import {
   EvidenceFileError,
+  EvidenceIntegrityError,
   type PublishedEvidenceFile,
 } from "../domain/evidenceErrors.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -11,8 +14,15 @@ import {
   AnalysisInputError,
   cancelledBy,
 } from "../domain/analysisErrorCore.js";
-import type { Evidence } from "../domain/evidence.js";
-import type { EvidenceBundle } from "../domain/evidenceBundle.js";
+import {
+  evidenceDisplayMetadataAgree,
+  evidenceSemanticContent,
+  type Evidence,
+} from "../domain/evidence.js";
+import {
+  createImmutableEvidenceBundle,
+  type EvidenceBundle,
+} from "../domain/evidenceBundle.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { ownedJsonValueSchema } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -22,11 +32,14 @@ import {
 } from "../domain/bundleComparison.js";
 import { ArtifactResourceScope } from "../resources/index.js";
 import {
+  admitBundlePackRecordHeadroom,
   readEvidenceBundle,
   readImmutableEvidenceBundle,
   readComparisonEvidenceBundles,
+  readStandaloneEvidenceRecord,
   writeEvidenceBundle,
   evidenceBundleExportReceipt,
+  type BundlePackWorkingSetBudget,
 } from "./EvidenceBundleFiles.js";
 import { inspectEvidenceBundle } from "./investigation/InspectEvidenceBundle.js";
 import type { EvidenceRecordFilters } from "../domain/evidenceRecordSummary.js";
@@ -81,18 +94,132 @@ export const exportEvidenceBundleCommand = async (
     signal,
   );
   if (!loaded.ok) return loaded;
+  return publishCanonicalBundleCommand(
+    loaded.value,
+    outputPath,
+    overwrite,
+    signal,
+    "export_evidence_bundle",
+  );
+};
+
+/** Assemble 1..N standalone Evidence JSON records into a canonical Evidence bundle. */
+export const packEvidenceBundleCommand = async (
+  sourcePaths: readonly string[],
+  outputPath: string,
+  overwrite: boolean,
+  signal?: AbortSignal,
+  options?: { readonly availableBytes?: number },
+): Promise<Result<JsonValue, AnalysisError>> => {
+  if (sourcePaths.length === 0)
+    return err(
+      new AnalysisInputError(
+        "pack_evidence_bundle",
+        {
+          userMessage:
+            "Select at least one standalone Evidence JSON file to pack.",
+        },
+        [
+          {
+            path: ["sources"],
+            reason: "missing_argument",
+            message: "At least one standalone Evidence JSON path is required",
+          },
+        ],
+      ),
+    );
+  const loaded = await withBundleReadResources(
+    async (resources) => {
+      const admitted = new Map<
+        string,
+        { readonly record: Evidence; readonly path: string }
+      >();
+      const records: Evidence[] = [];
+      let bundleWorkingSet: BundlePackWorkingSetBudget = {
+        valueBytes: 0,
+        serializedUtf16Bytes: 0,
+      };
+      for (const sourcePath of sourcePaths) {
+        if (signal?.aborted)
+          return err(cancelledBy("pack_evidence_bundle", signal));
+        const read = await readStandaloneEvidenceRecord(
+          sourcePath,
+          signal,
+          resources,
+          "pack_evidence_bundle",
+        );
+        if (!read.ok) return read;
+        const record = read.value;
+        const callerPath = absoluteCallerPath(sourcePath);
+        const existing = admitted.get(record.evidence_id);
+        if (existing === undefined) {
+          const headroom = admitBundlePackRecordHeadroom(
+            record,
+            bundleWorkingSet,
+            callerPath,
+            options?.availableBytes,
+          );
+          if (!headroom.ok) return headroom;
+          bundleWorkingSet = headroom.value;
+          admitted.set(record.evidence_id, { record, path: callerPath });
+          records.push(record);
+          continue;
+        }
+        if (
+          !isDeepStrictEqual(
+            evidenceSemanticContent(existing.record),
+            evidenceSemanticContent(record),
+          ) ||
+          !evidenceDisplayMetadataAgree(existing.record, record)
+        ) {
+          return err(
+            new EvidenceIntegrityError(
+              `Conflicting Evidence records for ${record.evidence_id}`,
+              {
+                userMessage: `Conflicting Evidence records for ${record.evidence_id} in ${existing.path} and ${callerPath}: records share an evidence_id but differ in content or display metadata.`,
+                diagnostics: {
+                  evidence_id: record.evidence_id,
+                  paths: [existing.path, callerPath],
+                },
+              },
+            ),
+          );
+        }
+      }
+      return ok(createImmutableEvidenceBundle(records));
+    },
+    "pack_evidence_bundle",
+    signal,
+  );
+  if (!loaded.ok) return loaded;
+  return publishCanonicalBundleCommand(
+    loaded.value,
+    outputPath,
+    overwrite,
+    signal,
+    "pack_evidence_bundle",
+  );
+};
+
+const publishCanonicalBundleCommand = async (
+  bundle: EvidenceBundle,
+  outputPath: string,
+  overwrite: boolean,
+  signal: AbortSignal | undefined,
+  operation: "export_evidence_bundle" | "pack_evidence_bundle",
+): Promise<Result<JsonValue, AnalysisError>> => {
   const written = await finalizeBundleWork(
     () =>
       persistEvidenceBundleCommand(
-        loaded.value,
+        bundle,
         outputPath,
         overwrite,
         signal,
-        "export_evidence_bundle",
+        operation,
       ),
     {
       providerId: "rea",
-      operation: "export_evidence_bundle",
+      operation,
       signal,
       // Deliver interrupts queued during publication cleanup before deciding
       // whether a written bundle survives cancellation.
@@ -100,7 +227,7 @@ export const exportEvidenceBundleCommand = async (
       diagnostics: (receipt) => ({ evidence_bundle: { ...receipt } }),
     },
   );
-  return projectWrite(loaded.value, written);
+  return projectWrite(bundle, written);
 };
 
 /** Selected Evidence delivered after its complete bundle was committed. */

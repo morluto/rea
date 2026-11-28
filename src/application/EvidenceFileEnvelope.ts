@@ -16,7 +16,7 @@ export const evidenceFileEnvelopeKind = (
 export const snapshotWrongEvidenceKind = (
   path: string,
   operation: string,
-  expected: "bundle" | "record-or-bundle",
+  expected: "bundle" | "record" | "record-or-bundle",
 ): EvidenceFileError => {
   const importing = operation === "import_evidence_bundle";
   const explanation =
@@ -33,6 +33,8 @@ export const snapshotWrongEvidenceKind = (
       ? `${explanation} To restore it, use a matching target, provider and analysis profile: call open_binary with snapshot_path set to this file to load the snapshot, and close_binary with snapshot_path to save updated state. Alternatively, supply a bundle from export_evidence_bundle.`
       : expected === "bundle"
         ? `${explanation} Supply a standalone Evidence bundle from export_evidence_bundle for this input.`
-        : `${explanation} Supply a standalone Evidence record or bundle for this input. Use export_evidence_bundle to export a bundle from a session.`,
+        : expected === "record"
+          ? `${explanation} Supply standalone Evidence record JSON files for this input. Use export_evidence_bundle to export a bundle from a session.`
+          : `${explanation} Supply a standalone Evidence record or bundle for this input. Use export_evidence_bundle to export a bundle from a session.`,
   });
 };

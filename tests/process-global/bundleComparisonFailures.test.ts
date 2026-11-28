@@ -47,6 +47,16 @@ const validBundleFile = async (directory: string, name = "bundle.json") => {
   return { bundle, path };
 };
 
+const validRecordFile = async (directory: string, name = "record.json") => {
+  const path = join(directory, name);
+  const record = processEvidence();
+  await writeFile(path, JSON.stringify(record));
+  return {
+    bundle: evidenceBundleDomain.createEvidenceBundle([record]),
+    path,
+  };
+};
+
 it.each(["missing", "invalid", "cleanup"])(
   "retains the right bundle close owner when the left bundle has a %s failure",
   async (leftFailure) => {
@@ -310,11 +320,28 @@ const standaloneBundleArguments = (
       ? [command, path, path]
       : command === "evidence-export"
         ? [command, path, output]
-        : [command, path];
+        : command === "evidence-pack"
+          ? [command, output, path]
+          : [command, path];
+
+const prepareStandaloneCommandInput = async (
+  command: string,
+  directory: string,
+) =>
+  command === "evidence-pack"
+    ? {
+        ...(await validRecordFile(directory)),
+        fileName: "record.json",
+      }
+    : {
+        ...(await validBundleFile(directory)),
+        fileName: "bundle.json",
+      };
 
 it.each([
   "evidence-import",
   "evidence-export",
+  "evidence-pack",
   "compare",
   "inspect-evidence-bundle",
 ])(
@@ -323,7 +350,10 @@ it.each([
     const directory = await createTestTempDirectory(
       "rea-standalone-bundle-cleanup-",
     );
-    const { path } = await validBundleFile(directory);
+    const { path, fileName } = await prepareStandaloneCommandInput(
+      command,
+      directory,
+    );
     const output = join(directory, "output.json");
     const original = OwnedFileHandle.prototype.close;
     const attempts = new Map<OwnedFileHandle, number>();
@@ -363,7 +393,7 @@ it.each([
       // final cleanup resolves resource ownership rather than inventing data.
       expect(result).toMatchObject({ code: "execution_failure" });
       expect(result.details?.cleanup_incomplete).not.toBe(true);
-      expect(await readdir(directory)).toEqual(["bundle.json"]);
+      expect(await readdir(directory)).toEqual([fileName]);
     } finally {
       process.exitCode = previousExitCode;
     }
@@ -373,13 +403,17 @@ it.each([
 it.each([
   "evidence-import",
   "evidence-export",
+  "evidence-pack",
   "compare",
   "inspect-evidence-bundle",
 ])("handles SIGINT during the standalone %s input close", async (command) => {
   const directory = await createTestTempDirectory(
     "rea-standalone-bundle-cancel-",
   );
-  const { path } = await validBundleFile(directory);
+  const { path, fileName } = await prepareStandaloneCommandInput(
+    command,
+    directory,
+  );
   const output = join(directory, "output.json");
   const original = OwnedFileHandle.prototype.close;
   const owners = new Set<OwnedFileHandle>();
@@ -410,7 +444,7 @@ it.each([
     expect(process.listenerCount("SIGINT")).toBe(before);
     expect(owners.size).toBeGreaterThan(0);
     expect([...owners].every((owner) => owner.handle.fd < 0)).toBe(true);
-    expect(await readdir(directory)).toEqual(["bundle.json"]);
+    expect(await readdir(directory)).toEqual([fileName]);
   } finally {
     process.exitCode = previousExitCode;
   }
@@ -479,13 +513,22 @@ it.each(["compare", "inspect-evidence-bundle"])(
   },
 );
 
-it.each(["before-commit", "after-commit", "cleanup-retry"])(
-  "preserves standalone export publication facts on SIGINT at %s",
-  async (phase) => {
+it.each(
+  (["evidence-export", "evidence-pack"] as const).flatMap((command) =>
+    (["before-commit", "after-commit", "cleanup-retry"] as const).map(
+      (phase) => [command, phase] as const,
+    ),
+  ),
+)(
+  "preserves standalone %s publication facts on SIGINT at %s",
+  async (command, phase) => {
     const directory = await createTestTempDirectory(
       "rea-standalone-export-publication-",
     );
-    const { path, bundle } = await validBundleFile(directory);
+    const { path, bundle, fileName } = await prepareStandaloneCommandInput(
+      command,
+      directory,
+    );
     const output = join(directory, "output.json");
     const method =
       phase === "before-commit" ? "assertReadyForPublication" : "close";
@@ -510,18 +553,21 @@ it.each(["before-commit", "after-commit", "cleanup-retry"])(
     let stdout = "";
     try {
       process.exitCode = undefined;
-      await createCli({}).serve(["evidence-export", path, output, "--json"], {
-        stdout: (part) => {
-          stdout += part;
+      await createCli({}).serve(
+        [...standaloneBundleArguments(command, path, output), "--json"],
+        {
+          stdout: (part) => {
+            stdout += part;
+          },
+          exit: () => {},
         },
-        exit: () => {},
-      });
+      );
       const result = JSON.parse(stdout);
       expect(result).toMatchObject({ code: "cancelled" });
       expect(process.exitCode).toBe(130);
       expect(process.listenerCount("SIGINT")).toBe(listeners);
       if (phase === "before-commit") {
-        expect(await readdir(directory)).toEqual(["bundle.json"]);
+        expect(await readdir(directory)).toEqual([fileName]);
         expect(result).not.toHaveProperty(
           "details.diagnostics.evidence_bundle",
         );
@@ -533,10 +579,9 @@ it.each(["before-commit", "after-commit", "cleanup-retry"])(
         });
         const loaded = await readEvidenceBundle(output);
         expect(loaded).toEqual({ ok: true, value: bundle });
-        expect((await readdir(directory)).sort()).toEqual([
-          "bundle.json",
-          "output.json",
-        ]);
+        expect((await readdir(directory)).sort()).toEqual(
+          [fileName, "output.json"].sort(),
+        );
       }
       expect(attempts).toBe(phase === "cleanup-retry" ? 2 : 1);
     } finally {
