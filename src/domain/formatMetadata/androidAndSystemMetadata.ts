@@ -725,8 +725,8 @@ export const prefetchMetadataSchema = z
     // word is reachable and renders as eight hex digits, zero included.
     executable_path_hash: z.string().regex(/^[0-9a-f]{8}$/u),
     run_count: uint32.nullable(),
-    // The single last-run FILETIME this reader decodes is either reachable or
-    // not; the metrics array holds more slots but their times are not decoded.
+    // The last-run FILETIME is either reachable or unknown. Its timestamp is
+    // not decoded.
     run_time_slots: z.literal(1).nullable(),
   })
   // Members are reachable only once the bytes reach them, so run facts a capture

@@ -6,36 +6,31 @@ import type { PrefetchMetadataFacts } from "../domain/formatMetadata/androidAndS
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import {
-  PREFETCH_MAX_FILE_BYTES,
-  parsePrefetchFile,
+  PREFETCH_HEADER_READ_BYTES,
+  parsePrefetchHeader,
 } from "../domain/windows/prefetchFormat.js";
 import {
   ArtifactFileSource,
   ArtifactReaderFailure,
   ArtifactResourceScope,
+  artifactParseFailure,
   assertArtifactReadActive,
-  artifactReadCancelledBy,
-  malformedArtifact,
-  truncatedArtifact,
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
 } from "../resources/index.js";
+import { ArtifactPreparation } from "./ArtifactPreparation.js";
 
 /** Windows Prefetch file whose header facts become the root occurrence. */
 export class WindowsPrefetchArtifactReader implements ArtifactReader {
   readonly format = "windows-prefetch" as const;
   readonly #scope = new ArtifactResourceScope();
-  readonly #path: string;
   readonly #source: ArtifactFileSource;
-  #prepared:
-    | { signal: AbortSignal | undefined; promise: Promise<void> }
-    | undefined;
+  readonly #preparation = new ArtifactPreparation();
   #metadata: PrefetchMetadataFacts | undefined;
   #closing = false;
 
   constructor(path: string, admitted?: StableRegularFileDescriptor) {
-    this.#path = path;
     this.#source = new ArtifactFileSource(path, "Windows Prefetch", admitted);
   }
 
@@ -62,30 +57,11 @@ export class WindowsPrefetchArtifactReader implements ArtifactReader {
     let limitations: readonly string[] = [];
     await this.#scope.run(async () => {
       this.#assertOpen(signal);
-      for (;;) {
-        const pending = (this.#prepared ??= {
-          signal,
-          promise: this.#prepare(signal),
-        });
-        try {
-          await pending.promise;
-          break;
-        } catch (cause: unknown) {
-          // A preparation bound to another caller's signal stays cached when
-          // that caller aborts, so this traversal retries under its own signal
-          // instead of inheriting a cancellation it never received.
-          if (this.#prepared === pending) this.#prepared = undefined;
-          if (
-            pending.signal !== signal &&
-            signal?.aborted !== true &&
-            artifactReadCancelledBy(cause, pending.signal)
-          ) {
-            this.#assertOpen(signal);
-            continue;
-          }
-          throw cause;
-        }
-      }
+      await this.#preparation.run(
+        signal,
+        () => this.#prepare(signal),
+        () => this.#assertOpen(signal),
+      );
       await this.#source.read(signal);
       limitations = this.#limitations;
     });
@@ -132,37 +108,20 @@ export class WindowsPrefetchArtifactReader implements ArtifactReader {
   async #prepare(signal?: AbortSignal): Promise<void> {
     const { handle, initial } = await this.#source.read(signal);
     const assertActive = (): void => this.#assertOpen(signal);
-    if (initial.size > PREFETCH_MAX_FILE_BYTES)
-      throw new ArtifactReaderFailure(
-        "limit",
-        `Windows Prefetch files are capped at 1 MiB when built; ${String(initial.size)} bytes is above the ${String(PREFETCH_MAX_FILE_BYTES)}-byte allowance.`,
-        { boundary: "memory" },
-      );
-    const bytes = await readFileHandleRange(
-      handle,
-      0,
-      initial.size,
-      assertActive,
-    );
-    const parsed = parsePrefetchFile(bytes);
-    if (!parsed.ok) {
-      // Bytes read before the source changed are not this file's contents, so
-      // verify identity first: a carrier replaced mid-read is an integrity
-      // failure, not a stable malformed input.
-      await this.#source.read(signal);
-      // An intact variant this reader does not decode is unavailable, not
-      // malformed; only a genuine decode failure is a format failure.
-      const { kind, message, extent } = parsed.error;
-      if (kind === "unsupported")
-        throw new ArtifactReaderFailure("unavailable", message);
-      if (kind === "truncated")
-        throw truncatedArtifact("windows-prefetch", message, extent);
-      throw malformedArtifact("windows-prefetch", message);
-    }
-    const metadata = parsed.value;
-    // Accept the source identity before exposing any parsed fact, so a carrier
-    // that changed after the read cannot leave metadata from an unverified file.
+    const length = Math.min(initial.size, PREFETCH_HEADER_READ_BYTES);
+    const bytes = await readFileHandleRange(handle, 0, length, assertActive);
+    // Verify the source before classifying the bytes. A source that changed
+    // during the read takes precedence over the recorded format facts.
     await this.#source.read(signal);
+    if (bytes.length !== length)
+      throw new ArtifactReaderFailure(
+        "integrity",
+        `Windows Prefetch header read ended at ${String(bytes.length)} of ${String(length)} bytes`,
+        { integrityCheck: "read-coverage" },
+      );
+    const parsed = parsePrefetchHeader(bytes, initial.size);
+    if (!parsed.ok) throw artifactParseFailure(parsed.error, signal);
+    const metadata = parsed.value;
     this.#metadata = {
       kind: "windows-prefetch",
       version: metadata.version,

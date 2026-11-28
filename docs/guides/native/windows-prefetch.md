@@ -17,9 +17,8 @@ summary keeps the complete Evidence; use `parent_evidence_id` with
 An uncompressed Prefetch file starts with a little-endian version DWORD and the
 four-byte `SCCA` signature. Recognition reads that prefix only, so the file name
 does not matter. A compressed container replaces the whole header with `MAM` at
-offset 0; it is recognized as `windows-prefetch` and then refused with an
-explicit "does not decode that container" failure rather than being reported as
-corrupt.
+offset 0. A complete MAM header yields the typed `unsupported` target failure
+for `windows-prefetch`. An incomplete MAM header yields `truncated`.
 
 ## What the header reports
 
@@ -48,7 +47,8 @@ being decoded.
 
 ## Limits
 
-- The whole file is read into memory; files above 64 MiB are refused. Windows
-  caps generated Prefetch files at 1 MiB, so this only rejects implausible input.
+- The header reader requests at most 156 bytes. The observed file size comes
+  from the verified source, and inventory provenance still covers the whole
+  file.
 - One occurrence is reported: the root. The references this reader does not
   decode are not materialized as inventory entries.

@@ -1,11 +1,17 @@
 import { expect, it, vi } from "vitest";
+import { appendFile, truncate } from "node:fs/promises";
 
 import { prefetchMetadataSchema } from "../domain/formatMetadata/androidAndSystemMetadata.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { openRegularFile } from "../filesystem/RegularFile.js";
 import { WindowsPrefetchArtifactReader } from "./WindowsPrefetchArtifactReader.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
+import { translateArtifactFailure } from "../resources/ArtifactOperationFailure.js";
 import { ArtifactFileSource } from "../resources/ArtifactFileSource.js";
 import { assertArtifactReadActive } from "../resources/ArtifactFileOperation.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import { PREFETCH_HEADER_READ_BYTES } from "../domain/windows/prefetchFormat.js";
 import { prefetchFixture, writePrefetch } from "./windows/Prefetch.fixture.js";
 
 const PARSED_VERSIONS = ["17", "23"] as const;
@@ -51,7 +57,7 @@ it.each(PARSED_VERSIONS)(
 
 it("reports the v23 run count and last-run presence as declared", async () => {
   const reader = await readerFor(
-    prefetchFixture({ version: "23", runCount: 12, runTimeSlots: 1 }),
+    prefetchFixture({ version: "23", runCount: 12 }),
   );
   try {
     await inventory(reader);
@@ -82,21 +88,83 @@ it("reports the v17 run count from its own offset", async () => {
 });
 
 it("names the undecoded fields in its one limitation", async () => {
-  const limitations = await inventory(
-    await readerFor(prefetchFixture({ version: "23" })),
-  );
-  expect(limitations.join(" ")).toContain("not decoded");
-});
-
-it("identifies a Windows 8+ generation it does not parse", async () => {
-  const reader = await readerFor(prefetchFixture({ version: "26" }));
+  const reader = await readerFor(prefetchFixture({ version: "23" }));
   try {
-    await expect(inventory(reader)).rejects.toMatchObject({
-      reason: "unavailable",
-      message: expect.stringContaining("v26") as unknown,
-    });
+    expect((await inventory(reader)).join(" ")).toContain("not decoded");
   } finally {
     await reader.close();
+  }
+});
+
+it.each([
+  ["v26", prefetchFixture({ version: "26" })],
+  ["MAM", prefetchFixture({ version: "23", compressed: true }).subarray(0, 8)],
+] as const)(
+  "preserves the unsupported %s target in the public refusal",
+  async (detail, bytes) => {
+    const path = await writePrefetch("program.pf", bytes);
+    const result = scanCanonicalArtifactInventory(path).catch(
+      (cause: unknown) => {
+        expect(cause).toMatchObject({
+          message: expect.stringContaining(detail),
+        });
+        throw projectAnalysisError(
+          translateArtifactFailure("inspect_artifact", path, cause),
+        );
+      },
+    );
+    await expect(result).rejects.toMatchObject({
+      code: "unsupported_target",
+      details: {
+        path,
+        failure_kind: "unsupported",
+        format: "windows-prefetch",
+      },
+    });
+  },
+);
+
+it("reads only the header and retains the size of a padded capture", async () => {
+  const fixture = prefetchFixture({ version: "23" });
+  const path = await writePrefetch("large.pf", fixture);
+  const fileBytes = 64 * 1024 * 1024 + 1;
+  await truncate(path, fileBytes);
+  const admitted = await openRegularFile(path, { symlinks: "reject" });
+  const reader = new WindowsPrefetchArtifactReader(path, admitted);
+  const reads = vi.spyOn(admitted.handle, "read");
+  try {
+    await expect(inventory(reader)).resolves.toContain(
+      `The header declares ${String(fixture.length)} bytes but the file holds ${String(fileBytes)}.`,
+    );
+    expect(prefetchMetadataSchema.parse(reader.formatMetadata())).toMatchObject(
+      {
+        file_bytes: fileBytes,
+        declared_file_bytes: fixture.length,
+        run_count: 7,
+      },
+    );
+    expect(reads).toHaveBeenCalledWith(
+      expect.any(Buffer),
+      0,
+      PREFETCH_HEADER_READ_BYTES,
+      0,
+    );
+    for (const call of reads.mock.calls) {
+      const [, , length, position] = call as unknown as [
+        Buffer,
+        number,
+        number,
+        number,
+      ];
+      expect(position + length).toBeLessThanOrEqual(PREFETCH_HEADER_READ_BYTES);
+    }
+  } finally {
+    try {
+      await reader.close();
+    } finally {
+      reads.mockRestore();
+      await admitted.handle.close();
+    }
   }
 });
 
@@ -116,30 +184,20 @@ it("calls a truncated newer-generation capture truncated, not unsupported", asyn
   }
 });
 
-it("refuses a MAM container without calling it corrupt", async () => {
-  const reader = await readerFor(
-    prefetchFixture({ version: "23", compressed: true }),
-  );
-  try {
-    await expect(inventory(reader)).rejects.toMatchObject({
-      reason: "unavailable",
-      message: expect.stringContaining("MAM") as unknown,
-    });
-  } finally {
-    await reader.close();
-  }
-});
-
 it("recognizes a checksum-bearing MAM header as the same container", async () => {
   // The wrapper sets the high bit of the compression byte when it records a
   // checksum; the low seven bits still select XPRESS Huffman, so this is the
   // same unsupported container rather than an unrecognized file.
   const reader = await readerFor(
-    prefetchFixture({ version: "23", compressed: true, checksum: true }),
+    prefetchFixture({
+      version: "23",
+      compressed: true,
+      checksum: true,
+    }).subarray(0, 12),
   );
   try {
     await expect(inventory(reader)).rejects.toMatchObject({
-      reason: "unavailable",
+      reason: "unsupported",
       message: expect.stringContaining("MAM") as unknown,
     });
   } finally {
@@ -295,9 +353,8 @@ it("inventories a .pf file as windows-prefetch end to end", async () => {
 });
 
 it("rejects Prefetch sizes the parser cannot report", async () => {
-  // A successful parse always holds the 84-byte common header and stays within
-  // the 64 MiB allowance, so a persisted size outside that range is impossible
-  // Evidence rather than a fact to accept at the boundary.
+  // A successful parse always holds the 84-byte common header. A persisted
+  // observation must represent its file size as an exact integer.
   const facts = {
     kind: "windows-prefetch",
     version: "23",
@@ -309,7 +366,7 @@ it("rejects Prefetch sizes the parser cannot report", async () => {
     run_time_slots: null,
   } as const;
   expect(prefetchMetadataSchema.parse(facts)).toMatchObject({ file_bytes: 84 });
-  for (const invalid of [0, 83, 64 * 1024 * 1024 + 1, -1, 1.5])
+  for (const invalid of [0, 83, Number.MAX_SAFE_INTEGER + 1, -1, 1.5])
     expect(() =>
       prefetchMetadataSchema.parse({ ...facts, file_bytes: invalid }),
     ).toThrow();
@@ -452,94 +509,112 @@ it("retries a shared preparation cancelled by another traversal", async () => {
   const started = new Promise<void>((resolve) => {
     entered = resolve;
   });
+  let releaseRead: () => void = () => {};
+  const held = new Promise<void>((resolve) => {
+    releaseRead = resolve;
+  });
   const read = ArtifactFileSource.prototype.read;
   const spy = vi
     .spyOn(ArtifactFileSource.prototype, "read")
     .mockImplementationOnce(async function (this: ArtifactFileSource, signal) {
+      assertArtifactReadActive(signal);
       entered();
-      await new Promise<void>((resolve) => {
-        signal?.addEventListener("abort", () => resolve(), { once: true });
-      });
+      await held;
       assertArtifactReadActive(signal);
       return read.call(this, signal);
     });
+  const cancelled = reader
+    .entries(controller.signal)
+    [Symbol.asyncIterator]()
+    .next();
+  let other: typeof cancelled | undefined;
   try {
-    const cancelled = reader
-      .entries(controller.signal)
-      [Symbol.asyncIterator]()
-      .next();
-    const cancelledResult = expect(cancelled).rejects.toMatchObject({
-      reason: "cancelled",
-    });
-    await started;
-    const other = reader.entries()[Symbol.asyncIterator]().next();
+    await awaitAcknowledgement(
+      started,
+      cancelled,
+      "Prefetch preparation source read",
+    );
+    other = reader.entries()[Symbol.asyncIterator]().next();
     controller.abort("cancelled first traversal");
-    await cancelledResult;
-    await expect(other).resolves.toMatchObject({ done: true });
+    releaseRead();
+    await Promise.all([
+      expect(cancelled).rejects.toMatchObject({ reason: "cancelled" }),
+      expect(other).resolves.toMatchObject({ done: true }),
+    ]);
     expect(reader.formatMetadata()).toMatchObject({
       executable_name: "GOOGLE.EXE",
     });
   } finally {
     controller.abort();
+    releaseRead();
+    await Promise.allSettled([cancelled, other]);
     spy.mockRestore();
     await reader.close();
   }
 });
 
-it("verifies the source before publishing header facts", async () => {
-  const reader = await readerFor(prefetchFixture({ version: "23" }));
-  const read = ArtifactFileSource.prototype.read;
-  const spy = vi
-    .spyOn(ArtifactFileSource.prototype, "read")
-    .mockImplementationOnce(function (this: ArtifactFileSource, signal) {
-      return read.call(this, signal);
-    })
-    .mockRejectedValueOnce(new Error("final source verification failed"));
-  try {
-    await expect(
-      reader.entries()[Symbol.asyncIterator]().next(),
-    ).rejects.toThrow("final source verification failed");
-    expect(reader.formatMetadata()).toBeUndefined();
-    await expect(
-      reader.entries()[Symbol.asyncIterator]().next(),
-    ).resolves.toMatchObject({ done: true });
-    expect(reader.formatMetadata()).toMatchObject({
-      kind: "windows-prefetch",
-      executable_name: "GOOGLE.EXE",
-    });
-  } finally {
-    spy.mockRestore();
-    await reader.close();
-  }
-});
-
-it("reports a source that changed during the read as an integrity failure", async () => {
-  // Bytes read before the source changed are not this file's contents, so a
-  // capture that no longer parses must not be reported as stable malformed
-  // input when the carrier itself moved.
-  const reader = await readerFor(
-    prefetchFixture({ version: "23" }).subarray(0, 60),
-  );
-  const read = ArtifactFileSource.prototype.read;
-  const spy = vi
-    .spyOn(ArtifactFileSource.prototype, "read")
-    .mockImplementationOnce(function (this: ArtifactFileSource, signal) {
-      return read.call(this, signal);
-    })
-    .mockRejectedValueOnce(
-      new ArtifactReaderFailure("integrity", "source identity changed", {
-        integrityCheck: "container-identity",
-      }),
-    );
-  try {
-    await expect(
-      reader.entries()[Symbol.asyncIterator]().next(),
-    ).rejects.toMatchObject({
-      reason: "integrity",
-      message: expect.stringContaining("identity changed") as unknown,
-    });
-  } finally {
-    spy.mockRestore();
-    await reader.close();
-  }
-});
+it.each(["valid", "truncated"] as const)(
+  "verifies the source after reading a %s header before publishing its outcome",
+  async (header) => {
+    const fixture = prefetchFixture({ version: "23" });
+    const bytes = header === "valid" ? fixture : fixture.subarray(0, 60);
+    const headerLength = Math.min(bytes.length, PREFETCH_HEADER_READ_BYTES);
+    const path = await writePrefetch("program.pf", bytes);
+    const admitted = await openRegularFile(path, { symlinks: "reject" });
+    const { handle } = admitted;
+    const reader = new WindowsPrefetchArtifactReader(path, admitted);
+    const nativeRead = handle.read.bind(handle);
+    const nativeStat = handle.stat.bind(handle);
+    const failure = new Error("final source verification failed");
+    let captured = 0;
+    let verifiedAfterRead = false;
+    const reads = vi.spyOn(handle, "read").mockImplementation((async (
+      ...args: unknown[]
+    ) => {
+      const result = (await Reflect.apply(nativeRead, handle, args)) as {
+        bytesRead: number;
+      };
+      captured += result.bytesRead;
+      if (header === "truncated" && captured === headerLength)
+        await appendFile(path, "changed");
+      return result;
+    }) as typeof handle.read);
+    const stats = vi.spyOn(handle, "stat").mockImplementation((async (
+      ...args: unknown[]
+    ) => {
+      if (captured === headerLength) {
+        verifiedAfterRead = true;
+        if (header === "valid") throw failure;
+      }
+      return Reflect.apply(nativeStat, handle, args);
+    }) as typeof handle.stat);
+    try {
+      if (header === "valid")
+        await expect(inventory(reader)).rejects.toBe(failure);
+      else
+        await expect(inventory(reader)).rejects.toMatchObject({
+          reason: "integrity",
+          integrityCheck: "container-identity",
+        });
+      expect(verifiedAfterRead).toBe(true);
+      expect(reader.formatMetadata()).toBeUndefined();
+      if (header === "valid") {
+        reads.mockRestore();
+        stats.mockRestore();
+        await inventory(reader);
+        expect(reader.formatMetadata()).toMatchObject({
+          kind: "windows-prefetch",
+          executable_name: "GOOGLE.EXE",
+        });
+      }
+    } finally {
+      try {
+        await reader.close();
+      } finally {
+        reads.mockRestore();
+        stats.mockRestore();
+        await handle.close();
+      }
+    }
+  },
+);

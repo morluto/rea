@@ -1,5 +1,12 @@
-import { err, ok, type Result } from "../result.js";
+import type { Result } from "../result.js";
 import { BinaryReader } from "../binaryContainer.js";
+import {
+  captureParseFailure,
+  malformedInput,
+  truncatedInput,
+  unsupportedInput,
+  type ParseFailureError,
+} from "../parseFailure.js";
 import { z } from "zod";
 
 /**
@@ -17,6 +24,7 @@ export type ParsedPrefetchVersion = "17" | "23";
 const VERSION_BYTES = 4;
 const SIGNATURE_OFFSET = 4;
 const SIGNATURE = Buffer.from("SCCA", "ascii");
+const FORMAT = "windows-prefetch";
 /** A MAM-compressed container replaces the whole header with "MAM" and a header size. */
 const MAM_MAGIC = Buffer.from("MAM", "ascii");
 // "MAM", the compression byte, and the uncompressed-size DWORD. The
@@ -67,8 +75,10 @@ export const PREFETCH_RUN_TIME_BYTES: Readonly<
   "23": RUN_TIME_OFFSETS["23"] + RUN_TIME_SLOT_BYTES,
 };
 
-/** Refuse to hold a whole Prefetch file above this size. */
-export const PREFETCH_MAX_FILE_BYTES = 64 * 1024 * 1024;
+/** All supported header fields fit in the first 156 bytes. */
+export const PREFETCH_HEADER_READ_BYTES = Math.max(
+  ...Object.values(PREFETCH_RUN_COUNT_BYTES),
+);
 
 export interface PrefetchMetadata {
   readonly version: ParsedPrefetchVersion;
@@ -81,32 +91,27 @@ export interface PrefetchMetadata {
   /** The recorded name-hash, as lowercase hexadecimal. The common header is
    * required, so the hash word is reachable and this is never null. */
   readonly executablePathHash: string;
-  /** Declared number of recorded runs; v17 files do not report one. */
+  /** Declared number of recorded runs, if the capture reaches the field. */
   readonly runCount: number | null;
   /**
-   * Declared count of last-run timestamp slots, or null when the capture ends
-   * before the metrics array. Only the first slot's FILETIME is decoded, and
-   * this reader does not report it, so a reachable array is always one slot.
+   * One last-run timestamp slot when the capture reaches it. The timestamp
+   * itself is not decoded.
    */
   readonly runTimeSlots: 1 | null;
   readonly limitations: readonly string[];
 }
 
-export interface PrefetchDecodeFailure {
-  readonly kind: "malformed" | "limit" | "truncated" | "unsupported";
-  readonly message: string;
-  /** The byte extent this file reached and the extent the field needed. */
-  readonly extent?: {
-    readonly availableBytes: number;
-    readonly requiredBytes: number;
-  };
-}
-
-const readVersionTag = (bytes: Uint8Array): PrefetchVersion | null => {
-  if (bytes.length < VERSION_BYTES) return null;
-  const tag = String(
-    new BinaryReader(Buffer.from(bytes), true, "prefetch").u32(0),
+/** Keep the exact range even when recognition receives a sliced view. */
+const readerFor = (bytes: Uint8Array): BinaryReader =>
+  new BinaryReader(
+    Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    true,
+    FORMAT,
   );
+
+const readVersionTag = (reader: BinaryReader): PrefetchVersion | null => {
+  if (reader.bytes.length < VERSION_BYTES) return null;
+  const tag = String(reader.u32(0));
   return (SUPPORTED_VERSIONS as readonly string[]).includes(tag)
     ? (tag as PrefetchVersion)
     : null;
@@ -116,12 +121,15 @@ const readVersionTag = (bytes: Uint8Array): PrefetchVersion | null => {
  * Whether the first bytes carry a Prefetch generation and its "SCCA"
  * signature. Recognition never depends on the file's name.
  */
-export const hasPrefetchSignature = (prefix: Uint8Array): boolean =>
-  readVersionTag(prefix) !== null &&
-  prefix.length >= SIGNATURE_OFFSET + SIGNATURE.length &&
-  Buffer.from(
-    prefix.subarray(SIGNATURE_OFFSET, SIGNATURE_OFFSET + SIGNATURE.length),
-  ).equals(SIGNATURE);
+export const hasPrefetchSignature = (prefix: Uint8Array): boolean => {
+  const reader = readerFor(prefix);
+  return readVersionTag(reader) !== null && hasScca(reader.bytes);
+};
+
+const hasScca = (bytes: Buffer): boolean =>
+  bytes
+    .subarray(SIGNATURE_OFFSET, SIGNATURE_OFFSET + SIGNATURE.length)
+    .equals(SIGNATURE);
 
 /**
  * A MAM container starts at offset 0 with "MAM" and the container version byte
@@ -153,36 +161,27 @@ const mamHeaderBytes = (bytes: Uint8Array): number =>
 /**
  * Whether a prefix carries MAM ownership. The four-byte signature is enough:
  * a capture that ends inside the fixed header is a truncated container, and
- * `parsePrefetchFile()` reports that truncation. Requiring the whole header
+ * `parsePrefetchHeader()` reports that truncation. Requiring the whole header
  * here would instead route it to executable parsing, where the reader's
  * "ends inside the MAM container header" failure is unreachable.
  */
 export const hasMamSignature = hasMamMagic;
 
-/** Prefetch header fields are little-endian. */
-const readerFor = (bytes: Uint8Array): BinaryReader =>
-  new BinaryReader(Buffer.from(bytes), true, "prefetch");
-
-/** The common header is required before the declared size at 0x0c is reachable. */
-const MIN_FILE_BYTES = COMMON_HEADER_BYTES;
-
 /**
- * Bytes a parsed capture holds. The producer accepts 84 bytes through the
- * Prefetch allowance, so the metadata schema constrains the field to that range
- * instead of accepting sizes no successful parse can report.
+ * The observed capture size comes from the verified file descriptor. The
+ * common header must be present for a successful parse.
  */
 export const prefetchFileBytesSchema = z
   .number()
   .int()
-  .min(MIN_FILE_BYTES)
-  .max(PREFETCH_MAX_FILE_BYTES);
+  .min(COMMON_HEADER_BYTES);
 
 /** The executable name is a NUL-terminated UTF-16LE string in a 60-byte field. */
-const utf16Name = (bytes: Uint8Array): string | null => {
+const utf16Name = (bytes: Buffer): string | null => {
   let end = 0;
   while (end + 1 < bytes.length && (bytes[end] !== 0 || bytes[end + 1] !== 0))
     end += 2;
-  const text = Buffer.from(bytes.subarray(0, end)).toString("utf16le");
+  const text = bytes.toString("utf16le", 0, end);
   return text.length === 0 ? null : text;
 };
 
@@ -192,56 +191,56 @@ const hexHash = (value: number): string => value.toString(16).padStart(8, "0");
 const NOT_DECODED_LIMITATION =
   "This reader reports the executable name, its name hash, the declared file size, the recorded run count and whether a last-run timestamp is present. The timestamp value, the volume list and the read-ahead file list are not decoded; their contents remain unknown.";
 
-export const parsePrefetchFile = (
-  bytes: Uint8Array,
-): Result<PrefetchMetadata, PrefetchDecodeFailure> => {
-  if (bytes.length > PREFETCH_MAX_FILE_BYTES)
-    return err({
-      kind: "limit",
-      message: `The file exceeds the ${String(PREFETCH_MAX_FILE_BYTES)}-byte Prefetch allowance.`,
-    });
+export const parsePrefetchHeader = (
+  header: Uint8Array,
+  fileBytes: number,
+): Result<PrefetchMetadata, ParseFailureError> =>
+  captureParseFailure(() => decodePrefetchHeader(readerFor(header), fileBytes));
+
+const decodePrefetchHeader = (
+  reader: BinaryReader,
+  fileBytes: number,
+): PrefetchMetadata => {
+  const { bytes } = reader;
   // A MAM container replaces the header entirely, so it has no generation. The
   // signature alone does not make a container: a file that ends inside the
   // fixed MAM header is truncated, not an intact unimplemented format.
   if (hasMamMagic(bytes)) {
-    if (bytes.length < mamHeaderBytes(bytes))
-      return err({
-        kind: "truncated",
-        message: "The file ends inside the MAM container header.",
-        extent: {
-          availableBytes: bytes.length,
-          requiredBytes: mamHeaderBytes(bytes),
+    const headerBytes = mamHeaderBytes(bytes);
+    if (bytes.length < headerBytes)
+      throw truncatedInput(
+        FORMAT,
+        "The file ends inside the MAM container header.",
+        {
+          extent: {
+            availableBytes: bytes.length,
+            requiredBytes: headerBytes,
+          },
         },
-      });
-    return err({
-      kind: "unsupported",
-      message:
-        "The file is a MAM-compressed container, and this reader does not decode that container.",
-    });
+      );
+    throw unsupportedInput(
+      FORMAT,
+      "The file is a MAM-compressed container, and this reader does not decode that container.",
+      { undecodedContent: true },
+    );
   }
-  const version = readVersionTag(bytes);
-  if (version === null)
-    return err({ kind: "malformed", message: "No Prefetch generation." });
-  if (!hasPrefetchSignature(bytes))
-    return err({
-      kind: "malformed",
-      message: 'The Prefetch signature is not "SCCA".',
-    });
+  const version = readVersionTag(reader);
+  if (version === null) throw malformedInput(FORMAT, "No Prefetch generation.");
+  if (!hasScca(bytes))
+    throw malformedInput(FORMAT, 'The Prefetch signature is not "SCCA".');
   if (bytes.length < COMMON_HEADER_BYTES)
-    return err({
-      kind: "truncated",
-      message: "The file ends inside the Prefetch header.",
+    throw truncatedInput(FORMAT, "The file ends inside the Prefetch header.", {
       extent: {
         availableBytes: bytes.length,
         requiredBytes: COMMON_HEADER_BYTES,
       },
     });
   if (version !== "17" && version !== "23")
-    return err({
-      kind: "unsupported",
-      message: `Prefetch v${version} is not one of the header generations this reader parses (17, 23).`,
-    });
-  const reader = readerFor(bytes);
+    throw unsupportedInput(
+      FORMAT,
+      `Prefetch v${version} is not one of the header generations this reader parses (17, 23).`,
+      { undecodedContent: true },
+    );
   const end = bytes.byteLength;
   const limitations: string[] = [];
   // The common-header check above guarantees the DWORD at 0x0c is present, so a
@@ -257,9 +256,9 @@ export const parsePrefetchFile = (
     limitations.push(
       "The header records no executable name, so the recorded program is unknown.",
     );
-  if (declaredFileBytes !== bytes.length)
+  if (declaredFileBytes !== fileBytes)
     limitations.push(
-      `The header declares ${String(declaredFileBytes)} bytes but the file holds ${String(bytes.length)}.`,
+      `The header declares ${String(declaredFileBytes)} bytes but the file holds ${String(fileBytes)}.`,
     );
   let runCount: number | null = null;
   // The last-run FILETIME sits at a generation-specific offset, so a capture
@@ -279,14 +278,14 @@ export const parsePrefetchFile = (
       "The file ends before the last-run timestamp, so no run time is reported.",
     );
   limitations.push(NOT_DECODED_LIMITATION);
-  return ok({
+  return {
     version,
-    fileBytes: bytes.length,
+    fileBytes,
     declaredFileBytes,
     executableName,
     executablePathHash: hexHash(reader.u32(EXECUTABLE_HASH_OFFSET)),
     runCount,
     runTimeSlots,
     limitations,
-  });
+  };
 };
