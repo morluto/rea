@@ -20,6 +20,14 @@ export const oggOpusMetadataSchema = z.strictObject({
   input_sample_rate: uint32,
   output_gain: z.number().int().min(-0x8000).max(0x7fff),
   mapping_family: uint8,
+  /** Explicit indexed routing for Opus mapping families 1, 2 and 255. */
+  channel_mapping_table: z
+    .strictObject({
+      stream_count: uint8,
+      coupled_stream_count: uint8,
+      output_channel_map: z.array(uint8).max(255),
+    })
+    .exactOptional(),
   /** OpusTags vendor string, when that page was examined and valid. */
   vendor: z.string().nullable(),
   pages_read: uint32,

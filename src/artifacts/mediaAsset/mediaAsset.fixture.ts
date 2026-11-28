@@ -70,15 +70,19 @@ export const oggPage = (
   return page;
 };
 
-/** An OpusHead packet: version 1, stereo, pre-skip 312, 48 kHz, gain 0. */
-export const opusHeadPacket = (): Buffer =>
+/** OpusHead v1, with a caller-selected raw channel mapping after the fixed fields. */
+export const opusHeadPacket = (
+  channelCount = 2,
+  mappingFamily = 0,
+  mappingBytes: readonly number[] = [],
+): Buffer =>
   Buffer.concat([
     Buffer.from("OpusHead", "latin1"),
-    Buffer.from([1, 2]),
+    Buffer.from([1, channelCount]),
     u16(312),
     u32(48_000),
     i16(0),
-    Buffer.from([0]),
+    Buffer.from([mappingFamily, ...mappingBytes]),
   ]);
 
 /** An OpusTags packet with the given vendor bytes and no comments. */
