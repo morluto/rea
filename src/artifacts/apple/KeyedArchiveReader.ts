@@ -66,7 +66,10 @@ import {
   hasBinaryPlistSignature,
   hasNibArchiveSignature,
 } from "../../domain/apple/appleArchiveFormat.js";
-import { estimateBinaryPlistExpansion } from "../../domain/apple/propertyListDecodeBudget.js";
+import {
+  estimateBinaryPlistExpansion,
+  preflightPropertyListDecode,
+} from "../../domain/apple/propertyListDecodeBudget.js";
 import { errorMessage } from "../../kernel/errorMessage.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 
@@ -118,6 +121,15 @@ export const decodeKeyedArchiveBytes = (
   const binaryScalarMetadata = binary
     ? scanBinaryPlistScalars(bytes, binaryExpansion)
     : undefined;
+  // Empty XML elements charge the DOM model far above the input cap. The
+  // binary branch already preflights. Number projection matches the literals
+  // this decoder retains. UID projection does not change the XML estimate.
+  if (!binary)
+    preflightPropertyListDecode(bytes, MAX_DECODE_BYTES, xmlText, {
+      numberProjection: true,
+      uidProjection: true,
+      budget: "the keyed archive decode budget",
+    });
   const parsed =
     binaryExpansion !== undefined
       ? decodeBinaryPropertyList(bytes, binaryExpansion, binaryScalarMetadata)
