@@ -130,6 +130,16 @@ export interface JavaScriptSemanticCallSite {
   readonly callerCallableId: string | null;
   readonly location: JavaScriptSourceRange;
   readonly calleeLocation: JavaScriptSourceRange;
+  /** Root binding and static member path of the callee, when it has both. */
+  readonly calleeAccess?: {
+    readonly bindingId: string;
+    readonly path: readonly string[];
+    /**
+     * Module required inside an unverified helper call that initializes the
+     * root binding, such as a compiler's import interop wrapper.
+     */
+    readonly wrappedSpecifier?: string;
+  };
   /** The call's value appears in an enclosing expression or return. */
   readonly resultUsed: boolean;
   readonly resolution: "exact" | "ambiguous" | "unresolved";

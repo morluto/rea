@@ -45,6 +45,8 @@ const report: VsixPackage = {
     commands: [{ command: "demo.hello", title: "Say Hello" }],
     commands_total: 1,
     commands_omitted: 0,
+    menus: [],
+    keybindings: [],
   },
   extension_dependencies: {
     vsixmanifest: [],

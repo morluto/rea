@@ -49,8 +49,8 @@ exists.
 
 `activation_events` lists each package.json event with `eager` true for `*`
 and `onStartupFinished`. `contributes` lists contribute key names and counts,
-and a capped command list (`commands_total` and `commands_omitted` keep the
-remainder). `extension_dependencies` and `extension_pack` keep both
+every declared command, and the command each menu item (`menus`) and
+keybinding (`keybindings`) invokes. `extension_dependencies` and `extension_pack` keep both
 manifests' declared ids and a `disagreement` flag. A side is `null` when its
 manifest was missing or could not be read, and `disagreement` is only true
 when both sides were read. `extension_kind`,
@@ -72,6 +72,42 @@ scripts, and nested archives with byte length, SHA-256 when hashed, and
 `classification` `observed` (magic bytes) or `inferred` (name or Unix
 executable bit). Member kinds are ZIP-name and magic conventions, not a
 runtime load inventory.
+
+## Commands and their handlers
+
+`correlate_vsix_commands` (CLI `correlate-vsix-commands`) joins the declared
+commands to `vscode.commands.registerCommand` and
+`registerTextEditorCommand` calls. It needs two complete Evidence records:
+`inspect_vsix_package` for the package and `analyze_javascript_application`
+for the files extracted from it.
+
+```bash
+rea extract-artifact demo.vsix --output-root /absolute/extracted
+rea inspect-vsix-package demo.vsix --detail complete --json > package.json
+rea analyze-javascript-application /absolute/extracted/extension --detail complete --json > application.json
+```
+
+Pass both records as `vsix_package` and `javascript_application` in one JSON
+document to `rea correlate-vsix-commands request.json --json`. MCP also accepts
+exact retained-Evidence references.
+
+| `status`                | Meaning                                                                             |
+| ----------------------- | ----------------------------------------------------------------------------------- |
+| `registered`            | A call with that literal identifier was found                                       |
+| `not_found`             | Declared, and no such call was seen                                                 |
+| `undetermined`          | No call seen, but a declared entry point was not analyzed or analysis was truncated |
+| `registered_undeclared` | Registered in code, absent from `contributes.commands`                              |
+
+Each registration has its module, line and column. `loader_authority:
+candidate` marks a `require`-based match, and `wrapper: unverified` one that
+reaches `vscode` through an interop helper such as `__toESM` whose effect is not
+checked. Calls whose identifier is not a string literal appear in
+`unresolved_registrations`. `menus` and `keybindings` list where each command is
+invoked; they are null when not recorded.
+
+REA does not verify that the two records describe the same files:
+`entry_points` says whether each declared entry path was analyzed. `not_found`
+does not prove that a command has no handler.
 
 ## Limits and failures
 

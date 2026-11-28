@@ -1,3 +1,7 @@
+import {
+  correlateVsixCommandsInputSchema,
+  vsixCommandCorrelationSchema,
+} from "../domain/vsix/vsixCommandCorrelation.js";
 import { PLAYWRIGHT_TRACE_TOOL_CONTRACTS } from "./playwrightTraceToolContracts.js";
 import { API_CONTRACT_TOOL_CONTRACTS } from "./apiContractToolContracts.js";
 import { NTFS_JOURNAL_TOOL_CONTRACTS } from "./ntfsJournalToolContracts.js";
@@ -67,6 +71,9 @@ const semanticTraceOutputSchema = evidenceResultOf(
 );
 const comparisonOutputSchema = evidenceResultOf(
   applicationVersionComparisonResultSchema,
+);
+const vsixCommandCorrelationOutputSchema = evidenceResultOf(
+  vsixCommandCorrelationSchema,
 );
 const exportShapeComparisonOutputSchema = evidenceResultOf(
   javaScriptExportShapeComparisonResultSchema,
@@ -188,6 +195,25 @@ export const APPLICATION_TOOL_CONTRACTS = [
   },
   COMPARE_STATIC_AND_OBSERVED_ENDPOINTS_TOOL_CONTRACT,
   COMPARE_SOURCE_TO_BUNDLE_TOOL_CONTRACT,
+  {
+    name: "correlate_vsix_commands",
+    cli: true,
+    ...toolContractMetadata("correlate_vsix_commands", evidenceEffects),
+    description:
+      "Join the commands a VS Code extension declares (inspect_vsix_package Evidence) with literal vscode registerCommand and registerTextEditorCommand calls (analyze_javascript_application Evidence of its extracted files). Reports each command as registered, not_found, undetermined (incomplete analysis) or registered_undeclared with source positions, menus and keybindings; run-time identifiers stay unresolved. The pairing of the two sources is caller-selected and not verified. Does not execute the extension.",
+    kind: "application",
+    inputSchema: correlateVsixCommandsInputSchema,
+    outputSchema: vsixCommandCorrelationOutputSchema,
+    examples: [
+      {
+        title: "Correlate retained package and application Evidence",
+        input: {
+          vsix_package: retained(`ev_${"1".repeat(64)}`),
+          javascript_application: retained(`ev_${"2".repeat(64)}`),
+        },
+      },
+    ],
+  },
   {
     name: "compare_javascript_export_shapes",
     cli: true,

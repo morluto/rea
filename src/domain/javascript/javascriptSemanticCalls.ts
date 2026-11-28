@@ -15,12 +15,14 @@ import {
   javaScriptExpressionWrapperTarget,
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
+  unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
+import { readSemanticRequireOriginCandidate } from "./javascriptSemanticRequireOriginSlot.js";
 import {
   type LocalCallableResolution,
   parameterBindings,
@@ -152,6 +154,72 @@ const callResultIsUsed = (
   );
 };
 
+/**
+ * The module a binding gets from `helper(require(name))`, or from
+ * `x = require(name); x = helper(x)`. The helper is not verified: it must be a
+ * plain function name with that module as its only non-literal argument.
+ */
+const wrappedRequire = (
+  binding: JavaScriptSemanticBindingState,
+  state: JavaScriptSemanticAnalysisState,
+): string | undefined => {
+  const [first, second, ...rest] = binding.initializers;
+  if (first === undefined || rest.length > 0) return undefined;
+  if (binding.definitions.length !== binding.initializers.length)
+    return undefined;
+  if (binding.initializers.some(({ projection }) => projection.length > 0))
+    return undefined;
+  const call = (second ?? first).node;
+  if (!t.isCallExpression(call) || !t.isIdentifier(call.callee))
+    return undefined;
+  const [input, ...flags] = call.arguments;
+  if (input === undefined || !flags.every((flag) => t.isLiteral(flag)))
+    return undefined;
+  const required =
+    second === undefined
+      ? input
+      : t.isIdentifier(input) &&
+          resolveSemanticBindingState(state, input, input.name) === binding
+        ? first.node
+        : undefined;
+  if (required === undefined || !t.isNode(required)) return undefined;
+  const origin = readSemanticRequireOriginCandidate(required, state)?.origin;
+  return origin?.importedPath.length === 0 ? origin.specifier : undefined;
+};
+
+/** Follow static member reads from a callee down to its lexical root. */
+const calleeAccess = (
+  callee: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): JavaScriptSemanticCallSite["calleeAccess"] => {
+  const path: string[] = [];
+  let current = callee;
+  for (;;) {
+    current = unwrapJavaScriptExpression(
+      unwrapPureSemanticSequenceExpression(current, state),
+    ).node;
+    if (t.isIdentifier(current)) {
+      const binding = resolveSemanticBindingState(state, current, current.name);
+      if (binding === undefined) return undefined;
+      const wrapped = wrappedRequire(binding, state);
+      return {
+        bindingId: binding.bindingId,
+        path,
+        ...(wrapped === undefined ? {} : { wrappedSpecifier: wrapped }),
+      };
+    }
+    if (
+      !t.isMemberExpression(current) &&
+      !t.isOptionalMemberExpression(current)
+    )
+      return undefined;
+    const key = semanticStaticPropertyKey(current.property, current.computed);
+    if (key === null) return undefined;
+    path.unshift(key);
+    current = current.object;
+  }
+};
+
 const collectCallSite = (
   node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
   parent: t.Node | null,
@@ -168,12 +236,14 @@ const collectCallSite = (
   });
   const callSiteId = semanticCallSiteId(node);
   const argumentsValue = retainedArguments(node.arguments, state);
+  const access = calleeAccess(node.callee, state);
   const site: JavaScriptSemanticCallSite = {
     callSiteId,
     kind: t.isNewExpression(node) ? "construct" : "call",
     callerCallableId: owner?.callableId ?? null,
     location: range(node),
     calleeLocation: range(node.callee),
+    ...(access === undefined ? {} : { calleeAccess: access }),
     resultUsed: callResultIsUsed(node, parent, context.ancestors),
     resolution:
       resolution.callableIds.length === 1 && resolution.complete

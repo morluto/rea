@@ -39,11 +39,9 @@ import { hasZipSignature } from "../domain/zipPackageFormat.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 import { Budget } from "../domain/budget.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
-import { boundedList } from "../domain/boundedList.js";
 import {
   MAX_INSPECT_VSIX_PACKAGE_MANIFEST_JSON_VALUES,
   MAX_INSPECT_VSIX_PACKAGE_MANIFEST_XML_NODES,
-  VSIX_COMMANDS_CAP,
   VSIX_PACKAGE_FORMAT,
   isVsixInterestingMemberKind,
   vsixActivationIsEager,
@@ -612,6 +610,28 @@ interface ParsedPackageJson {
   readonly enabledApiProposals: string[];
 }
 
+/** VS Code accepts one contribution object or an array of them. */
+const rowsOf = (value: unknown): readonly Record<string, unknown>[] =>
+  (Array.isArray(value) ? (value as readonly unknown[]) : [value]).filter(
+    (row): row is Record<string, unknown> =>
+      row !== null && typeof row === "object" && !Array.isArray(row),
+  );
+
+const exactText = (value: unknown): string | null =>
+  typeof value === "string" && value !== "" ? value : null;
+
+const menuItems = (menus: unknown) =>
+  rowsOf(menus).flatMap((record) =>
+    Object.entries(record).flatMap(([menu, items]) =>
+      menu === ""
+        ? []
+        : rowsOf(items).map((row) => ({
+            menu,
+            command: exactText(row.command),
+          })),
+    ),
+  );
+
 const parsePackageJsonDocument = (
   text: string,
   limitations: string[],
@@ -628,6 +648,8 @@ const parsePackageJsonDocument = (
       commands: [],
       commands_total: 0,
       commands_omitted: 0,
+      menus: null,
+      keybindings: null,
     },
     extensionDependencies: null,
     extensionPack: null,
@@ -684,8 +706,7 @@ const parsePackageJsonDocument = (
       name,
       count: name === "commands" ? commandRows.length : contributeCount(item),
     }));
-  const listedCommands = boundedList(commandRows, VSIX_COMMANDS_CAP);
-  const commands = listedCommands.items.map((item) => {
+  const commands = commandRows.map((item) => {
     if (item === null || typeof item !== "object" || Array.isArray(item))
       return { command: null, title: null };
     const command = item as Record<string, unknown>;
@@ -718,7 +739,12 @@ const parsePackageJsonDocument = (
       keys,
       commands,
       commands_total: commandRows.length,
-      commands_omitted: listedCommands.omitted,
+      commands_omitted: 0,
+      menus: menuItems(contributesRaw?.menus),
+      keybindings: rowsOf(contributesRaw?.keybindings).map((row) => ({
+        command: exactText(row.command),
+        key: exactText(row.key),
+      })),
     },
     extensionDependencies: parseExtensionList(record.extensionDependencies),
     extensionPack: parseExtensionList(record.extensionPack),
@@ -1344,6 +1370,8 @@ export const parseVsixPackage = async (
         commands: [],
         commands_total: 0,
         commands_omitted: 0,
+        menus: null,
+        keybindings: null,
       },
       extension_dependencies: extensionDependencies,
       extension_pack: extensionPack,

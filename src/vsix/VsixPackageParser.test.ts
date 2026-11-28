@@ -14,7 +14,6 @@ import {
   MAX_INSPECT_VSIX_PACKAGE_MANIFEST_JSON_VALUES,
   MAX_INSPECT_VSIX_PACKAGE_MANIFEST_XML_NODES,
   MAX_INSPECT_VSIX_PACKAGE_MEMBER_BYTES,
-  VSIX_COMMANDS_CAP,
   vsixPackageSchema,
 } from "../domain/vsix/vsixPackage.js";
 import {
@@ -257,14 +256,11 @@ it("records identity, engine and dependency disagreements", async () => {
   expect(report.extension_dependencies.disagreement).toBe(true);
 });
 
-it("caps contributed commands and keeps the omitted count", async () => {
-  const commands = Array.from(
-    { length: VSIX_COMMANDS_CAP + 3 },
-    (_, index) => ({
-      command: `demo.cmd${String(index)}`,
-      title: `Command ${String(index)}`,
-    }),
-  );
+it("keeps every declared command", async () => {
+  const commands = Array.from({ length: 40 }, (_, index) => ({
+    command: `demo.cmd${String(index)}`,
+    title: `Command ${String(index)}`,
+  }));
   const bytes = await vsixPackageFixture({
     packageJson: JSON.stringify({
       name: "hello",
@@ -277,9 +273,36 @@ it("caps contributed commands and keeps the omitted count", async () => {
   const report = vsixPackageSchema.parse(
     await parseVsixPackage(bytes, artifactOf(bytes), defaults),
   );
-  expect(report.contributes.commands).toHaveLength(VSIX_COMMANDS_CAP);
-  expect(report.contributes.commands_total).toBe(VSIX_COMMANDS_CAP + 3);
-  expect(report.contributes.commands_omitted).toBe(3);
+  expect(report.contributes.commands).toEqual(commands);
+  expect(report.contributes.commands_total).toBe(40);
+  expect(report.contributes.commands_omitted).toBe(0);
+});
+
+it("records the commands that menus and keybindings invoke", async () => {
+  const bytes = await vsixPackageFixture({
+    packageJson: JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      engines: { vscode: "^1.74.0" },
+      contributes: {
+        menus: {
+          "editor/context": [{ command: "demo.run" }, { submenu: "demo.more" }],
+        },
+        keybindings: { command: "demo.run", key: "ctrl+h" },
+      },
+    }),
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.contributes.menus).toEqual([
+    { menu: "editor/context", command: "demo.run" },
+    { menu: "editor/context", command: null },
+  ]);
+  expect(report.contributes.keybindings).toEqual([
+    { command: "demo.run", key: "ctrl+h" },
+  ]);
 });
 
 it("counts a single contributed command object as one command", async () => {

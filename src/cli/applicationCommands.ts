@@ -25,6 +25,7 @@ type EvidenceWorkflowOperation =
   | "trace_javascript_semantics"
   | "compare_application_versions"
   | "compare_javascript_export_shapes"
+  | "correlate_vsix_commands"
   | "project_android_application_graph"
   | "project_apple_application_graph"
   | "project_harmony_application_graph";
@@ -101,6 +102,20 @@ export const registerApplicationCommands = (
       const result = compareJavaScriptExportShapesEvidence(input, lookup, {
         signal,
       });
+      return result.ok ? { ok: true, value: result.value.evidence } : result;
+    },
+  });
+  registerEvidenceJsonCommand({
+    cli,
+    logger,
+    name: cliCommandFor("correlate_vsix_commands"),
+    operation: "correlate_vsix_commands",
+    description:
+      "Join VS Code extension command declarations with static registrations",
+    workflow: async (input, lookup, signal) => {
+      const { correlateVsixCommandsExecution } =
+        await import("../application/vsix/VsixCommandCorrelationService.js");
+      const result = correlateVsixCommandsExecution(input, lookup, { signal });
       return result.ok ? { ok: true, value: result.value.evidence } : result;
     },
   });
