@@ -106,6 +106,10 @@ checked. Calls whose identifier is not a string literal appear in
 `unresolved_registrations`. `menus` lists the known commands each menu invokes, and each command's
 `keybindings` lists its keys; both are null when not recorded.
 
+When the result is larger than the agent result budget, MCP returns a retained
+summary of counts; page the complete record with `inspect_analysis_view` kind
+`evidence-json`, or request `detail: "complete"`.
+
 REA does not verify that the two records describe the same files:
 `entry_points` says whether each declared entry path was analyzed. `not_found`
 does not prove that a command has no handler.
