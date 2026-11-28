@@ -12,7 +12,6 @@ import {
   vsixPackageFixture,
   vsixPackageMalformedManifestFixture,
 } from "../../src/vsix/VsixPackage.fixture.js";
-import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
@@ -136,7 +135,8 @@ cliTest(
     const report = completeVsixEvidenceSchema.parse(
       output.json,
     ).normalized_result;
-    const { call } = await connectLocalToolsMcp();
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
     const reply = await call("inspect_vsix_package", { path });
     expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
     expect(
@@ -197,7 +197,8 @@ cliTest(
     const root = await createTestTempDirectory("rea-vsix-provenance-");
     const path = join(root, "pkg.vsix");
     await writeFile(path, await vsixPackageFixture());
-    const { call } = await connectLocalToolsMcp();
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
     for (const maximum of [undefined, 67108864, 8192]) {
       const input = {
         path,
@@ -314,7 +315,8 @@ cliTest(
       present: true,
     });
     expect(cliReport.coverage.examined_manifest_bytes).toBeGreaterThan(2048);
-    const { call } = await connectLocalToolsMcp();
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
     const reply = await call("inspect_vsix_package", {
       path,
       max_manifest_bytes: 1024,

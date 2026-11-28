@@ -20,10 +20,13 @@ import {
   buildImage,
   buildSection,
 } from "../../tests/fixtures/uefiImage.js";
-import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
+import { lazyLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+
+/** One stdio MCP session for the file; each test passes its own target. */
+const fileMcp = lazyLocalToolsMcp();
 
 const execute = promisify(execFile);
 const cli = fileURLToPath(new URL("../../scripts/rea.mjs", import.meta.url));
@@ -117,7 +120,7 @@ it("maps a flash image end to end through CLI inspection and MCP session invento
   ]);
   expect(inspected.unknown_regions.length).toBeGreaterThan(0);
 
-  const { call } = await connectLocalToolsMcp();
+  const { call } = await fileMcp();
   const opened = await call("open_binary", { path: imagePath });
   expect(opened.isError, JSON.stringify(opened.content)).not.toBe(true);
 
@@ -311,7 +314,7 @@ it("keeps deep-provider analysis unavailable for the admitted uefi target", asyn
   const root = await createTestTempDirectory("rea-uefi-deep-rejection-");
   const imagePath = join(root, "image.FIb");
   await writeFile(imagePath, buildFlashImage());
-  const { call } = await connectLocalToolsMcp();
+  const { call } = await fileMcp();
   const opened = await call("open_binary", { path: imagePath });
   expect(opened.isError, JSON.stringify(opened.content)).not.toBe(true);
   const deep = await call("analyze_function", { procedure: "main" });
@@ -352,7 +355,7 @@ it("retains an opaque volume and reports only the unparsed ranges in the selecte
   const suffixOffset = opaqueOffset + opaque.buffer.length;
   await writeFile(path, Buffer.concat([valid.buffer, opaque.buffer, suffix]));
 
-  const { call } = await connectLocalToolsMcp();
+  const { call } = await fileMcp();
   const { normalized_result: inspection } = parseEvidence(
     (await call("inspect_uefi_firmware", { path, detail: "complete" }))
       .structuredContent,
@@ -451,7 +454,7 @@ it("publishes distinct AMI NVAR link, attributes, GUID index and data digest", a
       "hex",
     ),
   );
-  const { call } = await connectLocalToolsMcp();
+  const { call } = await fileMcp();
   const response = await call("inspect_uefi_nvram", { path });
   const result = uefiResultSchemas.inspect_uefi_nvram.parse(
     parseEvidence(response.structuredContent).normalized_result,
@@ -523,7 +526,7 @@ it("publishes an EDK2 variable store and keeps an unusable store signature from 
   const unusablePath = join(root, "unusable.fd");
   await writeFile(unusablePath, unusable);
 
-  const { call } = await connectLocalToolsMcp();
+  const { call } = await fileMcp();
   const parsed = async (path: string) =>
     uefiResultSchemas.inspect_uefi_nvram.parse(
       parseEvidence(
@@ -587,7 +590,7 @@ cliTest(
       Buffer.concat([...Array<Buffer>(512).fill(empty), last]),
     );
 
-    const { call } = await connectLocalToolsMcp();
+    const { call } = await fileMcp();
     const observed = await call("inspect_uefi_firmware", {
       path,
       max_volumes: 513,
@@ -672,7 +675,7 @@ it("attributes an existing output directory to output_directory", async () => {
   await writeFile(imagePath, buildFlashImage());
   const existing = join(root, "existing");
   await mkdir(existing);
-  const { call } = await connectLocalToolsMcp();
+  const { call } = await fileMcp();
 
   const refused = await call("extract_uefi_firmware", {
     path: imagePath,

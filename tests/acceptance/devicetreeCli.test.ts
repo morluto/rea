@@ -12,7 +12,6 @@ import {
   emptyStringsAtReservationBoundaryFixture,
 } from "../../src/domain/firmware/devicetree.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
@@ -62,7 +61,8 @@ cliTest(
       limitations: expect.arrayContaining([diagnostic]),
     });
 
-    const { call } = await connectLocalToolsMcp();
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
     const reply = await call("inspect_devicetree", { path });
     expect(reply.isError).not.toBe(true);
     const mcp = toolContract("inspect_devicetree").outputSchema.parse(
@@ -209,7 +209,8 @@ cliTest(
         ],
       },
     });
-    const { call } = await connectLocalToolsMcp();
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
     const withReport = (changed: Devicetree) =>
       createEvidence(
         { path, sha256: report.artifact.sha256, format: "file" },

@@ -11,7 +11,6 @@ import { analysisViewResultSchema } from "../../src/domain/analysisView/analysis
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { inesFixture, nes2Fixture } from "../fixtures/ines.js";
 import { writeOrderedZip } from "../fixtures/artifactEntryOrder.js";
@@ -21,11 +20,12 @@ import { buildBinary } from "plist";
 
 cliTest(
   "refuses extraction after an already open plist is replaced through MCP",
-  async () => {
+  async ({ cli }) => {
     const root = await createTestTempDirectory("rea-ines-plist-refresh-");
     const path = join(root, "source.bin");
     await writeFile(path, buildBinary({ value: "old" }));
-    const { call } = await connectLocalToolsMcp();
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
     const opened = await call("open_binary", { path });
     expect(opened.isError, JSON.stringify(opened.structuredContent)).not.toBe(
       true,
@@ -47,9 +47,10 @@ cliTest(
 
 cliTest(
   "refreshes an iNES path through MCP for every ZIP package family",
-  async () => {
+  async ({ cli }) => {
     const root = await createTestTempDirectory("rea-ines-zip-refresh-");
-    const { call } = await connectLocalToolsMcp();
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
     for (const format of ZIP_PACKAGE_FORMATS) {
       const path = join(
         root,
@@ -178,7 +179,8 @@ cliTest(
       expected.map(([logicalPath]) => logicalPath),
     );
 
-    const { call } = await connectLocalToolsMcp();
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
     const opened = await call("open_binary", { path });
     if (opened.isError) throw new Error(JSON.stringify(opened));
     const inspected = await call("inspect_artifact", {});
@@ -320,7 +322,8 @@ cliTest(
     const root = await createTestTempDirectory("rea-ines-public-refusal-");
     const validPath = join(root, "valid.nes");
     await writeFile(validPath, inesFixture({ chrUnits: 0 }));
-    const { call } = await connectLocalToolsMcp();
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
     const opened = await call("open_binary", { path: validPath });
     if (opened.isError) throw new Error(JSON.stringify(opened));
     for (const [name, bytes, reason] of [

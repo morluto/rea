@@ -39,7 +39,6 @@ import {
 } from "../fixtures/apkSignature/v1SignatureBlock.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
-import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 import { createTestMcp } from "../support/mcp/mcpFixture.js";
 import { bufferByteSource } from "../../src/domain/byteSource.js";
@@ -410,7 +409,8 @@ cliTest(
       `${block}: 2 bytes follow the PKCS#7 ContentInfo and were ignored, as apksig ignores them.`,
     );
 
-    const { call } = await connectLocalToolsMcp();
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
     for (const [path, decodeError] of cases) {
       const result = await call("inspect_apk_signature", {
         path,
@@ -705,7 +705,8 @@ cliTest(
     const { central } = zipEntryOffsets(bytes, "META-INF/F4096.SF");
     malformed.writeUInt16LE(0xffff, central + 28);
 
-    const { call } = await connectLocalToolsMcp();
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
     for (const [name, selected, expected] of [
       [
         "framed",

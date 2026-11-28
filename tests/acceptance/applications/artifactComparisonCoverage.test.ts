@@ -24,10 +24,13 @@ import {
   connectArtifactComparisonMcp,
   inventoryEvidence,
 } from "../../fixtures/artifactComparisonMcp.js";
-import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
+import {
+  cliTest,
+  type TestCli,
+  type SharedMcpCall,
+} from "../../support/cli/cliFixture.js";
 
 const plist = (message: string) =>
   `<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>message</key><string>${message}</string></dict></plist>\n`;
@@ -133,7 +136,7 @@ const assertMalformedImportsRejected = async (
   left: Evidence,
   right: Evidence,
   inventory: ArtifactInventoryResult,
-  call: Awaited<ReturnType<typeof connectLocalToolsMcp>>["call"],
+  call: SharedMcpCall,
 ) => {
   // Reauthenticate an imported malformed carrier; this does not claim that
   // the real inventory producer emitted members beyond its commitment.
@@ -279,7 +282,8 @@ cliTest(
           authority: "shipped-artifact",
         },
       );
-    const { call } = await connectLocalToolsMcp();
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
     const valid = await call("compare_artifacts", {
       left: derive(partial),
       right: derive(partial),
