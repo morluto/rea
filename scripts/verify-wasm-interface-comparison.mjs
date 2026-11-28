@@ -11,6 +11,7 @@ import {
   VerifierFixture,
   withVerifierFixture,
 } from "./lib/verifier-fixture.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 const execute = promisify(execFile);
 const bin = process.env.REA_WABT_BIN_DIRECTORY;
@@ -32,10 +33,12 @@ const command = async (file, args) =>
       maxBuffer: 64 * 1024 * 1024,
     })
   ).stdout;
-const client = new Client({
-  name: "wasm-interface-real-verifier",
-  version: "1",
-});
+const client = completeEvidenceClient(
+  new Client({
+    name: "wasm-interface-real-verifier",
+    version: "1",
+  }),
+);
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [cli, "mcp"],
@@ -58,7 +61,7 @@ const assemble = async (name, wat) => {
 const inspect = async (path) => {
   const result = await client.callTool({
     name: "inspect_wasm_artifact",
-    arguments: { path },
+    arguments: { detail: "complete", path },
   });
   assert.notEqual(result.isError, true, JSON.stringify(result));
   assert.notEqual(result.structuredContent, undefined);

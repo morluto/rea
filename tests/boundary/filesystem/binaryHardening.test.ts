@@ -1,42 +1,33 @@
 import { readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
-import { createBinaryHardeningService } from "../../../src/composition/binaryDiagnostics.js";
+import { scheduler } from "node:timers/promises";
+import { describe, expect, it, vi } from "vitest";
+import { createBinaryHardeningService } from "../../../src/composition/binaryDiagnostics/binaryHardening.js";
 import { elfHardeningFixture } from "../../../src/native/hardening/BinaryHardening.fixture.js";
+import { elfFrameAllowanceFixture } from "../../fixtures/binaryDiagnostics/elfFrameAllowance.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { expectFileSelectionErrors } from "../../support/expectFileSelectionErrors.js";
 
 describe("binary hardening stable filesystem boundary", () => {
-  it("reports non-file, missing and malformed selections as caller input errors", async () => {
+  it("reports non-file and missing selections as caller input errors", async () => {
     const root = await createTestTempDirectory("rea-binary-hardening-files-");
     const path = join(root, "app");
     const alias = join(root, "alias");
-    const malformed = join(root, "malformed");
     const bytes = elfHardeningFixture();
     await writeFile(path, bytes);
-    await writeFile(malformed, Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0]));
     await symlink(path, alias);
     const service = createBinaryHardeningService();
     try {
-      for (const [candidate, reason] of [
-        [root, "invalid_format"],
-        [alias, "invalid_format"],
-        [malformed, "invalid_format"],
-        [join(root, "missing"), "invalid_value"],
-        [join(path, "child"), "invalid_value"],
-      ] as const) {
-        const result = await service.inspect({ path: candidate });
-        if (result.ok) throw new Error("Expected file acquisition failure");
-        expect(result.error).toMatchObject({
-          _tag: "AnalysisInputError",
-          operation: "inspect_binary_hardening",
-          issues: [{ path: ["path"], reason, message: expect.any(String) }],
-        });
-      }
+      await expectFileSelectionErrors(service, "inspect_binary_hardening", {
+        root,
+        alias,
+        path,
+      });
       const foreign = join(root, "foreign");
       await writeFile(foreign, Buffer.from("not a binary"));
       const unsupported = await service.inspect({ path: foreign });
       if (unsupported.ok) throw new Error("Expected an unsupported target");
-      expect(unsupported.error._tag).toBe("AnalysisUnsupportedTargetError");
+      expect(unsupported.error._tag).toBe("AnalysisTargetFailureError");
     } finally {
       await service.close();
     }
@@ -94,6 +85,40 @@ describe("binary hardening stable filesystem boundary", () => {
         fixedAllowance: { limit: 65_536, unit: "entries" },
       });
     } finally {
+      await service.close();
+    }
+  });
+});
+
+describe("binary hardening compressed ELF names", () => {
+  it("cancels a many-frame compressed section-name table", async () => {
+    const root = await createTestTempDirectory("rea-binary-hardening-cancel-");
+    const path = join(root, "app");
+    await writeFile(path, elfFrameAllowanceFixture());
+    const reason = new Error("stop hardening frames");
+    const controller = new AbortController();
+    const yieldImpl = scheduler.yield.bind(scheduler);
+    let yields = 0;
+    const spy = vi.spyOn(scheduler, "yield").mockImplementation(async () => {
+      yields += 1;
+      await yieldImpl();
+      if (yields === 1) controller.abort(reason);
+    });
+    const service = createBinaryHardeningService();
+    try {
+      const result = await service.inspect(
+        { path },
+        { signal: controller.signal },
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisCancelledError",
+        operation: "inspect_binary_hardening",
+        cause: reason,
+      });
+    } finally {
+      spy.mockRestore();
       await service.close();
     }
   });

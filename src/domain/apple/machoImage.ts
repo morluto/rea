@@ -2,7 +2,8 @@ import { LC } from "./machoLoadCommandCodes.js";
 import type { FileMapping, ZeroFillMapping } from "../virtualFileMapping.js";
 import { decodeMachoFixedName } from "./appleMachoNames.js";
 import {
-  isMachoZeroFillSection,
+  machoSectionBacking,
+  machoSectionHeaderSize,
   readMachoSectionHeader,
   type MachoSectionHeader,
 } from "./machoSectionHeader.js";
@@ -12,26 +13,116 @@ import {
 } from "./machoSegmentHeader.js";
 import {
   declaredFileRange,
+  DEFAULT_NATIVE_STRUCTURE_BYTES,
+  requireBinaryTableBudget,
   BinaryFormatFailure,
   BinaryReader,
   type BinaryContainer,
   type ImageSection,
   type LoadRegion,
+  type MachoSegmentDeclaration,
 } from "../binaryContainer.js";
 import {
   MachoLoadCommandCursor,
+  machoCommandTableIssue,
   readMachoLoadCommandDeclarations,
 } from "./machoLoadCommands.js";
+import { readByteSourceSlice, type ByteSource } from "../byteSource.js";
+
+/**
+ * The bytes carry no Mach-O magic, so they are not a Mach-O image at all: an
+ * ELF, PE or other file. That is outside this reader, not a broken Mach-O, so
+ * it is `unrecognized`; a recognized header that fails to parse stays
+ * malformed or truncated.
+ */
+export const notMachoImage = (): BinaryFormatFailure =>
+  new BinaryFormatFailure(
+    "unrecognized",
+    "The bytes are not a thin Mach-O image",
+    { format: "macho" },
+  );
 
 /** Read thin Mach-O images, retaining the slice's exact file-backed mappings. */
 export const readMachoImage = (
   bytes: Buffer,
-): Extract<BinaryContainer, { format: "macho" }> => {
-  const parsed = readMachoLoadCommandDeclarations(bytes, bytes.length);
+  structureBytes: number = DEFAULT_NATIVE_STRUCTURE_BYTES,
+): Extract<BinaryContainer, { format: "macho" }> =>
+  readMachoImageCore(bytes, bytes.length, structureBytes);
+
+/** One framed load command handed to a reader's visitor during the shared walk. */
+export interface MachoLoadCommandVisit {
+  readonly command: number;
+  readonly size: number;
+  /** The whole command, `cmdsize` bytes from its `cmd` field. A view, not a copy. */
+  readonly body: Buffer;
+  /** Byte order of the image, so a visitor decodes fields without the result. */
+  readonly littleEndian: boolean;
+}
+
+/**
+ * Same thin Mach-O header and section read over a random-access source without
+ * buffering the full image. `visit` sees every framed load command during the
+ * one shared walk, so a consumer needing other commands does not walk again.
+ */
+export const readMachoImageFromReader = async (
+  source: ByteSource,
+  structureBytes: number = DEFAULT_NATIVE_STRUCTURE_BYTES,
+  visit?: (command: MachoLoadCommandVisit) => void,
+): Promise<Extract<BinaryContainer, { format: "macho" }>> => {
+  const headerPrefix = await readByteSourceSlice(
+    source,
+    0,
+    Math.min(32, source.size),
+  );
+  const parsed = readMachoLoadCommandDeclarations(headerPrefix, source.size);
   if (!parsed.ok) throw new BinaryFormatFailure("malformed", parsed.error);
-  if (parsed.value === null)
-    throw new BinaryFormatFailure("malformed", "Unrecognized Mach-O header");
+  if (parsed.value === null) throw notMachoImage();
   const table = parsed.value;
+  const issue = machoCommandTableIssue(table, source.size);
+  if (issue !== null)
+    throw new BinaryFormatFailure(
+      issue.kind === "extent" ? "truncated" : "malformed",
+      issue.message,
+      {
+        format: "macho",
+        field: "Mach-O load commands",
+        offset: table.headerSize,
+      },
+    );
+  requireBinaryTableBudget(
+    BigInt(table.commandBytes),
+    "Mach-O load commands",
+    structureBytes,
+  );
+  const tableBytes = await readByteSourceSlice(
+    source,
+    0,
+    table.headerSize + table.commandBytes,
+  );
+  return readMachoImageCore(tableBytes, source.size, structureBytes, visit);
+};
+
+const readMachoImageCore = (
+  bytes: Buffer,
+  fileBytes: number,
+  structureBytes: number,
+  visit?: (command: MachoLoadCommandVisit) => void,
+): Extract<BinaryContainer, { format: "macho" }> => {
+  const parsed = readMachoLoadCommandDeclarations(bytes, fileBytes);
+  if (!parsed.ok) throw new BinaryFormatFailure("malformed", parsed.error);
+  if (parsed.value === null) throw notMachoImage();
+  const table = parsed.value;
+  const issue = machoCommandTableIssue(table, fileBytes);
+  if (issue !== null)
+    throw new BinaryFormatFailure(
+      issue.kind === "extent" ? "truncated" : "malformed",
+      issue.message,
+      {
+        format: "macho",
+        field: "Mach-O load commands",
+        offset: table.headerSize,
+      },
+    );
   const { headerSize, commandBytes, littleEndian: little } = table;
   const bits = table.wide ? 64 : 32;
   const reader = new BinaryReader(bytes, little, "macho");
@@ -40,12 +131,14 @@ export const readMachoImage = (
     commandBytes,
     1,
     "Mach-O load commands",
+    structureBytes,
   );
   const mappings: FileMapping[] = [];
   const loadRegions: LoadRegion[] = [];
   const executableMappings: FileMapping[] = [];
   const zeroFills: ZeroFillMapping[] = [];
   const sections: ImageSection[] = [];
+  const segmentDeclarations: MachoSegmentDeclaration[] = [];
   let chainedFixups = false;
   const commands = new MachoLoadCommandCursor(table);
   while (commands.nextOffset !== null) {
@@ -53,6 +146,12 @@ export const readMachoImage = (
     const frame = commands.read(bytes.subarray(offset, offset + 8));
     if (!frame.ok) throw new BinaryFormatFailure("malformed", frame.error);
     const { command, size } = frame.value;
+    visit?.({
+      command,
+      size,
+      body: bytes.subarray(offset, offset + size),
+      littleEndian: little,
+    });
     if (command === LC.DYLD_CHAINED_FIXUPS) chainedFixups = true;
     if (command === LC.SEGMENT || command === LC.SEGMENT_64) {
       const wide = command === LC.SEGMENT_64;
@@ -61,7 +160,7 @@ export const readMachoImage = (
           "malformed",
           "Mach-O segment command does not match the header width",
         );
-      const sectionWidth = wide ? 80 : 68;
+      const sectionWidth = machoSectionHeaderSize(wide);
       const parsedSegment = readMachoSegmentHeader(
         bytes.subarray(offset, offset + size),
         wide,
@@ -74,7 +173,6 @@ export const readMachoImage = (
         );
       const {
         headerSize: segmentHeader,
-        address,
         memorySize,
         fileOffset,
         fileSize,
@@ -87,23 +185,31 @@ export const readMachoImage = (
         parsedSegment.value,
         size,
         bits,
-        bytes.length,
+        fileBytes,
       );
       if (!admitted.ok)
         throw new BinaryFormatFailure(
           admitted.error.kind,
           admitted.error.message,
         );
-      const { unmapped } = admitted.value;
+      const { unmapped, fileAddress, zeroFill } = admitted.value;
       const fileRange =
         fileSize === 0n
           ? undefined
-          : reader.fileRange(fileOffset, fileSize, "Mach-O segment");
+          : { offset: Number(fileOffset), size: Number(fileSize) };
       const mapping =
         unmapped || fileRange === undefined
           ? undefined
-          : { ...fileRange, address };
+          : { ...fileRange, address: fileAddress };
       const name = decodeMachoFixedName(nameBytes);
+      segmentDeclarations.push({
+        name,
+        address: parsedSegment.value.address,
+        memory_size: memorySize,
+        file_offset: fileOffset,
+        file_size: fileSize,
+        protection,
+      });
       if (mapping !== undefined && name !== "__PAGEZERO") {
         mappings.push(mapping);
         loadRegions.push({
@@ -119,11 +225,7 @@ export const readMachoImage = (
         });
         if ((protection & 4) !== 0) executableMappings.push(mapping);
       }
-      if (memorySize > fileSize && name !== "__PAGEZERO")
-        zeroFills.push({
-          address: address + fileSize,
-          size: memorySize - fileSize,
-        });
+      if (zeroFill !== null && name !== "__PAGEZERO") zeroFills.push(zeroFill);
       for (let sectionIndex = 0; sectionIndex < sectionCount; sectionIndex++) {
         const section = offset + segmentHeader + sectionIndex * sectionWidth;
         const parsedSection = readMachoSectionHeader(
@@ -138,16 +240,13 @@ export const readMachoImage = (
           );
         sections.push(
           machoImageSection({
-            fileBytes: bytes.length,
+            fileBytes,
             section: parsedSection.value,
             protection,
             segmentMapping: mapping ?? null,
             segmentUnmapped: unmapped,
             unmapped: unmapped || mapping === undefined,
-            segmentAddress: address,
-            segmentMemorySize: memorySize,
-            segmentFileOffset: fileOffset,
-            segmentFileSize: fileSize,
+            segment: parsedSegment.value,
           }),
         );
       }
@@ -168,6 +267,8 @@ export const readMachoImage = (
   return {
     format: "macho",
     macho_cpu_type: table.identity.cpuType,
+    macho_file_type: table.fileType,
+    macho_segments: segmentDeclarations,
     macho_chained_fixups: chainedFixups,
     architecture: names.get(cpu) ?? `macho-cpu-${cpu}`,
     bits,
@@ -187,10 +288,7 @@ const machoImageSection = ({
   segmentMapping,
   segmentUnmapped,
   unmapped,
-  segmentAddress,
-  segmentMemorySize,
-  segmentFileOffset,
-  segmentFileSize,
+  segment,
 }: {
   readonly fileBytes: number;
   readonly section: MachoSectionHeader;
@@ -198,26 +296,13 @@ const machoImageSection = ({
   readonly segmentMapping: FileMapping | null;
   readonly segmentUnmapped: boolean;
   readonly unmapped: boolean;
-  readonly segmentAddress: bigint;
-  readonly segmentMemorySize: bigint;
-  readonly segmentFileOffset: bigint;
-  readonly segmentFileSize: bigint;
+  readonly segment: Parameters<typeof machoSectionBacking>[1];
 }): ImageSection => {
   const { flags, address: sectionAddress, size: sectionSize } = section;
   const sectionOffset = BigInt(section.offset);
   const sectionName = decodeMachoFixedName(section.nameBytes);
   const name = `${decodeMachoFixedName(section.segmentNameBytes)},${sectionName}`;
-  const zeroFill = isMachoZeroFillSection(flags);
-  const addressDelta = sectionAddress - segmentAddress;
-  const fileDelta = sectionOffset - segmentFileOffset;
-  const inSegmentMemory =
-    addressDelta >= 0n &&
-    addressDelta <= segmentMemorySize &&
-    sectionSize <= segmentMemorySize - addressDelta;
-  const inSegmentFile =
-    fileDelta >= 0n &&
-    fileDelta <= segmentFileSize &&
-    sectionSize <= segmentFileSize - fileDelta;
+  const backing = machoSectionBacking(section, segment);
   const declaredRange = declaredFileRange(
     fileBytes,
     sectionOffset,
@@ -226,8 +311,7 @@ const machoImageSection = ({
   const range = unmapped
     ? { offset: 0, size: 0, file_backed: false }
     : declaredRange;
-  const fileBacked =
-    range.file_backed && !zeroFill && inSegmentMemory && inSegmentFile;
+  const fileBacked = range.file_backed && backing.issue === null;
   const readOnly =
     fileBacked &&
     (protection & 1) !== 0 &&
@@ -249,7 +333,7 @@ const machoImageSection = ({
     },
     ...range,
     file_backed: fileBacked,
-    on_disk: declaredRange.file_backed && !zeroFill && inSegmentFile,
+    on_disk: declaredRange.file_backed && backing.onDisk,
     read_only: readOnly,
     compressed: false,
   };

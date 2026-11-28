@@ -2,19 +2,24 @@ import { isNativeObservationOperation } from "../domain/native/nativeObservation
 import { isNativeInventoryOperation } from "../domain/native/nativeInventory.js";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { ToolResultDelivery } from "./ToolResultDelivery.js";
+import { AGENT_RESULT_BUDGET_ENVIRONMENT } from "../domain/agentResultBudget.js";
 import { INSPECT_ANALYSIS_VIEW_OPERATION } from "../domain/analysisView/analysisViewErrors.js";
 import { inspectAnalysisViewInputSchema } from "../domain/analysisView/analysisViewRequest.js";
 import { smallerBatchDecompileSelection } from "../domain/analysisView/batchDecompileView.js";
 import type { Evidence } from "../domain/evidence.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import { ownedJsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 
 /** Compose native Evidence continuation with the selected, parsed response budget. */
 export const createToolResultDelivery = (
   maximumResponseBytes: number | undefined,
+  /** The server's captured launch environment, read only for its budget seed. */
+  environment: Readonly<Record<string, string | undefined>> = {},
 ): ToolResultDelivery =>
   new ToolResultDelivery(
     maximumResponseBytes ?? STDIO_DEFAULT_MAX_BUFFER_SIZE,
     retainedEvidenceContinuation,
+    undefined,
+    environment[AGENT_RESULT_BUDGET_ENVIRONMENT],
   );
 
 /**
@@ -47,7 +52,7 @@ const continuationOf = (
   return {
     continuation: {
       name: INSPECT_ANALYSIS_VIEW_OPERATION,
-      arguments: jsonValueSchema.parse(input.data),
+      arguments: ownedJsonValueSchema.parse(input.data),
     },
   };
 };
@@ -99,8 +104,36 @@ const ownerFirstPage = (evidence: Evidence): JsonValue | undefined =>
                 offset: 0,
                 limit: 64,
               }
-            : isNativeInventoryOperation(evidence.operation)
-              ? { kind: "native-inventory", offset: 0, limit: 64 }
-              : isNativeObservationOperation(evidence.operation)
-                ? { kind: "native-observation", offset: 0, limit: 64 }
-                : undefined;
+            : evidence.operation === "inspect_esp_nvs"
+              ? {
+                  kind: "esp-nvs",
+                  collection: "entries",
+                  offset: 0,
+                  limit: 64,
+                }
+              : evidence.operation === "inspect_firmware_vector_table"
+                ? {
+                    kind: "firmware-vector-table",
+                    collection:
+                      (
+                        evidence.normalized_result as {
+                          architecture?: unknown;
+                        } | null
+                      )?.architecture === "riscv"
+                        ? "riscv_slots"
+                        : "arm_entries",
+                    offset: 0,
+                    limit: 64,
+                  }
+                : evidence.operation === "inspect_labview_artifact"
+                  ? {
+                      kind: "labview-artifact",
+                      collection: "blocks",
+                      offset: 0,
+                      limit: 64,
+                    }
+                  : isNativeInventoryOperation(evidence.operation)
+                    ? { kind: "native-inventory", offset: 0, limit: 64 }
+                    : isNativeObservationOperation(evidence.operation)
+                      ? { kind: "native-observation", offset: 0, limit: 64 }
+                      : undefined;

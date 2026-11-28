@@ -3,7 +3,8 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { deflateSync } from "node:zlib";
 import { randomBytes } from "node:crypto";
-import { expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { collectEntries } from "../../../tests/fixtures/artifactEntries.js";
 import { withPyInstallerReader } from "../../../tests/fixtures/pyinstallerReader.js";
 import {
   scanCanonicalArtifactInventory,
@@ -17,6 +18,7 @@ import {
   PYTHON_39_MAGIC,
 } from "./CArchive.fixture.js";
 import { readPyzArchive } from "./PyzArchive.js";
+import { parseCArchiveToc } from "./CArchiveLayout.js";
 import { marshalCode } from "../../python/PythonPyc.fixture.js";
 import { createEvidence } from "../../domain/evidence.js";
 import { parseArtifactInventoryEvidence } from "../../domain/artifactInventoryEvidence.js";
@@ -24,6 +26,84 @@ import {
   ArtifactReaderFailure,
   type ArtifactEntry,
 } from "../../resources/ArtifactReader.js";
+
+describe.each(["2.0", "2.1"] as const)(
+  "CArchive names with a %s cookie",
+  (layout) => {
+    const name = "member-é";
+    const nameOffset = 18;
+    const record = Buffer.alloc(32);
+    record.writeUInt32BE(record.length, 0);
+    record[17] = 0x78; // data member
+    const nameEnd = nameOffset + record.write(name, nameOffset, "utf8");
+    const readPaths = async (tocBytes: Buffer) => {
+      const paths: string[] = [];
+      await withPyInstallerReader(
+        cArchiveExecutable({
+          layout,
+          pythonVersion: layout === "2.0" ? 27 : 309,
+          members: [],
+          tocBytes,
+        }),
+        async (reader) => {
+          for await (const entry of reader.entries()) paths.push(entry.path);
+        },
+      );
+      return paths;
+    };
+
+    it("preserves the UTF-8 name with a terminator and zero padding", async () => {
+      await expect(readPaths(record)).resolves.toEqual([name]);
+    });
+    it.each([
+      ["missing terminator", nameEnd],
+      ["nonzero byte after terminator", nameEnd + 1],
+    ] as const)("reports %s at the rejected record", async (_case, fillAt) => {
+      const malformed = Buffer.from(record).fill(0x61, fillAt);
+      await expect(readPaths(malformed)).rejects.toMatchObject({
+        reason: "malformed",
+        message: expect.stringContaining("table index 0 at TOC offset 0"),
+      });
+    });
+  },
+);
+
+describe("CArchive entry admission at the TOC record limit", () => {
+  const entryCount = 100_000;
+  const entry = Buffer.alloc(32);
+  entry.writeUInt32BE(entry.length);
+  entry[17] = 0x78;
+  entry.write("member.txt", 18, "ascii");
+  const boundary = entry.length * entryCount;
+  const toc = Buffer.alloc(boundary + entry.length, entry);
+
+  it("accepts exactly the limit and refuses one more framed record", () => {
+    const admitted = parseCArchiveToc(toc.subarray(0, boundary));
+    if (!admitted.ok) throw new Error(admitted.error.message);
+    expect(admitted.value).toHaveLength(entryCount);
+    expect(parseCArchiveToc(toc)).toMatchObject({
+      ok: false,
+      error: { reason: "limit" },
+    });
+  });
+
+  it.each([4, 20])(
+    "preserves framing failure for %i trailing bytes at the entry limit",
+    (tailSize) => {
+      expect(
+        parseCArchiveToc(toc.subarray(0, boundary + tailSize)),
+      ).toMatchObject({
+        ok: false,
+        error: {
+          reason: "malformed",
+          message: expect.stringContaining(
+            `table index ${entryCount} at TOC offset ${boundary}:`,
+          ),
+        },
+      });
+    },
+  );
+});
 
 it.each([0, 1, 2])(
   "identifies malformed CArchive compression at table index %i",
@@ -43,8 +123,7 @@ it.each([0, 1, 2])(
     for (let row = 0; row < index; row++)
       record += original.readUInt32BE(record);
     await withPyInstallerReader(original, async (reader) => {
-      const entries = [];
-      for await (const entry of reader.entries()) entries.push(entry);
+      const entries = await collectEntries(reader);
       expect(entries).toHaveLength(3);
     });
     const malformed = Buffer.from(original);
@@ -56,7 +135,7 @@ it.each([0, 1, 2])(
         }
       }),
     ).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining(
         `table index ${index} at TOC offset ${record - toc}`,
       ),
@@ -90,8 +169,7 @@ it.each([
         ],
       }),
       async (reader) => {
-        const entries = [];
-        for await (const entry of reader.entries()) entries.push(entry);
+        const entries = await collectEntries(reader);
         const module = entries.find((entry) => entry.path === "module")!;
         expect(module.formatMetadata).toMatchObject({
           bytecode_header: "unknown",
@@ -118,8 +196,7 @@ it("fills short descriptor reads when distinguishing both CArchive module layout
       return Reflect.apply(read, this, args);
     });
     try {
-      const entries = [];
-      for await (const entry of reader.entries()) entries.push(entry);
+      const entries = await collectEntries(reader);
       for (const module of fixture.modules) {
         const entry = entries.find((item) => item.path === module.name)!;
         expect(await buffer(await reader.open(entry))).toEqual(module.bytes);
@@ -159,8 +236,7 @@ it.each(["unused compressed input", "wrong declared size"])(
         ],
       }),
       async (reader) => {
-        const entries = [];
-        for await (const entry of reader.entries()) entries.push(entry);
+        const entries = await collectEntries(reader);
         const module = entries.find((entry) => entry.path === "module")!;
         expect(module.formatMetadata).toMatchObject({
           bytecode_header: "derived",
@@ -169,7 +245,7 @@ it.each(["unused compressed input", "wrong declared size"])(
           reason: "integrity",
           integrityCheck:
             fault === "unused compressed input"
-              ? "read-coverage"
+              ? "layout-consistency"
               : "declared-size",
         });
       },
@@ -207,9 +283,11 @@ it.each(["malformed zlib", "declared plaintext overrun"] as const)(
       const list = async () => {
         for await (const entry of reader.entries()) void entry;
       };
-      await expect(list()).rejects.toMatchObject({
-        reason: fault === "malformed zlib" ? "format" : "limit",
-      });
+      await expect(list()).rejects.toMatchObject(
+        fault === "malformed zlib"
+          ? { reason: "malformed" }
+          : { reason: "integrity", integrityCheck: "declared-size" },
+      );
     });
   },
 );
@@ -290,8 +368,7 @@ it.each(["magic", "marshal"])(
         members: [{ name: "PYZ.pyz", typeCode: "z", payload, compress: true }],
       }),
       async (reader, carrier) => {
-        const entries: ArtifactEntry[] = [];
-        for await (const entry of reader.entries()) entries.push(entry);
+        const entries = await collectEntries(reader);
         const entry = entries[0]!;
         expect(entry.kind).toBe("file");
         const read = vi
@@ -433,7 +510,9 @@ it.each(["size", "offset", "overlap"])(
       expect(failure).toBeInstanceOf(ArtifactReaderFailure);
       if (!(failure instanceof ArtifactReaderFailure))
         throw new Error("Expected parser failure");
-      expect(failure.reason).toBe(mode === "offset" ? "format" : "integrity");
+      expect(failure.reason).toBe(
+        mode === "offset" ? "malformed" : "integrity",
+      );
       expect(failure.message.length).toBeLessThan(128);
       expect(failure.message).toContain(
         `table index ${mode === "overlap" ? 1 : 0}`,
@@ -876,8 +955,7 @@ it.each([false, true])(
         ],
       }),
       async (reader, _handle, path) => {
-        const entries: ArtifactEntry[] = [];
-        for await (const entry of reader.entries()) entries.push(entry);
+        const entries = await collectEntries(reader);
         const inventory = await scanCanonicalArtifactInventory(path);
         for (const [logicalPath, code, bytecode] of [
           ["PYZ.pyz/app/mod.pyc", 0, true],
@@ -1222,8 +1300,7 @@ it("retains multipackage references as distinct unresolved declarations", async 
       })),
     }),
     async (reader) => {
-      const entries: ArtifactEntry[] = [];
-      for await (const entry of reader.entries()) entries.push(entry);
+      const entries = await collectEntries(reader);
       expect(reader.formatMetadata()).toMatchObject({
         external_dependency_count: names.length,
         runtime_option_count: 0,
@@ -1244,7 +1321,7 @@ it("retains multipackage references as distinct unresolved declarations", async 
           dependency_member: index < 2 ? "assets/x:y" : null,
         });
         await expect(reader.open(entry)).rejects.toMatchObject({
-          reason: "format",
+          reason: "path",
         });
       }
     },
@@ -1291,7 +1368,7 @@ for (const container of ["carchive", "outer-pyz", "inner-pyz"] as const) {
         };
         await expect(consume()).rejects.toMatchObject({
           reason: "integrity",
-          integrityCheck: "read-coverage",
+          integrityCheck: "layout-consistency",
         });
       });
     },
@@ -1365,7 +1442,10 @@ it("distinguishes actual EOF after a short PYZ header read", async () => {
         readPyzArchive(handle, 0, bytes.length),
       ).resolves.toMatchObject({
         ok: false,
-        error: { reason: "format", message: expect.stringContaining("header") },
+        error: {
+          reason: "truncated",
+          message: expect.stringContaining("header"),
+        },
       });
       expect(calls).toBe(2);
     } finally {

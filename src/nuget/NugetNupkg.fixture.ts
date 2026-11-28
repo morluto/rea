@@ -7,67 +7,64 @@ import {
 import { crc32 } from "node:zlib";
 
 /** Real ZIP filename carriers and their independent, format-defined readings. */
-export const NUPKG_NAME_ENCODING_CASES = [
+const nupkgNameEncodingCases = [
   {
     encoding: "legacy",
     rawName: Buffer.from("6c69622f6e6574382e302f822e646c6c", "hex"),
     utf8: false,
     unicodePath: null,
-    name: "lib/net8.0/é.dll",
-    uncertain: true,
   },
   {
     encoding: "ascii",
     rawName: Buffer.from("lib/net8.0/demo.dll"),
     utf8: false,
     unicodePath: null,
-    name: "lib/net8.0/demo.dll",
-    uncertain: false,
   },
   {
     encoding: "utf8",
-    rawName: Buffer.from("lib/net8.0/é.dll"),
+    rawName: Buffer.from("lib/net8.0/π.dll"),
     utf8: true,
     unicodePath: null,
-    name: "lib/net8.0/é.dll",
-    uncertain: false,
   },
   {
     encoding: "unicode-path",
     rawName: Buffer.from("6c69622f6e6574382e302f822e646c6c", "hex"),
     utf8: false,
     unicodePath: "lib/net8.0/café.dll",
-    name: "lib/net8.0/café.dll",
-    uncertain: false,
   },
 ] as const;
 
-/** Inert package with an independently selected raw filename, EFS flag and Unicode Path claim. */
-export const nugetNupkgNameEncodingFixture = async (
-  input: (typeof NUPKG_NAME_ENCODING_CASES)[number],
-): Promise<Uint8Array> => {
+/** Inert ZIP members use independently selected names, EFS flags and Unicode Path extras. */
+export const nugetNupkgNameEncodingFixture = async (): Promise<Uint8Array> => {
   const writer = new ZipWriter(new Uint8ArrayWriter(), {
     encodeText: (text, type) =>
-      type === "filename" && text === "asset" ? input.rawName : undefined,
+      type === "filename"
+        ? nupkgNameEncodingCases.find(({ encoding }) => encoding === text)
+            ?.rawName
+        : undefined,
   });
-  await writer.add("Demo.Package.nuspec", new TextReader(defaultNuspec), {
-    level: 0,
-  });
-  let unicodeField: Buffer | undefined;
-  if (input.unicodePath !== null) {
-    const name = Buffer.from(input.unicodePath);
-    unicodeField = Buffer.alloc(5 + name.length);
-    unicodeField[0] = 1;
-    unicodeField.writeUInt32LE(crc32(input.rawName), 1);
-    name.copy(unicodeField, 5);
+  await addText(writer, "Demo.Package.nuspec", defaultNuspec);
+  for (const {
+    encoding,
+    rawName,
+    utf8,
+    unicodePath,
+  } of nupkgNameEncodingCases) {
+    let extraField: Map<number, Uint8Array> | undefined;
+    if (unicodePath !== null) {
+      const name = Buffer.from(unicodePath);
+      const unicodeField = Buffer.alloc(5 + name.length);
+      unicodeField[0] = 1;
+      unicodeField.writeUInt32LE(crc32(rawName), 1);
+      name.copy(unicodeField, 5);
+      extraField = new Map([[0x7075, unicodeField]]);
+    }
+    await writer.add(encoding, new TextReader("benign asset bytes"), {
+      level: 0,
+      useUnicodeFileNames: utf8,
+      ...(extraField === undefined ? {} : { extraField }),
+    });
   }
-  await writer.add("asset", new TextReader("benign asset bytes"), {
-    level: 0,
-    useUnicodeFileNames: input.utf8,
-    ...(unicodeField === undefined
-      ? {}
-      : { extraField: new Map([[0x7075, unicodeField]]) }),
-  });
   return writer.close();
 };
 

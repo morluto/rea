@@ -1,5 +1,5 @@
 import { constants, type Stats } from "node:fs";
-import { link, lstat, mkdtemp, open, realpath, rename } from "node:fs/promises";
+import { link, mkdtemp, open, realpath, rename } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
 import { AnalysisCleanupLease } from "../resources/index.js";
@@ -7,6 +7,7 @@ import { fileHandleMatchesBytes } from "../filesystem/fileHandleMatchesBytes.js"
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { OwnedStagedOutput } from "../filesystem/OwnedStagedOutput.js";
 import { sameRegularFileState } from "../filesystem/RegularFile.js";
+import { publicationPathMatchesSelection } from "./PublicationFileSelection.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
 /** The read owner's byte-exact original and selected identity. */
@@ -158,7 +159,10 @@ export class SkillFilePublication {
 
   async publish(): Promise<void> {
     await this.staging.assertReadyForPublication(this.stagedPath);
-    await this.#assertSelected();
+    if (
+      !(await publicationPathMatchesSelection(this.path, this.original?.state))
+    )
+      throw new SkillDestinationChangedError(this.path);
     this.#attempted = true;
     if (this.original === undefined) {
       // Exclusive creation preserves a file created after the absence check.
@@ -190,26 +194,15 @@ export class SkillFilePublication {
       !sameRegularFileState(before, await this.owner.handle.stat())
     )
       throw new SkillDestinationChangedError(this.path);
-    await this.#assertNamed(before);
-    if (!(await fileHandleMatchesBytes(this.owner.handle, this.bytes)))
-      throw new SkillDestinationChangedError(this.path);
-    if (!sameRegularFileState(before, await this.owner.handle.stat()))
-      throw new SkillDestinationChangedError(this.path);
-    await this.#assertNamed(before);
+    await this.#assertReadback(before, this.bytes);
   }
 
   /** Restore through the owned descriptor; a changed name never grants write authority. */
   async restore(): Promise<void> {
     if (!this.#attempted || this.#restored) return;
     // A rejected exclusive link or rename may leave the original selection intact.
-    const named = await optionalState(this.path);
-    if (
-      this.original !== undefined &&
-      named !== undefined &&
-      sameRegularFileState(this.original.state, named)
-    )
+    if (await publicationPathMatchesSelection(this.path, this.original?.state))
       return;
-    if (this.original === undefined && named === undefined) return;
     await this.assertCurrent();
     if (this.original === undefined)
       throw new Error(
@@ -230,9 +223,7 @@ export class SkillFilePublication {
     await this.owner.handle.truncate(original.bytes.length);
     await this.owner.handle.chmod(original.mode);
     await this.owner.handle.sync();
-    await this.#assertNamed(await this.owner.handle.stat());
-    if (!(await fileHandleMatchesBytes(this.owner.handle, original.bytes)))
-      throw new SkillDestinationChangedError(this.path);
+    await this.#assertReadback(await this.owner.handle.stat(), original.bytes);
     this.#restored = true;
   }
 
@@ -240,36 +231,21 @@ export class SkillFilePublication {
     return this.lease.release();
   }
 
-  async #assertNamed(expected: Stats): Promise<void> {
-    const named = await optionalState(this.path);
+  async #assertReadback(expected: Stats, bytes: Buffer): Promise<void> {
+    await this.#assertNamed(expected);
     if (
-      expected.ino === 0 ||
-      named === undefined ||
-      named.isSymbolicLink() ||
-      !sameRegularFileState(expected, named)
+      !(await fileHandleMatchesBytes(this.owner.handle, bytes)) ||
+      !sameRegularFileState(expected, await this.owner.handle.stat())
     )
       throw new SkillDestinationChangedError(this.path);
+    await this.#assertNamed(expected);
   }
 
-  async #assertSelected(): Promise<void> {
-    const current = await optionalState(this.path);
+  async #assertNamed(expected: Stats): Promise<void> {
     if (
-      this.original === undefined
-        ? current !== undefined
-        : current === undefined ||
-          current.isSymbolicLink() ||
-          !sameRegularFileState(this.original.state, current)
+      !(await publicationPathMatchesSelection(this.path, expected)) ||
+      expected.ino === 0
     )
       throw new SkillDestinationChangedError(this.path);
   }
 }
-
-const optionalState = async (path: string): Promise<Stats | undefined> => {
-  try {
-    return await lstat(path);
-  } catch (cause: unknown) {
-    if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
-      return undefined;
-    throw cause;
-  }
-};

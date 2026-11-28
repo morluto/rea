@@ -1,8 +1,22 @@
 import { gt, major, valid } from "semver";
 import { z } from "zod";
+import {
+  canonicalGitHubReleaseUrl,
+  githubReleaseReference,
+  plainReleaseNumbers,
+  releaseBreakingFooters,
+  releaseMigrationWording,
+  releaseSection,
+} from "./release-markdown.mjs";
 
 const shaSchema = z.string().regex(/^[a-f0-9]{40}$/u);
 const versionSchema = z.object({ version: z.string() });
+const sourcePackageSchema = versionSchema.extend({
+  repository: z
+    .union([z.string(), z.object({ url: z.string() })])
+    .optional()
+    .catch(undefined),
+});
 const manifestSchema = z.object({ ".": z.string() });
 const PLUGIN_MANIFEST_PATHS = [
   ".claude-plugin/plugin.json",
@@ -106,53 +120,93 @@ function readCommits(text) {
     const body = z.string().parse(fields[index + 2]);
     const title = conventionalTitle(subject, body);
     const type = /^([a-z]+)(?:\([^)]*\))?!?: /u.exec(title)?.[1];
+    const breakingNotes = releaseBreakingFooters(body);
     commits.push({
       sha,
       subject,
       ...(title !== subject ? { conventionalTitle: title } : {}),
       type,
       breaking:
-        /^[a-z]+(?:\([^)]*\))?!: /u.test(title) ||
-        /^BREAKING(?: CHANGE|-CHANGE):\s*\S/mu.test(body),
-      breakingNotes: Array.from(
-        body
-          .replace(/\r\n/gu, "\n")
-          .matchAll(
-            /^BREAKING(?: CHANGE|-CHANGE):[ \t]*(\S[^\n]*(?:\n(?!\n|[A-Za-z-]+: )[^\n]+)*)/gmu,
-          ),
-        (match) => match[1].replace(/\s+/gu, " ").trim(),
-      ),
+        /^[a-z]+(?:\([^)]*\))?!: /u.test(title) || breakingNotes.length > 0,
+      breakingNotes,
     });
   }
   return commits;
 }
 
-function referencesCommit(text, commit) {
-  if (text.includes(commit.sha.slice(0, 7))) return true;
+function repositoryName(repository) {
+  const source = typeof repository === "string" ? repository : repository?.url;
+  const url = canonicalGitHubReleaseUrl(source?.replace(/^git\+/iu, ""));
+  const match = /^\/([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/u.exec(
+    url?.pathname ?? "",
+  );
+  return match?.[1].toLowerCase();
+}
+
+function referencesCommit(references, commit) {
+  if (references.shas.has(commit.sha)) return true;
   const pullRequest =
     GITHUB_MERGE_SUBJECT.exec(commit.subject)?.[1] ??
     /\(#(\d+)\)$/u.exec(commit.subject)?.[1];
   return (
-    pullRequest !== undefined &&
-    new RegExp(`#${pullRequest}(?!\\d)`, "u").test(text)
+    pullRequest !== undefined && references.numbers.has(Number(pullRequest))
   );
 }
 
 function releaseNotes(text, expectedVersion) {
-  const headings = Array.from(text.matchAll(/^## \[([^\]]+)\].*$/gmu));
-  const first = headings[0];
-  if (first?.[1] !== expectedVersion || first.index === undefined) {
+  const section = releaseSection(text, expectedVersion);
+  if (section === undefined)
     throw new Error(`CHANGELOG.md must start with release ${expectedVersion}.`);
-  }
-  return text.slice(first.index, headings[1]?.index ?? text.length);
+  return section.blocks;
 }
 
-function breakingSection(notes) {
-  const heading = /^### [^\n]*BREAKING CHANGES[^\n]*\n/imu.exec(notes);
-  if (heading === null) return "";
-  const body = notes.slice(heading.index + heading[0].length);
-  const end = body.search(/^### /mu);
+function breakingSection(blocks) {
+  const start = blocks.findIndex(({ heading }) =>
+    /^### .*BREAKING CHANGES/iu.test(heading ?? ""),
+  );
+  if (start === -1) return [];
+  const body = blocks.slice(start + 1);
+  const end = body.findIndex(({ heading }) => heading?.startsWith("### "));
   return end < 0 ? body : body.slice(0, end);
+}
+
+function releaseReferences(blocks, repository, commits) {
+  const numbers = new Set();
+  const shas = new Set();
+  const linked = (href) => {
+    const reference = githubReleaseReference(href);
+    if (reference === undefined || reference.repository !== repository) return;
+    if (reference.commit !== undefined) shas.add(reference.commit);
+    else if (Number.isSafeInteger(reference.number) && reference.number > 0)
+      numbers.add(reference.number);
+  };
+  for (const { parts } of blocks) {
+    const prose = parts
+      .map(({ text, href }) => {
+        if (!href) return text;
+        linked(href);
+        return " ";
+      })
+      .join("")
+      .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s<>]+/giu, (href) => {
+        linked(href.replace(/[.,;:)]+$/u, ""));
+        return " ";
+      });
+    for (const number of plainReleaseNumbers(prose))
+      if (Number.isSafeInteger(number) && number > 0) numbers.add(number);
+    for (const match of prose.matchAll(/\b[a-f0-9]{7,40}\b/giu))
+      shas.add(match[0].toLowerCase());
+  }
+  // Resolve each abbreviation once in the frozen history. A shared prefix
+  // alone cannot establish which of its candidate commits the notes name.
+  const matches = new Map();
+  for (const { sha } of commits)
+    for (let length = 7; length <= sha.length; length++) {
+      const prefix = sha.slice(0, length);
+      if (shas.has(prefix))
+        matches.set(prefix, matches.has(prefix) ? null : sha);
+    }
+  return { numbers, shas: new Set([...matches.values()].filter(Boolean)) };
 }
 
 async function requireAncestor(git, ancestor, descendant, description) {
@@ -181,7 +235,14 @@ async function resolveBaseline(git, tag) {
   }
 }
 
-async function validateCandidate(git, sha, version, commits) {
+async function validateCandidate(
+  git,
+  sha,
+  version,
+  commits,
+  history,
+  repository,
+) {
   const versions = [
     [
       "package.json",
@@ -216,16 +277,16 @@ async function validateCandidate(git, sha, version, commits) {
     sha,
     "server.json",
     versionSchema.extend({
-      packages: z.array(
-        z.object({ identifier: z.string(), version: z.string() }),
-      ),
+      packages: z.tuple([
+        z.object({
+          registryType: z.literal("npm"),
+          identifier: z.literal("rea-agents"),
+          version: z.string(),
+        }),
+      ]),
     }),
   );
-  const npmPackage = server.packages.find(
-    (entry) => entry.identifier === "rea-agents",
-  );
-  if (npmPackage === undefined)
-    throw new Error("server.json is missing the rea-agents package.");
+  const [npmPackage] = server.packages;
   versions.push(
     ["server.json", server.version],
     ["server.json rea-agents package", npmPackage.version],
@@ -305,22 +366,26 @@ async function validateCandidate(git, sha, version, commits) {
     version,
   );
   const breakingNotes = breakingSection(notes);
-  const normalizedBreakingNotes = breakingNotes.replace(/\s+/gu, " ");
+  const breakingReferences = releaseReferences(
+    breakingNotes,
+    repository,
+    history,
+  );
+  const containsMigrationWording = releaseMigrationWording(breakingNotes);
   const missingBreaking = commits.filter(
     (commit) =>
       commit.breaking &&
-      !referencesCommit(breakingNotes, commit) &&
+      !referencesCommit(breakingReferences, commit) &&
       (commit.breakingNotes.length === 0 ||
-        commit.breakingNotes.some(
-          (note) => !normalizedBreakingNotes.includes(note),
-        )),
+        !commit.breakingNotes.every(containsMigrationWording)),
   );
   if (missingBreaking.length > 0) {
     throw new Error(
       `Release ${version} migration notes omit unreleased breaking changes: ${missingBreaking.map((commit) => `${commit.sha} ${commit.subject}`).join("; ")}`,
     );
   }
-  return commits.filter((commit) => !referencesCommit(notes, commit));
+  const references = releaseReferences(notes, repository, history);
+  return commits.filter((commit) => !referencesCommit(references, commit));
 }
 
 /** Validate a recorded checkpoint and optional candidate using exact Git ancestry. */
@@ -371,7 +436,7 @@ export async function inspectReleaseCheckpoint(git, options) {
     git,
     applicationSha,
     "package.json",
-    versionSchema,
+    sourcePackageSchema,
   );
   if (sourcePackage.version !== baselineVersion) {
     throw new Error(
@@ -402,7 +467,7 @@ export async function inspectReleaseCheckpoint(git, options) {
       .filter((section) => !section.hidden)
       .map((section) => section.type),
   );
-  const commits = readCommits(
+  const history = readCommits(
     await git([
       "log",
       "--first-parent",
@@ -410,7 +475,10 @@ export async function inspectReleaseCheckpoint(git, options) {
       "--format=%H%x00%s%x00%B",
       `${baselineSha}..${applicationSha}`,
     ]),
-  ).filter((commit) => commit.breaking || visibleTypes.has(commit.type));
+  );
+  const commits = history.filter(
+    (commit) => commit.breaking || visibleTypes.has(commit.type),
+  );
   const breaking = commits.filter((commit) => commit.breaking);
   if (
     configuration.versioning !== "always-bump-minor" &&
@@ -436,7 +504,14 @@ export async function inspectReleaseCheckpoint(git, options) {
   }
   const missingNotes =
     phase === "publish" || stage === "candidate"
-      ? await validateCandidate(git, snapshot, expectedVersion, commits)
+      ? await validateCandidate(
+          git,
+          snapshot,
+          expectedVersion,
+          commits,
+          history,
+          repositoryName(sourcePackage.repository),
+        )
       : [];
   return {
     expectedVersion,

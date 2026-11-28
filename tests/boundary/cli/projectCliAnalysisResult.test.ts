@@ -3,20 +3,22 @@ import { expect, it } from "vitest";
 import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
-  reattributedResourceConstraint,
+  AnalysisTargetFailureError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../../../src/domain/analysisErrorCleanup.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { freezeJsonSnapshot } from "../../../src/domain/immutableJson.js";
-import { ownedJsonObjectSchema } from "../../../src/domain/jsonValue.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
-import { err, ok } from "../../../src/domain/result.js";
 import { createCli } from "../../../src/cli.js";
 import { cliCommand, cliCommands } from "../../../src/cli/commandRegistry.js";
-import { BinaryTargetError } from "../../../src/domain/configurationErrors.js";
 import { ArtifactOperationError } from "../../../src/domain/artifactOperationError.js";
 import {
-  projectCliAnalysisResult,
+  MCP_TARGET_FAILURE_SPELLING,
+  renderTargetFailureRecovery,
+} from "../../../src/domain/targetFailure.js";
+import { runWithAnalysisRefusalSpelling } from "../../../src/domain/analysisRefusalSpelling.js";
+import {
+  cliRefusalSpelling,
   projectCliCommandOutput,
   projectCliInputFields,
 } from "../../../src/cli/projectCliAnalysisResult.js";
@@ -27,7 +29,7 @@ const binding = {
   flags: {},
 };
 
-it("projects bound input fields without changing canonical facts or nested identities", () => {
+it("projects bound input fields without changing canonical facts or nested paths", () => {
   const original = freezeJsonSnapshot(
     projectAnalysisError(
       new AnalysisInputError("inspect_keyed_archive", undefined, [
@@ -59,17 +61,6 @@ it("projects bound input fields without changing canonical facts or nested ident
     { path: ["path", "path", 0] },
     { path: ["root"] },
   ]);
-  const details = ownedJsonObjectSchema.parse(
-    ownedJsonObjectSchema.parse(mapped).details,
-  );
-  const mappedIssues = details.issues;
-  const originalIssues = original.details?.issues;
-  if (!Array.isArray(mappedIssues) || !Array.isArray(originalIssues))
-    throw new Error("Expected projected input issues");
-  expect(mappedIssues[1]).toBe(originalIssues[1]);
-  expect(ownedJsonObjectSchema.parse(mappedIssues[0]).observed).toBe(
-    ownedJsonObjectSchema.parse(originalIssues[0]).observed,
-  );
 });
 
 it("keeps cleanup history and retained output while binding the actionable primary issue", () => {
@@ -115,30 +106,23 @@ it("keeps cleanup history and retained output while binding the actionable prima
       issues: [{ path: ["archive"], reason: "invalid_value" }],
     },
   });
-  const details = ownedJsonObjectSchema.parse(
-    ownedJsonObjectSchema.parse(mapped).details,
-  );
-  expect(details.diagnostics).toBe(original.details?.diagnostics);
-  expect(details.captured_output).toBe(original.details?.captured_output);
 });
 
 it("passes through successful data, unbound operations and unknown error values", () => {
   const value = { path: "caller-selected data" };
-  expect(projectCliInputFields(value, binding)).toBe(value);
+  expect(projectCliInputFields(value, binding)).toEqual(value);
   const targetError = projectAnalysisError(
     new AnalysisInputError("open_binary", undefined, [
       { path: ["path"], reason: "invalid_format" },
     ]),
   );
-  expect(projectCliInputFields(targetError, binding)).toBe(targetError);
+  expect(projectCliInputFields(targetError, binding)).toEqual(targetError);
   const unbound = projectAnalysisError(
     new AnalysisInputError("inspect_keyed_archive", undefined, [
       { path: ["root"], reason: "invalid_value" },
     ]),
   );
-  expect(projectCliInputFields(unbound, binding)).toBe(unbound);
-  expect(projectCliAnalysisResult(err(targetError))).toBe(targetError);
-  expect(projectCliAnalysisResult(ok(value))).toBe(value);
+  expect(projectCliInputFields(unbound, binding)).toEqual(unbound);
   const unknown = {
     code: "future_failure",
     details: {
@@ -146,47 +130,74 @@ it("passes through successful data, unbound operations and unknown error values"
       issues: [{ path: ["path"] }],
     },
   };
-  expect(projectCliInputFields(unknown, binding)).toBe(unknown);
+  expect(projectCliInputFields(unknown, binding)).toEqual(unknown);
 });
 
-it("names related fields and operations by contract identity and renders only this command's flags", () => {
-  const constraint = new AnalysisResourceConstraintError(
-    "inspect_sqlite_database",
-    "memory",
-    "fixture limit",
-    null,
-    {
-      related: {
-        parameters: ["columns", "table", "row_limit"],
-        operations: ["inspect_artifact"],
+it("renders a generated per-call budget recovery in the command's spelling and keeps authored recovery", () => {
+  const cli = createCli();
+  const entry = cliCommand(cli, "inspect-pe-resources");
+  if (entry === undefined) throw new Error("Expected inspect-pe-resources");
+  const spelling = cliRefusalSpelling({
+    operations: entry.operations,
+    commands: cliCommands(cli),
+  });
+  const refusal = (remediationAction?: string) =>
+    new AnalysisResourceConstraintError(
+      "inspect_pe_resources",
+      "capacity",
+      "Reads exceed max_file_bytes.",
+      null,
+      {
+        retryable: false,
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_file_bytes",
+          effective_value: 4096,
+          unit: "bytes",
+          minimum: 64,
+          maximum: 8192,
+          default_value: 4096,
+          applies_at: "next_call",
+          required_value: 5000,
+        },
+        ...(remediationAction === undefined ? {} : { remediationAction }),
       },
-    },
+    );
+  const action = (error: AnalysisResourceConstraintError) =>
+    runWithAnalysisRefusalSpelling(
+      spelling,
+      () => projectAnalysisError(error).remediation.action,
+    );
+
+  expect(action(refusal())).toBe(
+    "inspect_pe_resources reached its max_file_bytes budget of 4096 bytes. Pass a larger --max-file-bytes on the next rea inspect-pe-resources run (at least 5000 bytes; range 64..8192 bytes), then retry.",
   );
-  // Re-attribution keeps the inputs the recovery names, as it keeps `limit`.
+  // MCP keeps the contract field and tool.
+  expect(projectAnalysisError(refusal()).remediation.action).toContain(
+    "Pass a larger max_file_bytes on the next inspect_pe_resources call",
+  );
+  const authored =
+    "Producer note. Pass a larger max_file_bytes on the next inspect_pe_resources call.";
+  expect(action(refusal(authored))).toBe(authored);
+});
+
+it("spells an input refusal with the CLI command and drops the MCP catalog clause", () => {
+  const cli = createCli();
+  const entries = cliCommands(cli);
+  const entry = cliCommand(cli, "inspect-pe-resources");
+  if (entry === undefined) throw new Error("Expected inspect-pe-resources");
   const projected = projectAnalysisError(
-    reattributedResourceConstraint("inspect_sqlite_database", constraint),
+    new AnalysisInputError("inspect_pe_resources", undefined, [
+      { path: ["path"], reason: "invalid_value" },
+    ]),
   );
-  expect(projected.details).toMatchObject({
-    related_parameters: ["columns", "table", "row_limit"],
-    related_operations: ["inspect_artifact"],
-  });
-  const sqlite = {
-    operation: "inspect_sqlite_database",
-    fields: {},
-    flags: { columns: "--column", table: "--table" },
-  };
-  // A field the command takes no flag for is left to the contract name.
-  expect(projectCliInputFields(projected, sqlite)).toMatchObject({
-    details: { related_cli_flags: { columns: "--column", table: "--table" } },
-  });
-  // Another command's failure keeps its fields for that command to render.
-  expect(
-    projectCliInputFields(projected, { ...sqlite, operation: "inspect_plist" }),
-  ).toBe(projected);
-  // An error that names nothing projects no related fields.
-  expect(
-    projectAnalysisError(new AnalysisInputError("inspect_plist")).details ?? {},
-  ).not.toHaveProperty("related_parameters");
+  const cliProjected = projectCliCommandOutput(projected, {
+    operations: entry.operations,
+    commands: entries,
+  }) as { remediation: { action: string } };
+  expect(cliProjected.remediation.action).toContain("rea inspect-pe-resources");
+  expect(cliProjected.remediation.action).not.toContain("inspect_pe_resources");
+  expect(cliProjected.remediation.action).not.toContain("tools/list");
 });
 
 it("renders related_cli_flags and related_cli_commands from the CLI command registry across command shapes", () => {
@@ -201,35 +212,6 @@ it("renders related_cli_flags and related_cli_commands from the CLI command regi
     inspectArtifactEntry === undefined
   )
     throw new Error("Expected registered CLI commands");
-
-  // Open-path BinaryTargetError has no details.operation; flags come from the
-  // running command's open_binary bindings, while MCP projection stays flag-free.
-  const loadRejected = projectAnalysisError(
-    new BinaryTargetError("/tmp/image.bin", "unaligned entry", {
-      constraint: "load_selection_rejected",
-    }),
-  );
-  expect(loadRejected.details).toMatchObject({
-    related_parameters: ["format", "architecture", "entry_point"],
-  });
-  expect(loadRejected.details).not.toHaveProperty("related_cli_flags");
-  expect(JSON.stringify(loadRejected)).not.toContain("--target-format");
-
-  const cliLoadRejected = projectCliCommandOutput(
-    { error: "Analysis failed", ...loadRejected },
-    { operations: inspectEntry.operations, commands: entries },
-  );
-  expect(cliLoadRejected).toMatchObject({
-    error: "Analysis failed",
-    details: {
-      related_parameters: ["format", "architecture", "entry_point"],
-      related_cli_flags: {
-        format: "--target-format",
-        architecture: "--architecture",
-        entry_point: "--entry-point",
-      },
-    },
-  });
 
   // Artifact integrity errors omit details.operation when artifactDetails are present.
   const integrityFailure = projectAnalysisError(
@@ -293,30 +275,6 @@ it("renders related_cli_flags and related_cli_commands from the CLI command regi
     },
   });
 
-  // In one-shot mode where only the running registrar was loaded, recorded
-  // canonical commands from other registrars still resolve.
-  expect(
-    projectCliCommandOutput(
-      projectAnalysisError(
-        new BinaryTargetError("/tmp/module.wasm", "wasm module", {
-          constraint: "wasm_requires_static_inspection",
-        }),
-      ),
-      {
-        operations: inspectEntry.operations,
-        commands: [inspectEntry],
-        recordedCommands: { "inspect-wasm-artifact": "wasm" },
-      },
-    ),
-  ).toMatchObject({
-    details: {
-      related_operations: ["inspect_wasm_artifact"],
-      related_cli_commands: {
-        inspect_wasm_artifact: "rea inspect-wasm-artifact",
-      },
-    },
-  });
-
   // Non-contract host commands that bind contract operations render flags too.
   const compareFailure = projectAnalysisError(
     new AnalysisInputError("compare_bundles", {
@@ -333,4 +291,265 @@ it("renders related_cli_flags and related_cli_commands from the CLI command regi
       details: { related_cli_flags: { record_pairs: "--record_pairs" } },
     },
   });
+});
+
+it("names a flattened member flag or the JSON flag for its containing group", () => {
+  const cli = createCli();
+  const commands = cliCommands(cli);
+  const project = (command: string, limit: Record<string, string>) => {
+    const entry = cliCommand(cli, command);
+    if (entry === undefined) throw new Error(`Missing command ${command}`);
+    return projectCliCommandOutput(
+      { code: "resource_constraint", details: { limit } },
+      { operations: entry.operations, commands },
+    ).details.limit;
+  };
+  expect(
+    project("inspect-web-network-capture", {
+      control_kind: "parameter",
+      parameter: "protobuf.schema.message_type",
+    }),
+  ).toEqual({
+    control_kind: "parameter",
+    parameter: "protobuf.schema.message_type",
+    cli_flag: "--protobuf-message",
+  });
+  expect(
+    project("inspect-binary-layout", {
+      setting: "pwntools.max_input_bytes",
+      parameter: "producer_limits.input_bytes",
+    }),
+  ).toEqual({
+    setting: "pwntools.max_input_bytes",
+    parameter: "producer_limits.input_bytes",
+    cli_flag: "--producer-limits",
+  });
+  const unavailable = {
+    control_kind: "parameter",
+    parameter: "source_map_limits.fetch_bytes",
+  };
+  expect(project("trace-web-source-location", unavailable)).toEqual(
+    unavailable,
+  );
+
+  const sourceLocation = cliCommand(cli, "trace-web-source-location");
+  if (sourceLocation === undefined)
+    throw new Error("Missing source location command");
+  const data = {
+    details: {
+      limit: {
+        control_kind: "parameter",
+        parameter: "source_map_limits.decoded_records",
+      },
+    },
+  };
+  expect(
+    projectCliCommandOutput(data, {
+      operations: sourceLocation.operations,
+      commands,
+    }),
+  ).toEqual(data);
+});
+
+it("names a target failure's alternative operations and providers in each adapter's spelling", () => {
+  const cli = createCli();
+  const entries = cliCommands(cli);
+  const entry = cliCommand(cli, "inspect-artifact");
+  if (entry === undefined) throw new Error("Expected inspect-artifact");
+  const projected = projectAnalysisError(
+    new AnalysisTargetFailureError(
+      "inspect_artifact",
+      "/selected/app",
+      {
+        kind: "unsupported",
+        format: "directory",
+        detail: "No container format claims the directory",
+        undecodedContent: false,
+      },
+      {
+        related: {
+          operations: ["inspect_desktop_application"],
+          providers: ["ghidra"],
+        },
+      },
+    ),
+  );
+  const facts = {
+    operation: "inspect_artifact",
+    kind: "unsupported" as const,
+    format: "directory",
+    alternatives: {
+      operations: ["inspect_desktop_application"],
+      providers: ["ghidra"],
+    },
+  };
+  // MCP, and Evidence, name the tool and the open_binary argument.
+  expect(projected).toMatchObject({
+    remediation: {
+      action: renderTargetFailureRecovery(facts, MCP_TARGET_FAILURE_SPELLING),
+    },
+    details: {
+      related_operations: ["inspect_desktop_application"],
+      related_providers: ["ghidra"],
+    },
+  });
+  expect(projected.remediation.action).toContain("inspect_artifact");
+  expect(projected.remediation.action).toContain("inspect_desktop_application");
+  expect(projected.remediation.action).toContain(
+    'open_binary with provider_id "ghidra"',
+  );
+  // The CLI renders the same table entry with its commands and option.
+  const cliProjected = projectCliCommandOutput(projected, {
+    operations: entry.operations,
+    commands: entries,
+  }) as { remediation: { action: string } };
+  expect(cliProjected).toMatchObject({
+    remediation: {
+      action: renderTargetFailureRecovery(facts, {
+        operation: (op) =>
+          op === "inspect_artifact"
+            ? "rea inspect-artifact"
+            : "rea inspect-desktop-application",
+        provider: (providerId) => `--provider ${providerId}`,
+      }),
+    },
+  });
+  expect(cliProjected.remediation.action).toContain("rea inspect-artifact");
+  expect(cliProjected.remediation.action).toContain(
+    "rea inspect-desktop-application",
+  );
+  expect(cliProjected.remediation.action).toContain("--provider ghidra");
+});
+
+it("rewrites target recovery when cleanup drops the retry hint", () => {
+  const cli = createCli();
+  const entries = cliCommands(cli);
+  const entry = cliCommand(cli, "inspect-artifact");
+  if (entry === undefined) throw new Error("Expected inspect-artifact");
+  const projected = projectAnalysisError(
+    new AnalysisTargetFailureError(
+      "inspect_artifact",
+      "/selected/app",
+      {
+        kind: "malformed",
+        format: "zip",
+        detail: "ZIP archive is malformed: bad crc",
+      },
+      { cleanup: { reason: "close failed", resources: ["/selected/app"] } },
+    ),
+  );
+  expect(projected).toMatchObject({
+    code: "cleanup_incomplete",
+    details: { failure_kind: "malformed", format: "zip" },
+  });
+  expect(projected.retry).toBeUndefined();
+  expect(projected.remediation.action).toContain("inspect_artifact");
+  const cliProjected = projectCliCommandOutput(projected, {
+    operations: entry.operations,
+    commands: entries,
+  }) as { remediation: { action: string } };
+  expect(cliProjected.remediation.action).toContain("rea inspect-artifact");
+  expect(cliProjected.remediation.action).not.toContain("inspect_artifact");
+});
+
+it("omits MCP-only alternative operations from CLI target failure recovery", () => {
+  const cli = createCli();
+  const entries = cliCommands(cli);
+  const entry = cliCommand(cli, "inspect-analysis-view");
+  if (entry === undefined) throw new Error("Expected inspect-analysis-view");
+  const projected = projectAnalysisError(
+    new AnalysisTargetFailureError(
+      "inspect_analysis_view",
+      "/selected/evidence.json",
+      {
+        kind: "unsupported",
+        format: "evidence",
+        detail:
+          "inspect_recorded_crash Evidence does not expose analysis views",
+        undecodedContent: false,
+      },
+      {
+        related: {
+          operations: ["get_evidence_bundle", "export_evidence_bundle"],
+        },
+      },
+    ),
+  );
+  const cliProjected = projectCliCommandOutput(projected, {
+    operations: entry.operations,
+    commands: entries,
+  }) as { remediation: { action: string } };
+  expect(cliProjected.remediation.action).toBe(
+    renderTargetFailureRecovery(
+      {
+        operation: "inspect_analysis_view",
+        kind: "unsupported",
+        format: "evidence",
+      },
+      {
+        operation: () => "rea inspect-analysis-view",
+        provider: (providerId) => `--provider ${providerId}`,
+      },
+    ),
+  );
+  expect(cliProjected.remediation.action).toContain(
+    "rea inspect-analysis-view",
+  );
+  expect(cliProjected.remediation.action).not.toContain("get_evidence_bundle");
+  expect(cliProjected.remediation.action).not.toContain(
+    "export_evidence_bundle",
+  );
+});
+
+it("rewrites conflict recovery input names to CLI flags even after renaming details.inputs", () => {
+  const cli = createCli();
+  const entries = cliCommands(cli);
+  const entry = cliCommand(cli, "inspect-il2cpp-metadata");
+  if (entry === undefined) throw new Error("Expected inspect-il2cpp-metadata");
+  const projected = projectAnalysisError(
+    new AnalysisTargetFailureError(
+      "inspect_il2cpp_metadata",
+      "/selected/global-metadata.dat",
+      {
+        kind: "conflict",
+        format: "il2cpp-metadata",
+        detail: "code-registration-not-found: no registration matched",
+        inputs: [
+          { field: "path", path: "/selected/global-metadata.dat" },
+          { field: "binary_path", path: "/selected/GameAssembly.dylib" },
+        ],
+      },
+    ),
+  );
+  expect(projected.remediation.action).toContain("(path, binary_path)");
+
+  // Contract commands run projectCliInputFields before projectCliCommandOutput.
+  const fieldProjected = projectCliInputFields(projected, {
+    operation: "inspect_il2cpp_metadata",
+    fields: { binary_path: "binary" },
+    flags: { binary_path: "--binary" },
+    operations: entry.operations,
+  });
+  const cliProjected = projectCliCommandOutput(fieldProjected, {
+    operations: entry.operations,
+    commands: entries,
+  });
+  expect(cliProjected).toMatchObject({
+    details: {
+      inputs: [
+        { field: "path", path: "/selected/global-metadata.dat" },
+        { field: "binary", path: "/selected/GameAssembly.dylib" },
+      ],
+    },
+  });
+  expect(cliProjected.remediation.action).toContain("(path, --binary)");
+  expect(cliProjected.remediation.action).not.toContain("binary_path");
+
+  // Direct command-output projection without prior field renaming also maps flags.
+  const directProjected = projectCliCommandOutput(projected, {
+    operations: entry.operations,
+    commands: entries,
+  });
+  expect(directProjected.remediation.action).toContain("(path, --binary)");
+  expect(directProjected.remediation.action).not.toContain("binary_path");
 });

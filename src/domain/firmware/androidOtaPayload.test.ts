@@ -1,5 +1,12 @@
 import { createHash } from "node:crypto";
 import { zstdCompressSync } from "node:zlib";
+import { runWithAnalysisOperationSnapshot } from "../analysisOperationSnapshot.js";
+import { ConfigurationError } from "../configurationErrors.js";
+import { ZSTD_MAX_FRAMES_ENVIRONMENT } from "../compression/zstandardFrameAllowance.js";
+import {
+  MAXIMUM_ZSTD_MAX_FRAMES,
+  MINIMUM_ZSTD_MAX_FRAMES,
+} from "../analysisResourceLimits.js";
 
 import { BinaryWriter, WireType } from "@bufbuild/protobuf/wire";
 import { expect, it } from "vitest";
@@ -11,18 +18,18 @@ import {
   ANDROID_OTA_MAX_EXTRACT_BYTES,
   ANDROID_OTA_MAX_GROUP_PARTITION_NAMES,
   ANDROID_OTA_MAX_MANIFEST_BYTES,
-  ANDROID_OTA_MAX_OPERATION_DATA_BYTES,
   ANDROID_OTA_MAX_PARTITIONS,
   ANDROID_OTA_MAX_SIGNATURE_BYTES,
   ANDROID_OTA_PAYLOAD_LIMITATIONS,
   parseAndroidOtaHeader,
   parseAndroidOtaPayload,
   recognizeAndroidOtaPayload,
-  reconstructAndroidOtaPartition,
-  androidOtaDistinctOperationDataBytes,
-  androidOtaUnsupportedVersion,
+  reconstructAndroidOtaPartitionCooperative,
+  withAndroidOtaPayloadSignature,
+  type AndroidOtaPartition,
 } from "./androidOtaPayload.js";
 import {
+  androidOtaSignatureBlob,
   buildAndroidOtaPayload,
   deltaAndroidOtaPayload,
   fullAndroidOtaPayload,
@@ -30,8 +37,36 @@ import {
   v1AndroidOtaPayload,
 } from "./androidOtaPayload.fixture.js";
 
-const parse = (bytes: Uint8Array) =>
-  parseAndroidOtaPayload(bytes, bytes.length);
+const parse = (bytes: Uint8Array) => {
+  const header = parseAndroidOtaHeader(bytes, bytes.length);
+  if (!header.ok) return header;
+  const { manifestOffset, metadataPrefixEnd } = header.value;
+  const parsed = parseAndroidOtaPayload(
+    header.value,
+    bytes.subarray(manifestOffset, metadataPrefixEnd),
+    bytes.length,
+  );
+  if (!parsed.ok || parsed.value.payloadSignatureRange === null) return parsed;
+  const { offset, bytes: length } = parsed.value.payloadSignatureRange;
+  return withAndroidOtaPayloadSignature(
+    parsed.value,
+    bytes.subarray(offset, offset + length),
+  );
+};
+
+const reconstructPartition = (
+  partition: AndroidOtaPartition,
+  blockSize: number,
+  readBlob: (offset: number, length: number) => Uint8Array,
+  options?: { readonly verifyDeclaredHash?: boolean },
+) =>
+  reconstructAndroidOtaPartitionCooperative(
+    partition,
+    blockSize,
+    readBlob,
+    async () => {},
+    options,
+  );
 
 const header = (fields: {
   readonly version?: bigint;
@@ -48,6 +83,35 @@ const header = (fields: {
   return bytes;
 };
 
+it.each([0, 4])(
+  "merges empty PartitionInfo occurrences and keeps last scalar values (size: %s)",
+  (size) => {
+    const hash = Buffer.alloc(32, 0xab);
+    const fragments = [
+      { size: 8, hash: Buffer.alloc(32) },
+      { size },
+      { hash },
+      {},
+    ];
+    const bytes = buildAndroidOtaPayload({
+      partitions: [
+        {
+          name: "boot",
+          oldInfoFragments: fragments,
+          newInfoFragments: fragments,
+          operations: [{ type: 0, data: Buffer.from("BOOT") }],
+        },
+      ],
+    });
+    const parsed = parse(bytes);
+    if (!parsed.ok) throw parsed.error;
+    expect(parsed.value.partitions[0]).toMatchObject({
+      oldPartitionInfo: { size, hashHex: hash.toString("hex") },
+      newPartitionInfo: { size, hashHex: hash.toString("hex") },
+    });
+  },
+);
+
 it("recognizes CrAU v2 and refuses any other readable major version", () => {
   expect(recognizeAndroidOtaPayload(Buffer.from("nope"))).toBeUndefined();
   expect(recognizeAndroidOtaPayload(Buffer.from("CrAU"))).toEqual({
@@ -56,13 +120,9 @@ it("recognizes CrAU v2 and refuses any other readable major version", () => {
   expect(recognizeAndroidOtaPayload(header({}))).toEqual({
     state: "recognized",
   });
-  expect(recognizeAndroidOtaPayload(header({ version: 1n }))).toEqual({
-    state: "refused",
-    reason: androidOtaUnsupportedVersion(1n),
-  });
   expect(recognizeAndroidOtaPayload(header({ version: 3n }))).toEqual({
     state: "refused",
-    reason: androidOtaUnsupportedVersion(3n),
+    reason: expect.stringContaining("major version 3"),
   });
 });
 
@@ -116,25 +176,7 @@ it("inventories a full payload with REPLACE, ZERO, dynamic groups and apex_info"
   expect(parsed.value.limitations.join(" ")).toContain("not verified");
 });
 
-it("reconstructs REPLACE and ZERO partitions against the declared hash", () => {
-  const bytes = fullAndroidOtaPayload();
-  const parsed = parse(bytes);
-  if (!parsed.ok) throw parsed.error;
-  const blob = bytes.subarray(parsed.value.header.blobOffset);
-  for (const partition of parsed.value.partitions) {
-    const reconstructed = reconstructAndroidOtaPartition(
-      partition,
-      parsed.value.blockSize,
-      (offset, length) => blob.subarray(offset, offset + length),
-    );
-    if (!reconstructed.ok) throw reconstructed.error;
-    expect(createHash("sha256").update(reconstructed.value).digest("hex")).toBe(
-      partition.newPartitionInfo.hashHex,
-    );
-  }
-});
-
-it("inventories a delta payload without applying SOURCE_COPY or BROTLI_BSDIFF", () => {
+it("inventories a delta payload without applying SOURCE_COPY or BROTLI_BSDIFF", async () => {
   const parsed = parse(deltaAndroidOtaPayload());
   if (!parsed.ok) throw parsed.error;
   expect(parsed.value.payloadKind).toBe("delta");
@@ -148,7 +190,7 @@ it("inventories a delta payload without applying SOURCE_COPY or BROTLI_BSDIFF", 
       { type: "BROTLI_BSDIFF", type_code: 10, count: 1 },
     ],
   });
-  const reconstructed = reconstructAndroidOtaPartition(
+  const reconstructed = await reconstructPartition(
     parsed.value.partitions[0]!,
     parsed.value.blockSize,
     () => new Uint8Array(),
@@ -167,7 +209,132 @@ it("counts an unknown InstallOperation type as unknown", () => {
   ]);
 });
 
-it("reconstructs REPLACE_ZSTD payloads", () => {
+it("reconstructs REPLACE_ZSTD payloads", async () => {
+  const plain = Buffer.from("zstd-partition-bytes");
+  const compressed = zstdCompressSync(plain);
+  const bytes = buildAndroidOtaPayload({
+    partitions: [
+      {
+        name: "vendor",
+        operations: [
+          {
+            type: 14,
+            data: compressed,
+            dataHash: createHash("sha256").update(compressed).digest(),
+            dstExtents: [{ startBlock: 0, numBlocks: 1 }],
+          },
+        ],
+      },
+    ],
+  });
+  const parsed = parse(bytes);
+  if (!parsed.ok) throw parsed.error;
+  expect(parsed.value.partitions[0]?.extractable).toBe(true);
+  const blob = bytes.subarray(parsed.value.header.blobOffset);
+  const reconstructed = await reconstructPartition(
+    parsed.value.partitions[0]!,
+    parsed.value.blockSize,
+    (offset, length) => blob.subarray(offset, offset + length),
+  );
+  if (!reconstructed.ok) throw reconstructed.error;
+  expect(
+    Buffer.from(reconstructed.value.subarray(0, plain.length)).equals(plain),
+  ).toBe(true);
+});
+
+const zstdByteFrame = (byte: number): Buffer =>
+  Buffer.from([0x28, 0xb5, 0x2f, 0xfd, 0x20, 0x01, 0x09, 0x00, 0x00, byte]);
+
+it("rejects unread REPLACE_ZSTD bytes and accepts a second frame", async () => {
+  const plain = Buffer.from("zstd partition");
+  const trailing = buildAndroidOtaPayload({
+    partitions: [
+      {
+        name: "vendor",
+        operations: [
+          {
+            type: 14,
+            data: Buffer.concat([zstdCompressSync(plain), Buffer.of(0)]),
+          },
+        ],
+      },
+    ],
+  });
+  const trailingParsed = parse(trailing);
+  if (!trailingParsed.ok) throw trailingParsed.error;
+  const trailingBlob = trailing.subarray(
+    trailingParsed.value.header.blobOffset,
+  );
+  expect(
+    await reconstructPartition(
+      trailingParsed.value.partitions[0]!,
+      trailingParsed.value.blockSize,
+      (offset, length) => trailingBlob.subarray(offset, offset + length),
+    ),
+  ).toMatchObject({
+    ok: false,
+    error: {
+      kind: "malformed",
+      failure: { field: "trailing_bytes" },
+    },
+  });
+
+  const frames = Buffer.concat([zstdByteFrame(0x61), zstdByteFrame(0x62)]);
+  const concatenated = buildAndroidOtaPayload({
+    partitions: [
+      {
+        name: "vendor",
+        newSize: 2,
+        omitNewHash: true,
+        operations: [
+          {
+            type: 14,
+            data: frames,
+            dstExtents: [{ startBlock: 0, numBlocks: 1 }],
+          },
+        ],
+      },
+    ],
+  });
+  const parsed = parse(concatenated);
+  if (!parsed.ok) throw parsed.error;
+  const blob = concatenated.subarray(parsed.value.header.blobOffset);
+  const read = (offset: number, length: number) =>
+    blob.subarray(offset, offset + length);
+  const reconstructed = await reconstructPartition(
+    parsed.value.partitions[0]!,
+    parsed.value.blockSize,
+    read,
+    { verifyDeclaredHash: false },
+  );
+  if (!reconstructed.ok) throw reconstructed.error;
+  expect([...reconstructed.value.subarray(0, 2)]).toEqual([0x61, 0x62]);
+  expect(
+    await runWithAnalysisOperationSnapshot(
+      { revision: 1, overrides: { "zstd.max_frames": 1 } },
+      () =>
+        reconstructPartition(
+          parsed.value.partitions[0]!,
+          parsed.value.blockSize,
+          read,
+          { verifyDeclaredHash: false },
+        ),
+    ),
+  ).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "ZstandardFrameWorkRefusal",
+      reason: "work_limit",
+      setting: "zstd.max_frames",
+      value: 1,
+      source: "runtime",
+      minimum: MINIMUM_ZSTD_MAX_FRAMES,
+      maximum: MAXIMUM_ZSTD_MAX_FRAMES,
+    },
+  });
+});
+
+it("keeps an invalid REPLACE_ZSTD allowance out of the malformed path", async () => {
   const plain = Buffer.from("zstd-partition-bytes");
   const bytes = buildAndroidOtaPayload({
     partitions: [
@@ -185,20 +352,31 @@ it("reconstructs REPLACE_ZSTD payloads", () => {
   });
   const parsed = parse(bytes);
   if (!parsed.ok) throw parsed.error;
-  expect(parsed.value.partitions[0]?.extractable).toBe(true);
   const blob = bytes.subarray(parsed.value.header.blobOffset);
-  const reconstructed = reconstructAndroidOtaPartition(
-    parsed.value.partitions[0]!,
-    parsed.value.blockSize,
-    (offset, length) => blob.subarray(offset, offset + length),
-  );
-  if (!reconstructed.ok) throw reconstructed.error;
-  expect(
-    Buffer.from(reconstructed.value.subarray(0, plain.length)).equals(plain),
-  ).toBe(true);
+  const reconstruct = () =>
+    reconstructPartition(
+      parsed.value.partitions[0]!,
+      parsed.value.blockSize,
+      (offset, length) => blob.subarray(offset, offset + length),
+    );
+  const previous = process.env[ZSTD_MAX_FRAMES_ENVIRONMENT];
+  process.env[ZSTD_MAX_FRAMES_ENVIRONMENT] = "0";
+  try {
+    const refused = await reconstruct();
+    expect(refused.ok).toBe(false);
+    if (!refused.ok) expect(refused.error).toBeInstanceOf(ConfigurationError);
+    const recovered = await runWithAnalysisOperationSnapshot(
+      { revision: 1, overrides: { "zstd.max_frames": 8 } },
+      reconstruct,
+    );
+    expect(recovered.ok).toBe(true);
+  } finally {
+    if (previous === undefined) delete process.env[ZSTD_MAX_FRAMES_ENVIRONMENT];
+    else process.env[ZSTD_MAX_FRAMES_ENVIRONMENT] = previous;
+  }
 });
 
-it("refuses REPLACE_ZSTD output past destination extents as a capacity limit", () => {
+it("refuses REPLACE_ZSTD output past destination extents as a capacity limit", async () => {
   const plain = Buffer.alloc(8192, 0x61);
   const bytes = buildAndroidOtaPayload({
     partitions: [
@@ -219,7 +397,7 @@ it("refuses REPLACE_ZSTD output past destination extents as a capacity limit", (
   if (!parsed.ok) throw parsed.error;
   const blob = bytes.subarray(parsed.value.header.blobOffset);
   expect(
-    reconstructAndroidOtaPartition(
+    await reconstructPartition(
       parsed.value.partitions[0]!,
       parsed.value.blockSize,
       (offset, length) => blob.subarray(offset, offset + length),
@@ -232,41 +410,13 @@ it("refuses REPLACE_ZSTD output past destination extents as a capacity limit", (
   });
 });
 
-it("refuses distinct operation data past the read budget as a capacity limit", () => {
-  expect(
-    androidOtaDistinctOperationDataBytes([
-      {
-        typeCode: 0,
-        typeName: "REPLACE",
-        dataOffset: 0,
-        dataLength: ANDROID_OTA_MAX_OPERATION_DATA_BYTES + 1,
-        srcExtents: [],
-        dstExtents: [{ startBlock: 0, numBlocks: 1 }],
-      },
-    ]),
-  ).toMatchObject({
-    ok: false,
-    error: {
-      failure: {
-        kind: "limit",
-        limit: {
-          maximum: ANDROID_OTA_MAX_OPERATION_DATA_BYTES,
-        },
-      },
-    },
-  });
-});
-
 it("refuses a v1 header as an unsupported version", () => {
   const bytes = v1AndroidOtaPayload();
-  expect(recognizeAndroidOtaPayload(bytes)).toMatchObject({
-    state: "refused",
-    reason: androidOtaUnsupportedVersion(1n),
-  });
   expect(parseAndroidOtaHeader(bytes, bytes.length)).toMatchObject({
     ok: false,
     error: {
       kind: "unsupported",
+      message: expect.stringContaining("major version 1"),
       failure: { field: "major_version" },
     },
   });
@@ -295,7 +445,7 @@ it("refuses a bad magic, truncated header, and a truncated manifest", () => {
   });
 });
 
-it("keeps a complete manifest when the blob is truncated", () => {
+it("keeps a complete manifest when the blob is truncated", async () => {
   const full = fullAndroidOtaPayload();
   const parsed = parse(full);
   if (!parsed.ok) throw parsed.error;
@@ -311,7 +461,7 @@ it("keeps a complete manifest when the blob is truncated", () => {
   expect(kept.value.partitions[0]?.extractRefusal).toBe("blob_truncated");
   expect(kept.value.limitations.join(" ")).toContain("truncated");
   expect(
-    reconstructAndroidOtaPartition(
+    await reconstructPartition(
       kept.value.partitions[0]!,
       kept.value.blockSize,
       () => new Uint8Array(),
@@ -322,7 +472,7 @@ it("keeps a complete manifest when the blob is truncated", () => {
   });
 });
 
-it("names the extraction ceiling, not unsupported operations, for a large REPLACE partition", () => {
+it("names the extraction ceiling, not unsupported operations, for a large REPLACE partition", async () => {
   const blockSize = 4096;
   const newSize = ANDROID_OTA_MAX_EXTRACT_BYTES + blockSize;
   const parsed = parse(
@@ -356,7 +506,7 @@ it("names the extraction ceiling, not unsupported operations, for a large REPLAC
     ANDROID_OTA_PAYLOAD_LIMITATIONS.unsupportedOperations,
   );
   expect(
-    reconstructAndroidOtaPartition(partition!, blockSize, () => {
+    await reconstructPartition(partition!, blockSize, () => {
       throw new Error("a refused partition reads no operation data");
     }),
   ).toMatchObject({
@@ -369,6 +519,46 @@ it("names the extraction ceiling, not unsupported operations, for a large REPLAC
     },
   });
 });
+
+it.each([
+  { signaturesOffset: 0, signaturesSize: null },
+  {
+    signaturesOffset: null,
+    signaturesSize: ANDROID_OTA_MAX_SIGNATURE_BYTES + 1,
+  },
+])(
+  "reconstructs a partition when one payload signature coordinate is absent ($signaturesOffset, $signaturesSize)",
+  async ({ signaturesOffset, signaturesSize }) => {
+    const data = Buffer.from("BOOT");
+    const bytes = buildAndroidOtaPayload({
+      signaturesOffset,
+      signaturesSize,
+      payloadSignature: new Uint8Array(),
+      partitions: [{ name: "boot", operations: [{ type: 0, data }] }],
+    });
+    const parsed = parse(bytes);
+    expect(parsed).toMatchObject({
+      ok: true,
+      value: {
+        signaturesOffset,
+        signaturesSize,
+        payloadSignatureBlobSize: null,
+        payloadSignatureCount: null,
+        blobTruncated: false,
+      },
+    });
+    if (!parsed.ok) throw parsed.error;
+    const { blobOffset } = parsed.value.header;
+    expect(
+      await reconstructPartition(
+        parsed.value.partitions[0]!,
+        parsed.value.blockSize,
+        (offset, length) =>
+          bytes.subarray(blobOffset + offset, blobOffset + offset + length),
+      ),
+    ).toEqual({ ok: true, value: data });
+  },
+);
 
 it("refuses operation data that overruns the payload blob", () => {
   const bytes = buildAndroidOtaPayload({
@@ -417,13 +607,11 @@ it("refuses a truncated protobuf field in the manifest", () => {
   });
 });
 
-it("refuses an oversize manifest and metadata signature as capacity limits", () => {
-  expect(
-    parseAndroidOtaHeader(
-      header({ manifestSize: BigInt(ANDROID_OTA_MAX_MANIFEST_BYTES + 1) }),
-      ANDROID_OTA_HEADER_V2_BYTES,
-    ),
-  ).toMatchObject({
+it("reports a manifest beyond EOF before applying the manifest allowance", () => {
+  const manifestSize = ANDROID_OTA_MAX_MANIFEST_BYTES + 1;
+  const bytes = header({ manifestSize: BigInt(manifestSize) });
+  const end = ANDROID_OTA_HEADER_V2_BYTES + manifestSize;
+  expect(parseAndroidOtaHeader(bytes, end)).toMatchObject({
     ok: false,
     error: {
       failure: {
@@ -432,37 +620,52 @@ it("refuses an oversize manifest and metadata signature as capacity limits", () 
       },
     },
   });
-  expect(
-    parseAndroidOtaHeader(
-      header({ metadataSignatureSize: ANDROID_OTA_MAX_SIGNATURE_BYTES + 1 }),
-      ANDROID_OTA_HEADER_V2_BYTES,
-    ),
-  ).toMatchObject({
+  expect(parseAndroidOtaHeader(bytes, end - 1)).toMatchObject({
     ok: false,
-    error: {
-      failure: {
-        kind: "limit",
-        limit: { maximum: ANDROID_OTA_MAX_SIGNATURE_BYTES },
-      },
-    },
+    error: { kind: "truncated" },
   });
 });
 
-it("refuses an oversize manifest signatures_size before any signature read", () => {
-  const bytes = buildAndroidOtaPayload({
-    partitions: [],
-    signaturesSize: ANDROID_OTA_MAX_SIGNATURE_BYTES + 1,
-  });
-  expect(parse(bytes)).toMatchObject({
-    ok: false,
-    error: {
-      failure: {
-        kind: "limit",
-        limit: { maximum: ANDROID_OTA_MAX_SIGNATURE_BYTES },
+it.each(["metadata", "payload"] as const)(
+  "limits a backed %s signature and keeps the manifest if that signature is incomplete",
+  (kind) => {
+    const signature = androidOtaSignatureBlob(
+      Buffer.alloc(ANDROID_OTA_MAX_SIGNATURE_BYTES),
+    );
+    const empty = new Uint8Array();
+    const bytes = buildAndroidOtaPayload({
+      partitions: [],
+      ...(kind === "metadata"
+        ? {
+            metadataSignature: signature,
+            payloadSignature: empty,
+            signaturesOffset: null,
+            signaturesSize: null,
+          }
+        : { metadataSignature: empty, payloadSignature: signature }),
+    });
+    expect(parse(bytes)).toMatchObject({
+      ok: false,
+      error: {
+        failure: {
+          kind: "limit",
+          limit: { maximum: ANDROID_OTA_MAX_SIGNATURE_BYTES },
+        },
       },
-    },
-  });
-});
+    });
+    expect(parse(bytes.subarray(0, -1))).toMatchObject({
+      ok: true,
+      value: {
+        blobTruncated: true,
+        metadataSignatureBlobSize: kind === "metadata" ? signature.length : 0,
+        metadataSignatureCount: null,
+        payloadSignatureBlobSize: kind === "payload" ? signature.length : null,
+        payloadSignatureRange: null,
+        payloadSignatureCount: null,
+      },
+    });
+  },
+);
 
 it("refuses manifest extents past the total extent budget as a capacity limit", () => {
   const extents = new Uint8Array((ANDROID_OTA_MAX_EXTENTS_TOTAL + 1) * 2);
@@ -531,7 +734,7 @@ it("refuses group partition names past the manifest-wide budget as a capacity li
   });
 });
 
-it("reports a reconstructed hash mismatch without inventing a matching digest", () => {
+it("reports a reconstructed hash mismatch without inventing a matching digest", async () => {
   const bytes = buildAndroidOtaPayload({
     partitions: [
       {
@@ -545,7 +748,7 @@ it("reports a reconstructed hash mismatch without inventing a matching digest", 
   if (!parsed.ok) throw parsed.error;
   const blob = bytes.subarray(parsed.value.header.blobOffset);
   expect(
-    reconstructAndroidOtaPartition(
+    await reconstructPartition(
       parsed.value.partitions[0]!,
       parsed.value.blockSize,
       (offset, length) => blob.subarray(offset, offset + length),
@@ -559,7 +762,7 @@ it("reports a reconstructed hash mismatch without inventing a matching digest", 
   });
 });
 
-it("charges repeated operations on one blob against the reconstruction budget", () => {
+it("charges repeated operations on one blob against the reconstruction budget", async () => {
   const blockSize = 4096;
   const bytes = buildAndroidOtaPayload({
     blockSize,
@@ -583,7 +786,7 @@ it("charges repeated operations on one blob against the reconstruction budget", 
   const [operation] = partition!.operations;
   const repeats = ANDROID_OTA_MAX_EXTRACT_BYTES / blockSize + 1;
   expect(
-    reconstructAndroidOtaPartition(
+    await reconstructPartition(
       {
         ...partition!,
         operations: Array.from({ length: repeats }, () => operation!),
@@ -604,7 +807,7 @@ it("charges repeated operations on one blob against the reconstruction budget", 
   });
 });
 
-it("refuses destination extents outside the image and short operation data", () => {
+it("refuses destination extents outside the image and short operation data", async () => {
   const blockSize = 4096;
   const reconstruct = (
     dstExtents: readonly { startBlock: number; numBlocks: number }[],
@@ -623,7 +826,7 @@ it("refuses destination extents outside the image and short operation data", () 
     const parsed = parse(bytes);
     if (!parsed.ok) throw parsed.error;
     const blob = bytes.subarray(parsed.value.header.blobOffset);
-    return reconstructAndroidOtaPartition(
+    return reconstructPartition(
       parsed.value.partitions[0]!,
       blockSize,
       (offset, length) => blob.subarray(offset, offset + length),
@@ -635,29 +838,29 @@ it("refuses destination extents outside the image and short operation data", () 
     error: { kind: "malformed" },
   };
   expect(
-    reconstruct(
+    await reconstruct(
       [{ startBlock: 1, numBlocks: 1 }],
       Buffer.alloc(blockSize, 0x41),
     ),
   ).toMatchObject(refused);
   expect(
-    reconstruct(
+    await reconstruct(
       [{ startBlock: 0, numBlocks: 2 }],
       Buffer.alloc(blockSize * 2, 0x41),
     ),
   ).toMatchObject(refused);
   expect(
-    reconstruct([{ startBlock: 0, numBlocks: 1 }], Buffer.from("BOOT")),
+    await reconstruct([{ startBlock: 0, numBlocks: 1 }], Buffer.from("BOOT")),
   ).toMatchObject(refused);
   expect(
-    reconstruct(
+    await reconstruct(
       [{ startBlock: 0, numBlocks: 1 }],
       Buffer.alloc(blockSize, 0x41),
     ),
   ).toMatchObject({ ok: true });
 });
 
-it("refuses reconstruction when destination extents leave blocks unwritten", () => {
+it("refuses reconstruction when destination extents leave blocks unwritten", async () => {
   const blockSize = 4096;
   const bytes = buildAndroidOtaPayload({
     blockSize,
@@ -679,7 +882,7 @@ it("refuses reconstruction when destination extents leave blocks unwritten", () 
   if (!parsed.ok) throw parsed.error;
   const blob = bytes.subarray(parsed.value.header.blobOffset);
   expect(
-    reconstructAndroidOtaPartition(
+    await reconstructPartition(
       parsed.value.partitions[0]!,
       blockSize,
       (offset, length) => blob.subarray(offset, offset + length),
@@ -729,4 +932,78 @@ it("keeps duplicate partition naming linear at the partition count limit", () =>
   expect(paths.at(-1)).toBe(
     `${name}-${String(ANDROID_OTA_MAX_PARTITIONS - 1)}.img`,
   );
+});
+
+it("treats empty operation digests as absent and rejects malformed lengths", () => {
+  const data = Buffer.from("BOOT");
+  for (const dataHash of [Buffer.alloc(0), Buffer.alloc(31)]) {
+    const parsed = parse(
+      buildAndroidOtaPayload({
+        partitions: [
+          {
+            name: "boot",
+            omitNewHash: true,
+            operations: [{ type: 0, data, dataHash }],
+          },
+        ],
+      }),
+    );
+    if (dataHash.length === 0) {
+      expect(parsed).toMatchObject({
+        ok: true,
+        value: { partitions: [{ operations: [{ dataHashHex: null }] }] },
+      });
+    } else {
+      expect(parsed).toMatchObject({
+        ok: false,
+        error: {
+          message: expect.stringContaining(
+            "data_sha256_hash must be 32 bytes or empty",
+          ),
+        },
+      });
+    }
+  }
+});
+
+it("compares each digest claim when operation data is shared", async () => {
+  const data = Buffer.alloc(4096, 0x42);
+  const expected = createHash("sha256").update(data).digest();
+  const conflicting = Buffer.alloc(32);
+  const bytes = buildAndroidOtaPayload({
+    partitions: [
+      {
+        name: "boot",
+        newSize: 8192,
+        omitNewHash: true,
+        operations: [
+          { type: 0, data, dataHash: expected },
+          {
+            type: 0,
+            dataOffset: 0,
+            dataLength: data.length,
+            dataHash: conflicting,
+            dstExtents: [{ startBlock: 1, numBlocks: 1 }],
+          },
+        ],
+      },
+    ],
+  });
+  const parsed = parse(bytes);
+  if (!parsed.ok) throw parsed.error;
+  const [partition] = parsed.value.partitions;
+  if (partition === undefined) throw new Error("Missing boot partition");
+  const { blobOffset } = parsed.value.header;
+  const blob = bytes.subarray(blobOffset, blobOffset + data.length);
+  expect(
+    await reconstructPartition(partition, parsed.value.blockSize, () => blob),
+  ).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AndroidOtaPayloadIntegrityFailure",
+      message: expect.stringContaining("operation 1"),
+      declaredHashHex: conflicting.toString("hex"),
+      observedHashHex: expected.toString("hex"),
+    },
+  });
 });

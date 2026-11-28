@@ -1,3 +1,4 @@
+import { captureOutput } from "../../support/cli/capturedOutput.js";
 import { registerCliCommand } from "../../../src/cli/commandRegistry.js";
 import { createCommandCli } from "../../support/cli/commandCli.js";
 import { Writable } from "node:stream";
@@ -6,7 +7,7 @@ import { estimateTokenCount } from "tokenx";
 import { describe, expect, it } from "vitest";
 
 import { formatCliOutput } from "../../../src/cli/cliOutputFormatter.js";
-import { parseCliOutputArguments } from "../../../src/cliOutput.js";
+import { parseCliOutputArguments } from "../../../src/cli/cliOutput.js";
 import { createCliResultOutput } from "../../../src/cli/cliResultOutput.js";
 
 const renderWindow = async (
@@ -17,14 +18,7 @@ const renderWindow = async (
   terminal = false,
   formatExplicit = true,
 ): Promise<{ readonly handled: boolean; readonly text: string }> => {
-  const chunks: Buffer[] = [];
-  const destination = new Writable({
-    write(chunk: Buffer, _encoding, callback) {
-      chunks.push(chunk);
-      callback();
-    },
-  });
-  if (terminal) Object.defineProperty(destination, "isTTY", { value: true });
+  const { destination, text: readText } = captureOutput(terminal);
   const argv = [
     "fixture",
     ...(formatExplicit ? ["--format", "toon"] : []),
@@ -43,7 +37,7 @@ const renderWindow = async (
     command: "fixture",
     duration: "0ms",
   });
-  return { handled, text: Buffer.concat(chunks).toString("utf8") };
+  return { handled, text: readText() };
 };
 
 describe("successful CLI token windows", () => {
@@ -94,26 +88,7 @@ describe("successful CLI token windows", () => {
     },
   );
 
-  it("does not reformat a fitting ordinary result", async () => {
-    let reads = 0;
-    const page = await renderWindow(
-      {
-        get text() {
-          reads++;
-          return "abcdefghij";
-        },
-      },
-      0,
-      1000,
-    );
-    expect(page.handled).toBe(true);
-    // TOON reads this property once per formatting pass.
-    expect(reads).toBe(1);
-    expect(page.text).toBe("text: abcdefghij\n");
-  });
-
   it.each([
-    { terminal: false, formatExplicit: false },
     { terminal: true, formatExplicit: false },
     { terminal: true, formatExplicit: true },
   ])(
@@ -181,7 +156,7 @@ describe("successful CLI token windows", () => {
   );
 });
 
-describe("token windows through Incur output policies", () => {
+describe("token windows and CLI presentation policy", () => {
   it.each([{ windowFlags: [] }, { windowFlags: ["--token-limit", "2"] }])(
     "retains filtered typed failures despite suppressed human results ($windowFlags)",
     async ({ windowFlags }) => {

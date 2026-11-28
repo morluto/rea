@@ -7,6 +7,7 @@ import {
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
 import { translateNativeCommandFailure } from "./NativeCommandAnalysisError.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { DEFAULT_NATIVE_COMMAND_TIMEOUT_MS } from "../domain/native/nativeDeadlines.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { randomUUID } from "node:crypto";
@@ -69,7 +70,10 @@ import {
 } from "../providers/NativeCommandRunner.js";
 import { projectPartialNativeCalls } from "./NativeCallObservation.js";
 import { LldbReadbackFiles } from "./LldbReadbackFiles.js";
-import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  providerCleanupErrorFromFailures,
+} from "../domain/analysisErrorCleanup.js";
 import { resolvedAnalysisError } from "../domain/analysisErrorBase.js";
 import { runOwned } from "../providers/runOwned.js";
 import {
@@ -617,18 +621,15 @@ export class LldbCallTracer implements NativeCallTracer {
     }
     if (unresolved.length === 0) return undefined;
     if (unresolved.length === 1) return unresolved[0];
-    return new ProviderCleanupError(
+    return providerCleanupErrorFromFailures(
       PROVIDER,
-      [...new Set(unresolved.flatMap((marker) => marker.cleanupResources))],
-      { reason: "LLDB resolver cleanup remains incomplete" },
+      unresolved,
+      "LLDB resolver cleanup remains incomplete",
       {
         operation: OPERATION,
-        cause: new AggregateError(
-          unresolved,
-          "LLDB resolver cleanup remains incomplete",
-        ),
+        message: "LLDB resolver cleanup remains incomplete",
       },
-    ).bindCleanupDependencies(unresolved);
+    );
   }
 
   async #run(
@@ -1221,11 +1222,16 @@ const readTracerOutput = async (
             maximum_result_bytes: MAX_NATIVE_CALL_CAPTURE_BYTES,
             observed_result_bytes: size,
           },
-          {
-            retryable: false,
-            remediationAction:
-              "The combined LLDB result cannot fit the running Node Buffer/single-string representation. Select smaller capture_limits.trace_bytes or capture_limits.breakpoint_location_bytes, or fewer breakpoints before a new authorized observation. Increasing the client receive buffer cannot raise this ceiling. Retained journal/output observations remain partial; earlier omitted facts cannot be recovered.",
-          },
+          fixedAllowanceOptions(
+            "The combined LLDB result representation ceiling",
+            "capture",
+            {
+              limit: MAX_NATIVE_CALL_CAPTURE_BYTES,
+              unit: "bytes",
+              narrowing:
+                "Select smaller capture_limits.trace_bytes or capture_limits.breakpoint_location_bytes, or fewer breakpoints, before a new authorized observation.",
+            },
+          ),
         ),
       );
     const read = await readBoundedPrefix(

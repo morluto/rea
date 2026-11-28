@@ -3,7 +3,10 @@ import { webTextFacts } from "../../domain/webContentArtifact.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { sanitizeBrowserUrl } from "../../domain/browserObservation.js";
-import { jsonObjectSchema } from "../../domain/jsonValue.js";
+import {
+  ownedJsonObjectSchema,
+  type JsonValue,
+} from "../../domain/jsonValue.js";
 import type {
   WebRuntimeSource,
   webRuntimeLocationSchema,
@@ -146,6 +149,7 @@ export class CdpRuntimeSources {
   /** Retain complete script text and compute a digest distinct from the producer hash. */
   async read(scriptIds: Iterable<string>): Promise<WebRuntimeSource[]> {
     this.check();
+    const validatedContexts = new WeakMap<object, Record<string, JsonValue>>();
     for (const scriptId of new Set(scriptIds)) {
       if (this.#sources.has(scriptId)) continue;
       const script = this.scripts.get(scriptId);
@@ -154,16 +158,24 @@ export class CdpRuntimeSources {
         script === undefined
           ? undefined
           : this.#contexts.get(script.executionContextId);
+      let reportedExecutionContext: Record<string, JsonValue> | null = null;
+      if (context !== undefined) {
+        const cached = validatedContexts.get(context);
+        if (cached !== undefined) reportedExecutionContext = cached;
+        else {
+          reportedExecutionContext = ownedJsonObjectSchema.parse(context);
+          validatedContexts.set(context, reportedExecutionContext);
+        }
+      }
       const item: WebRuntimeSource = {
         script_id: scriptId,
         url: this.sourceUrl(scriptId, script?.url ?? ""),
         execution_context_id: script?.executionContextId ?? null,
-        reported_execution_context:
-          context === undefined ? null : jsonObjectSchema.parse(context),
+        reported_execution_context: reportedExecutionContext,
         reported_script_context_aux_data:
           script?.executionContextAuxData === undefined
             ? null
-            : jsonObjectSchema.parse(script.executionContextAuxData),
+            : ownedJsonObjectSchema.parse(script.executionContextAuxData),
         frame_id: owned ? this.session.target.frame_id : null,
         producer_hash: script?.hash ?? null,
         source_map_url: script?.sourceMapURL ?? null,

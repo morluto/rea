@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import {
   artifactGraphManifestSchema,
   artifactInventoryCoverageSchema,
@@ -13,6 +14,7 @@ import {
   type ArtifactFormatMetadata,
 } from "../artifactFormatMetadata.js";
 import { prefixedDigestSchema } from "../digests.js";
+import { absoluteLocalPathStringSchema } from "../localPath.js";
 import type { ArtifactOccurrence } from "../artifactGraph.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import { z } from "zod";
@@ -29,6 +31,7 @@ import {
   type InventorySet,
 } from "../artifactInventoryEvidence.js";
 import type { ArtifactInspectionResult } from "../artifactInspection.js";
+import { filterSet } from "./selectViewRows.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   assertOwnedView,
@@ -41,7 +44,14 @@ import {
 } from "./analysisViewCoverage.js";
 import { analysisViewResultInputError } from "./analysisViewParent.js";
 import { ARTIFACT_INVENTORY_VIEW_CAVEATS } from "./artifactInventoryViewCaveats.js";
+import {
+  compileInventoryPathGlob,
+  inventoryPathGlobSchema,
+} from "./inventoryPathGlob.js";
 import { androidOtaPayloadSummaryMetadataSchema } from "./androidOtaPayloadSummary.js";
+import { androidVbmetaSummaryMetadataSchema } from "./androidVbmetaSummary.js";
+import { ubiImageSummaryMetadataSchema } from "./ubiImageSummary.js";
+import { systemdJournalObjectHeaderSchema } from "../formatMetadata/androidAndSystemMetadata.js";
 import {
   espFlashImageSummaryMetadataSchema,
   summaryRootMetadata,
@@ -65,6 +75,27 @@ export const artifactInventoryViewRequestSchema = z.discriminatedUnion(
       entry_kinds: z
         .array(artifactOccurrenceSchema.shape.entry_kind)
         .optional(),
+      artifact_kinds: z
+        .array(artifactOccurrenceSchema.shape.artifact_kind)
+        .optional()
+        .describe(
+          'Exact recognized artifact kinds, e.g. ["native-addon"]; [] matches none. Unrecognized bytes keep kind unknown.',
+        ),
+      path_globs: z
+        .array(inventoryPathGlobSchema)
+        .optional()
+        .describe(
+          'Whole-path globs over recorded logical paths, any of which may match: * and ? stay within one segment, a ** segment spans segments, e.g. ["lib/*/*.so"], ["META-INF/*"], ["*"] for root entries, ["assets/**"] for everything below; [] matches none. "." names the container itself and never matches.',
+        ),
+      order_by: z
+        .strictObject({
+          field: z.enum(["declared_size", "compressed_size"]),
+          direction: z.enum(["ascending", "descending"]),
+        })
+        .optional()
+        .describe(
+          'Order selected rows by size before paging; unknown sizes come last and ties keep inventory order. Omit for inventory order. The container itself (".") is a sized row; add path_globs ["**"] to rank only its entries.',
+        ),
       fields: z.array(artifactOccurrenceSchema.keyof()).optional(),
     }),
     z.strictObject({
@@ -76,6 +107,19 @@ export const artifactInventoryViewRequestSchema = z.discriminatedUnion(
     z.strictObject({
       ...page,
       collection: z.enum(["edges", "integrity_contradictions"]),
+    }),
+    z.strictObject({
+      ...page,
+      collection: z
+        .literal("format_record_headers")
+        .describe(
+          "Per-record headers of the root artifact past its inline window (systemd journal object headers).",
+        ),
+      // Its own name: other views' `path` is a semantic selector, such as a
+      // devicetree node, that a caller-path rewrite must never touch.
+      artifact_path: absoluteLocalPathStringSchema.describe(
+        "Absolute local path of the inventoried root file to re-read for this page; it must still match the inventory's root digest. Evidence never selects the file.",
+      ),
     }),
   ],
 );
@@ -92,8 +136,68 @@ export const artifactInventoryItemsSchema = z.array(
       .strict(),
     artifactEdgeSchema,
     integrityContradictionSchema,
+    systemdJournalObjectHeaderSchema,
   ]),
 );
+
+/**
+ * Formats whose root metadata retains a bounded window of per-record headers,
+ * with the exact record total. This is the single list of formats the
+ * `format_record_headers` collection pages.
+ */
+const FORMAT_RECORD_HEADER_TOTALS: Readonly<
+  Partial<Record<string, (metadata: ArtifactFormatMetadata) => number | null>>
+> = {
+  "systemd-journal": (metadata) =>
+    metadata.kind === "systemd-journal" ? metadata.object_count : null,
+};
+
+/** What a `format_record_headers` page must re-read, from the parent inventory. */
+export interface FormatRecordPageSource {
+  readonly format: string;
+  readonly sha256: string;
+  readonly total: number;
+}
+
+/**
+ * Resolve the root artifact a `format_record_headers` page re-reads. The
+ * inventory owner's parsed facts decide the format, digest and total; a format
+ * without a record window is refused rather than paged as empty.
+ */
+export const formatRecordPageSource = (
+  parent: AnalysisViewParent,
+): Result<FormatRecordPageSource, AnalysisError> => {
+  const operation = parent.operation;
+  if (operation !== "inventory_artifact" && operation !== "inspect_artifact")
+    return err(
+      inputError(
+        "source",
+        "Inventory views require inventory_artifact or inspect_artifact Evidence.",
+      ),
+    );
+  const parsed = parseSource(parent);
+  if (!parsed.ok) return parsed;
+  const { manifest, occurrences } = parsed.value.inventory;
+  const metadata = occurrences.find(
+    (row) => row.logical_path === ".",
+  )?.format_metadata;
+  const total =
+    metadata === undefined || metadata === null
+      ? null
+      : (FORMAT_RECORD_HEADER_TOTALS[manifest.root_format]?.(metadata) ?? null);
+  if (total === null)
+    return err(
+      inputError(
+        "view",
+        `format_record_headers pages per-record headers of a root artifact that retains them; ${manifest.root_format} inventory declares none.`,
+      ),
+    );
+  return ok({
+    format: manifest.root_format,
+    sha256: manifest.root_sha256,
+    total,
+  });
+};
 
 export const artifactInventorySummarySchema = z.strictObject({
   effective_limits: artifactReaderLimitsSchema.exactOptional(),
@@ -108,14 +212,18 @@ export const artifactInventorySummarySchema = z.strictObject({
     .exactOptional(),
   manifest: artifactGraphManifestSchema,
   /**
-   * An ESP flash layout's nested images appear as summaries here, and an
-   * Android OTA payload's partition, group and APEX arrays as counts.
+   * An ESP flash layout's nested images appear as summaries here, an
+   * Android OTA payload's partition, group and APEX arrays as counts, a
+   * vbmeta image's descriptors as counts, and a UBI image's volume array as
+   * counts.
    */
   root_format_metadata: z
     .union([
       artifactFormatMetadataSchema,
       espFlashImageSummaryMetadataSchema,
       androidOtaPayloadSummaryMetadataSchema,
+      androidVbmetaSummaryMetadataSchema,
+      ubiImageSummaryMetadataSchema,
     ])
     .exactOptional(),
   available_counts: z.strictObject({
@@ -192,10 +300,10 @@ const parseSource = (
   const cached = reusable ? checkedSources.get(key) : undefined;
   if (cached !== undefined && cached.operation === parent.operation) {
     try {
-      validateArtifactInventorySubject(
-        parent.subject,
-        cached.source.inventory.manifest,
-      );
+      validateArtifactInventorySubject(parent.subject, {
+        manifest: cached.source.inventory.manifest,
+        root_digest: cached.source.inventory.rootDigest,
+      });
     } catch (cause: unknown) {
       return sourceFailure(parent.normalizedResult, cause);
     }
@@ -289,6 +397,10 @@ export const projectArtifactInventoryView = (
     inventory.manifest.root_format === "godot-pck" ||
     inventory.manifest.root_format === "unityfs" ||
     inventory.manifest.root_format === "wxapkg" ||
+    inventory.manifest.root_format === "iso9660" ||
+    inventory.manifest.root_format === "tar" ||
+    inventory.manifest.root_format === "nso" ||
+    inventory.manifest.root_format === "nro" ||
     inventory.manifest.root_format === "pyinstaller" ||
     inventory.manifest.root_format === "node-sea" ||
     inventory.manifest.root_format === "intel-hex" ||
@@ -296,9 +408,19 @@ export const projectArtifactInventoryView = (
     inventory.manifest.root_format === "esp-image" ||
     inventory.manifest.root_format === "uf2" ||
     inventory.manifest.root_format === "dfuse" ||
+    inventory.manifest.root_format === "bflt" ||
     inventory.manifest.root_format === "esp-flash-image" ||
     inventory.manifest.root_format === "fit" ||
-    inventory.manifest.root_format === "android-ota-payload";
+    inventory.manifest.root_format === "nds" ||
+    inventory.manifest.root_format === "mega-drive-rom" ||
+    inventory.manifest.root_format === "n64-rom" ||
+    inventory.manifest.root_format === "qualcomm-mbn" ||
+    inventory.manifest.root_format === "apple-img4" ||
+    inventory.manifest.root_format === "android-ota-payload" ||
+    inventory.manifest.root_format === "android-vbmeta" ||
+    inventory.manifest.root_format === "android-dtbo" ||
+    inventory.manifest.root_format === "android-sparse-image" ||
+    inventory.manifest.root_format === "ubi-image";
   const counts = inventoryCounts(source);
   const limitations = uniqueSorted([
     ...parent.limitations,
@@ -386,6 +508,29 @@ export const projectArtifactInventoryView = (
       ...shared,
     });
   }
+  if (view.collection === "format_record_headers") {
+    // The application read this page from the unchanged root file; the domain
+    // only refuses a request that arrived without one.
+    const page = parent.formatRecordPage;
+    if (page === undefined)
+      return err(
+        inputError(
+          "view",
+          "format_record_headers pages are read from the inventoried root file; this source cannot reopen it.",
+        ),
+      );
+    return ok({
+      kind: "inventory" as const,
+      view,
+      manifest: inventory.manifest,
+      inventory_evidence_ids: [...evidenceIds],
+      source_complete: inventory.complete,
+      ...sourceCoverage,
+      items: [...page.items],
+      coverage: pageViewCoverage(view.offset, page.items.length, page.total),
+      ...shared,
+    });
+  }
   const selected =
     view.collection === "occurrences"
       ? occurrencePage(source, view)
@@ -419,8 +564,12 @@ export const projectArtifactInventoryView = (
 };
 
 const occurrencePage = (source: InventorySource, view: OccurrenceView) => {
-  const indices = occurrenceIndices(source, view);
   const rows = source.inventory.occurrences;
+  const selected = occurrenceIndices(source, view);
+  const indices =
+    view.order_by === undefined
+      ? selected
+      : sizeOrder(rows, selected, view.order_by);
   const total = indices?.length ?? rows.length;
   const items = [];
   for (
@@ -430,6 +579,23 @@ const occurrencePage = (source: InventorySource, view: OccurrenceView) => {
   )
     items.push(selectOccurrenceFields(rows[indices?.[at] ?? at]!, view.fields));
   return { items, total };
+};
+
+/** Stable size order; unknown sizes follow known ones in either direction. */
+const sizeOrder = (
+  rows: readonly ArtifactOccurrence[],
+  selected: number[] | undefined,
+  order: NonNullable<OccurrenceView["order_by"]>,
+): number[] => {
+  const sign = order.direction === "ascending" ? 1 : -1;
+  return (selected ?? rows.map((_, index) => index)).sort((left, right) => {
+    const a = rows[left]![order.field];
+    const b = rows[right]![order.field];
+    if (a === b) return left - right;
+    if (a === null) return 1;
+    if (b === null) return -1;
+    return (a - b) * sign;
+  });
 };
 
 const nodePage = (
@@ -489,60 +655,72 @@ const occurrenceIndices = (
   source: InventorySource,
   view: OccurrenceView,
 ): number[] | undefined => {
+  const selectors = [
+    view.occurrence_ids,
+    view.logical_paths,
+    view.entry_kinds,
+    view.artifact_kinds,
+    view.path_globs,
+  ];
+  if (selectors.every((selector) => selector === undefined)) return undefined;
+  if (selectors.some((selector) => selector?.length === 0)) return [];
+  const rows = source.inventory.occurrences;
+  const paths = filterSet(view.logical_paths);
+  const kinds = filterSet(view.entry_kinds);
+  const artifactKinds = filterSet(view.artifact_kinds);
+  const globs = view.path_globs?.map(compileInventoryPathGlob);
+  const matches = (index: number) => {
+    const row = rows[index]!;
+    return (
+      (paths === undefined || paths.has(row.logical_path)) &&
+      (kinds === undefined || kinds.has(row.entry_kind)) &&
+      (artifactKinds === undefined || artifactKinds.has(row.artifact_kind)) &&
+      (globs === undefined ||
+        (row.logical_path !== "." &&
+          globs.some((glob) => glob(row.logical_path))))
+    );
+  };
+  return exactCandidates(source, view)
+    .filter(matches)
+    .sort((left, right) => left - right);
+};
+
+/** Narrow by the most selective exact index; remaining selectors filter. */
+const exactCandidates = (
+  source: InventorySource,
+  view: OccurrenceView,
+): number[] => {
+  const rows = source.inventory.occurrences;
   if (
     view.occurrence_ids === undefined &&
     view.logical_paths === undefined &&
     view.entry_kinds === undefined
   )
-    return undefined;
-  if (
-    view.occurrence_ids?.length === 0 ||
-    view.logical_paths?.length === 0 ||
-    view.entry_kinds?.length === 0
-  )
-    return [];
+    return rows.map((_, index) => index);
   if (source.index === undefined) {
     const byId = new Map<string, number>();
     const byPath = new Map<string, number[]>();
     const byKind = new Map<ArtifactOccurrence["entry_kind"], number[]>();
-    for (const [index, row] of source.inventory.occurrences.entries()) {
+    for (const [index, row] of rows.entries()) {
       byId.set(row.occurrence_id, index);
-      const existing = byPath.get(row.logical_path);
-      if (existing === undefined) byPath.set(row.logical_path, [index]);
-      else existing.push(index);
-      const kind = byKind.get(row.entry_kind);
-      if (kind === undefined) byKind.set(row.entry_kind, [index]);
-      else kind.push(index);
+      appendToMapList(byPath, row.logical_path, index);
+      appendToMapList(byKind, row.entry_kind, index);
     }
     source.index = { byId, byPath, byKind };
   }
   const lookup = source.index;
-  const paths =
-    view.logical_paths === undefined ? undefined : new Set(view.logical_paths);
-  const selected =
-    view.occurrence_ids === undefined
-      ? paths === undefined
-        ? [...new Set(view.entry_kinds)].flatMap(
-            (kind) => lookup.byKind.get(kind) ?? [],
-          )
-        : [...paths].flatMap((path) => lookup.byPath.get(path) ?? [])
-      : [...new Set(view.occurrence_ids)].flatMap((id) => {
-          const index = lookup.byId.get(id);
-          return index === undefined ||
-            (paths !== undefined &&
-              !paths.has(source.inventory.occurrences[index]!.logical_path))
-            ? []
-            : [index];
-        });
-  const kinds =
-    view.entry_kinds === undefined ? undefined : new Set(view.entry_kinds);
-  return selected
-    .filter(
-      (index) =>
-        kinds === undefined ||
-        kinds.has(source.inventory.occurrences[index]!.entry_kind),
-    )
-    .sort((left, right) => left - right);
+  if (view.occurrence_ids !== undefined)
+    return [...new Set(view.occurrence_ids)].flatMap((id) => {
+      const index = lookup.byId.get(id);
+      return index === undefined ? [] : [index];
+    });
+  if (view.logical_paths !== undefined)
+    return [...new Set(view.logical_paths)].flatMap(
+      (path) => lookup.byPath.get(path) ?? [],
+    );
+  return [...new Set(view.entry_kinds)].flatMap(
+    (kind) => lookup.byKind.get(kind) ?? [],
+  );
 };
 
 const nodeIndices = (

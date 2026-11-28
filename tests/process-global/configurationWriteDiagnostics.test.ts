@@ -48,7 +48,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 import { configureClientConfiguration } from "../../src/application/SetupClientConfiguration.js";
 import { failedConfigurationMessage } from "../../src/application/SetupClients.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { supportedClientRegistrationProfile } from "../../src/application/SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../fixtures/clientRegistrationProfile.js";
 
 afterEach(() => {
   selected.operation = undefined;

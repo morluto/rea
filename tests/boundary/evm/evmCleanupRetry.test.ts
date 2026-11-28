@@ -1,9 +1,11 @@
+import { EVMOLE_VERSION } from "../../../src/evm/EvmoleProviderIdentity.js";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, it, vi } from "vitest";
+import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
+const LIMITS_PATH = "/proc/self/limits";
 const limitReport = [
   "Max address space         unlimited            unlimited            bytes",
   "Max cpu time              unlimited            unlimited            seconds",
@@ -12,6 +14,7 @@ const limitReport = [
 
 const closeState = vi.hoisted(() => ({
   path: "",
+  kernelReport: "",
   failures: 0,
   onClosed: undefined as (() => void) | undefined,
   onClosing: undefined as (() => void) | undefined,
@@ -24,7 +27,13 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   return {
     ...fs,
     open: async (...args: Parameters<typeof fs.open>) => {
-      const handle = await fs.open(...args);
+      const isLimits = args[0] === LIMITS_PATH;
+      if (isLimits) closeState.onLimits?.();
+      const handle = await fs.open(
+        isLimits ? closeState.kernelReport : args[0],
+        args[1],
+        args[2],
+      );
       if (args[0] !== closeState.path) return handle;
       const close = handle.close.bind(handle);
       if (closeState.readFailure !== undefined)
@@ -42,11 +51,6 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       };
       return handle;
     },
-    readFile: async (...args: Parameters<typeof fs.readFile>) => {
-      if (args[0] !== "/proc/self/limits") return fs.readFile(...args);
-      closeState.onLimits?.();
-      return limitReport;
-    },
   };
 });
 
@@ -59,11 +63,78 @@ import { projectAnalysisError } from "../../../src/domain/analysisErrorProjectio
 import { waitForProviderProcessReady } from "../../fixtures/providerProcess.js";
 import { EvmInterfaceService } from "../../../src/application/evm/EvmInterfaceService.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+let limitsWorkspace = "";
+beforeAll(async () => {
+  limitsWorkspace = await mkdtemp(join(tmpdir(), "rea-evm-kernel-limits-"));
+  closeState.kernelReport = join(limitsWorkspace, "limits");
+  await writeFile(closeState.kernelReport, limitReport);
+});
+afterAll(async () => {
+  closeState.kernelReport = "";
+  await rm(limitsWorkspace, { recursive: true, force: true });
+});
+
+it.each(["completed", "invalid", "cancelled"] as const)(
+  "retains and retries the limit descriptor after %s admission",
+  async (scenario) => {
+    const controller = new AbortController();
+    const reason = { requested: "stop at limit descriptor close" };
+    const createRuntime = vi.fn(async () => {
+      throw new Error("Worker must not start before its limits are admitted");
+    });
+    const provider = new EvmoleInterfaceProvider(
+      { REA_EVM_PRLIMIT_COMMAND: process.execPath },
+      undefined,
+      createRuntime,
+      SIMULATED_LINUX_X64,
+    );
+    closeState.path = LIMITS_PATH;
+    closeState.failures = 2;
+    if (scenario === "invalid")
+      await writeFile(
+        closeState.kernelReport,
+        limitReport.replace("seconds", "bytes"),
+      );
+    if (scenario === "cancelled")
+      closeState.onClosing = () => controller.abort(reason);
+    try {
+      const outcome = await provider.inspect(
+        { path: "/selected.hex", encoding: "hex" },
+        { signal: controller.signal },
+      );
+      if (outcome.ok)
+        throw new Error("Expected limit descriptor cleanup failure");
+      expect(outcome.error.cleanupResources).toEqual([LIMITS_PATH]);
+      expect(outcome.error.cleanupIncomplete).toBe(true);
+      if (scenario === "invalid")
+        expect(outcome.error.cleanupPrimary?.message).toContain(
+          "Malformed inherited Linux resource limit: Max cpu time.",
+        );
+      if (scenario === "cancelled")
+        expect(outcome.error.cleanupPrimary?.cause).toBe(reason);
+      await expect(provider.close()).rejects.toMatchObject({
+        cleanupIncomplete: true,
+        cleanupResources: [LIMITS_PATH],
+      });
+      await provider.close();
+      expect(outcome.error.cleanupIncomplete).toBe(false);
+      expect(createRuntime).not.toHaveBeenCalled();
+    } finally {
+      closeState.path = "";
+      closeState.failures = 0;
+      closeState.onClosing = undefined;
+      await provider.close();
+      await writeFile(closeState.kernelReport, limitReport);
+    }
+  },
+);
 
 it.each(["pre-aborted", "admission", "close"] as const)(
   "preserves opaque caller reasons through service cancellation at %s",
   async (stage) => {
-    const workspace = await mkdtemp(join(tmpdir(), "rea-evm-artifact-cancel-"));
+    const workspace = await createTestTempDirectory("rea-evm-artifact-cancel-");
     const input = join(workspace, "selected.hex");
     await writeFile(input, "0x60006000f3\n");
     const createRuntime = vi.fn(async () => {
@@ -112,7 +183,6 @@ it.each(["pre-aborted", "admission", "close"] as const)(
       closeState.onClosed = undefined;
       closeState.onLimits = undefined;
       await provider.close();
-      await rm(workspace, { recursive: true, force: true });
     }
   },
 );
@@ -125,7 +195,7 @@ it.each([
 ] as const)(
   "updates a returned cleanup error after later root release: %s",
   async (scenario) => {
-    const workspace = await mkdtemp(join(tmpdir(), "rea-evm-cleanup-retry-"));
+    const workspace = await createTestTempDirectory("rea-evm-cleanup-retry-");
     const input = join(workspace, "selected.hex");
     await writeFile(input, "0x60006000f3\n");
     let rootPath = "";
@@ -151,7 +221,7 @@ it.each([
             request.reply_path,
             JSON.stringify({
               ok: true,
-              version: "0.9.3",
+              version: EVMOLE_VERSION,
               bytecode: {
                 sha256: createHash("sha256").update(bytes).digest("hex"),
                 bytes: bytes.length,
@@ -249,13 +319,12 @@ it.each([
       } catch {
         // Preserve the assertion's original failure; the workspace cleanup follows.
       }
-      await rm(workspace, { recursive: true, force: true });
     }
   },
 );
 
 it("keeps descriptor cleanup in close aggregates until the exact file lease releases", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "rea-evm-descriptor-retry-"));
+  const workspace = await createTestTempDirectory("rea-evm-descriptor-retry-");
   const input = join(workspace, "selected.hex");
   await writeFile(input, "0x60006000f3\n");
   closeState.path = input;
@@ -303,12 +372,11 @@ it("keeps descriptor cleanup in close aggregates until the exact file lease rele
     } catch {
       // Preserve the assertion's original failure while releasing test files.
     }
-    await rm(workspace, { recursive: true, force: true });
   }
 });
 
 it("keeps a mixed root and reply-descriptor aggregate pending until both owners release", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "rea-evm-mixed-owners-"));
+  const workspace = await createTestTempDirectory("rea-evm-mixed-owners-");
   const input = join(workspace, "selected.hex");
   await writeFile(input, "0x60006000f3\n");
   closeState.path = "";
@@ -393,13 +461,12 @@ it("keeps a mixed root and reply-descriptor aggregate pending until both owners 
     } catch {
       // Preserve the assertion's original failure while releasing test files.
     }
-    await rm(workspace, { recursive: true, force: true });
   }
 });
 
 it("releases a retained process independently while a root cleanup retry remains pending", async () => {
-  const workspace = await mkdtemp(
-    join(tmpdir(), "rea-evm-process-root-retry-"),
+  const workspace = await createTestTempDirectory(
+    "rea-evm-process-root-retry-",
   );
   const input = join(workspace, "selected.hex");
   await writeFile(input, "0x60006000f3\n");
@@ -420,7 +487,7 @@ it("releases a retained process independently while a root cleanup retry remains
         request.reply_path,
         JSON.stringify({
           ok: true,
-          version: "0.9.3",
+          version: EVMOLE_VERSION,
           bytecode: {
             sha256: createHash("sha256").update(bytes).digest("hex"),
             bytes: bytes.length,
@@ -506,12 +573,11 @@ it("releases a retained process independently while a root cleanup retry remains
     } catch {
       // Preserve the assertion's original failure while releasing test files.
     }
-    await rm(workspace, { recursive: true, force: true });
   }
 });
 
 it("preserves an active cancellation through denied owned-group cleanup and later retry", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "rea-evm-cancel-process-"));
+  const workspace = await createTestTempDirectory("rea-evm-cancel-process-");
   const input = join(workspace, "selected.hex");
   await writeFile(input, "0x60006000f3\n");
   const controller = new AbortController();
@@ -606,7 +672,6 @@ it("preserves an active cancellation through denied owned-group cleanup and late
     } catch {
       // Preserve the assertion's original failure while releasing test files.
     }
-    await rm(workspace, { recursive: true, force: true });
   }
 });
 
@@ -622,8 +687,8 @@ it.each([
 ] as const)(
   "retains validated reply ownership through finalization: %s",
   async (scenario) => {
-    const workspace = await mkdtemp(
-      join(tmpdir(), "rea-evm-reply-finalization-"),
+    const workspace = await createTestTempDirectory(
+      "rea-evm-reply-finalization-",
     );
     const input = join(workspace, "selected.hex");
     await writeFile(input, "0x60006000f3\n");
@@ -657,10 +722,11 @@ it.each([
         const bytes = Buffer.from("60006000f3", "hex");
         const reply =
           scenario === "refusal"
-            ? { ok: false, reason: "format", message: "invalid carrier" }
+            ? { ok: false, reason: "malformed", message: "invalid carrier" }
             : {
                 ok: true,
-                version: scenario === "wrong-version" ? "0.0.0" : "0.9.3",
+                version:
+                  scenario === "wrong-version" ? "0.0.0" : EVMOLE_VERSION,
                 bytecode: {
                   sha256: createHash("sha256").update(bytes).digest("hex"),
                   bytes: bytes.length,
@@ -756,7 +822,6 @@ it.each([
       closeState.onClosing = undefined;
       closeState.readFailure = undefined;
       await provider.close();
-      await rm(workspace, { recursive: true, force: true });
     }
   },
 );
@@ -764,8 +829,8 @@ it.each([
 it.each(["physical-read", "completed-late-cancel"] as const)(
   "retains only completed caller carrier identity: %s",
   async (scenario) => {
-    const workspace = await mkdtemp(
-      join(tmpdir(), "rea-evm-carrier-finalization-"),
+    const workspace = await createTestTempDirectory(
+      "rea-evm-carrier-finalization-",
     );
     const input = join(workspace, "selected.hex");
     await writeFile(input, "0x60006000f3\n");
@@ -825,7 +890,6 @@ it.each(["physical-read", "completed-late-cancel"] as const)(
       closeState.onClosing = undefined;
       closeState.readFailure = undefined;
       await provider.close();
-      await rm(workspace, { recursive: true, force: true });
     }
   },
 );
@@ -841,7 +905,7 @@ it.each([
 ] as const)(
   "preserves exact reserved-exit marker receipt and cleanup: %s",
   async (scenario) => {
-    const workspace = await mkdtemp(join(tmpdir(), "rea-evm-marker-receipt-"));
+    const workspace = await createTestTempDirectory("rea-evm-marker-receipt-");
     const input = join(workspace, "selected.hex");
     await writeFile(input, "0x60006000f3\n");
     let markerPath = "";
@@ -940,13 +1004,12 @@ it.each([
       closeState.onClosing = undefined;
       closeState.readFailure = undefined;
       await provider.close();
-      await rm(workspace, { recursive: true, force: true });
     }
   },
 );
 
 it("keeps the selected limiter and child environment together while later inspections reconfigure", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "rea-evm-environment-"));
+  const workspace = await createTestTempDirectory("rea-evm-environment-");
   const input = join(workspace, "selected.hex");
   const limiter = join(workspace, "selected-limiter");
   const { symlink } = await import("node:fs/promises");
@@ -991,7 +1054,6 @@ it("keeps the selected limiter and child environment together while later inspec
   } finally {
     closeState.onLimits = undefined;
     await provider.close();
-    await rm(workspace, { recursive: true, force: true });
   }
 });
 
@@ -1002,7 +1064,7 @@ it.each([
 ] as const)(
   "counts %s from the worker launch as cancellation: %s",
   async (_label, thrown, cancelled) => {
-    const workspace = await mkdtemp(join(tmpdir(), "rea-evm-abort-owner-"));
+    const workspace = await createTestTempDirectory("rea-evm-abort-owner-");
     const input = join(workspace, "selected.hex");
     await writeFile(input, "0x60006000f3\n");
     const controller = new AbortController();
@@ -1038,7 +1100,6 @@ it.each([
       } else expect(result.error).not.toBeInstanceOf(AnalysisCancelledError);
     } finally {
       await provider.close();
-      await rm(workspace, { recursive: true, force: true });
     }
   },
 );

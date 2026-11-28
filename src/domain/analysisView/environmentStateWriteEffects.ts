@@ -424,7 +424,7 @@ const refineUpdate = (
     observed: draft.observed!,
     stored: evidence.after.object,
   });
-  retainFixed(context, body.fixed.slice(plan.body!.fixed.length));
+  retainFixed(context.io, body.fixed.slice(plan.body!.fixed.length));
   plan.body = body;
   const ruled = new Set(plan.rules.map((rule) => rule.field));
   const later = new Map(
@@ -447,15 +447,15 @@ const refineUpdate = (
 
 /** Count the sent values of fixed members a plan keeps, which outlive the request body they were read from. */
 export const retainFixed = (
-  context: EffectContext,
+  io: Pick<WriteIo, "retain">,
   fixed: readonly { readonly sent: JsonValue }[],
 ): void => {
-  if (fixed.length > 0) context.io.retain(64 + jsonTextCodeUnits(fixed) * 2);
+  if (fixed.length > 0) io.retain(64 + jsonTextCodeUnits(fixed) * 2);
 };
 
 /** Retain only exemplars that may acquire a composed rule; state already owns and charges their entity facts. */
 export const retainCreateExemplar = (
-  context: EffectContext,
+  io: Pick<WriteIo, "retain">,
   input: CreateEvidence,
   rules: readonly FieldRule[],
 ): CreateEvidence | undefined => {
@@ -474,7 +474,7 @@ export const retainCreateExemplar = (
     (count, items) => count + items.length,
     0,
   );
-  context.io.retain(
+  io.retain(
     192 +
       references * 8 +
       jsonTextCodeUnits(input.call.body) * 2 +
@@ -564,7 +564,7 @@ const buildUpdate = (
     refineUpdate(context, draft, evidence);
     return;
   }
-  retainFixed(context, evidence.explained.body.fixed);
+  retainFixed(context.io, evidence.explained.body.fixed);
   const { ordinal } = step.record;
   const envelope = requestBodyPlan(
     context,

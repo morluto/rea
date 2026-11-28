@@ -3,8 +3,11 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import {
+  countJsonValues,
+  equalJsonValues,
   jsonObjectSchema,
   ownedJsonObjectSchema,
+  jsonValueExceedsDepth,
   jsonValueSchema,
   jsonValueValidationIssue,
   jsonValueValidationSteps,
@@ -43,6 +46,23 @@ it("still parses only JSON values at runtime", () => {
     expect(jsonValueSchema.safeParse(value).success).toBe(false);
 });
 
+it("compares admitted values by JSON meaning and distinguishes an absent root", () => {
+  const left = ownedJsonObjectSchema.parse(
+    JSON.parse('{"__proto__":{"q":1},"value":[-0,"𐐷"],"nested":{"b":2,"a":1}}'),
+  );
+  const right = ownedJsonObjectSchema.parse(
+    JSON.parse('{"nested":{"a":1,"b":2},"value":[0,"𐐷"],"__proto__":{"q":1}}'),
+  );
+  expect(equalJsonValues(left, right)).toBe(true);
+  expect(equalJsonValues(left, { ...right, value: ["𐐷", 0] })).toBe(false);
+  expect(equalJsonValues({ value: null }, { other: null })).toBe(false);
+  expect(equalJsonValues(undefined, undefined)).toBe(true);
+  expect(equalJsonValues(undefined, null)).toBe(false);
+  expect(equalJsonValues({ value: true }, { value: 1 })).toBe(false);
+  expect(equalJsonValues([0], { "0": 0 })).toBe(false);
+  expect(equalJsonValues({ constructor: 1 }, { constructor: 2 })).toBe(false);
+});
+
 it("retains owned object identity while caller objects remain isolated", () => {
   const source = JSON.parse('{"__proto__":{"name":"recorded"},"items":[1]}');
   const owned = ownedJsonObjectSchema.parse(source);
@@ -78,6 +98,24 @@ describe("jsonValueSchema depth bound", () => {
     expect(jsonValueSchema.safeParse(deepObject(MAX_JSON_DEPTH)).success).toBe(
       true,
     );
+    expect(jsonValueExceedsDepth({}, 0)).toBe(false);
+    expect(jsonValueExceedsDepth([], 0)).toBe(false);
+    expect(jsonValueExceedsDepth({ a: 1 }, 0)).toBe(true);
+    expect(jsonValueExceedsDepth([1], 0)).toBe(true);
+    expect(jsonValueExceedsDepth({ a: [1] }, 2)).toBe(false);
+    expect(jsonValueExceedsDepth({ a: [1] }, 1)).toBe(true);
+    expect(
+      jsonValueExceedsDepth(
+        deepObject(MAX_JSON_DEPTH) as Record<string, never>,
+        MAX_JSON_DEPTH,
+      ),
+    ).toBe(false);
+    expect(
+      jsonValueExceedsDepth(
+        deepObject(MAX_JSON_DEPTH + 1) as Record<string, never>,
+        MAX_JSON_DEPTH,
+      ),
+    ).toBe(true);
   });
 
   it("rejects values nested past the maximum depth without throwing", () => {
@@ -266,5 +304,20 @@ describe("inert JSON data boundaries", () => {
       },
     });
     expect(jsonValueSchema.parse(value)).toEqual([1, { nested: "preserved" }]);
+  });
+});
+
+describe("countJsonValues", () => {
+  it.each([
+    ["{}", 1],
+    ['{"a":[1,-2.5e+3,true,null,"x"]}', 8],
+    ['["{[\\"]", "\\\\", {"k":"v"}]', 6],
+    ["  [ 0 , 1 ]  ", 3],
+  ])("counts the values JSON.parse allocates in %s", (text, expected) => {
+    expect(countJsonValues(text, 100)).toBe(expected);
+  });
+
+  it("stops one value past the limit", () => {
+    expect(countJsonValues(`[${"0,".repeat(10)}0]`, 4)).toBe(5);
   });
 });

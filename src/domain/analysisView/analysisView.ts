@@ -1,6 +1,11 @@
 import { projectWebSourceLocationView } from "./webSourceLocationView.js";
 import { projectNativeProcedureReferencesView } from "./nativeProcedureReferencesView.js";
 import { projectPlaywrightTraceView } from "./playwrightTraceView.js";
+import { projectWebPageView } from "./webPageView.js";
+import { projectWebExecutionView } from "./webExecutionView.js";
+import { projectApktoolResourcesView } from "./apktoolResourcesView.js";
+import { projectAndroidReferencesView } from "./androidReferencesView.js";
+import { projectArtifactExtractionView } from "./artifactExtractionView.js";
 import { projectApiContractView } from "./apiContractView.js";
 import {
   isNativeObservationOperation,
@@ -8,20 +13,28 @@ import {
 } from "../native/nativeObservation.js";
 import { projectNativeObservationView } from "./nativeObservationView.js";
 import { projectRecordedArrayView } from "./recordedArrayView.js";
+import { projectEvidenceJsonView } from "./evidenceJsonView.js";
 import { projectNativeInstructionReferencesView } from "./nativeInstructionReferencesView.js";
 import { projectNativeValueTraceView } from "./nativeValueTraceView.js";
 import { projectDevicetreeView } from "./devicetreeView.js";
+import { projectEspNvsView } from "./espNvsView.js";
+import { projectFirmwareVectorTableView } from "./firmwareVectorTableView.js";
+import { projectLabviewArtifactView } from "./labviewArtifactView.js";
+import { projectUefiExtractionView } from "./uefiExtractionView.js";
+import { projectUefiFirmwareView } from "./uefiFirmwareView.js";
 import { projectApkSignatureView } from "./apkSignatureView.js";
 import { byteEntropySchema } from "../native/byteEntropy.js";
 import { projectErlangBeamView } from "./erlangBeamView.js";
 import { projectPythonPycView } from "./pythonPycView.js";
+import { projectDebPackageView } from "./debPackageView.js";
 import { projectNugetNupkgView } from "./nugetNupkgView.js";
+import { projectVsixPackageView } from "./vsixPackageView.js";
+import { projectOciImageLayoutView } from "./ociImageLayoutView.js";
 import { projectNativeExportsView } from "./nativeExportsView.js";
 import { projectElfDependenciesView } from "./elfDependenciesView.js";
 import { projectByteEntropyView } from "./byteEntropyView.js";
 import {
-  parseAnalysisViewResult,
-  analysisViewResultInputError,
+  createAnalysisViewResultReader,
   parentArtifactPath,
 } from "./analysisViewParent.js";
 import { projectJavaScriptRoutesView } from "./javascriptRoutesView.js";
@@ -51,7 +64,10 @@ import { projectBrowserScenarioView } from "./browserScenarioView.js";
 import { projectNativeLoadImageView } from "./nativeLoadImageView.js";
 import { projectDesktopApplicationView } from "./desktopApplicationView.js";
 
-import { AnalysisUnsupportedTargetError } from "../analysisErrorCore.js";
+import {
+  unsupportedTarget,
+  AnalysisTargetFailureError,
+} from "../analysisErrorCore.js";
 import {
   INSPECT_ANALYSIS_VIEW_OPERATION,
   analysisViewInputError,
@@ -98,6 +114,7 @@ import { projectEnvironmentCoverageView } from "./environmentCoverageView.js";
 import { projectPcapCaptureView } from "./pcapCaptureView.js";
 import { projectAndroidPackageView } from "./androidPackageView.js";
 import { projectAndroidSymbolSummary } from "./androidSymbolView.js";
+import { projectAndroidClassView } from "./androidClassView.js";
 import { projectAndroidJniView } from "./androidJniView.js";
 import { projectDartAotView } from "./dartAotView.js";
 import { projectIl2cppMetadataView } from "./il2cppMetadataView.js";
@@ -122,32 +139,47 @@ export const sealAnalysisView = (
 
 const parentEvidenceIdSchema = prefixedDigestSchema("ev");
 
-const parseJavaScriptParent = (
+const safeParseJavaScriptParent = (
   input: unknown,
-): Result<JavaScriptApplicationAnalysisResult, AnalysisError> => {
+): z.ZodSafeParseResult<JavaScriptApplicationAnalysisResult> => {
   try {
     // The format owner authenticates imported results completely before reuse;
     // mutable or merely frozen inputs still receive canonical validation.
     const steps = parseOwnedJavaScriptApplicationAnalysisSteps(input);
     let step = steps.next();
     while (!step.done) step = steps.next();
-    return ok(step.value);
+    return { success: true, data: step.value };
   } catch (cause: unknown) {
     if (!(cause instanceof z.ZodError)) throw cause;
-    return err(analysisViewResultInputError(input, cause));
+    return {
+      success: false,
+      error: cause as z.ZodError<JavaScriptApplicationAnalysisResult>,
+    };
   }
 };
+const readJavaScriptParent = createAnalysisViewResultReader({
+  safeParse: safeParseJavaScriptParent,
+});
+const readByteEntropyParent = createAnalysisViewResultReader(byteEntropySchema);
+const readBinaryLayoutParent = createAnalysisViewResultReader({
+  safeParse: safeParseOwnedBinaryLayout,
+});
+const readFunctionDossierParent = createAnalysisViewResultReader(
+  functionDossierSchema,
+);
 
 const unsupportedParent = (
   parent: AnalysisViewParent,
-): AnalysisUnsupportedTargetError =>
-  new AnalysisUnsupportedTargetError(
+): AnalysisTargetFailureError =>
+  unsupportedTarget(
     INSPECT_ANALYSIS_VIEW_OPERATION,
     parentArtifactPath(parent),
-    `Parent Evidence operation ${JSON.stringify(parent.operation)} does not support analysis views.`,
+    "evidence",
+    `Parent Evidence operation ${JSON.stringify(parent.operation)} does not support analysis views. For an analysis view, select completed Evidence from a supported parent operation and a compatible view; for a summary receipt, use normalized_result.parent_evidence_id. To read this record, use the complete Evidence directly; complete bundle delivery may exceed the MCP response budget.`,
     {
-      remediationAction:
-        "For an analysis view, select completed Evidence from a supported parent operation and a compatible view. For a summary receipt, use normalized_result.parent_evidence_id. To read this record, use the original complete Evidence directly; for session-retained records, request get_evidence_bundle with detail complete or use export_evidence_bundle. Complete bundle delivery may exceed the MCP response budget.",
+      related: {
+        operations: ["get_evidence_bundle", "export_evidence_bundle"],
+      },
     },
   );
 
@@ -180,11 +212,19 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("trace_native_values", projectNativeValueTraceView),
   retain("inspect_erlang_beam", projectErlangBeamView),
   retain("inspect_devicetree", projectDevicetreeView),
+  retain("inspect_esp_nvs", projectEspNvsView),
+  retain("inspect_firmware_vector_table", projectFirmwareVectorTableView),
+  retain("inspect_labview_artifact", projectLabviewArtifactView),
+  retain("inspect_uefi_firmware", projectUefiFirmwareView),
+  retain("extract_uefi_firmware", projectUefiExtractionView),
   retain("inspect_native_exports", projectNativeExportsView),
   retain("inspect_elf_dependencies", projectElfDependenciesView),
   retain("inspect_native_load_image", projectNativeLoadImageView),
   retain("inspect_python_pyc", projectPythonPycView),
+  retain("inspect_deb_package", projectDebPackageView),
   retain("inspect_nuget_nupkg", projectNugetNupkgView),
+  retain("inspect_vsix_package", projectVsixPackageView),
+  retain("inspect_oci_image_layout", projectOciImageLayoutView),
   retain("frida_session_status", projectFridaSessionStatusView),
   retain("gdb_console", projectCommandObservationView),
   retain("inspect_with_objdump", projectCommandObservationView),
@@ -201,7 +241,7 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("inspect_managed_artifact", projectManagedArtifactView),
   retain("inspect_managed_members", projectManagedMemberView),
   retain("inspect_android_package", projectAndroidPackageView),
-  retain("inspect_android_class", projectAndroidSymbolSummary),
+  retain("inspect_android_class", projectAndroidClassView),
   retain("inspect_android_method", projectAndroidSymbolSummary),
   retain("inspect_android_jni_bindings", projectAndroidJniView),
   retain("capture_browser_scenario", projectBrowserScenarioView),
@@ -223,6 +263,11 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("inspect_artifact", projectArtifactInventoryView),
   retain("inventory_artifact", projectArtifactInventoryView),
   retain("analyze_web_bundle", projectWebBundleView),
+  retain("inspect_web_page", projectWebPageView),
+  retain("observe_web_execution", projectWebExecutionView),
+  retain("decode_android_resources", projectApktoolResourcesView),
+  retain("trace_android_references", projectAndroidReferencesView),
+  retain("extract_artifact", projectArtifactExtractionView),
   retain("trace_web_source_location", projectWebSourceLocationView),
 ]);
 
@@ -347,6 +392,8 @@ export const projectAnalysisView = (
   if (view.kind === "recorded-array") {
     return sealProjected(projectRecordedArrayView(parent, view));
   }
+  if (view.kind === "evidence-json")
+    return sealProjected(projectEvidenceJsonView(parent, view));
   if (view.kind === "javascript-routes") {
     const projected = projectJavaScriptRoutesView(parent, view);
     return sealProjected(projected);
@@ -368,22 +415,19 @@ export const projectAnalysisView = (
     return sealProjected(projected);
   }
   if (parent.operation === "inspect_byte_entropy") {
-    const report = parseAnalysisViewResult(byteEntropySchema, parent);
+    const report = readByteEntropyParent(parent);
     if (!report.ok) return report;
     const projected = projectByteEntropyView(parent, report.value, view);
     return sealProjected(projected);
   }
   if (parent.operation === "inspect_binary_layout") {
-    const layout = parseAnalysisViewResult(
-      { safeParse: safeParseOwnedBinaryLayout },
-      parent,
-    );
+    const layout = readBinaryLayoutParent(parent);
     if (!layout.ok) return layout;
     const projected = projectBinaryLayoutView(parent, layout.value, view);
     return sealProjected(projected);
   }
   if (parent.operation === "analyze_javascript_application") {
-    const analysis = parseJavaScriptParent(parent.normalizedResult);
+    const analysis = readJavaScriptParent(parent);
     if (!analysis.ok) return analysis;
     const projected = projectJavaScriptApplicationView(
       parent,
@@ -393,7 +437,7 @@ export const projectAnalysisView = (
     return sealProjected(projected);
   }
   if (parent.operation === "analyze_function") {
-    const native = parseAnalysisViewResult(functionDossierSchema, parent);
+    const native = readFunctionDossierParent(parent);
     if (!native.ok) return native;
     const projected = projectNativeFunctionView(parent, native.value, view);
     return sealProjected(projected);

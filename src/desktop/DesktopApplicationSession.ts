@@ -95,7 +95,7 @@ const sampleSession = async (
       signal,
     );
   else observations.unreadableWindowSamples += 1;
-  await sampleOpenFiles(observations, plan.roots);
+  await sampleOpenFiles(observations, plan.roots, signal);
   if (!observations.announced && observations.firstWindowMs !== null) {
     observations.announced = true;
     await plan.report(
@@ -111,8 +111,9 @@ const checkpointNow = (
   observations: SessionObservations,
   name: string,
   trigger: CheckpointTrigger,
+  atMs = observations.now(),
 ): Promise<void> =>
-  plan.checkpoint(name, trigger, observations.now(), {
+  plan.checkpoint(name, trigger, atMs, {
     openedFiles: new Set(observations.openedFiles.keys()),
     titles: [...observations.windows.values()]
       .filter((window) => window.application)
@@ -135,9 +136,16 @@ const requestCheckpoint = async (
     });
     return;
   }
-  const chosen = name ?? `checkpoint-${String(observations.now())}`;
+  const atMs = observations.now();
+  let chosen = name;
+  if (chosen === undefined) {
+    const base = `checkpoint-${String(atMs)}`;
+    chosen = base;
+    for (let suffix = 2; taken.has(chosen); suffix += 1)
+      chosen = `${base}-${String(suffix)}`;
+  }
   taken.add(chosen);
-  await checkpointNow(plan, observations, chosen, "request");
+  await checkpointNow(plan, observations, chosen, "request", atMs);
 };
 
 /**
@@ -288,7 +296,18 @@ const launch = async (
   runId: string,
   signal: AbortSignal,
 ) => {
-  const [command, ...arguments_] = plan.argv;
+  // An env wrapper can clear or overwrite the token supplied to its own
+  // process. Give the application the supervisor's token as the last
+  // assignment, without changing the recorded argv or the wrapper's options.
+  const argv =
+    plan.envProgramIndex === undefined
+      ? plan.argv
+      : plan.argv.toSpliced(
+          plan.envProgramIndex,
+          0,
+          `REA_PROCESS_RUN_ID=${runId}`,
+        );
+  const [command, ...arguments_] = argv;
   const spawned = await spawnOwnedProviderProcess({
     command: command ?? "",
     arguments: arguments_,

@@ -1,5 +1,6 @@
 import type { JsonValue } from "../jsonValue.js";
 import {
+  succeeded,
   ownMember,
   at,
   requestJson,
@@ -14,7 +15,7 @@ import {
   type StateToolFacts,
   type StateView,
 } from "./environmentStateRules.js";
-import { entityTarget, succeeded } from "./environmentStateWriteChecks.js";
+import { entityTarget } from "./environmentStateWriteChecks.js";
 import type { WriteIo } from "./environmentStateWriteEffects.js";
 import {
   pathValuesOf,
@@ -207,10 +208,9 @@ export const bulkWrite = (
     addressOf(requestJson(facts.requestBody(record.ordinal)), idField),
   );
   const [first] = forms;
-  if (
-    first === undefined ||
-    forms.some((form) => JSON.stringify(form) !== JSON.stringify(first))
-  )
+  if (first === undefined) return undefined;
+  const firstJson = JSON.stringify(first);
+  if (forms.some((form) => JSON.stringify(form) !== firstJson))
     return undefined;
   // An id array names entities only; an update needs members to apply.
   if (effect === "update" && first.by === "ids" && first.member === null)

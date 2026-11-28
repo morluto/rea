@@ -1,11 +1,12 @@
+import { analysisViewPageFields } from "./analysisViewPageFields.js";
 import { z } from "zod";
 import {
   qlogCaptureFactsSchema,
   type QlogCaptureFacts,
 } from "../qlogCapture.js";
-import { err, ok, type Result } from "../result.js";
+import { ok, type Result } from "../result.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { pageViewCoverage } from "./analysisViewCoverage.js";
 
 const traceSchema = qlogCaptureFactsSchema.shape.traces.element;
@@ -21,11 +22,7 @@ export const qlogSummarySchema = qlogViewContextSchema.extend({
 });
 
 /** Select retained trace facts without copying event inventories or every contribution. */
-const pageRequestShape = {
-  kind: z.literal("qlog"),
-  offset: z.int().nonnegative().default(0),
-  limit: z.int().positive().default(64),
-};
+const pageRequestShape = analysisViewPageFields("qlog");
 const traceSelectorShape = { trace_index: z.int().nonnegative() };
 const streamSelectorShape = {
   ...traceSelectorShape,
@@ -177,12 +174,6 @@ export const projectQlogCapturePage = (
   },
   AnalysisError
 > => {
-  const invalid = (field: string, message: string) =>
-    err(
-      analysisViewInputError([
-        { path: ["view", field], reason: "invalid_value", message },
-      ]),
-    );
   const slice = <T>(items: readonly T[]) =>
     items.slice(view.offset, view.offset + view.limit);
   let page: QlogViewPage;
@@ -198,9 +189,9 @@ export const projectQlogCapturePage = (
       (trace) => trace.trace_index === view.trace_index,
     );
     if (matches.length !== 1)
-      return invalid(
-        "trace_index",
+      return invalidAnalysisView(
         "Select one unambiguous retained trace index.",
+        "trace_index",
       );
     const trace = matches[0]!;
     if (view.facet === "streams") {
@@ -222,9 +213,9 @@ export const projectQlogCapturePage = (
           stream.direction === view.direction,
       );
       if (matches.length !== 1)
-        return invalid(
-          "stream_id",
+        return invalidAnalysisView(
           "Select one unambiguous retained stream ID and direction within the trace.",
+          "stream_id",
         );
       const stream = matches[0]!;
       if (view.facet === "contributions") {

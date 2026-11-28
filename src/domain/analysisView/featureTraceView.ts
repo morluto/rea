@@ -1,3 +1,4 @@
+import { analysisViewPageFields } from "./analysisViewPageFields.js";
 import { z } from "zod";
 import { prefixedDigestSchema } from "../digests.js";
 import { applicationCoverageSchema } from "../javascript/javascriptApplicationEvidenceSchemas.js";
@@ -11,13 +12,13 @@ import {
   applicationFeatureTraceResultSchema,
   type ApplicationFeatureTraceResult,
 } from "../javascript/javascriptFeatureTraceSchemas.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import {
   boundedViewMessages,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import {
   createAnalysisViewResultReader,
   type AnalysisViewParent,
@@ -31,7 +32,7 @@ import {
   javascriptFactBasis,
   javascriptFactBasisSchema,
 } from "./javascriptModuleReferences.js";
-import { selectViewRows } from "./selectViewRows.js";
+import { selectViewRows, filterSet } from "./selectViewRows.js";
 
 const OPERATION = "trace_application_feature" as const;
 const trace = applicationFeatureTraceResultSchema.shape;
@@ -42,11 +43,7 @@ const nodeIdsFilter = z
   .describe(
     "Exact trace node identities. Omitted selects all; [] selects none.",
   );
-const page = {
-  kind: z.literal("feature-trace"),
-  offset: z.int().nonnegative().default(0),
-  limit: z.int().positive().default(64),
-};
+const page = analysisViewPageFields("feature-trace");
 
 const pathsRequestSchema = z.strictObject({
   ...page,
@@ -170,9 +167,6 @@ const checkedTrace = createAnalysisViewResultReader(
   applicationFeatureTraceResultSchema,
 );
 
-const selected = <Value>(values: readonly Value[] | undefined) =>
-  values === undefined ? undefined : new Set(values);
-
 const traceContext = (result: ApplicationFeatureTraceResult) => ({
   trace_id: result.trace_id,
   source_evidence_id: result.source_evidence_id,
@@ -224,20 +218,19 @@ const tracePage = <Shared extends object>(
     items: rows,
     coverage: pageViewCoverage(selection.offset, rows.length, total),
   });
-  const all = () => true;
   if (view.collection === "seed_matches")
     return pageOf(
       view,
-      selectViewRows(result.seed_matches, view, all, (row) => row),
+      selectViewRows(result.seed_matches, view, undefined, (row) => row),
     );
   if (view.collection === "native_handoffs")
     return pageOf(
       view,
-      selectViewRows(result.native_handoffs, view, all, (row) => row),
+      selectViewRows(result.native_handoffs, view, undefined, (row) => row),
     );
   if (view.collection === "paths") {
-    const nodes = selected(view.where.node_ids);
-    const ends = selected<string>(view.where.end_kinds);
+    const nodes = filterSet(view.where.node_ids);
+    const ends = filterSet<string>(view.where.end_kinds);
     return pageOf(
       view,
       selectViewRows(
@@ -252,8 +245,8 @@ const tracePage = <Shared extends object>(
   }
   const graph = result.graph;
   if (view.collection === "edges") {
-    const nodes = selected(view.where.node_ids);
-    const relations = selected(view.where.relations);
+    const nodes = filterSet(view.where.node_ids);
+    const relations = filterSet(view.where.relations);
     return pageOf(
       view,
       selectViewRows<ApplicationEdge, ApplicationEdge>(
@@ -268,8 +261,8 @@ const tracePage = <Shared extends object>(
       ),
     );
   }
-  const ids = selected(view.where.node_ids);
-  const kinds = selected(view.where.kinds);
+  const ids = filterSet(view.where.node_ids);
+  const kinds = filterSet(view.where.kinds);
   const seeds = new Set(result.seed_matches.map(({ node_id: id }) => id));
   return pageOf(
     view,
@@ -295,15 +288,8 @@ export const projectFeatureTraceView = (
     "feature-trace",
   );
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Application feature traces support summary and feature-trace pages of paths, nodes, edges, seed_matches or native_handoffs.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Application feature traces support summary and feature-trace pages of paths, nodes, edges, seed_matches or native_handoffs.",
     );
   const parsed = checkedTrace(parent);
   if (!parsed.ok) return parsed;

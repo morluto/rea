@@ -1,3 +1,4 @@
+import { emptyCutterDiscovery } from "../../fixtures/cutterDiscovery.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
 import { phaseArrival, phaseGate } from "../../support/lifecycleHarness.js";
@@ -12,6 +13,7 @@ import {
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { CutterBridgeClient } from "../../../src/cutter/CutterBridgeClient.js";
 import { CutterBridgeService } from "../../../src/cutter/CutterBridgeService.js";
+import { cutterDiscoveryLimitations } from "../../../src/domain/cutterDiscovery.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { cutterMcpServer } from "../../fixtures/debuggerMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -24,12 +26,7 @@ it("propagates MCP cancellation into an active Cutter command", async () => {
   let observedAbort = false;
   const dispatch = phaseArrival();
   const service = new CutterBridgeService({
-    listSessions: async () => ({
-      sessions: [],
-      bridge_directory: "/private/bridge",
-      discovery_status: "no_live_bridge_found",
-      bridge_directory_security: "private_verified",
-    }),
+    listSessions: async () => emptyCutterDiscovery(),
     execute: async ({ signal }) => {
       dispatch.arrive();
       await new Promise<void>((resolve) => {
@@ -94,12 +91,7 @@ it("shares one cleanup proof across concurrent Cutter MCP commands without Binar
   let confirmations = 0;
   let dispatches = 0;
   const service = new CutterBridgeService({
-    listSessions: async () => ({
-      sessions: [],
-      bridge_directory: "/private/bridge",
-      discovery_status: "no_live_bridge_found",
-      bridge_directory_security: "private_verified",
-    }),
+    listSessions: async () => emptyCutterDiscovery(),
     confirmCommandCompletion: async () => {
       confirmations += 1;
       if (confirmations > 1) {
@@ -259,6 +251,7 @@ it("cancels active discovery sockets, stops queued probes and recovers on the sa
       ...(process.platform === "win32"
         ? {}
         : { bridge_directory_security: "private_verified" }),
+      limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
     });
     expect(connections).toBe(8);
   } finally {

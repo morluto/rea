@@ -5,7 +5,7 @@ import {
   withArtifactRegularFile,
   bindArtifactFileCleanup,
   artifactFilePrimaryFacts,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   artifactFileCompletion,
   selectedFileTargetError,
 } from "../resources/index.js";
@@ -30,19 +30,36 @@ import {
   AnalysisArtifactChangedError,
   AnalysisAccessDeniedError,
   AnalysisResourceConstraintError,
-  cancelledBy,
-  carriedReason,
 } from "../domain/analysisErrorCore.js";
-import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
+import {
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../domain/parseFailureAnalysisError.js";
+import {
+  projectZstandardFrameAllowance,
+  ZstandardFrameAllowanceError,
+} from "../domain/compression/zstandardFrameAllowance.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { BinaryResourceFailure } from "../domain/binaryContainer.js";
+import {
+  BinaryResourceFailure,
+  binaryResourceCeiling,
+} from "../domain/binaryContainer.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
+import { nativeStructureLimit } from "../domain/native/nativeStructureBudget.js";
+import {
+  GPU_AMD_METADATA_DEPTH_LIMIT,
+  GPU_CONTAINER_NESTING_LIMIT,
+  gpuBudgetParameterForLimit,
+  gpuCodeObjectsBudgetLimit,
+  resolveGpuCodeObjectsBudgets,
+  type GpuCodeObjectsBudgets,
+} from "../domain/gpu/gpuCodeObjectsBudgets.js";
 import {
   GpuFileSource,
+  GpuReportCapacityFailure,
   gpuCount,
-  GPU_OBJECT_BYTES,
-  GPU_REPORT_BYTES,
 } from "./GpuSource.js";
 import { GpuInventory } from "./GpuInventory.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -53,6 +70,58 @@ import {
 import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_gpu_code_objects";
+
+const gpuResourceConstraint = (
+  primary: BinaryResourceFailure,
+  budgets: GpuCodeObjectsBudgets,
+): AnalysisResourceConstraintError => {
+  const reportedLimitContext = {
+    maximum_object_bytes: budgets.maxObjectBytes,
+    maximum_report_bytes: budgets.maxReportBytes,
+    ...(primary instanceof GpuReportCapacityFailure &&
+    primary.minimumReportBytes !== undefined
+      ? { minimum_report_bytes: primary.minimumReportBytes }
+      : {}),
+  };
+  const { name, maximum, required } = primary.failure.limit;
+  const requiredValue =
+    required !== undefined && required <= BigInt(Number.MAX_SAFE_INTEGER)
+      ? Number(required)
+      : undefined;
+  const parameter = gpuBudgetParameterForLimit(name);
+  if (parameter === "max_structure_bytes")
+    return parseLimitConstraint(OPERATION, "memory", primary, {
+      reportedLimitContext,
+      retryable: false,
+      limit: nativeStructureLimit(maximum),
+    });
+  if (parameter !== undefined)
+    return parseLimitConstraint(OPERATION, "memory", primary, {
+      reportedLimitContext,
+      retryable: false,
+      limit: gpuCodeObjectsBudgetLimit(parameter, maximum, requiredValue),
+    });
+  if (
+    name === GPU_CONTAINER_NESTING_LIMIT ||
+    name === GPU_AMD_METADATA_DEPTH_LIMIT
+  )
+    return parseLimitConstraint(OPERATION, "memory", primary, {
+      reportedLimitContext,
+      ...fixedAllowanceOptions(
+        "The GPU nesting allowance",
+        "parser",
+        binaryResourceCeiling(primary),
+      ),
+    });
+  return parseLimitConstraint(OPERATION, "memory", primary, {
+    reportedLimitContext,
+    ...fixedAllowanceOptions(
+      "The GPU parser syntax allowance",
+      "parser",
+      binaryResourceCeiling(primary),
+    ),
+  });
+};
 
 /** One admitted descriptor and bounded report at a time; retained cleanup blocks new work. */
 export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
@@ -90,6 +159,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
         ),
       );
     this.#busy = true;
+    const budgets = resolveGpuCodeObjectsBudgets(input);
     let progress: { inventory: GpuInventory; size: number } | undefined;
     try {
       return ok(
@@ -99,7 +169,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
             this.#resources,
             options?.signal,
             ({ handle: file }) =>
-              this.#read(file, input, options?.signal, (value) => {
+              this.#read(file, input, budgets, options?.signal, (value) => {
                 progress = value;
               }),
           ),
@@ -107,41 +177,36 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
       );
     } catch (cause) {
       const { cause: primary, origin } = artifactFilePrimaryFacts(cause);
-      // Malformed and truncated bytes are an invalid `path`; unsupported
+      // Malformed and truncated bytes are a malformed target; unsupported
       // bytes are an unsupported target, as for every other format parser.
       const formatFailure = parseFailureAnalysisError(
         OPERATION,
         input.path,
         primary,
       );
+      const frameAllowance =
+        primary instanceof ZstandardFrameAllowanceError
+          ? primary
+          : cause instanceof ZstandardFrameAllowanceError
+            ? cause
+            : undefined;
       let error: AnalysisError;
-      if (origin === "owned-or-classified" && primary instanceof AnalysisError)
+      if (frameAllowance !== undefined)
+        error = projectZstandardFrameAllowance(OPERATION, frameAllowance);
+      else if (
+        origin === "owned-or-classified" &&
+        primary instanceof AnalysisError
+      )
         error = primary;
       else if (primary instanceof BinaryResourceFailure)
-        error = new AnalysisResourceConstraintError(
-          OPERATION,
-          "memory",
-          primary.message,
-          {
-            maximum_object_bytes: GPU_OBJECT_BYTES,
-            maximum_report_bytes: GPU_REPORT_BYTES,
-          },
-          {
-            cause,
-            retryable: false,
-            remediationAction: `${primary.message} This release has no runtime override for that GPU byte allowance. The object allowance is ${String(GPU_OBJECT_BYTES)} bytes and the report allowance is ${String(GPU_REPORT_BYTES)} bytes. Additional host memory does not raise them. Repeating the unchanged request fails the same way.`,
-          },
-        );
+        error = gpuResourceConstraint(primary, budgets);
       else if (formatFailure !== undefined) error = formatFailure;
       else if (
         origin === "owned-or-classified" &&
         primary instanceof ArtifactReaderFailure &&
         primary.reason === "cancelled"
       )
-        error = cancelledBy(
-          OPERATION,
-          carriedReason(artifactFileCancellationCause(primary)),
-        );
+        error = artifactFileCancellationError(OPERATION, primary);
       else if (
         origin === "owned-or-classified" &&
         primary instanceof ArtifactReaderFailure &&
@@ -167,18 +232,33 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
         origin === "owned-or-classified" &&
         primary instanceof ArtifactReaderFailure &&
         primary.reason === "limit"
-      )
+      ) {
+        const requiredBytes =
+          primary.observedBytes !== undefined &&
+          primary.observedBytes <= BigInt(Number.MAX_SAFE_INTEGER)
+            ? Number(primary.observedBytes)
+            : undefined;
         error = new AnalysisResourceConstraintError(
           OPERATION,
           "memory",
           primary.message,
-          { maximum_object_bytes: GPU_OBJECT_BYTES },
+          {
+            maximum_object_bytes: budgets.maxObjectBytes,
+            ...(primary.observedBytes === undefined
+              ? {}
+              : { required: String(primary.observedBytes) }),
+          },
           {
             cause: primary,
             retryable: false,
-            remediationAction: `${primary.message} The GPU object allowance is ${String(GPU_OBJECT_BYTES)} bytes. This release has no runtime override. Additional host memory does not raise it. Repeating the unchanged request fails the same way.`,
+            limit: gpuCodeObjectsBudgetLimit(
+              "max_object_bytes",
+              budgets.maxObjectBytes,
+              requiredBytes,
+            ),
           },
         );
+      }
       // Other coded I/O failures remain host failures (for example, EMFILE).
       else
         error = new ProviderAdapterError(this.identity.id, OPERATION, {
@@ -246,6 +326,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
   async #read(
     file: FileHandle,
     input: GpuCodeObjectsInput,
+    budgets: GpuCodeObjectsBudgets,
     signal: AbortSignal | undefined,
     retainProgress: (progress: {
       inventory: GpuInventory;
@@ -254,7 +335,12 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
   ): Promise<GpuCodeObjects> {
     const initial = await file.stat({ bigint: true });
     const size = gpuCount(initial.size);
-    const source = new GpuFileSource(file, size, signal);
+    const source = new GpuFileSource(
+      file,
+      size,
+      signal,
+      budgets.maxObjectBytes,
+    );
     const sha256 = await source.digest();
     if (input.expected_sha256 !== undefined && sha256 !== input.expected_sha256)
       throw new AnalysisArtifactChangedError(

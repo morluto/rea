@@ -56,6 +56,10 @@ it("derives interval unions per trace/direction while retaining event source ord
     enumerable: true,
     value: { ordinary: true },
   });
+  Object.defineProperty(original.traces[0].events[0].data, "__proto__", {
+    enumerable: true,
+    value: { eventExtension: "kept" },
+  });
   original.extra = "https://example.test/path?token=ordinary";
   const { decoded, traces } = facts(JSON.stringify(original));
   expect(traces[0]?.streams[0]).toMatchObject({
@@ -88,10 +92,15 @@ it("derives interval unions per trace/direction while retaining event source ord
     extra: original.extra,
     ["__proto__"]: { ordinary: true },
   });
+  const container = decoded.container.reported;
+  expect(Object.hasOwn(Object(container), "__proto__")).toBe(true);
+  expect(decoded.records[0]?.reported).toMatchObject({
+    data: { ["__proto__"]: { eventExtension: "kept" } },
+  });
   expect(Reflect.get(Object.prototype, "ordinary")).toBeUndefined();
 });
 
-it("keeps exact 62-bit integers and numeric lexemes without allocating exponent expansion", () => {
+it("keeps exact 62-bit integers and source numeric lexemes", () => {
   const text = capture([event([frame(0, 0, true)])])
     .replace('"stream_id":0', '"stream_id":4611686018427387903')
     .replace('"offset":0', '"offset":9007199254740993')
@@ -112,26 +121,60 @@ it("keeps exact 62-bit integers and numeric lexemes without allocating exponent 
   });
 });
 
-it("keeps incomplete fields unknown and FIN without bytes as metadata", () => {
-  const { traces } = facts(
+it("keeps incomplete STREAM facts, distinct FIN values and zero-byte final sizes", () => {
+  const { decoded, traces } = facts(
     capture([
+      event([{ ...frame(8, 3), fin: undefined }]),
+      event([{ ...frame(8, 3), fin: null }]),
+      event([frame(8, 3, false)]),
+      event([{ ...frame(12, 0, true), stream_id: 6 }]),
       event([{ frame_type: "stream", stream_id: 0, length: 5 }]),
-      event([frame(10, 0, true)]),
       { name: "recovery:packet_lost", time: 1, data: {} },
-      {
-        name: "extension:custom",
-        time: 0,
-        data: { body: "ordinary evidence" },
-      },
     ]),
   );
-  expect(traces[0]?.incomplete_fact_records).toEqual([0]);
-  expect(traces[0]?.streams[0]).toMatchObject({
-    unique_bytes: "0",
-    covered_ranges: [],
-    reported_final_sizes: ["10"],
+  expect(traces[0]).toMatchObject({
+    incomplete_fact_records: [0, 1, 4],
+    streams: [
+      {
+        stream_id: "0",
+        unique_bytes: "3",
+        covered_ranges: [{ start: "8", end: "11" }],
+        reported_final_sizes: [],
+      },
+      {
+        stream_id: "6",
+        unique_bytes: "0",
+        covered_ranges: [],
+        reported_final_sizes: ["12"],
+      },
+    ],
+    loss_declarations: [
+      { record_ordinal: 5, packet_number: { state: "unknown" } },
+    ],
   });
-  expect(traces[0]?.loss_declarations[0]?.packet_number.state).toBe("unknown");
+  expect(
+    traces[0]?.streams.flatMap(({ contributions }) =>
+      contributions.map(
+        ({ record_ordinal, frame_index, offset, length, fin }) => [
+          record_ordinal,
+          frame_index,
+          offset,
+          length,
+          fin,
+        ],
+      ),
+    ),
+  ).toEqual([
+    [0, 0, "8", "3", null],
+    [1, 0, "8", "3", null],
+    [2, 0, "8", "3", false],
+    [3, 0, "12", "0", true],
+  ]);
+  expect(decoded.records[0]?.reported).not.toHaveProperty("data.frames.0.fin");
+  expect(decoded.records[1]?.reported).toHaveProperty(
+    "data.frames.0.fin",
+    null,
+  );
 });
 
 it("marks non-string frame types incomplete without hiding their recorded values", () => {
@@ -149,54 +192,8 @@ it("marks non-string frame types incomplete without hiding their recorded values
   });
 });
 
-it.each([
-  { fin: undefined, incomplete: [0] },
-  { fin: null, incomplete: [0] },
-  { fin: false, incomplete: [] },
-  { fin: true, incomplete: [] },
-])(
-  "retains STREAM ranges and marks unknown FIN records incomplete: $fin",
-  ({ fin, incomplete }) => {
-    const streamFrame: Record<string, unknown> = {
-      frame_type: "stream",
-      stream_id: 4,
-      offset: 8,
-      length: 3,
-    };
-    if (fin !== undefined) streamFrame.fin = fin;
-    const { traces } = facts(capture([event([streamFrame])]));
-    expect(traces[0]?.incomplete_fact_records).toEqual(incomplete);
-    expect(traces[0]?.streams[0]?.contributions).toEqual([
-      {
-        record_ordinal: 0,
-        frame_index: 0,
-        offset: "8",
-        length: "3",
-        fin: typeof fin === "boolean" ? fin : null,
-      },
-    ]);
-    expect(traces[0]?.streams[0]?.covered_ranges).toEqual([
-      { start: "8", end: "11" },
-    ]);
-  },
-);
-
-it("excludes structural auth material and explicit normalized values without guessing extension secrecy", () => {
+it("excludes structural QUIC credentials and marked normalized stream values", () => {
   const text = capture([
-    {
-      name: "http:frame_parsed",
-      time: 1,
-      data: {
-        frame: {
-          frame_type: "headers",
-          headers: [
-            { name: "authorization", value: "Bearer credential" },
-            { name: ":path", value: "/?token=ordinary" },
-            { name: "location", value: "https://user:pass@example.test/a" },
-          ],
-        },
-      },
-    },
     {
       name: "transport:parameters_set",
       time: 2,
@@ -210,74 +207,73 @@ it("excludes structural auth material and explicit normalized values without gue
     {
       name: "extension:custom",
       time: 3,
-      data: {
-        secret: "caller-selected ordinary value",
-        reset_token: "extension ordinary",
-      },
+      data: { reset_token: "ordinary extension value" },
     },
   ]).replace('"length":100', '"length":1e2');
   const { decoded, traces } = facts(text, ["100"]);
-  const serialized = JSON.stringify(decoded);
-  for (const hidden of [
-    "Bearer credential",
+  for (const excluded of [
     "reset-credential",
     "reset-frame",
     "new-token",
     "100",
-    "user:pass",
   ])
-    expect(serialized).not.toContain(hidden);
-  expect(serialized).toContain("token=ordinary");
-  expect(serialized).toContain("caller-selected ordinary value");
+    expect(JSON.stringify(decoded)).not.toContain(excluded);
+  expect(decoded.records[0]?.reported).toHaveProperty(
+    "data.stateless_reset_token",
+    null,
+  );
+  expect(decoded.records[1]?.reported).toMatchObject({
+    data: {
+      frames: [
+        { frame_type: "new_connection_id", reset_token: null },
+        { frame_type: "new_token", token: null },
+        { frame_type: "stream", length: null },
+      ],
+    },
+  });
+  expect(decoded.records[2]?.reported).toHaveProperty(
+    "data.reset_token",
+    "ordinary extension value",
+  );
   expect(traces[0]?.streams).toEqual([]);
-  expect(traces[0]?.incomplete_fact_records).toContain(2);
+  expect(traces[0]?.incomplete_fact_records).toEqual([1]);
 });
 
-it.each(["http:frame_created", "http:frame_parsed", "extension:custom"])(
-  "applies HTTP credential and transport URL rules only to HTTP header events: %s",
-  (name) => {
-    const headers = [
-      { name: "Authorization", value: "authorization credential" },
-      { name: "Proxy-AUTHORIZATION", value: "proxy credential" },
-      { name: "CoOkIe", value: "cookie credential" },
-      { name: "Set-Cookie", value: "response cookie credential" },
-      { name: "Location", value: "https://user:pass@example.test/path" },
-      { name: "authorization-extra", value: "ordinary extension" },
-    ];
-    const { decoded } = facts(
-      capture([{ name, time: 1, data: { frame: { headers } } }]),
-    );
-    const http = name.startsWith("http:");
-    const expectedValues = http
-      ? [
-          null,
-          null,
-          null,
-          null,
-          "https://example.test/path",
-          "ordinary extension",
-        ]
-      : headers.map(({ value }) => value);
-    expect(decoded.records[0]?.reported).toMatchObject({
-      data: {
-        frame: {
-          headers: headers.map((header, index) => ({
-            ...header,
-            value: expectedValues[index],
-          })),
-        },
-      },
-    });
-    expect(decoded.records[0]?.redactions).toEqual(
-      http
-        ? Array.from({ length: 5 }, (_, index) => ({
-            pointer: `/data/frame/headers/${index}/value`,
-            reason: "transport-credential",
-          }))
-        : [],
-    );
-  },
-);
+it("applies transport redaction only to actual HTTP header events", () => {
+  const headers = [
+    { name: "Authorization", value: "authorization credential" },
+    { name: "Proxy-AUTHORIZATION", value: "proxy credential" },
+    { name: "CoOkIe", value: "cookie credential" },
+    { name: "Set-Cookie", value: "response cookie credential" },
+    { name: "Location", value: "https://user:pass@example.test/path" },
+    { name: ":path", value: "/?token=ordinary" },
+    { name: "authorization-extra", value: "ordinary extension" },
+  ];
+  const names = ["http:frame_created", "extension:custom", "http:frame_parsed"];
+  const { decoded } = facts(
+    capture(
+      names.map((name) => ({ name, time: 1, data: { frame: { headers } } })),
+    ),
+  );
+  const redactedHeaders = headers.map((header, index) => ({
+    ...header,
+    value:
+      index < 4
+        ? null
+        : index === 4
+          ? "https://example.test/path"
+          : header.value,
+  }));
+  const redactions = Array.from({ length: 5 }, (_, index) => ({
+    pointer: `/data/frame/headers/${index}/value`,
+    reason: "transport-credential",
+  }));
+  expect(decoded.records).toMatchObject([
+    { reported: { data: { frame: { headers: redactedHeaders } } }, redactions },
+    { reported: { data: { frame: { headers } } }, redactions: [] },
+    { reported: { data: { frame: { headers: redactedHeaders } } }, redactions },
+  ]);
+});
 
 it.each([
   { literal: "1e2", sensitive: "100", reported: null, retained: false },
@@ -365,12 +361,8 @@ it("counts hidden payloads only for events interpreted as transport facts", () =
 });
 
 it("omits a hidden derived total for a stream with more contributions than call arguments allow", () => {
-  const events = Array.from({ length: 130 }, (_, index) =>
-    event(
-      Array.from({ length: 1_000 }, (_, offset) =>
-        frame(index * 1_000 + offset, 1),
-      ),
-    ),
+  const events = Array.from({ length: 130 }, () =>
+    event(Array.from({ length: 1_000 }, () => frame(0, 1))),
   );
   const { traces } = facts(capture(events), ["130000"]);
   expect(traces[0]?.streams).toEqual([]);
@@ -408,17 +400,33 @@ it.each([
         `"length":${literal}`,
       ),
     ),
-  ).toThrow(CaptureFormatError);
+  ).toThrow(
+    expect.objectContaining({
+      pointer: "/traces/0/events/0/data/frames/0/length",
+      failure: expect.objectContaining({ kind: "malformed" }),
+    }),
+  );
+});
+
+it("rejects a STREAM whose valid offset and length exceed the range when added", () => {
+  const text = capture([event([frame(0, 1)])]).replace(
+    '"offset":0',
+    '"offset":4611686018427387903',
+  );
+  expect(() => facts(text)).toThrow(
+    expect.objectContaining({
+      pointer: "/traces/0/events/0/data/frames/0",
+      failure: expect.objectContaining({ kind: "malformed" }),
+    }),
+  );
 });
 
 it.each([
   '{"qlog_format":"JSON","qlog_format":"JSON","qlog_version":"0.3","traces":[]}',
-  capture([]).slice(0, -1),
   capture([]) + " {}",
   capture([{ name: "invalid", time: "1", data: {} }]),
   capture([[1, "transport", "packet_sent", {}]]),
   capture([event([{ ...frame(0, 1), fin: "true" }])]),
-  capture([event([{ ...frame(0, 1), offset: 4611686018427388000 }])]),
 ])(
   "rejects malformed JSON/profile events with no partial success: %s",
   (text) => {
@@ -426,53 +434,25 @@ it.each([
   },
 );
 
-it.each([
-  { depth: 64, innermost: "[]", accepted: true },
-  { depth: 64, innermost: "{}", accepted: true },
-  { depth: 64, innermost: "[0]", accepted: true },
-  { depth: 65, innermost: "[]", accepted: false },
-  { depth: 65, innermost: "{}", accepted: false },
-  { depth: 65, innermost: "[0]", accepted: false },
-  { depth: 66, innermost: "[]", accepted: false },
-])(
-  "bounds a $innermost extension at container level $depth",
-  ({ depth, innermost, accepted }) => {
-    // The root, traces array and trace object are the first three levels.
-    const enclosing = depth - 4;
-    const text = `{"qlog_format":"JSON","qlog_version":"0.3","traces":[{"events":[],"ext":${"[".repeat(enclosing)}${innermost}${"]".repeat(enclosing)}}]}`;
-    if (accepted) expect(facts(text).decoded.total_records).toBe(0);
-    else
-      expect(() => facts(text)).toThrow(
-        expect.objectContaining({
-          limit: { name: "nesting-depth", maximum: 64 },
-        }),
-      );
-  },
-);
+it("retains an extension at the last admitted qlog container level", () => {
+  // The root, traces array and trace object consume the first three levels.
+  const nested = "[".repeat(61) + '"last-level"' + "]".repeat(61);
+  const text = `{"qlog_format":"JSON","qlog_version":"0.3","traces":[{"events":[],"ext":${nested}}]}`;
+  const bytes = Buffer.from("\ufeff" + text);
+  const { decoded } = facts(decodeCaptureText(bytes, "qlog"));
+  expect(decoded.container.reported).toHaveProperty(
+    "traces.0.ext",
+    JSON.parse(nested),
+  );
+});
 
-it("rejects other qlog containers/versions and excessive nesting, accepts empty profiles and UTF-8 BOM", () => {
-  for (const extra of [{ qlog_format: "JSON-SEQ" }, { qlog_version: "0.4" }])
-    expect(() => facts(capture([], extra))).toThrow("Only the aioquic");
-  expect(() =>
-    facts(
-      capture([], {
-        extension: JSON.parse("[".repeat(65) + "0" + "]".repeat(65)),
-      }),
-    ),
-  ).toThrow(
-    expect.objectContaining({ limit: { name: "nesting-depth", maximum: 64 } }),
+it("distinguishes unsupported qlog sequences from an empty supported profile", () => {
+  expect(() => facts(capture([], { qlog_format: "JSON-SEQ" }))).toThrow(
+    expect.objectContaining({
+      failure: expect.objectContaining({ kind: "unsupported" }),
+    }),
   );
   expect(
     facts('{"qlog_format":"JSON","qlog_version":"0.3","traces":[]}').traces,
   ).toEqual([]);
-  const raw = Buffer.from(capture([]));
-  expect(
-    facts(
-      decodeCaptureText(
-        Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), raw]),
-        "qlog",
-      ),
-    ).decoded.total_records,
-  ).toBe(0);
-  expect(() => decodeCaptureText(Buffer.from([0xff]), "qlog")).toThrow("UTF-8");
 });

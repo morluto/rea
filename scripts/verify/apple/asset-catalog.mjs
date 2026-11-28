@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { sha256File } from "../../lib/verifier-file-sha256.mjs";
 import {
   artifactCli,
   artifactMcpResult,
@@ -12,6 +12,7 @@ import {
   withArtifactMcp,
   withBundleResourcesMcp,
 } from "../../lib/artifact-e2e.mjs";
+import { requireMcpToolError } from "../../lib/mcp-verifier-results.mjs";
 import {
   VerifierFixture,
   withVerifierFixture,
@@ -71,12 +72,10 @@ await withVerifierFixture(fixture, async () => {
       ])
     ).stdout,
   );
-  const sha256 = createHash("sha256")
-    .update(await readFile(join(resources, "Assets.car")))
-    .digest("hex");
-  const executableSha256 = createHash("sha256")
-    .update(await readFile(join(app, "Contents", "MacOS", "Fixture")))
-    .digest("hex");
+  const sha256 = await sha256File(join(resources, "Assets.car"));
+  const executableSha256 = await sha256File(
+    join(app, "Contents", "MacOS", "Fixture"),
+  );
   const cli = await artifactCli("inspect-asset-catalog", app);
   assert.deepEqual(
     cli.records.map(({ metadata }) => metadata),
@@ -106,7 +105,15 @@ await withVerifierFixture(fixture, async () => {
       name: "inspect_asset_catalog",
       arguments: { offset: -1 },
     });
-    assert.equal(invalid.isError, true);
+    // appleAssetCatalogInputSchema requires an inclusive offset minimum of 0.
+    // projectInputIssues reports that bound as out_of_range.
+    assert.partialDeepStrictEqual(requireMcpToolError(invalid), {
+      code: "invalid_request",
+      details: {
+        operation: "inspect_asset_catalog",
+        issues: [{ path: ["offset"], reason: "out_of_range", minimum: 0 }],
+      },
+    });
   });
   const { resource_root, target_sha256, ...resourcePayload } = cli;
   assert.equal(resource_root.executable_sha256, null);

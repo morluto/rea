@@ -6,6 +6,7 @@ import { cancelledBy, OwnerCancellation } from "../domain/analysisErrorCore.js";
 import { HopperRemoteError } from "./HopperErrors.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { extractRequiredRegexLiteral } from "../domain/regexLiteralCandidate.js";
 import { nativeSearchInput } from "../domain/native/nativeSearch.js";
 import type { HopperClient } from "./HopperClient.js";
 import {
@@ -28,15 +29,22 @@ const inputSchema = z.strictObject({
   mode: z.literal("regex"),
 });
 /** Match collected native facts off Hopper's API thread, with cancellable lifetime. */
-/** The client capability regex search needs: one validated inventory read. */
+/** The client capability regex search needs: one validated inventory or literal candidate read. */
 export interface HopperInventoryReader {
   callTool(
-    method: "list_strings" | "list_procedures",
+    method:
+      | "list_strings"
+      | "list_procedures"
+      | "search_strings"
+      | "search_procedures",
     arguments_: Readonly<Record<string, JsonValue>>,
     options: Parameters<HopperClient["callTool"]>[2],
   ): Promise<
     Result<
-      HopperReply<"list_strings"> | HopperReply<"list_procedures">,
+      | HopperReply<"list_strings">
+      | HopperReply<"list_procedures">
+      | HopperReply<"search_strings">
+      | HopperReply<"search_procedures">,
       AnalysisError
     >
   >;
@@ -119,9 +127,28 @@ export class HopperRegexSearch {
       input.data.document === undefined
         ? {}
         : { document: input.data.document };
+    const candidateLiteral = extractRequiredRegexLiteral(
+      input.data.pattern,
+      input.data.case_sensitive,
+    );
+    const inventoryMethod =
+      candidateLiteral !== undefined
+        ? operation
+        : operation === "search_strings"
+          ? "list_strings"
+          : "list_procedures";
+    const inventoryArgs =
+      candidateLiteral !== undefined
+        ? {
+            ...inventoryArguments,
+            pattern: candidateLiteral,
+            mode: "literal",
+            case_sensitive: input.data.case_sensitive,
+          }
+        : inventoryArguments;
     const inventory = await this.client.callTool(
-      operation === "search_strings" ? "list_strings" : "list_procedures",
-      inventoryArguments,
+      inventoryMethod,
+      inventoryArgs,
       { ...inventoryOptions, operation },
     );
     if (!inventory.ok)
@@ -159,7 +186,6 @@ export class HopperRegexSearch {
     if (!matched.ok) return matched;
     if (options.signal?.aborted)
       return err(cancelledBy(operation, options.signal));
-    const selected = new Set(matched.value);
-    return ok(rows.filter((_, index) => selected.has(index)));
+    return ok(matched.value.map((index) => rows[index]!));
   }
 }

@@ -1,5 +1,5 @@
 import {
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   ArtifactFileCancelled,
   ArtifactFileCleanupFailure,
   withArtifactRegularFile,
@@ -122,10 +122,7 @@ const scanRecoveryFile = async (
         },
       );
     if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-      throw cancelledBy(
-        OPERATION,
-        carriedReason(artifactFileCancellationCause(cause)),
-      );
+      throw artifactFileCancellationError(OPERATION, cause);
     if (
       cause instanceof Error &&
       "code" in cause &&
