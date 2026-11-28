@@ -49,8 +49,10 @@ exists.
 
 `activation_events` lists each package.json event with `eager` true for `*`
 and `onStartupFinished`. `contributes` lists contribute key names and counts,
-and a capped command list (`commands_total` and `commands_omitted` keep the
-remainder). `extension_dependencies` and `extension_pack` keep both
+every declared command, the commands each menu invokes (`menus`), and the command each
+keybinding (`keybindings`) invokes, plus declared chat participants, language
+model tools, MCP server providers, views and custom editors (`declarations`),
+and configuration `settings`. `extension_dependencies` and `extension_pack` keep both
 manifests' declared ids and a `disagreement` flag. A side is `null` when its
 manifest was missing or could not be read, and `disagreement` is only true
 when both sides were read. `extension_kind`,
@@ -72,6 +74,80 @@ scripts, and nested archives with byte length, SHA-256 when hashed, and
 `classification` `observed` (magic bytes) or `inferred` (name or Unix
 executable bit). Member kinds are ZIP-name and magic conventions, not a
 runtime load inventory.
+
+## Commands and their handlers
+
+`correlate_vsix_registrations` (CLI `correlate-vsix-registrations`) joins the declared
+commands to `vscode.commands.registerCommand` and
+`registerTextEditorCommand` calls. It needs two complete Evidence records:
+`inspect_vsix_package` for the package and `analyze_javascript_application`
+for the files extracted from it.
+
+```bash
+rea extract-artifact demo.vsix --output-root /absolute/extracted
+rea inspect-vsix-package demo.vsix --detail complete --json > package.json
+rea analyze-javascript-application /absolute/extracted/extension --detail complete --json > application.json
+```
+
+Pass both records as `vsix_package` and `javascript_application` in one JSON
+document to `rea correlate-vsix-registrations request.json --json`. MCP also accepts
+exact retained-Evidence references.
+
+| `status`                | Meaning                                                |
+| ----------------------- | ------------------------------------------------------ |
+| `registered`            | A call with that literal identifier was found          |
+| `not_found`             | Declared, and no such call was seen                    |
+| `undetermined`          | Registration cannot be confirmed or ruled out          |
+| `registered_undeclared` | Registered in code, absent from `contributes.commands` |
+
+Each registration has its module, line and column. `loader_authority: candidate`
+marks a `require`-based match, and `wrapper: unverified` one that reaches
+`vscode` through an interop helper such as `__toESM` whose effect is not
+checked. `replacement: possible` means the source also writes that function or
+an object containing it, including through a computed name; REA does not
+establish write order or execution, so a command with only such calls is
+`undetermined`. `identity: possible` marks a call on a binding that may hold
+something other than `vscode`, with the same effect. Calls whose identifier is
+not a string literal appear in `unresolved_registrations`. `menus` lists the
+known commands each menu invokes, and each command's `keybindings` lists its
+keys; both are null when not recorded or not all rows could be read.
+
+When the result is larger than the agent result budget, MCP returns a retained
+summary of counts; page the complete record with `inspect_analysis_view` kind
+`evidence-json`, or request `detail: "complete"`.
+
+REA does not verify that the two records describe the same files:
+`entry_points` says whether each declared entry path was analyzed. `not_found`
+does not prove that a command has no handler.
+
+`contributions` reports the same statuses for these contribution points:
+
+| Declared in `contributes`           | Registered with                                                                             |
+| ----------------------------------- | ------------------------------------------------------------------------------------------- |
+| `chatParticipants[].id`             | `vscode.chat.createChatParticipant`                                                         |
+| `languageModelTools[].name`         | `vscode.lm.registerTool`                                                                    |
+| `mcpServerDefinitionProviders[].id` | `vscode.lm.registerMcpServerDefinitionProvider`                                             |
+| `views.*[].id`                      | `vscode.window.registerTreeDataProvider`, `createTreeView` or `registerWebviewViewProvider` |
+| `customEditors[].viewType`          | `vscode.window.registerCustomEditorProvider`                                                |
+
+When a row or its identifier cannot be read, it is kept with a null identifier
+and no ID of that kind is called undeclared. The servers an MCP provider returns
+at run time, their commands and prompt handling are not analyzed. `summary`
+counts commands only, apart from `unresolved_registrations`, which covers every
+kind.
+
+The package report also lists declared configuration `settings` with their
+types. Unreadable configuration is named in `limitations`. Reads of those
+settings in code are not correlated. Views that VS Code fills without a provider
+call, such as walkthrough or welcome content, have no registration to find.
+
+`undetermined` replaces `not_found` when a declared entry point was not
+analyzed, analysis was truncated, or any registration identifier is unresolved,
+because it could be that ID. Only unresolved registrations of the same kind
+count. It also replaces `registered_undeclared` when the manifest was not read
+or an older record omitted commands. Absence is not claimed when any source was
+skipped or unparsed, or for application Evidence recorded before callee facts
+existed; rerun the analysis for those.
 
 ## Limits and failures
 

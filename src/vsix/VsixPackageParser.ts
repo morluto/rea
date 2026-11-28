@@ -39,11 +39,9 @@ import { hasZipSignature } from "../domain/zipPackageFormat.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 import { Budget } from "../domain/budget.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
-import { boundedList } from "../domain/boundedList.js";
 import {
   MAX_INSPECT_VSIX_PACKAGE_MANIFEST_JSON_VALUES,
   MAX_INSPECT_VSIX_PACKAGE_MANIFEST_XML_NODES,
-  VSIX_COMMANDS_CAP,
   VSIX_PACKAGE_FORMAT,
   isVsixInterestingMemberKind,
   vsixActivationIsEager,
@@ -82,6 +80,8 @@ export const VSIX_LIMITATIONS = {
     `Entry point ${JSON.stringify(path)} matches member ${JSON.stringify(member)} only when case is ignored; it is reported absent, as a case-sensitive file system would not load it.`,
   entryPointBackslash: (path: string): string =>
     `Entry point ${JSON.stringify(path)} contains a backslash and is reported absent, as Node on POSIX treats "\\" as a literal filename character.`,
+  unreadSettings:
+    "Some of extension/package.json contributes.configuration could not be read; contributes.settings lists only the readable settings.",
   emptyContributesKey:
     "extension/package.json contributes has an empty key; it is not listed in contributes.keys.",
   duplicatePath: (path: string): string =>
@@ -612,6 +612,103 @@ interface ParsedPackageJson {
   readonly enabledApiProposals: string[];
 }
 
+const isRow = (row: unknown): row is Record<string, unknown> =>
+  row !== null && typeof row === "object" && !Array.isArray(row);
+
+/** VS Code accepts one contribution object or an array of them. */
+const rowList = (value: unknown): readonly unknown[] =>
+  value === undefined ? [] : Array.isArray(value) ? value : [value];
+
+const rowsOf = (value: unknown) => rowList(value).filter(isRow);
+
+/** A row that is not an object, or holds a non-text field, cannot be read. */
+const unreadableRows = (value: unknown, fields: readonly string[]): boolean =>
+  !rowList(value).every(
+    (row) =>
+      isRow(row) &&
+      fields.every(
+        (field) => row[field] === undefined || typeof row[field] === "string",
+      ),
+  );
+
+const exactText = (value: unknown): string | null =>
+  typeof value === "string" && value !== "" ? value : null;
+
+const menuGroups = (menus: unknown) =>
+  rowsOf(menus).flatMap((record) =>
+    Object.entries(record).flatMap(([menu, items]) =>
+      menu === ""
+        ? []
+        : [
+            {
+              menu,
+              commands: rowsOf(items).map((row) => exactText(row.command)),
+            },
+          ],
+    ),
+  );
+
+/** Menus are one object keyed by menu name, each holding its rows. */
+const unreadableMenus = (menus: unknown): boolean =>
+  menus !== undefined &&
+  (!isRow(menus) ||
+    Object.values(menus).some((rows) => unreadableRows(rows, ["command"])));
+
+/** Each AI contribution point, with the keys naming its ID and display text. */
+const CONTRIBUTION_POINTS = [
+  ["chat_participant", "chatParticipants", "id", "name"],
+  ["language_model_tool", "languageModelTools", "name", "displayName"],
+  ["mcp_server_provider", "mcpServerDefinitionProviders", "id", "label"],
+  ["view", "views", "id", "name"],
+  ["custom_editor", "customEditors", "viewType", "displayName"],
+] as const;
+
+/** `contributes.views` groups its rows by view container. */
+const pointRows = (point: string, value: unknown): readonly unknown[] =>
+  point === "views"
+    ? rowList(value).flatMap((containers) =>
+        isRow(containers)
+          ? Object.values(containers).flatMap(rowList)
+          : [containers],
+      )
+    : rowList(value);
+
+const declaredContributions = (
+  contributes: Record<string, unknown> | undefined,
+) =>
+  CONTRIBUTION_POINTS.flatMap(([kind, point, idKey, labelKey]) =>
+    // A row that cannot be read stays as a null identifier of its kind.
+    pointRows(point, contributes?.[point]).map((value) => {
+      const row = isRow(value) ? value : {};
+      return {
+        kind,
+        id: exactText(row[idKey]),
+        label: exactText(row[labelKey]),
+      };
+    }),
+  );
+
+const unreadableSettings = (configuration: unknown): boolean =>
+  rowList(configuration).some(
+    (row) =>
+      !isRow(row) || (row.properties !== undefined && !isRow(row.properties)),
+  );
+
+/** Properties of one configuration object or of each in an array. */
+const declaredSettings = (configuration: unknown) =>
+  rowsOf(configuration).flatMap(({ properties }) =>
+    rowsOf(properties).flatMap((record) =>
+      Object.entries(record).flatMap(([key, schema]) => {
+        const types = rowsOf(schema).flatMap(({ type }) =>
+          (Array.isArray(type) ? (type as readonly unknown[]) : [type]).filter(
+            (name): name is string => typeof name === "string" && name !== "",
+          ),
+        );
+        return key === "" ? [] : [{ key, types }];
+      }),
+    ),
+  );
+
 const parsePackageJsonDocument = (
   text: string,
   limitations: string[],
@@ -628,6 +725,10 @@ const parsePackageJsonDocument = (
       commands: [],
       commands_total: 0,
       commands_omitted: 0,
+      menus: null,
+      keybindings: null,
+      declarations: null,
+      settings: null,
     },
     extensionDependencies: null,
     extensionPack: null,
@@ -671,6 +772,8 @@ const parsePackageJsonDocument = (
   // A contribution point is named by its key; an empty key names none.
   if (entries.some(([name]) => name.length === 0))
     limitations.push(VSIX_LIMITATIONS.emptyContributesKey);
+  if (unreadableSettings(contributesRaw?.configuration))
+    limitations.push(VSIX_LIMITATIONS.unreadSettings);
   // VS Code accepts `contributes.commands` as one command object or an array.
   const commandsRaw = contributesRaw?.commands;
   const commandRows: readonly unknown[] = Array.isArray(commandsRaw)
@@ -678,14 +781,19 @@ const parsePackageJsonDocument = (
     : commandsRaw !== null && typeof commandsRaw === "object"
       ? [commandsRaw]
       : [];
+  const unreadContributes =
+    record.contributes !== undefined && contributesRaw === undefined;
+  const unreadCommands =
+    unreadContributes ||
+    (commandsRaw !== undefined &&
+      (commandsRaw === null || typeof commandsRaw !== "object"));
   const keys = entries
     .filter(([name]) => name.length > 0)
     .map(([name, item]) => ({
       name,
       count: name === "commands" ? commandRows.length : contributeCount(item),
     }));
-  const listedCommands = boundedList(commandRows, VSIX_COMMANDS_CAP);
-  const commands = listedCommands.items.map((item) => {
+  const commands = commandRows.map((item) => {
     if (item === null || typeof item !== "object" || Array.isArray(item))
       return { command: null, title: null };
     const command = item as Record<string, unknown>;
@@ -717,8 +825,27 @@ const parsePackageJsonDocument = (
     contributes: {
       keys,
       commands,
-      commands_total: commandRows.length,
-      commands_omitted: listedCommands.omitted,
+      commands_total: commandRows.length + (unreadCommands ? 1 : 0),
+      // A present but unsupported shape is a declaration that was not read.
+      commands_omitted: unreadCommands ? 1 : 0,
+      menus:
+        unreadContributes || unreadableMenus(contributesRaw?.menus)
+          ? null
+          : menuGroups(contributesRaw?.menus),
+      keybindings:
+        unreadContributes ||
+        unreadableRows(contributesRaw?.keybindings, ["command", "key"])
+          ? null
+          : rowsOf(contributesRaw?.keybindings).map((row) => ({
+              command: exactText(row.command),
+              key: exactText(row.key),
+            })),
+      declarations: unreadContributes
+        ? null
+        : declaredContributions(contributesRaw),
+      settings: unreadContributes
+        ? null
+        : declaredSettings(contributesRaw?.configuration),
     },
     extensionDependencies: parseExtensionList(record.extensionDependencies),
     extensionPack: parseExtensionList(record.extensionPack),
@@ -1344,6 +1471,10 @@ export const parseVsixPackage = async (
         commands: [],
         commands_total: 0,
         commands_omitted: 0,
+        menus: null,
+        keybindings: null,
+        declarations: null,
+        settings: null,
       },
       extension_dependencies: extensionDependencies,
       extension_pack: extensionPack,
