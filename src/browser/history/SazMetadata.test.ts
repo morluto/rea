@@ -1,4 +1,8 @@
 import { expect, it } from "vitest";
+import {
+  XML_ELEMENT_DEPTH_ALLOWANCE,
+  XML_ELEMENT_DEPTH_LIMIT,
+} from "../../domain/xmlDocument.js";
 import { decodeSazMetadata } from "./SazMetadata.js";
 
 it("reports a declared legacy XML encoding as unsupported", () => {
@@ -41,6 +45,24 @@ it("preserves XML node order, attributes, entities, and literal replacement char
       },
     ],
   });
+});
+
+it("reports element depth as the XML ceiling", () => {
+  const xml = `<Session>${"<a>".repeat(XML_ELEMENT_DEPTH_LIMIT)}x${"</a>".repeat(XML_ELEMENT_DEPTH_LIMIT)}</Session>`;
+  expect(() => decodeSazMetadata(Buffer.from(xml))).toThrow(
+    expect.objectContaining({
+      replyReason: "fixed-limit",
+      message: `XML element depth exceeds ${String(XML_ELEMENT_DEPTH_LIMIT)}. This release has no runtime override for this ceiling.`,
+      ceiling: {
+        boundary: "memory",
+        fixedAllowance: XML_ELEMENT_DEPTH_ALLOWANCE,
+      },
+      failure: expect.objectContaining({
+        kind: "limit",
+        format: "web-network-capture",
+      }),
+    }),
+  );
 });
 
 it("refuses malformed markup even when the XML contains a literal replacement character", () => {
