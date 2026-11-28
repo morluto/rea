@@ -298,7 +298,7 @@ export const comparisonLimitations = (
     )
   )
     limitations.push(
-      "Field Constant-table defaults are not compared; field matching and change detection cover names, flags and signatures only.",
+      "Field Constant-table defaults compare decoded element types and exact bytes, not runtime initialization or inferred enum names.",
     );
   const namesTypes = (result: ManagedMemberInspection) =>
     result.methods.some(

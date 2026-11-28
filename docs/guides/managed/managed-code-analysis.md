@@ -71,8 +71,19 @@ Retained `managed-members` field pages can select `fields: ["constant"]` while
 keeping original field identity and source offsets. These values are metadata
 declarations, including enum members' encoded underlying constants, not observed
 runtime state or inferred enum-name mappings. Parameter/property defaults are
-not exposed by this field-focused reader. Member comparison still covers field
-names, flags and signatures; it does not compare constant defaults.
+not exposed by this field-focused reader.
+
+`compare_managed_members` pairs fields by the existing name/type/signature
+rules, then compares flags, signatures and decoded Constant-table defaults.
+Default comparison uses `element_type` and exact `raw_hex`, so adjacent wide
+integers, positive versus negative zero, and distinct NaN encodings remain
+distinguishable. Declaration offsets and blob indices are build-local
+coordinates and do not establish a change. Two absent defaults compare equal;
+adding or removing a decoded default establishes a change. An unavailable
+default leaves the field `unknown` with a side-specific
+`field-constant-unavailable` limitation unless a separately observed flag or
+signature change already establishes `changed`. These statuses compare encoded
+metadata declarations and do not establish runtime field values.
 
 The encoding follows [ECMA-335, Partition II, sections 22.9 and 23.1.16](https://ecma-international.org/publications-and-standards/standards/ecma-335/).
 
