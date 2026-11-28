@@ -1,5 +1,5 @@
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { mkdir, readFile, readdir, symlink, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { expect } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -141,6 +141,245 @@ cliTest(
       },
     });
     expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(original);
+  },
+);
+
+/** Lay out a package with REA's CLI script shape and the given manifest. */
+const installPackage = async (
+  root: string,
+  manifest: Readonly<Record<string, unknown>> | string,
+): Promise<string> => {
+  const script = join(root, "scripts", "rea.mjs");
+  await mkdir(dirname(script), { recursive: true });
+  await writeFile(script, "");
+  await writeFile(
+    join(root, "package.json"),
+    typeof manifest === "string" ? manifest : JSON.stringify(manifest),
+  );
+  return script;
+};
+
+const reaManifest = { name: "rea-agents", bin: { rea: "scripts/rea.mjs" } };
+
+cliTest(
+  "setup refreshes this installation's script under another runtime",
+  async ({ cli }) => {
+    const home = await createTestTempDirectory("rea-setup-other-runtime-");
+    const config = join(home, ".claude.json");
+    const runtime = join(home, "old-runtime", "node");
+    await mkdir(dirname(runtime), { recursive: true });
+    await writeFile(runtime, "");
+    // The CLI fixture runs this checkout's script, outside any node_modules.
+    const original = JSON.stringify({
+      mcpServers: {
+        rea: { command: runtime, args: [resolve("scripts/rea.mjs"), "mcp"] },
+      },
+    });
+    await writeFile(config, original);
+    const result = await cli.run({
+      arguments: [...setup, "--yes"],
+      cwd: home,
+      environment: { HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: home },
+    });
+    expect(result.exitCode, result.stdout).toBe(0);
+    expect(JSON.parse(await readFile(config, "utf8"))).toMatchObject({
+      mcpServers: { rea: { command: process.execPath } },
+    });
+    expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(original);
+  },
+);
+
+for (const runtime of ["current", "other"] as const)
+  cliTest(
+    `setup refreshes a launcher of another installed REA package (${runtime} runtime)`,
+    async ({ cli }) => {
+      const home = await createTestTempDirectory("rea-setup-other-install-");
+      const config = join(home, ".claude.json");
+      const script = await installPackage(
+        join(
+          home,
+          "npm-cache",
+          "_npx",
+          "af752b90",
+          "node_modules",
+          "rea-agents",
+        ),
+        reaManifest,
+      );
+      let command = process.execPath;
+      if (runtime === "other") {
+        command = join(home, "old-runtime", "node");
+        await mkdir(dirname(command), { recursive: true });
+        await writeFile(command, "");
+      }
+      const original = JSON.stringify({
+        mcpServers: {
+          rea: { command, args: [script, "mcp"], env: { CUSTOM: "keep" } },
+          peer: { command: "peer" },
+        },
+      });
+      await writeFile(config, original);
+      const environment = {
+        HOME: home,
+        USERPROFILE: home,
+        CLAUDE_CONFIG_DIR: home,
+      };
+      const doctor = await cli.run({
+        arguments: [
+          "doctor",
+          "--client",
+          "claude_code",
+          "--skill=false",
+          "--json",
+        ],
+        cwd: home,
+        environment,
+      });
+      expect(doctor.json).toMatchObject({
+        identity: {
+          registrations: expect.arrayContaining([
+            expect.objectContaining({
+              client: "claude_code",
+              command_identity: "owned",
+              state: "stale",
+              remediation: expect.stringContaining(
+                "another installed rea-agents package or runtime",
+              ),
+            }),
+          ]),
+        },
+      });
+      const result = await cli.run({
+        arguments: [...setup, "--yes"],
+        cwd: home,
+        environment,
+      });
+      expect(result.exitCode, result.stdout).toBe(0);
+      const refreshed = JSON.parse(await readFile(config, "utf8"));
+      expect(refreshed).toMatchObject({
+        mcpServers: {
+          rea: { command: process.execPath, env: { CUSTOM: "keep" } },
+          peer: { command: "peer" },
+        },
+      });
+      expect(refreshed.mcpServers.rea.args).not.toContain(script);
+      expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(original);
+    },
+  );
+
+for (const [label, root, manifest, identity] of [
+  [
+    "another package name",
+    ["node_modules", "rea-agents"],
+    { ...reaManifest, name: "other-agents" },
+    "foreign",
+  ],
+  ["a source checkout", ["checkout", "rea-agents"], reaManifest, "foreign"],
+  [
+    "a different CLI script",
+    ["node_modules", "rea-agents"],
+    { ...reaManifest, bin: { rea: "scripts/other.mjs" } },
+    "foreign",
+  ],
+  [
+    "an unparseable REA manifest",
+    ["node_modules", "rea-agents"],
+    '{"name":"rea-agents",',
+    "unknown",
+  ],
+] as const)
+  cliTest(`setup keeps a launcher of ${label} ${identity}`, async ({ cli }) => {
+    const home = await createTestTempDirectory("rea-setup-unproven-install-");
+    const config = join(home, ".claude.json");
+    const script = await installPackage(join(home, ...root), manifest);
+    const original = JSON.stringify({
+      mcpServers: { rea: { command: process.execPath, args: [script, "mcp"] } },
+    });
+    await writeFile(config, original);
+    const result = await cli.run({
+      arguments: [...setup, "--yes"],
+      cwd: home,
+      environment: { HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: home },
+    });
+    expect(result.exitCode, result.stdout).toBe(1);
+    expect(result.json).toMatchObject({
+      status: "needs_human",
+      remediation: expect.stringContaining(`${identity} ownership`),
+    });
+    expect(await readFile(config, "utf8")).toBe(original);
+  });
+
+cliTest(
+  "setup leaves a removed installation's launcher under another runtime unknown",
+  async ({ cli }) => {
+    const home = await createTestTempDirectory("rea-setup-removed-install-");
+    const config = join(home, ".claude.json");
+    const runtime = join(home, "old-runtime", "node");
+    await mkdir(dirname(runtime), { recursive: true });
+    await writeFile(runtime, "");
+    const script = join(
+      home,
+      "npm-cache",
+      "_npx",
+      "af752b90",
+      "node_modules",
+      "rea-agents",
+      "scripts",
+      "rea.mjs",
+    );
+    const original = JSON.stringify({
+      mcpServers: { rea: { command: runtime, args: [script, "mcp"] } },
+    });
+    await writeFile(config, original);
+    const result = await cli.run({
+      arguments: [...setup, "--yes"],
+      cwd: home,
+      environment: { HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: home },
+    });
+    expect(result.exitCode, result.stdout).toBe(1);
+    expect(result.json).toMatchObject({
+      status: "needs_human",
+      remediation: expect.stringContaining("unknown ownership"),
+    });
+    expect(await readFile(config, "utf8")).toBe(original);
+  },
+);
+
+cliTest.skipIf(process.platform === "win32")(
+  "setup leaves a launcher unknown when Node and native traversal select different scripts",
+  async ({ cli }) => {
+    const home = await createTestTempDirectory("rea-setup-divergent-install-");
+    const config = join(home, ".claude.json");
+    const root = join(home, "pkg", "node_modules", "rea-agents");
+    await installPackage(root, reaManifest);
+    await mkdir(join(root, "lib"));
+    // Native traversal follows the link before `..` into the REA package;
+    // Node removes `..` first and runs the unrelated sibling script.
+    await installPackage(join(home, "foreign"), { name: "foreign" });
+    await symlink(join(root, "lib"), join(home, "foreign", "link"), "dir");
+    const runtime = join(home, "old-runtime", "node");
+    await mkdir(dirname(runtime), { recursive: true });
+    await writeFile(runtime, "");
+    const original = JSON.stringify({
+      mcpServers: {
+        rea: {
+          command: runtime,
+          args: [`${home}/foreign/link/../scripts/rea.mjs`, "mcp"],
+        },
+      },
+    });
+    await writeFile(config, original);
+    const result = await cli.run({
+      arguments: [...setup, "--yes"],
+      cwd: home,
+      environment: { HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: home },
+    });
+    expect(result.exitCode, result.stdout).toBe(1);
+    expect(result.json).toMatchObject({
+      status: "needs_human",
+      remediation: expect.stringContaining("unknown ownership"),
+    });
+    expect(await readFile(config, "utf8")).toBe(original);
   },
 );
 

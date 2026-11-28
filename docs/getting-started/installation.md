@@ -2242,11 +2242,14 @@ untouched. Setup does not prewarm a separate package-runner command.
 
 If setup itself runs from a package-runner cache, the registration depends on
 that cache entry and the selected runtime remaining installed. Removing either
-makes startup fail; it does not download or resolve another package. Restore the
-same installation and rerun setup. Changing package requests, cache roots, or
-runtimes can create a different installation identity. If the old entry cannot be
-identified, restore it first or manually remove the confirmed REA registration
-before running setup again. A global installation provides a more durable path.
+makes startup fail; it does not download or resolve another package. Changing
+package requests, cache roots, or runtimes selects a different installation. Doctor
+reports a registration of another installation as owned but stale, and setup
+refreshes it with a backup, when its script still resolves to the CLI script that
+an installed `node_modules/rea-agents/package.json` names. A removed cache entry
+leaves ownership unknown: restore the same installation first or manually remove
+the confirmed REA registration before running setup again. A global installation
+provides a more durable path.
 
 ## Package runners and global installation
 

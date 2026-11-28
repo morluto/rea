@@ -7,6 +7,7 @@ import { readClientRegistrationStatuses } from "../../../src/application/ClientR
 import {
   classifyClientRegistrationCommand,
   currentClientRegistrationCommand,
+  inspectClientRegistrationCommand,
 } from "../../../src/application/ClientRegistrationIdentity.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -348,9 +349,51 @@ it
       entrypoint,
       "mcp",
     ]);
-    expect(classifyClientRegistrationCommand([shim, "mcp"], entrypoint)).toBe(
-      "foreign",
+    // A parsed shim that starts another runtime runs REA's script, but never
+    // this installation; an unparsed marker proves nothing.
+    expect(
+      inspectClientRegistrationCommand([shim, "mcp"], entrypoint),
+    ).toMatchObject(
+      cause === "marker-only"
+        ? { identity: "foreign" }
+        : { identity: "owned", installation: "other" },
     );
+  },
+);
+
+it.skipIf(process.platform === "win32").each([
+  ["this installation's script", "owned", "owned", "stale"],
+  ["an installed REA package", "owned", "owned", "stale"],
+  ["an unverified package", "unknown", "foreign", "unknown"],
+] as const)(
+  "classifies a saved Aube launcher of another runtime whose target is %s",
+  async (target, saved, direct, state) => {
+    const home = await createTestTempDirectory("rea-aube-other-runtime-");
+    const { entrypoint, shim } = await installWithMise(
+      join(home, "installs", "rea"),
+      "6.7.0",
+    );
+    const current =
+      target === "this installation's script"
+        ? entrypoint
+        : (await installWithMise(join(home, "other", "rea"), "6.8.0"))
+            .entrypoint;
+    if (target === "an installed REA package")
+      await writeFile(
+        join(dirname(dirname(entrypoint)), "package.json"),
+        JSON.stringify({ name: "rea-agents", bin: { rea: "scripts/rea.mjs" } }),
+      );
+    await rm(join(dirname(shim), "node"));
+    const runtime = join(home, "old-node", "node");
+    await mkdir(dirname(runtime));
+    await writeFile(runtime, "#!/bin/sh\nexit 44\n", { mode: 0o755 });
+    const command = oldAubeRegistration(shim, runtime, "saved");
+    expect(classifyClientRegistrationCommand(command, current)).toBe(saved);
+    expect(classifyClientRegistrationCommand([shim, "mcp"], current)).toBe(
+      direct,
+    );
+    await registerWithClaudeCode(home, command);
+    expect(await claudeCodeState(home, current)).toBe(state);
   },
 );
 
@@ -603,9 +646,9 @@ it.skipIf(process.platform === "win32")(
     const direct = [shim, "mcp"];
     // The Node script argument resolves lexically to the installed script.
     // The shell's earlier -x test resolves its own Node path natively.
-    expect(classifyClientRegistrationCommand(direct, entrypoint)).not.toBe(
-      "owned",
-    );
+    expect(
+      inspectClientRegistrationCommand(direct, entrypoint).installation,
+    ).not.toBe("current");
     await rm(join(lexicalBin, "node"));
     await symlink(process.execPath, join(nativeBin, "node"));
     expect(classifyClientRegistrationCommand(direct, entrypoint)).toBe("owned");

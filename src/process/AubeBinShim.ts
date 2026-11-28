@@ -250,10 +250,12 @@ const aubeRuntime = (
   return useSaved ? fallbackRuntime : operand;
 };
 
-interface AubeShimInspection {
+export interface AubeShimInspection {
   readonly target: string;
   readonly siblingRuntime: string;
   readonly durableWrapper: boolean;
+  /** Whether the shim starts its target with the runtime the caller named. */
+  readonly runtime: "current" | "other";
 }
 
 const runtimeMissing = (path: string): boolean => {
@@ -281,11 +283,12 @@ export const inspectAubeShim = (
     facts.boundRuntime !== undefined &&
     runtimeMissing(facts.boundRuntime) &&
     runtimeMatches(fallbackRuntime, runtime);
-  if (!activeInterpreterMatches && !recoverableBinding) return undefined;
   return {
     target: facts.target,
     siblingRuntime: facts.siblingRuntime,
     durableWrapper: wrapper === "adaptive" || wrapper === "legacy_saved",
+    runtime:
+      activeInterpreterMatches || recoverableBinding ? "current" : "other",
   };
 };
 

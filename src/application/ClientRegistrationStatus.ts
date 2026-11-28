@@ -520,6 +520,9 @@ export const readClientRegistrationInspections = async (
             : undefined) ??
           (transientPaths.length > 0 && commandFacts.identity === "owned"
             ? `The saved launcher uses a session path (${transientPaths.join(", ")}). ${remediation(effectiveClient, launcherPath, launcherRegistrationScope)}`
+            : undefined) ??
+          (commandFacts.installation === "other"
+            ? `The saved launcher starts another installed ${PRODUCT_IDENTITY.packageName} package or runtime, not the installation running this check. ${remediation(effectiveClient, launcherPath, launcherRegistrationScope)}`
             : undefined),
         packageReference,
         advisory:
@@ -617,8 +620,13 @@ const registrationAligned = ({
   // value of a caller-owned expression as an advisory.
   if (client.format === "dsh" && registration.toolCallTimeoutMs === undefined)
     return "stale";
-  // Legacy package runners remain owned, but setup migrates them to the selected installation.
-  if (commandFacts.package !== undefined) return "stale";
+  // Legacy package runners and launchers of another installed REA package
+  // remain owned, but setup migrates them to the selected installation.
+  if (
+    commandFacts.package !== undefined ||
+    commandFacts.installation === "other"
+  )
+    return "stale";
   // Owning the script does not establish how its shebang interpreter resolves
   // in the client. Setup migrates these launchers without losing ownership.
   if (commandFacts.launch === "managed_shim")

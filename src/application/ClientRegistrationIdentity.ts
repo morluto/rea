@@ -6,7 +6,7 @@ import {
   readlinkSync,
   realpathSync,
 } from "node:fs";
-import { isAbsolute, posix } from "node:path";
+import { isAbsolute, posix, resolve } from "node:path";
 import {
   CURRENT_ENTRYPOINT_PATH,
   normalizeEntrypointPath,
@@ -27,6 +27,7 @@ import {
   aubeShimLauncher,
   aubeShimRegistration,
   inspectAubeShim,
+  type AubeShimInspection,
   type AubeShimLauncher,
   registeredAubeShim,
 } from "../process/AubeBinShim.js";
@@ -34,6 +35,7 @@ import {
   msixPackagesDirectory,
   packagePrivateLauncherBlocker,
 } from "./MsixPackageStorage.js";
+import { installedReaPackageEvidence } from "./InstalledReaPackage.js";
 
 /** Package runners recognized for invocation guidance and legacy registrations. */
 type PackageRunner = "npx" | "bunx";
@@ -226,6 +228,75 @@ const entrypointIdentity = (
   } catch {
     return "unknown";
   }
+};
+
+/** Ownership of an absolute REA entry and which installation it selects. */
+type EntrypointOwnership = Pick<
+  ClientRegistrationCommandFacts,
+  "identity" | "installation"
+>;
+
+/**
+ * Another installed REA package still owns the registration, so setup can
+ * refresh it; it does not select this installation. Unresolved package
+ * evidence leaves ownership unknown.
+ */
+const entrypointOwnership = (
+  identity: ClientRegistrationCommandIdentity,
+  candidate: string,
+): EntrypointOwnership => {
+  if (identity === "owned") return { identity, installation: "current" };
+  if (identity !== "foreign") return { identity };
+  const evidence = installedReaPackageEvidence(candidate);
+  if (evidence === "verified")
+    return { identity: "owned", installation: "other" };
+  return evidence === "unknown" ? { identity: "unknown" } : { identity };
+};
+
+/**
+ * A launcher under another runtime never selects this installation, but its
+ * script may still be this installation's or another installed REA package's.
+ * That runtime may follow Node's lexical `..` or native traversal, so both
+ * spellings must select the current script.
+ */
+const otherRuntimeScriptOwnership = (
+  script: string,
+  currentCommandPath: string,
+): EntrypointOwnership => {
+  const current = [...new Set([script, resolve(script)])].map(
+    (spelling) => entrypointIdentity(spelling, currentCommandPath) === "owned",
+  );
+  if (current.every(Boolean))
+    return { identity: "owned", installation: "other" };
+  if (current.some(Boolean)) return { identity: "unknown" };
+  return entrypointOwnership("foreign", script);
+};
+
+/**
+ * A shim that starts another runtime cannot select this installation, but its
+ * target may still be this installation's script or another installed REA
+ * package. Undefined proves nothing.
+ */
+const aubeShimOwnership = (
+  shim: AubeShimInspection | undefined,
+  currentCommandPath: string | undefined,
+): EntrypointOwnership | undefined => {
+  if (
+    shim === undefined ||
+    currentCommandPath === undefined ||
+    currentCommandPath.length === 0
+  )
+    return undefined;
+  if (shim.runtime === "current")
+    return entrypointOwnership(
+      entrypointIdentity(shim.target, currentCommandPath),
+      shim.target,
+    );
+  const ownership = otherRuntimeScriptOwnership(
+    shim.target,
+    currentCommandPath,
+  );
+  return ownership.identity === "foreign" ? undefined : ownership;
 };
 
 /** A direct launcher may be a native executable or a Node shebang script. */
@@ -449,6 +520,7 @@ export const equivalentClientRegistrationCommands = (
   return (
     prior.entrypoint !== undefined &&
     prior.identity === "owned" &&
+    prior.installation === "current" &&
     prior.launch === requestedFacts.launch &&
     (prior.launch !== "managed_shim" || prior.independentFallback === true)
   );
@@ -465,6 +537,12 @@ export interface ClientRegistrationCommandFacts {
     | "unknown";
   /** Selected absolute launcher/script path; excludes package and unresolved PATH commands. */
   readonly entrypoint: string | undefined;
+  /**
+   * Whether an owned absolute launcher selects this installation (runtime and
+   * REA entry) or another installed REA package or runtime. Absent when no
+   * owned absolute launcher was resolved.
+   */
+  readonly installation?: "current" | "other";
   /** The fallback must reach the current interpreter without the shim's sibling. */
   readonly independentFallback?: boolean;
   readonly package:
@@ -512,6 +590,32 @@ export const classifyClientRegistrationCommand = (
 ): ClientRegistrationCommandIdentity =>
   inspectClientRegistrationCommand(command, currentCommandPath).identity;
 
+/** A saved wrapper around an Aube shim, with its fallback runtime. */
+const inspectManagedShimCommand = (
+  managed: NonNullable<ReturnType<typeof registeredAubeShim>>,
+  currentCommandPath: string | undefined,
+): ClientRegistrationCommandFacts => {
+  const shim =
+    HOST_PLATFORM.platform === "win32"
+      ? undefined
+      : inspectAubeShim(managed.shim, process.execPath, managed);
+  return {
+    launch: "managed_shim",
+    ...(aubeShimOwnership(shim, currentCommandPath) ?? { identity: "unknown" }),
+    entrypoint: shim?.target,
+    independentFallback:
+      shim?.runtime === "current" &&
+      shim.durableWrapper &&
+      entrypointIdentity(managed.fallbackRuntime, process.execPath) ===
+        "owned" &&
+      !launcherPathWalksThrough(
+        managed.fallbackRuntime,
+        (hop) => hop === shim.siblingRuntime,
+      ),
+    package: undefined,
+  };
+};
+
 const inspectDirectRegistrationCommand = (
   command: readonly string[],
   currentCommandPath: string | undefined,
@@ -519,30 +623,8 @@ const inspectDirectRegistrationCommand = (
   const currentPathAvailable =
     currentCommandPath !== undefined && currentCommandPath.length > 0;
   const managed = registeredAubeShim(command);
-  if (managed !== undefined) {
-    const shim =
-      HOST_PLATFORM.platform === "win32"
-        ? undefined
-        : inspectAubeShim(managed.shim, process.execPath, managed);
-    return {
-      launch: "managed_shim",
-      identity:
-        shim === undefined || !currentPathAvailable
-          ? "unknown"
-          : entrypointIdentity(shim.target, currentCommandPath),
-      entrypoint: shim?.target,
-      independentFallback:
-        shim !== undefined &&
-        shim.durableWrapper &&
-        entrypointIdentity(managed.fallbackRuntime, process.execPath) ===
-          "owned" &&
-        !launcherPathWalksThrough(
-          managed.fallbackRuntime,
-          (hop) => hop === shim.siblingRuntime,
-        ),
-      package: undefined,
-    };
-  }
+  if (managed !== undefined)
+    return inspectManagedShimCommand(managed, currentCommandPath);
   if (command.length === 3 && command[2] === "mcp") {
     const interpreter = command[0] ?? "";
     const entrypoint = command[1] ?? "";
@@ -559,7 +641,9 @@ const inspectDirectRegistrationCommand = (
     );
     if (interpreterIdentity !== "owned")
       return {
-        identity: currentPathAvailable ? interpreterIdentity : "unknown",
+        ...(currentPathAvailable && interpreterIdentity === "foreign"
+          ? otherRuntimeScriptOwnership(entrypoint, currentCommandPath)
+          : { identity: "unknown" }),
         launch: "runtime_script",
         entrypoint: undefined,
         package: undefined,
@@ -569,10 +653,12 @@ const inspectDirectRegistrationCommand = (
     const selectedEntrypoint = normalizeEntrypointPath(entrypoint);
     return {
       launch: "runtime_script",
-      identity:
-        selectedEntrypoint === undefined || !currentPathAvailable
-          ? "unknown"
-          : entrypointIdentity(selectedEntrypoint, currentCommandPath),
+      ...(selectedEntrypoint === undefined || !currentPathAvailable
+        ? { identity: "unknown" }
+        : entrypointOwnership(
+            entrypointIdentity(selectedEntrypoint, currentCommandPath),
+            selectedEntrypoint,
+          )),
       entrypoint: selectedEntrypoint,
       package: undefined,
     };
@@ -586,26 +672,28 @@ const inspectDirectRegistrationCommand = (
         entrypoint: undefined,
         package: undefined,
       };
-    const managedTarget =
+    const shim =
       HOST_PLATFORM.platform !== "win32" &&
       javaScriptRuntime(process.versions).id === "node"
-        ? inspectAubeShim(executable, process.execPath)?.target
+        ? inspectAubeShim(executable, process.execPath)
         : undefined;
-    if (managedTarget !== undefined)
+    const ownership = aubeShimOwnership(shim, currentCommandPath);
+    if (shim?.runtime === "current" || ownership !== undefined)
       return {
         launch: "direct",
-        identity: currentPathAvailable
-          ? entrypointIdentity(managedTarget, currentCommandPath)
-          : "unknown",
-        entrypoint: managedTarget,
+        ...(ownership ?? { identity: "unknown" }),
+        entrypoint: shim?.target,
         package: undefined,
       };
     if (isAbsolute(executable))
       return {
         launch: "direct",
-        identity: currentPathAvailable
-          ? directEntrypointIdentity(executable, currentCommandPath)
-          : "unknown",
+        ...(currentPathAvailable
+          ? entrypointOwnership(
+              directEntrypointIdentity(executable, currentCommandPath),
+              executable,
+            )
+          : { identity: "unknown" }),
         entrypoint: executable,
         package: undefined,
       };

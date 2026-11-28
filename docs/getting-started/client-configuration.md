@@ -24,8 +24,10 @@ version updates. When no eligible alias exists, setup uses the selected
 installation paths. This also applies when setup
 runs through a package runner: retain the selected cache entry and runtime while
 the registration uses them. Clearing either makes startup fail without resolving
-another package from the client's project. Restore the same installation before
-repairing it; an unidentified registration remains untouched. See
+another package from the client's project. Setup refreshes a registration of
+another installed `rea-agents` package; when that installation is gone, restore
+it before repairing the registration, because an unidentified registration
+remains untouched. See
 [installation and recovery](installation.md#package-runners-and-global-installation).
 
 For a supported Aube v2 package shim, setup saves a wrapper around the shim so
@@ -57,8 +59,9 @@ the runtime command, preserving the REA script arguments and other settings.
 Rerun setup to review the registration and restart the client.
 
 Doctor JSON records each registration's `command_identity` as `owned`, `foreign`,
-or `unknown`, separately from its readiness `state`. An invalid timeout or client
-policy can leave ownership established. Setup uses that recorded observation for
+or `unknown`, separately from its readiness `state`. A launcher of another
+installed `rea-agents` package or runtime is `owned` with a `stale` state. An
+invalid timeout or client policy can leave ownership established. Setup uses that recorded observation for
 its default client selection, then inspects selected configuration again before
 planning writes; a missing or unreadable launcher remains unknown.
 
