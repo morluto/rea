@@ -714,7 +714,10 @@ describe("parsePerfData identifier completeness", () => {
     const archive = parsed(bytes);
     expect(archive.events).toHaveLength(1);
     expect(archive.diagnostics).toEqual([
-      expect.objectContaining({ code: "truncated-event-attribute" }),
+      expect.objectContaining({
+        code: "truncated-event-attribute",
+        message: expect.stringContaining(`contains 8 of ${firstStride} bytes`),
+      }),
     ]);
     expect(archive.summary.identifiers_present).toBe(false);
   });

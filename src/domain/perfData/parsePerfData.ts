@@ -302,7 +302,7 @@ const readEvents = (
         state,
         null,
         "truncated-event-attribute",
-        `The attribute section ends ${stride - (end - cursor)} bytes into the entry at ${cursor}; it was not read.`,
+        `The attribute section contains ${end - cursor} of ${stride} bytes for the entry at ${cursor}. The incomplete entry was not read.`,
       );
       // The walk stopped early: later entries can carry identifiers this pass
       // never saw, so the retained list is a prefix rather than the inventory.
