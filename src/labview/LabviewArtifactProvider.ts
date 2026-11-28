@@ -41,6 +41,11 @@ import {
   type LabviewPresence,
   parseLabviewRsrc,
 } from "./LabviewRsrc.js";
+import {
+  parseProgramTreeZip,
+  type ProgramTreeFailureKind,
+  type ProgramTreeScan,
+} from "./LabviewProgramTree.js";
 
 const OPERATION = "inspect_labview_artifact";
 /** Caller-selected complete artifact bound; this reader never truncates a container. */
@@ -51,6 +56,7 @@ const MAX_BYTES = 256 * 1024 * 1024;
  */
 export const decodeOmissionLimitations = (
   omissions: Readonly<Partial<Record<LabviewDecodeOmission, number>>>,
+  required: Readonly<Partial<Record<LabviewDecodeOmission, number>>> = {},
 ): string[] =>
   (Object.entries(omissions) as [LabviewDecodeOmission, number][]).map(
     ([reason, count]) => {
@@ -68,9 +74,32 @@ export const decodeOmissionLimitations = (
           return `${sections} ${verb} not decoded because the container reached its fixed ${String(LABVIEW_DECODE_ALLOWANCES[reason])}-byte ${reason === "compressed_allowance" ? "compressed-input" : "decoded-output"} allowance. This release has no override; the stored bytes are inventoried but not decoded.`;
         case "inflate_failed":
           return `${sections} ${carries} a zlib header but ${does} not inflate to the declared length, so ${count === 1 ? "it was" : "they were"} not decoded.`;
+        case "program_tree_allowance": {
+          const allowance = LABVIEW_DECODE_ALLOWANCES[reason];
+          const needed = required.program_tree_allowance;
+          if (needed !== undefined && needed > allowance)
+            return `An embedded program-tree section needs ${String(needed)} bytes, which exceeds the fixed ${String(allowance)}-byte decoded-output allowance, so it was not decoded. This release has no override; use another ZIP inventory for the complete tree.`;
+          return `An embedded program-tree section was not decoded because the container's fixed ${String(allowance)}-byte decoded-output allowance was already spent by earlier sections${needed === undefined ? "" : ` before that section's ${String(needed)} bytes`}. Sections share that allowance; this release has no override, so use another ZIP inventory for the complete tree.`;
+        }
       }
     },
   );
+
+/** Rank one program-tree refusal; a specific cause outranks generic damage. */
+const treeFailureRank = (kind: ProgramTreeFailureKind): number => {
+  switch (kind) {
+    case "limit":
+      return 4;
+    case "size":
+      return 3;
+    case "name":
+      return 2;
+    case "ambiguous":
+      return 1;
+    case "damaged":
+      return 0;
+  }
+};
 
 /** Release-fixed input ceiling, stated so the refusal keeps its recovery. */
 const INPUT_ALLOWANCE = {
@@ -264,6 +293,39 @@ export class LabviewArtifactProvider implements LabviewArtifactPort {
       throw parsed.failure;
     }
     const value = parsed.value;
+    // A damaged archive must not hide a readable later one; stop at the first
+    // success so aliases and later sections are not scanned.
+    let listedTree: Extract<ProgramTreeScan, { ok: true }> | undefined;
+    let unlistableTree: Extract<ProgramTreeScan, { ok: false }> | undefined;
+    for (const archive of value.programTreeArchives) {
+      const scan = parseProgramTreeZip(archive);
+      if (scan.ok) {
+        listedTree = scan;
+        break;
+      }
+      // Prefer the most specific refusal over a generic damaged-directory
+      // result, so the effective limit and its recovery survive.
+      if (
+        unlistableTree === undefined ||
+        treeFailureRank(scan.kind) > treeFailureRank(unlistableTree.kind)
+      )
+        unlistableTree = scan;
+    }
+    const programTree =
+      listedTree?.ok === true
+        ? {
+            entry_count: listedTree.value.entryCount,
+            total_bytes: listedTree.value.totalBytes,
+            members: listedTree.value.members.map((member) => ({
+              name: member.name,
+              bytes: member.bytes,
+              stored_bytes: member.storedBytes,
+              method: member.method,
+              encrypted: member.encrypted,
+              raw_name_hex: member.rawNameHex,
+            })),
+          }
+        : null;
 
     // The parser owns these block facts; this layer decides only whether an
     // unobserved heap can be called absent.
@@ -284,7 +346,7 @@ export class LabviewArtifactProvider implements LabviewArtifactPort {
     const frontPanel = presence(value.frontPanel);
 
     const limitations = [
-      "Stored section bytes are inventoried; only zlib-coded sections are decoded, and no section payload is returned.",
+      "Stored section bytes are inventoried; zlib sections are decoded only to their declared length, and the embedded program tree to its ZIP central directory. No section payload is returned.",
       ...(containers.length > 1
         ? [
             `The file carries ${String(containers.length)} embedded RSRC containers; only the largest was inventoried, and the others were not examined.`,
@@ -300,7 +362,20 @@ export class LabviewArtifactProvider implements LabviewArtifactPort {
         : [
             "Part of the PE resource tree could not be examined, so heap presence is unknown for that content.",
           ]),
-      ...decodeOmissionLimitations(value.decodeOmissions),
+      ...decodeOmissionLimitations(
+        value.decodeOmissions,
+        value.decodeOmissionRequired,
+      ),
+      ...(() => {
+        const legacy =
+          programTree?.members.filter((member) => member.raw_name_hex !== null)
+            .length ?? 0;
+        return legacy === 0
+          ? []
+          : [
+              `${String(legacy)} member name(s) use the CP437 fallback: the ZIP declares no encoding, so each reports its recorded bytes as raw_name_hex.`,
+            ];
+      })(),
       ...(value.versionCoverage === "unknown"
         ? [
             "The container has a vers section whose content could not be decoded, so the version is unknown rather than absent.",
@@ -308,7 +383,11 @@ export class LabviewArtifactProvider implements LabviewArtifactPort {
         : []),
       ...(value.programTree
         ? [
-            "The inspected container carries an embedded program tree (LVzp) that this reader does not decode.",
+            programTree !== null
+              ? "The embedded program tree is a ZIP archive; its member contents are not extracted."
+              : unlistableTree !== undefined && !unlistableTree.ok
+                ? `The embedded program tree could not be listed: ${unlistableTree.reason}.`
+                : "The inspected container carries an embedded program tree (LVzp) whose content was not decoded.",
           ]
         : []),
       ...(blockDiagram === "absent"
@@ -352,6 +431,7 @@ export class LabviewArtifactProvider implements LabviewArtifactPort {
       version_coverage: value.versionCoverage,
       block_diagram: blockDiagram,
       front_panel: frontPanel,
+      program_tree: programTree,
       blocks: value.blocks.map((block) => ({
         identifier: block.identifier,
         sections: block.sections.map((section) => ({

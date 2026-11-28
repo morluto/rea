@@ -22,8 +22,15 @@ import {
   buildLabviewRsrc,
   labviewContainer,
   labviewVersionSection,
+  labviewXor8320,
+  labviewZipArchive,
   labviewZlibSection,
 } from "../../tests/fixtures/labview/rsrc.js";
+import {
+  MAX_PROGRAM_TREE_MEMBERS,
+  parseProgramTreeZip,
+} from "./LabviewProgramTree.js";
+import { labviewArtifactSchema } from "../domain/labview/labviewArtifact.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 describe("parseLabviewRsrc", () => {
@@ -354,9 +361,10 @@ describe("parseLabviewRsrc", () => {
     if (!parsed.ok) throw new Error(parsed.failure.message);
     expect(parsed.value.blockDiagram).toBe("present");
     expect(parsed.value.frontPanel).toBe("present");
+    // The xor8320 stream always yields bytes; only a ZIP content is retained.
     expect(parsed.value.blocks[0]?.sections[0]).toMatchObject({
       coding: "xor",
-      decodedBytes: null,
+      decodedBytes: 7,
     });
   });
 
@@ -454,6 +462,39 @@ describe("parseLabviewRsrc", () => {
     if (!parsed.ok) throw new Error(parsed.failure.message);
     expect(parsed.value.labviewVersion).toBeNull();
     expect(parsed.value.versionCoverage).toBe("absent");
+  });
+
+  it("decodes an xor-coded embedded program tree into its ZIP members", () => {
+    const archive = labviewZipArchive([
+      { name: "demo.vi", content: Buffer.from("one") },
+      { name: "lib/helper.vi", content: Buffer.from("two") },
+    ]);
+    const parsed = parseLabviewRsrc(
+      buildLabviewRsrc([
+        { ident: "LVzp", sections: [labviewXor8320(archive)] },
+      ]),
+    );
+    if (!parsed.ok) throw new Error(parsed.failure.message);
+    expect(parsed.value.programTree).toBe(true);
+    const scan = parseProgramTreeZip(parsed.value.programTreeArchives[0]!);
+    expect(scan.ok).toBe(true);
+    if (scan.ok)
+      expect(scan.value.members.map(({ name }) => name)).toEqual([
+        "demo.vi",
+        "lib/helper.vi",
+      ]);
+  });
+
+  it("reads a plain stored program tree", () => {
+    const archive = labviewZipArchive([
+      { name: "plain.vi", content: Buffer.from("x") },
+    ]);
+    const parsed = parseLabviewRsrc(
+      buildLabviewRsrc([{ ident: "LVzp", sections: [archive] }]),
+    );
+    if (!parsed.ok) throw new Error(parsed.failure.message);
+    const scan = parseProgramTreeZip(parsed.value.programTreeArchives[0]!);
+    expect(scan.ok && scan.value.members[0]?.name).toBe("plain.vi");
   });
 
   it("fails a truncated or non-RSRC container instead of returning a partial inventory", () => {
@@ -735,6 +776,166 @@ describe("LabviewArtifactProvider", () => {
       offset: 24,
     });
     expect(parsed.failure.message).toContain("data and info sections overlap");
+  });
+
+  it("reports the embedded program tree through the provider", async () => {
+    const root = await createTestTempDirectory("rea-labview-tree-");
+    const path = join(root, "tree.vi");
+    const archive = labviewZipArchive([
+      { name: "a.vi", content: Buffer.from("1") },
+      { name: "b/c.vi", content: Buffer.from("2") },
+    ]);
+    await writeFile(
+      path,
+      buildLabviewRsrc([
+        { ident: "LVzp", sections: [labviewXor8320(archive)] },
+      ]),
+    );
+    const provider = new LabviewArtifactProvider();
+    const result = await provider.inspect({ path });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.program_tree).toMatchObject({ entry_count: 2 });
+      expect(
+        result.value.program_tree?.members.map((member) => member.name),
+      ).toEqual(["a.vi", "b/c.vi"]);
+    }
+    await provider.close();
+  });
+
+  it("keeps a refused plain program tree from being treated as XOR", async () => {
+    const many = Array.from(
+      { length: MAX_PROGRAM_TREE_MEMBERS + 1 },
+      (_, index) => ({ name: `v${index}`, content: Buffer.alloc(0) }),
+    );
+    const bytes = buildLabviewRsrc([
+      { ident: "LVzp", sections: [labviewZipArchive(many)] },
+    ]);
+    const parsed = parseLabviewRsrc(bytes);
+    if (!parsed.ok) throw new Error(parsed.failure.message);
+    expect(parsed.value.blocks[0]?.sections[0]?.coding).toBe("none");
+
+    const root = await createTestTempDirectory("rea-labview-tree-refused-");
+    const path = join(root, "tree.vi");
+    await writeFile(path, bytes);
+    const provider = new LabviewArtifactProvider();
+    const result = await provider.inspect({ path });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.program_tree).toBeNull();
+      expect(result.value.limitations.join(" ")).toContain("above the 4096");
+    }
+    await provider.close();
+  });
+
+  it("reports a CP437 fallback with the recorded name bytes", async () => {
+    const root = await createTestTempDirectory("rea-labview-tree-raw-");
+    const path = join(root, "tree.vi");
+    const archive = labviewZipArchive([
+      {
+        name: "ignored.vi",
+        rawName: Buffer.from([0xe9, 0x2e, 0x76, 0x69]),
+        content: Buffer.from("x"),
+      },
+    ]);
+    await writeFile(
+      path,
+      buildLabviewRsrc([{ ident: "LVzp", sections: [archive] }]),
+    );
+    const provider = new LabviewArtifactProvider();
+    const result = await provider.inspect({ path });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.program_tree?.members[0]).toMatchObject({
+        raw_name_hex: "e92e7669",
+      });
+      expect(result.value.limitations.join(" ")).toContain("CP437 fallback");
+    }
+    await provider.close();
+  });
+
+  it("prefers a later actionable refusal over an earlier damaged one", async () => {
+    const many = Array.from(
+      { length: MAX_PROGRAM_TREE_MEMBERS + 1 },
+      (_, index) => ({ name: `v${index}`, content: Buffer.alloc(0) }),
+    );
+    const broken = Buffer.concat([Buffer.from("PK\x03\x04"), Buffer.alloc(20)]);
+    const root = await createTestTempDirectory("rea-labview-tree-prefer-");
+    const path = join(root, "tree.vi");
+    await writeFile(
+      path,
+      buildLabviewRsrc([
+        { ident: "LVzp", sections: [broken, labviewZipArchive(many)] },
+      ]),
+    );
+    const provider = new LabviewArtifactProvider();
+    const result = await provider.inspect({ path });
+    expect(result.ok).toBe(true);
+    if (result.ok)
+      expect(result.value.limitations.join(" ")).toContain("above the 4096");
+    await provider.close();
+  });
+
+  it("tries a later program-tree archive when the first is unreadable", async () => {
+    const root = await createTestTempDirectory("rea-labview-tree-later-");
+    const path = join(root, "tree.vi");
+    const archive = labviewZipArchive([
+      { name: "good.vi", content: Buffer.from("x") },
+    ]);
+    // The first archive opens like a ZIP but has no central directory.
+    const broken = Buffer.concat([Buffer.from("PK\x03\x04"), Buffer.alloc(20)]);
+    await writeFile(
+      path,
+      buildLabviewRsrc([
+        {
+          ident: "LVzp",
+          sections: [labviewXor8320(broken), labviewXor8320(archive)],
+        },
+      ]),
+    );
+    const provider = new LabviewArtifactProvider();
+    const result = await provider.inspect({ path });
+    expect(result.ok).toBe(true);
+    if (result.ok)
+      expect(
+        result.value.program_tree?.members.map(({ name }) => name),
+      ).toEqual(["good.vi"]);
+    await provider.close();
+  });
+
+  it("does not claim a program tree whose content is not a ZIP", async () => {
+    const root = await createTestTempDirectory("rea-labview-tree-bad-");
+    const path = join(root, "tree.vi");
+    await writeFile(
+      path,
+      buildLabviewRsrc([
+        { ident: "LVzp", sections: [labviewXor8320(Buffer.from("not a zip"))] },
+      ]),
+    );
+    const provider = new LabviewArtifactProvider();
+    const result = await provider.inspect({ path });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.program_tree).toBeNull();
+      // The ZIP owner reports the damaged candidate, not an undecoded one.
+      expect(result.value.limitations.join(" ")).toContain(
+        "could not be listed",
+      );
+    }
+    await provider.close();
+  });
+
+  it("reads a saved report that predates the program_tree field", async () => {
+    const root = await createTestTempDirectory("rea-labview-old-evidence-");
+    const path = join(root, "fixture.vi");
+    await writeFile(path, labviewContainer());
+    const provider = new LabviewArtifactProvider();
+    const result = await provider.inspect({ path });
+    await provider.close();
+    if (!result.ok) throw new Error(result.error.message);
+    const { program_tree: _omitted, ...saved } = result.value;
+    // Evidence saved before this field existed must still project.
+    expect(labviewArtifactSchema.parse(saved).program_tree).toBeNull();
   });
 
   it("keeps the completed file identity on a later parse failure", async () => {
