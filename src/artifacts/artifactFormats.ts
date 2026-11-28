@@ -834,9 +834,13 @@ const NON_ZIP_FORMATS = {
     role: "resource",
     retainClassifiedSource: true,
     readerLimitation:
-      "Kubernetes audit log inventory reports line, stage and verb totals and a bounded window of events joined on their auditID, with malformed lines, repeated stages and auditIDs that do not carry every stage counted. Events past the sample are counted but their joined stages and fields are not listed. Request and response object bodies, annotations, impersonation metadata and audit policy are not interpreted; the log is not treated as complete or authentic.",
+      "Kubernetes audit log inventory reports line, stage and verb totals and a bounded sample of requests joined by auditID. It counts malformed lines, oversized record skips, repeated stages, and requests without a recorded terminal stage. Set artifact_limits.kubernetes_audit_log.line_bytes to change the per-record allowance. Request and response object bodies, annotations, impersonation metadata and audit policy are not interpreted. Source completeness and authenticity are unknown.",
     createReader: (path, options) =>
-      new KubernetesAuditLogArtifactReader(path, sourceOf(options)),
+      new KubernetesAuditLogArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.kubernetes_audit_log,
+      ),
   }),
   unknown: described("unknown", plain),
 } satisfies Record<

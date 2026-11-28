@@ -300,6 +300,34 @@ it("recognizes a Kubernetes audit log by its first event and leaves other JSON a
   ).toBeUndefined();
 });
 
+it("does not claim JSON with nested or malformed Kubernetes audit fields", () => {
+  for (const line of [
+    '{"payload":{"auditID":"a","stage":"RequestReceived"}}',
+    '{"auditID":"a","payload":[{"stage":"RequestReceived"}]}',
+    '{"stage":"RequestReceived","payload":{"auditID":"a"}}',
+    '{"auditID":42,"stage":"RequestReceived"}',
+    '{"auditID":"a","stage":"RequestReceived","stage":"Unknown"}',
+    '{"auditID":"a","stage":"RequestReceived","invalid":',
+  ])
+    expect(recognize(Buffer.from(line))).toBeUndefined();
+});
+
+it("recognizes complete top-level audit fields before a clipped request body", () => {
+  const first = String.raw`{"auditID":"a","st\u0061ge":"RequestReceived","requestObject":{"message":"`;
+  const document = Buffer.from(`${first}€"}}\n`);
+  const clipped = document.subarray(0, Buffer.byteLength(first) + 1);
+  expect(
+    recognizeArtifactFormat({
+      prefix: clipped,
+      fileSize: document.length,
+      espFlashLayout: false,
+    }),
+  ).toMatchObject({
+    state: "recognized",
+    format: "kubernetes-audit-log",
+  });
+});
+
 it("recognizes an Android sparse image by its 0xED26FF3A magic", () => {
   expect(recognize(mixedAndroidSparseImage())).toMatchObject({
     state: "recognized",

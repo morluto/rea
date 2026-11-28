@@ -784,8 +784,8 @@ editable setting or active worker telemetry.
 
 `inspect_artifact` and `extract_artifact` accept `bun`, `dotnet_bundle`,
 `node_sea`, `godot`, `iso9660`, `deno`, `wxapkg`, `tar` and
-`android_sparse_image`, `android_vbmeta`, `media_asset` and `android_dtbo`
-groups in `artifact_limits`. Their controls apply when
+`android_sparse_image`, `android_vbmeta`, `media_asset`, `android_dtbo` and
+`kubernetes_audit_log` groups in `artifact_limits`. Their controls apply when
 recognition or inventory encounters that format. Supplying a policy does not
 assert the format is present. Unsupported keys are rejected. Each group follows
 one domain-owned default policy. See [.NET bundles](../dotnet-bundles.md),
@@ -796,6 +796,13 @@ one domain-owned default policy. See [.NET bundles](../dotnet-bundles.md),
 [Android vbmeta](../guides/firmware/android-vbmeta.md),
 [media asset headers](../media-asset-headers.md) and
 [Android DTBO partition images](../android-dtbo.md) for format semantics.
+
+`artifact_limits.kubernetes_audit_log.line_bytes` sets the largest audit JSON
+record inspected from the log (default 4 MiB, range 1 byte to 16 MiB). The
+inventory reports the effective value and counts larger complete lines as
+capacity skips. Their contents are unexamined and their event, stage, and verb
+facts are unknown. To inspect them, raise the allowance on the next call or
+select a log with smaller records.
 
 `artifact_limits.expanded_bytes` selects aggregate plaintext work for ZIP, Bun,
 SEA, PCK, ISO 9660, Deno, wxapkg, tar, macOS flat `.pkg` (including

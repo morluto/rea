@@ -1,5 +1,9 @@
 import type { Readable } from "node:stream";
 
+import {
+  DEFAULT_KUBERNETES_AUDIT_LOG_READER_LIMITS,
+  type KubernetesAuditLogReaderLimits,
+} from "../domain/artifactReaderLimits.js";
 import type { ArtifactFormatMetadata } from "../domain/artifactFormatMetadata.js";
 import { kubernetesAuditLogMetadataSchema } from "../domain/formatMetadata/androidAndSystemMetadata.js";
 import type { RegionDecodeFailure } from "../domain/firmware/regionDecoder.js";
@@ -33,12 +37,18 @@ export class KubernetesAuditLogArtifactReader implements ArtifactReader {
   readonly format = "kubernetes-audit-log" as const;
   readonly #scope = new ArtifactResourceScope();
   readonly #source: ArtifactFileSource;
+  readonly #lineBytes: number;
   readonly #preparation = new ArtifactPreparation();
   #metadata: ArtifactFormatMetadata | undefined;
   #limitations: readonly string[] = [];
   #closing = false;
 
-  constructor(path: string, admitted?: StableRegularFileDescriptor) {
+  constructor(
+    path: string,
+    admitted?: StableRegularFileDescriptor,
+    limits: KubernetesAuditLogReaderLimits = DEFAULT_KUBERNETES_AUDIT_LOG_READER_LIMITS,
+  ) {
+    this.#lineBytes = limits.line_bytes;
     this.#source = new ArtifactFileSource(
       path,
       "Kubernetes audit log",
@@ -130,7 +140,10 @@ export class KubernetesAuditLogArtifactReader implements ArtifactReader {
 
   async #decode(signal?: AbortSignal): Promise<KubernetesAuditInventory> {
     const { handle, initial } = await this.#source.read(signal);
-    const decoder = createKubernetesAuditLogDecoder(initial.size);
+    const decoder = createKubernetesAuditLogDecoder(
+      initial.size,
+      this.#lineBytes,
+    );
     if (!decoder.ok) throw this.#failure(decoder.error);
     if (initial.size > 0)
       for await (const chunk of readFileHandleChunks(handle, {

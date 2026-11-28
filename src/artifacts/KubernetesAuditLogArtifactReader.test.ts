@@ -7,6 +7,7 @@ import { KubernetesAuditLogArtifactReader } from "./KubernetesAuditLogArtifactRe
 import {
   KUBERNETES_AUDIT_INLINE_DIAGNOSTIC_LIMIT,
   KUBERNETES_AUDIT_INLINE_EVENT_LIMIT,
+  KUBERNETES_AUDIT_INLINE_VERB_LIMIT,
 } from "../domain/linux/kubernetesAuditLog.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
@@ -116,10 +117,17 @@ it("joins the stages of one request on its auditID", async () => {
   expect(event?.resource).toBe("pods");
   expect(event?.namespace).toBe("default");
   expect(event?.object_name).toBe("web-0");
-  expect(event?.response_code).toBeNull();
+  expect(event?.response_code).toBe(200);
+  expect(event?.response_code_line).toBe(2);
+  expect(event?.stages.map((stage) => stage.response_code)).toEqual([
+    null,
+    200,
+    200,
+  ]);
   expect(event?.unsupported_version).toBe(false);
-  expect(metadata.incomplete_stage_event_count).toBe(1);
-  expect(metadata.duplicate_stage_line_count).toBe(0);
+  expect(metadata.sample_missing_terminal_stage_count).toBe(0);
+  expect(metadata.unsampled_event_line_count).toBe(0);
+  expect(metadata.sample_duplicate_stage_line_count).toBe(0);
 });
 
 it("counts stage and verb totals across every line", async () => {
@@ -150,6 +158,7 @@ it("counts stage and verb totals across every line", async () => {
     "00000000-0000-4000-8000-00000000000b",
   ]);
   expect(metadata.events[1]?.response_code).toBe(403);
+  expect(metadata.sample_missing_terminal_stage_count).toBe(1);
 });
 
 it("keeps a stage the API does not define out of the inventory as a diagnostic", async () => {
@@ -198,9 +207,60 @@ it("counts a repeated stage for one auditID without dropping the line", async ()
     ].join("\n"),
   );
   expect(metadata.event_count).toBe(2);
-  expect(metadata.duplicate_stage_line_count).toBe(1);
+  expect(metadata.sample_duplicate_stage_line_count).toBe(1);
   expect(metadata.events).toHaveLength(1);
   expect(metadata.events[0]?.stages.map((stage) => stage.line)).toEqual([1, 2]);
+  expect(
+    metadata.events[0]?.stages.map((stage) => stage.response_code),
+  ).toEqual([200, 500]);
+});
+
+it("retains the first late terminal stage and accounts for every discarded repeat", async () => {
+  const metadata = await metadataOf(
+    [
+      auditEvent(),
+      auditEvent(),
+      auditEvent(),
+      auditEvent(),
+      auditEvent({ stage: "ResponseComplete", responseCode: 403 }),
+      auditEvent({ stage: "ResponseComplete", responseCode: 500 }),
+    ].join("\n"),
+  );
+  const [event] = metadata.events;
+  expect(
+    event?.stages.map(({ line, response_code }) => [line, response_code]),
+  ).toEqual([
+    [1, null],
+    [2, null],
+    [3, null],
+    [5, 403],
+  ]);
+  expect(event?.omitted_stage_lines).toBe(2);
+  expect(metadata.sample_duplicate_stage_line_count).toBe(4);
+  expect(metadata.sample_missing_terminal_stage_count).toBe(0);
+});
+
+it("treats a recorded Panic as terminal even when earlier stages are absent", async () => {
+  const metadata = await metadataOf(
+    auditEvent({ stage: "Panic", responseCode: 500 }),
+  );
+  expect(metadata.sample_missing_terminal_stage_count).toBe(0);
+  expect(metadata.events[0]?.stages).toMatchObject([
+    { stage: "Panic", response_code: 500 },
+  ]);
+});
+
+it("retains valid response facts when another stage has a fractional response code", async () => {
+  const metadata = await metadataOf(
+    [
+      auditEvent({ stage: "ResponseStarted", responseCode: 200.5 }),
+      auditEvent({ stage: "ResponseComplete", responseCode: 403 }),
+    ].join("\n"),
+  );
+  expect(
+    metadata.events[0]?.stages.map((stage) => stage.response_code),
+  ).toEqual([null, 403]);
+  expect(metadata.events[0]?.response_code).toBe(403);
 });
 
 it("does not interpret an audit API version this reader does not model", async () => {
@@ -213,6 +273,7 @@ it("does not interpret an audit API version this reader does not model", async (
       requestURI: "/api/v1/pods",
       verb: "list",
       responseStatus: { code: 200 },
+      requestReceivedTimestamp: "2026-11-20T10:00:00Z",
     })}\n`,
   );
   const [event] = metadata.events;
@@ -224,6 +285,11 @@ it("does not interpret an audit API version this reader does not model", async (
   expect(event?.request_uri).toBeNull();
   expect(event?.verb).toBeNull();
   expect(event?.response_code).toBeNull();
+  expect(event?.stages[0]).toMatchObject({
+    request_received_timestamp: null,
+    response_code: null,
+  });
+  expect(metadata.verb_counts).toEqual([]);
   expect(
     metadata.limitations.some((line) => line.includes("does not model")),
   ).toBe(true);
@@ -241,11 +307,16 @@ it("reads an optional field it did not get as null, not as empty text", async ()
   expect(event?.request_uri).toBeNull();
   expect(event?.verb).toBeNull();
   expect(event?.username).toBeNull();
-  expect(event?.user_groups).toEqual([]);
-  expect(event?.source_ips).toEqual([]);
+  expect(event?.user_groups).toBeNull();
+  expect(event?.source_ips).toBeNull();
   expect(event?.resource).toBeNull();
   expect(event?.response_code).toBeNull();
   expect(event?.stages[0]?.request_received_timestamp).toBeNull();
+});
+
+it("preserves explicitly empty groups and source IP arrays", async () => {
+  const metadata = await metadataOf(auditEvent({ groups: [], sourceIPs: [] }));
+  expect(metadata.events[0]).toMatchObject({ user_groups: [], source_ips: [] });
 });
 
 it("parses the event's own requestReceivedTimestamp", async () => {
@@ -268,12 +339,46 @@ it("samples a bounded window of events while totals cover the whole file", async
   const metadata = await metadataOf(`${lines.join("\n")}\n`);
   expect(metadata.event_count).toBe(KUBERNETES_AUDIT_INLINE_EVENT_LIMIT + 5);
   expect(metadata.events).toHaveLength(KUBERNETES_AUDIT_INLINE_EVENT_LIMIT);
-  expect(metadata.omitted_events).toBe(5);
+  expect(metadata.unsampled_event_line_count).toBe(5);
   expect(
     metadata.limitations.some((line) =>
       line.includes(`${KUBERNETES_AUDIT_INLINE_EVENT_LIMIT} auditID(s)`),
     ),
   ).toBe(true);
+});
+
+it("bounds retained request text and verb labels while stage totals cover the log", async () => {
+  const first = auditEvent({
+    auditID: "first",
+    userAgent: "x".repeat(128 * 1024),
+    verb: "get",
+  });
+  const next = Array.from(
+    { length: KUBERNETES_AUDIT_INLINE_VERB_LIMIT },
+    (_value, index) =>
+      auditEvent({
+        auditID: `id-${String(index)}`,
+        verb: `verb-${String(index)}`,
+      }),
+  );
+  const complete = auditEvent({
+    auditID: "first",
+    stage: "ResponseComplete",
+    verb: "get",
+    responseCode: 403,
+  });
+  const metadata = await metadataOf([first, ...next, complete].join("\n"));
+  expect(metadata.events[0]).toMatchObject({
+    audit_id: "first",
+    user_agent: null,
+    request_fields_omitted: true,
+    response_code: 403,
+  });
+  expect(metadata.verb_counts).toHaveLength(KUBERNETES_AUDIT_INLINE_VERB_LIMIT);
+  expect(metadata.verb_counts).toContainEqual({ label: "get", count: 2 });
+  expect(metadata.unlisted_verb_line_count).toBe(1);
+  expect(metadata.unsampled_event_line_count).toBe(1);
+  expect(metadata.event_count).toBe(next.length + 2);
 });
 
 it("bounds the inline diagnostics while counting every malformed line", async () => {
@@ -295,6 +400,16 @@ it("reports a trailing line that the file ended without a newline", async () => 
   const metadata = await metadataOf(`${auditEvent()}`);
   expect(metadata.trailing_bytes).toBeGreaterThan(0);
   expect(metadata.event_count).toBe(1);
+});
+
+it("counts the full size of an overlong unterminated line without retaining it", async () => {
+  const trailing = "x".repeat(4 * 1024 * 1024 + 128 * 1024);
+  const metadata = await metadataOf(`${auditEvent()}\n${trailing}`);
+  expect(metadata.trailing_bytes).toBe(trailing.length);
+  expect(metadata.oversized_line_count).toBe(1);
+  expect(metadata.malformed_line_count).toBe(0);
+  expect(metadata.event_count).toBe(1);
+  expect(metadata.line_bytes_limit).toBe(4 * 1024 * 1024);
 });
 
 it("refuses a file whose lines are not audit events as malformed", async () => {

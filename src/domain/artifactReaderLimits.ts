@@ -217,6 +217,19 @@ export const tarReaderLimitsSchema = z.strictObject({
 });
 export type TarReaderLimits = z.output<typeof tarReaderLimitsSchema>;
 
+/** Kubernetes audit JSON is decoded one line at a time. */
+export const DEFAULT_KUBERNETES_AUDIT_LOG_READER_LIMITS = {
+  line_bytes: 4 * 1024 * 1024,
+};
+/** Bound the one-line UTF-8 and JSON decoder working set. */
+export const MAX_KUBERNETES_AUDIT_LINE_BYTES = 16 * 1024 * 1024;
+const kubernetesAuditLogReaderLimitsSchema = z.strictObject({
+  line_bytes: bytes.max(MAX_KUBERNETES_AUDIT_LINE_BYTES),
+});
+export type KubernetesAuditLogReaderLimits = z.output<
+  typeof kubernetesAuditLogReaderLimitsSchema
+>;
+
 /** Input selections preserve omission; only the producing operation resolves defaults. */
 export const artifactReaderLimitsInputSchema = z.strictObject({
   bun: z
@@ -391,6 +404,15 @@ export const artifactReaderLimitsInputSchema = z.strictObject({
     .describe(
       `tar admission; omitted fields use ${JSON.stringify(DEFAULT_TAR_READER_LIMITS)}. Extended-header bytes bound one pax or GNU long-name record; metadata bytes bound retained member metadata.`,
     ),
+  kubernetes_audit_log: z
+    .strictObject({
+      line_bytes:
+        kubernetesAuditLogReaderLimitsSchema.shape.line_bytes.exactOptional(),
+    })
+    .exactOptional()
+    .describe(
+      `Kubernetes audit log admission; omitted fields use ${JSON.stringify(DEFAULT_KUBERNETES_AUDIT_LOG_READER_LIMITS)}. Line bytes bound one JSON record before decoding.`,
+    ),
   expanded_bytes: bytes
     .exactOptional()
     .describe(
@@ -413,6 +435,7 @@ const readerLimitGroups = {
   deno: denoReaderLimitsSchema,
   wxapkg: wxapkgReaderLimitsSchema,
   tar: tarReaderLimitsSchema,
+  kubernetes_audit_log: kubernetesAuditLogReaderLimitsSchema,
 } as const;
 
 const resolvedArtifactReaderLimitsSchema = z.strictObject({
@@ -423,13 +446,14 @@ export type ArtifactReaderLimits = z.output<
   typeof resolvedArtifactReaderLimitsSchema
 >;
 
-// Earlier Evidence may omit the later vbmeta, sparse-image, media and DTBO policies.
+// Earlier Evidence may omit reader policies added in later versions.
 export const artifactReaderLimitsSchema =
   resolvedArtifactReaderLimitsSchema.extend({
     android_vbmeta: androidVbmetaReaderLimitsSchema.exactOptional(),
     android_sparse_image: androidSparseImageReaderLimitsSchema.exactOptional(),
     media_asset: mediaAssetReaderLimitsSchema.exactOptional(),
     android_dtbo: androidDtboReaderLimitsSchema.exactOptional(),
+    kubernetes_audit_log: kubernetesAuditLogReaderLimitsSchema.exactOptional(),
   });
 
 /**
@@ -487,6 +511,10 @@ export const resolveArtifactReaderLimits = (
   },
   wxapkg: { ...DEFAULT_WXAPKG_READER_LIMITS, ...selected?.wxapkg },
   tar: { ...DEFAULT_TAR_READER_LIMITS, ...selected?.tar },
+  kubernetes_audit_log: {
+    ...DEFAULT_KUBERNETES_AUDIT_LOG_READER_LIMITS,
+    ...selected?.kubernetes_audit_log,
+  },
   ...(selected?.expanded_bytes === undefined
     ? {}
     : { expanded_bytes: selected.expanded_bytes }),

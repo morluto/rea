@@ -339,7 +339,10 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     when("ntfs-mft", hasMftFileRecordHeader),
     when("systemd-journal", hasSystemdJournalHeader),
     when("auditd-log", hasAuditdLogRecord),
-    when("kubernetes-audit-log", hasKubernetesAuditEvent),
+    ({ prefix, fileSize }) =>
+      hasKubernetesAuditEvent(prefix, fileSize)
+        ? { state: "recognized", format: "kubernetes-audit-log" }
+        : undefined,
     when("sqlite", hasSqliteHeader),
     when("windows-shortcut", hasWindowsShortcutHeader),
     when("deb", hasDebPackageHeader),

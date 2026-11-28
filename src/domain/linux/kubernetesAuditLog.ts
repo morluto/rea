@@ -1,27 +1,31 @@
 import { ok, err, type Result } from "../result.js";
+import { Budget } from "../budget.js";
+import {
+  DEFAULT_KUBERNETES_AUDIT_LOG_READER_LIMITS,
+  MAX_KUBERNETES_AUDIT_LINE_BYTES,
+} from "../artifactReaderLimits.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { isRecord } from "../../kernel/isRecord.js";
 import { ellipsisExcerpt } from "../excerpt.js";
-import { decodeUtf8PreservingBomOrNull } from "../strictUtf8.js";
+import {
+  decodeUtf8PreservingBomOrNull,
+  strictUtf8Decoder,
+} from "../strictUtf8.js";
 import type {
   RegionDecodeFailure,
   RegionDecoder,
 } from "../firmware/regionDecoder.js";
 
-/**
- * `kube-apiserver` writes one JSON object per line. A line is bounded so a
- * crafted or corrupt acquisition cannot buffer without limit; a line past this
- * is reported as malformed rather than retained.
- */
-const MAX_AUDIT_LINE_BYTES = 4 * 1024 * 1024;
-/** The whole log is bounded so a runaway acquisition cannot exhaust memory. */
+/** Whole-log work admission; retained memory is bounded independently. */
 export const KUBERNETES_AUDIT_LOG_MAX_FILE_BYTES = 1024 * 1024 * 1024 * 4;
 /** Inline events are a sample; totals below cover the whole file. */
 export const KUBERNETES_AUDIT_INLINE_EVENT_LIMIT = 32;
 /** Inline diagnostics are a sample too. */
 export const KUBERNETES_AUDIT_INLINE_DIAGNOSTIC_LIMIT = 16;
-/** Stage records retained per event; a request has at most four. */
-const KUBERNETES_AUDIT_EVENT_STAGE_LIMIT = 4;
+/** The first-seen sample bounds keys and total source text retained. */
+export const KUBERNETES_AUDIT_INLINE_VERB_LIMIT = 32;
+const MAX_SAMPLE_KEY_UNITS = 128;
+const MAX_SAMPLE_SOURCE_BYTES = 128 * 1024;
 
 /** The stages one request's `auditID` can pass through, in Kubernetes' order. */
 export const KUBERNETES_AUDIT_STAGES = [
@@ -31,6 +35,9 @@ export const KUBERNETES_AUDIT_STAGES = [
   "Panic",
 ] as const;
 export type KubernetesAuditStage = (typeof KUBERNETES_AUDIT_STAGES)[number];
+/** Retain one record per distinct stage before retaining repeats. */
+export const KUBERNETES_AUDIT_INLINE_STAGE_LIMIT =
+  KUBERNETES_AUDIT_STAGES.length;
 
 /** Audit event versions whose fields this reader interprets. */
 const AUDIT_VERSIONS: readonly string[] = [
@@ -54,6 +61,7 @@ export interface KubernetesAuditStageRecord {
    * omitted it or it did not parse. A stage line carries the same instant.
    */
   readonly request_received_timestamp: number | null;
+  readonly response_code: number | null;
 }
 
 export interface KubernetesAuditEventSummary {
@@ -62,16 +70,21 @@ export interface KubernetesAuditEventSummary {
   readonly request_uri: string | null;
   readonly verb: string | null;
   readonly username: string | null;
-  readonly user_groups: readonly string[];
-  readonly source_ips: readonly string[];
+  readonly user_groups: readonly string[] | null;
+  readonly source_ips: readonly string[] | null;
   readonly user_agent: string | null;
   /** `objectRef.resource`, `namespace` and `name`; each null when unstated. */
   readonly resource: string | null;
   readonly namespace: string | null;
   readonly object_name: string | null;
-  /** `responseStatus.code`, or null when the event carried no response. */
+  /** First understood `responseStatus.code`; individual values are on stages. */
   readonly response_code: number | null;
+  /** Source line of `response_code`, even if that stage record was omitted. */
+  readonly response_code_line: number | null;
   readonly stages: readonly KubernetesAuditStageRecord[];
+  readonly omitted_stage_lines: number;
+  /** The first line's optional request fields did not fit the sample budget. */
+  readonly request_fields_omitted: boolean;
   /**
    * True when the event names an API version this reader does not model. Its
    * `auditID` and stage are still joined, but no field of it is interpreted.
@@ -88,18 +101,22 @@ interface KubernetesAuditLines {
   readonly kind: "kubernetes-audit-log";
   readonly line_count: number;
   readonly event_count: number;
+  readonly oversized_line_count: number;
+  readonly line_bytes_limit: number;
   readonly malformed_line_count: number;
   readonly malformed_lines: readonly KubernetesAuditDiagnostic[];
   readonly omitted_malformed_lines: number;
-  /** auditIDs whose retained stages do not cover every declared stage. */
-  readonly incomplete_stage_event_count: number;
-  /** Extra lines that repeat a stage already seen for the same auditID. */
-  readonly duplicate_stage_line_count: number;
+  /** Sampled requests with no recorded ResponseComplete or Panic. */
+  readonly sample_missing_terminal_stage_count: number;
+  /** Extra lines that repeat a stage for a sampled auditID. */
+  readonly sample_duplicate_stage_line_count: number;
   readonly stage_counts: readonly KubernetesAuditEventCount[];
   readonly verb_counts: readonly KubernetesAuditEventCount[];
+  /** Lines whose understood verbs were outside the retained labels. */
+  readonly unlisted_verb_line_count: number;
   readonly events: readonly KubernetesAuditEventSummary[];
-  /** auditIDs the sample does not list; their lines are still counted. */
-  readonly omitted_events: number;
+  /** Valid event lines whose auditID was outside the request sample. */
+  readonly unsampled_event_line_count: number;
   /** Bytes after the last newline, which no line boundary ended. */
   readonly trailing_bytes: number;
 }
@@ -117,19 +134,27 @@ const failure = (message: string): RegionDecodeFailure => ({
 const stringOrNull = (value: unknown): string | null =>
   typeof value === "string" ? value : null;
 
-const numberOrNull = (value: unknown): number | null =>
-  typeof value === "number" && Number.isFinite(value) ? value : null;
-
-const stringArray = (value: unknown): string[] =>
-  Array.isArray(value)
-    ? value.filter((entry): entry is string => typeof entry === "string")
-    : [];
+const stringArrayOrNull = (value: unknown): readonly string[] | null =>
+  Array.isArray(value) &&
+  value.every((entry): entry is string => typeof entry === "string")
+    ? value
+    : null;
 
 const stageOf = (value: unknown): KubernetesAuditStage | null =>
-  typeof value === "string" &&
-  (KUBERNETES_AUDIT_STAGES as readonly string[]).includes(value)
-    ? (value as KubernetesAuditStage)
+  KUBERNETES_AUDIT_STAGES.find((stage) => stage === value) ?? null;
+
+/** Detach a bounded key from the potentially much larger JSON source string. */
+const retainedKey = (value: string): string =>
+  Buffer.from(value, "utf16le").toString("utf16le");
+
+const responseCode = (event: Record<string, unknown>): number | null => {
+  const status = isRecord(event.responseStatus)
+    ? event.responseStatus.code
     : null;
+  return typeof status === "number" && Number.isSafeInteger(status)
+    ? status
+    : null;
+};
 
 /** How much of an offending line a diagnostic shows. */
 const DIAGNOSTIC_EXCERPT_UNITS = 160;
@@ -147,51 +172,56 @@ const parseTimestamp = (value: unknown): number | null => {
 const isUnsupportedVersion = (value: unknown): boolean =>
   typeof value === "string" && !AUDIT_VERSIONS.includes(value);
 
-/**
- * The summary one audit line declares. An unmodelled API version keeps only
- * its auditID and stage: a field this reader does not know the meaning of is
- * not read out under a name the event may not have used it for.
- */
+/** Interpreted request fields from the first line of a sampled auditID. */
 const summarizeEvent = (
-  event: Record<string, unknown>,
+  event: Record<string, unknown> | undefined,
+  auditId: string,
   stageRecord: KubernetesAuditStageRecord,
-  line: {
-    readonly auditId: string;
-    readonly unsupported: boolean;
-    readonly verb: string | null;
-  },
+  unsupported: boolean,
+  requestFieldsOmitted: boolean,
 ): KubernetesAuditEventSummary => {
-  const { unsupported } = line;
-  const user = isRecord(event.user) ? event.user : undefined;
-  const objectRef = isRecord(event.objectRef) ? event.objectRef : undefined;
-  const responseStatus = isRecord(event.responseStatus)
-    ? event.responseStatus
-    : undefined;
-  const field = (read: () => string | null): string | null =>
-    unsupported ? null : read();
-  const objectField = (read: () => unknown): string | null =>
-    unsupported || objectRef === undefined ? null : stringOrNull(read());
+  const user = isRecord(event?.user) ? event.user : undefined;
+  const object = isRecord(event?.objectRef) ? event.objectRef : undefined;
   return {
-    audit_id: line.auditId,
-    request_uri: field(() => stringOrNull(event.requestURI)),
-    verb: unsupported ? null : line.verb,
-    username: field(() =>
-      user === undefined ? null : stringOrNull(user.username),
-    ),
-    user_groups:
-      unsupported || user === undefined ? [] : stringArray(user.groups),
-    source_ips: unsupported ? [] : stringArray(event.sourceIPs),
-    user_agent: field(() => stringOrNull(event.userAgent)),
-    resource: objectField(() => objectRef!.resource),
-    namespace: objectField(() => objectRef!.namespace),
-    object_name: objectField(() => objectRef!.name),
-    response_code:
-      unsupported || responseStatus === undefined
-        ? null
-        : numberOrNull(responseStatus.code),
+    audit_id: auditId,
+    request_uri: stringOrNull(event?.requestURI),
+    verb: stringOrNull(event?.verb),
+    username: stringOrNull(user?.username),
+    user_groups: stringArrayOrNull(user?.groups),
+    source_ips: stringArrayOrNull(event?.sourceIPs),
+    user_agent: stringOrNull(event?.userAgent),
+    resource: stringOrNull(object?.resource),
+    namespace: stringOrNull(object?.namespace),
+    object_name: stringOrNull(object?.name),
+    response_code: stageRecord.response_code,
+    response_code_line:
+      stageRecord.response_code === null ? null : stageRecord.line,
     stages: [stageRecord],
+    omitted_stage_lines: 0,
+    request_fields_omitted: requestFieldsOmitted,
     unsupported_version: unsupported,
   };
+};
+
+type SampledRequest = {
+  summary: KubernetesAuditEventSummary;
+  readonly seenStages: Set<KubernetesAuditStage>;
+};
+
+/** Keep the first observation of each stage. Repeats use the remaining slots. */
+const retainStage = (
+  stages: readonly KubernetesAuditStageRecord[],
+  record: KubernetesAuditStageRecord,
+  alreadySeen: boolean,
+): readonly KubernetesAuditStageRecord[] => {
+  if (stages.length < KUBERNETES_AUDIT_INLINE_STAGE_LIMIT)
+    return [...stages, record];
+  if (alreadySeen) return stages;
+  const lastRepeat = stages.findLastIndex(
+    (stage, index) =>
+      stages.findIndex((earlier) => earlier.stage === stage.stage) < index,
+  );
+  return [...stages.filter((_stage, index) => index !== lastRepeat), record];
 };
 
 /**
@@ -203,19 +233,23 @@ class KubernetesAuditScanner {
   #pending: Buffer[] = [];
   // not-an-allowance: bytes of the line being assembled, bounded by a fixed line ceiling rather than charged from a resource budget.
   #pendingBytes = 0;
-  #pendingOverflow = false;
   #lineNumber = 0;
   #recordCount = 0;
   #trailingBytes = 0;
   #malformedCount = 0;
+  #oversizedLineCount = 0;
   readonly #malformed: KubernetesAuditDiagnostic[] = [];
-  readonly #eventsByAuditId = new Map<string, KubernetesAuditEventSummary[]>();
-  /** First-seen order of the retained events, bounded to the sample. */
-  readonly #sampleOrder: string[] = [];
+  /** Insertion order is the first-seen display order. */
+  readonly #sample = new Map<string, SampledRequest>();
+  readonly #sampleSource = new Budget(MAX_SAMPLE_SOURCE_BYTES);
+  #unsampledEventLines = 0;
+  #unlistedVerbLines = 0;
   readonly #stageCounts = new Map<KubernetesAuditStage, number>();
   readonly #verbCounts = new Map<string, number>();
-  #duplicateStageLineCount = 0;
+  #sampleDuplicateStageLines = 0;
   #unsupportedVersionLineCount = 0;
+
+  constructor(private readonly maxLineBytes: number) {}
 
   write(chunk: Uint8Array): Result<void, RegionDecodeFailure> {
     const bytes = Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
@@ -231,67 +265,67 @@ class KubernetesAuditScanner {
   }
 
   finish(): Result<KubernetesAuditInventory, RegionDecodeFailure> {
-    if (this.#pendingOverflow || this.#pendingBytes > 0) {
+    if (this.#pendingBytes > 0) {
       this.#trailingBytes = this.#pendingBytes;
       this.#finishLine();
     }
     if (this.#lineNumber === 0)
       return err(failure("file holds no Kubernetes audit records"));
-    if (this.#recordCount === 0)
+    if (this.#recordCount === 0 && this.#oversizedLineCount === 0)
       return err(
         failure(
           `${String(this.#lineNumber)} line(s) were read but none is a Kubernetes audit event`,
         ),
       );
-    const eventCount = this.#recordCount;
-    const incomplete = this.#incompleteStageAuditIds();
-    const limitations = this.#limitations(eventCount, incomplete);
+    const sampleWithoutTerminalStage = [...this.#sample.values()].filter(
+      ({ seenStages }) =>
+        !seenStages.has("ResponseComplete") && !seenStages.has("Panic"),
+    ).length;
+    const events = [...this.#sample.values()].map(({ summary }) => summary);
     return ok({
       metadata: {
         kind: "kubernetes-audit-log",
         line_count: this.#lineNumber,
-        event_count: eventCount,
+        event_count: this.#recordCount,
+        oversized_line_count: this.#oversizedLineCount,
+        line_bytes_limit: this.maxLineBytes,
         malformed_line_count: this.#malformedCount,
         malformed_lines: this.#malformed,
         omitted_malformed_lines: Math.max(
           0,
           this.#malformedCount - this.#malformed.length,
         ),
-        incomplete_stage_event_count: incomplete,
-        duplicate_stage_line_count: this.#duplicateStageLineCount,
+        sample_missing_terminal_stage_count: sampleWithoutTerminalStage,
+        sample_duplicate_stage_line_count: this.#sampleDuplicateStageLines,
         stage_counts: [...this.#stageCounts]
           .sort(([left], [right]) => compareUnicodeCodePoints(left, right))
           .map(([label, count]) => ({ label, count })),
         verb_counts: [...this.#verbCounts]
           .sort(([left], [right]) => compareUnicodeCodePoints(left, right))
           .map(([label, count]) => ({ label, count })),
-        events: this.#sampleOrder.map(
-          (auditId) => this.#eventsByAuditId.get(auditId)![0]!,
-        ),
-        omitted_events: Math.max(0, eventCount - this.#sampleOrder.length),
+        unlisted_verb_line_count: this.#unlistedVerbLines,
+        events,
+        unsampled_event_line_count: this.#unsampledEventLines,
         trailing_bytes: this.#trailingBytes,
       },
-      limitations,
+      limitations: this.#limitations(events, sampleWithoutTerminalStage),
     });
   }
 
-  /** What the scan could not establish, in a fixed order. */
-  /**
-   * auditIDs whose retained stages do not cover every stage. A request that
-   * finished has RequestReceived and ResponseComplete; one that is still in
-   * flight, or whose log was truncated, is missing at least one of them.
-   */
-  #incompleteStageAuditIds(): number {
-    let incomplete = 0;
-    for (const stages of this.#eventsByAuditId.values()) {
-      const seen = new Set(stages[0]!.stages.map((record) => record.stage));
-      if (seen.size < KUBERNETES_AUDIT_STAGES.length) incomplete += 1;
-    }
-    return incomplete;
-  }
-
-  #limitations(eventCount: number, incompleteStageEvents: number): string[] {
+  #limitations(
+    events: readonly KubernetesAuditEventSummary[],
+    sampleWithoutTerminalStage: number,
+  ): string[] {
     const limitations: string[] = [];
+    if (this.#oversizedLineCount > 0) {
+      const recovery =
+        this.maxLineBytes < MAX_KUBERNETES_AUDIT_LINE_BYTES
+          ? `Raise artifact_limits.kubernetes_audit_log.line_bytes up to ${String(MAX_KUBERNETES_AUDIT_LINE_BYTES)}, or inspect a capture whose records fit.`
+          : "Inspect a capture whose records fit this line-size ceiling.";
+      limitations.push(
+        `${String(this.#oversizedLineCount)} line(s) exceeded the ${String(this.maxLineBytes)}-byte line limit and were not parsed or included in event, stage or verb totals. ${recovery}`,
+      );
+    }
     if (this.#malformedCount > 0)
       limitations.push(
         `${String(this.#malformedCount)} line(s) are not JSON objects, not audit events, or name an unknown stage; their text is not represented`,
@@ -300,18 +334,25 @@ class KubernetesAuditScanner {
       limitations.push(
         `${String(this.#unsupportedVersionLineCount)} line(s) declare an audit API version this reader does not model; their auditID and stage are retained, but their request, user, object and response fields are not interpreted`,
       );
-    if (incompleteStageEvents > 0)
+    if (sampleWithoutTerminalStage > 0)
       limitations.push(
-        `${String(incompleteStageEvents)} auditID(s) do not carry every declared stage; the file is reported as written rather than treated as a complete request record`,
+        `${String(sampleWithoutTerminalStage)} sampled auditID(s) have no recorded ResponseComplete or Panic stage; capture and policy coverage remain unknown`,
       );
-    if (this.#duplicateStageLineCount > 0)
+    if (this.#sampleDuplicateStageLines > 0)
       limitations.push(
-        `${String(this.#duplicateStageLineCount)} line(s) repeat a stage for an auditID already seen; each line is counted once and the repeat is retained as its own stage record`,
+        `${String(this.#sampleDuplicateStageLines)} line(s) repeat a stage for a sampled auditID; a bounded stage window retains the first occurrence of each observed stage`,
       );
-    const beyondSample = Math.max(0, eventCount - this.#sampleOrder.length);
-    if (beyondSample > 0)
+    if (this.#unsampledEventLines > 0)
       limitations.push(
-        `events are listed for ${String(KUBERNETES_AUDIT_INLINE_EVENT_LIMIT)} auditID(s); ${String(beyondSample)} further auditID(s) are counted in the totals but their joined stages and fields are not listed`,
+        `events are listed for ${String(events.length)} auditID(s); ${String(this.#unsampledEventLines)} further event line(s) contribute to aggregate counts`,
+      );
+    if (this.#unlistedVerbLines > 0)
+      limitations.push(
+        `${String(this.#unlistedVerbLines)} line(s) carry verbs outside the bounded verb histogram`,
+      );
+    if (events.some((event) => event.request_fields_omitted))
+      limitations.push(
+        "some sampled request fields exceed the retained source-text budget and are left unknown; their stage and numeric response facts remain available",
       );
     limitations.push(
       "events are inventoried by the declared request, user, object reference and response code: request and response object bodies, annotations, impersonation metadata and audit policy are not interpreted, and the log is not treated as complete or authentic",
@@ -320,32 +361,24 @@ class KubernetesAuditScanner {
   }
 
   #acceptSegment(segment: Buffer): void {
-    if (this.#pendingOverflow) return;
-    if (this.#pendingBytes + segment.length > MAX_AUDIT_LINE_BYTES) {
-      this.#pendingOverflow = true;
-      this.#pending = [];
-      this.#pendingBytes = MAX_AUDIT_LINE_BYTES + 1;
+    this.#pendingBytes += segment.length;
+    if (this.#pendingBytes > this.maxLineBytes) {
+      this.#pending.length = 0;
       return;
     }
     if (segment.length > 0) this.#pending.push(Buffer.from(segment));
-    this.#pendingBytes += segment.length;
   }
 
   #finishLine(): void {
     this.#lineNumber += 1;
-    if (this.#pendingOverflow) {
-      this.#pendingOverflow = false;
-      this.#pendingBytes = 0;
-      this.#pending = [];
-      this.#diagnose(
-        `line exceeds the fixed ${String(MAX_AUDIT_LINE_BYTES)}-byte record ceiling`,
-        "",
-      );
+    const lineLength = this.#pendingBytes;
+    this.#pendingBytes = 0;
+    if (lineLength > this.maxLineBytes) {
+      this.#oversizedLineCount += 1;
       return;
     }
-    const lineBytes = Buffer.concat(this.#pending);
-    this.#pendingBytes = 0;
-    this.#pending = [];
+    const lineBytes = Buffer.concat(this.#pending, lineLength);
+    this.#pending.length = 0;
     this.#acceptLine(lineBytes);
   }
 
@@ -379,61 +412,89 @@ class KubernetesAuditScanner {
       this.#diagnose("audit event names an unknown stage", excerptOf(line));
       return;
     }
-    this.#record(value, stage);
+    this.#record(value, value.auditID, stage, lineBytes.length);
   }
 
-  #record(event: Record<string, unknown>, stage: KubernetesAuditStage): void {
+  #countVerb(verb: string): void {
+    const previous = this.#verbCounts.get(verb);
+    if (previous !== undefined) {
+      this.#verbCounts.set(verb, previous + 1);
+      return;
+    }
+    if (
+      this.#verbCounts.size >= KUBERNETES_AUDIT_INLINE_VERB_LIMIT ||
+      verb.length > MAX_SAMPLE_KEY_UNITS
+    ) {
+      this.#unlistedVerbLines += 1;
+      return;
+    }
+    this.#verbCounts.set(retainedKey(verb), 1);
+  }
+
+  #record(
+    event: Record<string, unknown>,
+    auditId: string,
+    stage: KubernetesAuditStage,
+    sourceBytes: number,
+  ): void {
     this.#recordCount += 1;
     const unsupported = isUnsupportedVersion(event.apiVersion);
     if (unsupported) this.#unsupportedVersionLineCount += 1;
-    const auditId = event.auditID as string;
-    const verb = stringOrNull(event.verb);
+    else if (typeof event.verb === "string") this.#countVerb(event.verb);
     this.#stageCounts.set(stage, (this.#stageCounts.get(stage) ?? 0) + 1);
-    if (verb !== null)
-      this.#verbCounts.set(verb, (this.#verbCounts.get(verb) ?? 0) + 1);
+    const sampled = this.#sample.get(auditId);
+    if (
+      sampled === undefined &&
+      (this.#sample.size >= KUBERNETES_AUDIT_INLINE_EVENT_LIMIT ||
+        auditId.length > MAX_SAMPLE_KEY_UNITS)
+    ) {
+      this.#unsampledEventLines += 1;
+      return;
+    }
     const stageRecord: KubernetesAuditStageRecord = {
       stage,
       line: this.#lineNumber,
-      request_received_timestamp: parseTimestamp(
-        event.requestReceivedTimestamp,
-      ),
+      request_received_timestamp: unsupported
+        ? null
+        : parseTimestamp(event.requestReceivedTimestamp),
+      response_code: unsupported ? null : responseCode(event),
     };
-    const existing = this.#eventsByAuditId.get(auditId);
-    if (existing === undefined) {
-      this.#retain(event, stageRecord, { auditId, unsupported, verb });
+    if (sampled === undefined) {
+      const omitted =
+        !unsupported && !this.#sampleSource.tryCharge(sourceBytes);
+      const key = retainedKey(auditId);
+      this.#sample.set(key, {
+        summary: summarizeEvent(
+          unsupported || omitted ? undefined : event,
+          key,
+          stageRecord,
+          unsupported,
+          omitted,
+        ),
+        seenStages: new Set([stage]),
+      });
       return;
     }
-    const first = existing[0]!;
-    // A request passes each stage at most once; a second line at the same stage
-    // repeats one, which is reported rather than folded into the first.
-    if (first.stages.some((seen) => seen.stage === stage))
-      this.#duplicateStageLineCount += 1;
-    const stages =
-      first.stages.length < KUBERNETES_AUDIT_EVENT_STAGE_LIMIT
-        ? [...first.stages, stageRecord]
-        : first.stages;
-    existing[0] = {
-      ...first,
-      stages,
-      unsupported_version: first.unsupported_version || unsupported,
-    };
-  }
 
-  /** Retain an auditID's first line as its summary, and its place in the sample. */
-  #retain(
-    event: Record<string, unknown>,
-    stageRecord: KubernetesAuditStageRecord,
-    line: {
-      readonly auditId: string;
-      readonly unsupported: boolean;
-      readonly verb: string | null;
-    },
-  ): void {
-    this.#eventsByAuditId.set(line.auditId, [
-      summarizeEvent(event, stageRecord, line),
-    ]);
-    if (this.#sampleOrder.length < KUBERNETES_AUDIT_INLINE_EVENT_LIMIT)
-      this.#sampleOrder.push(line.auditId);
+    const alreadySeen = sampled.seenStages.has(stage);
+    if (alreadySeen) this.#sampleDuplicateStageLines += 1;
+    else sampled.seenStages.add(stage);
+    const previous = sampled.summary;
+    const stages = retainStage(previous.stages, stageRecord, alreadySeen);
+    sampled.summary = {
+      ...previous,
+      response_code: previous.response_code ?? stageRecord.response_code,
+      response_code_line:
+        previous.response_code_line ??
+        (stageRecord.response_code === null ? null : stageRecord.line),
+      stages,
+      omitted_stage_lines:
+        previous.omitted_stage_lines +
+        previous.stages.length +
+        1 -
+        stages.length,
+      unsupported_version: previous.unsupported_version || unsupported,
+    };
   }
 
   #diagnose(reason: string, text: string): void {
@@ -447,38 +508,81 @@ class KubernetesAuditScanner {
   }
 }
 
-/** A JSON object carrying an `"auditID"` key. */
-const HAS_AUDIT_ID = /"auditID"\s*:/u;
-/** A stage value the audit log API defines. */
-const HAS_AUDIT_STAGE =
-  /"stage"\s*:\s*"(?:RequestReceived|ResponseStarted|ResponseComplete|Panic)"\s*[,}]/u;
+/** Parse a complete object, with the same auditID and stage checks as the reader. */
+const isAuditEventObject = (line: string): boolean => {
+  try {
+    const event: unknown = JSON.parse(line);
+    return (
+      isRecord(event) &&
+      typeof event.auditID === "string" &&
+      stageOf(event.stage) !== null
+    );
+  } catch {
+    return false;
+  }
+};
 
-/**
- * Recognize a Kubernetes audit log by its first line: a JSON object with a top
- * level `auditID` and a defined `stage`. The reader still validates every line;
- * recognition only decides that the file is worth the audit-log reader's
- * explicit refusals rather than ordinary inventory.
- */
-export const hasKubernetesAuditEvent = (prefix: Uint8Array): boolean => {
-  if (prefix.length === 0) return false;
-  const newline = prefix.indexOf(0x0a);
-  const firstLine = Buffer.from(
-    newline < 0 ? prefix : prefix.subarray(0, newline),
-  ).toString("utf8");
-  return (
-    firstLine.startsWith("{") &&
-    HAS_AUDIT_ID.test(firstLine) &&
-    HAS_AUDIT_STAGE.test(firstLine)
-  );
+/** Find the last complete top-level property before a clipped JSON object. */
+const lastAuditProperty = (line: string): number => {
+  let depth = 0;
+  let inString = false;
+  let separator = -1;
+  for (let offset = 0; offset < line.length; offset += 1) {
+    const character = line[offset];
+    if (inString) {
+      if (character === "\\") offset += 1;
+      else if (character === '"') inString = false;
+      continue;
+    }
+    if (character === '"') inString = true;
+    else if (character === "{" || character === "[") depth += 1;
+    else if (character === "}" || character === "]") {
+      depth -= 1;
+      if (depth === 0) return -1;
+    } else if (character === "," && depth === 1) separator = offset;
+  }
+  return separator;
+};
+
+/** Recognize only top-level audit facts on the first line. When the probe
+ * ends inside that line, validate the completed properties before the cut. */
+export const hasKubernetesAuditEvent = (
+  prefix: Uint8Array,
+  fileSize: number,
+): boolean => {
+  let start = 0;
+  while (
+    prefix[start] === 0x20 ||
+    prefix[start] === 0x09 ||
+    prefix[start] === 0x0d
+  )
+    start += 1;
+  if (prefix[start] !== 0x7b) return false;
+  const newline = prefix.indexOf(0x0a, start);
+  const complete = newline !== -1 || prefix.byteLength >= fileSize;
+  let line: string;
+  try {
+    line = strictUtf8Decoder("preserve").decode(
+      prefix.subarray(start, newline === -1 ? prefix.length : newline),
+      { stream: !complete },
+    );
+  } catch {
+    return false;
+  }
+  if (isAuditEventObject(line)) return true;
+  if (complete) return false;
+  const end = lastAuditProperty(line);
+  return end !== -1 && isAuditEventObject(`${line.slice(0, end)}}`);
 };
 
 export const createKubernetesAuditLogDecoder = (
   fileBytes: number,
+  maxLineBytes = DEFAULT_KUBERNETES_AUDIT_LOG_READER_LIMITS.line_bytes,
 ): Result<RegionDecoder<KubernetesAuditInventory>, RegionDecodeFailure> =>
   Number.isSafeInteger(fileBytes) &&
   fileBytes >= 0 &&
   fileBytes <= KUBERNETES_AUDIT_LOG_MAX_FILE_BYTES
-    ? ok(new KubernetesAuditScanner())
+    ? ok(new KubernetesAuditScanner(maxLineBytes))
     : err({
         kind: "limit",
         message: `file is ${String(fileBytes)} bytes, exceeding the fixed ${String(KUBERNETES_AUDIT_LOG_MAX_FILE_BYTES)}-byte (4 GiB) ceiling`,
