@@ -395,9 +395,15 @@ const declarationsByKind: {
     notCompared:
       "Its fields come from the file's own hunk header and blocks, which content comparison covers.",
   },
+  /**
+   * Memory and the allocated size are header facts. The hunk index and role
+   * are the entry path, and content comparison covers the stored bytes.
+   */
   "amiga-hunk-entry": {
-    notCompared:
-      "Its hunk number and role are in its path and its offset and length are layout; content comparison covers its bytes.",
+    declaration: (metadata) => ({
+      memory: metadata.memory,
+      declared_bytes: metadata.declared_bytes,
+    }),
   },
   "esp-flash-image": {
     notCompared:

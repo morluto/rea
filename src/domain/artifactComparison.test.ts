@@ -749,6 +749,45 @@ const ubiVolume: FormatMetadata = {
   source_ranges: [],
 };
 
+const amigaHunkEntry: FormatMetadata = {
+  kind: "amiga-hunk-entry",
+  hunk: 0,
+  role: "code",
+  memory: "any",
+  declared_bytes: 4,
+  stored_bytes: 4,
+};
+
+it("compares an Amiga hunk's memory and allocated size", () => {
+  expect(
+    compareArtifacts(declared(amigaHunkEntry), declared(amigaHunkEntry)),
+  ).toMatchObject({ status: "unchanged", changes: [] });
+  expect(
+    compareArtifacts(
+      declared(amigaHunkEntry),
+      declared({ ...amigaHunkEntry, hunk: 1, stored_bytes: 8 }),
+    ),
+  ).toMatchObject({ status: "unchanged", changes: [] });
+  expect(
+    compareArtifacts(
+      declared(amigaHunkEntry),
+      declared({ ...amigaHunkEntry, memory: "chip" }),
+    ),
+  ).toMatchObject({
+    status: "changed",
+    changes: [{ classification: "changed", dimensions: ["metadata"] }],
+  });
+  expect(
+    compareArtifacts(
+      declared(amigaHunkEntry),
+      declared({ ...amigaHunkEntry, declared_bytes: 16 }),
+    ),
+  ).toMatchObject({
+    status: "changed",
+    changes: [{ classification: "changed", dimensions: ["metadata"] }],
+  });
+});
+
 it("compares a UBI volume declaration without its PEB placement", () => {
   expect(
     compareArtifacts(

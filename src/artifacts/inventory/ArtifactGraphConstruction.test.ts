@@ -13,7 +13,11 @@ import {
   indexDestinationOccurrencesByPath,
   resolveOccurrenceParents,
 } from "./ArtifactGraphConstruction.js";
-import { createArtifactClassificationProbe } from "../ArtifactClassificationProbe.js";
+import {
+  ARTIFACT_CLASSIFICATION_PREFIX_BYTES,
+  createArtifactClassificationProbe,
+} from "../ArtifactClassificationProbe.js";
+import { amigaObjectFile } from "../../domain/amigaHunk.fixture.js";
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { translateArtifactFailure } from "../../resources/index.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
@@ -45,6 +49,24 @@ import { devicetreeFixture } from "../../domain/firmware/devicetree.fixture.js";
 import { fitFixture } from "../fit/FitImage.fixture.js";
 import { twoVolumeUbiImage } from "../../domain/firmware/ubiImage.fixture.js";
 import { sampleAndroidVbmeta } from "../../domain/firmware/androidVbmeta.fixture.js";
+
+it("retains an Amiga unit name that passes the classification prefix", () => {
+  const bytes = amigaObjectFile([
+    {
+      name: "a".repeat(ARTIFACT_CLASSIFICATION_PREFIX_BYTES),
+      hunks: [{ type: "code", bytes: Buffer.from([0x4e, 0x75, 0x00, 0x00]) }],
+    },
+  ]);
+  const probe = createArtifactClassificationProbe();
+  probe.write(bytes);
+  const evidence = probe.finish(bytes.length);
+  expect(evidence.prefix.length).toBeGreaterThan(
+    ARTIFACT_CLASSIFICATION_PREFIX_BYTES,
+  );
+  expect(classifyArtifactContent("obj.o", evidence, bytes.length).format).toBe(
+    "amiga-hunk",
+  );
+});
 
 it("joins only observed PE signature bytes across stream chunks", () => {
   const bytes = pe(0x8664, 8190);

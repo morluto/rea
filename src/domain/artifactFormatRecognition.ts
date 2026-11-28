@@ -21,7 +21,7 @@ import { recognizeUbiImage } from "./firmware/ubiImage.js";
 import { claimsExecutableHeader } from "./binaryTarget.js";
 import { hasQualcommMbnHeader } from "./qualcommMbnImage.js";
 import { hasUImageMagic } from "./uimageFormat.js";
-import { hasAmigaHunkMagic } from "./amigaHunk.js";
+import { amigaHunkPrefixDecision } from "./amigaHunk.js";
 import { hasBfltMagic } from "./bfltExecutable.js";
 import { hasNroMagic, hasNsoMagic } from "./switchExecutable.js";
 import { hasUnityFsHeader } from "./unityfsFormat.js";
@@ -228,10 +228,13 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
       return format === undefined ? undefined : { state: "recognized", format };
     },
     when("uf2", hasUf2Block),
-    ({ prefix, fileSize }) =>
-      hasAmigaHunkMagic(prefix, fileSize)
+    ({ prefix, fileSize }) => {
+      const claim = amigaHunkPrefixDecision(prefix, fileSize);
+      if (claim === undefined) return undefined;
+      return claim.state === "recognized"
         ? { state: "recognized", format: "amiga-hunk" }
-        : undefined,
+        : { state: "needs-input", format: "amiga-hunk" };
+    },
     when("bflt", hasBfltMagic),
     ({ prefix, suffix, fileSize }) => {
       if (!hasDfuSePrefix(prefix)) return undefined;
