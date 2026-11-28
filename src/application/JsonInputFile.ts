@@ -41,6 +41,7 @@ import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { hostRangeErrorKind } from "../domain/parseFailure.js";
 import { err, ok, type Result } from "../domain/result.js";
 
@@ -544,7 +545,16 @@ const jsonReadFailure = (
       },
       {
         cause,
-        remediationAction: JSON_INPUT_RESOURCE_REMEDIATION,
+        ...fixedAllowanceOptions(
+          "The JavaScript runtime single-string length limit",
+          "parser",
+          {
+            limit: constants.MAX_STRING_LENGTH,
+            unit: "code_units",
+            narrowing:
+              "For Evidence workflows, re-analyze a smaller selection of the original target and use its complete Evidence instead of splitting JSON text or trimming fields.",
+          },
+        ),
       },
     );
   return undefined;
@@ -666,7 +676,10 @@ const admitJsonAssembly = (
             available_heap_bytes: heap.total_available_size,
             heap_size_limit_bytes: heap.heap_size_limit,
           },
-          { remediationAction: JSON_INPUT_RESOURCE_REMEDIATION },
+          {
+            measuredExhaustion: true,
+            remediationAction: JSON_INPUT_RESOURCE_REMEDIATION,
+          },
         );
       nextCheck = projectedBytes + READ_CHUNK_BYTES;
     }
@@ -699,6 +712,7 @@ const requireStringAssemblyHeadroom = (
         heap_size_limit_bytes: heap.heap_size_limit,
       },
       {
+        measuredExhaustion: true,
         remediationAction: JSON_INPUT_RESOURCE_REMEDIATION,
       },
     );

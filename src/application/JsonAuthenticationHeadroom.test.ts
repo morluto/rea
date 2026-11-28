@@ -39,6 +39,13 @@ it("checks escaped complete JSON against serialization capacity independently of
     ok: false,
     error: {
       retryable: false,
+      fixedAllowance: {
+        name: "The single-string JSON serialization limit",
+        kind: "report",
+        limit: encodedLength - 1,
+        unit: "code_units",
+        narrowing: "Reduce the selected facts before serialization.",
+      },
       reportedLimits: {
         serialized_json_code_units: encodedLength,
         maximum_serialized_json_code_units: encodedLength - 1,

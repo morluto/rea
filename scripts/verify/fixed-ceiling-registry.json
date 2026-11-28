@@ -59,6 +59,18 @@
       "reason": "Bounds the reply to `apktool --version`, a short fixed-format banner; no analysis input passes through it."
     }
   },
+  "src/application/JsonAuthenticationHeadroom.ts": {
+    "\"The single-string JSON serialization limit\"": {
+      "class": "representation",
+      "reason": "JSON.stringify cannot materialize a single UTF-16 string above the JavaScript runtime's MAX_STRING_LENGTH ceiling."
+    }
+  },
+  "src/application/JsonInputFile.ts": {
+    "\"The JavaScript runtime single-string length limit\"": {
+      "class": "representation",
+      "reason": "An individual JSON scalar must materialize as one JavaScript string, bounded by node:buffer constants.MAX_STRING_LENGTH."
+    }
+  },
   "src/artifacts/AndroidBootImageArtifactReader.ts": {
     "ceiling.name": {
       "class": "forwarding",

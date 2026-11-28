@@ -1,6 +1,7 @@
 import { jsonStringCodeUnits } from "../domain/jsonSerialization.js";
 import { getHeapStatistics } from "node:v8";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 /** Authentication clones parsed JSON and hashes its canonical commitment. */
@@ -147,11 +148,15 @@ export const requireAuthenticationHeadroom = (
           serialized_json_code_units: serializedCodeUnits,
           maximum_serialized_json_code_units: options.serializedCodeUnitLimit,
         },
-        {
-          retryable: false,
-          remediationAction:
-            "Reduce the selected facts before serialization. If the question requires the complete representation above this ceiling, report this unsupported size instead of repeating the unchanged request. Increasing heap or command-output admission does not raise the serialization ceiling. A delivery summary cannot repair an Evidence record that could not be assembled.",
-        },
+        fixedAllowanceOptions(
+          "The single-string JSON serialization limit",
+          "report",
+          {
+            limit: options.serializedCodeUnitLimit,
+            unit: "code_units",
+            narrowing: "Reduce the selected facts before serialization.",
+          },
+        ),
       ),
     );
   // Canonical hashing and manifest normalization can still encode scalars or
