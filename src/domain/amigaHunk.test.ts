@@ -479,6 +479,22 @@ it("keeps parsed facts when a name length runs past the file", () => {
   expect(file.limitations.map((item) => item.kind)).toEqual(["truncated"]);
 });
 
+it("keeps parsed hunks when a symbol value is missing and its name exceeds the allowance", () => {
+  const bytes = amigaLoadFile({
+    hunks: [
+      { type: "code", bytes: CODE },
+      { type: "code", bytes: CODE, symbols: [{ name: "start", offset: 0 }] },
+    ],
+  });
+  const valueAt = blockAt(bytes, 0x3f0) + 16;
+  const file = parseAmigaHunk(bytes.subarray(0, valueAt), {
+    maxSymbolBytes: 4,
+  });
+  expect(file.hunks).toHaveLength(2);
+  expect(file.hunks[1]?.symbols).toEqual([]);
+  expect(file.limitations.map((item) => item.kind)).toEqual(["truncated"]);
+});
+
 it("keeps parsed facts when a relocation count runs past the file", () => {
   const bytes = amigaLoadFile({
     hunks: [

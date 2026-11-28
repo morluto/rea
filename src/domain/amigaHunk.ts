@@ -1065,14 +1065,10 @@ class AmigaHunkParser {
         return;
       }
       if (nlongs === 0) return;
-      const name = this.readName(nlongs);
+      const name = this.readName(nlongs, 4);
       if (name === undefined) return;
-      const valueAt = this.offset;
-      const value = this.u32();
-      if (value === undefined) {
-        this.failTruncated(valueAt, "symbol offset");
-        return;
-      }
+      const value = this.reader.u32(this.offset);
+      this.offset += 4;
       hunk.symbols.push({ name, offset: value });
     }
   }
@@ -1230,10 +1226,10 @@ class AmigaHunkParser {
     );
   }
 
-  private readName(nlongs: number): string | undefined {
+  private readName(nlongs: number, trailingBytes = 0): string | undefined {
     const byteLength = nlongs * 4;
-    if (!this.fits(byteLength)) {
-      this.failTruncated(this.offset, "name");
+    if (!this.fits(byteLength + trailingBytes)) {
+      this.failTruncated(this.offset, trailingBytes === 0 ? "name" : "symbol");
       return undefined;
     }
     if (byteLength > this.limits.maxSymbolBytes - this.symbolBytes)
