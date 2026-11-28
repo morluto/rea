@@ -2116,3 +2116,108 @@ it("still resolves slash-separated and extensionless entry points, including bac
     present: true,
   });
 });
+
+it.each([
+  ["a string for commands", { commands: "demo.run" }],
+  ["a non-object contributes", "demo"],
+])("marks %s as declarations that were not read", async (_, contributes) => {
+  const bytes = await vsixPackageFixture({
+    packageJson: JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      contributes,
+    }),
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.contributes.commands_omitted).toBe(1);
+});
+
+it.each(["demo", null, []])(
+  "keeps menus and keybindings unknown when contributes is %j",
+  async (contributes) => {
+    const bytes = await vsixPackageFixture({
+      packageJson: JSON.stringify({
+        name: "hello",
+        publisher: "demo",
+        version: "1.2.3",
+        contributes,
+      }),
+    });
+    const report = vsixPackageSchema.parse(
+      await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+    );
+    expect(report.contributes.menus).toBeNull();
+    expect(report.contributes.keybindings).toBeNull();
+    expect(report.contributes.declarations).toBeNull();
+  },
+);
+
+it.each(["demo", null, 1])(
+  "keeps menus and keybindings declared as %j unknown",
+  async (unsupported) => {
+    const bytes = await vsixPackageFixture({
+      packageJson: JSON.stringify({
+        name: "hello",
+        publisher: "demo",
+        version: "1.2.3",
+        contributes: { menus: unsupported, keybindings: unsupported },
+      }),
+    });
+    const report = vsixPackageSchema.parse(
+      await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+    );
+    expect(report.contributes.menus).toBeNull();
+    expect(report.contributes.keybindings).toBeNull();
+  },
+);
+
+it.each([
+  { menus: { "editor/context": ["demo.a"] }, keybindings: ["ctrl+h"] },
+  { menus: { "editor/context": [null] }, keybindings: [[]] },
+  { menus: { "editor/context": "demo.a" }, keybindings: [{}, 1] },
+  {
+    menus: { "editor/context": [{ command: 7 }] },
+    keybindings: [{ command: "demo.a", key: 7 }],
+  },
+  {
+    menus: { "editor/context": [{ command: null }] },
+    keybindings: [{ command: ["demo.a"], key: "ctrl+h" }],
+  },
+])("keeps unreadable contribution rows unknown: %j", async (contributes) => {
+  const bytes = await vsixPackageFixture({
+    packageJson: JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      contributes,
+    }),
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.contributes.menus).toBeNull();
+  expect(report.contributes.keybindings).toBeNull();
+});
+
+it.each([
+  { languageModelTools: ["demo_tool"] },
+  { chatParticipants: "demo.chat" },
+  { mcpServerDefinitionProviders: [{ id: 7 }] },
+  { languageModelTools: [{ name: "demo_tool", displayName: [] }] },
+])("keeps unreadable declarations unknown: %j", async (contributes) => {
+  const bytes = await vsixPackageFixture({
+    packageJson: JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      contributes,
+    }),
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.contributes.declarations).toBeNull();
+});

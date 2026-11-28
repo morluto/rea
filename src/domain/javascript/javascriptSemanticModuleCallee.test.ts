@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
+import {
+  analyzeJavaScriptSemantics,
+  analyzeParsedJavaScriptSemantics,
+} from "./javascriptSemanticAnalysis.js";
+import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { semanticModuleCallees } from "./javascriptSemanticModuleCallee.js";
 
 const callees = (source: string) =>
@@ -8,6 +12,10 @@ const callees = (source: string) =>
     ({ specifier, path }) => `${specifier}:${path.join(".")}`,
   );
 const REGISTER = "vscode:commands.registerCommand";
+const replacements = (source: string) =>
+  [...semanticModuleCallees(analyzeJavaScriptSemantics(source)).values()]
+    .filter(({ path }) => path.at(-1) === "registerCommand")
+    .map(({ replacement }) => replacement);
 
 describe("module-rooted callees", () => {
   it.each([
@@ -163,11 +171,15 @@ describe("module-rooted callees", () => {
 });
 
 describe("module members that are not the imported ones", () => {
+  it("does not resolve an explicit default member of a require", () => {
+    expect(
+      callees(
+        'const v = require("vscode"); v.default.commands.registerCommand("a", f);',
+      ),
+    ).not.toContain(REGISTER);
+  });
+
   it.each([
-    [
-      "an explicit default member of a require",
-      'const v = require("vscode"); v.default.commands.registerCommand("a", f);',
-    ],
     [
       "a replaced member",
       'const v = require("vscode"); v.commands.registerCommand = noop; v.commands.registerCommand("a", f);',
@@ -184,15 +196,87 @@ describe("module members that are not the imported ones", () => {
       "a replaced member of a wrapped require",
       'var i = toESM(require("vscode")); i.commands.registerCommand = noop; i.commands.registerCommand("a", f);',
     ],
-  ])("does not resolve %s", (_, source) => {
-    expect(callees(source)).not.toContain(REGISTER);
+    [
+      "a member written later in source",
+      'const v = require("vscode"); v.commands.registerCommand("a", f); v.commands.registerCommand = noop;',
+    ],
+    [
+      "a member written in a function that may not run",
+      'const v = require("vscode"); function stub() { v.commands.registerCommand = noop; } v.commands.registerCommand("a", f);',
+    ],
+    [
+      "a member read by a later declaration of its binding",
+      'var register; require("vscode").commands.registerCommand = noop; var register = require("vscode").commands.registerCommand; register("a", f);',
+    ],
+    [
+      "a member written through require and called through require",
+      'require("vscode").commands.registerCommand = noop; require("vscode").commands.registerCommand("a", f);',
+    ],
+    [
+      "a member written through require and called through a binding",
+      'require("vscode").commands.registerCommand = noop; const v = require("vscode"); v.commands.registerCommand("a", f);',
+    ],
+    [
+      "a computed write on the module",
+      'const v = require("vscode"); v.commands[key] = noop; v.commands.registerCommand("a", f);',
+    ],
+    [
+      "a computed write on a destructured member",
+      'const { commands: c } = require("vscode"); c[key] = noop; require("vscode").commands.registerCommand("a", f);',
+    ],
+  ])("marks %s as possibly replaced", (_, source) => {
+    expect(replacements(source)).toEqual(["possible"]);
+  });
+
+  it("does not drop a source default on a required member", () => {
+    expect(
+      callees(
+        'const v = require("vscode").default; v.commands.registerCommand("a", f);',
+      ),
+    ).not.toContain(REGISTER);
+  });
+
+  it("resolves a call rooted directly in require", () => {
+    expect(
+      callees('require("vscode").commands.registerCommand("a", f);'),
+    ).toContain(REGISTER);
+  });
+
+  it("drops an import's default when the file loads imports with require", () => {
+    const file = parseJavaScriptSource(
+      'import vscode from "vscode"; const w = vscode; w.commands.registerCommand("a", f);',
+    );
+    if (file === null) throw new Error("Expected a parsed source");
+    const ir = analyzeParsedJavaScriptSemantics(file, "require");
+    expect(
+      [...semanticModuleCallees(ir).values()].map(({ path }) => path),
+    ).toEqual([["commands", "registerCommand"]]);
+  });
+
+  it("keeps one origin when a file mixes import and require of a module", () => {
+    const file = parseJavaScriptSource(
+      'import * as v from "vscode"; const w = flag ? v : require("vscode");',
+    );
+    if (file === null) throw new Error("Expected a parsed source");
+    const ir = analyzeParsedJavaScriptSemantics(file, "require");
+    expect(
+      ir.bindings.find(({ name }) => name === "w")?.provenance.origins,
+    ).toHaveLength(1);
+  });
+
+  it("keeps a member when a computed write is on a sibling object", () => {
+    expect(
+      replacements(
+        'const v = require("vscode"); const w = v.window; w[key] = noop; v.commands.registerCommand("a", f);',
+      ),
+    ).toEqual([undefined]);
   });
 
   it("keeps a member when only a sibling is written", () => {
     expect(
-      callees(
+      replacements(
         'const v = require("vscode"); v.commands.other = noop; v.commands.registerCommand("a", f);',
       ),
-    ).toContain(REGISTER);
+    ).toEqual([undefined]);
   });
 });

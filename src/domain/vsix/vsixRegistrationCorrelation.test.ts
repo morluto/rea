@@ -18,7 +18,12 @@ const contributes = (
       | null;
   } = {},
 ) => ({
-  commands: commands.map((command) => ({ command, title: null })),
+  commands: commands.map(
+    (command): { command: string | null; title: string | null } => ({
+      command,
+      title: null,
+    }),
+  ),
   commands_omitted: 0,
   menus: [],
   keybindings: [],
@@ -72,12 +77,30 @@ describe("VS Code command correlation", () => {
     });
   });
 
+  it("leaves a possibly replaced registration undetermined", () => {
+    const result = correlate(
+      `${VSCODE}vscode.commands.registerCommand = noop;
+       vscode.commands.registerCommand("demo.a", f);
+       vscode.commands.registerCommand("demo.hidden", f);`,
+      contributes(["demo.a"]),
+    );
+    expect(
+      result.commands.map(({ command, status }) => [command, status]),
+    ).toEqual([
+      ["demo.a", "undetermined"],
+      ["demo.hidden", "undetermined"],
+    ]);
+    expect(result.commands[0]?.registrations).toEqual([
+      expect.objectContaining({ replacement: "possible" }),
+    ]);
+  });
+
   it("keeps a built-at-run-time identifier unresolved", () => {
     const result = correlate(
       `${VSCODE}vscode.commands.registerCommand(prefix + ".a", f);`,
       contributes(["demo.a"]),
     );
-    expect(result.commands[0]?.status).toBe("not_found");
+    expect(result.commands[0]?.status).toBe("undetermined");
     expect(result.unresolved_registrations).toHaveLength(1);
   });
 
@@ -190,6 +213,28 @@ describe("VS Code command correlation", () => {
     expect(result.contributions[0]?.status).toBe("undetermined");
   });
 
+  it.each([
+    ["a run-time tool name", "vscode.lm.registerTool(name, t);"],
+    [
+      "a possibly replaced function",
+      'vscode.lm.registerTool = noop; vscode.lm.registerTool("demo_tool", t);',
+    ],
+  ])("leaves a declared tool undetermined after %s", (_, source) => {
+    const result = correlate(
+      `${VSCODE}${source}`,
+      contributes([], {
+        declarations: [
+          { kind: "language_model_tool", id: "demo_tool", label: null },
+          { kind: "chat_participant", id: "demo.chat", label: null },
+        ],
+      }),
+    );
+    expect(result.contributions.map(({ id, status }) => [id, status])).toEqual([
+      ["demo.chat", "not_found"],
+      ["demo_tool", "undetermined"],
+    ]);
+  });
+
   const withGraph = (
     change: (graph: ReturnType<typeof graphForJavaScript>) => unknown,
   ) =>
@@ -247,6 +292,15 @@ it("is undetermined when a call's literal identifier exceeded a limit", () => {
   const result = correlate(
     `${VSCODE}vscode.commands.registerCommand("${"x".repeat(2_000_000)}", f);`,
     contributes(["demo.a"]),
+  );
+  expect(result.commands.map(({ status }) => status)).toEqual(["undetermined"]);
+});
+
+it("does not call a command undeclared when a declaration has no readable ID", () => {
+  const declared = contributes([]);
+  const result = correlate(
+    `${VSCODE}vscode.commands.registerCommand("demo.a", f);`,
+    { ...declared, commands: [{ command: null, title: null }] },
   );
   expect(result.commands.map(({ status }) => status)).toEqual(["undetermined"]);
 });

@@ -610,11 +610,23 @@ interface ParsedPackageJson {
   readonly enabledApiProposals: string[];
 }
 
+const isRow = (row: unknown): row is Record<string, unknown> =>
+  row !== null && typeof row === "object" && !Array.isArray(row);
+
 /** VS Code accepts one contribution object or an array of them. */
-const rowsOf = (value: unknown): readonly Record<string, unknown>[] =>
-  (Array.isArray(value) ? (value as readonly unknown[]) : [value]).filter(
-    (row): row is Record<string, unknown> =>
-      row !== null && typeof row === "object" && !Array.isArray(row),
+const rowList = (value: unknown): readonly unknown[] =>
+  value === undefined ? [] : Array.isArray(value) ? value : [value];
+
+const rowsOf = (value: unknown) => rowList(value).filter(isRow);
+
+/** A row that is not an object, or holds a non-text field, cannot be read. */
+const unreadableRows = (value: unknown, fields: readonly string[]): boolean =>
+  !rowList(value).every(
+    (row) =>
+      isRow(row) &&
+      fields.every(
+        (field) => row[field] === undefined || typeof row[field] === "string",
+      ),
   );
 
 const exactText = (value: unknown): string | null =>
@@ -634,6 +646,12 @@ const menuGroups = (menus: unknown) =>
     ),
   );
 
+/** Menus are one object keyed by menu name, each holding its rows. */
+const unreadableMenus = (menus: unknown): boolean =>
+  menus !== undefined &&
+  (!isRow(menus) ||
+    Object.values(menus).some((rows) => unreadableRows(rows, ["command"])));
+
 /** Each AI contribution point, with the keys naming its ID and display text. */
 const CONTRIBUTION_POINTS = [
   ["chat_participant", "chatParticipants", "id", "name"],
@@ -645,13 +663,18 @@ const declaredContributions = (
   contributes: Record<string, unknown> | undefined,
 ) =>
   CONTRIBUTION_POINTS.flatMap(([kind, point, idKey, labelKey]) =>
-    contributes?.[point] === undefined
-      ? []
-      : rowsOf(contributes[point]).map((row) => ({
-          kind,
-          id: exactText(row[idKey]),
-          label: exactText(row[labelKey]),
-        })),
+    rowsOf(contributes?.[point]).map((row) => ({
+      kind,
+      id: exactText(row[idKey]),
+      label: exactText(row[labelKey]),
+    })),
+  );
+
+const unreadableDeclarations = (
+  contributes: Record<string, unknown> | undefined,
+): boolean =>
+  CONTRIBUTION_POINTS.some(([, point, idKey, labelKey]) =>
+    unreadableRows(contributes?.[point], [idKey, labelKey]),
   );
 
 const parsePackageJsonDocument = (
@@ -723,6 +746,12 @@ const parsePackageJsonDocument = (
     : commandsRaw !== null && typeof commandsRaw === "object"
       ? [commandsRaw]
       : [];
+  const unreadContributes =
+    record.contributes !== undefined && contributesRaw === undefined;
+  const unreadCommands =
+    unreadContributes ||
+    (commandsRaw !== undefined &&
+      (commandsRaw === null || typeof commandsRaw !== "object"));
   const keys = entries
     .filter(([name]) => name.length > 0)
     .map(([name, item]) => ({
@@ -761,14 +790,25 @@ const parsePackageJsonDocument = (
     contributes: {
       keys,
       commands,
-      commands_total: commandRows.length,
-      commands_omitted: 0,
-      menus: menuGroups(contributesRaw?.menus),
-      keybindings: rowsOf(contributesRaw?.keybindings).map((row) => ({
-        command: exactText(row.command),
-        key: exactText(row.key),
-      })),
-      declarations: declaredContributions(contributesRaw),
+      commands_total: commandRows.length + (unreadCommands ? 1 : 0),
+      // A present but unsupported shape is a declaration that was not read.
+      commands_omitted: unreadCommands ? 1 : 0,
+      menus:
+        unreadContributes || unreadableMenus(contributesRaw?.menus)
+          ? null
+          : menuGroups(contributesRaw?.menus),
+      keybindings:
+        unreadContributes ||
+        unreadableRows(contributesRaw?.keybindings, ["command", "key"])
+          ? null
+          : rowsOf(contributesRaw?.keybindings).map((row) => ({
+              command: exactText(row.command),
+              key: exactText(row.key),
+            })),
+      declarations:
+        unreadContributes || unreadableDeclarations(contributesRaw)
+          ? null
+          : declaredContributions(contributesRaw),
     },
     extensionDependencies: parseExtensionList(record.extensionDependencies),
     extensionPack: parseExtensionList(record.extensionPack),

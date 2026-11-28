@@ -57,6 +57,8 @@ export const projectVsixRegistrationCorrelationView = (
     return invalidAnalysisView(
       "VS Code registration correlation Evidence names no local package.",
     );
+  let unanalyzed = 0;
+  for (const { analyzed } of result.entry_points) if (!analyzed) unanalyzed++;
   return ok({
     parent_evidence_id: parent.evidenceId,
     parent_operation: "correlate_vsix_registrations" as const,
@@ -73,9 +75,7 @@ export const projectVsixRegistrationCorrelationView = (
       command_count: result.commands.length,
       menu_count: result.menus?.length ?? null,
       entry_point_count: result.entry_points.length,
-      unanalyzed_entry_point_count: result.entry_points.filter(
-        ({ analyzed }) => !analyzed,
-      ).length,
+      unanalyzed_entry_point_count: unanalyzed,
       limitation_count: result.limitations.length,
     },
     coverage: completeWithinViewCoverage(result.commands.length),

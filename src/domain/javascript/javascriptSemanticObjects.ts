@@ -4,6 +4,7 @@ import type {
   JavaScriptSemanticCallable,
   JavaScriptSemanticObjectOperation,
 } from "./javascriptSemanticIr.js";
+import { semanticCalleeAccess } from "./javascriptSemanticCalls.js";
 import { createSemanticCallableIdStack } from "./javascriptSemanticCallableStack.js";
 import { createSemanticExpressionShapeResolver } from "./javascriptSemanticExpressionShapes.js";
 import { semanticBindingMayRejectAssignmentAt } from "./javascriptSemanticMutationInitializers.js";
@@ -168,10 +169,19 @@ const collectMember = (
       state,
       output,
     );
+  const required =
+    write && identity.bindingId === null
+      ? semanticCalleeAccess(node, state)
+      : undefined;
   addObjectOperation(
     {
       node,
       kind: write ? "write" : "read",
+      ...(required?.requireOrigin === undefined
+        ? {}
+        : {
+            requireOrigin: required.requireOrigin,
+          }),
       provenOwnSlot:
         !write &&
         identity.path !== null &&
@@ -180,7 +190,8 @@ const collectMember = (
       ownerCallableId,
       objectBindingId: identity.bindingId,
       targetBindingId: null,
-      propertyPath: identity.path,
+      propertyPath:
+        required?.requireOrigin === undefined ? identity.path : required.path,
     },
     state,
     output,
@@ -436,6 +447,7 @@ interface AddObjectOperationInput {
   readonly kind: JavaScriptSemanticObjectOperation["kind"];
   readonly ownerCallableId: string | null;
   readonly objectBindingId: string | null;
+  readonly requireOrigin?: JavaScriptSemanticObjectOperation["requireOrigin"];
   readonly targetBindingId: string | null;
   readonly propertyPath: readonly string[] | null;
   readonly provenOwnSlot?: boolean;
@@ -462,6 +474,9 @@ const addObjectOperation = (
     location: range(input.node),
     ownerCallableId: input.ownerCallableId,
     objectBindingId: input.objectBindingId,
+    ...(input.requireOrigin === undefined
+      ? {}
+      : { requireOrigin: input.requireOrigin }),
     targetBindingId: input.targetBindingId,
     propertyPath: input.propertyPath,
     resolution:

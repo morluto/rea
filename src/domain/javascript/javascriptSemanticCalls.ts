@@ -188,7 +188,7 @@ const wrappedRequire = (
 };
 
 /** Follow static member reads from a callee down to its lexical root. */
-const calleeAccess = (
+export const semanticCalleeAccess = (
   callee: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): JavaScriptSemanticCallSite["calleeAccess"] => {
@@ -207,6 +207,15 @@ const calleeAccess = (
         path,
         ...(wrapped === undefined ? {} : { wrappedSpecifier: wrapped }),
       };
+    }
+    if (t.isCallExpression(current)) {
+      const requireOrigin = readSemanticRequireOriginCandidate(
+        current,
+        state,
+      )?.origin;
+      return requireOrigin === undefined
+        ? undefined
+        : { bindingId: null, requireOrigin, path };
     }
     if (
       !t.isMemberExpression(current) &&
@@ -236,7 +245,7 @@ const collectCallSite = (
   });
   const callSiteId = semanticCallSiteId(node);
   const argumentsValue = retainedArguments(node.arguments, state);
-  const access = calleeAccess(node.callee, state);
+  const access = semanticCalleeAccess(node.callee, state);
   const site: JavaScriptSemanticCallSite = {
     callSiteId,
     kind: t.isNewExpression(node) ? "construct" : "call",
