@@ -12,6 +12,7 @@ import {
   ISO9660_SECTOR_BYTES,
   ISO9660_STANDARD_IDENTIFIER,
   iso9660DirectoryRecordAt,
+  iso9660HalvesDisagree,
   iso9660LimitFailure,
   iso9660Malformed,
   readBothEndian16,
@@ -103,7 +104,9 @@ const textField = (bytes: Buffer, start: number, end: number): string =>
 /**
  * The descriptor's 34-byte root record: a directory with identifier 0x00,
  * in one extent, on the volume the descriptor declares. A Joliet descriptor
- * may store that identifier as the UCS-2 bytes 00 00.
+ * may store that identifier as the UCS-2 bytes 00 00. Unlike records inside
+ * directory extents, both halves of its data length must agree, as libarchive
+ * requires of a descriptor's root record.
  */
 const rootRecord = (
   sector: Buffer,
@@ -143,6 +146,8 @@ const rootRecord = (
       ...(jolietNul ? { identifierLength: 1 } : {}),
     },
   );
+  if (root.dataLengthBigEndian !== null)
+    throw iso9660HalvesDisagree(base + ROOT_RECORD_OFFSET + 10, "data_length");
   if (root.identifier[0] !== 0)
     throw iso9660Malformed(
       `root directory record identifier is 0x${byteToHex(root.identifier[0]!)}, not 0x00`,

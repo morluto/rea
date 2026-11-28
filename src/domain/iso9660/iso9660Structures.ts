@@ -18,7 +18,9 @@ import {
 /**
  * ISO 9660 (ECMA-119) directory records and the bounds shared with the
  * volume descriptor parser. Both-endian fields are decoded from both halves
- * and must agree. Rock Ridge (SUSP) system-use fields are not decoded.
+ * and must agree, except a directory record's data length, whose
+ * little-endian half is used and whose disagreeing big-endian copy is kept.
+ * Rock Ridge (SUSP) system-use fields are not decoded.
  */
 export const ISO9660_FORMAT = "iso9660";
 export const ISO9660_SECTOR_BYTES = 2048;
@@ -109,7 +111,15 @@ export interface Iso9660DirectoryRecord {
   readonly offset: number;
   readonly extendedAttributeLength: number;
   readonly extentLocation: number;
+  /** The little-endian half of the both-endian data length. */
   readonly dataLength: number;
+  /**
+   * The big-endian copy of the data length when it disagrees with
+   * `dataLength`, otherwise null. Linux isofs, libarchive and pycdlib read
+   * only the little-endian half, because mastering programs have written
+   * images whose big-endian copy is wrong.
+   */
+  readonly dataLengthBigEndian: number | null;
   readonly recordingDate: string | null;
   readonly flags: number;
   readonly fileUnitSize: number;
@@ -159,7 +169,27 @@ export const iso9660LimitFailure = (
     { name: limit.name, maximum, required },
   );
 
-/** Read a both-endian field: a little-endian half, then a big-endian copy. */
+/** A both-endian field: its little-endian half, then its big-endian copy. */
+const bothEndianHalves = (
+  bytes: Buffer,
+  at: number,
+  width: 2 | 4,
+): { readonly value: number; readonly copy: number } => {
+  const little = new BinaryReader(bytes, true, ISO9660_FORMAT);
+  const big = new BinaryReader(bytes, false, ISO9660_FORMAT);
+  return width === 4
+    ? { value: little.u32(at), copy: big.u32(at + width) }
+    : { value: little.u16(at), copy: big.u16(at + width) };
+};
+
+/** The failure for a both-endian field at `offset` whose halves must agree. */
+export const iso9660HalvesDisagree = (
+  offset: number,
+  field: string,
+): ParseFailureError<"malformed"> =>
+  iso9660Malformed(`both-endian ${field} halves disagree`, offset, field);
+
+/** Read a both-endian field whose halves must agree. */
 const readBothEndian = (
   bytes: Buffer,
   at: number,
@@ -167,16 +197,8 @@ const readBothEndian = (
   base: number,
   field: string,
 ): number => {
-  const little = new BinaryReader(bytes, true, ISO9660_FORMAT);
-  const big = new BinaryReader(bytes, false, ISO9660_FORMAT);
-  const value = width === 4 ? little.u32(at) : little.u16(at);
-  const copy = width === 4 ? big.u32(at + width) : big.u16(at + width);
-  if (value !== copy)
-    throw iso9660Malformed(
-      `both-endian ${field} halves disagree`,
-      base + at,
-      field,
-    );
+  const { value, copy } = bothEndianHalves(bytes, at, width);
+  if (value !== copy) throw iso9660HalvesDisagree(base + at, field);
   return value;
 };
 
@@ -296,11 +318,14 @@ export const iso9660DirectoryRecordAt = (
       base + at + 1,
       "extended_attribute_length",
     );
+  const dataLength = bothEndianHalves(bytes, at + 10, 4);
   return {
     offset: base + at,
     extendedAttributeLength,
     extentLocation: readBothEndian32(bytes, at + 2, base, "extent_location"),
-    dataLength: readBothEndian32(bytes, at + 10, base, "data_length"),
+    dataLength: dataLength.value,
+    dataLengthBigEndian:
+      dataLength.copy === dataLength.value ? null : dataLength.copy,
     recordingDate: decodeIso9660RecordDate(bytes, at + 18),
     flags,
     fileUnitSize,

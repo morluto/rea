@@ -420,13 +420,73 @@ it.each([0xd800, 0xdfff])(
   },
 );
 
-it("fails a both-endian directory record disagreement as malformed", async () => {
-  const { bytes, layout } = image();
-  bytes.writeUInt32BE(9, layout.primaryRecords.get("top.txt")! + 14);
-  await expect(inventory(bytes)).rejects.toMatchObject({
-    reason: "malformed",
-    message: expect.stringContaining("data_length"),
+it.each(["top.txt", "dir"])(
+  "lists %s by its little-endian data length when the big-endian copy disagrees",
+  async (path) => {
+    const { bytes, layout } = image();
+    const record = layout.primaryRecords.get(path)!;
+    const length = bytes.readUInt32LE(record + 10);
+    bytes.writeUInt32BE(length + 9, record + 14);
+    const snapshot = await scanCanonicalArtifactInventory(await fixture(bytes));
+    const rows = new Map(
+      snapshot.occurrences.map((row) => [row.logical_path, row]),
+    );
+    expect(rows.get(path)).toMatchObject({ declared_size: length });
+    expect(rows.get(path)?.limitations).toContain(
+      `ISO 9660 directory record at byte ${String(record)} stores data_length ${String(length)} in its little-endian half and ${String(length + 9)} in its big-endian copy; the entry uses the little-endian value, and which half is correct is unknown.`,
+    );
+    // The rest of the tree, below the directory too, is still listed and read.
+    for (const [listed, size] of [
+      ["top.txt", 3],
+      ["dir/inner/file.bin", 7],
+    ] as const)
+      expect(rows.get(listed)).toMatchObject({
+        declared_size: size,
+        hash_status: "verified",
+      });
+  },
+);
+
+it("names each disagreeing section of a multi-extent file and none of the next file", async () => {
+  const { bytes, layout } = buildIso9660Image({
+    files: [
+      {
+        path: "big.bin",
+        bytes: Buffer.alloc(SECTOR + 9, 1),
+        extents: [SECTOR, 9],
+      },
+      { path: "next.txt", bytes: Buffer.from("next") },
+    ],
   });
+  const first = layout.primaryRecords.get("big.bin")!;
+  const second = first + bytes[first]!;
+  for (const record of [first, second])
+    bytes.writeUInt32BE(bytes.readUInt32LE(record + 10) + 1, record + 14);
+  const snapshot = await scanCanonicalArtifactInventory(await fixture(bytes));
+  const rows = new Map(
+    snapshot.occurrences.map((row) => [row.logical_path, row]),
+  );
+  const disagreements = (path: string) =>
+    rows
+      .get(path)
+      ?.limitations.filter((line) =>
+        line.startsWith("ISO 9660 directory record at byte"),
+      );
+  const disagreement = (record: number, length: number) =>
+    `ISO 9660 directory record at byte ${String(record)} stores data_length ${String(length)} in its little-endian half and ${String(length + 1)} in its big-endian copy; the entry uses the little-endian value, and which half is correct is unknown.`;
+  expect(rows.get("big.bin")).toMatchObject({
+    declared_size: SECTOR + 9,
+    hash_status: "verified",
+  });
+  expect(disagreements("big.bin")).toEqual([
+    disagreement(first, SECTOR),
+    disagreement(second, 9),
+  ]);
+  expect(rows.get("next.txt")).toMatchObject({
+    declared_size: 4,
+    hash_status: "verified",
+  });
+  expect(disagreements("next.txt")).toEqual([]);
 });
 
 it("fails a directory that points back at an ancestor as a cycle", async () => {
