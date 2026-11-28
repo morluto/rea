@@ -136,7 +136,8 @@ interface AmigaHunk {
   readonly type: AmigaHunkBody | null;
   readonly memory: AmigaHunkMemory;
   readonly extendedFlags: number | null;
-  readonly declaredLongwords: number;
+  /** Null when an object-file hunk's size word was never read. */
+  readonly declaredLongwords: number | null;
   readonly storedLongwords: number | null;
   readonly storedBytes: number | null;
   readonly fileOffset: number | null;
@@ -348,7 +349,7 @@ interface HunkDraft {
   type: AmigaHunkBody | null;
   memory: AmigaHunkMemory;
   extendedFlags: number | null;
-  declaredLongwords: number;
+  declaredLongwords: number | null;
   storedLongwords: number | null;
   storedBytes: number | null;
   fileOffset: number | null;
@@ -375,7 +376,7 @@ const draftHunk = (
   index: number,
   memory: AmigaHunkMemory,
   extendedFlags: number | null,
-  declaredLongwords: number,
+  declaredLongwords: number | null,
   unitIndex: number | null,
 ): HunkDraft => ({
   index,
@@ -837,7 +838,8 @@ class AmigaHunkParser {
       this.unitHunk,
       decoded.memory,
       decoded.extendedFlags,
-      0,
+      // An object hunk declares its size in its own block; unknown until read.
+      null,
       this.currentUnit.index,
     );
     this.readBody(hunk, kind);
@@ -876,12 +878,14 @@ class AmigaHunkParser {
     }
     // A load-file header may allocate more than the block stores; the loader
     // zero-fills the tail. Only a block larger than its allocation conflicts.
-    if (this.fileKind === "object") hunk.declaredLongwords = nlongs;
-    else if (nlongs > hunk.declaredLongwords)
+    const declared = hunk.declaredLongwords;
+    if (this.fileKind === "object" || declared === null)
+      hunk.declaredLongwords = nlongs;
+    else if (nlongs > declared)
       this.note(
         "size-mismatch",
         hunk.blockOffset,
-        `Hunk ${hunk.index} header allocates ${hunk.declaredLongwords} longwords and the block stores ${nlongs}.`,
+        `Hunk ${hunk.index} header allocates ${declared} longwords and the block stores ${nlongs}.`,
       );
     // The size word is an observed fact even when the payload is cut short;
     // only the extractable range depends on the payload being present.
@@ -900,7 +904,12 @@ class AmigaHunkParser {
 
   private addLoadEntry(hunk: HunkDraft): void {
     if (hunk.type !== "code" && hunk.type !== "data") return;
-    if (hunk.storedBytes === null || hunk.fileOffset === null) return;
+    if (
+      hunk.storedBytes === null ||
+      hunk.fileOffset === null ||
+      hunk.declaredLongwords === null
+    )
+      return;
     this.entries.push({
       path: `hunk-${hunk.index}-${hunk.type}.bin`,
       role: hunk.type,
@@ -975,7 +984,8 @@ class AmigaHunkParser {
       this.failTruncated(at, "relocation target");
       return false;
     }
-    const size = hunk.declaredLongwords * 4;
+    const declared = hunk.declaredLongwords;
+    const size = declared === null ? null : declared * 4;
     let badOffset = false;
     for (let index = 0; index < count; index += 1) {
       const offAt = this.offset;
@@ -984,11 +994,11 @@ class AmigaHunkParser {
         this.failTruncated(offAt, "relocation offset");
         return false;
       }
-      if (size < 4 || off > size - 4) badOffset = true;
+      if (size !== null && (size < 4 || off > size - 4)) badOffset = true;
     }
     this.addReloc(hunk, kind, target, count);
     this.noteRelocTarget(hunk, target);
-    if (badOffset) this.noteRelocOffset(hunk, size);
+    if (badOffset && size !== null) this.noteRelocOffset(hunk, size);
     return true;
   }
 

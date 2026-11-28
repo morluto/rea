@@ -47,7 +47,7 @@ record per hunk:
 | `type`                        | `code`, `data` or `bss`, or null when the body was not reached   |
 | `memory`                      | `any`, `chip`, `fast` or `extended`                              |
 | `extended_flags`              | Raw flags longword when memory is extended; otherwise null       |
-| `declared_longwords`          | Size the header declares                                         |
+| `declared_longwords`          | Declared size; null when an object hunk's size word is missing   |
 | `stored_longwords`            | Longword count in the hunk block, including BSS                  |
 | `stored_bytes`, `file_offset` | Stored byte range in the file; null for BSS                      |
 | `name`                        | The `HUNK_NAME` before the hunk, or null                         |

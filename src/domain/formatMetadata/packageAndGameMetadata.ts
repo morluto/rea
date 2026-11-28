@@ -453,7 +453,11 @@ const amigaHunkRecordSchema = z.strictObject({
    * Also null when an `extended` row's flags longword is truncated.
    */
   extended_flags: uint32.nullable(),
-  declared_longwords: uint32,
+  /**
+   * Allocation in longwords. Null when an object-file hunk's size word was
+   * not read; zero only for a hunk read as empty.
+   */
+  declared_longwords: uint32.nullable(),
   stored_longwords: uint32.nullable(),
   stored_bytes: offset.nullable(),
   file_offset: offset.nullable(),

@@ -301,6 +301,38 @@ it.each(["code", "data"] as const)(
   },
 );
 
+it("leaves an object hunk's declared size unknown until its size word is read", () => {
+  // HUNK_UNIT, empty name, HUNK_CODE, then end of file.
+  const cut = Buffer.alloc(12);
+  cut.writeUInt32BE(0x3e7, 0);
+  cut.writeUInt32BE(0, 4);
+  cut.writeUInt32BE(0x3e9, 8);
+  const file = parseAmigaHunk(cut);
+  expect(file.fileKind).toBe("object");
+  expect(file.hunks[0]).toMatchObject({
+    type: "code",
+    declaredLongwords: null,
+    storedLongwords: null,
+  });
+  const metadata = amigaHunkMetadata(file);
+  expect(metadata.hunks[0]?.declared_longwords).toBeNull();
+  expect(amigaHunkMetadataSchema.parse(metadata)).toEqual(metadata);
+  expect(file.limitations).toMatchObject([
+    { kind: "truncated", detail: expect.stringContaining("hunk size") },
+  ]);
+
+  const empty = parseAmigaHunk(
+    amigaObjectFile([
+      { name: "", hunks: [{ type: "code", bytes: Buffer.alloc(0) }] },
+    ]),
+  );
+  expect(empty.hunks[0]).toMatchObject({
+    declaredLongwords: 0,
+    storedLongwords: 0,
+  });
+  expect(amigaHunkMetadata(empty).hunks[0]?.declared_longwords).toBe(0);
+});
+
 it("records chip, fast and extended memory flags", () => {
   const file = parseAmigaHunk(
     amigaLoadFile({
