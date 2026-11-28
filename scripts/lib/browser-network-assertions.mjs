@@ -114,6 +114,18 @@ export function assertBrowserNetworkEvidence(
     );
   };
   assert.deepEqual(retained(responseFor("/binary")), networkFixtureBinary);
+  assert.equal(
+    events.find(
+      (event) =>
+        event.kind === "response" &&
+        event.url.url === `${origin}/nonstandard-status`,
+    )?.status,
+    999,
+  );
+  assert.equal(
+    retained(responseFor("/nonstandard-status")).toString(),
+    "nonstandard-status-body",
+  );
   assert.deepEqual(retained(responseFor("/compressed")), networkFixtureDecoded);
   assert.equal(
     responseFor("/compressed").body.representation,
