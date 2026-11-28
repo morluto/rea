@@ -1,7 +1,7 @@
 import { isAbsolute } from "node:path";
 import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
-import { isHostLimitFailure } from "../../domain/parseFailure.js";
+import { decodeLimit, isHostLimitFailure } from "../../domain/parseFailure.js";
 import {
   isParseLimit,
   parseLimitConstraint,
@@ -9,25 +9,23 @@ import {
 import { constants } from "node:buffer";
 import {
   ArtifactReaderFailure,
-  artifactFileCancellationCause,
-  artifactFilePrimaryFacts,
   artifactReaderTargetFailure,
   projectStableArtifactFailure,
   readStableArtifact,
   stableArtifactInputRecovery,
   type ArtifactResourceScope,
 } from "../../resources/index.js";
-import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import {
-  AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
-  AnalysisInputError,
-  AnalysisResourceConstraintError,
-  carriedReason,
-  cancelledBy,
-} from "../../domain/analysisErrorCore.js";
+import type {
+  AnalysisError,
+  AnalysisErrorOptions,
+} from "../../domain/analysisErrorBase.js";
+import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import {
+  OTLP_TRACE_DEFAULT_ATTRIBUTES,
+  OTLP_TRACE_DEFAULT_SPANS,
+  OTLP_TRACE_MAX_FILE_BYTES,
   OTLP_TRACE_OPERATION as operation,
   OTLP_TRACE_PROVIDER,
   type OtlpTrace,
@@ -35,23 +33,38 @@ import {
 } from "../../domain/otlpTrace/otlpTrace.js";
 import {
   inspectOtlpTraceInputSchema,
-  type InspectOtlpTraceInput as OtlpInput,
+  type InspectOtlpTraceInput as OtlpTraceRequest,
 } from "../../domain/otlpTrace/otlpTraceQuery.js";
 import { parseOtlpTrace } from "../../domain/otlpTrace/parseOtlpTrace.js";
+import { countJsonValues } from "../../domain/jsonValue.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
-import { parseAnalysisInput } from "../AnalysisInput.js";
+import {
+  callerAnalysisParameters,
+  parseAnalysisInput,
+} from "../AnalysisInput.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 import { OTLP_MAX_LOSSY_FIELDS, scanOtlpNumbers } from "./scanOtlpNumbers.js";
 
-/** The one accepted encoding, after the contract applies its default. */
-type InspectOtlpTraceInput = OtlpInput;
+interface OtlpTraceAllowances {
+  readonly max_file_bytes: number;
+  readonly max_spans: number;
+  readonly max_attributes: number;
+}
 
-const inputFailure = (message: string, cause?: unknown) =>
+type InspectOtlpTraceInput = OtlpTraceAllowances &
+  Pick<OtlpTraceRequest, "path">;
+
+const inputFailure = (
+  message: string,
+  cause?: unknown,
+  details?: AnalysisErrorOptions,
+) =>
   new AnalysisInputError(
     operation,
     {
+      ...details,
       cause,
       ...(isSelectedRegularFileError(cause)
         ? {
@@ -99,9 +112,13 @@ const isExactIntegerNumber = (value: number, source: unknown): boolean => {
   return exact === BigInt(value);
 };
 
+// Small JSON tokens can dominate heap use while fitting the file byte limit.
+const MAX_OTLP_JSON_VALUES = 1_000_000;
+
 const decodeExport = (
   bytes: Buffer,
   path: string,
+  limits: OtlpTraceAllowances,
 ): Result<
   { document: unknown; lossyNumber: (holder: object, key: string) => boolean },
   AnalysisError
@@ -126,6 +143,26 @@ const decodeExport = (
         `Export at ${path} exceeds the maximum in-memory string length.`,
       ),
     );
+  if (countJsonValues(text, MAX_OTLP_JSON_VALUES) > MAX_OTLP_JSON_VALUES)
+    return err(
+      parseLimitConstraint(
+        operation,
+        "memory",
+        decodeLimit(
+          "otlp-trace",
+          "The OTLP document contains too many JSON values to allocate and retain safely.",
+          { name: "max_json_values", maximum: MAX_OTLP_JSON_VALUES },
+        ),
+        fixedAllowanceOptions(
+          "The OTLP JSON representation allowance",
+          "parser",
+          {
+            limit: MAX_OTLP_JSON_VALUES,
+            unit: "values",
+          },
+        ),
+      ),
+    );
   try {
     // If there are no escapes and no numeric candidate at a key the reader
     // consumes — whether as a parsed number or as retained raw evidence — the
@@ -143,7 +180,12 @@ const decodeExport = (
       ok: true,
       value: {
         document,
-        lossyNumber: scanOtlpNumbers(text, document, isExactIntegerNumber),
+        lossyNumber: scanOtlpNumbers(
+          text,
+          document,
+          isExactIntegerNumber,
+          limits,
+        ),
       },
     };
   } catch (cause: unknown) {
@@ -168,70 +210,6 @@ const decodeExport = (
   }
 };
 
-/** Keep the reader's typed reasons instead of flattening every failure into "io". */
-const readFailure = (
-  failure: unknown,
-  input: InspectOtlpTraceInput,
-): AnalysisError => {
-  const { cause, origin } = artifactFilePrimaryFacts(failure);
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure
-  ) {
-    if (cause.reason === "cancelled")
-      return cancelledBy(
-        operation,
-        carriedReason(artifactFileCancellationCause(cause)),
-      );
-    if (cause.reason === "integrity")
-      return new AnalysisArtifactChangedError(
-        operation,
-        input.path,
-        cause.message,
-        { cause },
-      );
-    if (cause.reason === "limit")
-      return new AnalysisResourceConstraintError(
-        operation,
-        "file-size",
-        cause.message,
-        { max_file_bytes: input.max_file_bytes },
-        {
-          cause,
-          ...fixedAllowanceOptions("The OTLP export file allowance", "input", {
-            limit: input.max_file_bytes,
-            unit: "bytes",
-          }),
-        },
-      );
-    if (cause.reason === "path") return inputFailure(cause.message, cause);
-    const targetFailure = artifactReaderTargetFailure(
-      operation,
-      input.path,
-      cause,
-    );
-    if (targetFailure !== undefined) return targetFailure;
-  }
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(operation, input.path, cause.code, {
-        cause,
-      });
-    if (isSelectedRegularFileError(cause))
-      return inputFailure(
-        `Selected trace could not be read (${cause.code}): ${input.path}`,
-        cause,
-      );
-  }
-  return new ArtifactOperationError(
-    operation,
-    "io",
-    undefined,
-    "Export read failed.",
-    { cause: failure },
-  );
-};
-
 const readExport = async (
   input: InspectOtlpTraceInput,
   resources: ArtifactResourceScope,
@@ -249,7 +227,63 @@ const readExport = async (
     );
     return ok(source);
   } catch (failure: unknown) {
-    const primary = readFailure(failure, input);
+    const primary = classifyProviderFailure(failure, {
+      providerId: OTLP_TRACE_PROVIDER.id,
+      operation,
+      recognise: (cause, details) =>
+        isSelectedRegularFileError(cause)
+          ? inputFailure(
+              `Selected trace could not be read (${cause.code}): ${input.path}`,
+              cause,
+              details,
+            )
+          : artifactReaderTargetFailure(operation, input.path, cause),
+      file: {
+        path: input.path,
+        description: "OTLP export",
+        fileSize: (cause, details) =>
+          parseLimitConstraint(
+            operation,
+            "file-size",
+            decodeLimit(
+              "otlp-trace",
+              cause.message,
+              {
+                name: "max_file_bytes",
+                maximum: input.max_file_bytes,
+              },
+              { cause },
+            ),
+            {
+              ...details,
+              legacyMaximumKey: "max_file_bytes",
+              retryable: false,
+              limit: {
+                control_kind: "parameter",
+                parameter: "max_file_bytes",
+                effective_value: input.max_file_bytes,
+                unit: "bytes",
+                minimum: 1,
+                maximum: OTLP_TRACE_MAX_FILE_BYTES,
+                default_value: OTLP_TRACE_MAX_FILE_BYTES,
+                applies_at: "next_call",
+                ...(cause.observedBytes !== undefined &&
+                cause.observedBytes <= BigInt(Number.MAX_SAFE_INTEGER)
+                  ? { required_value: Number(cause.observedBytes) }
+                  : {}),
+              },
+            },
+          ),
+      },
+      unclassified: (cause, details) =>
+        new ArtifactOperationError(
+          operation,
+          "io",
+          undefined,
+          "Export read failed.",
+          { ...details, cause },
+        ),
+    });
     return err(
       projectStableArtifactFailure(
         failure,
@@ -281,7 +315,14 @@ export const inspectOtlpTraceEvidence = async (
     options.signal,
   );
   if (!admitted.ok) return admitted;
-  const input = admitted.value;
+  const selectedParameters = callerAnalysisParameters(rawInput)(admitted.value);
+  const input: InspectOtlpTraceInput = {
+    path: admitted.value.path,
+    max_file_bytes: admitted.value.max_file_bytes ?? OTLP_TRACE_MAX_FILE_BYTES,
+    max_spans: admitted.value.max_spans ?? OTLP_TRACE_DEFAULT_SPANS,
+    max_attributes:
+      admitted.value.max_attributes ?? OTLP_TRACE_DEFAULT_ATTRIBUTES,
+  };
   if (!isAbsolute(input.path))
     return err(
       inputFailure("Expected an absolute filesystem path on this host."),
@@ -301,7 +342,7 @@ export const inspectOtlpTraceEvidence = async (
       });
     return result;
   };
-  const document = retain(decodeExport(bytes, input.path));
+  const document = retain(decodeExport(bytes, input.path, input));
   if (!document.ok) return document;
   const artifact: OtlpTraceArtifact = {
     path: input.path,
@@ -310,6 +351,8 @@ export const inspectOtlpTraceEvidence = async (
   };
   const parsed = parseOtlpTrace(document.value.document, artifact, {
     lossyNumber: document.value.lossyNumber,
+    maxSpans: input.max_spans,
+    maxAttributes: input.max_attributes,
   });
   if (!parsed.ok) return retain(err(inputFailure(parsed.problem)));
   const result = parsed.value;
@@ -320,11 +363,7 @@ export const inspectOtlpTraceEvidence = async (
       {
         operation,
         predicateType: "rea.otlp-trace-inventory",
-        parameters: {
-          path: input.path,
-          format: input.format ?? "otlp-json",
-          max_file_bytes: input.max_file_bytes,
-        },
+        parameters: selectedParameters,
         result,
         confidence: "observed",
         limitations: result.limitations,

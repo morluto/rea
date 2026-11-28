@@ -3,6 +3,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { otlpTraceSchema } from "../../domain/otlpTrace/otlpTrace.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
@@ -419,4 +420,89 @@ it("refuses an imprecise number in a surviving duplicate container", async () =>
   expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected a numeric refusal");
   expect(result.error._tag).toBe("AnalysisInputError");
+});
+
+it("records the selected OTLP controls and reports the measured file size", async () => {
+  const input = '{"resourceSpans":[]}';
+  const path = join(
+    await createTestTempDirectory("rea-otlp-budget-"),
+    "trace.json",
+  );
+  await writeFile(path, input);
+  const resources = new ArtifactResourceScope();
+  onTestFinished(() => resources.close());
+  const refused = await inspectOtlpTraceEvidence(
+    { path, max_file_bytes: 1 },
+    resources,
+  );
+  if (refused.ok)
+    throw new Error("Expected the selected file allowance to refuse the read");
+  expect(projectAnalysisError(refused.error).details?.refusal).toMatchObject({
+    kind: "adjustable_budget",
+    control: "max_file_bytes",
+    required_value: Buffer.byteLength(input),
+  });
+  const defaults = await inspectOtlpTraceEvidence({ path }, resources);
+  if (!defaults.ok) throw defaults.error;
+  expect(defaults.value.evidence.parameters).toEqual({ path });
+  const selected = await inspectOtlpTraceEvidence(
+    { path, max_spans: 60_000, max_attributes: 200 },
+    resources,
+  );
+  if (!selected.ok) throw selected.error;
+  expect(selected.value.evidence.parameters).toEqual({
+    path,
+    max_spans: 60_000,
+    max_attributes: 200,
+  });
+  expect(selected.value.evidence.normalized_result).toMatchObject({
+    inventory_limits: { max_spans: 60_000, max_attributes: 200 },
+  });
+});
+
+it("does not charge discarded spans or unselected AnyValue members as numeric losses", async () => {
+  const good = `{"traceId":"${"1".repeat(32)}","spanId":"${"2".repeat(16)}","attributes":[{"key":"kept","value":{"intValue":1.0000000000000001,"stringValue":"retained"}},{"key":"discarded","value":{"intValue":1.0000000000000001}}]}`;
+  const discarded = `{"traceId":"${"1".repeat(32)}","spanId":"${"3".repeat(16)}","startTimeUnixNano":1.0000000000000001}`;
+  const input = `{"resourceSpans":[{"scopeSpans":[{"spans":[${good},${(discarded + ",").repeat(16_384)}${discarded}]}]}]}`;
+  const path = join(
+    await createTestTempDirectory("rea-otlp-selected-numbers-"),
+    "trace.json",
+  );
+  await writeFile(path, input);
+  const resources = new ArtifactResourceScope();
+  onTestFinished(() => resources.close());
+  const result = await inspectOtlpTraceEvidence(
+    { path, max_spans: 1, max_attributes: 1 },
+    resources,
+  );
+  if (!result.ok) throw result.error;
+  expect(result.value.evidence.normalized_result).toMatchObject({
+    spans: [
+      {
+        attributes_omitted: 1,
+        attributes: [
+          { key: "kept", value_kind: "string", string_value: "retained" },
+        ],
+      },
+    ],
+    inventory_limits: { max_spans: 1, max_attributes: 1 },
+  });
+});
+
+it("refuses JSON whose decoded structure would exceed the heap allowance", async () => {
+  const input = `{"resourceSpans":[],"unused":[${"0,".repeat(1_000_000)}0]}`;
+  const path = join(
+    await createTestTempDirectory("rea-otlp-structure-"),
+    "trace.json",
+  );
+  await writeFile(path, input);
+  const resources = new ArtifactResourceScope();
+  onTestFinished(() => resources.close());
+  const result = await inspectOtlpTraceEvidence({ path }, resources);
+  if (result.ok) throw new Error("Expected a representation allowance refusal");
+  expect(result.error._tag).toBe("AnalysisResourceConstraintError");
+  expect(result.error.partialObservation).toMatchObject({
+    kind: "file-snapshot-hash",
+    path,
+  });
 });

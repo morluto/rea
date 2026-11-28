@@ -1,16 +1,26 @@
 import { decodeLimit } from "../../domain/parseFailure.js";
 import { isRecord } from "../../kernel/isRecord.js";
-import { OTLP_TRACE_MAX_ATTRIBUTES_PER_SPAN } from "../../domain/otlpTrace/otlpTrace.js";
+import {
+  isOtlpAttribute,
+  readOtlpSpanIds,
+  selectedOtlpAnyValue,
+  selectedOtlpServiceNameIndex,
+} from "../../domain/otlpTrace/parseOtlpTrace.js";
 
 /** Bound retained source-coordinate metadata independently of input byte size. */
 export const OTLP_MAX_LOSSY_FIELDS = 16_384;
 type JsonObject = Record<string, unknown>;
 type Plan =
-  | { readonly kind: "object"; readonly fields: Readonly<Record<string, Plan>> }
+  | {
+      readonly kind: "object";
+      readonly fields: Readonly<Record<string, Plan>>;
+      readonly anyValue?: true;
+    }
   | {
       readonly kind: "array";
       readonly item: Plan;
       readonly attributes?: "span" | "resource";
+      readonly spans?: true;
     }
   | {
       readonly kind: "number";
@@ -23,6 +33,7 @@ const numeric: Plan = { kind: "number" };
 const retainedNumeric: Plan = { kind: "number", retained: true };
 const value: Plan = {
   kind: "object",
+  anyValue: true,
   fields: {
     intValue: numeric,
     stringValue: retainedNumeric,
@@ -47,7 +58,7 @@ const span: Plan = {
 };
 const scope: Plan = {
   kind: "object",
-  fields: { spans: { kind: "array", item: span } },
+  fields: { spans: { kind: "array", item: span, spans: true } },
 };
 const resource: Plan = {
   kind: "object",
@@ -71,9 +82,11 @@ export const scanOtlpNumbers = (
   text: string,
   document: unknown,
   exact: (value: number, source: string) => boolean,
+  limits: { readonly max_spans: number; readonly max_attributes: number },
 ): ((holder: object, key: string) => boolean) => {
   const lossy = new WeakMap<object, Set<string>>();
   let marked = 0;
+  let selectedSpans = 0;
   let position = 0;
   const whitespace = () => {
     while (" \t\r\n".includes(text[position] ?? "\0")) position++;
@@ -142,7 +155,10 @@ export const scanOtlpNumbers = (
         } else break;
       }
       const objectEnd = position + 1;
+      const selected =
+        plan.anyValue === true ? selectedOtlpAnyValue(node) : undefined;
       for (const [key, { child, from, end }] of members) {
+        if (plan.anyValue === true && key !== selected) continue;
         position = from;
         if (child.kind === "number") {
           const current = node[key];
@@ -189,22 +205,25 @@ export const scanOtlpNumbers = (
       whitespace();
       let index = 0;
       let retained = 0;
+      const serviceNameIndex =
+        plan.attributes === "resource"
+          ? selectedOtlpServiceNameIndex(node)
+          : -1;
       while (text[position] !== "]") {
         const item = node[index];
         let selected = true;
-        if (plan.attributes === "span") {
-          selected = record(item) && typeof item.key === "string";
-        } else if (plan.attributes === "resource") {
-          selected = !(
+        if (plan.spans === true) {
+          selected =
+            selectedSpans < limits.max_spans &&
             record(item) &&
-            item.key === "service.name" &&
-            record(item.value) &&
-            typeof item.value.stringValue === "string"
-          );
-        }
-        if (plan.attributes !== undefined && selected) {
-          retained++;
-          selected = retained <= OTLP_TRACE_MAX_ATTRIBUTES_PER_SPAN;
+            readOtlpSpanIds(item) !== undefined;
+          if (selected) selectedSpans++;
+        } else if (plan.attributes !== undefined) {
+          selected =
+            plan.attributes === "span"
+              ? isOtlpAttribute(item)
+              : index !== serviceNameIndex;
+          if (selected) selected = ++retained <= limits.max_attributes;
         }
         if (selected) visit(plan.item, item);
         else skip();

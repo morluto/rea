@@ -91,6 +91,25 @@ cliTest(
       ).structuredContent,
     );
     expect(full.normalized_result).toEqual(parent.normalized_result);
+    expect(parent.parameters).toEqual({ path: fixture.path });
+    const controlled = parseEvidence(
+      (
+        await call("inspect_otlp_trace", {
+          path: fixture.path,
+          max_spans: 1,
+          max_attributes: 1,
+        })
+      ).structuredContent,
+    );
+    expect(controlled.parameters).toEqual({
+      path: fixture.path,
+      max_spans: 1,
+      max_attributes: 1,
+    });
+    expect(controlled.normalized_result).toMatchObject({
+      inventory_limits: { max_spans: 1, max_attributes: 1 },
+      spans: [{ attributes_omitted: 1 }],
+    });
     const report = otlpTraceSchema.parse(parent.normalized_result);
     expect(report.artifact.path).toBe(fixture.path);
     expect(report.summary).toMatchObject({
@@ -146,6 +165,7 @@ cliTest(
     expect(result.exitCode, result.stderr).toBe(0);
     const fromCli = parseEvidence(result.json);
     expect(fromCli.normalized_result).toEqual(parent.normalized_result);
+    expect(fromCli.parameters).toEqual({ path: fixture.path });
     const output = join(fixture.root, "evidence.json");
     const published = await run({
       arguments: [

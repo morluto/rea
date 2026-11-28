@@ -5,13 +5,15 @@ import { jsonValueSchema } from "../jsonValue.js";
 
 /** Resource allowances, not OTLP format limits. */
 export const OTLP_TRACE_MAX_FILE_BYTES = 32 * 1024 * 1024;
-export const OTLP_TRACE_MAX_SPANS = 50_000;
+export const OTLP_TRACE_DEFAULT_SPANS = 50_000;
+export const OTLP_TRACE_MAX_SPANS = 100_000;
 
 /** Bounded so a file of malformed groups cannot turn into an unbounded result. */
 export const OTLP_TRACE_MAX_DIAGNOSTICS = 1_000;
 
 /** Per-span attribute allowance; a span never loses attributes silently. */
-export const OTLP_TRACE_MAX_ATTRIBUTES_PER_SPAN = 128;
+export const OTLP_TRACE_DEFAULT_ATTRIBUTES = 128;
+export const OTLP_TRACE_MAX_ATTRIBUTES = 512;
 export const OTLP_TRACE_OPERATION = "inspect_otlp_trace" as const;
 export const OTLP_TRACE_PROVIDER = {
   id: "rea-otlp-trace",
@@ -44,24 +46,24 @@ export const otlpAttributeSchema = z.strictObject({
     "key-value-list",
     "empty",
   ]),
-  string_value: z.string().nullable(),
+  string_value: z.string().nullable().optional(),
   /** The recorded value when it is not a string the inventory can read. */
-  string_value_raw: jsonValueSchema.nullable(),
-  bool_value: z.boolean().nullable(),
+  string_value_raw: jsonValueSchema.nullable().optional(),
+  bool_value: z.boolean().nullable().optional(),
   /** The recorded value when it is not a boolean the inventory can read. */
-  bool_value_raw: jsonValueSchema.nullable(),
-  int_value: z.string().nullable(),
+  bool_value_raw: jsonValueSchema.nullable().optional(),
+  int_value: z.string().nullable().optional(),
   /** The recorded value when it is not an int64 the inventory can read. */
-  int_value_raw: jsonValueSchema.nullable(),
-  double_value: z.number().finite().nullable(),
+  int_value_raw: jsonValueSchema.nullable().optional(),
+  double_value: z.number().finite().nullable().optional(),
   /** The recorded value when it is not a finite JS number the schema can hold. */
-  double_value_raw: jsonValueSchema.nullable(),
-  bytes_length: z.int().nonnegative().nullable(),
+  double_value_raw: jsonValueSchema.nullable().optional(),
+  bytes_length: z.int().nonnegative().nullable().optional(),
   /** The recorded base64 payload, kept so equal-length values stay distinct. */
-  bytes_base64: z.string().nullable(),
+  bytes_base64: z.string().nullable().optional(),
   /** The recorded value when it is not a base64 string the inventory can read. */
-  bytes_value_raw: jsonValueSchema.nullable(),
-  element_count: z.int().nonnegative().nullable(),
+  bytes_value_raw: jsonValueSchema.nullable().optional(),
+  element_count: z.int().nonnegative().nullable().optional(),
 });
 
 /** Timestamp facts stay separate from the duration derived from them. */
@@ -98,8 +100,12 @@ export const otlpSpanSchema = z.strictObject({
   resource_index: z.int().nonnegative(),
   scope_index: z.int().nonnegative(),
   attributes: z.array(otlpAttributeSchema),
+  attributes_omitted: z.int().positive().optional(),
   event_count: z.int().nonnegative(),
+  dropped_events_count: z.int().nonnegative().optional(),
   link_count: z.int().nonnegative(),
+  dropped_links_count: z.int().nonnegative().optional(),
+  dropped_attributes_count: z.int().nonnegative().optional(),
   source_pointer: z.string(),
 });
 export type OtlpSpan = z.output<typeof otlpSpanSchema>;
@@ -125,7 +131,9 @@ export const otlpDiagnosticSchema = z.strictObject({
 export const otlpResourceSchema = z.strictObject({
   source_pointer: z.string(),
   service_name: z.string().nullable(),
+  dropped_attributes_count: z.int().nonnegative().optional(),
   attributes: z.array(otlpAttributeSchema),
+  attributes_omitted: z.int().positive().optional(),
 });
 export type OtlpResource = z.output<typeof otlpResourceSchema>;
 
@@ -159,6 +167,10 @@ export const otlpTraceSchema = z.strictObject({
     distinct_traces: z.int().nonnegative(),
     distinct_services: z.int().nonnegative(),
     diagnostics: z.int().nonnegative(),
+  }),
+  inventory_limits: z.strictObject({
+    max_spans: z.int().positive(),
+    max_attributes: z.int().positive(),
   }),
   source_coverage: z.strictObject({
     scope: z.literal("single-caller-supplied-export"),

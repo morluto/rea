@@ -60,13 +60,13 @@
     }
   },
   "src/application/otlpTrace/OtlpTraceService.ts": {
+    "\"The OTLP JSON representation allowance\"": {
+      "class": "representation",
+      "reason": "A source value count bounds heap amplification from dense JSON before parsing, and bounds the inventory rows and retained raw values created from that tree."
+    },
     "\"The OTLP imprecise-numeric-field allowance\"": {
       "class": "representation",
       "reason": "Source-coordinate metadata retained for imprecise numeric fields is bounded independently of the export's byte size; the OTLP JSON format states no such maximum."
-    },
-    "\"The OTLP export file allowance\"": {
-      "class": "forwarding",
-      "reason": "Relays the caller-selected max_file_bytes read budget from the shared stable-artifact reader; the ceiling is declared where that input limit is chosen."
     }
   },
   "src/artifacts/AndroidBootImageArtifactReader.ts": {

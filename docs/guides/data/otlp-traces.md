@@ -17,13 +17,15 @@ selecting one fails as an input-format error rather than being guessed at.
 ## What is retained
 
 Each recorded span keeps its trace, span and parent identifiers, name, kind,
-status, start and end timestamps as exact 64-bit decimal strings, the
-its own attributes, and indexes into the `resources` and `scopes` arrays. Each
+status, start and end timestamps as exact 64-bit decimal strings, its own attributes, and indexes into the `resources` and `scopes` arrays. Each
 resource stores `service.name` and resource attributes once; each scope stores
 its name, version, and resource index. A scope name or version recorded as
 something other than a string keeps that value in `name_raw` / `version_raw`
 so it cannot be read as an omitted field. Group source pointers preserve their
 positions in the input. Event and link counts are reported without their payloads.
+When present, the export’s dropped event, link, and attribute counts are retained
+separately from omissions caused by the importer. Malformed span fields carry
+diagnostics with source pointers.
 
 - **Identity is recorded, not reconstructed.** A parent identifier the export
   does not contain is reported in `orphan_span_ids` with a `missing-parent`
@@ -58,9 +60,10 @@ positions in the input. Event and link counts are reported without their payload
   non-finite value — `1e400`, for example — cannot be held as a finite Evidence
   number and refuses the whole import with the verified file identity rather
   than returning a rounded or invented value. Array and key-value-list
-  attributes report only their element count. Each span and resource retains at
-  most 128 attributes; omissions are reported in diagnostics or limitations.
-  Resource and scope groups are retained when at least one span is inventoried.
+  attributes report only their element count. Byte attributes accept the standard
+  and URL-safe ProtoJSON base64 alphabets with optional padding and retain the
+  original spelling. Resource and scope groups are retained when at least one span
+  is inventoried.
 
 ## Coverage
 
@@ -71,9 +74,14 @@ an operation did not occur.
 
 File admission is 32 MiB by default (`max_file_bytes`); a larger file is refused
 before parsing and the inspection fails with a resource-constraint error naming
-the `file-size` limit, never a partial inventory. The export-level span allowance
-is 50,000 and behaves differently: spans beyond it are dropped from the inventory
-and reported as a diagnostic with a matching limitation.
+the `file-size` limit and the measured bytes required. Independently, a fixed
+representation allowance refuses exports with more than one million JSON values
+before parsing, bounding allocation even when individual fields are very small.
+
+`max_spans` defaults to 50,000 and accepts up to 100,000. `max_attributes` defaults
+to 128 and accepts up to 512 per span or resource. The inventory reports the
+effective controls, affected records report omitted attributes, and dropped spans
+are indicated by a diagnostic and limitation.
 
 Diagnostics retain the first 1000 findings in processing order, sorted by ID
 for display. If more occur, a limitation gives the omitted count; later findings

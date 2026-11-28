@@ -356,7 +356,9 @@ describe("parseOtlpTrace attributes", () => {
         value_kind: "bytes",
         bytes_length: null,
       });
-      expect(attributes.get(key)!.bytes_value_raw).not.toBeNull();
+      expect(attributes.get(key)!.bytes_base64).toBe(
+        key === "damaged" ? "!!!!" : "AA=EC",
+      );
     }
     expect(report.diagnostics).toContainEqual(
       expect.objectContaining({ code: "invalid-record" }),
@@ -1065,4 +1067,89 @@ describe("parseOtlpTrace scope fields", () => {
       version_raw: null,
     });
   });
+});
+
+it("retains both ProtoJSON base64 alphabets and the original padding", () => {
+  const spellings = ["AQI", "AQI=", "-_8", "-_8=", "+/8", "+/8="];
+  const report = parse(
+    envelope([
+      span({
+        attributes: spellings.map((value) => ({
+          key: value,
+          value: { bytesValue: value },
+        })),
+      }),
+    ]),
+  );
+  expect(report.spans[0]?.attributes).toEqual(
+    spellings.map((value) => ({
+      key: value,
+      value_kind: "bytes",
+      bytes_length: 2,
+      bytes_base64: value,
+      bytes_value_raw: null,
+    })),
+  );
+  expect(report.diagnostics).toEqual([]);
+});
+
+it("retains recorded losses and identifies malformed fields", () => {
+  const document = envelope([
+    span({
+      name: 42,
+      status: 2,
+      events: {},
+      links: false,
+      droppedEventsCount: 5,
+      droppedLinksCount: "3",
+      droppedAttributesCount: 0,
+    }),
+  ]);
+  const group = document.resourceSpans[0]!;
+  const report = parse({
+    resourceSpans: [
+      { ...group, resource: { ...group.resource, droppedAttributesCount: 2 } },
+    ],
+  });
+  expect(report.spans[0]).toMatchObject({
+    status_code: "unknown-code",
+    dropped_events_count: 5,
+    dropped_links_count: 3,
+    dropped_attributes_count: 0,
+  });
+  expect(report.resources[0]).toMatchObject({ dropped_attributes_count: 2 });
+  expect(
+    report.diagnostics
+      .map((item) => item.source_pointer.split("/").at(-1))
+      .sort(),
+  ).toEqual(["events", "links", "name", "status"]);
+});
+
+it("reports every cycle participant even when traces reuse span IDs", () => {
+  const first = "1".repeat(16);
+  const second = "2".repeat(16);
+  const report = parse(
+    envelope(
+      ["a", "b"].flatMap((digit) => [
+        span({
+          traceId: digit.repeat(32),
+          spanId: first,
+          parentSpanId: second,
+        }),
+        span({
+          traceId: digit.repeat(32),
+          spanId: second,
+          parentSpanId: first,
+        }),
+      ]),
+    ),
+  );
+  const cycles = report.diagnostics.filter((item) => item.code === "cycle");
+  expect(new Set(cycles.map((item) => item.source_pointer)).size).toBe(4);
+  expect(
+    cycles.filter((item) => item.message.includes("a".repeat(32))),
+  ).toHaveLength(2);
+  expect(
+    cycles.filter((item) => item.message.includes("b".repeat(32))),
+  ).toHaveLength(2);
 });
