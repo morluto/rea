@@ -3,6 +3,7 @@ import {
   isCollection,
   isMap,
   isNode,
+  isPair,
   isScalar,
   LineCounter,
   parseDocument,
@@ -30,18 +31,16 @@ const YAML_ALIAS_LIMIT = 100;
  * decoder owes its callers.
  */
 function* yamlNodes(root: unknown): Generator<Node> {
-  const pending: Node[] = [];
-  if (isNode(root)) pending.push(root);
-  for (let current = pending.pop(); current !== undefined;) {
-    yield current;
-    if (isMap<unknown, unknown>(current)) {
-      for (const pair of current.items) {
-        if (isNode(pair.key)) pending.push(pair.key);
-        if (isNode(pair.value)) pending.push(pair.value);
-      }
-    } else if (isCollection(current))
-      for (const item of current.items) if (isNode(item)) pending.push(item);
-    current = pending.pop();
+  const pending = [root];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (isPair(current)) {
+      pending.push(current.key, current.value);
+    } else if (isNode(current)) {
+      yield current;
+      if (isCollection(current))
+        for (const item of current.items) pending.push(item);
+    }
   }
 }
 

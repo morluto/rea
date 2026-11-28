@@ -145,6 +145,29 @@ it("keeps the source binding when an anchor name is reused", () => {
   });
 });
 
+it("resolves an anchor within a tagged pairs sequence", async () => {
+  const result = await importText(
+    "pairs.yaml",
+    [
+      'openapi: "3.1.0"',
+      'info: {title: t, version: "1"}',
+      "x-bindings: !!pairs",
+      "  - paths: &publishedPaths",
+      "      /pair: {get: {operationId: fromPair}}",
+      "  - alias: *publishedPaths",
+      "paths: *publishedPaths",
+    ].join("\n"),
+    "openapi-yaml",
+  );
+  expect(contractOf(result).operations).toEqual([
+    expect.objectContaining({
+      method: "GET",
+      path: "/pair",
+      declared_id: "fromPair",
+    }),
+  ]);
+});
+
 it("refuses a YAML alias that creates a circular object", async () => {
   const result = await importText(
     "circular.yaml",
