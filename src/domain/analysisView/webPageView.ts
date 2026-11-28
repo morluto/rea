@@ -436,12 +436,7 @@ export const projectWebPageView = (
     if (!rows.ok) return rows;
     return ok({
       ...pageBase,
-      items: rows.value.rows,
-      coverage: pageViewCoverage(
-        selected.offset,
-        rows.value.rows.length,
-        rows.value.total,
-      ),
+      ...selectedViewPage(selected.offset, rows.value),
     });
   }
   const rows = selectRows(report, selected);

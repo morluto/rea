@@ -27,6 +27,9 @@ import type { CdpCommand, CdpCommandParams } from "./protocol/CdpCommands.js";
 const MAX_INTAKE_CSS_VARIABLES = 2000;
 const MAX_REJECTED_PREVIEWS = 3;
 const MAX_PREVIEW_NAME_LENGTH = 64;
+const CSS_IDENT_ASCII_RE = /[\w-]/u;
+const CSS_WHITESPACE_RE = /[ \t\r\n\f]/u;
+const CSS_WHITESPACE_OR_QUOTE_RE = /[ \t\r\n\f"']/u;
 
 const sanitizeDiagnosticPreview = (text: string): string =>
   text.replace(/[\u0000-\u001F\u007F-\u009F\u202A-\u202E\u2066-\u2069]/gu, "");
@@ -227,7 +230,9 @@ const findCssUrlMatches = (text: string): readonly CssUrlMatch[] => {
       continue;
     }
 
-    if (!(/[\w-]/u.test(ch) || ch.charCodeAt(0) >= 0x80 || ch === "\\")) {
+    if (
+      !(CSS_IDENT_ASCII_RE.test(ch) || ch.charCodeAt(0) >= 0x80 || ch === "\\")
+    ) {
       pos++;
       continue;
     }
@@ -240,7 +245,10 @@ const findCssUrlMatches = (text: string): readonly CssUrlMatch[] => {
         const [escapedChar, nextPos] = consumeEscape(text, curr + 1);
         identName += escapedChar;
         curr = nextPos;
-      } else if (/[\w-]/u.test(identCh) || identCh.charCodeAt(0) >= 0x80) {
+      } else if (
+        CSS_IDENT_ASCII_RE.test(identCh) ||
+        identCh.charCodeAt(0) >= 0x80
+      ) {
         identName += identCh;
         curr++;
       } else {
@@ -470,14 +478,17 @@ const redactStandaloneCssUrl = (value: string): string => {
       continue;
     }
 
-    if (/[ \t\r\n\f]/u.test(ch)) {
+    if (CSS_WHITESPACE_RE.test(ch)) {
       result += ch;
       pos++;
       continue;
     }
 
     let tokenEnd = pos + 1;
-    while (tokenEnd < len && !/[ \t\r\n\f"']/u.test(value[tokenEnd]!)) {
+    while (
+      tokenEnd < len &&
+      !CSS_WHITESPACE_OR_QUOTE_RE.test(value[tokenEnd]!)
+    ) {
       tokenEnd++;
     }
     const token = value.slice(pos, tokenEnd);
