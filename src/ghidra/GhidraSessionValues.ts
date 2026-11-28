@@ -5,7 +5,10 @@ import { z } from "zod";
 
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { GHIDRA_NAMING_OPERATIONS } from "./GhidraInventoryValues.js";
+import {
+  GHIDRA_COMMENT_WRITE_OPERATIONS,
+  GHIDRA_NAMING_OPERATIONS,
+} from "./GhidraInventoryValues.js";
 import { GHIDRA_INVENTORY_OPERATIONS } from "./GhidraInventoryOperations.js";
 import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionOperations.js";
 import { ghidraExtensionResultSchema } from "./extensions/GhidraExtensions.js";
@@ -30,6 +33,7 @@ export const GHIDRA_MUTATING_OPERATIONS: ReadonlySet<string> = new Set([
   "annotate_native_function",
   "define_native_data_types",
   ...GHIDRA_NAMING_OPERATIONS,
+  ...GHIDRA_COMMENT_WRITE_OPERATIONS,
 ]);
 
 // Shared wire budget: Java bounds the aggregate before serializing the handshake.

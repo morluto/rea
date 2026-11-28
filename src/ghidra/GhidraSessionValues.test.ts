@@ -311,6 +311,8 @@ const databaseEdits = [
   "define_native_data_types",
   "set_address_name",
   "set_addresses_names",
+  "set_comment",
+  "set_inline_comment",
 ] as const;
 
 const readOnlySession = () => ({

@@ -215,6 +215,20 @@ export const ghidraOperationLimitations = (
           ? "Metadata edits invalidate immutable analysis snapshots. Normal close saves edits to the owned checkpoint; cancellation or process failure can lose edits after the last successful save."
           : "Metadata edits invalidate immutable analysis snapshots and are discarded on close; this is not a saved Ghidra project.",
       ];
+    case "comment":
+    case "inline_comment":
+      return [
+        `Reads Ghidra's ${operation === "comment" ? "PRE" : "EOL"} comment at an explicit mapped address, inside or outside a function; null means none is set. Ghidra has no cursor, so address is required. An unmapped address is refused.`,
+      ];
+    case "set_comment":
+    case "set_inline_comment":
+      return [
+        `Writes Ghidra's ${operation === "set_comment" ? "PRE" : "EOL"} comment at any mapped address, inside or outside a function, as annotate_native_function does at a function entry. An empty comment clears it. The result is true only when readback equals the request; otherwise the edit is rolled back. An unmapped address is refused before any change.`,
+        "Comment text rejects NUL and unpaired Unicode surrogates before mutation, with the UTF-16 index in the error. Supported Unicode and line endings are preserved. Target bytes are not modified.",
+        source === "owned-checkpoint"
+          ? "Metadata edits invalidate immutable analysis snapshots. Normal close saves edits to the owned checkpoint; cancellation or process failure can lose edits after the last successful save."
+          : "Metadata edits invalidate immutable analysis snapshots and are discarded on close; this is not a saved Ghidra project.",
+      ];
     case "inspect_native_load_image":
       return [ghidraLoadImageVerificationNote()];
     case "read_bytes":

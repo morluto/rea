@@ -1502,7 +1502,11 @@ the containing function; the name and comments are changed at its entry, not
 at the selected instruction. Annotation text must contain no NUL or
 unpaired Unicode surrogate; a rejection identifies the field and UTF-16 index
 and leaves every annotation unchanged. CRLF, supplementary Unicode characters,
-and combining characters are preserved. Windows P0 remains read-only. Ghidra has no
+and combining characters are preserved. To comment a specific instruction, a
+data table or a global, use `set_comment` (PRE) or `set_inline_comment` (EOL)
+with an explicit mapped address; `comment` and `inline_comment` read them back.
+An empty comment clears it, the same text rules apply, and an unmapped address
+is refused before any change. Windows P0 remains read-only. Ghidra has no
 GUI authority, and REA never falls back automatically to Hopper.
 
 For a target without debug information, set a function's prototype and the

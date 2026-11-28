@@ -355,7 +355,7 @@ export const OFFICIAL_TOOL_CONTRACTS = [
       mutatesSession: true,
       mayDiscardData: true,
     }),
-    "Write a regular analysis comment at a hexadecimal address and return whether readback matched. An empty comment clears it. This mutates the Hopper document; use comments to record evidence IDs or reasoning.",
+    "Write a regular analysis comment at a mapped hexadecimal address, inside or outside a function, and return whether readback matched. An empty comment clears it. This mutates the provider's session analysis metadata (Ghidra: PRE comment), not the target bytes; use comments to record evidence IDs or reasoning.",
     z.object({ address, comment: z.string(), document }),
   ),
   official(
@@ -365,7 +365,7 @@ export const OFFICIAL_TOOL_CONTRACTS = [
       mutatesSession: true,
       mayDiscardData: true,
     }),
-    "Write an inline instruction comment at a hexadecimal address and return whether readback matched. An empty comment clears it; Hopper may flatten newlines, producing false on exact readback. This mutates analysis metadata.",
+    "Write an inline comment at a mapped hexadecimal address and return whether readback matched. An empty comment clears it. Hopper may flatten newlines, producing false on exact readback; Ghidra stores it as the EOL comment and preserves line endings. This mutates session analysis metadata, not the target bytes.",
     z.object({ address, comment: z.string(), document }),
   ),
   official(
