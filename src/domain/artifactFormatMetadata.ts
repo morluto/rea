@@ -42,6 +42,8 @@ import {
   fitMetadataSchema,
   hexRecordRegionMetadataSchema,
   hexRecordsMetadataSchema,
+  image4EntryMetadataSchema,
+  image4MetadataSchema,
   qualcommMbnMetadataSchema,
   uf2MetadataSchema,
   uf2RegionMetadataSchema,
@@ -130,6 +132,8 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   espFlashPartitionMetadataSchema,
   fitMetadataSchema,
   fitImageMetadataSchema,
+  image4EntryMetadataSchema,
+  image4MetadataSchema,
   qualcommMbnMetadataSchema,
   androidBootImageMetadataSchema,
   androidBootImageEntryMetadataSchema,
@@ -546,6 +550,14 @@ const declarationsByKind: {
   "qualcomm-mbn": {
     notCompared:
       "Its header and hash-segment facts come from the image's own bytes, which content comparison covers. Signatures are located, not verified.",
+  },
+  "apple-img4": {
+    notCompared:
+      "Its fields come from the container's own DER, which content comparison covers. Keybag values are not recorded.",
+  },
+  "apple-img4-entry": {
+    notCompared:
+      "Role, encryption and compression restate the entry path and the root facts; decoded is always false.",
   },
   /**
    * Payload interpretation and sharing declarations, independent of FIT
