@@ -13,8 +13,7 @@ import {
 } from "../../domain/apple/machoSliceSelection.js";
 import {
   AnalysisInputError,
-  AnalysisMalformedTargetError,
-  AnalysisUnsupportedTargetError,
+  AnalysisTargetFailureError,
 } from "../../domain/analysisErrorCore.js";
 
 const selectNativeImage = (
@@ -66,8 +65,8 @@ describe("selectNativeImage subtype names", () => {
       [CPU_ARM64, 12],
     ]);
     for (const [architecture, index, other] of [
-      ["arm64", 0, "arm64e"],
-      ["arm64e", 1, "arm64"],
+      ["arm64", 0, "arm64e.x1"],
+      ["arm64e.x1", 1, "arm64"],
     ] as const) {
       expect(selectNativeImage(bytes, architecture)).toMatchObject({
         ok: true,
@@ -81,25 +80,25 @@ describe("selectNativeImage subtype names", () => {
     }
   });
 
-  it("distinguishes ambiguous and absent selectors for the same subtype table", () => {
-    const { bytes } = fat([
+  it("reads arm64e and arm64e.x1 slices of one table by their own selectors", () => {
+    const { bytes, offsets } = fat([
       [CPU_ARM64, 2],
       [CPU_ARM64, 12],
     ]);
-    expect(selectNativeImage(bytes, "arm64e")).toEqual({
-      ok: false,
-      error: {
-        kind: "ambiguous_architecture",
-        message:
-          "Universal Mach-O holds several arm64e slices (arm64 (subtype 0x2), arm64 (subtype 0xc)); no slice was selected.",
-      },
+    expect(selectNativeImage(bytes, "arm64e")).toMatchObject({
+      ok: true,
+      value: { fileOffset: offsets[0] },
+    });
+    expect(selectNativeImage(bytes, "arm64e.x1")).toMatchObject({
+      ok: true,
+      value: { fileOffset: offsets[1] },
     });
     expect(selectNativeImage(bytes, "arm64")).toEqual({
       ok: false,
       error: {
         kind: "architecture_not_present",
         message:
-          "Universal Mach-O holds arm64 (subtype 0x2), arm64 (subtype 0xc); no slice has the arm64 subtype.",
+          "Universal Mach-O holds arm64 (subtype 0x2), arm64 (subtype 0xc); no slice has the arm64 subtype. Select architecture arm64e or arm64e.x1.",
       },
     });
   });
@@ -208,7 +207,7 @@ describe("selectNativeImage family reads and unread slices", () => {
     const message =
       "FAT architecture 1 CPU type/subtype disagrees with its Mach-O header";
     expect(result.ok ? undefined : result.error).toEqual({
-      kind: "format",
+      kind: "target",
       message,
       failure: {
         kind: "malformed",
@@ -228,10 +227,16 @@ describe("selectNativeImage family reads and unread slices", () => {
     file.bytes.writeUInt32BE(file.bytes.length, 8 + 20 + 12);
     const result = selectNativeImage(file.bytes, "arm64");
     const message = "FAT architecture 1 slice range extends beyond the file";
-    expect(result.ok ? undefined : result.error).toEqual({
-      kind: "format",
+    // A slice declared past the measured end is a cut-off file.
+    expect(result.ok ? undefined : result.error).toMatchObject({
+      kind: "target",
       message,
-      failure: { kind: "malformed", format: "macho", detail: message },
+      failure: {
+        kind: "truncated",
+        format: "macho",
+        detail: message,
+        field: "fat_arch[1]",
+      },
     });
   });
 
@@ -244,7 +249,7 @@ describe("selectNativeImage family reads and unread slices", () => {
     file.bytes.writeUInt32BE(8, 8 + 20 + 12);
     const result = selectNativeImage(file.bytes, "arm64e");
     expect(result.ok ? undefined : result.error).toMatchObject({
-      kind: "format",
+      kind: "target",
       failure: {
         kind: "truncated",
         format: "macho",
@@ -259,7 +264,7 @@ describe("selectNativeImage family reads and unread slices", () => {
     file.bytes.writeUInt32BE(60, 8 + 16);
     const result = selectNativeImage(file.bytes, "arm64");
     expect(result.ok ? undefined : result.error).toMatchObject({
-      kind: "format",
+      kind: "target",
       failure: {
         kind: "unsupported",
         format: "macho",
@@ -372,7 +377,7 @@ describe.each(Object.entries(MAPPERS))(
       ]);
       file.bytes.writeUInt32BE(8, 8 + 20 + 12);
       const refused = await refusal(file.bytes, "arm64e");
-      expect(refused).toBeInstanceOf(AnalysisMalformedTargetError);
+      expect(refused).toBeInstanceOf(AnalysisTargetFailureError);
       expect(refused).toMatchObject({
         path: "/a.dylib",
         failure: {
@@ -389,7 +394,7 @@ describe.each(Object.entries(MAPPERS))(
         [CPU_ARM64, 2, 0],
       ]);
       const refused = await refusal(file.bytes, "arm64e");
-      expect(refused).toBeInstanceOf(AnalysisMalformedTargetError);
+      expect(refused).toBeInstanceOf(AnalysisTargetFailureError);
       expect(refused).toMatchObject({
         path: "/a.dylib",
         failure: { kind: "malformed", format: "macho" },
@@ -400,7 +405,7 @@ describe.each(Object.entries(MAPPERS))(
       const file = fat([[CPU_ARM64, 0]]);
       file.bytes.writeUInt32BE(60, 8 + 16);
       const refused = await refusal(file.bytes, "arm64");
-      expect(refused).toBeInstanceOf(AnalysisUnsupportedTargetError);
+      expect(refused).toBeInstanceOf(AnalysisTargetFailureError);
       expect(refused).toMatchObject({ path: "/a.dylib" });
     });
   },

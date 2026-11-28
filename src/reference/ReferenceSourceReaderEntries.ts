@@ -1,3 +1,4 @@
+import { sameFileStatStamp } from "../filesystem/FileStatStamp.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import type { BigIntStats, Dir, Dirent } from "node:fs";
 import { opendir, readlink, realpath, stat } from "node:fs/promises";
@@ -11,7 +12,10 @@ import {
   absoluteCallerPath,
   appendCallerPath,
 } from "../filesystem/callerPath.js";
-import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
+import {
+  appendCleanupObservation,
+  type AnalysisCleanupObservation,
+} from "../domain/analysisErrorBase.js";
 import { err, ok } from "../domain/result.js";
 
 import {
@@ -28,7 +32,6 @@ import { readStableFile } from "./ReferenceSourceReaderFile.js";
 import { decodeDirectoryEntryName } from "../filesystem/decodeDirectoryEntryName.js";
 import {
   isAborted,
-  sameFile,
   validateDirectory,
   bigLstat,
 } from "./ReferenceSourceReaderValidate.js";
@@ -63,19 +66,6 @@ const recordDirectoryFailure = (
         localDiagnostic,
       ),
     );
-};
-
-/** Keep every unresolved owner when a later failure becomes primary. */
-const mergeCleanupObservation = (
-  first: AnalysisCleanupObservation | undefined,
-  second: AnalysisCleanupObservation | undefined,
-): AnalysisCleanupObservation | undefined => {
-  if (first === undefined) return second;
-  if (second === undefined) return first;
-  return {
-    reason: `${first.reason}; ${second.reason}`,
-    resources: [...new Set([...first.resources, ...second.resources])],
-  };
 };
 
 /**
@@ -281,10 +271,7 @@ export const traverseDirectory = async (
         cleanup.cause,
         current.path,
       );
-      const previous = mergeCleanupObservation(
-        result.ok ? undefined : result.error.cleanup,
-        retainedCleanup,
-      );
+      const previous = result.ok ? retainedCleanup : result.error.cleanup;
       const primary = result.ok
         ? readFailure !== undefined
           ? {
@@ -305,7 +292,7 @@ export const traverseDirectory = async (
         : result.error;
       return err({
         ...primary,
-        cleanup: mergeCleanupObservation(previous, observation) ?? observation,
+        cleanup: appendCleanupObservation(previous, observation),
         cause: Object.hasOwn(primary, "cause") ? primary.cause : cleanup.cause,
       });
     }
@@ -335,7 +322,7 @@ export const traverseDirectory = async (
     current.path,
     state.signal,
   ).then((after) => {
-    if (!after.ok || !sameFile(before.stats, after.stats))
+    if (!after.ok || !sameFileStatStamp(before.stats, after.stats))
       recordDirectoryFailure(
         state,
         current.path,
@@ -546,14 +533,14 @@ export const readStableSymlinkTarget = async (
   try {
     const before = await bigLstat(absolute);
     if (isAborted(signal)) return cancelledSymlink(path);
-    if (!before.isSymbolicLink() || !sameFile(expected, before))
+    if (!before.isSymbolicLink() || !sameFileStatStamp(expected, before))
       return changedSymlink(path);
     const observed = await readTarget();
     if (observed.status === "failed") return observed;
     if (isAborted(signal)) return cancelledSymlink(path);
     const after = await bigLstat(absolute);
     if (isAborted(signal)) return cancelledSymlink(path);
-    if (!after.isSymbolicLink() || !sameFile(expected, after))
+    if (!after.isSymbolicLink() || !sameFileStatStamp(expected, after))
       return changedSymlink(path);
     return observed;
   } catch (cause: unknown) {

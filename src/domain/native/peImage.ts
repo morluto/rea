@@ -387,24 +387,30 @@ export const readPeImage = (
   );
 };
 
-/**
- * Read PE32/PE32+ native image mappings and section facts from a random-access
- * reader without buffering the whole PE file in memory.
- */
-export const readPeImageFromReader = async (
-  source: {
-    readonly size: number;
-    readonly prefix: Buffer;
-    readonly readRange: (offset: number, length: number) => Promise<Buffer>;
-  },
-  sections: PeSectionAdmission = "mapped",
-): Promise<PeImage> => {
-  const readBytes = (offset: number, length: number): Promise<Buffer> => {
+interface PeImageSource {
+  readonly size: number;
+  readonly prefix: Buffer;
+  readonly readRange: (offset: number, length: number) => Promise<Buffer>;
+}
+
+/** Serve a complete retained prefix range before reading the artifact. */
+export const peImageRangeReader =
+  (source: PeImageSource) =>
+  (offset: number, length: number): Promise<Buffer> => {
     if (length === 0) return Promise.resolve(Buffer.alloc(0));
     if (offset >= 0 && offset + length <= source.prefix.length)
       return Promise.resolve(source.prefix.subarray(offset, offset + length));
     return source.readRange(offset, length);
   };
+/**
+ * Read PE32/PE32+ native image mappings and section facts from a random-access
+ * reader without buffering the whole PE file in memory.
+ */
+export const readPeImageFromReader = async (
+  source: PeImageSource,
+  sections: PeSectionAdmission = "mapped",
+): Promise<PeImage> => {
+  const readBytes = peImageRangeReader(source);
   let evidence = parseMzHeaderEvidence(source.prefix, source.size);
   if (evidence.windowsHeader.state === "signature-needed") {
     const sigOffset = evidence.windowsHeader.offset;

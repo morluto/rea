@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { jadxBridgeIdentity } from "../../../dist/android/JadxRelease.js";
+import { completeEvidenceClient } from "../../lib/complete-evidence.mjs";
 
 /** Retained Java diagnostics tail; a failing bridge can be arbitrarily noisy. */
 const STDERR_TAIL_BYTES = 64 * 1024;
@@ -76,7 +77,9 @@ export const verifyAndroidBridgeCatalog = async ({
   transport.stderr?.on("data", (chunk) => {
     diagnostics = `${diagnostics}${chunk}`.slice(-STDERR_TAIL_BYTES);
   });
-  const client = new Client({ name: "rea-bridge-catalog", version: "1" });
+  const client = completeEvidenceClient(
+    new Client({ name: "rea-bridge-catalog", version: "1" }),
+  );
   try {
     await client.connect(transport);
     assert.deepEqual(

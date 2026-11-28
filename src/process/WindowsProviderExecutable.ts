@@ -1,4 +1,4 @@
-import { statSync } from "node:fs";
+import { isRegularFileSync } from "../filesystem/regularFileProbe.js";
 import { win32 } from "node:path";
 import { err, ok, type Result } from "../domain/result.js";
 import {
@@ -14,14 +14,6 @@ export interface WindowsExecutableLookup {
   /** The caller must wrap selected batch paths with windowsBatchCommand. */
   readonly allowBatch?: boolean;
 }
-
-const isRegularFile = (path: string): boolean => {
-  try {
-    return statSync(path).isFile();
-  } catch {
-    return false;
-  }
-};
 
 /**
  * Resolve a configured command against the captured child environment. A
@@ -52,6 +44,6 @@ export const resolveWindowsProviderExecutable = (
   });
   if (!candidates.ok) return candidates;
   for (const { path } of candidates.value)
-    if ((lookup.isFile ?? isRegularFile)(path)) return ok(path);
+    if ((lookup.isFile ?? isRegularFileSync)(path)) return ok(path);
   return err({ kind: "not_found" });
 };

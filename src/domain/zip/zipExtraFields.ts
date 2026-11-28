@@ -6,6 +6,7 @@ export const ZIP_EXTRA_FIELD = {
   headerBytes: 4,
   idOffset: 0,
   sizeOffset: 2,
+  zip64: 0x0001,
   unicodePath: 0x7075,
 } as const;
 

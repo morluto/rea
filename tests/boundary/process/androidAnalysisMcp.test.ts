@@ -22,10 +22,8 @@ import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import {
-  createJadxProtocolFixture,
-  verifyJadxFixtureCleanup,
-} from "../../fixtures/android/jadx.js";
+import { expectProviderLaunchCleanup } from "../../support/process/expectProviderLaunchCleanup.js";
+import { createJadxProtocolFixture } from "../../fixtures/android/jadx.js";
 
 test("preserves Android caller field constraints before target or provider access", async () => {
   let calls = 0;
@@ -179,7 +177,7 @@ it("publishes and executes all APK contracts with inline Evidence and no active 
   }
   expect(launches).toHaveLength(1);
   await close();
-  await verifyJadxFixtureCleanup(launches);
+  await expectProviderLaunchCleanup(launches);
 });
 
 test.each([
@@ -271,7 +269,7 @@ test.each([
     if (!containsAmbientEnvironment)
       expect(JSON.stringify(partial)).not.toContain("JAVA_HOME");
     await close();
-    await verifyJadxFixtureCleanup(launches);
+    await expectProviderLaunchCleanup(launches);
   },
 );
 
@@ -341,5 +339,5 @@ it("cleans an active engine when the MCP client disconnects", async () => {
     })
     .toBe(true);
   await close();
-  await verifyJadxFixtureCleanup(launches);
+  await expectProviderLaunchCleanup(launches);
 });

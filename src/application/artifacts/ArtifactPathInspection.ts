@@ -2,7 +2,7 @@ import { stat } from "node:fs/promises";
 
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 
-import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
@@ -17,8 +17,8 @@ import type {
   RetainedResourceScope,
 } from "../../ports/AnalysisProvider.js";
 import {
-  translateArtifactFailure,
   type ArtifactResourceScope,
+  translateArtifactFailure,
 } from "../../resources/index.js";
 import type { InspectArtifactDirectory } from "../../ports/artifacts/ArtifactDirectoryInspectionPort.js";
 import type { DirectAnalysisDependencies } from "../DirectAnalysisDependencies.js";
@@ -56,13 +56,14 @@ export const selectedArtifactDirectory = async (
  */
 export const runInRetainedArtifactScope = async <T>(
   retained: RetainedResourceScope | undefined,
+  path: string,
   operation: () => Promise<Result<T, AnalysisError>>,
 ): Promise<Result<T, AnalysisError>> => {
   if (retained === undefined) return operation();
   try {
     return await retained.run(operation);
   } catch (cause: unknown) {
-    return err(translateArtifactFailure("inspect_artifact", cause));
+    return err(translateArtifactFailure("inspect_artifact", path, cause));
   }
 };
 
@@ -80,7 +81,7 @@ export const executeArtifactPathInspection = async (
   options: ExecutionOptions = {},
   retained?: RetainedResourceScope,
 ): Promise<Result<AnalysisExecution, AnalysisError>> =>
-  runInRetainedArtifactScope(retained, async () => {
+  runInRetainedArtifactScope(retained, path, async () => {
     const directory = await selectedArtifactDirectory(path);
     if (directory !== undefined)
       return dependencies.inspectArtifactDirectory(

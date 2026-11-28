@@ -1,14 +1,13 @@
 import { collectEntries } from "../../tests/fixtures/artifactEntries.js";
 import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
 
 import { expect, it, vi } from "vitest";
 
 import { AndroidBootImageArtifactReader } from "./AndroidBootImageArtifactReader.js";
 import {
-  ArtifactReaderFailure,
   artifactFixedLimitFailure,
+  malformedArtifact,
 } from "../resources/index.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
 import {
@@ -16,16 +15,10 @@ import {
   buildVendorBootImage,
 } from "../../tests/fixtures/androidBootImage.js";
 import { artifactReaderLifecycleCases } from "../../tests/fixtures/artifactReaderLifecycle.js";
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { createTestTempFile } from "../../tests/fixtures/temporaryDirectory.js";
 
-const fixture = async (bytes: Buffer): Promise<string> => {
-  const path = join(
-    await createTestTempDirectory("rea-android-boot-boundary-"),
-    "image",
-  );
-  await writeFile(path, bytes);
-  return path;
-};
+const fixture = (bytes: Buffer): Promise<string> =>
+  createTestTempFile("rea-android-boot-boundary-", "image", bytes);
 
 it("does not publish preparation metadata or coverage after carrier mutation", async () => {
   const bytes = buildBootImage({ version: 0 });
@@ -67,8 +60,8 @@ it.each(["invalid", "cancelled"] as const)(
         if (refuse) {
           refuse = false;
           if (mode === "invalid")
-            throw new ArtifactReaderFailure(
-              "malformed",
+            throw malformedArtifact(
+              "android-boot-image",
               "injected preparation failure",
             );
           controller.abort(new Error("cancel final preparation validation"));

@@ -34,6 +34,7 @@ const executeTimingReport = async (
       SOURCE_RESULT: "",
       CI_VERIFY_TEST_INVENTORY: "false",
       CI_TEST_SELECTION: "",
+      CI_APPLE_SELECTED: "",
       CI_COMPARE_TEST_SHADOW: "false",
       ...environment,
       GITHUB_STEP_SUMMARY: summary,
@@ -110,6 +111,9 @@ it("merges available failed-shard diagnostics and skips unavailable shard report
   expect(summary?.env?.CI_TEST_SELECTION).toBe(
     "${{ needs.changes.outputs.test_selection }}",
   );
+  expect(summary?.env?.CI_APPLE_SELECTED).toBe(
+    "${{ needs.changes.outputs.apple }}",
+  );
   const command = steps[gate]?.run;
   if (command === undefined) throw new Error("Missing shard result gate");
   for (const tier of ["fast", "full"]) {
@@ -142,26 +146,23 @@ it("merges available failed-shard diagnostics and skips unavailable shard report
 // into a separate test implementation of the collection policy.
 function conditionValue(
   condition: string | undefined,
-  needs: Record<string, unknown>,
-  canceled: boolean,
-  timingReportExists = false,
-  shardResult = "",
+  context: Record<string, unknown>,
 ) {
   if (!condition) throw new Error("Missing report collection condition");
+  const expression = condition.startsWith("${{")
+    ? condition.slice(3, -2)
+    : condition;
   return runInNewContext(
-    condition.replaceAll("needs.test-source", 'needs["test-source"]'),
-    {
-      needs,
-      env: { SHARD_RESULT: shardResult },
-      cancelled: () => canceled,
-      hashFiles: () => (timingReportExists ? "timing-report" : ""),
-    },
+    expression.replaceAll("needs.test-source", 'needs["test-source"]'),
+    context,
     { timeout: 1_000 },
   );
 }
 
 it("collects either fast test group while keeping full reports tied to full shards", async () => {
   const steps = (await workflow()).test.steps;
+  const inputs = steps[0];
+  expect(inputs?.name).toBe("Require portable test inputs");
   const download = steps.find(
     (step) => step.with?.pattern === "vitest-report-*",
   );
@@ -196,15 +197,25 @@ it("collects either fast test group while keeping full reports tied to full shar
                 full: tier === "full" && builtAvailable,
               }
             : { download: false, fast: false, full: false };
-          expect(
-            conditionValue(download?.if, needs, canceled, false, shard),
-          ).toBe(expected.download);
-          expect(conditionValue(fast?.if, needs, canceled, false, shard)).toBe(
-            expected.fast,
+          const context = {
+            needs,
+            env: { SHARD_RESULT: shard },
+            cancelled: () => canceled,
+          };
+          const hasReports = conditionValue(
+            inputs?.env?.REPORTS_EXPECTED,
+            context,
           );
-          expect(conditionValue(full?.if, needs, canceled, false, shard)).toBe(
-            expected.full,
+          expect(hasReports).toBe(code === "true" && available);
+          const reportContext = {
+            ...context,
+            steps: { inputs: { outcome: hasReports ? "success" : "failure" } },
+          };
+          expect(conditionValue(download?.if, reportContext)).toBe(
+            expected.download,
           );
+          expect(conditionValue(fast?.if, reportContext)).toBe(expected.fast);
+          expect(conditionValue(full?.if, reportContext)).toBe(expected.full);
         }
       }
     }
@@ -222,23 +233,39 @@ it("collects either fast test group while keeping full reports tied to full shar
   );
 });
 
+it("fails before setup when classification fails or no portable test group ran", async () => {
+  const [inputs] = (await workflow()).test.steps;
+  if (!inputs?.run) throw new Error("Missing portable test input check");
+  for (const [classification, reportsExpected, passes] of [
+    ["success", "true", true],
+    ["success", "false", false],
+    ["failure", "true", false],
+  ] as const) {
+    const check = execute("bash", ["-c", inputs.run], {
+      env: {
+        CHANGES_RESULT: classification,
+        REPORTS_EXPECTED: reportsExpected,
+      },
+    });
+    if (passes) await expect(check).resolves.toMatchObject({ stderr: "" });
+    else await expect(check).rejects.toMatchObject({ code: 1 });
+  }
+});
+
 it("requires portable report validation even when the timing report is missing", async () => {
   const summary = (await workflow()).test.steps.find((step) =>
     step.run?.includes("scripts/ci/test-report.mjs"),
   );
-  for (const tier of ["fast", "full"]) {
+  for (const outcome of ["success", "failure"]) {
     for (const timingReportExists of [false, true]) {
-      for (const code of ["true", "false"]) {
-        for (const canceled of [false, true]) {
-          expect(
-            conditionValue(
-              summary?.if,
-              { changes: { outputs: { code, tier } } },
-              canceled,
-              timingReportExists,
-            ),
-          ).toBe(code === "true" && !canceled);
-        }
+      for (const canceled of [false, true]) {
+        expect(
+          conditionValue(summary?.if, {
+            steps: { inputs: { outcome } },
+            cancelled: () => canceled,
+            hashFiles: () => (timingReportExists ? "timing-report" : ""),
+          }),
+        ).toBe(outcome === "success" && !canceled);
       }
     }
   }
@@ -385,6 +412,51 @@ it("reports skipped modules without treating an entirely skipped suite as succes
   ).rejects.toMatchObject({ code: "ENOENT" });
 });
 
+it("accepts an entirely skipped selection only when the macOS lane runs every module", async () => {
+  const root = await createTestTempDirectory("rea-ci-report-macos-only-");
+  await workflowGit(root, ["init"]);
+  await mkdir(join(root, "tests"));
+  await writeFile(
+    join(root, "tests/macos.test.ts"),
+    'describe.skipIf(process.platform !== "darwin")("macOS", () => {});\n',
+  );
+  await writeFile(join(root, "tests/portable.test.ts"), "// fixture\n");
+  await workflowGit(root, ["add", "tests"]);
+  const run = async (names: readonly string[], apple: string) => {
+    await writeFile(
+      join(root, "test-timings.json"),
+      JSON.stringify({
+        version: 1,
+        success: true,
+        files: names.map((name) => ({ name, durationMs: 1, state: "skipped" })),
+      }),
+    );
+    return executeTimingReport(root, {
+      CI_VERIFY_TEST_INVENTORY: "true",
+      CI_APPLE_SELECTED: apple,
+      CI_TEST_SELECTION: JSON.stringify({
+        version: 3,
+        mode: "selected",
+        reason: "Affected tests: 1 changed",
+        files: names,
+        shards: 1,
+      }),
+    });
+  };
+
+  const covered = await run(["tests/macos.test.ts"], "true");
+  expect(covered.summary).toContain(
+    "Every selected module is gated to macOS; the selected macOS lane runs them.",
+  );
+  for (const [names, apple] of [
+    [["tests/macos.test.ts"], "false"],
+    [["tests/macos.test.ts", "tests/portable.test.ts"], "true"],
+  ] as const)
+    await expect(run(names, apple)).rejects.toMatchObject({
+      stderr: expect.stringContaining("Every portable test module was skipped"),
+    });
+});
+
 it("runs the existing onboarding and Python producer guards from their selected CI owners", async () => {
   const jobs = await workflow();
   const scripts = z
@@ -413,10 +485,15 @@ it("runs the existing onboarding and Python producer guards from their selected 
   expect(deep?.if).toBe(
     "needs.changes.outputs.tier == 'full' && needs.changes.outputs.code == 'true'",
   );
-  expect(deep?.steps.some((step) => step.run === "npm run check:ci:deep")).toBe(
-    true,
+  expect(
+    deep?.steps.some((step) => step.run === "npm run check:ci:deep:job"),
+  ).toBe(true);
+  expect(scripts["check:ci:deep"]).toBe(
+    "npm run verify:architecture-guards && npm run check:ci:deep:job",
   );
-  expect(scripts["check:ci:deep"]).toContain("npm run test:python");
+  expect(scripts["precheck:ci:deep:job"]).toBe("npm run deps:check");
+  expect(scripts["check:ci:deep:job"]).not.toContain("architecture-guards");
+  expect(scripts["check:ci:deep:job"]).toContain("npm run test:python");
   expect(scripts["check:ci:fast"]).toBe(
     "node scripts/run-exclusive.mjs artifacts npm run check:ci:fast:tasks",
   );

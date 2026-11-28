@@ -240,7 +240,8 @@ another partition when an app fails to load.
 Erased flash (`0xFF`) between regions is described. In a gap between
 regions, the first byte that is not erased starts an `undescribed` range to
 the end of the gap, and makes coverage `unknown`; the rest of that range is
-not examined. Coverage is also `unknown` when no bootloader is located, or
+not examined. Coverage is also `unknown` when no bootloader region is described
+(no bootloader is located, or the partition table does not follow it), or
 when a declared partition begins before the dump's first byte, since it has
 no entry. A partition cut short or left out by the end of the file does not
 make it `unknown`: its entry holds the bytes the file has, none for one past

@@ -155,3 +155,95 @@ cliTest(
     expect(fileIdentity(evidence.subject).format).toBe("file");
   },
 );
+
+cliTest(
+  "reports structured details.limit and CLI flags for max-file-bytes and max-entries refusals",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-kernel-module-cli-limit-");
+    const path = join(root, "demo.ko");
+    const bytes = kernelModuleFixture();
+    await writeFile(path, bytes);
+
+    const fileBudget = await cli.run({
+      arguments: [
+        "inspect-kernel-module",
+        path,
+        "--max-file-bytes",
+        "64",
+        "--json",
+      ],
+    });
+    expect(fileBudget.exitCode).not.toBe(0);
+    expect(fileBudget.json).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_file_bytes",
+          effective_value: 64,
+          unit: "bytes",
+          minimum: 64,
+          maximum: 536870912,
+          default_value: 67108864,
+          applies_at: "next_call",
+          required_value: bytes.length,
+          cli_flag: "--max-file-bytes",
+        },
+      },
+      remediation: {
+        action: expect.stringContaining("--max-file-bytes"),
+      },
+    });
+    expect(
+      (fileBudget.json as { remediation: { action: string } }).remediation
+        .action,
+    ).toContain(`at least ${String(bytes.length)}`);
+
+    const entryBudget = await cli.run({
+      arguments: [
+        "inspect-kernel-module",
+        path,
+        "--max-entries",
+        "1",
+        "--json",
+      ],
+    });
+    expect(entryBudget.exitCode).not.toBe(0);
+    expect(entryBudget.json).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_entries",
+          effective_value: 1,
+          unit: "count",
+          minimum: 1,
+          maximum: 65536,
+          default_value: 8192,
+          applies_at: "next_call",
+          cli_flag: "--max-entries",
+        },
+      },
+      remediation: {
+        action: expect.stringContaining("--max-entries"),
+      },
+    });
+
+    const recovered = await cli.run({
+      arguments: [
+        "inspect-kernel-module",
+        path,
+        "--max-file-bytes",
+        String(bytes.length),
+        "--max-entries",
+        "16",
+        "--json",
+      ],
+    });
+    expect(recovered.exitCode, recovered.stderr).toBe(0);
+    expect(
+      toolContract("inspect_kernel_module").outputSchema.parse(recovered.json)
+        .normalized_result.applicability,
+    ).toBe("applicable");
+  },
+);

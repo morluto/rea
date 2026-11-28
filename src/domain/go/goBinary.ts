@@ -13,6 +13,7 @@ import {
   localPathStringSchema,
 } from "../localPath.js";
 import { canonicalBase64Schema } from "../stringPatterns.js";
+import { maxStructureBytesSchema } from "../native/nativeStructureBudget.js";
 
 const sourceRangeSchema = z.strictObject({
   offset: z.int().nonnegative(),
@@ -21,7 +22,7 @@ const sourceRangeSchema = z.strictObject({
 
 /** Defaults applied at the owning reader; omitted request fields stay omitted in Evidence. */
 export const GO_ANALYSIS_BUDGET_DEFAULTS = {
-  max_input_bytes: 256 * 1024 * 1024,
+  max_input_bytes: 2 * 1024 * 1024 * 1024,
   max_report_bytes: 8 * 1024 * 1024,
   max_build_info_bytes: 1024 * 1024,
   max_header_search_bytes: 256 * 1024 * 1024,
@@ -191,11 +192,12 @@ export const inspectGoBinaryInputSchema = z
         "Also recover bounded inferred Go UTF-8 string literals referenced by static (ptr, len) headers in non-executable mapped data",
       ),
     ...goResourceBudgetFields,
+    max_structure_bytes: maxStructureBytesSchema,
     detail: z
       .enum(["complete", "summary"])
-      .default("complete")
+      .optional()
       .describe(
-        "complete returns all metadata inline; summary retains complete Evidence and returns build identity and counts for subsequent retained Go views.",
+        "Omitted: complete when it fits the agent result budget, otherwise the retained summary. complete returns all metadata inline; summary retains complete Evidence and returns build identity and counts for subsequent retained Go views.",
       ),
   })
   .superRefine((input, context) => {

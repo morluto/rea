@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256 as hash } from "../../tests/support/sha256.js";
 
 import type { NativeLoadImageObservation } from "../domain/native/nativeLoadImage.js";
 import type {
@@ -6,9 +6,6 @@ import type {
   RawBinaryLoad,
 } from "../domain/binaryTargetTypes.js";
 import { ghidraRawBinaryLanguage } from "./GhidraRawBinaryLanguage.js";
-
-const hash = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 /**
  * An ARM raw-binary target, its snapshot facts and the import Ghidra reports

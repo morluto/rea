@@ -6,6 +6,7 @@ import { analysisInputErrorFromIssues } from "../inputIssueProjection.js";
 import { err, ok, type Result } from "../result.js";
 import { ownedJsonValueSchema } from "../jsonValue.js";
 import { EvidenceIntegrityError } from "../evidenceErrors.js";
+import type { systemdJournalObjectHeaderSchema } from "../formatMetadata/androidAndSystemMetadata.js";
 
 /** Bind a projected artifact to the parent subject when one is recorded. */
 export const validateAnalysisViewSubject = (
@@ -23,6 +24,14 @@ export const validateAnalysisViewSubject = (
 };
 
 /** Parent record already resolved from inline Evidence or a session reference. */
+/**
+ * One row of a `format_record_headers` page. Owned here, beside the parent it
+ * travels on, so projectors and the request hub never import each other.
+ */
+export type FormatRecordHeader = z.output<
+  typeof systemdJournalObjectHeaderSchema
+>;
+
 export interface AnalysisViewParent {
   readonly evidenceId: string;
   readonly operation: string;
@@ -41,6 +50,16 @@ export interface AnalysisViewParent {
   readonly artifact?: { readonly path: string; readonly sha256: string } | null;
   /** Parent Evidence parameters, when the parent operation records them. */
   readonly parameters?: unknown;
+  /** The complete authenticated parent record, for views that page its exact JSON. */
+  readonly evidence?: Evidence;
+  /**
+   * A `format_record_headers` page the application re-read from the unchanged
+   * root file, with the parent inventory's exact record total.
+   */
+  readonly formatRecordPage?: {
+    readonly items: readonly FormatRecordHeader[];
+    readonly total: number;
+  };
 }
 import {
   canBorrowParsedJsonSnapshot,

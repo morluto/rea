@@ -1,4 +1,7 @@
-import type { CallToolResult } from "@modelcontextprotocol/server";
+import type {
+  CallToolResult,
+  ResourceLink,
+} from "@modelcontextprotocol/server";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 
 import type { ToolContract } from "../contracts/toolContractTypes.js";
@@ -37,6 +40,26 @@ import {
   type ToolResultEncoding,
 } from "./toolResultEncoding.js";
 import { isRecord } from "../kernel/isRecord.js";
+import { summarizeOverBudgetEvidence } from "../application/analysisView/AnalysisViewService.js";
+import { INSPECT_ANALYSIS_VIEW_OPERATION } from "../domain/analysisView/analysisViewErrors.js";
+import {
+  agentBudgetDelivery,
+  budgetedSummaryBytes,
+  currentAgentResultBudget,
+  failureEnvelopeBytes,
+  PARTIAL_OBSERVATION_DELIVERY,
+  type AgentBudgetDelivery,
+} from "../domain/agentResultBudget.js";
+import { currentMcpToolRequest } from "./McpToolRequest.js";
+import { AGENT_BUDGET_OPERATIONS } from "../domain/agentBudgetOperations.js";
+import { retainedEvidenceLink } from "./retainedEvidenceResource.js";
+
+const AGENT_BUDGET_OPERATION_NAMES: ReadonlySet<string> = new Set(
+  AGENT_BUDGET_OPERATIONS,
+);
+
+/** `_meta` key for the delivery facts of a budget-replaced result. */
+export const AGENT_BUDGET_DELIVERY_META = "rea/agent-budget-delivery";
 
 /** Project a response-budget refusal without labeling REA's reserved string limit as Node's ceiling. */
 export const mcpResponseOverflowProjection = (input: {
@@ -193,6 +216,8 @@ export class ToolResultDelivery {
       viewSource?: JsonValue,
     ) => Readonly<Record<string, JsonValue>> = () => ({}),
     private readonly noTargetRecovery?: string,
+    /** REA_AGENT_RESULT_BUDGET_BYTES from the environment this server captured. */
+    private readonly agentBudgetSeed?: string,
   ) {
     this.maximumResponseBytes = maximumResponseBytes;
     this.resultBudgetBytes = maximumResponseBytes - 1024;
@@ -205,6 +230,7 @@ export class ToolResultDelivery {
       this.maximumResponseBytes,
       this.nativeContinuation,
       recovery,
+      this.agentBudgetSeed,
     );
   }
 
@@ -291,32 +317,61 @@ export class ToolResultDelivery {
     contract: ToolContract,
     recorded: Result<unknown, AnalysisError> | undefined,
     viewSource?: JsonValue | (() => JsonValue | undefined),
+    /** Retains a budgeted summary as `detail: "summary"` would; none, no budget. */
+    recordSummary?: EvidenceWriter["recordEvidence"],
   ): CallToolResult {
-    return recorded !== undefined && !recorded.ok
-      ? this.toErrorToolResult(recorded.error, contract.returnsTargetContent)
-      : this.successResult(evidence, contract, () => {
-          const resolvedViewSource =
-            typeof viewSource === "function" ? viewSource() : viewSource;
-          return {
+    if (recorded !== undefined && !recorded.ok)
+      return this.toErrorToolResult(
+        recorded.error,
+        contract.returnsTargetContent,
+      );
+    // Only a retained record can be replaced by its summary.
+    const budgeted =
+      recorded === undefined
+        ? undefined
+        : overBudgetSummary(evidence, contract, recordSummary, {
+            agentBudgetSeed: this.agentBudgetSeed,
+            resultBudgetBytes: this.resultBudgetBytes,
+          });
+    if (budgeted !== undefined) {
+      // The frame check covers the delivery facts added after encoding.
+      const delivered = this.successResult(
+        budgeted.summary,
+        contract,
+        {
+          evidence_id: budgeted.summary.evidence_id,
+          evidence_reference: {
+            kind: "retained-evidence",
             evidence_id: evidence.evidence_id,
-            ...(recorded === undefined
-              ? {}
-              : {
-                  evidence_reference: {
-                    kind: "retained-evidence",
-                    evidence_id: evidence.evidence_id,
-                  },
-                }),
-            // A view names its caller's source, which needs no session to read again.
-            ...(recorded === undefined && resolvedViewSource === undefined
-              ? {}
-              : this.nativeContinuation(
-                  evidence,
-                  undefined,
-                  resolvedViewSource,
-                )),
-          };
-        });
+          },
+          agent_budget: budgeted.delivery as unknown as JsonValue,
+        },
+        undefined,
+        agentBudgetDeliveryBytes(budgeted.delivery, budgeted.link),
+      );
+      return delivered.isError === true
+        ? delivered
+        : withAgentBudgetDelivery(delivered, budgeted.delivery, budgeted.link);
+    }
+    return this.successResult(evidence, contract, () => {
+      const resolvedViewSource =
+        typeof viewSource === "function" ? viewSource() : viewSource;
+      return {
+        evidence_id: evidence.evidence_id,
+        ...(recorded === undefined
+          ? {}
+          : {
+              evidence_reference: {
+                kind: "retained-evidence",
+                evidence_id: evidence.evidence_id,
+              },
+            }),
+        // A view names its caller's source, which needs no session to read again.
+        ...(recorded === undefined && resolvedViewSource === undefined
+          ? {}
+          : this.nativeContinuation(evidence, undefined, resolvedViewSource)),
+      };
+    });
   }
 
   /**
@@ -424,8 +479,16 @@ export class ToolResultDelivery {
         },
         targetContent,
       );
+    // A retained partial that fits is referenced by ID, as before; one over
+    // the budget is replaced by its summary and the cursor that pages it.
+    const budgeted = budgetedPartialObservation(projected, {
+      partial: partial.value,
+      record: recordEvidence,
+      agentBudgetSeed: this.agentBudgetSeed,
+      retained: true,
+    });
     return this.projectedErrorResult(
-      {
+      budgeted?.projected ?? {
         ...projected,
         details: {
           ...projected.details,
@@ -436,19 +499,39 @@ export class ToolResultDelivery {
         },
       },
       targetContent,
+      budgeted,
     );
   }
 
   private projectedErrorResult(
-    projected: AnalysisErrorProjection,
+    input: AnalysisErrorProjection,
     targetContent: boolean,
+    /** A partial observation the caller already budgeted. */
+    budgetedPartial?: BudgetedPartialObservation,
   ): CallToolResult {
+    // Inline partial Evidence over the agent result budget is retained and
+    // replaced by its summary; the failure's own facts are never budgeted.
+    const budgeted =
+      budgetedPartial ?? inlinePartialWithinBudget(input, this.agentBudgetSeed);
+    const projected = budgeted?.projected ?? input;
+    // The summarized partial is linked like a successful result's complete
+    // record, when one read can deliver it.
+    const link =
+      budgeted === undefined
+        ? undefined
+        : retainedEvidenceLink(
+            budgeted.partial,
+            budgeted.completeBytes,
+            this.resultBudgetBytes,
+          );
+    const linkBytes =
+      link === undefined ? 0 : Buffer.byteLength(JSON.stringify(link)) + 1;
     let structuredContent = { error: projected };
     // Errors reach the wire as text only; the structured copy is a private
     // carrier the transport removes after its own budget check.
     let encoded = encodeToolResult(
       structuredContent,
-      this.resultBudgetBytes,
+      this.resultBudgetBytes - linkBytes,
       "error-text",
       targetContent,
     );
@@ -483,7 +566,8 @@ export class ToolResultDelivery {
         const content = { error: compact };
         const compactEncoded = encodeToolResult(
           content,
-          this.resultBudgetBytes,
+          // The link is appended to whichever encoding is kept.
+          this.resultBudgetBytes - linkBytes,
           "error-text",
           targetContent,
         );
@@ -497,7 +581,12 @@ export class ToolResultDelivery {
     // The transport retains an oversized projected error before replacing it
     // with a recoverable delivery constraint, using this same budget.
     const result: CallToolResult = {
-      content: encoded.ok ? [{ type: "text", text: encoded.text }] : [],
+      content: encoded.ok
+        ? [
+            { type: "text", text: encoded.text },
+            ...(link === undefined ? [] : [link]),
+          ]
+        : [],
       structuredContent,
       isError: true,
       ...(targetContent ? { _meta: TARGET_CONTENT_RESULT_META } : {}),
@@ -532,18 +621,21 @@ export class ToolResultDelivery {
       failure: Extract<ToolResultEncoding, { readonly ok: false }>,
       budgetBytes: number,
     ) => Iterable<JsonValue>,
+    /** Bytes the caller adds to a successful result after this encoding. */
+    reservedBytes = 0,
   ): CallToolResult {
+    const budgetBytes = this.resultBudgetBytes - reservedBytes;
     let encoded = encodeToolResult(
       value,
-      this.resultBudgetBytes,
+      budgetBytes,
       "structured-and-text",
       contract.returnsTargetContent,
     );
     if (!encoded.ok && alternatives !== undefined)
-      for (const candidate of alternatives(encoded, this.resultBudgetBytes)) {
+      for (const candidate of alternatives(encoded, budgetBytes)) {
         const candidateEncoding = encodeToolResult(
           candidate,
-          this.resultBudgetBytes,
+          budgetBytes,
           "structured-and-text",
           contract.returnsTargetContent,
         );
@@ -594,6 +686,200 @@ export class ToolResultDelivery {
     );
   }
 }
+
+/**
+ * The retained summary that replaces complete Evidence over the agent result
+ * budget, for a request whose caller left `detail` to that budget. A
+ * selected view, an explicit `detail`, an operation without a summary view,
+ * or a summary its contract does not advertise keeps complete delivery.
+ */
+const overBudgetSummary = (
+  evidence: Evidence,
+  contract: ToolContract,
+  recordSummary: EvidenceWriter["recordEvidence"] | undefined,
+  limits: {
+    /** REA_AGENT_RESULT_BUDGET_BYTES from the environment the server captured. */
+    readonly agentBudgetSeed: string | undefined;
+    /** This connection's response budget, which bounds one resource read. */
+    readonly resultBudgetBytes: number;
+  },
+):
+  | {
+      readonly summary: Evidence;
+      readonly delivery: AgentBudgetDelivery;
+      readonly link: ResourceLink | undefined;
+    }
+  | undefined => {
+  if (evidence.operation === INSPECT_ANALYSIS_VIEW_OPERATION) return undefined;
+  // Only a tool with a detail selector is budgeted: its caller can always
+  // request complete delivery with detail complete.
+  if (!AGENT_BUDGET_OPERATION_NAMES.has(contract.name)) return undefined;
+  const selection = currentMcpToolRequest()?.deliverySelection;
+  if (selection === undefined) return undefined;
+  const budget = currentAgentResultBudget(limits.agentBudgetSeed);
+  const completeBytes = budgetedSummaryBytes({
+    detail: selection.detail,
+    evidence,
+    budget,
+    retained: recordSummary !== undefined,
+    pageable: selection.pageable,
+  });
+  if (completeBytes === undefined || budget === undefined) return undefined;
+  const summary = summarizeOverBudgetEvidence(evidence);
+  if (!summary.ok || !contract.outputSchema.safeParse(summary.value).success)
+    return undefined;
+  // The summary is retained like an explicit one, so its own ID resolves;
+  // a summary that cannot be retained leaves complete delivery in place.
+  if (recordSummary === undefined || !recordSummary(summary.value).ok)
+    return undefined;
+  return {
+    summary: summary.value,
+    link: retainedEvidenceLink(
+      evidence,
+      completeBytes,
+      limits.resultBudgetBytes,
+    ),
+    delivery: agentBudgetDelivery({
+      operation: evidence.operation,
+      evidenceId: evidence.evidence_id,
+      completeBytes,
+      budget,
+      recovery: { kind: "session" },
+    }),
+  };
+};
+
+const agentBudgetDeliveryBlock = (delivery: AgentBudgetDelivery) => ({
+  type: "text" as const,
+  text: JSON.stringify({ delivery }),
+});
+
+/**
+ * Upper bound on the wire bytes the delivery facts add: their text block
+ * with its separator, and their `_meta` member with its separator.
+ */
+export const agentBudgetDeliveryBytes = (
+  delivery: AgentBudgetDelivery,
+  link?: ResourceLink,
+): number =>
+  Buffer.byteLength(JSON.stringify(agentBudgetDeliveryBlock(delivery))) +
+  1 +
+  Buffer.byteLength(
+    JSON.stringify({ [AGENT_BUDGET_DELIVERY_META]: delivery }),
+  ) +
+  1 +
+  (link === undefined ? 0 : Buffer.byteLength(JSON.stringify(link)) + 1);
+
+/**
+ * Carry the delivery facts beside the summary record: a second text block
+ * the model reads, and `_meta` for clients that read structured metadata.
+ * A `resource_link` to the complete record follows, for clients that read
+ * resources; the cursor in the delivery facts stays the recovery every
+ * client can follow. The structured content stays the summary, unchanged.
+ */
+const withAgentBudgetDelivery = (
+  result: CallToolResult,
+  delivery: AgentBudgetDelivery,
+  link: ResourceLink | undefined,
+): CallToolResult => ({
+  ...result,
+  content: [
+    ...result.content,
+    agentBudgetDeliveryBlock(delivery),
+    ...(link === undefined ? [] : [link]),
+  ],
+  _meta: { ...result._meta, [AGENT_BUDGET_DELIVERY_META]: delivery },
+});
+
+/** A failure whose over-budget partial observation its summary replaced. */
+interface BudgetedPartialObservation {
+  readonly projected: AnalysisErrorProjection;
+  /** The complete partial Evidence, retained in the session. */
+  readonly partial: Evidence;
+  readonly completeBytes: number;
+}
+
+/**
+ * The failure with its partial observation replaced by the retained summary
+ * when the complete partial Evidence does not fit the agent result budget
+ * left beside the failure's own facts; undefined keeps the failure as it
+ * is. The same decision as a successful result's: an explicit `detail`, a
+ * session that cannot page a summary, an operation without a summary view,
+ * or a record that cannot be retained keeps it unchanged. `retained` says
+ * whether the caller already recorded the complete partial Evidence.
+ */
+const budgetedPartialObservation = (
+  projected: AnalysisErrorProjection,
+  {
+    partial,
+    record,
+    agentBudgetSeed,
+    retained,
+  }: {
+    readonly partial: Evidence;
+    readonly record: EvidenceWriter["recordEvidence"] | undefined;
+    readonly agentBudgetSeed: string | undefined;
+    readonly retained: boolean;
+  },
+): BudgetedPartialObservation | undefined => {
+  const selection = currentMcpToolRequest()?.deliverySelection;
+  if (selection === undefined || record === undefined) return undefined;
+  const budget = currentAgentResultBudget(agentBudgetSeed);
+  const completeBytes = budgetedSummaryBytes({
+    detail: selection.detail,
+    evidence: partial,
+    budget,
+    retained: true,
+    pageable: selection.pageable,
+    // The wire text is {"error": <failure>}: the failure's own bytes plus
+    // its wrapper.
+    envelopeBytes: failureEnvelopeBytes(projected) + ERROR_WRAPPER_BYTES,
+  });
+  if (completeBytes === undefined || budget === undefined) return undefined;
+  const summary = summarizeOverBudgetEvidence(partial);
+  if (!summary.ok) return undefined;
+  if (!retained && !record(partial).ok) return undefined;
+  // The summary is retained like an explicit one, so its own ID resolves.
+  if (!record(summary.value).ok) return undefined;
+  return {
+    partial,
+    completeBytes,
+    projected: {
+      ...projected,
+      details: {
+        ...projected.details,
+        partial_observation: summary.value,
+        [PARTIAL_OBSERVATION_DELIVERY]: agentBudgetDelivery({
+          operation: partial.operation,
+          evidenceId: partial.evidence_id,
+          completeBytes,
+          budget,
+          recovery: { kind: "session" },
+        }) as unknown as JsonValue,
+      },
+    },
+  };
+};
+
+/** Bytes `{"error":}` adds around a projected failure on the wire. */
+const ERROR_WRAPPER_BYTES = Buffer.byteLength('{"error":}');
+
+/** Budget a failure's inline partial Evidence with the session's writer. */
+const inlinePartialWithinBudget = (
+  projected: AnalysisErrorProjection,
+  agentBudgetSeed: string | undefined,
+): BudgetedPartialObservation | undefined => {
+  const inline = projected.details?.partial_observation;
+  if (inline === undefined) return undefined;
+  const partial = safeParseEvidence(inline);
+  if (!partial.ok) return undefined;
+  return budgetedPartialObservation(projected, {
+    partial: partial.value,
+    record: currentMcpToolRequest()?.deliverySelection?.record,
+    agentBudgetSeed,
+    retained: false,
+  });
+};
 
 /** The ledger's own retained/unretained fact for this exact record, if it gave one. */
 const ledgerRetentionFact = (

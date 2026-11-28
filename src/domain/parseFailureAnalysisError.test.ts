@@ -1,9 +1,8 @@
 import { expect, it } from "vitest";
 
 import {
-  AnalysisMalformedTargetError,
+  AnalysisTargetFailureError,
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
 } from "./analysisErrorCore.js";
 import { projectAnalysisError } from "./analysisErrorProjection.js";
 import { analysisErrorProjectionSchema } from "./analysisErrorProjectionSchema.js";
@@ -36,16 +35,14 @@ it.each([
   "refuses $failure.kind bytes as a malformed target, not invalid input",
   (cause) => {
     const error = project(cause);
-    expect(error).toBeInstanceOf(AnalysisMalformedTargetError);
+    expect(error).toBeInstanceOf(AnalysisTargetFailureError);
     expect(error).toMatchObject({
       cause,
       operation: "inspect_example",
       path: "/tmp/sample.bin",
       failure: cause.failure,
     });
-    const projected = projectAnalysisError(
-      error as AnalysisMalformedTargetError,
-    );
+    const projected = projectAnalysisError(error as AnalysisTargetFailureError);
     expect(projected).toMatchObject({
       code: "unsupported_target",
       category: "unsupported_target",
@@ -58,7 +55,7 @@ it.each([
         operation: "inspect_example",
         path: "/tmp/sample.bin",
         reason: cause.message,
-        format_failure: cause.failure.kind,
+        failure_kind: cause.failure.kind,
         format: "elf",
       },
     });
@@ -81,10 +78,10 @@ it("keeps the parser's structure and offset on a malformed target", () => {
     field: "tensor data",
   });
   const error = project(cause);
-  if (!(error instanceof AnalysisMalformedTargetError))
+  if (!(error instanceof AnalysisTargetFailureError))
     throw new Error("Expected a malformed target");
   expect(projectAnalysisError(error).details).toMatchObject({
-    format_failure: "truncated",
+    failure_kind: "truncated",
     format: "gguf",
     offset: 64,
     field: "tensor data",
@@ -96,12 +93,16 @@ it("refuses an unsupported form as an unsupported target, keeping undecoded cont
     undecodedContent: true,
   });
   const error = project(cause);
-  expect(error).toBeInstanceOf(AnalysisUnsupportedTargetError);
+  expect(error).toBeInstanceOf(AnalysisTargetFailureError);
   expect(error).toMatchObject({
     cause,
     path: "/tmp/sample.bin",
-    reason: "compressed build-info section",
-    undecodedContent: true,
+    failure: {
+      kind: "unsupported",
+      format: "go",
+      detail: "compressed build-info section",
+      undecodedContent: true,
+    },
   });
 });
 

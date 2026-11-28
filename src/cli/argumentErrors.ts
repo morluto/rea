@@ -3,6 +3,7 @@ import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
 import {
   CLI_DOCUMENT_OUTPUT_FORMATS,
   renderCliDocument,
+  structuredOutputRequested,
   type ParsedCliOutputArguments,
 } from "./cliOutput.js";
 import { estimateTokenCount } from "tokenx";
@@ -48,16 +49,17 @@ export const cliArgumentFailure = (
   command: string,
   failure: CliArgvFailure,
 ): CliCommandFailure => {
-  if (failure.kind === "dry_run" || failure.kind === "flag_spelling")
-    return { code: "PARSE_ERROR", message: failure.message, retryable: false };
+  // Unknown flags, missing values and surplus positionals are argv parse
+  // failures like a misspelled flag; UNKNOWN stays reserved for unexpected errors.
   if (failure.kind !== "validation")
     return {
-      code: "UNKNOWN",
+      code: "PARSE_ERROR",
       message:
         failure.message +
         (failure.kind === "surplus"
           ? ` Use '${cli} ${command} --help' for the declared argument shape.`
           : ""),
+      retryable: false,
     };
   return {
     code: "VALIDATION_ERROR",
@@ -143,7 +145,12 @@ export const renderCliCommandFailure = (
 ): string => {
   const { controls, stdoutIsTerminal, cta } = input;
   const human = stdoutIsTerminal && !controls.formatExplicit;
-  if (human && failure.fieldErrors !== undefined)
+  // Usage text is terminal presentation; a requested document or count wins.
+  if (
+    human &&
+    !structuredOutputRequested(controls) &&
+    failure.fieldErrors !== undefined
+  )
     return `${validationUsage(input.cli, input.entry, failure.fieldErrors)}\n`;
   const format =
     controls.format === "csv" || controls.format === "tsv"

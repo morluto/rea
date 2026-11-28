@@ -1,27 +1,22 @@
 import { collectEntries } from "../../tests/fixtures/artifactEntries.js";
-import { artifactPreparationRecoveryCases } from "../../tests/fixtures/artifactReaderLifecycle.js";
+import {
+  artifactPreparationRecoveryCases,
+  boundedArchiveStreamCases,
+} from "../../tests/fixtures/artifactReaderLifecycle.js";
 import { truncate, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { buffer, text } from "node:stream/consumers";
 import { setImmediate } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { createTestTempFile } from "../../tests/fixtures/temporaryDirectory.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { buildUnityFs } from "../../tests/fixtures/unityfs.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
-import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { UnityFsArtifactReader } from "./UnityFsArtifactReader.js";
 import { ArtifactFileSource } from "../resources/index.js";
 
-const fixture = async (bytes: Buffer): Promise<string> => {
-  const path = join(
-    await createTestTempDirectory("rea-unity-boundary-"),
-    "bundle",
-  );
-  await writeFile(path, bytes);
-  return path;
-};
+const fixture = (bytes: Buffer): Promise<string> =>
+  createTestTempFile("rea-unity-boundary-", "bundle", bytes);
 
 // A valid two-sequence LZ4 block: one literal, a distance-one match, five final
 // literals. The decoder yields after the large match, before the last sequence.
@@ -111,7 +106,7 @@ it("does not publish UnityFs entries when final source verification fails", asyn
 describe("UnityFS declared container bounds", () => {
   it.each([
     ["encrypted", { flags: 0x1400 | 0xc3 }],
-    ["unsupported compression", { blocksInfoCompression: 1 }],
+    ["unsupported compression", { blocksInfoCompression: 4 }],
     ["unknown layout", { engineVersion: "2021.x.32f1c1", flags: 0x2c3 }],
   ] as const)(
     "rejects an impossible footer extent even with %s",
@@ -124,7 +119,7 @@ describe("UnityFS declared container bounds", () => {
       const reader = new UnityFsArtifactReader(await fixture(bytes));
       try {
         await expect(collectEntries(reader)).rejects.toMatchObject({
-          reason: "format",
+          reason: "malformed",
         });
       } finally {
         await reader.close();
@@ -140,7 +135,7 @@ describe("UnityFS declared container bounds", () => {
     // A one-byte unsupported block declares more than the 256 MiB work floor.
     // Its bytes need not be decoded to reject the declared virtual extent.
     bytes.writeUInt32BE(256 * 1024 * 1024 + 1, 64 + 20);
-    bytes.writeUInt16BE(1, 64 + 28);
+    bytes.writeUInt16BE(4, 64 + 28);
     const reader = new UnityFsArtifactReader(
       await fixture(Buffer.concat([bytes, Buffer.alloc(1024 * 1024)])),
     );
@@ -153,25 +148,40 @@ describe("UnityFS declared container bounds", () => {
       await reader.close();
     }
   });
-  it.each([false, true])(
-    "validates the encoded block range before its decoded budget (footer: %s)",
-    async (blocksInfoAtEnd) => {
+});
+
+describe("UnityFS per-block decode budget", () => {
+  it.each([
+    { blocksInfoAtEnd: false, blockCompression: 2 },
+    { blocksInfoAtEnd: true, blockCompression: 2 },
+    { blocksInfoAtEnd: false, blockCompression: 1 },
+    { blocksInfoAtEnd: true, blockCompression: 1 },
+  ])(
+    "keeps the directory and refuses only members of an over-budget block, then validates its encoded range ($blockCompression, footer: $blocksInfoAtEnd)",
+    async ({ blocksInfoAtEnd, blockCompression }) => {
       const bytes = buildUnityFs([{ path: "data", data: "abc" }], {
         blocksInfoAtEnd,
         blocksInfoCompression: 0,
-        blockCompression: 2,
+        blockCompression,
       });
       const tableOffset = blocksInfoAtEnd
         ? bytes.length - bytes.readUInt32BE(40)
         : 64;
       // Keep the produced encoded bytes, then declare a decoded size that
-      // exceeds the decoder allowance.
+      // exceeds the decoder allowance. Writers emit one LZMA block for a whole
+      // bundle, so this budget must not erase the directory.
       bytes.writeUInt32BE(64 * 1024 * 1024 + 1, tableOffset + 20);
       const control = new UnityFsArtifactReader(await fixture(bytes));
       try {
-        await expect(collectEntries(control)).rejects.toMatchObject({
-          reason: "limit",
-          boundary: "memory",
+        const [entry, ...rest] = await collectEntries(control);
+        expect(rest).toEqual([]);
+        if (entry === undefined)
+          throw new Error("expected the directory entry");
+        expect(entry.path).toBe("data");
+        await expect(control.open(entry)).rejects.toMatchObject({
+          reason: "unavailable",
+          message: expect.stringContaining("per-block decoded budget"),
+          limitation: expect.stringContaining("this release has no override"),
         });
       } finally {
         await control.close();
@@ -183,7 +193,7 @@ describe("UnityFS declared container bounds", () => {
       const invalid = new UnityFsArtifactReader(await fixture(bytes));
       try {
         await expect(collectEntries(invalid)).rejects.toMatchObject({
-          reason: "format",
+          reason: "malformed",
           message: expect.stringContaining(
             "declared data area exceeds the bundle extent",
           ),
@@ -195,6 +205,39 @@ describe("UnityFS declared container bounds", () => {
   );
 });
 
+describe("UnityFS per-block encoded budget", () => {
+  it("names the encoded bound when only the encoded size exceeds it", async () => {
+    const bytes = buildUnityFs([{ path: "data", data: "abc" }], {
+      blocksInfoCompression: 0,
+      blockCompression: 2,
+    });
+    // One byte above the encoded allowance (64 MiB + 64 MiB / 255 + 16),
+    // with the decoded size untouched; a sparse carrier keeps it in range.
+    const encoded =
+      64 * 1024 * 1024 + Math.floor((64 * 1024 * 1024) / 255) + 17;
+    bytes.writeUInt32BE(encoded, 64 + 24);
+    const path = await fixture(bytes);
+    const length = bytes.length + encoded;
+    const file = Buffer.from(bytes);
+    file.writeBigUInt64BE(BigInt(length), 32);
+    await writeFile(path, file);
+    await truncate(path, length);
+    const reader = new UnityFsArtifactReader(path);
+    try {
+      const [entry] = await collectEntries(reader);
+      if (entry === undefined) throw new Error("expected the directory entry");
+      await expect(reader.open(entry)).rejects.toMatchObject({
+        reason: "unavailable",
+        message: expect.stringContaining(
+          `${String(encoded)} encoded bytes, above the ${String(encoded - 1)}-byte per-block encoded budget`,
+        ),
+      });
+    } finally {
+      await reader.close();
+    }
+  });
+});
+
 describe("UnityFS allocation and malformed-input boundaries", () => {
   it("rejects an oversized directory extending past the physical file", async () => {
     const bytes = buildUnityFs([{ path: "data", data: "x" }]);
@@ -202,7 +245,7 @@ describe("UnityFS allocation and malformed-input boundaries", () => {
     const reader = new UnityFsArtifactReader(await fixture(bytes));
     try {
       await expect(collectEntries(reader)).rejects.toMatchObject({
-        reason: "format",
+        reason: "malformed",
       });
     } finally {
       await reader.close();
@@ -318,7 +361,7 @@ describe("UnityFS allocation and malformed-input boundaries", () => {
     const reader = new UnityFsArtifactReader(await fixture(bytes));
     try {
       await expect(collectEntries(reader)).rejects.toMatchObject({
-        reason: "format",
+        reason: "truncated",
       });
     } finally {
       await reader.close();
@@ -331,7 +374,7 @@ describe("UnityFS allocation and malformed-input boundaries", () => {
     const reader = new UnityFsArtifactReader(await fixture(bytes));
     try {
       await expect(collectEntries(reader)).rejects.toMatchObject({
-        reason: "format",
+        reason: "malformed",
       });
     } finally {
       await reader.close();
@@ -350,7 +393,7 @@ describe("UnityFS allocation and malformed-input boundaries", () => {
     const reader = new UnityFsArtifactReader(await fixture(bytes));
     try {
       await expect(collectEntries(reader)).rejects.toMatchObject({
-        reason: "format",
+        reason: "malformed",
       });
     } finally {
       await reader.close();
@@ -404,61 +447,6 @@ it.each([1, 2])(
 );
 
 describe("UnityFS stream ownership and immutable cache", () => {
-  it("preserves a pending read failure when cancellation overlaps it", async () => {
-    const path = await fixture(buildUnityFs([{ path: "x", data: "bytes" }]));
-    const admitted = await openRegularFile(path, { symlinks: "reject" });
-    const reader = new UnityFsArtifactReader(path, admitted);
-    const reached = createDeferred<void>();
-    const release = createDeferred<void>();
-    const failure = new Error("member read failed");
-    const controller = new AbortController();
-    const [entry] = await collectEntries(reader);
-    const reads = vi
-      .spyOn(admitted.handle, "read")
-      .mockImplementation((async () => {
-        reached.resolve();
-        await release.promise;
-        throw failure;
-      }) as typeof admitted.handle.read);
-    let consumed: Promise<Buffer> | undefined;
-    try {
-      consumed = buffer(await reader.open(entry!, controller.signal));
-      await awaitAcknowledgement(reached.promise, consumed, "member read");
-      controller.abort(new Error("caller cancelled"));
-      release.resolve();
-      await expect(consumed).rejects.toBe(failure);
-    } finally {
-      release.resolve();
-      await consumed?.catch(() => undefined);
-      reads.mockRestore();
-      await reader.close();
-      await admitted.handle.close();
-    }
-  });
-
-  it("retains descriptor ownership after cleanup fails and permits retry", async () => {
-    const reader = new UnityFsArtifactReader(
-      await fixture(buildUnityFs([{ path: "x", data: "bytes" }])),
-    );
-    const [entry] = await collectEntries(reader);
-    const stream = await reader.open(entry!);
-    const failure = new Error("descriptor close denied");
-    const close = vi
-      .spyOn(OwnedFileHandle.prototype, "close")
-      .mockRejectedValueOnce(failure);
-    try {
-      await expect(reader.close()).rejects.toBe(failure);
-      expect(stream.closed).toBe(true);
-      await expect(reader.open(entry!)).rejects.toMatchObject({
-        reason: "unavailable",
-      });
-      await reader.close();
-      expect(close).toHaveBeenCalledTimes(2);
-    } finally {
-      close.mockRestore();
-      await reader.close();
-    }
-  });
   it("joins an outstanding positional read before close completes", async () => {
     const path = await fixture(buildUnityFs([{ path: "x", data: "bytes" }]));
     const admitted = await openRegularFile(path, { symlinks: "reject" });
@@ -513,6 +501,43 @@ describe("UnityFS stream ownership and immutable cache", () => {
     const reader = new UnityFsArtifactReader(path, admitted);
     const controller = new AbortController();
     const reason = new Error("cancel during block decode");
+    const nativeRead = admitted.handle.read.bind(admitted.handle);
+    const [entry] = await collectEntries(reader);
+    const reads = vi.spyOn(admitted.handle, "read").mockImplementation((async (
+      ...args: unknown[]
+    ) => {
+      const result = await Reflect.apply(nativeRead, admitted.handle, args);
+      globalThis.setImmediate(() => {
+        controller.abort(reason);
+      });
+      return result;
+    }) as typeof admitted.handle.read);
+    try {
+      await expect(
+        buffer(await reader.open(entry!, controller.signal)),
+      ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
+    } finally {
+      try {
+        await reader.close();
+      } finally {
+        reads.mockRestore();
+        await admitted.handle.close();
+      }
+    }
+  });
+
+  it("preserves cancellation occurring inside the LZMA decoder", async () => {
+    const data = Buffer.alloc(8 * 1024 * 1024, 0x61);
+    const path = await fixture(
+      buildUnityFs([{ path: "x", data }], {
+        blockSize: data.length,
+        blockCompression: 1,
+      }),
+    );
+    const admitted = await openRegularFile(path, { symlinks: "reject" });
+    const reader = new UnityFsArtifactReader(path, admitted);
+    const controller = new AbortController();
+    const reason = new Error("cancel during lzma block decode");
     const nativeRead = admitted.handle.read.bind(admitted.handle);
     const [entry] = await collectEntries(reader);
     const reads = vi.spyOn(admitted.handle, "read").mockImplementation((async (
@@ -613,54 +638,14 @@ describe("UnityFS stream capacity and cache ownership", () => {
       await reader.close();
     }
   });
-
-  it("bounds active streams and releases capacity after abandonment", async () => {
-    const reader = new UnityFsArtifactReader(
-      await fixture(buildUnityFs([{ path: "x", data: "bytes" }])),
-    );
-    try {
-      const [entry] = await collectEntries(reader);
-      const streams = await Promise.all(
-        Array.from({ length: 4 }, () => reader.open(entry!)),
-      );
-      await expect(reader.open(entry!)).rejects.toMatchObject({
-        reason: "limit",
-        boundary: "capacity",
-      });
-      const closed = new Promise<void>((resolve) => {
-        streams[0]!.once("close", resolve);
-      });
-      streams[0]!.destroy();
-      await closed;
-      expect(await text(await reader.open(entry!))).toBe("bytes");
-    } finally {
-      await reader.close();
-    }
-  });
-
-  it("does not turn a paused inventory into complete coverage when closed", async () => {
-    const reader = new UnityFsArtifactReader(
-      await fixture(
-        buildUnityFs([
-          { path: "x", data: "bytes" },
-          { path: "y", data: "bytes" },
-        ]),
-      ),
-    );
-    const iterator = reader.entries()[Symbol.asyncIterator]();
-    try {
-      expect((await iterator.next()).done).toBe(false);
-      await reader.close();
-      await expect(iterator.next()).rejects.toMatchObject({
-        reason: "unavailable",
-      });
-    } finally {
-      await reader.close();
-    }
-  });
 });
 
 artifactPreparationRecoveryCases({
   image: () => buildUnityFs([{ path: "a", data: "x" }]),
   createReader: (path, admitted) => new UnityFsArtifactReader(path, admitted),
 });
+
+boundedArchiveStreamCases(
+  buildUnityFs,
+  (path, admitted) => new UnityFsArtifactReader(path, admitted),
+);

@@ -167,6 +167,34 @@ it("accepts sqlite_schema rows without requiring a fabricated declaration", asyn
     }),
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
 
+  // The documented `sqlite_master` alias reaches the same admission decision, so a caller that
+  // names the catalog that way is not refused at the result boundary.
+  const aliasRows = {
+    ...report,
+    rows: { ...report.rows, table: "sqlite_master" },
+  };
+  const aliasService = new SqliteDatabaseService({
+    inspect: async () => ok(execution(aliasRows)),
+  });
+  expect(
+    await aliasService.inspect({
+      path: "/selected.db",
+      table: "sqlite_master",
+      columns: ["name", "type"],
+      schema_scope: "selected_table",
+    }),
+  ).toMatchObject({ ok: true });
+  expect(
+    await new SqliteDatabaseService({
+      inspect: async () => ok(execution({ ...foreign, rows: aliasRows.rows })),
+    }).inspect({
+      path: "/selected.db",
+      table: "sqlite_master",
+      columns: ["name", "type"],
+      schema_scope: "selected_table",
+    }),
+  ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
+
   expect(
     await service.inspect({
       path: "/selected.db",

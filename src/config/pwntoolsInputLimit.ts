@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { positiveDecimalIntegerSchema } from "./positiveDecimalInteger.js";
 
 import { MAXIMUM_PWNTOOLS_MAX_INPUT_BYTES } from "../domain/analysisResourceLimits.js";
 import { currentAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
@@ -9,11 +9,11 @@ import { PWNTOOLS_LIMITS } from "../domain/native/pwntoolsResourceLimits.js";
 // reservation, so an override stays within a third of that reservation.
 
 /** Optional caller-supplied input bound, in bytes, without a decimal point. */
-export const pwntoolsInputBytesSchema = z
-  .string()
-  .regex(/^[1-9]\d*$/u, "must be a positive decimal integer")
-  .transform(Number)
-  .pipe(z.int().safe().max(MAXIMUM_PWNTOOLS_MAX_INPUT_BYTES));
+export const pwntoolsInputBytesSchema = positiveDecimalIntegerSchema(
+  1,
+  MAXIMUM_PWNTOOLS_MAX_INPUT_BYTES,
+  "must be a positive decimal integer",
+);
 
 const CONSTRAINT =
   `REA_PWNTOOLS_MAX_INPUT_BYTES must be a decimal integer from 1 to ` +

@@ -13,7 +13,7 @@ import {
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
 import {
-  analysisViewInputError,
+  invalidAnalysisViewSubject,
   invalidAnalysisView,
 } from "./analysisViewErrors.js";
 import { completeWithinViewCoverage } from "./analysisViewCoverage.js";
@@ -43,14 +43,8 @@ export const projectProcedurePseudocodeView = (
       "procedure_pseudo_code Evidence supports summary or native pseudocode views.",
     );
   if (parent.artifact == null)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message: "Pseudocode Evidence requires an artifact-bound subject.",
-        },
-      ]),
+    return invalidAnalysisViewSubject(
+      "Pseudocode Evidence requires an artifact-bound subject.",
     );
   const parsed = parseAnalysisViewResult(z.string().nullable(), parent);
   if (!parsed.ok) return parsed;

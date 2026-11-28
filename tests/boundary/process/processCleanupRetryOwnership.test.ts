@@ -1,6 +1,4 @@
-import { mkdtemp, rm, stat } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { rm, stat } from "node:fs/promises";
 import { setImmediate } from "node:timers/promises";
 import { expect, it } from "vitest";
 import { phaseGate } from "../../support/lifecycleHarness.js";

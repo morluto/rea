@@ -5,6 +5,18 @@ const execFileAsync = promisify(execFile);
 const MAX_BUFFER = 8 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 10_000;
 
+/** Validate the repository identifier used in a CI API path. */
+export function validateRepository(repository) {
+  if (
+    typeof repository !== "string" ||
+    !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository)
+  )
+    throw new Error(
+      "CI_REPOSITORY must be an owner/name repository identifier",
+    );
+  return repository;
+}
+
 /** Create a bounded GitHub CLI JSON transport with GET-only authority. */
 export function createGhApiRequest({ env = process.env, now = Date.now } = {}) {
   return async (method, endpoint, budget) => {
