@@ -183,6 +183,8 @@ export const reachableAsarPaths = (
   if (parsed === null || typeof parsed !== "object") return { reachable };
   const record = parsed as Record<string, unknown>;
   let capped = false;
+  let depthTruncated = false;
+  let sawUnresolvedPattern = false;
   const add = (path: string): void => {
     if (reachable.size >= MAX_REACHABLE_PATHS) {
       capped = true;
@@ -190,23 +192,47 @@ export const reachableAsarPaths = (
     }
     reachable.add(path);
   };
-  // `exports` targets are exact, fully specified paths — Node applies no
-  // extension or directory-index fallback to them — so they are added verbatim.
+  // An `exports` target is an exact, fully specified path — Node applies no
+  // extension or directory-index fallback to it — so a concrete target is added
+  // verbatim. A subpath *pattern* target (one holding `*`) only resolves against
+  // a concrete request, so it is left unresolved and disclosed rather than added
+  // as a literal `*` path that names no member.
   const normalize = (value: unknown): void => {
     if (typeof value !== "string") return;
+    if (value.includes("*")) {
+      sawUnresolvedPattern = true;
+      return;
+    }
     add(value.replace(/^\.?\//u, ""));
   };
-  // `exports` may be a bare string, a conditional/subpath object, an array
-  // fallback, or any nesting of these (e.g. an `{ import, require }` pair). Walk
-  // the subtree in place so an entrypoint declared only in a nested condition is
-  // proven reachable rather than mislabeled a decoy, bounded by the reachable-
-  // path count and a fixed depth so a crafted manifest cannot drive the walk.
+  // Walk `exports` the way Node selects from it, so a decoy is not counted
+  // reachable alongside the file Node actually loads:
+  //   - A subpath map (keys begin with `.`, e.g. `"."`, `"./feature"`) exposes
+  //     every subpath independently, so each value is walked.
+  //   - A conditions object (keys are condition names, e.g. `import`, `node`,
+  //     `default`) resolves to the FIRST matching condition in declared order,
+  //     and `default` always matches — so every branch after the first
+  //     `default` is unreachable and is left unwalked, while each branch up to
+  //     and including that `default` may be selected and is walked.
+  //   - An array is an ordered fallback; any element may be the one that
+  //     resolves, so each is walked.
+  // This mirrors Node's `exports` resolution: the application path resolver owns
+  // resolving one request to a target, while this domain walk enumerates the
+  // reachable superset for triage — a distinct operation the layer boundary
+  // keeps separate. The walk is bounded by the reachable-path count and a fixed
+  // nesting depth; a container dropped at either bound is disclosed rather than
+  // silently narrowing reported coverage.
   const addExportPaths = (value: unknown, depth: number): void => {
     if (typeof value === "string") {
       normalize(value);
       return;
     }
-    if (capped || depth >= MAX_EXPORTS_DEPTH) return;
+    if (capped) return;
+    if (value === null || typeof value !== "object") return;
+    if (depth >= MAX_EXPORTS_DEPTH) {
+      depthTruncated = true;
+      return;
+    }
     if (Array.isArray(value)) {
       for (const item of value) {
         if (capped) return;
@@ -214,13 +240,17 @@ export const reachableAsarPaths = (
       }
       return;
     }
-    if (value !== null && typeof value === "object") {
-      const exportsRecord = value as Record<string, unknown>;
-      for (const key in exportsRecord) {
-        if (!Object.hasOwn(exportsRecord, key)) continue;
-        if (capped) return;
-        addExportPaths(exportsRecord[key], depth + 1);
-      }
+    const exportsRecord = value as Record<string, unknown>;
+    const keys = Object.keys(exportsRecord);
+    const firstKey = keys[0];
+    const isSubpathMap = firstKey !== undefined && firstKey.startsWith(".");
+    for (const key of keys) {
+      if (capped) return;
+      addExportPaths(exportsRecord[key], depth + 1);
+      // In a conditions object nothing after the first `default` can be
+      // selected, so stop before a later branch is mistaken for a reachable
+      // decoy. A subpath map has no such terminal key; every subpath counts.
+      if (!isSubpathMap && key === "default") return;
     }
   };
   // `main`, unlike `exports`, resolves against the validated inventory with
@@ -230,12 +260,22 @@ export const reachableAsarPaths = (
   const main = record["main"];
   if (typeof main === "string") add(resolveMainEntry(main, files));
   addExportPaths(record["exports"], 0);
-  return capped
-    ? {
-        reachable,
-        limitation: `Reachable module paths beyond ${String(MAX_REACHABLE_PATHS)} were not retained; reachability is partial and the remaining entries are reported unverified rather than reachable.`,
-      }
-    : { reachable };
+  const limitations: string[] = [];
+  if (capped)
+    limitations.push(
+      `Reachable module paths beyond ${String(MAX_REACHABLE_PATHS)} were not retained; reachability is partial and the remaining entries are reported unverified rather than reachable.`,
+    );
+  if (depthTruncated)
+    limitations.push(
+      `The package.json exports nest beyond this pass's fixed ${String(MAX_EXPORTS_DEPTH)}-level walk; entrypoints declared deeper are unverified rather than unreachable.`,
+    );
+  if (sawUnresolvedPattern)
+    limitations.push(
+      `The package.json exports declare one or more wildcard ("*") subpath patterns whose concrete targets are unresolved here; they are reported unverified rather than reachable.`,
+    );
+  return limitations.length === 0
+    ? { reachable }
+    : { reachable, limitation: limitations.join(" ") };
 };
 
 const sizeBytes = (entry: AsarInventoryEntry): number => entry.size ?? 0;

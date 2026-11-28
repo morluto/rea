@@ -335,17 +335,75 @@ describe("reachableAsarPaths", () => {
     };
     const atLimit = reachableAsarPaths(
       Buffer.from(JSON.stringify({ exports: nest("./deep-ok.js", 8) }), "utf8"),
-    ).reachable;
+    );
     const pastLimit = reachableAsarPaths(
       Buffer.from(
         JSON.stringify({ exports: nest("./too-deep.js", 9) }),
         "utf8",
       ),
-    ).reachable;
-    expect(atLimit.has("deep-ok.js")).toBe(true);
-    expect(pastLimit.has("too-deep.js")).toBe(false);
-    // The over-depth leaf leaves reachability unproven, never confabulated.
-    expect(pastLimit.has("package.json")).toBe(true);
+    );
+    expect(atLimit.reachable.has("deep-ok.js")).toBe(true);
+    // A leaf exactly at the limit is proven without a cutoff disclosure.
+    expect(atLimit.limitation).toBeUndefined();
+    expect(pastLimit.reachable.has("too-deep.js")).toBe(false);
+    // The over-depth leaf leaves reachability unproven, never confabulated, and
+    // the stopped walk is disclosed rather than reported as complete coverage.
+    expect(pastLimit.reachable.has("package.json")).toBe(true);
+    expect(pastLimit.limitation).toMatch(/nest beyond/u);
+  });
+
+  it("counts only the branch Node selects, not a decoy after default", () => {
+    // Node resolves a conditions object to the first matching condition in
+    // order, and `default` always matches — so `z-real.js` is loaded and the
+    // later `node` branch is dead. Counting the decoy reachable would let it
+    // (sorting earlier in the inventory) consume the fact budget ahead of the
+    // real startup file.
+    const { reachable } = reachableAsarPaths(
+      Buffer.from(
+        JSON.stringify({
+          exports: { default: "./z-real.js", node: "./a-decoy.js" },
+        }),
+        "utf8",
+      ),
+    );
+    expect(reachable.has("z-real.js")).toBe(true);
+    expect(reachable.has("a-decoy.js")).toBe(false);
+  });
+
+  it("walks every branch before the first default condition", () => {
+    // Conditions ahead of `default` may each be the one Node selects, so each
+    // stays reachable; only branches after `default` are unreachable.
+    const { reachable } = reachableAsarPaths(
+      Buffer.from(
+        JSON.stringify({
+          exports: {
+            import: "./esm.js",
+            require: "./cjs.js",
+            default: "./fallback.js",
+            node: "./dead.js",
+          },
+        }),
+        "utf8",
+      ),
+    );
+    expect(reachable.has("esm.js")).toBe(true);
+    expect(reachable.has("cjs.js")).toBe(true);
+    expect(reachable.has("fallback.js")).toBe(true);
+    expect(reachable.has("dead.js")).toBe(false);
+  });
+
+  it("leaves a wildcard subpath pattern unresolved and discloses it", () => {
+    // A `*` target resolves only against a concrete request; adding it literally
+    // would record a `*` path that names no member, so it is reported unverified.
+    const { reachable, limitation } = reachableAsarPaths(
+      Buffer.from(
+        JSON.stringify({ exports: { "./*": "./dist/*.js" } }),
+        "utf8",
+      ),
+    );
+    expect(reachable.has("dist/*.js")).toBe(false);
+    expect([...reachable]).toEqual(["package.json"]);
+    expect(limitation).toMatch(/wildcard/u);
   });
 
   it("leaves reachability unproven on a malformed manifest and discloses the gap", () => {
