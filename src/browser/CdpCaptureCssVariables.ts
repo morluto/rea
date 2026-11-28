@@ -365,15 +365,12 @@ const findCssUrlMatches = (text: string): readonly CssUrlMatch[] => {
 };
 
 const redactStandaloneCssUrl = (value: string): string => {
-  const leadingMatch = /^\s*/u.exec(value);
-  const trailingMatch = /\s*$/u.exec(value);
-  const leadingWs = leadingMatch?.[0] ?? "";
-  const trailingWs = trailingMatch?.[0] ?? "";
-  const trimmed = value.slice(
-    leadingWs.length,
-    value.length - trailingWs.length,
-  );
-  if (trimmed.length === 0) return value;
+  const leadingEnd = value.length - value.trimStart().length;
+  const trailingStart = value.trimEnd().length;
+  if (leadingEnd >= trailingStart) return value;
+  const leadingWs = value.slice(0, leadingEnd);
+  const trailingWs = value.slice(trailingStart);
+  const trimmed = value.slice(leadingEnd, trailingStart);
 
   let quote = "";
   let inner = trimmed;
