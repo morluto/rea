@@ -64,7 +64,8 @@ cliTest(
     expect(outputSchema.parse(raised.json).parameters).toMatchObject({
       report_limits: { xml_nodes: 100_000 },
     });
-    const { call } = await connectLocalToolsMcp();
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
     const mcpRefused = await call("inspect_maven_gradle_metadata", {
       path,
       report_limits: { xml_nodes: 8 },
@@ -149,7 +150,8 @@ cliTest(
       status: "complete",
       examined_bytes: bytes.length,
     });
-    const { call } = await connectLocalToolsMcp();
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
     const response = await call("inspect_maven_gradle_metadata", { path });
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
     const evidence = outputSchema.parse(response.structuredContent);
@@ -221,7 +223,8 @@ cliTest(
       bytes: bytes.length,
       sha256: createHash("sha256").update(bytes).digest("hex"),
     });
-    const { call } = await connectLocalToolsMcp();
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
     const response = await call("inspect_maven_gradle_metadata", { path });
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
     const evidence = outputSchema.parse(response.structuredContent);
@@ -286,7 +289,8 @@ cliTest(
       coverage: { examined_bytes: Buffer.byteLength(source) },
       unresolved: expected,
     });
-    const { call } = await connectLocalToolsMcp();
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
     const response = await call("inspect_maven_gradle_metadata", { path });
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
     const evidence = outputSchema.parse(response.structuredContent);
@@ -348,7 +352,8 @@ cliTest(
   "preserves metadata selections and recorded declarations through CLI, MCP and retained Evidence",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-metadata-provenance-");
-    const { call } = await connectLocalToolsMcp();
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
     const url = "HTTPS://user:password@Example.invalid/a/../b?token=visible";
     for (const [file, source] of [
       [
