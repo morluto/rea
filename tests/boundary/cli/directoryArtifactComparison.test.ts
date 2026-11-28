@@ -138,6 +138,14 @@ cliTest(
     );
     expect(comparison.status).toBe("changed");
     expect(classifications(comparison)).toEqual(EXPECTED_CHANGES);
+    for (const logical_path of ["shaders", "shaders/b.spv"])
+      expect(comparison.changes).toContainEqual(
+        expect.objectContaining({
+          logical_path,
+          classification: "changed",
+          dimensions: ["content"],
+        }),
+      );
     expect(comparison.summary).toMatchObject({
       added: 2,
       removed: 1,

@@ -950,7 +950,10 @@ const relationsForOccurrence = (
       // directory. Preserve that identity in the relation comparison.
       mapped_artifact_id:
         edge.relation === "maps-source" ? edge.parent_artifact_id : null,
-      child_artifact_id: occurrence.artifact_id,
+      // Containment identifies the child by path. Its digest is compared
+      // separately as content, including derived directory digests.
+      child_artifact_id:
+        edge.relation === "contains" ? null : occurrence.artifact_id,
       relation: edge.relation,
       logical_path: occurrence.logical_path,
       producer: edge.producer,
