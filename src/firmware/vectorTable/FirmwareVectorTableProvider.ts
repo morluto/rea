@@ -25,6 +25,7 @@ import {
   type InspectFirmwareVectorTableInput,
 } from "../../domain/firmware/firmwareVectorTable.js";
 import { parseSvdInterruptMap } from "../../domain/firmware/firmwareSvdInterrupts.js";
+import { xmlElementDepthConstraint } from "../../domain/xmlDocument.js";
 import {
   minimumVectorTableBytes,
   parseFirmwareVectorTable,
@@ -169,7 +170,7 @@ export class FirmwareVectorTableProvider implements FirmwareVectorTablePort {
                 maxExpandedChars: input.max_svd_expanded_chars,
               });
         if (!svdResult.ok) {
-          if (isParseLimit(svdResult.error, "cmsis-svd")) throw svdResult.error;
+          if (svdResult.error.kind === "limit") throw svdResult.error;
           throw svdXmlInputError(svdResult.error);
         }
         if (baseAddress + input.vector_table_offset > 0xffff_ffff) {
@@ -263,6 +264,8 @@ const vectorTableFailure = (
       description: "firmware vector table",
       fallbackMessage: "Firmware vector table inspection failed.",
       recognise: (failure) => {
+        const depth = xmlElementDepthConstraint(OPERATION, undefined, failure);
+        if (depth !== undefined) return depth;
         if (isParseLimit(failure, "cmsis-svd")) {
           const { name, maximum } = failure.failure.limit;
           if (name === "max_svd_expanded_chars") {
