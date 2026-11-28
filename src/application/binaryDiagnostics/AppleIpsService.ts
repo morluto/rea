@@ -70,6 +70,15 @@ const validReport = (
     report.coverage.frames > input.max_frames ||
     report.coverage.images > input.max_images ||
     report.coverage.registers > input.max_registers ||
+    (report.termination?.reasons?.length ?? 0) >
+      input.max_termination_reasons ||
+    report.metadata.unlisted_keys.length > input.max_unlisted_keys ||
+    report.unlisted_body_keys.length > input.max_unlisted_keys ||
+    (report.exception?.unlisted_keys.length ?? 0) > input.max_unlisted_keys ||
+    (report.termination?.unlisted_keys.length ?? 0) > input.max_unlisted_keys ||
+    (report.process.os_version?.form === "structured" &&
+      report.process.os_version.unlisted_keys.length >
+        input.max_unlisted_keys) ||
     report.coverage.threads !== report.threads.length ||
     report.coverage.images !== report.images.length
   )
@@ -88,8 +97,18 @@ const validReport = (
   let frames = 0;
   let registers = 0;
   for (const thread of report.threads) {
+    if ((thread.unlisted_keys?.length ?? 0) > input.max_unlisted_keys)
+      return false;
+    for (const frame of thread.frames) {
+      if ((frame.unlisted_keys?.length ?? 0) > input.max_unlisted_keys)
+        return false;
+    }
     frames += thread.frames.length;
     registers += thread.registers.length;
+  }
+  for (const image of report.images) {
+    if ((image.unlisted_keys?.length ?? 0) > input.max_unlisted_keys)
+      return false;
   }
   return (
     frames === report.coverage.frames &&
@@ -108,5 +127,7 @@ type InspectAppleIpsInputLike = {
   readonly max_frames: number;
   readonly max_images: number;
   readonly max_registers: number;
+  readonly max_termination_reasons: number;
+  readonly max_unlisted_keys: number;
   readonly max_integer_text_bytes: number;
 };

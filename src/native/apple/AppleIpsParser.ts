@@ -15,7 +15,7 @@ import { FieldReader } from "./AppleIpsFieldReader.js";
 import {
   consumeJson,
   ipsBodyShape,
-  IPS_METADATA_SHAPE,
+  ipsMetadataShape,
 } from "./AppleIpsJsonShape.js";
 import type { LosslessJson } from "./losslessJson.js";
 import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
@@ -338,8 +338,12 @@ const crashText = (bytes: Buffer): { metadata: string; body: string } => {
   return { metadata: text.slice(0, newline), body: text.slice(lineEnd) };
 };
 
-const metadataOf = (text: string, read: FieldReader): AppleIps["metadata"] => {
-  const json = consumeJson(text, "IPS metadata", IPS_METADATA_SHAPE);
+const metadataOf = (
+  text: string,
+  read: FieldReader,
+  input: InspectAppleIpsInput,
+): AppleIps["metadata"] => {
+  const json = consumeJson(text, "IPS metadata", ipsMetadataShape(input));
   if (json.kind !== "object")
     throw malformedInput(APPLE_IPS_FORMAT, "IPS metadata is not a JSON object");
   const { members } = json;
@@ -400,7 +404,7 @@ export const parseAppleIps = (
   read: FieldReader = new FieldReader(input.max_integer_text_bytes),
 ): AppleIps => {
   const text = crashText(bytes);
-  const metadata = metadataOf(text.metadata, read);
+  const metadata = metadataOf(text.metadata, read, input);
   if (text.body.length === 0)
     throw malformedInput(
       APPLE_IPS_FORMAT,

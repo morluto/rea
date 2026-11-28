@@ -117,15 +117,60 @@ cliTest.for(["thread", "frame", "image"] as const)(
       if (count === 1025) {
         const expected = {
           code: "resource_constraint",
-          remediation: { action: expect.stringContaining("fixed allowance") },
           details: {
             resource: "capacity",
             reason: expect.stringContaining(path),
             reported_limits: { boundary: "unlisted_keys", maximum: 1024 },
+            limit: {
+              control_kind: "parameter",
+              parameter: "max_unlisted_keys",
+              effective_value: 1024,
+              default_value: 1024,
+              maximum: 16384,
+              unit: "count",
+              applies_at: "next_call",
+            },
           },
         };
-        expect(result.json).toMatchObject(expected);
+        expect(result.json).toMatchObject({
+          ...expected,
+          details: {
+            ...expected.details,
+            limit: {
+              ...expected.details.limit,
+              cli_flag: "--max-unlisted-keys",
+            },
+          },
+        });
         expect(parseMcpToolError(mcp).error).toMatchObject(expected);
+        const raisedCli = await cli.run({
+          arguments: [
+            "inspect-apple-ips",
+            path,
+            "--max-unlisted-keys",
+            "1025",
+            "--json",
+          ],
+        });
+        const raisedMcp = await call("inspect_apple_ips", {
+          path,
+          max_unlisted_keys: 1025,
+        });
+        expect(raisedCli.exitCode, raisedCli.stderr).toBe(0);
+        expect(raisedMcp.isError ?? false).toBe(false);
+        for (const reply of [raisedCli.json, raisedMcp.structuredContent]) {
+          const report =
+            toolContract("inspect_apple_ips").outputSchema.parse(
+              reply,
+            ).normalized_result;
+          const row =
+            kind === "thread"
+              ? report.threads[0]
+              : kind === "frame"
+                ? report.threads[0]?.frames[0]
+                : report.images[0];
+          expect(row).toMatchObject({ unlisted_keys: keys });
+        }
         continue;
       }
       for (const reply of [result.json, mcp.structuredContent]) {
@@ -172,5 +217,79 @@ cliTest.for(["thread", "frame", "image"] as const)(
     expect(JSON.stringify(parseMcpToolError(mcp))).toContain(
       "Duplicate JSON object key",
     );
+  },
+);
+
+cliTest(
+  "bounds termination.reasons through CLI and stdio MCP and accepts raised max_termination_reasons",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-ips-reasons-limit-");
+    const path = join(root, "report.ips");
+    const reasons = Array.from(
+      { length: 257 },
+      (_, i) => `reason-${String(i)}`,
+    );
+    await writeFile(
+      path,
+      `{"bug_type":"309"}\n{"termination":{"reasons":${JSON.stringify(reasons)}},"threads":[],"usedImages":[]}`,
+    );
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected stdio MCP session");
+    const rejectedCli = await cli.run({
+      arguments: ["inspect-apple-ips", path, "--json"],
+    });
+    const rejectedMcp = await call("inspect_apple_ips", { path });
+    expect(rejectedCli.exitCode, rejectedCli.stderr).toBe(1);
+    expect(rejectedMcp.isError).toBe(true);
+    const expected = {
+      code: "resource_constraint",
+      details: {
+        resource: "capacity",
+        reported_limits: { boundary: "termination_reasons", maximum: 256 },
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_termination_reasons",
+          effective_value: 256,
+          default_value: 256,
+          maximum: 4096,
+          unit: "count",
+          applies_at: "next_call",
+        },
+      },
+    };
+    expect(rejectedCli.json).toMatchObject({
+      ...expected,
+      details: {
+        ...expected.details,
+        limit: {
+          ...expected.details.limit,
+          cli_flag: "--max-termination-reasons",
+        },
+      },
+    });
+    expect(parseMcpToolError(rejectedMcp).error).toMatchObject(expected);
+
+    const raisedCli = await cli.run({
+      arguments: [
+        "inspect-apple-ips",
+        path,
+        "--max-termination-reasons",
+        "257",
+        "--json",
+      ],
+    });
+    const raisedMcp = await call("inspect_apple_ips", {
+      path,
+      max_termination_reasons: 257,
+    });
+    expect(raisedCli.exitCode, raisedCli.stderr).toBe(0);
+    expect(raisedMcp.isError ?? false).toBe(false);
+    for (const reply of [raisedCli.json, raisedMcp.structuredContent]) {
+      const parsed =
+        toolContract("inspect_apple_ips").outputSchema.parse(
+          reply,
+        ).normalized_result;
+      expect(parsed.termination?.reasons).toHaveLength(257);
+    }
   },
 );

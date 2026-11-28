@@ -122,7 +122,10 @@ their per-call budgets (`max_file_bytes`, entry, depth and decoded-byte budgets,
 `inspect_devicetree` bounds its estimated decoded representation with
 `max_decoded_bytes` (default 32 MiB, at most 256 MiB).
 `inspect_elf_dependencies`, `inspect_elf_unwind_ranges`, `inspect_macho_function_starts`,
-`inspect_apple_ips`,
+`inspect_apple_ips`
+(including `max_termination_reasons`, default 256, at most 4,096, and
+`max_unlisted_keys`, default 1,024, at most 16,384; JSON nesting stays a
+fixed 64-level representation ceiling),
 `inspect_dwarf_units`, `inspect_native_initializers`, `inspect_pe_overlay`,
 `inspect_pe_resources` (`max_entries`), `inspect_api_contract` (`max_file_bytes`),
 `compare_wasm_interfaces` (`max_interface_bytes`),

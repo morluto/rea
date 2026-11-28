@@ -323,3 +323,190 @@ it("rejects a provider's omitted join after explicit selection", async () => {
     error: { _tag: "AnalysisOutputError" },
   });
 });
+
+it.each([
+  [
+    "termination.reasons",
+    { max_termination_reasons: 1 },
+    (base: AppleIps): AppleIps => ({
+      ...base,
+      termination: {
+        namespace: "SIGNAL",
+        code: null,
+        indicator: null,
+        flags: null,
+        by_pid: null,
+        by_proc: null,
+        reasons: ["r0", "r1"],
+        unlisted_keys: [],
+      },
+    }),
+  ],
+  [
+    "metadata.unlisted_keys",
+    { max_unlisted_keys: 1 },
+    (base: AppleIps): AppleIps => ({
+      ...base,
+      metadata: { ...base.metadata, unlisted_keys: ["a", "b"] },
+    }),
+  ],
+  [
+    "unlisted_body_keys",
+    { max_unlisted_keys: 1 },
+    (base: AppleIps): AppleIps => ({
+      ...base,
+      unlisted_body_keys: ["a", "b"],
+    }),
+  ],
+  [
+    "exception.unlisted_keys",
+    { max_unlisted_keys: 1 },
+    (base: AppleIps): AppleIps => ({
+      ...base,
+      exception: {
+        type: "EXC_BAD_ACCESS",
+        signal: null,
+        subtype: null,
+        codes: null,
+        message: null,
+        unlisted_keys: ["a", "b"],
+      },
+    }),
+  ],
+  [
+    "termination.unlisted_keys",
+    { max_unlisted_keys: 1 },
+    (base: AppleIps): AppleIps => ({
+      ...base,
+      termination: {
+        namespace: "SIGNAL",
+        code: null,
+        indicator: null,
+        flags: null,
+        by_pid: null,
+        by_proc: null,
+        reasons: null,
+        unlisted_keys: ["a", "b"],
+      },
+    }),
+  ],
+  [
+    "os_version.unlisted_keys",
+    { max_unlisted_keys: 1 },
+    (base: AppleIps): AppleIps => ({
+      ...base,
+      process: {
+        ...base.process,
+        os_version: {
+          form: "structured",
+          train: "macOS 15",
+          build: null,
+          release_type: null,
+          is_embedded: null,
+          unlisted_keys: ["a", "b"],
+        },
+      },
+    }),
+  ],
+  [
+    "thread.unlisted_keys",
+    { max_unlisted_keys: 1 },
+    (base: AppleIps): AppleIps => ({
+      ...base,
+      threads: [
+        {
+          index: 0,
+          id: null,
+          triggered: null,
+          name: null,
+          queue: null,
+          frames: [],
+          state_flavor: null,
+          registers: [],
+          unlisted_keys: ["a", "b"],
+        },
+      ],
+      coverage: { ...base.coverage, threads: 1 },
+    }),
+  ],
+  [
+    "frame.unlisted_keys",
+    { max_unlisted_keys: 1 },
+    (base: AppleIps): AppleIps => ({
+      ...base,
+      threads: [
+        {
+          index: 0,
+          id: null,
+          triggered: null,
+          name: null,
+          queue: null,
+          frames: [
+            {
+              thread_index: 0,
+              frame_index: 0,
+              image_index: null,
+              image_offset: null,
+              runtime_address: null,
+              role: "unknown",
+              inline: null,
+              recorded_symbol: null,
+              symbol_location: null,
+              unlisted_keys: ["a", "b"],
+            },
+          ],
+          state_flavor: null,
+          registers: [],
+          unlisted_keys: [],
+        },
+      ],
+      coverage: { ...base.coverage, threads: 1, frames: 1 },
+    }),
+  ],
+  [
+    "image.unlisted_keys",
+    { max_unlisted_keys: 1 },
+    (base: AppleIps): AppleIps => ({
+      ...base,
+      images: [
+        {
+          index: 0,
+          name: "app",
+          path: null,
+          arch: null,
+          uuid: null,
+          uuid_unknown: false,
+          base: null,
+          size: null,
+          source: null,
+          source_meaning: null,
+          unlisted_keys: ["a", "b"],
+        },
+      ],
+      coverage: { ...base.coverage, images: 1 },
+    }),
+  ],
+] as const)(
+  "rejects provider output exceeding %s budget and accepts when budget matches",
+  async (_label, tightBudget, mutate) => {
+    const mutated = mutate(report);
+    const service = new AppleIpsService({
+      identity,
+      inspect: async () => ok(mutated),
+    });
+    const rejected = await service.inspect({
+      path: report.artifact.path,
+      ...tightBudget,
+    });
+    expect(rejected).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisOutputError" },
+    });
+    const raised = await service.inspect({
+      path: report.artifact.path,
+      max_termination_reasons: 2,
+      max_unlisted_keys: 2,
+    });
+    expect(raised.ok).toBe(true);
+  },
+);
