@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <meta
+      name="description"
+      content="A prediction-market demo with sample questions, paper trades, and a local portfolio."
+    />
+    <title>Forecast — Prediction markets demo</title>
+    <!-- website:sharing:start -->
+    <!-- prettier-ignore -->
+    <link rel="canonical" href="https://rea.tools/examples/polymarket/" />
+    <!-- website:languages:start -->
+
+    <!-- website:languages:end -->
+    <!-- prettier-ignore -->
+    <meta property="og:type" content="website" />
+    <!-- prettier-ignore -->
+    <meta property="og:site_name" content="REA" />
+    <!-- prettier-ignore -->
+    <meta property="og:title" content="Forecast — Prediction markets demo" />
+    <!-- prettier-ignore -->
+    <meta property="og:description" content="A prediction-market demo with sample questions, paper trades, and a local portfolio." />
+    <!-- prettier-ignore -->
+    <meta property="og:url" content="https://rea.tools/examples/polymarket/" />
+    <!-- prettier-ignore -->
+    <meta property="og:image" content="https://rea.tools/assets/social-card.png" />
+    <!-- prettier-ignore -->
+    <meta property="og:image:type" content="image/png" />
+    <!-- prettier-ignore -->
+    <meta property="og:image:width" content="1200" />
+    <!-- prettier-ignore -->
+    <meta property="og:image:height" content="630" />
+    <!-- prettier-ignore -->
+    <meta
+      property="og:image:alt"
+      content="REA: Find out how software works. Reverse engineering with your coding agent."
+    />
+    <!-- prettier-ignore -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <!-- prettier-ignore -->
+    <meta name="twitter:title" content="Forecast — Prediction markets demo" />
+    <!-- prettier-ignore -->
+    <meta name="twitter:description" content="A prediction-market demo with sample questions, paper trades, and a local portfolio." />
+    <!-- prettier-ignore -->
+    <meta name="twitter:image" content="https://rea.tools/assets/social-card.png" />
+    <!-- prettier-ignore -->
+    <meta
+      name="twitter:image:alt"
+      content="REA: Find out how software works. Reverse engineering with your coding agent."
+    />
+    <!-- website:sharing:end -->
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../assets/styles.css" />
+    <link rel="stylesheet" href="styles.css" />
+    <script src="app.js" defer></script>
+    <!-- website:theme:start -->
+    <meta name="theme-color" content="#ffffff" />
+    <!-- Apply the saved theme before styles load, to avoid a flash on navigation. -->
+    <script src="../../assets/theme.js"></script>
+    <!-- website:theme:end -->
+  </head>
+  <body id="top">
+    <a class="skip-link" href="#main">Skip to markets</a>
+    <!-- website:header:start -->
+    <!-- prettier-ignore -->
+    <header class="site-header">
+      <div class="container header-inner">
+        <a class="brand" href="../../" aria-label="REA home"
+          ><span class="brand-name">REA</span
+          ><span class="brand-caption" data-i18n-skip>Reverse Engineer Anything</span></a
+        >
+        <nav class="navigation" aria-label="Main navigation">
+          <a href="../../get-started/" class="nav-start">Get started</a>
+          <a href="../../showcase/">Showcases</a>
+          <a href="../../blog/">Blog</a>
+          <a href="../../guides/">Guides</a>
+        </nav>
+        <div class="header-social">
+
+          <button class="theme-toggle" type="button" data-theme-toggle hidden>
+            <svg class="theme-moon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+              <path d="M20.9 13a9 9 0 0 1-9.9-9.9A9 9 0 1 0 20.9 13Z" />
+            </svg>
+            <svg class="theme-sun" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true" focusable="false">
+              <circle cx="12" cy="12" r="4" />
+              <path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42" />
+            </svg>
+          </button>
+          <a
+            class="nav-github"
+            href="https://github.com/morluto/rea"
+            aria-label="REA on GitHub"
+            title="REA on GitHub"
+          >
+            <svg
+              width="22"
+              height="22"
+              viewBox="0 0 16 16"
+              aria-hidden="true"
+              focusable="false"
+            >
+              <path
+                fill="currentColor"
+                d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.65 7.65 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"
+              />
+            </svg>
+            <span class="nav-github-count" hidden aria-hidden="true"></span>
+          </a>
+          <a
+            class="nav-discord"
+            href="https://discord.gg/GkcryMnJDM"
+            aria-label="Join REA on Discord"
+            title="Join REA on Discord"
+          >
+            <svg
+              width="22"
+              height="22"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+              focusable="false"
+            >
+              <path
+                fill="currentColor"
+                d="M20.317 4.3698a19.7913 19.7913 0 0 0-4.8851-1.5152.0741.0741 0 0 0-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 0 0-.0785-.037 19.7363 19.7363 0 0 0-4.8852 1.515.0699.0699 0 0 0-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 0 0 .0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 0 0 .0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 0 0-.0416-.1057c-.6528-.2476-1.2743-.5495-1.8722-.8923a.077.077 0 0 1-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 0 1 .0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 0 1 .0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 0 1-.0066.1276 12.2986 12.2986 0 0 1-1.873.8914.0766.0766 0 0 0-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 0 0 .0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 0 0 .0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 0 0-.0312-.0286ZM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1569 2.4189Zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.946 2.4189-2.1568 2.4189Z"
+              />
+            </svg>
+          </a>
+          <a
+            class="nav-x"
+            href="https://x.com/reatools"
+            aria-label="Follow REA on X"
+            title="Follow REA on X"
+          >
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+              focusable="false"
+            >
+              <path
+                fill="currentColor"
+                d="M18.901 1.153h3.68l-8.04 9.19L24 22.846h-7.406l-5.8-7.584-6.638 7.584H.474l8.6-9.83L0 1.154h7.594l5.243 6.932ZM17.61 20.644h2.039L6.486 3.24H4.298Z"
+              />
+            </svg>
+          </a>
+        </div>
+      </div>
+    </header>
+    <!-- website:header:end -->
+    <div class="forecast-app">
+      <header class="market-header">
+        <a class="market-brand" href="./" aria-label="Forecast home">
+          <span class="brand-symbol" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M4 16.8 9.1 11l3.3 3.2L20 6.5" /><path d="M14.8 6.5H20V12" /></svg>
+          </span>
+          <span>forecast<span class="brand-period">.</span></span>
+        </a>
+        <label class="market-search">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.8" cy="8.8" r="5.6" /><path d="m13 13 4 4" /></svg>
+          <input id="market-search" type="search" placeholder="Search markets..." autocomplete="off" />
+          <kbd>/</kbd>
+        </label>
+        <nav class="header-links" aria-label="Market navigation">
+          <button type="button" class="header-link is-current" data-page="markets">Markets</button>
+          <button type="button" class="header-link" data-page="portfolio">Portfolio</button>
+        </nav>
+        <div class="paper-balance">
+          <span class="balance-label">PAPER BALANCE</span>
+          <strong id="header-balance">$1,000.00</strong>
+        </div>
+        <button class="user-chip" type="button" aria-label="Demo profile">
+          <span>F</span>
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg>
+        </button>
+      </header>
+
+      <div class="market-layout">
+        <aside class="market-sidebar" aria-label="Market categories">
+          <div class="sidebar-label">DISCOVER</div>
+          <nav class="category-nav" aria-label="Categories">
+            <button type="button" class="category-button is-selected" data-category="All">
+              <span class="category-symbol all-symbol" aria-hidden="true">◈</span><span>All markets</span>
+            </button>
+            <button type="button" class="category-button" data-category="Politics">
+              <span class="category-symbol" aria-hidden="true">⌂</span><span>Politics</span>
+            </button>
+            <button type="button" class="category-button" data-category="Economics">
+              <span class="category-symbol" aria-hidden="true">↗</span><span>Economics</span>
+            </button>
+            <button type="button" class="category-button" data-category="Crypto">
+              <span class="category-symbol" aria-hidden="true">₿</span><span>Crypto</span>
+            </button>
+            <button type="button" class="category-button" data-category="Climate">
+              <span class="category-symbol" aria-hidden="true">☼</span><span>Climate</span>
+            </button>
+            <button type="button" class="category-button" data-category="Science">
+              <span class="category-symbol" aria-hidden="true">✳</span><span>Science</span>
+            </button>
+          </nav>
+          <div class="sidebar-rule"></div>
+          <div class="sidebar-label watchlist-label">
+            WATCHLIST <span id="watchlist-count">0</span>
+          </div>
+          <div class="watchlist-mini" id="watchlist-mini">
+            <p>Save a market to keep it close.</p>
+          </div>
+          <div class="sidebar-bottom">
+            <div class="demo-callout">
+              <span class="demo-mark" aria-hidden="true">i</span>
+              <p><strong>Just a demo.</strong> Sample markets and paper trades. No live odds or money.</p>
+            </div>
+            <span class="sidebar-version">FORECAST PREVIEW · 2026</span>
+          </div>
+        </aside>
+
+        <main class="market-main" id="main">
+          <section class="page-view" id="markets-view">
+            <div class="market-intro">
+              <div>
+                <span class="intro-kicker"><span class="pulse-dot"></span> A DIFFERENT WAY TO SEE WHAT'S NEXT</span>
+                <h1>What do you think <span>happens?</span></h1>
+                <p>Explore questions about the future. Follow the odds. Make your call.</p>
+              </div>
+              <div class="date-stamp"><span class="date-icon">◷</span> Saturday, November 14</div>
+            </div>
+
+            <section class="featured-market" aria-labelledby="featured-title">
+              <div class="featured-copy">
+                <div class="featured-topline"><span class="featured-tag">✦ &nbsp;TODAY'S QUESTION</span><span class="live-label"><span></span> TRENDING</span></div>
+                <div class="featured-category">ECONOMICS <span>·</span> DECEMBER 2026</div>
+                <h2 id="featured-title">Will the Fed cut rates in December?</h2>
+                <p class="featured-description">One question. A thousand different views of what comes next.</p>
+                <button class="featured-cta" id="featured-cta" type="button">Explore this market <span>→</span></button>
+              </div>
+              <div class="featured-visual" aria-label="Illustrative market probability trend">
+                <div class="featured-percent"><strong>68%</strong><span>chance of a cut</span><span class="trend-up">↗ 4.2%</span></div>
+                <svg class="featured-chart" viewBox="0 0 430 140" preserveAspectRatio="none" role="img" aria-label="Sample trend line rising over one month">
+                  <defs><linearGradient id="chartFill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#6d9cff" stop-opacity=".28"/><stop offset="1" stop-color="#6d9cff" stop-opacity="0"/></linearGradient></defs>
+                  <path class="chart-area" d="M0 105 C22 98 28 111 47 93 S78 102 98 83 S124 90 145 71 S172 79 190 58 S222 76 241 55 S268 63 286 43 S314 55 335 35 S361 48 378 26 S407 38 430 8 V140 H0Z" />
+                  <path class="chart-line" d="M0 105 C22 98 28 111 47 93 S78 102 98 83 S124 90 145 71 S172 79 190 58 S222 76 241 55 S268 63 286 43 S314 55 335 35 S361 48 378 26 S407 38 430 8" />
+                  <circle cx="430" cy="8" r="4" class="chart-point" />
+                </svg>
+                <div class="chart-dates"><span>OCT 14</span><span>NOV 01</span><span>NOV 14</span></div>
+              </div>
+              <span class="featured-orb" aria-hidden="true"></span>
+            </section>
+
+            <div class="market-section-heading">
+              <div><h2 id="market-list-heading">Markets to watch</h2><p id="market-list-subtitle">A few questions on everyone's mind.</p></div>
+              <label class="sort-control">SORT BY
+                <select id="sort-select" aria-label="Sort markets">
+                  <option value="volume">Most volume</option>
+                  <option value="probability">Highest probability</option>
+                  <option value="newest">Recently added</option>
+                </select>
+              </label>
+            </div>
+            <div class="filter-tabs" role="group" aria-label="Market type">
+              <button type="button" class="filter-tab is-active" data-filter="Trending">Trending <span>↗</span></button>
+              <button type="button" class="filter-tab" data-filter="New">New</button>
+              <button type="button" class="filter-tab" data-filter="Ending soon">Ending soon</button>
+            </div>
+            <div class="market-list" id="market-list" aria-live="polite"></div>
+            <p class="market-disclaimer">Illustrative questions, odds, and volumes for this demo only. Not forecasts or financial advice.</p>
+          </section>
+
+          <section class="page-view portfolio-view" id="portfolio-view" hidden>
+            <div class="portfolio-heading">
+              <span class="intro-kicker"><span class="pulse-dot"></span> YOUR PAPER PORTFOLIO</span>
+              <h1>All your calls, <span>in one place.</span></h1>
+              <p>Practice keeping track of a position. No cash, no real-world outcomes.</p>
+            </div>
+            <div class="portfolio-summary">
+              <div><span>AVAILABLE PAPER BALANCE</span><strong id="portfolio-balance">$1,000.00</strong></div>
+              <div><span>OPEN POSITIONS</span><strong id="position-count">0</strong></div>
+              <button type="button" class="reset-button" id="reset-demo">Reset demo</button>
+            </div>
+            <div class="position-heading"><h2>Your positions</h2><span id="portfolio-status">Saved only in this browser</span></div>
+            <div id="position-list"></div>
+            <div class="activity-section">
+              <h2>Recent activity</h2>
+              <div id="activity-list"></div>
+            </div>
+          </section>
+        </main>
+
+        <aside class="trade-sidebar" id="trade-sidebar" aria-label="Paper trade panel">
+          <div class="trade-topline"><span>YOUR PAPER TRADE</span><span class="trade-mode"><i></i> SIMULATED</span></div>
+          <div class="trade-market" id="trade-market">
+            <div class="trade-market-icon">⌂</div>
+            <div><span id="trade-category">ECONOMICS · DECEMBER 2026</span><strong id="trade-question">Will the Fed cut rates in December?</strong></div>
+          </div>
+          <div class="trade-tabs" role="group" aria-label="Choose outcome">
+            <button type="button" class="outcome-button yes-outcome is-selected" data-outcome="yes">Yes <span id="yes-price">68¢</span></button>
+            <button type="button" class="outcome-button no-outcome" data-outcome="no">No <span id="no-price">34¢</span></button>
+          </div>
+          <div class="trade-price-row"><span>PRICE</span><strong id="selected-price">68¢</strong><span id="price-percent">68% chance</span></div>
+          <div class="amount-label"><label for="trade-amount">AMOUNT</label><span>Paper dollars</span></div>
+          <div class="amount-input-wrap"><span>$</span><input id="trade-amount" type="number" min="1" max="1000" step="1" value="25" inputmode="decimal" /><button type="button" id="max-amount">MAX</button></div>
+          <div class="amount-presets" aria-label="Quick amounts">
+            <button type="button" data-amount="10">$10</button>
+            <button type="button" data-amount="25">$25</button>
+            <button type="button" data-amount="50">$50</button>
+            <button type="button" data-amount="100">$100</button>
+          </div>
+          <div class="trade-estimate">
+            <div><span>EST. SHARES</span><strong id="estimate-shares">36.76</strong></div>
+            <div><span>IF CORRECT</span><strong id="estimate-payout">$36.76</strong></div>
+          </div>
+          <button class="trade-submit" id="trade-submit" type="button">Buy Yes · $25</button>
+          <p class="trade-footnote" id="trade-footnote">Paper trades only. A real trade could lose its full value.</p>
+          <div class="trade-divider"></div>
+          <div class="balance-row"><span>Available balance</span><strong id="trade-balance">$1,000.00</strong></div>
+          <div class="trade-help"><span>i</span> This is a safe, local demo. No orders are sent and no money changes hands.</div>
+          <p class="trade-status" id="trade-status" role="status" aria-live="polite"></p>
+        </aside>
+      </div>
+    </div>
+    <!-- website:footer:start -->
+    <!-- prettier-ignore -->
+    <footer class="site-footer">
+      <div class="container footer-inner">
+        <p>REA · Reverse Engineer Anything</p>
+        <div class="footer-links">
+          <a href="../../faq/">FAQ</a
+          ><a href="../../contributors/">Contributors</a
+          ><a href="https://github.com/morluto/rea">Source</a
+          ><a href="https://github.com/morluto/rea/blob/main/LICENSE">MIT license</a
+          ><a href="https://discord.gg/GkcryMnJDM">Join the community</a
+          ><a href="https://x.com/reatools">Follow us on X</a>
+        </div>
+      </div>
+    </footer>
+    <p class="sr-only" id="copy-status" role="status" aria-live="polite"></p>
+    <a class="back-to-top" href="#top" aria-label="Back to top">
+      <span aria-hidden="true">↑</span> Top
+    </a>
+    <!-- website:footer:end -->
+  </body>
+</html>
