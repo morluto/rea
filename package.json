@@ -148,7 +148,7 @@
     "check:ci:fast:tasks": "node scripts/run-turbo.mjs run typecheck lint format:check",
     "check:ci:deep": "npm run verify:architecture-guards && npm run check:ci:deep:job",
     "check:ci:deep:job": "npm run verify:mutation-targets && node scripts/run-exclusive.mjs artifacts npm run check:ci:deep:tasks && npm run verify:test-discovery && npm run test:python && npm run knip:production && npm run lint:typed",
-    "check:ci:deep:tasks": "node scripts/run-turbo.mjs run metadata:check jscpd scan:todos",
+    "check:ci:deep:tasks": "node scripts/run-turbo.mjs run compile metadata:check jscpd scan:todos",
     "ci:static-context": "node scripts/ci/static-task-context.mjs",
     "build:cached": "node scripts/check-dependency-install.mjs && node scripts/run-exclusive.mjs artifacts node scripts/run-turbo.mjs run artifacts:skills",
     "build:termux": "node scripts/run-exclusive.mjs artifacts npm run build:termux:run",
