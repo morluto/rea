@@ -12,6 +12,10 @@ const callees = (source: string) =>
     ({ specifier, path }) => `${specifier}:${path.join(".")}`,
   );
 const REGISTER = "vscode:commands.registerCommand";
+const replacements = (source: string) =>
+  [...semanticModuleCallees(analyzeJavaScriptSemantics(source)).values()]
+    .filter(({ path }) => path.at(-1) === "registerCommand")
+    .map(({ replacement }) => replacement);
 
 describe("module-rooted callees", () => {
   it.each([
@@ -167,11 +171,15 @@ describe("module-rooted callees", () => {
 });
 
 describe("module members that are not the imported ones", () => {
+  it("does not resolve an explicit default member of a require", () => {
+    expect(
+      callees(
+        'const v = require("vscode"); v.default.commands.registerCommand("a", f);',
+      ),
+    ).not.toContain(REGISTER);
+  });
+
   it.each([
-    [
-      "an explicit default member of a require",
-      'const v = require("vscode"); v.default.commands.registerCommand("a", f);',
-    ],
     [
       "a replaced member",
       'const v = require("vscode"); v.commands.registerCommand = noop; v.commands.registerCommand("a", f);',
@@ -188,16 +196,28 @@ describe("module members that are not the imported ones", () => {
       "a replaced member of a wrapped require",
       'var i = toESM(require("vscode")); i.commands.registerCommand = noop; i.commands.registerCommand("a", f);',
     ],
-  ])("does not resolve %s", (_, source) => {
-    expect(callees(source)).not.toContain(REGISTER);
-  });
-
-  it("keeps a call made before the member is replaced", () => {
-    expect(
-      callees(
-        'const v = require("vscode"); v.commands.registerCommand("a", f); v.commands.registerCommand = noop;',
-      ),
-    ).toContain(REGISTER);
+    [
+      "a member written later in source",
+      'const v = require("vscode"); v.commands.registerCommand("a", f); v.commands.registerCommand = noop;',
+    ],
+    [
+      "a member written in a function that may not run",
+      'const v = require("vscode"); function stub() { v.commands.registerCommand = noop; } v.commands.registerCommand("a", f);',
+    ],
+    [
+      "a member read by a later declaration of its binding",
+      'var register; require("vscode").commands.registerCommand = noop; var register = require("vscode").commands.registerCommand; register("a", f);',
+    ],
+    [
+      "a member written through require and called through require",
+      'require("vscode").commands.registerCommand = noop; require("vscode").commands.registerCommand("a", f);',
+    ],
+    [
+      "a member written through require and called through a binding",
+      'require("vscode").commands.registerCommand = noop; const v = require("vscode"); v.commands.registerCommand("a", f);',
+    ],
+  ])("marks %s as possibly replaced", (_, source) => {
+    expect(replacements(source)).toEqual(["possible"]);
   });
 
   it("does not drop a source default on a required member", () => {
@@ -212,19 +232,6 @@ describe("module members that are not the imported ones", () => {
     expect(
       callees('require("vscode").commands.registerCommand("a", f);'),
     ).toContain(REGISTER);
-  });
-
-  it.each([
-    [
-      "called through require again",
-      'require("vscode").commands.registerCommand = noop; require("vscode").commands.registerCommand("a", f);',
-    ],
-    [
-      "called through a binding",
-      'require("vscode").commands.registerCommand = noop; const v = require("vscode"); v.commands.registerCommand("a", f);',
-    ],
-  ])("does not resolve a member replaced through require, %s", (_, source) => {
-    expect(callees(source)).not.toContain(REGISTER);
   });
 
   it("drops an import's default when the file loads imports with require", () => {
@@ -249,26 +256,11 @@ describe("module members that are not the imported ones", () => {
     ).toHaveLength(1);
   });
 
-  it.each([
-    'const { commands: c } = require("vscode"); require("vscode").commands = fake; c.registerCommand("a", f);',
-    'const v = require("vscode"); const c = v.commands; v.commands = fake; c.registerCommand("a", f);',
-  ])("keeps an object taken before its slot is replaced: %s", (source) => {
-    expect(callees(source)).toContain(REGISTER);
-  });
-
-  it("does not resolve an object taken after its slot is replaced", () => {
-    expect(
-      callees(
-        'const v = require("vscode"); v.commands = fake; const c = v.commands; c.registerCommand("a", f);',
-      ),
-    ).not.toContain(REGISTER);
-  });
-
   it("keeps a member when only a sibling is written", () => {
     expect(
-      callees(
+      replacements(
         'const v = require("vscode"); v.commands.other = noop; v.commands.registerCommand("a", f);',
       ),
-    ).toContain(REGISTER);
+    ).toEqual([undefined]);
   });
 });

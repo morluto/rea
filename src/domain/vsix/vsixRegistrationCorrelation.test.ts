@@ -68,6 +68,24 @@ describe("VS Code command correlation", () => {
     });
   });
 
+  it("leaves a possibly replaced registration undetermined", () => {
+    const result = correlate(
+      `${VSCODE}vscode.commands.registerCommand = noop;
+       vscode.commands.registerCommand("demo.a", f);
+       vscode.commands.registerCommand("demo.hidden", f);`,
+      contributes(["demo.a"]),
+    );
+    expect(
+      result.commands.map(({ command, status }) => [command, status]),
+    ).toEqual([
+      ["demo.a", "undetermined"],
+      ["demo.hidden", "undetermined"],
+    ]);
+    expect(result.commands[0]?.registrations).toEqual([
+      expect.objectContaining({ replacement: "possible" }),
+    ]);
+  });
+
   it("keeps a built-at-run-time identifier unresolved", () => {
     const result = correlate(
       `${VSCODE}vscode.commands.registerCommand(prefix + ".a", f);`,

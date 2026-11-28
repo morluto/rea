@@ -24,6 +24,7 @@ const registrationSchema = z.strictObject({
   column: z.int().nonnegative().nullable(),
   loader_authority: z.literal("candidate").nullable(),
   wrapper: z.literal("unverified").nullable(),
+  replacement: z.literal("possible").nullable(),
 });
 type Registration = z.output<typeof registrationSchema>;
 
@@ -87,6 +88,7 @@ const calleeSchema = z.object({
   path: z.tuple([z.literal("commands"), z.enum(REGISTRATIONS)]),
   loader_authority: z.literal("candidate").optional(),
   wrapper: z.literal("unverified").optional(),
+  replacement: z.literal("possible").optional(),
 });
 const argumentsSchema = z.array(
   z.object({ index: z.number(), value: z.unknown() }),
@@ -108,6 +110,7 @@ const registrationsOf = (graph: JavaScriptSemanticGraph) => {
       column: start?.column ?? null,
       loader_authority: callee.data.loader_authority ?? null,
       wrapper: callee.data.wrapper ?? null,
+      replacement: callee.data.replacement ?? null,
     };
     const literals = argumentsSchema.safeParse(node.properties.arguments);
     const id = literals.data?.find(({ index }) => index === 0)?.value;
@@ -221,13 +224,17 @@ export const correlateVsixRegistrations = ({
     .sort(compareUnicodeCodePoints)
     .map((command) => {
       const registrations = byCommand.get(command) ?? [];
+      // A call to a possibly replaced function may not register anything.
+      const firm = registrations.some(
+        ({ replacement }) => replacement === null,
+      );
       const status = !declared.has(command)
-        ? allDeclared
+        ? allDeclared && firm
           ? ("registered_undeclared" as const)
           : ("undetermined" as const)
-        : registrations.length > 0
+        : firm
           ? ("registered" as const)
-          : complete
+          : complete && registrations.length === 0
             ? ("not_found" as const)
             : ("undetermined" as const);
       return {

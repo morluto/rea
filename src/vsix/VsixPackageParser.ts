@@ -610,12 +610,18 @@ interface ParsedPackageJson {
   readonly enabledApiProposals: string[];
 }
 
+const isRow = (row: unknown): row is Record<string, unknown> =>
+  row !== null && typeof row === "object" && !Array.isArray(row);
+
 /** VS Code accepts one contribution object or an array of them. */
-const rowsOf = (value: unknown): readonly Record<string, unknown>[] =>
-  (Array.isArray(value) ? (value as readonly unknown[]) : [value]).filter(
-    (row): row is Record<string, unknown> =>
-      row !== null && typeof row === "object" && !Array.isArray(row),
-  );
+const rowList = (value: unknown): readonly unknown[] =>
+  value === undefined ? [] : Array.isArray(value) ? value : [value];
+
+const rowsOf = (value: unknown) => rowList(value).filter(isRow);
+
+/** A declared row that is not an object cannot be read. */
+const unreadableRows = (value: unknown): boolean =>
+  !rowList(value).every(isRow);
 
 const exactText = (value: unknown): string | null =>
   typeof value === "string" && value !== "" ? value : null;
@@ -634,9 +640,10 @@ const menuGroups = (menus: unknown) =>
     ),
   );
 
-/** A declared value that is neither an object nor an array cannot be read. */
-const unreadableShape = (value: unknown): boolean =>
-  value !== undefined && (value === null || typeof value !== "object");
+/** Menus are one object keyed by menu name, each holding its rows. */
+const unreadableMenus = (menus: unknown): boolean =>
+  menus !== undefined &&
+  (!isRow(menus) || Object.values(menus).some(unreadableRows));
 
 const parsePackageJsonDocument = (
   text: string,
@@ -753,15 +760,12 @@ const parsePackageJsonDocument = (
       commands_total: commandRows.length + (unreadCommands ? 1 : 0),
       // A present but unsupported shape is a declaration that was not read.
       commands_omitted: unreadCommands ? 1 : 0,
-      // Menus are one object keyed by menu name, so an array is unread too.
       menus:
-        unreadContributes ||
-        unreadableShape(contributesRaw?.menus) ||
-        Array.isArray(contributesRaw?.menus)
+        unreadContributes || unreadableMenus(contributesRaw?.menus)
           ? null
           : menuGroups(contributesRaw?.menus),
       keybindings:
-        unreadContributes || unreadableShape(contributesRaw?.keybindings)
+        unreadContributes || unreadableRows(contributesRaw?.keybindings)
           ? null
           : rowsOf(contributesRaw?.keybindings).map((row) => ({
               command: exactText(row.command),

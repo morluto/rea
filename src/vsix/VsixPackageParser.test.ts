@@ -2148,3 +2148,23 @@ it.each(["demo", null, 1])(
     expect(report.contributes.keybindings).toBeNull();
   },
 );
+
+it.each([
+  { menus: { "editor/context": ["demo.a"] }, keybindings: ["ctrl+h"] },
+  { menus: { "editor/context": [null] }, keybindings: [[]] },
+  { menus: { "editor/context": "demo.a" }, keybindings: [{}, 1] },
+])("keeps unreadable contribution rows unknown: %j", async (contributes) => {
+  const bytes = await vsixPackageFixture({
+    packageJson: JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      contributes,
+    }),
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.contributes.menus).toBeNull();
+  expect(report.contributes.keybindings).toBeNull();
+});
