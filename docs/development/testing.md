@@ -54,9 +54,19 @@ that invoke PowerShell themselves remain subject to their own policy checks.
 scripts import built modules through the package-private `#dist/*` alias, which
 Node resolves to `./dist/*` at run time and the check resolves to `./src/*`, so a
 domain signature change that breaks a listed script fails `check:fast` without a
-build. To add a script, switch its `../dist/` imports and those of the local
-modules it loads to `#dist/`, add it to the list, and fix what the check
-reports with JSDoc types. Name tool results with the
+build. The entry is a `files` list rather than an `include` glob, and it stays
+curated: checking every `scripts/**/*.mjs` and `tests/support/**/*.mjs` file
+reports 8 768 errors across 434 of the 478 in-scope files, and any script that
+reaches a built module through a literal `../dist/` path instead of `#dist/*`
+adds the whole built tree to the program (313 604 errors there). Widening the
+list from 22 to 33 files cost nothing measurable, because the check is dominated
+by loading the `src` program the scripts name: 22.9 s before, 22.2 s after, on
+the same machine. To add a script, switch its `../dist/` imports and those of
+the local modules it loads to `#dist/`, delete a sibling `.d.mts` declaration if
+it has one, add it to the list, and fix what the check reports with JSDoc types;
+the deletion is mandatory rather than optional, because
+`scripts/verify/typed-script-declarations-guard.mjs` keeps the JSDoc in the
+`.mjs` source as the single type source. Name tool results with the
 `scripts/lib/mcp-verifier-results.mjs` typedefs (`ToolName`,
 `VerifierOperationResult<N>`) so a result reads with its named contract's
 type. `tests/support/analysis-efficiency/android-mapping-retention.mjs` stays
