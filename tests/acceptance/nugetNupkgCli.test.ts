@@ -13,7 +13,6 @@ import {
   nugetNupkgFixture,
   nugetNupkgNameEncodingFixture,
 } from "../../src/nuget/NugetNupkg.fixture.js";
-import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
@@ -72,7 +71,8 @@ cliTest(
         coverage: { status: "complete", entries: 5 },
       },
     });
-    const { call } = await connectLocalToolsMcp();
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
     const response = await call("inspect_nuget_nupkg", { path });
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
     const evidence = completeNupkgEvidenceSchema.parse(
@@ -164,7 +164,8 @@ cliTest(
     const report = completeNupkgEvidenceSchema.parse(
       output.json,
     ).normalized_result;
-    const { call } = await connectLocalToolsMcp();
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
     const reply = await call("inspect_nuget_nupkg", { path });
     expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
     expect(
@@ -245,7 +246,8 @@ cliTest(
     });
     expect(refused.exitCode).toBe(1);
     expect(refused.json).toMatchObject(expected);
-    const { call } = await connectLocalToolsMcp();
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
     const reply = await call("inspect_nuget_nupkg", { path });
     expect(parseMcpToolError(reply).error).toMatchObject(expected);
   },
@@ -285,7 +287,8 @@ cliTest(
         extraMembers: { "_rels/.rels": rels },
       }),
     );
-    const { call } = await connectLocalToolsMcp();
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
     for (const maximum of [undefined, 268435456, 8192]) {
       const input = {
         path,
