@@ -11,6 +11,7 @@ import {
   schemaChildren,
   schemaMaps,
   schemaPointerSteps,
+  setOwnSchemaProperty,
 } from "./jsonSchemaKeywords.js";
 
 const referencedDescription = (
@@ -137,13 +138,16 @@ const sharedRequiredProperties = (
   branches: readonly Readonly<Record<string, unknown>>[],
 ): readonly string[] => {
   const [first = [], ...others] = branches.map(requiredProperties);
-  return first.filter((name) => others.every((names) => names.includes(name)));
+  if (first.length === 0 || others.length === 0) return first;
+  const otherSets = others.map((names) => new Set(names));
+  return first.filter((name) => otherSets.every((names) => names.has(name)));
 };
 
 const inputGroup = (branch: Readonly<Record<string, unknown>>): string => {
   const required = requiredProperties(branch);
+  const requiredSet = new Set(required);
   const optional = Object.keys(branch.properties ?? {})
-    .filter((name) => !required.includes(name))
+    .filter((name) => !requiredSet.has(name))
     .map((name) => `[${name}]`);
   return [...required, ...optional].join(" + ");
 };
@@ -164,47 +168,56 @@ const omitNestedDefaults = (
   kept: ReadonlySet<string> = new Set(),
   path: readonly string[] = [],
 ): unknown => {
+  const trackPaths = kept.size > 0;
   if (Array.isArray(schema))
     return schema.map((child, index) =>
-      omitNestedDefaults(child, kept, [...path, String(index)]),
+      omitNestedDefaults(
+        child,
+        kept,
+        trackPaths ? [...path, String(index)] : path,
+      ),
     );
   if (!isObject(schema)) return schema;
-  return Object.fromEntries(
-    Object.entries(schema).flatMap(([key, value]) => {
-      const childPath = [...path, key];
-      if (kept.has(JSON.stringify(childPath))) return [[key, value]];
-      if (key === "default") return [];
-      return [
-        [
-          key,
-          isObjectKeyword(key) && isObject(value)
-            ? Object.fromEntries(
-                Object.entries(value).map(([name, child]) => [
-                  name,
-                  omitNestedDefaults(child, kept, [...childPath, name]),
-                ]),
-              )
-            : isArrayKeyword(key) && Array.isArray(value)
-              ? value.map((child, index) =>
-                  omitNestedDefaults(child, kept, [
-                    ...childPath,
-                    String(index),
-                  ]),
-                )
-              : isChildKeyword(key)
-                ? Array.isArray(value)
-                  ? value.map((child, index) =>
-                      omitNestedDefaults(child, kept, [
-                        ...childPath,
-                        String(index),
-                      ]),
-                    )
-                  : omitNestedDefaults(value, kept, childPath)
-                : value,
-        ],
-      ];
-    }),
-  );
+  const output: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(schema)) {
+    const childPath = trackPaths ? [...path, key] : path;
+    if (trackPaths && kept.has(JSON.stringify(childPath))) {
+      setOwnSchemaProperty(output, key, value);
+      continue;
+    }
+    if (key === "default") continue;
+    let projected = value;
+    if (isObjectKeyword(key) && isObject(value)) {
+      const mapped: Record<string, unknown> = {};
+      for (const [name, child] of Object.entries(value)) {
+        setOwnSchemaProperty(
+          mapped,
+          name,
+          omitNestedDefaults(
+            child,
+            kept,
+            trackPaths ? [...childPath, name] : path,
+          ),
+        );
+      }
+      projected = mapped;
+    } else if (
+      (isArrayKeyword(key) || isChildKeyword(key)) &&
+      Array.isArray(value)
+    ) {
+      projected = value.map((child, index) =>
+        omitNestedDefaults(
+          child,
+          kept,
+          trackPaths ? [...childPath, String(index)] : path,
+        ),
+      );
+    } else if (isChildKeyword(key)) {
+      projected = omitNestedDefaults(value, kept, childPath);
+    }
+    setOwnSchemaProperty(output, key, projected);
+  }
+  return output;
 };
 
 /** Every path into a `default` that a reference inside `schema` targets. */

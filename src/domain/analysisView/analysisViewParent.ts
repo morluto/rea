@@ -1,18 +1,19 @@
 import type { z } from "zod";
 import type { AnalysisInputError } from "../analysisErrorCore.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import { evidenceFileTarget, type Evidence } from "../evidence.js";
+import { evidenceLocalTarget, type Evidence } from "../evidence.js";
 import { analysisInputErrorFromIssues } from "../inputIssueProjection.js";
 import { err, ok, type Result } from "../result.js";
 import { ownedJsonValueSchema } from "../jsonValue.js";
 import { EvidenceIntegrityError } from "../evidenceErrors.js";
+import type { systemdJournalObjectHeaderSchema } from "../formatMetadata/androidAndSystemMetadata.js";
 
 /** Bind a projected artifact to the parent subject when one is recorded. */
 export const validateAnalysisViewSubject = (
   subject: Evidence["subject"] | undefined,
   artifactSha256: string | null | undefined,
 ): Result<void, EvidenceIntegrityError> => {
-  const file = evidenceFileTarget({ subject });
+  const file = evidenceLocalTarget({ subject });
   return file === undefined || file.sha256 === artifactSha256
     ? ok(undefined)
     : err(
@@ -23,6 +24,14 @@ export const validateAnalysisViewSubject = (
 };
 
 /** Parent record already resolved from inline Evidence or a session reference. */
+/**
+ * One row of a `format_record_headers` page. Owned here, beside the parent it
+ * travels on, so projectors and the request hub never import each other.
+ */
+export type FormatRecordHeader = z.output<
+  typeof systemdJournalObjectHeaderSchema
+>;
+
 export interface AnalysisViewParent {
   readonly evidenceId: string;
   readonly operation: string;
@@ -41,6 +50,16 @@ export interface AnalysisViewParent {
   readonly artifact?: { readonly path: string; readonly sha256: string } | null;
   /** Parent Evidence parameters, when the parent operation records them. */
   readonly parameters?: unknown;
+  /** The complete authenticated parent record, for views that page its exact JSON. */
+  readonly evidence?: Evidence;
+  /**
+   * A `format_record_headers` page the application re-read from the unchanged
+   * root file, with the parent inventory's exact record total.
+   */
+  readonly formatRecordPage?: {
+    readonly items: readonly FormatRecordHeader[];
+    readonly total: number;
+  };
 }
 import {
   canBorrowParsedJsonSnapshot,
@@ -70,9 +89,9 @@ export const createAnalysisViewResultReader = <Value>(parser: {
     }
     const normalized = ownedJsonValueSchema.safeParse(parsed.value);
     if (!normalized.success) return parsed;
-    freezeOwnedJsonTreeSnapshot(normalized.data);
-    checked.set(source, parsed.value);
-    return parsed;
+    const frozen = freezeOwnedJsonTreeSnapshot(normalized.data) as Value;
+    checked.set(source, frozen);
+    return ok(frozen);
   };
 };
 
@@ -104,3 +123,25 @@ export const analysisViewResultInputError = (
     { source: { normalized_result: input } },
     { cause },
   );
+
+/** Path named by a parent result, or the Evidence id when the result has none. */
+export const parentArtifactPath = (parent: AnalysisViewParent): string => {
+  if (
+    typeof parent.normalizedResult === "object" &&
+    parent.normalizedResult !== null &&
+    "artifact" in parent.normalizedResult &&
+    typeof parent.normalizedResult.artifact === "object" &&
+    parent.normalizedResult.artifact !== null &&
+    "path" in parent.normalizedResult.artifact &&
+    typeof parent.normalizedResult.artifact.path === "string"
+  )
+    return parent.normalizedResult.artifact.path;
+  if (
+    typeof parent.normalizedResult === "object" &&
+    parent.normalizedResult !== null &&
+    "input_path" in parent.normalizedResult &&
+    typeof parent.normalizedResult.input_path === "string"
+  )
+    return parent.normalizedResult.input_path;
+  return parent.evidenceId;
+};

@@ -90,62 +90,6 @@ describe.skipIf(process.platform === "win32")(
         expect(await readlink(join(root, "alias"))).toBe("dist");
       },
     );
-
-    cliTest(
-      "reports project, default, and explicit secret exclusions",
-      async ({ cli }) => {
-        const root = await createTestTempDirectory("rea-reference-exclusions-");
-        const logs = join(root, "logs");
-        await mkdir(logs);
-        await Promise.all([
-          writeFile(join(root, ".gitignore"), "project.tmp\n"),
-          writeFile(join(root, "project.tmp"), "project policy\n"),
-          writeFile(join(logs, "application.log"), "default policy\n"),
-          writeFile(join(root, "private.txt"), "sensitive local file\n"),
-          writeFile(join(root, "source.ts"), "export const value = 1;\n"),
-        ]);
-
-        const result = await cli.run({
-          arguments: ["import-reference-source", root, "--json"],
-          cwd: root,
-          environment: {
-            HOME: root,
-            USERPROFILE: root,
-            XDG_CONFIG_HOME: root,
-            XDG_CACHE_HOME: root,
-            REA_REFERENCE_SECRET_PATTERNS_JSON: '["private.txt"]',
-          },
-        });
-
-        expect(result.exitCode).toBe(0);
-        const graph = historicalSourceGraphSchema.parse(result.json);
-        expect(graph.exclusions).toEqual(
-          expect.arrayContaining([
-            {
-              path: "project.tmp",
-              entry_kind: "file",
-              reason: "project-ignored",
-              pattern: "project.tmp",
-            },
-            {
-              path: "logs/application.log",
-              entry_kind: "file",
-              reason: "default-ignored",
-              pattern: "*.log",
-            },
-            {
-              path: "private.txt",
-              entry_kind: "file",
-              reason: "configured-secret",
-              pattern: "private.txt",
-            },
-          ]),
-        );
-        expect(graph.entries).toContainEqual(
-          expect.objectContaining({ path: "source.ts", kind: "file" }),
-        );
-      },
-    );
   },
 );
 
@@ -186,9 +130,32 @@ describe.skipIf(process.platform === "win32")(
         expect(emptyGraph.entries.map((entry) => entry.path)).toEqual(
           omittedGraph.entries.map((entry) => entry.path),
         );
-        expect(omittedGraph.exclusions).not.toContainEqual(
-          expect.objectContaining({ reason: "caller-excluded" }),
-        );
+        expect(omittedGraph.exclusions).toEqual([
+          {
+            path: "keep.log",
+            entry_kind: "file",
+            reason: "default-ignored",
+            pattern: "*.log",
+          },
+          {
+            path: "logs/application.log",
+            entry_kind: "file",
+            reason: "default-ignored",
+            pattern: "*.log",
+          },
+          {
+            path: "private.txt",
+            entry_kind: "file",
+            reason: "configured-secret",
+            pattern: "private.txt",
+          },
+          {
+            path: "project.tmp",
+            entry_kind: "file",
+            reason: "project-ignored",
+            pattern: "project.tmp",
+          },
+        ]);
         expect(omittedGraph.entries).toContainEqual(
           expect.objectContaining({ path: "notes.tmp", kind: "file" }),
         );
@@ -198,12 +165,6 @@ describe.skipIf(process.platform === "win32")(
             kind: "file",
           }),
         );
-        expect(omittedGraph.exclusions).toContainEqual({
-          path: "keep.log",
-          entry_kind: "file",
-          reason: "default-ignored",
-          pattern: "*.log",
-        });
 
         expect(selected.exitCode).toBe(0);
         const selectedGraph = historicalSourceGraphSchema.parse(selected.json);

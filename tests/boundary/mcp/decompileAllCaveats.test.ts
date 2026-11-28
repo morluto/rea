@@ -1,6 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 
 import {
   createAnalysisExecution,
@@ -62,148 +62,201 @@ afterEach(async () => {
   await closeEnhancedToolResources();
 });
 
-describe("decompile_all MCP caveats", () => {
-  it("retains all observed caveats across unreadable and conflicting resumes", async () => {
-    const parent = await createTestTempDirectory(
-      "rea-decompile-resume-caveats-",
-    );
-    const output = join(parent, "out");
-    const selected = join(output, "functions", "0x1000.c");
-    const caveats = Array.from(
-      { length: 40 },
-      (_, i) => `provider limitation ${i}`,
-    );
-    const calls: string[] = [];
-    const port: AnalysisOperationPort = {
-      execute: async (operation) => {
-        calls.push(operation);
+it("retains all observed caveats across unreadable and conflicting resumes", async () => {
+  const parent = await createTestTempDirectory("rea-decompile-resume-caveats-");
+  const output = join(parent, "out");
+  const selected = join(output, "functions", "0x1000.c");
+  const caveats = Array.from(
+    { length: 40 },
+    (_, i) => `provider limitation ${i}`,
+  );
+  const foreign = "foreign entry point 0x9000";
+  const firstAttempt =
+    "Provider did not produce pseudocode on the first attempt";
+  const calls: string[] = [];
+  const port: AnalysisOperationPort = {
+    execute: async (operation, parameters) => {
+      calls.push(operation);
+      if (
+        operation === "procedure_pseudo_code" &&
+        parameters.analysis !== "independent_fresh"
+      )
         return ok(
-          createAnalysisExecution(
-            operation === "list_procedures"
-              ? [{ address: "0x1000", value: "function" }]
-              : operation === "procedure_info"
-                ? null
-                : "int f(void) { return 0; }",
-            provider,
-            {
-              analysisProfile: profile,
-              ...(operation === "list_procedures"
-                ? {
-                    subject: {
-                      path: "/tmp/test",
-                      sha256: "ab".repeat(32),
-                      format: "elf" as const,
-                      architecture: "x86_64" as const,
-                    },
-                  }
-                : {}),
-              ...(operation === "procedure_pseudo_code"
-                ? { limitations: caveats }
-                : {}),
+          createAnalysisExecution(null, provider, {
+            analysisProfile: profile,
+            limitations: [firstAttempt],
+            pseudocodeAbsence: {
+              kind: "provider-failure",
+              reason: "empty decompiler result",
             },
-          ),
+          }),
         );
-      },
-    };
-    const client = await connect(port);
-    const run = async (resume: boolean) =>
-      client.callTool({
-        name: "decompile_all",
-        arguments: { output_directory: output, resume },
-      });
-    const record = async () =>
-      decompileDirectoryIndexSchema.parse(
-        JSON.parse(
-          await readFile(join(output, "decompile-index.json"), "utf8"),
+      return ok(
+        createAnalysisExecution(
+          operation === "list_procedures"
+            ? [{ address: "0x1000", value: "function" }]
+            : operation === "procedure_info"
+              ? {
+                  name: "other",
+                  entrypoint: "0x9000",
+                  basicblock_count: 0,
+                  length: 0,
+                  signature: null,
+                  locals: [],
+                  classification: null,
+                  body: {
+                    available: false,
+                    reason: "other function has no body",
+                  },
+                }
+              : "int f(void) { return 0; }",
+          provider,
+          {
+            analysisProfile: profile,
+            ...(operation === "list_procedures"
+              ? {
+                  subject: {
+                    path: "/tmp/test",
+                    sha256: "ab".repeat(32),
+                    format: "elf" as const,
+                    architecture: "x86_64" as const,
+                  },
+                }
+              : {}),
+            ...(operation === "procedure_pseudo_code"
+              ? { limitations: caveats }
+              : operation === "procedure_info"
+                ? { limitations: [foreign] }
+                : {}),
+          },
         ),
-      ).functions[0];
-    expect((await run(false)).isError).not.toBe(true);
-    const original = await readFile(selected, "utf8");
-    const hashFile = DecompileExport.prototype.hashFile;
-    const blocked = vi
-      .spyOn(DecompileExport.prototype, "hashFile")
-      .mockImplementation(function (this: DecompileExport, path, signal) {
-        return path === "functions/0x1000.c"
-          ? Promise.reject(
-              Object.assign(new Error("access denied"), { code: "EACCES" }),
-            )
-          : hashFile.call(this, path, signal);
-      });
+      );
+    },
+  };
+  const client = await connect(port);
+  const run = async (resume: boolean) =>
+    client.callTool({
+      name: "decompile_all",
+      arguments: {
+        output_directory: output,
+        resume,
+        retry_failed: "independent_fresh",
+      },
+    });
+  const record = async () =>
+    decompileDirectoryIndexSchema.parse(
+      JSON.parse(await readFile(join(output, "decompile-index.json"), "utf8")),
+    ).functions[0];
+  const initial = await run(false);
+  expect(initial.isError).not.toBe(true);
+  const initialEvidence = parseEvidence(initial.structuredContent);
+  expect(initialEvidence.limitations.join("\n")).not.toContain(foreign);
+  expect(initialEvidence.limitations).toContainEqual(
+    expect.stringMatching(
+      /^33 per-item provider limitation observations were omitted/u,
+    ),
+  );
+  expect(initialEvidence.limitations).toContain(
+    `Fixture (fixture 1) procedure_pseudo_code: ${firstAttempt}`,
+  );
+  expect(initialEvidence.limitations).toContain(
+    "Fixture (fixture 1) procedure_pseudo_code: provider limitation 0",
+  );
+  const original = await readFile(selected, "utf8");
+  expect(original).not.toContain(foreign);
+  expect(original).toContain("// limitations: provider limitation 0");
+  expect(await record()).toMatchObject({
+    body: {
+      available: false,
+      reason:
+        "procedure_info described a different entry point than this function.",
+    },
+    limitations: caveats,
+  });
+  const hashFile = DecompileExport.prototype.hashFile;
+  const blocked = vi
+    .spyOn(DecompileExport.prototype, "hashFile")
+    .mockImplementation(function (this: DecompileExport, path, signal) {
+      return path === "functions/0x1000.c"
+        ? Promise.reject(
+            Object.assign(new Error("access denied"), { code: "EACCES" }),
+          )
+        : hashFile.call(this, path, signal);
+    });
+  expect((await run(true)).isError).not.toBe(true);
+  expect(await record()).toMatchObject({
+    status: "failed",
+    failure: { code: "output_io" },
+    limitations: caveats,
+    relative_path: "functions/0x1000.c",
+  });
+  blocked.mockRestore();
+  await writeFile(selected, "external change\n");
+  for (let i = 0; i < 2; i++) {
     expect((await run(true)).isError).not.toBe(true);
     expect(await record()).toMatchObject({
       status: "failed",
-      failure: { code: "output_io" },
+      failure: { code: "output_exists" },
       limitations: caveats,
       relative_path: "functions/0x1000.c",
     });
-    blocked.mockRestore();
-    await writeFile(selected, "external change\n");
-    for (let i = 0; i < 2; i++) {
-      expect((await run(true)).isError).not.toBe(true);
-      expect(await record()).toMatchObject({
-        status: "failed",
-        failure: { code: "output_exists" },
-        limitations: caveats,
-        relative_path: "functions/0x1000.c",
-      });
-      expect(await readFile(selected, "utf8")).toBe("external change\n");
-    }
-    await writeFile(selected, original);
-    calls.length = 0;
-    expect((await run(true)).isError).not.toBe(true);
-    expect(await record()).toMatchObject({
-      status: "written",
-      limitations: caveats,
-    });
-    expect(calls).not.toContain("procedure_pseudo_code");
+    expect(await readFile(selected, "utf8")).toBe("external change\n");
+  }
+  await writeFile(selected, original);
+  calls.length = 0;
+  expect((await run(true)).isError).not.toBe(true);
+  expect(await record()).toMatchObject({
+    status: "written",
+    limitations: caveats,
   });
-  it("returns a bounded caveat summary and keeps each function's caveats in its file", async () => {
-    const parent = await createTestTempDirectory("rea-decompile-caveats-");
-    const client = await connect(addressCaveats);
-    const result = await client.callTool({
-      name: "decompile_all",
-      arguments: { output_directory: join(parent, "out") },
-    });
-    expect(result.isError).not.toBe(true);
-    const evidence = parseEvidence(result.structuredContent);
-    expect(evidence.normalized_result).toMatchObject({
-      counts: { written: 20, failed: 0 },
-    });
-    // 40 address-specific caveats plus one oversized caveat: 8 kept and 33
-    // counted, beside the workflow line. Target uncertainty is in the subject.
-    expect(evidence.subject.identity).toEqual({
-      kind: "unknown",
-      reason: "derived-from-linked-evidence",
-    });
-    expect(evidence.limitations).toHaveLength(10);
-    expect(evidence.limitations).toContain(
-      "Derived by an REA composed workflow.",
-    );
-    expect(evidence.limitations).toEqual(
-      expect.arrayContaining(
-        addresses
-          .slice(0, 4)
-          .flatMap((address) => [
-            `Fixture (fixture 1) procedure_info: procedure_info caveat at ${address}`,
-            `Fixture (fixture 1) procedure_pseudo_code: terminal call at ${address}`,
-          ]),
-      ),
-    );
-    expect(evidence.limitations.at(-1)).toMatch(
-      /^33 per-item provider limitation observations were omitted/u,
-    );
-    const last = await readFile(
-      join(parent, "out", "functions", `${addresses.at(-1)}.c`),
-      "utf8",
-    );
-    expect(last).toContain(`procedure_info caveat at ${addresses.at(-1)}`);
-    expect(last).toContain(`terminal call at ${addresses.at(-1)}`);
-    expect(JSON.stringify(result)).not.toContain(longCaveat);
-    const index = JSON.parse(
-      await readFile(join(parent, "out", "decompile-index.json"), "utf8"),
-    );
-    expect(index.functions.at(-1).limitations).toContain(longCaveat);
+  expect(calls).not.toContain("procedure_pseudo_code");
+});
+it("returns a bounded caveat summary and keeps each function's caveats in its file", async () => {
+  const parent = await createTestTempDirectory("rea-decompile-caveats-");
+  const client = await connect(addressCaveats);
+  const result = await client.callTool({
+    name: "decompile_all",
+    arguments: { output_directory: join(parent, "out") },
   });
+  expect(result.isError).not.toBe(true);
+  const evidence = parseEvidence(result.structuredContent);
+  expect(evidence.normalized_result).toMatchObject({
+    counts: { written: 20, failed: 0 },
+  });
+  // 40 address-specific caveats plus one oversized caveat: 8 kept and 33
+  // counted, beside the workflow line. Target uncertainty is in the subject.
+  expect(evidence.subject.identity).toEqual({
+    kind: "unknown",
+    reason: "derived-from-linked-evidence",
+  });
+  expect(evidence.limitations).toHaveLength(10);
+  expect(evidence.limitations).toContain(
+    "Derived by an REA composed workflow.",
+  );
+  expect(evidence.limitations).toEqual(
+    expect.arrayContaining(
+      addresses
+        .slice(0, 4)
+        .flatMap((address) => [
+          `Fixture (fixture 1) procedure_info: procedure_info caveat at ${address}`,
+          `Fixture (fixture 1) procedure_pseudo_code: terminal call at ${address}`,
+        ]),
+    ),
+  );
+  expect(evidence.limitations.at(-1)).toMatch(
+    /^33 per-item provider limitation observations were omitted/u,
+  );
+  const last = await readFile(
+    join(parent, "out", "functions", `${addresses.at(-1)}.c`),
+    "utf8",
+  );
+  expect(last).toContain(`procedure_info caveat at ${addresses.at(-1)}`);
+  expect(last).toContain(`terminal call at ${addresses.at(-1)}`);
+  expect(JSON.stringify(result)).not.toContain(longCaveat);
+  const index = JSON.parse(
+    await readFile(join(parent, "out", "decompile-index.json"), "utf8"),
+  );
+  expect(index.functions.at(-1).limitations).toContain(longCaveat);
 });
 
 it("keeps long-name failures inside the tool window and complete in the index", async () => {
@@ -254,7 +307,8 @@ it("keeps long-name failures inside the tool window and complete in the index", 
   expect(manifest.failures.every((failure) => failure.code.length > 0)).toBe(
     true,
   );
-  expect(JSON.stringify(result)).not.toContain(caveat);
+  expect(evidence.limitations.join("\n")).not.toContain(caveat);
+  expect(manifest.limitations.join("\n")).not.toContain(caveat);
   const index = decompileDirectoryIndexSchema.parse(
     JSON.parse(await readFile(join(output, "decompile-index.json"), "utf8")),
   );

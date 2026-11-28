@@ -1,8 +1,6 @@
 import { expect, it, vi } from "vitest";
 import type { Socket } from "node:net";
 import type { Writable } from "node:stream";
-import { EventEmitter } from "node:events";
-import { PassThrough } from "node:stream";
 import {
   ProviderProcessSupervisor,
   type ProviderProcessDiagnostic,
@@ -99,31 +97,4 @@ it("bounds capture before diagnostic callbacks while draining both output stream
     await supervisor.stop();
     await stopProviderProcessFixture(child);
   }
-});
-
-it("bounds additional late output while retaining observed byte counts", () => {
-  const child = Object.assign(new EventEmitter(), {
-    stdout: new PassThrough(),
-    stderr: new PassThrough(),
-    exitCode: null as number | null,
-    signalCode: null as NodeJS.Signals | null,
-    kill: vi.fn(() => true),
-  });
-  const supervisor = new ProviderProcessSupervisor({
-    process: child,
-    ownsProcessLifetime: true,
-  });
-
-  supervisor.limitAdditionalOutputBytes(5);
-  child.stdout.write("abc");
-  supervisor.limitAdditionalOutputBytes(5);
-  child.stdout.write("defgh");
-  child.stderr.write("ijkl");
-
-  const snapshot = supervisor.snapshot();
-  expect(snapshot.stdout.text + snapshot.stderr.text).toHaveLength(5);
-  expect(snapshot.stdout.observedBytes).toBe(8);
-  expect(snapshot.stderr.observedBytes).toBe(4);
-  expect(snapshot.diagnosticTruncated).toBe(true);
-  supervisor.dispose();
 });

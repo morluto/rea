@@ -25,7 +25,7 @@ it("rejects extra caller arguments and admits an empty unwind inventory", () => 
     path: "/artifacts/app",
   });
   expect(parsed.max_ranges).toBe(8192);
-  expect(parsed.limit).toBe(256);
+  expect(parsed.limit).toBe(64);
   const report = elfUnwindRangesSchema.parse({
     artifact: {
       path: "/artifacts/app",
@@ -54,7 +54,7 @@ it("rejects extra caller arguments and admits an empty unwind inventory", () => 
     ranges: [],
     page: {
       offset: 0,
-      limit: 256,
+      limit: 64,
       returned: 0,
       total: 0,
       next_offset: null,
@@ -68,8 +68,10 @@ it("rejects extra caller arguments and admits an empty unwind inventory", () => 
       eh_frame_hdr_agreement: "unavailable",
       examined_records: 0,
     },
+    limitation_codes: ["cfa_not_evaluated"],
     limitations: ["CFA instructions are counted but not evaluated."],
   });
   expect(report.ranges).toEqual([]);
   expect(report.coverage.total_ranges).toBe(0);
+  expect(report.limitation_codes).toEqual(["cfa_not_evaluated"]);
 });

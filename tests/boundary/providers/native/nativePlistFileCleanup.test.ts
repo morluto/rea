@@ -1,4 +1,13 @@
-import { open, writeFile, type FileHandle } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import {
+  access,
+  mkdir,
+  open,
+  readFile,
+  rm,
+  writeFile,
+  type FileHandle,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi, onTestFinished } from "vitest";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
@@ -123,7 +132,7 @@ it("keeps mixed client cleanup live until both file and tracer owners resolve", 
 });
 
 it.for(["path-input", "target"] as const)(
-  "retains %s prefix read and close failures through repeated client cleanup",
+  "retains %s source read and close failures through repeated client cleanup",
   async (selection, { onTestFinished }) => {
     const root = await createTestTempDirectory("rea-native-plist-close-");
     const path = join(root, "selected.plist");
@@ -194,7 +203,7 @@ it.for(["path-input", "target"] as const)(
     expect(result.error.cleanupIncomplete).toBe(false);
     expect(resolvedAnalysisError(result.error).cause).toBe(primary);
     expect(resolvedAnalysisError(result.error).capturedOutput).toBeUndefined();
-    expect(commands.mock.calls.map(([tool]) => tool)).toEqual(["file"]);
+    expect(commands.mock.calls.map(([tool]) => tool)).toEqual([]);
     if (!first.ok) expect(first.error.cleanupIncomplete).toBe(false);
   },
 );
@@ -241,11 +250,14 @@ for (const readFails of [false, true])
     expect(failure).toBeInstanceOf(ArtifactFileCleanupFailure);
     if (!(failure instanceof ArtifactFileCleanupFailure))
       throw new Error("Expected physical owner");
-    expect(failure.fileCleanupFailure.outcome).toEqual(
-      readFails
-        ? { kind: "failed", cause: primary }
-        : { kind: "completed", value: "xml" },
-    );
+    const { outcome } = failure.fileCleanupFailure;
+    if (readFails) expect(outcome).toEqual({ kind: "failed", cause: primary });
+    else {
+      expect(outcome.kind).toBe("completed");
+      if (outcome.kind !== "completed" || !Buffer.isBuffer(outcome.value))
+        throw new Error("Expected the completed source bytes");
+      expect(outcome.value.equals(await readFile(path))).toBe(true);
+    }
     expect(result.error.cleanupIncomplete).toBe(true);
     expect((await client.close()).ok).toBe(true);
     expect(result.error.cleanupIncomplete).toBe(false);
@@ -330,15 +342,20 @@ it("preserves an opaque cancellation observed during successful prefix close", a
 });
 
 it.for([
-  ["prefix", "source"],
-  ["source", "source"],
-  ["prefix", "json"],
-  ["prefix", "xml"],
+  ["first", "source"],
+  ["continued", "source"],
+  ["first", "json"],
+  ["first", "xml"],
 ] as const)(
   "joins an admitted %s read and final %s command when client close starts concurrently",
   async ([phase, route]) => {
     const { client, path, prototype, runner } = await fixture();
     if (route !== "source") await writeFile(path, "{ name = value; }");
+    else if (phase === "continued")
+      await writeFile(
+        path,
+        `<plist><string>value</string></plist>${" ".repeat(64 * 1024)}`,
+      );
     const plistFileRead = phaseGate();
     const plistValidation = phaseGate();
     const original = prototype.read;
@@ -348,7 +365,7 @@ it.for([
       ...args: Parameters<FileHandle["read"]>
     ) {
       reads += 1;
-      if (reads === (phase === "prefix" ? 1 : 2)) {
+      if (reads === (phase === "first" ? 1 : 2)) {
         await plistFileRead.hold();
       }
       return Reflect.apply(original, this, args);
@@ -412,16 +429,19 @@ it.for([
     const result = inspectPlistSchema.parse(inspected.value.result);
     expect(result.value).toBe("value");
     expect(result.source_path).toBe(path);
+    const operand = commands.mock.calls[0]?.[1].at(-1);
+    expect(operand).toBeDefined();
+    expect(operand).not.toBe(path);
     const expectedCommands = [
-      ["file", ["-b", path]],
+      ["file", ["-b", operand]],
       [
         "plutil",
         route === "source"
-          ? ["-lint", "--", path]
-          : ["-convert", "json", "-o", "-", "--", path],
+          ? ["-lint", "--", operand]
+          : ["-convert", "json", "-o", "-", "--", operand],
       ],
       ...(route === "xml"
-        ? [["plutil", ["-convert", "xml1", "-o", "-", "--", path]]]
+        ? [["plutil", ["-convert", "xml1", "-o", "-", "--", operand]]]
         : []),
     ];
     expect(commands.mock.calls.map(([tool, args]) => [tool, args])).toEqual(
@@ -498,4 +518,57 @@ it("preserves a failed app plist read and its cleanup when the executable change
   expect(closeAttempts).toBe(2);
   expect(result.error.cleanupIncomplete).toBe(false);
   expect(resolvedAnalysisError(result.error).cause).toBe(primary);
+});
+
+it("retains the completed plist and exact cancellation until the private source is removed", async () => {
+  const root = await createTestTempDirectory("rea-plist-operand-cleanup-");
+  const path = join(root, "selected.plist");
+  const workspace = join(root, "owned");
+  const source = "<plist><string>value</string></plist>";
+  await writeFile(path, source);
+  await mkdir(workspace, { mode: 0o700 });
+  const controller = new AbortController();
+  const reason = new Error("cancelled during private source cleanup");
+  let attempts = 0;
+  const provider = new NativeMacOSProvider(
+    {},
+    new NativeFixtureRunner(),
+    "darwin",
+    undefined,
+    async () => ({
+      path: workspace,
+      async close() {
+        if (++attempts === 1) {
+          controller.abort(reason);
+          throw new Error("controlled private source removal failure");
+        }
+        await rm(workspace, { recursive: true });
+      },
+    }),
+  );
+  const client = provider.createClient(nativeMachoTarget(join(root, "target")));
+  onTestFinished(async () => {
+    await client.close();
+  });
+  const result = await client.execute(
+    "inspect_plist",
+    { path },
+    {
+      signal: controller.signal,
+    },
+  );
+  if (result.ok) throw new Error("Expected cancellation with retained cleanup");
+  expect(result.error.cleanupIncomplete).toBe(true);
+  expect(result.error.cleanupResources).toEqual([workspace]);
+  expect(result.error.partialObservation).toMatchObject({
+    source_path: path,
+    source_sha256: createHash("sha256").update(source).digest("hex"),
+    value: "value",
+  });
+  expect(await readFile(join(workspace, "source.plist"), "utf8")).toBe(source);
+  expect((await client.close()).ok).toBe(true);
+  expect(attempts).toBe(2);
+  expect(result.error.cleanupIncomplete).toBe(false);
+  expect(resolvedAnalysisError(result.error).cause).toBe(reason);
+  await expect(access(workspace)).rejects.toMatchObject({ code: "ENOENT" });
 });

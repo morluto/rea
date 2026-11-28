@@ -24,28 +24,24 @@ import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
 it("waits for admitted operations and shares concurrent close", async () => {
   const scope = new ArtifactResourceScope();
   const admitted = phaseGate();
+  const order: string[] = [];
   const operation = scope.run(async () => {
     await admitted.hold();
+    order.push("operation finished");
+  });
+  scope.addCloseHook(async () => {
+    order.push("scope closed");
   });
   try {
     await admitted.reached(operation, "scope admission");
-    const close = scope.close();
-    expect(scope.close()).toBe(close);
+    const close = Promise.all([scope.close(), scope.close()]);
     await expect(scope.run(async () => undefined)).rejects.toMatchObject({
       reason: "unavailable",
       message: expect.stringContaining("closed"),
     });
-    let closed = false;
-    void close.then(() => {
-      closed = true;
-    });
-    await Promise.resolve();
-    expect(closed).toBe(false);
-
     admitted.release();
-    await operation;
-    await close;
-    expect(closed).toBe(true);
+    await Promise.all([operation, close]);
+    expect(order).toEqual(["operation finished", "scope closed"]);
   } finally {
     admitted.release();
     try {
@@ -53,6 +49,51 @@ it("waits for admitted operations and shares concurrent close", async () => {
     } finally {
       await scope.close();
     }
+  }
+});
+
+it("does not report an owner released during drain after that drain attempt failed", async () => {
+  const scope = new ArtifactResourceScope();
+  let owner1Attempt = 0;
+  const owner1Failure = new Error("owner-1 still busy");
+  const owner1 = {
+    kind: "lease" as const,
+    resource: "owner-1",
+    lease: {
+      async release() {
+        owner1Attempt += 1;
+        if (owner1Attempt < 3) throw owner1Failure;
+      },
+    },
+  };
+  const owner2Gate = phaseGate();
+  const owner2 = {
+    kind: "lease" as const,
+    resource: "owner-2",
+    lease: {
+      async release() {
+        await owner2Gate.hold();
+      },
+    },
+  };
+  expect(await scope.release(owner1)).toMatchObject({
+    kind: "failed",
+    cause: owner1Failure,
+  });
+  scope.retain(owner2);
+
+  const closing = scope.close();
+  try {
+    await owner2Gate.reached(closing, "drain owner2");
+    expect(owner1Attempt).toBe(2);
+    expect(await scope.release(owner1)).toEqual({ kind: "released" });
+    expect(owner1Attempt).toBe(3);
+    owner2Gate.release();
+    await expect(closing).resolves.toBeUndefined();
+    expect(scope.cleanupResources).toEqual([]);
+  } finally {
+    owner2Gate.release();
+    await closing;
   }
 });
 
@@ -108,37 +149,6 @@ it("stops a close hook even when retained cleanup is still failing", async () =>
   expect(hookRuns).toBe(2);
 });
 
-it("runs later close hooks when an earlier hook fails", async () => {
-  const scope = new ArtifactResourceScope();
-  const order: string[] = [];
-  scope.addCloseHook(async () => {
-    order.push("first");
-    throw new Error("first hook failed");
-  });
-  scope.addCloseHook(async () => {
-    order.push("second");
-    throw new Error("second hook failed");
-  });
-
-  const failure = await scope.close().then(
-    () => {
-      throw new Error("close succeeded while hooks failed");
-    },
-    (cause: unknown) => cause,
-  );
-  expect(order).toEqual(["first", "second"]);
-  expect(failure).toBeInstanceOf(AggregateError);
-  expect(
-    (failure as AggregateError).errors.map((error) =>
-      error instanceof Error ? error.message : String(error),
-    ),
-  ).toEqual(["first hook failed", "second hook failed"]);
-
-  order.length = 0;
-  await expect(scope.close()).rejects.toBeInstanceOf(AggregateError);
-  expect(order).toEqual(["first", "second"]);
-});
-
 it("rejects a close hook's undefined reason and retries through the same scope", async () => {
   const scope = new ArtifactResourceScope();
   let denied = true;
@@ -189,7 +199,7 @@ it.each([
   }
 });
 
-it("preserves undefined alongside other close hook failures", async () => {
+it("runs and retries all close hooks in order, preserving their exact failures", async () => {
   const scope = new ArtifactResourceScope();
   const failure = new Error("third hook failed");
   const reasons = [undefined, null, failure];
@@ -202,16 +212,15 @@ it("preserves undefined alongside other close hook failures", async () => {
     });
 
   try {
-    const outcome = await scope.close().then(
-      () => ok(undefined),
-      (error: unknown) => err(error),
-    );
-    expect(outcome.ok).toBe(false);
-    if (outcome.ok || !(outcome.error instanceof AggregateError))
+    const failure = await scope.close().catch((cause: unknown) => cause);
+    if (!(failure instanceof AggregateError))
       throw new Error("Expected all hook failures");
-    expect(outcome.error.errors).toEqual(reasons);
-    expect(outcome.error.errors[2]).toBe(failure);
-    expect(attempted).toEqual(reasons);
+    expect(failure.errors).toStrictEqual(reasons);
+    expect(failure.errors[2]).toBe(reasons[2]);
+    expect(attempted).toStrictEqual(reasons);
+
+    await expect(scope.close()).rejects.toMatchObject({ errors: reasons });
+    expect(attempted).toStrictEqual([...reasons, ...reasons]);
   } finally {
     denied = false;
     await scope.close();
@@ -469,7 +478,11 @@ it("binds initial mixed cleanup to only its unresolved owners", async () => {
       throw new Error("Expected owned cleanup failures");
     const initial = scope.cleanupFailure({ kind: "completed" }, [a, b]);
     expect(initial.cleanupLeases).toEqual([a.lease, b.lease]);
-    const error = translateArtifactFailure("inventory_artifact", initial);
+    const error = translateArtifactFailure(
+      "inventory_artifact",
+      "/selected/artifact",
+      initial,
+    );
     denyFirst = false;
     const retry = await scope.retryCleanup().catch((cause: unknown) => cause);
     expect(retry).toBeInstanceOf(ArtifactResourceRetryFailure);
@@ -514,7 +527,11 @@ it.each(["owned-close", "independent-primary"] as const)(
           ? { kind: "completed" as const }
           : { kind: "failed" as const, cause: unknown };
       const initial = scope.cleanupFailure(outcome, [attempt]);
-      const error = translateArtifactFailure("inventory_artifact", initial);
+      const error = translateArtifactFailure(
+        "inventory_artifact",
+        "/selected/artifact",
+        initial,
+      );
       expect(error.cleanupIncomplete).toBe(true);
       denied = false;
       await scope.close();
@@ -557,7 +574,11 @@ it.each([undefined, null, { reason: "opaque reason" }])(
       ]);
       expect(initial.reason).toBe("cancelled");
       expect(initial.cancellation?.reason).toBe(reason);
-      const error = translateArtifactFailure("inventory_artifact", initial);
+      const error = translateArtifactFailure(
+        "inventory_artifact",
+        "/selected/artifact",
+        initial,
+      );
       expect(error.cause).toBe(reason);
       denied = false;
       await scope.close();
@@ -591,7 +612,11 @@ it("does not clear independent domain cleanup when a new scope owner releases", 
     const initial = scope.cleanupFailure({ kind: "failed", cause: primary }, [
       attempt,
     ]);
-    const error = translateArtifactFailure("inventory_artifact", initial);
+    const error = translateArtifactFailure(
+      "inventory_artifact",
+      "/selected/artifact",
+      initial,
+    );
     denied = false;
     await scope.close();
     expect(attempt.lease.released).toBe(true);
@@ -642,7 +667,11 @@ it.each(["completed", "failed"] as const)(
       ).catch((cause: unknown) => cause);
       if (!(failure instanceof ArtifactReaderFailure))
         throw new Error("Expected physical file failure");
-      const error = translateArtifactFailure("inventory_artifact", failure);
+      const error = translateArtifactFailure(
+        "inventory_artifact",
+        "/selected/artifact",
+        failure,
+      );
       expect(error.cleanupIncomplete).toBe(true);
       denied = false;
       await scope.close();
@@ -685,6 +714,7 @@ it.each(["artifact", "domain"] as const)(
         throw new Error("Expected retained children");
       const error = translateArtifactFailure(
         "inventory_artifact",
+        "/selected/artifact",
         scope.cleanupFailure({ kind: "completed" }, [attempt]),
       );
       expect(error.cleanupResources).toEqual(children);

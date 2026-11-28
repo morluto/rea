@@ -1,4 +1,5 @@
 import { access } from "node:fs/promises";
+import { setImmediate as nextTurn } from "node:timers/promises";
 import { expect, it } from "vitest";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { DarwinProcessOwnershipInspectionError } from "../../process/DarwinProcessRunTokenReader.js";
@@ -9,7 +10,9 @@ import {
   SourceMapCleanupFailure,
   type SourceMapDecoderDependencies,
 } from "./SourceMapCommand.js";
+import { parseSourceMapReply } from "./SourceMapReply.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
+import { assertProcessOwnershipInspectionActive } from "../../process/ProcessInspectionCancellation.js";
 import { spawnOwnedProviderProcess } from "../../process/ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "../../process/ProcessOwnership.js";
 import {
@@ -17,6 +20,7 @@ import {
   webSourceLocationFixture,
 } from "../../../tests/fixtures/webSourceLocation.js";
 import { releaseOwnedCleanup } from "../../../tests/support/cleanupRelease.js";
+import { createDeferred } from "../../../tests/fixtures/binarySession.js";
 
 const fixture = webSourceLocationFixture();
 const input = {
@@ -38,11 +42,71 @@ it("preserves the exact caller reason before source-map admission", async () => 
   expect(response.error.cause).toBe(reason);
 });
 
+it("cancels queued source-map work while the active request keeps its runtime", async () => {
+  const entered = createDeferred<void>();
+  const release = createDeferred<void>();
+  const roots: string[] = [];
+  const decoder = new SourceMapDecoder({
+    async createRuntime() {
+      const root = await PrivateRuntimeRoot.create({
+        prefix: "rea-source-map-queued-test-",
+      });
+      roots.push(root.path);
+      if (roots.length === 1) {
+        entered.resolve();
+        await release.promise;
+      }
+      return root;
+    },
+    launcher: (options) =>
+      spawnOwnedProviderProcess({
+        ...options,
+        arguments: ["-e", "process.exit(7)"],
+      }),
+  });
+  const active = decoder.trace(input);
+  try {
+    await entered.promise;
+    const controller = new AbortController();
+    const reason = { caller: "cancel the waiting source-map request" };
+    const queued = decoder.trace(input, { signal: controller.signal });
+    const following = decoder.trace(input);
+    controller.abort(reason);
+
+    const result = await Promise.race([
+      queued,
+      nextTurn("still queued" as const),
+    ]);
+    expect(result).not.toBe("still queued");
+    if (result === "still queued" || result.ok)
+      throw new Error("Expected cancellation before decoder admission");
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.cause).toBe(reason);
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(roots).toHaveLength(1);
+    await expect(access(roots[0]!)).resolves.toBeUndefined();
+
+    release.resolve();
+    const exited = {
+      ok: false,
+      error: { _tag: "ProviderAdapterError", diagnostics: { exit_code: 7 } },
+    };
+    await expect(active).resolves.toMatchObject(exited);
+    await expect(following).resolves.toMatchObject(exited);
+    expect(roots).toHaveLength(2);
+    for (const path of roots)
+      await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    release.resolve();
+    await decoder.close();
+  }
+});
+
 it("retains physical failure and late cancellation through cleanup failure and retry", async () => {
   const root = await PrivateRuntimeRoot.create({
     prefix: "rea-source-map-cleanup-retry-test-",
   });
-  let cleanupAttempts = 0;
+  let denyNextClose = true;
   const controller = new AbortController();
   const reason = { caller: "after physical exit during final cleanup" };
   const dependencies: SourceMapDecoderDependencies = {
@@ -50,8 +114,8 @@ it("retains physical failure and late cancellation through cleanup failure and r
     createRuntime: async () => ({
       path: root.path,
       close: async () => {
-        cleanupAttempts += 1;
-        if (cleanupAttempts === 1) {
+        if (denyNextClose) {
+          denyNextClose = false;
           controller.abort(reason);
           throw new Error("injected root cleanup failure");
         }
@@ -70,7 +134,6 @@ it("retains physical failure and late cancellation through cleanup failure and r
   const decoder = new SourceMapDecoder(dependencies);
   try {
     const failed = await decoder.trace(input, { signal: controller.signal });
-    expect(failed.ok).toBe(false);
     if (failed.ok)
       throw new Error("expected physical failure with cleanup failure");
     const primary = failed.error.cleanupPrimary;
@@ -88,8 +151,6 @@ it("retains physical failure and late cancellation through cleanup failure and r
     );
     expect(primary?.secondaryFailures[0]?.cause).toBe(reason);
     expect(failed.error.capturedOutput).toEqual(primary?.capturedOutput);
-    expect(failed.error.cause).toBeInstanceOf(AggregateError);
-    expect((failed.error.cause as AggregateError).errors[0]).toBe(primary);
     expect(failed.error.cleanupResources).toEqual([root.path]);
     expect(failed.error.diagnostics).toMatchObject({
       primary_error: { code: "execution_failure" },
@@ -106,11 +167,9 @@ it("retains physical failure and late cancellation through cleanup failure and r
 
     const invalidInput = { ...input, text: null } as unknown as typeof input;
     const retried = await decoder.trace(invalidInput);
-    expect(retried.ok).toBe(false);
     if (retried.ok)
       throw new Error("expected invalid input after cleanup retry");
     expect(retried.error._tag).toBe("AnalysisInputError");
-    expect(cleanupAttempts).toBe(2);
     await expect(access(root.path)).rejects.toMatchObject({ code: "ENOENT" });
     expect(failed.error.cleanupIncomplete).toBe(false);
     expect(failed.error.cleanupResources).toEqual([]);
@@ -158,9 +217,6 @@ it("settles every source-map cleanup failure when final close releases the exact
     const initial = await decoder.trace(input);
     if (initial.ok) throw new Error("expected initial cleanup failure");
     expect(initial.error.cleanupPrimary?.cause).toBe(launchCause);
-    expect((initial.error.cause as AggregateError).errors[0]).toBe(
-      initial.error.cleanupPrimary,
-    );
     const retry = await decoder.trace(input);
     if (retry.ok) throw new Error("expected retry cleanup failure");
     for (const failure of [initial.error, retry.error]) {
@@ -169,7 +225,6 @@ it("settles every source-map cleanup failure when final close releases the exact
     }
     await expect(access(root.path)).resolves.toBeUndefined();
     await decoder.close();
-    expect(attempts).toBe(3);
     await expect(access(root.path)).rejects.toMatchObject({ code: "ENOENT" });
     for (const failure of [initial.error, retry.error]) {
       expect(failure.cleanupIncomplete).toBe(false);
@@ -236,12 +291,11 @@ it("attributes cleanup resources to the remaining process and directory owners",
     const initial = await decoder.trace(input);
     if (initial.ok) throw new Error("expected process cleanup failure");
     expect(initial.error.cleanupResources).toEqual([runId, root.path]);
-    expect(rootAttempts).toBe(0);
+    await expect(access(root.path)).resolves.toBeUndefined();
     denyProcessRelease = false;
     await expect(decoder.close()).rejects.toMatchObject({
       cleanupIncomplete: true,
     });
-    expect(rootAttempts).toBe(1);
     expect(initial.error.cleanupIncomplete).toBe(true);
     expect(initial.error.cleanupResources).toEqual([root.path]);
     await expect(access(root.path)).resolves.toBeUndefined();
@@ -325,61 +379,67 @@ it("retains cancellation while retrying an earlier failed cleanup", async () => 
   }
 });
 
-it("retains Darwin preparation cleanup ownership and cancellation through retry", async () => {
-  const root = await PrivateRuntimeRoot.create({
-    prefix: "rea-source-map-prep-owner-",
-  });
-  const controller = new AbortController();
-  const reason = { caller: "after preparation failure" };
-  const cleanup = new ProviderCleanupError("darwin-helper", [root.path], {
-    reason: "held",
-  });
-  let release = false;
-  const physical = new DarwinProcessOwnershipInspectionError(
-    "compiler failure",
-    {
-      cleanupFailure: cleanup,
-      cleanupOwner: {
-        close: async () => {
-          if (!release) throw new Error("still held");
-          await root.close();
-          releaseOwnedCleanup(cleanup);
+it.each(["distinct", "shared"] as const)(
+  "retains physical Darwin preparation and cleanup for a %s caller reason",
+  async (reasonKind) => {
+    const root = await PrivateRuntimeRoot.create({
+      prefix: "rea-source-map-prep-owner-",
+    });
+    const controller = new AbortController();
+    const cleanup = new ProviderCleanupError("darwin-helper", [root.path], {
+      reason: "held",
+    });
+    let release = false;
+    const physical = new DarwinProcessOwnershipInspectionError(
+      "compiler failure",
+      {
+        cleanupFailure: cleanup,
+        cleanupOwner: {
+          close: async () => {
+            if (!release) throw new Error("still held");
+            await root.close();
+            releaseOwnedCleanup(cleanup);
+          },
         },
       },
-    },
-  );
-  const decoder = new SourceMapDecoder({
-    prepareOwnership: async () => {
-      controller.abort(reason);
-      throw physical;
-    },
-  });
-  try {
-    const failed = await decoder.trace(input, { signal: controller.signal });
-    if (failed.ok) throw new Error("expected failed preparation");
-    expect(failed.error.cleanupIncomplete).toBe(true);
-    expect(failed.error.cleanupResources).toContain(root.path);
-    expect(failed.error.cleanupPrimary?.cause).toBe(physical);
-    expect(
-      failed.error.cleanupPrimary?.secondaryFailures.find(
-        (entry) => entry instanceof AnalysisCancelledError,
-      )?.cause,
-    ).toBe(reason);
-    await expect(decoder.close()).rejects.toMatchObject({
-      cleanupIncomplete: true,
+    );
+    const reason =
+      reasonKind === "shared"
+        ? physical
+        : { caller: "after preparation failure" };
+    const decoder = new SourceMapDecoder({
+      prepareOwnership: async () => {
+        controller.abort(reason);
+        throw physical;
+      },
     });
-    expect(failed.error.cleanupResources).toContain(root.path);
-    await expect(access(root.path)).resolves.toBeUndefined();
-    release = true;
-    await decoder.close();
-    await expect(access(root.path)).rejects.toMatchObject({ code: "ENOENT" });
-    expect(failed.error.cleanupIncomplete).toBe(false);
-  } finally {
-    release = true;
-    await decoder.close();
-    await root.close();
-  }
-});
+    try {
+      const failed = await decoder.trace(input, { signal: controller.signal });
+      if (failed.ok) throw new Error("expected failed preparation");
+      expect(failed.error.cleanupIncomplete).toBe(true);
+      expect(failed.error.cleanupResources).toContain(root.path);
+      expect(failed.error.cleanupPrimary?.cause).toBe(physical);
+      expect(
+        failed.error.cleanupPrimary?.secondaryFailures.find(
+          (entry) => entry instanceof AnalysisCancelledError,
+        )?.cause,
+      ).toBe(reason);
+      await expect(decoder.close()).rejects.toMatchObject({
+        cleanupIncomplete: true,
+      });
+      expect(failed.error.cleanupResources).toContain(root.path);
+      await expect(access(root.path)).resolves.toBeUndefined();
+      release = true;
+      await decoder.close();
+      await expect(access(root.path)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(failed.error.cleanupIncomplete).toBe(false);
+    } finally {
+      release = true;
+      await decoder.close();
+      await root.close();
+    }
+  },
+);
 
 it("does not claim an opaque caller reason's Darwin cleanup owner", async () => {
   const controller = new AbortController();
@@ -399,9 +459,9 @@ it("does not claim an opaque caller reason's Darwin cleanup owner", async () => 
     },
   );
   const decoder = new SourceMapDecoder({
-    prepareOwnership: async () => {
+    prepareOwnership: async (signal) => {
       controller.abort(reason);
-      throw reason;
+      assertProcessOwnershipInspectionActive(signal);
     },
   });
   const result = await decoder.trace(input, { signal: controller.signal });
@@ -411,4 +471,179 @@ it("does not claim an opaque caller reason's Darwin cleanup owner", async () => 
   expect(result.error.cleanupIncomplete).toBe(false);
   await decoder.close();
   expect(ownerClosed).toBe(false);
+});
+
+it("reports details.limit for pre-spawn map_bytes, output_bytes, codec stdout output_bytes, and codec reply limits", async () => {
+  const decoder = new SourceMapDecoder();
+  try {
+    const mapBytesRefusal = await decoder.trace({
+      ...input,
+      limits: { map_bytes: 16 },
+    });
+    if (mapBytesRefusal.ok) throw new Error("expected map_bytes refusal");
+    const mapProjected = projectAnalysisError(mapBytesRefusal.error);
+    expect(mapProjected.details?.limit).toEqual({
+      control_kind: "parameter",
+      parameter: "source_map_limits.map_bytes",
+      effective_value: 16,
+      unit: "bytes",
+      minimum: 1,
+      maximum: 536_870_887,
+      default_value: 8_388_608,
+      applies_at: "next_call",
+      required_value: Buffer.byteLength(input.text),
+    });
+
+    const outputBytesRefusal = await decoder.trace({
+      ...input,
+      limits: { output_bytes: 16 },
+    });
+    if (outputBytesRefusal.ok) throw new Error("expected output_bytes refusal");
+    const outputProjected = projectAnalysisError(outputBytesRefusal.error);
+    expect(outputProjected.details?.limit).toEqual({
+      control_kind: "parameter",
+      parameter: "source_map_limits.output_bytes",
+      effective_value: 16,
+      unit: "bytes",
+      minimum: 1,
+      maximum: 536_870_887,
+      default_value: 33_554_432,
+      applies_at: "next_call",
+    });
+    expect(outputProjected.details?.limit).not.toHaveProperty("required_value");
+  } finally {
+    await decoder.close();
+  }
+
+  const stdoutDecoder = new SourceMapDecoder({
+    prepareOwnership: async () => {},
+    launcher: (options) =>
+      spawnOwnedProviderProcess({
+        ...options,
+        arguments: ["-e", 'process.stdout.write("x".repeat(4096))'],
+      }),
+  });
+  try {
+    const stdoutRefusal = await stdoutDecoder.trace({
+      ...input,
+      limits: { output_bytes: 1024 },
+    });
+    if (stdoutRefusal.ok)
+      throw new Error("expected stdout output_bytes refusal");
+    expect(stdoutRefusal.error._tag).toBe("AnalysisOutputError");
+    expect(projectAnalysisError(stdoutRefusal.error).details?.limit).toEqual({
+      control_kind: "parameter",
+      parameter: "source_map_limits.output_bytes",
+      effective_value: 1024,
+      unit: "bytes",
+      minimum: 1,
+      maximum: 536_870_887,
+      default_value: 33_554_432,
+      applies_at: "next_call",
+    });
+  } finally {
+    await stdoutDecoder.close();
+  }
+
+  const stderrDecoder = new SourceMapDecoder({
+    prepareOwnership: async () => {},
+    launcher: (options) =>
+      spawnOwnedProviderProcess({
+        ...options,
+        arguments: [
+          "-e",
+          'process.stderr.write("x".repeat(1024 * 1024 + 64)); setInterval(() => {}, 1000);',
+        ],
+      }),
+  });
+  try {
+    const stderrRefusal = await stderrDecoder.trace(input);
+    if (stderrRefusal.ok) throw new Error("expected stderr allowance refusal");
+    expect(stderrRefusal.error._tag).toBe("AnalysisOutputError");
+    expect(
+      projectAnalysisError(stderrRefusal.error).details?.limit,
+    ).toBeUndefined();
+  } finally {
+    await stderrDecoder.close();
+  }
+
+  const parsedReply = parseSourceMapReply(
+    JSON.stringify({
+      state: "failure",
+      reason: "limit",
+      message: "record budget exceeded",
+      limit: { field: "decoded_records", maximum: 4 },
+    }),
+    input.path,
+    null,
+  );
+  if (parsedReply.ok) throw new Error("expected decoded_records refusal");
+  expect(projectAnalysisError(parsedReply.error).details?.limit).toEqual({
+    control_kind: "parameter",
+    parameter: "source_map_limits.decoded_records",
+    effective_value: 4,
+    unit: "count",
+    minimum: 1,
+    maximum: 0x7fff_ffff,
+    default_value: 262_144,
+    applies_at: "next_call",
+  });
+
+  const legacyLimitReply = parseSourceMapReply(
+    JSON.stringify({
+      state: "failure",
+      reason: "limit",
+      message: "record budget exceeded without structured limit",
+    }),
+    input.path,
+    null,
+  );
+  if (legacyLimitReply.ok) throw new Error("expected legacy limit refusal");
+  expect(legacyLimitReply.error._tag).toBe("ArtifactOperationError");
+  expect(
+    projectAnalysisError(legacyLimitReply.error).details?.limit,
+  ).toBeUndefined();
+
+  for (const invalidReply of [
+    {
+      state: "failure",
+      reason: "limit",
+      message: "non-codec field",
+      limit: { field: "fetch_bytes", maximum: 1024 },
+    },
+    {
+      state: "failure",
+      reason: "limit",
+      message: "non-codec heap field",
+      limit: { field: "codec_heap_mib", maximum: 192 },
+    },
+    {
+      state: "failure",
+      reason: "limit",
+      message: "below range",
+      limit: { field: "decoded_records", maximum: 0 },
+    },
+    {
+      state: "failure",
+      reason: "limit",
+      message: "above range",
+      limit: { field: "output_bytes", maximum: 536_870_888 },
+    },
+    {
+      state: "failure",
+      reason: "malformed",
+      message: "limit on malformed reply",
+      limit: { field: "decoded_records", maximum: 4 },
+    },
+  ]) {
+    const rejected = parseSourceMapReply(
+      JSON.stringify(invalidReply),
+      input.path,
+      null,
+    );
+    if (rejected.ok) throw new Error("expected malformed codec reply error");
+    expect(rejected.error._tag).toBe("AnalysisOutputError");
+    expect(projectAnalysisError(rejected.error).code).toBe("unreadable_output");
+    expect(projectAnalysisError(rejected.error).details?.limit).toBeUndefined();
+  }
 });

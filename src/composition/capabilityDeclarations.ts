@@ -1,4 +1,5 @@
 // oxlint-disable max-lines -- Keep the exhaustive static provenance bindings together; this table has no execution or host-availability logic.
+import { UEFI_PROVIDER_IDENTITY } from "../uefi/UefiProviderIdentity.js";
 import type { ProviderIdentity } from "../ports/AnalysisProvider.js";
 import type {
   TOOL_CONTRACTS,
@@ -6,6 +7,7 @@ import type {
 } from "../contracts/toolContracts.js";
 import { ADB_PROVIDER_IDENTITY } from "../adb/AdbProviderIdentity.js";
 import { JADX_PROVIDER_IDENTITY } from "../android/JadxRelease.js";
+import { LABVIEW_PROVIDER_IDENTITY } from "../labview/LabviewProviderIdentity.js";
 import { APK_SIGNATURE_PROVIDER_IDENTITY } from "../apkSignature/ApkSignatureRelease.js";
 import { APKTOOL_PROVIDER_IDENTITY } from "../apktool/ApktoolProviderIdentity.js";
 import {
@@ -31,6 +33,9 @@ import {
   BINARY_HARDENING_PROVIDER,
   BYTE_ENTROPY_PROVIDER,
   DEVICETREE_PROVIDER,
+  DWARF_UNITS_PROVIDER,
+  ELF_DEBUG_LINK_PROVIDER,
+  ELF_DEPENDENCIES_PROVIDER,
   ELF_NOTES_PROVIDER,
   ELF_UNWIND_RANGES_PROVIDER,
   HARMONY_APPLICATION_PROVIDER,
@@ -39,6 +44,7 @@ import {
   JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER,
   KERNEL_BUILD_CONFIG_PROVIDER,
   KERNEL_MODULE_PROVIDER,
+  MACHO_FUNCTION_STARTS_PROVIDER,
   MANAGED_STATIC_PROVIDER,
   MANAGED_WORKFLOW_PROVIDER,
   NATIVE_EXPORTS_PROVIDER,
@@ -46,8 +52,12 @@ import {
   PE_CERTIFICATES_PROVIDER,
   PE_IMPORTS_PROVIDER,
   PE_LOAD_CONFIG_PROVIDER,
+  PE_UNWIND_RANGES_PROVIDER,
+  PE_OVERLAY_PROVIDER,
   PE_RESOURCES_PROVIDER,
   RELEASE_EXPOSURE_PROVIDER,
+  ESP_NVS_PROVIDER,
+  FIRMWARE_VECTOR_TABLE_PROVIDER,
   WEB_SCRIPT_EXPORT_PROVIDER,
   WINDOWS_SHORTCUT_PROVIDER,
 } from "../domain/investigationProviders.js";
@@ -59,6 +69,7 @@ import {
 import { ELECTRON_FUSE_PROVIDER_IDENTITY } from "../electron/ElectronFuseProviderIdentity.js";
 import { ERLANG_BEAM_PROVIDER_IDENTITY } from "../erlang/ErlangBeamProviderIdentity.js";
 import { V8_CODE_CACHE_PROVIDER_IDENTITY } from "../v8/V8CodeCacheProviderIdentity.js";
+import { MAVEN_GRADLE_METADATA_PROVIDER_IDENTITY } from "../java/MavenGradleMetadataProviderIdentity.js";
 import { EVMOLE_PROVIDER_IDENTITY } from "../evm/EvmoleProviderIdentity.js";
 import {
   BINWALK_PROVIDER_IDENTITY,
@@ -94,7 +105,12 @@ import { NATIVE_MACOS_PROVIDER_IDENTITY } from "../native/NativeMacosProviderIde
 import { PWNTOOLS_PROVIDER_IDENTITY } from "../native/pwntools/PwntoolsProviderIdentity.js";
 import { OBJDUMP_PROVIDER_IDENTITY } from "../objdump/ObjdumpProviderIdentity.js";
 import { PCAP_PROVIDER_IDENTITY } from "../pcap/PcapProviderIdentity.js";
+import { NUGET_NUPKG_PROVIDER_IDENTITY } from "../nuget/NugetNupkgProviderIdentity.js";
+import { VSIX_PACKAGE_PROVIDER_IDENTITY } from "../vsix/VsixPackageProviderIdentity.js";
+import { OCI_IMAGE_LAYOUT_PROVIDER_IDENTITY } from "../oci/OciImageLayoutProviderIdentity.js";
+import { YARA_PROVIDER_IDENTITY } from "../yara/YaraProviderIdentity.js";
 import { PYTHON_PYC_PROVIDER_IDENTITY } from "../python/PythonPycProviderIdentity.js";
+import { DEB_PACKAGE_PROVIDER_IDENTITY } from "../deb/DebPackageProviderIdentity.js";
 import { RIZIN_DEBUGGER_PROVIDER_IDENTITY } from "../rizin/RizinDebuggerProviderIdentity.js";
 import { RIZIN_PROVIDER_IDENTITY } from "../rizin/RizinProviderIdentity.js";
 import { RUST_BINARY_PROVIDER_IDENTITY } from "../rust/RustBinaryProviderIdentity.js";
@@ -239,6 +255,9 @@ export const CAPABILITY_DECLARATIONS = {
   devicetree: {
     providers: [providerBinding(DEVICETREE_PROVIDER, ["inspect_devicetree"])],
   },
+  dwarfUnits: {
+    providers: [providerBinding(DWARF_UNITS_PROVIDER, ["inspect_dwarf_units"])],
+  },
   electronActiveObservation: {
     providers: [
       providerBinding(PLAYWRIGHT_ELECTRON_ACTIVE_PROVIDER_IDENTITY, [
@@ -261,8 +280,18 @@ export const CAPABILITY_DECLARATIONS = {
       ]),
     ],
   },
+  elfDependencies: {
+    providers: [
+      providerBinding(ELF_DEPENDENCIES_PROVIDER, ["inspect_elf_dependencies"]),
+    ],
+  },
   elfNotes: {
     providers: [providerBinding(ELF_NOTES_PROVIDER, ["inspect_elf_notes"])],
+  },
+  elfDebugLink: {
+    providers: [
+      providerBinding(ELF_DEBUG_LINK_PROVIDER, ["inspect_elf_debug_link"]),
+    ],
   },
   nativeInitializers: {
     providers: [
@@ -296,6 +325,21 @@ export const CAPABILITY_DECLARATIONS = {
     providers: [
       providerBinding(BINWALK_PROVIDER_IDENTITY, ["inspect_firmware_regions"]),
       providerBinding(UNBLOB_PROVIDER_IDENTITY, ["extract_firmware"]),
+    ],
+  },
+  espNvs: {
+    providers: [providerBinding(ESP_NVS_PROVIDER, ["inspect_esp_nvs"])],
+  },
+  firmwareVectorTable: {
+    providers: [
+      providerBinding(FIRMWARE_VECTOR_TABLE_PROVIDER, [
+        "inspect_firmware_vector_table",
+      ]),
+    ],
+  },
+  uefiAnalysis: {
+    providers: [
+      providerBinding(UEFI_PROVIDER_IDENTITY, { group: "UEFI_TOOL_CONTRACTS" }),
     ],
   },
   flutter: {
@@ -402,6 +446,13 @@ export const CAPABILITY_DECLARATIONS = {
   kuna: {
     providers: [providerBinding(KUNA_PROVIDER_IDENTITY, KUNA_OPERATIONS)],
   },
+  machoFunctionStarts: {
+    providers: [
+      providerBinding(MACHO_FUNCTION_STARTS_PROVIDER, [
+        "inspect_macho_function_starts",
+      ]),
+    ],
+  },
   managedStatic: {
     providers: [
       providerBinding(MANAGED_STATIC_PROVIDER, {
@@ -460,6 +511,14 @@ export const CAPABILITY_DECLARATIONS = {
       providerBinding(PE_LOAD_CONFIG_PROVIDER, ["inspect_pe_load_config"]),
     ],
   },
+  peUnwindRanges: {
+    providers: [
+      providerBinding(PE_UNWIND_RANGES_PROVIDER, ["inspect_pe_unwind_ranges"]),
+    ],
+  },
+  peOverlay: {
+    providers: [providerBinding(PE_OVERLAY_PROVIDER, ["inspect_pe_overlay"])],
+  },
   binaryHardening: {
     providers: [
       providerBinding(BINARY_HARDENING_PROVIDER, ["inspect_binary_hardening"]),
@@ -468,6 +527,11 @@ export const CAPABILITY_DECLARATIONS = {
   peResources: {
     providers: [
       providerBinding(PE_RESOURCES_PROVIDER, ["inspect_pe_resources"]),
+    ],
+  },
+  labviewArtifact: {
+    providers: [
+      providerBinding(LABVIEW_PROVIDER_IDENTITY, ["inspect_labview_artifact"]),
     ],
   },
   windowsShortcut: {
@@ -482,6 +546,41 @@ export const CAPABILITY_DECLARATIONS = {
       }),
     ],
   },
+  debPackage: {
+    providers: [
+      providerBinding(DEB_PACKAGE_PROVIDER_IDENTITY, {
+        group: "DEB_PACKAGE_TOOL_CONTRACTS",
+      }),
+    ],
+  },
+  nugetNupkg: {
+    providers: [
+      providerBinding(NUGET_NUPKG_PROVIDER_IDENTITY, {
+        group: "NUGET_NUPKG_TOOL_CONTRACTS",
+      }),
+    ],
+  },
+  vsixPackage: {
+    providers: [
+      providerBinding(VSIX_PACKAGE_PROVIDER_IDENTITY, {
+        group: "VSIX_PACKAGE_TOOL_CONTRACTS",
+      }),
+    ],
+  },
+  ociImageLayout: {
+    providers: [
+      providerBinding(OCI_IMAGE_LAYOUT_PROVIDER_IDENTITY, {
+        group: "OCI_IMAGE_LAYOUT_TOOL_CONTRACTS",
+      }),
+    ],
+  },
+  yaraMatches: {
+    providers: [
+      providerBinding(YARA_PROVIDER_IDENTITY, {
+        group: "YARA_TOOL_CONTRACTS",
+      }),
+    ],
+  },
   releaseExposure: {
     providers: [
       providerBinding(RELEASE_EXPOSURE_PROVIDER, {
@@ -493,6 +592,13 @@ export const CAPABILITY_DECLARATIONS = {
     providers: [
       providerBinding(V8_CODE_CACHE_PROVIDER_IDENTITY, {
         group: "V8_CODE_CACHE_TOOL_CONTRACTS",
+      }),
+    ],
+  },
+  mavenGradleMetadata: {
+    providers: [
+      providerBinding(MAVEN_GRADLE_METADATA_PROVIDER_IDENTITY, {
+        group: "MAVEN_GRADLE_METADATA_TOOL_CONTRACTS",
       }),
     ],
   },

@@ -16,7 +16,6 @@ import {
 } from "../domain/analysisErrorProjection.js";
 import {
   AnalysisError,
-  type AnalysisCapturedOutput,
   type AnalysisErrorOptions,
 } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -29,7 +28,6 @@ import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
-import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
 import type { ProviderOutcome } from "../process/ProviderOutcome.js";
 import type { ProviderOutcomeContext } from "../process/classifyProviderOutcome.js";
 import { DEFAULT_SQLITE_WORKER_TIMEOUT_MS } from "../domain/sqlite/sqliteDatabase.js";

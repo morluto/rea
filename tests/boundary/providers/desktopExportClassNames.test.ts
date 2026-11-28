@@ -42,12 +42,20 @@ const plan: DesktopAppExportPlan = {
   captureEvidenceId: "fixture",
 };
 
-it("reserves FileExistsError while preserving the accepted environment name", () => {
-  const name = environmentName("file-exists-error", () => true);
-  expect(name).toBe("file-exists-error");
-  expect(className(name)).toBe("FileExistsErrorApp");
+it.each([
+  ["base-exception", "BaseExceptionApp", "base_exception_app.py"],
+  ["file-exists-error", "FileExistsErrorApp", "file_exists_error_app.py"],
+  [
+    "file-not-found-error",
+    "FileNotFoundErrorApp",
+    "file_not_found_error_app.py",
+  ],
+])("reserves the Python exception behind %s", (input, expected, module) => {
+  const name = environmentName(input, () => true);
+  expect(name).toBe(input);
+  expect(className(name)).toBe(expected);
   expect(renderEnvToml({ name, className: className(name) })).toContain(
-    'module = "file_exists_error_app.py:FileExistsErrorApp"',
+    `module = "${module}:${expected}"`,
   );
 });
 

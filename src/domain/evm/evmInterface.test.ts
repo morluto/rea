@@ -1,6 +1,16 @@
 import { expect, it } from "vitest";
-import { evmInterfaceSchema } from "./evmInterface.js";
+import {
+  evmInterfaceSchema,
+  selectedEvmProducerLimits,
+} from "./evmInterface.js";
 import { evmInterfaceFixture } from "../../../tests/fixtures/evm/interface.js";
+
+it("defaults the file limit to the selected reply budget until explicitly overridden", () => {
+  expect(selectedEvmProducerLimits({ output_bytes: 64 }).file_bytes).toBe(64);
+  expect(
+    selectedEvmProducerLimits({ output_bytes: 64, file_bytes: 128 }).file_bytes,
+  ).toBe(128);
+});
 
 it("accepts historical metadata omission as an unknown facet without changing the source", () => {
   const value = evmInterfaceFixture();

@@ -5,21 +5,12 @@ import { z } from "zod";
 import { expect, it } from "vitest";
 
 import { createCli } from "../../../src/cli.js";
+import { serveInProcessCli } from "../../support/cli/serveInProcessCli.js";
 
 type CliInstance = ReturnType<typeof createCli>;
 
 const serve = async (cli: CliInstance, argv: readonly string[]) => {
-  let stdout = "";
-  let exitCode = 0;
-  await cli.serve([...argv], {
-    env: {},
-    exit: (code) => {
-      exitCode = code;
-    },
-    stdout: (text) => {
-      stdout += text;
-    },
-  });
+  const { stdout, exitCode } = await serveInProcessCli(cli, argv);
   expect(exitCode, argv.join(" ")).toBe(0);
   return z
     .object({
@@ -261,14 +252,7 @@ it("rejects invalid selected paths before inspecting a target", async () => {
     ],
     [["import-reference-source", ""], "root", "too_small"],
   ] as const) {
-    let stdout = "";
-    await cli.serve([...args, "--json"], {
-      env: {},
-      exit: () => {},
-      stdout: (text) => {
-        stdout += text;
-      },
-    });
+    const { stdout } = await serveInProcessCli(cli, [...args, "--json"]);
     expect(JSON.parse(stdout), args.join(" ")).toMatchObject({
       code: "VALIDATION_ERROR",
       fieldErrors: [{ path: field, code }],

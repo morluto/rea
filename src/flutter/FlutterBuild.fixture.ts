@@ -4,12 +4,16 @@ import { Buffer } from "node:buffer";
 export const REFERENCE_HASH = "65817c30a78bb44c3dc3771876b6010a";
 
 /** A synthetic AOT image with four symbols, two data sections, and a pool. */
-export const aotFixtureImage = (hash: string = REFERENCE_HASH): Buffer => {
+export const aotFixtureImage = (
+  hash: string = REFERENCE_HASH,
+  additionalSymbols: Parameters<typeof buildElf64Image>[0] = [],
+): Buffer => {
   const elf = buildElf64Image([
     { name: "_kDartVmSnapshotData", value: 0x1000, size: 52 },
     { name: "_kDartVmSnapshotInstructions", value: 0x1800, size: 16 },
     { name: "_kDartIsolateSnapshotData", value: 0x2000, size: 0x600 },
     { name: "_kDartIsolateSnapshotInstructions", value: 0x2600, size: 16 },
+    ...additionalSymbols,
   ]);
   const pool = Buffer.concat([
     Buffer.from(
@@ -38,8 +42,16 @@ export const aotFixtureImage = (hash: string = REFERENCE_HASH): Buffer => {
   ]);
 };
 
+interface FixtureElfSymbol {
+  readonly name: string;
+  readonly value: number;
+  readonly size: number;
+  readonly binding?: number;
+  readonly other?: number;
+}
+
 export const buildElf64Image = (
-  symbols: ReadonlyArray<{ name: string; value: number; size: number }>,
+  symbols: readonly FixtureElfSymbol[],
 ): Buffer => {
   const ELF_HEADER = 64;
   const PHENT = 56;
@@ -110,14 +122,15 @@ export const buildElf64Image = (
     image.writeBigUInt64LE(BigInt(symbol.value), base + 8);
     image.writeBigUInt64LE(BigInt(symbol.size), base + 16);
     image.writeUInt16LE(1, base + 6); // Defined export (not SHN_UNDEF).
-    image[base + 4] = 0x10; // GLOBAL FUNC
+    image[base + 4] = (symbol.binding ?? 1) << 4;
+    image[base + 5] = symbol.other ?? 0;
   });
   return image;
 };
 
 /** The ELF32 (ARM) counterpart of {@link buildElf64Image}, with the same layout roles. */
 export const buildElf32Image = (
-  symbols: ReadonlyArray<{ name: string; value: number; size: number }>,
+  symbols: readonly FixtureElfSymbol[],
 ): Buffer => {
   const ELF_HEADER = 52;
   const PHENT = 32;
@@ -165,7 +178,8 @@ export const buildElf32Image = (
     image.writeUInt32LE(strCursor - dynstrOff, base);
     image.writeUInt32LE(symbol.value, base + 4);
     image.writeUInt32LE(symbol.size, base + 8);
-    image[base + 0xc] = 0x10; // GLOBAL
+    image[base + 0xc] = (symbol.binding ?? 1) << 4;
+    image[base + 0xd] = symbol.other ?? 0;
     image.writeUInt16LE(1, base + 0xe); // Defined export.
     strCursor += symbol.name.length + 1;
   });
@@ -178,7 +192,7 @@ export const buildElf32Image = (
  * way release toolchains ship `libapp.so`.
  */
 export const buildStrippedElf64Image = (
-  symbols: ReadonlyArray<{ name: string; value: number; size: number }>,
+  symbols: readonly FixtureElfSymbol[],
   extraDynamicEntries: ReadonlyArray<readonly [number, bigint]> = [],
 ): Buffer => {
   const ELF_HEADER = 64;
@@ -256,6 +270,8 @@ export const buildStrippedElf64Image = (
     image.writeUInt32LE(nameOffsets[index]!, base);
     image.writeBigUInt64LE(BigInt(symbol.value), base + 8);
     image.writeBigUInt64LE(BigInt(symbol.size), base + 16);
+    image[base + 4] = (symbol.binding ?? 1) << 4;
+    image[base + 5] = symbol.other ?? 0;
     image.writeUInt16LE(1, base + 6); // Defined even when section headers are stripped.
   });
   return image;
@@ -294,13 +310,65 @@ export const strippedAotFixtureImage = (
 };
 
 /** A minimal Dart snapshot data section carrying a 32-hex hash. */
-export const snapshotSection = (hash: string): Buffer =>
-  Buffer.concat([
-    Buffer.from([
-      0xf5, 0xf5, 0xdc, 0xdc, 48, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0,
-    ]),
-    Buffer.from(hash, "latin1"),
-  ]);
+export const snapshotSection = (hash: string, kind = 3): Buffer => {
+  const header = Buffer.alloc(20);
+  header.writeUInt32LE(0xdcdcf5f5, 0);
+  header.writeBigUInt64LE(48n, 4);
+  header.writeBigUInt64LE(BigInt(kind), 12);
+  return Buffer.concat([header, Buffer.from(hash, "latin1")]);
+};
+
+/** Pinned unified ELF layout with optional legacy assembler aliases. */
+export const unifiedAotFixtureImage = ({
+  includeText = true,
+  aliases = false,
+  kind = 2,
+}: {
+  includeText?: boolean;
+  aliases?: boolean;
+  kind?: number;
+} = {}): Buffer => {
+  const data = { value: 0x1000, size: 0x100 };
+  const text = { value: 0x1100, size: 16 };
+  const image = Buffer.alloc(text.value + text.size);
+  buildElf64Image([
+    { name: "_kDartSnapshotData", ...data },
+    ...(includeText ? [{ name: "_kDartSnapshotText", ...text }] : []),
+    ...(aliases
+      ? [
+          { name: "_kDartVmSnapshotData", ...data },
+          { name: "_kDartIsolateSnapshotData", ...data },
+          { name: "_kDartVmSnapshotInstructions", ...text },
+          { name: "_kDartIsolateSnapshotInstructions", ...text },
+        ]
+      : []),
+  ]).copy(image);
+  snapshotSection(REFERENCE_HASH, kind).copy(image, data.value);
+  image.write("\0package:app/unified.dart\0dart:core\0", data.value + 52);
+  return image;
+};
+
+/** Distinct split and unified exports, with conflicting or malformed headers. */
+export const mixedAotFixtureImage = (
+  malformed?: "legacy-split" | "unified",
+): Buffer => {
+  const image = Buffer.alloc(0x2810);
+  aotFixtureImage(REFERENCE_HASH, [
+    {
+      name: "_kDartSnapshotData",
+      value: 0x2700,
+      size: malformed === "unified" ? 4 : 0x100,
+    },
+    { name: "_kDartSnapshotText", value: 0x2800, size: 16 },
+  ]).copy(image);
+  snapshotSection("a".repeat(32), 2).copy(image, 0x2700);
+  image.write("\0package:app/mixed.dart\0", 0x2700 + 52);
+  if (malformed === "legacy-split") {
+    image.writeUInt32LE(0, 0x1000);
+    image.writeUInt32LE(0, 0x2000);
+  }
+  return image;
+};
 
 /** A real ELF container declaring GNU note ownership, with an unrelated payload prefix. */
 export const engineFixtureImage = (options: {

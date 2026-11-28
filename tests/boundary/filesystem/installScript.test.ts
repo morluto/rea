@@ -72,31 +72,28 @@ describe("installer Node.js admission", () => {
 });
 
 describe("curl installer scenarios", () => {
-  it("installs only a pinned REA CLI with closed stdin", async () => {
+  it("installs only the environment-selected REA CLI without a terminal", async () => {
     const fixture = await createFixture();
-    const result = await runInstaller(fixture, ["--version", "0.3.0"]);
+    const result = await runInstaller(fixture, [], {
+      REA_VERSION: "0.3.0",
+      FAKE_CURL_FAIL: "1",
+    });
     expect(result.stdout).toContain("REA 0.3.0 is installed");
     expect(result.stdout).toContain("Run ");
-    expect(await readFile(fixture.npmLog, "utf8")).toContain(
-      "install --global --prefix",
+    expect(await readFile(fixture.npmLog, "utf8")).toBe(
+      `install --global --prefix ${join(fixture.home, ".local")} rea-agents@0.3.0\n`,
     );
     expect(await readFile(fixture.reaLog, "utf8")).toBe("--version\n");
     expect(await readdir(fixture.temporary)).toEqual([]);
   });
 
-  it("resolves and validates the latest REA release tag", async () => {
+  it("plans the latest REA release without invoking npm", async () => {
     const fixture = await createFixture();
-    const result = await runInstaller(fixture);
-    expect(result.stdout).toContain("Version: 0.3.0");
-  });
-
-  it("prints a dry run without invoking npm", async () => {
-    const fixture = await createFixture();
-    const result = await runInstaller(fixture, [
-      "--version",
-      "0.3.0",
-      "--dry-run",
-    ]);
+    const result = await runInstaller(fixture, ["--dry-run"], {
+      FAKE_CURL_BODY: '{"tag_name":"rea-agents-0.4.1"}',
+    });
+    expect(result.stdout).toContain("Version: 0.4.1");
+    expect(result.stdout).toContain("rea-agents@0.4.1");
     expect(result.stdout).toContain("no changes made");
     await expect(readFile(fixture.npmLog, "utf8")).rejects.toMatchObject({
       code: "ENOENT",
@@ -227,11 +224,7 @@ describe("installer TTY fallback", () => {
       ["-e", wrapper, script, fixture.installerStderrLog, "--version", "0.3.0"],
       {
         cwd: process.cwd(),
-        env: {
-          ...process.env,
-          ...installerEnvironment(fixture),
-          TERM: "xterm-256color",
-        },
+        env: { ...installerEnvironment(fixture), TERM: "xterm-256color" },
         name: "xterm-256color",
         cols: 120,
         rows: 40,
@@ -629,11 +622,7 @@ const runInstaller = async (
   script = join(process.cwd(), "install.sh"),
 ): Promise<{ readonly stdout: string; readonly stderr: string }> =>
   execFileAsync("/bin/bash", [script, ...args], {
-    env: {
-      ...process.env,
-      ...installerEnvironment(fixture),
-      ...overrides,
-    },
+    env: { ...installerEnvironment(fixture), ...overrides },
   });
 
 /**

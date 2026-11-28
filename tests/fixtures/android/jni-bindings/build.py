@@ -114,9 +114,6 @@ def main():
         for abi in triples:
             for row in expected["native_declarations"]:
                 claim = {**row, "abi": abi, "implementations": []}
-                if variant == "aps2" and row["basis"] == "table":
-                    claim["per_abi_status"] = "unknown"
-                    claim["reason"] = "unsupported-aps2"
                 for member, facts in libraries.items():
                     if member.split("/")[1] != abi:
                         continue

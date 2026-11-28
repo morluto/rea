@@ -31,38 +31,58 @@ export class DylibFileAccess {
     private readonly signal?: AbortSignal,
   ) {}
 
-  startsWithMachoMagic(entry: ArtifactEntry): Promise<boolean> {
+  /**
+   * Check the 4-byte Mach-O magic and, on a match, parse the image headers on
+   * the same open descriptor so root discovery avoids a second open/stat cycle.
+   */
+  readMachoIfMagic(entry: ArtifactEntry): Promise<
+    | {
+        readonly facts: Awaited<ReturnType<typeof readMachoImage>>;
+        readonly identity: BigIntStats;
+      }
+    | undefined
+  > {
     return this.#read(entry.adapterKey, async (file, initial) => {
       if (!sameArtifactSourceIdentity(entry.sourceIdentity, initial))
         throw changed(entry.adapterKey);
-      const bytes = await readFileHandleRange(file, 0, 4, () =>
+      const magic = await readFileHandleRange(file, 0, 4, () =>
         assertArtifactReadActive(this.signal),
       );
       assertArtifactReadActive(this.signal);
-      return hasMachoMagic(bytes);
+      if (!hasMachoMagic(magic)) return undefined;
+      return this.#image(entry.adapterKey, file, initial, magic);
     });
   }
 
   image(path: string) {
-    return this.#read(path, async (file, identity) => {
-      const size = Number(identity.size);
-      if (!Number.isSafeInteger(size))
-        throw new ArtifactReaderFailure(
-          "limit",
-          `Mach-O file extent is not safely addressable: ${path}`,
-        );
-      const facts = await readMachoImage(async (offset, length) => {
-        const bytes = await readFileHandleRange(
-          file,
-          offset,
-          Math.max(0, Math.min(length, size - offset)),
-          () => assertArtifactReadActive(this.signal),
-        );
-        assertArtifactReadActive(this.signal);
-        return bytes;
-      }, size);
-      return { facts, identity };
-    });
+    return this.#read(path, (file, identity) =>
+      this.#image(path, file, identity),
+    );
+  }
+
+  async #image(
+    path: string,
+    file: FileHandle,
+    identity: BigIntStats,
+    prefix?: Buffer,
+  ) {
+    const size = Number(identity.size);
+    if (!Number.isSafeInteger(size))
+      throw new ArtifactReaderFailure(
+        "limit",
+        `Mach-O file extent is not safely addressable: ${path}`,
+      );
+    const facts = await readMachoImage(async (offset, length) => {
+      const clamped = Math.max(0, Math.min(length, size - offset));
+      if (prefix !== undefined && offset === 0 && clamped <= prefix.length)
+        return prefix.subarray(0, clamped);
+      const bytes = await readFileHandleRange(file, offset, clamped, () =>
+        assertArtifactReadActive(this.signal),
+      );
+      assertArtifactReadActive(this.signal);
+      return bytes;
+    }, size);
+    return { facts, identity };
   }
 
   sha256(path: string, expected: BigIntStats | undefined): Promise<string> {
@@ -130,7 +150,7 @@ export const classifyDylibReadFailure = (
   mapArtifactFileFailure(cause, (primary) => {
     if (primary instanceof NonRegularFileReadError)
       return new ArtifactReaderFailure(
-        "format",
+        "path",
         `Dyld input is not a regular file: ${primary.path}`,
         { cause: primary },
       );

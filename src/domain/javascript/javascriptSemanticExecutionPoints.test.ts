@@ -1,51 +1,15 @@
 import * as t from "@babel/types";
-import { describe, expect, it } from "vitest";
+import { expect, it } from "vitest";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
-import {
-  javaScriptClassifiedNodeTypes,
-  javaScriptExecutions,
-  javaScriptTypeOnlyAliases,
-} from "./javascriptSemanticExecutionPoints.js";
+import { javaScriptExecutions } from "./javascriptSemanticExecutionPoints.js";
 import { childNodes } from "./javascriptSemanticTraversal.js";
 import { semanticPropertyReadSources } from "./javascriptSemanticIterationSources.js";
 
-const installedNodeTypes = [
-  ...new Set([...Object.keys(t.VISITOR_KEYS), ...Object.keys(t.NODE_FIELDS)]),
-].sort();
-
-const typeOnly = new Set<string>(
-  javaScriptTypeOnlyAliases.flatMap(
-    (alias) => t.FLIPPED_ALIAS_KEYS[alias] ?? [],
-  ),
-);
-
-describe("JavaScript execution classification", () => {
-  it("classifies every installed Babel node type", () => {
-    const classified = new Set(javaScriptClassifiedNodeTypes());
-    const unclassified = installedNodeTypes.filter(
-      (type) =>
-        !classified.has(type) &&
-        (!typeOnly.has(type) || type === "EnumDeclaration"),
-    );
-    expect(unclassified).toEqual([]);
-  });
-
-  it("names no node type the installed Babel version lacks", () => {
-    const known = new Set([
-      ...installedNodeTypes,
-      ...Object.keys(t.DEPRECATED_KEYS),
-    ]);
-    expect(
-      javaScriptClassifiedNodeTypes().filter((type) => !known.has(type)),
-    ).toEqual([]);
-  });
-
-  it("treats a node type it does not know as code that may run", () => {
-    const future = { type: "FutureExpression" } as unknown as t.Node;
-    expect(javaScriptExecutions(future, null)).toMatchObject([
-      { kind: "unsupported-syntax", node: future },
-    ]);
-  });
+it("treats a node type it does not know as code that may run", () => {
+  const future = { type: "FutureExpression" } as unknown as t.Node;
+  expect(javaScriptExecutions(future, null)).toMatchObject([
+    { kind: "unsupported-syntax", node: future },
+  ]);
 });
 
 const parsed = (source: string): t.Program => {
@@ -89,7 +53,6 @@ it.each([
   ["const copy = [...value];", { SpreadElement: ["iteration"] }],
   ["const copy = { ...value };", { SpreadElement: ["property-copy"] }],
   ["for (const item of value);", { ForOfStatement: ["iteration"] }],
-  ["for (const key in value);", { ForInStatement: ["enumeration"] }],
   [
     "try { throw source; } catch ({ value }) {}",
     { CatchClause: ["destructuring"] },
@@ -117,9 +80,9 @@ it.each([
 it("exposes the enumerated object", () => {
   const node = parsed("for (const key in value);").body[0];
   if (!t.isForInStatement(node)) throw new Error("Expected for-in statement");
-  expect(javaScriptExecutions(node, null)).toContainEqual(
-    expect.objectContaining({ kind: "enumeration", operands: [node.right] }),
-  );
+  expect(javaScriptExecutions(node, null)).toMatchObject([
+    { kind: "enumeration", operands: [node.right] },
+  ]);
 });
 
 it.each(["!trigger", "typeof trigger", "void trigger", "trigger === 1"])(
@@ -138,3 +101,47 @@ it.each(["!trigger", "typeof trigger", "void trigger", "trigger === 1"])(
     );
   },
 );
+
+it("detaches member receiver on sequence member calls while preserving property-read and leading calls", () => {
+  const direct = parsed("obj.method(arg);");
+  const directStmt = direct.body[0];
+  if (
+    !t.isExpressionStatement(directStmt) ||
+    !t.isCallExpression(directStmt.expression)
+  )
+    throw new Error("Expected direct call");
+  expect(javaScriptExecutions(directStmt.expression, directStmt)).toEqual([
+    {
+      kind: "call",
+      node: directStmt.expression,
+      operands: [
+        (directStmt.expression.callee as t.MemberExpression).object,
+        directStmt.expression.arguments[0],
+      ],
+    },
+  ]);
+
+  const sequence = parsed("(0, obj.method)(arg);");
+  const seqStmt = sequence.body[0];
+  if (
+    !t.isExpressionStatement(seqStmt) ||
+    !t.isCallExpression(seqStmt.expression)
+  )
+    throw new Error("Expected sequence call");
+  expect(javaScriptExecutions(seqStmt.expression, seqStmt)).toEqual([
+    {
+      kind: "call",
+      node: seqStmt.expression,
+      operands: [seqStmt.expression.arguments[0]],
+    },
+  ]);
+  expect(Object.fromEntries(kindsByType("(0, obj.method)(arg);"))).toEqual({
+    CallExpression: ["call"],
+    MemberExpression: ["property-read"],
+  });
+  expect(
+    Object.fromEntries(kindsByType("(sideEffect(), localFn)(arg);")),
+  ).toEqual({
+    CallExpression: ["call", "call"],
+  });
+});

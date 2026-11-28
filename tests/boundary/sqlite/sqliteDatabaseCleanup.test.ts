@@ -2,6 +2,7 @@ import { access } from "node:fs/promises";
 import { expect, it, onTestFinished } from "vitest";
 import { SqliteDatabaseProvider } from "../../../src/sqlite/SqliteDatabaseProvider.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
+import { primaryAnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { OwnedCommandFailure } from "../../../src/process/OwnedCommand.js";
 import {
@@ -162,6 +163,17 @@ it("shrinks inspect and close errors as each retained root is released", async (
   );
   if (!(initialCloseFailure instanceof ProviderCleanupError))
     throw new Error("Expected aggregate provider cleanup failure");
+  const aggregate = initialCloseFailure.cause;
+  expect(aggregate).toBeInstanceOf(AggregateError);
+  if (!(aggregate instanceof AggregateError)) throw initialCloseFailure;
+  expect(aggregate.errors).toHaveLength(2);
+  const children = aggregate.errors.map((child: unknown) => {
+    if (!(child instanceof ProviderCleanupError)) throw initialCloseFailure;
+    return child;
+  });
+  expect(new Set(children.flatMap((child) => child.cleanupResources))).toEqual(
+    new Set(roots.map(({ root }) => root.path)),
+  );
   expect(initialCloseFailure.cleanupResources).toHaveLength(2);
   expect(new Set(initialCloseFailure.cleanupResources)).toEqual(
     new Set(roots.map(({ root }) => root.path)),
@@ -512,4 +524,50 @@ it("keeps a retained worker owner when the worker fails and its cleanup is unres
   expect(launches).toBe(1);
   mayClean = true;
   await provider.close();
+});
+
+it("keeps a late caller cancellation beside a retained worker cleanup failure", async () => {
+  const workspace = await createTestWorkspace("rea-sqlite-late-cancel-");
+  const database = createSqliteDatabaseFixture(workspace.root);
+  database.close();
+  const controller = new AbortController();
+  const reason = new Error("caller stopped waiting");
+  let mayClean = false;
+  // The real worker completes; the caller cancels while its cleanup is
+  // unresolved, after the work itself could still observe the signal.
+  const provider = new SqliteDatabaseProvider({}, async (spawn) => {
+    const launched = await spawnOwnedProviderProcess(spawn);
+    const cleanupOwned =
+      launched.cleanup ?? (() => cleanupOwnedProcessGroup(launched.ownership));
+    return {
+      ...launched,
+      cleanup: async () => {
+        const cleaned = await cleanupOwned();
+        if (mayClean) return cleaned;
+        controller.abort(reason);
+        throw new Error("injected retained cleanup failure");
+      },
+    };
+  });
+  onTestFinished(async () => {
+    mayClean = true;
+    await provider.close();
+    await removeTestWorkspace(workspace.root);
+  });
+  const result = await provider.inspect(
+    { path: database.path },
+    { signal: controller.signal },
+  );
+  if (result.ok) throw new Error("Expected retained worker cleanup");
+  expect(controller.signal.aborted).toBe(true);
+  expect(result.error.cleanupIncomplete).toBe(true);
+  const primary = primaryAnalysisError(result.error);
+  expect(
+    primary.cause === reason ||
+      primary.secondaryFailures.some(
+        (secondary) =>
+          secondary._tag === "AnalysisCancelledError" &&
+          secondary.cause === reason,
+      ),
+  ).toBe(true);
 });

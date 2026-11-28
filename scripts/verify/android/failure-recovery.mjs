@@ -14,6 +14,7 @@ import {
   VerifierFixture,
   withVerifierFixture,
 } from "../../lib/verifier-fixture.mjs";
+import { completeEvidenceClient } from "../../lib/complete-evidence.mjs";
 
 /** Real unusable Java runtimes and selectors must lead to applicable recovery. */
 export async function verifyAndroidFailureRecovery({
@@ -164,7 +165,14 @@ export async function verifyAndroidFailureRecovery({
       try {
         await execute(
           process.execPath,
-          [entrypoint, "inspect-android-package", path, "--json"],
+          [
+            entrypoint,
+            "inspect-android-package",
+            "--detail",
+            "complete",
+            path,
+            "--json",
+          ],
           {
             cwd: repository,
             env: scenario.env,
@@ -213,10 +221,12 @@ export async function verifyAndroidFailureRecovery({
       env: environment,
       stderr: "pipe",
     });
-    const client = new Client({
-      name: "rea-real-android-failures",
-      version: "1",
-    });
+    const client = completeEvidenceClient(
+      new Client({
+        name: "rea-real-android-failures",
+        version: "1",
+      }),
+    );
     try {
       await client.connect(transport);
       for (const name of [
@@ -253,6 +263,7 @@ export async function verifyAndroidFailureRecovery({
         {
           name: "inspect_android_method",
           arguments: {
+            detail: "complete",
             path,
             class_name: fixture.class_name,
             method_name: "noSuchMethod",
@@ -266,7 +277,10 @@ export async function verifyAndroidFailureRecovery({
       ]);
       await client.ping();
       const control = await client.callTool(
-        { name: "inspect_android_package", arguments: { path } },
+        {
+          name: "inspect_android_package",
+          arguments: { detail: "complete", path },
+        },
         { timeout: 150_000 },
       );
       assert.notEqual(control.isError, true, JSON.stringify(control));
@@ -297,7 +311,9 @@ const verifyAndroidReadiness = async ({
     env: environment,
     stderr: "pipe",
   });
-  const client = new Client({ name: "rea-android-readiness", version: "1" });
+  const client = completeEvidenceClient(
+    new Client({ name: "rea-android-readiness", version: "1" }),
+  );
   try {
     await client.connect(transport);
     const catalog = await client.listTools();
