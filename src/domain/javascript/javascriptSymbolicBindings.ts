@@ -20,6 +20,8 @@ import { javascriptBootstrapAt } from "./javascriptBootstrap.js";
 import { ELECTRON_MODULE } from "./javascriptElectronMemberWrites.js";
 import {
   indexJavaScriptElectronIdentitySteps,
+  indexSemanticMemberMutationFactsSteps,
+  semanticReferenceChangedSinceDeclaration,
   type JavaScriptElectronIdentity,
 } from "./javascriptSemanticAnalysis.js";
 import { semanticArrayIndex } from "./javascriptSemanticPropertyPaths.js";
@@ -32,6 +34,7 @@ import {
   bindingHasMemberWrites,
 } from "./javascriptSemanticEffectLog.js";
 import { symbolicLogicalRight } from "./javascriptSymbolicControlFlow.js";
+import { typeScriptEnumInitializer } from "./javascriptTypeScriptEnums.js";
 import {
   moduleFactory,
   modulePropertyName,
@@ -184,6 +187,10 @@ export class JavaScriptSymbolicBindings {
     ReadonlyMap<string, t.ObjectMethod | t.ObjectProperty> | null
   >();
   readonly #mutated = new Set<string>();
+  readonly #typeScriptEnums = new Map<
+    string,
+    NonNullable<ReturnType<typeof typeScriptEnumInitializer>>
+  >();
   readonly #mutatedAliasGroups = new Set<ReadonlySet<string>>();
   readonly #electronIdentity: JavaScriptElectronIdentity;
   readonly #indexMemberMutationFacts: (() => boolean | void) | undefined;
@@ -243,6 +250,7 @@ export class JavaScriptSymbolicBindings {
       "defineProperty",
     ]);
     this.#indexBindingAliases();
+    this.#indexTypeScriptEnums();
     traverseJavaScriptAst(program, {
       enter: (node) => {
         if (t.isCallExpression(node)) this.#indexBootstrap(node);
@@ -312,6 +320,16 @@ export class JavaScriptSymbolicBindings {
   /** Whether a function is a recognized bundle module factory, which runs once per module load. */
   isModuleFactory(node: t.Node): boolean {
     return t.isFunction(node) && this.#moduleFactories.has(node);
+  }
+
+  /**
+   * Complete the shared member-effect facts that compiled enum reads consult.
+   * Without them such a read stays unknown, so callers run this before reading.
+   */
+  *prepareSteps(): Generator<void, void> {
+    if (this.#typeScriptEnums.size === 0) return;
+    yield* indexSemanticMemberMutationFactsSteps(this.state);
+    this.#memberMutationFactsReady = this.state.memberMutationFactsComplete;
   }
 
   environmentAt(node: t.Node): SymbolicEnvironment {
@@ -887,6 +905,39 @@ export class JavaScriptSymbolicBindings {
     ]);
   }
 
+  /**
+   * A compiled TypeScript enum's members after its initializer call completes,
+   * while no other effect can have changed them. The generic path would
+   * evaluate the initializer without the member writes in its function body,
+   * so the recognized binding never reaches it.
+   */
+  #typeScriptEnum(
+    binding: JavaScriptSemanticBindingState,
+    env: SymbolicEnvironment,
+    node: t.Identifier,
+  ): SymbolicValue | undefined {
+    const enumeration = this.#typeScriptEnums.get(binding.bindingId);
+    if (enumeration === undefined) return undefined;
+    // Writes, aliases and calls that receive the object are the semantic
+    // owner's member-effect facts, ordered against this read.
+    if (
+      semanticReferenceChangedSinceDeclaration(
+        this.state,
+        node,
+        node,
+        enumeration.declaration,
+      )
+    )
+      return symbolicUnknown("enum members may have changed");
+    const boundary = this.#readBoundary(binding.scopeId, env, node);
+    const point =
+      boundary === undefined ? undefined : boundary.node[boundary.edge];
+    const end = enumeration.call.end;
+    if (end != null && point != null && end <= point) return enumeration.value;
+    this.unresolved = true;
+    return symbolicUnknown("initializer not available at this read");
+  }
+
   #identifier(node: t.Identifier, env: SymbolicEnvironment): SymbolicValue {
     const binding = resolveSemanticBindingState(this.state, node, node.name);
     if (
@@ -910,6 +961,8 @@ export class JavaScriptSymbolicBindings {
                 : {}),
             }
         : symbolicUnknown("unbound identifier");
+    const enumeration = this.#typeScriptEnum(binding, env, node);
+    if (enumeration !== undefined) return enumeration;
     if (binding.definitions.some((d) => d.kind === "assignment"))
       return symbolicUnknown("reassigned binding");
     // Electron member identity is checked at the selected property. A write
@@ -2198,6 +2251,14 @@ export class JavaScriptSymbolicBindings {
       const sources = this.#aliasSourcesByBinding.get(binding.bindingId) ?? [];
       sources.push(source.bindingId);
       this.#aliasSourcesByBinding.set(binding.bindingId, sources);
+    }
+  }
+
+  #indexTypeScriptEnums(): void {
+    for (const binding of this.state.bindingsById.values()) {
+      const enumeration = typeScriptEnumInitializer(binding, this.state);
+      if (enumeration !== undefined)
+        this.#typeScriptEnums.set(binding.bindingId, enumeration);
     }
   }
 

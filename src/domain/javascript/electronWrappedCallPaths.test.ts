@@ -932,6 +932,192 @@ it("resolves a site-determined constant channel in place of its dynamic observat
     0,
   );
 });
+// Compiled `enum Channel { Ping = "app:ping" }` from tsc 7.0.2, the same output
+// minified by esbuild 0.28.2, and Babel 8.0.7 with its TypeScript transform.
+it.each([
+  [
+    "tsc",
+    `var Channel;
+    (function (Channel) {
+        Channel["Ping"] = "app:ping";
+    })(Channel || (Channel = {}));
+    contextBridge.exposeInMainWorld("desktop", { ping: () => ipcRenderer.send(Channel.Ping) });`,
+  ],
+  [
+    "minified tsc",
+    `var Channel;(function(e){e.Ping="app:ping"})(Channel||(Channel={})),contextBridge.exposeInMainWorld("desktop",{ping:()=>ipcRenderer.send(Channel.Ping)});`,
+  ],
+  [
+    "Babel",
+    `var Channel = /*#__PURE__*/function (Channel) {
+      Channel["Ping"] = "app:ping";
+      return Channel;
+    }(Channel || {});
+    contextBridge.exposeInMainWorld("desktop", { ping: () => ipcRenderer.send(Channel.Ping) });`,
+  ],
+])(
+  "resolves a %s enum member channel in place of its dynamic observation",
+  (_emitter, preload) => {
+    const result = analyzeJavaScriptStaticSource(`
+      const {contextBridge,ipcRenderer}=require("electron");
+      ${preload}
+    `);
+    expect(result.electron.ipc).toEqual([
+      expect.objectContaining({
+        side: "renderer",
+        operation: "send",
+        channel: "app:ping",
+        resolution_basis: "wrapper-substitution",
+      }),
+    ]);
+    expect(result.electron.call_paths).toContainEqual(
+      expect.objectContaining({ entry: "desktop.ping", channel: "app:ping" }),
+    );
+    // The CommonJS require is a candidate loader in a source of unknown
+    // runtime context, as for a literal channel.
+    expect(result.parse_status).toBe("partial");
+  },
+);
+it("resolves an enum member channel in a bundle module factory", () => {
+  const result = analyzeJavaScriptStaticSource(
+    bundle(
+      `const Channel=function(e){return e.Ping="app:ping",e}({});
+       electron.contextBridge.exposeInMainWorld("desktop",{ping:()=>electron.ipcRenderer.send(Channel.Ping)});`,
+    ),
+  );
+  expect(result.electron.call_paths).toContainEqual(
+    expect.objectContaining({ entry: "desktop.ping", channel: "app:ping" }),
+  );
+});
+// tsc and Babel output for `export enum Channel` inside a bundle factory,
+// published through the factory's exports and module parameters.
+it.each([
+  [
+    "tsc through exports",
+    `var Channel;(function(e){e.Ping="app:ping"})(Channel||(exports.Channel=Channel={}));`,
+  ],
+  [
+    "Babel through exports",
+    `let Channel=exports.Channel=function(e){return e.Ping="app:ping",e}({});`,
+  ],
+])(
+  "resolves an exported %s enum channel in a bundle module factory",
+  (_emitter, enumeration) => {
+    const result = analyzeJavaScriptStaticSource(
+      bundle(
+        `${enumeration}
+         electron.contextBridge.exposeInMainWorld("desktop",{ping:()=>electron.ipcRenderer.send(Channel.Ping)});`,
+      ),
+    );
+    expect(result.electron.call_paths).toContainEqual(
+      expect.objectContaining({ entry: "desktop.ping", channel: "app:ping" }),
+    );
+  },
+);
+// `module.exports` may be replaced by an object whose setter rewrites the enum.
+it.each([
+  [
+    "a bundle module factory",
+    (enumeration: string) =>
+      bundle(
+        `module.exports={set Channel(value){value.Ping=runtimeChannel}};
+         ${enumeration}
+         electron.contextBridge.exposeInMainWorld("desktop",{ping:()=>electron.ipcRenderer.send(Channel.Ping)});`,
+      ),
+  ],
+  [
+    "a CommonJS source",
+    (enumeration: string) => `
+      const electron=require("electron");
+      module.exports={set Channel(value){value.Ping=runtimeChannel}};
+      ${enumeration}
+      electron.contextBridge.exposeInMainWorld("desktop",{ping:()=>electron.ipcRenderer.send(Channel.Ping)});`,
+  ],
+])(
+  "keeps an enum stored on a replaced module.exports unresolved in %s",
+  (_label, source) => {
+    for (const enumeration of [
+      `let Channel=module.exports.Channel=function(e){return e.Ping="app:ping",e}({});`,
+      `var Channel;(function(e){e.Ping="app:ping"})(Channel||(module.exports.Channel=Channel={}));`,
+    ]) {
+      const result = analyzeJavaScriptStaticSource(source(enumeration));
+      expect(result.electron.call_paths ?? []).not.toContainEqual(
+        expect.objectContaining({ channel: "app:ping" }),
+      );
+      expect(result.electron.ipc).not.toContainEqual(
+        expect.objectContaining({ channel: "app:ping" }),
+      );
+    }
+  },
+);
+it("keeps an enum stored through a parameter of an unknown function unresolved", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const {contextBridge,ipcRenderer}=require("electron");
+    (function (module, exports) {
+      var Channel;(function(e){e.Ping="app:ping"})(Channel||(exports.Channel=Channel={}));
+      contextBridge.exposeInMainWorld("desktop",{ping:()=>ipcRenderer.send(Channel.Ping)});
+    })({}, { set Channel(value) { value.Ping = runtimeChannel; } });
+  `);
+  expect(result.electron.ipc).toEqual([
+    expect.objectContaining({
+      channel: null,
+      channel_expression: "Channel.Ping",
+    }),
+  ]);
+});
+it("keeps an enum member channel unresolved after another member write", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const {contextBridge,ipcRenderer}=require("electron");
+    var Channel;
+    (function (Channel) {
+        Channel["Ping"] = "app:ping";
+    })(Channel || (Channel = {}));
+    Channel.Ping = runtimeChannel;
+    contextBridge.exposeInMainWorld("desktop", { ping: () => ipcRenderer.send(Channel.Ping) });
+  `);
+  expect(result.electron.ipc).toEqual([
+    expect.objectContaining({
+      channel: null,
+      channel_expression: "Channel.Ping",
+    }),
+  ]);
+  expect(result.parse_status).toBe("partial");
+});
+it.each([
+  [
+    "tsc",
+    `var Channel;
+    (function (Channel) {
+        Channel["Ping"] = "app:ping";
+    })(Channel || (Channel = {}));`,
+  ],
+  [
+    "Babel",
+    `var Channel = function (Channel) {
+      Channel["Ping"] = "app:ping";
+      return Channel;
+    }(Channel || {});`,
+  ],
+])(
+  "keeps a %s enum member channel unresolved after a function receives the enum",
+  (_emitter, enumeration) => {
+    const result = analyzeJavaScriptStaticSource(`
+      const {contextBridge,ipcRenderer}=require("electron");
+      ${enumeration}
+      function mutate(value) { value.Ping = runtimeChannel; }
+      mutate(Channel);
+      contextBridge.exposeInMainWorld("desktop", { ping: () => ipcRenderer.send(Channel.Ping) });
+    `);
+    expect(result.electron.ipc).toEqual([
+      expect.objectContaining({
+        channel: null,
+        channel_expression: "Channel.Ping",
+      }),
+    ]);
+    expect(result.electron.call_paths ?? []).toEqual([]);
+    expect(result.parse_status).toBe("partial");
+  },
+);
 it("resolves a site-determined registration whose handler is a named local", () => {
   const result = analyzeJavaScriptStaticSource(`
     const {contextBridge,ipcRenderer}=require("electron");

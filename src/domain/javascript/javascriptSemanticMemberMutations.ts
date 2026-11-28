@@ -51,6 +51,7 @@ import {
   semanticStoredSourcesReaching,
 } from "./javascriptSemanticEffectLog.js";
 import { semanticContainer } from "./javascriptSemanticSlots.js";
+import { typeScriptEnumInitializer } from "./javascriptTypeScriptEnums.js";
 import {
   hasFreshProjectedReceiver,
   semanticProjectedSourceFactsAtRead,
@@ -2954,6 +2955,11 @@ const observableMutationPaths = (
       binding.hostOrigin !== undefined
     )
       (observer.origins ??= new Set()).add("opaque");
+    // A compiled enum's initializer call returns the empty object it fills.
+    // This index does not follow call results, so name that allocation.
+    const enumeration = typeScriptEnumInitializer(binding, state);
+    if (enumeration !== undefined)
+      (observer.origins ??= new Set()).add(enumeration.object);
     for (const initializer of binding.initializers) {
       link(
         project(expressionNode(initializer.node), initializer.projection),

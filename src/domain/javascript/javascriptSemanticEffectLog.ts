@@ -1353,6 +1353,7 @@ const visitSemanticReferenceEffectsAtSite = (
   referenceNode: t.Node,
   visit: (
     effect: JavaScriptSemanticReferenceEffectsAtSite["effects"][number],
+    node: t.Node | undefined,
   ) => boolean,
   requestedPath?: JavaScriptSemanticPropertyPath,
   effectTiming: typeof semanticEffectTiming = semanticEffectTiming,
@@ -1383,11 +1384,14 @@ const visitSemanticReferenceEffectsAtSite = (
   ): boolean => {
     if (effectPath !== undefined && !semanticPathsOverlap(path, effectPath))
       return true;
-    return visit({
-      kind,
-      ...(effectPath === undefined ? {} : { path: effectPath }),
-      timing: effectTiming(site, node, state),
-    });
+    return visit(
+      {
+        kind,
+        ...(effectPath === undefined ? {} : { path: effectPath }),
+        timing: effectTiming(site, node, state),
+      },
+      node,
+    );
   };
   if (binding !== undefined) {
     for (const { kind, node } of semanticOpaqueReferenceEffects(binding, state))
@@ -1441,6 +1445,43 @@ export const semanticReferenceEffectsMayHaveChanged = (
       return !changed;
     },
     propertyPath,
+  );
+  return metadata.resolution !== "resolved" || changed;
+};
+
+/**
+ * Whether the effects on a resolved reference may have changed the object by
+ * `site`, other than those inside `declaration`, the expression that created
+ * it. Unindexed member facts cannot rule out a change.
+ */
+export const semanticReferenceChangedSinceDeclaration = (
+  state: JavaScriptSemanticAnalysisState,
+  ambientPaths: SemanticAmbientRootPaths,
+  site: t.Node,
+  referenceNode: t.Node,
+  declaration: t.Node,
+): boolean => {
+  if (!state.memberMutationFactsComplete) return true;
+  const inDeclaration = (node: t.Node | undefined): boolean => {
+    for (
+      let current = node;
+      current !== undefined;
+      current = state.parentsByNode.get(current)
+    )
+      if (current === declaration) return true;
+    return false;
+  };
+  let changed = false;
+  const metadata = visitSemanticReferenceEffectsAtSite(
+    state,
+    ambientPaths,
+    site,
+    referenceNode,
+    (effect, node) => {
+      if (inDeclaration(node)) return true;
+      changed = effect.timing !== "after";
+      return !changed;
+    },
   );
   return metadata.resolution !== "resolved" || changed;
 };

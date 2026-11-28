@@ -14,6 +14,7 @@ import {
   indexSemanticOpaqueEffects,
   opaqueCodeMayRebindBinding,
   semanticReferenceEffectsAtSite,
+  semanticReferenceChangedSinceDeclaration as semanticReferenceChangedSinceDeclarationIn,
   semanticReferenceEffectsMayHaveChanged,
   semanticReadMayObserveEffect,
   semanticReferenceRoot,
@@ -240,6 +241,24 @@ const ambientRootPaths = (
   return (root) => resolver(root).paths;
 };
 
+/**
+ * Whether effects on a resolved reference, other than those inside the
+ * expression that created its object, may have changed it by `site`.
+ */
+export const semanticReferenceChangedSinceDeclaration = (
+  state: JavaScriptSemanticAnalysisState,
+  site: t.Node,
+  referenceNode: t.Node,
+  declaration: t.Node,
+): boolean =>
+  semanticReferenceChangedSinceDeclarationIn(
+    state,
+    ambientRootPaths(state),
+    site,
+    referenceNode,
+    declaration,
+  );
+
 function* indexSemanticAmbientWritesSteps(
   state: JavaScriptSemanticAnalysisState,
 ): Generator<void, void> {
@@ -265,7 +284,7 @@ function* indexAmbientWritesOnceSteps(
 }
 
 /** Index alias-aware mutation facts only for consumers that request them. */
-function* indexSemanticMemberMutationFactsSteps(
+export function* indexSemanticMemberMutationFactsSteps(
   state: JavaScriptSemanticAnalysisState,
 ): Generator<void, void> {
   if (state.memberMutationFactsComplete) return;
