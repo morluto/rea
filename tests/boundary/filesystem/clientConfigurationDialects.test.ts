@@ -1032,34 +1032,37 @@ describe("client launcher traversal semantics", () => {
     );
   });
 
-  it("ignores rem comments when reading an npm rea.cmd shim", async () => {
-    const root = await createTestTempDirectory("rea-cmd-rem-");
-    const script = join(
-      root,
-      "node_modules",
-      PRODUCT_IDENTITY.packageName,
-      "scripts",
-      "rea.mjs",
-    );
-    await mkdir(dirname(script), { recursive: true });
-    await writeFile(script, "// owned dispatcher\n");
-    const foreign = join(root, "other.mjs");
-    await writeFile(foreign, "// foreign\n");
-    const cmd = join(root, "rea.cmd");
-    await writeFile(
-      cmd,
-      [
-        "@ECHO off",
-        `rem "%dp0%\\node_modules\\${PRODUCT_IDENTITY.packageName}\\scripts\\rea.mjs"`,
-        `endLocal & "%_prog%"  "%dp0%\\other.mjs" %*`,
-        "",
-      ].join("\r\n"),
-    );
-    // Comment names this package, but the launch statement does not.
-    expect(classifyClientRegistrationCommand([cmd, "mcp"], script)).toBe(
-      "unknown",
-    );
-  });
+  it.each(["rem", "@rem"] as const)(
+    "ignores %s comments when reading an npm rea.cmd shim",
+    async (comment) => {
+      const root = await createTestTempDirectory("rea-cmd-rem-");
+      const script = join(
+        root,
+        "node_modules",
+        PRODUCT_IDENTITY.packageName,
+        "scripts",
+        "rea.mjs",
+      );
+      await mkdir(dirname(script), { recursive: true });
+      await writeFile(script, "// owned dispatcher\n");
+      const foreign = join(root, "other.mjs");
+      await writeFile(foreign, "// foreign\n");
+      const cmd = join(root, "rea.cmd");
+      await writeFile(
+        cmd,
+        [
+          "@ECHO off",
+          `${comment} "%dp0%\\node_modules\\${PRODUCT_IDENTITY.packageName}\\scripts\\rea.mjs"`,
+          `endLocal & "%_prog%"  "%dp0%\\other.mjs" %*`,
+          "",
+        ].join("\r\n"),
+      );
+      // Comment names this package, but the launch statement does not.
+      expect(classifyClientRegistrationCommand([cmd, "mcp"], script)).toBe(
+        "unknown",
+      );
+    },
+  );
 
   it("ignores echoed npm launch text when a later launch is foreign", async () => {
     const root = await createTestTempDirectory("rea-cmd-echo-");
@@ -1078,6 +1081,32 @@ describe("client launcher traversal semantics", () => {
       [
         "@ECHO off",
         `echo "%_prog%" "%dp0%\\node_modules\\${PRODUCT_IDENTITY.packageName}\\scripts\\rea.mjs" %*`,
+        `endLocal & "%_prog%"  "%dp0%\\other.mjs" %*`,
+        "",
+      ].join("\r\n"),
+    );
+    expect(classifyClientRegistrationCommand([cmd, "mcp"], script)).toBe(
+      "unknown",
+    );
+  });
+
+  it("ignores conditional echo of npm launch text before a foreign launch", async () => {
+    const root = await createTestTempDirectory("rea-cmd-if-echo-");
+    const script = join(
+      root,
+      "node_modules",
+      PRODUCT_IDENTITY.packageName,
+      "scripts",
+      "rea.mjs",
+    );
+    await mkdir(dirname(script), { recursive: true });
+    await writeFile(script, "// owned dispatcher\n");
+    const cmd = join(root, "rea.cmd");
+    await writeFile(
+      cmd,
+      [
+        "@ECHO off",
+        `if errorlevel 1 echo "%_prog%" "%dp0%\\node_modules\\${PRODUCT_IDENTITY.packageName}\\scripts\\rea.mjs" %*`,
         `endLocal & "%_prog%"  "%dp0%\\other.mjs" %*`,
         "",
       ].join("\r\n"),
