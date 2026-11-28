@@ -1,4 +1,5 @@
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import type {
@@ -11,10 +12,15 @@ import {
   EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
 } from "./GhidraAdmission.js";
 import {
+  ghidraInstallationDiagnostics,
   inspectGhidraInstallation,
   type GhidraInstallationCheck,
   type GhidraInstallationInspection,
 } from "./GhidraInstallation.js";
+import {
+  findGhidraInstalledJdks,
+  ghidraJdkLocations,
+} from "./GhidraInstalledJdk.js";
 import {
   GHIDRA_RESTRICTED_TEMP_REMEDIATION,
   probeGhidraTemporaryDirectory,
@@ -33,7 +39,10 @@ export const GHIDRA_DOCTOR_SETTINGS = [
 export const projectGhidraDoctorInspection = (
   inspection: GhidraInstallationInspection,
   temporaryDirectory?: GhidraTemporaryDirectoryProbe,
-  selection: { readonly existingProject: boolean } = { existingProject: false },
+  selection: {
+    readonly existingProject: boolean;
+    readonly javaAlternatives?: string;
+  } = { existingProject: false },
 ): DoctorProviderInspection => {
   const admission = admitGhidraInstallation(inspection, selection);
   const existingProjectRefused =
@@ -42,7 +51,6 @@ export const projectGhidraDoctorInspection = (
   // Native authority is reported once the installation itself is usable.
   const readiness =
     inspection.status === "available" ? admission.windowsNative : undefined;
-  const windowsAuthorityUnavailable = readiness?.available === false;
   const temporaryDirectoryUnavailable = temporaryDirectory?.ok === false;
   return {
     id: "ghidra",
@@ -57,14 +65,22 @@ export const projectGhidraDoctorInspection = (
           }
         : {},
     checks: [
-      ...selectedChecks(inspection).map((check) =>
-        projectCheck(
+      ...selectedChecks(inspection).map((check) => {
+        const projected = projectCheck(
           check,
           inspection.installDir !== null,
           inspection.javaProbeFailure,
           inspection.nativeDecompilerHeaderFailure,
-        ),
-      ),
+        );
+        return check.name === "java" &&
+          projected.remediation !== null &&
+          selection.javaAlternatives !== undefined
+          ? {
+              ...projected,
+              remediation: `${projected.remediation} ${selection.javaAlternatives}`,
+            }
+          : projected;
+      }),
       ...(readiness !== undefined
         ? [
             readiness.available
@@ -167,12 +183,74 @@ export const inspectSystemGhidraProvider = async (
       installation.status === "available" && installation.platform === "win32"
         ? await probeGhidraTemporaryDirectory(resourceOwner)
         : undefined;
+    const javaAlternatives = await ghidraJavaAlternatives(
+      installation,
+      environment.HOME,
+      resourceOwner,
+      signal,
+    );
     return projectGhidraDoctorInspection(installation, temporaryDirectory, {
       existingProject: environment.REA_GHIDRA_PROJECT_PATH !== undefined,
+      ...(javaAlternatives === undefined ? {} : { javaAlternatives }),
     });
   } catch (cause: unknown) {
     throw analysisClientFailureForOperation(cause, "ghidra", "doctor");
   }
+};
+
+const ghidraJavaAlternatives = async (
+  installation: GhidraInstallationInspection,
+  home: string | undefined,
+  resourceOwner: RetainedResourceScope,
+  signal?: AbortSignal,
+): Promise<string | undefined> => {
+  const checks = selectedChecks(installation);
+  if (
+    signal?.aborted ||
+    !checks.some(({ name, status }) => name === "java" && status === "failed")
+  )
+    return undefined;
+  const discovery = await findGhidraInstalledJdks(
+    ghidraJdkLocations(installation.platform, installation.architecture, home),
+    installation.javaRequirement,
+    installation.javaHome,
+    { resourceOwner, ...(signal === undefined ? {} : { signal }) },
+  ).catch((cause: unknown) => {
+    if (cause instanceof AnalysisCancelledError && !cause.cleanupIncomplete)
+      return undefined;
+    throw analysisClientFailureForOperation(
+      cause,
+      "ghidra",
+      "doctor",
+      ghidraInstallationDiagnostics(installation),
+    );
+  });
+  if (discovery === undefined || signal?.aborted) return undefined;
+  const choices = discovery.candidates
+    .map(
+      ({ home: javaHome, version }) =>
+        `JDK ${version} at ${JSON.stringify(javaHome)}`,
+    )
+    .join(", ");
+  const suggestions =
+    choices === ""
+      ? ""
+      : `Installed JDKs within the declared version bounds: ${choices}. Set JAVA_HOME to a candidate and rerun doctor to verify it.`;
+  const limitations = discovery.limits.map((limit) => {
+    switch (limit.kind) {
+      case "location-scan":
+        return `Installed JDK discovery reached the scan limit of ${limit.limit} JDK homes at ${JSON.stringify(limit.root)}.`;
+      case "suggestions":
+        return `Installed JDK discovery reached the suggestion limit of ${limit.limit} JDKs.`;
+      case "release-metadata":
+        return `Installed JDK discovery skipped ${limit.skippedHomes} JDK ${limit.skippedHomes === 1 ? "home" : "homes"} with a release file larger than ${limit.limit} bytes.`;
+    }
+  });
+  if (limitations.length > 0)
+    limitations.push(
+      "Set JAVA_HOME directly to the JDK you want to check and rerun doctor.",
+    );
+  return [suggestions, ...limitations].filter(Boolean).join(" ") || undefined;
 };
 
 const selectedChecks = (
