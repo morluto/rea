@@ -17,6 +17,52 @@ import {
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
+cliTest.for(["certificateSignature", "digest"] as const)(
+  "rejects extra %s algorithm fields through CLI and MCP",
+  async (target, { cli }) => {
+    const root = await createTestTempDirectory("rea-pe-algorithm-fields-");
+    const path = join(root, "malformed.exe");
+    const malformed = Buffer.from([0x30, 8, 0x06, 2, 0x2a, 3, 5, 0, 5, 0]);
+    const payload = pkcs7SignedDataFixture(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { [target]: malformed },
+    );
+    const bytes = peCertificateFixture(false, payload);
+    await writeFile(path, bytes);
+    const result = await cli.run({
+      arguments: ["inspect-pe-certificates", path, "--json"],
+    });
+    expect(result.exitCode, result.stdout).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "unsupported_target",
+      category: "unsupported_target",
+      details: {
+        operation: "inspect_pe_certificates",
+        path,
+        failure_kind: "malformed",
+        format: "pe-certificate-table",
+        partial_observation: {
+          kind: "file-snapshot-hash",
+          path,
+          bytes: bytes.length,
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+        },
+      },
+    });
+    const call = await cli.sharedMcpCall!();
+    const response = await call("inspect_pe_certificates", { path });
+    expectAdapterErrorParity(
+      parseMcpToolError(response).error,
+      result.json,
+      "inspect_pe_certificates",
+    );
+    expect((await readFile(path)).equals(bytes)).toBe(true);
+  },
+);
+
 const contract = BINARY_DIAGNOSTICS_TOOL_CONTRACTS.find(
   (item) => item.name === "inspect_pe_certificates",
 );

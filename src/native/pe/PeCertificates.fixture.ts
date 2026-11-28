@@ -77,7 +77,16 @@ export const pkcs7SignedDataFixture = (
   unsignedAttributes?: readonly (readonly number[] | Buffer)[],
   fields: Partial<
     Record<
-      "issuer" | "subject" | "signerIssuer" | "extensions" | "signedAttributes",
+      | "issuer"
+      | "subject"
+      | "signerIssuer"
+      | "extensions"
+      | "signedAttributes"
+      | "certificateSignature"
+      | "subjectPublicKey"
+      | "digest"
+      | "signerDigest"
+      | "signerSignature",
       Buffer
     >
   > = {},
@@ -91,11 +100,14 @@ export const pkcs7SignedDataFixture = (
       seq(
         context(0, integer(2)),
         integer(serial),
-        algorithm(SHA256_RSA),
+        fields.certificateSignature ?? algorithm(SHA256_RSA),
         issuer,
         seq(utc("250101000000Z"), utc("260101000000Z")),
         owner,
-        seq(algorithm(RSA), bitString(Buffer.from("pubkey"))),
+        seq(
+          fields.subjectPublicKey ?? algorithm(RSA),
+          bitString(Buffer.from("pubkey")),
+        ),
         context(
           3,
           fields.extensions ??
@@ -104,7 +116,7 @@ export const pkcs7SignedDataFixture = (
             ),
         ),
       ),
-      algorithm(SHA256_RSA),
+      fields.certificateSignature ?? algorithm(SHA256_RSA),
       bitString(Buffer.from("signature")),
     );
   const certificate = certificateOf(
@@ -114,11 +126,11 @@ export const pkcs7SignedDataFixture = (
   const signer = seq(
     integer(1),
     seq(fields.signerIssuer ?? subject, integer(serial)),
-    algorithm(SHA256),
+    fields.signerDigest ?? algorithm(SHA256),
     ...(fields.signedAttributes === undefined
       ? []
       : [context(0, fields.signedAttributes)]),
-    algorithm(SHA256_RSA),
+    fields.signerSignature ?? algorithm(SHA256_RSA),
     signature,
     ...(unsignedAttributes === undefined
       ? []
@@ -137,7 +149,7 @@ export const pkcs7SignedDataFixture = (
   );
   const signedData = seq(
     integer(1),
-    set(algorithm(SHA256)),
+    set(fields.digest ?? algorithm(SHA256)),
     seq(DATA),
     context(
       0,
