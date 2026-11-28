@@ -98,7 +98,10 @@ const decodeManifest = (
  * The caller's `max_file_bytes` control, reported beside the refusal so the
  * recovery names the value that admitted or refused this read.
  */
-const inputAllowanceLimit = (maxFileBytes: number): AnalysisParameterLimit => ({
+const inputAllowanceLimit = (
+  maxFileBytes: number,
+  observedBytes: bigint | undefined,
+): AnalysisParameterLimit => ({
   control_kind: "parameter",
   parameter: "max_file_bytes",
   effective_value: maxFileBytes,
@@ -107,6 +110,10 @@ const inputAllowanceLimit = (maxFileBytes: number): AnalysisParameterLimit => ({
   maximum: CARGO_MANIFEST_MAX_FILE_BYTES,
   default_value: CARGO_MANIFEST_MAX_FILE_BYTES,
   applies_at: "next_call",
+  ...(observedBytes !== undefined &&
+  observedBytes <= BigInt(Number.MAX_SAFE_INTEGER)
+    ? { required_value: Number(observedBytes) }
+    : {}),
 });
 
 /**
@@ -129,7 +136,10 @@ const manifestFileSizeRefusal = (
           limit: CARGO_MANIFEST_MAX_FILE_BYTES,
           unit: "bytes",
         }).fixedAllowance,
-        { ...details, limit: inputAllowanceLimit(maxFileBytes) },
+        {
+          ...details,
+          limit: inputAllowanceLimit(maxFileBytes, cause.observedBytes),
+        },
       )
     : parseLimitConstraint(
         operation,
@@ -146,8 +156,7 @@ const manifestFileSizeRefusal = (
             maximum_file_bytes: CARGO_MANIFEST_MAX_FILE_BYTES,
           },
           retryable: false,
-          limit: inputAllowanceLimit(maxFileBytes),
-          remediationAction: `Raise max_file_bytes above ${String(maxFileBytes)} bytes, up to the ${String(CARGO_MANIFEST_MAX_FILE_BYTES)}-byte release maximum, or select a smaller manifest.`,
+          limit: inputAllowanceLimit(maxFileBytes, cause.observedBytes),
         },
       );
 

@@ -6,6 +6,7 @@ import { expect, it } from "vitest";
 import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { CARGO_MANIFEST_MAX_FILE_BYTES } from "../../domain/cargoManifest/cargoManifest.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { inspectCargoManifestEvidence } from "./CargoManifestService.js";
@@ -32,7 +33,8 @@ const refusal = <T>(
 };
 
 it("reports the caller's own file-size budget rather than the release maximum", async () => {
-  const path = await manifestFile(`${MANIFEST}# ${"x".repeat(4096)}\n`);
+  const text = `${MANIFEST}# ${"x".repeat(4096)}\n`;
+  const path = await manifestFile(text);
   const resources = new ArtifactResourceScope();
   try {
     const error = refusal(
@@ -44,9 +46,20 @@ it("reports the caller's own file-size budget rather than the release maximum", 
     expect(error.resource).toBe("file-size");
     expect(error.reportedLimits).toMatchObject({ max_file_bytes: 1024 });
     expect(error.fixedAllowance).toBeUndefined();
-    expect(error.remediationAction).toContain(
-      "Raise max_file_bytes above 1024",
+    const requiredBytes = Buffer.byteLength(text);
+    const projected = projectAnalysisError(error);
+    expect(projected.details?.refusal).toMatchObject({
+      kind: "adjustable_budget",
+      required_value: requiredBytes,
+    });
+    expect(projected.remediation.action).toContain(
+      `at least ${String(requiredBytes)} bytes`,
     );
+    const retry = await inspectCargoManifestEvidence(
+      { path, max_file_bytes: requiredBytes },
+      resources,
+    );
+    if (!retry.ok) throw retry.error;
   } finally {
     await resources.close();
   }
