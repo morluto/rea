@@ -172,7 +172,7 @@ export const CLI_COMMAND_REGISTRATIONS = {
     () => import("./pcapCommands.js"),
     "registerPcapCommands",
   ),
-  flutter: cliRegistrar(
+  flutter: cliRegistrarWithEnvironment(
     () => import("./flutterCommands.js"),
     "registerFlutterCommands",
   ),
@@ -277,7 +277,7 @@ export const CLI_COMMAND_REGISTRATIONS = {
     () => import("./webSourceLocationCommands.js"),
     "registerWebSourceLocationCommands",
   ),
-  application: cliRegistrar(
+  application: cliRegistrarWithEnvironment(
     () => import("./applicationCommands.js"),
     "registerApplicationCommands",
   ),

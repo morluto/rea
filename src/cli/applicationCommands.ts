@@ -35,7 +35,9 @@ const workflowJsonDescription = "Inline workflow JSON or JSON file path";
 export const registerApplicationCommands = (
   cli: CliInstance,
   logger: Logger,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
 ): void => {
+  registerPlaywrightTraceCommand(cli, logger, environment);
   registerEvidenceJsonCommand({
     cli,
     logger,
@@ -87,7 +89,6 @@ export const registerApplicationCommands = (
   });
   registerApiContractCommand(cli, logger);
   registerNtfsJournalCommand(cli, logger);
-  registerPlaywrightTraceCommand(cli, logger);
   registerEvidenceJsonCommand({
     cli,
     logger,

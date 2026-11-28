@@ -21,6 +21,7 @@ import {
   artifactOperationReason,
 } from "../../../resources/index.js";
 import { isSelectedRegularFileError } from "../../../filesystem/RegularFile.js";
+import type { ArtifactMemberCount } from "../../../domain/artifactReaderLimits.js";
 import { zipMemberCountConstraint } from "../../../config/artifactMemberCount.js";
 
 /** Classify the archive owner's facts without interpreting opaque cancellation reasons. */
@@ -28,6 +29,7 @@ export const traceFailure = (
   cause: unknown,
   path: string,
   limits: PlaywrightTraceLimits,
+  memberCount: ArtifactMemberCount,
 ): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
   if (cause instanceof ArtifactReaderFailure) {
@@ -44,8 +46,8 @@ export const traceFailure = (
           cause.fixedAllowance,
           { cause },
         );
-      const memberCount = zipMemberCountConstraint(operation, cause);
-      if (memberCount !== undefined) return memberCount;
+      const count = zipMemberCountConstraint(operation, cause, memberCount);
+      if (count !== undefined) return count;
       // The ZIP reader's plaintext-work budget grows with the archive size;
       // this tool selects no expansion control, so it is fixed per archive.
       if (cause.readerLimit !== undefined)

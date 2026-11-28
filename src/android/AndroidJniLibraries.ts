@@ -26,6 +26,7 @@ import { analysisClientFailureForOperation } from "../providers/AnalysisClientFa
 import { errorMessage } from "../kernel/errorMessage.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
+import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 import {
   operationZipMemberCount,
   ZIP_MEMBER_COUNT_PARAMETER,
@@ -80,6 +81,8 @@ export const readAndroidJniLibraries = async (input: {
   readonly signal: AbortSignal;
   readonly interruption: (reason: unknown) => AnalysisError;
   readonly onObservation: (checkpoint: AndroidJniLibraryCheckpoint) => void;
+  readonly environment?: Readonly<Record<string, string | undefined>>;
+  readonly settings?: AnalysisSettingsReader;
 }): Promise<AndroidJniLibraries> =>
   input.resources
     .run(async () => {
@@ -89,7 +92,10 @@ export const readAndroidJniLibraries = async (input: {
         ANDROID_JNI_LIBRARY_LIMITS.factsBytes,
         undefined,
         undefined,
-        operationZipMemberCount(),
+        operationZipMemberCount(
+          input.environment ?? process.env,
+          input.settings,
+        ).value,
       );
       const owner = {
         kind: "reader" as const,

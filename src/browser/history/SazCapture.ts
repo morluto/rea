@@ -35,7 +35,7 @@ interface SessionMember {
 export const decodeSazCapture = async (
   snapshotPath: string,
   sensitiveValues: readonly string[],
-  memberCount: number = operationZipMemberCount(),
+  memberCount: number = operationZipMemberCount(process.env).value,
 ) => {
   const reader = new ZipArtifactReader(
     snapshotPath,

@@ -568,7 +568,11 @@ export const createServer = (
         webModuleTrace,
         webSourceLocation,
         javascriptRecovery: javascriptRecoveryService,
-        applicationWorkflows: { resources: artifactResources },
+        applicationWorkflows: {
+          resources: artifactResources,
+          environment,
+          settings: analysisSettings.read,
+        },
         guidedWorkflows: promptsForToolFamilies(server.advertisedToolFamilies),
       });
       // Build tool responses are redacted as a whole; they record nothing.

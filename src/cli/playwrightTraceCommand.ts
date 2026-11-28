@@ -21,6 +21,7 @@ import type { CliInstance } from "./types.js";
 export const registerPlaywrightTraceCommand = (
   cli: CliInstance,
   logger: Logger,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
 ): void =>
   registerContractCommand(
     cli,
@@ -43,13 +44,15 @@ export const registerPlaywrightTraceCommand = (
       },
     },
     deliverWithService(
-      createPlaywrightTraceService,
+      () => createPlaywrightTraceService(environment),
       PLAYWRIGHT_TRACE_PROVIDER.id,
     ),
   );
 
 /** One-shot trace inventory that owns the archive it opens. */
-const createPlaywrightTraceService = (): EvidenceInspectionService => {
+const createPlaywrightTraceService = (
+  environment: Readonly<Record<string, string | undefined>>,
+): EvidenceInspectionService => {
   const resources = new ArtifactResourceScope();
   return {
     inspect: async (input, { signal }) => {
@@ -58,7 +61,7 @@ const createPlaywrightTraceService = (): EvidenceInspectionService => {
       const { PlaywrightTraceDecoder } =
         await import("../browser/history/playwrightTrace/PlaywrightTraceDecoder.js");
       return new PlaywrightTraceService(
-        new PlaywrightTraceDecoder(resources),
+        new PlaywrightTraceDecoder(resources, environment),
       ).inspect(input, signal);
     },
     close: () =>

@@ -63,10 +63,13 @@ export const runtimeArtifactMemberCount = (
 
 /**
  * Member count for a ZIP reader whose caller has no `artifact_limits` field.
+ * `environment` is the launch environment selected for this runtime.
  * Flutter APK inventory, Playwright trace import, and SAZ decoding use this.
  */
-export const operationZipMemberCount = (): number =>
-  runtimeArtifactMemberCount(process.env).value;
+export const operationZipMemberCount = (
+  environment: Readonly<Record<string, string | undefined>>,
+  read?: AnalysisSettingsReader,
+): ArtifactMemberCount => runtimeArtifactMemberCount(environment, read);
 
 /**
  * The public count sentence for a ZIP reader that has no `artifact_limits`
@@ -76,29 +79,27 @@ export const operationZipMemberCount = (): number =>
 export const zipMemberCountReason = (effectiveValue: number): string =>
   `ZIP admission reached ${ARTIFACT_MEMBER_COUNT_SETTING} at ${String(effectiveValue)} count. ${memberCountRecovery}`;
 
-/** A central-directory count refusal for that same setting. */
+/** A central-directory count refusal for the count admission already resolved. */
 export const zipMemberCountRefusal = (
   operation: string,
-  effectiveValue: number,
+  resolved: ArtifactMemberCount,
   cause?: unknown,
-): AnalysisResourceConstraintError => {
-  const resolved = runtimeArtifactMemberCount(process.env);
-  return sessionSettingConstraint(
+): AnalysisResourceConstraintError =>
+  sessionSettingConstraint(
     operation,
     "capacity",
-    zipMemberCountReason(effectiveValue),
-    { member_count: effectiveValue },
+    zipMemberCountReason(resolved.value),
+    { member_count: resolved.value },
     {
       ...(cause === undefined ? {} : { cause }),
       remediationAction: memberCountRecovery,
       limit: analysisSettingLimit(
         ARTIFACT_MEMBER_COUNT_SETTING,
-        effectiveValue,
+        resolved.value,
         resolved.source,
       ),
     },
   );
-};
 
 /** The public count refusal when this reader limit is the ZIP member count. */
 export const zipMemberCountConstraint = (
@@ -108,8 +109,15 @@ export const zipMemberCountConstraint = (
       | { readonly parameter: string; readonly effective_value: number }
       | undefined;
   },
+  resolved: ArtifactMemberCount,
 ): AnalysisResourceConstraintError | undefined => {
   const limit = cause.readerLimit;
   if (limit?.parameter !== ZIP_MEMBER_COUNT_PARAMETER) return undefined;
-  return zipMemberCountRefusal(operation, limit.effective_value, cause);
+  return zipMemberCountRefusal(
+    operation,
+    limit.effective_value === resolved.value
+      ? resolved
+      : { value: limit.effective_value, source: resolved.source },
+    cause,
+  );
 };

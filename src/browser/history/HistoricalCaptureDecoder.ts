@@ -60,6 +60,8 @@ import {
   type WebNetworkCapture,
 } from "../../domain/webNetworkCapture.js";
 import { snapshotEnvironment } from "../../process/snapshotEnvironment.js";
+import type { AnalysisSettingsReader } from "../../domain/analysisSettings.js";
+import type { ArtifactMemberCount } from "../../domain/artifactReaderLimits.js";
 import {
   operationZipMemberCount,
   zipMemberCountRefusal,
@@ -81,20 +83,43 @@ import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_web_network_capture";
 
+/** A member-count reply uses the count this call sent. Other formats do not send one. */
+const memberCountRefusal = (
+  format: string,
+  resolved: ArtifactMemberCount | undefined,
+  reply: { readonly message: string; readonly pointer: string },
+): AnalysisError =>
+  resolved === undefined
+    ? new ProviderAdapterError(format, OPERATION, {
+        diagnostics: {
+          phase: "decoder",
+          failure_kind: "member-count",
+          reason: reply.message,
+          pointer: reply.pointer,
+        },
+      })
+    : zipMemberCountRefusal(OPERATION, resolved);
+
 /** One owned snapshot/process/root lifecycle for replaceable historical format decoders. */
 export class HistoricalCaptureDecoder {
   readonly #resources: ArtifactResourceScope;
   readonly #heap: CaptureDecoderHeap;
 
+  readonly createRuntime: () => Promise<
+    Pick<PrivateRuntimeRoot, "path" | "close">
+  >;
+
   constructor(
     readonly adapters: readonly HistoricalCaptureFormatAdapter[],
     readonly environment: Readonly<NodeJS.ProcessEnv>,
-    readonly createRuntime: () => Promise<
-      Pick<PrivateRuntimeRoot, "path" | "close">
-    > = () => PrivateRuntimeRoot.create({ prefix: "rea-web-capture-" }),
-    resources = new ArtifactResourceScope(),
+    createRuntime?: () => Promise<Pick<PrivateRuntimeRoot, "path" | "close">>,
+    resources?: ArtifactResourceScope,
+    readonly settings?: AnalysisSettingsReader,
   ) {
-    this.#resources = resources;
+    this.createRuntime =
+      createRuntime ??
+      (() => PrivateRuntimeRoot.create({ prefix: "rea-web-capture-" }));
+    this.#resources = resources ?? new ArtifactResourceScope();
     // Adapters that launch the Node decoder already carry its parsed heap.
     // Reuse that fact. This environment is only the fallback when none do,
     // or when those facts disagree.
@@ -192,6 +217,10 @@ export class HistoricalCaptureDecoder {
             bytes: snapshot.bytes.length,
           };
           phase = "decoder";
+          const memberCount =
+            input.format === "saz"
+              ? operationZipMemberCount(this.environment, this.settings)
+              : undefined;
           runtime = await this.createRuntime();
           const snapshotPath = join(runtime.path, "capture.snapshot");
           const requestPath = join(runtime.path, "request.json");
@@ -210,7 +239,9 @@ export class HistoricalCaptureDecoder {
               reply_path: replyPath,
               sensitive_values: input.sensitive_values,
               budgets: captureBudgets(),
-              member_count: operationZipMemberCount(),
+              ...(memberCount === undefined
+                ? {}
+                : { member_count: memberCount.value }),
             }),
             { mode: 0o600, flag: "wx" },
           );
@@ -274,7 +305,7 @@ export class HistoricalCaptureDecoder {
                 reply.ceiling,
               );
             if (reply.reason === "member-count")
-              throw zipMemberCountRefusal(OPERATION, reply.member_count);
+              throw memberCountRefusal(input.format, memberCount, reply);
             const limit = captureLimitForReply(reply.reason);
             if (limit !== undefined) {
               const { parameter, expected } = CAPTURE_LIMITS[limit];

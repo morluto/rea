@@ -727,6 +727,8 @@ export class JadxProvider implements AndroidAnalysisPort {
             signal: workspaceSignal,
           },
           this.launcher,
+          this.environment,
+          this.settings,
         );
         retained = {
           key,

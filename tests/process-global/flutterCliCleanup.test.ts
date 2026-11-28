@@ -40,7 +40,7 @@ const serveWithCleanupRetry = async (
   const provider = new FlutterBuildProvider();
   onTestFinished(() => provider.close());
   const cli = createCommandCli();
-  registerFlutterCommands(cli, silentLogger, provider);
+  registerFlutterCommands(cli, silentLogger, process.env, provider);
   let stdout = "";
   await cli.serve([command, apk, "--format", "json"], {
     stdout: (text) => {
