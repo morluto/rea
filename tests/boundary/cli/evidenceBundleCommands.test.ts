@@ -377,6 +377,85 @@ cliTest(
 );
 
 cliTest(
+  "retains and validates prototype-named caller paths at public bundle boundaries",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-evidence-caller-paths-cli-",
+    );
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected shared MCP session");
+    const variants = [
+      '{"__proto__":"./selected","binary_path":"./known"}',
+      '{"__proto__":["./a","./a","./b"],"binary_path":"./known"}',
+      '{"__proto__":42}',
+      '{"__proto__":"bad\\u0000path"}',
+      '{"binary_path":"./known"}',
+    ];
+    for (const [index, raw] of variants.entries()) {
+      const paths: unknown = JSON.parse(raw);
+      const record = createEvidence(
+        unknownTarget("not-observed"),
+        { id: "fixture", name: "Fixture", version: "1" },
+        { operation: `caller-paths-${index}`, parameters: {}, result: null },
+      );
+      const bundle = createEvidenceBundle([record]);
+      const bytes = JSON.stringify({
+        ...bundle,
+        records: [{ ...record, caller_input_paths: paths }],
+      });
+      const path = join(root, `bundle-${index}.json`);
+      await writeFile(path, bytes);
+      const digest = createHash("sha256").update(bytes).digest("hex");
+      const before = await call("get_evidence_bundle", {});
+      const inspected = await cli.run({
+        arguments: [
+          "inspect-evidence-bundle",
+          JSON.stringify({ path, detail: "complete" }),
+          "--json",
+        ],
+      });
+      const imported = await call("import_evidence_bundle", { path });
+      const after = await call("get_evidence_bundle", {});
+      if (index === 2 || index === 3) {
+        expect(inspected.exitCode).toBe(1);
+        expect(inspected.json).toMatchObject({
+          code: "evidence_integrity_mismatch",
+        });
+        expect(parseMcpToolError(imported).error).toMatchObject({
+          code: "evidence_integrity_mismatch",
+        });
+        expect(after.structuredContent).toEqual(before.structuredContent);
+      } else {
+        expect(inspected.exitCode, inspected.stderr).toBe(0);
+        expect(imported.isError).not.toBe(true);
+        const inspectedRecords = (
+          inspected.json as { records: typeof bundle.records }
+        ).records;
+        const importedRecords = (
+          after.structuredContent as {
+            result: { records: typeof bundle.records };
+          }
+        ).result.records;
+        for (const records of [inspectedRecords, importedRecords]) {
+          const actual = records.find(
+            (item) => item.evidence_id === record.evidence_id,
+          );
+          expect(actual?.evidence_id).toBe(record.evidence_id);
+          expect(JSON.stringify(actual?.caller_input_paths)).toBe(
+            JSON.stringify(paths),
+          );
+        }
+      }
+      const actualBytes = await readFile(path);
+      expect(actualBytes.toString("utf8")).toBe(bytes);
+      expect(createHash("sha256").update(actualBytes).digest("hex")).toBe(
+        digest,
+      );
+    }
+  },
+);
+
+cliTest(
   "preserves a selected own __proto__ member from complete bundle data",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-evidence-filter-proto-");
