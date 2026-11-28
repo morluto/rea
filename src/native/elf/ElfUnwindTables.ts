@@ -12,7 +12,7 @@ import {
   yieldArtifactRead,
 } from "../../resources/index.js";
 import { decodeLimit } from "../../domain/parseFailure.js";
-import { readElfDynamicEntry } from "../../domain/elfDynamicEntry.js";
+import { walkElfDynamicTable } from "../../domain/elfDynamicEntry.js";
 import {
   elfSymbolSize,
   readElfSymbolFieldsAt,
@@ -56,7 +56,6 @@ const SHT_STRTAB = 3;
 const SHT_DYNAMIC = 6;
 const SHT_NOBITS = 8;
 const SHT_DYNSYM = 11;
-const DT_NULL = 0n;
 const DT_PLTGOT = 3n;
 /** Bound on dynamic entries scanned for DT_PLTGOT. */
 const MAX_DYNAMIC_ENTRIES = 4096;
@@ -1297,8 +1296,9 @@ const fileRange = (section: NativeSection): FileRange | null => {
 /**
  * GOT base for `.eh_frame` DW_EH_PE_datarel values: DT_PLTGOT, then the
  * `.got.plt` address, then the `.got` address. Null when none is declared,
- * or when a repeated PT_DYNAMIC header, SHT_DYNAMIC section or allocated GOT
- * section leaves the source ambiguous.
+ * when a repeated PT_DYNAMIC header, SHT_DYNAMIC section or allocated GOT
+ * section leaves the source ambiguous, or when the dynamic table is not read
+ * through DT_NULL or declares different DT_PLTGOT values.
  */
 function* resolveGotBase(
   fileBytes: number,
@@ -1336,28 +1336,28 @@ function* resolveGotBase(
   if (dynamic !== null) {
     const start = dynamic.offset;
     const end = dynamic.offset + dynamic.fileSize;
-    if (start >= 0n && end <= BigInt(fileBytes)) {
-      const width = directory.bits === 64 ? 16 : 8;
-      const maxRead = Math.min(
-        Number(dynamic.fileSize),
-        MAX_DYNAMIC_ENTRIES * width,
-      );
-      const dynBytes = yield* readSlice(Number(start), maxRead);
-      for (
-        let at = 0, index = 0;
-        at + width <= dynBytes.length && index < MAX_DYNAMIC_ENTRIES;
-        at += width, index += 1
-      ) {
-        const entry = readElfDynamicEntry(
-          dynBytes.subarray(at, at + width),
-          directory.bits,
-          directory.little,
-        );
-        if (!entry.ok || entry.value.tag === DT_NULL) break;
-        if (entry.value.tag === DT_PLTGOT && entry.value.value !== 0n)
-          return { address: entry.value.value, source: "DT_PLTGOT" };
-      }
-    }
+    // An unread declared table may name a base the sections do not.
+    if (start < 0n || end > BigInt(fileBytes)) return null;
+    const width = directory.bits === 64 ? 16 : 8;
+    const maxRead = Math.min(
+      Number(dynamic.fileSize),
+      MAX_DYNAMIC_ENTRIES * width,
+    );
+    const dynBytes = yield* readSlice(Number(start), maxRead);
+    const bases = new Set<bigint>();
+    const walked = walkElfDynamicTable<never>(
+      dynBytes,
+      { bits: directory.bits, littleEndian: directory.little },
+      new Set(),
+      ({ tag, value }) => {
+        if (tag === DT_PLTGOT && value !== 0n) bases.add(value);
+      },
+    );
+    // A row past the examined bytes, before DT_NULL, could name another base.
+    if (!walked.ok || walked.value.terminatorOffset === null || bases.size > 1)
+      return null;
+    const [base] = bases;
+    if (base !== undefined) return { address: base, source: "DT_PLTGOT" };
   }
   // Only an allocated section has a load address; a repeated allocated GOT
   // section has no single base.
