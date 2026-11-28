@@ -1039,6 +1039,22 @@ describe("client launcher traversal semantics", () => {
         }),
       ).toBe("unknown");
 
+      const cwdSpy = vi.spyOn(process, "cwd").mockImplementation(() => {
+        throw Object.assign(new Error("cwd removed"), { code: "ENOENT" });
+      });
+      try {
+        expect(
+          classifyClientRegistrationCommand(["rea", "mcp"], script, {
+            environment: {
+              ...process.env,
+              PATH: `..${delimiter}${bin}`,
+            },
+          }),
+        ).toBe("unknown");
+      } finally {
+        cwdSpy.mockRestore();
+      }
+
       expect(
         classifyClientRegistrationCommand(["rea", "mcp"], script, {
           unresolvedPath: true,

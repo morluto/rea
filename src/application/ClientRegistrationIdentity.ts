@@ -215,9 +215,16 @@ const readBoundedRegularFile = (
   }
 };
 
+const NPM_CMD_SHIM_PREAMBLE =
+  /^(?:@?\s*echo\s+off|@?\s*goto\s+[\w-]+|:[\w-]+|@?\s*call\s+:[\w-]+|@?\s*exit\s+\/b|@?\s*setlocal|@?\s*set\s+[^&|<>]+|@?\s*if\s+exist\s+"%dp0%[\\/]node\.exe"\s*\(|\)\s*else\s*\(|\))$/iu;
+
+const NPM_CMD_SHIM_LAUNCH =
+  /^(?:(?:endLocal\s*&\s*(?:goto\s+#_undefined_#\s+2>NUL\s*\|\|\s*title\s+%COMSPEC%\s*&\s*)?)?(?:@\s*)?)"%_prog%"\s+"%dp0%([\\/][^"]+)"\s+%\*$/iu;
+
 /**
  * Recover the script an npm Windows `rea.cmd` shim launches. Ownership follows
- * the launch statement's script argument, not a substring elsewhere in the file.
+ * only the recognized npm cmd-shim wrapper structure and its single launch
+ * statement (`"%_prog%" "%dp0%\…" %*`), rejecting custom or chained wrappers.
  */
 const windowsReaCmdScript = (cmdPath: string): string | undefined => {
   if (commandFileName(cmdPath) !== `${PRODUCT_IDENTITY.cliBinary}.cmd`)
@@ -228,25 +235,23 @@ const windowsReaCmdScript = (cmdPath: string): string | undefined => {
   let relative: string | undefined;
   for (const line of text.split(/\r?\n/u)) {
     const trimmed = line.trim();
-    // Comments and echo are not executed launch statements.
-    if (/^(?:@?\s*rem\b|::|@?\s*echo\b)/iu.test(trimmed)) continue;
-    // npm cmd-shim launch only: start of command or after &/|, then
-    // "%_prog%" "%dp0%\node_modules\<pkg>\…" %*
-    const match =
-      /(?:^|[&|])\s*(?:@\s*)?"%_prog%"\s+"%dp0%([\\/][^"]+)"\s+%*/iu.exec(
-        trimmed,
-      );
-    if (match === null) continue;
-    const launchAt = trimmed.search(/"%_prog%"/iu);
-    if (launchAt > 0 && /\becho\b/iu.test(trimmed.slice(0, launchAt))) continue;
+    if (trimmed === "" || /^(?:@?\s*rem\b|::)/iu.test(trimmed)) continue;
+    if (relative !== undefined) return undefined;
+    const match = NPM_CMD_SHIM_LAUNCH.exec(trimmed);
+    if (match === null) {
+      if (!NPM_CMD_SHIM_PREAMBLE.test(trimmed)) return undefined;
+      continue;
+    }
     const candidate = match[1]!.replace(/^[\\/]/u, "");
     const parts = candidate.split(/[/\\]/u).map((part) => part.toLowerCase());
     const modules = parts.indexOf("node_modules");
-    if (modules >= 0 && parts[modules + 1] === packageName)
+    if (
+      modules >= 0 &&
+      parts[modules + 1] === packageName &&
+      !parts.slice(modules + 1).includes("..")
+    )
       relative = candidate;
-    else
-      // A later non-package "%_prog%" launch means this file does not run REA.
-      return undefined;
+    else return undefined;
   }
   if (relative === undefined) return undefined;
   if (HOST_PLATFORM.platform === "win32")
@@ -274,8 +279,9 @@ const resolveBareCliOnPath = (
   if (HOST_PLATFORM.platform === "win32") {
     const search = windowsPathCandidates(name, environment, {
       allowBatch: true,
+      cwd: "C:\\",
     });
-    if (!search.ok) return undefined;
+    if (!search.ok) return "unknown";
     for (const candidate of search.value) {
       if (candidate.relativeEntry) return "unknown";
       if (!isRegularFile(candidate.path)) continue;
@@ -285,6 +291,7 @@ const resolveBareCliOnPath = (
   }
   for (const candidate of posixPathCandidates(name, environment.PATH ?? "", {
     relativeEntries: "resolve",
+    unreadableWorkingDirectory: "as-written",
   })) {
     if (candidate.relativeEntry) return "unknown";
     try {
