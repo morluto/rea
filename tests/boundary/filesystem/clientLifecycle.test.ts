@@ -11,7 +11,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parse as parseJsonc } from "jsonc-parser";
@@ -37,7 +37,35 @@ import {
 import type { UninstallFileSystem } from "../../../src/application/UninstallShared.js";
 
 const ownedSkillManifest = `---\nname: ${PRODUCT_IDENTITY.skillName}\n---\n# REA\n`;
-beforeEach(clearClientLocationEnvironment);
+
+/** Put an owned bare `rea` on PATH so lifecycle fixtures that seed that name classify as owned. */
+const installOwnedBareReaOnPath = async (): Promise<void> => {
+  if (process.platform === "win32") return;
+  const root = await createTestTempDirectory("rea-lifecycle-owned-path-");
+  const packageRoot = join(root, "node_modules", PRODUCT_IDENTITY.packageName);
+  const script = join(packageRoot, "scripts", "rea.mjs");
+  await mkdir(dirname(script), { recursive: true });
+  await writeFile(
+    join(packageRoot, "package.json"),
+    JSON.stringify({
+      name: PRODUCT_IDENTITY.packageName,
+      version: "0.0.0",
+    }),
+  );
+  await writeFile(script, "#!/usr/bin/env node\n");
+  const bin = join(root, "bin");
+  await mkdir(bin, { recursive: true });
+  const launcher = join(bin, PRODUCT_IDENTITY.cliBinary);
+  await symlink(script, launcher);
+  await chmod(script, 0o755);
+  await chmod(launcher, 0o755);
+  vi.stubEnv("PATH", `${bin}${delimiter}${process.env.PATH ?? ""}`);
+};
+
+beforeEach(async () => {
+  clearClientLocationEnvironment();
+  await installOwnedBareReaOnPath();
+});
 afterEach(() => vi.unstubAllEnvs());
 
 // Detection reports clients in the client table's order.
