@@ -138,7 +138,6 @@ export const vectorEntryNameBasisSchema = z.enum([
   "explicit_profile",
   "observed_slot",
 ]);
-export type VectorEntryNameBasis = z.infer<typeof vectorEntryNameBasisSchema>;
 
 export const armVectorEntrySchema = z.strictObject({
   slot_index: z.number().int().min(0),

@@ -94,9 +94,6 @@ export const firmwareVectorTableSummarySchema = z.strictObject({
   ...counts,
 });
 
-export const firmwareVectorTablePageContextSchema =
-  firmwareVectorTableSummarySchema;
-
 const readReport = createAnalysisViewResultReader(firmwareVectorTableSchema);
 
 export const projectFirmwareVectorTableView = (

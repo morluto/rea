@@ -41,7 +41,7 @@ export const IMAGE4_MAX_NESTED_BYTES = 256 * 1024;
  * is ever decoded (text, scalars and keybags are all smaller), so a bigger
  * primitive stays a range and its bytes are not loaded. A parse strategy.
  */
-export const IMAGE4_MAX_DECODED_PRIMITIVE_BYTES = IMAGE4_MAX_STRING_BYTES;
+const IMAGE4_MAX_DECODED_PRIMITIVE_BYTES = IMAGE4_MAX_STRING_BYTES;
 /**
  * Encoded bytes tree-parsed and kept in memory for one inspection. Past this,
  * values are walked by header only: structure is still checked, but their

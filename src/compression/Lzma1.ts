@@ -14,7 +14,7 @@
  */
 
 /** Properties byte plus the little-endian dictionary size. */
-export const LZMA1_PROPERTIES_BYTES = 5;
+const LZMA1_PROPERTIES_BYTES = 5;
 /** LZMA-Alone (`.lzma`, EDK II `LZMA_HEADER_SIZE`): properties plus a u64 size. */
 export const LZMA1_ALONE_HEADER_BYTES = LZMA1_PROPERTIES_BYTES + 8;
 /** An LZMA-Alone size of all ones declares an unknown size and an end marker. */
@@ -298,6 +298,9 @@ export const lzma1AloneFromRaw = (raw: Buffer, size: bigint): Buffer => {
  * Decode a private LZMA-Alone copy of a stream whose size its format declares
  * outside the stream. A writer may end it at that size or with an end marker;
  * any other trailing byte is malformed.
+ *
+ * @public LzmaUnityBlock's worker loads it by module URL, which static
+ * analysis cannot follow.
  */
 export const decodeLzma1KnownSize = (
   codec: Lzma1Codec,

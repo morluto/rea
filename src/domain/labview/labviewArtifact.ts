@@ -47,9 +47,6 @@ export const labviewVersionCoverageSchema = z.enum([
   "absent",
   "unknown",
 ]);
-export type LabviewArtifactVersionCoverage = z.infer<
-  typeof labviewVersionCoverageSchema
->;
 
 /** One static RSRC observation: container facts and the block inventory. */
 export const labviewArtifactSchema = z.strictObject({
