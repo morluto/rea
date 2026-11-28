@@ -1,79 +1,90 @@
-import { execFile } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { promisify } from "node:util";
 
-import { expect, it } from "vitest";
+import { expect } from "vitest";
 
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
+import { lazyLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
+import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 
-const execute = promisify(execFile);
+/** One stdio MCP session for the file; each test analyzes its own directory. */
+const builtinMcp = lazyLocalToolsMcp();
 
-it("retains streams with an undecidable delete encoding through CLI and MCP", async () => {
-  const root = await createTestTempDirectory("rea-stream-delete-");
-  await writeFile(
-    join(root, "app.cjs"),
-    `throw new Error("parse only");
+/** The public CLI with complete Evidence; a nonzero exit fails the test. */
+const analyze = async (cli: TestCli, root: string) => {
+  const result = await cli.run({
+    arguments: ["analyze-javascript-application", root, "--json"],
+  });
+  expect(result.exitCode, result.stderr).toBe(0);
+  return { stdout: result.stdout };
+};
+
+cliTest(
+  "retains streams with an undecidable delete encoding through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-stream-delete-");
+    await writeFile(
+      join(root, "app.cjs"),
+      `throw new Error("parse only");
      const fs = require("node:fs");
      const o = {}; Object.defineProperty(o, "x", { value: 1 });
      const read = fs.createReadStream("input", { encoding: delete o.x });
      const write = fs.createWriteStream("output", { encoding: delete o.x });
      read.close(); write.close();`,
-  );
-  const { stdout } = await execute(
-    process.execPath,
-    ["scripts/rea.mjs", "analyze-javascript-application", root, "--json"],
-    { cwd: process.cwd(), maxBuffer: 16 * 1024 * 1024 },
-  );
-  const evidence = parseEvidence(JSON.parse(stdout));
-  const result = javascriptApplicationAnalysisResultSchema.parse(
-    evidence.normalized_result,
-  );
-  expect(
-    result.semantic_graph.nodes.filter(({ kind }) => kind === "resource"),
-  ).toHaveLength(2);
-  expect(
-    result.semantic_graph.relations.filter(
-      ({ relation }) => relation === "releases",
-    ),
-  ).toHaveLength(2);
-  const { client, call } = await connectLocalToolsMcp();
-  const response = await call("analyze_javascript_application", {
-    input_path: root,
-    format: "auto",
-  });
-  expect(response.isError, JSON.stringify(response)).not.toBe(true);
-  expect(response.structuredContent).toEqual(evidence);
-  await client.ping();
-}, 60000);
+    );
+    const { stdout } = await analyze(cli, root);
+    const evidence = parseEvidence(JSON.parse(stdout));
+    const result = javascriptApplicationAnalysisResultSchema.parse(
+      evidence.normalized_result,
+    );
+    expect(
+      result.semantic_graph.nodes.filter(({ kind }) => kind === "resource"),
+    ).toHaveLength(2);
+    expect(
+      result.semantic_graph.relations.filter(
+        ({ relation }) => relation === "releases",
+      ),
+    ).toHaveLength(2);
+    const { client, call } = await builtinMcp();
+    const response = await call("analyze_javascript_application", {
+      input_path: root,
+      format: "auto",
+    });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    expect(response.structuredContent).toEqual(evidence);
+    await client.ping();
+  },
+  60000,
+);
 
-it("keeps prototype-intercepted streams and rejects boxed options through CLI and MCP", async () => {
-  const root = await createTestTempDirectory("rea-stream-option-ownership-");
-  await writeFile(
-    join(root, "prototype.cjs"),
-    `
+cliTest(
+  "keeps prototype-intercepted streams and rejects boxed options through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-stream-option-ownership-");
+    await writeFile(
+      join(root, "prototype.cjs"),
+      `
     const fs = require("node:fs");
     Object.defineProperty(Object.prototype, "start", { set(value) {}, configurable: true });
     const read = fs.createReadStream("input", { start: -1 });
     const write = fs.createWriteStream("output", { start: -1 });
     read.close(); write.close();
   `,
-  );
-  await writeFile(
-    join(root, "boxed.cjs"),
-    `
+    );
+    await writeFile(
+      join(root, "boxed.cjs"),
+      `
     const fs = require("node:fs");
     fs.createReadStream("input", { start: new Number(0) });
     fs.createWriteStream("output", { encoding: new String("utf8") });
     fs.createReadStream("input", { fd: new Handle() });
   `,
-  );
-  await writeFile(
-    join(root, "validator.cjs"),
-    `
+    );
+    await writeFile(
+      join(root, "validator.cjs"),
+      `
     const fs = require("node:fs");
     fs.createReadStream("before", { encoding: new String("utf8") });
     Buffer.isEncoding = () => true;
@@ -81,10 +92,10 @@ it("keeps prototype-intercepted streams and rejects boxed options through CLI an
     read.close();
     fs.createReadStream("invalid", { encoding: "nope" });
   `,
-  );
-  await writeFile(
-    join(root, "superclass.cjs"),
-    `
+    );
+    await writeFile(
+      join(root, "superclass.cjs"),
+      `
     const stream = require("node:stream");
     stream.Readable = wrapRead;
     stream.Writable = wrapWrite;
@@ -93,67 +104,67 @@ it("keeps prototype-intercepted streams and rejects boxed options through CLI an
     const write = fs.createWriteStream("output", { highWaterMark: -1 });
     read.close(); write.close();
   `,
-  );
-  const { stdout } = await execute(
-    process.execPath,
-    ["scripts/rea.mjs", "analyze-javascript-application", root, "--json"],
-    { cwd: process.cwd(), maxBuffer: 16 * 1024 * 1024 },
-  );
-  const evidence = parseEvidence(JSON.parse(stdout));
-  const graph = javascriptApplicationAnalysisResultSchema.parse(
-    evidence.normalized_result,
-  ).semantic_graph;
-  const resources = graph.nodes.filter(({ kind }) => kind === "resource");
-  expect(
-    resources.filter(
-      ({ identity }) => identity.module_path === "prototype.cjs",
-    ),
-  ).toHaveLength(2);
-  expect(
-    resources.filter(({ identity }) => identity.module_path === "boxed.cjs"),
-  ).toHaveLength(1);
-  expect(
-    resources.filter(
-      ({ identity }) => identity.module_path === "validator.cjs",
-    ),
-  ).toHaveLength(1);
-  expect(
-    resources.filter(
-      ({ identity }) => identity.module_path === "superclass.cjs",
-    ),
-  ).toHaveLength(2);
-  expect(
-    graph.relations.filter(({ relation }) => relation === "releases"),
-  ).toHaveLength(5);
-  const { client, call } = await connectLocalToolsMcp();
-  const response = await call("analyze_javascript_application", {
-    input_path: root,
-    format: "auto",
-  });
-  expect(response.isError, JSON.stringify(response)).not.toBe(true);
-  expect(response.structuredContent).toEqual(evidence);
-  await client.ping();
-}, 60000);
+    );
+    const { stdout } = await analyze(cli, root);
+    const evidence = parseEvidence(JSON.parse(stdout));
+    const graph = javascriptApplicationAnalysisResultSchema.parse(
+      evidence.normalized_result,
+    ).semantic_graph;
+    const resources = graph.nodes.filter(({ kind }) => kind === "resource");
+    expect(
+      resources.filter(
+        ({ identity }) => identity.module_path === "prototype.cjs",
+      ),
+    ).toHaveLength(2);
+    expect(
+      resources.filter(({ identity }) => identity.module_path === "boxed.cjs"),
+    ).toHaveLength(1);
+    expect(
+      resources.filter(
+        ({ identity }) => identity.module_path === "validator.cjs",
+      ),
+    ).toHaveLength(1);
+    expect(
+      resources.filter(
+        ({ identity }) => identity.module_path === "superclass.cjs",
+      ),
+    ).toHaveLength(2);
+    expect(
+      graph.relations.filter(({ relation }) => relation === "releases"),
+    ).toHaveLength(5);
+    const { client, call } = await builtinMcp();
+    const response = await call("analyze_javascript_application", {
+      input_path: root,
+      format: "auto",
+    });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    expect(response.structuredContent).toEqual(evidence);
+    await client.ping();
+  },
+  60000,
+);
 
-it("preserves earlier and sibling effects without inventing replaced cached-module or process effects", async () => {
-  const root = await createTestTempDirectory("rea-builtin-identity-");
-  await writeFile(
-    join(root, "app.cjs"),
-    `
+cliTest(
+  "preserves earlier and sibling effects without inventing replaced cached-module or process effects",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-builtin-identity-");
+    await writeFile(
+      join(root, "app.cjs"),
+      `
     throw new Error('parse only');
     const a = require('node:fs'); const b = require('fs');
     b.readFileSync('before.json'); const stream = b.createReadStream('before.json'); stream.destroy();
     patch(a); b.readFileSync('wrong-after.json');
     const proc = require('node:process'); proc.env = {}; proc.argv = []; const mode = proc.env.MODE; const arg = proc.argv[2];
   `,
-  );
-  await writeFile(
-    join(root, "sibling.mjs"),
-    `import fs from 'node:fs'; fs.writeFileSync = custom; fs.readFileSync('sibling.json'); fs.readFileSync = custom;`,
-  );
-  await writeFile(
-    join(root, "captures.cjs"),
-    `const fs = require('node:fs');
+    );
+    await writeFile(
+      join(root, "sibling.mjs"),
+      `import fs from 'node:fs'; fs.writeFileSync = custom; fs.readFileSync('sibling.json'); fs.readFileSync = custom;`,
+    );
+    await writeFile(
+      join(root, "captures.cjs"),
+      `const fs = require('node:fs');
      const saved = require('fs').readFileSync;
      const { readFileSync: savedDestructured } = fs;
      fs.readFileSync('before-write.json'); fs.readFileSync = custom;
@@ -161,99 +172,98 @@ it("preserves earlier and sibling effects without inventing replaced cached-modu
      const lateMember = require('fs').readFileSync;
      saved('saved.json'); savedDestructured('saved-destructured.json');
      late('wrong-late.json'); lateMember('wrong-member.json');`,
-  );
-  await writeFile(
-    join(root, "direct.cjs"),
-    `require('node:fs').readFileSync('direct.json');
+    );
+    await writeFile(
+      join(root, "direct.cjs"),
+      `require('node:fs').readFileSync('direct.json');
      const fs = require('fs'); fs.readFileSync('later.json');
      require('fs/promises').open('before');
      fs.promises.open = custom; require('node:fs/promises').open('wrong');`,
-  );
-  await writeFile(
-    join(root, "loader.cjs"),
-    `require = () => ({ readFileSync() {} });
+    );
+    await writeFile(
+      join(root, "loader.cjs"),
+      `require = () => ({ readFileSync() {} });
      const fs = require('node:fs'); fs.readFileSync('wrong-loader.json');
      require('node:fs').readFileSync('wrong-direct-loader.json');`,
-  );
-  await writeFile(
-    join(root, "imports.cts"),
-    `import fs = require('node:fs'); const other = require('fs');
+    );
+    await writeFile(
+      join(root, "imports.cts"),
+      `import fs = require('node:fs'); const other = require('fs');
      const read = other.readFileSync; observe(read); read('escaped.json');
      fs.readFileSync = custom; other.readFileSync('wrong-import-equals.json');`,
-  );
-  await writeFile(
-    join(root, "late-loader.cjs"),
-    `const fs=require('fs'); fs.readFileSync('loader-before.json');
+    );
+    await writeFile(
+      join(root, "late-loader.cjs"),
+      `const fs=require('fs'); fs.readFileSync('loader-before.json');
      require=replacement; fs.readFileSync('loader-after.json');
      require('fs').readFileSync('wrong-late-loader.json');`,
-  );
-  await writeFile(
-    join(root, "replacement.cts"),
-    `import fs = require('fs'); const other=require('fs'); fs={}; fs.readFileSync=custom; other.readFileSync('replacement-kept.json');`,
-  );
-  await writeFile(
-    join(root, "dynamic.cjs"),
-    `const fs=require('fs'); fs.hook=custom; fs[key](); fs.readFileSync('wrong-dynamic.json');`,
-  );
-  await writeFile(
-    join(root, "wrapped.cjs"),
-    `const fs=require('fs'); let assigned; const saved=(0, fs.readFileSync); fs.readFileSync=custom; const late=(assigned=fs.readFileSync); saved('wrapped-kept.json'); late('wrong-wrapped.json');`,
-  );
-  await writeFile(
-    join(root, "global-process.cjs"),
-    `process.env={MODE:'local'}; const proc=require('process'); const mode=proc.env.MODE;`,
-  );
-  const { stdout } = await execute(
-    process.execPath,
-    ["scripts/rea.mjs", "analyze-javascript-application", root, "--json"],
-    { cwd: process.cwd(), maxBuffer: 16 * 1024 * 1024 },
-  );
-  const evidence = parseEvidence(JSON.parse(stdout));
-  const result = javascriptApplicationAnalysisResultSchema.parse(
-    evidence.normalized_result,
-  );
-  expect(
-    result.semantic_graph.nodes
-      .filter(({ kind }) => kind === "config-source")
-      .map(({ properties }) => properties.key)
-      .sort(),
-  ).toEqual([
-    "before-write.json",
-    "before.json",
-    "direct.json",
-    "escaped.json",
-    "later.json",
-    "loader-after.json",
-    "loader-before.json",
-    "replacement-kept.json",
-    "saved-destructured.json",
-    "saved.json",
-    "sibling.json",
-    "wrapped-kept.json",
-  ]);
-  expect(
-    result.semantic_graph.nodes.filter(({ kind }) => kind === "resource"),
-  ).toHaveLength(2);
-  expect(
-    result.semantic_graph.relations.filter(
-      ({ relation }) => relation === "releases",
-    ),
-  ).toHaveLength(1);
-  const { client, call } = await connectLocalToolsMcp();
-  const response = await call("analyze_javascript_application", {
-    input_path: root,
-    format: "auto",
-  });
-  expect(response.isError, JSON.stringify(response)).not.toBe(true);
-  expect(response.structuredContent).toEqual(evidence);
-  await client.ping();
-});
+    );
+    await writeFile(
+      join(root, "replacement.cts"),
+      `import fs = require('fs'); const other=require('fs'); fs={}; fs.readFileSync=custom; other.readFileSync('replacement-kept.json');`,
+    );
+    await writeFile(
+      join(root, "dynamic.cjs"),
+      `const fs=require('fs'); fs.hook=custom; fs[key](); fs.readFileSync('wrong-dynamic.json');`,
+    );
+    await writeFile(
+      join(root, "wrapped.cjs"),
+      `const fs=require('fs'); let assigned; const saved=(0, fs.readFileSync); fs.readFileSync=custom; const late=(assigned=fs.readFileSync); saved('wrapped-kept.json'); late('wrong-wrapped.json');`,
+    );
+    await writeFile(
+      join(root, "global-process.cjs"),
+      `process.env={MODE:'local'}; const proc=require('process'); const mode=proc.env.MODE;`,
+    );
+    const { stdout } = await analyze(cli, root);
+    const evidence = parseEvidence(JSON.parse(stdout));
+    const result = javascriptApplicationAnalysisResultSchema.parse(
+      evidence.normalized_result,
+    );
+    expect(
+      result.semantic_graph.nodes
+        .filter(({ kind }) => kind === "config-source")
+        .map(({ properties }) => properties.key)
+        .sort(),
+    ).toEqual([
+      "before-write.json",
+      "before.json",
+      "direct.json",
+      "escaped.json",
+      "later.json",
+      "loader-after.json",
+      "loader-before.json",
+      "replacement-kept.json",
+      "saved-destructured.json",
+      "saved.json",
+      "sibling.json",
+      "wrapped-kept.json",
+    ]);
+    expect(
+      result.semantic_graph.nodes.filter(({ kind }) => kind === "resource"),
+    ).toHaveLength(2);
+    expect(
+      result.semantic_graph.relations.filter(
+        ({ relation }) => relation === "releases",
+      ),
+    ).toHaveLength(1);
+    const { client, call } = await builtinMcp();
+    const response = await call("analyze_javascript_application", {
+      input_path: root,
+      format: "auto",
+    });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    expect(response.structuredContent).toEqual(evidence);
+    await client.ping();
+  },
+);
 
-it("excludes monkey-patched CommonJS effects from CLI and MCP evidence", async () => {
-  const root = await createTestTempDirectory("rea-builtin-mutated-");
-  await writeFile(
-    join(root, "app.cjs"),
-    `
+cliTest(
+  "excludes monkey-patched CommonJS effects from CLI and MCP evidence",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-builtin-mutated-");
+    await writeFile(
+      join(root, "app.cjs"),
+      `
     throw new Error("parse only");
     const fs = require("node:fs"); fs.readFileSync = custom; fs.createReadStream = custom;
     const cp = require("node:child_process"); cp.spawn = custom;
@@ -264,47 +274,46 @@ it("excludes monkey-patched CommonJS effects from CLI and MCP evidence", async (
     const timer = timers.setTimeout(callback, 1); clearTimeout(timer);
     http.get("http://example.test");
   `,
-  );
-  const { stdout } = await execute(
-    process.execPath,
-    ["scripts/rea.mjs", "analyze-javascript-application", root, "--json"],
-    { cwd: process.cwd(), maxBuffer: 16 * 1024 * 1024 },
-  );
-  const evidence = parseEvidence(JSON.parse(stdout));
-  const result = javascriptApplicationAnalysisResultSchema.parse(
-    evidence.normalized_result,
-  );
-  expect(
-    result.semantic_graph.nodes.filter(({ kind }) =>
-      [
-        "config-source",
-        "resource",
-        "child-process",
-        "timer",
-        "request",
-      ].includes(kind),
-    ),
-  ).toEqual([]);
-  expect(
-    result.semantic_graph.relations.filter(({ relation }) =>
-      ["releases", "forwards-signal", "cancels-timer"].includes(relation),
-    ),
-  ).toEqual([]);
-  const { client, call } = await connectLocalToolsMcp();
-  const response = await call("analyze_javascript_application", {
-    input_path: root,
-    format: "auto",
-  });
-  expect(response.isError, JSON.stringify(response)).not.toBe(true);
-  expect(response.structuredContent).toEqual(evidence);
-  await client.ping();
-});
+    );
+    const { stdout } = await analyze(cli, root);
+    const evidence = parseEvidence(JSON.parse(stdout));
+    const result = javascriptApplicationAnalysisResultSchema.parse(
+      evidence.normalized_result,
+    );
+    expect(
+      result.semantic_graph.nodes.filter(({ kind }) =>
+        [
+          "config-source",
+          "resource",
+          "child-process",
+          "timer",
+          "request",
+        ].includes(kind),
+      ),
+    ).toEqual([]);
+    expect(
+      result.semantic_graph.relations.filter(({ relation }) =>
+        ["releases", "forwards-signal", "cancels-timer"].includes(relation),
+      ),
+    ).toEqual([]);
+    const { client, call } = await builtinMcp();
+    const response = await call("analyze_javascript_application", {
+      input_path: root,
+      format: "auto",
+    });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    expect(response.structuredContent).toEqual(evidence);
+    await client.ping();
+  },
+);
 
-it("retains CommonJS builtin effects and handle links through CLI and MCP", async () => {
-  const root = await createTestTempDirectory("rea-builtin-commonjs-");
-  await writeFile(
-    join(root, "app.cjs"),
-    `
+cliTest(
+  "retains CommonJS builtin effects and handle links through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-builtin-commonjs-");
+    await writeFile(
+      join(root, "app.cjs"),
+      `
     throw new Error("This source must only be parsed, never executed");
     const fs = require("node:fs");
     const {spawn: launch} = require("node:child_process");
@@ -321,78 +330,71 @@ it("retains CommonJS builtin effects and handle links through CLI and MCP", asyn
     const external = require("./fs.js"); external.readFileSync("wrong-external");
     function shadowed(require) { const fs = require("node:fs"); fs.readFileSync("wrong"); }
   `,
-  );
-  const { stdout } = await execute(
-    process.execPath,
-    ["scripts/rea.mjs", "analyze-javascript-application", root, "--json"],
-    { cwd: process.cwd(), maxBuffer: 16 * 1024 * 1024 },
-  );
-  const evidence = parseEvidence(JSON.parse(stdout));
-  const result = javascriptApplicationAnalysisResultSchema.parse(
-    evidence.normalized_result,
-  );
-  const nodes = result.semantic_graph.nodes;
-  expect(
-    nodes.filter(({ kind }) =>
-      [
-        "config-source",
-        "resource",
-        "child-process",
-        "timer",
-        "request",
-      ].includes(kind),
-    ),
-  ).toHaveLength(6);
-  expect(nodes).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
-        kind: "config-source",
-        properties: expect.objectContaining({ key: "config.json" }),
-      }),
-      expect.objectContaining({
-        kind: "config-source",
-        properties: expect.objectContaining({ key: "MODE" }),
-      }),
-      ...["createReadStream", "spawn", "setTimeout", "get"].map((method) =>
-        expect.objectContaining({
-          properties: expect.objectContaining({ method }),
-        }),
+    );
+    const { stdout } = await analyze(cli, root);
+    const evidence = parseEvidence(JSON.parse(stdout));
+    const result = javascriptApplicationAnalysisResultSchema.parse(
+      evidence.normalized_result,
+    );
+    const nodes = result.semantic_graph.nodes;
+    expect(
+      nodes.filter(({ kind }) =>
+        [
+          "config-source",
+          "resource",
+          "child-process",
+          "timer",
+          "request",
+        ].includes(kind),
       ),
-    ]),
-  );
-  const relations = result.semantic_graph.relations;
-  for (const relation of ["releases", "forwards-signal", "cancels-timer"])
-    expect(relations).toEqual(
+    ).toHaveLength(6);
+    expect(nodes).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ relation, resolution: "resolved" }),
+        expect.objectContaining({
+          kind: "config-source",
+          properties: expect.objectContaining({ key: "config.json" }),
+        }),
+        expect.objectContaining({
+          kind: "config-source",
+          properties: expect.objectContaining({ key: "MODE" }),
+        }),
+        ...["createReadStream", "spawn", "setTimeout", "get"].map((method) =>
+          expect.objectContaining({
+            properties: expect.objectContaining({ method }),
+          }),
+        ),
       ]),
     );
-  const { client, call } = await connectLocalToolsMcp();
-  const response = await call("analyze_javascript_application", {
-    input_path: root,
-    format: "auto",
-  });
-  expect(response.isError, JSON.stringify(response)).not.toBe(true);
-  expect(response.structuredContent).toEqual(evidence);
-  await client.ping();
-});
+    const relations = result.semantic_graph.relations;
+    for (const relation of ["releases", "forwards-signal", "cancels-timer"])
+      expect(relations).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ relation, resolution: "resolved" }),
+        ]),
+      );
+    const { client, call } = await builtinMcp();
+    const response = await call("analyze_javascript_application", {
+      input_path: root,
+      format: "auto",
+    });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    expect(response.structuredContent).toEqual(evidence);
+    await client.ping();
+  },
+);
 
-it.each([
+cliTest.for([
   "import fs from 'node:fs';",
   "import {default as fs} from 'node:fs';",
 ])(
   "retains filesystem effects in the public CLI with %s",
-  async (declaration) => {
+  async (declaration, { cli }) => {
     const root = await createTestTempDirectory("rea-builtin-default-cli-");
     await writeFile(
       join(root, "app.js"),
       `${declaration} const text=fs.readFileSync('config.json','utf8'); const stream=fs.createReadStream('config.json'); stream.destroy();`,
     );
-    const { stdout } = await execute(
-      process.execPath,
-      ["scripts/rea.mjs", "analyze-javascript-application", root, "--json"],
-      { cwd: process.cwd(), maxBuffer: 16 * 1024 * 1024 },
-    );
+    const { stdout } = await analyze(cli, root);
     const result = javascriptApplicationAnalysisResultSchema.parse(
       parseEvidence(JSON.parse(stdout)).normalized_result,
     );
@@ -419,17 +421,19 @@ it.each([
   },
 );
 
-it("keeps only direct logical defaults and actual argv elements in the public CLI graph", async () => {
-  const root = await createTestTempDirectory("rea-builtin-default-cli-");
-  const manyDefaults = Array.from(
-    { length: 400 },
-    (_, index) =>
-      `const value${index} = process.env.KEY_${index} ?? "fallback-${index}";`,
-  ).join("\n");
-  await writeFile(
-    join(root, "app.js"),
-    [
-      `const chained = process.env.CHAINED ?? "fallback" ?? "unreachable";
+cliTest(
+  "keeps only direct logical defaults and actual argv elements in the public CLI graph",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-builtin-default-cli-");
+    const manyDefaults = Array.from(
+      { length: 400 },
+      (_, index) =>
+        `const value${index} = process.env.KEY_${index} ?? "fallback-${index}";`,
+    ).join("\n");
+    await writeFile(
+      join(root, "app.js"),
+      [
+        `const chained = process.env.CHAINED ?? "fallback" ?? "unreachable";
 const wrapped = ((process.env.WRAPPED)) ?? "wrapped";
 const argument = process.argv[2];
 const argumentLength = process.argv.length;
@@ -440,85 +444,82 @@ const lastArrayIndex = process.argv[4294967294];
 const outOfRangeArgument = process.argv[4294967295];
 const dynamicArgument = process.argv[process.env.ARGV_INDEX];
 function shadowed(process) { return process.argv[3]; }`,
-      manyDefaults,
-    ].join("\n"),
-  );
-  const { stdout } = await execute(
-    process.execPath,
-    ["scripts/rea.mjs", "analyze-javascript-application", root, "--json"],
-    { cwd: process.cwd(), maxBuffer: 16 * 1024 * 1024 },
-  );
-  const result = javascriptApplicationAnalysisResultSchema.parse(
-    parseEvidence(JSON.parse(stdout)).normalized_result,
-  );
-  const configSources = result.semantic_graph.nodes.filter(
-    ({ kind }) => kind === "config-source",
-  );
-  const defaults = configSources.filter(
-    ({ properties }) => properties.source_kind === "default",
-  );
-  expect(defaults).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
-        properties: expect.objectContaining({
-          key: "CHAINED",
-          value: "fallback",
+        manyDefaults,
+      ].join("\n"),
+    );
+    const { stdout } = await analyze(cli, root);
+    const result = javascriptApplicationAnalysisResultSchema.parse(
+      parseEvidence(JSON.parse(stdout)).normalized_result,
+    );
+    const configSources = result.semantic_graph.nodes.filter(
+      ({ kind }) => kind === "config-source",
+    );
+    const defaults = configSources.filter(
+      ({ properties }) => properties.source_kind === "default",
+    );
+    expect(defaults).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            key: "CHAINED",
+            value: "fallback",
+          }),
         }),
-      }),
-      expect.objectContaining({
-        properties: expect.objectContaining({
-          key: "WRAPPED",
-          value: "wrapped",
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            key: "WRAPPED",
+            value: "wrapped",
+          }),
         }),
-      }),
-    ]),
-  );
-  expect(
-    defaults.filter(({ properties }) => properties.key === "CHAINED"),
-  ).toHaveLength(1);
-  expect(defaults).toHaveLength(402);
-  const defaultsByKey = new Map(
-    defaults.map(({ properties }) => [properties.key, properties.value]),
-  );
-  for (let index = 0; index < 400; index += 1)
-    expect(defaultsByKey.get(`KEY_${index}`)).toBe(`fallback-${index}`);
-  const argvSources = configSources.filter(
-    ({ properties }) => properties.source_kind === "argv",
-  );
-  expect(argvSources).toHaveLength(3);
-  expect(argvSources).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
-        properties: expect.objectContaining({ key: "2" }),
-      }),
-      expect.objectContaining({
-        properties: expect.objectContaining({ key: "4294967294" }),
-      }),
-      expect.objectContaining({
-        properties: expect.objectContaining({ key: null }),
-      }),
-    ]),
-  );
-  expect(
-    result.semantic_graph.relations
-      .filter(({ relation }) => relation === "reads-argv")
-      .map(({ resolution }) => resolution),
-  ).toEqual(expect.arrayContaining(["resolved", "candidate"]));
-  expect(
-    result.semantic_graph.relations.filter(
-      ({ relation, source_node_id, target_node_id }) => {
-        if (relation !== "overrides") return false;
-        const source = result.semantic_graph.nodes.find(
-          ({ node_id }) => node_id === source_node_id,
-        );
-        const target = result.semantic_graph.nodes.find(
-          ({ node_id }) => node_id === target_node_id,
-        );
-        return (
-          source?.properties.key === "CHAINED" &&
-          target?.properties.key === "CHAINED"
-        );
-      },
-    ),
-  ).toHaveLength(1);
-});
+      ]),
+    );
+    expect(
+      defaults.filter(({ properties }) => properties.key === "CHAINED"),
+    ).toHaveLength(1);
+    expect(defaults).toHaveLength(402);
+    const defaultsByKey = new Map(
+      defaults.map(({ properties }) => [properties.key, properties.value]),
+    );
+    for (let index = 0; index < 400; index += 1)
+      expect(defaultsByKey.get(`KEY_${index}`)).toBe(`fallback-${index}`);
+    const argvSources = configSources.filter(
+      ({ properties }) => properties.source_kind === "argv",
+    );
+    expect(argvSources).toHaveLength(3);
+    expect(argvSources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          properties: expect.objectContaining({ key: "2" }),
+        }),
+        expect.objectContaining({
+          properties: expect.objectContaining({ key: "4294967294" }),
+        }),
+        expect.objectContaining({
+          properties: expect.objectContaining({ key: null }),
+        }),
+      ]),
+    );
+    expect(
+      result.semantic_graph.relations
+        .filter(({ relation }) => relation === "reads-argv")
+        .map(({ resolution }) => resolution),
+    ).toEqual(expect.arrayContaining(["resolved", "candidate"]));
+    expect(
+      result.semantic_graph.relations.filter(
+        ({ relation, source_node_id, target_node_id }) => {
+          if (relation !== "overrides") return false;
+          const source = result.semantic_graph.nodes.find(
+            ({ node_id }) => node_id === source_node_id,
+          );
+          const target = result.semantic_graph.nodes.find(
+            ({ node_id }) => node_id === target_node_id,
+          );
+          return (
+            source?.properties.key === "CHAINED" &&
+            target?.properties.key === "CHAINED"
+          );
+        },
+      ),
+    ).toHaveLength(1);
+  },
+);
