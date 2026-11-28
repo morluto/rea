@@ -228,11 +228,13 @@ const captureAuthorizedPage = async (
           { ...context, events: state.events },
           limitations,
         );
-  if ("include_css_variables" in input && input.include_css_variables) {
-    if (cssVariables.status === "unavailable") {
-      state.events.completeness.unavailable("css_variables");
-    } else if (cssVariables.status === "truncated") {
-      state.events.completeness.truncate("css_variables");
+  if (context.operation === "inspect_web_page") {
+    if ("include_css_variables" in input && input.include_css_variables) {
+      if (cssVariables.status === "truncated") {
+        state.events.completeness.truncate("css_variables");
+      }
+    } else {
+      state.events.completeness.exclude("css_variables", "not_approved", null);
     }
   }
   if (!input.include_storage_keys)

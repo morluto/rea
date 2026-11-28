@@ -1212,6 +1212,16 @@ it("redacts credentials from standalone URL custom properties and admits custom 
           value: "https://alice:sec,ret@example.test/comma.png",
         },
         {
+          name: "--asset-comma-list",
+          value:
+            "https://public.example/a,https://alice:secret@private.example/b",
+        },
+        {
+          name: "--asset-mixed-alternatives",
+          value:
+            'url("https://safe.test/a") 1x, "https://alice:secret@example.test/b" 2x',
+        },
+        {
           name: "--asset-escaped",
           value: '"https://carol:pw\\40 example.test/c.png"',
         },
@@ -1255,6 +1265,16 @@ it("redacts credentials from standalone URL custom properties and admits custom 
   expect(byName.get("--asset-comma-password")).toEqual({
     name: "--asset-comma-password",
     value: "https://example.test/comma.png",
+    redacted: true,
+  });
+  expect(byName.get("--asset-comma-list")).toEqual({
+    name: "--asset-comma-list",
+    value: "https://public.example/a,https://private.example/b",
+    redacted: true,
+  });
+  expect(byName.get("--asset-mixed-alternatives")).toEqual({
+    name: "--asset-mixed-alternatives",
+    value: 'url("https://safe.test/a") 1x, "https://example.test/b" 2x',
     redacted: true,
   });
   expect(byName.get("--asset-escaped")).toEqual({

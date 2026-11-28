@@ -406,9 +406,27 @@ const redactStandaloneCssUrl = (value: string): string => {
     const candidate = hasTrailingComma ? token.slice(0, -1) : token;
     try {
       const sanitized = redactCssUrl(candidate);
-      result += sanitized.redacted
-        ? `${sanitized.url}${hasTrailingComma ? "," : ""}`
-        : token;
+      if (sanitized.redacted) {
+        result += `${sanitized.url}${hasTrailingComma ? "," : ""}`;
+      } else if (candidate.includes(",")) {
+        const parts = token.split(/,(?=(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?\/\/)/u);
+        result += parts
+          .map((part) => {
+            const partTrailingComma = part.endsWith(",");
+            const partCandidate = partTrailingComma ? part.slice(0, -1) : part;
+            try {
+              const partSanitized = redactCssUrl(partCandidate);
+              return partSanitized.redacted
+                ? `${partSanitized.url}${partTrailingComma ? "," : ""}`
+                : part;
+            } catch {
+              return part;
+            }
+          })
+          .join(",");
+      } else {
+        result += token;
+      }
     } catch {
       result += token;
     }
@@ -437,7 +455,7 @@ export const redactCssUrlCredentials = (
   let result = "";
   let lastIndex = 0;
   for (const match of matches) {
-    result += value.slice(lastIndex, match.start);
+    result += redactStandaloneCssUrl(value.slice(lastIndex, match.start));
     try {
       const sanitized = redactCssUrl(match.rawUrl);
       if (sanitized.redacted) {
@@ -450,7 +468,7 @@ export const redactCssUrlCredentials = (
     }
     lastIndex = match.end;
   }
-  result += value.slice(lastIndex);
+  result += redactStandaloneCssUrl(value.slice(lastIndex));
   return result;
 };
 
@@ -476,6 +494,7 @@ const safeCdpCommand = async <M extends CdpCommand>(
           reason: "invalid_protocol_value",
           count: number | null,
         ) => void;
+        readonly unavailable?: (section: "css_variables") => void;
       };
     };
   },
@@ -497,10 +516,13 @@ const safeCdpCommand = async <M extends CdpCommand>(
         "invalid_protocol_value",
         1,
       );
+    } else {
+      context.events?.completeness.unavailable?.("css_variables");
     }
     return undefined;
   } catch (cause: unknown) {
     if (cause instanceof CdpCommandRejection && cause.code === -32000) {
+      context.events?.completeness.unavailable?.("css_variables");
       limitations.push(
         `${method} failed (CDP error -32000): ${cause.reportedMessage ?? "target node detached or unavailable"}.`,
       );
@@ -527,6 +549,7 @@ export const captureCssVariables = async (
           reason: "invalid_protocol_value",
           count: number | null,
         ) => void;
+        readonly unavailable?: (section: "css_variables") => void;
       };
     };
   },
@@ -656,7 +679,7 @@ export const captureCssVariables = async (
 
     totalObserved += 1;
 
-    if (rawValue.length > maxValueLength) {
+    if (name.length + rawValue.length > maxValueLength) {
       rejectedCount += 1;
       if (rejectedPreviews.length < MAX_REJECTED_PREVIEWS) {
         const truncatedName = ellipsisExcerpt(
@@ -664,7 +687,7 @@ export const captureCssVariables = async (
           MAX_PREVIEW_NAME_LENGTH,
         );
         rejectedPreviews.push(
-          `${truncatedName} (value length ${String(rawValue.length)} exceeds max_css_variable_value_length ${String(maxValueLength)})`,
+          `${truncatedName} (name + value length ${String(name.length + rawValue.length)} exceeds max_css_variable_value_length ${String(maxValueLength)})`,
         );
       }
       continue;
