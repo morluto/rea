@@ -261,7 +261,7 @@ export const DEFAULT_MAX_CSS_VARIABLES = 250;
 export const MAX_CSS_VARIABLES_CEILING = 10_000;
 export const DEFAULT_MAX_CSS_VARIABLE_VALUE_LENGTH = 512;
 export const MAX_CSS_VARIABLE_VALUE_LENGTH_CEILING = 65_536;
-export const MAX_CSS_VARIABLES_TOTAL_CHARS = 16_777_216;
+export const MAX_CSS_VARIABLES_TOTAL_CHARS = 33_554_432;
 
 export const browserCssVariableItemSchema = z.object({
   name: z

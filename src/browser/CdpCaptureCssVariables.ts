@@ -391,14 +391,14 @@ const redactStandaloneCssUrl = (value: string): string => {
       continue;
     }
 
-    if (/\s/u.test(ch)) {
+    if (/[ \t\r\n\f]/u.test(ch)) {
       result += ch;
       pos++;
       continue;
     }
 
     let tokenEnd = pos + 1;
-    while (tokenEnd < len && !/[\s"']/u.test(value[tokenEnd]!)) {
+    while (tokenEnd < len && !/[ \t\r\n\f"']/u.test(value[tokenEnd]!)) {
       tokenEnd++;
     }
     const token = value.slice(pos, tokenEnd);
@@ -409,7 +409,7 @@ const redactStandaloneCssUrl = (value: string): string => {
       if (sanitized.redacted) {
         result += `${sanitized.url}${hasTrailingComma ? "," : ""}`;
       } else if (candidate.includes(",")) {
-        const parts = token.split(/,(?=(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?\/\/)/u);
+        const parts = token.split(/,(?=[a-zA-Z][a-zA-Z0-9+.-]*:\/\/)/u);
         result += parts
           .map((part) => {
             const partTrailingComma = part.endsWith(",");
@@ -585,7 +585,11 @@ export const captureCssVariables = async (
   const targetNodeId =
     numberValue(elementChild?.nodeId) ?? numberValue(rootRecord.nodeId);
 
-  if (targetNodeId === undefined || targetNodeId <= 0) {
+  if (
+    targetNodeId === undefined ||
+    !Number.isInteger(targetNodeId) ||
+    targetNodeId <= 0
+  ) {
     context.events?.completeness.exclude(
       "css_variables",
       "invalid_protocol_value",
@@ -679,16 +683,19 @@ export const captureCssVariables = async (
 
     totalObserved += 1;
 
-    if (name.length + rawValue.length > maxValueLength) {
+    const maxNameLength = Math.max(1024, maxValueLength);
+    if (name.length > maxNameLength || rawValue.length > maxValueLength) {
       rejectedCount += 1;
       if (rejectedPreviews.length < MAX_REJECTED_PREVIEWS) {
         const truncatedName = ellipsisExcerpt(
           sanitizeDiagnosticPreview(name),
           MAX_PREVIEW_NAME_LENGTH,
         );
-        rejectedPreviews.push(
-          `${truncatedName} (name + value length ${String(name.length + rawValue.length)} exceeds max_css_variable_value_length ${String(maxValueLength)})`,
-        );
+        const oversizedDetail =
+          name.length > maxNameLength
+            ? `name length ${String(name.length)} exceeds ${String(maxNameLength)}`
+            : `value length ${String(rawValue.length)} exceeds max_css_variable_value_length ${String(maxValueLength)}`;
+        rejectedPreviews.push(`${truncatedName} (${oversizedDetail})`);
       }
       continue;
     }

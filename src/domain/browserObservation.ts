@@ -304,11 +304,12 @@ export const refineInspectWebPageInput = (
     const maxLen =
       input.max_css_variable_value_length ??
       DEFAULT_MAX_CSS_VARIABLE_VALUE_LENGTH;
-    if (maxVars * maxLen > MAX_CSS_VARIABLES_TOTAL_CHARS) {
+    const maxNameLen = Math.max(1024, maxLen);
+    if (maxVars * (maxNameLen + maxLen) > MAX_CSS_VARIABLES_TOTAL_CHARS) {
       context.addIssue({
         code: "custom",
         path: ["max_css_variables"],
-        message: `max_css_variables * max_css_variable_value_length exceeds the ${String(MAX_CSS_VARIABLES_TOTAL_CHARS)} UTF-16 unit capture budget; lower max_css_variables or max_css_variable_value_length.`,
+        message: `max_css_variables * (name + value budget) exceeds the ${String(MAX_CSS_VARIABLES_TOTAL_CHARS)} UTF-16 unit capture budget; lower max_css_variables or max_css_variable_value_length.`,
       });
     }
   }

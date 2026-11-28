@@ -1110,7 +1110,7 @@ describe("web capture CSS variables comparison", () => {
     if (!captured.ok) throw captured.error;
 
     const beforeCss = structuredClone(captured.value);
-    markSectionsComplete(beforeCss, ["metadata"]);
+    markSectionsComplete(beforeCss, ["metadata", "css_variables"]);
     beforeCss.css_variables = {
       status: "included",
       origin_scope: "same_origin",
