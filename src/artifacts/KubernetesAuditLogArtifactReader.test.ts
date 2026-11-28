@@ -748,3 +748,25 @@ it("reports no members to open", async () => {
   ).rejects.toMatchObject({ reason: "unavailable" });
   await reader.close();
 });
+
+it("fills request fields from a readable stage after a depth-cut first one", async () => {
+  const nest = `${"[".repeat(KUBERNETES_AUDIT_JSON_DEPTH)}1${"]".repeat(KUBERNETES_AUDIT_JSON_DEPTH)}`;
+  const cut = `{"auditID":"late-fill","stage":"RequestReceived","requestObject":${nest},"apiVersion":"audit.k8s.io/v1"}`;
+  const readable = auditEvent({
+    auditID: "late-fill",
+    stage: "ResponseComplete",
+    requestURI: "/api/v1/namespaces/default/pods",
+    verb: "delete",
+    username: "ada",
+    responseCode: 403,
+  });
+  const metadata = await metadataOf(`${cut}\n${readable}\n`);
+  expect(metadata.events[0]).toMatchObject({
+    audit_id: "late-fill",
+    request_uri: "/api/v1/namespaces/default/pods",
+    verb: "delete",
+    username: "ada",
+    response_code: 403,
+    depth_limited: true,
+  });
+});

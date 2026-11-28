@@ -542,7 +542,7 @@ class KubernetesAuditScanner {
           this.#sampleFields,
         ),
         seenStages: new Set([stage]),
-        fieldsRecorded: !unsupported,
+        fieldsRecorded: !suppressFields,
       });
       const created = this.#sample.get(key);
       if (created !== undefined && (depthLimited || budgetOmitted))
@@ -558,7 +558,7 @@ class KubernetesAuditScanner {
     const alreadySeen = sampled.seenStages.has(stage);
     if (alreadySeen) this.#sampleDuplicateStageLines += 1;
     else sampled.seenStages.add(stage);
-    if (!unsupported && !sampled.fieldsRecorded) {
+    if (!suppressFields && !sampled.fieldsRecorded) {
       const filled = summarizeEvent(
         suppressFields ? undefined : event,
         sampled.summary.audit_id,
