@@ -12,6 +12,7 @@ import type {
 } from "./javascriptStaticAnalysisTypes.js";
 import {
   readExactJavaScriptLiteral,
+  stringValue,
   semanticStaticPropertyKey,
   semanticStaticPropertyName,
   unwrapJavaScriptExpression,
@@ -545,6 +546,28 @@ export const FS_OPEN_FLAGS: ReadonlySet<string> = new Set([
   "xw+",
 ]);
 
+/**
+ * Encodings Node's `Buffer` accepts, so an `encoding` stream option can be decided.
+ *
+ * `Buffer.isEncoding` is the authority, but this module is the pure domain layer and
+ * does not reach for Node globals. The set is the documented list; a value outside it
+ * is one Node rejects at the call site.
+ */
+export const BUFFER_ENCODINGS: ReadonlySet<string> = new Set([
+  "ascii",
+  "base64",
+  "base64url",
+  "binary",
+  "hex",
+  "latin1",
+  "ucs-2",
+  "ucs2",
+  "utf-16le",
+  "utf8",
+  "utf-8",
+  "utf16le",
+]);
+
 /** Reserved browsing-context names (ASCII case-insensitive). */
 const BROWSING_CONTEXT_KEYWORDS = new Set([
   "_blank",
@@ -726,9 +749,34 @@ const storageKind = (
   return undefined;
 };
 
-/** Produce a dotted callee name through type-erased expression wrappers. */
-export const calleeName = (node: t.Node): string => {
+/**
+ * Bundlers call an import as `(0, ns.name)(...)`, which drops only the
+ * receiver. Read the final operand only when every discarded operand is an
+ * exact literal: any other operand may replace the callee before it is read.
+ */
+const receiverlessCallee = (node: t.Node): t.Node => {
   node = unwrapJavaScriptExpression(node).node;
+  while (t.isSequenceExpression(node)) {
+    const final = node.expressions.at(-1);
+    if (
+      final === undefined ||
+      !node.expressions
+        .slice(0, -1)
+        .every((operand) => readExactJavaScriptLiteral(operand).found)
+    )
+      return node;
+    node = unwrapJavaScriptExpression(final).node;
+  }
+  return node;
+};
+
+/**
+ * Produce a dotted callee name through type-erased expression wrappers and
+ * receiverless bundler calls. The name is spelling only; receiver and global
+ * identity proofs read the original callee.
+ */
+export const calleeName = (node: t.Node): string => {
+  node = receiverlessCallee(node);
   const segments: string[] = [];
   while (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
     // Dynamic keys retain their syntax identity instead of inventing a name.
@@ -749,20 +797,6 @@ const memberPropertyName = (
 ): string =>
   semanticStaticPropertyKey(node.property, node.computed) ??
   (node.computed ? `[computed@${String(node.property.start ?? -1)}]` : "");
-
-/**
- * Return a string literal value without evaluating an expression. A template
- * literal without substitutions denotes the same exact string.
- */
-export const stringValue = (
-  node: t.Node | null | undefined,
-): string | undefined => {
-  if (node === null || node === undefined) return undefined;
-  const literal = readExactJavaScriptLiteral(node);
-  return literal.found && typeof literal.value === "string"
-    ? literal.value
-    : undefined;
-};
 
 /** Return a string or numeric argument literal. */
 export const argumentValue = (

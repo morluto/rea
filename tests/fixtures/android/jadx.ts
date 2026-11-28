@@ -1,11 +1,4 @@
-import {
-  access,
-  chmod,
-  mkdir,
-  readFile,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, onTestFinished } from "vitest";
@@ -159,21 +152,4 @@ export const createJadxProtocolFixture = async (
       return contents.split("\n").filter(Boolean).length;
     },
   };
-};
-
-/** Verify only this fixture's acquired group and workspace, without scanning unrelated host environments. */
-export const verifyJadxFixtureCleanup = async (
-  launches: Awaited<ReturnType<typeof createJadxProtocolFixture>>["launches"],
-): Promise<void> => {
-  for (const launch of launches) {
-    const pid = launch.pid;
-    if (pid !== undefined)
-      expect(() => process.kill(-pid, 0)).toThrowError(
-        expect.objectContaining({ code: "ESRCH" }),
-      );
-    if (launch.cwd !== undefined)
-      await expect(access(launch.cwd)).rejects.toMatchObject({
-        code: "ENOENT",
-      });
-  }
 };

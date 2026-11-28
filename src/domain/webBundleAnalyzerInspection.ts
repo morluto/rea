@@ -27,6 +27,7 @@ import type { JavaScriptOpenReceiverFact } from "./javascript/javascriptSemantic
 import { isIntrinsicMapLookup } from "./javascript/javascriptSemanticIntrinsicInstances.js";
 import { isUnmodifiedGlobalReference } from "./javascript/javascriptSemanticGlobalReference.js";
 import {
+  stringValue,
   semanticStaticPropertyKey,
   isNullishJavaScriptSyntax,
   staticObjectProperty,
@@ -37,7 +38,6 @@ import {
   STATIC_ROUTE_CALL_NAMES,
   calleeName,
   endpointArgument,
-  stringValue,
 } from "./javascript/javascriptStaticAnalysisHelpers.js";
 import {
   location,

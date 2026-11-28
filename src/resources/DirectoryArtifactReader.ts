@@ -40,6 +40,7 @@ import { invariantViolation } from "../domain/internalInvariant.js";
 import { hostExecutableMarking } from "./hostExecutableMarking.js";
 import { resolveArtifactSourcePath } from "./ArtifactSelectedSource.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { reportedSystemCode } from "../kernel/reportedSystemCode.js";
 
 export type DirectoryArtifactEntry = ArtifactEntry & {
   readonly kind: "file" | "directory" | "symlink";
@@ -239,7 +240,7 @@ export class DirectoryArtifactReader implements ArtifactReader {
     const handle = new OwnedDirectoryHandle(
       await opendir(directory, { encoding: "buffer" as BufferEncoding }).catch(
         (cause: unknown) => {
-          const code = hostErrorCode(cause);
+          const code = reportedSystemCode(cause);
           if (directory !== root && (code === "EACCES" || code === "EPERM"))
             throw new DirectoryArtifactEntryAccessDenied(
               code,
@@ -656,7 +657,7 @@ const directoryIoFailure = (
   Failure: typeof ArtifactReaderFailure = ArtifactReaderFailure,
 ): ArtifactReaderFailure => {
   if (cause instanceof ArtifactReaderFailure) return cause;
-  const code = hostErrorCode(cause);
+  const code = reportedSystemCode(cause);
   const suffix = code === undefined ? "" : ` (${code})`;
   const detail = errorMessage(cause);
   return new Failure(
@@ -668,15 +669,6 @@ const directoryIoFailure = (
   );
 };
 
-/** The host errno a lower-level failure reported, when it reported one. */
-const hostErrorCode = (cause: unknown): string | undefined =>
-  typeof cause === "object" &&
-  cause !== null &&
-  "code" in cause &&
-  typeof cause.code === "string"
-    ? cause.code
-    : undefined;
-
 /**
  * Report a refused entry open as the host's read-access denial so the consumer
  * that owns the caller's selection can classify it without re-reading text.
@@ -686,7 +678,7 @@ const entryOpenFailure = (
   cause: unknown,
 ): ArtifactReaderFailure => {
   const failure = directoryIoFailure("open entry", entry.adapterKey, cause);
-  const code = hostErrorCode(cause);
+  const code = reportedSystemCode(cause);
   return code === "EACCES" || code === "EPERM"
     ? new DirectoryArtifactEntryAccessDenied(
         code,

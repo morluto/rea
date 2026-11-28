@@ -55,6 +55,8 @@ export interface ReadGoBinaryImageOptions {
   readonly includeStringLiterals?: boolean;
   readonly checkActive?: (() => void) | undefined;
   readonly budgets?: Partial<GoAnalysisBudgets>;
+  /** `max_structure_bytes` for the container's header tables. */
+  readonly structureBytes?: number | undefined;
 }
 
 /** Stream Go build-info and optional string-literal inspection over a bounded FileHandle. */
@@ -67,6 +69,7 @@ export const readGoBinaryImageFromHandle = async (
     source,
     "inspect_go_binary",
     pause,
+    options?.structureBytes,
   );
   const budgets = goAnalysisBudgets(options?.budgets);
   const stringLiterals =

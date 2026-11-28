@@ -204,6 +204,7 @@ it("preserves cross-file typed errors and explicit worker choices", async () => 
   const diagnostics: string[][] = [];
   const typedEnvironment = {
     ...process.env,
+    OXLINT_TSGOLINT_PATH: undefined,
     PATH: [join(repository, "node_modules", ".bin"), process.env.PATH]
       .filter((path) => path !== undefined)
       .join(delimiter),
@@ -263,6 +264,15 @@ it("preserves cross-file typed errors and explicit worker choices", async () => 
   expect(corrected.error).toBeUndefined();
   expect(corrected.status, corrected.stderr).toBe(0);
   expect(corrected.stdout).toContain("0 errors, 1 warnings");
+
+  const missingBackend = join(root, "missing-typed-lint-backend");
+  const overridden = invokeWithEnvironment(root, "typed-lint", {
+    ...typedEnvironment,
+    OXLINT_TSGOLINT_PATH: missingBackend,
+  });
+  expect(overridden.error).toBeUndefined();
+  expect(overridden.status).toBe(1);
+  expect(overridden.stderr).toContain(missingBackend);
 });
 
 it("excludes translation staging while retaining authored website errors", async () => {

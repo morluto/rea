@@ -1,3 +1,7 @@
+import {
+  sessionExecutionEvidenceMetadata,
+  withSessionExecutionProvenance,
+} from "../binary/SessionEvidenceReuse.js";
 import { ZodError } from "zod";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
@@ -106,6 +110,7 @@ export const recoverProviderSourceFailure = (input: {
     evidenceForAnalysis,
   } = input;
   const { sourceEvidence, ...primaryExecution } = execution;
+  const metadata = sessionExecutionEvidenceMetadata(execution);
   // The schema owns the envelope shape. Measure its generated fields and then
   // account for source IDs incrementally, before allocating the ID array.
   const shell: Record<string, JsonValue> = Object.fromEntries(
@@ -116,6 +121,8 @@ export const recoverProviderSourceFailure = (input: {
   shell.confidence = "observed";
   shell.authority = "shipped-artifact";
   shell.evidence_links = [];
+  if (metadata.provider_selection !== undefined)
+    shell.provider_selection = metadata.provider_selection;
   const base = estimateJsonStorage(shell);
   let sourceValueBytes = base.valueBytes;
   let sourceSerializedUtf16Bytes = base.serializedUtf16Bytes;
@@ -158,12 +165,15 @@ export const recoverProviderSourceFailure = (input: {
   let evidence: Evidence | undefined;
   if (validSourceIds) {
     try {
-      evidence = createAnalysisExecutionEvidence(
-        operation,
-        parameters,
+      evidence = withSessionExecutionProvenance(
         execution,
-        "observed",
-        { immutable: true },
+        createAnalysisExecutionEvidence(
+          operation,
+          parameters,
+          execution,
+          "observed",
+          { immutable: true },
+        ),
       );
     } catch (cause) {
       if (!(cause instanceof ZodError)) throw cause;
@@ -176,6 +186,7 @@ export const recoverProviderSourceFailure = (input: {
   const observation = jsonObjectSchema.parse({
     operation,
     parameters,
+    ...metadata,
     result: execution.result,
     raw_result: execution.rawResult,
     provider: execution.provider,

@@ -70,7 +70,6 @@ import { PRODUCT_IDENTITY, SDK_IDENTITY } from "../identity.js";
 import {
   readClientRegistrationStatuses,
   type ClientRegistrationStatus,
-  type UnhealthyClientRegistrationStatus,
 } from "./ClientRegistrationStatus.js";
 import type { ProviderRequestBudgetResolver } from "./ClientRegistrationEnvironment.js";
 import {
@@ -82,6 +81,7 @@ import {
   doctorHealthy,
 } from "./DoctorDiagnostics.js";
 import {
+  clientRegistrationCheck,
   normalizeDoctorScope,
   scopeDoctorChecks,
   type DoctorScopeReport,
@@ -549,10 +549,10 @@ const collectDoctorIdentity = async (
           ]),
       ...registrations
         .filter(
-          (registration): registration is UnhealthyClientRegistrationStatus =>
+          (registration) =>
             registration.state !== "aligned" && registration.state !== "manual",
         )
-        .map(registrationCheck),
+        .map(clientRegistrationCheck),
     ],
     value: {
       cli_package_version: PRODUCT_IDENTITY.packageVersion,
@@ -665,19 +665,6 @@ const skillIdentityCheck = (
     remediation: skillIdentityRemediation(identity),
   };
 };
-
-const registrationCheck = (
-  registration: UnhealthyClientRegistrationStatus,
-): DoctorCheck => ({
-  name: `registration:${registration.client}`,
-  ok: false,
-  classification: registration.state === "unknown" ? "unknown" : "config_drift",
-  detail: registration.config_path,
-  ...(registration.scope === undefined
-    ? {}
-    : { details: { scope: registration.scope } }),
-  remediation: registration.remediation,
-});
 
 /** A PATH launcher and the installation identity its host resolved it to. */
 export interface DoctorInstallationLauncher {

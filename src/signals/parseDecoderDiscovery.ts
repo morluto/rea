@@ -1,28 +1,9 @@
 import type { InspectSignalDecodersInput } from "../domain/signals/signalDecoders.js";
 import { literalSubstringPredicate } from "../domain/analysisSearch.js";
-import { decodeLimit } from "../domain/parseFailure.js";
-
-/** The ParseFailure format of the `sigrok-cli` decoder catalog. */
-export const DECODER_CATALOG_FORMAT = "sigrok-decoder-catalog";
-const DECODER_CATALOG_LINES = 65536;
+import { SIGNAL_DECODER_PAGE_RECORDS } from "../domain/signals/signalDecoders.js";
 
 const copyText = (value: string): string =>
   Buffer.from(value, "utf16le").toString("utf16le");
-
-/** Keep the budget refusal ahead of grammar checking. The final empty line counts here. */
-const assertDiscoveryLineBudget = (text: string): void => {
-  let separators = 0;
-  let end = text.indexOf("\n");
-  while (end >= 0) {
-    if (++separators >= DECODER_CATALOG_LINES)
-      throw decodeLimit(
-        DECODER_CATALOG_FORMAT,
-        "Decoder discovery exceeds the 65,536-line representation budget",
-        { name: "line_budget", maximum: DECODER_CATALOG_LINES },
-      );
-    end = text.indexOf("\n", end + 1);
-  }
-};
 
 function* discoveryLines(text: string): Generator<string, void> {
   let start = 0;
@@ -43,16 +24,24 @@ export const parseDecoderDiscovery = (
   text: string,
   input: InspectSignalDecodersInput,
 ) => {
-  assertDiscoveryLineBudget(text);
   const matches = literalSubstringPredicate(input.query, false);
   const decoders: { id: string; name: string }[] = [];
   const help: { line_number: number; text: string }[] = [];
   let examined = 0;
   let matching = 0;
-  // Copy selected strings so a page does not retain the complete producer output.
+  let recordBudgetReached = false;
+  // Copy selected strings so a page does not retain the complete producer
+  // output. A page ends early at the record budget, so a short line cannot
+  // expand into an unbounded number of records; it stays contiguous.
   const select = (): boolean => {
     const index = matching++ - input.offset;
-    return index >= 0 && (input.limit === null || index < input.limit);
+    if (index < 0 || (input.limit !== null && index >= input.limit))
+      return false;
+    if (index >= SIGNAL_DECODER_PAGE_RECORDS) {
+      recordBudgetReached = true;
+      return false;
+    }
+    return true;
   };
   const lines = discoveryLines(text);
   const catalog = input.decoder === null;
@@ -98,6 +87,7 @@ export const parseDecoderDiscovery = (
       matching,
       returned,
       has_more: matching - input.offset > returned,
+      record_budget_reached: recordBudgetReached,
     },
   };
 };

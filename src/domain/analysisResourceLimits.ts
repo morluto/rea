@@ -58,6 +58,39 @@ export const MAXIMUM_NATIVE_MATCHING_REPRESENTATION_BYTES = 1024 * 1024 * 1024;
 /** Default absolute deadline for Ghidra import, analysis, bridge, and readiness. */
 export const DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS = 330_000;
 
+/**
+ * Per-call bounds on the C text REA hands to Ghidra's parser, which cannot be
+ * cancelled. Measured on Ghidra 12.2: the slowest shape per character is one
+ * chain of pointer declarators, cubic in its length (0.3 s at 2048 UTF-16 code
+ * units, 0.8 s at 4096, 6.8 s at 8192, 100 s at 16384). The maxima keep the
+ * slowest admitted text under about 7 s; the Java bridge enforces the same
+ * defaults and ranges.
+ */
+export const DEFAULT_GHIDRA_SIGNATURE_MAX_UTF16 = 2048;
+export const MAXIMUM_GHIDRA_SIGNATURE_MAX_UTF16 = 4096;
+export const DEFAULT_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16 = 4096;
+export const MAXIMUM_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16 = 8192;
+/** Shorter text cannot hold a prototype or a definition worth refusing by length. */
+export const MINIMUM_GHIDRA_C_TEXT_UTF16 = 16;
+/**
+ * Per-call bound on parenthesis nesting in caller C text. Each level doubles
+ * Ghidra's recursive-descent parse time and the cost repeats per occurrence
+ * (8192 units filled at depth 8: 0.2 s; at depth 12: 2.2 s), so the maximum
+ * keeps the slowest admitted text near the length bounds' own. A prototype's
+ * own parameter list is one level.
+ */
+export const MINIMUM_GHIDRA_C_PARENTHESIS_DEPTH = 1;
+export const DEFAULT_GHIDRA_C_PARENTHESIS_DEPTH = 8;
+export const MAXIMUM_GHIDRA_C_PARENTHESIS_DEPTH = 12;
+/**
+ * Fixed ceiling on how deep a parsed C type chains through pointers, arrays,
+ * typedefs and members. Ghidra 12.2 stores, names and compares a type
+ * recursively: 1024 levels resolve, 2048 exhaust the stack inside
+ * addDataType with its database lock held, leaving the Program unusable. The
+ * Java bridge enforces the same value.
+ */
+export const GHIDRA_C_MAX_TYPE_DEPTH = 256;
+
 /** Default absolute deadline for Hopper launch, analysis, bridge, and readiness. */
 export const DEFAULT_HOPPER_STARTUP_TIMEOUT_MS = 120_000;
 
@@ -120,6 +153,22 @@ export const timerDurationMsSchema = z
 export const MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS = Math.floor(
   MAX_NODE_TIMER_DELAY_MS / 1000,
 );
+
+/**
+ * tools/list page budget when `REA_MCP_TOOLS_LIST_PAGE_BYTES` is unset.
+ * FastMCP's default SSE event cap is 1,048,576 bytes. 128 KiB of that stays
+ * free for SSE framing and transport fields.
+ */
+export const DEFAULT_MCP_TOOLS_LIST_PAGE_BYTES = 917_504;
+
+/** A page budget of zero admits nothing, so the setting starts at one byte. */
+export const MINIMUM_MCP_TOOLS_LIST_PAGE_BYTES = 1;
+
+/**
+ * Largest tools/list page REA will advertise. This is FastMCP's default SSE
+ * event cap. A larger JSON-RPC message cannot be delivered to that client.
+ */
+export const MAXIMUM_MCP_TOOLS_LIST_PAGE_BYTES = 1_048_576;
 
 /** Matching deadline used when the setting is unset. Today's fixed constant. */
 export const DEFAULT_REGEX_MATCHING_DEADLINE_MS = 5_000;
@@ -293,3 +342,45 @@ export const MAXIMUM_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS = 1_000;
 export const DEFAULT_ZSTD_MAX_FRAMES = 4_096;
 export const MINIMUM_ZSTD_MAX_FRAMES = 1;
 export const MAXIMUM_ZSTD_MAX_FRAMES = 65_536;
+
+/**
+ * Agent delivery budget for one tool result's inline JSON text. This is not
+ * an admission limit: an over-budget result is retained and delivered as its
+ * summary with a cursor, never refused. Claude Code moves MCP results above
+ * 25,000 tokens out of context and warns above 10,000. A 120-row inventory
+ * page of 73K characters already crossed the 25,000-token cap there (about
+ * 2.9 bytes per token for dense JSON), so 32 KiB is about 11,000 tokens: more
+ * than twice under the cap, with room for the delivery facts. 48 KiB would be
+ * about 17,000 tokens, too close to the cap for denser rows.
+ */
+export const DEFAULT_AGENT_RESULT_BUDGET_BYTES = 32_768;
+/** Below one small summary, every result would overflow. */
+export const MINIMUM_AGENT_RESULT_BUDGET_BYTES = 4_096;
+/** The stdio frame floor (10 MiB); the transport limit applies above it. */
+export const MAXIMUM_AGENT_RESULT_BUDGET_BYTES = 10 * 1024 * 1024;
+
+/**
+ * Default byte allowance for armed `observe_web_session` timeline rows.
+ * Request-identity metadata uses `WEB_RUNTIME_LIMITS.retainedEventBytes` as
+ * its own counter. The two counters start at the same 8 MiB and do not share
+ * remaining room.
+ */
+export const DEFAULT_BROWSER_TIMELINE_RETAINED_BYTES = 8 * 1024 * 1024;
+/** One byte is enough to refuse the next row. */
+export const MINIMUM_BROWSER_TIMELINE_RETAINED_BYTES = 1;
+/** Admission arithmetic stays inside a safe integer. */
+export const MAXIMUM_BROWSER_TIMELINE_RETAINED_BYTES = Number.MAX_SAFE_INTEGER;
+
+/**
+ * Total size of the per-user cache that keeps over-budget CLI results
+ * recoverable. A delivery bound, not an admission limit: a result that cannot
+ * be kept falls back to the rerun arguments, and 0 turns retention off. 256
+ * MiB keeps dozens of large inventories (a 530 KB assembly's complete
+ * managed members are 20.8 MB) without growing unbounded.
+ */
+export const DEFAULT_CLI_RETAINED_EVIDENCE_BYTES = 256 * 1024 * 1024;
+/** 0 turns CLI retention off. */
+export const MINIMUM_CLI_RETAINED_EVIDENCE_BYTES = 0;
+export const MAXIMUM_CLI_RETAINED_EVIDENCE_BYTES = 64 * 1024 * 1024 * 1024;
+/** Retained CLI Evidence unused for this long is removed by the next retention. */
+export const CLI_RETAINED_EVIDENCE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;

@@ -1,6 +1,6 @@
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { spawn } from "node:child_process";
-import { rm, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -28,7 +28,6 @@ import { waitFor } from "../../support/testWait.js";
 const cliProcesses = createTestProcessRegistry();
 const cli = createTestCli(cliProcesses);
 const browsers: FakeCdpBrowser[] = [];
-const temporary: string[] = [];
 
 afterEach(async () => {
   await closeVerifierResources([
@@ -37,16 +36,11 @@ afterEach(async () => {
       await browser.close();
       browsers.splice(browsers.indexOf(browser), 1);
     }),
-    ...temporary.map((path) => async () => {
-      await rm(path, { recursive: true, force: true });
-      temporary.splice(temporary.indexOf(path), 1);
-    }),
   ]);
 });
 
 it("returns the same endpoint-scoped Electron Evidence contracts", async () => {
   const root = await createTestTempDirectory("rea-electron-cli-");
-  temporary.push(root);
   await writeFile(join(root, "index.html"), "<script src='app.js'></script>");
   await writeFile(join(root, "app.js"), "export const app = true;");
   const browser = await startFakeCdpBrowser({
@@ -158,7 +152,6 @@ it.skipIf(process.platform === "win32")(
   "forwards SIGINT through Electron page inspection and completes target cleanup",
   async () => {
     const root = await createTestTempDirectory("rea-electron-cli-cancel-");
-    temporary.push(root);
     const page = join(root, "index.html");
     await writeFile(page, "<main>fixture</main>");
     const browser = await startFakeCdpBrowser({
@@ -232,7 +225,6 @@ it.skipIf(process.platform === "win32")(
 
 it("returns the static JavaScript application Evidence contract", async () => {
   const root = await createTestTempDirectory("rea-electron-static-cli-");
-  temporary.push(root);
   await writeElectronBoundaryFixture(root);
   const environment = {
     ...process.env,
@@ -263,7 +255,6 @@ it("returns the static JavaScript application Evidence contract", async () => {
 describe("Electron CLI artifact behavior", () => {
   it("keeps artifact format separate from structured output format", async () => {
     const root = await createTestTempDirectory("rea-electron-format-cli-");
-    temporary.push(root);
     await writeElectronBoundaryFixture(root);
     const environment = {
       ...process.env,
@@ -289,7 +280,6 @@ describe("Electron CLI artifact behavior", () => {
 
   it("routes generic directory analysis to static JavaScript", async () => {
     const root = await createTestTempDirectory("rea-electron-routed-cli-");
-    temporary.push(root);
     await writeElectronBoundaryFixture(root);
     const environment = {
       ...process.env,
@@ -335,7 +325,6 @@ describe("Electron CLI runtime reconciliation", () => {
   it("reads a file and returns the derived static/runtime reconciliation contract", async () => {
     const root = await createTestTempDirectory("rea-runtime-cli-");
     const inputPath = join(root, "reconciliation.json");
-    temporary.push(root);
     await writeFile(
       inputPath,
       JSON.stringify(JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE),
@@ -370,7 +359,6 @@ describe("Electron CLI runtime reconciliation", () => {
     const assets = await createTestTempDirectory("rea-runtime-cli-assets-");
     const runtime = await createTestTempDirectory("rea-runtime-cli-live-");
     const inputPath = join(assets, "reconciliation.json");
-    temporary.push(application, assets, runtime);
     await Promise.all([
       writeFile(join(assets, "app.js"), SOURCE),
       writeFile(join(assets, "absent.js"), "export const absent = true;\n"),

@@ -157,8 +157,8 @@ describe("bounded Ghidra PowerPC admission", () => {
       expect(resolved).toMatchObject({
         ok: false,
         error: {
-          _tag: "AnalysisUnsupportedTargetError",
-          reason: expect.stringContaining(reason),
+          _tag: "AnalysisTargetFailureError",
+          failure: { detail: expect.stringContaining(reason) },
         },
       });
     },

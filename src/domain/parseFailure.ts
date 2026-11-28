@@ -1,29 +1,24 @@
+import { err, ok, type Result } from "./result.js";
+import type {
+  FormatTargetFailure,
+  FormatTargetFailureKind,
+  TargetFailureFacts,
+  TruncatedExtent,
+} from "./targetFailure.js";
+
 /**
- * How a byte-format parser failed. One algebra for every format, so the
- * public category depends on what the parser established, not on which error
- * class it happened to throw.
+ * How a byte-format parser failed. The byte-structure outcomes are the
+ * {@link TargetFailureOf} variants themselves, so a parser's fact is the
+ * target failure every projection reads; only `limit` is parser-specific.
  *
+ * - `unrecognized`: the bytes are not this format; another reader may own them.
  * - `malformed`: the bytes violate the format's structure.
  * - `truncated`: a declared structure starts in the bytes but ends past them.
  * - `unsupported`: the bytes use a form outside this decoder's coverage.
  * - `limit`: a named decode budget stopped the parse; the input is not shown
  *   to be invalid.
  */
-export type ParseFailureKind =
-  | "malformed"
-  | "truncated"
-  | "unsupported"
-  | "limit";
-
-interface ParseFailureFacts {
-  /** The format being decoded, such as `elf` or `windows-shortcut`. */
-  readonly format: string;
-  readonly detail: string;
-  /** Byte offset of the structure that failed, when the parser knows it. */
-  readonly offset?: number;
-  /** The structure or field that failed, when the parser names it. */
-  readonly field?: string;
-}
+export type ParseFailureKind = FormatTargetFailureKind | "limit";
 
 /**
  * The limit a parse stopped at: its stable name, the maximum in force, and,
@@ -45,31 +40,13 @@ export const reportedParseLimit = ({ name, maximum, required }: LimitRef) => ({
     : { required: typeof required === "bigint" ? String(required) : required }),
 });
 
-/**
- * How far the input reached when a declared structure ran past it: the
- * measured end of the input and the length the structure needs. Only a
- * reader that measured the input's end reports it.
- */
-export interface TruncatedExtent {
-  readonly availableBytes: number;
-  readonly requiredBytes: number;
-}
-
 /** A parse outcome the parser established, carried with its facts. */
-export type ParseFailure = ParseFailureFacts &
-  (
-    | { readonly kind: "malformed" }
-    | { readonly kind: "truncated"; readonly extent?: TruncatedExtent }
-    | {
-        readonly kind: "unsupported";
-        /** The input holds the content, in a form this decoder cannot read. */
-        readonly undecodedContent: boolean;
-      }
-    | {
-        readonly kind: "limit";
-        readonly limit: LimitRef;
-      }
-  );
+export type ParseFailure =
+  | FormatTargetFailure
+  | (TargetFailureFacts & {
+      readonly kind: "limit";
+      readonly limit: LimitRef;
+    });
 
 /** The one throwable carrier for a {@link ParseFailure}. */
 export class ParseFailureError<
@@ -91,7 +68,7 @@ export class ParseFailureError<
 }
 
 /** Where the failure was found, and the failure that revealed it. */
-type ParseFailureSite = Pick<ParseFailureFacts, "offset" | "field"> & {
+type ParseFailureSite = Pick<TargetFailureFacts, "offset" | "field"> & {
   readonly cause?: unknown;
 };
 
@@ -100,6 +77,14 @@ const failureWith = <Kind extends ParseFailureKind>(
   cause: unknown,
 ): ParseFailureError<Kind> =>
   new ParseFailureError(failure, cause === undefined ? undefined : { cause });
+
+/** The bytes are not this format; another reader may own them. */
+export const unrecognizedInput = (
+  format: string,
+  detail: string,
+  { cause, ...at }: ParseFailureSite = {},
+): ParseFailureError<"unrecognized"> =>
+  failureWith({ kind: "unrecognized", format, detail, ...at }, cause);
 
 /** The bytes violate the format's structure. */
 export const malformedInput = (
@@ -214,4 +199,17 @@ export const parseFailureFromCause = (
 ): ParseFailureError | undefined => {
   if (cause instanceof ParseFailureError) return cause;
   return undefined;
+};
+
+/** Return a parser's reported failure and let unexpected exceptions reach the caller. */
+export const captureParseFailure = <T>(
+  read: () => T,
+): Result<T, ParseFailureError> => {
+  try {
+    return ok(read());
+  } catch (cause) {
+    const failure = parseFailureFromCause(cause);
+    if (failure === undefined) throw cause;
+    return err(failure);
+  }
 };

@@ -1,3 +1,4 @@
+import { appendToMapList } from "../domain/appendToMapList.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { ReconstructionObligationSources } from "./ReconstructionObligationLedgerRequest.js";
 import {
@@ -44,9 +45,7 @@ const groupByObligation = <T extends { readonly obligation_id: string }>(
 ): ReadonlyMap<string, readonly T[]> => {
   const groups = new Map<string, T[]>();
   for (const entry of entries) {
-    const group = groups.get(entry.obligation_id);
-    if (group === undefined) groups.set(entry.obligation_id, [entry]);
-    else group.push(entry);
+    appendToMapList(groups, entry.obligation_id, entry);
   }
   return groups;
 };

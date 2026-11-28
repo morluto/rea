@@ -119,11 +119,11 @@ describe("selected captured module artifact boundary", () => {
       });
       if (response.ok) throw new Error("expected invalid source bytes");
       expect(projectAnalysisError(response.error)).toMatchObject({
-        code: "artifact_operation_failed",
+        code: "unsupported_target",
         details: {
           operation,
-          reason: "format",
-          detail: expect.stringContaining(f.sourcePath),
+          path: expect.stringContaining(f.sourcePath),
+          failure_kind: "malformed",
         },
       });
     }
@@ -320,7 +320,6 @@ describe("selected captured script index", () => {
         "script_index",
         { reason: "invalid_value" },
       ],
-      ["{", 0, "manifest_path", { reason: "invalid_format" }],
     ] as const) {
       await writeFile(f.manifestPath, text);
       const response = await artifacts.load({ ...input, script_index: index });
@@ -330,5 +329,18 @@ describe("selected captured script index", () => {
         details: { issues: [{ path: [field], ...issue }] },
       });
     }
+    // Malformed manifest bytes are the selected file's fault, not the request's.
+    await writeFile(f.manifestPath, "{");
+    const malformed = await artifacts.load(input);
+    if (malformed.ok)
+      throw new Error("unexpected malformed manifest acceptance");
+    expect(projectAnalysisError(malformed.error)).toMatchObject({
+      code: "unsupported_target",
+      retryable: false,
+      details: {
+        path: f.manifestPath,
+        failure_kind: "malformed",
+      },
+    });
   });
 });

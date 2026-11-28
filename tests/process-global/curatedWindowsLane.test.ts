@@ -116,6 +116,7 @@ describe("curated Windows test lane", () => {
         "src/contracts/sessionPathInputs.test.ts",
         "tests/boundary/filesystem/directAnalysisSnapshotReplay.test.ts",
         "tests/boundary/mcp/rawBinaryMcp.test.ts",
+        "tests/boundary/filesystem/windowsTargetSeparators.test.ts",
       ]),
     );
   });
@@ -217,6 +218,7 @@ it("checks the complete source with the fallback compiler before Windows build r
   const built = steps.findIndex((step) => step.run === "npm run build:cached");
   expect(restored).toBeGreaterThan(-1);
   expect(checked).toBeGreaterThan(restored);
+  expect(steps[checked]?.if).toBe("matrix.suite == 'capabilities'");
   expect(built).toBeGreaterThan(checked);
   const vitestRuns = steps
     .map((step) => step.run)

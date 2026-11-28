@@ -1,14 +1,12 @@
-import {
-  analysisViewInputError,
-  invalidAnalysisView,
-} from "./analysisViewErrors.js";
+import { appendToMapList } from "../appendToMapList.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import {
   managedMemberInspectionSchema,
   type ManagedMemberInspection,
 } from "../managed/managedArtifact.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   assertOwnedView,
@@ -37,7 +35,7 @@ import type {
 
 export const MANAGED_MEMBER_SCOPE_GUIDANCE = {
   selectedNominalRows:
-    "Exported types and member references cover the whole assembly. Named type rows, fields, methods, call edges, field accesses and user strings follow the declaring-type selection.",
+    "Named type rows, exported types, fields, methods, call edges, field accesses and user strings follow the declaring-type selection; member references cover only rows referenced by selected method bodies.",
   unresolvedTypeRows:
     "Unresolved TypeDef coordinates cover the assembly-wide name scan.",
   unresolvedMethodRows:
@@ -85,9 +83,7 @@ const getCollectionFilterIndex = <T extends Row>(
     const value = row[key];
     if (typeof value !== "string") unresolved += 1;
     else {
-      const bucket = byValue.get(value);
-      if (bucket === undefined) byValue.set(value, [index]);
-      else bucket.push(index);
+      appendToMapList(byValue, value, index);
     }
   }
   const built = { byValue, unresolved };
@@ -484,17 +480,11 @@ export const projectManagedMemberView = (
   }
   const selected = collectionPage(report, view);
   if (selected === null)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view", "collection"],
-          reason: "invalid_value",
-          message:
-            view.collection === "unresolved_definitions"
-              ? "The parent Evidence did not record unresolved_definitions. Repeat inspect_managed_members to obtain checked coordinates."
-              : `The parent Evidence did not examine ${view.collection}; repeat inspect_managed_members with the current runtime to record it.`,
-        },
-      ]),
+    return invalidAnalysisView(
+      view.collection === "unresolved_definitions"
+        ? "The parent Evidence did not record unresolved_definitions. Repeat inspect_managed_members to obtain checked coordinates."
+        : `The parent Evidence did not examine ${view.collection}; repeat inspect_managed_members with the current runtime to record it.`,
+      "collection",
     );
   const { page, total } = selected;
   if (

@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import { z } from "zod";
 
 import { digestCanonicalValue } from "../canonicalDigest.js";
@@ -13,7 +14,6 @@ import {
 } from "./managedArtifact.js";
 import {
   buildComparisonCoverage,
-  hasCompleteMethodRows,
   managedComparisonScope,
   buildComparisonMatching,
   buildComparisonSummary,
@@ -282,9 +282,7 @@ const callEdgesByCaller = (
     ManagedMemberInspection["call_edges"][number][]
   >();
   for (const edge of result.call_edges) {
-    const callerEdges = edges.get(edge.caller_token);
-    if (callerEdges === undefined) edges.set(edge.caller_token, [edge]);
-    else callerEdges.push(edge);
+    appendToMapList(edges, edge.caller_token, edge);
   }
   return edges;
 };
@@ -306,10 +304,7 @@ const fieldAccessesByCaller = (
       access.target_identity_sha256 !== null
         ? { ...access, target_identity_sha256: null }
         : access;
-    const callerAccesses = accesses.get(access.method_token);
-    if (callerAccesses === undefined)
-      accesses.set(access.method_token, [observed]);
-    else callerAccesses.push(observed);
+    appendToMapList(accesses, access.method_token, observed);
   }
   return accesses;
 };
@@ -324,12 +319,6 @@ export const compareManagedMembers = (
   const itemContext = {
     leftEvidenceId: left.evidenceId,
     rightEvidenceId: right.evidenceId,
-    leftComplete: scope.left.metadataComplete,
-    rightComplete: scope.right.metadataComplete,
-    leftMethodsComplete:
-      scope.left.metadataComplete && hasCompleteMethodRows(left.result),
-    rightMethodsComplete:
-      scope.right.metadataComplete && hasCompleteMethodRows(right.result),
     scope,
     sameArtifact: left.result.artifact.sha256 === right.result.artifact.sha256,
     leftAssembly: left.result.assembly,

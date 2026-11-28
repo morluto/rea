@@ -34,8 +34,12 @@ export interface CliCommandRunContext<
 > {
   readonly args: Inputs<Args>;
   readonly options: Inputs<Options>;
-  /** The caller chose an output format (`--format` or `--json`). */
-  readonly formatExplicit: boolean;
+  /**
+   * The caller asked for the result document (`--format`, `--json`,
+   * `--full-output`, or `--token-count`), so it is written even on a terminal
+   * and the command must not also render its own terminal presentation.
+   */
+  readonly structuredOutput: boolean;
 }
 
 /** A command as its registrar defines it. */

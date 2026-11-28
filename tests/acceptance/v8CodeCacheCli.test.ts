@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { sha256 as digest } from "../support/sha256.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -21,8 +22,6 @@ cliTest(
     const wide = v8CodeCacheFixture(
       `var settings = { key: "${marker}" }; settings.key;`,
     );
-    const digest = (bytes: Buffer) =>
-      createHash("sha256").update(bytes).digest("hex");
     const payloadDigest = digest(wide.subarray(32));
     for (const [bytes, headerBytes] of [
       [wide, 32],
@@ -129,8 +128,29 @@ cliTest(
     expect(result.exitCode, result.stderr).toBe(1);
     expect(result.json).toMatchObject({
       code: "resource_constraint",
+      retryable: false,
       details: {
         reported_limits: { boundary: "max_strings", maximum: 1 },
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_strings",
+          cli_flag: "--max-strings",
+          effective_value: 1,
+          unit: "count",
+          minimum: 1,
+          maximum: 65_536,
+          default_value: 4096,
+          applies_at: "next_call",
+        },
+        refusal: {
+          kind: "adjustable_budget",
+          operation: "inspect_v8_code_cache",
+          control: "max_strings",
+          effective_value: 1,
+          unit: "count",
+          range: { minimum: 1, maximum: 65_536 },
+          default_value: 4096,
+        },
         partial_observation: {
           kind: "file-snapshot-hash",
           path,
@@ -139,5 +159,73 @@ cliTest(
         },
       },
     });
+    const details = (result.json as { details?: { limit?: unknown } }).details;
+    expect(details?.limit).not.toHaveProperty("required_value");
+  },
+);
+
+cliTest(
+  "reports CLI-spelled recovery and details.limit for --max-file-bytes refusals",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-v8-cli-file-size-");
+    const path = join(root, "module.jsc");
+    const bytes = v8CodeCacheFixture("function f(){ return 1; } f();");
+    await writeFile(path, bytes);
+    const refused = await cli.run({
+      arguments: [
+        "inspect-v8-code-cache",
+        path,
+        "--max-file-bytes",
+        "36",
+        "--json",
+      ],
+    });
+    expect(refused.exitCode, refused.stderr).toBe(1);
+    expect(refused.json).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_file_bytes",
+          cli_flag: "--max-file-bytes",
+          effective_value: 36,
+          unit: "bytes",
+          minimum: 36,
+          maximum: 67_108_864,
+          default_value: 33_554_432,
+          applies_at: "next_call",
+          required_value: bytes.length,
+        },
+        refusal: {
+          kind: "adjustable_budget",
+          operation: "inspect_v8_code_cache",
+          control: "max_file_bytes",
+          effective_value: 36,
+          unit: "bytes",
+          range: { minimum: 36, maximum: 67_108_864 },
+          default_value: 33_554_432,
+          required_value: bytes.length,
+        },
+      },
+    });
+    const remediation = (refused.json as { remediation?: { action?: string } })
+      .remediation?.action;
+    expect(remediation).toContain("--max-file-bytes");
+    expect(remediation).toContain("rea inspect-v8-code-cache");
+
+    const admitted = await cli.run({
+      arguments: [
+        "inspect-v8-code-cache",
+        path,
+        "--max-file-bytes",
+        String(bytes.length),
+        "--json",
+      ],
+    });
+    expect(admitted.exitCode, admitted.stderr).toBe(0);
+    expect(
+      outputSchema.parse(admitted.json).normalized_result.artifact.bytes,
+    ).toBe(bytes.length);
   },
 );

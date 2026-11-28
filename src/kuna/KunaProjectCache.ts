@@ -55,7 +55,12 @@ import {
 } from "../filesystem/OwnedRegularFile.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import type { KunaInstallation } from "./KunaInstallation.js";
-import type { KunaDeadline } from "./KunaConfiguration.js";
+import {
+  DEFAULT_KUNA_CACHE_MAX_BYTES,
+  MAXIMUM_KUNA_CACHE_MAX_BYTES,
+  MINIMUM_KUNA_CACHE_MAX_BYTES,
+  type KunaDeadline,
+} from "./KunaConfiguration.js";
 import {
   exportKunaProject,
   KUNA_EXPORT_OPERATION,
@@ -1012,6 +1017,16 @@ export class KunaProjectCache {
           `This export occupies ${String(total)} bytes, more than the whole Kuna cache may hold.`,
           { cache_max_bytes: this.#maxBytes, export_bytes: total },
           {
+            limit: {
+              control_kind: "environment",
+              environment: "REA_KUNA_CACHE_MAX_BYTES",
+              effective_value: this.#maxBytes,
+              unit: "bytes",
+              minimum: MINIMUM_KUNA_CACHE_MAX_BYTES,
+              maximum: MAXIMUM_KUNA_CACHE_MAX_BYTES,
+              default_value: DEFAULT_KUNA_CACHE_MAX_BYTES,
+              applies_at: "next_startup",
+            },
             remediationAction:
               "Raise REA_KUNA_CACHE_MAX_BYTES above the export size, or analyze this target with another provider.",
           },

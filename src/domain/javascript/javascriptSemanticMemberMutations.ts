@@ -6,6 +6,7 @@ import {
   createGlobalPathReader,
   retainSemanticAmbientEffect,
 } from "./javascriptSemanticAmbientWrites.js";
+import { isUnmodifiedGlobalReference } from "./javascriptSemanticGlobalReference.js";
 import { isIntrinsicMapLookup } from "./javascriptSemanticIntrinsicInstances.js";
 import { JavaScriptSemanticWorkMeter } from "./javascriptSemanticWorkAllowance.js";
 import {
@@ -19,6 +20,7 @@ import {
   semanticEffectMayReachOriginalGlobalProcess,
   semanticMutableBuiltinOrigin,
   semanticRequireExportsIdentity,
+  semanticRequireOrigin,
   semanticRequireOriginCandidate,
   semanticRequireLoaderAt,
   hasSemanticCreateRequireFactoryOrigin,
@@ -44,6 +46,9 @@ import {
   bindingProjectedContentsMayChangeAt,
   semanticAmbientArrayIterationUnknown,
   semanticArrayPrototypeIterationMayChange,
+  semanticBindingStoresAtOrBelow,
+  semanticEscapedStorePaths,
+  semanticStoredSourcesReaching,
 } from "./javascriptSemanticEffectLog.js";
 import { semanticContainer } from "./javascriptSemanticSlots.js";
 import {
@@ -115,6 +120,7 @@ import {
   childNodes,
 } from "./javascriptSemanticTraversal.js";
 import {
+  primitiveOwnKeys,
   semanticStaticPropertyKey,
   semanticMemberChain,
   semanticWriteTargets,
@@ -911,6 +917,7 @@ export function* collectSemanticMemberMutationsSteps(
     iterableReferences.push(reference);
   };
   const ambientPaths = createAmbientPathResolver(state, true);
+  const propertyDefinitions = new WeakSet<t.Node>();
   // One query's alias states. Exact paths are affordable for almost every
   // query; a query that outgrows this budget is answered again by escaping
   // whole objects, so one dense alias cluster cannot spend the source's
@@ -1066,6 +1073,82 @@ export function* collectSemanticMemberMutationsSteps(
         joined: { key, value: joined },
       });
     };
+    // A destructuring site selects each receiver at its own pattern element,
+    // so a store in a later default may follow that read. The pattern's
+    // iterator and close owners select the stores an element can see.
+    const sitePattern =
+      t.isVariableDeclarator(mutation) && t.isPattern(mutation.id)
+        ? mutation.id
+        : t.isAssignmentExpression(mutation) && t.isPattern(mutation.left)
+          ? mutation.left
+          : undefined;
+    const storedBySitePattern = (node: t.Node): boolean => {
+      if (sitePattern === undefined) return false;
+      for (
+        let ancestor: t.Node | undefined = node;
+        ancestor !== undefined && ancestor !== mutation;
+        ancestor = parents.get(ancestor)
+      )
+        if (ancestor === sitePattern) return true;
+      return false;
+    };
+    // An escape exposes the values earlier writes stored at or below the
+    // escaped path; the receiver's initializers reach only their own slots.
+    // `followed` is a receiver path whose stored values are already queued.
+    const escapeStoredValues = (
+      binding: JavaScriptSemanticBindingState,
+      current: PendingValue,
+      nested: ReadonlySet<string>,
+      followed?: PropertyPath,
+    ): void => {
+      // A collapsed escape names no site, so it may follow any store. Each
+      // stored value escapes whole without a site, and later collapsed
+      // queries stop where an earlier one covered it.
+      if (queryCollapsed) {
+        for (const stored of storedSourceNodes([
+          ...semanticStoredSourcesReaching(binding, current.path),
+        ]))
+          if (!primitiveStore(stored))
+            enqueue({
+              node: stored,
+              path: [],
+              bindings: nested,
+              definiteReceiver: false,
+              originAt: stored,
+            });
+        return;
+      }
+      for (const storedPath of semanticEscapedStorePaths(binding, current.path))
+        if (storedPath !== followed)
+          for (const source of semanticProjectedSourceFactsAtRead(
+            binding,
+            current.node,
+            storedPath,
+            state,
+            false,
+            current.memberReadAt ?? current.originAt ?? current.node,
+            current.capturedSelections,
+          )?.storedSources ?? [])
+            if (
+              !primitiveStore(source.node) &&
+              !storedBySitePattern(source.node)
+            )
+              enqueue({
+                node: source.node,
+                path: source.path,
+                bindings: nested,
+                definiteReceiver: false,
+                originAt: source.node,
+                memberReadAt: current.memberReadAt,
+                capturedSelections: semanticNormalizeCapturedSelections([
+                  ...(semanticShiftCapturedSelections(
+                    current.capturedSelections,
+                    source.path.length - storedPath.length,
+                  ) ?? []),
+                  ...(source.capturedSelections ?? []),
+                ]),
+              });
+    };
     enqueue({
       node,
       path,
@@ -1192,7 +1275,22 @@ export function* collectSemanticMemberMutationsSteps(
           current.path,
           effect,
         );
-        if (path === null) continue;
+        if (path === null) {
+          // Initializers place no object at this escaped path, but a value a
+          // store put at or below it still escapes. A path only a store above
+          // it reaches stays pruned: through a self store such as
+          // `s.c = s.c.p`, it would grow on every visit.
+          if (
+            effect === "escape" &&
+            semanticBindingStoresAtOrBelow(binding, current.path)
+          )
+            escapeStoredValues(
+              binding,
+              current,
+              new Set([...current.bindings, lifetime, captureKey]),
+            );
+          continue;
+        }
         const selectorIndex = path.findIndex(
           (key) => key !== null && typeof key === "object",
         );
@@ -1388,6 +1486,7 @@ export function* collectSemanticMemberMutationsSteps(
         // Preserve the explicit target write separately; deleting never invokes it.
         if (
           effect === "write" &&
+          (mutation === undefined || !propertyDefinitions.has(mutation)) &&
           !t.isUnaryExpression(mutation, { operator: "delete" })
         ) {
           const selectedPath = path;
@@ -1434,7 +1533,11 @@ export function* collectSemanticMemberMutationsSteps(
         let retainsInitializers = true;
         if (!primitiveWrite) {
           for (const origin of origins.directOrigins) {
-            const shared = semanticMutableBuiltinOrigin(origin, path);
+            const shared = semanticMutableBuiltinOrigin(
+              origin,
+              path,
+              effect === "escape",
+            );
             if (shared !== undefined)
               recordRequiredEffect(
                 shared.specifier,
@@ -1530,6 +1633,8 @@ export function* collectSemanticMemberMutationsSteps(
                 ]),
               });
           }
+          if (effect === "escape")
+            escapeStoredValues(binding, current, nested, storedReceiverPath);
           // A directly invoked function's parameter starts as its argument,
           // which therefore did not escape at the call.
           const argument = semanticDirectInvocationArgument(
@@ -1998,8 +2103,85 @@ export function* collectSemanticMemberMutationsSteps(
       );
     else if (node.init != null) markEscaped(node.init, exit);
   };
+  /**
+   * `Object.defineProperty(fs, "x", {value, writable, enumerable, configurable})`
+   * defines one known property of a mutable built-in and returns its target. When
+   * the result is discarded the target never escapes, so the call is not an escape
+   * either; a retained result is returned so the caller can step over it.
+   */
+  const markBuiltinPropertyDefinition = (
+    node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
+    parent: t.Node | null,
+  ): t.Node | undefined => {
+    if (t.isNewExpression(node)) return undefined;
+    const callTarget = unwrapJavaScriptExpression(node.callee).node;
+    if (
+      (!t.isMemberExpression(callTarget) &&
+        !t.isOptionalMemberExpression(callTarget)) ||
+      semanticStaticPropertyKey(callTarget.property, callTarget.computed) !==
+        "defineProperty" ||
+      !isUnmodifiedGlobalReference(node.callee, state, [
+        "Object",
+        "defineProperty",
+      ])
+    )
+      return undefined;
+    const [target, key, descriptor] = node.arguments;
+    if (
+      target === undefined ||
+      t.isSpreadElement(target) ||
+      t.isArgumentPlaceholder(target) ||
+      (!t.isStringLiteral(key) && !t.isNumericLiteral(key)) ||
+      !t.isObjectExpression(descriptor) ||
+      !descriptor.properties.every(
+        (property) =>
+          t.isObjectProperty(property) &&
+          !property.computed &&
+          ["value", "writable", "enumerable", "configurable"].includes(
+            semanticStaticPropertyKey(property.key, false) ?? "",
+          ),
+      )
+    )
+      return undefined;
+    const value = unwrapJavaScriptExpression(target).node;
+    const required = semanticRequireOriginCandidate(value, state);
+    const binding = t.isIdentifier(value)
+      ? resolveSemanticBindingState(state, value, value.name)
+      : undefined;
+    const provenance =
+      binding === undefined
+        ? undefined
+        : evaluateSemanticExpressionProvenance(value, state);
+    // A single candidate origin is still the module this call mutates, which is
+    // the same allowance `semanticExpressionModuleOrigin` makes.
+    const origin =
+      required?.origin ??
+      (provenance?.status === "module"
+        ? provenance.origins[0]
+        : provenance?.status === "ambiguous" &&
+            provenance.origins.length === 1 &&
+            provenance.origins[0]?.loaderAuthority === "candidate"
+          ? provenance.origins[0]
+          : undefined);
+    const module =
+      origin === undefined
+        ? undefined
+        : semanticMutableBuiltinOrigin(origin, []);
+    if (
+      module === undefined ||
+      module.specifier.replace(/^node:/u, "") !== "fs" ||
+      module.path.length !== 0
+    )
+      return undefined;
+    propertyDefinitions.add(node);
+    markValue(target, [String(key.value)], new Set(), "write", node);
+    return parent !== null && t.isExpressionStatement(parent)
+      ? target
+      : undefined;
+  };
   const markInvocation = (
     node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
+    definedTarget?: t.Node,
   ): void => {
     for (const source of returnedReferences(node.callee).references)
       markEscaped(source.node, node, source.projection);
@@ -2018,7 +2200,7 @@ export function* collectSemanticMemberMutationsSteps(
           mutation: node,
           originAt: node,
         });
-      else markEscaped(argument, node);
+      else if (argument !== definedTarget) markEscaped(argument, node);
     // Constructing a member does not pass its container as `this`.
     if (!t.isNewExpression(node)) {
       const mapLookup = isIntrinsicMapLookup(node, state);
@@ -2123,7 +2305,7 @@ export function* collectSemanticMemberMutationsSteps(
               t.isOptionalCallExpression(node) ||
               t.isNewExpression(node)
             )
-              markInvocation(node);
+              markInvocation(node, markBuiltinPropertyDefinition(node, parent));
             break;
           case "tagged-template":
             if (t.isTaggedTemplateExpression(node)) {
@@ -2674,6 +2856,10 @@ const storedSourceNodes = (
   }
   return nodes;
 };
+
+/** Whether a stored expression is an operator result, which is primitive. */
+const primitiveStore = (node: t.Node): boolean =>
+  primitiveOwnKeys(unwrapJavaScriptExpression(node).node) !== null;
 
 const observableMutationPaths = (
   state: JavaScriptSemanticAnalysisState,

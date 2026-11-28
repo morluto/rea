@@ -81,7 +81,10 @@ export async function verifyGhidraLargeResults({
       "invalid_request",
     );
     assert.equal(
-      await call("procedure_address", { procedure: entry.address }),
+      await call("procedure_address", {
+        detail: "complete",
+        procedure: entry.address,
+      }),
       entry.address,
     );
 
@@ -107,7 +110,10 @@ export async function verifyGhidraLargeResults({
       "annotate_native_function",
     );
     assert.equal(
-      await call("procedure_address", { procedure: "rea_frame_probe" }),
+      await call("procedure_address", {
+        detail: "complete",
+        procedure: "rea_frame_probe",
+      }),
       entry.address,
       "A delivery constraint must preserve the successfully committed edit",
     );

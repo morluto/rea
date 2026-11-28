@@ -1,7 +1,6 @@
-import { parseLimitConstraint } from "../../domain/parseFailureAnalysisError.js";
 import {
   projectStableArtifactFailure,
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   ArtifactReaderFailure,
   withStableArtifactHandle,
   artifactFilePrimaryFacts,
@@ -12,19 +11,16 @@ import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
-import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
-  MAX_INSPECT_KERNEL_MODULE_ENTRIES,
-  MAX_INSPECT_KERNEL_MODULE_FILE_BYTES,
+  KERNEL_MODULE_READ_BUDGETS,
   type InspectKernelModuleInput,
   type KernelModule,
 } from "../../domain/native/kernelModule.js";
+import { elfReadBudgetLimit } from "../../domain/native/elfReadBudgets.js";
 import { err, ok } from "../../domain/result.js";
 import { KERNEL_MODULE_PROVIDER } from "../../domain/investigationProviders.js";
-import {
-  BinaryResourceFailure,
-  binaryResourceCeiling,
-} from "../../domain/binaryContainer.js";
+import { isNativeStructureFailure } from "../../domain/binaryContainer.js";
+import { nativeStructureConstraint } from "../../domain/native/nativeStructureBudget.js";
 import { parseKernelModuleFromHandle } from "./KernelModuleParser.js";
 
 const OPERATION = "inspect_kernel_module";
@@ -35,16 +31,12 @@ export class KernelModuleProvider implements KernelModulePort {
   readonly identity = KERNEL_MODULE_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        KERNEL_MODULE_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      KERNEL_MODULE_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(input: InspectKernelModuleInput, options?: ExecutionOptions) {
@@ -70,11 +62,7 @@ export class KernelModuleProvider implements KernelModulePort {
           },
           (handle) =>
             parseKernelModuleFromHandle(
-              {
-                size: handle.size,
-                prefix: handle.prefix,
-                readRange: (offset, length) => handle.readRange(offset, length),
-              },
+              handle,
               {
                 path: input.path,
                 sha256: handle.sha256,
@@ -92,18 +80,6 @@ export class KernelModuleProvider implements KernelModulePort {
   }
 }
 
-const inputBudgetRemediation = (
-  boundary: "file-size" | "capacity",
-  input: InspectKernelModuleInput,
-): string =>
-  boundary === "file-size"
-    ? input.max_file_bytes >= MAX_INSPECT_KERNEL_MODULE_FILE_BYTES
-      ? `The image exceeds the ${String(MAX_INSPECT_KERNEL_MODULE_FILE_BYTES)}-byte input ceiling this operation accepts; select a smaller artifact.`
-      : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`
-    : input.max_entries >= MAX_INSPECT_KERNEL_MODULE_ENTRIES
-      ? `The image exceeds the ${String(MAX_INSPECT_KERNEL_MODULE_ENTRIES)}-entry kernel-module ceiling this operation accepts; select a smaller artifact.`
-      : `Raise max_entries above ${String(input.max_entries)} or select a smaller artifact; the limit is the caller-selected .modinfo and __versions entry budget.`;
-
 const kernelModuleFailure = (
   cause: unknown,
   input: InspectKernelModuleInput,
@@ -120,17 +96,8 @@ const kernelModuleFailure = (
       description: "kernel module",
       fallbackMessage: "Kernel module inspection failed.",
       recognise: (failure, origin) => {
-        if (failure instanceof BinaryResourceFailure)
-          return parseLimitConstraint(
-            OPERATION,
-            "memory",
-            failure,
-            fixedAllowanceOptions(
-              "The ELF structural decoding allowance",
-              "parser",
-              binaryResourceCeiling(failure),
-            ),
-          );
+        if (isNativeStructureFailure(failure))
+          return nativeStructureConstraint(OPERATION, failure);
         if (
           origin === "owned-or-classified" &&
           failure instanceof ArtifactReaderFailure &&
@@ -160,9 +127,20 @@ const kernelModuleFailure = (
                       }
                   : {
                       retryable: false as const,
-                      remediationAction: inputBudgetRemediation(
-                        failure.boundary,
-                        input,
+                      limit: elfReadBudgetLimit(
+                        KERNEL_MODULE_READ_BUDGETS,
+                        failure.boundary === "file-size"
+                          ? "max_file_bytes"
+                          : "max_entries",
+                        failure.boundary === "file-size"
+                          ? input.max_file_bytes
+                          : input.max_entries,
+                        failure.boundary === "file-size" &&
+                          failure.observedBytes !== undefined &&
+                          failure.observedBytes <=
+                            BigInt(Number.MAX_SAFE_INTEGER)
+                          ? failure.observedBytes
+                          : undefined,
                       ),
                     }),
             },

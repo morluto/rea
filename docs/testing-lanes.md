@@ -923,10 +923,10 @@ timing data is reused; live provider results are never cached. Turbo outputs are
 restored by task hash, with trusted default-branch runs as cache writers and PRs
 as restore-only consumers. The static job also restores its Turbo snapshot;
 each task revalidates its own input hash before reusing outputs or diagnostics.
-The Node pin and npm install settings are global hash inputs. Knip runs only
-in full qualification, with `--cache` and a GitHub cache of
+The Node pin and npm install settings are global hash inputs. Knip runs in the
+build job on every code change, with `--cache` and a GitHub cache of
 `node_modules/.cache/knip`. The saved key includes the commit SHA. Restore uses
-the configuration prefix, so the next trusted full run can publish a refreshed
+the configuration prefix, so the next trusted run can publish a refreshed
 snapshot. That cache is an AST cache keyed by file mtime and size, so a
 fresh checkout often misses it; Turbo still hashes the Knip task inputs. Knip
 includes its ignore rules and VitePress

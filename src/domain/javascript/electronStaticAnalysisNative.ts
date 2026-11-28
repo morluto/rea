@@ -13,12 +13,9 @@ import {
   isTypeOnlyImportSpecifier,
 } from "./javascriptModuleDeclaration.js";
 import { addLocatedFinding } from "./javascriptStaticAnalysisFindings.js";
+import { argumentNode, range } from "./javascriptStaticAnalysisHelpers.js";
 import {
-  argumentNode,
-  range,
   stringValue,
-} from "./javascriptStaticAnalysisHelpers.js";
-import {
   propertyName,
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,

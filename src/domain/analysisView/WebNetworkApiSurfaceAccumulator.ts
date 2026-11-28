@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import { mediaTypeEssence } from "./recordedMediaType.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js";
@@ -267,9 +268,7 @@ export class WebNetworkApiSurfaceAccumulator extends WebNetworkProjectionAccumul
     if (mime !== null) group.contentTypes.add(mime);
     if (queryNames !== undefined && group.queryNames !== undefined) {
       for (const name of queryNames) {
-        const ordinals = group.queryNames.get(name);
-        if (ordinals === undefined) group.queryNames.set(name, [ordinal]);
-        else ordinals.push(ordinal);
+        appendToMapList(group.queryNames, name, ordinal);
       }
     }
     if (group.headers !== undefined && headers !== undefined)
@@ -279,9 +278,7 @@ export class WebNetworkApiSurfaceAccumulator extends WebNetworkProjectionAccumul
         [group.headers.setCookie, headers.setCookie],
       ] as const)
         for (const name of selected) {
-          const ordinals = names.get(name);
-          if (ordinals === undefined) names.set(name, [ordinal]);
-          else ordinals.push(ordinal);
+          appendToMapList(names, name, ordinal);
         }
     return ok(undefined);
   }

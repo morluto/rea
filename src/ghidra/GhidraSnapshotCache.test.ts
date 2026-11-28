@@ -96,6 +96,28 @@ const fixture = (version = "12.2", coverage?: RelationshipCoverage) => {
           name = "original";
           return err(new GhidraSessionError("cancelled", "Cancelled"));
         }
+        // The bridge rolls a refused prototype or type definition back.
+        if (operation === "define_native_data_types")
+          return err(
+            new GhidraSessionError(
+              "remote",
+              "The database already holds types with these names: session",
+              {},
+              { remoteCode: "data_type_conflict" },
+            ),
+          );
+        if (
+          operation === "annotate_native_function" &&
+          parameters.signature !== undefined
+        )
+          return err(
+            new GhidraSessionError(
+              "remote",
+              "signature repeats parameter name a",
+              {},
+              { remoteCode: "invalid_function_signature" },
+            ),
+          );
         if (operation === "annotate_native_function") {
           if (typeof parameters.name !== "string")
             throw new Error("Expected an annotation name");
@@ -128,6 +150,9 @@ const fixture = (version = "12.2", coverage?: RelationshipCoverage) => {
               name,
               comment: null,
               inline_comment: null,
+              signature: `undefined ${name}()`,
+              signature_source: "default",
+              calling_convention: "unknown",
             },
             dossier,
             effects: {
@@ -456,6 +481,47 @@ describe("Ghidra snapshot cache", () => {
     expect(changed.calls).toEqual([]);
     await changed.session.close();
   });
+
+  it.each([
+    {
+      operation: "define_native_data_types",
+      edit: { declarations: "struct session { long other; };" },
+      field: "declarations",
+    },
+    {
+      operation: "annotate_native_function",
+      edit: { procedure: "0x1000", signature: "int f(int a, int a)" },
+      field: "signature",
+    },
+  ] as const)(
+    "stops replaying the snapshot once $operation is dispatched, even when the bridge refuses it",
+    async ({ operation, edit, field }) => {
+      const { session, calls } = fixture();
+      await open(session);
+      const parameters = { procedure: "0x1000", document: "fixture" };
+      const reads = () =>
+        calls.filter((call) => call === "procedure_pseudo_code").length;
+      for (let index = 0; index < 2; index += 1)
+        expect(
+          (await session.execute("procedure_pseudo_code", parameters)).ok,
+        ).toBe(true);
+      // The second read replayed the immutable snapshot.
+      expect(reads()).toBe(1);
+      expect(session.exportAnalysisSnapshot().ok).toBe(true);
+      expect(await session.execute(operation, edit)).toMatchObject({
+        ok: false,
+        error: { _tag: "AnalysisInputError", issues: [{ path: [field] }] },
+      });
+      // A failed reply cannot prove the write rolled back, so reads stay live.
+      expect(session.exportAnalysisSnapshot().ok).toBe(false);
+      for (let index = 0; index < 2; index += 1)
+        expect(
+          (await session.execute("procedure_pseudo_code", parameters)).ok,
+        ).toBe(true);
+      expect(reads()).toBe(3);
+      await session.close();
+    },
+  );
 
   it("keeps annotation-dependent reads live after cancellation reimports the original artifact", async () => {
     const { session, calls, cancellationReady } = fixture();

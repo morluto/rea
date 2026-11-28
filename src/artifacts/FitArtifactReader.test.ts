@@ -24,8 +24,12 @@ import {
 import {
   cells,
   devicetreeFixture,
+  dtString,
 } from "../domain/firmware/devicetree.fixture.js";
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import {
+  createTestTempDirectory,
+  createTestTempFile,
+} from "../../tests/fixtures/temporaryDirectory.js";
 import { renameOpenParent } from "../../tests/fixtures/renameOpenParent.js";
 import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
@@ -33,12 +37,8 @@ import { ArtifactFileSource } from "../resources/index.js";
 
 const MIB = 1024 * 1024;
 
-const writeFit = async (name: string, bytes: Buffer): Promise<string> => {
-  const directory = await createTestTempDirectory("rea-fit-");
-  const path = join(directory, name);
-  await writeFile(path, bytes);
-  return path;
-};
+const writeFit = (name: string, bytes: Buffer): Promise<string> =>
+  createTestTempFile("rea-fit-", name, bytes);
 
 const withTotalsize = (bytes: Buffer, totalsize: number): Buffer => {
   const copy = Buffer.from(bytes);
@@ -334,8 +334,16 @@ it("fails a devicetree totalsize past the end of the file", async () => {
       ),
     ),
   ).rejects.toMatchObject({
-    reason: "format",
-    message: expect.stringContaining("FIT devicetree is truncated"),
+    reason: "truncated",
+    parseFailure: {
+      kind: "truncated",
+      format: "fit",
+      field: "totalsize",
+      extent: {
+        availableBytes: FIT_EMBEDDED.length,
+        requiredBytes: FIT_EMBEDDED.length + 4,
+      },
+    },
   });
 });
 
@@ -347,7 +355,7 @@ it("fails /images followed by a malformed structure, and reads a plain DTB as a 
   await expect(
     scanCanonicalArtifactInventory(await writeFit("broken.itb", bytes)),
   ).rejects.toMatchObject({
-    reason: "format",
+    reason: "malformed",
     message: expect.stringMatching(/FDT.*token 10/iu),
   });
   const plain = await scanCanonicalArtifactInventory(
@@ -387,9 +395,7 @@ it("isolates returned declaration arrays from saved FIT facts", async () => {
       reason: "integrity",
     });
     const stream = await reader.open(fresh);
-    const chunks: Buffer[] = [];
-    for await (const chunk of stream) chunks.push(chunk as Buffer);
-    expect(Buffer.concat(chunks).equals(FIT_KERNEL)).toBe(true);
+    expect((await buffer(stream)).equals(FIT_KERNEL)).toBe(true);
   } finally {
     await reader.close();
   }
@@ -712,4 +718,44 @@ it("preserves a final validation failure when cancellation overlaps it", async (
 artifactPreparationRecoveryCases({
   image: () => FIT_EMBEDDED,
   createReader: (path, admitted) => new FitArtifactReader(path, admitted),
+});
+
+/**
+ * An image field the structure reader could not decode leaves the inventory
+ * unknown, the same way `NtfsMftArtifactReader` reports a recorded limitation.
+ */
+it("reports unknown coverage when an image field could not be decoded", async () => {
+  const file = fitFixture({
+    images: [
+      {
+        name: "kernel",
+        data: FIT_KERNEL,
+        // Three cells is not a 1- or 2-cell address, so `load` stays undecoded.
+        properties: {
+          description: dtString("Linux kernel"),
+          type: dtString("kernel"),
+          load: cells(0, 1, 2),
+        },
+      },
+    ],
+  });
+  const snapshot = await scanCanonicalArtifactInventory(
+    await writeFit("undecodable.itb", file),
+  );
+  const root = snapshot.occurrences.find((row) => row.logical_path === ".");
+  const image = snapshot.occurrences.find((row) =>
+    row.logical_path.startsWith("images/kernel"),
+  );
+  expect(
+    (image?.format_metadata as { unreadable_fields?: string[] })
+      ?.unreadable_fields,
+  ).toContain("load");
+  expect(root).toBeDefined();
+  expect(snapshot.coverage).toMatchObject({ status: "unknown" });
+  // The reason travels with the status, so a coverage consumer can name the field.
+  expect(
+    snapshot.limitations.some(
+      (line) => line.includes("kernel") && line.includes("load"),
+    ),
+  ).toBe(true);
 });
