@@ -490,7 +490,7 @@ export const walkTar = async (
       const path = withoutCurrentDirectoryPrefix(name);
       const role = memberRole(typeflag, name, records);
       const symlinkBytes =
-        "member" in role && role.member === "symlink" && linkName !== null
+        "member" in role && role.member === "symlink"
           ? paxLink === undefined
             ? Buffer.from(linkBytes)
             : Buffer.from(paxLink, paxLinkIsLatin1 ? "latin1" : "utf8")
@@ -538,7 +538,7 @@ export const walkTar = async (
             ? {}
             : {
                 linkTarget: {
-                  text: isStrictUtf8(symlinkBytes) ? linkName : null,
+                  text: isStrictUtf8(symlinkBytes) ? (linkName ?? "") : null,
                   hex: symlinkBytes.toString("hex"),
                 },
               }),

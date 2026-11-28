@@ -27,7 +27,7 @@ cliTest(
     const link = {
       name: "current",
       type: "2",
-      linkname: "target-a",
+      linkname: "",
       mode: 0o777,
     };
     await writeFile(left, tarFixture([link]));
