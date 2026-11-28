@@ -208,6 +208,14 @@ export class KubernetesAuditEventProbe {
       case "falseValue":
         this.#field = undefined;
         break;
+      case "endNumber":
+      case "numberChunk":
+      case "whitespace":
+      // Packed value tokens are disabled in the tokenizer configuration.
+      case "keyValue":
+      case "numberValue":
+      case "stringValue":
+        break;
     }
   }
 }
