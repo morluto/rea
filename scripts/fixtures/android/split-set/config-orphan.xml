@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="dev.rea.fixture" android:versionCode="7" split="config.fr" configForSplit="feature_missing">
+  <application android:hasCode="false"/>
+</manifest>
