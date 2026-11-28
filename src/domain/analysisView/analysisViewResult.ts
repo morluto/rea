@@ -125,6 +125,7 @@ import {
   objdumpOutputCaptureSchema,
   objdumpOutputViewRequestSchema,
 } from "./commandObservationView.js";
+import { analysisTextPageItemSchema } from "./analysisViewText.js";
 import {
   javascriptModuleReferenceSchema,
   javascriptModuleReferencesRequestSchema,
