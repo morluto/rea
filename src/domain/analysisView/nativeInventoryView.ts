@@ -3,7 +3,6 @@ import { analysisStringSchema } from "../native/nativeString.js";
 import { inventoryDiscoveryCoverageSchema } from "../native/inventoryCoverage.js";
 import { jsonValueSchema, type JsonValue } from "../jsonValue.js";
 import { jsonValueByteLength } from "../jsonValueByteLength.js";
-import { fixedCeilingConstraint } from "../analysisErrorCore.js";
 import { Budget } from "../budget.js";
 import {
   addressedValueSchema,
@@ -25,8 +24,9 @@ import {
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
 import {
-  INSPECT_ANALYSIS_VIEW_OPERATION,
+  ANALYSIS_VIEW_PAGE_BYTES,
   analysisViewInputError,
+  analysisViewPageTooLarge,
   invalidAnalysisView,
 } from "./analysisViewErrors.js";
 import { pickFields } from "./selectViewRows.js";
@@ -210,23 +210,11 @@ export const projectNativeInventoryView = (
           ? null
           : pageViewCoverage(view.offset, count, names.length),
     };
-    const budget = new Budget(1024 * 1024);
+    const budget = new Budget(ANALYSIS_VIEW_PAGE_BYTES);
     const tooLarge = () =>
-      err(
-        fixedCeilingConstraint(
-          INSPECT_ANALYSIS_VIEW_OPERATION,
-          "transport",
-          "The procedure alias page cannot fit the analysis-view byte allowance.",
-          {
-            name: "The analysis-view page allowance",
-            kind: "bytes",
-            limit: budget.maximum,
-            unit: "bytes",
-            narrowing:
-              "Select fewer aliases or read the complete retained parent Evidence.",
-          },
-          { diagnostics: { parent_evidence_id: parent.evidenceId } },
-        ),
+      analysisViewPageTooLarge(
+        parent.evidenceId,
+        "The procedure alias page cannot fit the analysis-view byte allowance.",
       );
     // Charge the result header, including the future digest and empty alias
     // array, before adding any alias entries.
