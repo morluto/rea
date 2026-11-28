@@ -65,10 +65,13 @@ const bodyLines = (body: FunctionBody): readonly string[] =>
     : ["// body: unavailable", `// body_reason: ${headerValue(body.reason)}`];
 
 const limitationLines = (limitations: readonly string[]): readonly string[] => {
-  const joined = limitations
-    .map((limitation) => headerValue(limitation))
-    .filter((limitation) => limitation.length > 0)
-    .join("; ");
+  let joined = "";
+  for (const limitation of limitations) {
+    const value = headerValue(limitation);
+    if (value.length === 0) continue;
+    joined += `${joined.length === 0 ? "" : "; "}${value}`;
+    if (joined.length > 4_000) break;
+  }
   if (joined.length <= 4_000)
     return [`// limitations: ${joined.length === 0 ? "none" : joined}`];
   return [
@@ -80,6 +83,8 @@ const limitationLines = (limitations: readonly string[]): readonly string[] => {
 const providerLine = (identity: ExportIdentity): string =>
   `${identity.provider.name} ${identity.provider.version ?? "unknown"} (${identity.provider.id})`;
 
-/** Keep a provider string on one header line without control characters. */
+/** Keep untrusted metadata on one line; only the first 2,000 units are emitted. */
 const headerValue = (value: string): string =>
-  value.replace(/[\u0000-\u001f\u007f]/gu, " ").slice(0, 2_000);
+  value
+    .slice(0, 2_000)
+    .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/gu, " ");
