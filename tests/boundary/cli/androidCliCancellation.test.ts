@@ -10,6 +10,7 @@ import { CallerAbort } from "../../../src/domain/analysisErrorCore.js";
 it.each([
   ["SIGINT", 130, "interrupt"],
   ["SIGTERM", 143, "terminate"],
+  ["SIGHUP", 129, "terminate"],
 ] as const)(
   "awaits cleanup after %s and removes its listeners",
   async (event, expectedExit, expectedKind) => {
@@ -38,6 +39,7 @@ it.each([
     expect(host.exitCode).toBe(expectedExit);
     expect(events.listenerCount("SIGINT")).toBe(0);
     expect(events.listenerCount("SIGTERM")).toBe(0);
+    expect(events.listenerCount("SIGHUP")).toBe(0);
   },
 );
 
@@ -59,6 +61,7 @@ it("leaves the exit code alone on success and removes listeners when execution t
   ).rejects.toThrow("fixture failure");
   expect(events.listenerCount("SIGINT")).toBe(0);
   expect(events.listenerCount("SIGTERM")).toBe(0);
+  expect(events.listenerCount("SIGHUP")).toBe(0);
 });
 
 it("retains signals after operation settlement until its resource close succeeds", () => {
@@ -72,6 +75,7 @@ it("retains signals after operation settlement until its resource close succeeds
   scope.finish();
   expect(host.exitCode).toBe(0);
   expect(events.listenerCount("SIGINT")).toBe(1);
+  expect(events.listenerCount("SIGHUP")).toBe(1);
   events.emit("SIGTERM");
   expect(scope.exitStatus).toBe(143);
   expect(host.exitCode).toBe(143);
@@ -82,4 +86,5 @@ it("retains signals after operation settlement until its resource close succeeds
   scope.close();
   expect(events.listenerCount("SIGINT")).toBe(0);
   expect(events.listenerCount("SIGTERM")).toBe(0);
+  expect(events.listenerCount("SIGHUP")).toBe(0);
 });
