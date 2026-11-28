@@ -228,6 +228,18 @@ const entrypointIdentity = (
   }
 };
 
+/** Ownership of an absolute REA entry and which installation it selects. */
+type EntrypointOwnership = Pick<
+  ClientRegistrationCommandFacts,
+  "identity" | "installation"
+>;
+
+/** An owned absolute entry selects this installation. */
+const entrypointOwnership = (
+  identity: ClientRegistrationCommandIdentity,
+): EntrypointOwnership =>
+  identity === "owned" ? { identity, installation: "current" } : { identity };
+
 /** A direct launcher may be a native executable or a Node shebang script. */
 const directEntrypointIdentity = (
   candidate: string,
@@ -449,6 +461,7 @@ export const equivalentClientRegistrationCommands = (
   return (
     prior.entrypoint !== undefined &&
     prior.identity === "owned" &&
+    prior.installation === "current" &&
     prior.launch === requestedFacts.launch &&
     (prior.launch !== "managed_shim" || prior.independentFallback === true)
   );
@@ -465,6 +478,11 @@ export interface ClientRegistrationCommandFacts {
     | "unknown";
   /** Selected absolute launcher/script path; excludes package and unresolved PATH commands. */
   readonly entrypoint: string | undefined;
+  /**
+   * Present when an owned absolute launcher selects this installation
+   * (runtime and REA entry); absent when none was resolved.
+   */
+  readonly installation?: "current";
   /** The fallback must reach the current interpreter without the shim's sibling. */
   readonly independentFallback?: boolean;
   readonly package:
@@ -526,10 +544,11 @@ const inspectDirectRegistrationCommand = (
         : inspectAubeShim(managed.shim, process.execPath, managed);
     return {
       launch: "managed_shim",
-      identity:
-        shim === undefined || !currentPathAvailable
-          ? "unknown"
-          : entrypointIdentity(shim.target, currentCommandPath),
+      ...(shim === undefined || !currentPathAvailable
+        ? { identity: "unknown" }
+        : entrypointOwnership(
+            entrypointIdentity(shim.target, currentCommandPath),
+          )),
       entrypoint: shim?.target,
       independentFallback:
         shim !== undefined &&
@@ -569,10 +588,11 @@ const inspectDirectRegistrationCommand = (
     const selectedEntrypoint = normalizeEntrypointPath(entrypoint);
     return {
       launch: "runtime_script",
-      identity:
-        selectedEntrypoint === undefined || !currentPathAvailable
-          ? "unknown"
-          : entrypointIdentity(selectedEntrypoint, currentCommandPath),
+      ...(selectedEntrypoint === undefined || !currentPathAvailable
+        ? { identity: "unknown" }
+        : entrypointOwnership(
+            entrypointIdentity(selectedEntrypoint, currentCommandPath),
+          )),
       entrypoint: selectedEntrypoint,
       package: undefined,
     };
@@ -594,18 +614,22 @@ const inspectDirectRegistrationCommand = (
     if (managedTarget !== undefined)
       return {
         launch: "direct",
-        identity: currentPathAvailable
-          ? entrypointIdentity(managedTarget, currentCommandPath)
-          : "unknown",
+        ...(currentPathAvailable
+          ? entrypointOwnership(
+              entrypointIdentity(managedTarget, currentCommandPath),
+            )
+          : { identity: "unknown" }),
         entrypoint: managedTarget,
         package: undefined,
       };
     if (isAbsolute(executable))
       return {
         launch: "direct",
-        identity: currentPathAvailable
-          ? directEntrypointIdentity(executable, currentCommandPath)
-          : "unknown",
+        ...(currentPathAvailable
+          ? entrypointOwnership(
+              directEntrypointIdentity(executable, currentCommandPath),
+            )
+          : { identity: "unknown" }),
         entrypoint: executable,
         package: undefined,
       };
