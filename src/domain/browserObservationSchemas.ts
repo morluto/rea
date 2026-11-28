@@ -321,6 +321,18 @@ export const browserCssVariablesSchema =
         message: 'total must match items.length when status is "included"',
       });
     }
+    const seenNames = new Set<string>();
+    for (const item of val.items) {
+      if (seenNames.has(item.name)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["items"],
+          message: `Duplicate CSS variable name: ${item.name}`,
+        });
+        break;
+      }
+      seenNames.add(item.name);
+    }
   });
 export type BrowserCssVariables = z.infer<typeof browserCssVariablesSchema>;
 

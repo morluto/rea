@@ -1225,6 +1225,11 @@ it("redacts credentials from standalone URL custom properties and admits custom 
           value: "https://public.test/a,//bob:two@b.test/y",
         },
         {
+          name: "--asset-scheme-relative-email-user",
+          value:
+            "https://public.test/a,//alice@example.org:secret@assets.test/y",
+        },
+        {
           name: "--asset-safe-comma-path",
           value: "https://cdn.example/sprites/a,//icons@2x/logo.svg",
         },
@@ -1245,6 +1250,19 @@ it("redacts credentials from standalone URL custom properties and admits custom 
           name: "--sources",
           value:
             '"https://alice:secret@example.test/a.png" 1x, "https://bob:pw@example.test/b.png" 2x',
+        },
+        {
+          name: "--display-message",
+          value: '"https://alice:secret@example.test"',
+        },
+        {
+          name: "content",
+          value: "var(--display-message)",
+        },
+        {
+          name: "background-image",
+          value:
+            "image-set(var(--asset-quoted) 1x, var(--asset-unquoted) 2x, var(--asset-comma-password) 3x, var(--asset-comma-list) 4x, var(--asset-comma-multi-cred) 5x, var(--asset-scheme-relative-list) 6x, var(--asset-scheme-relative-email-user) 7x, var(--asset-safe-comma-path) 8x, var(--asset-nbsp-userinfo) 9x, var(--asset-mixed-alternatives) 10x, var(--asset-escaped) 11x, var(--sources) 12x)",
         },
         { name: longName, value: "#123456" },
       ],
@@ -1298,6 +1316,11 @@ it("redacts credentials from standalone URL custom properties and admits custom 
     value: "https://public.test/a,//b.test/y",
     redacted: true,
   });
+  expect(byName.get("--asset-scheme-relative-email-user")).toEqual({
+    name: "--asset-scheme-relative-email-user",
+    value: "https://public.test/a,//assets.test/y",
+    redacted: true,
+  });
   expect(byName.get("--asset-safe-comma-path")).toEqual({
     name: "--asset-safe-comma-path",
     value: "https://cdn.example/sprites/a,//icons@2x/logo.svg",
@@ -1322,6 +1345,11 @@ it("redacts credentials from standalone URL custom properties and admits custom 
     name: "--sources",
     value: '"https://example.test/a.png" 1x, "https://example.test/b.png" 2x',
     redacted: true,
+  });
+  expect(byName.get("--display-message")).toEqual({
+    name: "--display-message",
+    value: '"https://alice:secret@example.test"',
+    redacted: false,
   });
   expect(byName.get(longName)).toEqual({
     name: longName,
@@ -1410,4 +1438,46 @@ it("splits URL list tokens in linear time even with long colon runs", async () =
     { name: "--colon-run", value: input, redacted: false },
   ]);
   expect(elapsedMs).toBeLessThan(200);
+});
+
+it("rejects malformed child nodeType before falling back to document root nodeId", async () => {
+  const connection = makeMockConnection({
+    "DOM.getDocument": {
+      root: {
+        nodeId: 1,
+        children: [{ nodeId: 2, nodeType: "1" }],
+      },
+    },
+  });
+
+  const limitations: string[] = [];
+  const exclusions: {
+    section: string;
+    reason: string;
+    count: number | null;
+  }[] = [];
+  const result = await captureCssVariables(
+    {
+      connection,
+      sessionId: undefined,
+      input: inspectWebPageInputSchema.parse({
+        cdp_endpoint: "http://127.0.0.1:9222",
+        target_id: "target_1",
+        include_css_variables: true,
+      }),
+      events: {
+        completeness: {
+          exclude: (section, reason, count) => {
+            exclusions.push({ section, reason, count });
+          },
+        },
+      },
+    },
+    limitations,
+  );
+
+  expect(result.status).toBe("unavailable");
+  expect(exclusions).toEqual([
+    { section: "css_variables", reason: "invalid_protocol_value", count: 1 },
+  ]);
 });

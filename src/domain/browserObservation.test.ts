@@ -410,6 +410,17 @@ describe("browser CSS variables item and summary schemas", () => {
         items: [],
       }).success,
     ).toBe(false);
+    expect(
+      browserCssVariablesSchema.safeParse({
+        ...valid,
+        total: 2,
+        retained_count: 2,
+        items: [
+          { name: "--dup", value: "red" },
+          { name: "--dup", value: "blue" },
+        ],
+      }).success,
+    ).toBe(false);
 
     // Security 1: Enforces valid -- prefix (rejects prototype keys and non-custom CSS properties)
     expect(

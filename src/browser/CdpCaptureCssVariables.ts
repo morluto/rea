@@ -368,10 +368,14 @@ const startsWithUrlBoundary = (token: string, start: number): boolean => {
   const len = token.length;
   if (token.startsWith("//", start)) {
     let seenColon = false;
+    let colonBeforeLastAt = false;
     for (let i = start + 2; i < len; i++) {
       const c = token[i]!;
-      if (c === "@") return seenColon && i > start + 2;
-      if (c === ":") {
+      if (c === "@") {
+        if (seenColon && i > start + 2) {
+          colonBeforeLastAt = true;
+        }
+      } else if (c === ":") {
         seenColon = true;
       } else if (
         c === "/" ||
@@ -382,10 +386,10 @@ const startsWithUrlBoundary = (token: string, start: number): boolean => {
         c === "\n" ||
         c === "\f"
       ) {
-        return false;
+        return colonBeforeLastAt;
       }
     }
-    return false;
+    return colonBeforeLastAt;
   }
 
   if (start >= len) return false;
@@ -482,26 +486,53 @@ const redactStandaloneCssUrl = (value: string): string => {
   return result;
 };
 
+const collectUrlReferencedVarNames = (
+  computedStyle: readonly unknown[],
+): ReadonlySet<string> => {
+  const referenced = new Set<string>();
+  const varPattern = /\bvar\(\s*(--[^\s,)]+)/gu;
+  for (const entry of computedStyle) {
+    const prop = recordValue(entry);
+    if (prop === undefined) continue;
+    const rawValue = cdpStringValue(prop.value);
+    if (
+      rawValue === undefined ||
+      (!/url\(/iu.test(rawValue) && !/image-set\(/iu.test(rawValue)) ||
+      !/\bvar\(/iu.test(rawValue)
+    ) {
+      continue;
+    }
+    for (const match of rawValue.matchAll(varPattern)) {
+      if (match[1] !== undefined) referenced.add(match[1]);
+    }
+  }
+  return referenced;
+};
+
 export const redactCssUrlCredentials = (
   value: string,
   maxLength = DEFAULT_MAX_CSS_VARIABLE_VALUE_LENGTH,
+  redactStandalone = false,
 ): string => {
   if (
     value.length > maxLength ||
     (!/url\(/iu.test(value) &&
       !/image-set\(/iu.test(value) &&
-      !value.includes("@") &&
-      !value.includes("\\"))
+      !value.includes("\\") &&
+      (!redactStandalone || !value.includes("@")))
   ) {
     return value;
   }
   const matches = findCssUrlMatches(value);
-  if (matches.length === 0) return redactStandaloneCssUrl(value);
+  if (matches.length === 0) {
+    return redactStandalone ? redactStandaloneCssUrl(value) : value;
+  }
 
   let result = "";
   let lastIndex = 0;
   for (const match of matches) {
-    result += redactStandaloneCssUrl(value.slice(lastIndex, match.start));
+    const gap = value.slice(lastIndex, match.start);
+    result += redactStandalone ? redactStandaloneCssUrl(gap) : gap;
     try {
       const sanitized = redactCssUrl(match.rawUrl);
       if (sanitized.redacted) {
@@ -514,7 +545,8 @@ export const redactCssUrlCredentials = (
     }
     lastIndex = match.end;
   }
-  result += redactStandaloneCssUrl(value.slice(lastIndex));
+  const tail = value.slice(lastIndex);
+  result += redactStandalone ? redactStandaloneCssUrl(tail) : tail;
   return result;
 };
 
@@ -626,7 +658,34 @@ export const captureCssVariables = async (
     return emptyCssVariables("unavailable");
   }
 
+  if (
+    rootRecord.children !== undefined &&
+    !Array.isArray(rootRecord.children)
+  ) {
+    context.events?.completeness.exclude(
+      "css_variables",
+      "invalid_protocol_value",
+      1,
+    );
+    limitations.push("DOM.getDocument response omitted valid children list.");
+    return emptyCssVariables("unavailable");
+  }
   const children = recordsValue(rootRecord.children);
+  const hasMalformedChildNodeType = children.some((c) => {
+    const nt = numberValue(c.nodeType);
+    return nt === undefined || !Number.isInteger(nt);
+  });
+  if (hasMalformedChildNodeType) {
+    context.events?.completeness.exclude(
+      "css_variables",
+      "invalid_protocol_value",
+      1,
+    );
+    limitations.push(
+      "DOM.getDocument response child node omitted valid integer nodeType.",
+    );
+    return emptyCssVariables("unavailable");
+  }
   const elementChild = children.find((c) => numberValue(c.nodeType) === 1);
   const targetNodeId =
     elementChild !== undefined
@@ -692,7 +751,8 @@ export const captureCssVariables = async (
     DEFAULT_MAX_CSS_VARIABLE_VALUE_LENGTH;
   const maxIntake = Math.max(MAX_INTAKE_CSS_VARIABLES, maxRetainedVariables);
 
-  const validItems: BrowserCssVariableItem[] = [];
+  const urlReferencedVars = collectUrlReferencedVarNames(computedStyleVal);
+  const validItemsByName = new Map<string, BrowserCssVariableItem>();
   let totalObserved = 0;
   let rejectedCount = 0;
   let malformedProtocolEntries = 0;
@@ -748,7 +808,11 @@ export const captureCssVariables = async (
       continue;
     }
 
-    const sanitizedValue = redactCssUrlCredentials(rawValue, maxValueLength);
+    const sanitizedValue = redactCssUrlCredentials(
+      rawValue,
+      maxValueLength,
+      urlReferencedVars.has(name),
+    );
     if (sanitizedValue.length > maxValueLength) {
       rejectedCount += 1;
       if (rejectedPreviews.length < MAX_REJECTED_PREVIEWS) {
@@ -769,8 +833,11 @@ export const captureCssVariables = async (
       redacted,
     });
     if (parsed.success) {
-      if (validItems.length < maxIntake) {
-        validItems.push(parsed.data);
+      if (
+        validItemsByName.has(parsed.data.name) ||
+        validItemsByName.size < maxIntake
+      ) {
+        validItemsByName.set(parsed.data.name, parsed.data);
       }
     } else {
       rejectedCount += 1;
@@ -808,6 +875,7 @@ export const captureCssVariables = async (
     );
   }
 
+  const validItems = [...validItemsByName.values()];
   validItems.sort((left, right) =>
     compareUnicodeCodePoints(left.name, right.name),
   );
