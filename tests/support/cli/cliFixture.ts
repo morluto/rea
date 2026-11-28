@@ -24,6 +24,7 @@ import {
 } from "../mcp/sharedMcpSession.js";
 import { REGISTRATION_GUARD_NODE_OPTIONS_ENV } from "./registrationEnvironment.js";
 import { terminalStdoutInvocation } from "./terminalStdout.js";
+import { childHomeEnvironment, selectsChildHome } from "./childHome.js";
 import {
   completeEvidenceCliArguments,
   type TestDelivery,
@@ -84,6 +85,7 @@ const sharedMcpSessionClosed = (): Error =>
 
 const createFileMcpSession = (
   compileCache: string,
+  home: string,
 ): { session: SharedMcpSession; close(): Promise<void> } =>
   createSharedMcpSession(async (registerCleanup, isClosed) => {
     const { connectLocalToolsMcp } =
@@ -92,6 +94,7 @@ const createFileMcpSession = (
     const mcp = await connectLocalToolsMcp(
       {
         ...INLINE_EVIDENCE_MCP_ENVIRONMENT,
+        ...childHomeEnvironment(home),
         NODE_COMPILE_CACHE: compileCache,
       },
       registerCleanup,
@@ -103,8 +106,13 @@ const createFileMcpSession = (
 export const cliProcessEnvironment = (
   environment: NodeJS.ProcessEnv | undefined,
   compileCache?: string,
+  home?: string,
 ): NodeJS.ProcessEnv => ({
   PATH: process.env.PATH ?? "",
+  // A caller-selected home, including an empty one, takes precedence.
+  ...(home === undefined || selectsChildHome(environment)
+    ? {}
+    : childHomeEnvironment(home)),
   // Native Windows APIs need the system root and a writable temporary
   // directory even when the command's application environment is empty.
   ...(process.platform === "win32"
@@ -186,6 +194,7 @@ const enablesLogging = (level: string | undefined): boolean => {
 export const createTestCli = (
   processes: TestProcesses,
   compileCache?: string,
+  home?: string,
 ): TestCli => ({
   run: async ({
     arguments: written,
@@ -209,7 +218,7 @@ export const createTestCli = (
         : { command: process.execPath, arguments: rea };
     const result = await processes.run(command, commandArguments, {
       cwd: cwd ?? process.cwd(),
-      env: cliProcessEnvironment(environment, compileCache),
+      env: cliProcessEnvironment(environment, compileCache, home),
       ...(input === undefined ? {} : { input }),
       ...(timeoutMs === undefined ? {} : { timeoutMs }),
     });
@@ -220,7 +229,11 @@ export const createTestCli = (
 /** Vitest API extended with an owned process registry and compiled CLI driver. */
 export const cliTest = processTest.extend<{
   $test: { cli: TestCli };
-  $file: { mcpSession: SharedMcpSession; cliCommandSession: CliCommandSession };
+  $file: {
+    cliHome: string;
+    mcpSession: SharedMcpSession;
+    cliCommandSession: CliCommandSession;
+  };
   $worker: { cliCompileCache: string };
 }>({
   cliCompileCache: [
@@ -235,9 +248,21 @@ export const cliTest = processTest.extend<{
     },
     { scope: "worker" },
   ],
+  cliHome: [
+    // oxlint-disable-next-line no-empty-pattern -- Vitest parses fixture dependencies from object destructuring.
+    async ({}, use) => {
+      const workspace = await createTestWorkspace("rea-cli-home-");
+      try {
+        await use(await workspace.mkdir("home"));
+      } finally {
+        await removeTestWorkspace(workspace.root);
+      }
+    },
+    { scope: "file" },
+  ],
   mcpSession: [
-    async ({ cliCompileCache }, use) => {
-      const opened = createFileMcpSession(cliCompileCache);
+    async ({ cliCompileCache, cliHome }, use) => {
+      const opened = createFileMcpSession(cliCompileCache, cliHome);
       try {
         await use(opened.session);
       } finally {
@@ -247,8 +272,8 @@ export const cliTest = processTest.extend<{
     { scope: "file" },
   ],
   cliCommandSession: [
-    // oxlint-disable-next-line no-empty-pattern -- Vitest parses fixture dependencies from object destructuring.
-    async ({}, use) => {
+    // Depending on cliHome stops the worker before its home is removed.
+    async ({ cliHome: _home }, use) => {
       const session = createCliCommandSession();
       try {
         await use(session);
@@ -259,10 +284,10 @@ export const cliTest = processTest.extend<{
     { scope: "file" },
   ],
   cli: async (
-    { processes, cliCompileCache, mcpSession, cliCommandSession },
+    { processes, cliCompileCache, cliHome, mcpSession, cliCommandSession },
     use,
   ) => {
-    const cli = createTestCli(processes, cliCompileCache);
+    const cli = createTestCli(processes, cliCompileCache, cliHome);
     await use({
       run: (invocation) =>
         sharedProcessCanServe(invocation)
@@ -273,7 +298,11 @@ export const cliTest = processTest.extend<{
                 : { delivery: invocation.delivery }),
               cwd: invocation.cwd ?? process.cwd(),
               environment: definedCliEnvironment(
-                cliProcessEnvironment(invocation.environment, cliCompileCache),
+                cliProcessEnvironment(
+                  invocation.environment,
+                  cliCompileCache,
+                  cliHome,
+                ),
               ),
             })
           : cli.run(invocation),
