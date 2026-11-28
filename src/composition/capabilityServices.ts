@@ -30,6 +30,7 @@ import { sigrokHostSupported } from "../signals/SigrokRecordingProvider.js";
 import { wasmArtifactModule } from "./wasm.js";
 import { apkSignatureModule } from "./apkSignature.js";
 import { evmInterfaceModule } from "./evm.js";
+import { createSolidityMetadataBindingService } from "./solidityMetadata.js";
 import {
   evmHostSupported,
   evmLimiterAvailability,
@@ -293,6 +294,7 @@ const modules = {
   apkSignature: service(({ environment, options }) =>
     apkSignatureModule.create(environment, options.apkSignature),
   ),
+  solidityMetadata: service(() => createSolidityMetadataBindingService()),
   evmInterface: service(
     ({ environment, options, platform, arch }) =>
       options.evmInterface ??

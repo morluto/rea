@@ -277,3 +277,9 @@ export const FIRMWARE_VECTOR_TABLE_PROVIDER = Object.freeze({
   name: "REA firmware vector table decoder",
   version: "1",
 } as const);
+
+export const SOLIDITY_METADATA_BINDING_PROVIDER = Object.freeze({
+  id: "rea-solidity-metadata",
+  name: "REA offline Solidity metadata verifier",
+  version: "1",
+} as const);
