@@ -25,6 +25,20 @@ rea inspect-evm-proxy /absolute/path/runtime.hex hex --json \
 Slot status is `unavailable` (not supplied), `zero`, `address`, or
 `not_an_address` (any of the high 12 bytes set).
 
+## Following a chain
+
+With a root `snapshot`, pass `related`: a list of other accounts, each with
+`path`, `encoding` and its own `snapshot`. REA follows edges from the root
+through entries recorded on the same `chain_id` and `block`. An account may be
+supplied once per chain and block.
+
+| Step `status`       | Meaning                                               |
+| ------------------- | ----------------------------------------------------- |
+| `supplied`          | You provided that account at the same chain and block |
+| `not_supplied`      | No entry names that account                           |
+| `snapshot_mismatch` | Entries name it only for another chain or block       |
+| `cycle`             | The edge returns to an account already on the path    |
+
 ## Result
 
 | Field      | Meaning                                                              |
@@ -35,6 +49,8 @@ Slot status is `unavailable` (not supplied), `zero`, `address`, or
 | `snapshot` | Supplied chain, block and account, or null                           |
 | `slots`    | The three ERC-1967 positions, their status and supplied word         |
 | `edges`    | Inferred implementation or beacon targets and the evidence used      |
+| `related`  | The same facts for each related account, and whether it was reached  |
+| `chain`    | Followed edges in depth-first order with their status                |
 
 An edge from bytecode has a null `from`: the selected bytes are not proven to
 belong to any account. The admin slot creates no edge. A beacon's
@@ -45,5 +61,5 @@ code is not a proxy: shortened-address clones and other proxy patterns are not
 inspected. Supplied words are not verified against any chain, and no match shows
 that a call was delegated.
 
-`max_file_bytes` limits the carrier size (default 4 MiB) and applies to the next
+`max_file_bytes` limits each carrier (default 4 MiB) and applies to the next
 call.

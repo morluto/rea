@@ -69,4 +69,34 @@ describe("inspect_evm_proxy", () => {
       _tag: "AnalysisTargetFailureError",
     });
   });
+
+  it("follows a related account and names the one that fails", async () => {
+    const path = await carrier(CLONE);
+    const snapshot = (account: string) => ({
+      chain_id: 1,
+      block: 1,
+      account,
+      slots: {},
+    });
+    const target = `0x${"be".repeat(20)}`;
+    const request = (relatedPath: string) => ({
+      path,
+      encoding: "hex",
+      snapshot: snapshot(`0x${"11".repeat(20)}`),
+      related: [
+        { path: relatedPath, encoding: "hex", snapshot: snapshot(target) },
+      ],
+    });
+    const followed = await inspect(request(await carrier("0x00")));
+    expect(followed.ok && followed.value).toMatchObject({
+      related: [{ reached: true }],
+      chain: [{ to: target, status: "supplied" }],
+    });
+    const broken = await carrier("0x0");
+    const failed = await inspect(request(broken));
+    expect(!failed.ok && failed.error).toMatchObject({
+      _tag: "AnalysisTargetFailureError",
+      path: broken,
+    });
+  });
 });

@@ -35,7 +35,13 @@ export class EvmProxyService {
         validateReport: (report, input) =>
           report.artifact.path === input.path &&
           report.artifact.encoding === input.encoding &&
-          report.artifact.bytes <= input.max_file_bytes,
+          report.artifact.bytes <= input.max_file_bytes &&
+          report.related.length === (input.related?.length ?? 0) &&
+          report.related.every(
+            ({ artifact }, index) =>
+              artifact.path === input.related?.[index]?.path &&
+              artifact.bytes <= input.max_file_bytes,
+          ),
         buildEvidence: (report, identity, parameters) =>
           createEvidence(
             {

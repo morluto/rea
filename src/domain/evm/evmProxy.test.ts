@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   deriveProxyFacts,
+  followProxyChain,
   inspectEvmProxyInputSchema,
   matchErc1167Clone,
 } from "./evmProxy.js";
@@ -136,4 +137,105 @@ describe("ERC-1967 supplied slots", () => {
       expect(() => snapshot({ implementation: value })).toThrow();
     },
   );
+});
+
+const account = (byte: string) => `0x${byte.repeat(20)}`;
+const node = (byte: string, to?: string, block = 100) =>
+  deriveProxyFacts(
+    bytes(""),
+    inspectEvmProxyInputSchema.parse({
+      path: "/a.hex",
+      encoding: "hex",
+      snapshot: {
+        chain_id: 1,
+        block,
+        account: account(byte),
+        slots: to === undefined ? {} : { implementation: word(account(to)) },
+      },
+    }).snapshot,
+  );
+
+describe("proxy chains", () => {
+  const summary = (...args: Parameters<typeof followProxyChain>) =>
+    followProxyChain(...args).chain.map(({ source, to, status }) => [
+      source,
+      to,
+      status,
+    ]);
+
+  it("follows supplied accounts to a missing target", () => {
+    expect(summary(node("aa", "bb"), [node("bb", "cc")])).toEqual([
+      [account("aa"), account("bb"), "supplied"],
+      [account("bb"), account("cc"), "not_supplied"],
+    ]);
+  });
+
+  it.each([
+    ["itself", node("aa", "aa"), []],
+    ["an earlier account", node("aa", "bb"), [node("bb", "aa")]],
+  ])("stops at a cycle back to %s", (_, root, related) => {
+    expect(summary(root, related).at(-1)?.[2]).toBe("cycle");
+  });
+
+  it("does not join snapshots from another block", () => {
+    const result = followProxyChain(node("aa", "bb"), [node("bb", "cc", 101)]);
+    expect(result.chain.map(({ status }) => status)).toEqual([
+      "snapshot_mismatch",
+    ]);
+    expect(result.reached).toEqual([false]);
+  });
+
+  it("expands a shared target once without calling it a cycle", () => {
+    const root = deriveProxyFacts(bytes(PREFIX + "bb".repeat(20) + SUFFIX), {
+      chain_id: 1,
+      block: 100,
+      account: account("aa"),
+      slots: { implementation: word(account("bb")) },
+    });
+    expect(summary(root, [node("bb", "cc")]).map((row) => row[2])).toEqual([
+      "supplied",
+      "not_supplied",
+      "supplied",
+    ]);
+  });
+
+  it("walks a long chain without recursion limits", () => {
+    const id = (index: number) => `0x${index.toString(16).padStart(40, "0")}`;
+    const facts = (index: number) =>
+      deriveProxyFacts(bytes(""), {
+        chain_id: 1,
+        block: 100,
+        account: id(index),
+        slots: { implementation: word(id(index + 1)) },
+      });
+    const related = Array.from({ length: 20_000 }, (_, i) => facts(i + 2));
+    expect(followProxyChain(facts(1), related).chain).toHaveLength(20_001);
+  });
+});
+
+describe("related inputs", () => {
+  const entry = (byte: string) => ({
+    path: "/b.hex",
+    encoding: "hex",
+    snapshot: { chain_id: 1, block: 100, account: account(byte), slots: {} },
+  });
+  const parse = (extra: Record<string, unknown>) =>
+    inspectEvmProxyInputSchema.safeParse({
+      path: "/a.hex",
+      encoding: "hex",
+      ...extra,
+    }).success;
+
+  it("requires a root snapshot", () => {
+    expect(parse({ related: [entry("bb")] })).toBe(false);
+  });
+
+  it("rejects two artifacts for one account at one block", () => {
+    const { snapshot } = entry("aa");
+    expect(parse({ snapshot, related: [entry("bb"), entry("BB")] })).toBe(
+      false,
+    );
+    expect(parse({ snapshot, related: [entry("aa")] })).toBe(false);
+    expect(parse({ snapshot, related: [entry("bb")] })).toBe(true);
+  });
 });

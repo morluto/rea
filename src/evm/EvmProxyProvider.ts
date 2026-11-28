@@ -2,6 +2,7 @@ import { AnalysisTargetFailureError } from "../domain/analysisErrorCore.js";
 import {
   evmProxyBudgetLimit,
   deriveProxyFacts,
+  followProxyChain,
   type InspectEvmProxyInput,
 } from "../domain/evm/evmProxy.js";
 import { decodeLimit } from "../domain/parseFailure.js";
@@ -29,6 +30,13 @@ import {
 
 const OPERATION = "inspect_evm_proxy";
 
+const EVM_PROXY_LIMITATIONS = [
+  "Only the exact 45-byte ERC-1167 runtime is recognized; shortened-address clones and other proxy patterns are not, so none_recognized does not show the code is not a proxy.",
+  "Edges are inferred from the selected bytes and caller-supplied slot words. Deployment, snapshot authenticity, whether bytecode belongs to its snapshot account and any executed delegatecall are not established.",
+  "A supplied chain step means the caller provided an artifact for that account, chain and block; it does not verify the relationship on chain.",
+  "A beacon's implementation is not resolved; implementation() is never called.",
+] as const;
+
 /** Offline proxy recognition over one bounded, identity-checked carrier. */
 export class EvmProxyProvider implements EvmProxyPort {
   readonly identity = EVM_PROXY_PROVIDER;
@@ -43,51 +51,74 @@ export class EvmProxyProvider implements EvmProxyPort {
   }
 
   async inspect(input: InspectEvmProxyInput, options?: ExecutionOptions) {
+    let path = input.path;
     try {
       return await this.#resources.run(async () => {
-        const carrier = await readStableArtifact(
-          input.path,
-          input.max_file_bytes,
-          options?.signal,
-          undefined,
-          this.#resources,
-        );
-        assertArtifactReadActive(options?.signal);
-        const code = decodeEvmBytecodeCarrier(carrier.bytes, input.encoding);
+        const root = await this.#readAccount(input, input, options?.signal);
+        const accounts = [];
+        for (const entry of input.related ?? []) {
+          path = entry.path;
+          accounts.push(await this.#readAccount(entry, input, options?.signal));
+        }
+        const { chain, reached } = followProxyChain(root, accounts);
         return ok({
-          artifact: {
-            path: input.path,
-            sha256: carrier.sha256,
-            bytes: carrier.bytes.length,
-            encoding: input.encoding,
-          },
-          bytecode: { sha256: sha256Hex(code), bytes: code.length },
-          ...deriveProxyFacts(code, input.snapshot),
-          limitations: [
-            "Only the exact 45-byte ERC-1167 runtime is recognized; shortened-address clones and other proxy patterns are not, so none_recognized does not show the code is not a proxy.",
-            "Edges are inferred from the selected bytes and caller-supplied slot words. Deployment, snapshot authenticity, whether the bytecode belongs to the snapshot account, code at a target address and any executed delegatecall are not established.",
-            "A beacon's implementation is not resolved; implementation() is never called.",
-          ],
+          ...root,
+          related: accounts.map((account, index) => ({
+            ...account,
+            reached: reached[index] === true,
+          })),
+          chain,
+          limitations: [...EVM_PROXY_LIMITATIONS],
         });
       });
     } catch (cause) {
       const facts = artifactFilePrimaryFacts(cause);
+      const selected = { path, max_file_bytes: input.max_file_bytes };
       return err(
         projectStableArtifactFailure(
           cause,
-          classifyProviderFailure(facts.cause, evmProxyDialect(facts, input)),
-          input.path,
+          classifyProviderFailure(
+            facts.cause,
+            evmProxyDialect(facts, selected),
+          ),
+          path,
           EVM_PROXY_PROVIDER.id,
           OPERATION,
         ),
       );
     }
   }
+
+  async #readAccount(
+    selected: Pick<InspectEvmProxyInput, "path" | "encoding" | "snapshot">,
+    { max_file_bytes }: Pick<InspectEvmProxyInput, "max_file_bytes">,
+    signal: AbortSignal | undefined,
+  ) {
+    const carrier = await readStableArtifact(
+      selected.path,
+      max_file_bytes,
+      signal,
+      undefined,
+      this.#resources,
+    );
+    assertArtifactReadActive(signal);
+    const code = decodeEvmBytecodeCarrier(carrier.bytes, selected.encoding);
+    return {
+      artifact: {
+        path: selected.path,
+        sha256: carrier.sha256,
+        bytes: carrier.bytes.length,
+        encoding: selected.encoding,
+      },
+      bytecode: { sha256: sha256Hex(code), bytes: code.length },
+      ...deriveProxyFacts(code, selected.snapshot),
+    };
+  }
 }
 
 const evmProxyDialect = (
   facts: ArtifactFilePrimaryFacts,
-  input: InspectEvmProxyInput,
+  input: Pick<InspectEvmProxyInput, "path" | "max_file_bytes">,
 ) =>
   offlineArtifactFailureDialect(facts, {
     providerId: EVM_PROXY_PROVIDER.id,

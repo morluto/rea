@@ -48,7 +48,7 @@ export const evmProxySnapshotSchema = z.strictObject({
 });
 export type EvmProxySnapshot = z.output<typeof evmProxySnapshotSchema>;
 
-export const inspectEvmProxyInputSchema = z.strictObject({
+const carrierShape = {
   path: absoluteLocalPathStringSchema.describe(
     "Absolute path to caller-selected local bytecode carrier",
   ),
@@ -57,15 +57,59 @@ export const inspectEvmProxyInputSchema = z.strictObject({
     .describe(
       "Raw bytes or UTF-8 hex with optional 0x prefix and outer ASCII whitespace",
     ),
-  max_file_bytes: parameterBudgetSchema(
-    EVM_PROXY_BUDGETS.max_file_bytes,
-  ).describe("Maximum stable carrier bytes to read (default 4 MiB)"),
-  snapshot: evmProxySnapshotSchema
-    .optional()
-    .describe(
-      "Optional recorded ERC-1967 slot values with their chain, block and account",
-    ),
+};
+
+/** Another account's bytecode and recorded slots, claimed by the caller. */
+const relatedAccountSchema = z.strictObject({
+  ...carrierShape,
+  snapshot: evmProxySnapshotSchema,
 });
+
+const snapshotKey = ({ chain_id, block, account }: EvmProxySnapshot) =>
+  `${String(chain_id)}:${String(block)}:${account.toLowerCase()}`;
+
+export const inspectEvmProxyInputSchema = z
+  .strictObject({
+    ...carrierShape,
+    max_file_bytes: parameterBudgetSchema(
+      EVM_PROXY_BUDGETS.max_file_bytes,
+    ).describe("Maximum stable bytes read from each carrier (default 4 MiB)"),
+    snapshot: evmProxySnapshotSchema
+      .optional()
+      .describe(
+        "Optional recorded ERC-1967 slot values with their chain, block and account",
+      ),
+    related: z
+      .array(relatedAccountSchema)
+      .optional()
+      .describe(
+        "Bytecode and snapshots of other accounts, used to follow inferred edges. Requires snapshot. Only entries with its chain_id and block are followed.",
+      ),
+  })
+  .superRefine(({ snapshot, related }, context) => {
+    if (related === undefined) return;
+    if (snapshot === undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["related"],
+        message:
+          "related requires snapshot, which names the root account, chain and block",
+      });
+      return;
+    }
+    const seen = new Set([snapshotKey(snapshot)]);
+    for (const [index, entry] of related.entries()) {
+      const key = snapshotKey(entry.snapshot);
+      if (seen.has(key))
+        context.addIssue({
+          code: "custom",
+          path: ["related", index, "snapshot", "account"],
+          message:
+            "Each account may be supplied once per chain_id and block, including the root",
+        });
+      seen.add(key);
+    }
+  });
 export type InspectEvmProxyInput = z.output<typeof inspectEvmProxyInputSchema>;
 
 const byteCount = z.int().nonnegative();
@@ -129,7 +173,7 @@ const proxyFactShape = {
   edges: z.array(proxyEdgeSchema),
 };
 
-export const evmProxySchema = z.strictObject({
+const accountReportShape = {
   artifact: z.strictObject({
     path: z.string().min(1),
     sha256,
@@ -138,6 +182,21 @@ export const evmProxySchema = z.strictObject({
   }),
   bytecode: z.strictObject({ sha256, bytes: byteCount }),
   ...proxyFactShape,
+};
+
+/** One edge met while following supplied accounts from the root. */
+const chainStepSchema = proxyEdgeSchema.omit({ from: true }).extend({
+  source: address,
+  status: z.enum(["supplied", "not_supplied", "snapshot_mismatch", "cycle"]),
+});
+export type EvmProxyChainStep = z.output<typeof chainStepSchema>;
+
+export const evmProxySchema = z.strictObject({
+  ...accountReportShape,
+  related: z.array(
+    z.strictObject({ ...accountReportShape, reached: z.boolean() }),
+  ),
+  chain: z.array(chainStepSchema),
   limitations: z.array(z.string()),
 });
 export type EvmProxy = z.output<typeof evmProxySchema>;
@@ -226,4 +285,63 @@ export const deriveProxyFacts = (
     slots,
     edges,
   };
+};
+
+type ProxyFacts = ReturnType<typeof deriveProxyFacts>;
+type SnapshotFacts = NonNullable<ProxyFacts["snapshot"]>;
+
+const sameMoment = (left: SnapshotFacts, right: SnapshotFacts) =>
+  left.chain_id === right.chain_id && left.block === right.block;
+
+/**
+ * Follow inferred edges depth first through supplied accounts of the root's
+ * chain and block. Each account is expanded once; an edge back to an account
+ * on the current path is a cycle. Iterative, so chain length is unbounded.
+ */
+export const followProxyChain = (
+  root: ProxyFacts,
+  related: readonly ProxyFacts[],
+) => {
+  const chain: EvmProxyChainStep[] = [];
+  const reached = related.map(() => false);
+  const origin = root.snapshot;
+  if (origin === null) return { chain, reached };
+  const usable = new Map<string, number>();
+  const known = new Set([origin.account]);
+  for (const [index, { snapshot }] of related.entries()) {
+    if (snapshot === null) continue;
+    known.add(snapshot.account);
+    if (sameMoment(origin, snapshot)) usable.set(snapshot.account, index);
+  }
+  const open = new Set([origin.account]);
+  const expanded = new Set([origin.account]);
+  const stack = [{ account: origin.account, edges: root.edges, next: 0 }];
+  for (let frame = stack.at(-1); frame !== undefined; frame = stack.at(-1)) {
+    const edge = frame.edges[frame.next++];
+    if (edge === undefined) {
+      open.delete(frame.account);
+      stack.pop();
+      continue;
+    }
+    const { relation, evidence, to } = edge;
+    const step = { source: frame.account, relation, evidence, to };
+    const index = usable.get(to);
+    if (open.has(to)) chain.push({ ...step, status: "cycle" });
+    else if (index === undefined && to !== origin.account)
+      chain.push({
+        ...step,
+        status: known.has(to) ? "snapshot_mismatch" : "not_supplied",
+      });
+    else {
+      chain.push({ ...step, status: "supplied" });
+      const target = index === undefined ? undefined : related[index];
+      if (index === undefined || target === undefined || expanded.has(to))
+        continue;
+      reached[index] = true;
+      expanded.add(to);
+      open.add(to);
+      stack.push({ account: to, edges: target.edges, next: 0 });
+    }
+  }
+  return { chain, reached };
 };

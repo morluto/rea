@@ -45,11 +45,15 @@ export const registerEvmCommands = (
         "Recognize a standard ERC-1167 clone proxy in local EVM bytecode",
       positionals: ["path", "encoding"],
       callerPaths: ["path"],
-      jsonText: ["snapshot"],
+      jsonText: ["snapshot", "related"],
       fields: {
         path: { description: "Local bytecode carrier" },
         encoding: { description: "Selected carrier representation" },
-        max_file_bytes: { description: "Maximum carrier size in bytes" },
+        max_file_bytes: { description: "Maximum bytes read per carrier" },
+        related: {
+          description:
+            "JSON array of other accounts: path, encoding and snapshot",
+        },
         snapshot: {
           description:
             "JSON with chain_id, block, account and recorded ERC-1967 slots",
