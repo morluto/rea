@@ -46,8 +46,7 @@ const resolveOwnedConfigSymlink = async (
   const currentUid =
     typeof process.getuid === "function" ? process.getuid() : undefined;
   if (
-    currentUid === undefined ||
-    requestedStats.uid !== currentUid ||
+    (currentUid !== undefined && requestedStats.uid !== currentUid) ||
     fileSystem.realpath === undefined
   )
     return undefined;
@@ -55,7 +54,8 @@ const resolveOwnedConfigSymlink = async (
   try {
     const canonicalPath = await fileSystem.realpath(requestedPath);
     const targetStats = await fileSystem.lstat(canonicalPath);
-    return targetStats.isFile?.() === true && targetStats.uid === currentUid
+    return targetStats.isFile?.() === true &&
+      (currentUid === undefined || targetStats.uid === currentUid)
       ? canonicalPath
       : undefined;
   } catch (cause: unknown) {
