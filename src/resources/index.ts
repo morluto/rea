@@ -25,7 +25,12 @@ export {
   ArtifactFileSource,
   assertArtifactFileSelectedSource,
 } from "./ArtifactFileSource.js";
-export { translateArtifactFailure } from "./ArtifactOperationFailure.js";
+export {
+  artifactOperationReason,
+  artifactReaderTargetFailure,
+  translateArtifactFailure,
+  translateArtifactOperationFailure,
+} from "./ArtifactOperationFailure.js";
 export {
   ArtifactFileCancelled,
   ArtifactFileCleanupFailure,
@@ -49,6 +54,11 @@ export {
   ArtifactEntryContentUnavailable,
   ArtifactReaderFailure,
   artifactFixedLimitFailure,
+  artifactFormatFailure,
+  malformedArtifact,
+  truncatedArtifact,
+  unsupportedArtifact,
+  readFailureError,
   artifactPrimaryCleanupLeases,
   assertProducedEntry,
   copyArtifactEntry,
@@ -85,10 +95,15 @@ export {
 export type {
   ArtifactCleanupAttempt,
   ArtifactResourceOwner,
+  RetainedResourceScope,
 } from "./ArtifactResourceScope.js";
 export {
   imageFileSizeRemediation,
+  closeArtifactResources,
+  artifactFileCleanupError,
   projectArtifactCloseFailure,
+  withArtifactCleanupFailure,
+  artifactFileCancellationError,
   projectOwnedArtifactIdentityFailure,
   projectOwnedArtifactInputFailure,
   projectSelectedArtifactFileFailure,
@@ -109,11 +124,19 @@ export {
   assertStableArtifactState,
   completedStableArtifact,
   completedStableArtifactStream,
+  readAdmittedRange,
   readStableArtifact,
   streamStableArtifact,
+  withStableArtifactHandle,
 } from "./readStableArtifact.js";
+export {
+  artifactFileCeilingConstraint,
+  artifactReadBudgetConstraint,
+} from "./artifactReadBudget.js";
 export type {
   StableArtifactFileSystem,
+  StableArtifactHandle,
+  StableArtifactHandleOptions,
   StableArtifactSnapshot,
   StableArtifactStream,
   StableArtifactStreamOptions,
@@ -123,8 +146,10 @@ export {
   DestinationCaseCollisionFailure,
   DestinationPathUnrepresentableFailure,
   annotateEnglishUnicodeCaseCollisions,
+  currentDirectoryPrefixLimitation,
   hasDestinationPath,
   normalizeArtifactPath,
+  withoutCurrentDirectoryPrefix,
 } from "./ArtifactPaths.js";
 export { SafeOutputTree } from "./SafeOutputTree.js";
 export {
@@ -147,11 +172,16 @@ export {
   withArtifactTargetIdentity,
 } from "./withArtifactTargetIdentity.js";
 export {
+  isZipFileEntry,
+  readBoundedZipMember,
+  zipMemberSize,
+} from "./boundedZipMember.js";
+export {
   ZIP_READER_OPTIONS,
   ZipArtifactReader,
   decodeZipEntryText,
   zipEntryNameLimitations,
   zipEntryPath,
   zipListingCoverage,
-  typedZipFailure,
+  throwZipPackageFailure,
 } from "./ZipArtifactReader.js";

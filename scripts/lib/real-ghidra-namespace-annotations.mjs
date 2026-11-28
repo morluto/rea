@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { inspectVerifierGhidraInstallation } from "./ghidra-installation-inspection.mjs";
+import { inspectVerifierGhidraFromEnvironment } from "./ghidra-installation-inspection.mjs";
 
 /** Exercise qualified annotation names against real demangled C++ ABI symbols. */
 export async function verifyGhidraNamespaceAnnotations({
@@ -71,6 +71,7 @@ export async function verifyGhidraNamespaceAnnotations({
     // Search accepts the leaf spelling exact lookup accepts, keeping each
     // procedure as one row under its qualified primary name.
     const leafMatches = await call("search_procedures", {
+      detail: "complete",
       pattern: "^same$",
       mode: "regex",
       case_sensitive: true,
@@ -106,6 +107,7 @@ export async function verifyGhidraNamespaceAnnotations({
       }
       assert.equal(
         await call("procedure_address", {
+          detail: "complete",
           procedure: qualified.annotations.name,
         }),
         address,
@@ -474,11 +476,7 @@ async function verifyAddressNames(call, symbols, kind) {
 }
 
 async function requireNamespaceDemangler(env) {
-  const inspection = await inspectVerifierGhidraInstallation({
-    environment: env,
-    installDir: env.GHIDRA_INSTALL_DIR,
-    ...(env.JAVA_HOME === undefined ? {} : { javaHome: env.JAVA_HOME }),
-  });
+  const inspection = await inspectVerifierGhidraFromEnvironment(env);
   if (
     inspection.status !== "available" ||
     inspection.nativeDecompilerPath === null

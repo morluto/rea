@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import { verifyClientSetupAndReadSkillBody } from "./verify/clients/setup.mjs";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { basename, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
@@ -10,20 +11,25 @@ import {
 } from "../dist/contracts/toolContracts.js";
 import { advertisedInputJsonSchema } from "../dist/contracts/toolSchemaMetadata.js";
 import { advertiseTool } from "../dist/contracts/advertisedTool.js";
-import { isPathWithinRoot } from "../dist/domain/localPath.js";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import { readClientVersion } from "./verify/clients/version.mjs";
+import { receiptContext, publishReceipt } from "./verify/clients/receipt.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
 import {
   CLIENT_JAVASCRIPT_FIXTURE_SOURCE,
   assertClientJavaScriptFixtureEvidence,
 } from "./verify/clients/javascript-fixture.mjs";
 import {
+  containsText,
   findClientResult,
   isClientJavaScriptEvidence,
 } from "./verify/clients/result-discovery.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
-import { createOpenAiModelFixture } from "./verify/clients/model-fixture.mjs";
+import {
+  createOpenAiModelFixture,
+  toolCallMessage,
+} from "./verify/clients/model-fixture.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import { advertisedToolPresentation } from "../dist/contracts/mcpSchemaPresentation.js";
 
@@ -97,13 +103,7 @@ await withVerifierCleanup(async () => {
       REA_PROCESS_RUN_ID: verifier.run_id,
     };
     try {
-      clientVersion = (
-        await commands.exec(command, ["--version"], {
-          env: environment,
-          timeout: 30_000,
-          stdin: "pipe",
-        })
-      ).stdout.trim();
+      clientVersion = await readClientVersion(commands, command, environment);
     } catch (cause) {
       throw new Error(
         `Copilot CLI preflight failed for ${command}; install Copilot CLI or set REA_VERIFY_COPILOT_COMMAND. ${String(cause)}`,
@@ -117,14 +117,6 @@ await withVerifierCleanup(async () => {
       strict: false,
       validateFormats: false,
     });
-    const containsText = (value, text) => {
-      if (typeof value === "string") return value.includes(text);
-      if (value && typeof value === "object")
-        return Object.values(value).some((nested) =>
-          containsText(nested, text),
-        );
-      return false;
-    };
     fixture = await createOpenAiModelFixture({
       directory: lab,
       prefix: "copilot",
@@ -205,17 +197,8 @@ await withVerifierCleanup(async () => {
           requestIndex <= 8,
           "Local model workflow exceeded its turn budget",
         );
-        const call = (name, args) => ({
-          role: "assistant",
-          content: null,
-          tool_calls: [
-            {
-              id: `call_rea_fixture_${requestIndex}`,
-              type: "function",
-              function: { name, arguments: JSON.stringify(args) },
-            },
-          ],
-        });
+        const call = (name, args) =>
+          toolCallMessage(`call_rea_fixture_${requestIndex}`, name, args);
         if (!skillRequested) {
           const skill = tools.find((t) => t.name === "skill");
           assert(skill, "Copilot CLI must expose its native skill tool");
@@ -266,81 +249,20 @@ await withVerifierCleanup(async () => {
       2,
     );
     await writeFile(configPath, original);
-    for (const args of [
-      ["setup", "--client", "copilot_cli", "--dry-run"],
-      ["setup", "--client", "copilot_cli", "--yes"],
-      ["doctor", "--client", "copilot_cli", "--skill"],
-    ]) {
-      const result = await commands.exec(
-        process.execPath,
-        [join(runtimeRoot, "scripts/rea.mjs"), ...args, "--json"],
-        { env: environment, cwd: workspace, timeout: 60_000, stdin: "pipe" },
-      );
-      await writeFile(
-        join(
-          lab,
-          `${args[0]}${args.includes("--dry-run") ? "-plan" : ""}.json`,
-        ),
-        result.stdout,
-      );
-      const parsed = JSON.parse(result.stdout);
-      if (args[0] === "doctor") assert.equal(parsed.healthy, true);
-      else {
-        assert.equal(
-          parsed.status,
-          args.includes("--dry-run") ? "planned" : "ready",
-        );
-        if (args.includes("--dry-run")) {
-          assert(parsed.plannedActions.some((a) => a.target === configPath));
-          assert(
-            parsed.plannedActions.some((a) => a.target === skillDirectory),
-          );
-          assert(
-            parsed.plannedActions.every(
-              (a) =>
-                a.target === configPath ||
-                (isAbsolute(a.target) &&
-                  isPathWithinRoot(skillDirectory, a.target)),
-            ),
-          );
-        }
-      }
-    }
-    assert.equal(await readFile(`${configPath}.rea.backup`, "utf8"), original);
-    const configured = await readFile(configPath, "utf8");
-    assert(configured.includes("unrelated-server"));
-
-    const repeated = await commands.exec(
-      process.execPath,
-      [
-        join(runtimeRoot, "scripts/rea.mjs"),
-        "setup",
-        "--client",
-        "copilot_cli",
-        "--yes",
-        "--json",
-      ],
-      { env: environment, cwd: workspace, timeout: 60_000, stdin: "pipe" },
-    );
-    assert.deepEqual(JSON.parse(repeated.stdout).appliedActions, []);
-    assert.equal(await readFile(configPath, "utf8"), configured);
-    assert.equal(await readFile(`${configPath}.rea.backup`, "utf8"), original);
-    const installedSkill = await readFile(
-      join(skillDirectory, "SKILL.md"),
-      "utf8",
-    );
-    assert(installedSkill.includes("name: reverse-engineer-anything"));
-    const skillLines = installedSkill.split("\n");
-    const headerEnd = skillLines.indexOf("---", 1);
-    assert(
-      skillLines[0] === "---" && headerEnd > 0,
-      "Installed skill must have its authored frontmatter",
-    );
-    expectedSkillBody = skillLines
-      .slice(headerEnd + 1)
-      .join("\n")
-      .trim();
-    assert(expectedSkillBody.length > 0);
+    expectedSkillBody = await verifyClientSetupAndReadSkillBody({
+      client: "copilot_cli",
+      commands,
+      runtimeRoot,
+      environment,
+      workspace,
+      lab,
+      configPath,
+      original,
+      skillDirectory,
+      checkConfigured: (configured) => {
+        assert(configured.includes("unrelated-server"));
+      },
+    });
     for (const [name, args] of [
       ["mcp-list", ["mcp", "list"]],
       ["skill-add", ["skill", "add", skillDirectory]],
@@ -423,20 +345,14 @@ await withVerifierCleanup(async () => {
 }, [
   async () => {
     const lineage = await completeVerifierRun(verifier);
-    const receipt = {
+    await publishReceipt({
       client: "Copilot CLI",
       clientVersion,
       mode,
       model,
       wireModel,
       passed,
-      artifacts: lab,
-      runtimeRoot,
-      host: {
-        platform: process.platform,
-        architecture: process.arch,
-        node: process.versions.node,
-      },
+      ...receiptContext(lab, runtimeRoot),
       modelFixture:
         "loopback OpenAI completions/SSE, synthetic usage, requested one-million-token BYOK prompt capacity; effective capacity unknown; no live provider claim",
       skillDiscovery:
@@ -455,15 +371,6 @@ await withVerifierCleanup(async () => {
       probes: fixture?.probes,
       fixtureFailure: fixture?.failure,
       verifier: lineage,
-    };
-    await withVerifierCleanup(
-      () =>
-        writeFile(join(lab, "receipt.json"), JSON.stringify(receipt, null, 2)),
-      [
-        () => {
-          console.log(JSON.stringify(receipt));
-        },
-      ],
-    );
+    });
   },
 ]);

@@ -54,26 +54,36 @@ const STATE_NESTING_DEPTH = 16;
 // this also covers the whole-second digits of every finite number duration.
 const DURATION_DIGITS = 3 - Math.floor(Math.log10(Number.MIN_VALUE));
 
-/** A recorded response body as state JSON: a JSON-like media type, complete UTF-8 text within the state body limit, exact numbers; otherwise undefined. */
-export const stateBodyJson = (
-  contentType: string | null,
+const parseStateJsonText = (text: string): JsonValue | undefined => {
+  const value = parseExactJson(text);
+  return value === undefined ||
+    jsonValueExceedsDepth(value, MAX_JSON_DEPTH - STATE_NESTING_DEPTH)
+    ? undefined
+    : value;
+};
+
+/** Parsed state JSON for a body whose media type has already been admitted. */
+const parseStateBodyJson = (
   body: RecordedResponseBody,
 ): JsonValue | undefined => {
   if (
-    contentType === null ||
-    !isJsonLike(mediaTypeEssence(contentType)) ||
     body.bodyText === null ||
     body.bodyEncoding === "base64" ||
     body.bodyCut === true ||
     Buffer.byteLength(body.bodyText, "utf8") > STATE_BODY_LIMIT_BYTES
   )
     return undefined;
-  const value = parseExactJson(body.bodyText);
-  return value === undefined ||
-    jsonValueExceedsDepth(value, MAX_JSON_DEPTH - STATE_NESTING_DEPTH)
-    ? undefined
-    : value;
+  return parseStateJsonText(body.bodyText);
 };
+
+/** Interpret a serving exchange's raw media type before reading its state body. */
+export const stateBodyJson = (
+  contentType: string | null,
+  body: RecordedResponseBody,
+): JsonValue | undefined =>
+  contentType !== null && isJsonLike(mediaTypeEssence(contentType))
+    ? parseStateBodyJson(body)
+    : undefined;
 
 const startSchema = z.object({ startedDateTime: z.string() });
 const durationSchema = z.object({ time: z.number().nonnegative() });
@@ -118,7 +128,7 @@ interface RecordEntry {
   /** Null for a write without a usable URL: its unknown target bounds every type. */
   readonly origin: string | null;
   readonly targetExclusion?: "url-redacted" | "url-unparseable";
-  readonly contentType: string;
+  readonly contentTypeEssence: string | null;
   readonly startInterpretation:
     | NonNullable<ReturnType<typeof readRecordedStart>>["interpretation"]
     | undefined;
@@ -163,6 +173,7 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
   protected override prepareRecordedRequestLine(
     record: WebNetworkCaptureRecord,
     line: RecordedRequestLine,
+    mime: string | null,
   ): Result<() => void, AnalysisError> {
     const target =
       line.kind === "line"
@@ -257,7 +268,7 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
         ...("targetExclusion" in target
           ? { targetExclusion: target.targetExclusion }
           : {}),
-        contentType: target.rawMime,
+        contentTypeEssence: mime,
         startInterpretation: reading?.interpretation,
         record,
       });
@@ -269,7 +280,7 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
     this.#bodyReleases.push(this.temporaryCheckpoint());
     const entry = this.#entries.get(ordinal);
     // A body that is not JSON-like is refused before its decoding is charged.
-    if (entry === undefined || !isJsonLike(mediaTypeEssence(entry.contentType)))
+    if (entry === undefined || !isJsonLike(entry.contentTypeEssence))
       return { kind: "unusable" };
     const declaration = readRecordedResponseDeclaration(entry.record.reported);
     const content = declaration?.content;
@@ -280,8 +291,7 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
       return { kind: "unusable" };
     if (!this.temporary(RECORD_SCRATCH_BYTES + textBytes(length) * 4))
       return null;
-    const value = stateBodyJson(
-      entry.contentType,
+    const value = parseStateBodyJson(
       readRecordedResponseBody(
         entry.record,
         STATE_BODY_LIMIT_BYTES,
@@ -323,15 +333,19 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
     )
       return use({ kind: "absent" });
     if (
-      !isJsonLike(mediaTypeEssence(mimeType)) ||
+      text.length > STATE_BODY_LIMIT_BYTES ||
       Buffer.byteLength(text, "utf8") > STATE_BODY_LIMIT_BYTES
     )
       return use({ kind: "unusable" });
     const release = this.temporaryCheckpoint();
     try {
+      // Request media is separate from the response type admitted with the line.
+      if (!this.temporary(textBytes(mimeType.length))) return null;
+      if (!isJsonLike(mediaTypeEssence(mimeType)))
+        return use({ kind: "unusable" });
       if (!this.temporary(RECORD_SCRATCH_BYTES + textBytes(text.length) * 4))
         return null;
-      const value = stateBodyJson(mimeType, { bodyText: text });
+      const value = parseStateJsonText(text);
       return use(
         value === undefined ? { kind: "unusable" } : { kind: "json", value },
       );

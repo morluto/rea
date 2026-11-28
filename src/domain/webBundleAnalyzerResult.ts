@@ -1,3 +1,4 @@
+import { knownCoverage } from "./coverageAccumulator.js";
 import { buildJavaScriptRouteInventorySteps } from "./javascript/javascriptRouteInventory.js";
 import { completeSemanticSteps } from "./javascript/javascriptSemanticTraversal.js";
 import { RETURNED_REFERENCE_WIDENING_LIMITATION } from "./javascript/javascriptSemanticCoverage.js";
@@ -199,12 +200,12 @@ export const buildCapturedWebBundleAnalysis = (
       omittedSourceScripts,
       omittedSourceMaps,
     }),
-    completeness: buildCompleteness({
-      partial,
-      parsedScripts: accumulator.parsedScripts,
-      parseFailures: accumulator.failedScripts.length,
-      visitedNodes: accumulator.visitedNodes,
-    }),
+    completeness: {
+      status: knownCoverage(!partial),
+      parsed_scripts: accumulator.parsedScripts,
+      parse_failures: accumulator.failedScripts.length,
+      visited_ast_nodes: accumulator.visitedNodes,
+    },
     limitations: bundleLimitations(),
   });
 };
@@ -539,22 +540,6 @@ const captureBudgetReason = (label: string, count: number | null): string =>
   count === null
     ? `Capture omitted an unknown number of ${label} because its resource budget was exhausted.`
     : `Capture omitted ${String(count)} ${label} because its resource budget was exhausted.`;
-
-interface CompletenessInput {
-  readonly partial: boolean;
-  readonly parsedScripts: number;
-  readonly parseFailures: number;
-  readonly visitedNodes: number;
-}
-
-const buildCompleteness = (
-  input: CompletenessInput,
-): WebBundleAnalysis["completeness"] => ({
-  status: input.partial ? "partial" : "complete",
-  parsed_scripts: input.parsedScripts,
-  parse_failures: input.parseFailures,
-  visited_ast_nodes: input.visitedNodes,
-});
 
 /**
  * Reported when findings are merged across scripts. Wording may change, but

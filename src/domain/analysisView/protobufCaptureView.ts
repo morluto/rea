@@ -10,6 +10,7 @@ import {
   type ProtobufField,
 } from "../protobufWire.js";
 import type { WebNetworkCapture } from "../webNetworkCapture.js";
+import { filterSet } from "./selectViewRows.js";
 import { pageViewCoverage } from "./analysisViewCoverage.js";
 
 const body = {
@@ -149,17 +150,10 @@ const fieldSelection = (
   const cache = reusable && key.length * 2 <= referenceBytes;
   const selection: FieldSelection = {
     key,
-    frames:
-      view.frame_indices === undefined
-        ? undefined
-        : new Set(view.frame_indices),
-    ids: view.field_ids === undefined ? undefined : new Set(view.field_ids),
-    numbers:
-      view.field_numbers === undefined
-        ? undefined
-        : new Set(view.field_numbers),
-    names:
-      view.schema_names === undefined ? undefined : new Set(view.schema_names),
+    frames: filterSet(view.frame_indices),
+    ids: filterSet(view.field_ids),
+    numbers: filterSet(view.field_numbers),
+    names: filterSet(view.schema_names),
     rows: cache ? new WeakMap() : undefined,
   };
   if (cache) fieldQueries.set(report, selection);
@@ -205,12 +199,8 @@ export const projectProtobufCapturePage = (
     view.collection === "fields"
       ? fieldSelection(report, bodies, view, reusable)
       : undefined;
-  const ordinals =
-    view.record_ordinals === undefined
-      ? undefined
-      : new Set(view.record_ordinals);
-  const pointers =
-    view.body_pointers === undefined ? undefined : new Set(view.body_pointers);
+  const ordinals = filterSet(view.record_ordinals);
+  const pointers = filterSet(view.body_pointers);
   const frames =
     "frame_indices" in view && view.frame_indices !== undefined
       ? new Set(view.frame_indices)

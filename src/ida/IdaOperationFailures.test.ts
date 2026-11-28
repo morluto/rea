@@ -519,8 +519,12 @@ describe("headless IDA procedure lookup failures", () => {
 
         const projected = projectAnalysisError(caller.error);
         expect(projected).not.toHaveProperty("recovery");
+        // Recovery names contract operations only; each adapter renders its spelling.
         expect(projected.remediation.action).toContain(
-          "--kind procedures --mode regex --provider ida",
+          "search_procedures or list_procedures",
+        );
+        expect(projected.remediation.action).not.toMatch(
+          /\bCLI\b|\brea \b|MCP/u,
         );
         expect(projected).toMatchObject({
           code: "invalid_request",

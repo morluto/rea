@@ -13,6 +13,10 @@ import { artifactCliEvidence } from "../../lib/artifact-e2e.mjs";
 import { withVerifierCleanup } from "../../lib/verifier-cleanup.mjs";
 import { VerifierFixture } from "../../lib/verifier-fixture.mjs";
 import {
+  completeEvidenceClient,
+  completeEvidenceToolArguments,
+} from "../../lib/complete-evidence.mjs";
+import {
   OwnedCommandFailure,
   runOwnedCommand,
 } from "../../../dist/process/OwnedCommand.js";
@@ -54,10 +58,12 @@ const transport = new StdioClientTransport({
   },
   stderr: "pipe",
 });
-const client = new Client({
-  name: "javascript-module-reference-verifier",
-  version: "1",
-});
+const client = completeEvidenceClient(
+  new Client({
+    name: "javascript-module-reference-verifier",
+    version: "1",
+  }),
+);
 const serialize = (value) => JSON.stringify(value);
 const bytes = (value) => Buffer.byteLength(serialize(value));
 const digest = (value) =>
@@ -114,7 +120,10 @@ await withVerifierCleanup(async () => {
   };
   const summary = await call(
     "analyze_javascript_application",
-    preparationRequest,
+    await completeEvidenceToolArguments(
+      "analyze_javascript_application",
+      preparationRequest,
+    ),
   );
   const source = {
     kind: "retained-evidence",

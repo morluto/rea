@@ -7,15 +7,15 @@ import {
   contractNamed,
   describeContractCommand,
   describeOperationChoices,
-  describeContractDocumentCommand,
 } from "../../../src/cli/contractCliDescription.js";
+import { describeContractDocumentCommand } from "../../../src/cli/contractCliDocumentDescription.js";
 import type {
   ContractCliDescription,
   ContractCliParameter,
 } from "../../../src/cli/contractCliDescriptionTypes.js";
 import { BROWSER_TOOL_CONTRACTS } from "../../../src/contracts/browserToolContracts.js";
 import { passiveNetworkCapture } from "../../fixtures/passiveNetworkCapture.js";
-import { contractInputBranch } from "../../../src/cli/contractCommand.js";
+import { contractInputBranch } from "../../../src/cli/routedContractCommand.js";
 import { jsonInputContentSchema } from "../../../src/cli/jsonInputArgument.js";
 import {
   cliCommands,
@@ -274,7 +274,9 @@ const requiredValue = (
   parameter: ContractCliParameter,
 ): unknown =>
   parameter.callerPath
-    ? "rel/target"
+    ? parameter.repeatable
+      ? ["rel/target"]
+      : "rel/target"
     : probes(suppliedField(description, parameter)).find(
         (value) =>
           value !== undefined &&
@@ -1687,7 +1689,12 @@ describe("JSON-document delivery options", () => {
     ).toEqual(["required", "optional"]);
     expect(flagged.admitDelivery({ detail: "complete" })).toEqual({
       ok: true,
-      value: { detail: "complete", evidenceOutput: undefined },
+      // A contract that declares no effects is assumed rerunnable.
+      value: {
+        detail: "complete",
+        evidenceOutput: undefined,
+        rerunRecoversResult: true,
+      },
     });
     expect(
       flagged.admitDelivery({
@@ -1700,6 +1707,7 @@ describe("JSON-document delivery options", () => {
       value: {
         detail: "summary",
         evidenceOutput: "out.json",
+        rerunRecoversResult: true,
         view: { offset: 2 },
       },
     });

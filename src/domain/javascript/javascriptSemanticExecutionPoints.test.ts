@@ -101,3 +101,47 @@ it.each(["!trigger", "typeof trigger", "void trigger", "trigger === 1"])(
     );
   },
 );
+
+it("detaches member receiver on sequence member calls while preserving property-read and leading calls", () => {
+  const direct = parsed("obj.method(arg);");
+  const directStmt = direct.body[0];
+  if (
+    !t.isExpressionStatement(directStmt) ||
+    !t.isCallExpression(directStmt.expression)
+  )
+    throw new Error("Expected direct call");
+  expect(javaScriptExecutions(directStmt.expression, directStmt)).toEqual([
+    {
+      kind: "call",
+      node: directStmt.expression,
+      operands: [
+        (directStmt.expression.callee as t.MemberExpression).object,
+        directStmt.expression.arguments[0],
+      ],
+    },
+  ]);
+
+  const sequence = parsed("(0, obj.method)(arg);");
+  const seqStmt = sequence.body[0];
+  if (
+    !t.isExpressionStatement(seqStmt) ||
+    !t.isCallExpression(seqStmt.expression)
+  )
+    throw new Error("Expected sequence call");
+  expect(javaScriptExecutions(seqStmt.expression, seqStmt)).toEqual([
+    {
+      kind: "call",
+      node: seqStmt.expression,
+      operands: [seqStmt.expression.arguments[0]],
+    },
+  ]);
+  expect(Object.fromEntries(kindsByType("(0, obj.method)(arg);"))).toEqual({
+    CallExpression: ["call"],
+    MemberExpression: ["property-read"],
+  });
+  expect(
+    Object.fromEntries(kindsByType("(sideEffect(), localFn)(arg);")),
+  ).toEqual({
+    CallExpression: ["call", "call"],
+  });
+});

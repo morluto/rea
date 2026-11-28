@@ -1,7 +1,7 @@
+import type { RequestAnalysisPort } from "../../../src/ports/AnalysisProvider.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished } from "vitest";
 
-import type { ApktoolResourceAnalysisPort } from "../../../src/application/apktool/ApktoolResourceAnalysisPort.js";
 import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import type { ApktoolRequest } from "../../../src/domain/apktool/apktoolResourceAnalysis.js";
@@ -68,7 +68,7 @@ it("advertises exact valid Apktool schemas and records inline evidence through M
     ApktoolRequest,
     { operation: "decode_android_resources" }
   >["input"][] = [];
-  const provider: ApktoolResourceAnalysisPort = {
+  const provider: RequestAnalysisPort<ApktoolRequest> = {
     async inspectAvailability() {
       return { status: "available", code: null, reason: null, diagnostics: {} };
     },

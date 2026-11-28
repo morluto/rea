@@ -4,7 +4,7 @@ import { onTestFinished } from "vitest";
 import { createFirmwareAnalysisProvider } from "../../../src/composition/firmware.js";
 import { FirmwareAnalysisService } from "../../../src/application/firmware/FirmwareAnalysisService.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
-import type { assertFirmwareCleanup } from "./provider.js";
+import type { firmwareFixture } from "./provider.js";
 import { createTestTempDirectory } from "../temporaryDirectory.js";
 
 /**
@@ -73,7 +73,7 @@ with open(report, 'w') as handle:
   );
   const path = join(directory, "input.bin");
   await writeFile(path, "fixture-input-data");
-  const launches: Parameters<typeof assertFirmwareCleanup>[0] = [];
+  const launches: Awaited<ReturnType<typeof firmwareFixture>>["launches"] = [];
   const service = new FirmwareAnalysisService(
     createFirmwareAnalysisProvider(
       { ...process.env, REA_UNBLOB_COMMAND: command },

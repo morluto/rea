@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { chainedImportNames } from "../domain/apple/appleMachoFixups.js";
+import {
+  chainedImportNames,
+  type FixupCommands,
+} from "../domain/apple/appleMachoFixups.js";
 import { parsePointerFixups } from "./AppleMachoFixups.fixture.js";
 import type { Segment } from "../domain/apple/appleMachoSelection.js";
 
@@ -102,6 +105,24 @@ const SEGMENTS: Segment[] = [
   { address: BASE, size: 0x4000n, offset: 0, executable: true },
   { address: BASE + 0x4000n, size: 0x4000n, offset: 0x4000, executable: false },
 ];
+
+/** Place one opcode stream inside its file, independently of the bound metadata locations. */
+const legacyBind = (
+  opcodes: Buffer,
+  dylibs: FixupCommands["dylibs"],
+  stream: FixupCommands["binds"][number]["stream"] = "bind",
+  size = opcodes.length,
+) => {
+  const offset = 0x7000;
+  const image = Buffer.alloc(0x8000);
+  opcodes.copy(image, offset);
+  return parsePointerFixups(
+    image,
+    { chained: null, binds: [{ offset, size, stream }], rebases: [], dylibs },
+    SEGMENTS,
+    BASE,
+  );
+};
 
 it("decodes raw chained pointer layouts through real segment membership", () => {
   const data = chainedData(2);
@@ -274,22 +295,14 @@ it.each(["bind", "weak", "lazy"] as const)(
       0x90,
       0,
     ]);
-    const data = Buffer.alloc(0x8000);
-    opcodes.copy(data);
-    const fixups = parsePointerFixups(
-      data,
-      {
-        chained: null,
-        rebases: [],
-        binds: [{ offset: 0, size: opcodes.length, stream }],
-        dylibs: [{ bytes_base64: libraryBytes }, "/library-2"],
-      },
-      SEGMENTS,
-      BASE,
+    const fixups = legacyBind(
+      opcodes,
+      [{ bytes_base64: libraryBytes }, "/library-2"],
+      stream,
     );
     expect(fixups.decode(BASE + 0x4008n, 0n)).toMatchObject(
       stream === "weak"
-        ? { kind: "bind", symbol: "_first", library: null }
+        ? { kind: "bind", symbol: "_first", library: null, library_ordinal: 1 }
         : {
             kind: "unsupported",
             binding: {
@@ -303,6 +316,7 @@ it.each(["bind", "weak", "lazy"] as const)(
     expect(fixups.decode(BASE + 0x4010n, 0n)).toMatchObject({
       kind: "bind",
       symbol: "_second",
+      library_ordinal: 2,
       library: stream === "weak" ? null : "/library-2",
     });
     expect(fixups.decoded).toBe(1);
@@ -433,19 +447,7 @@ it.each(["bind", "weak", "lazy"] as const)(
       0x90,
       0,
     ]);
-    const data = Buffer.alloc(0x8000);
-    opcodes.copy(data, 0x7000);
-    const fixups = parsePointerFixups(
-      data,
-      {
-        chained: null,
-        binds: [{ offset: 0x7000, size: opcodes.length, stream }],
-        rebases: [],
-        dylibs: ["/library-1"],
-      },
-      SEGMENTS,
-      BASE,
-    );
+    const fixups = legacyBind(opcodes, ["/library-1"], stream);
     expect(fixups.decode(BASE + 0x4008n, 0n)).toMatchObject({
       kind: "unsupported",
       reason: expect.stringContaining("UTF-8"),
@@ -487,23 +489,20 @@ it.each(["bind", "weak", "lazy"] as const)(
   },
 );
 
-const legacyRebaseInput = (stream: Buffer) => {
+const legacyRebaseFixups = (stream: Buffer) => {
   const data = Buffer.alloc(0x8000);
   stream.copy(data, 0x7000);
-  return {
+  return parsePointerFixups(
     data,
-    fixups: parsePointerFixups(
-      data,
-      {
-        chained: null,
-        binds: [],
-        rebases: [{ offset: 0x7000, size: stream.length }],
-        dylibs: [],
-      },
-      [{ address: BASE, size: 0x2000n, offset: 0, executable: false }],
-      BASE,
-    ),
-  };
+    {
+      chained: null,
+      binds: [],
+      rebases: [{ offset: 0x7000, size: stream.length }],
+      dylibs: [],
+    },
+    [{ address: BASE, size: 0x2000n, offset: 0, executable: false }],
+    BASE,
+  );
 };
 
 it("charges a padded rebase operand that exhausts the work budget", () => {
@@ -536,28 +535,46 @@ it("charges a padded rebase operand that exhausts the work budget", () => {
   expect(fixups.issues).toHaveLength(2);
 });
 
-it("marks only opcode-selected pointer slots rebased, including target zero", () => {
-  // SET_TYPE(pointer), SET_SEGMENT(offset 0x100), DO once,
-  // ADD_ADDR(0x10), DO once, DONE.
-  const { data, fixups } = legacyRebaseInput(
-    Buffer.from([0x11, 0x20, 0x80, 0x02, 0x51, 0x30, 0x10, 0x51, 0]),
+it("rebases only selected pointer slots across address and count-and-skip steps", () => {
+  const fixups = legacyRebaseFixups(
+    Buffer.from([
+      0x11, // SET_TYPE(pointer)
+      0x20,
+      0x80,
+      0x02, // SET_SEGMENT(offset 0x100)
+      0x51, // DO once at 0x100
+      0x30,
+      0x10, // ADD_ADDR(0x10) to 0x118
+      0x80,
+      0x02,
+      0x08, // DO twice skipping 8, at 0x118 and 0x128
+      0x70,
+      0x08, // DO at 0x138 and advance to 0x148
+      0x41, // ADD_ADDR_IMM_SCALED(1) to 0x150
+      0x51,
+      0, // DO once at 0x150, DONE
+    ]),
   );
-  data.writeBigUInt64LE(BASE + 0x200n, 0x100);
-  data.writeBigUInt64LE(0n, 0x118);
 
-  expect(fixups.decode(BASE + 0x100n, BASE + 0x200n)).toEqual({
-    kind: "rebase",
-    target: BASE + 0x200n,
-  });
+  for (const [offset, target] of [
+    [0x100n, BASE + 0x200n],
+    [0x118n, 0n],
+    [0x128n, 0x210n],
+    [0x138n, 0x220n],
+    [0x150n, 0x230n],
+  ] as const) {
+    expect(
+      fixups.decode(BASE + offset, target),
+      `slot 0x${offset.toString(16)}`,
+    ).toEqual({ kind: "rebase", target });
+  }
+  for (const offset of [0x108n, 0x110n, 0x120n, 0x130n, 0x140n, 0x148n]) {
+    expect(
+      fixups.decode(BASE + offset, 0n),
+      `gap 0x${offset.toString(16)}`,
+    ).toEqual({ kind: "raw", target: 0n });
+  }
   expect(fixups.hasUnresolvedLegacyBytes(BASE + 0x100n, 4)).toBe(false);
-  expect(fixups.decode(BASE + 0x118n, 0n)).toEqual({
-    kind: "rebase",
-    target: 0n,
-  });
-  expect(fixups.decode(BASE + 0x110n, 0n)).toEqual({
-    kind: "raw",
-    target: 0n,
-  });
   expect(fixups).toMatchObject({
     kind: "dyld-info",
     examined: 1,
@@ -566,40 +583,8 @@ it("marks only opcode-selected pointer slots rebased, including target zero", ()
   });
 });
 
-it("applies count-and-skip opcodes to their emitted pointer locations", () => {
-  // SET_TYPE(pointer), SET_SEGMENT(offset 0x100), DO 1 skipping 8,
-  // DO_REBASE_ADD_ADDR(8), DO once, DONE. The selected slots are 0x100, 0x110,
-  // and 0x120; the skipped words remain raw.
-  const { fixups } = legacyRebaseInput(
-    Buffer.from([
-      0x11, 0x20, 0x80, 0x02, 0x80, 0x01, 0x08, 0x70, 0x08, 0x51, 0,
-    ]),
-  );
-
-  expect(fixups.decode(BASE + 0x100n, 0x200n)).toEqual({
-    kind: "rebase",
-    target: 0x200n,
-  });
-  expect(fixups.decode(BASE + 0x110n, 0x210n)).toEqual({
-    kind: "rebase",
-    target: 0x210n,
-  });
-  expect(fixups.decode(BASE + 0x120n, 0x220n)).toEqual({
-    kind: "rebase",
-    target: 0x220n,
-  });
-  expect(fixups.decode(BASE + 0x108n, 0n)).toEqual({
-    kind: "raw",
-    target: 0n,
-  });
-  expect(fixups.decode(BASE + 0x118n, 0n)).toEqual({
-    kind: "raw",
-    target: 0n,
-  });
-});
-
 it("retains known prefix rebases and leaves unmatched locations unknown on an invalid tail", () => {
-  const { fixups } = legacyRebaseInput(
+  const fixups = legacyRebaseFixups(
     Buffer.from([0x11, 0x20, 0x80, 0x02, 0x51, 0xf0]),
   );
 
@@ -619,7 +604,7 @@ it("retains known prefix rebases and leaves unmatched locations unknown on an in
 });
 
 it("does not treat 32-bit text rebases as 64-bit metadata pointers", () => {
-  const { fixups } = legacyRebaseInput(
+  const fixups = legacyRebaseFixups(
     Buffer.from([0x12, 0x20, 0x80, 0x02, 0x51, 0]),
   );
 
@@ -638,7 +623,7 @@ it("does not treat 32-bit text rebases as 64-bit metadata pointers", () => {
 });
 
 it("retains unaligned pointer locations accepted by dyld's rebase state checks", () => {
-  const { fixups } = legacyRebaseInput(
+  const fixups = legacyRebaseFixups(
     Buffer.from([0x11, 0x20, 0x81, 0x02, 0x51, 0]),
   );
 
@@ -652,18 +637,6 @@ it("retains unaligned pointer locations accepted by dyld's rebase state checks",
   });
 });
 
-it("rejects count expansion outside the selected file-backed segment without expanding it", () => {
-  const { fixups } = legacyRebaseInput(
-    Buffer.from([0x11, 0x20, 0x00, 0x60, 0x80, 0x80, 0x80, 0x80, 0x10, 0x00]),
-  );
-
-  expect(fixups.unreadRebaseBytes).toBeGreaterThan(0);
-  expect(fixups.decode(BASE + 0x100n, 0n)).toMatchObject({
-    kind: "unknown",
-    reason: expect.stringContaining("leaves its file-backed segment"),
-  });
-});
-
 // ULEB encodings of 64-bit two's-complement backward steps.
 const MINUS_0X10 = [0xf0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01];
 const MINUS_0X18 = [0xe8, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01];
@@ -671,59 +644,57 @@ const MINUS_0X200 = [
   0x80, 0xfc, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01,
 ];
 
-it("wraps a backward ADD_ADDR_ULEB rebase step at 64 bits like dyld", () => {
-  // SET_TYPE(pointer), SET_SEGMENT(offset 0x100), DO once,
-  // ADD_ADDR(-0x10), DO once, DONE. dyld's uint64 cursor lands on 0xf8.
-  const { fixups } = legacyRebaseInput(
-    Buffer.from([0x11, 0x20, 0x80, 0x02, 0x51, 0x30, ...MINUS_0X10, 0x51, 0]),
-  );
-
-  expect(fixups.decode(BASE + 0x100n, 0x200n)).toEqual({
-    kind: "rebase",
-    target: 0x200n,
-  });
-  expect(fixups.decode(BASE + 0xf8n, 0x300n)).toEqual({
-    kind: "rebase",
-    target: 0x300n,
-  });
-  expect(fixups.issues).toEqual([]);
-  expect(fixups.unreadRebaseBytes).toBe(0);
-});
-
-it("wraps backward rebase-and-advance and single-slot skip steps", () => {
-  // SET_TYPE(pointer), SET_SEGMENT(offset 0x100),
-  // DO_REBASE_ADD_ADDR(-0x18) → 0xf0, DO 1 skipping -0x18 → 0xe0, DO once.
-  const { fixups } = legacyRebaseInput(
-    Buffer.from([
-      0x11,
-      0x20,
-      0x80,
-      0x02,
-      0x70,
-      ...MINUS_0X18,
-      0x80,
-      0x01,
-      ...MINUS_0X18,
-      0x51,
-      0,
-    ]),
-  );
-
-  for (const offset of [0x100n, 0xf0n, 0xe0n])
-    expect(fixups.decode(BASE + offset, 0x200n)).toEqual({
-      kind: "rebase",
-      target: 0x200n,
+it.each([
+  {
+    instruction: "ADD_ADDR_ULEB",
+    opcodes: [0x51, 0x30, ...MINUS_0X10, 0x51],
+    selected: [0x100n, 0xf8n],
+    skipped: 0x108n,
+  },
+  {
+    instruction: "rebase-and-advance and single-slot skip",
+    opcodes: [0x70, ...MINUS_0X18, 0x80, 0x01, ...MINUS_0X18, 0x51],
+    selected: [0x100n, 0xf0n, 0xe0n],
+    skipped: 0xe8n,
+  },
+])(
+  "wraps a backward $instruction rebase step at 64 bits",
+  ({ opcodes, selected, skipped }) => {
+    const fixups = legacyRebaseFixups(
+      Buffer.from([0x11, 0x20, 0x80, 0x02, ...opcodes, 0]),
+    );
+    for (const offset of selected) {
+      const target = BASE + offset + 0x100n;
+      expect(fixups.decode(BASE + offset, target)).toEqual({
+        kind: "rebase",
+        target,
+      });
+    }
+    expect(fixups.decode(BASE + skipped, 0n)).toEqual({
+      kind: "raw",
+      target: 0n,
     });
-  expect(fixups.decode(BASE + 0xe8n, 0n)).toEqual({ kind: "raw", target: 0n });
-  expect(fixups.issues).toEqual([]);
-});
+    expect(fixups).toMatchObject({ issues: [], unreadRebaseBytes: 0 });
+  },
+);
 
-it("still refuses a wrapped rebase cursor that leaves the segment", () => {
-  // SET_SEGMENT(offset 0x100), ADD_ADDR(-0x200) wraps below the segment start.
-  const { fixups } = legacyRebaseInput(
-    Buffer.from([0x11, 0x20, 0x80, 0x02, 0x30, ...MINUS_0X200, 0x51, 0]),
-  );
-
+it.each([
+  {
+    instruction: "an oversized expansion count",
+    opcodes: [0x60, 0x80, 0x80, 0x80, 0x80, 0x10],
+  },
+  {
+    instruction: "a wrapped cursor outside the selected segment",
+    opcodes: [0x30, ...MINUS_0X200, 0x51],
+  },
+  {
+    instruction: "a multi-slot run with a backward skip",
+    opcodes: [0x80, 0x02, ...MINUS_0X18],
+  },
+])("rejects $instruction before publishing any locations", ({ opcodes }) => {
+  const stream = Buffer.from([0x11, 0x20, 0x80, 0x02, ...opcodes, 0]);
+  const fixups = legacyRebaseFixups(stream);
+  expect(fixups.unreadRebaseBytes).toBe(stream.length);
   expect(fixups.decode(BASE + 0x100n, 0n)).toMatchObject({
     kind: "unknown",
     reason: expect.stringContaining("leaves its file-backed segment"),
@@ -731,18 +702,6 @@ it("still refuses a wrapped rebase cursor that leaves the segment", () => {
   expect(fixups.issues).toMatchObject([
     { code: "rebase_stream_decode_failed" },
   ]);
-});
-
-it("still refuses a multi-slot run with a backward skip", () => {
-  // DO 2 skipping -0x18 would revisit earlier slots; this bounded decoder refuses that run.
-  const { fixups } = legacyRebaseInput(
-    Buffer.from([0x11, 0x20, 0x80, 0x02, 0x80, 0x02, ...MINUS_0X18, 0]),
-  );
-
-  expect(fixups.decode(BASE + 0x100n, 0n)).toMatchObject({
-    kind: "unknown",
-    reason: expect.stringContaining("leaves its file-backed segment"),
-  });
 });
 
 it("bounds cumulative work across repeated full-range runs and retains the prefix", () => {
@@ -756,7 +715,7 @@ it("bounds cumulative work across repeated full-range runs and retains the prefi
     0x40, // DO_REBASE_ULEB_TIMES(8192)
   ]);
   const stream = Buffer.concat([
-    ...Array.from({ length: 100 }, () => repeatedRun),
+    ...Array.from({ length: 17 }, () => repeatedRun),
     Buffer.from([0]),
   ]);
   stream.copy(data);
@@ -890,38 +849,47 @@ describe("incomplete legacy bind applicability", () => {
     expect(fixups.hasUnresolvedLegacyBytes(BASE + 0x1008n, 4)).toBe(true);
   });
 
-  it("retains a positive bind prefix while leaving unmatched slots unknown", () => {
-    const opcodes = Buffer.from([
-      0x51,
-      0x11,
-      0x40,
-      ...Buffer.from("_x\0"),
-      0x71,
-      0x08,
-      0x90,
-      0xf0,
-    ]);
-    const fixups = parsePointerFixups(
-      opcodes,
-      {
-        chained: null,
-        binds: [{ offset: 0, size: opcodes.length, stream: "bind" }],
-        rebases: [],
-        dylibs: ["/library-1"],
-      },
-      SEGMENTS,
-      BASE,
-    );
-
-    expect(fixups.decode(BASE + 0x4008n, 0n)).toMatchObject({
-      kind: "bind",
-      symbol: "_x",
-    });
-    expect(fixups.decode(BASE + 0x4010n, 0n)).toMatchObject({
-      kind: "unknown",
-      raw: 0n,
-    });
-  });
+  it.each([
+    [true, 1, "raw"],
+    [false, 0, "unknown"],
+  ] as const)(
+    "keeps a bind prefix and distinguishes a symbol terminator at the stream boundary (%s)",
+    (inside, decoded, unmatched) => {
+      const opcodes = Buffer.from([
+        0x51,
+        0x11,
+        0x40,
+        ...Buffer.from("_x\0"),
+        0x71,
+        0x08,
+        0x90,
+        0x40,
+        ...Buffer.from("_tail\0"),
+      ]);
+      const fixups = legacyBind(
+        opcodes,
+        ["/library-1"],
+        "bind",
+        opcodes.length - (inside ? 0 : 1),
+      );
+      expect(fixups).toMatchObject({ examined: 1, decoded });
+      expect(fixups.issues).toEqual(
+        inside
+          ? []
+          : [
+              expect.objectContaining({
+                code: "bind_stream_decode_failed",
+                message: expect.stringContaining("Unterminated bind symbol"),
+              }),
+            ],
+      );
+      expect(fixups.decode(BASE + 0x4008n, 0n)).toMatchObject({
+        kind: "bind",
+        symbol: "_x",
+      });
+      expect(fixups.decode(BASE + 0x4010n, 0n).kind).toBe(unmatched);
+    },
+  );
 
   it("keeps unmatched chained-image slots unknown when a legacy bind tail fails", () => {
     const chained = chainedData(1);
@@ -1791,7 +1759,7 @@ describe("legacy bind write types", () => {
 });
 
 describe("legacy pointer fixup streams", () => {
-  it("interprets legacy bind, weak-bind and lazy-bind opcodes", () => {
+  it("keeps regular bind skips and both lazy entries through DONE", () => {
     const opcodes = Buffer.from([
       0x11, // SET_DYLIB_ORDINAL_IMM 1
       0x40,
@@ -1844,10 +1812,16 @@ describe("legacy pointer fixup streams", () => {
         symbol: "_OBJC_CLASS_$_NSObject",
         library: "/usr/lib/libobjc.A.dylib",
       });
-    expect(fixups.decode(BASE + 0x4038n, 0n)).toMatchObject({
-      symbol: "_malloc",
-      library: "/usr/lib/libSystem.B.dylib",
-    });
+    for (const [address, symbol] of [
+      [0x4030n, "_free"],
+      [0x4038n, "_malloc"],
+    ] as const)
+      expect(fixups.decode(BASE + address, 0n)).toMatchObject({
+        kind: "bind",
+        binding_source: "lazy",
+        symbol,
+        library: "/usr/lib/libSystem.B.dylib",
+      });
     expect(fixups.decode(BASE + 0x4018n, 0x99n)).toEqual({
       kind: "raw",
       target: 0x99n,
@@ -1877,17 +1851,10 @@ describe("legacy pointer fixup streams", () => {
       0x90, // DO_BIND the next slot
       0x00,
     ]);
-    const fixups = parsePointerFixups(
-      opcodes,
-      {
-        chained: null,
-        binds: [{ offset: 0, size: opcodes.length, stream: "bind" }],
-        rebases: [],
-        dylibs: ["/usr/lib/libc++.1.dylib", "/usr/lib/libobjc.A.dylib"],
-      },
-      SEGMENTS,
-      BASE,
-    );
+    const fixups = legacyBind(opcodes, [
+      "/usr/lib/libc++.1.dylib",
+      "/usr/lib/libobjc.A.dylib",
+    ]);
     expect(fixups.failures).toEqual([]);
     expect(fixups.decode(BASE + 0x4010n, 0n)).toMatchObject({
       kind: "bind",
@@ -1899,8 +1866,92 @@ describe("legacy pointer fixup streams", () => {
       target: 0x99n,
     });
   });
+});
 
-  it("retains weak-bind stream provenance independently from its default ordinal", () => {
+describe("legacy bind target registers", () => {
+  const selectedName = [0x40, ...Buffer.from("_name\0")];
+  it.each([
+    {
+      target: "unset symbol",
+      initial: [0x30],
+      reason: "Legacy bind has no selected symbol",
+    },
+    {
+      target: "unset ordinal",
+      initial: selectedName,
+      reason: "Legacy bind has no selected library ordinal",
+    },
+    {
+      target: "ordinal outside the dependency table",
+      initial: [0x11, ...selectedName],
+      reason: "Dylib ordinal 1 exceeds the 0 declared dependencies",
+    },
+    {
+      target: "unknown special ordinal",
+      initial: [0x3c, ...selectedName],
+      reason: "Unsupported dylib ordinal -4",
+    },
+    {
+      target: "unsafe unsigned ordinal",
+      initial: [0x20, ...Array<number>(7).fill(0x80), 0x10, ...selectedName],
+      reason: "Dylib ordinal 9007199254740992 exceeds the safe integer range",
+    },
+  ])(
+    "reports a bind with an $target and keeps later explicit registers",
+    ({ initial, reason }) => {
+      const opcodes = Buffer.from([
+        0x51,
+        0x71,
+        0x08,
+        ...initial,
+        0x90,
+        0x30,
+        0x40,
+        0,
+        0x90,
+        0x40,
+        ...Buffer.from("_following\0"),
+        0x90,
+        0,
+      ]);
+      const fixups = legacyBind(opcodes, []);
+      expect(fixups).toMatchObject({
+        examined: 1,
+        decoded: 1,
+        failures: [reason],
+      });
+      expect(fixups.issues).toEqual([
+        {
+          facet: "pointer_fixups",
+          code: "bind_target_unresolved",
+          location: "0x100004008",
+          message: reason,
+        },
+      ]);
+      expect(fixups.decode(BASE + 0x4008n, 0x99n)).toEqual({
+        kind: "unsupported",
+        reason,
+      });
+      expect(fixups.hasUnresolvedLegacyBytes(BASE + 0x4008n, 8)).toBe(true);
+      expect(fixups.decode(BASE + 0x4010n, 0n)).toMatchObject({
+        kind: "bind",
+        symbol: "",
+        library_ordinal: 0,
+      });
+      expect(fixups.decode(BASE + 0x4018n, 0n)).toMatchObject({
+        kind: "bind",
+        symbol: "_following",
+        library_ordinal: 0,
+      });
+      expect(fixups.hasUnresolvedLegacyBytes(BASE + 0x4020n, 8)).toBe(false);
+      expect(fixups.decode(BASE + 0x4020n, 0x12n)).toEqual({
+        kind: "raw",
+        target: 0x12n,
+      });
+    },
+  );
+
+  it("reports the implicit weak-lookup ordinal for a weak stream without a setter", () => {
     const opcodes = Buffer.from([
       0x51,
       0x40,
@@ -1910,21 +1961,11 @@ describe("legacy pointer fixup streams", () => {
       0x90,
       0x00,
     ]);
-    const fixups = parsePointerFixups(
-      opcodes,
-      {
-        chained: null,
-        binds: [{ offset: 0, size: opcodes.length, stream: "weak" }],
-        rebases: [],
-        dylibs: [],
-      },
-      SEGMENTS,
-      BASE,
-    );
+    const fixups = legacyBind(opcodes, [], "weak");
     expect(fixups.decode(BASE + 0x4018n, 0n)).toMatchObject({
       kind: "bind",
       binding_source: "weak",
-      library_ordinal: 0,
+      library_ordinal: -3,
       library: null,
     });
   });
@@ -1944,17 +1985,7 @@ describe("legacy bind operand decoding", () => {
       0x00,
     ]);
   const parseBinds = (opcodes: Buffer) =>
-    parsePointerFixups(
-      opcodes,
-      {
-        chained: null,
-        binds: [{ offset: 0, size: opcodes.length, stream: "bind" }],
-        rebases: [],
-        dylibs: ["/usr/lib/libSystem.B.dylib"],
-      },
-      SEGMENTS,
-      BASE,
-    );
+    legacyBind(opcodes, ["/usr/lib/libSystem.B.dylib"]);
 
   it.each([
     { addend: 0n, sleb: [0x00] },
@@ -2020,17 +2051,7 @@ describe("legacy bind operand decoding", () => {
 
   it("does not read beyond the declared stream to terminate an addend", () => {
     const opcodes = addendStream([0x80]);
-    const fixups = parsePointerFixups(
-      opcodes,
-      {
-        chained: null,
-        binds: [{ offset: 0, size: opcodes.length - 1, stream: "bind" }],
-        rebases: [],
-        dylibs: ["/library-1", "/library-2"],
-      },
-      SEGMENTS,
-      BASE,
-    );
+    const fixups = legacyBind(opcodes, [], "bind", opcodes.length - 1);
     expect(fixups).toMatchObject({ examined: 1, decoded: 0 });
     expect(fixups.failures).toEqual([
       "bind bind opcodes: Truncated bind opcode operand",
@@ -2040,6 +2061,7 @@ describe("legacy bind operand decoding", () => {
   const addressStream = (operand: readonly number[]) =>
     Buffer.from([
       0x51,
+      0x30, // SET_DYLIB_SPECIAL_IMM self
       0x40,
       ...Buffer.from("_x\0"),
       0x71,
@@ -2084,12 +2106,11 @@ describe("legacy bind operand decoding", () => {
   });
 });
 
-it("preserves classic special ordinals and returns unsupported at invalid bind locations", () => {
-  const parseOrdinal = (ordinal: number, dylibs: readonly string[]) => {
-    const immediate = ordinal < 0 ? ordinal + 16 : ordinal;
+it("preserves explicit classic special ordinals", () => {
+  for (const ordinal of [0, -1, -2, -3]) {
     const opcodes = Buffer.from([
       0x51,
-      ordinal > 0 ? 0x10 | ordinal : 0x30 | immediate,
+      0x30 | (ordinal & 0x0f),
       0x40,
       ...Buffer.from("_OBJC_CLASS_$_NSObject\0"),
       0x71,
@@ -2097,20 +2118,7 @@ it("preserves classic special ordinals and returns unsupported at invalid bind l
       0x90,
       0x00,
     ]);
-    return parsePointerFixups(
-      opcodes,
-      {
-        chained: null,
-        binds: [{ offset: 0, size: opcodes.length, stream: "bind" }],
-        rebases: [],
-        dylibs,
-      },
-      SEGMENTS,
-      BASE,
-    );
-  };
-  for (const ordinal of [0, -1, -2, -3]) {
-    const fixups = parseOrdinal(ordinal, []);
+    const fixups = legacyBind(opcodes, []);
     expect(fixups.decode(BASE + 0x4008n, 0n)).toMatchObject({
       kind: "bind",
       symbol: "_OBJC_CLASS_$_NSObject",
@@ -2118,48 +2126,4 @@ it("preserves classic special ordinals and returns unsupported at invalid bind l
       library: null,
     });
   }
-  for (const [ordinal, dylibs, reason] of [
-    [1, [], "Dylib ordinal 1 exceeds the 0 declared dependencies"],
-    [-4, [], "Unsupported dylib ordinal -4"],
-  ] as const) {
-    const fixups = parseOrdinal(ordinal, dylibs);
-    expect(fixups.decode(BASE + 0x4008n, 0n)).toEqual({
-      kind: "unsupported",
-      reason,
-    });
-  }
-  const oversized = BigInt(Number.MAX_SAFE_INTEGER) + 1n;
-  let remaining = oversized;
-  const encoded: number[] = [];
-  while (remaining >= 0x80n) {
-    encoded.push(Number(remaining & 0x7fn) | 0x80);
-    remaining >>= 7n;
-  }
-  encoded.push(Number(remaining));
-  const oversizedStream = Buffer.from([
-    0x51,
-    0x20,
-    ...encoded,
-    0x40,
-    ...Buffer.from("_OBJC_CLASS_$_NSObject\0"),
-    0x71,
-    0x08,
-    0x90,
-    0x00,
-  ]);
-  const oversizedFixups = parsePointerFixups(
-    oversizedStream,
-    {
-      chained: null,
-      binds: [{ offset: 0, size: oversizedStream.length, stream: "bind" }],
-      rebases: [],
-      dylibs: [],
-    },
-    SEGMENTS,
-    BASE,
-  );
-  expect(oversizedFixups.decode(BASE + 0x4008n, 0n)).toEqual({
-    kind: "unsupported",
-    reason: `Dylib ordinal ${oversized} exceeds the safe integer range`,
-  });
 });

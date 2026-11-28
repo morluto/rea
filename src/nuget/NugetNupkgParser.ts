@@ -1,35 +1,31 @@
 import { accountZipMemberRegion } from "../domain/zip/zipMemberRegion.js";
-import {
-  decodeLimit,
-  malformedInput,
-  ParseFailureError,
-  unsupportedInput,
-} from "../domain/parseFailure.js";
-import {
-  Uint8ArrayReader,
-  Uint8ArrayWriter,
-  ZipReader,
-  type Entry,
-  type FileEntry,
-} from "@zip.js/zip.js";
+import { decodeLimit, malformedInput } from "../domain/parseFailure.js";
+import { Reader, ZipReader, type Entry, type FileEntry } from "@zip.js/zip.js";
 import type { Element, Node } from "@xmldom/xmldom";
 
 import {
   assertArtifactReadActive,
   ArtifactReaderFailure,
+  malformedArtifact,
   decodeZipEntryText,
   zipEntryNameLimitations,
-  typedZipFailure,
+  throwZipPackageFailure,
   ZIP_READER_OPTIONS,
   zipEntryPath,
   zipListingCoverage,
+  isZipFileEntry,
+  readBoundedZipMember,
+  zipMemberSize,
 } from "../resources/index.js";
 import {
   isXmlElement,
+  parseTrueFalseText,
   parseXmlDocument,
   xmlChildElements,
   xmlChildrenNamed,
   xmlFirstChildNamed,
+  xmlTrimmedAttribute,
+  xmlTrimmedDirectText,
 } from "../domain/xmlDocument.js";
 import { decodeXmlPlistText } from "../domain/propertyListXmlText.js";
 import { hasZipSignature } from "../domain/zipPackageFormat.js";
@@ -41,7 +37,7 @@ import {
   type NugetNupkg,
 } from "../domain/nuget/nupkg.js";
 import { redactRecordedTransportUrl } from "../domain/recordedTransportUrl.js";
-import { Budget } from "../domain/budget.js";
+import type { PrefixedByteSource } from "../domain/byteSource.js";
 
 /** Limitation wording owned by the parser; tests assert delivery through these. */
 export const NUPKG_LIMITATIONS = {
@@ -62,33 +58,6 @@ const BASE_LIMITATIONS = [
   "Directory ZIP markers are omitted from contents; only file members are listed.",
 ] as const;
 
-const nonempty = (value: string | null | undefined): string | null => {
-  if (value === null || value === undefined) return null;
-  const trimmed = value.trim();
-  return trimmed === "" ? null : trimmed;
-};
-
-const attribute = (element: Element, name: string): string | null =>
-  nonempty(element.getAttribute(name));
-
-const elementText = (element: Element): string | null => {
-  const parts: string[] = [];
-  for (
-    let child = element.firstChild;
-    child !== null;
-    child = child.nextSibling
-  )
-    // Text (3) and CDATA section (4) nodes both carry character data.
-    if (child.nodeType === 3 || child.nodeType === 4)
-      parts.push(child.nodeValue ?? "");
-  return nonempty(parts.join(""));
-};
-
-const zipSize = (value: number | undefined): number | null =>
-  typeof value === "number" && Number.isSafeInteger(value) && value >= 0
-    ? value
-    : null;
-
 /** NuGet indexes nonempty leaf metadata by local name and keeps its first value. */
 const indexedMetadataText = (
   metadata: Element,
@@ -102,81 +71,34 @@ const indexedMetadataText = (
       continue;
     const text = child.textContent ?? "";
     if (!text) continue;
-    // XDocument ignores ordinary XML whitespace. CDATA and xml:space can
-    // retain a whitespace-only value that occupies this key in NuGet's index.
-    if (/[^\t\r\n ]/u.test(text)) return nonempty(text);
-    if (
-      Array.from(child.childNodes).some(
-        (node) => node.nodeType === 4 && node.nodeValue,
-      )
-    )
-      return null;
     for (
       let scope: Node | null = child;
       isXmlElement(scope);
       scope = scope.parentNode
     ) {
       const space = scope.getAttribute("xml:space");
-      if (space === "preserve") return null;
+      if (space === "preserve") return text.trim() === "" ? null : text;
       if (space === "default") break;
     }
+    if (/[^\t\r\n ]/u.test(text)) return text.trim() || null;
+    // A blank CDATA value still occupies the first matching key.
+    if (
+      Array.from(child.childNodes).some(
+        (node) => node.nodeType === 4 && node.nodeValue,
+      )
+    )
+      return null;
   }
   return null;
 };
 
-const asFileEntry = (entry: Entry): entry is FileEntry =>
-  !entry.directory && "getData" in entry;
-
-const wrapZipFailure = (cause: unknown, compressionMethod?: number): never => {
-  if (
-    cause instanceof ArtifactReaderFailure ||
-    cause instanceof ParseFailureError
-  )
-    throw cause;
-  // The shared ZIP reader owns ZIP failure classification, including native
-  // decoder faults: a Zstandard window above its fixed allowance is a
-  // resource limit, and a feature it cannot provide (encryption, split
-  // archives, a Zstandard dictionary) is an unsupported layout. Project its
-  // typed result instead of re-reading the error text here.
-  const typed = typedZipFailure(cause, compressionMethod);
-  if (typed instanceof ArtifactReaderFailure && typed.reason === "limit")
-    throw typed;
-  if (typed instanceof ArtifactReaderFailure && typed.reason === "unavailable")
-    throw unsupportedInput(
-      NUGET_NUPKG_FORMAT,
-      `NuGet package ZIP uses an unsupported layout: ${typed.message}`,
-      { cause: typed },
-    );
-  if (typed instanceof ArtifactReaderFailure && typed.reason === "format")
-    throw malformedInput(NUGET_NUPKG_FORMAT, typed.message, { cause: typed });
-  throw cause;
-};
-
-/** Refuse expansion past the metadata budget before buffering more output. */
-class BoundedUint8ArrayWriter extends Uint8ArrayWriter {
-  readonly #budget: Budget;
-
-  constructor(
-    maximum: number,
-    private readonly exceeded: (required: number) => Error,
-  ) {
-    super();
-    this.#budget = new Budget(maximum);
-  }
-
-  override async init(size?: number): Promise<void> {
-    if (size !== undefined && size > this.#budget.maximum)
-      throw this.exceeded(size);
-    await super.init?.(size);
-  }
-
-  override async writeUint8Array(array: Uint8Array): Promise<void> {
-    this.#budget.charge(array.length, () =>
-      this.exceeded(this.#budget.used + array.length),
-    );
-    await super.writeUint8Array(array);
-  }
-}
+const wrapZipFailure = (cause: unknown, compressionMethod?: number): never =>
+  throwZipPackageFailure(
+    cause,
+    NUGET_NUPKG_FORMAT,
+    "NuGet package",
+    compressionMethod,
+  );
 
 /** Read one metadata member under max_nuspec_bytes, declared and expanded. */
 const readMemberBytes = async (
@@ -191,13 +113,8 @@ const readMemberBytes = async (
       `${label} exceeds the ${String(maximum)}-byte budget.`,
       { name: "max_nuspec_bytes", maximum, required },
     );
-  const declared = zipSize(entry.uncompressedSize);
-  if (declared !== null && declared > maximum) throw exceeded(declared);
   try {
-    return await entry.getData(new BoundedUint8ArrayWriter(maximum, exceeded), {
-      checkSignature: true,
-      ...(signal === undefined ? {} : { signal }),
-    });
+    return await readBoundedZipMember(entry, signal, maximum, exceeded);
   } catch (cause: unknown) {
     return wrapZipFailure(cause, entry.compressionMethod);
   }
@@ -264,9 +181,9 @@ const opcManifestTargets = (
   const targets = new Map<string, OpcManifestTarget>();
   for (const relationship of xmlChildrenNamed(root, "Relationship")) {
     if (relationship.namespaceURI !== OPC_RELATIONSHIP_NAMESPACE) continue;
-    const type = attribute(relationship, "Type");
+    const type = xmlTrimmedAttribute(relationship, "Type");
     if (type !== NUGET_MANIFEST_RELATIONSHIP) continue;
-    const target = attribute(relationship, "Target");
+    const target = xmlTrimmedAttribute(relationship, "Target");
     if (target === null) continue;
     const displayedTarget = redactRecordedTransportUrl(target).url;
     // Only an absent mode defaults to Internal. External targets can be relative.
@@ -302,14 +219,6 @@ const opcManifestTargets = (
   return [...targets.values()];
 };
 
-const parseBooleanAttribute = (value: string | null): boolean | null => {
-  if (value === null) return null;
-  const folded = value.toLowerCase();
-  if (folded === "true") return true;
-  if (folded === "false") return false;
-  return null;
-};
-
 const parseDependencies = (
   metadata: Element,
   namespace: string,
@@ -327,18 +236,18 @@ const parseDependencies = (
   const readDependency = (
     element: Element,
   ): NugetNupkg["dependency_groups"][number]["dependencies"][number] => ({
-    id: attribute(element, "id"),
-    version: attribute(element, "version"),
-    include: attribute(element, "include"),
-    exclude: attribute(element, "exclude"),
-    development_dependency: parseBooleanAttribute(
-      attribute(element, "developmentDependency"),
+    id: xmlTrimmedAttribute(element, "id"),
+    version: xmlTrimmedAttribute(element, "version"),
+    include: xmlTrimmedAttribute(element, "include"),
+    exclude: xmlTrimmedAttribute(element, "exclude"),
+    development_dependency: parseTrueFalseText(
+      xmlTrimmedAttribute(element, "developmentDependency"),
     ),
   });
   const fromGroup = (
     element: Element,
   ): NugetNupkg["dependency_groups"][number] => ({
-    target_framework: attribute(element, "targetFramework"),
+    target_framework: xmlTrimmedAttribute(element, "targetFramework"),
     dependencies: xmlChildrenNamed(element, "dependency", namespace).map(
       readDependency,
     ),
@@ -403,7 +312,7 @@ const parseNuspecDocument = (
   const metadataNamespace = metadata.lookupNamespaceURI("") ?? "";
   const metadataText = (local: string): string | null => {
     const element = xmlFirstChildNamed(metadata, local, metadataNamespace);
-    return element === undefined ? null : elementText(element);
+    return element === undefined ? null : xmlTrimmedDirectText(element);
   };
   const licenseElement = xmlFirstChildNamed(
     metadata,
@@ -411,7 +320,7 @@ const parseNuspecDocument = (
     metadataNamespace,
   );
   const licenseType = licenseElement
-    ? attribute(licenseElement, "type")?.toLowerCase()
+    ? xmlTrimmedAttribute(licenseElement, "type")?.toLowerCase()
     : undefined;
   const repositoryElement = xmlFirstChildNamed(
     metadata,
@@ -433,16 +342,18 @@ const parseNuspecDocument = (
               licenseType === "expression" || licenseType === "file"
                 ? licenseType
                 : null,
-            value: elementText(licenseElement),
+            value: xmlTrimmedDirectText(licenseElement),
           },
     repository:
       repositoryElement === undefined
         ? null
         : {
-            type: attribute(repositoryElement, "type"),
-            ...redactRecordedTransportUrl(attribute(repositoryElement, "url")),
-            commit: attribute(repositoryElement, "commit"),
-            branch: attribute(repositoryElement, "branch"),
+            type: xmlTrimmedAttribute(repositoryElement, "type"),
+            ...redactRecordedTransportUrl(
+              xmlTrimmedAttribute(repositoryElement, "url"),
+            ),
+            commit: xmlTrimmedAttribute(repositoryElement, "commit"),
+            branch: xmlTrimmedAttribute(repositoryElement, "branch"),
           },
     dependency_groups: parseDependencies(
       metadata,
@@ -513,24 +424,61 @@ const findNuspec = (
   return { member: undefined, source: undefined };
 };
 
+class RandomAccessZipReader extends Reader<undefined> {
+  readonly #source: PrefixedByteSource;
+  readonly #path: string;
+
+  constructor(source: PrefixedByteSource, path: string) {
+    super(undefined);
+    this.#source = source;
+    this.#path = path;
+    this.size = source.size;
+  }
+
+  override async readUint8Array(
+    index: number,
+    length: number,
+  ): Promise<Uint8Array> {
+    const readBytes = Math.min(length, this.size - index);
+    if (readBytes < 0)
+      throw malformedArtifact(
+        "zip",
+        `ZIP archive is malformed: read at ${String(index)} extends beyond the ${String(this.size)}-byte archive`,
+      );
+    const bytes = await this.#source.readRange(index, readBytes);
+    if (bytes.length !== readBytes)
+      throw new ArtifactReaderFailure(
+        "integrity",
+        `ZIP source ended before its admitted extent: ${this.#path}`,
+        { integrityCheck: "read-coverage" },
+      );
+    return bytes;
+  }
+}
+
 /** Decode one bounded NuGet .nupkg without restore, execution, or network. */
 export const parseNugetNupkg = async (
-  bytes: Uint8Array,
+  source: PrefixedByteSource,
   artifact: { path: string; sha256: string; bytes: number },
   input: InspectNugetNupkgInput,
   signal?: AbortSignal,
 ): Promise<NugetNupkg> => {
-  if (bytes.length !== artifact.bytes)
+  if (source.size !== artifact.bytes)
     throw malformedInput(
       NUGET_NUPKG_FORMAT,
       "Selected artifact length disagrees with the retained bytes.",
     );
-  if (!hasZipSignature(bytes))
+  if (!hasZipSignature(source.prefix))
     throw malformedInput(
       NUGET_NUPKG_FORMAT,
       "Selected file is not a ZIP archive (NuGet .nupkg).",
     );
-  const reader = new ZipReader(new Uint8ArrayReader(bytes), ZIP_READER_OPTIONS);
+  const reader = new ZipReader(
+    new RandomAccessZipReader(source, artifact.path),
+    ZIP_READER_OPTIONS,
+  );
+  const readLocalRange = (at: number, length: number): Promise<Uint8Array> =>
+    source.readRange(at, length);
   const limitations: string[] = [...BASE_LIMITATIONS];
   const zipAbort = signal === undefined ? undefined : new AbortController();
   const zipSignal = zipAbort?.signal;
@@ -587,15 +535,14 @@ export const parseNugetNupkg = async (
               dataDescriptor: entry.bitFlag?.dataDescriptor ?? false,
             })),
             directoryOffset,
-            (at, length) => Promise.resolve(bytes.subarray(at, at + length)),
+            readLocalRange,
           ),
     );
     limitations.push(...listing.limitations);
     const files: { entry: FileEntry; name: string }[] = [];
     const contents: NugetNupkg["contents"] = [];
     for (const entry of entries) {
-      if (entry.directory) continue;
-      if (!asFileEntry(entry)) continue;
+      if (!isZipFileEntry(entry)) continue;
       const sourceName = zipEntryPath(entry);
       const name = nugetNupkgLogicalPath(sourceName);
       if (name === "") continue;
@@ -607,8 +554,8 @@ export const parseNugetNupkg = async (
       contents.push({
         name: sourceName,
         path: name,
-        uncompressed_size: zipSize(entry.uncompressedSize),
-        compressed_size: zipSize(entry.compressedSize),
+        uncompressed_size: zipMemberSize(entry.uncompressedSize),
+        compressed_size: zipMemberSize(entry.compressedSize),
         role: nugetNupkgEntryRole(name),
         encrypted: entry.encrypted === true,
       });

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
+import { sha256 } from "../support/sha256.js";
 import { execFile } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -27,9 +28,6 @@ import { cliTest } from "../support/cli/cliFixture.js";
 const execute = promisify(execFile);
 const cli = fileURLToPath(new URL("../../scripts/rea.mjs", import.meta.url));
 
-const sha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
-
 const DRIVER_GUID = "9e21fd93-9c72-4c15-8c4b-e77f9db8d4d2";
 const PAD_GUID = "fff12b8d-d7da-47f8-b4cf-1a0a2a1c1b1c";
 const PAYLOAD = Buffer.from(
@@ -37,19 +35,19 @@ const PAYLOAD = Buffer.from(
   "hex",
 );
 
+const PE_SECTION = buildSection(0x10, PAYLOAD);
+const DRIVER_FILE = buildFfsFile({
+  guid: DRIVER_GUID,
+  typeCode: 0x07,
+  payload: PE_SECTION,
+});
+
 /**
  * One B550-shaped flash image: an erased lead-in with no volume at offset 0,
  * the platform volume at 0x1000 carrying two FFS files (one payload, one pad
  * file), and a second volume holding a third file.
  */
-const PE_SECTION = buildSection(0x10, PAYLOAD);
-
 const buildFlashImage = (): Buffer => {
-  const payloadFile = buildFfsFile({
-    guid: DRIVER_GUID,
-    typeCode: 0x07,
-    payload: PE_SECTION,
-  });
   const padFile = buildFfsFile({
     guid: PAD_GUID,
     typeCode: 0xf0,
@@ -62,7 +60,7 @@ const buildFlashImage = (): Buffer => {
   });
   const body = buildImage({
     volumes: [
-      buildFv({ files: [payloadFile, padFile] }).buffer,
+      buildFv({ files: [DRIVER_FILE, padFile] }).buffer,
       buildFv({ files: [trailingFile] }).buffer,
     ],
   });
@@ -194,6 +192,7 @@ it("maps a flash image end to end through CLI inspection and MCP session invento
     path: imagePath,
     output_directory: join(root, "extracted"),
     target: { kind: "ffs-file", offset: sourceLocation.offset },
+    detail: "complete",
   });
   expect(extractedSession.isError, JSON.stringify(extractedSession)).not.toBe(
     true,
@@ -341,16 +340,12 @@ it("retains an opaque volume and reports only the unparsed ranges in the selecte
   const nvDataGuid = "fff12b8d-7696-4c8b-a985-2747075b4f50";
   const valid = buildFv({
     fileSystemGuid: "5473c07a-3dcb-4dca-bd6f-1e9689e7349a",
-    files: [
-      buildFfsFile({ guid: DRIVER_GUID, typeCode: 0x07, payload: PE_SECTION }),
-    ],
+    files: [DRIVER_FILE],
   });
   const opaque = buildFv({
     fileSystemGuid: nvDataGuid,
     // These bytes could be walked as FFS if the volume GUID were ignored.
-    files: [
-      buildFfsFile({ guid: DRIVER_GUID, typeCode: 0x07, payload: PE_SECTION }),
-    ],
+    files: [DRIVER_FILE],
   });
   const opaqueOffset = valid.buffer.length;
   const suffix = Buffer.from("vendor footer");
@@ -359,7 +354,8 @@ it("retains an opaque volume and reports only the unparsed ranges in the selecte
 
   const { call } = await connectLocalToolsMcp();
   const { normalized_result: inspection } = parseEvidence(
-    (await call("inspect_uefi_firmware", { path })).structuredContent,
+    (await call("inspect_uefi_firmware", { path, detail: "complete" }))
+      .structuredContent,
   );
   const inspected = uefiResultSchemas.inspect_uefi_firmware.parse(inspection);
   expect(inspected.coverage).toBe("partial");
@@ -406,6 +402,7 @@ it("retains an opaque volume and reports only the unparsed ranges in the selecte
             path,
             output_directory: join(root, name),
             ...(target === undefined ? {} : { target }),
+            detail: "complete",
           })
         ).structuredContent,
       ).normalized_result,
@@ -484,6 +481,85 @@ it("publishes distinct AMI NVAR link, attributes, GUID index and data digest", a
   ]);
 });
 
+it("publishes an EDK2 variable store and keeps an unusable store signature from reading as absence", async () => {
+  const root = await createTestTempDirectory("rea-edk2-store-");
+  const guid = (text: string): Buffer => {
+    const [a, b, c, d, e] = text.split("-") as [
+      string,
+      string,
+      string,
+      string,
+      string,
+    ];
+    const out = Buffer.alloc(16);
+    out.writeUInt32LE(Number.parseInt(a, 16), 0);
+    out.writeUInt16LE(Number.parseInt(b, 16), 4);
+    out.writeUInt16LE(Number.parseInt(c, 16), 6);
+    Buffer.from(`${d}${e}`, "hex").copy(out, 8);
+    return out;
+  };
+  // gEfiVariableGuid store holding one added variable, then erased space.
+  const store = Buffer.alloc(0x100, 0xff);
+  guid("ddcf3616-3275-4164-98b6-fe85707ffe7d").copy(store, 0);
+  store.writeUInt32LE(0x100, 16);
+  store.writeUInt8(0x5a, 20);
+  store.writeUInt8(0xfe, 21);
+  const name = Buffer.from("Lang\0", "utf16le");
+  const data = Buffer.from("eng", "ascii");
+  store.writeUInt16LE(0x55aa, 28);
+  store.writeUInt8(0x3f, 30);
+  store.writeUInt32LE(0x7, 32);
+  store.writeUInt32LE(name.length, 36);
+  store.writeUInt32LE(data.length, 40);
+  guid("8be4df61-93ca-11d2-aa0d-00e098032b8c").copy(store, 44);
+  name.copy(store, 60);
+  data.copy(store, 60 + name.length);
+  const storePath = join(root, "vars.fd");
+  await writeFile(storePath, store);
+
+  // The same signature with an unformatted header is not a usable store.
+  const unusable = Buffer.from(store);
+  unusable.writeUInt8(0xff, 20);
+  const unusablePath = join(root, "unusable.fd");
+  await writeFile(unusablePath, unusable);
+
+  const { call } = await connectLocalToolsMcp();
+  const parsed = async (path: string) =>
+    uefiResultSchemas.inspect_uefi_nvram.parse(
+      parseEvidence(
+        (await call("inspect_uefi_nvram", { path })).structuredContent,
+      ).normalized_result,
+    );
+  const result = await parsed(storePath);
+  expect(result.coverage).toBe("complete");
+  expect(result.edk2_stores).toMatchObject([
+    {
+      offset: 0,
+      authenticated: false,
+      variables: [
+        {
+          name: "Lang",
+          state: "added",
+          attributes: 7,
+          vendor_guid: "8be4df61-93ca-11d2-aa0d-00e098032b8c",
+          data_offset: 60 + name.length,
+          data_length: 3,
+          data_sha256: sha256(data),
+        },
+      ],
+    },
+  ]);
+
+  const rejected = await parsed(unusablePath);
+  expect(rejected.edk2_stores).toEqual([]);
+  expect(rejected.limitations.join(" ")).toContain(
+    "not a formatted variable-store header",
+  );
+  expect(rejected.limitations.join(" ")).not.toContain(
+    "No EDK2 variable stores",
+  );
+});
+
 cliTest(
   "shares volume and file scan limits across MCP and CLI extraction",
   async ({ cli: command }) => {
@@ -516,6 +592,7 @@ cliTest(
       path,
       max_volumes: 513,
       max_files: 2,
+      detail: "complete",
     });
     expect(observed.isError, JSON.stringify(observed.content)).not.toBe(true);
     const inspection = uefiResultSchemas.inspect_uefi_firmware.parse(
@@ -533,6 +610,7 @@ cliTest(
         max_volumes: 513,
         max_files: maxFiles,
         target: { kind: "ffs-file", offset, source_stream: null },
+        detail: "complete",
       });
     const extractCli = (maxFiles: number) =>
       command.run({
@@ -587,3 +665,28 @@ cliTest(
     }
   },
 );
+
+it("attributes an existing output directory to output_directory", async () => {
+  const root = await createTestTempDirectory("rea-uefi-existing-output-");
+  const imagePath = join(root, "flash.fd");
+  await writeFile(imagePath, buildFlashImage());
+  const existing = join(root, "existing");
+  await mkdir(existing);
+  const { call } = await connectLocalToolsMcp();
+
+  const refused = await call("extract_uefi_firmware", {
+    path: imagePath,
+    output_directory: existing,
+  });
+  expect(parseMcpToolError(refused).error).toMatchObject({
+    code: "invalid_request",
+    details: {
+      issues: [
+        {
+          path: ["output_directory"],
+          message: "Output root already exists",
+        },
+      ],
+    },
+  });
+});

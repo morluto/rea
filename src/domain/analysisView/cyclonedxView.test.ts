@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
+  AnalysisTargetFailureError,
 } from "../analysisErrorCore.js";
 import { createEvidence } from "../evidence.js";
 import { unknownTarget } from "../targetIdentity.js";
@@ -912,7 +912,7 @@ it("refuses a CycloneDX view of a parent that is neither Go nor Rust", () => {
   );
   expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected an unsupported parent");
-  expect(result.error).toBeInstanceOf(AnalysisUnsupportedTargetError);
+  expect(result.error).toBeInstanceOf(AnalysisTargetFailureError);
   expect(result.error.message).toContain(
     "inspect_go_binary or inspect_rust_binary",
   );
@@ -1282,9 +1282,8 @@ it("names the parent input path when CycloneDX has no artifact path", () => {
   );
   expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected an unsupported parent");
-  expect(result.error).toBeInstanceOf(AnalysisUnsupportedTargetError);
-  if (!(result.error instanceof AnalysisUnsupportedTargetError))
-    throw result.error;
+  expect(result.error).toBeInstanceOf(AnalysisTargetFailureError);
+  if (!(result.error instanceof AnalysisTargetFailureError)) throw result.error;
   expect(result.error.path).toBe("/artifacts/layout-input");
 });
 

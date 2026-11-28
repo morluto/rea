@@ -1,6 +1,6 @@
 import type { FileHandle } from "node:fs/promises";
 
-import type { EspFlashImageMetadata } from "../domain/artifactFormatMetadata.js";
+import type { EspFlashImageMetadata } from "../domain/formatMetadata/firmwareMetadata.js";
 import type { EspFlashWrittenExtent } from "../domain/firmware/espFlashLayout.js";
 import {
   ESP8266_REFUSAL,

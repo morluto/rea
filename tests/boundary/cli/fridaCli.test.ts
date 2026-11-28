@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative } from "node:path";
 import { expect, it } from "vitest";
 import type { DeviceManager } from "frida";
@@ -108,14 +107,19 @@ it.each([
   });
 });
 
-it.each([false, true])(
-  "preserves canonical process discovery when CLI cleanup fails: %s",
-  async (cleanupFails) => {
+it.each([
+  { paging: false, cleanupFails: false },
+  { paging: false, cleanupFails: true },
+  { paging: true, cleanupFails: false },
+  { paging: true, cleanupFails: true },
+])(
+  "preserves CLI process discovery (paging: $paging, cleanup failed: $cleanupFails)",
+  async ({ paging, cleanupFails }) => {
     const provider: FridaInstrumentationPort =
       new FridaInstrumentationManager();
     const processes = [
-      { pid: 0, name: "idle", identifier: null },
       { pid: 71, name: "target", identifier: "example.target" },
+      { pid: 0, name: "idle", identifier: null },
     ];
     provider.listProcesses = async (selector) => {
       expect(selector).toEqual({ deviceId: "chosen-device" });
@@ -133,7 +137,13 @@ it.each([false, true])(
     };
     let stdout = "";
     await createCli({}, undefined, provider).serve(
-      ["list-frida-processes", "--device-id", "chosen-device", "--json"],
+      [
+        "list-frida-processes",
+        "--device-id",
+        "chosen-device",
+        ...(paging ? ["--offset", "1", "--limit", "20000"] : []),
+        "--json",
+      ],
       {
         env: {},
         exit: () => {},
@@ -144,7 +154,10 @@ it.each([false, true])(
     );
     const expected = {
       device_id: "chosen-device",
-      processes,
+      processes: paging
+        ? [{ pid: 71, name: "target", identifier: "example.target" }]
+        : processes,
+      ...(paging ? { total_processes: 2, truncated: true } : {}),
       cleanup_error: "earlier endpoint cleanup diagnostic",
     };
     if (cleanupFails)

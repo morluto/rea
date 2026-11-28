@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 
 import {
   decodeStrictUtf8,
+  decodeUtf8PreservingBomOrNull,
   isStrictUtf8,
   strictUtf8Decoder,
 } from "./strictUtf8.js";
@@ -11,6 +12,7 @@ const bomPrefixed = Uint8Array.of(0xef, 0xbb, 0xbf, 0x7b, 0x7d);
 it("keeps a leading BOM unless the caller states it is a signature", () => {
   expect(decodeStrictUtf8(bomPrefixed, "preserve")).toBe("﻿{}");
   expect(decodeStrictUtf8(bomPrefixed, "strip-signature")).toBe("{}");
+  expect(decodeUtf8PreservingBomOrNull(bomPrefixed)).toBe("\uFEFF{}");
   expect(strictUtf8Decoder("preserve").decode(bomPrefixed)).toBe("﻿{}");
 });
 
@@ -20,6 +22,7 @@ it("refuses malformed UTF-8 for every policy", () => {
   expect(() => decodeStrictUtf8(malformed, "strip-signature")).toThrow(
     TypeError,
   );
+  expect(decodeUtf8PreservingBomOrNull(malformed)).toBeNull();
   expect(isStrictUtf8(malformed)).toBe(false);
   expect(isStrictUtf8(bomPrefixed)).toBe(true);
 });

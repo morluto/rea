@@ -114,6 +114,30 @@ These controls take nonnegative safe-integer offsets and positive safe-integer
 budgets, apply on the next decode, and require no REA restart. Process memory
 and response transport capacity still apply.
 
+### Delivery and views
+
+A decode carries the full manifest text and every returned string, so it grows
+with the app. On VLC 3.7.2 the default MCP result was 180,996 bytes: 1,531
+strings and 69,295 code units of manifest text. An MCP call that omits `detail`
+returns the decode inline when its Evidence fits the
+[agent result budget](../../reference/limits-and-recovery.md#agent-result-budget).
+Otherwise the decode is retained, and the call returns a summary with metadata,
+locales, the decoded file count, each selected table's counts and page, and the
+manifest length. `detail: "complete"` returns everything inline.
+
+With `detail: "summary"`, `view` returns one page instead of the summary, and
+`inspect_analysis_view` reads later pages of the retained decode:
+
+- `{"kind":"android-resources","facet":"strings"}` lists `{locale, name, value}`
+  rows across the decoded tables. `locales` selects tables (`null` is the
+  default table), and `names` and `name_prefixes` match exactly.
+  `coverage.total` counts every match, so a prefix count needs one page.
+- `{"kind":"android-resources","facet":"manifest"}` pages the manifest text by
+  `offset` and `limit` in UTF-16 code units.
+
+A view reads only the tables this decode returned; decode the locales first. On
+the CLI, `--detail summary` and `--view` require `--evidence_output`.
+
 ## Interpret the result
 
 - **An owned APK snapshot is digested and decoded.** `target.sha256` and
@@ -127,7 +151,11 @@ and response transport capacity still apply.
 - **Metadata comes from apktool.yml as apktool printed it.** Version codes
   keep their own spelling (`'7'` versus `7`). The `package_name` field
   follows the [decoded manifest rules](android-analysis.md#manifest-component-projection)
-  and preserves the decoded attribute value.
+  and preserves the decoded attribute value. If a complete decoded manifest has
+  no package attribute, REA uses the name recorded in tagged Apktool 2 metadata
+  (current name, then original name) or Apktool 3 resource metadata when present.
+  An explicitly empty package attribute or a missing or truncated manifest
+  leaves the package name unknown.
   The `version: 2.9.0`-or-later header that Apktool 2.9+ and 3 emit selects
   their single-line string dialect: literal hashes, single quotes, empty
   strings, and the text `null` stay part of the value; producer backslashes
@@ -180,10 +208,16 @@ and response transport capacity still apply.
 
 - The decode wall clock is `decode_timeout_ms` (CLI `--decode-timeout-ms`).
   Omitted means 600000 ms. The integer range is 1 to 2147483647. A change
-  applies on the next decode. It does not raise the 4194304-byte (4 MiB)
-  output capture budget. That capture budget has no runtime override. A
+  applies on the next decode. It does not raise the output capture budget. A
   stopped decode reports `provider_timeout` and names the effective
-  milliseconds; an exceeded capture budget reports `resource_constraint`.
+  milliseconds.
+- Apktool's retained stdout and stderr are bounded by
+  `producer_limits.output_bytes` (CLI `--producer-limits` as JSON text),
+  default 4194304 bytes (4 MiB), at most the JavaScript string limit. An
+  exceeded budget reports `resource_constraint` with `details.limit` naming
+  `producer_limits.output_bytes`, its effective value and default; raise it
+  on the next decode. It does not raise `decode_timeout_ms` or the version
+  probe.
 - The version probe waits 20000 ms and retains 65536 bytes. This release has
   no runtime override for that probe. `decode_timeout_ms` does not raise it.
 - Manifest reads are bounded to 512 KiB before decoding UTF-8. Strings XML

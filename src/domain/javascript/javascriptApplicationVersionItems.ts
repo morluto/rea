@@ -1,3 +1,5 @@
+import { countValues } from "../valueCounts.js";
+import { appendToMapList } from "../appendToMapList.js";
 import { absenceClaimable, canonicalJson } from "../comparisonSemantics.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
@@ -234,140 +236,95 @@ const matchedItem = (
 const unmatchedItem = (
   member: OneSidedNode,
   context: ItemContext,
-): ApplicationVersionComparisonItem =>
-  member.left === undefined
-    ? rightOnlyItem(member.right, member.candidateLeftNodeIds, context)
-    : leftOnlyItem(member.left, member.candidateRightNodeIds, context);
-
-const leftOnlyItem = (
-  node: ApplicationNode,
-  candidateNodeIds: readonly string[],
-  context: ItemContext,
 ): ApplicationVersionComparisonItem => {
-  const [firstCandidate, ...remainingCandidates] = candidateNodeIds;
+  const onLeft = member.left !== undefined;
+  const node = onLeft ? member.left : member.right;
+  const [first, ...rest] = onLeft
+    ? member.candidateRightNodeIds
+    : member.candidateLeftNodeIds;
   const common = {
     node_kind: node.kind,
-    evidence_links: itemEvidenceLinks(node, undefined, context),
+    evidence_links: itemEvidenceLinks(member.left, member.right, context),
   };
-  if (firstCandidate !== undefined)
+  if (first !== undefined) {
+    const candidates: [string, ...string[]] = [first, ...rest];
+    const empty: [] = [];
+    const ambiguous = {
+      status: "ambiguous",
+      basis: "none",
+      confidence: "unknown",
+    } as const;
     return itemWithId({
       ...common,
       status: "unknown",
-      left_node_id: node.node_id,
-      right_node_id: null,
-      match: {
-        status: "ambiguous",
-        basis: "none",
-        confidence: "unknown",
-        candidate_left_node_ids: [],
-        candidate_right_node_ids: [firstCandidate, ...remainingCandidates],
-      },
+      ...(onLeft
+        ? {
+            left_node_id: node.node_id,
+            right_node_id: null,
+            match: {
+              ...ambiguous,
+              candidate_left_node_ids: empty,
+              candidate_right_node_ids: candidates,
+            },
+          }
+        : {
+            left_node_id: null,
+            right_node_id: node.node_id,
+            match: {
+              ...ambiguous,
+              candidate_left_node_ids: candidates,
+              candidate_right_node_ids: empty,
+            },
+          }),
       dimensions: ["availability"],
       limitations: [
         ...ownComparisonLimitations(node),
         AMBIGUOUS_MATCH_LIMITATION,
       ],
     });
-  if (ownPresenceUncertain(node) || unresolvedEndpointTarget(node))
-    return itemWithId({
-      ...common,
-      status: "unknown",
-      left_node_id: node.node_id,
-      right_node_id: null,
-      match: unmatchedMatch(),
-      dimensions: ["availability"],
-      limitations: ownComparisonLimitations(node),
-    });
-  const endpointGap = oppositeEndpointUncertain(
-    node,
-    context.rightUnresolvedEndpointKinds,
-  );
-  const absenceObserved =
-    !endpointGap && absenceClaimable(context.rightGraph.coverage);
+  }
+  const dimensions: ApplicationVersionComparisonItem["dimensions"] = [
+    "availability",
+  ];
+  let absenceObserved = false;
+  let limitation: string | undefined;
+  if (!ownPresenceUncertain(node) && !unresolvedEndpointTarget(node)) {
+    const endpointGap = oppositeEndpointUncertain(
+      node,
+      onLeft
+        ? context.rightUnresolvedEndpointKinds
+        : context.leftUnresolvedEndpointKinds,
+    );
+    if (endpointGap) limitation = ENDPOINT_ABSENCE_LIMITATION;
+    else if (
+      absenceClaimable(
+        (onLeft ? context.rightGraph : context.leftGraph).coverage,
+      )
+    )
+      absenceObserved = true;
+    else {
+      dimensions.push("coverage");
+      limitation = INCOMPLETE_GRAPH_LIMITATION;
+    }
+  }
+  const limitations = ownComparisonLimitations(node);
+  if (limitation !== undefined) limitations.push(limitation);
   return itemWithId({
     ...common,
-    status: absenceObserved ? "removed" : "unknown",
-    left_node_id: node.node_id,
-    right_node_id: null,
+    ...(onLeft
+      ? ({
+          status: absenceObserved ? "removed" : "unknown",
+          left_node_id: node.node_id,
+          right_node_id: null,
+        } as const)
+      : ({
+          status: absenceObserved ? "added" : "unknown",
+          left_node_id: null,
+          right_node_id: node.node_id,
+        } as const)),
     match: unmatchedMatch(),
-    dimensions:
-      absenceObserved || endpointGap
-        ? ["availability"]
-        : ["availability", "coverage"],
-    limitations: [
-      ...ownComparisonLimitations(node),
-      ...(endpointGap
-        ? [ENDPOINT_ABSENCE_LIMITATION]
-        : absenceObserved
-          ? []
-          : [INCOMPLETE_GRAPH_LIMITATION]),
-    ],
-  });
-};
-
-const rightOnlyItem = (
-  node: ApplicationNode,
-  candidateNodeIds: readonly string[],
-  context: ItemContext,
-): ApplicationVersionComparisonItem => {
-  const [firstCandidate, ...remainingCandidates] = candidateNodeIds;
-  const common = {
-    node_kind: node.kind,
-    evidence_links: itemEvidenceLinks(undefined, node, context),
-  };
-  if (firstCandidate !== undefined)
-    return itemWithId({
-      ...common,
-      status: "unknown",
-      left_node_id: null,
-      right_node_id: node.node_id,
-      match: {
-        status: "ambiguous",
-        basis: "none",
-        confidence: "unknown",
-        candidate_left_node_ids: [firstCandidate, ...remainingCandidates],
-        candidate_right_node_ids: [],
-      },
-      dimensions: ["availability"],
-      limitations: [
-        ...ownComparisonLimitations(node),
-        AMBIGUOUS_MATCH_LIMITATION,
-      ],
-    });
-  if (ownPresenceUncertain(node) || unresolvedEndpointTarget(node))
-    return itemWithId({
-      ...common,
-      status: "unknown",
-      left_node_id: null,
-      right_node_id: node.node_id,
-      match: unmatchedMatch(),
-      dimensions: ["availability"],
-      limitations: ownComparisonLimitations(node),
-    });
-  const endpointGap = oppositeEndpointUncertain(
-    node,
-    context.leftUnresolvedEndpointKinds,
-  );
-  const absenceObserved =
-    !endpointGap && absenceClaimable(context.leftGraph.coverage);
-  return itemWithId({
-    ...common,
-    status: absenceObserved ? "added" : "unknown",
-    left_node_id: null,
-    right_node_id: node.node_id,
-    match: unmatchedMatch(),
-    dimensions:
-      absenceObserved || endpointGap
-        ? ["availability"]
-        : ["availability", "coverage"],
-    limitations: [
-      ...ownComparisonLimitations(node),
-      ...(endpointGap
-        ? [ENDPOINT_ABSENCE_LIMITATION]
-        : absenceObserved
-          ? []
-          : [INCOMPLETE_GRAPH_LIMITATION]),
-    ],
+    dimensions,
+    limitations,
   });
 };
 
@@ -626,22 +583,17 @@ const indexRelationships = (
   graph: JavaScriptApplicationGraph,
 ): RelationshipIndex => {
   const adjacency = new Map<string, IndexedRelationship[]>();
-  const add = (nodeId: string, relationship: IndexedRelationship): void => {
-    const existing = adjacency.get(nodeId);
-    if (existing === undefined) adjacency.set(nodeId, [relationship]);
-    else existing.push(relationship);
-  };
   for (const edge of graph.edges) {
     const coverageLimited =
       edge.properties.pairing_basis === IPC_COVERAGE_LIMITED_PAIRING_BASIS;
-    add(edge.source_node_id, {
+    appendToMapList(adjacency, edge.source_node_id, {
       direction: "out",
       relation: edge.relation,
       neighborId: edge.target_node_id,
       coverageLimited,
     });
     if (edge.target_node_id !== edge.source_node_id)
-      add(edge.target_node_id, {
+      appendToMapList(adjacency, edge.target_node_id, {
         direction: "in",
         relation: edge.relation,
         neighborId: edge.source_node_id,
@@ -693,15 +645,10 @@ const unexplainedRelationshipDifference = (
   leftPossible: readonly string[],
   rightPossible: readonly string[],
 ): boolean => {
-  const counts = (values: readonly string[]) => {
-    const result = new Map<string, number>();
-    for (const value of values) result.set(value, (result.get(value) ?? 0) + 1);
-    return result;
-  };
-  const leftCounts = counts(left);
-  const rightCounts = counts(right);
-  const leftCandidateCounts = counts(leftPossible);
-  const rightCandidateCounts = counts(rightPossible);
+  const leftCounts = countValues(left);
+  const rightCounts = countValues(right);
+  const leftCandidateCounts = countValues(leftPossible);
+  const rightCandidateCounts = countValues(rightPossible);
   for (const key of new Set([...leftCounts.keys(), ...rightCounts.keys()])) {
     const difference = (leftCounts.get(key) ?? 0) - (rightCounts.get(key) ?? 0);
     if (
@@ -793,9 +740,7 @@ const indexNativeEvidence = (
     const id = record.evidence_id;
     const digest = evidenceFileTarget(record)?.sha256;
     if (digest === undefined) continue;
-    const ids = evidenceByDigest.get(digest);
-    if (ids === undefined) evidenceByDigest.set(digest, [id]);
-    else ids.push(id);
+    appendToMapList(evidenceByDigest, digest, id);
   }
   return evidenceByDigest;
 };

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createGhidraVerifierMcpOperations } from "./lib/ghidra-verifier-mcp.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
@@ -12,6 +13,7 @@ import { basename, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import {
   inspectMipsReadelf,
@@ -27,7 +29,7 @@ import {
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { parseAnalysisSnapshot } from "../dist/domain/analysisSnapshot.js";
 import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
-import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
+import { requireVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
 import { buildMipsFixture } from "../tests/conformance/ghidra/mips-fixture.mjs";
 import {
   buildPspFixture,
@@ -50,6 +52,10 @@ import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { runOwnedCommand } from "../dist/process/OwnedCommand.js";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import { requireLaneToolchain } from "../tests/conformance/ghidra/fixture-toolchain.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./lib/complete-evidence.mjs";
 
 // Optional cross-target lane. No tool acquisition and no target execution.
 const mode = process.argv[2];
@@ -64,19 +70,7 @@ if (!["linux", "darwin"].includes(process.platform))
   throw new Error(
     "MIPS verification requires a supported Linux/macOS Ghidra host",
   );
-if (process.env.GHIDRA_INSTALL_DIR === undefined)
-  throw new Error("Missing prerequisite: caller-supplied GHIDRA_INSTALL_DIR");
-const installation = await inspectVerifierGhidraInstallation({
-  environment: process.env,
-  installDir: process.env.GHIDRA_INSTALL_DIR,
-  ...(process.env.JAVA_HOME === undefined
-    ? {}
-    : { javaHome: process.env.JAVA_HOME }),
-});
-if (installation.status !== "available")
-  throw new Error(
-    `Ghidra prerequisite unavailable: ${JSON.stringify(installation)}`,
-  );
+const installation = await requireVerifierGhidraInstallation(process.env);
 const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const run = createVerifierRun();
 // Refuse a host without the fixture toolchain before allocating anything.
@@ -87,11 +81,6 @@ const workspaceFixture = await VerifierFixture.open({
   private: false,
 });
 const workspace = workspaceFixture.path;
-// A failed run keeps its workspace for diagnosis; the fixture records why.
-const retainWorkspace = (message, options) => {
-  workspaceFixture.retain(message);
-  return new Error(message, options);
-};
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const env = {
@@ -109,6 +98,7 @@ for (const setting of ["GHIDRA_HEADLESS_MAXMEM", "GHIDRA_MAXMEM"]) {
 }
 // CLI launches share one command owner, created before the lane starts a tool.
 const commands = await createVerifierCommands();
+const exec = commands.exec.bind(commands);
 
 /** stdout and stderr of an owned command that exited nonzero. */
 const commandFailureOutput = (cause) => {
@@ -155,12 +145,12 @@ async function verifyExistingMipsProject(fixture, byteOrder) {
     };
     await walk(join(projectDir, "ExistingMips.rep"));
     return Promise.all(
-      paths.sort().map(async (path) => [
-        relative(projectDir, path),
-        createHash("sha256")
-          .update(await readFile(path))
-          .digest("hex"),
-      ]),
+      paths
+        .sort()
+        .map(async (path) => [
+          relative(projectDir, path),
+          await sha256File(path),
+        ]),
     );
   };
   const before = await digestTree();
@@ -174,7 +164,9 @@ async function verifyExistingMipsProject(fixture, byteOrder) {
     },
     stderr: "pipe",
   });
-  const client = new Client({ name: "rea-existing-mips-proof", version: "1" });
+  const client = completeEvidenceClient(
+    new Client({ name: "rea-existing-mips-proof", version: "1" }),
+  );
   try {
     await client.connect(transport);
     const opened = await client.callTool(
@@ -186,7 +178,7 @@ async function verifyExistingMipsProject(fixture, byteOrder) {
     );
     requireMcpOperationResult(opened, "open_binary");
     const result = await client.callTool(
-      { name: "list_procedures", arguments: {} },
+      { name: "list_procedures", arguments: { detail: "complete" } },
       { timeout: 180000 },
     );
     const observation = parseEvidence(
@@ -217,12 +209,7 @@ async function verifyExistingMipsProject(fixture, byteOrder) {
     before,
     "REA changed the source project",
   );
-  assert.equal(
-    createHash("sha256")
-      .update(await readFile(fixture.path))
-      .digest("hex"),
-    fixture.sha256,
-  );
+  assert.equal(await sha256File(fixture.path), fixture.sha256);
   return {
     byte_order: byteOrder,
     project_unchanged: true,
@@ -276,16 +263,32 @@ const reports = [];
 let primaryFailure;
 try {
   if (!psp) {
-    // Recordless legacy admission: ABI field 0, no ABI flags record, pinned
-    // 32-bit language. Independent GNU readelf checks the header interpretation.
-    for (const byteOrder of ["little", "big"]) {
-      const fixture = await buildMipsFixture(workspace, byteOrder, "hard", {
-        legacy: true,
-      });
-      const legacy = await inspectLegacyMipsReadelf(fixture.path, byteOrder);
+    for (const { byteOrder, recordlessAbi } of ["little", "big"].flatMap(
+      (byteOrder) =>
+        ["unspecified", "o32"].map((recordlessAbi) => ({
+          byteOrder,
+          recordlessAbi,
+        })),
+    )) {
+      const declared = recordlessAbi === "o32";
+      const fixture = await buildMipsFixture(
+        workspace,
+        byteOrder,
+        "hard",
+        {
+          recordlessAbi,
+        },
+        exec,
+      );
+      const legacy = await inspectLegacyMipsReadelf(
+        fixture.path,
+        byteOrder,
+        recordlessAbi,
+        exec,
+      );
       const resolved = await parseBinaryTarget(fixture.path);
       if (!resolved.ok) throw resolved.error;
-      assert.equal(resolved.value.mips.flags, 0x50000001);
+      assert.equal(resolved.value.mips.flags, legacy.flags);
       assert.equal(resolved.value.mips.abiFlags, null);
       assert.deepEqual(
         resolved.value.mips.limitations ?? [],
@@ -293,28 +296,29 @@ try {
         "REA legacy ABI-record absence interpretation disagrees with GNU readelf",
       );
       assert.equal(resolved.value.sha256, fixture.sha256);
-      const snapshotPath = join(workspace, `${byteOrder}-legacy.snapshot.json`);
+      const snapshotPath = join(
+        workspace,
+        `${byteOrder}-${recordlessAbi}.snapshot.json`,
+      );
       const transport = new StdioClientTransport({
         command: process.execPath,
         args: [entrypoint, "mcp"],
         env,
         stderr: "pipe",
       });
-      const client = new Client({
-        name: "rea-real-mips-legacy-proof",
-        version: "1",
-      });
+      const client = completeEvidenceClient(
+        new Client({
+          name: "rea-real-mips-legacy-proof",
+          version: "1",
+        }),
+      );
       let stderr = "";
       transport.stderr?.on("data", (chunk) => {
         stderr = (stderr + chunk.toString()).slice(-65536);
       });
-      const call = async (name, args = {}) => {
-        const reply = await client.callTool(
-          { name, arguments: args },
-          { timeout: 180000 },
-        );
-        return requireMcpOperationResult(reply, name);
-      };
+      const call = createGhidraVerifierMcpOperations(client, {
+        timeout: 180000,
+      }).decodedCall(requireMcpOperationResult);
       try {
         await client.connect(transport);
         const selected = await call("open_binary", {
@@ -333,6 +337,18 @@ try {
         const procedures = await call("list_procedures");
         const entry = procedures.find((p) => p.value === "rea_mips_entry");
         assert.ok(entry, "Entry function missing from legacy inventory");
+        if (declared) {
+          const callees = await call("procedure_callees", {
+            procedure: entry.address,
+          });
+          assert.ok(
+            callees.some(
+              (address) =>
+                BigInt(address) === BigInt(legacy.symbols.rea_mips_leaf),
+            ),
+            "Expected PIC call to rea_mips_leaf",
+          );
+        }
         assert.equal(
           BigInt(entry.address),
           BigInt(legacy.symbols.rea_mips_entry),
@@ -372,24 +388,32 @@ try {
         assert.equal(parameters.language_selection, "provider-pinned");
         assert.equal(
           parameters.mips_support_lane,
-          "elf32-exec-arch32-legacy-pinned",
+          declared
+            ? "elf32-exec-o32-arch32-standard"
+            : "elf32-exec-arch32-legacy-pinned",
         );
-        assert.equal(parameters.mips_abi_basis, "inferred-o32-assumption");
+        assert.equal(
+          parameters.mips_abi_basis,
+          declared ? "declared-o32-header" : "inferred-o32-assumption",
+        );
+        const limitations = snapshot.evidence_bundle.records.flatMap(
+          (record) => parseEvidence(record).limitations,
+        );
+        assert.equal(
+          limitations.some((item) =>
+            item.includes("o32 calling conventions are an analysis assumption"),
+          ),
+          !declared,
+        );
         assert.ok(
-          snapshot.evidence_bundle.records.some((record) =>
-            parseEvidence(record).limitations.some((item) =>
-              item.includes("analysis assumption"),
+          limitations.some((item) =>
+            item.includes(
+              declared
+                ? "does not verify floating-point"
+                : "Floating-point ABI semantics are unverified",
             ),
           ),
-          "Legacy o32 assumption limitation missing from retained Evidence",
-        );
-        assert.ok(
-          snapshot.evidence_bundle.records.some((record) =>
-            parseEvidence(record).limitations.some((item) =>
-              item.includes("Floating-point ABI semantics are unverified"),
-            ),
-          ),
-          "Legacy floating-point uncertainty missing from retained Evidence",
+          "Floating-point uncertainty missing from retained Evidence",
         );
         await call("open_binary", {
           path: fixture.path,
@@ -400,7 +424,7 @@ try {
         await call("close_binary");
       } catch (cause) {
         throw new Error(
-          `MIPS legacy ${byteOrder} verification failed; MCP stderr: ${stderr}`,
+          `MIPS32 recordless ${recordlessAbi} ${byteOrder} verification failed; MCP stderr: ${stderr}`,
           { cause },
         );
       } finally {
@@ -413,13 +437,17 @@ try {
       reports.push({
         ...fixture,
         independent_reader: legacy,
-        variant: "recordless-legacy-pinned",
+        variant: declared
+          ? "recordless-declared-o32-pinned"
+          : "recordless-legacy-pinned",
         effective_language: `MIPS:${
           byteOrder === "little" ? "LE" : "BE"
         }:32:default`,
         procedures: "verified-through-snapshot",
         checks: [
-          "recordless header admitted with inferred o32 assumption",
+          declared
+            ? "recordless header admitted with declared o32"
+            : "recordless header admitted with inferred o32 assumption",
           "pinned 32-bit language checked after import",
           "legacy limitations retained in Evidence",
           "snapshot round-trip and profile parameters",
@@ -438,10 +466,10 @@ try {
       ]) {
     const fixture = psp
       ? await buildPspFixture(workspace)
-      : await buildMipsFixture(workspace, byteOrder, floatAbi);
+      : await buildMipsFixture(workspace, byteOrder, floatAbi, {}, exec);
     const independent = psp
       ? fixture
-      : await inspectMipsReadelf(fixture.path, byteOrder, floatAbi);
+      : await inspectMipsReadelf(fixture.path, byteOrder, floatAbi, exec);
     const resolved = await parseBinaryTarget(fixture.path);
     if (!resolved.ok) throw resolved.error;
     if (psp) {
@@ -473,18 +501,16 @@ try {
       env,
       stderr: "pipe",
     });
-    const client = new Client({ name: "rea-real-mips-proof", version: "1" });
+    const client = completeEvidenceClient(
+      new Client({ name: "rea-real-mips-proof", version: "1" }),
+    );
     let stderr = "";
     transport.stderr?.on("data", (chunk) => {
       stderr = (stderr + chunk.toString()).slice(-65536);
     });
-    const call = async (name, args = {}) => {
-      const reply = await client.callTool(
-        { name, arguments: args },
-        { timeout: 180000 },
-      );
-      return requireMcpOperationResult(reply, name);
-    };
+    const call = createGhidraVerifierMcpOperations(client, {
+      timeout: 180000,
+    }).decodedCall(requireMcpOperationResult);
     try {
       await client.connect(transport);
       if (missingExtension) {
@@ -503,12 +529,14 @@ try {
             process.execPath,
             [
               entrypoint,
-              "function",
-              fixture.path,
-              `${prefix}_entry`,
-              "--provider",
-              "ghidra",
-              "--json",
+              ...(await completeEvidenceCliArguments([
+                "function",
+                fixture.path,
+                `${prefix}_entry`,
+                "--provider",
+                "ghidra",
+                "--json",
+              ])),
             ],
             { env, timeout: 60000, maxBuffer: 1024 * 1024 },
           );
@@ -634,6 +662,7 @@ try {
         ).toString("hex"),
       );
       const callees = await call("procedure_callees", {
+        detail: "complete",
         procedure: entry.address,
       });
       assert.ok(
@@ -776,12 +805,14 @@ try {
         process.execPath,
         [
           entrypoint,
-          "function",
-          fixture.path,
-          `${prefix}_entry`,
-          "--provider",
-          "ghidra",
-          "--json",
+          ...(await completeEvidenceCliArguments([
+            "function",
+            fixture.path,
+            `${prefix}_entry`,
+            "--provider",
+            "ghidra",
+            "--json",
+          ])),
         ],
         { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
       );
@@ -794,9 +825,7 @@ try {
       assert.equal(cliDossier.procedure.address, dossier.procedure.address);
       assert.ok(cliDossier.pseudocode.trim().length > 0);
       assert.equal(
-        createHash("sha256")
-          .update(await readFile(fixture.path))
-          .digest("hex"),
+        await sha256File(fixture.path),
         fixture.sha256,
         "Analysis modified the source executable",
       );
@@ -834,12 +863,14 @@ try {
             process.execPath,
             [
               entrypoint,
-              "function",
-              carvedPath,
-              independent.symbols.rea_mips_entry,
-              "--provider",
-              "ghidra",
-              "--json",
+              ...(await completeEvidenceCliArguments([
+                "function",
+                carvedPath,
+                independent.symbols.rea_mips_entry,
+                "--provider",
+                "ghidra",
+                "--json",
+              ])),
             ],
             { env, timeout: 60000, maxBuffer: 1024 * 1024 },
           );
@@ -926,7 +957,7 @@ try {
   cleanupFailure = cause;
 }
 if (cleanupFailure !== undefined)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `MIPS command cleanup failed; retained diagnostic workspace: ${workspace}`,
     {
       cause:
@@ -942,13 +973,13 @@ const completed = await completeVerifierRun(run);
 try {
   assertVerifierCleanupComplete(completed.process_lineage);
 } catch (cause) {
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `Cleanup unverified; retained diagnostic workspace: ${workspace}`,
     { cause: primaryFailure ?? cause },
   );
 }
 if (primaryFailure !== undefined)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `MIPS verification failed; retained workspace: ${workspace}`,
     {
       cause: primaryFailure,

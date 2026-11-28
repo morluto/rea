@@ -1,9 +1,11 @@
+import { CordisDocumentError } from "./DshCordisYaml.js";
 import {
   parseClientToml,
   serializeCodexConfiguration,
   serializeGrokConfiguration,
 } from "./ClientConfigurationToml.js";
 import {
+  GooseConfigurationYamlError,
   parseGooseConfigurationYaml,
   stringifyGooseConfigurationYaml,
   editGooseConfigurationYaml,
@@ -17,6 +19,7 @@ import {
 } from "./DshCordisPatch.js";
 import {
   editHermesConfigurationYaml,
+  HermesConfigurationEditError,
   parseHermesConfigurationYaml,
   stringifyHermesConfigurationYaml,
 } from "./HermesConfigurationYaml.js";
@@ -35,18 +38,11 @@ import {
 import { z } from "zod";
 
 import { err, ok, type Result } from "../domain/result.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import type { SetupClient } from "./SupportedClients.js";
 import {
   clientConfigurationRecordSchema,
-  clientConfigurationValuesEqual,
-  isEmptyClientConfigurationText,
-} from "./ClientConfigurationValues.js";
-
-export { parseClientToml } from "./ClientConfigurationToml.js";
-export {
-  clientConfigurationRecordSchema,
-  clientConfigurationValuesEqual,
   isEmptyClientConfigurationText,
 } from "./ClientConfigurationValues.js";
 
@@ -283,7 +279,7 @@ const parseDocument = (
 };
 
 /** A parsed configuration whose structure, not its syntax, cannot hold MCP servers. */
-export class ClientConfigurationShapeError extends TypeError {}
+class ClientConfigurationShapeError extends TypeError {}
 
 /** Validate source mappings and copy their own properties without rewriting values. */
 const requireObject = (
@@ -298,7 +294,7 @@ const requireObject = (
 };
 
 /** ZCode reads the same-scope fallback as strict JSON with a mcpServers table. */
-export const parseZcodeFallbackConfiguration = (
+const parseZcodeFallbackConfiguration = (
   text: string,
 ): ClientConfigurationDocument => {
   const { document } = parseDocument(
@@ -334,12 +330,10 @@ const fxConfigurationServersKey = (
   return legacy ? "mcp" : "mcpServers";
 };
 
-export const parseClientConfiguration = (
+const readClientDocument = (
   text: string,
-  format: ClientConfigurationFormat | undefined,
+  format: Exclude<ClientConfigurationFormat, "unsupported">,
 ): ClientConfigurationDocument => {
-  if (format === undefined || format === "unsupported")
-    throw new TypeError("client does not have a supported MCP config format");
   // DeepSeek Harness stores a Cordis patch list, not a server table.
   if (format === "zcode_fallback") return parseZcodeFallbackConfiguration(text);
   if (format === "dsh") return parseDshCordisDocument(text);
@@ -439,6 +433,53 @@ export const parseClientConfiguration = (
       ),
     ),
   };
+};
+
+type NativeDocumentError =
+  | CordisDocumentError
+  | GooseConfigurationYamlError
+  | HermesConfigurationEditError;
+
+interface NativeDocumentFailure {
+  readonly kind: "document";
+  readonly detail: string;
+  readonly cause: NativeDocumentError;
+}
+
+const isNativeDocumentError = (cause: unknown): cause is NativeDocumentError =>
+  cause instanceof CordisDocumentError ||
+  cause instanceof GooseConfigurationYamlError ||
+  cause instanceof HermesConfigurationEditError;
+
+export type ClientConfigurationParseFailure =
+  | NativeDocumentFailure
+  | {
+      readonly kind: "unsupported" | "syntax" | "shape";
+      readonly detail: string;
+      readonly cause?: unknown;
+    };
+
+/** Parse one native client document and retain its failure at the format boundary. */
+export const parseClientConfiguration = (
+  text: string,
+  format: ClientConfigurationFormat | undefined,
+): Result<ClientConfigurationDocument, ClientConfigurationParseFailure> => {
+  if (format === undefined || format === "unsupported")
+    return err({
+      kind: "unsupported",
+      detail: "client does not have a supported MCP config format",
+    });
+  try {
+    return ok(readClientDocument(text, format));
+  } catch (cause: unknown) {
+    if (isNativeDocumentError(cause))
+      return err({ kind: "document", detail: cause.message, cause });
+    return err({
+      kind: cause instanceof ClientConfigurationShapeError ? "shape" : "syntax",
+      detail: errorMessage(cause),
+      cause,
+    });
+  }
 };
 
 /** Interpret activation in the authored dialect and preserve malformed values. */
@@ -744,16 +785,46 @@ const jsonChildRemovalEdits = (
   const siblings = object.children ?? [];
   const removed = new Set(properties);
   const anyKept = siblings.some((member) => !removed.has(member));
+  const separators = siblings.map((member) =>
+    nextJsoncToken(text, member.offset + member.length),
+  );
+  const whitespaceOnly = (from: number, to: number): boolean =>
+    /^[\t\n\r ]*$/u.test(text.slice(from, to));
   const edits: Edit[] = [];
   let earlierKept = false;
   for (const [index, member] of siblings.entries()) {
-    if (removed.has(member))
-      edits.push({ offset: member.offset, length: member.length, content: "" });
-    else earlierKept = true;
-    const separator = nextJsoncToken(text, member.offset + member.length);
+    const separator = separators[index]!;
     const next = siblings[index + 1];
     if (separator.kind !== JSON_COMMA && next !== undefined)
       throw new TypeError("JSON property separator was not found");
+    if (removed.has(member)) {
+      // Take the member's own line break and indentation with it, and an
+      // emptied object's closing indentation. A comment in either gap belongs
+      // to the surrounding text and keeps that gap intact.
+      const gapStart =
+        index === 0 ? object.offset + 1 : separators[index - 1]!.offset + 1;
+      const memberEnd = member.offset + member.length;
+      const start = whitespaceOnly(gapStart, member.offset)
+        ? gapStart
+        : member.offset;
+      // A trailing JSONC comma of an emptied object goes with that gap.
+      const closing =
+        separator.kind === JSON_COMMA && next === undefined
+          ? nextJsoncToken(text, separator.offset + 1).offset
+          : separator.offset;
+      const end =
+        !anyKept &&
+        next === undefined &&
+        whitespaceOnly(memberEnd, separator.offset) &&
+        whitespaceOnly(
+          separator.kind === JSON_COMMA ? separator.offset + 1 : closing,
+          closing,
+        )
+          ? closing
+          : memberEnd;
+      edits.push({ offset: start, length: end - start, content: "" });
+      if (end > separator.offset) continue;
+    } else earlierKept = true;
     // Keep the separator before the next retained member, matching the
     // existing single-member deletion rule. JSONC may retain a trailing comma.
     const keepSeparator =
@@ -958,7 +1029,7 @@ export interface ClientConfigurationEditOptions {
  * Serialize a validated client document, retaining JSONC and TOML comments.
  * JSON edits fail only when they would activate a shadowed duplicate member.
  */
-export const serializeClientConfiguration = (
+const editClientDocument = (
   document: Record<string, unknown>,
   format: ClientConfigurationFormat | undefined,
   originalText?: string,
@@ -1015,6 +1086,23 @@ export const serializeClientConfiguration = (
       ? strictJsonSyntax(text)
       : text,
   );
+};
+
+export type ClientConfigurationEditFailure =
+  | ClientConfigurationShadowedMember
+  | NativeDocumentFailure
+  | { readonly kind: "serialize"; readonly cause: unknown };
+
+export const serializeClientConfiguration = (
+  ...args: Parameters<typeof editClientDocument>
+): Result<string, ClientConfigurationEditFailure> => {
+  try {
+    return editClientDocument(...args);
+  } catch (cause: unknown) {
+    return isNativeDocumentError(cause)
+      ? err({ kind: "document", detail: cause.message, cause })
+      : err({ kind: "serialize", cause });
+  }
 };
 
 /** Key path of a named registration in the server table. */

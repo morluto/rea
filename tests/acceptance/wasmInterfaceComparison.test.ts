@@ -2,6 +2,7 @@ import {
   canonicalOutputSchema,
   withCanonicalOutputSchema,
 } from "../fixtures/canonicalOutputSchema.js";
+import { constants as bufferConstants } from "node:buffer";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -208,5 +209,96 @@ cliTest(
       "unknown",
     ]);
     expect(report.summary.unchanged).toBe(0);
+  },
+);
+
+cliTest(
+  "reports details.limit and adjustable_budget refusal when max_interface_bytes is exceeded through the public CLI",
+  async ({ cli }) => {
+    const side = (name: string) => {
+      const report = wasmArtifactFixture();
+      report.interface = parseWabtWat(
+        `(module (func $f (param i32) (result i32)) (export "${name}" (func $f)))`,
+      ).interface;
+      return createEvidence(
+        {
+          path: report.artifact.path,
+          sha256: report.artifact.sha256,
+          format: "file",
+        },
+        { id: "fixture", name: "typed fixture", version: "1" },
+        {
+          operation: "inspect_wasm_artifact",
+          parameters: { path: report.artifact.path },
+          result: report,
+          confidence: "observed",
+        },
+      );
+    };
+    const root = await createTestTempDirectory("rea-wasm-budget-cli-");
+    const refusedPath = join(root, "refused.json");
+    const recoveredPath = join(root, "recovered.json");
+    const left = side("left_export");
+    const right = side("right_export");
+    await writeFile(
+      refusedPath,
+      JSON.stringify({
+        left,
+        right,
+        scope: "both",
+        max_interface_bytes: 1024,
+      }),
+    );
+    await writeFile(
+      recoveredPath,
+      JSON.stringify({
+        left,
+        right,
+        scope: "both",
+        max_interface_bytes: 8192,
+      }),
+    );
+
+    const refused = await cli.run({
+      arguments: ["compare-wasm-interfaces", refusedPath, "--json"],
+    });
+    expect(refused.exitCode, refused.stderr).toBe(1);
+    expect(refused.json).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_interface_bytes",
+          effective_value: 1024,
+          unit: "bytes",
+          minimum: 1,
+          maximum: bufferConstants.MAX_STRING_LENGTH,
+          default_value: 33_554_432,
+          applies_at: "next_call",
+        },
+        refusal: {
+          kind: "adjustable_budget",
+          operation: "compare_wasm_interfaces",
+          control: "max_interface_bytes",
+          effective_value: 1024,
+          unit: "bytes",
+          range: { minimum: 1, maximum: bufferConstants.MAX_STRING_LENGTH },
+          default_value: 33_554_432,
+        },
+      },
+    });
+    expect(
+      (refused.json as { details?: { limit?: unknown } }).details?.limit,
+    ).not.toHaveProperty("required_value");
+
+    const recovered = await cli.run({
+      arguments: ["compare-wasm-interfaces", recoveredPath, "--json"],
+    });
+    expect(recovered.exitCode, recovered.stderr).toBe(0);
+    const report = wasmInterfaceComparisonSchema.parse(
+      parseEvidence(recovered.json).normalized_result,
+    );
+    expect(report.summary).toMatchObject({ added: 1, removed: 1 });
   },
 );

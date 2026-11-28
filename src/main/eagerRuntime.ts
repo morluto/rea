@@ -45,11 +45,14 @@ export const runEager = async (
   const logger = createLogger("mcp", config.value.logLevel);
   const serverLogger = logger.child({ layer: "server" });
   const analysisSettings = new AnalysisSettings(environment);
+  // One MCP session serves many calls, so shared provider limitations are
+  // stated once and referenced.
   const session = createBinarySession(
     config.value,
     logger,
     environment,
     analysisSettings.read,
+    "reference",
   );
   const startup = new AbortController();
   let transport: Awaited<ReturnType<typeof startMcpTransport>> | undefined;
@@ -97,6 +100,12 @@ export const runEager = async (
           shutdown.request();
         })
       : undefined;
+  const outerStartup = dependencies.startupSignal;
+  const cancelStartup = (): void => {
+    startup.abort(outerStartup?.reason ?? OwnerCancellation.ownerClosed);
+  };
+  if (outerStartup?.aborted === true) cancelStartup();
+  else outerStartup?.addEventListener("abort", cancelStartup, { once: true });
   dependencies.captureShutdown?.(async () => {
     startup.abort(OwnerCancellation.ownerClosed);
     await shutdown.shutdown();
@@ -133,7 +142,10 @@ export const runEager = async (
           analysisSettings,
           environment,
           signal: startup.signal,
-          delivery: createToolResultDelivery(config.value.mcpMaxResponseBytes),
+          delivery: createToolResultDelivery(
+            config.value.mcpMaxResponseBytes,
+            environment,
+          ),
           loadOptionalProviders:
             dependencies.loadOptionalProviders ??
             (() =>
@@ -153,6 +165,7 @@ export const runEager = async (
     startupRejected = true;
     startupCause = cause;
   } finally {
+    outerStartup?.removeEventListener("abort", cancelStartup);
     settleStartup();
     startupInput?.close();
   }

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { knownCoverage } from "../coverageAccumulator.js";
 import {
   bundleResourceBoundResultSchema,
   type BundleResourceRoot,
@@ -492,7 +493,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
     coverage.push(
       {
         facet: `objects:${document.relativePath}`,
-        status: objectsTruncated ? "partial" : "complete",
+        status: knownCoverage(!objectsTruncated, "object_limit_reached"),
         reason: objectsTruncated ? "object_limit_reached" : null,
         examined: documentObjectCount,
         omitted:

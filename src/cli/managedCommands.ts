@@ -7,11 +7,11 @@ import { projectManagedApplicationGraphEvidence } from "../application/managed/M
 import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
 import { MANAGED_WORKFLOW_TOOL_CONTRACTS } from "../contracts/managed/managedWorkflowToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
+import { registerContractCommand } from "./contractCommand.js";
 import {
-  registerContractCommand,
   runOnEvidenceTargets,
   runOnSessionTarget,
-} from "./contractCommand.js";
+} from "./contractCommandRunners.js";
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { ok } from "../domain/result.js";
 import {

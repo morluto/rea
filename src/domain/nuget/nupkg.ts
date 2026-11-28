@@ -1,3 +1,4 @@
+import type { AnalysisParameterLimit } from "../analysisSettings.js";
 import { z } from "zod";
 
 import { digestSchema } from "../digests.js";
@@ -16,11 +17,40 @@ export const MAX_INSPECT_NUGET_NUPKG_ENTRIES = 65536;
 /** Hard ceiling on decoded .nuspec bytes. */
 export const MAX_INSPECT_NUGET_NUPKG_NUSPEC_BYTES = 16 * 1024 * 1024;
 
-export const NUGET_NUPKG_LIMIT_MAXIMA = {
-  max_file_bytes: MAX_INSPECT_NUGET_NUPKG_FILE_BYTES,
-  max_entries: MAX_INSPECT_NUGET_NUPKG_ENTRIES,
-  max_nuspec_bytes: MAX_INSPECT_NUGET_NUPKG_NUSPEC_BYTES,
+/** Each per-call budget's schema bounds and omitted value. */
+export const NUGET_NUPKG_BUDGETS = {
+  max_file_bytes: {
+    minimum: 16,
+    maximum: MAX_INSPECT_NUGET_NUPKG_FILE_BYTES,
+    // Above nuget.org's 250 MB package ceiling. The ZIP is read by range and
+    // hashed in one streaming pass; only the .nuspec and directory are retained.
+    default_value: 256 * 1024 * 1024,
+  },
+  max_entries: {
+    minimum: 1,
+    maximum: MAX_INSPECT_NUGET_NUPKG_ENTRIES,
+    default_value: 4096,
+  },
+  max_nuspec_bytes: {
+    minimum: 1,
+    maximum: MAX_INSPECT_NUGET_NUPKG_NUSPEC_BYTES,
+    default_value: 1024 * 1024,
+  },
 } as const;
+export type NugetNupkgBudget = keyof typeof NUGET_NUPKG_BUDGETS;
+
+/** The per-call control that stopped a package read, from the schema's bounds. */
+export const nugetNupkgBudgetLimit = (
+  parameter: NugetNupkgBudget,
+  effectiveValue: number,
+): AnalysisParameterLimit => ({
+  control_kind: "parameter",
+  parameter,
+  effective_value: effectiveValue,
+  unit: parameter === "max_entries" ? "count" : "bytes",
+  ...NUGET_NUPKG_BUDGETS[parameter],
+  applies_at: "next_call",
+});
 
 /** Path-derived NuGet folder roles; restore-time asset selection is not observed. */
 export const NUGET_NUPKG_ENTRY_ROLES = [
@@ -88,25 +118,27 @@ export const inspectNugetNupkgInputSchema = z.strictObject({
   max_file_bytes: z
     .number()
     .int()
-    .min(16)
-    .max(MAX_INSPECT_NUGET_NUPKG_FILE_BYTES)
-    .default(67108864)
-    .describe("Maximum stable artifact bytes to read (default 64 MiB)"),
+    .min(NUGET_NUPKG_BUDGETS.max_file_bytes.minimum)
+    .max(NUGET_NUPKG_BUDGETS.max_file_bytes.maximum)
+    .default(NUGET_NUPKG_BUDGETS.max_file_bytes.default_value)
+    .describe(
+      `Maximum stable artifact bytes to read (default ${String(NUGET_NUPKG_BUDGETS.max_file_bytes.default_value)})`,
+    ),
   max_entries: z
     .number()
     .int()
-    .min(1)
-    .max(MAX_INSPECT_NUGET_NUPKG_ENTRIES)
-    .default(4096)
+    .min(NUGET_NUPKG_BUDGETS.max_entries.minimum)
+    .max(NUGET_NUPKG_BUDGETS.max_entries.maximum)
+    .default(NUGET_NUPKG_BUDGETS.max_entries.default_value)
     .describe(
       "Maximum ZIP entries to inventory; exceeding the budget fails without partial success",
     ),
   max_nuspec_bytes: z
     .number()
     .int()
-    .min(1)
-    .max(MAX_INSPECT_NUGET_NUPKG_NUSPEC_BYTES)
-    .default(1048576)
+    .min(NUGET_NUPKG_BUDGETS.max_nuspec_bytes.minimum)
+    .max(NUGET_NUPKG_BUDGETS.max_nuspec_bytes.maximum)
+    .default(NUGET_NUPKG_BUDGETS.max_nuspec_bytes.default_value)
     .describe(
       "Maximum expanded bytes to decode for the .nuspec and the OPC _rels/.rels member; exceeding the budget fails without partial success",
     ),

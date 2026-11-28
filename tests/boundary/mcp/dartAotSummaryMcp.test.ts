@@ -7,7 +7,7 @@ import { unlink } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it, onTestFinished, vi } from "vitest";
-import { FlutterBuildAnalysisService } from "../../../src/application/flutter/FlutterBuildAnalysisService.js";
+import { createFlutterBuildAnalysisService } from "../../../src/application/ProviderOperationServices.js";
 import {
   executeRetainedSummaryOperation,
   inspectAnalysisView,
@@ -319,7 +319,7 @@ it("rejects unavailable retention, invalid delivery and cancellation before prod
   const provider = createFlutterBuildAnalysisProvider();
   onTestFinished(() => provider.close());
   const execute = vi.spyOn(provider, "execute");
-  const service = new FlutterBuildAnalysisService(provider);
+  const service = createFlutterBuildAnalysisService(provider);
   const retention = { recordEvidence: undefined, evidenceById: undefined };
   expect(
     await executeRetainedSummaryOperation(

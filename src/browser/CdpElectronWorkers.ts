@@ -7,7 +7,10 @@ import type { CdpConnection } from "./CdpConnection.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
 import type { CdpEndpointTarget } from "./CdpEndpoint.js";
 import { optionalCdpCommand } from "./CdpOptionalCommand.js";
-import { authorizedElectronFile } from "./ElectronFileScope.js";
+import {
+  authorizedElectronFile,
+  type ElectronFileScope,
+} from "./ElectronFileScope.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { cancelledBy } from "../domain/analysisErrorCore.js";
 import {
@@ -25,6 +28,7 @@ export const captureElectronWorkers = async (input: {
   readonly completeness: CdpCaptureCompleteness;
   readonly limitations: string[];
   readonly asarHeaderAdmission: AsarHeaderAdmission;
+  readonly files?: ElectronFileScope;
 }): Promise<ElectronPageInspection["workers"]> => {
   const result = await optionalCdpCommand(
     {
@@ -71,6 +75,7 @@ export const captureElectronWorkers = async (input: {
       input.signal,
       "inspect_electron_page",
       input.asarHeaderAdmission,
+      input.files,
     );
     if (path === undefined) {
       input.completeness.exclude("workers", "out_of_target_scope");

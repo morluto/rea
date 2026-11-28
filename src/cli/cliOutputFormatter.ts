@@ -26,7 +26,7 @@ import { edgeSpan } from "../kernel/trimEdges.js";
 
 import { encode as encodeToon } from "@toon-format/toon";
 
-import type { CliOutputFormat } from "../cliOutput.js";
+import type { CliOutputFormat } from "./cliOutput.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { err, ok, type Result } from "../domain/result.js";

@@ -1,9 +1,9 @@
+import { inspectFakePage } from "../../support/browser/inspectFakePage.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
-import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
 import {
   webPageInspectionSchema,
   type WebPageInspection,
@@ -89,18 +89,7 @@ const startBrowser = async () => {
     },
   });
   trackBrowser(browser);
-  const inspect = async () => {
-    const result = await new CdpBrowserProvider().inspectPage(
-      inspectWebPageInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 0,
-      }),
-    );
-    if (!result.ok) throw result.error;
-    return result.value;
-  };
+  const inspect = () => inspectFakePage(browser);
   return {
     state,
     inspect,

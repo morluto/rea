@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { compareInspectionDimension } from "../../tests/support/browser/webCaptureComparison.js";
 
 import {
   unselectBodyShapes,
@@ -6,16 +7,9 @@ import {
   withPassiveDroppedEvents,
 } from "../../tests/fixtures/passiveNetworkCapture.js";
 import type { WebPageInspection } from "./browserObservationSchemas.js";
-import { compareWebCaptures } from "./webCaptureDiff.js";
 import { compareWebCapturesInputSchema } from "./webCaptureDiffSchemas.js";
 
-const compare = (before: WebPageInspection, after: WebPageInspection) =>
-  compareWebCaptures(
-    compareWebCapturesInputSchema.parse({
-      before: { inspection: before },
-      after: { inspection: after },
-    }),
-  ).dimensions.network;
+const compare = compareInspectionDimension("network");
 
 const redirectCapture = (resourceType: string | null): WebPageInspection => {
   const capture = unselectBodyShapes(passiveNetworkCapture());

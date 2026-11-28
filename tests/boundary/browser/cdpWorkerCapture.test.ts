@@ -326,6 +326,7 @@ it.each([false, true])(
           inventories++;
           return { targetInfos: [] };
         }
+        return undefined;
       },
       commandEvents(command, origin) {
         if (command.method === "Target.setAutoAttach") return [];
@@ -344,6 +345,7 @@ it.each([false, true])(
               },
             },
           ];
+        return undefined;
       },
     });
     const captured = await provider.inspectPage(input);
@@ -936,7 +938,7 @@ it.each(["revoked", "selected", "controlled"])(
       if (captured.ok)
         throw new Error("Expected the worker event budget to be exhausted");
       expect(projectAnalysisError(captured.error)).toMatchObject({
-        code: "truncated",
+        code: "partial",
         message: expect.stringContaining(
           String(WEB_RUNTIME_LIMITS.retainedEventBytes),
         ),
@@ -1078,7 +1080,7 @@ it("reports the aggregate worker source limit separately from the event budget",
   if (captured.ok)
     throw new Error("Expected the worker source budget to be exhausted");
   expect(projectAnalysisError(captured.error)).toMatchObject({
-    code: "truncated",
+    code: "partial",
     message: expect.stringContaining(String(WEB_RUNTIME_LIMITS.sourceBytes)),
     details: {
       reason: "payload_limit",

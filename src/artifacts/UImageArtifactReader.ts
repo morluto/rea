@@ -4,8 +4,13 @@ import { readArtifactFileBytes } from "./ArtifactFileRange.js";
 import type {
   UImageEntryMetadata,
   UImageMetadata,
-} from "../domain/artifactFormatMetadata.js";
-import { ArtifactReaderFailure } from "../resources/index.js";
+} from "../domain/formatMetadata/firmwareMetadata.js";
+import type { ArtifactIntegrityPolicyName } from "../domain/artifactIntegrityPolicy.js";
+import {
+  ArtifactReaderFailure,
+  malformedArtifact,
+  truncatedArtifact,
+} from "../resources/index.js";
 import {
   PositionalArtifactReader,
   type PositionalArtifactEntries,
@@ -32,9 +37,15 @@ type UImageEntry = PositionalArtifactEntry & {
 /** Read a U-Boot legacy uImage without running, decompressing, or altering it. */
 export class UImageArtifactReader extends PositionalArtifactReader<UImageMetadata> {
   override readonly format = "uimage" as const;
+  readonly #integrity: ArtifactIntegrityPolicyName;
 
-  constructor(path: string, admitted?: StableRegularFileDescriptor) {
+  constructor(
+    path: string,
+    admitted?: StableRegularFileDescriptor,
+    integrity: ArtifactIntegrityPolicyName = "fail",
+  ) {
     super(path, "uImage", admitted, "U-Boot uImage");
+    this.#integrity = integrity;
   }
 
   formatMetadata(): UImageMetadata | undefined {
@@ -53,6 +64,7 @@ export class UImageArtifactReader extends PositionalArtifactReader<UImageMetadat
   ): Promise<PositionalArtifactEntries<UImageMetadata>> {
     const { handle, initial } = await this.verifyCarrier(signal);
     const headerBytes = await readArtifactFileBytes(
+      "uimage",
       handle,
       0,
       Math.min(initial.size, UIMAGE_HEADER_SIZE),
@@ -63,16 +75,23 @@ export class UImageArtifactReader extends PositionalArtifactReader<UImageMetadat
     if (!fields.ok) throw parseFailure(fields.error);
     const header = fields.value;
     if (initial.size < UIMAGE_HEADER_SIZE + header.payloadSize)
-      throw formatFailure(
-        `uImage payload is truncated: header declares ${header.payloadSize} payload bytes but only ${initial.size - UIMAGE_HEADER_SIZE} follow the header`,
+      throw truncatedArtifact(
+        "uimage",
+        `uImage is malformed: uImage payload is truncated: header declares ${header.payloadSize} payload bytes but only ${initial.size - UIMAGE_HEADER_SIZE} follow the header`,
+        {
+          availableBytes: initial.size - UIMAGE_HEADER_SIZE,
+          requiredBytes: header.payloadSize,
+        },
       );
     // Admit the bounded size table first, then include those same bytes in the
     // native CRC stream. No payload byte needs to be read twice for verification.
     let dataCrc32 = 0;
     let read = 0;
     let subImages: readonly UImageSubImage[] = [];
+    let sizeTableLimitation: string | undefined;
     if (hasUImageSizeTable(header.type)) {
       const tablePrefix = await readArtifactFileBytes(
+        "uimage",
         handle,
         UIMAGE_HEADER_SIZE,
         Math.min(header.payloadSize, UIMAGE_MULTI_TABLE_WINDOW),
@@ -80,14 +99,23 @@ export class UImageArtifactReader extends PositionalArtifactReader<UImageMetadat
         signal,
       );
       const parsed = parseMultiImageTable(tablePrefix, header.payloadSize);
-      if (!parsed.ok) throw parseFailure(parsed.error);
-      subImages = parsed.value;
+      if (parsed.ok) {
+        subImages = parsed.value;
+      } else if (
+        this.#integrity === "fail" ||
+        parsed.error._tag === "UImageCapacityFailure"
+      ) {
+        throw parseFailure(parsed.error);
+      } else {
+        sizeTableLimitation = `Multi-image/script size table could not be parsed (${parsed.error.message}); only the full stored payload.bin is exposed.`;
+      }
       dataCrc32 = crc32(tablePrefix);
       read = tablePrefix.length;
     }
     while (read < header.payloadSize) {
       this.assertOpen(signal);
       const chunk = await readArtifactFileBytes(
+        "uimage",
         handle,
         UIMAGE_HEADER_SIZE + read,
         Math.min(READ_CHUNK_BYTES, header.payloadSize - read),
@@ -97,10 +125,7 @@ export class UImageArtifactReader extends PositionalArtifactReader<UImageMetadat
       dataCrc32 = crc32(chunk, dataCrc32);
       read += chunk.length;
     }
-    if (dataCrc32 !== header.dataCrc32)
-      throw formatFailure(
-        `uImage data CRC32 mismatch: declared 0x${header.dataCrc32.toString(16)}, computed 0x${dataCrc32.toString(16)}`,
-      );
+    const crcVerified = dataCrc32 === header.dataCrc32;
     const entries: UImageEntry[] = [
       entryFor("payload", 0, {
         byteOffset: UIMAGE_HEADER_SIZE,
@@ -110,28 +135,53 @@ export class UImageArtifactReader extends PositionalArtifactReader<UImageMetadat
     ];
     return {
       entries,
-      coverage: {
-        status: "complete",
-        limitations: hasUImageSizeTable(header.type)
-          ? [
-              "Multi-image sub-images are split from the stored size table; the payload entry retains the full stored bytes.",
-            ]
-          : [],
+      coverage: uImageCoverage(header, initial.size, sizeTableLimitation),
+      formatMetadata: toMetadata(header, subImages.length, crcVerified),
+      containerIntegrity: {
+        algorithm: "crc32",
+        declared_crc32: crcHex(header.dataCrc32),
+        observed_crc32: crcHex(dataCrc32),
       },
-      formatMetadata: toMetadata(header, subImages.length),
     };
   }
 }
+
+/**
+ * Coverage is complete only when the entries account for every file byte and
+ * any size table split them. U-Boot does not pad a legacy image, so bytes past
+ * the declared payload belong to no entry.
+ */
+const uImageCoverage = (
+  header: UImageHeaderFields,
+  fileBytes: number,
+  sizeTableLimitation: string | undefined,
+): PositionalArtifactEntries<UImageMetadata>["coverage"] => {
+  const limitations: string[] = [];
+  if (sizeTableLimitation !== undefined) limitations.push(sizeTableLimitation);
+  else if (hasUImageSizeTable(header.type))
+    limitations.push(
+      "Multi-image sub-images are split from the stored size table; the payload entry retains the full stored bytes.",
+    );
+  const imageEnd = UIMAGE_HEADER_SIZE + header.payloadSize;
+  const trailingBytes = fileBytes - imageEnd;
+  if (trailingBytes > 0)
+    limitations.push(
+      `${String(trailingBytes)} byte(s) after the uImage payload, starting at offset ${String(imageEnd)}, were not exposed as entries.`,
+    );
+  return {
+    status:
+      sizeTableLimitation === undefined && trailingBytes === 0
+        ? "complete"
+        : "unknown",
+    limitations,
+  };
+};
 
 const formatFailure = (
   detail: string,
   options?: ErrorOptions,
 ): ArtifactReaderFailure =>
-  new ArtifactReaderFailure(
-    "format",
-    `uImage is malformed: ${detail}`,
-    options,
-  );
+  malformedArtifact("uimage", `uImage is malformed: ${detail}`, options);
 
 const parseFailure = (failure: UImageParseError): ArtifactReaderFailure =>
   failure._tag === "UImageCapacityFailure"
@@ -168,9 +218,13 @@ const entryFor = (
   };
 };
 
+const crcHex = (value: number): string =>
+  (value >>> 0).toString(16).padStart(8, "0");
+
 const toMetadata = (
   facts: UImageHeaderFields,
   subImageCount: number,
+  crcVerified: boolean,
 ): UImageMetadata => ({
   kind: "uimage",
   magic: facts.magic,
@@ -181,7 +235,7 @@ const toMetadata = (
   entry_point: facts.entryPoint,
   header_crc32: facts.headerCrc32,
   data_crc32: facts.dataCrc32,
-  crc_verified: true,
+  crc_verified: crcVerified,
   os: facts.os,
   os_name: facts.osName,
   arch: facts.arch,

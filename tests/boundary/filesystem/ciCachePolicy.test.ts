@@ -9,7 +9,7 @@ import {
   readdir,
   writeFile,
 } from "node:fs/promises";
-import { delimiter, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { runInNewContext } from "node:vm";
 
 import { beforeAll, describe, expect, it } from "vitest";
@@ -138,7 +138,16 @@ const readWorkflows = async () => {
               z
                 .object({
                   env: z.record(z.string(), z.unknown()).optional(),
-                  steps: z.array(z.record(z.string(), z.unknown())).optional(),
+                  steps: z
+                    .array(
+                      z
+                        .object({
+                          uses: z.string().optional(),
+                          with: z.record(z.string(), z.unknown()).optional(),
+                        })
+                        .passthrough(),
+                    )
+                    .optional(),
                 })
                 .passthrough(),
             )
@@ -185,6 +194,7 @@ async function verifyPrefixedHashFiles(
     const fileNames = targetPaths.map((path) =>
       path.slice("triggering-source/".length),
     );
+    expect(fileNames.every((name) => !name.includes("/"))).toBe(true);
     const nestedHash = aggregateHashFilesContent(
       await Promise.all(
         targetPaths.map((path) => readFile(join(runnerWorkspace, path))),
@@ -202,9 +212,19 @@ async function verifyPrefixedHashFiles(
   return targetHash!;
 }
 
+const retentionKeyFiles = [
+  ".npmrc",
+  ".nvmrc",
+  "knip.json",
+  "package-lock.json",
+  "package.json",
+  "tsconfig.json",
+];
+
 async function exerciseTrustedRetentionWithLegacyTarget(
   retentionRun: unknown,
   retentionEnv: Record<string, string>,
+  trustedSparseCheckout: string,
 ) {
   const runnerWorkspace = await createTestTempDirectory(
     "rea-ci-retention-trusted-checkout-",
@@ -212,18 +232,10 @@ async function exerciseTrustedRetentionWithLegacyTarget(
   const legacyTarget = join(runnerWorkspace, "triggering-source");
   const legacyRoot = join(runnerWorkspace, "legacy-root");
   const trustedSource = join(runnerWorkspace, "trusted-retention");
-  const inputNames = [
-    ".nvmrc",
-    ".npmrc",
-    "package-lock.json",
-    "knip.json",
-    "tsconfig.json",
-    "package.json",
-  ];
   const targetSha = "0123456789abcdef0123456789abcdef01234567";
   await mkdir(legacyTarget, { recursive: true });
   await mkdir(legacyRoot, { recursive: true });
-  for (const name of inputNames) {
+  for (const name of retentionKeyFiles) {
     const contents = `target-source:${name}\n`;
     await writeFile(join(legacyTarget, name), contents);
     await writeFile(join(legacyRoot, name), contents);
@@ -232,11 +244,14 @@ async function exerciseTrustedRetentionWithLegacyTarget(
     trustedSource,
     "scripts/ci/cache-retention.mjs",
   );
-  await mkdir(join(trustedSource, "scripts/ci"), { recursive: true });
-  await copyFile(
-    join(repository, "scripts/ci/cache-retention.mjs"),
-    trustedHelperPath,
-  );
+  for (const pattern of trustedSparseCheckout.trim().split("\n")) {
+    expect(pattern).toMatch(/^\/(?:\.nvmrc|scripts\/ci\/[\w-]+\.mjs)$/u);
+    const filename = pattern.slice(1);
+    const destination = join(trustedSource, filename);
+    await mkdir(dirname(destination), { recursive: true });
+    await copyFile(join(repository, filename), destination);
+  }
+  await expect(access(join(trustedSource, ".nvmrc"))).resolves.toBeUndefined();
   await expect(
     access(join(legacyTarget, "scripts/ci/cache-retention.mjs")),
   ).rejects.toMatchObject({ code: "ENOENT" });
@@ -430,15 +445,12 @@ printf '%s\n' 'C:\Users\runner with spaces\AppData\Local\npm-cache'
     expect(policy?.env?.LOCKFILES_HASH).toBe(
       "${{ hashFiles('package-lock.json', 'npm-shrinkwrap.json', '.npmrc') }}",
     );
-    expect(restoreAndSave?.uses).toBe(
-      "actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830",
-    );
+    const revision = restoreAndSave?.uses?.split("@")[1];
+    expect(revision).toMatch(/^[0-9a-f]{40}$/u);
     expect(restoreAndSave?.if).toBe(
       "steps.context.outputs.can-save == 'true' && inputs.save == 'true'",
     );
-    expect(restoreOnly?.uses).toBe(
-      "actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830",
-    );
+    expect(restoreOnly?.uses).toBe(`actions/cache/restore@${revision}`);
     expect(restoreOnly?.if).toBe(
       "steps.context.outputs.can-save != 'true' || inputs.save != 'true'",
     );
@@ -467,8 +479,10 @@ printf '%s\n' 'C:\Users\runner with spaces\AppData\Local\npm-cache'
           if (
             typeof step?.uses === "string" &&
             step.uses.startsWith("actions/setup-node@")
-          )
+          ) {
             expect(step.with).not.toHaveProperty("cache", "npm");
+            expect(step.with).toMatchObject({ "package-manager-cache": false });
+          }
           if (step?.uses !== "./.github/actions/npm-cache") continue;
           npmCacheSteps++;
           const setup = steps
@@ -483,9 +497,13 @@ printf '%s\n' 'C:\Users\runner with spaces\AppData\Local\npm-cache'
             `${file}:${jobName} npm cache action requires preceding setup-node`,
           ).toBeDefined();
           expect(step.if).toBe(setup?.if);
+          const installCommand =
+            file === "ci-timings.yml" && jobName === "report"
+              ? "npm ci --omit=dev --ignore-scripts"
+              : "npm ci";
           const npmCiIndex = steps.findIndex(
             (candidate, candidateIndex) =>
-              candidateIndex > index && candidate.run === "npm ci",
+              candidateIndex > index && candidate.run === installCommand,
           );
           expect(
             npmCiIndex,
@@ -555,18 +573,26 @@ it("shares static task snapshots only after validation using the npm cache owner
   const deepSave = deep.find(
     (step) => step.name === "Save validated deep static task cache",
   );
-  const knipRestore = deep.find((step) => step.id === "knip-cache");
-  const knipSave = deep.find(
+  const build = ci?.workflow.jobs?.build?.steps ?? [];
+  const knipRestore = build.find((step) => step.id === "knip-cache");
+  const knipSave = build.find(
     (step) => step.name === "Save Knip analysis cache",
+  );
+  const knipCheck = build.findIndex(
+    (step) => step.run === "node scripts/run-turbo.mjs run knip",
   );
   expect(deepSave?.uses).toMatch(/^actions\/cache\/save@/u);
   expectSavePolicy(deepSave?.if, "static-cache", false);
   const deepCheck = deep.findIndex(
-    (step) => step.run === "npm run check:ci:deep",
+    (step) => step.run === "npm run check:ci:deep:job",
   );
   expect(deepCheck).toBeGreaterThanOrEqual(0);
   expect(deep.indexOf(deepSave!)).toBeGreaterThan(deepCheck);
-  expect(deep.indexOf(knipSave!)).toBeGreaterThan(deepCheck);
+  expect(knipCheck).toBeGreaterThan(
+    build.findIndex((step) => step.run === "npm run test:prepare"),
+  );
+  expect(build.indexOf(knipRestore!)).toBeLessThan(knipCheck);
+  expect(build.indexOf(knipSave!)).toBeGreaterThan(knipCheck);
   const knipWith = z
     .object({
       path: z.string(),
@@ -578,7 +604,7 @@ it("shares static task snapshots only after validation using the npm cache owner
   expect(knipWith.key).toContain("${{ github.sha }}");
   expect(knipWith["restore-keys"]).not.toContain("github.sha");
   expect(knipWith["restore-keys"].startsWith("knip-meta-v1-")).toBe(true);
-  expectSavePolicy(knipSave?.if, "knip-cache", false);
+  expectSavePolicy(knipSave?.if, "knip-cache", true);
   expect(knipSave?.with).toEqual({
     path: "node_modules/.cache/knip",
     key: "${{ steps.knip-cache.outputs.cache-primary-key }}",
@@ -632,18 +658,21 @@ it("deletes superseded caches only from the trusted follow-up workflow", async (
     ref: "${{ github.workflow_sha }}",
     path: "trusted-retention",
     "persist-credentials": false,
+    "sparse-checkout-cone-mode": false,
   });
   const targetCheckout = checkouts[1];
   expect(targetCheckout?.with).toMatchObject({
     ref: "${{ github.event.workflow_run.head_sha }}",
     path: "triggering-source",
     "persist-credentials": false,
+    "sparse-checkout-cone-mode": false,
+    "sparse-checkout": retentionKeyFiles.map((name) => `/${name}\n`).join(""),
   });
   expect(checkouts).toHaveLength(2);
   const setupNode = steps.find(
     (step) =>
-      step.uses ===
-      "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+      typeof step.uses === "string" &&
+      step.uses.startsWith("actions/setup-node@"),
   );
   expect(setupNode?.with).toMatchObject({
     "node-version-file": "trusted-retention/.nvmrc",
@@ -667,7 +696,14 @@ it("deletes superseded caches only from the trusted follow-up workflow", async (
   expect(retentionEnv.GH_TOKEN).toBe("${{ github.token }}");
 
   // Exercise the selected trusted helper against a legacy target tree.
-  await exerciseTrustedRetentionWithLegacyTarget(retention?.run, retentionEnv);
+  const trustedInputs = z
+    .object({ "sparse-checkout": z.string() })
+    .parse(trustedCheckout?.with);
+  await exerciseTrustedRetentionWithLegacyTarget(
+    retention?.run,
+    retentionEnv,
+    trustedInputs["sparse-checkout"],
+  );
   const ci = workflows.find(({ file }) => file === "ci.yml")?.workflow;
   if (ci === undefined) throw new Error("Missing CI workflow");
   expect(ci.permissions).toMatchObject({ contents: "read" });
@@ -680,6 +716,7 @@ it("deletes superseded caches only from the trusted follow-up workflow", async (
   }
   const staticSteps = ci.jobs?.static?.steps ?? [];
   const deepSteps = ci.jobs?.["static-deep"]?.steps ?? [];
+  const buildSteps = ci.jobs?.build?.steps ?? [];
   const publishedKey = (steps: typeof deepSteps, id: string) =>
     z
       .string()
@@ -712,9 +749,9 @@ it("deletes superseded caches only from the trusted follow-up workflow", async (
   );
   expect(retentionEnv.CACHE_KNIP_PREFIX).toBe(knipPrefix);
   expect(retentionEnv.CACHE_KNIP_KEEP_KEY).toBe(
-    targetSourceKey(deepSteps, "knip-cache"),
+    targetSourceKey(buildSteps, "knip-cache"),
   );
-  expect(publishedKey(deepSteps, "knip-cache").startsWith(knipPrefix)).toBe(
+  expect(publishedKey(buildSteps, "knip-cache").startsWith(knipPrefix)).toBe(
     true,
   );
   const toolchain = "hashFiles('.nvmrc', '.npmrc', 'package-lock.json')";
@@ -722,7 +759,7 @@ it("deletes superseded caches only from the trusted follow-up workflow", async (
     [staticSteps, "static-cache", toolchain],
     [deepSteps, "static-cache", toolchain],
     [
-      deepSteps,
+      buildSteps,
       "knip-cache",
       "hashFiles('knip.json', 'tsconfig.json', 'package.json', 'package-lock.json')",
     ],
@@ -738,6 +775,51 @@ it("deletes superseded caches only from the trusted follow-up workflow", async (
   expect(String(windowsNativeKey?.run)).toContain("ImageOS");
   expect(String(windowsNativeKey?.run)).toContain("ImageVersion");
   expect(String(windowsNativeKey?.run)).toContain("date -u +%Y-%m-%d");
+});
+
+it("replaces Windows cross-build artifacts on retries under their consumer names", async () => {
+  const ci = workflows.find(({ file }) => file === "ci.yml");
+  const jobs = ci?.workflow.jobs;
+  const producer = jobs?.["windows-native-build"]?.steps ?? [];
+  const verifiedAt = producer.findIndex(
+    (step) => step.name === "Verify cross-built Windows test fixtures",
+  );
+  const uploadPositions = producer.flatMap((step, index) =>
+    step.uses?.startsWith("actions/upload-artifact@") ? [index] : [],
+  );
+  expect(verifiedAt).toBeGreaterThanOrEqual(0);
+  expect(uploadPositions).toHaveLength(3);
+  for (const index of uploadPositions)
+    expect(index).toBeGreaterThan(verifiedAt);
+  const uploads = uploadPositions.map((index) => producer[index]?.with);
+  expect(uploads).toMatchObject([
+    {
+      name: "windows-native-inspection-fixture",
+      overwrite: true,
+      "if-no-files-found": "error",
+    },
+    {
+      name: "windows-process-boundary-fixture",
+      overwrite: true,
+      "if-no-files-found": "error",
+    },
+    {
+      name: "windows-native-controls",
+      overwrite: true,
+      "if-no-files-found": "error",
+    },
+  ]);
+  const names = new Set(uploads.map((upload) => upload?.name));
+  for (const job of ["package-e2e", "windows-curated"]) {
+    const downloads = jobs?.[job]?.steps?.filter(
+      (step) =>
+        step.uses?.startsWith("actions/download-artifact@") &&
+        names.has(step.with?.name),
+    );
+    expect(downloads?.map((step) => step.with?.name).sort()).toEqual(
+      job === "package-e2e" ? ["windows-native-controls"] : [...names].sort(),
+    );
+  }
 });
 
 it("publishes each hosted npm download cache from one writer", async () => {

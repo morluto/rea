@@ -15,6 +15,7 @@ import { startWorkerSite } from "../fixtures/browser-worker-site.mjs";
 import { parseEvidence } from "../../dist/domain/evidence.js";
 import { webPageInspectionSchema } from "../../dist/domain/browserObservationSchemas.js";
 import { mcpTextValue } from "./mcp-verifier-results.mjs";
+import { completeEvidenceClient } from "./complete-evidence.mjs";
 
 /** Real workers, selected-origin negatives, source digests, cache delivery and owned cleanup through public adapters. */
 export async function verifyBrowserWorkers(
@@ -69,6 +70,8 @@ export async function verifyBrowserWorkers(
       [
         entrypoint,
         "inspect-web-page",
+        "--detail",
+        "complete",
         endpoint,
         target,
         "--include-script-sources",
@@ -97,6 +100,8 @@ export async function verifyBrowserWorkers(
       [
         entrypoint,
         "inspect-web-page",
+        "--detail",
+        "complete",
         endpoint,
         target,
         "--include-script-sources",
@@ -124,7 +129,9 @@ export async function verifyBrowserWorkers(
       sweepTokenOwnedProcesses: true,
     });
     commands.adopt(transport, "worker verifier MCP process");
-    client = new Client({ name: "worker-verifier", version: "1" });
+    client = completeEvidenceClient(
+      new Client({ name: "worker-verifier", version: "1" }),
+    );
     await client.connect(transport);
     const catalog = await client.listTools();
     const bundleTool = catalog.tools.find(

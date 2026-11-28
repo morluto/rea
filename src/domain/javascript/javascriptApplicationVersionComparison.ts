@@ -131,6 +131,9 @@ const matchingSummary = (
       case "semantic-key":
         counts.semantic_key += 1;
         break;
+      case "none":
+        // Ambiguous and unmatched items are counted by match status below.
+        break;
     }
     if (match.status === "ambiguous") counts.ambiguous += 1;
     else if (match.status === "unmatched") counts.unmatched += 1;
