@@ -81,12 +81,63 @@ exact `where.indices`, `addresses`, `procedure_addresses` or `statuses`. Add
 `collection: "pseudocode"` with one row's `index` to page a large body. Batch
 limitations aggregate every item, so do not attribute them to one successful row.
 
+## Keep competing explanations testable
+
+For an unanswered question, state what observation would distinguish the
+remaining explanations. Select the smallest supported probe that can supply
+that evidence within the requested scope. A matching string, loaded script or
+static path can identify a candidate without proving the observed behavior.
+Keep a negative result bounded by the searched artifact, selected records,
+capture interval and coverage. A missing provider or truncated search leaves a
+gap; repeating an unchanged call does not close it.
+
 Use `record_unknown` to track unresolved questions in the user's investigation
 and name the authority or environment still required. Supply supporting and
-contradicting evidence IDs. It updates the session registry directly.
-Use `update_unknown` with the current revision; reread after a stale revision
-instead of retrying blindly. Only qualifying observed evidence can verify a
-resolution.
+contradicting evidence IDs. It updates the session registry directly. Its
+`recommended_probes` record a proposed probe; they do not run or authorize it.
+Keep static findings available when runtime execution is outside the request.
+
+`list_unknowns` returns current heads; keep the same exact filters and follow
+`next_offset` until it is null when paging. `update_unknown` appends a
+full-state revision, so start from the current head, keep its evidence links,
+requirements and relationships, and send its revision as `expected_revision`.
+After a stale revision, reread and reconcile the new head instead of retrying
+blindly. Only qualifying observed evidence can verify a resolution.
+
+`verify_unknown_resolution` inspects the current disposition; it does not run a
+probe or discover new evidence. `result.valid` is true for any resolved head,
+including withdrawn and out-of-scope dispositions; only `result.truthVerified`
+reports a verified disposition. Cite the resolution's Evidence and its coverage,
+not the boolean alone. Registry mutation Evidence is not proof of an answer.
+
+## Hand off an investigation
+
+Retained Evidence IDs and Unknown history belong to the current MCP connection.
+`close_binary` releases the engine but keeps them; `reset_investigation` clears
+them, and loses them unless `save_path` is supplied. Export with
+`export_evidence_bundle` before ending the session or handing off work when the
+records must survive it. Existing files require `overwrite: true`; keep the
+original export when it is the handoff baseline.
+
+Record the bundle path, artifact digests, relevant Evidence and Unknown IDs, the
+answered question, competing explanations, coverage gaps and next useful probe.
+Reference the bundle rather than copying complete payloads into the handoff.
+Preserve external captures and exported scripts, maps or manifests needed by
+later tools; a bundle does not recreate those files. A failure's
+`details.partial_observation` of kind `retained-evidence` is in the ledger and
+is exported; any other partial observation is not retained, so save it
+separately. An empty bundle does not prove that no partial work or side effect
+occurred.
+
+In the destination MCP session, call `import_evidence_bundle` with the saved
+absolute path. Import validates every Evidence ID and manifest, merges
+atomically and restores the Unknown entries in the bundle; questions embedded
+only in Evidence do not become Unknown entries. Import does not open a target,
+start a provider or refresh runtime facts, and historical observations remain
+historical. Open the intended target first only when the next operation needs
+one; `open_binary` snapshot restoration is separate and requires the matching
+target, provider and analysis profile. CLI `rea evidence-import` validates a
+file in its own process; it does not populate an MCP session.
 
 Use comparisons with complete, compatible page sets when claiming equivalence
 or absence:
