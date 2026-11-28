@@ -1,5 +1,6 @@
 import { registerPlaywrightTraceCommand } from "./playwrightTraceCommand.js";
 import { registerApiContractCommand } from "./apiContractCommand.js";
+import { registerPerfDataCommand } from "./perfDataCommand.js";
 import { registerNtfsJournalCommand } from "./ntfsJournalCommand.js";
 import type { CliInstance } from "./types.js";
 
@@ -86,6 +87,7 @@ export const registerApplicationCommands = (
     },
   });
   registerApiContractCommand(cli, logger);
+  registerPerfDataCommand(cli, logger);
   registerNtfsJournalCommand(cli, logger);
   registerPlaywrightTraceCommand(cli, logger);
   registerEvidenceJsonCommand({

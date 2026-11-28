@@ -662,6 +662,7 @@ const NON_ZIP_FORMATS = {
   plist: described("plist", plain),
   sqlite: described("sqlite", plain),
   "windows-shortcut": described("windows-shortcut", plain),
+  "perf-data": described("perf-data", plain),
   "python-pyc": described("python-pyc", plain),
   devicetree: described("devicetree", plain),
   "esp-nvs": described("esp-nvs", plain),

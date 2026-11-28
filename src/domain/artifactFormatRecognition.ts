@@ -41,6 +41,7 @@ import {
 import { hasEspNvsHeader } from "./firmware/espNvsParser.js";
 import { hasDebPackageHeader } from "./deb/debPackage.js";
 import { observePythonBytecodePrefix } from "./python/pythonBytecodeIdentity.js";
+import { hasPerfDataMagic } from "./perfData/perfDataFormat.js";
 import { hasSqliteHeader } from "./sqliteFormat.js";
 import { recognizeTarPrefix, tarHeaderRefusal } from "./tarFormat.js";
 import {
@@ -112,6 +113,7 @@ export type RecognizedArtifactFormat = Extract<
 export const STANDALONE_ARTIFACT_FORMATS = [
   "sqlite",
   "windows-shortcut",
+  "perf-data",
   "python-pyc",
   "devicetree",
   "esp-nvs",
@@ -339,6 +341,7 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     when("auditd-log", hasAuditdLogRecord),
     when("sqlite", hasSqliteHeader),
     when("windows-shortcut", hasWindowsShortcutHeader),
+    when("perf-data", hasPerfDataMagic),
     when("deb", hasDebPackageHeader),
     ({ prefix, fileSize }) =>
       hasEspNvsHeader(prefix, fileSize)

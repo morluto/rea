@@ -173,6 +173,7 @@ const TARGETS: TargetFixtures = {
   uefi: { ...artifact, format: "uefi" },
   sqlite: { ...artifact, format: "sqlite" },
   "windows-shortcut": { ...artifact, format: "windows-shortcut" },
+  "perf-data": { ...artifact, format: "perf-data" },
   "python-pyc": { ...artifact, format: "python-pyc" },
   devicetree: { ...artifact, format: "devicetree" },
   "esp-nvs": { ...artifact, format: "esp-nvs" },

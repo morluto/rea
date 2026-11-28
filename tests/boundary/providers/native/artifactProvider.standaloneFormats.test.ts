@@ -9,6 +9,7 @@ import { bfltFile } from "../../../../src/domain/bfltExecutable.fixture.js";
 import { megaDriveRom } from "../../../../src/domain/megaDriveRom.fixture.js";
 import { n64RomImage } from "../../../../src/domain/n64Rom.fixture.js";
 import { windowsShortcutBytes } from "../../../fixtures/binaryDiagnostics/windowsShortcut.js";
+import { buildPerfRecording } from "../../../fixtures/perfData.js";
 import { createSqliteDatabaseFixture } from "../../../fixtures/sqlite/database.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { buildFv } from "../../../fixtures/uefiImage.js";
@@ -109,6 +110,12 @@ it.each([
     create: writeBytes("target.lnk", () => windowsShortcutBytes()),
     format: "windows-shortcut",
     operation: "inspect_windows_shortcut",
+  },
+  {
+    name: "a Linux perf recording",
+    create: writeBytes("recording.bin", () => buildPerfRecording()),
+    format: "perf-data",
+    operation: "inspect_perf_data",
   },
   {
     name: "a Python pyc",
