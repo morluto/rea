@@ -147,12 +147,15 @@ cliTest(
 /** Lay out a package with REA's CLI script shape and the given manifest. */
 const installPackage = async (
   root: string,
-  manifest: Readonly<Record<string, unknown>>,
+  manifest: Readonly<Record<string, unknown>> | string,
 ): Promise<string> => {
   const script = join(root, "scripts", "rea.mjs");
   await mkdir(dirname(script), { recursive: true });
   await writeFile(script, "");
-  await writeFile(join(root, "package.json"), JSON.stringify(manifest));
+  await writeFile(
+    join(root, "package.json"),
+    typeof manifest === "string" ? manifest : JSON.stringify(manifest),
+  );
   return script;
 };
 
@@ -236,20 +239,28 @@ for (const runtime of ["current", "other"] as const)
     },
   );
 
-for (const [label, root, manifest] of [
+for (const [label, root, manifest, identity] of [
   [
     "another package name",
     ["node_modules", "rea-agents"],
     { ...reaManifest, name: "other-agents" },
+    "foreign",
   ],
-  ["a source checkout", ["checkout", "rea-agents"], reaManifest],
+  ["a source checkout", ["checkout", "rea-agents"], reaManifest, "foreign"],
   [
     "a different CLI script",
     ["node_modules", "rea-agents"],
     { ...reaManifest, bin: { rea: "scripts/other.mjs" } },
+    "foreign",
+  ],
+  [
+    "an unparseable REA manifest",
+    ["node_modules", "rea-agents"],
+    '{"name":"rea-agents",',
+    "unknown",
   ],
 ] as const)
-  cliTest(`setup keeps a launcher of ${label} foreign`, async ({ cli }) => {
+  cliTest(`setup keeps a launcher of ${label} ${identity}`, async ({ cli }) => {
     const home = await createTestTempDirectory("rea-setup-unproven-install-");
     const config = join(home, ".claude.json");
     const script = await installPackage(join(home, ...root), manifest);
@@ -265,13 +276,13 @@ for (const [label, root, manifest] of [
     expect(result.exitCode, result.stdout).toBe(1);
     expect(result.json).toMatchObject({
       status: "needs_human",
-      remediation: expect.stringContaining("foreign ownership"),
+      remediation: expect.stringContaining(`${identity} ownership`),
     });
     expect(await readFile(config, "utf8")).toBe(original);
   });
 
 cliTest.skipIf(process.platform === "win32")(
-  "setup keeps a launcher foreign when Node selects a script outside the REA package",
+  "setup leaves a launcher unknown when Node and native traversal select different scripts",
   async ({ cli }) => {
     const home = await createTestTempDirectory("rea-setup-divergent-install-");
     const config = join(home, ".claude.json");
@@ -302,7 +313,7 @@ cliTest.skipIf(process.platform === "win32")(
     expect(result.exitCode, result.stdout).toBe(1);
     expect(result.json).toMatchObject({
       status: "needs_human",
-      remediation: expect.stringContaining("foreign ownership"),
+      remediation: expect.stringContaining("unknown ownership"),
     });
     expect(await readFile(config, "utf8")).toBe(original);
   },

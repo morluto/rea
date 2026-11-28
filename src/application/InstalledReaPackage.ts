@@ -3,6 +3,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { z } from "zod";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
+import { isEnoentError } from "./ClientConfigPath.js";
 
 /** REA's manifest is tens of kilobytes; a larger file is not one REA published. */
 const MAX_PACKAGE_MANIFEST_BYTES = 1024 * 1024;
@@ -14,36 +15,65 @@ const reaPackageManifestSchema = z.object({
 });
 
 /**
- * Whether a path resolves to the CLI script of an installed REA package.
- * npm, npx, pnpm and Bun place an installed package at `node_modules/<name>`,
- * and its manifest names the script REA's CLI runs. A source checkout, an
- * entry whose package is gone, or a spelling that Node and native traversal
- * resolve to different files is not proven to be another REA installation.
+ * Whether a launcher script belongs to an installed REA package: verified,
+ * absent (another package or location, or no manifest), or unknown when the
+ * package layout matches but its manifest could not be read or parsed, or the
+ * runtimes may select different scripts.
  */
-export const installedReaPackageEntrypoint = (path: string): boolean => {
+export type InstalledReaPackageEvidence = "verified" | "absent" | "unknown";
+
+/** Classify one resolved script against the package directory that contains it. */
+const scriptPackageEvidence = (script: string): InstalledReaPackageEvidence => {
+  // Every published manifest maps the CLI to `scripts/rea.mjs`, and npm, npx,
+  // pnpm and Bun place an installed package at `node_modules/<name>`.
+  const root = dirname(dirname(script));
+  if (
+    basename(root) !== PRODUCT_IDENTITY.packageName ||
+    basename(dirname(root)) !== "node_modules"
+  )
+    return "absent";
+  const manifestPath = join(root, "package.json");
+  let value: unknown;
   try {
-    const script = realpathSync.native(path);
-    // Node removes `..` before following links, while native traversal follows
-    // them first; a script the two select differently is not proven.
-    if (realpathSync.native(resolve(path)) !== script) return false;
-    // Every published manifest maps the CLI to `scripts/rea.mjs`.
-    const root = dirname(dirname(script));
-    if (
-      basename(root) !== PRODUCT_IDENTITY.packageName ||
-      basename(dirname(root)) !== "node_modules"
-    )
-      return false;
-    const manifestPath = join(root, "package.json");
     const stat = statSync(manifestPath);
-    if (!stat.isFile() || stat.size > MAX_PACKAGE_MANIFEST_BYTES) return false;
-    const manifest = reaPackageManifestSchema.safeParse(
-      JSON.parse(readFileSync(manifestPath, "utf8")),
-    );
-    return (
-      manifest.success &&
-      resolve(root, manifest.data.bin[PRODUCT_IDENTITY.cliBinary]) === script
-    );
-  } catch {
-    return false;
+    if (!stat.isFile() || stat.size > MAX_PACKAGE_MANIFEST_BYTES)
+      return "absent";
+    value = JSON.parse(readFileSync(manifestPath, "utf8"));
+  } catch (cause) {
+    // No manifest means no installed package claims the script; one that
+    // cannot be read or parsed leaves the package unresolved.
+    return isEnoentError(cause) ? "absent" : "unknown";
   }
+  const manifest = reaPackageManifestSchema.safeParse(value);
+  return manifest.success &&
+    resolve(root, manifest.data.bin[PRODUCT_IDENTITY.cliBinary]) === script
+    ? "verified"
+    : "absent";
+};
+
+const resolvedScript = (path: string): string | undefined => {
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return undefined;
+  }
+};
+
+/**
+ * Whether a launcher path selects the CLI script of an installed REA package.
+ * Node removes `..` before following links, while native traversal follows
+ * them first; when the two select different files and either may be REA's,
+ * the selected script is unknown.
+ */
+export const installedReaPackageEvidence = (
+  path: string,
+): InstalledReaPackageEvidence => {
+  const selections = [
+    ...new Set([resolvedScript(path), resolvedScript(resolve(path))]),
+  ];
+  const evidence = selections.map((script) =>
+    script === undefined ? "absent" : scriptPackageEvidence(script),
+  );
+  if (evidence.length === 1) return evidence[0] ?? "absent";
+  return evidence.every((value) => value === "absent") ? "absent" : "unknown";
 };

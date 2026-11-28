@@ -35,7 +35,7 @@ import {
   msixPackagesDirectory,
   packagePrivateLauncherBlocker,
 } from "./MsixPackageStorage.js";
-import { installedReaPackageEntrypoint } from "./InstalledReaPackage.js";
+import { installedReaPackageEvidence } from "./InstalledReaPackage.js";
 
 /** Package runners recognized for invocation guidance and legacy registrations. */
 type PackageRunner = "npx" | "bunx";
@@ -238,16 +238,19 @@ type EntrypointOwnership = Pick<
 
 /**
  * Another installed REA package still owns the registration, so setup can
- * refresh it; it does not select this installation. Unresolved paths stay unknown.
+ * refresh it; it does not select this installation. Unresolved package
+ * evidence leaves ownership unknown.
  */
 const entrypointOwnership = (
   identity: ClientRegistrationCommandIdentity,
   candidate: string,
 ): EntrypointOwnership => {
   if (identity === "owned") return { identity, installation: "current" };
-  if (identity === "foreign" && installedReaPackageEntrypoint(candidate))
+  if (identity !== "foreign") return { identity };
+  const evidence = installedReaPackageEvidence(candidate);
+  if (evidence === "verified")
     return { identity: "owned", installation: "other" };
-  return { identity };
+  return evidence === "unknown" ? { identity: "unknown" } : { identity };
 };
 
 /**
@@ -269,9 +272,10 @@ const aubeShimOwnership = (
       entrypointIdentity(shim.target, currentCommandPath),
       shim.target,
     );
-  return installedReaPackageEntrypoint(shim.target)
-    ? { identity: "owned", installation: "other" }
-    : undefined;
+  const evidence = installedReaPackageEvidence(shim.target);
+  if (evidence === "verified")
+    return { identity: "owned", installation: "other" };
+  return evidence === "unknown" ? { identity: "unknown" } : undefined;
 };
 
 /** A direct launcher may be a native executable or a Node shebang script. */
