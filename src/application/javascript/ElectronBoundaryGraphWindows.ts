@@ -43,6 +43,7 @@ export const addElectronWindowBoundaries = (
     const { file, javascript } = analyzed;
     if (javascript === null) continue;
     const coverage = javascriptAnalysisCoverage(javascript);
+    const windowsByLocation = new Map<string, ApplicationNode>();
     for (const value of javascript.electron.browser_windows) {
       const source = electronFindingSourceNode(
         context,
@@ -51,7 +52,38 @@ export const addElectronWindowBoundaries = (
         value.module_runtime,
       );
       if (source !== undefined)
-        addBrowserWindow({ context, file, source, value, coverage });
+        windowsByLocation.set(
+          javascriptSourceRangeKey(value.location),
+          addBrowserWindow({ context, file, source, value, coverage }),
+        );
+    }
+    for (const value of javascript.electron.browser_windows) {
+      const handler = value.window_open_handler;
+      if (handler === undefined) continue;
+      const source = windowsByLocation.get(
+        javascriptSourceRangeKey(handler.opener_location),
+      );
+      const target = windowsByLocation.get(
+        javascriptSourceRangeKey(value.location),
+      );
+      if (source !== undefined && target !== undefined)
+        addElectronInferenceEdge(context, {
+          source,
+          target,
+          file,
+          range: handler.registration_location,
+          coverage,
+          relation: "contains",
+          operation: "associate-window-open-opener",
+          loaderAuthority: value.loader_authority,
+          limitations: [
+            "The opener is a source allocation; this does not establish runtime popup creation or parent identity.",
+          ],
+          properties: {
+            relationship: "popup-configuration",
+            runtime_creation_observed: false,
+          },
+        });
     }
     for (const value of javascript.electron.context_bridge_apis) {
       const source = electronFindingSourceNode(
@@ -78,8 +110,21 @@ export const addElectronWindowBoundaries = (
 
 const addBrowserWindow = (
   input: FindingInput<ElectronBrowserWindowFinding>,
-): void => {
+): ApplicationNode => {
   const { context, file, value, coverage } = input;
+  const popup = value.window_open_handler;
+  const observationOperation =
+    popup === undefined
+      ? "observe-browser-window-construction"
+      : "observe-window-open-override";
+  const limitations = [
+    "Only explicitly present webPreferences are reported; omitted properties are not interpreted as Electron defaults.",
+    ...(popup === undefined
+      ? []
+      : [
+          "This is a returned popup configuration, not evidence a popup was created; inherited preferences and runtime parent identity are not inferred.",
+        ]),
+  ];
   const window = context.accumulator.addNode({
     kind: "browser-window",
     identity: artifactLocalIdentity(
@@ -89,12 +134,19 @@ const addBrowserWindow = (
     ),
     observations: [
       {
-        label: `${value.window_constructor ?? "BrowserWindow"}@${javascriptSourceRangeKey(value.location)}`,
+        label: `${popup === undefined ? (value.window_constructor ?? "BrowserWindow") : "WindowOpenHandler override"}@${javascriptSourceRangeKey(value.location)}`,
         properties: {
           ...(value.window_constructor === undefined
             ? {}
             : { window_constructor: value.window_constructor }),
           source_path: file.path,
+          ...(popup === undefined
+            ? {}
+            : {
+                configuration_source: "setWindowOpenHandler",
+                window_open_handler: popup,
+                runtime_creation_observed: false,
+              }),
           options_status: value.options_status,
           web_preferences_status: value.web_preferences_status,
           web_preferences: value.web_preferences,
@@ -122,11 +174,9 @@ const addBrowserWindow = (
                   sha256: file.sha256,
                   path: file.path,
                   range: value.location,
-                  operation: "observe-browser-window-construction",
+                  operation: observationOperation,
                   coverage,
-                  limitations: [
-                    "Only explicitly present webPreferences are reported; omitted properties are not interpreted as Electron defaults.",
-                  ],
+                  limitations,
                 },
                 value.loader_authority,
               )
@@ -134,13 +184,10 @@ const addBrowserWindow = (
                 sha256: file.sha256,
                 path: file.path,
                 range: value.location,
-                operation:
-                  value.resolution_sources === undefined
-                    ? "observe-browser-window-construction"
-                    : "resolve-browser-window-constant-options",
+                operation: "resolve-browser-window-constant-options",
                 coverage,
                 limitations: [
-                  "Only explicitly present webPreferences are reported; omitted properties are not interpreted as Electron defaults.",
+                  ...limitations,
                   ...(value.loader_authority === "candidate"
                     ? [ELECTRON_CANDIDATE_LIMITATION]
                     : []),
@@ -159,11 +206,15 @@ const addBrowserWindow = (
     range: value.location,
     coverage,
     relation: "contains",
-    operation: "locate-browser-window-construction",
+    operation:
+      popup === undefined
+        ? "locate-browser-window-construction"
+        : "locate-window-open-override",
     properties: { source_path: file.path },
     loaderAuthority: value.loader_authority,
   });
   addWindowPreload(input, window);
+  return window;
 };
 
 const addWindowPreload = (
@@ -193,7 +244,10 @@ const addWindowPreload = (
     kind: "electron-preload",
     anchor: input.file,
     resolution,
-    mechanism: `${input.value.window_constructor ?? "BrowserWindow"}:webPreferences.preload`,
+    mechanism:
+      input.value.window_open_handler === undefined
+        ? `${input.value.window_constructor ?? "BrowserWindow"}:webPreferences.preload`
+        : "setWindowOpenHandler:overrideBrowserWindowOptions.webPreferences.preload",
     range: input.value.location,
     coverage: input.coverage,
   });
