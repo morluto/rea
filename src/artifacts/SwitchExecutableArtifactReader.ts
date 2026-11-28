@@ -498,6 +498,15 @@ export class SwitchExecutableArtifactReader extends PositionalArtifactReader<
         asset.truncated,
         null,
       );
+    if (assets !== undefined) {
+      let assetEnd = assets.offset + NRO_ASSET_HEADER_SIZE;
+      for (const asset of assets.assets)
+        assetEnd = Math.max(assetEnd, asset.fileOffset + asset.size);
+      if (assetEnd < fileSize)
+        limitations.push(
+          `NRO has ${String(fileSize - assetEnd)} byte(s) at offset ${String(assetEnd)} after the ASET header and declared asset ranges; they are not interpreted.`,
+        );
+    }
     const mod0Extent = nroMod0MagicExtent(header, fileSize);
     const mod0Present =
       mod0Extent === undefined
