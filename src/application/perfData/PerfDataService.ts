@@ -1,26 +1,22 @@
 import { isAbsolute } from "node:path";
 import {
-  ArtifactReaderFailure,
   type ArtifactResourceScope,
-  artifactFileCancellationCause,
   artifactFilePrimaryFacts,
-  artifactReaderTargetFailure,
   projectStableArtifactFailure,
   readStableArtifact,
-  stableArtifactInputRecovery,
 } from "../../resources/index.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
   AnalysisInputError,
-  cancelledBy,
-  carriedReason,
   fixedCeilingConstraint,
 } from "../../domain/analysisErrorCore.js";
-import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
+import { decodeLimit } from "../../domain/parseFailure.js";
+import { parseLimitConstraint } from "../../domain/parseFailureAnalysisError.js";
+import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
+import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
+  PERF_DATA_MAX_FILE_BYTES,
   PERF_DATA_OPERATION as operation,
   PERF_DATA_PROVIDER,
   type PerfData,
@@ -32,84 +28,66 @@ import {
 } from "../../domain/perfData/perfDataQuery.js";
 import { parsePerfData } from "../../domain/perfData/parsePerfData.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
-import { parseAnalysisInput } from "../AnalysisInput.js";
+import {
+  callerAnalysisParameters,
+  parseAnalysisInput,
+} from "../AnalysisInput.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
-const inputFailure = (message: string, cause?: unknown) =>
-  new AnalysisInputError(
-    operation,
-    {
-      cause,
-      ...(isSelectedRegularFileError(cause)
-        ? {
-            conformsToInputContract: true,
-            remediationAction:
-              "Check that the selected path exists and is a readable regular file on the host running REA.",
-          }
-        : {}),
-      ...(cause instanceof ArtifactReaderFailure
-        ? stableArtifactInputRecovery(cause)
-        : {}),
-    },
-    [{ path: ["path"], reason: "invalid_format", message }],
-  );
+const inputFailure = (message: string) =>
+  new AnalysisInputError(operation, {}, [
+    { path: ["path"], reason: "invalid_format", message },
+  ]);
 
-/** Keep the reader's typed reasons instead of flattening every failure into "io". */
-const readFailure = (
-  failure: unknown,
-  input: InspectPerfDataInput,
-): AnalysisError => {
-  const { cause, origin } = artifactFilePrimaryFacts(failure);
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure
-  ) {
-    if (cause.reason === "cancelled")
-      return cancelledBy(
-        operation,
-        carriedReason(artifactFileCancellationCause(cause)),
-      );
-    if (cause.reason === "integrity")
-      return new AnalysisArtifactChangedError(
-        operation,
-        input.path,
-        cause.message,
-        { cause },
-      );
-    if (cause.reason === "limit")
-      return fixedCeilingConstraint(
-        operation,
-        cause.boundary ?? "file-size",
-        cause.message,
-        { name: "The perf.data file admission allowance", kind: "input" },
-        { cause },
-      );
-    if (cause.reason === "path") return inputFailure(cause.message, cause);
-    const targetFailure = artifactReaderTargetFailure(
+const readFailure = (failure: unknown, input: InspectPerfDataInput) => {
+  const facts = artifactFilePrimaryFacts(failure);
+  return classifyProviderFailure(
+    facts.cause,
+    offlineArtifactFailureDialect(facts, {
+      providerId: PERF_DATA_PROVIDER.id,
       operation,
-      input.path,
-      cause,
-    );
-    if (targetFailure !== undefined) return targetFailure;
-  }
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(operation, input.path, cause.code, {
-        cause,
-      });
-    if (isSelectedRegularFileError(cause))
-      return inputFailure(
-        `Selected recording could not be read (${cause.code}): ${input.path}`,
-        cause,
-      );
-  }
-  return new ArtifactOperationError(
-    operation,
-    "io",
-    undefined,
-    "perf recording read failed.",
-    { cause: failure },
+      path: input.path,
+      description: "perf recording",
+      fallbackMessage: "perf recording read failed.",
+      fileSize: (cause) =>
+        input.max_file_bytes === PERF_DATA_MAX_FILE_BYTES
+          ? fixedCeilingConstraint(
+              operation,
+              "file-size",
+              cause.message,
+              {
+                name: "max_file_bytes",
+                limit: PERF_DATA_MAX_FILE_BYTES,
+                unit: "bytes",
+                kind: "input",
+              },
+              { cause },
+            )
+          : parseLimitConstraint(
+              operation,
+              "file-size",
+              decodeLimit(
+                "perf-data",
+                cause.message,
+                { name: "max_file_bytes", maximum: input.max_file_bytes },
+                { cause },
+              ),
+              {
+                retryable: false,
+                limit: {
+                  control_kind: "parameter",
+                  parameter: "max_file_bytes",
+                  effective_value: input.max_file_bytes,
+                  unit: "bytes",
+                  minimum: 1,
+                  maximum: PERF_DATA_MAX_FILE_BYTES,
+                  default_value: PERF_DATA_MAX_FILE_BYTES,
+                  applies_at: "next_call",
+                },
+                remediationAction: `Increase max_file_bytes above ${input.max_file_bytes}, up to ${PERF_DATA_MAX_FILE_BYTES}, and retry with the same file if it fits.`,
+              },
+            ),
+    }),
   );
 };
 
@@ -185,11 +163,11 @@ export const inspectPerfDataEvidence = async (
     {
       operation,
       predicateType: "rea.perf-data-inventory",
-      parameters: {
+      parameters: callerAnalysisParameters(rawInput)({
         path: input.path,
         max_file_bytes: input.max_file_bytes,
         max_events: input.max_events,
-      },
+      }),
       result: recording,
       confidence: "observed",
       limitations: recording.limitations,

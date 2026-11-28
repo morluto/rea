@@ -71,6 +71,8 @@ export const perfDiagnosticSchema = z.strictObject({
   code: z.enum([
     "not-a-perf-data-file",
     "truncated-header",
+    "unsupported-header",
+    "invalid-feature-section",
     "invalid-attribute-section",
     "attribute-section-overlap",
     "empty-attribute-section",

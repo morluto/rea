@@ -46,6 +46,7 @@ export const BINARY_TARGET_FORMAT_KINDS = {
   uefi: "artifact",
   sqlite: "artifact",
   "windows-shortcut": "artifact",
+  "perf-data": "artifact",
   "python-pyc": "artifact",
   devicetree: "artifact",
   "source-map": "artifact",

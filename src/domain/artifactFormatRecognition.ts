@@ -24,6 +24,7 @@ import {
   readDevicetreeHeader,
 } from "./firmware/devicetreeHeader.js";
 import { observePythonBytecodePrefix } from "./python/pythonBytecodeIdentity.js";
+import { hasPerfDataMagic } from "./perfData/perfDataFormat.js";
 import { hasSqliteHeader } from "./sqliteFormat.js";
 import { recognizeTarPrefix, tarHeaderRefusal } from "./tarFormat.js";
 import {
@@ -71,6 +72,7 @@ export type RecognizedArtifactFormat = Extract<
 export const STANDALONE_ARTIFACT_FORMATS = [
   "sqlite",
   "windows-shortcut",
+  "perf-data",
   "python-pyc",
   "devicetree",
 ] as const;
@@ -230,6 +232,7 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     when("ntfs-mft", hasMftFileRecordHeader),
     when("sqlite", hasSqliteHeader),
     when("windows-shortcut", hasWindowsShortcutHeader),
+    when("perf-data", hasPerfDataMagic),
     // Only a pinned CPython magic claims the format; a CR LF trailer alone
     // is too weak a signature for arbitrary bytes.
     when("python-pyc", (prefix) => {

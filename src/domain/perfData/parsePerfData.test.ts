@@ -177,10 +177,44 @@ describe("parsePerfData rejection diagnostics", () => {
     bytes.writeBigUInt64LE(0xffffffffffffffffn, 0x08);
     const archive = parsed(bytes);
     expect(archive.diagnostics).toEqual([
-      expect.objectContaining({ code: "truncated-header" }),
+      expect.objectContaining({ code: "unsupported-header" }),
     ]);
     expect(archive.diagnostics[0]?.message).toContain("MAX_SAFE_INTEGER");
   });
+
+  it("distinguishes a complete unsupported header from missing bytes", () => {
+    const archive = parsed(buildPerfRecording({ headerBytes: 112 }));
+    expect(archive.diagnostics).toEqual([
+      expect.objectContaining({ code: "unsupported-header" }),
+    ]);
+  });
+
+  it.each(["descriptor", "payload"] as const)(
+    "keeps feature %s bytes out of the identifier inventory",
+    (range) => {
+      const recording = buildPerfRecording();
+      const table = Buffer.alloc(16);
+      const payload = Buffer.alloc(8);
+      const tableOffset = recording.length;
+      const payloadOffset = tableOffset + table.length;
+      table.writeBigUInt64LE(BigInt(payloadOffset));
+      table.writeBigUInt64LE(BigInt(payload.length), 8);
+      recording.writeUInt8(1 << 3, PERF_HEADER_BYTES_WITHOUT_FEATURES);
+      const extended = Buffer.concat([recording, table, payload]);
+      expect(parsed(extended).events[0]?.ids).toEqual([7]);
+
+      extended.writeBigUInt64LE(
+        BigInt(range === "descriptor" ? tableOffset : payloadOffset),
+        PERF_HEADER_BYTES + PERF_STRIDE - 16,
+      );
+      const archive = parsed(extended);
+      expect(archive.events[0]?.ids).toEqual([]);
+      expect(archive.summary.identifiers_present).toBe(false);
+      expect(archive.diagnostics.map(({ code }) => code)).toEqual([
+        "invalid-ids-section",
+      ]);
+    },
+  );
 
   it("accepts the pre-feature-bitmap header as absent rather than truncated", () => {
     const archive = parsed(
@@ -377,14 +411,13 @@ describe("parsePerfData section accounting", () => {
     expect(archive.source_coverage.status).not.toBe("complete-within-scope");
   });
 
-  it("refuses to walk attributes when the event-types extent is unrepresentable", () => {
+  it("keeps readable attributes when a nonempty event-types section is past EOF", () => {
     const bytes = buildPerfRecording();
-    // The extent owns bytes the walk cannot compare against, so whether the
-    // attributes it covers belong to the event-types section is undecidable.
     bytes.writeBigUInt64LE(0xffffffffffffffffn, 0x38);
     bytes.writeBigUInt64LE(16n, 0x40);
     const archive = parsed(bytes);
-    expect(archive.events).toEqual([]);
+    expect(archive.events).toHaveLength(1);
+    expect(archive.summary.identifiers_present).toBe(true);
     expect(archive.diagnostics).toEqual([
       expect.objectContaining({ code: "unsafe-section-extent" }),
     ]);

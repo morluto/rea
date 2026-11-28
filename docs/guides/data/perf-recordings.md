@@ -7,7 +7,7 @@ on it for process investigations.
 
 ```sh
 rea inspect-perf-data ./perf.data --json
-rea inspect-perf-data ./perf.data --max-events 500 --evidence-output ./perf-inventory.json
+rea inspect-perf-data ./perf.data --max-events 500 --json > ./perf-inventory.json
 ```
 
 ```json

@@ -1,3 +1,7 @@
+import {
+  hasTruncatedPerfDataMagic,
+  perfDataByteOrder,
+} from "./perfDataFormat.js";
 import { BinaryReader } from "../binaryContainer.js";
 import { ok, type Result } from "../result.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
@@ -20,7 +24,6 @@ const PERF_DATA_READER_FORMAT = "perf-data";
  * Little- and big-endian recordings share the field order and differ only in
  * byte order, so one reader with an explicit endianness covers both.
  */
-const MAGIC = "PERFILE2";
 /** Offset of `size`; the header extent is the writer's own `sizeof(header)`. */
 const HEADER_SIZE_FIELD = 0x08;
 /** `sizeof(perf_file_header)` up to (not including) `adds_features`. */
@@ -207,6 +210,59 @@ const sectionAt = (bytes: Buffer, read: Reader, field: number): SectionRead => {
   };
 };
 
+/** Reserve the descriptor table and its payload extents without reading payloads. */
+const featureSections = (
+  bytes: Buffer,
+  read: Reader,
+  data: Section,
+  state: DecodeState,
+): readonly Section[] | undefined => {
+  let count = 0;
+  for (const byte of bytes.subarray(
+    HEADER_BYTES_WITHOUT_FEATURES,
+    HEADER_BYTES_WITH_FEATURES,
+  ))
+    for (let bits = byte; bits !== 0; bits &= bits - 1) count++;
+  if (count === 0) return [];
+  const offset = data.offset + data.size;
+  const size = count * PERF_FILE_SECTION_BYTES;
+  if (!withinFile(bytes.length, offset, size)) {
+    diagnose(
+      state,
+      null,
+      "invalid-feature-section",
+      "The feature descriptor table does not fit the file; its payload ownership could not be established.",
+    );
+    return undefined;
+  }
+  const owners: Section[] = [{ offset, size, within_file: true }];
+  for (
+    let field = offset;
+    field < offset + size;
+    field += PERF_FILE_SECTION_BYTES
+  ) {
+    const { section } = sectionAt(bytes, read, field);
+    if (section === null) {
+      diagnose(
+        state,
+        null,
+        "invalid-feature-section",
+        "A feature payload extent is not representable; its ownership could not be established.",
+      );
+      return undefined;
+    }
+    if (!section.within_file)
+      diagnose(
+        state,
+        null,
+        "invalid-feature-section",
+        "A feature payload extent exceeds the file size.",
+      );
+    owners.push(section);
+  }
+  return owners;
+};
+
 /**
  * Walks the attribute section. Each entry is `attr_size` bytes: a
  * `perf_event_attr` followed by the `perf_file_section` locating its ids.
@@ -220,6 +276,7 @@ const readEvents = (
   // Ranges the header already owns. An ids extent inside one of them would
   // decode those bytes as identifiers, so it is rejected instead.
   ownedSections: readonly Section[],
+  featureOwnershipKnown: boolean,
 ): void => {
   const end = section.offset + section.size;
   let cursor = section.offset;
@@ -292,7 +349,10 @@ const readEvents = (
     } else {
       // The writer places the id arrays outside the attribute entries, so an
       // offset inside the entry is not required; containment in the file is.
-      if (overlapsOwned(ids.offset, ids.size, ownedSections)) {
+      const overlaps = overlapsOwned(ids.offset, ids.size, ownedSections);
+      const unknownOwner = !featureOwnershipKnown && ids.size > 0;
+      const invalidExtent = ids.size % 8 !== 0 || !ids.within_file;
+      if (overlaps || unknownOwner) {
         // Entries may share one ids extent, which stays legitimate, but bytes
         // the header already assigned to the header, attributes, data or event
         // types are not an identifier array.
@@ -300,9 +360,11 @@ const readEvents = (
           state,
           ordinal,
           "invalid-ids-section",
-          `The entry at ${cursor} declares ids at ${ids.offset} for ${ids.size} bytes, which overlaps a section the header already owns.`,
+          overlaps
+            ? `The entry at ${cursor} declares ids at ${ids.offset} for ${ids.size} bytes, which overlaps a section the header already owns.`
+            : `The entry at ${cursor} declares ids whose ownership cannot be established because the feature sections are unreadable.`,
         );
-      } else if (ids.size % 8 !== 0 || !ids.within_file) {
+      } else if (invalidExtent) {
         diagnose(
           state,
           ordinal,
@@ -345,11 +407,7 @@ const readEvents = (
       // An extent that was rejected rather than decoded leaves this group's
       // identifiers unknown, the same as one that is not a whole number of
       // identifiers, so the summary cannot report a complete inventory.
-      if (
-        ids.size % 8 !== 0 ||
-        !ids.within_file ||
-        overlapsOwned(ids.offset, ids.size, ownedSections)
-      )
+      if (invalidExtent || overlaps || unknownOwner)
         state.identifiersPresent = false;
       else state.identifiers += idsList.length;
     }
@@ -477,27 +535,6 @@ const withIds = (
     ),
   }));
 
-/**
- * The magic encodes the recording host's byte order and reads `PERFILE2` in
- * it, so both spellings are accepted and the chosen order drives every read.
- */
-const byteOrder = (bytes: Buffer): boolean | null => {
-  if (bytes.length < 8) return null;
-  const magic = bytes.toString("latin1", 0, 8);
-  if (magic === MAGIC) return true;
-  return magic === [...MAGIC].reverse().join("") ? false : null;
-};
-
-/**
- * Whether a file shorter than the magic could still be a recording cut short
- * inside it: every byte it does carry has to match the magic in one order or
- * the other. A file that diverges before its end is unrelated input instead.
- */
-const magicPrefixOf = (bytes: Buffer): boolean =>
-  [MAGIC, [...MAGIC].reverse().join("")].some((spelling) =>
-    bytes.equals(Buffer.from(spelling.slice(0, bytes.length), "latin1")),
-  );
-
 export const parsePerfData = (
   bytes: Buffer,
   artifact: PerfDataArtifact,
@@ -515,18 +552,18 @@ export const parsePerfData = (
     identified: [],
     identifiersPresent: true,
   };
-  const little = byteOrder(bytes);
+  const little = perfDataByteOrder(bytes);
   if (little === null) {
     // A file cut short inside the magic is a damaged recording, not unrelated
     // input: reporting it as a wrong format sends callers looking at the wrong
     // thing, so the truncation wins when the bytes present all match.
-    const truncatedMagic = bytes.length < 8 && magicPrefixOf(bytes);
+    const truncatedMagic = hasTruncatedPerfDataMagic(bytes);
     diagnose(
       state,
       null,
       truncatedMagic ? "truncated-header" : "not-a-perf-data-file",
       truncatedMagic
-        ? `The file ends after ${bytes.length} of the ${MAGIC.length} magic bytes, so its sections were not read.`
+        ? `The file ends after ${bytes.length} of the 8 magic bytes, so its sections were not read.`
         : "The file does not start with the PERFILE2 magic in either byte order.",
     );
     return ok(noHeaderRecording(artifact, state.diagnostics));
@@ -541,22 +578,22 @@ export const parsePerfData = (
   // saw because both cases return null, so test presence on the raw field.
   const headerSizePresent = read.u64Bits(bytes, HEADER_SIZE_FIELD) !== null;
   const headerUnrepresentable = headerSizePresent && headerBytes === null;
+  const headerTruncated =
+    !headerSizePresent || (headerBytes !== null && bytes.length < headerBytes);
   if (
-    !headerSizePresent ||
-    headerUnrepresentable ||
-    bytes.length < (headerBytes ?? 0) ||
+    headerTruncated ||
     (headerBytes !== HEADER_BYTES_WITHOUT_FEATURES &&
       headerBytes !== HEADER_BYTES_WITH_FEATURES)
   ) {
     diagnose(
       state,
       null,
-      "truncated-header",
+      headerTruncated ? "truncated-header" : "unsupported-header",
       !headerSizePresent
         ? `The file ends before its ${HEADER_SIZE_FIELD + 8}-byte header size field, so its sections were not read.`
         : headerUnrepresentable
-          ? `The header size exceeds Number.MAX_SAFE_INTEGER, so the declared layout cannot be compared and its sections were not read.`
-          : bytes.length < (headerBytes ?? 0)
+          ? "The header size exceeds Number.MAX_SAFE_INTEGER, so the declared layout cannot be compared and its sections were not read."
+          : headerTruncated
             ? `The header declares ${headerBytes} bytes but the file ends at ${bytes.length}, so its sections were not read.`
             : `The header declares ${headerBytes} bytes; this inventory accepts the ${HEADER_BYTES_WITHOUT_FEATURES}- and ${HEADER_BYTES_WITH_FEATURES}-byte layouts.`,
     );
@@ -615,38 +652,22 @@ export const parsePerfData = (
   // events. Only a readable, nonempty extent can conflict.
   const eventTypesRead = sectionAt(bytes, read, EVENT_TYPES_SECTION_FIELD);
   const eventTypes = eventTypesRead.section;
-  // `sectionAt` reports the whole extent as unrepresentable when either half
-  // is, so the serialized size is read again to tell a zero-byte section from
-  // one whose size could not be read at all.
-  const eventTypesSize = read.u64(bytes, EVENT_TYPES_SECTION_FIELD + 8);
-  // An unrepresentable `event_types` extent with a nonzero size owns unknown
-  // bytes, so whether the walk publishes its contents cannot be decided:
-  // treating it as absent is what the overlap predicate below would do, and the
-  // walk would then publish contested attribute bytes as events while still
-  // reporting complete scope.
-  //
-  // A serialized zero size proves the section owns no bytes, so its offset
-  // cannot create an overlap. The offset is still unrepresentable and worth
-  // reporting, but dropping otherwise readable attributes would state less
-  // than the file does.
-  if (eventTypesRead.unrepresentable && eventTypesSize !== 0) {
+  if (eventTypesRead.unrepresentable) {
+    const offset = read.u64Bits(bytes, EVENT_TYPES_SECTION_FIELD);
+    const size = read.u64Bits(bytes, EVENT_TYPES_SECTION_FIELD + 8);
+    const noInFileBytes =
+      size === 0n || (offset !== null && offset >= BigInt(bytes.length));
     diagnose(
       state,
       null,
       "unsafe-section-extent",
-      eventTypesSize === null
-        ? "The event-types section size exceeds Number.MAX_SAFE_INTEGER, so its range cannot be compared with the attribute section."
-        : "The event-types section offset exceeds Number.MAX_SAFE_INTEGER while it declares bytes, so its range cannot be compared with the attribute section.",
+      noInFileBytes
+        ? "The event-types section extent exceeds Number.MAX_SAFE_INTEGER and owns no in-file bytes."
+        : "The event-types section extent exceeds Number.MAX_SAFE_INTEGER, so its range cannot be compared with the attribute section.",
     );
-    return ok(emptyRecording(artifact, state.diagnostics, order));
+    if (!noInFileBytes)
+      return ok(emptyRecording(artifact, state.diagnostics, order));
   }
-  if (eventTypesRead.unrepresentable)
-    diagnose(
-      state,
-      null,
-      "unsafe-section-extent",
-      "The event-types section offset exceeds Number.MAX_SAFE_INTEGER, so its position cannot be compared with the attribute section; it declares no bytes.",
-    );
   const attributeOverlapsEventTypes =
     eventTypes !== null &&
     attributeSection.size > 0 &&
@@ -704,17 +725,27 @@ export const parsePerfData = (
         "empty-attribute-section",
         "The attribute section is empty; the recording states no events.",
       );
-    else if (strideFitsEntry)
-      readEvents(bytes, read, state, attributeSection, stride, [
-        {
-          offset: 0,
-          size: headerBytes ?? HEADER_BYTES_WITHOUT_FEATURES,
-          within_file: true,
-        },
+    else if (strideFitsEntry) {
+      const features =
+        headerBytes === HEADER_BYTES_WITH_FEATURES
+          ? featureSections(bytes, read, dataSection, state)
+          : [];
+      readEvents(
+        bytes,
+        read,
+        state,
         attributeSection,
-        dataSection,
-        ...(eventTypes === null ? [] : [eventTypes]),
-      ]);
+        stride,
+        [
+          { offset: 0, size: headerBytes, within_file: true },
+          attributeSection,
+          dataSection,
+          ...(eventTypes === null ? [] : [eventTypes]),
+          ...(features ?? []),
+        ],
+        features !== undefined,
+      );
+    }
     // A section that holds entries but whose stride was rejected never reaches
     // `readEvents`, so no ids descriptor was examined; leaving the inventory
     // flagged present would publish an unread section as a complete empty one.

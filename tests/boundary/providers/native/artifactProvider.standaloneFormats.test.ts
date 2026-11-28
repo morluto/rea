@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 
 import { windowsShortcutBytes } from "../../../fixtures/binaryDiagnostics/windowsShortcut.js";
+import { buildPerfRecording } from "../../../fixtures/perfData.js";
 import { createSqliteDatabaseFixture } from "../../../fixtures/sqlite/database.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { buildFv } from "../../../fixtures/uefiImage.js";
@@ -85,6 +86,12 @@ it.each([
     create: writeBytes("target.lnk", () => windowsShortcutBytes()),
     format: "windows-shortcut",
     operation: "inspect_windows_shortcut",
+  },
+  {
+    name: "a Linux perf recording",
+    create: writeBytes("recording.bin", () => buildPerfRecording()),
+    format: "perf-data",
+    operation: "inspect_perf_data",
   },
   {
     name: "a Python pyc",

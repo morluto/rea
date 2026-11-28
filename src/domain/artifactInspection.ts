@@ -652,6 +652,11 @@ const STANDALONE_FORMAT_READERS = {
     rationale:
       "Read the Shell Link target, arguments and ExtraData without resolving or executing it.",
   },
+  "perf-data": {
+    operation: "inspect_perf_data",
+    rationale:
+      "Read perf recording headers, event attributes and identifiers without replay.",
+  },
   "python-pyc": {
     operation: "inspect_python_pyc",
     rationale:

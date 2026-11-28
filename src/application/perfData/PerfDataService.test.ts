@@ -42,6 +42,7 @@ it("binds the published source bytes to complete Evidence", async () => {
     if (!result.ok) throw result.error;
     const value = perfDataSchema.parse(result.value.evidence.normalized_result);
     expect(result.value.evidence.operation).toBe("inspect_perf_data");
+    expect(result.value.evidence.parameters).toEqual({ path });
     expect(value.artifact).toEqual({
       path,
       bytes: bytes.length,
@@ -89,6 +90,15 @@ it("refuses a recording larger than the selected file allowance", async () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected a resource constraint");
     expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
+    expect(result.error).toMatchObject({
+      reportedLimits: { boundary: "max_file_bytes", maximum: 16 },
+      limit: { parameter: "max_file_bytes", effective_value: 16 },
+      recovery: {
+        remediationAction: expect.stringContaining(
+          "Increase max_file_bytes above 16",
+        ),
+      },
+    });
   } finally {
     await resources.close();
   }
@@ -107,6 +117,7 @@ it("honours the event allowance without discarding the file identity", async () 
     );
     if (!result.ok) throw result.error;
     const value = perfDataSchema.parse(result.value.evidence.normalized_result);
+    expect(result.value.evidence.parameters).toEqual({ path, max_events: 1 });
     expect(value.events).toHaveLength(1);
     expect(value.artifact.sha256).toBe(
       createHash("sha256").update(bytes).digest("hex"),

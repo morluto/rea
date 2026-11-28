@@ -2,12 +2,14 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { perfDataSchema } from "../../src/domain/perfData/perfData.js";
-import { toolContract } from "../../src/contracts/toolContracts.js";
+import { PERF_DATA_TOOL_CONTRACTS } from "../../src/contracts/perfDataToolContracts.js";
+import { contractNamed } from "../../src/cli/contractCliDescription.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { buildPerfRecording, perfEntry } from "../fixtures/perfData.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
-const completePerfEvidenceSchema = toolContract(
+const completePerfEvidenceSchema = contractNamed(
+  PERF_DATA_TOOL_CONTRACTS,
   "inspect_perf_data",
 ).outputSchema.safeExtend({ normalized_result: perfDataSchema });
 
