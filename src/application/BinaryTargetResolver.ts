@@ -82,6 +82,7 @@ import {
   MAX_XML_PLIST_PROBE_BYTES,
 } from "../domain/apple/appleArchiveFormat.js";
 import { hasDiskImageSignature } from "../domain/apple/diskImageFormat.js";
+import { KubernetesAuditEventProbe } from "../domain/linux/kubernetesAuditEventProbe.js";
 import { recognizeArtifactFormat } from "../domain/artifactFormatRecognition.js";
 import { gzipTarExtraFieldProbeBytes } from "../domain/tarFormat.js";
 import {
@@ -798,12 +799,14 @@ const detectArtifactFormat = async (
   let suffix: Uint8Array | undefined;
   let espFlashLayout: boolean | undefined;
   let iso9660Descriptor: Uint8Array | undefined;
+  let kubernetesAuditEvent: boolean | undefined;
   const recognitionInput = () => ({
     prefix: recognitionPrefix,
     fileSize: initial.size,
     suffix,
     espFlashLayout,
     iso9660Descriptor,
+    kubernetesAuditEvent,
   });
   let recognition = recognizeArtifactFormat(recognitionInput());
   while (recognition !== undefined) {
@@ -833,7 +836,25 @@ const detectArtifactFormat = async (
         ISO9660_SIGNATURE_BYTES,
         signal,
       );
-    else
+    else if (recognition.format === "kubernetes-audit-log") {
+      const probe = new KubernetesAuditEventProbe();
+      probe.write(recognitionPrefix);
+      let offset = recognitionPrefix.length;
+      while (offset < Math.min(initial.size, probe.limit)) {
+        const chunk = await readCachedRange(
+          offset,
+          Math.min(64 * 1024, initial.size - offset, probe.limit - offset),
+        );
+        if (chunk.length === 0) break;
+        probe.write(chunk);
+        offset += chunk.length;
+      }
+      await assertStableRegularFileIdentity(handle, sourcePath, initial, {
+        symlinks: "reject",
+        ...(signal === undefined ? {} : { signal }),
+      });
+      kubernetesAuditEvent = probe.finish(initial.size) ?? false;
+    } else
       espFlashLayout = (
         await locateEspFlashLayout(
           initial.size,

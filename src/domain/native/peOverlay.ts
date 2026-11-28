@@ -117,6 +117,7 @@ export const PE_OVERLAY_LEADING_FORMATS = [
   "labview-rsrc",
   "systemd-journal",
   "auditd-log",
+  "kubernetes-audit-log",
 ] as const;
 export type PeOverlayLeadingFormat =
   (typeof PE_OVERLAY_LEADING_FORMATS)[number];

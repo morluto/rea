@@ -64,6 +64,7 @@ import {
   androidVbmetaMetadataSchema,
   androidSparseImageMetadataSchema,
   auditdLogMetadataSchema,
+  kubernetesAuditLogMetadataSchema,
   iso9660EntryMetadataSchema,
   iso9660MetadataSchema,
   ntfsMftMetadataSchema,
@@ -124,6 +125,7 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   ntfsMftMetadataSchema,
   systemdJournalMetadataSchema,
   auditdLogMetadataSchema,
+  kubernetesAuditLogMetadataSchema,
   dfuSeMetadataSchema,
   dfuSeElementMetadataSchema,
   bfltMetadataSchema,
@@ -415,6 +417,10 @@ const declarationsByKind: {
   "auditd-log": {
     notCompared:
       "Its fields come from the file's own record headers, which content comparison covers.",
+  },
+  "kubernetes-audit-log": {
+    notCompared:
+      "Its fields come from the file's own audit event lines, which content comparison covers.",
   },
   dfuse: {
     notCompared:

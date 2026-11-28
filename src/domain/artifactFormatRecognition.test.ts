@@ -13,6 +13,9 @@ import {
   recognizeArtifactFormat,
   recognizesArtifactPrefix,
 } from "./artifactFormatRecognition.js";
+import { MAX_KUBERNETES_AUDIT_LINE_BYTES } from "./artifactReaderLimits.js";
+import { KubernetesAuditEventProbe } from "./linux/kubernetesAuditEventProbe.js";
+import { KUBERNETES_AUDIT_JSON_DEPTH } from "./linux/kubernetesAuditRecord.js";
 import {
   fullAndroidOtaPayload,
   v1AndroidOtaPayload,
@@ -267,6 +270,133 @@ it("decides an auditd claim on a multi-megabyte prefix without overflowing the s
   expect(recognize(record)).toMatchObject({
     state: "recognized",
     format: "auditd-log",
+  });
+});
+
+it("recognizes a Kubernetes audit log by its first event and leaves other JSON alone", () => {
+  const event = Buffer.from(
+    `${JSON.stringify({
+      kind: "Event",
+      apiVersion: "audit.k8s.io/v1",
+      auditID: "0f5e3b1c-0000-4000-8000-000000000001",
+      stage: "RequestReceived",
+      requestURI: "/api/v1/namespaces/default/pods",
+    })}\n`,
+  );
+  expect(recognize(event)).toMatchObject({
+    state: "recognized",
+    format: "kubernetes-audit-log",
+  });
+  // A JSON object without an auditID, or with a stage the API does not define,
+  // is not a claim this format makes.
+  expect(
+    recognize(
+      Buffer.from(
+        `${JSON.stringify({ kind: "Pod", stage: "RequestReceived" })}\n`,
+      ),
+    ),
+  ).toBeUndefined();
+  expect(
+    recognize(
+      Buffer.from(`${JSON.stringify({ auditID: "a", stage: "Started" })}\n`),
+    ),
+  ).toBeUndefined();
+});
+
+it("recognizes an audit record after a BOM or blank lines and ignores other padding", () => {
+  const record = JSON.stringify({
+    auditID: "a",
+    stage: "RequestReceived",
+  });
+  expect(recognize(Buffer.from(`\n\n${record}\n`))).toMatchObject({
+    state: "recognized",
+    format: "kubernetes-audit-log",
+  });
+  expect(
+    recognize(
+      Buffer.concat([
+        Buffer.from([0xef, 0xbb, 0xbf]),
+        Buffer.from(`${record}\n`),
+      ]),
+    ),
+  ).toMatchObject({
+    state: "recognized",
+    format: "kubernetes-audit-log",
+  });
+  expect(recognize(Buffer.from(`\u00A0${record}\n`))).toBeUndefined();
+  expect(recognize(Buffer.from(`\n{"payload":${record}}\n`))).toBeUndefined();
+  expect(
+    recognizeArtifactFormat({
+      prefix: Buffer.from("\n"),
+      fileSize: Buffer.byteLength(`\n${record}\n`),
+      espFlashLayout: false,
+    }),
+  ).toMatchObject({
+    state: "needs-input",
+    format: "kubernetes-audit-log",
+  });
+  const probe = new KubernetesAuditEventProbe();
+  const head = Buffer.from([0xef, 0xbb]);
+  const tail = Buffer.concat([
+    Buffer.from([0xbf]),
+    Buffer.from(`\n${record}\n`),
+  ]);
+  probe.write(head);
+  probe.write(tail);
+  expect(probe.finish(head.length + tail.length)).toBe(true);
+  const nest = `{"x":${"[".repeat(KUBERNETES_AUDIT_JSON_DEPTH + 8)}1${"]".repeat(KUBERNETES_AUDIT_JSON_DEPTH + 8)}}`;
+  expect(() => recognize(Buffer.from(nest))).not.toThrow();
+  expect(recognize(Buffer.from(nest))).toBeUndefined();
+  const claimed = `{"pad":"${"x".repeat(5000)}","auditID":"a","stage":"RequestReceived","requestObject":${"[".repeat(KUBERNETES_AUDIT_JSON_DEPTH + 8)}1${"]".repeat(KUBERNETES_AUDIT_JSON_DEPTH + 8)}}`;
+  const inline = `{"auditID":"a","stage":"RequestReceived","requestObject":${"[".repeat(KUBERNETES_AUDIT_JSON_DEPTH + 8)}1${"]".repeat(KUBERNETES_AUDIT_JSON_DEPTH + 8)}}`;
+  expect(recognize(Buffer.from(inline))).toMatchObject({
+    state: "recognized",
+    format: "kubernetes-audit-log",
+  });
+  const replaced = `{"auditID":"a","stage":"RequestReceived","pad":"${"y".repeat(5000)}","stage":"Unknown","requestObject":${"[".repeat(KUBERNETES_AUDIT_JSON_DEPTH + 8)}1${"]".repeat(KUBERNETES_AUDIT_JSON_DEPTH + 8)}}`;
+  expect(recognize(Buffer.from(replaced))).toBeUndefined();
+  expect(recognize(Buffer.from(claimed))).toMatchObject({
+    state: "recognized",
+    format: "kubernetes-audit-log",
+  });
+  const padding = Buffer.alloc(MAX_KUBERNETES_AUDIT_LINE_BYTES, 0x0a);
+  const padded = Buffer.concat([padding, Buffer.from(`${record}\n`)]);
+  const probeAfterPadding = new KubernetesAuditEventProbe();
+  probeAfterPadding.write(padding);
+  expect(probeAfterPadding.pending).toBe(true);
+  probeAfterPadding.write(Buffer.from(`${record}\n`));
+  expect(probeAfterPadding.finish(padded.length)).toBe(true);
+  expect(recognize(padded)).toMatchObject({
+    state: "recognized",
+    format: "kubernetes-audit-log",
+  });
+});
+
+it("does not claim JSON with nested or malformed Kubernetes audit fields", () => {
+  for (const line of [
+    '{"payload":{"auditID":"a","stage":"RequestReceived"}}',
+    '{"auditID":"a","payload":[{"stage":"RequestReceived"}]}',
+    '{"stage":"RequestReceived","payload":{"auditID":"a"}}',
+    '{"auditID":42,"stage":"RequestReceived"}',
+    '{"auditID":"a","stage":"RequestReceived","stage":"Unknown"}',
+    '{"auditID":"a","stage":"RequestReceived","invalid":',
+  ])
+    expect(recognize(Buffer.from(line))).toBeUndefined();
+});
+
+it("seeks the remainder after seeing audit fields in a clipped JSON prefix", () => {
+  const first = String.raw`{"auditID":"a","st\u0061ge":"RequestReceived","requestObject":{"message":"`;
+  const document = Buffer.from(`${first}€"}}\n`);
+  const clipped = document.subarray(0, Buffer.byteLength(first) + 1);
+  expect(
+    recognizeArtifactFormat({
+      prefix: clipped,
+      fileSize: document.length,
+      espFlashLayout: false,
+    }),
+  ).toMatchObject({
+    state: "needs-input",
+    format: "kubernetes-audit-log",
   });
 });
 

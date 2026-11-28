@@ -297,6 +297,7 @@ export interface ArtifactReader {
     | "ntfs-mft"
     | "systemd-journal"
     | "auditd-log"
+    | "kubernetes-audit-log"
     | "pkg"
     | "file";
   entries(

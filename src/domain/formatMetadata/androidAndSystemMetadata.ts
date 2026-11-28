@@ -13,6 +13,13 @@ import {
   AUDITD_INLINE_EVENT_LIMIT,
   AUDITD_INLINE_EVENT_TYPE_LIMIT,
 } from "../linux/auditdLog.js";
+import { KUBERNETES_AUDIT_STAGES } from "../linux/kubernetesAuditEventProbe.js";
+import {
+  KUBERNETES_AUDIT_INLINE_DIAGNOSTIC_LIMIT,
+  KUBERNETES_AUDIT_INLINE_EVENT_LIMIT,
+  KUBERNETES_AUDIT_INLINE_STAGE_LIMIT,
+  KUBERNETES_AUDIT_INLINE_VERB_LIMIT,
+} from "../linux/kubernetesAuditLog.js";
 import { offset, uint32 } from "./primitives.js";
 
 const ntfsRecordHeaderSchema = z.strictObject({
@@ -503,6 +510,74 @@ export const auditdLogMetadataSchema = z.strictObject({
     )
     .max(AUDITD_INLINE_EVENT_LIMIT),
   omitted_events: offset,
+  trailing_bytes: offset,
+});
+
+const kubernetesAuditStageSchema = z.enum(KUBERNETES_AUDIT_STAGES);
+const kubernetesAuditCount = z.strictObject({
+  label: z.string(),
+  count: offset,
+});
+/** One stage line: the stage, its source line and the request's own instant. */
+const kubernetesAuditStageRecordSchema = z.strictObject({
+  stage: kubernetesAuditStageSchema,
+  line: offset,
+  request_received_timestamp: z.number().int().nullable(),
+  response_code: z.number().int().nullable(),
+});
+/** Kubernetes audit log facts: line and stage totals plus a sampled event window. */
+export const kubernetesAuditLogMetadataSchema = z.strictObject({
+  kind: z.literal("kubernetes-audit-log"),
+  line_count: offset,
+  event_count: offset,
+  oversized_line_count: offset,
+  line_bytes_limit: offset,
+  malformed_line_count: offset,
+  malformed_lines: z
+    .array(
+      z.strictObject({
+        line: offset,
+        reason: z.string(),
+        excerpt: z.string(),
+      }),
+    )
+    .max(KUBERNETES_AUDIT_INLINE_DIAGNOSTIC_LIMIT),
+  omitted_malformed_lines: offset,
+  sample_missing_terminal_stage_count: offset,
+  sample_duplicate_stage_line_count: offset,
+  stage_counts: z.array(kubernetesAuditCount),
+  verb_counts: z
+    .array(kubernetesAuditCount)
+    .max(KUBERNETES_AUDIT_INLINE_VERB_LIMIT),
+  unlisted_verb_line_count: offset,
+  events: z
+    .array(
+      z.strictObject({
+        audit_id: z.string(),
+        request_uri: z.string().nullable(),
+        verb: z.string().nullable(),
+        username: z.string().nullable(),
+        user_groups: z.array(z.string()).nullable(),
+        source_ips: z.array(z.string()).nullable(),
+        user_agent: z.string().nullable(),
+        resource: z.string().nullable(),
+        namespace: z.string().nullable(),
+        object_name: z.string().nullable(),
+        // As the event recorded it; a status code is an integer, not a byte offset.
+        response_code: z.number().int().nullable(),
+        response_code_line: offset.nullable(),
+        stages: z
+          .array(kubernetesAuditStageRecordSchema)
+          .max(KUBERNETES_AUDIT_INLINE_STAGE_LIMIT),
+        omitted_stage_lines: offset,
+        request_fields_omitted: z.boolean(),
+        depth_limited: z.boolean(),
+        unsupported_version: z.boolean(),
+      }),
+    )
+    .max(KUBERNETES_AUDIT_INLINE_EVENT_LIMIT),
+  unsampled_event_line_count: offset,
+  depth_limited_line_count: offset,
   trailing_bytes: offset,
 });
 
