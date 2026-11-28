@@ -761,6 +761,43 @@ it("keeps a size-table row whose extended memory flags are truncated", () => {
   ]);
 });
 
+it("keeps an object hunk whose extended memory flags are truncated", () => {
+  // HUNK_UNIT, empty name, extended HUNK_CODE, then end of file.
+  const bytes = Buffer.alloc(12);
+  bytes.writeUInt32BE(0x3e7, 0);
+  bytes.writeUInt32BE(0, 4);
+  bytes.writeUInt32BE(0xc00003e9, 8);
+  const file = parseAmigaHunk(bytes);
+  expect(file.fileKind).toBe("object");
+  expect(file.hunks).toMatchObject([
+    {
+      index: 0,
+      unit: 0,
+      type: "code",
+      memory: "extended",
+      extendedFlags: null,
+      declaredLongwords: null,
+    },
+  ]);
+  const metadata = amigaHunkMetadata(file);
+  expect(metadata.hunks).toMatchObject([
+    {
+      index: 0,
+      memory: "extended",
+      extended_flags: null,
+      declared_longwords: null,
+    },
+  ]);
+  expect(amigaHunkMetadataSchema.parse(metadata)).toEqual(metadata);
+  expect(file.limitations).toMatchObject([
+    {
+      kind: "truncated",
+      offset: 12,
+      detail: expect.stringContaining("extended memory flags"),
+    },
+  ]);
+});
+
 it("caps retained rows in a truncated hunk size table", () => {
   const maxHunks = 4;
   const bytes = Buffer.alloc(20 + 6 * 4);

@@ -833,18 +833,20 @@ class AmigaHunkParser {
       return;
     }
     const decoded = this.readMemoryFlags(flags);
-    if (decoded === undefined) return;
     if (this.open !== undefined && !this.open.ended)
       this.noteMissingEnd(this.open);
+    // A truncated extended-flags longword still leaves this hunk's unit,
+    // index, kind and memory class known; only the raw flags stay unknown.
     const hunk = draftHunk(
       this.unitHunk,
-      decoded.memory,
-      decoded.extendedFlags,
+      decoded?.memory ?? "extended",
+      decoded?.extendedFlags ?? null,
       // An object hunk declares its size in its own block; unknown until read.
       null,
       this.currentUnit.index,
     );
-    this.readBody(hunk, kind);
+    if (decoded === undefined) hunk.type = kind;
+    else this.readBody(hunk, kind);
     // Report truncation without retaining a partial hunk beyond the allowance.
     if (this.hunks.length >= this.limits.maxHunks) {
       if (this.aborted) return;
