@@ -630,6 +630,27 @@ it("does not clear a nested omission from a same-named top-level key", async () 
   });
 });
 
+it("clears budget omission when a later null replaces an address list", async () => {
+  const addresses = Array.from({ length: 5000 }, () => "10.0.0.1");
+  const first = JSON.stringify({
+    apiVersion: "audit.k8s.io/v1",
+    auditID: "ips-null",
+    stage: "RequestReceived",
+    verb: "get",
+    requestURI: "/api",
+    sourceIPs: addresses,
+  });
+  const metadata = await metadataOf(
+    `${first.slice(0, -1)},"sourceIPs":null}\n`,
+  );
+  expect(metadata.events[0]).toMatchObject({
+    audit_id: "ips-null",
+    request_uri: "/api",
+    source_ips: null,
+    request_fields_omitted: false,
+  });
+});
+
 it("clears budget omission when a later object replaces an address list", async () => {
   const addresses = Array.from({ length: 5000 }, () => "10.0.0.1");
   const first = JSON.stringify({

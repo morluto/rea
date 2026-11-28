@@ -121,10 +121,8 @@ export class KubernetesAuditEventProbe {
     const newline = rest.indexOf(0x0a);
     if (newline !== -1) this.#lineEnded = true;
     const line = newline === -1 ? rest : rest.subarray(0, newline);
-    if (this.#lineEnded || this.#observed === AUDIT_PROBE_BYTES) {
+    if (this.#lineEnded || this.#observed === AUDIT_PROBE_BYTES)
       this.#done = true;
-      this.#recordSlices.length = 0;
-    }
     if (line.length === 0) return;
     if (this.#decoder === undefined) {
       this.#decoder = strictUtf8Decoder("preserve");
@@ -162,11 +160,13 @@ export class KubernetesAuditEventProbe {
             this.#rereadRecord();
             this.#failed = !this.#depthStopped;
             this.#done = true;
+            this.#recordSlices.length = 0;
             return;
           }
           index = end;
         }
       }
+      if (this.#done) this.#recordSlices.length = 0;
     } catch (cause: unknown) {
       if (isHostLimitFailure(cause)) throw cause;
       this.#failed = true;

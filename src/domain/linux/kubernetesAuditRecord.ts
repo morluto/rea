@@ -167,16 +167,26 @@ export const parseKubernetesAuditLine = (
     if (frame?.kind === "root" && pendingKey === "user") {
       sawUser = false;
       for (const key of Object.keys(user)) delete user[key];
+      budgetOmittedFields.delete("user:username");
+      budgetOmittedFields.delete("list:groups");
       return;
     }
     if (frame?.kind === "root" && pendingKey === "objectRef") {
       sawObject = false;
       for (const key of Object.keys(objectRef)) delete objectRef[key];
+      budgetOmittedFields.delete("object:resource");
+      budgetOmittedFields.delete("object:namespace");
+      budgetOmittedFields.delete("object:name");
       return;
     }
     if (frame?.kind === "root" && pendingKey === "responseStatus") {
       sawStatus = false;
       delete responseStatus.code;
+      return;
+    }
+    if (frame?.kind === "root" && pendingKey === "sourceIPs") {
+      value.sourceIPs = null;
+      budgetOmittedFields.delete("list:sourceIPs");
       return;
     }
     if (frame?.kind === "root" && pendingKey !== undefined) {
