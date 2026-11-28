@@ -510,6 +510,23 @@ const unboundRequireCall = (
   return { program: file.program, required, state: index.bindings };
 };
 
+it.each([
+  ["void box.value", "unknown"],
+  ["void box?.value", "unknown"],
+  ["void box.owner", "commonjs-loader"],
+  ["void box.returnOwner", "commonjs-loader"],
+  ["void other.value", "commonjs-loader"],
+])("tracks wrapper exposure at the getter read: %s", (use, loader) => {
+  const { required, state } = unboundRequireCall(
+    `const box={ owner:module,get value(){observe(this.owner)},get returnOwner(){return this.owner} };
+     const other={owner:{},get value(){observe(this.owner)}};
+     ${use};require('fs');`,
+    "fixture.cjs",
+    "commonjs",
+  );
+  expect(semanticRequireLoaderAt(required, state, new Set())).toBe(loader);
+});
+
 it.each(unboundRequireCases)(
   "agrees on loader and origin for a CommonJS require in $source ($why)",
   ({ source, precedes }) => {

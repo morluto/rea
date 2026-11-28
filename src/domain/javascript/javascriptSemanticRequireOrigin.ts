@@ -56,6 +56,7 @@ import {
 import {
   ambientBindingMayObserveWriteAt,
   ambientPathMayObserveAt,
+  ambientMemberReadMayExposeAt,
   ambientPathOrMemberMayHaveChanged,
   bindingHasUnmodeledMemberValues,
   opaqueCodeMayRebindBinding,
@@ -142,6 +143,7 @@ const commonJsDelegateChangedAt = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): boolean =>
+  ambientMemberReadMayExposeAt(state, node, ["commonjs-module", "require"]) ||
   writesModuleRequire(state).some((write) =>
     semanticEffectMayPrecede(state, node, write),
   );
