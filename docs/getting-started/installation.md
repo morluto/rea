@@ -6,6 +6,7 @@ Setup previews configuration changes and asks for approval before applying them.
 | Task                                  | Section                                                                                                             |
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | Connect an agent                      | [Start setup](#start-setup), then [review changes](#review-setup-changes)                                           |
+| Run REA without registering MCP       | [One-off CLI use](#one-off-cli-use)                                                                                 |
 | Install a Claude Code/Codex plugin    | [Agent plugins and marketplaces](#agent-plugins-and-marketplaces)                                                   |
 | Install the Cursor Marketplace plugin | [Cursor Marketplace](#cursor-marketplace)                                                                           |
 | Run unreleased code                   | [Run REA from a checkout](#run-rea-from-a-checkout)                                                                 |
@@ -13,6 +14,27 @@ Setup previews configuration changes and asks for approval before applying them.
 | Configure an analysis engine          | [Hopper](#hopper), [Ghidra](#ghidra), the [IDA guide](../providers/ida-provider.md), or [Kuna](../kuna-provider.md) |
 | Update or remove REA                  | [Maintenance](#diagnose-update-and-remove)                                                                          |
 | Resolve a client-specific problem     | [Client configuration](client-configuration.md)                                                                     |
+
+## One-off CLI use
+
+For a one-off inspection, use the CLI without changing agent registrations:
+
+```bash
+npx rea-agents inspect-artifact /absolute/path/to/archive.zip --json
+```
+
+This reads the selected artifact without configuring an MCP client. npm may
+prompt to install the REA package for the command; package installation is
+separate from MCP registration. See [CLI and Evidence](cli.md) for other
+single-command inspections.
+
+Use MCP when the task needs retained Evidence pages, a live provider session,
+or several related tool calls. A setup-created MCP registration persists after
+the client session ends; stopping the session does not remove the registration.
+For opt-in Claude Code use, follow the [project/profile instructions](#limit-rea-to-one-project-or-agent-profile)
+and remove the scoped entry explicitly afterward. Other clients have their
+own registration and removal steps; REA does not promise automatic temporary
+attachment and configuration restoration across clients.
 
 ## Start setup
 
