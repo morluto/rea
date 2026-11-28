@@ -14,6 +14,8 @@ export interface JavaScriptModuleOrigin {
   /** An unbound require whose CommonJS wrapper is not established. */
   readonly loaderAuthority?: "candidate";
   readonly resolutionMode?: JavaScriptModuleResolutionMode;
+  /** Static import syntax that this file loads with `require` semantics. */
+  readonly importSyntax?: true;
   readonly specifier: string;
   readonly importedPath: readonly string[];
 }
@@ -130,6 +132,18 @@ export interface JavaScriptSemanticCallSite {
   readonly callerCallableId: string | null;
   readonly location: JavaScriptSourceRange;
   readonly calleeLocation: JavaScriptSourceRange;
+  /** Root binding and static member path of the callee, when it has both. */
+  readonly calleeAccess?: {
+    /** Null when the callee is rooted directly in a `require(...)` call. */
+    readonly bindingId: string | null;
+    readonly requireOrigin?: JavaScriptModuleOrigin;
+    readonly path: readonly string[];
+    /**
+     * Module required inside an unverified helper call that initializes the
+     * root binding, such as a compiler's import interop wrapper.
+     */
+    readonly wrappedSpecifier?: string;
+  };
   /** The call's value appears in an enclosing expression or return. */
   readonly resultUsed: boolean;
   readonly resolution: "exact" | "ambiguous" | "unresolved";
@@ -408,6 +422,10 @@ export interface JavaScriptSemanticObjectOperation {
   readonly location: JavaScriptSourceRange;
   readonly ownerCallableId: string | null;
   readonly objectBindingId: string | null;
+  /** A write rooted directly in a `require(...)` call. */
+  readonly requireOrigin?: JavaScriptModuleOrigin;
+  /** For a write with a computed key, the static keys below the first one. */
+  readonly knownPathPrefix?: readonly string[];
   readonly targetBindingId: string | null;
   readonly propertyPath: readonly string[] | null;
   readonly resolution: "complete" | "partial";

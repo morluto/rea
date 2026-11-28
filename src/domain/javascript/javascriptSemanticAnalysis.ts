@@ -2546,6 +2546,13 @@ const addBinding = (input: AddBindingInput): void => {
         ? {
             ...directOrigin,
             resolutionMode: state.staticImportResolutionMode,
+            // Marked only where it changes the member path, so an import
+            // and a require of the same member stay one origin.
+            ...(kind === "import" &&
+            directOrigin.importedPath[0] === "default" &&
+            state.staticImportResolutionMode === "require"
+              ? { importSyntax: true as const }
+              : {}),
           }
         : directOrigin,
     );

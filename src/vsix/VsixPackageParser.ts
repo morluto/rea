@@ -39,11 +39,9 @@ import { hasZipSignature } from "../domain/zipPackageFormat.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 import { Budget } from "../domain/budget.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
-import { boundedList } from "../domain/boundedList.js";
 import {
   MAX_INSPECT_VSIX_PACKAGE_MANIFEST_JSON_VALUES,
   MAX_INSPECT_VSIX_PACKAGE_MANIFEST_XML_NODES,
-  VSIX_COMMANDS_CAP,
   VSIX_PACKAGE_FORMAT,
   isVsixInterestingMemberKind,
   vsixActivationIsEager,
@@ -612,6 +610,48 @@ interface ParsedPackageJson {
   readonly enabledApiProposals: string[];
 }
 
+const isRow = (row: unknown): row is Record<string, unknown> =>
+  row !== null && typeof row === "object" && !Array.isArray(row);
+
+/** VS Code accepts one contribution object or an array of them. */
+const rowList = (value: unknown): readonly unknown[] =>
+  value === undefined ? [] : Array.isArray(value) ? value : [value];
+
+const rowsOf = (value: unknown) => rowList(value).filter(isRow);
+
+/** A row that is not an object, or holds a non-text field, cannot be read. */
+const unreadableRows = (value: unknown, fields: readonly string[]): boolean =>
+  !rowList(value).every(
+    (row) =>
+      isRow(row) &&
+      fields.every(
+        (field) => row[field] === undefined || typeof row[field] === "string",
+      ),
+  );
+
+const exactText = (value: unknown): string | null =>
+  typeof value === "string" && value !== "" ? value : null;
+
+const menuGroups = (menus: unknown) =>
+  rowsOf(menus).flatMap((record) =>
+    Object.entries(record).flatMap(([menu, items]) =>
+      menu === ""
+        ? []
+        : [
+            {
+              menu,
+              commands: rowsOf(items).map((row) => exactText(row.command)),
+            },
+          ],
+    ),
+  );
+
+/** Menus are one object keyed by menu name, each holding its rows. */
+const unreadableMenus = (menus: unknown): boolean =>
+  menus !== undefined &&
+  (!isRow(menus) ||
+    Object.values(menus).some((rows) => unreadableRows(rows, ["command"])));
+
 const parsePackageJsonDocument = (
   text: string,
   limitations: string[],
@@ -628,6 +668,8 @@ const parsePackageJsonDocument = (
       commands: [],
       commands_total: 0,
       commands_omitted: 0,
+      menus: null,
+      keybindings: null,
     },
     extensionDependencies: null,
     extensionPack: null,
@@ -678,14 +720,19 @@ const parsePackageJsonDocument = (
     : commandsRaw !== null && typeof commandsRaw === "object"
       ? [commandsRaw]
       : [];
+  const unreadContributes =
+    record.contributes !== undefined && contributesRaw === undefined;
+  const unreadCommands =
+    unreadContributes ||
+    (commandsRaw !== undefined &&
+      (commandsRaw === null || typeof commandsRaw !== "object"));
   const keys = entries
     .filter(([name]) => name.length > 0)
     .map(([name, item]) => ({
       name,
       count: name === "commands" ? commandRows.length : contributeCount(item),
     }));
-  const listedCommands = boundedList(commandRows, VSIX_COMMANDS_CAP);
-  const commands = listedCommands.items.map((item) => {
+  const commands = commandRows.map((item) => {
     if (item === null || typeof item !== "object" || Array.isArray(item))
       return { command: null, title: null };
     const command = item as Record<string, unknown>;
@@ -717,8 +764,21 @@ const parsePackageJsonDocument = (
     contributes: {
       keys,
       commands,
-      commands_total: commandRows.length,
-      commands_omitted: listedCommands.omitted,
+      commands_total: commandRows.length + (unreadCommands ? 1 : 0),
+      // A present but unsupported shape is a declaration that was not read.
+      commands_omitted: unreadCommands ? 1 : 0,
+      menus:
+        unreadContributes || unreadableMenus(contributesRaw?.menus)
+          ? null
+          : menuGroups(contributesRaw?.menus),
+      keybindings:
+        unreadContributes ||
+        unreadableRows(contributesRaw?.keybindings, ["command", "key"])
+          ? null
+          : rowsOf(contributesRaw?.keybindings).map((row) => ({
+              command: exactText(row.command),
+              key: exactText(row.key),
+            })),
     },
     extensionDependencies: parseExtensionList(record.extensionDependencies),
     extensionPack: parseExtensionList(record.extensionPack),
@@ -1344,6 +1404,8 @@ export const parseVsixPackage = async (
         commands: [],
         commands_total: 0,
         commands_omitted: 0,
+        menus: null,
+        keybindings: null,
       },
       extension_dependencies: extensionDependencies,
       extension_pack: extensionPack,

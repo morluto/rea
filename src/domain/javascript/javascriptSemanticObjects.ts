@@ -20,6 +20,8 @@ import {
   type JavaScriptSemanticInitializer,
 } from "./javascriptSemanticState.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
+import { readSemanticRequireOriginCandidate } from "./javascriptSemanticRequireOriginSlot.js";
+import { unwrapPureSemanticSequenceExpression } from "./javascriptSemanticGlobalReference.js";
 import {
   clearSemanticValueCaches,
   evaluateSemanticExpression,
@@ -168,10 +170,18 @@ const collectMember = (
       state,
       output,
     );
+  const requireOrigin =
+    write && identity.bindingId === null
+      ? requireRootOrigin(identity.root, state)
+      : undefined;
   addObjectOperation(
     {
       node,
       kind: write ? "write" : "read",
+      ...(requireOrigin === undefined ? {} : { requireOrigin }),
+      ...(write && identity.path === null
+        ? { knownPathPrefix: identity.prefix }
+        : {}),
       provenOwnSlot:
         !write &&
         identity.path !== null &&
@@ -436,6 +446,8 @@ interface AddObjectOperationInput {
   readonly kind: JavaScriptSemanticObjectOperation["kind"];
   readonly ownerCallableId: string | null;
   readonly objectBindingId: string | null;
+  readonly requireOrigin?: JavaScriptSemanticObjectOperation["requireOrigin"];
+  readonly knownPathPrefix?: readonly string[];
   readonly targetBindingId: string | null;
   readonly propertyPath: readonly string[] | null;
   readonly provenOwnSlot?: boolean;
@@ -462,6 +474,12 @@ const addObjectOperation = (
     location: range(input.node),
     ownerCallableId: input.ownerCallableId,
     objectBindingId: input.objectBindingId,
+    ...(input.requireOrigin === undefined
+      ? {}
+      : { requireOrigin: input.requireOrigin }),
+    ...(input.knownPathPrefix === undefined
+      ? {}
+      : { knownPathPrefix: input.knownPathPrefix }),
     targetBindingId: input.targetBindingId,
     propertyPath: input.propertyPath,
     resolution:
@@ -477,7 +495,23 @@ const addObjectOperation = (
 interface ObjectIdentity {
   readonly bindingId: string | null;
   readonly path: readonly string[] | null;
+  /** Keys from the root up to the first computed one; the whole path if static. */
+  readonly prefix: readonly string[];
+  readonly root: t.Node | null;
 }
+
+const requireRootOrigin = (
+  root: t.Node | null,
+  state: JavaScriptSemanticAnalysisState,
+) => {
+  if (root === null) return undefined;
+  const { node } = unwrapJavaScriptExpression(
+    unwrapPureSemanticSequenceExpression(root, state),
+  );
+  return t.isCallExpression(node)
+    ? readSemanticRequireOriginCandidate(node, state)?.origin
+    : undefined;
+};
 
 const expressionObjectIdentity = (
   node: t.Node | null | undefined,
@@ -496,16 +530,22 @@ const expressionObjectIdentity = (
         current.property,
         current.computed,
       );
-      if (name === null) staticPath = false;
-      else path.push(name);
+      if (name === null) {
+        // Keys collected so far sit above this one and are not established.
+        staticPath = false;
+        path.length = 0;
+      } else path.push(name);
       current = current.object;
     } else break;
   }
+  path.reverse();
   return {
     bindingId: t.isIdentifier(current)
       ? (resolveSemanticBindingState(state, current, current.name)?.bindingId ??
         null)
       : null,
-    path: staticPath ? path.reverse() : null,
+    path: staticPath ? path : null,
+    prefix: path,
+    root: current ?? null,
   };
 };

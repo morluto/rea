@@ -278,3 +278,10 @@ the original keys per returned observation without unselected values. Keep each
 row's node/observation identity paired when composing facts.
 These rows select application-graph observations; semantic relationships and
 semantic unknown records remain in the complete parent Evidence and trace tools.
+
+## VS Code extension commands
+
+Use `correlate_vsix_registrations` to join `inspect_vsix_package` Evidence with
+`analyze_javascript_application` Evidence of the extracted extension. Check
+`entry_points` before reading `not_found` as absence
+([VSIX guide](https://github.com/morluto/rea/blob/main/docs/guides/managed/vsix-package.md)).

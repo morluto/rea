@@ -25,6 +25,7 @@ type EvidenceWorkflowOperation =
   | "trace_javascript_semantics"
   | "compare_application_versions"
   | "compare_javascript_export_shapes"
+  | "correlate_vsix_registrations"
   | "project_android_application_graph"
   | "project_apple_application_graph"
   | "project_harmony_application_graph";
@@ -99,6 +100,26 @@ export const registerApplicationCommands = (
       const { compareJavaScriptExportShapesEvidence } =
         await import("../application/javascript/JavaScriptApplicationWorkflowService.js");
       const result = compareJavaScriptExportShapesEvidence(input, lookup, {
+        signal,
+      });
+      return result.ok ? { ok: true, value: result.value.evidence } : result;
+    },
+  });
+  registerEvidenceJsonCommand({
+    cli,
+    logger,
+    name: cliCommandFor("correlate_vsix_registrations"),
+    operation: "correlate_vsix_registrations",
+    omit: {
+      detail:
+        "A one-shot command retains no session Evidence for a summary; it always returns the complete correlation",
+    },
+    description:
+      "Join VS Code extension command declarations with static registrations",
+    workflow: async (input, lookup, signal) => {
+      const { correlateVsixRegistrationsExecution } =
+        await import("../application/vsix/VsixRegistrationCorrelationService.js");
+      const result = correlateVsixRegistrationsExecution(input, lookup, {
         signal,
       });
       return result.ok ? { ok: true, value: result.value.evidence } : result;

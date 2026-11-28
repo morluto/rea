@@ -315,6 +315,7 @@ import {
   sourceToBundleSummaryViewResultSchema,
 } from "./summarySchemas/sourceToBundleSummarySchemas.js";
 import { vsixPackageSummaryViewResultSchema } from "./summarySchemas/vsixPackageSummarySchema.js";
+import { vsixRegistrationCorrelationSummaryViewResultSchema } from "./summarySchemas/vsixRegistrationCorrelationSummarySchema.js";
 import { wasmArtifactSummaryViewResultSchema } from "./summarySchemas/wasmArtifactSummarySchema.js";
 import {
   webBundlePageViewResultSchema,
@@ -422,6 +423,7 @@ export {
   uefiFirmwarePageViewResultSchema,
   uefiFirmwareSummaryViewResultSchema,
   vsixPackageSummaryViewResultSchema,
+  vsixRegistrationCorrelationSummaryViewResultSchema,
   wasmArtifactSummaryViewResultSchema,
   webBundlePageViewResultSchema,
   webBundleSummaryViewResultSchema,
@@ -447,6 +449,7 @@ const viewResultBase = {
     "inspect_deb_package",
     "inspect_nuget_nupkg",
     "inspect_vsix_package",
+    "correlate_vsix_registrations",
     "inspect_oci_image_layout",
     "inspect_erlang_beam",
     "inspect_devicetree",
@@ -871,6 +874,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     artifactExtractionSummaryViewResultSchema,
     nugetNupkgSummaryViewResultSchema,
     vsixPackageSummaryViewResultSchema,
+    vsixRegistrationCorrelationSummaryViewResultSchema,
     ociImageLayoutSummaryViewResultSchema,
   ]),
   z.strictObject({

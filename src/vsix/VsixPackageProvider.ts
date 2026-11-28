@@ -1,4 +1,4 @@
-import { VSIX_PACKAGE_PROVIDER_IDENTITY } from "./VsixPackageProviderIdentity.js";
+import { VSIX_PACKAGE_PROVIDER_IDENTITY } from "../domain/investigationProviders.js";
 import {
   ArtifactReaderFailure,
   ArtifactResourceScope,

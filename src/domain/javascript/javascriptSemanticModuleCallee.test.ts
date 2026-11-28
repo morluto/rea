@@ -1,0 +1,338 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  analyzeJavaScriptSemantics,
+  analyzeParsedJavaScriptSemantics,
+} from "./javascriptSemanticAnalysis.js";
+import { parseJavaScriptSource } from "./javascriptSourceParser.js";
+import { semanticModuleCallees } from "./javascriptSemanticModuleCallee.js";
+
+const callees = (source: string) =>
+  [...semanticModuleCallees(analyzeJavaScriptSemantics(source)).values()]
+    .filter(({ identity }) => identity === undefined)
+    .map(({ specifier, path }) => `${specifier}:${path.join(".")}`);
+const REGISTER = "vscode:commands.registerCommand";
+const replacements = (source: string) =>
+  [...semanticModuleCallees(analyzeJavaScriptSemantics(source)).values()]
+    .filter(({ path }) => path.at(-1) === "registerCommand")
+    .map(({ replacement }) => replacement);
+
+describe("module-rooted callees", () => {
+  it.each([
+    [
+      "a required namespace",
+      'const vscode = require("vscode"); vscode.commands.registerCommand("a", f);',
+    ],
+    [
+      "an import namespace",
+      'import * as vscode from "vscode"; vscode.commands.registerCommand("a", f);',
+    ],
+    [
+      "a default import",
+      'import vscode from "vscode"; vscode.commands.registerCommand("a", f);',
+    ],
+    [
+      "a named import",
+      'import { commands as c } from "vscode"; c.registerCommand("a", f);',
+    ],
+    [
+      "a destructured require",
+      'const { commands } = require("vscode"); commands.registerCommand("a", f);',
+    ],
+    [
+      "an alias",
+      'const v = require("vscode"); const w = v; w.commands.registerCommand("a", f);',
+    ],
+    [
+      "a sequence callee",
+      'const v = require("vscode"); (0, v.commands.registerCommand)("a", f);',
+    ],
+    [
+      "optional access",
+      'const v = require("vscode"); v?.commands?.registerCommand("a", f);',
+    ],
+  ])("resolves %s", (_, source) => {
+    expect(callees(source)).toContain(REGISTER);
+  });
+
+  it.each([
+    [
+      "a selected fallback",
+      'const v = false || require("vscode"); v.commands.registerCommand("a");',
+    ],
+    [
+      "two branches requiring the same module",
+      'const v = flag ? require("vscode") : require("vscode"); v.commands.registerCommand("a");',
+    ],
+  ])("resolves %s", (_, source) => {
+    expect(callees(source)).toContain(REGISTER);
+  });
+
+  it("labels a require-based origin as a candidate", () => {
+    const [callee] = semanticModuleCallees(
+      analyzeJavaScriptSemantics('const v = require("vscode"); v.f();'),
+    ).values();
+    expect(callee?.loader_authority).toBe("candidate");
+  });
+
+  it.each([
+    [
+      "a conditional import",
+      'const v = flag ? require("vscode") : fake; v.commands.registerCommand("a");',
+    ],
+    [
+      "a fallback import",
+      'const v = flag || require("vscode"); v.commands.registerCommand("a");',
+    ],
+    [
+      "a conditional alias",
+      'const v = require("vscode"); const w = flag ? v : fake; w.commands.registerCommand("a");',
+    ],
+    [
+      "a local require",
+      'function g(require) { const v = require("vscode"); v.commands.registerCommand("a"); }',
+    ],
+    [
+      "a local object of the same name",
+      'const vscode = { commands: { registerCommand() {} } }; vscode.commands.registerCommand("a");',
+    ],
+    [
+      "a parameter shadowing the import",
+      'const vscode = require("vscode"); function g(vscode) { vscode.commands.registerCommand("a"); }',
+    ],
+    [
+      "a reassigned binding",
+      'let vscode = require("vscode"); vscode = fake; vscode.commands.registerCommand("a");',
+    ],
+    [
+      "a computed member",
+      'const v = require("vscode"); v.commands[name]("a");',
+    ],
+    ["an unbound global", 'vscode.commands.registerCommand("a");'],
+  ])("does not resolve %s", (_, source) => {
+    expect(callees(source)).not.toContain(REGISTER);
+  });
+
+  it.each([
+    [
+      "a namespace helper",
+      'var o = __toESM(require("vscode")); o.commands.registerCommand("a", f);',
+    ],
+    [
+      "a minified helper with a mode flag",
+      'var o = l(require("vscode"), 1); o.commands.registerCommand("a", f);',
+    ],
+    [
+      "a TypeScript import star",
+      'const v = __importStar(require("vscode")); v.commands.registerCommand("a", f);',
+    ],
+    [
+      "a default import through a helper",
+      'const v = __importDefault(require("vscode")); v.default.commands.registerCommand("a", f);',
+    ],
+    [
+      "a two-step conversion",
+      'let v = require("vscode"); v = __toESM(v); v.commands.registerCommand("a", f);',
+    ],
+  ])("resolves %s as a wrapped candidate", (_, source) => {
+    const found = [
+      ...semanticModuleCallees(analyzeJavaScriptSemantics(source)).values(),
+    ].filter(({ path }) => path.join(".") === "commands.registerCommand");
+    expect(found).toEqual([
+      {
+        specifier: "vscode",
+        path: ["commands", "registerCommand"],
+        loader_authority: "candidate",
+        wrapper: "unverified",
+      },
+    ]);
+  });
+
+  it.each([
+    [
+      "a wrapper taking two modules",
+      'const v = join(require("vscode"), require("other")); v.commands.registerCommand("a");',
+    ],
+    [
+      "a member of the wrapper result input",
+      'const v = pick(require("vscode").window); v.commands.registerCommand("a");',
+    ],
+    [
+      "a wrapped binding assigned again",
+      'let v = __toESM(require("vscode")); v = fake; v.commands.registerCommand("a");',
+    ],
+    [
+      "a method wrapping the module",
+      'const v = registry.wrap(require("vscode")); v.commands.registerCommand("a");',
+    ],
+  ])("does not resolve %s", (_, source) => {
+    expect(callees(source)).not.toContain(REGISTER);
+  });
+});
+
+describe("callees whose module identity is not established", () => {
+  it.each([
+    [
+      "a conditional import",
+      'const v = flag ? require("vscode") : fake; v.commands.registerCommand("a");',
+    ],
+    [
+      "a fallback import",
+      'const v = flag || require("vscode"); v.commands.registerCommand("a");',
+    ],
+    [
+      "one of two modules",
+      'const v = flag ? require("other") : require("vscode"); v.commands.registerCommand("a");',
+    ],
+    [
+      "a module assigned after declaration",
+      'let v; v = require("vscode"); v.commands.registerCommand("a");',
+    ],
+  ])("marks %s as a possible identity", (_, source) => {
+    const found = [
+      ...semanticModuleCallees(
+        analyzeJavaScriptSemantics(source),
+        "vscode",
+      ).values(),
+    ].filter(({ path }) => path.at(-1) === "registerCommand");
+    expect(found).toEqual([
+      expect.objectContaining({ specifier: "vscode", identity: "possible" }),
+    ]);
+  });
+});
+
+describe("module members that are not the imported ones", () => {
+  it("does not resolve an explicit default member of a require", () => {
+    expect(
+      callees(
+        'const v = require("vscode"); v.default.commands.registerCommand("a", f);',
+      ),
+    ).not.toContain(REGISTER);
+  });
+
+  it.each([
+    [
+      "a replaced member",
+      'const v = require("vscode"); v.commands.registerCommand = noop; v.commands.registerCommand("a", f);',
+    ],
+    [
+      "a member replaced through an alias",
+      'const v = require("vscode"); const c = v.commands; c.registerCommand = noop; v.commands.registerCommand("a", f);',
+    ],
+    [
+      "a replaced parent object",
+      'const v = require("vscode"); v.commands = fake; v.commands.registerCommand("a", f);',
+    ],
+    [
+      "a replaced member of a wrapped require",
+      'var i = toESM(require("vscode")); i.commands.registerCommand = noop; i.commands.registerCommand("a", f);',
+    ],
+    [
+      "a member written later in source",
+      'const v = require("vscode"); v.commands.registerCommand("a", f); v.commands.registerCommand = noop;',
+    ],
+    [
+      "a member written in a function that may not run",
+      'const v = require("vscode"); function stub() { v.commands.registerCommand = noop; } v.commands.registerCommand("a", f);',
+    ],
+    [
+      "a member read by a later declaration of its binding",
+      'var register; require("vscode").commands.registerCommand = noop; var register = require("vscode").commands.registerCommand; register("a", f);',
+    ],
+    [
+      "a member written through require and called through require",
+      'require("vscode").commands.registerCommand = noop; require("vscode").commands.registerCommand("a", f);',
+    ],
+    [
+      "a member written through require and called through a binding",
+      'require("vscode").commands.registerCommand = noop; const v = require("vscode"); v.commands.registerCommand("a", f);',
+    ],
+    [
+      "a computed write on the module",
+      'const v = require("vscode"); v.commands[key] = noop; v.commands.registerCommand("a", f);',
+    ],
+    [
+      "a computed write on a destructured member",
+      'const { commands: c } = require("vscode"); c[key] = noop; require("vscode").commands.registerCommand("a", f);',
+    ],
+    [
+      "a computed write directly on require",
+      'const key = "registerCommand"; require("vscode").commands[key] = noop; require("vscode").commands.registerCommand("a", f);',
+    ],
+    [
+      "a write below a computed key of require",
+      'require("vscode")[key].registerCommand = noop; const v = require("vscode"); v.commands.registerCommand("a", f);',
+    ],
+  ])("marks %s as possibly replaced", (_, source) => {
+    expect(replacements(source)).toEqual(["possible"]);
+  });
+
+  it("does not drop a source default on a required member", () => {
+    expect(
+      callees(
+        'const v = require("vscode").default; v.commands.registerCommand("a", f);',
+      ),
+    ).not.toContain(REGISTER);
+  });
+
+  it("resolves a call rooted directly in require", () => {
+    expect(
+      callees('require("vscode").commands.registerCommand("a", f);'),
+    ).toContain(REGISTER);
+  });
+
+  it("drops an import's default when the file loads imports with require", () => {
+    const file = parseJavaScriptSource(
+      'import vscode from "vscode"; const w = vscode; w.commands.registerCommand("a", f);',
+    );
+    if (file === null) throw new Error("Expected a parsed source");
+    const ir = analyzeParsedJavaScriptSemantics(file, "require");
+    expect(
+      [...semanticModuleCallees(ir).values()].map(({ path }) => path),
+    ).toEqual([["commands", "registerCommand"]]);
+  });
+
+  it("keeps one origin when a file mixes import and require of a module", () => {
+    const file = parseJavaScriptSource(
+      'import * as v from "vscode"; const w = flag ? v : require("vscode");',
+    );
+    if (file === null) throw new Error("Expected a parsed source");
+    const ir = analyzeParsedJavaScriptSemantics(file, "require");
+    expect(
+      ir.bindings.find(({ name }) => name === "w")?.provenance.origins,
+    ).toHaveLength(1);
+  });
+
+  it("keeps a member when a computed write is on a sibling object", () => {
+    expect(
+      replacements(
+        'const v = require("vscode"); const w = v.window; w[key] = noop; v.commands.registerCommand("a", f);',
+      ),
+    ).toEqual([undefined]);
+  });
+
+  it("keeps a member when a computed write is on a sibling of require", () => {
+    expect(
+      replacements(
+        'require("vscode").window[key] = noop; require("vscode").commands.registerCommand("a", f);',
+      ),
+    ).toEqual([undefined]);
+  });
+
+  it.each([
+    'const v = require("vscode"); v.window[key] = noop; v.commands.registerCommand("a", f);',
+    'const v = require("vscode"); v.window[key].title = noop; v.commands.registerCommand("a", f);',
+    'const v = require("vscode"); require("vscode").window[key] = noop; v.commands.registerCommand("a", f);',
+    'const { window: w } = require("vscode"); w[key] = noop; require("vscode").commands.registerCommand("a", f);',
+  ])("keeps a member beside a computed sibling write: %s", (source) => {
+    expect(replacements(source)).toEqual([undefined]);
+  });
+
+  it("keeps a member when only a sibling is written", () => {
+    expect(
+      replacements(
+        'const v = require("vscode"); v.commands.other = noop; v.commands.registerCommand("a", f);',
+      ),
+    ).toEqual([undefined]);
+  });
+});

@@ -24,7 +24,6 @@ export const MAX_INSPECT_VSIX_PACKAGE_MANIFEST_JSON_VALUES = 1_048_576;
 /** Hard ceiling on decoded bytes hashed for one interesting member. */
 export const MAX_INSPECT_VSIX_PACKAGE_MEMBER_BYTES = 16 * 1024 * 1024;
 /** Commands listed in the contributes summary; remaining stay in the total. */
-export const VSIX_COMMANDS_CAP = 32;
 
 /** Each per-call budget's schema bounds and omitted value. */
 export const VSIX_PACKAGE_BUDGETS = {
@@ -282,6 +281,19 @@ const contributeCommandSchema = z.strictObject({
   title: nullableText,
 });
 
+/**
+ * The commands one menu's items invoke, in order; null for an item naming
+ * none. The publisher-controlled menu name is retained once.
+ */
+const menuSchema = z.strictObject({
+  menu: z.string().min(1),
+  commands: z.array(nullableText),
+});
+const keybindingSchema = z.strictObject({
+  command: nullableText,
+  key: nullableText,
+});
+
 // A side is null when its manifest was not read, so no disagreement is
 // claimed against a declaration that was never seen.
 const declaredIdsSchema = z.strictObject({
@@ -369,6 +381,9 @@ export const vsixPackageSchema = z.strictObject({
     commands: z.array(contributeCommandSchema),
     commands_total: uint,
     commands_omitted: uint,
+    /** Null when package.json was not read, or in older Evidence. */
+    menus: z.array(menuSchema).nullable().default(null),
+    keybindings: z.array(keybindingSchema).nullable().default(null),
   }),
   extension_dependencies: declaredIdsSchema,
   extension_pack: declaredIdsSchema,

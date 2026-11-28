@@ -75,6 +75,8 @@ const unknownIdentityReport = {
     commands: [],
     commands_total: 0,
     commands_omitted: 0,
+    menus: null,
+    keybindings: null,
   },
   extension_dependencies: {
     vsixmanifest: [],
