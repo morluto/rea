@@ -9,6 +9,7 @@ import { devicetreeLimitFailure, parseDevicetree } from "./devicetreeParser.js";
 import {
   cells,
   devicetreeFixture,
+  dtString,
   emptyStringsAtReservationBoundaryFixture,
   type FixtureNode,
 } from "./devicetree.fixture.js";
@@ -472,4 +473,43 @@ it("bounds repeated reference paths before Evidence serialization", () => {
   });
   expect(bytes.length).toBeLessThan(100_000);
   expect(() => parse(bytes)).toThrow("max_decoded_bytes");
+});
+
+/**
+ * A property the reader could not decode leaves the inventory incomplete, so the
+ * coverage claim follows the recorded limitations rather than staying complete.
+ */
+it("reports partial coverage when a reg property was not decoded", () => {
+  const report = parse(
+    devicetreeFixture({
+      name: "",
+      properties: {
+        compatible: dtString("test,board"),
+        // More address cells than this reader decodes makes `reg` undecodable.
+        "#address-cells": cells(5),
+        "#size-cells": cells(1),
+      },
+      children: [{ name: "dev@1000", properties: { reg: cells(0, 1) } }],
+    }),
+  );
+  expect(
+    report.limitations.some((line) => line.includes("reg at /dev@1000")),
+  ).toBe(true);
+  expect(report.coverage.status).toBe("partial");
+});
+
+/** A tree the reader decoded completely still claims complete coverage. */
+it("keeps complete coverage when nothing was left undecoded", () => {
+  const report = parse(
+    devicetreeFixture({
+      name: "",
+      properties: {
+        compatible: dtString("test,board"),
+        "#address-cells": cells(1),
+        "#size-cells": cells(1),
+      },
+      children: [{ name: "dev@1000", properties: { reg: cells(0, 1) } }],
+    }),
+  );
+  expect(report.coverage.status).toBe("complete");
 });
