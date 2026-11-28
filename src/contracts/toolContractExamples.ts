@@ -53,6 +53,11 @@ export const TOOL_EXAMPLE_OVERRIDES: Readonly<
   },
   analyze_swift_types: { category: "classes", pattern: "Account" },
   inspect_native_api: { procedure: "main" },
+  reconstruct_procedure_hardware_interactions: {
+    procedure: "reset_handler",
+    hardware_architecture: "cortex-m",
+    platform: "stm32f4",
+  },
   trace_feature: { query: "license" },
   trace_call_path: { start: "0x1000", goal: "0x1100" },
   trace_native_ui_action: { action: "buildTapped:" },

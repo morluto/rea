@@ -500,6 +500,16 @@ export const bindEnhancedWorkflowTools = ({
         request,
       ),
   },
+  reconstruct_procedure_hardware_interactions: {
+    admission: "sdk",
+    analyze: (input, analysis, request) =>
+      executeSessionWorkflowEvidence(
+        { name: "reconstruct_procedure_hardware_interactions", input },
+        analysis,
+        session,
+        request,
+      ),
+  },
   trace_feature: {
     admission: "sdk",
     detail: "delivery",

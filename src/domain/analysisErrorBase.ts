@@ -691,6 +691,7 @@ import type {
 import type { AndroidPartialObservation } from "./android/androidPartialObservation.js";
 import type { UefiPartialObservation } from "./uefi/uefiFirmwareAnalysis.js";
 import type { FirmwarePartialObservation } from "./firmware/firmwareAnalysis.js";
+import type { HardwareReconstructionPartialObservation } from "./firmware/hardwareReconstructionPartial.js";
 import type {
   AdbActivityStartPartialObservation,
   AdbAcquiredFilePartialObservation,
@@ -797,6 +798,7 @@ export type AnalysisPartialObservation =
   | RecordedCrashPartialObservation
   | AndroidPartialObservation
   | FirmwarePartialObservation
+  | HardwareReconstructionPartialObservation
   | UefiPartialObservation
   | NativeUiObservationResult
   | InspectSignature

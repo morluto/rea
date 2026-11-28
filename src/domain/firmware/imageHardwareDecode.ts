@@ -1,0 +1,522 @@
+import { z } from "zod";
+import {
+  decideHardwareClaim,
+  type HardwareClaim,
+  type HardwareClaimInput,
+} from "./hardwareFactBasis.js";
+import { lookupHardwareRegister } from "./hardwareRegisterCatalog.js";
+import {
+  type HardwareArchitecture,
+  hardwareArchitectureSchema,
+} from "./hardwareMemoryMap.js";
+import {
+  lookupSocPeripheral,
+  type SocPlatform,
+  socPlatformSchema,
+} from "./socPeripheralDatabase.js";
+import {
+  sysclkClaims,
+  sysclkProductSchema,
+  type SysclkProductObservation,
+} from "./sysclkProduct.js";
+
+/**
+ * Image observations the reference edge cannot carry: immediates, pin indexes,
+ * bus-name strings, SFUD rows, vector slots, and a SYSCLK product. Controller
+ * names come from the existing SoC catalog. This module does not add manual rows.
+ */
+export interface PinPlacement {
+  readonly origin: bigint;
+  readonly stride: bigint;
+  readonly portLimit: number;
+}
+
+export interface VectorManualEntry {
+  readonly index: number;
+  readonly rule: "architecture-register" | "chip-manual-name";
+  readonly name: string;
+}
+
+export interface PllFieldLayout {
+  readonly name: string;
+  readonly shift: number;
+  readonly width: number;
+}
+
+export type ImageHardwareObservation =
+  | {
+      readonly kind: "loaded-address";
+      readonly site: string;
+      readonly address: bigint;
+      readonly fromRoundedPage: boolean;
+    }
+  | { readonly kind: "bus-name"; readonly site: string; readonly name: string }
+  | {
+      readonly kind: "pin-index";
+      readonly site: string;
+      readonly index: bigint;
+    }
+  | {
+      readonly kind: "sfud-table";
+      readonly tableAddress: string;
+      readonly deviceName: string | null;
+      readonly rows: readonly {
+        readonly address: string;
+        readonly name: string;
+        readonly jedec: bigint;
+        readonly capacity: bigint;
+      }[];
+    }
+  | {
+      readonly kind: "vector-slot";
+      readonly site: string;
+      readonly index: number;
+    }
+  | {
+      readonly kind: "pll-immediate";
+      readonly site: string;
+      readonly value: bigint;
+      readonly fields: readonly PllFieldLayout[];
+      /** Null when the image writes the PLL word and does not switch SYSCLK. */
+      readonly clockSwitch: { readonly site: string } | null;
+    }
+  | SysclkProductObservation
+  | {
+      readonly kind: "register-access";
+      readonly site: string;
+      readonly address: bigint;
+      readonly immediate: bigint | null;
+    }
+  | {
+      readonly kind: "offset-write";
+      readonly site: string;
+      readonly base: bigint;
+      readonly offset: bigint;
+      readonly mask: bigint | null;
+    }
+  | {
+      readonly kind: "immediate";
+      readonly site: string;
+      readonly value: bigint;
+    };
+
+export interface ImageHardwareDecodeInput {
+  readonly architecture: HardwareArchitecture | null;
+  readonly platform: SocPlatform | null;
+  readonly pinPlacement: PinPlacement | null;
+  readonly vectors: readonly VectorManualEntry[];
+  readonly observations: readonly ImageHardwareObservation[];
+}
+
+const pinPlacementSchema = z.strictObject({
+  origin: z.bigint(),
+  stride: z.bigint(),
+  portLimit: z.number().int().nonnegative(),
+});
+
+const vectorManualEntrySchema = z.strictObject({
+  index: z.number().int().nonnegative(),
+  rule: z.enum(["architecture-register", "chip-manual-name"]),
+  name: z.string(),
+});
+
+const pllFieldSchema = z.strictObject({
+  name: z.string(),
+  shift: z.number().int().nonnegative(),
+  width: z.number().int().positive(),
+});
+
+const loadedAddressSchema = z.strictObject({
+  kind: z.literal("loaded-address"),
+  site: z.string(),
+  address: z.bigint(),
+  fromRoundedPage: z.boolean(),
+});
+
+const busNameSchema = z.strictObject({
+  kind: z.literal("bus-name"),
+  site: z.string(),
+  name: z.string(),
+});
+
+const pinIndexSchema = z.strictObject({
+  kind: z.literal("pin-index"),
+  site: z.string(),
+  index: z.bigint(),
+});
+
+const sfudTableSchema = z.strictObject({
+  kind: z.literal("sfud-table"),
+  tableAddress: z.string(),
+  deviceName: z.string().nullable(),
+  rows: z.array(
+    z.strictObject({
+      address: z.string(),
+      name: z.string(),
+      jedec: z.bigint(),
+      capacity: z.bigint(),
+    }),
+  ),
+});
+
+const vectorSlotSchema = z.strictObject({
+  kind: z.literal("vector-slot"),
+  site: z.string(),
+  index: z.number().int().nonnegative(),
+});
+
+const pllImmediateSchema = z.strictObject({
+  kind: z.literal("pll-immediate"),
+  site: z.string(),
+  value: z.bigint(),
+  fields: z.array(pllFieldSchema),
+  clockSwitch: z.strictObject({ site: z.string() }).nullable(),
+});
+
+const registerAccessSchema = z.strictObject({
+  kind: z.literal("register-access"),
+  site: z.string(),
+  address: z.bigint(),
+  immediate: z.bigint().nullable(),
+});
+
+const offsetWriteSchema = z.strictObject({
+  kind: z.literal("offset-write"),
+  site: z.string(),
+  base: z.bigint(),
+  offset: z.bigint(),
+  mask: z.bigint().nullable(),
+});
+
+const immediateSchema = z.strictObject({
+  kind: z.literal("immediate"),
+  site: z.string(),
+  value: z.bigint(),
+});
+
+export const imageHardwareDecodeInputSchema = z.strictObject({
+  architecture: hardwareArchitectureSchema.nullable(),
+  platform: socPlatformSchema.nullable(),
+  pinPlacement: pinPlacementSchema.nullable(),
+  vectors: z.array(vectorManualEntrySchema),
+  observations: z.array(
+    z.discriminatedUnion("kind", [
+      loadedAddressSchema,
+      busNameSchema,
+      pinIndexSchema,
+      sfudTableSchema,
+      vectorSlotSchema,
+      pllImmediateSchema,
+      sysclkProductSchema,
+      registerAccessSchema,
+      offsetWriteSchema,
+      immediateSchema,
+    ]),
+  ),
+});
+
+const hex = (value: bigint): string => `0x${value.toString(16)}`;
+
+const claimFrom = (
+  input: HardwareClaimInput,
+  subject: string,
+  source: string,
+): HardwareClaim => {
+  const decision = decideHardwareClaim(input);
+  return { subject, source, ...decision };
+};
+
+const fieldValue = (word: bigint, field: PllFieldLayout): bigint => {
+  const mask = (1n << BigInt(field.width)) - 1n;
+  return (word >> BigInt(field.shift)) & mask;
+};
+
+const loadedAddressClaims = (
+  observation: Extract<ImageHardwareObservation, { kind: "loaded-address" }>,
+  platform: SocPlatform | null,
+): HardwareClaim[] => {
+  const hit =
+    platform === null
+      ? null
+      : lookupSocPeripheral(observation.address, platform);
+  return [
+    claimFrom(
+      {
+        rule: "observed-address",
+        addressSeen: true,
+        fromRoundedPage: observation.fromRoundedPage,
+      },
+      hex(observation.address),
+      observation.site,
+    ),
+    claimFrom(
+      { rule: "chip-manual-name", addressHit: hit !== null },
+      hit?.name ?? hex(observation.address),
+      observation.site,
+    ),
+  ];
+};
+
+const pinClaims = (
+  observation: Extract<ImageHardwareObservation, { kind: "pin-index" }>,
+  platform: SocPlatform | null,
+  placement: PinPlacement | null,
+): HardwareClaim[] => {
+  const port = observation.index >> 4n;
+  const pin = observation.index & 0xfn;
+  const selected = placement !== null && port < BigInt(placement.portLimit);
+  const base =
+    selected && placement !== null
+      ? placement.origin + port * placement.stride
+      : null;
+  const hit =
+    base !== null && platform !== null
+      ? lookupSocPeripheral(base, platform)
+      : null;
+  const index = hex(observation.index);
+  return [
+    claimFrom(
+      { rule: "instruction-decode", decodedByInstruction: true },
+      `pin:${index}`,
+      `${observation.site} port=${port} pin=${pin}`,
+    ),
+    claimFrom(
+      { rule: "explicit-profile", profileSelected: base !== null },
+      `pin-base:${index}`,
+      base === null ? observation.site : hex(base),
+    ),
+    claimFrom(
+      { rule: "chip-manual-name", addressHit: hit !== null },
+      `pin-name:${index}`,
+      hit === null ? observation.site : `${observation.site} ${hit.name}`,
+    ),
+    claimFrom(
+      {
+        rule: "board-record",
+        statement:
+          "The pin index names a port and a pin. The instructions do not name the board device on that pin.",
+      },
+      `gpio-role:${port}:${pin}`,
+      observation.site,
+    ),
+  ];
+};
+
+const sfudClaims = (
+  observation: Extract<ImageHardwareObservation, { kind: "sfud-table" }>,
+): HardwareClaim[] => {
+  const rows = observation.rows.flatMap((row) => [
+    claimFrom(
+      {
+        rule: "driver-linkage",
+        stringPresent: true,
+        usedAsBootProof: false,
+      },
+      `sfud:${row.address}:name`,
+      row.name,
+    ),
+    claimFrom(
+      { rule: "instruction-decode", decodedByInstruction: true },
+      `sfud:${row.address}:jedec`,
+      hex(row.jedec),
+    ),
+    claimFrom(
+      { rule: "instruction-decode", decodedByInstruction: true },
+      `sfud:${row.address}:capacity`,
+      hex(row.capacity),
+    ),
+  ]);
+  return [
+    ...rows,
+    claimFrom(
+      {
+        rule: "installed-part",
+        tableNames: observation.rows.map((row) => row.name),
+        deviceName: observation.deviceName,
+        answered: false,
+      },
+      "spi-flash-part",
+      observation.tableAddress,
+    ),
+  ];
+};
+
+const vectorClaim = (
+  observation: Extract<ImageHardwareObservation, { kind: "vector-slot" }>,
+  vectors: readonly VectorManualEntry[],
+): HardwareClaim => {
+  const entry = vectors.find((item) => item.index === observation.index);
+  if (entry?.rule === "architecture-register") {
+    return claimFrom(
+      {
+        rule: "architecture-register",
+        architectureHit: true,
+        placementIsBoardSpecific: false,
+      },
+      entry.name,
+      observation.site,
+    );
+  }
+  if (entry?.rule === "chip-manual-name") {
+    return claimFrom(
+      { rule: "chip-manual-name", addressHit: true },
+      entry.name,
+      observation.site,
+    );
+  }
+  return claimFrom(
+    { rule: "chip-manual-name", addressHit: false },
+    `vector:${observation.index}`,
+    observation.site,
+  );
+};
+
+const pllClaims = (
+  observation: Extract<ImageHardwareObservation, { kind: "pll-immediate" }>,
+): HardwareClaim[] => {
+  const fields = observation.fields.map((field) =>
+    claimFrom(
+      { rule: "instruction-decode", decodedByInstruction: true },
+      `pll:${observation.site}:${field.name}`,
+      `${hex(observation.value)}=${fieldValue(observation.value, field)}`,
+    ),
+  );
+  return [
+    ...fields,
+    claimFrom(
+      {
+        rule: "instruction-decode",
+        decodedByInstruction: observation.clockSwitch !== null,
+      },
+      `pll-frequency:${observation.site}`,
+      observation.clockSwitch?.site ?? observation.site,
+    ),
+  ];
+};
+
+const registerAccessClaims = (
+  observation: Extract<ImageHardwareObservation, { kind: "register-access" }>,
+  input: ImageHardwareDecodeInput,
+): HardwareClaim[] => {
+  const address = hex(observation.address);
+  const named =
+    input.architecture === null
+      ? null
+      : lookupHardwareRegister(address, input.architecture);
+  const peripheral =
+    input.platform === null
+      ? null
+      : lookupSocPeripheral(observation.address, input.platform);
+  const claims = [
+    claimFrom(
+      { rule: "observed-address", addressSeen: true, fromRoundedPage: false },
+      address,
+      observation.site,
+    ),
+    named === null
+      ? claimFrom(
+          { rule: "chip-manual-name", addressHit: peripheral !== null },
+          peripheral?.name ?? address,
+          observation.site,
+        )
+      : claimFrom(
+          {
+            rule: "architecture-register",
+            architectureHit: true,
+            placementIsBoardSpecific: false,
+          },
+          named.mnemonic,
+          observation.site,
+        ),
+  ];
+  if (observation.immediate === null) return claims;
+  return [
+    ...claims,
+    claimFrom(
+      { rule: "instruction-decode", decodedByInstruction: true },
+      `immediate:${observation.site}:${address}`,
+      hex(observation.immediate),
+    ),
+  ];
+};
+
+const offsetWriteClaims = (
+  observation: Extract<ImageHardwareObservation, { kind: "offset-write" }>,
+  platform: SocPlatform | null,
+): HardwareClaim[] => {
+  const peripheral =
+    platform === null ? null : lookupSocPeripheral(observation.base, platform);
+  const claims = [
+    claimFrom(
+      { rule: "chip-manual-name", addressHit: peripheral !== null },
+      peripheral?.name ?? hex(observation.base),
+      observation.site,
+    ),
+    claimFrom(
+      { rule: "instruction-decode", decodedByInstruction: true },
+      `offset:${observation.site}`,
+      hex(observation.offset),
+    ),
+  ];
+  if (observation.mask === null) return claims;
+  return [
+    ...claims,
+    claimFrom(
+      { rule: "instruction-decode", decodedByInstruction: true },
+      `mask:${observation.site}`,
+      hex(observation.mask),
+    ),
+  ];
+};
+
+const claimsForObservation = (
+  observation: ImageHardwareObservation,
+  input: ImageHardwareDecodeInput,
+): HardwareClaim[] => {
+  switch (observation.kind) {
+    case "loaded-address":
+      return loadedAddressClaims(observation, input.platform);
+    case "bus-name":
+      return [
+        claimFrom(
+          {
+            rule: "driver-linkage",
+            stringPresent: true,
+            usedAsBootProof: false,
+          },
+          observation.name,
+          observation.site,
+        ),
+      ];
+    case "pin-index":
+      return pinClaims(observation, input.platform, input.pinPlacement);
+    case "sfud-table":
+      return sfudClaims(observation);
+    case "vector-slot":
+      return [vectorClaim(observation, input.vectors)];
+    case "pll-immediate":
+      return pllClaims(observation);
+    case "sysclk-product":
+      return sysclkClaims(observation);
+    case "register-access":
+      return registerAccessClaims(observation, input);
+    case "offset-write":
+      return offsetWriteClaims(observation, input.platform);
+    case "immediate":
+      return [
+        claimFrom(
+          { rule: "instruction-decode", decodedByInstruction: true },
+          `immediate:${observation.site}`,
+          hex(observation.value),
+        ),
+      ];
+  }
+};
+
+/** Decode image observations into claims. A bus name never becomes a controller. */
+export const hardwareClaimsFromImage = (
+  input: ImageHardwareDecodeInput,
+): readonly HardwareClaim[] =>
+  input.observations.flatMap((observation) =>
+    claimsForObservation(observation, input),
+  );
