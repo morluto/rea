@@ -182,6 +182,11 @@ it.each([
     `{\n  "mcpServers": {}\n}\n`,
   ],
   [
+    "only trailing-comma",
+    `{"mcpServers":{\n  "rea":{},\n}}`,
+    `{"mcpServers":{}}`,
+  ],
+  [
     "single-line",
     `{"mcpServers":{"other":{"command":"foo"}, "rea":{"command":"rea"}}}`,
     `{"mcpServers":{"other":{"command":"foo"}}}`,

@@ -807,14 +807,23 @@ const jsonChildRemovalEdits = (
       const start = whitespaceOnly(gapStart, member.offset)
         ? gapStart
         : member.offset;
+      // A trailing JSONC comma of an emptied object goes with that gap.
+      const closing =
+        separator.kind === JSON_COMMA && next === undefined
+          ? nextJsoncToken(text, separator.offset + 1).offset
+          : separator.offset;
       const end =
         !anyKept &&
         next === undefined &&
-        separator.kind !== JSON_COMMA &&
-        whitespaceOnly(memberEnd, separator.offset)
-          ? separator.offset
+        whitespaceOnly(memberEnd, separator.offset) &&
+        whitespaceOnly(
+          separator.kind === JSON_COMMA ? separator.offset + 1 : closing,
+          closing,
+        )
+          ? closing
           : memberEnd;
       edits.push({ offset: start, length: end - start, content: "" });
+      if (end > separator.offset) continue;
     } else earlierKept = true;
     // Keep the separator before the next retained member, matching the
     // existing single-member deletion rule. JSONC may retain a trailing comma.
