@@ -239,8 +239,15 @@ const unanalyzedFiles = (graph: JavaScriptSemanticGraph) => {
       (reason === "resource-limit" && family === "call-flow");
     if (!dropped) continue;
     const { location } = evidence;
-    if (location.available && location.value.kind === "artifact-path") {
-      paths.add(location.value.path);
+    const path = !location.available
+      ? undefined
+      : location.value.kind === "artifact-path"
+        ? location.value.path
+        : location.value.kind === "source-range"
+          ? location.value.source
+          : undefined;
+    if (path !== undefined) {
+      paths.add(path);
       any = true;
     } else if (reason === "incomplete-module") any = true;
   }

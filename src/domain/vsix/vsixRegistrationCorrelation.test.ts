@@ -272,3 +272,11 @@ describe("VS Code command correlation", () => {
     expect(result.commands[0]?.status).toBe("undetermined");
   });
 });
+
+it("is undetermined when a call's literal identifier exceeded a limit", () => {
+  const result = correlate(
+    `${VSCODE}vscode.commands.registerCommand("${"x".repeat(2_000_000)}", f);`,
+    contributes(["demo.a"]),
+  );
+  expect(result.commands.map(({ status }) => status)).toEqual(["undetermined"]);
+});

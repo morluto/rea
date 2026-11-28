@@ -1,3 +1,8 @@
+import { vsixRegistrationCorrelationSummaryViewResultSchema } from "../domain/analysisView/summarySchemas/vsixRegistrationCorrelationSummarySchema.js";
+import {
+  analysisDetailOutputSchemaOf,
+  analysisDetailSchema,
+} from "./analysisDetail.js";
 import {
   correlateVsixRegistrationsInputSchema,
   vsixRegistrationCorrelationSchema,
@@ -72,8 +77,9 @@ const semanticTraceOutputSchema = evidenceResultOf(
 const comparisonOutputSchema = evidenceResultOf(
   applicationVersionComparisonResultSchema,
 );
-const vsixRegistrationCorrelationOutputSchema = evidenceResultOf(
+const vsixRegistrationCorrelationOutputSchema = analysisDetailOutputSchemaOf(
   vsixRegistrationCorrelationSchema,
+  vsixRegistrationCorrelationSummaryViewResultSchema,
 );
 const exportShapeComparisonOutputSchema = evidenceResultOf(
   javaScriptExportShapeComparisonResultSchema,
@@ -200,9 +206,11 @@ export const APPLICATION_TOOL_CONTRACTS = [
     cli: true,
     ...toolContractMetadata("correlate_vsix_registrations", evidenceEffects),
     description:
-      "Join the commands a VS Code extension declares (inspect_vsix_package Evidence) with literal vscode registerCommand and registerTextEditorCommand calls (analyze_javascript_application Evidence of its extracted files). Reports each command as registered, not_found, undetermined (incomplete analysis) or registered_undeclared, and does the same in contributions for chat participants, language model tools, MCP server providers, views and custom editors with source positions, menus and keybindings; run-time identifiers stay unresolved. The pairing of the two sources is caller-selected and not verified. Does not execute the extension.",
+      "Join the commands a VS Code extension declares (inspect_vsix_package Evidence) with literal vscode registerCommand and registerTextEditorCommand calls (analyze_javascript_application Evidence of its extracted files). Reports each command as registered, not_found, undetermined (incomplete analysis) or registered_undeclared, and does the same in contributions for chat participants, language model tools, MCP server providers, views and custom editors with source positions, menus and keybindings; run-time identifiers stay unresolved. The pairing of the two sources is caller-selected and not verified. Omitted detail returns complete Evidence within the agent result budget and otherwise the retained summary of counts; inspect_analysis_view kind evidence-json pages the complete record. Does not execute the extension.",
     kind: "application",
-    inputSchema: correlateVsixRegistrationsInputSchema,
+    inputSchema: correlateVsixRegistrationsInputSchema.extend({
+      detail: analysisDetailSchema,
+    }),
     outputSchema: vsixRegistrationCorrelationOutputSchema,
     examples: [
       {

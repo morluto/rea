@@ -110,6 +110,10 @@ export const registerApplicationCommands = (
     logger,
     name: cliCommandFor("correlate_vsix_registrations"),
     operation: "correlate_vsix_registrations",
+    omit: {
+      detail:
+        "A one-shot command retains no session Evidence for a summary; it always returns the complete correlation",
+    },
     description:
       "Join VS Code extension command declarations with static registrations",
     workflow: async (input, lookup, signal) => {
