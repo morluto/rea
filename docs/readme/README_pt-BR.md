@@ -129,7 +129,7 @@ npx rea-agents@latest setup
 <a href="https://rea.tools/pt-BR/showcase/">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../assets/rea-showcases-dark.svg" />
-    <img alt="Ilustrações dos estudos de panoramização de áudio do DX-Ball, da ponte da área de transferência do Notion e do anel de projéteis do TH04" src="../assets/rea-showcases.svg" />
+    <img alt="Ilustrações dos estudos de panorâmica de áudio do DX-Ball, da ponte da área de transferência do Notion e do anel de projéteis do TH04" src="../assets/rea-showcases.svg" />
   </picture>
 </a>
 
@@ -294,24 +294,25 @@ Consulte [CONTRIBUTING.md](../../CONTRIBUTING.md) para configurar o ambiente de 
 
 Consulte [DISCLAIMER.md](../../DISCLAIMER.md) para orientações sobre o uso responsável.
 
-O REA destina-se à pesquisa, à educação, à interoperabilidade, à preservação de software e à análise de software que você possui ou está autorizado a examinar, dentro da lei.
+A posição do projeto sobre uso ilegal ou não autorizado abrange todas as versões,
+canais de distribuição e plataformas do REA; cada cópia mantém as licenças aplicáveis.
 
-The project's position on illegal or unauthorized use covers all REA
-versions, distribution channels, and platforms; each copy retains its
-applicable licenses.
+O REA destina-se à pesquisa, à educação, à interoperabilidade, à preservação de software e à análise de software que você possui ou está autorizado a examinar, dentro da lei.
 
 ## Licença
 
 [MIT](../../LICENSE)
 
-REA-authored code is licensed under MIT. Third-party material retains its own
-licenses and copyright notices; see [Third-party notices](../../THIRD_PARTY_NOTICES.md)
-for the dependency inventory, preserved license texts, and external-tool terms.
+O código de autoria do REA é licenciado sob a MIT. Materiais de terceiros mantêm
+suas próprias licenças e avisos de direitos autorais; consulte os
+[avisos de terceiros](../../THIRD_PARTY_NOTICES.md) para o inventário de dependências,
+os textos de licença preservados e os termos das ferramentas externas.
 
-**You must legally obtain and be authorized to use commercial tools**, including
-IDA Pro / Hex-Rays decompilers, Hopper, and JEB, under their applicable licenses.
-REA grants no tool license, key, or activation entitlement. Trials and demos
-remain subject to vendor terms, including user, feature, automation, and output
-sharing restrictions. Cracked copies, stolen keys, unauthorized key sharing,
-and bypassing license restrictions are not authorized. This guidance does not
-amend MIT or third-party licenses.
+**Você precisa obter legalmente e estar autorizado a usar as ferramentas comerciais**,
+incluindo IDA Pro / descompiladores Hex-Rays, Hopper e JEB, conforme as licenças
+aplicáveis. O REA não concede licença, chave nem direito de ativação de nenhuma
+ferramenta. Versões de avaliação e de demonstração continuam sujeitas aos termos dos
+fornecedores, incluindo restrições de usuários, funcionalidades, automação e
+compartilhamento de resultados. Cópias crackeadas, chaves roubadas, compartilhamento
+não autorizado de chaves e contorno de restrições de licença não são autorizados.
+Esta orientação não altera a licença MIT nem as licenças de terceiros.
