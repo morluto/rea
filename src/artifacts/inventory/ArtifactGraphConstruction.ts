@@ -198,10 +198,14 @@ export const materializeDirectoryNodes = (
     );
   }
   for (const directory of directories) {
+    const prefix = `${directory.logical_path}/`;
     const children = (childrenByParent.get(directory.occurrence_id) ?? [])
       .map(({ logical_path, artifact_id, entry_kind }) => ({
         // Intermediate directory entries may be absent from an archive.
-        name: logical_path.slice(directory.logical_path.length + 1),
+        // A member with an explicit parent can have a projected ordinal name.
+        name: logical_path.startsWith(prefix)
+          ? logical_path.slice(prefix.length)
+          : logical_path.slice(logical_path.lastIndexOf("/") + 1),
         artifact_id,
         entry_kind,
       }))
@@ -452,6 +456,7 @@ export const resolveOccurrenceParents = (
   occurrences: readonly MutableOccurrence[],
   byPath: ReadonlyMap<string, readonly MutableOccurrence[]>,
   expandedContainerIds: ReadonlySet<string>,
+  metadataParentPaths?: ReadonlyMap<MutableOccurrence, string>,
 ): ArtifactParentResolution => {
   const root: ArtifactParentIndex = { children: new Map() };
   for (const matches of byPath.values()) {
@@ -486,9 +491,25 @@ export const resolveOccurrenceParents = (
   const limitations = new Set<string>();
   const unknownParentOccurrences = new Set<MutableOccurrence>();
   for (const occurrence of occurrences) {
-    // Query paths do not imply filesystem containment. The scanner records
-    // the declaring container for metadata instead.
-    if (occurrence.entry_kind === "metadata") continue;
+    if (occurrence.entry_kind === "metadata") {
+      // A declaration query name does not imply containment. Only a parent
+      // independently established by the reader can override the carrier.
+      const path = metadataParentPaths?.get(occurrence);
+      if (path === undefined) continue;
+      const parents = byPath
+        .get(path)
+        ?.filter((candidate) => candidate.entry_kind === "directory");
+      if (parents?.length === 1) {
+        occurrence.parent_occurrence_id = parents[0]!.occurrence_id;
+      } else {
+        occurrence.parent_occurrence_id = null;
+        unknownParentOccurrences.add(occurrence);
+        const limitation = `The parent occurrence for ${JSON.stringify(occurrence.logical_path)} is unknown because the declared directory ${JSON.stringify(path)} does not identify one observed occurrence.`;
+        occurrence.limitations.push(limitation);
+        limitations.add(limitation);
+      }
+      continue;
+    }
     const path = occurrence.logical_path;
     let branch = root;
     let parent: MutableOccurrence | undefined;

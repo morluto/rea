@@ -1,7 +1,7 @@
-import { once } from "node:events";
-import { PassThrough, Readable } from "node:stream";
+import { Readable } from "node:stream";
 
 import { Budget } from "../domain/budget.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
 import type {
   CompoundFileEntryMetadata,
   CompoundFileMetadata,
@@ -29,12 +29,14 @@ import {
   type ArtifactReader,
   type ArtifactTraversalOptions,
 } from "../resources/index.js";
-import {
-  FileReadCancelled,
-  readFileHandleChunks,
-} from "../filesystem/readFileHandleChunks.js";
+import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import { AbortedWait, waitForAbortable } from "../process/AbortablePromise.js";
+import {
+  ArtifactStreamLifecycle,
+  checkedArtifactMemberStream,
+  ownArtifactStream,
+} from "./OwnedArtifactStream.js";
 
 /**
  * A compound file's directories and allocation tables describe containers
@@ -47,8 +49,7 @@ export class CompoundFileArtifactReader implements ArtifactReader {
   readonly #scope = new ArtifactResourceScope();
   readonly #source: ArtifactFileSource;
   readonly #entries = new Map<string, ArtifactEntry>();
-  /** Member streams whose consumer may still be draining them. */
-  readonly #liveOutputs = new Set<PassThrough>();
+  readonly #lifecycle = new ArtifactStreamLifecycle("compound file");
   /** Logical path to source ordinal, so `open` finds the entry it was given. */
   readonly #byPath = new Map<string, string>();
   #prepared:
@@ -56,7 +57,6 @@ export class CompoundFileArtifactReader implements ArtifactReader {
     | undefined;
   #metadata: CompoundFileMetadata | undefined;
   #limitations: readonly string[] = [];
-  #closing = false;
 
   constructor(path: string, admitted?: StableRegularFileDescriptor) {
     this.#source = new ArtifactFileSource(path, "compound file", admitted);
@@ -130,94 +130,37 @@ export class CompoundFileArtifactReader implements ArtifactReader {
       const { handle } = await this.#source.read(signal);
       this.#assertOpen(signal);
       const label = "compound file";
+      const member = this.#lifecycle.member(signal);
       const source = readFileHandleChunks(handle, {
         start: stored.byteOffset,
         end: stored.byteOffset + stored.declaredSize - 1,
-        signal,
-        cancellationFailure: (reason) =>
-          new ArtifactReaderFailure("cancelled", `${label} read cancelled`, {
-            cause: reason,
-          }),
+        signal: member.signal,
+        cancellationFailure: member.cancellationFailure,
       });
-      const output = new PassThrough();
-      // Retirement can destroy the stream before its consumer listens.
-      output.on("error", () => undefined);
-      // A consumer that stops draining leaves `write` returning false forever,
-      // so the pump would wait on a `drain` that never comes and the scope
-      // could never settle. Destroy every live output before the scope drains.
-      this.#liveOutputs.add(output);
-      // A parked pump waits on the consumer, not on the source, so a
-      // cancellation that arrives while it waits would otherwise stay
-      // unreported until the consumer reads again or the reader is closed.
-      const destroyOnCancel = (): void => {
-        output.destroy(
-          new ArtifactReaderFailure("cancelled", `${label} read cancelled`, {
-            cause: signal?.reason,
+      const output = checkedArtifactMemberStream(
+        stored,
+        label,
+        (detail) =>
+          new ArtifactReaderFailure("integrity", `${label} ${detail}`, {
+            integrityCheck: "member-identity",
           }),
-        );
-      };
-      signal?.addEventListener("abort", destroyOnCancel, { once: true });
-      output.once("close", () => {
-        this.#liveOutputs.delete(output);
-        signal?.removeEventListener("abort", destroyOnCancel);
+        () => member.verify((active) => this.#source.read(active)),
+      );
+      ownArtifactStream(source, output, {
+        scope: this.#scope,
+        signal: member.signal,
+        cancellationFailure: member.cancellationFailure,
+        label,
       });
-      let delivered = 0;
-      // A carrier truncated or rewritten after the pre-read would otherwise
-      // publish whatever bytes happened to arrive, so the delivered length and
-      // the source identity are checked once the range has been consumed. The
-      // check runs at the end of the stream instead of before the first write:
-      // a near-ceiling member must not be held resident in full to be delivered.
-      const verify = async (): Promise<void> => {
-        this.#assertOpen(signal);
-        if (delivered !== stored.declaredSize)
-          throw new ArtifactReaderFailure(
-            "integrity",
-            `${label} entry ended early: ${stored.path}`,
-            { integrityCheck: "member-identity" },
-          );
-        await this.#source.read(signal);
-      };
-      void this.#scope
-        .run(async () => {
-          for await (const chunk of source as AsyncIterable<Buffer>) {
-            if (output.destroyed) return;
-            delivered += chunk.length;
-            if (!output.write(chunk)) {
-              await drain(output);
-              if (output.destroyed) return;
-            }
-          }
-          await verify();
-          output.end();
-        })
-        .catch((cause: unknown) =>
-          output.destroy(
-            // A read cancelled by the caller's signal leaves the pump with the
-            // stream's own FileReadCancelled, which the operation boundary only
-            // recognizes as cancellation when it is an ArtifactReaderFailure.
-            cause instanceof FileReadCancelled
-              ? new ArtifactReaderFailure(
-                  "cancelled",
-                  `${label} read cancelled`,
-                  { cause: cause.reason },
-                )
-              : cause instanceof Error
-                ? cause
-                : new Error(`${label} read failed`, { cause }),
-          ),
-        );
       return output;
     });
   }
 
   async close(): Promise<void> {
-    this.#closing = true;
-    // Destroying an undrained output makes its pump's pending `drain` settle,
-    // so the scope's active set can empty instead of waiting on a consumer
-    // that may never read again.
-    for (const output of this.#liveOutputs) output.destroy();
+    this.#lifecycle.close();
     await this.#scope.close();
     await this.#source.close();
+    this.#prepared = undefined;
     this.#entries.clear();
     this.#byPath.clear();
     this.#metadata = undefined;
@@ -229,7 +172,7 @@ export class CompoundFileArtifactReader implements ArtifactReader {
 
   #assertOpen(signal?: AbortSignal): void {
     assertArtifactReadActive(signal);
-    if (this.#closing)
+    if (this.#lifecycle.closed)
       throw new ArtifactReaderFailure(
         "unavailable",
         "compound file reader is closed",
@@ -247,7 +190,7 @@ export class CompoundFileArtifactReader implements ArtifactReader {
       this.#assertOpen(signal);
       const pending = (this.#prepared ??= {
         signal,
-        promise: this.#prepare(signal),
+        promise: this.#scope.track(() => this.#prepare(signal)),
       });
       try {
         const outcome = await waitForAbortable(pending.promise, signal);
@@ -284,6 +227,16 @@ export class CompoundFileArtifactReader implements ArtifactReader {
     // reader rebuilds under a placed parent, so the reader charges its own
     // retained path text against the same ceiling.
     const pathBudget = new Budget(COMPOUND_FILE_PATH_ALLOWANCE);
+    // Each admitted record may need its ordinal plus a collision suffix. Both
+    // numbers are bounded by the directory count. Release each reservation
+    // immediately before selecting and charging the retained path.
+    const maxOrdinal = String(image.entries.length);
+    const fallbackReservation = `entry-${maxOrdinal}-${maxOrdinal}`.length;
+    pathBudget.charge(image.entries.length * fallbackReservation, () =>
+      invariantViolation(
+        "Compound file directory exceeds its fallback path reservation",
+      ),
+    );
     // A storage renamed by claimPath moves its whole subtree, so each parent's
     // placed path is carried to its descendants: otherwise a child would keep
     // the declared prefix while its parent was listed somewhere else, and the
@@ -294,6 +247,7 @@ export class CompoundFileArtifactReader implements ArtifactReader {
     const entries = new Map<string, ArtifactEntry>();
     const byPath = new Map<string, string>();
     const place = (entry: CompoundFileDirectoryEntry): void => {
+      pathBudget.refund(fallbackReservation);
       const artifact = toArtifactEntry(entry);
       if (artifact === null) return;
       const key = String(entry.index);
@@ -318,16 +272,23 @@ export class CompoundFileArtifactReader implements ArtifactReader {
           ? artifact
           : { ...artifact, path: listed };
       const placed = claimPath(projected, claimed, pathBudget, entry.index);
-      placedByIndex.set(entry.index, placed.path);
-      entries.set(key, placed);
+      if (entry.type === "storage") placedByIndex.set(entry.index, placed.path);
+      entries.set(
+        key,
+        entry.type === "stream" &&
+          placed.kind === "metadata" &&
+          placedParent !== undefined &&
+          placedParent !== ""
+          ? { ...placed, metadataParentPath: placedParent }
+          : placed,
+      );
       byPath.set(placed.path, key);
     };
     // Ancestors first: a child's path is built from its parent's placed path,
     // so the parent must be placed before it whatever order the directory
     // lists them in. The root storage is not a member of itself, so it seeds
     // the map at the empty prefix its children extend.
-    for (const entry of image.entries)
-      if (entry.type === "root-storage") placedByIndex.set(entry.index, "");
+    placedByIndex.set(0, "");
     const waiting = new Map<number, CompoundFileDirectoryEntry[]>();
     const settle = (entry: CompoundFileDirectoryEntry): void => {
       const queued = waiting.get(entry.index);
@@ -335,9 +296,6 @@ export class CompoundFileArtifactReader implements ArtifactReader {
       waiting.delete(entry.index);
       for (const child of queued) {
         place(child);
-        // A dropped child (the root storage is the only one) still has to
-        // release its own children; its placed path is absent, so those fall
-        // back to the parser's path.
         settle(child);
       }
     };
@@ -371,7 +329,7 @@ export class CompoundFileArtifactReader implements ArtifactReader {
   async #decode(signal?: AbortSignal): Promise<CompoundFileImage> {
     const { handle, initial } = await this.#source.read(signal);
     const decoder = createCompoundFileDecoder(initial.size);
-    if (!decoder.ok) throw this.#failure(decoder.error);
+    if (!decoder.ok) throw await this.#stableFailure(decoder.error, signal);
     if (initial.size > 0)
       for await (const chunk of readFileHandleChunks(handle, {
         end: initial.size - 1,
@@ -385,11 +343,19 @@ export class CompoundFileArtifactReader implements ArtifactReader {
       }) as AsyncIterable<Buffer>) {
         this.#assertOpen(signal);
         const written = decoder.value.write(chunk);
-        if (!written.ok) throw this.#failure(written.error);
+        if (!written.ok) throw await this.#stableFailure(written.error, signal);
       }
     const image = decoder.value.finish();
-    if (!image.ok) throw this.#failure(image.error);
+    if (!image.ok) throw await this.#stableFailure(image.error, signal);
     return image.value;
+  }
+
+  async #stableFailure(
+    failure: RegionDecodeFailure,
+    signal: AbortSignal | undefined,
+  ): Promise<ArtifactReaderFailure> {
+    await this.#source.read(signal);
+    return this.#failure(failure);
   }
 
   #failure(failure: RegionDecodeFailure): ArtifactReaderFailure {
@@ -429,22 +395,6 @@ const sameRange = (entry: ArtifactEntry, stored: ArtifactEntry): boolean =>
   entry.declaredSize === stored.declaredSize;
 
 /**
- * Wait for a backpressured write to be consumed. `once("drain")` alone never
- * settles when the stream is destroyed, so a close would strand the pump; this
- * settles on close as well.
- */
-const drain = (output: PassThrough): Promise<void> =>
-  new Promise((resolve) => {
-    const settle = (): void => {
-      output.off("drain", settle);
-      output.off("close", settle);
-      resolve();
-    };
-    output.once("drain", settle);
-    output.once("close", settle);
-  });
-
-/**
  * The root storage has no name of its own and two entries can share a logical
  * path, so an entry whose path is already claimed by another is listed under
  * its source ordinal instead. The same applies to a name that is not a single
@@ -454,10 +404,8 @@ const drain = (output: PassThrough): Promise<void> =>
  * inventory registry normalizes NFC, so two canonically equivalent names would
  * otherwise both pass here and abort the whole inventory downstream.
  *
- * `paths` bounds the text retained across every entry, because the parser's
- * own allowance covers only what it stores: a member whose path it cannot
- * retain is placed under its parent here, so the reader charges those strings
- * too. An entry past the allowance keeps its ordinal path and says why.
+ * Charge only the selected path, including a fallback when necessary. Each
+ * fallback has space reserved before the reader starts placing entries.
  */
 const claimPath = (
   entry: ArtifactEntry,
@@ -465,45 +413,36 @@ const claimPath = (
   paths: Budget,
   index: number,
 ): ArtifactEntry => {
-  const budgeted =
-    entry.path === "" || paths.tryCharge(entry.path.length)
-      ? entry
-      : {
-          ...entry,
-          path: "",
-          limitations: [
-            ...entry.limitations,
-            "Directory paths exceeded the cumulative allowance this read retains, so this entry is listed under its source ordinal; its declared name and facts are kept.",
-          ],
-        };
-  const identity = normalizedIdentity(budgeted.path);
-  const collides =
-    budgeted.path === "" || identity === null || claimed.has(identity);
-  let path = budgeted.path;
-  if (collides) {
-    // A member may literally be named `entry-<ordinal>`, so the fallback is
-    // probed against the same set; reusing a claimed fallback would overwrite
-    // that member's path and make open() resolve the wrong range.
-    const base = `entry-${String(index)}`;
-    path = base;
-    for (let suffix = 2; claimed.has(path); suffix += 1)
-      path = `${base}-${String(suffix)}`;
+  const identity = entry.path === "" ? null : normalizedIdentity(entry.path);
+  const canClaim = identity !== null && !claimed.has(identity);
+  if (
+    canClaim &&
+    paths.tryCharge(Math.max(identity.length, entry.path.length))
+  ) {
+    claimed.add(identity);
+    return entry;
   }
-  claimed.add(collides ? path : (identity as string));
-  if (!collides && budgeted === entry) return entry;
+  // A member may literally use an ordinal path. Compare fallbacks against
+  // the same index so they never take another entry's established identity.
+  const base = `entry-${String(index)}`;
+  let path = base;
+  for (let suffix = 2; claimed.has(path); suffix += 1)
+    path = `${base}-${String(suffix)}`;
+  paths.charge(path.length, () =>
+    invariantViolation("Compound file ordinal path exceeded its reservation"),
+  );
+  claimed.add(path);
   return {
-    ...budgeted,
+    ...entry,
     path,
-    ...(budgeted.path === "" || budgeted.sourcePath !== undefined
+    ...(entry.path === "" || entry.sourcePath !== undefined
       ? {}
-      : { sourcePath: budgeted.path }),
+      : { sourcePath: entry.path }),
     limitations: [
-      ...budgeted.limitations,
-      ...(budgeted === entry
-        ? [
-            "This entry's declared name is not a single safe path component, or another entry already claimed its logical path, so it is listed under its source ordinal; the declared name, when it has one, is retained in sourcePath.",
-          ]
-        : []),
+      ...entry.limitations,
+      canClaim
+        ? "Directory paths exceeded the cumulative allowance this read retains, so this entry is listed under its source ordinal; its declared name and facts are kept."
+        : "This entry's declared name is not a single safe path component, or another entry already claimed its logical path, so it is listed under its source ordinal; the declared name, when it has one, is retained in sourcePath.",
     ],
   };
 };
@@ -521,7 +460,7 @@ const chainProblemLimitation = (problem: CompoundFileChainProblem): string => {
   if (problem === "marker-start")
     return "This stream declares bytes but its start marker names no sector, so it has no byte range in this step.";
   if (problem === "budget")
-    return "This stream's FAT chain was left unresolved when the allocation-chain walk budget was exhausted, so it has no byte range in this step.";
+    return "This stream's FAT chain was left unresolved when the allocation-chain walk and inspection budget was exhausted, so it has no byte range in this step.";
   return "This stream's FAT chain ends before the declared size — it is cyclic or leaves the file — so it has no byte range in this step.";
 };
 
@@ -539,12 +478,8 @@ const entryMetadata = (
   return {
     kind: "compound-file-entry",
     index: entry.index,
-    role:
-      entry.type === "stream"
-        ? "stream"
-        : entry.type === "storage"
-          ? "storage"
-          : "undefined-type",
+    role: entry.type === "unknown" ? "undefined-type" : entry.type,
+    declared_type: entry.declaredType,
     parent_index: entry.parentIndex,
     left_sibling: entry.leftSibling,
     right_sibling: entry.rightSibling,
@@ -555,7 +490,7 @@ const entryMetadata = (
     // the limitation that says the size is unknown.
     stream_size:
       stream && entry.streamSizeRepresentable ? entry.streamSize : null,
-    storage: stream || entry.type === "root-storage" ? entry.storage : null,
+    storage: stream ? entry.storage : null,
     contiguous: stream ? entry.contiguous : null,
   };
 };
@@ -567,17 +502,23 @@ const toArtifactEntry = (
   // The root storage is the container itself, not a member of it. An entry
   // outside the root's tree keeps its declared facts under its source ordinal;
   // the parse counts orphans.
-  if (entry.type === "root-storage") return null;
+  if (entry.type === "root-storage" && entry.index === 0) return null;
   // A record whose declared type the format does not define keeps its readable
   // name and declaration facts as metadata: the parser's count says these are
   // listed without a role, and dropping them here would leave that count
   // describing entries the inventory never shows. A zero byte is an
   // unallocated slot, not a declaration, and is still dropped.
-  if (entry.type === "unknown" && entry.declaredType !== 0)
+  if (
+    entry.type === "root-storage" ||
+    (entry.type === "unknown" && entry.declaredType !== 0)
+  )
     return {
       path: path ?? "",
       kind: "metadata",
-      declaredSize: entry.streamSizeRepresentable ? entry.streamSize : null,
+      declaredSize:
+        entry.type === "unknown" && entry.streamSizeRepresentable
+          ? entry.streamSize
+          : null,
       compressedSize: null,
       executable: false,
       encrypted: false,
@@ -585,7 +526,9 @@ const toArtifactEntry = (
       declaredIntegrity: null,
       unpacked: false,
       limitations: [
-        "This entry declares an object type the format does not define, so it is listed as a declaration without a role; its name, declared size and allocation facts are kept.",
+        entry.type === "root-storage"
+          ? "This record declares a root storage outside directory entry 0. Its name and links are listed without granting it ownership of a subtree."
+          : "This entry declares an object type the format does not define, so it is listed as a declaration without a role.",
       ],
       ...(entry.name === null || entry.name === path
         ? {}
@@ -602,7 +545,9 @@ const toArtifactEntry = (
       ];
     if (path === null)
       return [
-        "This entry is not reachable from the root storage, so it has no logical path; its declared name and facts are kept.",
+        entry.parentIndex === null
+          ? "This entry is not reachable from the root storage, so it has no declared logical path; its declared name and facts are kept."
+          : "This entry is reachable, but its declared path could not be retained because a name on the path is unusable or the cumulative path allowance was reached.",
       ];
     return [];
   };
@@ -638,7 +583,7 @@ const toArtifactEntry = (
     limitations.push(
       "This stream is smaller than the mini stream cutoff and lives in the root storage's mini stream; its byte range is not resolved in this step.",
     );
-  if (entry.storage === "empty" && entry.streamSize > 0)
+  if (entry.storage === null && entry.streamSize > 0)
     limitations.push(
       "This stream declares bytes but its allocation is unresolved, so it has no byte range in this step.",
     );

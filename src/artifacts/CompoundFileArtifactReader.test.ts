@@ -1,5 +1,6 @@
 import { stat, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { setImmediate } from "node:timers/promises";
 
 import { expect, it, vi } from "vitest";
 
@@ -12,11 +13,20 @@ import {
 } from "../domain/windows/compoundFile.js";
 import { ArtifactFileSource } from "../resources/ArtifactFileSource.js";
 import { assertArtifactReadActive } from "../resources/ArtifactFileOperation.js";
+import { openRegularFile } from "../filesystem/RegularFile.js";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 
 const SECTOR = 512;
 const END = 0xffff_fffe;
 const FREE = 0xffff_ffff;
+
+const acknowledgement = (): { promise: Promise<void>; resolve: () => void } => {
+  let resolve = (): void => {};
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+};
 
 interface FixtureEntry {
   readonly name: string;
@@ -211,9 +221,11 @@ it("publishes each entry's directory facts as format metadata", async () => {
     }),
   );
   const inventory = await scanCanonicalArtifactInventory(path);
-  const facts = (logicalPath: string) =>
-    inventory.occurrences.find((row) => row.logical_path === logicalPath)
-      ?.format_metadata;
+  const row = (logicalPath: string) =>
+    inventory.occurrences.find(
+      (occurrence) => occurrence.logical_path === logicalPath,
+    );
+  const facts = (logicalPath: string) => row(logicalPath)?.format_metadata;
   expect(facts("Nested")).toMatchObject({
     kind: "compound-file-entry",
     index: 1,
@@ -236,6 +248,50 @@ it("publishes each entry's directory facts as format metadata", async () => {
     stream_size: 3,
     storage: "mini",
     contiguous: null,
+  });
+  expect(row("Nested/inner")).toMatchObject({
+    parent_occurrence_id: row("Nested")?.occurrence_id,
+    entry_kind: "metadata",
+    source_location: null,
+  });
+  const empty = await scanCanonicalArtifactInventory(
+    await write(
+      "empty-storage.automaticDestinations-ms",
+      compoundFile({
+        entries: rootWith(1, [{ name: "Nested", type: 1, start: 0, size: 0 }]),
+      }),
+    ),
+  );
+  const emptyStorage = empty.occurrences.find(
+    (entry) => entry.logical_path === "Nested",
+  );
+  expect(row("Nested")?.artifact_id).not.toBe(emptyStorage?.artifact_id);
+});
+
+it("publishes unknown allocation separately from an empty stream", async () => {
+  const fixture = compoundFile({
+    entries: rootWith(1, [
+      { name: "Bytes", type: 2, start: 2, size: 4096, right: 2 },
+      { name: "Empty", type: 2, start: END, size: 0 },
+    ]),
+  });
+  fixture.writeUInt32LE(0, 0x38);
+  const inventory = await scanCanonicalArtifactInventory(
+    await write("unknown-cutoff.automaticDestinations-ms", fixture),
+  );
+  expect(
+    inventory.occurrences.find((row) => row.logical_path === "Bytes"),
+  ).toMatchObject({
+    entry_kind: "metadata",
+    source_location: null,
+    format_metadata: { stream_size: 4096, storage: null },
+    limitations: [expect.stringContaining("allocation is unresolved")],
+  });
+  expect(
+    inventory.occurrences.find((row) => row.logical_path === "Empty"),
+  ).toMatchObject({
+    entry_kind: "file",
+    format_metadata: { stream_size: 0, storage: "empty" },
   });
 });
 
@@ -330,6 +386,19 @@ it("keeps a descendant of an unusable name under its storage", async () => {
   expect(paths).toContain("entry-1");
   expect(paths).toContain("entry-1/payload");
   expect(paths).not.toContain("payload");
+  expect(await rootMetadata(inventory, path)).toMatchObject({
+    orphan_entry_count: 0,
+  });
+  for (const occurrence of inventory.occurrences.filter(
+    (row) => row.logical_path !== ".",
+  )) {
+    expect(occurrence.limitations).toContainEqual(
+      expect.stringContaining("This entry is reachable"),
+    );
+    expect(occurrence.limitations).not.toContainEqual(
+      expect.stringContaining("not reachable"),
+    );
+  }
 });
 
 it("does not rebuild a rejected name into a path under its parent", async () => {
@@ -357,6 +426,10 @@ it("does not rebuild a rejected name into a path under its parent", async () => 
     (row) => row.source_path === "bad/name",
   );
   expect(listed?.logical_path).toBe("entry-2");
+  expect(listed?.parent_occurrence_id).toBe(
+    inventory.occurrences.find((row) => row.logical_path === "Nested")
+      ?.occurrence_id,
+  );
 });
 
 it("keeps an entry that declares no usable name", async () => {
@@ -394,8 +467,44 @@ it("lists an entry whose declared type is not defined as metadata", async () => 
   const listed = inventory.occurrences.find(
     (row) => row.logical_path === "Odd",
   );
+  expect(listed?.format_metadata).toMatchObject({
+    role: "undefined-type",
+    declared_type: 3,
+  });
   expect(listed?.limitations).toContainEqual(
     expect.stringMatching(/object type the format does not define/u),
+  );
+});
+
+it("retains a second root record without letting it own a subtree", async () => {
+  const inventory = await scanCanonicalArtifactInventory(
+    await write(
+      "extra-root.automaticDestinations-ms",
+      compoundFile({
+        entries: rootWith(1, [
+          { name: "Extra", type: 5, start: END, size: 0, child: 2 },
+          { name: "Detached", type: 2, start: END, size: 0 },
+        ]),
+      }),
+    ),
+  );
+  expect(
+    inventory.occurrences.find((row) => row.logical_path === "Extra"),
+  ).toMatchObject({
+    entry_kind: "metadata",
+    format_metadata: {
+      index: 1,
+      role: "root-storage",
+      declared_type: 5,
+      child: 2,
+      stream_size: null,
+    },
+  });
+  expect(
+    inventory.occurrences.find((row) => row.logical_path === "entry-2")
+      ?.limitations,
+  ).toContainEqual(
+    expect.stringMatching(/not reachable from the root storage/u),
   );
 });
 
@@ -473,56 +582,75 @@ it("moves a projected storage's child under the path it was listed at", async ()
   expect(new Set(paths).size).toBe(paths.length);
 });
 
-it("bounds the path text the reader rebuilds under a placed parent", async () => {
-  // The parser's allowance covers the paths it can name, but a member of a
-  // storage whose own name cannot name a path is placed here, and those
-  // rebuilt paths are charged against the same ceiling. Fifty thousand
-  // members under sixty nested maximum-length names retain about 100 MiB of
-  // path text without that charge.
-  const depth = 60;
-  const name = "s".repeat(31);
-  const leaves = 50_000;
-  const entries: FixtureEntry[] = [
-    // Ordinal 1 is the unusable storage; storages 2..61 nest under each other.
-    { name: "bad/name", type: 1, start: 0, size: 0, child: 2 },
-  ];
-  for (let level = 0; level < depth; level += 1)
-    entries.push({
-      name,
-      type: 1,
-      start: 0,
-      size: 0,
-      child: level === depth - 1 ? 2 + depth : 3 + level,
-    });
-  const firstLeaf = 2 + depth;
-  for (let leaf = 0; leaf < leaves; leaf += 1)
-    entries.push({
-      name,
-      type: 2,
-      start: END,
-      size: 0,
-      ...(leaf === leaves - 1 ? {} : { right: firstLeaf + leaf + 1 }),
-    });
-  const path = await write(
-    "path-allowance.automaticDestinations-ms",
-    sprawlingFixture(rootWith(1, entries)),
-  );
-  const inventory = await scanCanonicalArtifactInventory(path);
-  const members = inventory.occurrences.filter(
-    (row) => row.format_metadata?.kind === "compound-file-entry",
-  );
-  const retained = members.reduce(
-    (total, row) => total + row.logical_path.length,
-    0,
-  );
-  expect(members.length).toBe(leaves + depth + 1);
-  expect(retained).toBeLessThanOrEqual(32 * 1024 * 1024);
-  expect(
-    members.filter((row) =>
-      row.limitations.some((text) => text.includes("cumulative allowance")),
-    ).length,
-  ).toBeGreaterThan(0);
-});
+it.each([
+  {
+    name: "unique",
+    leafName: (ordinal: number) => `leaf-${ordinal}`,
+    expectLimit: true,
+  },
+  {
+    name: "colliding",
+    leafName: (ordinal: number) => (ordinal === 17_999 ? "payload" : "leaf"),
+    expectLimit: false,
+  },
+])(
+  "accounts for the paths it keeps with $name names",
+  async ({ leafName, expectLimit }) => {
+    // The parser's allowance covers the paths it can name, but a member of a
+    // storage whose own name cannot name a path is placed here, and those
+    // rebuilt paths are charged against the same ceiling. Unique leaves exhaust
+    // it; repeated leaves need only the short ordinals for the duplicates.
+    const depth = 60;
+    const name = "s".repeat(31);
+    const leaves = expectLimit ? 40_000 : 18_000;
+    const entries: FixtureEntry[] = [
+      // Ordinal 1 is the unusable storage; storages 2..61 nest under each other.
+      { name: "bad/name", type: 1, start: 0, size: 0, child: 2 },
+    ];
+    for (let level = 0; level < depth; level += 1)
+      entries.push({
+        name,
+        type: 1,
+        start: 0,
+        size: 0,
+        child: level === depth - 1 ? 2 + depth : 3 + level,
+      });
+    const firstLeaf = 2 + depth;
+    for (let leaf = 0; leaf < leaves; leaf += 1)
+      entries.push({
+        name: leafName(leaf),
+        type: 2,
+        start: END,
+        size: 0,
+        ...(leaf === leaves - 1 ? {} : { right: firstLeaf + leaf + 1 }),
+      });
+    const path = await write(
+      "path-allowance.automaticDestinations-ms",
+      sprawlingFixture(rootWith(1, entries)),
+    );
+    const reader = new CompoundFileArtifactReader(path);
+    try {
+      let count = 0;
+      let retained = 0;
+      let limited = false;
+      let placedPayload = false;
+      for await (const entry of reader.entries()) {
+        count += 1;
+        retained += entry.path.length;
+        limited ||= entry.limitations.some((text) =>
+          text.includes("paths exceeded the cumulative allowance"),
+        );
+        placedPayload ||= entry.path.endsWith("/payload");
+      }
+      expect(count).toBe(leaves + depth + 1);
+      expect(retained).toBeLessThanOrEqual(32 * 1024 * 1024);
+      expect(limited).toBe(expectLimit);
+      expect(placedPayload).toBe(!expectLimit);
+    } finally {
+      await reader.close();
+    }
+  },
+);
 
 it("claims a canonically equivalent name as one path", async () => {
   // `é` (U+00E9) and `e` + U+0301 normalize to the same NFC path. Claiming
@@ -736,6 +864,82 @@ it("keeps a cancelled waiter from restarting a shared preparation", async () => 
   }
 });
 
+it("joins an abandoned preparation before closing a borrowed carrier", async () => {
+  const path = await write(
+    "close-while-preparing.automaticDestinations-ms",
+    compoundFile({ entries: rootWith(undefined, []) }),
+  );
+  const admitted = await openRegularFile(path, { symlinks: "reject" });
+  const reader = new CompoundFileArtifactReader(path, admitted);
+  const controller = new AbortController();
+  const entered = acknowledgement();
+  const release = acknowledgement();
+  const read = admitted.handle.read.bind(admitted.handle);
+  const calls = vi
+    .spyOn(admitted.handle, "read")
+    .mockImplementationOnce((async (...args: Parameters<typeof read>) => {
+      entered.resolve();
+      await release.promise;
+      return read(...args);
+    }) as typeof read);
+  let closing: Promise<void> | undefined;
+  const listing = reader
+    .entries(controller.signal)
+    [Symbol.asyncIterator]()
+    .next();
+  try {
+    await awaitAcknowledgement(
+      entered.promise,
+      listing,
+      "admitted compound file read",
+    );
+    controller.abort("released by the listing caller");
+    await expect(listing).rejects.toMatchObject({ reason: "cancelled" });
+    const closed = vi.fn();
+    closing = reader.close().then(closed);
+    await setImmediate();
+    expect(closed).not.toHaveBeenCalled();
+    release.resolve();
+    await closing;
+  } finally {
+    controller.abort();
+    release.resolve();
+    await listing.catch(() => undefined);
+    await closing;
+    await reader.close();
+    calls.mockRestore();
+    await admitted.handle.close();
+  }
+});
+
+it("checks carrier identity before reporting a decoder failure", async () => {
+  const path = await write(
+    "truncated-while-preparing.automaticDestinations-ms",
+    compoundFile({ entries: rootWith(undefined, []) }),
+  );
+  const admitted = await openRegularFile(path, { symlinks: "reject" });
+  const reader = new CompoundFileArtifactReader(path, admitted);
+  const read = admitted.handle.read.bind(admitted.handle);
+  const calls = vi
+    .spyOn(admitted.handle, "read")
+    .mockImplementationOnce((async (...args: Parameters<typeof read>) => {
+      await truncate(path, SECTOR);
+      return read(...args);
+    }) as typeof read);
+  try {
+    await expect(
+      reader.entries()[Symbol.asyncIterator]().next(),
+    ).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "container-identity",
+    });
+  } finally {
+    await reader.close();
+    calls.mockRestore();
+    await admitted.handle.close();
+  }
+});
+
 it("retries a shared preparation cancelled by another traversal", async () => {
   const reader = new CompoundFileArtifactReader(
     await write(
@@ -874,5 +1078,63 @@ it("rejects a stream whose carrier shrank while it was being delivered", async (
     await expect(consumed).rejects.toMatchObject({ reason: "integrity" });
   } finally {
     await reader.close();
+  }
+});
+
+it("keeps final carrier verification primary when cancellation arrives late", async () => {
+  const path = await write(
+    "abort-final-verification.automaticDestinations-ms",
+    compoundFile({
+      entries: rootWith(1, [{ name: "Stream", type: 2, start: 2, size: 4096 }]),
+      fat: [END, END, 3, 4, 5, 6, 7, 8, 9, END],
+      totalSectors: 12,
+    }),
+  );
+  const admitted = await openRegularFile(path, { symlinks: "reject" });
+  const reader = new CompoundFileArtifactReader(path, admitted);
+  const controller = new AbortController();
+  const finalCheck = acknowledgement();
+  const release = acknowledgement();
+  try {
+    let entry: Parameters<typeof reader.open>[0] | undefined;
+    for await (const member of reader.entries())
+      if (member.path === "Stream") entry = member;
+    if (entry === undefined) throw new Error("Missing Stream entry");
+    const stat = admitted.handle.stat.bind(admitted.handle);
+    const calls = vi
+      .spyOn(admitted.handle, "stat")
+      .mockImplementationOnce(stat)
+      .mockImplementationOnce(async () => {
+        finalCheck.resolve();
+        await release.promise;
+        return stat();
+      });
+    const stream = await reader.open(entry, controller.signal);
+    const consumed = (async (): Promise<number> => {
+      let bytes = 0;
+      for await (const chunk of stream) bytes += chunk.length;
+      return bytes;
+    })();
+    try {
+      await awaitAcknowledgement(
+        finalCheck.promise,
+        consumed,
+        "compound file final verification",
+      );
+      await truncate(path, 0);
+      controller.abort("stopped during verification");
+      release.resolve();
+      await expect(consumed).rejects.toMatchObject({
+        reason: "integrity",
+        integrityCheck: "container-identity",
+      });
+    } finally {
+      release.resolve();
+      await consumed.catch(() => undefined);
+      calls.mockRestore();
+    }
+  } finally {
+    await reader.close();
+    await admitted.handle.close();
   }
 });

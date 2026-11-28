@@ -71,6 +71,8 @@ export interface ArtifactEntry {
   readonly path: string;
   /** Exact reader-source path or opaque key before logical path mapping. */
   readonly sourcePath?: string;
+  /** An observed containing directory for a member listed without readable content. */
+  readonly metadataParentPath?: string;
   readonly kind: "file" | "directory" | "symlink" | "slice" | "metadata";
   readonly declaredSize: number | null;
   readonly compressedSize: number | null;
@@ -157,6 +159,7 @@ export const sameArtifactEntry = (
 ): boolean =>
   entry.path === produced.path &&
   entry.sourcePath === produced.sourcePath &&
+  entry.metadataParentPath === produced.metadataParentPath &&
   entry.kind === produced.kind &&
   entry.declaredSize === produced.declaredSize &&
   entry.compressedSize === produced.compressedSize &&

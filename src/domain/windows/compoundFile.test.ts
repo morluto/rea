@@ -84,7 +84,10 @@ const compoundFile = (options: {
  * `compoundFile` fixes those at the one-sector layout its small fixtures need.
  * A sector's offset is `512 * (id + 1)`; the header occupies the first 512 bytes.
  */
-const sprawlingCompoundFile = (entries: readonly Entry[]): Buffer => {
+const sprawlingCompoundFile = (
+  entries: readonly Entry[],
+  trailingStreamSectors = 0,
+): Buffer => {
   const directorySectors = Math.max(
     1,
     Math.ceil((entries.length * 128) / SECTOR),
@@ -92,11 +95,16 @@ const sprawlingCompoundFile = (entries: readonly Entry[]): Buffer => {
   // Each FAT sector describes 128 sectors, and the FAT itself is part of what
   // must be described, so the count is the least one that covers both.
   let fatSectors = 1;
-  while (fatSectors * 128 < directorySectors + fatSectors) fatSectors += 1;
+  while (
+    fatSectors * 128 <
+    directorySectors + trailingStreamSectors + fatSectors
+  )
+    fatSectors += 1;
   if (fatSectors > 109)
     throw new Error("sprawling fixture needs a DIFAT chain");
   const firstDirectorySector = fatSectors;
-  const totalSectors = fatSectors + directorySectors;
+  const firstStreamSector = fatSectors + directorySectors;
+  const totalSectors = firstStreamSector + trailingStreamSectors;
   const file = Buffer.alloc((totalSectors + 1) * SECTOR);
   MAGIC.copy(file, 0);
   file.writeUInt16LE(0x003e, 0x18);
@@ -119,7 +127,7 @@ const sprawlingCompoundFile = (entries: readonly Entry[]): Buffer => {
     cells.push(
       sector < firstDirectorySector
         ? FREE
-        : sector + 1 < totalSectors
+        : sector + 1 < totalSectors && sector + 1 !== firstStreamSector
           ? sector + 1
           : END,
     );
@@ -411,6 +419,79 @@ it("leaves a stream whose chain reaches the mini FAT unresolved", () => {
   expect(big).toMatchObject({ structuralOverlap: true, byteOffset: null });
 });
 
+it.each([
+  { start: 1000, count: 1, next: END, reached: 0, broken: true },
+  { start: 2, count: 4, next: END, reached: 1, broken: false },
+  { start: 2, count: 1, next: 2, reached: 1, broken: true },
+])(
+  "reports a mini FAT that holds $reached of $count declared sectors (broken=$broken)",
+  ({ start, count, next, reached, broken }) => {
+    const file = compoundFile({
+      entries: root(undefined, []),
+      fat: [END, END, next],
+    });
+    file.writeUInt32LE(start, 0x3c);
+    file.writeUInt32LE(count, 0x40);
+    const { limitations } = parse(file);
+    expect(
+      limitations.some((text) => text.includes("mini FAT chain starting")),
+    ).toBe(broken);
+    if (reached !== count)
+      expect(limitations).toContain(
+        `header declares ${count} mini FAT sector(s) but the chain holds ${reached}`,
+      );
+  },
+);
+
+it("keeps zero-length allocation distinct from a stream with an unknown cutoff", () => {
+  const file = compoundFile({
+    entries: root(1, [
+      { name: "nonempty", type: 2, start: 2, size: 4096, right: 2 },
+      { name: "empty", type: 2, start: END, size: 0 },
+    ]),
+  });
+  file.writeUInt32LE(0, 0x38);
+  const { entries } = parse(file);
+  expect(entries[1]).toMatchObject({
+    streamSize: 4096,
+    storage: null,
+    byteOffset: null,
+  });
+  expect(entries[2]).toMatchObject({ streamSize: 0, storage: "empty" });
+});
+
+it("charges repeated inspection of an aliased FAT chain", () => {
+  const aliases = 48;
+  const streamSectors = 8;
+  const directorySectors = Math.ceil((aliases + 1) / 4);
+  const firstStream = 1 + directorySectors; // This fixture fits one FAT sector.
+  const streams = Array.from({ length: aliases }, (_, index) => ({
+    name: `stream-${index}`,
+    type: 2,
+    start: firstStream,
+    size: 4096,
+    ...(index + 1 === aliases ? {} : { right: index + 2 }),
+  }));
+  const image = parse(sprawlingCompoundFile(root(1, streams), streamSectors));
+  expect(image.entries[1]).toMatchObject({
+    byteOffset: (firstStream + 1) * SECTOR,
+    chainProblem: null,
+  });
+  expect(image.entries[2]).toMatchObject({
+    sharedOverlap: true,
+    byteOffset: null,
+  });
+  expect(image.entries[aliases]).toMatchObject({
+    chainProblem: "budget",
+    byteOffset: null,
+    contiguous: null,
+  });
+  expect(image.metadata.broken_chain_count).toBe(0);
+  expect(image.limitations).toContainEqual(
+    expect.stringContaining("walk and inspection budget"),
+  );
+});
+
 it("reports a directory tree link that leaves the entry table", () => {
   const image = parse(
     compoundFile({
@@ -419,8 +500,8 @@ it("reports a directory tree link that leaves the entry table", () => {
       ]),
     }),
   );
-  expect(image.limitations).toContainEqual(
-    expect.stringMatching(/outside the 4 entries/u),
+  expect(image.limitations).toContain(
+    "directory entry 1 links to entry 40, which is outside the 4 entries the directory stream holds",
   );
 });
 

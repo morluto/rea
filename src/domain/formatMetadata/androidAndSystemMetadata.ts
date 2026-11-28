@@ -734,7 +734,8 @@ export type CompoundFileMetadata = z.infer<typeof compoundFileMetadataSchema>;
 export const compoundFileEntryMetadataSchema = z.strictObject({
   kind: z.literal("compound-file-entry"),
   index: offset,
-  role: z.enum(["storage", "stream", "undefined-type"]),
+  role: z.enum(["storage", "stream", "root-storage", "undefined-type"]),
+  declared_type: z.number().int().min(0).max(255),
   parent_index: offset.nullable(),
   left_sibling: offset.nullable(),
   right_sibling: offset.nullable(),

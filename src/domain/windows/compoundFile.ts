@@ -1,4 +1,5 @@
 import { BinaryReader } from "../binaryContainer.js";
+import { Budget } from "../budget.js";
 import { err, ok, type Result } from "../result.js";
 import type {
   RegionDecodeFailure,
@@ -171,21 +172,24 @@ export interface CompoundFileDirectoryEntry {
   readonly streamSizeRepresentable: boolean;
   /**
    * Where the bytes live: the FAT chain, the mini FAT inside the root storage's
-   * stream, or nowhere when the entry declares no bytes.
+   * stream, or nowhere when the entry declares no bytes. Null means the
+   * record has no allocation semantics or its allocation class is unknown.
    */
-  readonly storage: "fat" | "mini" | "empty";
+  readonly storage: "fat" | "mini" | "empty" | null;
   /** True when the entry's FAT chain occupies consecutive sectors. */
   readonly contiguous: boolean | null;
   /**
    * True when the chain reaches a sector the FAT, the DIFAT or the directory
    * already owns, so its bytes are container structure rather than content.
+   * Null means the inspection allowance left the chain unchecked.
    */
-  readonly structuralOverlap: boolean;
+  readonly structuralOverlap: boolean | null;
   /**
    * True when the chain reaches a sector an earlier entry's chain already owns,
    * so publishing these bytes would present one range under two identities.
+   * Null means the inspection allowance left the chain unchecked.
    */
-  readonly sharedOverlap: boolean;
+  readonly sharedOverlap: boolean | null;
   /** File offset of the first sector, only when the chain is contiguous. */
   readonly byteOffset: number | null;
   /**
@@ -276,19 +280,15 @@ interface ChainWalk {
  */
 class ChainTable {
   readonly #walks = new Map<number, ChainWalk>();
-  /** Sectors visited across every walk of one parse. */
-  // not-an-allowance: cumulative visit tally, compared with the aggregate budget only to stop and report exhaustion; it charges nothing.
-  #visited = 0;
+  readonly budget: Budget;
 
   constructor(
     readonly fat: Uint32Array,
     readonly sectorBytes: number,
     readonly fileBytes: number,
-    readonly visitBudget: number,
-  ) {}
-
-  get visited(): number {
-    return this.#visited;
+    visitBudget: number,
+  ) {
+    this.budget = new Budget(visitBudget);
   }
 
   walk(start: number): ChainWalk {
@@ -316,11 +316,10 @@ class ChainTable {
       // fresh long chain from multiplying out into unbounded work; the cap is
       // a multiple of the file's own sector count so a legitimate file never
       // reaches it.
-      if (this.#visited >= this.visitBudget) {
+      if (!this.budget.tryCharge(1)) {
         budgetHit = true;
         break;
       }
-      this.#visited += 1;
       seen.add(sector);
       visitedHere.push(sector);
       sector = this.fat[sector] as number;
@@ -683,16 +682,14 @@ export const parseCompoundFile = (
     return err(failure("the header lists no FAT sector within the file"));
 
   // One chain cache for the whole parse: the directory, the mini FAT, the root
-  // storage's mini stream and every member stream share it, so a sector walked
-  // once is never walked again. The visit budget is a multiple of the sectors
-  // the file actually holds, which no legitimate container can exhaust: a
-  // chain may revisit a sector only when it is malformed, and each such walk
-  // stops at its first revisit.
+  // storage's mini stream and every member stream share it. Charge the walks
+  // and stream checks against one bound. Well-formed chains are disjoint, so
+  // they fit even with all four per-sector validation and ownership passes.
   const chains = new ChainTable(
     table,
     sectorBytes,
     bytes.length,
-    Math.max(1024, sectorCount * 4),
+    Math.max(1024, sectorCount * 8),
   );
 
   // The directory stream is a FAT chain; its sectors hold the entries.
@@ -721,6 +718,16 @@ export const parseCompoundFile = (
   // A mini-FAT chain is container structure too: a stream that reaches one of
   // its sectors would publish allocation cells as member bytes.
   const miniFatChain = chains.walk(firstMiniFatSector);
+  if (declaredMiniFatSectors !== 0 || miniFatChain.sectors.length !== 0) {
+    if (miniFatChain.broken)
+      limitations.push(
+        `the mini FAT chain starting at sector ${String(firstMiniFatSector)} is broken or leaves the file`,
+      );
+    if (miniFatChain.sectors.length !== declaredMiniFatSectors)
+      limitations.push(
+        `header declares ${String(declaredMiniFatSectors)} mini FAT sector(s) but the chain holds ${String(miniFatChain.sectors.length)}`,
+      );
+  }
   // A mini-FAT chain and the directory chain that start at or reach the same
   // sector would each read that sector as a different structure: the directory
   // walk would decode mini-FAT cells as entry names, or the reverse. Reject
@@ -870,25 +877,30 @@ export const parseCompoundFile = (
   ): void => {
     // An explicit stack keeps a long sibling chain from nesting one call per
     // entry; a malformed tree can hold far more than the call stack allows.
-    const pending: {
+    type PendingLink = {
       index: number;
       parent: number;
+      referringEntry: number;
       prefix: string | null;
       depth: number;
       chainNamed: boolean;
-    }[] = [{ index, parent, prefix, depth: 0, chainNamed: true }];
+    };
+    const pending: PendingLink[] = [
+      {
+        index,
+        parent,
+        referringEntry: parent,
+        prefix,
+        depth: 0,
+        chainNamed: true,
+      },
+    ];
     while (pending.length > 0) {
-      const next = pending.pop() as {
-        index: number;
-        parent: number;
-        prefix: string | null;
-        depth: number;
-        chainNamed: boolean;
-      };
+      const next = pending.pop() as PendingLink;
       const entryIndex = next.index;
       if (entryIndex >= entryCount) {
         limitations.push(
-          `directory entry ${String(next.parent)} links to entry ${String(entryIndex)}, which is outside the ${String(entryCount)} entries the directory stream holds`,
+          `directory entry ${String(next.referringEntry)} links to entry ${String(entryIndex)}, which is outside the ${String(entryCount)} entries the directory stream holds`,
         );
         continue;
       }
@@ -940,6 +952,7 @@ export const parseCompoundFile = (
         pending.push({
           index: entry.leftSibling,
           parent: next.parent,
+          referringEntry: entryIndex,
           prefix: next.prefix,
           depth: next.depth,
           chainNamed: next.chainNamed,
@@ -948,6 +961,7 @@ export const parseCompoundFile = (
         pending.push({
           index: entry.rightSibling,
           parent: next.parent,
+          referringEntry: entryIndex,
           prefix: next.prefix,
           depth: next.depth,
           chainNamed: next.chainNamed,
@@ -968,9 +982,10 @@ export const parseCompoundFile = (
         pending.push({
           index: entry.child,
           parent: entryIndex,
+          referringEntry: entryIndex,
           prefix: retained,
           depth: next.depth + 1,
-          chainNamed: descendantsNamed,
+          chainNamed: descendantsNamed && retained !== null,
         });
       }
     }
@@ -1035,14 +1050,17 @@ export const parseCompoundFile = (
     const markerStartWithBytes =
       bearing && entry.streamSize > 0 && isMarker(entry.startingSector);
     const empty = entry.streamSize === 0;
-    const storage: CompoundFileDirectoryEntry["storage"] =
-      !bearing || !cutoffValid
+    const storage: CompoundFileDirectoryEntry["storage"] = !bearing
+      ? null
+      : empty
         ? "empty"
-        : empty
-          ? "empty"
-          : entry.type !== "root-storage" && entry.streamSize < 4096
-            ? "mini"
-            : "fat";
+        : entry.type === "root-storage"
+          ? "fat"
+          : !cutoffValid
+            ? null
+            : entry.streamSize < 4096
+              ? "mini"
+              : "fat";
     if (markerStartWithBytes) brokenChains += 1;
     if (storage !== "fat" || startingSector === null)
       return {
@@ -1068,31 +1086,37 @@ export const parseCompoundFile = (
       };
     const chain = chains.walk(startingSector);
     const needed = Math.ceil(entry.streamSize / sectorBytes);
+    // Cached arrays still cost work when entries share them. Reserve the
+    // possible contiguity, structure, sharing and ownership passes up front.
+    const inspected =
+      !chain.budgetHit && chains.budget.tryCharge(chain.sectors.length * 4);
     // A chain is complete when it did not break and reaches the declared size.
     // Contiguity is a separate fact: a short chain whose reached sectors happen
     // to be consecutive is still incomplete.
-    const complete = !chain.broken && chain.sectors.length >= needed;
-    const contiguous =
-      !chain.broken &&
-      chain.sectors.every(
-        (sector, position) => sector === startingSector + position,
-      );
-    if (!complete && !markerStartWithBytes) {
-      brokenChains += 1;
-      if (chain.budgetHit) chainBudgetHits += 1;
-    }
-    const structuralOverlap = chain.sectors.some((sector) =>
-      structuralSectors.has(sector),
-    );
-    const sharedOverlap = chain.sectors.some((sector) => {
-      const owner = ownedSectors.get(sector);
-      return owner !== undefined && owner !== index;
-    });
+    const complete =
+      inspected && !chain.broken && chain.sectors.length >= needed;
+    const contiguous = inspected
+      ? !chain.broken &&
+        chain.sectors.every(
+          (sector, position) => sector === startingSector + position,
+        )
+      : null;
+    if (!inspected) chainBudgetHits += 1;
+    else if (!complete) brokenChains += 1;
+    const structuralOverlap = inspected
+      ? chain.sectors.some((sector) => structuralSectors.has(sector))
+      : null;
+    const sharedOverlap = inspected
+      ? chain.sectors.some((sector) => {
+          const owner = ownedSectors.get(sector);
+          return owner !== undefined && owner !== index;
+        })
+      : null;
     if (structuralOverlap) overlappingChains += 1;
     if (sharedOverlap) sharedChains += 1;
     // Only a chain that becomes the owner of its sectors can be published with
     // a byte range; the chain itself is complete regardless.
-    if (!structuralOverlap && !sharedOverlap)
+    if (inspected && !structuralOverlap && !sharedOverlap)
       for (const sector of chain.sectors)
         if (!ownedSectors.has(sector)) ownedSectors.set(sector, index);
     return {
@@ -1117,7 +1141,7 @@ export const parseCompoundFile = (
         contiguous && complete && !structuralOverlap && !sharedOverlap
           ? sectorOf(startingSector, sectorBytes)
           : null,
-      chainProblem: complete ? null : chain.budgetHit ? "budget" : "incomplete",
+      chainProblem: complete ? null : inspected ? "incomplete" : "budget",
     };
   });
 
@@ -1144,7 +1168,7 @@ export const parseCompoundFile = (
     );
   if (chainBudgetHits !== 0)
     limitations.push(
-      `${String(chainBudgetHits)} stream(s) were left unresolved when the allocation-chain walk budget (${String(chains.visitBudget)} sector visits) was exhausted; a file whose acceptable chains stay within it is unaffected`,
+      `${String(chainBudgetHits)} stream(s) were left unresolved when the allocation-chain walk and inspection budget (${String(chains.budget.maximum)} sector visits) was exhausted`,
     );
 
   const metadata: CompoundFileMetadata = {
