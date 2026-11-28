@@ -139,10 +139,15 @@ export class FitArtifactReader extends PositionalArtifactReader<FitMetadata> {
               },
       });
     }
+    // A field the structure reader could not decode leaves the image description
+    // incomplete, whichever image carries it.
+    const undecodable = structure.images.some(
+      (image) => image.metadata.unreadable_fields.length > 0,
+    );
     return {
       entries,
       coverage: {
-        status: "complete",
+        status: undecodable ? "unknown" : "complete",
         limitations,
       },
       formatMetadata: structure.metadata,
