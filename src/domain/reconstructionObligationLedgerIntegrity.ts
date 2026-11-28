@@ -1,3 +1,4 @@
+import { CoverageAccumulator } from "./coverageAccumulator.js";
 import { digestCanonicalValue } from "./canonicalDigest.js";
 import { canonicalJson } from "./comparisonSemantics.js";
 import { obligationCategories } from "./reconstructionObligationCategories.js";
@@ -67,9 +68,11 @@ export const reconstructionObligationLedgerStatus = (
 
 export const reconstructionObligationCoverage = (
   limitations: readonly string[],
-): ReconstructionObligationLedger["coverage"] => ({
-  status: limitations.length === 0 ? "complete" : "partial",
-});
+): ReconstructionObligationLedger["coverage"] => {
+  const coverage = new CoverageAccumulator().recordComplete();
+  for (const limitation of limitations) coverage.recordOmission(limitation);
+  return { status: coverage.finalizeKnown() };
+};
 
 export const reconstructionObligationReports = (
   obligations: readonly ReconstructionObligation[],

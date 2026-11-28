@@ -8,7 +8,10 @@ import {
 } from "./virtualFileMapping.js";
 import type { PeDataDirectory } from "./peOptionalHeader.js";
 import { decodeLimit, ParseFailureError } from "./parseFailure.js";
-import type { TruncatedExtent } from "./targetFailure.js";
+import type {
+  FormatTargetFailureKind,
+  TruncatedExtent,
+} from "./targetFailure.js";
 
 /** Return whether the leading bytes begin with the 4-byte ELF magic (`\x7fELF`). */
 export const hasElfMagic = (bytes: Uint8Array): boolean =>
@@ -39,11 +42,9 @@ interface BinaryFormatFailureFacts {
 }
 
 /** Distinguish corrupt recognized binaries from containers outside parser coverage. */
-export class BinaryFormatFailure extends ParseFailureError<
-  "malformed" | "truncated" | "unsupported"
-> {
+export class BinaryFormatFailure extends ParseFailureError<FormatTargetFailureKind> {
   constructor(
-    kind: "malformed" | "truncated" | "unsupported",
+    kind: FormatTargetFailureKind,
     message: string,
     facts: BinaryFormatFailureFacts = {},
   ) {
@@ -96,16 +97,52 @@ export class BinaryResourceFailure extends ParseFailureError<"limit"> {
     message: string,
     allowance: string = boundary,
     readonly unit?: "bytes" | "entries",
+    required?: number | bigint,
   ) {
     super({
       kind: "limit",
       format: "native-binary",
       detail: message,
-      limit: { name: allowance, maximum: maximum_bytes },
+      limit: {
+        name: allowance,
+        maximum: maximum_bytes,
+        ...(required === undefined ? {} : { required }),
+      },
     });
     this.name = "BinaryResourceFailure";
   }
 }
+
+/**
+ * `max_structure_bytes` when omitted: the bytes of one native directory or
+ * load-command table read, and of the section names decoded from it.
+ */
+export const DEFAULT_NATIVE_STRUCTURE_BYTES = 16 * 1024 * 1024;
+
+/** Limit name a `BinaryResourceFailure` carries for `max_structure_bytes`. */
+export const NATIVE_STRUCTURE_LIMIT = "max_structure_bytes";
+
+/** A native table read or decoded section-name set above `max_structure_bytes`. */
+export const nativeStructureFailure = (
+  what: string,
+  requiredBytes: bigint | number,
+  maximumBytes: number,
+): BinaryResourceFailure =>
+  new BinaryResourceFailure(
+    "structure",
+    maximumBytes,
+    `${what} requires ${String(requiredBytes)} bytes, above max_structure_bytes (${String(maximumBytes)})`,
+    NATIVE_STRUCTURE_LIMIT,
+    "bytes",
+    requiredBytes,
+  );
+
+/** Whether a resource failure stopped at `max_structure_bytes`. */
+export const isNativeStructureFailure = (
+  cause: unknown,
+): cause is BinaryResourceFailure =>
+  cause instanceof BinaryResourceFailure &&
+  cause.failure.limit.name === NATIVE_STRUCTURE_LIMIT;
 
 /** The exceeded maximum as fixed-ceiling facts; the unit only when its producer named it. */
 export const binaryResourceCeiling = (
@@ -261,8 +298,30 @@ export type BinaryContainer = BinaryContainerFacts &
         };
       }
     | { readonly format: "pe" }
-    | { readonly format: "macho"; readonly macho_cpu_type: number }
+    | {
+        readonly format: "macho";
+        readonly macho_cpu_type: number;
+        /** `mach_header.filetype`, such as MH_OBJECT (1) or MH_EXECUTE (2). */
+        readonly macho_file_type: number;
+        /**
+         * Every LC_SEGMENT/LC_SEGMENT_64 in declaration order, including
+         * segments with no file bytes. `load_regions` holds only the
+         * file-backed ones, so whether a segment was declared is read here.
+         */
+        readonly macho_segments: readonly MachoSegmentDeclaration[];
+      }
   );
+
+/** One declared Mach-O segment command, whether or not it has file bytes. */
+export interface MachoSegmentDeclaration {
+  readonly name: string;
+  readonly address: bigint;
+  readonly memory_size: bigint;
+  readonly file_offset: bigint;
+  readonly file_size: bigint;
+  /** Initial VM protection (`initprot`). */
+  readonly protection: number;
+}
 
 /** All declared file-backed image memory, including PE headers at the image base. */
 export const imageFileMappings = (
@@ -459,10 +518,16 @@ export class BinaryReader {
     return result;
   }
 
-  table(offset: bigint, count: number, width: number, label: string): number {
+  table(
+    offset: bigint,
+    count: number,
+    width: number,
+    label: string,
+    structureBytes: number = DEFAULT_NATIVE_STRUCTURE_BYTES,
+  ): number {
     const size = BigInt(count) * BigInt(width);
     const range = this.fileRange(offset, size, label);
-    requireBinaryTableBudget(size, label);
+    requireBinaryTableBudget(size, label, structureBytes);
     return range.offset;
   }
 }
@@ -483,16 +548,14 @@ export const createBinaryReaderCache = (little: boolean, format: string) => {
   };
 };
 
-/** Reject oversized structural tables before reading their bytes. */
-export const requireBinaryTableBudget = (size: bigint, label: string): void => {
-  if (size > 16n * 1024n * 1024n)
-    throw new BinaryResourceFailure(
-      "structure",
-      16 * 1024 * 1024,
-      `${label} exceeds the 16 MiB structural decoding budget`,
-      "structure",
-      "bytes",
-    );
+/** Reject a structural table above `max_structure_bytes` before reading its bytes. */
+export const requireBinaryTableBudget = (
+  size: bigint,
+  label: string,
+  structureBytes: number = DEFAULT_NATIVE_STRUCTURE_BYTES,
+): void => {
+  if (size > BigInt(structureBytes))
+    throw nativeStructureFailure(label, size, structureBytes);
 };
 
 /** Admit a declared file span, or mark it unbacked when it leaves the file. */

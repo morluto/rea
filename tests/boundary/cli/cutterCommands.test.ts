@@ -1,8 +1,7 @@
 import { listenCutterServer } from "../../fixtures/cutterBridgeProtocol.js";
 import { createServer } from "node:net";
 import { createHmac, randomUUID } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";

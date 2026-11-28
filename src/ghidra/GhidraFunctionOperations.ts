@@ -1,6 +1,7 @@
 /** Function analysis and annotation operations admitted by the Ghidra adapter. */
 export const GHIDRA_FUNCTION_OPERATIONS = [
   "annotate_native_function",
+  "define_native_data_types",
   "inspect_native_data_type",
   "inspect_native_instruction",
   "resolve_native_call_targets",

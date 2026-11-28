@@ -103,12 +103,17 @@ export class AndroidBootImageArtifactReader extends PositionalArtifactReader<And
         throw formatFailure(`duplicate component path ${plan.path}`);
       entries.set(entry.adapterKey, entry);
     }
-    const degraded = tableResult.degraded || footerResult.degraded;
+    // Unexposed layout bytes leave coverage unknown, as unparsed metadata does.
+    const unknownCoverage =
+      tableResult.degraded ||
+      footerResult.degraded ||
+      header.unexposedLayoutBytes ||
+      tableResult.table?.unexposedSectionBytes === true;
     return {
       entries: [...entries.values()],
       formatMetadata: toMetadata(header, footerResult.avb, plans.length),
       coverage: {
-        status: degraded ? "unknown" : "complete",
+        status: unknownCoverage ? "unknown" : "complete",
         limitations: [
           ...header.limitations,
           ...(tableResult.table?.limitations ?? []),

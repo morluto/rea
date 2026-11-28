@@ -4,6 +4,7 @@ interface PackageManifest {
   devDependencies?: Record<string, string>;
   dependencies?: Record<string, string>;
   overrides?: Record<string, unknown>;
+  scripts?: Record<string, string>;
   // npm manifests are extensible; preserve metadata outside this projection.
   [key: string]: unknown;
 }
@@ -28,8 +29,21 @@ export function pluginPackageMetadata<Manifest extends PackageManifest>(
   manifest: Manifest,
   lock: PackageLock,
 ): {
-  packageJson: Omit<Manifest, "devDependencies" | "overrides"> & {
+  packageJson: Omit<Manifest, "devDependencies" | "overrides" | "scripts"> & {
     bundleDependencies: string[];
+    /** The source scripts without prepare, which an installed package never runs. */
+    scripts?: Omit<NonNullable<Manifest["scripts"]>, "prepare">;
   };
   shrinkwrap: PackageLock;
 };
+
+export interface PluginPlatformPackage {
+  name: string;
+  path: string;
+  version: string;
+  integrity: string;
+}
+
+export function pluginPlatformPackages(
+  shrinkwrap: PackageLock,
+): PluginPlatformPackage[];

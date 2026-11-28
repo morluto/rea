@@ -129,7 +129,6 @@ test("keeps each Kuna no-pseudocode observation's limitations on its batch item"
     const batch = parseEvidence(
       (
         await call("batch_decompile", {
-          detail: "complete",
           addresses: ["main", "broken", "puts", "0xdead"],
         })
       ).structuredContent,

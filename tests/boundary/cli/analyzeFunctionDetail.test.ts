@@ -58,7 +58,7 @@ const harness = () => {
         address: "main",
       }),
       options: optionsSchema.parse(options),
-      formatExplicit: false,
+      structuredOutput: false,
     });
   return { runDirectAnalysis, invoke };
 };

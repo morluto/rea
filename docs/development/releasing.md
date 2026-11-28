@@ -40,7 +40,9 @@ Before publishing, npm lookup failures and malformed metadata stop the job.
 An existing version must match the qualified tarball's SHA-512 and intended
 `latest`/`next` dist-tag before it can be reused. Publication never overwrites
 an existing version or silently changes a dist-tag. After publication, confirmed
-registry absence is polled every 30 seconds for a 75-minute retry window. Lookup errors and content or tag mismatches fail immediately. If
+registry absence is polled every 30 seconds. A single 75-minute deadline covers
+both requests and polling delays, and each request keeps its 30-second cap.
+Lookup errors and content or tag mismatches fail immediately. If
 visibility takes longer, rerun the failed jobs in the original workflow once the
 package appears. A separate post-publication job with read-only
 repository/actions permissions verifies registry bytes and tags, then installs
@@ -393,7 +395,7 @@ records the actual release commit. Before npm publication, the workflow validate
 the dispatch, qualifies and rehearses the selected revision, and rechecks that
 the branch tip still equals the dispatch SHA. Registry jobs run only during
 `publish`. A GitHub tag pointing to a different commit stops MCP publication.
-See [npm's provenance implementation](https://github.com/npm/cli/blob/v11.16.0/workspaces/libnpmpublish/lib/provenance.js)
+See [npm's provenance implementation](https://github.com/npm/cli/blob/v11.21.3/workspaces/libnpmpublish/lib/provenance.js)
 for the use of GitHub's workflow ref and commit SHA.
 
 Full qualification builds the bundled Windows controls and verifies the packaged

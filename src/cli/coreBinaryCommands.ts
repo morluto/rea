@@ -108,6 +108,7 @@ const registerContractBinaryCommands = (
     {
       description: `List bounded, untyped references to an analyzed address. For typed incoming references, use inspect-native-instruction at the target address where supported. ${namedAddressGuidance} ${equalSelectorGuidance}`,
       sessionTarget: program,
+      evidenceDelivery: true,
       positionals: ["address"],
       selectorOptions: {
         address: {

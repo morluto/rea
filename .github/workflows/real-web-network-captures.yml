@@ -47,7 +47,14 @@ jobs:
         id: npm-cache
         uses: ./.github/actions/npm-cache
       - name: Use pinned package manager
-        run: npm install --global npm@11.16.0
+        shell: bash
+        run: |
+          npm_spec=$(node -p 'require("./package.json").packageManager')
+          if [[ ! $npm_spec =~ ^npm@[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Expected packageManager to pin npm to an exact version." >&2
+            exit 1
+          fi
+          npm install --global "$npm_spec"
       - run: npm ci
       - uses: ./.github/actions/portable-build-cache
         with:

@@ -5,6 +5,8 @@ import {
   parseXmlDocument,
   parseXmlDocumentWithinNodeLimit,
   xmlElementRanges,
+  xmlTrimmedAttribute,
+  xmlTrimmedDirectText,
 } from "./xmlDocument.js";
 
 it.each([
@@ -100,6 +102,19 @@ it("applies the consumer's explicit DTD policy", () => {
     kind: "unsupported",
     field: "doctype",
   });
+});
+
+it("trims attributes and joins only direct character data", () => {
+  const parsed = parseXmlDocument(
+    '<item id="  example  " blank=" ">  One <![CDATA[& two]]><nested>ignored</nested><!-- ignored --> three  </item>',
+    { doctype: "reject", lineEndings: "preserve" },
+  );
+  if (!parsed.ok) throw parsed.error;
+  const item = parsed.value.documentElement!;
+  expect(xmlTrimmedAttribute(item, "id")).toBe("example");
+  expect(xmlTrimmedAttribute(item, "blank")).toBeNull();
+  expect(xmlTrimmedAttribute(item, "missing")).toBeNull();
+  expect(xmlTrimmedDirectText(item)).toBe("One & two three");
 });
 
 it("counts projected XML nodes before creating their DOM", () => {

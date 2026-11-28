@@ -74,10 +74,12 @@ const outputSchema = z.strictObject({
   next_step: z.string(),
 });
 
+export const DISCOVERY_REFRESH_GUIDANCE =
+  "If your client caches the tool list, refresh tools/list after discovery or reconnect with REA_MCP_TOOL_CATALOG_PROFILE=full.";
+
 export const DISCOVER_TOOLS = {
   name: "discover_tools",
-  description:
-    "Find and load REA tools on demand. Search by task keywords (for example javascript, sqlite, strings, imports), or supply exact names. Returned tools become callable with their original names and full schemas after your client refreshes tools/list. Loaded tools remain available for this connection. This only changes catalog visibility; it does not run analysis or grant execution authority. If tools do not appear, enable MCP catalog refresh in your client or use REA_MCP_TOOL_CATALOG_PROFILE=full.",
+  description: `Find and load REA tools on demand. Search by task keywords (for example javascript, sqlite, strings, imports), or supply exact names. Returned tools become callable with their original names and full schemas. Loaded tools remain available for this connection. This only changes catalog visibility; it does not run analysis or grant execution authority. ${DISCOVERY_REFRESH_GUIDANCE}`,
   inputSchema,
   outputSchema,
   annotations: {

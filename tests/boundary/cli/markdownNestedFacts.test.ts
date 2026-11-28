@@ -15,7 +15,6 @@ import { createCliResultOutput } from "../../../src/cli/cliResultOutput.js";
 import { writeOrderedZip } from "../../fixtures/artifactEntryOrder.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
-import { completeArguments } from "../../support/completeDetail.js";
 
 it("keeps source keys literal in Markdown headings through CLI result output", async () => {
   const value = Object.freeze({
@@ -115,7 +114,7 @@ workspaceCliTest(
       arguments: ["inspect-artifact", archive, "--format", "md"],
     });
     const json = await cli.run({
-      arguments: completeArguments("inspect-artifact", archive),
+      arguments: ["inspect-artifact", archive, "--json"],
     });
     expect(markdown.exitCode).toBe(0);
     expect(json.exitCode).toBe(0);

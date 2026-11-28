@@ -100,8 +100,10 @@ export type {
 export {
   imageFileSizeRemediation,
   closeArtifactResources,
+  artifactFileCleanupError,
   projectArtifactCloseFailure,
   withArtifactCleanupFailure,
+  artifactFileCancellationError,
   projectOwnedArtifactIdentityFailure,
   projectOwnedArtifactInputFailure,
   projectSelectedArtifactFileFailure,
@@ -144,8 +146,10 @@ export {
   DestinationCaseCollisionFailure,
   DestinationPathUnrepresentableFailure,
   annotateEnglishUnicodeCaseCollisions,
+  currentDirectoryPrefixLimitation,
   hasDestinationPath,
   normalizeArtifactPath,
+  withoutCurrentDirectoryPrefix,
 } from "./ArtifactPaths.js";
 export { SafeOutputTree } from "./SafeOutputTree.js";
 export {
@@ -168,11 +172,16 @@ export {
   withArtifactTargetIdentity,
 } from "./withArtifactTargetIdentity.js";
 export {
+  isZipFileEntry,
+  readBoundedZipMember,
+  zipMemberSize,
+} from "./boundedZipMember.js";
+export {
   ZIP_READER_OPTIONS,
   ZipArtifactReader,
   decodeZipEntryText,
   zipEntryNameLimitations,
   zipEntryPath,
   zipListingCoverage,
-  typedZipFailure,
+  throwZipPackageFailure,
 } from "./ZipArtifactReader.js";

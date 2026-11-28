@@ -31,8 +31,10 @@ authority are validated independently before selection and connection.
   Page `dom` (`node_names`), `accessibility` (`roles`), `console` (`types`),
   `network` (`methods`), `scripts` or `resources` with
   `inspect_analysis_view` view `{"kind":"web-page","collection":...}`.
-  `compare_web_captures` needs the complete `normalized_result` inline, so
-  request `detail: "complete"` for a capture you will compare.
+  To compare a summarized capture, pass
+  `{"kind":"retained-evidence","evidence_id":...}` in `compare_web_captures`
+  instead of resending it; either the summary's or the complete record's ID
+  works.
 - `analyze_web_bundle` / `rea analyze-web-bundle` parses selected script artifacts without execution and derives chunk edges, route and endpoint candidates, vendor fingerprints, static WebMCP declarations, and optionally source-map/original-source evidence.
   Sources reported as JavaScript use JavaScript grammar even when the script
   has no URL or its URL ends in a different source extension.
@@ -465,7 +467,20 @@ Cancellation and clock-request failures retain their own outcomes. Session
 subresources, child-frame requests and failures without admitted request ownership
 are excluded. Redirects reuse their request identity, and completed/failed requests
 release it. Active request identity metadata uses the existing 8 MiB retained-event
-allowance; exhaustion fails the observation explicitly instead of guessing scope.
+allowance as its own counter; exhaustion fails the observation explicitly
+instead of guessing scope. Armed timeline rows keep a separate counter.
+Each row counts its retained strings plus a fixed overhead for its numbers.
+That counter defaults to the same 8 MiB (`browser.timeline_retained_bytes`).
+One call can pass `timeline_retained_bytes` (CLI `--timeline-retained-bytes`).
+A running REA changes the default for later calls with
+`update_analysis_settings`. The range is 1 to `Number.MAX_SAFE_INTEGER`.
+A row that does not fit fails the observation with `payload_limit` and
+`details.limit`, and does not return a shorter timeline.
+`details.reported_limits.measured_timeline_bytes` counts the retained rows
+and the refused row. Later rows in the window are not counted, so the limit
+has no `required_value`. Raising the
+timeline allowance does not raise the request-identity counter, and the
+reverse is also true. Event count has no separate ceiling.
 
 ## Data minimization
 

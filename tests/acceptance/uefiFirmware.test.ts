@@ -24,7 +24,6 @@ import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
-import { COMPLETE_DETAIL } from "../support/completeDetail.js";
 
 const execute = promisify(execFile);
 const cli = fileURLToPath(new URL("../../scripts/rea.mjs", import.meta.url));
@@ -122,9 +121,7 @@ it("maps a flash image end to end through CLI inspection and MCP session invento
   const opened = await call("open_binary", { path: imagePath });
   expect(opened.isError, JSON.stringify(opened.content)).not.toBe(true);
 
-  const inspectedSession = await call("inspect_artifact", {
-    detail: "complete",
-  });
+  const inspectedSession = await call("inspect_artifact", {});
   expect(inspectedSession.isError, JSON.stringify(inspectedSession)).not.toBe(
     true,
   );
@@ -265,7 +262,6 @@ it("never admits prose carrying a `_FVH` string as the flash image format", asyn
     const cliResult = await execute(process.execPath, [
       cli,
       "inspect-artifact",
-      ...COMPLETE_DETAIL,
       path,
       "--json",
     ]);
@@ -298,7 +294,6 @@ it.each([
     const command = await execute(process.execPath, [
       cli,
       "inspect-artifact",
-      ...COMPLETE_DETAIL,
       path,
       "--json",
     ]);
@@ -382,7 +377,7 @@ it("retains an opaque volume and reports only the unparsed ranges in the selecte
   const opened = await call("open_binary", { path });
   expect(opened.isError, JSON.stringify(opened.content)).not.toBe(true);
   const inventoryEvidence = parseEvidence(
-    (await call("inspect_artifact", { detail: "complete" })).structuredContent,
+    (await call("inspect_artifact", {})).structuredContent,
   );
   const inventory = artifactInventoryResultSchema.parse(
     artifactInspectionResultSchema.parse(inventoryEvidence.normalized_result)
@@ -484,6 +479,85 @@ it("publishes distinct AMI NVAR link, attributes, GUID index and data digest", a
       data_sha256: sha256(Buffer.from([0xaa, 0xbb])),
     },
   ]);
+});
+
+it("publishes an EDK2 variable store and keeps an unusable store signature from reading as absence", async () => {
+  const root = await createTestTempDirectory("rea-edk2-store-");
+  const guid = (text: string): Buffer => {
+    const [a, b, c, d, e] = text.split("-") as [
+      string,
+      string,
+      string,
+      string,
+      string,
+    ];
+    const out = Buffer.alloc(16);
+    out.writeUInt32LE(Number.parseInt(a, 16), 0);
+    out.writeUInt16LE(Number.parseInt(b, 16), 4);
+    out.writeUInt16LE(Number.parseInt(c, 16), 6);
+    Buffer.from(`${d}${e}`, "hex").copy(out, 8);
+    return out;
+  };
+  // gEfiVariableGuid store holding one added variable, then erased space.
+  const store = Buffer.alloc(0x100, 0xff);
+  guid("ddcf3616-3275-4164-98b6-fe85707ffe7d").copy(store, 0);
+  store.writeUInt32LE(0x100, 16);
+  store.writeUInt8(0x5a, 20);
+  store.writeUInt8(0xfe, 21);
+  const name = Buffer.from("Lang\0", "utf16le");
+  const data = Buffer.from("eng", "ascii");
+  store.writeUInt16LE(0x55aa, 28);
+  store.writeUInt8(0x3f, 30);
+  store.writeUInt32LE(0x7, 32);
+  store.writeUInt32LE(name.length, 36);
+  store.writeUInt32LE(data.length, 40);
+  guid("8be4df61-93ca-11d2-aa0d-00e098032b8c").copy(store, 44);
+  name.copy(store, 60);
+  data.copy(store, 60 + name.length);
+  const storePath = join(root, "vars.fd");
+  await writeFile(storePath, store);
+
+  // The same signature with an unformatted header is not a usable store.
+  const unusable = Buffer.from(store);
+  unusable.writeUInt8(0xff, 20);
+  const unusablePath = join(root, "unusable.fd");
+  await writeFile(unusablePath, unusable);
+
+  const { call } = await connectLocalToolsMcp();
+  const parsed = async (path: string) =>
+    uefiResultSchemas.inspect_uefi_nvram.parse(
+      parseEvidence(
+        (await call("inspect_uefi_nvram", { path })).structuredContent,
+      ).normalized_result,
+    );
+  const result = await parsed(storePath);
+  expect(result.coverage).toBe("complete");
+  expect(result.edk2_stores).toMatchObject([
+    {
+      offset: 0,
+      authenticated: false,
+      variables: [
+        {
+          name: "Lang",
+          state: "added",
+          attributes: 7,
+          vendor_guid: "8be4df61-93ca-11d2-aa0d-00e098032b8c",
+          data_offset: 60 + name.length,
+          data_length: 3,
+          data_sha256: sha256(data),
+        },
+      ],
+    },
+  ]);
+
+  const rejected = await parsed(unusablePath);
+  expect(rejected.edk2_stores).toEqual([]);
+  expect(rejected.limitations.join(" ")).toContain(
+    "not a formatted variable-store header",
+  );
+  expect(rejected.limitations.join(" ")).not.toContain(
+    "No EDK2 variable stores",
+  );
 });
 
 cliTest(

@@ -45,6 +45,33 @@ it("reads nchain from a complete DT_HASH table", () => {
   );
 });
 
+it("reads eight-byte DT_HASH entries in either byte order", () => {
+  const big = { bytes: 8, little: false } as const;
+  const little = { bytes: 8, little: true } as const;
+  expect(
+    readElfHashSymbolCount(words([0, 1, 0, 3, ...Array(8).fill(0)]), 8, big),
+  ).toEqual(ok(3));
+  expect(
+    readElfHashSymbolCount(words([1, 0, 3, 0, ...Array(8).fill(0)]), 8, little),
+  ).toEqual(ok(3));
+  expect(
+    readElfHashSymbolCount(words([0, 1, 0, 3, ...Array(7).fill(0)]), 8, big),
+  ).toEqual(
+    err({
+      kind: "malformed",
+      message: expect.stringMatching(/DT_HASH table.*outside/iu),
+    }),
+  );
+  expect(
+    readElfHashSymbolCount(words([0, 1, 1, 3, ...Array(8).fill(0)]), 8, big),
+  ).toEqual(
+    err({
+      kind: "malformed",
+      message: expect.stringMatching(/DT_HASH header.*32 bits/iu),
+    }),
+  );
+});
+
 it("follows the last DT_GNU_HASH chain to its end", () => {
   expect(
     finish(readElfGnuHashSymbolCount(words(gnuTable([2, 3], [0, 0, 1])), 8)),
@@ -82,7 +109,13 @@ it("applies a caller budget before walking each table", () => {
     err({ kind: "budget", label: "DT_GNU_HASH symbol index", count: 9 }),
   );
   expect(budget(gnuTable([2], [0, 0, 0, 1]), 3)).toEqual(
-    err({ kind: "budget", label: "DT_GNU_HASH symbol table", count: 4 }),
+    err({
+      kind: "budget",
+      label: "DT_GNU_HASH symbol table",
+      count: 4,
+      // The chain walk stops at the budget, so 4 is a lower bound.
+      lowerBound: true,
+    }),
   );
 });
 

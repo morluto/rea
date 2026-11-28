@@ -115,7 +115,10 @@ const documents: readonly {
   {
     command: cliCommandFor("inspect_analysis_view"),
     schema: inspectAnalysisViewInputSchema,
-    callerPaths: [["source", "path"]],
+    callerPaths: [
+      ["source", "path"],
+      ["view", "artifact_path"],
+    ],
   },
   {
     command: cliCommandFor("capture_electron_scenario"),

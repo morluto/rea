@@ -344,6 +344,24 @@ describe("browser scenario MCP tool", () => {
         alignment: { status: "aligned", aligned_steps: 2 },
       },
     });
+    // The same capture named by its retained Evidence compares identically.
+    const capturedId = Reflect.get(
+      captured.structuredContent ?? {},
+      "evidence_id",
+    );
+    const reference = { kind: "retained-evidence", evidence_id: capturedId };
+    const referenced = await client.callTool({
+      name: "compare_web_captures",
+      arguments: { before_scenario: reference, after_scenario: reference },
+    });
+    expect(referenced.isError, JSON.stringify(referenced)).not.toBe(true);
+    expect(referenced.structuredContent).toMatchObject({
+      normalized_result: Reflect.get(
+        compared.structuredContent ?? {},
+        "normalized_result",
+      ),
+      evidence_links: [capturedId, capturedId],
+    });
 
     const otherOrigin = await client.callTool({
       name: "capture_browser_scenario",

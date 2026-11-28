@@ -1,4 +1,3 @@
-import type { StableArtifactSnapshot } from "./readStableArtifact.js";
 import type {
   AnalysisError,
   AnalysisErrorOptions,
@@ -27,6 +26,8 @@ import {
   AnalysisTargetFailureError,
   cancelledBy,
   carriedReason,
+  type AnalysisCancelledError,
+  type CancelledOptions,
 } from "../domain/analysisErrorCore.js";
 
 /**
@@ -67,6 +68,18 @@ export const readerIntegrityFailure = (
         },
       );
 
+/** Carry the artifact reader's observed abort reason into the analysis error. */
+export const artifactFileCancellationError = (
+  operation: string,
+  failure: ArtifactReaderFailure,
+  options?: CancelledOptions,
+): AnalysisCancelledError =>
+  cancelledBy(
+    operation,
+    carriedReason(artifactFileCancellationCause(failure)),
+    options,
+  );
+
 /** Preserve ownership classification for stable-file identity and cancellation. */
 export const projectOwnedArtifactIdentityFailure = (
   facts: ArtifactFilePrimaryFacts,
@@ -82,10 +95,7 @@ export const projectOwnedArtifactIdentityFailure = (
   if (cause.reason === "integrity")
     return readerIntegrityFailure(operation, path, cause);
   if (cause.reason === "cancelled")
-    return cancelledBy(
-      operation,
-      carriedReason(artifactFileCancellationCause(cause)),
-    );
+    return artifactFileCancellationError(operation, cause);
   return undefined;
 };
 
@@ -205,18 +215,24 @@ const artifactCleanupFailure = (
   );
 };
 
-/** Project descriptor cleanup while keeping its exact leases bound to the error. */
+/** Build the provider cleanup error and bind it to the reader's exact leases. */
+export const artifactFileCleanupError = (
+  cause: unknown,
+  providerId: string,
+  operation: string,
+): ProviderCleanupError | undefined => {
+  if (!(cause instanceof ArtifactReaderFailure)) return undefined;
+  const error = artifactCleanupFailure(cause, providerId, operation);
+  if (error !== undefined) bindArtifactFileCleanup(cause, error);
+  return error;
+};
+
+/** Preserve the original close failure when the reader has no cleanup evidence. */
 export const projectArtifactCloseFailure = (
   cause: unknown,
   providerId: string,
   operation: string,
-): unknown => {
-  if (!(cause instanceof ArtifactReaderFailure)) return cause;
-  const error = artifactCleanupFailure(cause, providerId, operation);
-  if (error === undefined) return cause;
-  bindArtifactFileCleanup(cause, error);
-  return error;
-};
+): unknown => artifactFileCleanupError(cause, providerId, operation) ?? cause;
 
 /** Close a provider's descriptor scope and preserve its cleanup leases on failure. */
 export const closeArtifactResources = async (

@@ -9,7 +9,7 @@ import { pathToFileURL } from "node:url";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -46,7 +46,6 @@ const testClient = (name: string) =>
 
 const browsers: FakeCdpBrowser[] = [];
 const resources: Array<{ close(): Promise<unknown> }> = [];
-const temporary: string[] = [];
 
 it("retains failed JavaScript inventory cleanup through server shutdown retries", async () => {
   const { archive } = await createStrippedAsarAddon();
@@ -74,7 +73,6 @@ it("retains failed JavaScript inventory cleanup through server shutdown retries"
     const response = await client.callTool({
       name: "analyze_javascript_application",
       arguments: {
-        detail: "complete",
         input_path: archive,
         integrity_policy: "record-and-continue",
       },
@@ -104,11 +102,6 @@ it("retains failed JavaScript inventory cleanup through server shutdown retries"
 afterEach(async () => {
   await Promise.all(resources.splice(0).map(async (item) => item.close()));
   await Promise.all(browsers.splice(0).map(async (browser) => browser.close()));
-  await Promise.all(
-    temporary
-      .splice(0)
-      .map(async (path) => rm(path, { recursive: true, force: true })),
-  );
 });
 
 it("records completed Electron facts after final detach as server Evidence", async () => {
@@ -213,7 +206,7 @@ it("lets MCP JavaScript analysis continue only with recorded untrusted ASAR byte
 
   const rejected = await client.callTool({
     name: "analyze_javascript_application",
-    arguments: { detail: "complete", input_path: archive },
+    arguments: { input_path: archive },
   });
   expect(parseMcpToolError(rejected)).toMatchObject({
     error: {
@@ -227,7 +220,6 @@ it("lets MCP JavaScript analysis continue only with recorded untrusted ASAR byte
   const continued = await client.callTool({
     name: "analyze_javascript_application",
     arguments: {
-      detail: "complete",
       input_path: archive,
       integrity_policy: "record-and-continue",
     },
@@ -290,7 +282,6 @@ it("advertises owned JavaScript analysis effects without foreign target executio
 
 it("exposes endpoint-scoped Electron discovery and inspection as Evidence", async () => {
   const root = await createTestTempDirectory("rea-electron-mcp-");
-  temporary.push(root);
   await writeFile(join(root, "index.html"), "<script src='app.js'></script>");
   await writeFile(
     join(root, "app.js"),
@@ -378,7 +369,7 @@ it("exposes endpoint-scoped Electron discovery and inspection as Evidence", asyn
   );
   const analyzed = await client.callTool({
     name: "analyze_javascript_application",
-    arguments: { detail: "complete", input_path: root },
+    arguments: { input_path: root },
   });
   expect(analyzed.isError).not.toBe(true);
   expect(analyzed.structuredContent).toMatchObject({
@@ -439,7 +430,6 @@ it("exposes endpoint-scoped Electron discovery and inspection as Evidence", asyn
 /** Create the selected-path aliases and retained IPC-gap capture for the public workflow. */
 const activeElectronScenarioFixture = async () => {
   const root = await createTestTempDirectory("rea-electron-active-mcp-");
-  temporary.push(root);
   const applicationPath = join(root, "main.js");
   await writeFile(applicationPath, "module.exports = {};\n");
   const aliasedRoot = join(root, "..", `${basename(root)}-alias`);
@@ -449,11 +439,10 @@ const activeElectronScenarioFixture = async () => {
     aliasedRoot,
     process.platform === "win32" ? "junction" : "dir",
   );
-  temporary.push(aliasedRoot);
+  onTestFinished(() => rm(aliasedRoot, { recursive: true, force: true }));
   const workingDirectory = await createTestTempDirectory(
     "rea-electron-working-directory-",
   );
-  temporary.push(workingDirectory);
   const activeResult =
     createElectronActiveObservationFixtureResult(applicationPath);
   const capturedEvent = activeResult.timeline.events[0];
@@ -631,7 +620,6 @@ it("runs active Electron scenarios with selected paths and inferred working dire
 
 it("exposes the target-free static JavaScript application workflow", async () => {
   const root = await createTestTempDirectory("rea-electron-static-mcp-");
-  temporary.push(root);
   await writeElectronBoundaryFixture(root);
   const session = createTestBinarySession(() => ({
     execute: () => Promise.resolve(observed(null)),
@@ -663,7 +651,7 @@ it("exposes the target-free static JavaScript application workflow", async () =>
   const analyzed = await client.callTool(
     {
       name: "analyze_javascript_application",
-      arguments: { detail: "complete", input_path: root },
+      arguments: { input_path: root },
     },
     { onprogress: (update) => progress.push(update.progress) },
   );
@@ -765,13 +753,13 @@ it.skipIf(process.platform === "win32")(
     await client.connect(clientTransport);
     const initial = await client.callTool({
       name: "analyze_javascript_application",
-      arguments: { detail: "complete", input_path: join(root, "app") },
+      arguments: { input_path: join(root, "app") },
     });
     expect(initial.isError, JSON.stringify(initial)).not.toBe(true);
     const initialEvidence = parseEvidence(initial.structuredContent);
     const refused = await client.callTool({
       name: "analyze_javascript_application",
-      arguments: { detail: "complete", input_path: `${root}/file/../app` },
+      arguments: { input_path: `${root}/file/../app` },
     });
     expect(refused.isError).toBe(true);
     expect(parseMcpToolError(refused)).toMatchObject({
@@ -783,7 +771,7 @@ it.skipIf(process.platform === "win32")(
     const selected = `${root}/link/../app`;
     const admitted = await client.callTool({
       name: "analyze_javascript_application",
-      arguments: { detail: "complete", input_path: selected },
+      arguments: { input_path: selected },
     });
     expect(admitted.isError, JSON.stringify(admitted)).not.toBe(true);
     const evidence = parseEvidence(admitted.structuredContent);
