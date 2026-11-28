@@ -973,4 +973,61 @@ describe("client launcher traversal semantics", () => {
       ),
     ).toBe("unknown");
   });
+
+  it("unwraps a path-qualified cmd.exe before recognizing the package runner", () => {
+    expect(
+      classifyClientRegistrationCommand(
+        [
+          "C:\\Windows\\System32\\cmd.exe",
+          "/d",
+          "/c",
+          "npx",
+          "-y",
+          `${PRODUCT_IDENTITY.packageName}@6.10.1`,
+          "mcp",
+        ],
+        undefined,
+      ),
+    ).toBe("owned");
+    expect(
+      classifyClientRegistrationCommand(
+        ["/usr/bin/cmd.exe", "/c", "npx", "-y", "another-package", "mcp"],
+        undefined,
+      ),
+    ).toBe("foreign");
+  });
+
+  it("reads the script an npm rea.cmd shim launches", async () => {
+    const root = await createTestTempDirectory("rea-cmd-shim-");
+    const script = join(
+      root,
+      "node_modules",
+      PRODUCT_IDENTITY.packageName,
+      "scripts",
+      "rea.mjs",
+    );
+    await mkdir(dirname(script), { recursive: true });
+    await writeFile(script, "// owned dispatcher\n");
+    const cmd = join(root, "rea.cmd");
+    await writeFile(
+      cmd,
+      [
+        "@ECHO off",
+        'SET "_prog=node"',
+        `endLocal & "%_prog%"  "%dp0%\\node_modules\\${PRODUCT_IDENTITY.packageName}\\scripts\\rea.mjs" %*`,
+        "",
+      ].join("\r\n"),
+    );
+    expect(classifyClientRegistrationCommand([cmd, "mcp"], script)).toBe(
+      "owned",
+    );
+    expect(classifyClientRegistrationCommand([cmd, "mcp"], undefined)).toBe(
+      "owned",
+    );
+    const foreign = join(root, "other.mjs");
+    await writeFile(foreign, "// foreign\n");
+    expect(classifyClientRegistrationCommand([cmd, "mcp"], foreign)).toBe(
+      "foreign",
+    );
+  });
 });

@@ -3,10 +3,11 @@ import {
   accessSync,
   constants,
   lstatSync,
+  readFileSync,
   readlinkSync,
   realpathSync,
 } from "node:fs";
-import { isAbsolute, posix } from "node:path";
+import { isAbsolute, posix, win32 } from "node:path";
 import {
   CURRENT_ENTRYPOINT_PATH,
   normalizeEntrypointPath,
@@ -170,13 +171,53 @@ export const currentClientRegistrationCommand = (
     : [runtime, script, "mcp"];
 };
 
+/** Command spelling may be path-qualified; Windows and POSIX separators both appear in fixtures. */
+const commandFileName = (path: string): string =>
+  (path.split(/[/\\]/u).at(-1) ?? path).toLowerCase();
+
 const unwrapCmdCommand = (command: readonly string[]): readonly string[] => {
-  const executable = command[0]?.toLowerCase();
-  if (executable !== "cmd" && executable !== "cmd.exe") return command;
+  const executable = command[0];
+  if (executable === undefined) return command;
+  const name = commandFileName(executable);
+  if (name !== "cmd" && name !== "cmd.exe") return command;
   if (command[1]?.toLowerCase() === "/c") return command.slice(2);
   if (command[1]?.toLowerCase() === "/d" && command[2]?.toLowerCase() === "/c")
     return command.slice(3);
   return [];
+};
+
+/**
+ * Recover the script an npm Windows `rea.cmd` shim launches. The shim is a
+ * different program from that script, so path identity alone cannot prove
+ * ownership; the quoted `%dp0%…` argument is the nested record to read.
+ */
+const windowsReaCmdScript = (cmdPath: string): string | undefined => {
+  if (commandFileName(cmdPath) !== `${PRODUCT_IDENTITY.cliBinary}.cmd`)
+    return undefined;
+  let text: string;
+  try {
+    const bytes = readFileSync(cmdPath);
+    if (bytes.length === 0 || bytes.length > 64 * 1024) return undefined;
+    text = bytes.toString("utf8");
+  } catch {
+    return undefined;
+  }
+  const packageNeedle =
+    `node_modules\\${PRODUCT_IDENTITY.packageName}\\`.toLowerCase();
+  const packageNeedlePosix =
+    `node_modules/${PRODUCT_IDENTITY.packageName}/`.toLowerCase();
+  let relative: string | undefined;
+  for (const match of text.matchAll(/"%dp0%([^"]+)"/giu)) {
+    const candidate = match[1]!.replace(/^[\\/]/u, "");
+    const lowered = candidate.toLowerCase();
+    if (lowered.includes(packageNeedle) || lowered.includes(packageNeedlePosix))
+      relative = candidate;
+  }
+  if (relative === undefined) return undefined;
+  const windowsSpelling = /[\\:]/u.test(cmdPath);
+  return windowsSpelling
+    ? win32.join(win32.dirname(cmdPath), relative.replace(/\//gu, "\\"))
+    : posix.join(posix.dirname(cmdPath), relative.replace(/\\/gu, "/"));
 };
 
 /** Preserve the package argument from a supported package-runner command. */
@@ -600,7 +641,17 @@ const inspectDirectRegistrationCommand = (
         entrypoint: managedTarget,
         package: undefined,
       };
-    if (isAbsolute(executable))
+    if (isAbsolute(executable)) {
+      const cmdScript = windowsReaCmdScript(executable);
+      if (cmdScript !== undefined)
+        return {
+          launch: "direct",
+          identity: currentPathAvailable
+            ? entrypointIdentity(cmdScript, currentCommandPath)
+            : "owned",
+          entrypoint: cmdScript,
+          package: undefined,
+        };
       return {
         launch: "direct",
         identity: currentPathAvailable
@@ -609,6 +660,7 @@ const inspectDirectRegistrationCommand = (
         entrypoint: executable,
         package: undefined,
       };
+    }
     if (/[./\\]/u.test(executable))
       return {
         identity: "unknown",
