@@ -159,6 +159,7 @@ export interface AmigaHunkEntry {
   readonly role: "code" | "data";
   readonly hunk: number;
   readonly memory: AmigaHunkMemory;
+  readonly extendedFlags: number | null;
   readonly declaredBytes: number;
   readonly storedBytes: number;
   readonly byteOffset: number;
@@ -493,6 +494,7 @@ export const amigaHunkEntryMetadata = (
   hunk: entry.hunk,
   role: entry.role,
   memory: entry.memory,
+  extended_flags: entry.extendedFlags,
   declared_bytes: entry.declaredBytes,
   stored_bytes: entry.storedBytes,
 });
@@ -915,6 +917,7 @@ class AmigaHunkParser {
       role: hunk.type,
       hunk: hunk.index,
       memory: hunk.memory,
+      extendedFlags: hunk.extendedFlags,
       declaredBytes: hunk.declaredLongwords * 4,
       storedBytes: hunk.storedBytes,
       byteOffset: hunk.fileOffset,

@@ -59,8 +59,9 @@ record per hunk:
 
 `hunk-<n>-code.bin` and `hunk-<n>-data.bin` are the stored bytes. `n` is the
 header hunk number. `source_location` is that range. Entry metadata
-(`kind: "amiga-hunk-entry"`) records the hunk number, role, memory, and the
-declared and stored sizes.
+(`kind: "amiga-hunk-entry"`) records the hunk number, role, memory, raw
+`extended_flags` (null unless memory is extended), and the declared and
+stored sizes.
 
 A BSS hunk has no stored bytes and no entry. Its size stays in the hunk
 record. A header may allocate more longwords than the block stores; the

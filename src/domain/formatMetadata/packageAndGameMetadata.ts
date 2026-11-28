@@ -499,6 +499,8 @@ export const amigaHunkEntryMetadataSchema = z.strictObject({
   hunk: uint32,
   role: z.enum(["code", "data"]),
   memory: amigaHunkMemorySchema,
+  /** Raw flags longword when memory is extended; otherwise null. */
+  extended_flags: uint32.nullable(),
   declared_bytes: offset,
   stored_bytes: offset,
 });

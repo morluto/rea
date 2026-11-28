@@ -444,12 +444,13 @@ const declarationsByKind: {
       "Its fields come from the file's own hunk header and blocks, which content comparison covers.",
   },
   /**
-   * Memory and the allocated size are header facts. The hunk index and role
+   * Memory, extended memory flags and the allocated size are header facts. The hunk index and role
    * are the entry path, and content comparison covers the stored bytes.
    */
   "amiga-hunk-entry": {
     declaration: (metadata) => ({
       memory: metadata.memory,
+      extended_flags: metadata.extended_flags,
       declared_bytes: metadata.declared_bytes,
     }),
   },

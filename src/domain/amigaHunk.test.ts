@@ -16,9 +16,13 @@ import {
   amigaHunkPrefixGrowth,
   hasAmigaHunkMagic,
   parseAmigaHunk,
+  amigaHunkEntryMetadata,
   amigaHunkMetadata,
 } from "./amigaHunk.js";
-import { amigaHunkMetadataSchema } from "./formatMetadata/packageAndGameMetadata.js";
+import {
+  amigaHunkEntryMetadataSchema,
+  amigaHunkMetadataSchema,
+} from "./formatMetadata/packageAndGameMetadata.js";
 import { ParseFailureError } from "./parseFailure.js";
 import { amigaLoadFile, amigaObjectFile } from "./amigaHunk.fixture.js";
 
@@ -146,6 +150,7 @@ it("lists one code hunk and extracts its stored bytes", () => {
       role: "code",
       hunk: 0,
       memory: "any",
+      extendedFlags: null,
       declaredBytes: 4,
       storedBytes: 4,
       byteOffset: hunk?.fileOffset,
@@ -349,6 +354,28 @@ it("records chip, fast and extended memory flags", () => {
     ["fast", null],
     ["extended", 2],
   ]);
+});
+
+it("keeps extended memory flags in each load entry's metadata", () => {
+  const entryMetadata = (extendedFlags: number) => {
+    const file = parseAmigaHunk(
+      amigaLoadFile({
+        hunks: [
+          { type: "code", bytes: CODE, memory: "extended", extendedFlags },
+        ],
+      }),
+    );
+    expect(file.limitations).toEqual([]);
+    const entry = file.entries[0];
+    if (entry === undefined) throw new Error("expected one entry");
+    expect(entry.extendedFlags).toBe(extendedFlags);
+    return amigaHunkEntryMetadataSchema.parse(amigaHunkEntryMetadata(entry));
+  };
+  const two = entryMetadata(2);
+  const four = entryMetadata(4);
+  expect(two).toMatchObject({ memory: "extended", extended_flags: 2 });
+  expect(four).toMatchObject({ memory: "extended", extended_flags: 4 });
+  expect(two).not.toEqual(four);
 });
 
 it.each([

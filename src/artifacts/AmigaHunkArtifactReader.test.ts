@@ -110,6 +110,7 @@ it("inventories a load file and extracts stored code and data hunks", async () =
         hunk: entry.hunk,
         role: entry.role,
         memory: entry.memory,
+        extended_flags: entry.extendedFlags,
         declared_bytes: entry.declaredBytes,
         stored_bytes: entry.storedBytes,
       },

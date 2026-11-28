@@ -458,8 +458,7 @@ it("compares declared digests without using limitation prose", () => {
   const different = changes(unavailable(claim), unavailable(edited));
   const noted = (
     integrity:
-      | { readonly algorithm: "md5"; readonly digest: string }
-      | undefined,
+      { readonly algorithm: "md5"; readonly digest: string } | undefined,
     limitations: readonly string[],
   ) =>
     observation({
@@ -817,6 +816,7 @@ const amigaHunkEntry: FormatMetadata = {
   hunk: 0,
   role: "code",
   memory: "any",
+  extended_flags: null,
   declared_bytes: 4,
   stored_bytes: 4,
 };
@@ -844,6 +844,16 @@ it("compares an Amiga hunk's memory and allocated size", () => {
     compareArtifacts(
       declared(amigaHunkEntry),
       declared({ ...amigaHunkEntry, declared_bytes: 16 }),
+    ),
+  ).toMatchObject({
+    status: "changed",
+    changes: [{ classification: "changed", dimensions: ["metadata"] }],
+  });
+  // Same bytes and size, different raw memory flags: still a changed hunk.
+  expect(
+    compareArtifacts(
+      declared({ ...amigaHunkEntry, memory: "extended", extended_flags: 2 }),
+      declared({ ...amigaHunkEntry, memory: "extended", extended_flags: 4 }),
     ),
   ).toMatchObject({
     status: "changed",
