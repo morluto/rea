@@ -32,6 +32,8 @@ import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { collectEntries } from "../../tests/fixtures/artifactEntries.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { resolveArtifactReaderLimits } from "../domain/artifactReaderLimits.js";
+import { createReader } from "./inventory/reader.js";
 
 import { openRegularFile } from "../filesystem/RegularFile.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
@@ -1206,4 +1208,71 @@ it("rejects ZIP carrier mutation during member streaming", async () => {
   } finally {
     await reader.close();
   }
+});
+
+it("refuses a ZIP whose central directory exceeds the member count", async () => {
+  const directory = await createTestTempDirectory("rea-zip-member-count-");
+  const path = join(directory, "many.zip");
+  const writer = new ZipWriter(new Uint8ArrayWriter());
+  for (const name of ["a", "b", "c"])
+    await writer.add(name, new TextReader(""), { level: 0 });
+  await writeFile(path, await writer.close());
+  const reader = new ZipArtifactReader(
+    path,
+    "zip",
+    undefined,
+    undefined,
+    undefined,
+    2,
+  );
+  const failure = await collectEntries(reader).then(
+    () => undefined,
+    (cause: unknown) => cause,
+  );
+  await reader.close();
+  expect(failure).toMatchObject({
+    reason: "limit",
+    readerLimit: {
+      parameter: "artifact_limits.zip.member_count",
+      effective_value: 2,
+      unit: "count",
+    },
+  });
+  expect((failure as { readerLimit?: object }).readerLimit).not.toHaveProperty(
+    "required_value",
+  );
+});
+
+it("applies artifact_limits.zip.member_count from the zip format reader", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-zip-member-count-format-",
+  );
+  const path = join(directory, "many.zip");
+  const writer = new ZipWriter(new Uint8ArrayWriter());
+  for (const name of ["a", "b", "c"])
+    await writer.add(name, new TextReader(""), { level: 0 });
+  await writeFile(path, await writer.close());
+  const reader = createReader(
+    path,
+    "zip",
+    {},
+    undefined,
+    undefined,
+    undefined,
+    resolveArtifactReaderLimits({ zip: { member_count: 2 } }),
+  );
+  if (reader === undefined) throw new Error("Missing ZIP reader");
+  const failure = await collectEntries(reader).then(
+    () => undefined,
+    (cause: unknown) => cause,
+  );
+  await reader.close();
+  expect(failure).toMatchObject({
+    reason: "limit",
+    readerLimit: {
+      parameter: "artifact_limits.zip.member_count",
+      effective_value: 2,
+      unit: "count",
+    },
+  });
 });
