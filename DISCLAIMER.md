@@ -26,6 +26,56 @@ software you analyze.
 Requests for help with the uses above will be closed without response in issues
 and discussions, and may result in removal from the REA community.
 
+## AI provider policies and account ban risks
+
+AI model providers and platforms (such as OpenAI, Anthropic, Cursor, Copilot, and
+other cloud LLM hosts) publish their own usage and acceptable use policies and
+may apply automated safety classifiers and abuse-detection monitoring. Whether a
+particular reverse-engineering or analysis workflow violates a provider's rules
+depends on that provider's current policy, the prompt content, and the
+authorization you hold for the target. Authorized security research is not
+automatically prohibited. Asking an agent to extract protected intellectual
+property without rights, bypass DRM or anti-cheat systems, or circumvent vendor
+safety constraints can violate those policies.
+
+Depending on the provider and the circumstances, enforcement may include
+warnings, rate limits, temporary suspension, permanent account termination, API
+key revocation, or other service restrictions. Treat account bans and access
+loss as a possible, provider-dependent risk—not a guaranteed or universal
+outcome. Review the policies that apply to the tools you use, for example:
+
+- [OpenAI Usage Policies](https://openai.com/policies/usage-policies/)
+- [Anthropic Usage Policy](https://www.anthropic.com/legal/aup)
+- [Cursor Acceptable Use Policy](https://cursor.com/acceptable-use-policy)
+- [GitHub Acceptable Use Policies](https://docs.github.com/en/site-policy/acceptable-use-policies/github-acceptable-use-policies)
+  (including Copilot and related features)
+
+The REA project assumes no responsibility for bans, account terminations, API
+revocations, service disruptions, or legal consequences resulting from prompts,
+scripts, or instructions submitted by users to third-party AI model providers or
+platforms. You are solely responsible for ensuring your prompts and agent
+workflows comply with all applicable terms of service and acceptable use
+policies.
+
+## Copyright, public domain, and authorization requirements
+
+REA must only be used on:
+
+1. **Software you own**;
+2. **Software in the public domain** or under open-source licenses that permit reverse engineering; or
+3. **Targets for which you hold explicit, written authorization** from the copyright holder (such as an authorized security audit or coordinated disclosure engagement).
+
+Decompilation, disassembly, and reverse engineering do not grant or transfer
+copyright or intellectual property rights in the target software or generated
+output. Copying or redistributing protected code or assets without permission
+can infringe copyright. Matching an algorithm or independently reimplementing
+observed behavior is not, by itself, copyright infringement. Whether reverse
+engineering also breaches an End User License Agreement (EULA) or other
+contract depends on that agreement's terms and on applicable law. Verify your
+rights and any statutory exceptions (such as legally protected reverse
+engineering for interoperability in your jurisdiction) before beginning any
+analysis.
+
 ## User responsibility
 
 Do not use REA for unauthorized access or exploitation, credential theft,

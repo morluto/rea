@@ -294,6 +294,11 @@ Geliştirme ortamı ve kontroller için [CONTRIBUTING.md](../../CONTRIBUTING.md)
 
 Sorumlu kullanım yönergeleri için [DISCLAIMER.md](../../DISCLAIMER.md) dosyasına bakın.
 
+> [!WARNING]
+> **Hesap Engelleme Uyarısı ve Yalnızca Yetkili Kullanım:** Yapay zeka sağlayıcıları ve platformlar (Anthropic, OpenAI, Cursor vb.) kendi kullanım politikalarını yayımlar ve otomatik güvenlik filtreleri uygulayabilir. Ajanlara haklar olmadan korunan fikri mülkiyeti ayıklama, DRM/hile korumalarını atlatma veya sağlayıcı kısıtlarını aşma talimatı vermek, sağlayıcıya ve hedef için yetkinize bağlı olarak bu politikaları ihlal edebilir. Hesap engelleme veya API iptali dahil yaptırım, olası ve sağlayıcıya bağlı bir risktir. Politika bağlantıları ve ayrıntılar için DISCLAIMER.md dosyasına bakın.
+>
+> REA'yı yalnızca sahibi olduğunuz yazılımlar, kamu malı kodlar veya incelemek için açık yetkiniz olan hedefler üzerinde kullanın. Yetkisiz tersine mühendislik, oluşturulan kod veya varlıklar üzerinde hak tanımaz. Korunan kod veya varlıkları kopyalamak telif hakkını ihlal edebilir; bir algoritmayı eşleştirmek veya davranışı yeniden uygulamak tek başına otomatik ihlal değildir ve herhangi bir EULA ihlali geçerli sözleşmeye bağlıdır.
+
 REA; yasal araştırma, eğitim, birlikte çalışabilirlik, yazılımın korunması ve sahibi olduğunuz ya da inceleme yetkiniz bulunan yazılımların analizi için tasarlanmıştır.
 
 Projenin yasa dışı veya yetkisiz kullanıma ilişkin tutumu tüm REA sürümleri,

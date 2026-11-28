@@ -299,6 +299,11 @@ Development setup-നും checks-നും [CONTRIBUTING.md](../../CONTRIBUTIN
 
 ഉത്തരവാദിത്തത്തോടെ ഉപയോഗിക്കുന്നതിനുള്ള മാർഗനിർദ്ദേശങ്ങൾക്ക് [DISCLAIMER.md](../../DISCLAIMER.md) കാണുക.
 
+> [!WARNING]
+> **Account Ban Notice & Authorized Use Only:** AI providers and platforms (such as Anthropic, OpenAI, Cursor, and other model hosts) publish their own usage policies and may apply automated safety filters. Prompting agents to extract protected intellectual property without rights, bypass DRM or anti-cheat protections, or circumvent vendor safeguards can violate those policies, depending on the provider and the authorization you hold. Enforcement—including account suspension or API revocation—is a possible, provider-dependent risk. See DISCLAIMER.md for policy links and details.
+>
+> REA must only be used on software you own, public-domain code, or targets for which you possess explicit authorization. Reverse engineering without authorization does not grant rights to generated code or assets. Copying protected code or assets may infringe copyright; matching an algorithm or reimplementing behavior is not automatic infringement, and any EULA breach depends on the applicable agreement.
+
 നിയമവിരുദ്ധമോ അനുമതിയില്ലാത്തതോ ആയ ഉപയോഗത്തെക്കുറിച്ചുള്ള project-ന്റെ നിലപാട് എല്ലാ REA versions-നും distribution channels-നും platforms-നും ബാധകമാണ്; ഓരോ copy-യും അതിന് ബാധകമായ licenses നിലനിർത്തുന്നു.
 
 നിയമാനുസൃതമായ research, education, interoperability, software preservation, കൂടാതെ നിങ്ങൾക്ക് സ്വന്തമായതോ പരിശോധിക്കാൻ അനുമതിയുള്ളതോ ആയ software-ന്റെ analysis എന്നിവയ്ക്കാണ് REA ഉദ്ദേശിച്ചിരിക്കുന്നത്.

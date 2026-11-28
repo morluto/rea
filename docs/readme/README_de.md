@@ -294,6 +294,11 @@ Die Entwicklungsumgebung und Prüfungen beschreibt [CONTRIBUTING.md](../../CONTR
 
 Hinweise zur verantwortungsvollen Nutzung findest du in [DISCLAIMER.md](../../DISCLAIMER.md).
 
+> [!WARNING]
+> **Hinweis zu Kontosperren und ausschließlicher Nutzung mit Genehmigung:** KI-Anbieter und Plattformen (wie Anthropic, OpenAI, Cursor u. a.) veröffentlichen eigene Nutzungsrichtlinien und können automatische Sicherheitsfilter einsetzen. Agenten anzuweisen, geschütztes geistiges Eigentum ohne Rechte zu extrahieren, DRM- oder Anti-Cheat-Mechanismen zu umgehen oder Anbieter-Schutzmaßnahmen zu umgehen, kann diese Richtlinien verletzen – abhängig vom Anbieter und Ihrer Berechtigung für das Ziel. Durchsetzung einschließlich Kontosperrung oder API-Widerruf ist ein mögliches, anbieterabhängiges Risiko. Siehe DISCLAIMER.md für Richtlinienlinks und Details.
+>
+> Nutzen Sie REA ausschließlich für Software in Ihrem Besitz, gemeinfreie Werke (Public Domain) oder Ziele, für die Sie eine ausdrückliche Genehmigung haben. Reverse Engineering ohne Genehmigung überträgt keine Rechte am generierten Code oder an Assets. Das Kopieren geschützten Codes oder geschützter Assets kann Urheberrecht verletzen; das Nachbilden eines Algorithmus oder das Neuimplementieren beobachteten Verhaltens ist für sich kein automatischer Verstoß, und ein etwaiger EULA-Bruch hängt vom jeweiligen Vertrag ab.
+
 REA dient der rechtmäßigen Forschung, Bildung, Interoperabilität, Softwareerhaltung und Analyse von Software, die dir gehört oder die du mit entsprechender Genehmigung untersuchen darfst.
 
 The project's position on illegal or unauthorized use covers all REA

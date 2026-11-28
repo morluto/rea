@@ -294,6 +294,11 @@ Xem [CONTRIBUTING.md](../../CONTRIBUTING.md) về thiết lập môi trường p
 
 Xem [DISCLAIMER.md](../../DISCLAIMER.md) để biết hướng dẫn sử dụng có trách nhiệm.
 
+> [!WARNING]
+> **Cảnh báo khóa tài khoản & chỉ sử dụng cho mục tiêu được cấp phép:** Các nhà cung cấp và nền tảng AI (như Anthropic, OpenAI, Cursor, v.v.) công bố chính sách sử dụng riêng và có thể áp dụng bộ lọc an toàn tự động. Hướng dẫn agent trích xuất tài sản trí tuệ được bảo vệ khi không có quyền, vượt DRM hoặc chống gian lận, hoặc né hạn chế của nhà cung cấp có thể vi phạm các chính sách đó, tùy nhà cung cấp và quyền bạn có. Thực thi—kể cả đình chỉ tài khoản hoặc thu hồi API—là rủi ro có thể xảy ra và phụ thuộc nhà cung cấp. Xem DISCLAIMER.md để có liên kết chính sách và chi tiết.
+>
+> Chỉ sử dụng REA trên phần mềm bạn sở hữu, mã nguồn thuộc phạm vi công cộng, hoặc các mục tiêu mà bạn có sự cho phép rõ ràng. Kỹ thuật đảo ngược khi chưa được cấp phép không trao quyền đối với mã hoặc tài sản được tạo ra. Sao chép mã hoặc tài sản được bảo vệ có thể vi phạm bản quyền; khớp thuật toán hoặc tái hiện hành vi không tự động là xâm phạm, và mọi vi phạm EULA phụ thuộc vào thỏa thuận áp dụng.
+
 REA dành cho nghiên cứu, giáo dục, khả năng tương tác, bảo tồn phần mềm và phân tích phần mềm bạn sở hữu hoặc được phép kiểm tra, trong khuôn khổ pháp luật.
 
 The project's position on illegal or unauthorized use covers all REA

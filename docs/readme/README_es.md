@@ -294,6 +294,11 @@ Consulta [CONTRIBUTING.md](../../CONTRIBUTING.md) para preparar el entorno de de
 
 Consulta [DISCLAIMER.md](../../DISCLAIMER.md) para obtener orientación sobre el uso responsable.
 
+> [!WARNING]
+> **Aviso de bloqueo de cuenta y uso autorizado únicamente:** Los proveedores y plataformas de IA (como Anthropic, OpenAI, Cursor, entre otros) publican sus propias políticas de uso y pueden aplicar filtros automatizados de seguridad. Indicar a agentes que extraigan propiedad intelectual protegida sin derechos, eludan DRM o anti-cheat, o burlen salvaguardas del proveedor puede infringir esas políticas, según el proveedor y la autorización que tenga. La aplicación—incluida la suspensión de cuentas o la revocación de API—es un riesgo posible y dependiente del proveedor. Consulte DISCLAIMER.md para enlaces a políticas y detalles.
+>
+> Utilice REA únicamente en software propio, de dominio público o en objetivos para los que disponga de autorización explícita. La ingeniería inversa sin autorización no otorga derechos sobre el código o los assets generados. Copiar código o assets protegidos puede infringir derechos de autor; coincidir con un algoritmo o reimplementar un comportamiento no es infracción automática, y cualquier incumplimiento de EULA depende del acuerdo aplicable.
+
 REA está destinado a la investigación, la educación, la interoperabilidad, la preservación de software y el análisis de software propio o autorizado, dentro de la ley.
 
 The project's position on illegal or unauthorized use covers all REA
