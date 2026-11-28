@@ -6,6 +6,7 @@ import {
   clientServerRowsReplace,
   effectiveClientServer,
   parseClientConfiguration,
+  parseGgcodeLegacyConfiguration,
   type ClientConfigurationDocument,
   type ClientConfigurationFormat,
   type ClientInlineConfiguration,
@@ -104,6 +105,7 @@ type ClientConfigurationLocation = Pick<
   | "configPathError"
   | "readOnlyLowerLayers"
   | "inlineConfiguration"
+  | "fallbackConfigPath"
 > & { readonly format?: ClientConfigurationFormat };
 
 interface ClientConfigurationReadOptions {
@@ -219,17 +221,53 @@ export const readClientConfigurationFiles = async (
             : undefined,
   );
   if (!documents.ok) return documents;
-  const effective = mergeClientConfigurationDocuments(
-    documents.value,
-    platform,
-  );
+  let sources = documents.value;
+  // ggcode honors its legacy in-main section only while the standalone file
+  // is absent, so the fallback joins as the lowest-precedence layer only then.
+  if (
+    client.format === "ggcode" &&
+    client.fallbackConfigPath !== undefined &&
+    !sources.some(({ sourcePath }) => sourcePath === client.configPath)
+  ) {
+    const fallbackText = await readConfigurationText(
+      client.fallbackConfigPath,
+      resources,
+    );
+    if (!fallbackText.ok) return fallbackText;
+    if (fallbackText.value !== undefined) {
+      try {
+        const document = parseGgcodeLegacyConfiguration(fallbackText.value);
+        // The fallback becomes the writable source while the standalone file
+        // is absent, so proposed overrides must repair invalid saved settings
+        // here exactly as they do on the standalone path.
+        const failure = configurationEnvironmentFailure(client, platform, {
+          path: client.fallbackConfigPath,
+          document,
+          validation: "fragment",
+          overrides: writeOverrides,
+        });
+        if (failure !== undefined) return err(failure);
+        sources = [
+          { ...document, sourcePath: client.fallbackConfigPath },
+          ...sources,
+        ];
+      } catch (cause: unknown) {
+        return err({
+          kind: "malformed",
+          path: client.fallbackConfigPath,
+          detail: `Configuration ${client.fallbackConfigPath} is malformed: ${errorMessage(cause)}`,
+        });
+      }
+    }
+  }
+  const effective = mergeClientConfigurationDocuments(sources, platform);
   if (openCode) {
     // A native row replaces its peers. Only a write target needs separate
     // fragment validation in that dialect.
     const replacesRows = clientServerRowsReplace(effective?.dialect);
     const writing =
       targetDocument !== undefined || writeOverrides !== undefined;
-    for (const source of documents.value) {
+    for (const source of sources) {
       const path = source.sourcePath;
       if (
         path === undefined ||
@@ -246,7 +284,7 @@ export const readClientConfigurationFiles = async (
     validation: "effective",
     overrides: writeOverrides,
   });
-  return failure === undefined ? documents : err(failure);
+  return failure === undefined ? ok(sources) : err(failure);
 };
 
 const readUserConfigurationSources = async (
@@ -975,12 +1013,20 @@ const readEffectiveUserConfiguration = async (
   };
   const fallbackPath =
     client.format === "zcode" ? client.zcodeFallbackPath : undefined;
+  // A fallback-layer client reports the file its registration was read from.
+  const effectivePath =
+    client.fallbackConfigPath === undefined
+      ? client.configPath
+      : (nativeSources.value.at(-1)?.sourcePath ?? client.configPath);
   if (
     fallbackPath === undefined ||
     (nativeDocument !== undefined &&
       Object.keys(nativeDocument.servers).length > 0)
   )
-    return ok(native);
+    return ok({
+      ...native,
+      configPath: effectivePath,
+    });
   const fallbackClient: SetupClient = {
     ...client,
     configPath: fallbackPath,

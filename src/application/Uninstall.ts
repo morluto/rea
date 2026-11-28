@@ -30,10 +30,12 @@ import {
   clientConfigurationServersKey,
   clientConfigurationSyntaxName,
   parseClientConfiguration,
+  parseGgcodeLegacyConfiguration,
   serializeClientConfiguration,
   clientServerPath,
   effectiveClientServer,
   type ClientConfigurationDocument,
+  type ClientConfigurationParseFailure,
 } from "./ClientConfigurationDocument.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
@@ -80,6 +82,7 @@ import {
   ArtifactReaderFailure,
   ArtifactResourceScope,
 } from "../resources/index.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 import {
   appDataRedirection,
   clientOwnershipEvidencePaths,
@@ -973,6 +976,35 @@ type ClientConfigurationRead =
       readonly parsed: ClientConfigurationDocument;
     };
 
+/**
+ * Uninstall also targets ggcode's legacy in-main ggcode.yaml, whose mapping
+ * root the strict standalone parser rejects; parse it as the legacy layout.
+ * The legacy parser throws, so model its expected failures as the same
+ * Result the strict parser returns: structure rejections are TypeErrors,
+ * anything else is malformed YAML syntax.
+ */
+const parseUninstallConfiguration = (
+  client: SetupClient,
+  text: string,
+): Result<ClientConfigurationDocument, ClientConfigurationParseFailure> => {
+  if (
+    !(
+      client.format === "ggcode" &&
+      client.configPath === client.fallbackConfigPath
+    )
+  )
+    return parseClientConfiguration(text, client.format);
+  try {
+    return ok(parseGgcodeLegacyConfiguration(text));
+  } catch (cause: unknown) {
+    return err({
+      kind: cause instanceof TypeError ? "shape" : "syntax",
+      detail: errorMessage(cause),
+      cause,
+    });
+  }
+};
+
 /** The configuration text, or the outcome to report for a failed read. A
  * completed physical read is retained even when its handle fails to close:
  * that exact text still drives removal, so an owned row it proves stays
@@ -1068,7 +1100,7 @@ const readClientConfiguration = async (
     configurationFailure,
   });
   if (typeof original !== "string") return original;
-  const parsed = parseClientConfiguration(original, format);
+  const parsed = parseUninstallConfiguration(client, original);
   if (parsed.ok)
     return {
       kind: "configuration",
@@ -1591,7 +1623,7 @@ const removeClient = async (
     try {
       const text = await fileSystem.readText(publication.path);
       await publication.assertCurrent(text);
-      const parsed = parseClientConfiguration(text, client.format);
+      const parsed = parseUninstallConfiguration(client, text);
       if (parsed.ok) {
         const readback = parsed.value;
         if (

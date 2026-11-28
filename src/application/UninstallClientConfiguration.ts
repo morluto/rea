@@ -24,6 +24,11 @@ export const uninstallConfigPaths = (
     ...(client.readOnlyLowerLayers === true
       ? [client.configPath]
       : (client.configPaths ?? [client.configPath])),
+    // A legacy fallback file holds the live registration while the write
+    // target is absent; uninstall removes REA's entry from it as well.
+    ...(client.fallbackConfigPath === undefined
+      ? []
+      : [client.fallbackConfigPath]),
     ...(client.msixPackage === undefined
       ? []
       : [

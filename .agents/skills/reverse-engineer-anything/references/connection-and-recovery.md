@@ -156,7 +156,7 @@ Use the current supported client's ID: `claude_code`, `claude_desktop`, `codex`,
 `cursor`, `codebuddy`, `cline`, `gemini_cli`, `windsurf`, `devin`, `opencode`,
 `antigravity`, `copilot_cli`, `commandcode`, `qwen_code`, `kimi`, `vscode`, `trae`,
 `workbuddy`, `lm_studio`, `grok_build`, `omp`, `pi`, `hermes`, `qoder`, `droid`,
-`zcode`, `dsh`, `freebuff`, `cline_vscode`, `cline_vscode_insiders`, `cline_vscodium`,
+`ggcode`, `zcode`, `dsh`, `freebuff`, `cline_vscode`, `cline_vscode_insiders`, `cline_vscodium`,
 `cline_cursor`, `cline_windsurf`, `kiro`, `mastracode`, `zed`, `amp`, `mcporter`, `fx`, `junie`, `goose`,
 `kilo`, or `grok_bot`. If unknown, inspect `doctor --json` before choosing a
 scope. `grok_bot` uses a chat registration step rather than local `mcp.json`.
