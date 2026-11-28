@@ -1582,13 +1582,20 @@ public final class ReaGhidraBridge extends HeadlessScript {
             throw new RequestFailure("file_offset_ambiguous", "File offset " + coordinate +
                 " has multiple loaded mappings: " + candidates.stream().map(ReaGhidraBridge::canonicalAddress).toList() +
                 "; select an explicit analysis address");
-        if (candidates.isEmpty())
+        if (candidates.isEmpty()) {
+            String unmapped = " has no loaded source mapping for the admitted target file; Ghidra image base: " +
+                canonicalAddress(currentProgram.getImageBase()) +
+                ". Inspect mappings with rea inspect-native-load-image <path> --provider ghidra --json or MCP inspect_native_load_image.";
+            // A bare number that names no analysis location was an address
+            // request first; the file-offset reading is only its fallback.
+            if (!explicitOffset && !isMappedAnalysisAddress(selector))
+                throw new RequestFailure("procedure_not_found", "No procedure exists at " + coordinate +
+                    ", which is outside every mapped analysis address. Read as a file offset, " + coordinate + unmapped);
             throw new RequestFailure("file_offset_unmapped",
-                (explicitOffset || !isMappedAnalysisAddress(selector) ? "" :
+                (explicitOffset ? "" :
                     coordinate + " is a mapped analysis address that holds no disassembled code and no procedure. Read as a file offset instead: ") +
-                "File offset " + coordinate +
-                " has no loaded source mapping for the admitted target file; Ghidra image base: " + canonicalAddress(currentProgram.getImageBase()) +
-                ". Inspect mappings with rea inspect-native-load-image <path> --provider ghidra --json or MCP inspect_native_load_image.");
+                "File offset " + coordinate + unmapped);
+        }
         Address mapped = candidates.get(0);
         // A file offset names the same location as its mapped analysis
         // address, so it resolves the way that address does, including code
