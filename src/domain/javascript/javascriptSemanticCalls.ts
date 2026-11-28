@@ -208,6 +208,15 @@ const calleeAccess = (
         ...(wrapped === undefined ? {} : { wrappedSpecifier: wrapped }),
       };
     }
+    if (t.isCallExpression(current)) {
+      const requireOrigin = readSemanticRequireOriginCandidate(
+        current,
+        state,
+      )?.origin;
+      return requireOrigin === undefined
+        ? undefined
+        : { bindingId: null, requireOrigin, path };
+    }
     if (
       !t.isMemberExpression(current) &&
       !t.isOptionalMemberExpression(current)

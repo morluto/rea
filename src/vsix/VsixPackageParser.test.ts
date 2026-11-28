@@ -2092,3 +2092,21 @@ it("still resolves slash-separated and extensionless entry points, including bac
     present: true,
   });
 });
+
+it.each([
+  ["a string for commands", { commands: "demo.run" }],
+  ["a non-object contributes", "demo"],
+])("marks %s as declarations that were not read", async (_, contributes) => {
+  const bytes = await vsixPackageFixture({
+    packageJson: JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      contributes,
+    }),
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.contributes.commands_omitted).toBe(1);
+});

@@ -702,6 +702,10 @@ const parsePackageJsonDocument = (
     : commandsRaw !== null && typeof commandsRaw === "object"
       ? [commandsRaw]
       : [];
+  const unreadCommands =
+    (record.contributes !== undefined && contributesRaw === undefined) ||
+    (commandsRaw !== undefined &&
+      (commandsRaw === null || typeof commandsRaw !== "object"));
   const keys = entries
     .filter(([name]) => name.length > 0)
     .map(([name, item]) => ({
@@ -740,8 +744,9 @@ const parsePackageJsonDocument = (
     contributes: {
       keys,
       commands,
-      commands_total: commandRows.length,
-      commands_omitted: 0,
+      commands_total: commandRows.length + (unreadCommands ? 1 : 0),
+      // A present but unsupported shape is a declaration that was not read.
+      commands_omitted: unreadCommands ? 1 : 0,
       menus: menuGroups(contributesRaw?.menus),
       keybindings: rowsOf(contributesRaw?.keybindings).map((row) => ({
         command: exactText(row.command),

@@ -10,7 +10,12 @@ const contributes = (
     keybindings?: { command: string | null; key: string | null }[] | null;
   } = {},
 ) => ({
-  commands: commands.map((command) => ({ command, title: null })),
+  commands: commands.map(
+    (command): { command: string | null; title: string | null } => ({
+      command,
+      title: null,
+    }),
+  ),
   commands_omitted: 0,
   menus: [],
   keybindings: [],
@@ -203,6 +208,15 @@ it("is undetermined when a call's literal identifier exceeded a limit", () => {
   const result = correlate(
     `${VSCODE}vscode.commands.registerCommand("${"x".repeat(2_000_000)}", f);`,
     contributes(["demo.a"]),
+  );
+  expect(result.commands.map(({ status }) => status)).toEqual(["undetermined"]);
+});
+
+it("does not call a command undeclared when a declaration has no readable ID", () => {
+  const declared = contributes([]);
+  const result = correlate(
+    `${VSCODE}vscode.commands.registerCommand("demo.a", f);`,
+    { ...declared, commands: [{ command: null, title: null }] },
   );
   expect(result.commands.map(({ status }) => status)).toEqual(["undetermined"]);
 });

@@ -213,7 +213,10 @@ export const correlateVsixRegistrations = ({
   const keys = groupBy(contributes.keybindings, ({ key }) => key);
   const { entries, complete } = callCoverage(semanticGraph, entryPoints);
   // An unread manifest or a capped older list cannot show an ID is undeclared.
-  const allDeclared = manifestRead && contributes.commands_omitted === 0;
+  const allDeclared =
+    manifestRead &&
+    contributes.commands_omitted === 0 &&
+    contributes.commands.every(({ command }) => command !== null);
   const commands = [...new Set([...declared.keys(), ...byCommand.keys()])]
     .sort(compareUnicodeCodePoints)
     .map((command) => {

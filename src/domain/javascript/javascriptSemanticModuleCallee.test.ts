@@ -188,6 +188,28 @@ describe("module members that are not the imported ones", () => {
     expect(callees(source)).not.toContain(REGISTER);
   });
 
+  it("keeps a call made before the member is replaced", () => {
+    expect(
+      callees(
+        'const v = require("vscode"); v.commands.registerCommand("a", f); v.commands.registerCommand = noop;',
+      ),
+    ).toContain(REGISTER);
+  });
+
+  it("does not drop a source default on a required member", () => {
+    expect(
+      callees(
+        'const v = require("vscode").default; v.commands.registerCommand("a", f);',
+      ),
+    ).not.toContain(REGISTER);
+  });
+
+  it("resolves a call rooted directly in require", () => {
+    expect(
+      callees('require("vscode").commands.registerCommand("a", f);'),
+    ).toContain(REGISTER);
+  });
+
   it("keeps a member when only a sibling is written", () => {
     expect(
       callees(

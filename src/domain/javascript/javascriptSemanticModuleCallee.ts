@@ -1,4 +1,8 @@
-import type { JavaScriptSemanticIr } from "./javascriptSemanticIr.js";
+import type {
+  JavaScriptModuleOrigin,
+  JavaScriptSemanticIr,
+} from "./javascriptSemanticIr.js";
+import type { JavaScriptSourceRange } from "./javascriptStaticAnalysisTypes.js";
 import { UNKNOWN_REQUIRE_LOADER_REASON } from "./javascriptSemanticProvenance.js";
 
 /** A call whose callee is a static member chain rooted in one module import. */
@@ -15,40 +19,70 @@ export interface JavaScriptModuleCallee {
 const withoutDefault = (path: readonly string[]): readonly string[] =>
   path[0] === "default" ? path.slice(1) : path;
 
+/**
+ * An origin's member path. A `default` from an import names the module; one
+ * written on a `require` is a real member.
+ */
+const originPath = ({
+  importedPath,
+  resolutionMode,
+}: JavaScriptModuleOrigin): readonly string[] =>
+  resolutionMode === "require" ? importedPath : withoutDefault(importedPath);
+
 type SemanticBinding = JavaScriptSemanticIr["bindings"][number];
 
+const isBefore = (
+  left: JavaScriptSourceRange["start"],
+  right: JavaScriptSourceRange["start"],
+): boolean =>
+  left.line < right.line ||
+  (left.line === right.line && left.column < right.column);
+
 /**
- * Whether the file writes the called member or an object containing it, through
- * the same binding or another binding of the same module.
+ * Whether source earlier than the call writes the called member or an object
+ * containing it, through the same binding or another binding of the module.
  */
 const replacedMembers = (
   ir: Pick<JavaScriptSemanticIr, "objectOperations">,
   bindings: ReadonlyMap<string, SemanticBinding>,
 ) => {
-  const written = new Set<string>();
-  for (const { kind, objectBindingId, propertyPath } of ir.objectOperations) {
+  const written = new Map<string, JavaScriptSourceRange["start"]>();
+  const record = (key: string, at: JavaScriptSourceRange["start"]) => {
+    const earlier = written.get(key);
+    if (earlier === undefined || isBefore(at, earlier)) written.set(key, at);
+  };
+  for (const operation of ir.objectOperations) {
+    const { kind, objectBindingId, propertyPath, location } = operation;
     if (kind !== "write" || objectBindingId === null || propertyPath === null)
       continue;
-    written.add(JSON.stringify([objectBindingId, ...propertyPath]));
+    record(JSON.stringify([objectBindingId, ...propertyPath]), location.start);
     for (const origin of bindings.get(objectBindingId)?.provenance.origins ??
       [])
-      written.add(
+      record(
         JSON.stringify([
           origin.specifier,
-          ...withoutDefault([...origin.importedPath, ...propertyPath]),
+          ...originPath(origin),
+          ...propertyPath,
         ]),
+        location.start,
       );
   }
-  return (root: string, path: readonly string[]): boolean =>
-    path.some((_, end) =>
-      written.has(JSON.stringify([root, ...path.slice(0, end + 1)])),
-    );
+  return (
+    root: string,
+    path: readonly string[],
+    call: JavaScriptSourceRange["start"],
+  ): boolean =>
+    path.some((_, end) => {
+      const at = written.get(JSON.stringify([root, ...path.slice(0, end + 1)]));
+      return at !== undefined && isBefore(at, call);
+    });
 };
 
 /**
  * Module-rooted callees by call site ID, from the call's recorded access path
- * and its root binding's single module origin. A reassigned binding, several
- * origins or an unrooted callee are omitted.
+ * and its single module origin: a direct `require`, or the root binding's. A
+ * reassigned binding, several origins, a replaced member or an unrooted callee
+ * are omitted.
  */
 export const semanticModuleCallees = (
   ir: Pick<JavaScriptSemanticIr, "bindings" | "callSites" | "objectOperations">,
@@ -58,11 +92,12 @@ export const semanticModuleCallees = (
   );
   const replaced = replacedMembers(ir, bindings);
   const callees = new Map<string, JavaScriptModuleCallee>();
-  for (const { callSiteId, calleeAccess } of ir.callSites) {
+  for (const { callSiteId, calleeAccess, location } of ir.callSites) {
     if (calleeAccess === undefined) continue;
-    const { wrappedSpecifier, path } = calleeAccess;
+    const { bindingId, wrappedSpecifier, requireOrigin, path } = calleeAccess;
     if (wrappedSpecifier !== undefined) {
-      if (replaced(calleeAccess.bindingId, path)) continue;
+      if (bindingId !== null && replaced(bindingId, path, location.start))
+        continue;
       callees.set(callSiteId, {
         specifier: wrappedSpecifier,
         path: withoutDefault(path),
@@ -71,31 +106,35 @@ export const semanticModuleCallees = (
       });
       continue;
     }
-    const binding = bindings.get(calleeAccess.bindingId);
-    if (binding === undefined) continue;
-    const { provenance, definitions } = binding;
-    const [origin, ...others] = provenance.origins;
-    if (origin === undefined || others.length > 0) continue;
-    const candidate = origin.loaderAuthority === "candidate";
-    // Other ambiguity reasons concern the value itself, not only its loader.
+    let origin = requireOrigin;
+    if (bindingId !== null) {
+      const binding = bindings.get(bindingId);
+      if (binding === undefined) continue;
+      const { provenance, definitions } = binding;
+      const [only, ...others] = provenance.origins;
+      if (only === undefined || others.length > 0) continue;
+      // Other ambiguity reasons concern the value itself, not only its loader.
+      if (
+        provenance.status !== "module" &&
+        provenance.reason !== UNKNOWN_REQUIRE_LOADER_REASON
+      )
+        continue;
+      if (definitions.some(({ kind }) => kind === "assignment")) continue;
+      origin = only;
+    }
+    if (origin === undefined) continue;
+    const member = [...originPath(origin), ...path];
     if (
-      provenance.status !== "module" &&
-      provenance.reason !== UNKNOWN_REQUIRE_LOADER_REASON
-    )
-      continue;
-    if (definitions.some(({ kind }) => kind === "assignment")) continue;
-    // Only the import itself supplies a `default` to drop; one written in the
-    // source is a real member access.
-    const member = [...withoutDefault(origin.importedPath), ...path];
-    if (
-      replaced(calleeAccess.bindingId, path) ||
-      replaced(origin.specifier, member)
+      (bindingId !== null && replaced(bindingId, path, location.start)) ||
+      replaced(origin.specifier, member, location.start)
     )
       continue;
     callees.set(callSiteId, {
       specifier: origin.specifier,
       path: member,
-      ...(candidate ? { loader_authority: "candidate" as const } : {}),
+      ...(origin.loaderAuthority === "candidate"
+        ? { loader_authority: "candidate" as const }
+        : {}),
     });
   }
   return callees;

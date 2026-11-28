@@ -132,7 +132,9 @@ export interface JavaScriptSemanticCallSite {
   readonly calleeLocation: JavaScriptSourceRange;
   /** Root binding and static member path of the callee, when it has both. */
   readonly calleeAccess?: {
-    readonly bindingId: string;
+    /** Null when the callee is rooted directly in a `require(...)` call. */
+    readonly bindingId: string | null;
+    readonly requireOrigin?: JavaScriptModuleOrigin;
     readonly path: readonly string[];
     /**
      * Module required inside an unverified helper call that initializes the
