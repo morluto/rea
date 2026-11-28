@@ -116,6 +116,9 @@ export const createProviderOperationToolHandler =
           const executionOptions = {
             signal: context.mcpReq.signal,
             progress,
+            // A direct tool call reads the session's own target, so a
+            // single-Program provider can replay it without a document.
+            snapshotContext: "session-target" as const,
             isOperationAdvertised: (advertised: AnalysisOperation) =>
               server.advertisesTool(advertised),
           };
@@ -129,7 +132,10 @@ export const createProviderOperationToolHandler =
                 executionParameters,
                 (parameters) =>
                   analysis.execute(operation, parameters, executionOptions),
-                { signal: context.mcpReq.signal },
+                {
+                  signal: context.mcpReq.signal,
+                  snapshotContext: executionOptions.snapshotContext,
+                },
               ),
           );
           if (!execution.ok)

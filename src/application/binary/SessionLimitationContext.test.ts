@@ -3,6 +3,13 @@ import { describe, expect, it } from "vitest";
 import { unknownTarget } from "../../domain/targetIdentity.js";
 import { createAnalysisExecution } from "../../ports/AnalysisProvider.js";
 import { deliverSessionLimitations } from "./SessionLimitationContext.js";
+import { admitInvestigationAuthentication } from "../investigation/InvestigationRetention.js";
+
+const deliver = (...args: Parameters<typeof deliverSessionLimitations>) => {
+  const result = deliverSessionLimitations(...args);
+  if (!result.ok) throw result.error;
+  return result.value;
+};
 
 const provider = { id: "fixture", name: "Fixture", version: "1" };
 const target = unknownTarget("not-observed");
@@ -14,18 +21,14 @@ const execution = (call: string, session: readonly string[]) =>
 
 describe("session limitation delivery", () => {
   it("keeps shared facts inline for a one-call session and drops the scope marker", () => {
-    const inline = deliverSessionLimitations(
-      execution("call", ["a", "b"]),
-      target,
-      "inline",
-    );
+    const inline = deliver(execution("call", ["a", "b"]), target, "inline");
     expect(inline.limitations).toEqual(["call", "a", "b"]);
     expect(inline).not.toHaveProperty("sessionLimitations");
     expect(inline.sourceEvidence).toBeUndefined();
   });
 
   it("replaces shared facts with one reference to a linked retained record", () => {
-    const referenced = deliverSessionLimitations(
+    const referenced = deliver(
       execution("call", ["a", "b"]),
       target,
       "reference",
@@ -40,21 +43,9 @@ describe("session limitation delivery", () => {
   });
 
   it("gives every result with the same session facts the same record", () => {
-    const first = deliverSessionLimitations(
-      execution("one", ["a", "b"]),
-      target,
-      "reference",
-    );
-    const second = deliverSessionLimitations(
-      execution("two", ["a", "b"]),
-      target,
-      "reference",
-    );
-    const other = deliverSessionLimitations(
-      execution("one", ["a"]),
-      target,
-      "reference",
-    );
+    const first = deliver(execution("one", ["a", "b"]), target, "reference");
+    const second = deliver(execution("two", ["a", "b"]), target, "reference");
+    const other = deliver(execution("one", ["a"]), target, "reference");
     expect(second.sourceEvidence?.[0]?.evidence_id).toBe(
       first.sourceEvidence?.[0]?.evidence_id,
     );
@@ -67,6 +58,25 @@ describe("session limitation delivery", () => {
     const plain = createAnalysisExecution(null, provider, {
       limitations: ["call"],
     });
-    expect(deliverSessionLimitations(plain, target, "reference")).toBe(plain);
+    expect(deliver(plain, target, "reference")).toBe(plain);
+  });
+});
+
+it("returns a typed refusal before copying a reference context when headroom is exhausted", () => {
+  const result = deliverSessionLimitations(
+    execution("call", ["shared"]),
+    target,
+    "reference",
+    (value, operation, additional) =>
+      admitInvestigationAuthentication(
+        value,
+        operation,
+        { availableAuthenticationBytes: () => 0 },
+        additional,
+      ),
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisResourceConstraintError", resource: "memory" },
   });
 });

@@ -12,6 +12,7 @@ import {
   type GpuCodeObjects,
 } from "../gpu/gpuCodeObjects.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
+import { filterSet } from "./selectViewRows.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   ownedView,
@@ -20,13 +21,12 @@ import {
 } from "./analysisViewShape.js";
 import {
   ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
-  analysisViewInputError,
   invalidAnalysisViewSubject,
   invalidAnalysisView,
 } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
@@ -226,11 +226,7 @@ export const projectGpuCodeObjectsView = (
     parent_operation: "inspect_gpu_code_objects" as const,
     parent_digest: parent.evidenceId.slice(3),
     artifact: { path: report.artifact.path, sha256: report.artifact.sha256 },
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...report.limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, report.limitations),
     unknowns: [
       "GPU execution, runtime compatibility and host launch sites were not inspected.",
       ...(report.coverage.payloads !== "complete"
@@ -254,15 +250,9 @@ export const projectGpuCodeObjectsView = (
       (row) => row.object_id === view.object_id,
     );
     if (artifact === undefined)
-      return err(
-        analysisViewInputError([
-          {
-            path: ["view", "object_id"],
-            reason: "invalid_value",
-            message:
-              "No retained PTX artifact exists for this object; inspect a selected PTX payload with analysis kernels",
-          },
-        ]),
+      return invalidAnalysisView(
+        "No retained PTX artifact exists for this object; inspect a selected PTX payload with analysis kernels",
+        "object_id",
       );
     const end = Math.min(artifact.text.length, view.offset + view.limit);
     const split = (offset: number): boolean =>
@@ -307,9 +297,8 @@ export const projectGpuCodeObjectsView = (
       ),
     });
   }
-  const targets =
-    view.targets === undefined ? undefined : new Set(view.targets);
-  const ids = view.ids === undefined ? undefined : new Set(view.ids);
+  const targets = filterSet(view.targets);
+  const ids = filterSet(view.ids);
   const objectIds =
     view.collection === "kernels" && view.object_ids !== undefined
       ? new Set(view.object_ids)

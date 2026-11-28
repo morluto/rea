@@ -14,12 +14,14 @@ export async function buildMipsFixture(
   byteOrder,
   floatAbi = "hard",
   options = {},
+  run = execute,
 ) {
   if (byteOrder !== "little" && byteOrder !== "big")
     throw new Error("MIPS fixture byte order must be little or big");
   if (floatAbi !== "hard" && floatAbi !== "soft")
     throw new Error("MIPS fixture float ABI must be hard or soft");
-  const legacy = options.legacy === true;
+  const recordlessAbi = options.recordlessAbi;
+  const legacy = recordlessAbi !== undefined;
   const soft = floatAbi === "soft";
   const target = byteOrder === "little" ? "mipsel-linux-gnu" : "mips-linux-gnu";
   const source = fileURLToPath(new URL("../c/mips.c", import.meta.url));
@@ -29,15 +31,16 @@ export async function buildMipsFixture(
   const probe = fileURLToPath(new URL("./mips-probe.S", import.meta.url));
   const path = join(
     directory,
-    `${target}${soft ? "-soft-float" : ""}${legacy ? "-legacy" : ""}.elf`,
+    `${target}${soft ? "-soft-float" : ""}${legacy ? `-recordless-${recordlessAbi}` : ""}.elf`,
   );
   const args = [
     `--target=${target}`,
     `-march=${legacy ? "mips32" : "mips32r2"}`,
     "-mabi=32",
     ...(soft ? ["-msoft-float"] : []),
-    "-mno-abicalls",
-    "-fno-pic",
+    ...(recordlessAbi === "o32"
+      ? ["-mabicalls", "-fPIC"]
+      : ["-mno-abicalls", "-fno-pic"]),
     "-fuse-ld=lld",
     "-nostdlib",
     "-static",
@@ -51,12 +54,18 @@ export async function buildMipsFixture(
     "-o",
     path,
   ];
-  const compiled = await compileMipsFixture(path, byteOrder, 2, args, {
-    expectedFlags: legacy ? 0x50001001 : 0x70001001,
-  });
-  // Legacy variant: retype the ABI record declarations out of the image and
-  // zero the header ABI field, matching pre-ABI-flags 2000s firmware toolchains
-  // (their compilers predate the record; the header leaves the ABI unspecified).
+  const compiled = await compileMipsFixture(
+    path,
+    byteOrder,
+    2,
+    args,
+    {
+      expectedFlags:
+        recordlessAbi === "o32" ? 0x50001007 : legacy ? 0x50001001 : 0x70001001,
+    },
+    run,
+  );
+  // Retype the ABI record independently of the ABI declared by the ELF header.
   let attested = compiled;
   if (legacy) {
     const raw = await readFile(path);
@@ -75,7 +84,7 @@ export async function buildMipsFixture(
     const flags = read32(36);
     if ((flags & 0xf0000000) !== 0x50000000)
       throw new Error("Legacy fixture did not build as EF_MIPS_ARCH_32");
-    write32(36, flags & ~0x0000f000);
+    if (recordlessAbi === "unspecified") write32(36, flags & ~0x0000f000);
     const programOffset = read32(28);
     const programCount = read16(44);
     if (read16(42) !== 32)
@@ -116,7 +125,10 @@ export async function buildMipsFixture(
       byteOrder === "little"
         ? patched.readUInt32LE(36)
         : patched.readUInt32BE(36);
-    if (patchedFlags !== 0x50000001)
+    if (
+      patchedFlags !==
+      (recordlessAbi === "unspecified" ? 0x50000001 : 0x50001007)
+    )
       throw new Error(
         "Legacy fixture did not end with the recordless o32 declaration",
       );

@@ -69,6 +69,8 @@ export interface ElfUnwindFixtureOptions {
    * a `.dynamic` DT_PLTGOT entry.
    */
   readonly datarel?: "got" | "none" | "dynamic";
+  /** With `datarel: "dynamic"`, also declare `.got.plt` at the same GOT address. */
+  readonly gotPlt?: boolean;
   /**
    * First CIE and first FDE use the 0xffffffff extended (64-bit) length
    * escape; their CIE ID / CIE pointer stays 4 bytes, as `.eh_frame` requires.
@@ -93,6 +95,11 @@ export interface ElfUnwindFixtureOptions {
    * declare the dynamic table.
    */
   readonly dynamicSection?: boolean;
+  /**
+   * `.dynamic` rows as `[d_tag, d_un]` pairs, written in order with no
+   * implied DT_NULL. Without it, `.dynamic` is DT_PLTGOT then DT_NULL.
+   */
+  readonly dynamicEntries?: readonly (readonly [tag: number, value: number])[];
   /** `.symtab` and `.dynsym` each under 65536 entries, together over it. */
   readonly symbolCap?: boolean;
   /** Second FDE stores a raw zero pcrel LSDA pointer (no LSDA). */
@@ -706,7 +713,7 @@ const addOptionalSections = (
   bits: 32 | 64,
   little: boolean,
 ): void => {
-  if (options.datarel === "got")
+  if (options.datarel === "got" || options.gotPlt === true)
     sections.push({
       name: ".got.plt",
       type: 1,
@@ -719,10 +726,15 @@ const addOptionalSections = (
     });
   if (options.datarel === "dynamic") {
     const width = bits === 64 ? 16 : 8;
-    const dynamic = Buffer.alloc(width * 2);
-    // DT_PLTGOT, then DT_NULL.
-    writeWord(dynamic, 0, 3, bits, little);
-    writeWord(dynamic, width / 2, UNWIND_GOT_VA, bits, little);
+    const entries = options.dynamicEntries ?? [
+      [3, UNWIND_GOT_VA],
+      [0, 0],
+    ];
+    const dynamic = Buffer.alloc(width * entries.length);
+    entries.forEach(([tag, value], index) => {
+      writeWord(dynamic, index * width, tag, bits, little);
+      writeWord(dynamic, index * width + width / 2, value, bits, little);
+    });
     sections.push({
       name: ".dynamic",
       type: options.dynamicSection === false ? 1 : 6,

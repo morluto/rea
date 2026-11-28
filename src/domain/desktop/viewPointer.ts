@@ -33,6 +33,10 @@ type Stepped =
   | { readonly kind: "none"; readonly reason?: string }
   | { readonly kind: "unresolved"; readonly problem: string };
 
+/** Parent element of an XML view's child pointer, including named and positional selectors. */
+export const xmlParentPointer = (pointer: string): string | undefined =>
+  /^(?<parent>.+)\/children\/[^/]+$/u.exec(pointer)?.groups?.parent;
+
 /** The conditions in a pointer's last reference token, when it is a selector. */
 export const lastSelectorOf = (pointer: string): readonly Condition[] =>
   selectorOf(

@@ -1,5 +1,6 @@
 import { sha256File } from "./verifier-file-sha256.mjs";
 import { canonicalOutputSchema } from "./canonical-output-schema.mjs";
+import { completeEvidenceCliArguments } from "./complete-evidence.mjs";
 import {
   requireMcpToolError,
   mcpTextValue,
@@ -27,6 +28,24 @@ import { verifyGhidraInstructionFlow } from "./real-ghidra-instruction-flow.mjs"
 import { verifyGhidraSearchFacts } from "./real-ghidra-search-facts.mjs";
 
 /** Probe real Ghidra location, annotation and error contracts through public adapters. */
+/**
+ * Readback of an edit that changed the name and comments only: those fields
+ * match the request, and the untouched prototype is not caller-authored.
+ */
+export function assertNameAndCommentReadback(annotations, address, changes) {
+  const { signature, signature_source, calling_convention, ...edited } =
+    annotations;
+  assert.deepEqual(edited, {
+    address,
+    name: changes.name,
+    comment: changes.comment,
+    inline_comment: changes.inline_comment,
+  });
+  assert.ok(signature.includes(`${changes.name}(`));
+  assert.notEqual(signature_source, "user_defined");
+  assert.equal(typeof calling_convention, "string");
+}
+
 export async function verifyGhidraBoundaries(
   client,
   { target, procedure, entrypoint, env },
@@ -115,13 +134,16 @@ export async function verifyGhidraBoundaries(
       process.execPath,
       [
         entrypoint,
-        command,
-        target.path,
-        value,
-        "--provider",
-        "ghidra",
-        "--json",
-        ...flags,
+        // Compare complete Evidence, not a result-budget summary.
+        ...(await completeEvidenceCliArguments([
+          command,
+          target.path,
+          value,
+          "--provider",
+          "ghidra",
+          "--json",
+          ...flags,
+        ])),
       ],
       { env, timeout: 240000, maxBuffer: 72 * 1024 * 1024 },
     );
@@ -564,12 +586,7 @@ export async function verifyGhidraBoundaries(
     inline_comment: "Inline\n註記",
   };
   const updated = await call("annotate_native_function", changes);
-  assert.deepEqual(updated.annotations, {
-    address,
-    name: changes.name,
-    comment: changes.comment,
-    inline_comment: changes.inline_comment,
-  });
+  assertNameAndCommentReadback(updated.annotations, address, changes);
   const traceAfter = await evidence("trace_native_values", traceInput);
   const sourceAfter = traceAfter.normalized_result.procedures[0].evidence_id;
   assert.notEqual(sourceBefore, sourceAfter);

@@ -12,11 +12,11 @@ import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
 import {
-  MAX_INSPECT_KERNEL_MODULE_ENTRIES,
-  MAX_INSPECT_KERNEL_MODULE_FILE_BYTES,
+  KERNEL_MODULE_READ_BUDGETS,
   type InspectKernelModuleInput,
   type KernelModule,
 } from "../../domain/native/kernelModule.js";
+import { elfReadBudgetLimit } from "../../domain/native/elfReadBudgets.js";
 import { err, ok } from "../../domain/result.js";
 import { KERNEL_MODULE_PROVIDER } from "../../domain/investigationProviders.js";
 import { isNativeStructureFailure } from "../../domain/binaryContainer.js";
@@ -80,18 +80,6 @@ export class KernelModuleProvider implements KernelModulePort {
   }
 }
 
-const inputBudgetRemediation = (
-  boundary: "file-size" | "capacity",
-  input: InspectKernelModuleInput,
-): string =>
-  boundary === "file-size"
-    ? input.max_file_bytes >= MAX_INSPECT_KERNEL_MODULE_FILE_BYTES
-      ? `The image exceeds the ${String(MAX_INSPECT_KERNEL_MODULE_FILE_BYTES)}-byte input ceiling this operation accepts; select a smaller artifact.`
-      : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`
-    : input.max_entries >= MAX_INSPECT_KERNEL_MODULE_ENTRIES
-      ? `The image exceeds the ${String(MAX_INSPECT_KERNEL_MODULE_ENTRIES)}-entry kernel-module ceiling this operation accepts; select a smaller artifact.`
-      : `Raise max_entries above ${String(input.max_entries)} or select a smaller artifact; the limit is the caller-selected .modinfo and __versions entry budget.`;
-
 const kernelModuleFailure = (
   cause: unknown,
   input: InspectKernelModuleInput,
@@ -139,9 +127,20 @@ const kernelModuleFailure = (
                       }
                   : {
                       retryable: false as const,
-                      remediationAction: inputBudgetRemediation(
-                        failure.boundary,
-                        input,
+                      limit: elfReadBudgetLimit(
+                        KERNEL_MODULE_READ_BUDGETS,
+                        failure.boundary === "file-size"
+                          ? "max_file_bytes"
+                          : "max_entries",
+                        failure.boundary === "file-size"
+                          ? input.max_file_bytes
+                          : input.max_entries,
+                        failure.boundary === "file-size" &&
+                          failure.observedBytes !== undefined &&
+                          failure.observedBytes <=
+                            BigInt(Number.MAX_SAFE_INTEGER)
+                          ? failure.observedBytes
+                          : undefined,
                       ),
                     }),
             },

@@ -62,7 +62,7 @@ import {
 import { admitClientStdioConnection } from "./ClientRegistrationConnection.js";
 import type { ConfigurationError } from "../domain/configurationErrors.js";
 import { errorMessage } from "../kernel/errorMessage.js";
-import { isAbsentClientConfigPath } from "./ClientConfigPath.js";
+import { isAbsentClientConfigPath, isEnoentError } from "./ClientConfigPath.js";
 
 interface ClientRegistrationStatusBase {
   readonly client: string;
@@ -563,7 +563,7 @@ export const readClientRegistrationInspections = async (
       record(
         unavailableStatus(
           client,
-          isMissing(cause) ? "missing" : "invalid",
+          isEnoentError(cause) ? "missing" : "invalid",
           selectedConfigPath,
           selectedScope,
         ),
@@ -695,7 +695,7 @@ const missingTransientLauncherRemediation = async (
     try {
       await stat(path);
     } catch (cause) {
-      if (isMissing(cause)) {
+      if (isEnoentError(cause)) {
         const detail = `The saved session launcher path ${path} is missing.`;
         return client.format === "dsh"
           ? `${detail} Run rea setup --client dsh to review and refresh the installed REA registration, then restart the client.`
@@ -936,6 +936,3 @@ const clientEvidencePresent = async (
   }
   return unavailable === undefined ? ok(false) : err(unavailable);
 };
-
-const isMissing = (cause: unknown): boolean =>
-  cause instanceof Error && "code" in cause && cause.code === "ENOENT";

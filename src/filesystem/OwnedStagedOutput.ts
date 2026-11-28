@@ -24,6 +24,7 @@ export class OwnedStagedOutput {
   #fileClosed = false;
   #fileRemovedByOwner = false;
   #publishedRename = false;
+  #closeFileAttempt: Promise<void> | undefined;
   #closeAttempt: Promise<void> | undefined;
   #closed = false;
   #identityFailure: unknown;
@@ -72,12 +73,20 @@ export class OwnedStagedOutput {
   }
 
   /** Observe the descriptor's identity after its last write, then close it. */
-  async closeFile(): Promise<void> {
+  closeFile(): Promise<void> {
     const file = this.#file;
-    if (file === undefined || this.#fileClosed) return;
-    await this.#observeFileIdentity();
-    await file.close();
-    this.#fileClosed = true;
+    if (file === undefined || this.#fileClosed) return Promise.resolve();
+    if (this.#closeFileAttempt !== undefined) return this.#closeFileAttempt;
+    const attempt = (async () => {
+      await this.#observeFileIdentity();
+      await file.close();
+      this.#fileClosed = true;
+    })().finally(() => {
+      if (this.#closeFileAttempt === attempt)
+        this.#closeFileAttempt = undefined;
+    });
+    this.#closeFileAttempt = attempt;
+    return attempt;
   }
 
   async #observeFileIdentity(): Promise<void> {
@@ -87,9 +96,10 @@ export class OwnedStagedOutput {
     // so only the descriptor's final identity can prove the staged pathname.
     try {
       this.#fileIdentity = identityOf(await file.handle.stat());
+      this.#identityFailure = undefined;
     } catch (cause: unknown) {
-      // The handle remains owned; cleanup will close it and refuse pathname removal.
-      this.#fileIdentity = undefined;
+      // Preserve an already-verified post-write identity across cleanup retries;
+      // only record the failure if identity has never been observed yet.
       this.#identityFailure = cause;
     }
   }

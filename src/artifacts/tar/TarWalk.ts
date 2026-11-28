@@ -4,20 +4,27 @@ import { Budget } from "../../domain/budget.js";
 import { malformedInput } from "../../domain/parseFailure.js";
 import { isStrictUtf8 } from "../../domain/strictUtf8.js";
 import {
+  isTarDirectoryHeader,
   parsePaxRecords,
   parseTarHeaderBlock,
   TAR_BLOCK_BYTES,
   TAR_TYPEFLAGS,
   tarPaddedSize,
+  tarStoredDataBytes,
   type TarHeaderDialect,
   type TarPaxRecords,
 } from "../../domain/tarFormat.js";
-import type { ArtifactTraversalOmissionKind } from "../../domain/artifactGraph.js";
+import type {
+  ArtifactLinkTarget,
+  ArtifactTraversalOmissionKind,
+} from "../../domain/artifactGraph.js";
 import type { TarReaderLimits } from "../../domain/artifactReaderLimits.js";
 import {
   artifactReaderLimitFailure,
   artifactParseFailure,
   assertArtifactReadActive,
+  currentDirectoryPrefixLimitation,
+  withoutCurrentDirectoryPrefix,
 } from "../../resources/index.js";
 import { TarStreamEnded, type TarByteStream } from "./TarByteStream.js";
 
@@ -51,6 +58,7 @@ export interface TarMember {
   readonly uname: string | null;
   readonly gname: string | null;
   readonly linkName: string | null;
+  readonly linkTarget?: ArtifactLinkTarget;
   readonly limitations: readonly string[];
 }
 
@@ -245,6 +253,7 @@ export const walkTar = async (
   const members: TarMember[] = [];
   const omissions: { path: string; kind: ArtifactTraversalOmissionKind }[] = [];
   const limitations: string[] = [];
+  let prefixedMembers = 0;
   const dialects = new Set<TarHeaderDialect>();
   let paxHeaders = 0;
   const retained = new Budget(limits.metadata_bytes);
@@ -252,6 +261,8 @@ export const walkTar = async (
   const global = new Map<string, string>();
   let chargedGlobalPax = 0;
   let local: TarPaxRecords | undefined;
+  let globalLinkIsLatin1 = false;
+  let localLinkIsLatin1 = false;
   let localLimitations: string[] = [];
   let chargedLocalLimitations = 0;
   let longName: Uint8Array | undefined;
@@ -297,9 +308,28 @@ export const walkTar = async (
       }
       const parsed = parseTarHeaderBlock(block);
       if (parsed.state === "zero") {
-        endOffset = headerOffset;
-        endState = "end-marker";
-        const tarTrailing = await countTrailingNonZero(stream, signal);
+        const secondBlock = await stream.read(TAR_BLOCK_BYTES, signal);
+        const secondBlockNonZero = secondBlock.reduce(
+          (count, byte) => count + Number(byte !== 0),
+          0,
+        );
+        if (secondBlock.length < TAR_BLOCK_BYTES) {
+          stop(
+            "truncated",
+            headerOffset,
+            `Tar end-of-archive marker at offset ${String(headerOffset)} has only ${String(secondBlock.length)} byte(s) in its second zero block.`,
+          );
+        } else if (secondBlockNonZero > 0) {
+          stop(
+            "malformed",
+            headerOffset,
+            `Tar end-of-archive marker at offset ${String(headerOffset)} has a non-zero second block.`,
+          );
+        } else {
+          stop("end-marker", headerOffset);
+        }
+        const tarTrailing =
+          secondBlockNonZero + (await countTrailingNonZero(stream, signal));
         if (tarTrailing > 0) {
           trailingNonZeroBytes += tarTrailing;
           limitations.push(
@@ -412,12 +442,15 @@ export const walkTar = async (
               retained.refund(chargedGlobalPax - nextBytes);
             chargedGlobalPax = nextBytes;
             applyPaxInPlace(global, pax.records);
+            if (pax.records.has("linkpath"))
+              globalLinkIsLatin1 = pax.latin1.includes("linkpath");
             limitations.push(...latin1);
           } else {
             // A later local header discards the warnings of this one.
             retained.refund(chargedLocalLimitations);
             chargedLocalLimitations = latin1Bytes;
             local = pax.records;
+            localLinkIsLatin1 = pax.latin1.includes("linkpath");
             localLimitations = latin1;
           }
         } else {
@@ -434,8 +467,13 @@ export const walkTar = async (
         records.get("path") ??
         decodeName(longName ?? header.name, "name", memberLimitations);
       const linkBytes = longLink ?? header.linkname;
-      const linkTarget =
-        records.get("linkpath") ??
+      const paxLink = records.get("linkpath");
+      const paxLinkIsLatin1 =
+        local?.has("linkpath") === true
+          ? localLinkIsLatin1
+          : globalLinkIsLatin1;
+      const linkName =
+        paxLink ??
         (linkBytes.length === 0
           ? null
           : decodeName(linkBytes, "link name", memberLimitations));
@@ -457,7 +495,7 @@ export const walkTar = async (
           break;
         }
       }
-      const stored = storedDataBytes(typeflag, name, size);
+      const stored = tarStoredDataBytes(typeflag, name, size);
       const skipped = await stream.skip(stored, signal);
       if (skipped < stored) {
         stop(
@@ -468,8 +506,14 @@ export const walkTar = async (
         break;
       }
       const sourcePath = name;
-      const path = name.replace(/^(?:\.\/)+/u, "");
+      const path = withoutCurrentDirectoryPrefix(name);
       const role = memberRole(typeflag, name, records);
+      const symlinkBytes =
+        "member" in role && role.member === "symlink"
+          ? paxLink === undefined
+            ? Buffer.from(linkBytes)
+            : Buffer.from(paxLink, paxLinkIsLatin1 ? "latin1" : "utf8")
+          : undefined;
       // Only an inventoried member keeps its pax warnings.
       if ("omit" in role || role.member === "root")
         retained.refund(chargedMemberLimitations);
@@ -477,16 +521,15 @@ export const walkTar = async (
       if ("omit" in role || role.member !== "root")
         retained.charge(
           MEMBER_OVERHEAD_BYTES +
-            2 * (Buffer.byteLength(path) + Buffer.byteLength(linkTarget ?? "")),
+            2 * (Buffer.byteLength(path) + Buffer.byteLength(linkName ?? "")) +
+            // Each target byte becomes two retained UTF-16 hex digits.
+            4 * (symlinkBytes?.length ?? 0),
           metadataLimit,
         );
       if ("omit" in role)
         omissions.push({ path: path.replace(/\/+$/u, ""), kind: role.omit });
       else if (role.member !== "root") {
-        if (path !== sourcePath)
-          memberLimitations.push(
-            `tar member name ${JSON.stringify(sourcePath)} has a leading current-directory prefix omitted from its logical path.`,
-          );
+        if (path !== sourcePath) prefixedMembers += 1;
         members.push({
           kind: role.member,
           path,
@@ -509,7 +552,15 @@ export const walkTar = async (
             (header.gname.length === 0
               ? null
               : decodeName(header.gname, "group name", memberLimitations)),
-          linkName: linkTarget,
+          linkName,
+          ...(symlinkBytes === undefined
+            ? {}
+            : {
+                linkTarget: {
+                  text: isStrictUtf8(symlinkBytes) ? (linkName ?? "") : null,
+                  hex: symlinkBytes.toString("hex"),
+                },
+              }),
           limitations: memberLimitations,
         });
       }
@@ -540,6 +591,8 @@ export const walkTar = async (
     )
       members.pop();
   }
+  if (prefixedMembers > 0)
+    limitations.push(currentDirectoryPrefixLimitation("tar", prefixedMembers));
   return {
     members,
     omissions,
@@ -553,27 +606,6 @@ export const walkTar = async (
   };
 };
 
-/** A directory header, including an old regular header whose name ends in `/`. */
-const isDirectoryHeader = (flag: number, name: string): boolean =>
-  flag === TAR_TYPEFLAGS.directory || (flag === 0 && name.endsWith("/"));
-
-/** Typeflags POSIX ustar records without data blocks, besides directories. */
-const HEADER_ONLY_TYPEFLAGS: ReadonlySet<number> = new Set([
-  TAR_TYPEFLAGS.symlink,
-  TAR_TYPEFLAGS.characterDevice,
-  TAR_TYPEFLAGS.blockDevice,
-  TAR_TYPEFLAGS.fifo,
-]);
-
-/**
- * Data bytes stored after a member header. POSIX ustar stores none for
- * symbolic links, devices, directories and FIFOs, whose size field may still
- * be nonzero, so the next header follows at once. Hard links keep their size:
- * pax interchange archives may store a body for them.
- */
-const storedDataBytes = (flag: number, name: string, size: number): number =>
-  isDirectoryHeader(flag, name) || HEADER_ONLY_TYPEFLAGS.has(flag) ? 0 : size;
-
 /**
  * What a header contributes: an inventory member, an omission, or nothing
  * for the archive's own `./` root and a GNU volume label.
@@ -585,7 +617,7 @@ const memberRole = (
 ):
   | { readonly member: TarMember["kind"] | "root" }
   | { readonly omit: ArtifactTraversalOmissionKind } => {
-  const directory = isDirectoryHeader(flag, name);
+  const directory = isTarDirectoryHeader(flag, name);
   if (flag === TAR_TYPEFLAGS.gnuVolumeLabel) return { member: "root" };
   if (directory && /^(?:\.\/?)?$/u.test(name)) return { member: "root" };
   if ([...records.keys()].some((key) => key.startsWith("GNU.sparse.")))

@@ -95,6 +95,26 @@ export const godotReaderLimitsSchema = z.strictObject({
 });
 export type GodotReaderLimits = z.output<typeof godotReaderLimitsSchema>;
 
+/**
+ * Android vbmeta admission. The format caps none of these: the header declares
+ * both block sizes as u64 values and the descriptor table has no count field.
+ */
+export const DEFAULT_ANDROID_VBMETA_READER_LIMITS = {
+  authentication_block_bytes: 64 * 1024,
+  auxiliary_block_bytes: 2 * 1024 * 1024,
+  descriptor_bytes: 1024 * 1024,
+  descriptor_count: 4096,
+};
+export const androidVbmetaReaderLimitsSchema = z.strictObject({
+  authentication_block_bytes: bytes,
+  auxiliary_block_bytes: bytes,
+  descriptor_bytes: bytes,
+  descriptor_count: count,
+});
+export type AndroidVbmetaReaderLimits = z.output<
+  typeof androidVbmetaReaderLimitsSchema
+>;
+
 export const DEFAULT_ANDROID_SPARSE_IMAGE_READER_LIMITS = {
   chunk_count: 1_048_576,
 };
@@ -103,6 +123,20 @@ export const androidSparseImageReaderLimitsSchema = z.strictObject({
 });
 export type AndroidSparseImageReaderLimits = z.output<
   typeof androidSparseImageReaderLimitsSchema
+>;
+/**
+ * Media asset admission. Ogg, RIFF and Bink headers bound neither the pages
+ * walked for the Opus header packets nor the RIFF chunk count, so the regions
+ * one container lists are admitted against this count.
+ */
+export const DEFAULT_MEDIA_ASSET_READER_LIMITS = {
+  region_count: DEFAULT_ARTIFACT_MEMBER_COUNT,
+};
+export const mediaAssetReaderLimitsSchema = z.strictObject({
+  region_count: count,
+});
+export type MediaAssetReaderLimits = z.output<
+  typeof mediaAssetReaderLimitsSchema
 >;
 export const DEFAULT_ISO9660_READER_LIMITS = {
   descriptor_count: 64,
@@ -119,6 +153,18 @@ export const iso9660ReaderLimitsSchema = z.strictObject({
   path_bytes: bytes,
 });
 export type Iso9660ReaderLimits = z.output<typeof iso9660ReaderLimitsSchema>;
+
+export const DEFAULT_ANDROID_DTBO_READER_LIMITS = {
+  entry_count: 4096,
+  entry_table_bytes: 16 * 1024 * 1024,
+};
+export const androidDtboReaderLimitsSchema = z.strictObject({
+  entry_count: count,
+  entry_table_bytes: representedBytes,
+});
+export type AndroidDtboReaderLimits = z.output<
+  typeof androidDtboReaderLimitsSchema
+>;
 
 export const DEFAULT_DENO_READER_LIMITS = {
   metadata_json_bytes: 8 * 1024 * 1024,
@@ -241,6 +287,21 @@ export const artifactReaderLimitsInputSchema = z.strictObject({
     .describe(
       `Godot directory representation admission; omitted fields use ${JSON.stringify(DEFAULT_GODOT_READER_LIMITS)}. Applies before path allocation and again to retained metadata.`,
     ),
+  android_vbmeta: z
+    .strictObject({
+      authentication_block_bytes:
+        androidVbmetaReaderLimitsSchema.shape.authentication_block_bytes.exactOptional(),
+      auxiliary_block_bytes:
+        androidVbmetaReaderLimitsSchema.shape.auxiliary_block_bytes.exactOptional(),
+      descriptor_bytes:
+        androidVbmetaReaderLimitsSchema.shape.descriptor_bytes.exactOptional(),
+      descriptor_count:
+        androidVbmetaReaderLimitsSchema.shape.descriptor_count.exactOptional(),
+    })
+    .exactOptional()
+    .describe(
+      `Android vbmeta admission; omitted fields use ${JSON.stringify(DEFAULT_ANDROID_VBMETA_READER_LIMITS)}. Header-declared block and descriptor-table sizes are admitted before the image is read; the descriptor count bounds the descriptor walk.`,
+    ),
   android_sparse_image: z
     .strictObject({
       chunk_count:
@@ -249,6 +310,15 @@ export const artifactReaderLimitsInputSchema = z.strictObject({
     .exactOptional()
     .describe(
       `Android sparse image admission; omitted fields use ${JSON.stringify(DEFAULT_ANDROID_SPARSE_IMAGE_READER_LIMITS)}. The declared total_chunks is admitted before the chunk walk; it bounds walked chunk headers and the retained expansion plan.`,
+    ),
+  media_asset: z
+    .strictObject({
+      region_count:
+        mediaAssetReaderLimitsSchema.shape.region_count.exactOptional(),
+    })
+    .exactOptional()
+    .describe(
+      `Ogg Opus, RIFF/XMA2, Bink 2 and Vulkan pipeline-cache admission; omitted fields use ${JSON.stringify(DEFAULT_MEDIA_ASSET_READER_LIMITS)}. Region count bounds the Ogg header pages and RIFF chunks walked and listed.`,
     ),
   iso9660: z
     .strictObject({
@@ -265,6 +335,17 @@ export const artifactReaderLimitsInputSchema = z.strictObject({
     .exactOptional()
     .describe(
       `ISO 9660 admission; omitted fields use ${JSON.stringify(DEFAULT_ISO9660_READER_LIMITS)}. Descriptor count bounds the volume descriptor set; directory depth, record count, directory bytes and path bytes bound directory-tree traversal.`,
+    ),
+  android_dtbo: z
+    .strictObject({
+      entry_count:
+        androidDtboReaderLimitsSchema.shape.entry_count.exactOptional(),
+      entry_table_bytes:
+        androidDtboReaderLimitsSchema.shape.entry_table_bytes.exactOptional(),
+    })
+    .exactOptional()
+    .describe(
+      `Android DTBO admission; omitted fields use ${JSON.stringify(DEFAULT_ANDROID_DTBO_READER_LIMITS)}. Entry count bounds parsed dt_table_entry rows and child entries; entry table bytes bound the buffered dt_table_entry table read.`,
     ),
   deno: z
     .strictObject({
@@ -319,26 +400,36 @@ export const artifactReaderLimitsInputSchema = z.strictObject({
 export type ArtifactReaderLimitsInput = z.output<
   typeof artifactReaderLimitsInputSchema
 >;
-const resolvedArtifactReaderLimitsSchema = z.strictObject({
+const readerLimitGroups = {
   bun: bunReaderLimitsSchema,
   dotnet_bundle: dotnetBundleReaderLimitsSchema,
   node_sea: nodeSeaReaderLimitsSchema,
   godot: godotReaderLimitsSchema,
+  android_vbmeta: androidVbmetaReaderLimitsSchema,
   android_sparse_image: androidSparseImageReaderLimitsSchema,
+  media_asset: mediaAssetReaderLimitsSchema,
   iso9660: iso9660ReaderLimitsSchema,
+  android_dtbo: androidDtboReaderLimitsSchema,
   deno: denoReaderLimitsSchema,
   wxapkg: wxapkgReaderLimitsSchema,
   tar: tarReaderLimitsSchema,
+} as const;
+
+const resolvedArtifactReaderLimitsSchema = z.strictObject({
+  ...readerLimitGroups,
   expanded_bytes: bytes.exactOptional(),
 });
 export type ArtifactReaderLimits = z.output<
   typeof resolvedArtifactReaderLimitsSchema
 >;
 
-// Earlier Evidence predates sparse-image admission and omits that policy.
+// Earlier Evidence may omit the later vbmeta, sparse-image, media and DTBO policies.
 export const artifactReaderLimitsSchema =
   resolvedArtifactReaderLimitsSchema.extend({
+    android_vbmeta: androidVbmetaReaderLimitsSchema.exactOptional(),
     android_sparse_image: androidSparseImageReaderLimitsSchema.exactOptional(),
+    media_asset: mediaAssetReaderLimitsSchema.exactOptional(),
+    android_dtbo: androidDtboReaderLimitsSchema.exactOptional(),
   });
 
 /**
@@ -372,11 +463,23 @@ export const resolveArtifactReaderLimits = (
     ...selected?.node_sea,
   },
   godot: { ...DEFAULT_GODOT_READER_LIMITS, ...selected?.godot },
+  android_vbmeta: {
+    ...DEFAULT_ANDROID_VBMETA_READER_LIMITS,
+    ...selected?.android_vbmeta,
+  },
   android_sparse_image: {
     ...DEFAULT_ANDROID_SPARSE_IMAGE_READER_LIMITS,
     ...selected?.android_sparse_image,
   },
+  media_asset: {
+    ...DEFAULT_MEDIA_ASSET_READER_LIMITS,
+    ...selected?.media_asset,
+  },
   iso9660: { ...DEFAULT_ISO9660_READER_LIMITS, ...selected?.iso9660 },
+  android_dtbo: {
+    ...DEFAULT_ANDROID_DTBO_READER_LIMITS,
+    ...selected?.android_dtbo,
+  },
   deno: {
     ...DEFAULT_DENO_READER_LIMITS,
     vfs_entries: memberCount,
@@ -409,26 +512,14 @@ export const artifactMemberCountSelected = (
   }
 };
 
-/** Every group's resolved schema; the source of each field's supported range. */
-const READER_LIMIT_GROUPS = {
-  bun: bunReaderLimitsSchema,
-  dotnet_bundle: dotnetBundleReaderLimitsSchema,
-  node_sea: nodeSeaReaderLimitsSchema,
-  godot: godotReaderLimitsSchema,
-  android_sparse_image: androidSparseImageReaderLimitsSchema,
-  iso9660: iso9660ReaderLimitsSchema,
-  deno: denoReaderLimitsSchema,
-  wxapkg: wxapkgReaderLimitsSchema,
-  tar: tarReaderLimitsSchema,
-} as const;
-type ReaderLimitGroup = keyof typeof READER_LIMIT_GROUPS;
+type ReaderLimitGroup = keyof typeof readerLimitGroups;
 
 /** The exact contract field a reader admission names on refusal. */
 export type ArtifactReaderLimitParameter =
   | {
       [
         Group in ReaderLimitGroup
-      ]: `artifact_limits.${Group}.${keyof z.output<(typeof READER_LIMIT_GROUPS)[Group]> & string}`;
+      ]: `artifact_limits.${Group}.${keyof z.output<(typeof readerLimitGroups)[Group]> & string}`;
     }[ReaderLimitGroup]
   | "artifact_limits.expanded_bytes";
 
@@ -459,7 +550,7 @@ export const artifactReaderLimitMaximum = (
     field === undefined
       ? bytes
       : (
-          READER_LIMIT_GROUPS[group as ReaderLimitGroup].shape as Record<
+          readerLimitGroups[group as ReaderLimitGroup].shape as Record<
             string,
             typeof bytes
           >

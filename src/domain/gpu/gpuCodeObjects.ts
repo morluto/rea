@@ -6,6 +6,7 @@ import {
   localPathStringSchema,
 } from "../localPath.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
+import { gpuCodeObjectsBudgetFields } from "./gpuCodeObjectsBudgets.js";
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 /**
  * GPU inventories report known coverage: discovery, note and payload
@@ -512,6 +513,7 @@ export const inspectGpuCodeObjectsInputSchema = z
       .describe(
         "Decode only exact target declarations, preserving all inventory rows",
       ),
+    ...gpuCodeObjectsBudgetFields,
     detail: z.enum(["summary", "complete"]).default("summary"),
     view: gpuCodeObjectsSelectionSchema.optional(),
   })
@@ -535,5 +537,17 @@ export type GpuKernel = z.infer<typeof gpuKernelSchema>;
 export type GpuLocation = z.infer<typeof gpuLocationSchema>;
 export type GpuCodeObjectsInput = Pick<
   z.infer<typeof inspectGpuCodeObjectsInputSchema>,
-  "path" | "analysis" | "object_ids" | "targets" | "expected_sha256"
+  | "path"
+  | "analysis"
+  | "object_ids"
+  | "targets"
+  | "expected_sha256"
+  | "max_object_bytes"
+  | "max_work_bytes"
+  | "max_report_bytes"
+  | "max_metadata_bytes"
+  | "max_structure_bytes"
+  | "max_parser_entries"
+  | "max_parser_visits"
+  | "max_token_bytes"
 >;

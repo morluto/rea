@@ -715,6 +715,34 @@ it.each([
   },
 );
 
+it("keeps listed entries openable after a later enumeration ends early", async () => {
+  const root = await createTestTempDirectory("rea-dotnet-reenumerate-");
+  const path = join(root, "host.exe");
+  await writeFile(
+    path,
+    dotnetBundleFixture([
+      { path: "first", bytes: Buffer.from("one") },
+      { path: "second", bytes: Buffer.from("two") },
+    ]).bytes,
+  );
+  const reader = new DotnetBundleArtifactReader(path);
+  try {
+    const entries = [];
+    for await (const entry of reader.entries()) entries.push(entry);
+    expect(entries.map(({ path }) => path)).toEqual(["first", "second"]);
+    for await (const entry of reader.entries()) {
+      expect(entry.path).toBe("first");
+      break;
+    }
+    const chunks = [];
+    for await (const chunk of await reader.open(entries[1]!))
+      chunks.push(chunk);
+    expect(Buffer.concat(chunks).equals(Buffer.from("two"))).toBe(true);
+  } finally {
+    await reader.close();
+  }
+});
+
 it("rejects replacement, forged entry metadata and cancellation without losing cleanup", async () => {
   const root = await createTestTempDirectory("rea-dotnet-stable-");
   const path = join(root, "host.exe");

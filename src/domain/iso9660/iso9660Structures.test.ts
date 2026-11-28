@@ -544,6 +544,63 @@ it("requires . and .. to reference the directory and its parent", () => {
     );
 });
 
+it("checks a .. that names its own directory against that directory's lengths", () => {
+  const { bytes, layout } = buildIso9660Image({
+    files: [{ path: "sub/a.txt", bytes: Buffer.from("a") }],
+  });
+  const subBlock = layout.directoryBlocks.get("sub")!;
+  const start = subBlock * ISO9660_SECTOR_BYTES;
+  // The parent's lengths differ from the directory's, so only a check against
+  // the directory itself accepts the self-describing .. record.
+  const parent = {
+    extentLocation: layout.directoryBlocks.get("")!,
+    dataLength: 2 * ISO9660_SECTOR_BYTES,
+    extendedAttributeLength: 1,
+  };
+  const listing = (damage: (extent: Buffer) => void = () => {}) => {
+    const extent = Buffer.from(
+      bytes.subarray(start, start + ISO9660_SECTOR_BYTES),
+    );
+    extent.copy(extent, 34 + 2, 2, 18);
+    damage(extent);
+    return () =>
+      recordsOf(
+        parseIso9660DirectoryExtent(extent, start, () => {}, ONE_VOLUME, {
+          self: directoryLink(subBlock),
+          parent,
+          parentMayBeSelf: true,
+        }),
+      );
+  };
+  expect(listing()()).toHaveLength(3);
+  for (const [field, offset, damage] of [
+    [
+      "data_length",
+      34 + 10,
+      (extent: Buffer) => {
+        extent.writeUInt32LE(parent.dataLength, 34 + 10);
+        extent.writeUInt32BE(parent.dataLength, 34 + 14);
+      },
+    ],
+    [
+      "extended_attribute_length",
+      34 + 1,
+      (extent: Buffer) => {
+        extent[34 + 1] = parent.extendedAttributeLength;
+      },
+    ],
+  ] as const)
+    expect(listing(damage)).toThrow(
+      expect.objectContaining({
+        failure: expect.objectContaining({
+          kind: "malformed",
+          offset: start + offset,
+          field,
+        }),
+      }),
+    );
+});
+
 it("rejects a reserved . or .. identifier after the opening pair", () => {
   for (const identifier of ["\u0000", "\u0001"]) {
     const { bytes, layout } = buildIso9660Image({
@@ -653,4 +710,80 @@ it("requires the padding byte an even-length identifier needs to fit its record"
       Buffer.from("AB;"),
     ),
   ).toBe(true);
+});
+
+/**
+ * The descriptor's root field is 34 bytes, and the volume set identifier
+ * starts on the next byte. A declared length of 34 or more still names that
+ * field. Below 34 the fixed fields do not fit.
+ */
+it("reads a root record from the descriptor's fixed 34-byte field", () => {
+  const { bytes, layout } = buildIso9660Image({ joliet: true });
+  const parsed = descriptors(bytes);
+  expect(parsed.ok).toBe(true);
+  if (!parsed.ok) return;
+  const { primaryRoot, jolietRoot } = parsed.value;
+  expect(jolietRoot).not.toBeNull();
+  if (jolietRoot === null) return;
+  const rootFacts = (record: typeof primaryRoot) => ({
+    offset: record.offset,
+    extentLocation: record.extentLocation,
+    dataLength: record.dataLength,
+    flags: record.flags,
+    volumeSequenceNumber: record.volumeSequenceNumber,
+    identifier: [...record.identifier],
+  });
+  for (const declared of [36, 48]) {
+    const copy = Buffer.from(bytes);
+    copy[layout.primaryDescriptor + 156] = declared;
+    const result = descriptors(copy);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(rootFacts(result.value.primaryRoot)).toEqual(rootFacts(primaryRoot));
+  }
+  // A Joliet root may store its NUL identifier as UCS-2: length 2, bytes 00 00.
+  // The second byte is the first byte after the 34-byte field.
+  const joliet = layout.primaryDescriptor + ISO9660_SECTOR_BYTES;
+  const jolietCopy = Buffer.from(bytes);
+  jolietCopy[joliet + 156] = 36;
+  jolietCopy[joliet + 156 + 32] = 2;
+  jolietCopy[joliet + 156 + 33] = 0;
+  jolietCopy[joliet + 156 + 34] = 0;
+  const jolietResult = descriptors(jolietCopy);
+  expect(jolietResult.ok).toBe(true);
+  if (!jolietResult.ok) return;
+  const admittedJolietRoot = jolietResult.value.jolietRoot;
+  expect(admittedJolietRoot).not.toBeNull();
+  if (admittedJolietRoot === null) return;
+  expect(rootFacts(admittedJolietRoot)).toEqual(rootFacts(jolietRoot));
+  // The primary root's identifier is the single byte 0x00. Two identifier
+  // bytes do not fit the field, so the same 00 00 form is rejected there.
+  const primary = layout.primaryDescriptor;
+  const primaryCopy = Buffer.from(bytes);
+  primaryCopy[primary + 156] = 36;
+  primaryCopy[primary + 156 + 32] = 2;
+  primaryCopy[primary + 156 + 33] = 0;
+  primaryCopy[primary + 156 + 34] = 0;
+  expect(descriptors(primaryCopy)).toMatchObject({
+    ok: false,
+    error: {
+      failure: {
+        kind: "malformed",
+        field: "identifier_length",
+        offset: primary + 156 + 32,
+      },
+    },
+  });
+  const short = Buffer.from(bytes);
+  short[primary + 156] = 20;
+  expect(descriptors(short)).toMatchObject({
+    ok: false,
+    error: {
+      failure: {
+        kind: "malformed",
+        field: "root_directory_record",
+        offset: primary + 156,
+      },
+    },
+  });
 });

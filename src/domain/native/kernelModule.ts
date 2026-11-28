@@ -7,6 +7,11 @@ import { digestSchema } from "../digests.js";
 import { fixedTupleSchema } from "../fixedTupleSchema.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 import { ELF_OBJECT_TYPE_NAMES } from "./elfNotes.js";
+import {
+  DEFAULT_ELF_READ_FILE_BYTES,
+  MINIMUM_ELF_READ_FILE_BYTES,
+  type ElfReadBudgets,
+} from "./elfReadBudgets.js";
 import { maxStructureBytesSchema } from "./nativeStructureBudget.js";
 
 const uint = z.number().int().min(0).max(0xffffffff);
@@ -21,6 +26,20 @@ export const MAX_INSPECT_KERNEL_MODULE_FILE_BYTES = 536870912;
  * file-backed __ksymtab* sections combined.
  */
 export const MAX_INSPECT_KERNEL_MODULE_ENTRIES = 65536;
+
+/** Per-call read and entry budgets for kernel module inspection. */
+export const KERNEL_MODULE_READ_BUDGETS: ElfReadBudgets = {
+  max_file_bytes: {
+    minimum: MINIMUM_ELF_READ_FILE_BYTES,
+    maximum: MAX_INSPECT_KERNEL_MODULE_FILE_BYTES,
+    default_value: DEFAULT_ELF_READ_FILE_BYTES,
+  },
+  max_entries: {
+    minimum: 1,
+    maximum: MAX_INSPECT_KERNEL_MODULE_ENTRIES,
+    default_value: 8192,
+  },
+};
 /** Default per-field retention budgets; omission does not establish malformed syntax. */
 export const DEFAULT_KERNEL_MODULE_KEY_BYTES = 256;
 export const DEFAULT_KERNEL_MODULE_VALUE_BYTES = 4096;
@@ -234,16 +253,16 @@ export const inspectKernelModuleInputSchema = z.strictObject({
   max_file_bytes: z
     .number()
     .int()
-    .min(64)
-    .max(MAX_INSPECT_KERNEL_MODULE_FILE_BYTES)
-    .default(67108864)
+    .min(KERNEL_MODULE_READ_BUDGETS.max_file_bytes.minimum)
+    .max(KERNEL_MODULE_READ_BUDGETS.max_file_bytes.maximum)
+    .default(KERNEL_MODULE_READ_BUDGETS.max_file_bytes.default_value)
     .describe("Maximum stable artifact bytes to read (default 64 MiB)"),
   max_entries: z
     .number()
     .int()
-    .min(1)
-    .max(MAX_INSPECT_KERNEL_MODULE_ENTRIES)
-    .default(8192)
+    .min(KERNEL_MODULE_READ_BUDGETS.max_entries.minimum)
+    .max(KERNEL_MODULE_READ_BUDGETS.max_entries.maximum)
+    .default(KERNEL_MODULE_READ_BUDGETS.max_entries.default_value)
     .describe(
       "Maximum .modinfo and __versions entries plus file-backed __ksymtab* sections to examine; exceeding the budget fails without partial success",
     ),

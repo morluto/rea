@@ -60,6 +60,21 @@ describe("a member-mutation query that outgrows its state budget", () => {
     expect(collapsed.value?.status).not.toBe("literal");
   });
 
+  it("escapes a value stored into the receiver of a collapsed escape", () => {
+    // The escape reaches the store's receiver through more aliases than the
+    // budget admits. The collapsed escape names no site, so every value a
+    // store put into that receiver escapes with it.
+    const body = `const y = { v: 1 };
+       const x = {};
+       x.a = y;
+       ${aliasChain("x", 12)}
+       unknown(x12);
+       return y.v;`;
+    const collapsed = analyze(body, tightPrecision);
+    expect(collapsed.ir.coverage.resourceLimits).toContain("alias-selections");
+    expect(collapsed.value?.status).not.toBe("literal");
+  });
+
   it("covers a dense cluster once for every query that collapses into it", () => {
     // A hundred calls each pass a member of one cyclic cluster. Their
     // collapsed escapes name no site, so the cluster is walked once and

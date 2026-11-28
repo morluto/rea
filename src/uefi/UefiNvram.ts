@@ -78,6 +78,8 @@ export interface AmiNvramScan {
   readonly stores: readonly AmiNvramStore[];
   readonly coverage: "complete" | "partial";
   readonly limitations: readonly string[];
+  /** True when the image was fully searched and no AMI NVAR store was found. */
+  readonly absent: boolean;
 }
 
 /** Locate a nonempty, terminated name within the framed record body. */
@@ -312,6 +314,7 @@ export const scanAmiNvramStores = (
   maxStores: number,
   maxDepth: number,
   checkpoint: () => void = () => {},
+  records: Budget = new Budget(UEFI_FIRMWARE_LIMITS.scanRecords),
 ): AmiNvramScan => {
   const stores: AmiNvramStore[] = [];
   const limitations: string[] = [];
@@ -319,9 +322,9 @@ export const scanAmiNvramStores = (
   let partial = false;
   const noteOmission = (detail: string): void => {
     partial = true;
-    if (limitations.length < 512) limitations.push(detail);
+    if (limitations.length < UEFI_FIRMWARE_LIMITS.limitationLines)
+      limitations.push(detail);
   };
-  const records = new Budget(UEFI_FIRMWARE_LIMITS.scanRecords);
   const limit: { offset: number | null } = { offset: null };
   const reserve: ReserveNvarRecord = (offset) => {
     checkpoint();
@@ -346,7 +349,7 @@ export const scanAmiNvramStores = (
       limitations.push(
         `Stopped after ${maxStores} AMI NVRAM stores; additional stores exist.`,
       );
-      return { stores, coverage: "partial", limitations };
+      return { stores, coverage: "partial", limitations, absent: false };
     }
     const variables: AmiNvramVariable[] = [];
     const { endOffset, nextSearchOffset } = collectChain(
@@ -377,15 +380,12 @@ export const scanAmiNvramStores = (
     limitations.push(
       `Structural record limit ${UEFI_FIRMWARE_LIMITS.scanRecords} reached at NVAR candidate 0x${limit.offset.toString(16)}.`,
     );
-    return { stores, coverage: "partial", limitations };
+    return { stores, coverage: "partial", limitations, absent: false };
   }
-  if (stores.length === 0)
-    limitations.push(
-      "No AMI NVRAM variable stores (NVAR chains) were found in the image.",
-    );
   return {
     stores,
     coverage: partial ? "partial" : "complete",
     limitations,
+    absent: stores.length === 0,
   };
 };

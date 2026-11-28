@@ -684,6 +684,7 @@ it("completes large class inventories with exact case-sensitive search semantics
   const full = await service.execute("search_android_classes", {
     path: apk,
     query: "",
+    limit: 10_000,
   });
   if (!full.ok) throw full.error;
   const inventory = androidResultSchemas.search_android_classes.parse(
@@ -704,6 +705,7 @@ it("completes large class inventories with exact case-sensitive search semantics
   const filtered = await service.execute("search_android_classes", {
     path: apk,
     query: "Class",
+    limit: 10_000,
   });
   if (!filtered.ok) throw filtered.error;
   const matches = androidResultSchemas.search_android_classes.parse(
@@ -798,6 +800,7 @@ it("preserves duplicate class-name rows and occurrence counts", async () => {
   const full = await service.execute("search_android_classes", {
     path: apk,
     query: "",
+    limit: 10_000,
   });
   if (!full.ok) throw full.error;
   const fullResult = androidResultSchemas.search_android_classes.parse(

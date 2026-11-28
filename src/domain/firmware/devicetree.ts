@@ -6,6 +6,7 @@ import {
   type ParameterBudget,
 } from "../parameterBudget.js";
 import { digestSchema } from "../digests.js";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 const uint = z.number().int().min(0).max(0xffffffff);
 export const MAX_DEVICETREE_FILE_BYTES = 16777216;
@@ -130,7 +131,8 @@ export const devicetreeSchema = z
       ),
     }),
     coverage: z.strictObject({
-      status: z.literal("complete"),
+      // This reader always decides coverage. An undecoded property is partial.
+      status: knownCoverageStatusSchema,
       examined_nodes: uint,
       examined_properties: uint,
     }),

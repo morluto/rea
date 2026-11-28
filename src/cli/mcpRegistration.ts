@@ -1,5 +1,5 @@
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
-import { Writable } from "node:stream";
+import { cliResultDestination } from "./cliDestination.js";
 
 import { z } from "zod";
 
@@ -133,7 +133,10 @@ const createRegistrationPresentation = (
 ): RegistrationPresentation | undefined => {
   const write =
     options.stdout ?? ((text: string) => process.stdout.write(text));
+  let exitRequested = false;
   const fail = () => {
+    if (exitRequested) return;
+    exitRequested = true;
     if (options.exit !== undefined) options.exit(1);
     else process.exitCode = 1;
   };
@@ -153,21 +156,7 @@ const createRegistrationPresentation = (
     fail();
     return undefined;
   }
-  const destination =
-    options.stdout === undefined
-      ? process.stdout
-      : new Writable({
-          write(chunk: Buffer, _encoding, callback) {
-            try {
-              write(chunk.toString());
-              callback();
-            } catch (error) {
-              callback(
-                error instanceof Error ? error : new Error(String(error)),
-              );
-            }
-          },
-        });
+  const destination = cliResultDestination(options.stdout);
   const result = createCliResultOutput(output, destination);
   const document = async (value: unknown, failure = false) => {
     const handled = await result?.write(value, {

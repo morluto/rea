@@ -29,9 +29,11 @@ import {
 } from "../domain/analysisErrorBase.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import type { LimitRef } from "../domain/parseFailure.js";
-import type {
-  FormatTargetFailure,
-  TargetFailureOf,
+import {
+  isFormatTargetFailureKind,
+  type FormatTargetFailure,
+  type FormatTargetFailureKind,
+  type TargetFailureOf,
 } from "../domain/targetFailure.js";
 import { ParseFailureError } from "../domain/parseFailure.js";
 
@@ -251,6 +253,9 @@ export interface ArtifactReader {
     | ZipPackageFormat
     | "asar"
     | "ines"
+    | "nds"
+    | "mega-drive-rom"
+    | "n64-rom"
     | "godot-pck"
     | "unityfs"
     | "wxapkg"
@@ -259,10 +264,19 @@ export interface ArtifactReader {
     | "glb"
     | "ktx"
     | "ktx2"
+    | "ogg-opus"
+    | "riff-xma2"
+    | "bink2"
+    | "vulkan-pipeline-cache"
     | "uimage"
+    | "nso"
+    | "nro"
     | "android-boot-image"
+    | "android-dtbo"
     | "android-ota-payload"
+    | "android-vbmeta"
     | "android-sparse-image"
+    | "ubi-image"
     | "iso9660"
     | "uefi"
     | "pyinstaller"
@@ -275,9 +289,15 @@ export interface ArtifactReader {
     | "esp-image"
     | "uf2"
     | "dfuse"
+    | "bflt"
     | "esp-flash-image"
     | "fit"
+    | "qualcomm-mbn"
+    | "apple-img4"
     | "ntfs-mft"
+    | "systemd-journal"
+    | "auditd-log"
+    | "pkg"
     | "file";
   entries(
     signal?: AbortSignal,
@@ -389,12 +409,9 @@ export class ArtifactReaderFailure extends Error {
     this.parserLimit = options?.parserLimit;
     this.fixedAllowance = options?.fixedAllowance;
     this.integrityCheck = options?.integrityCheck;
-    this.parseFailure =
-      reason === "malformed" ||
-      reason === "truncated" ||
-      reason === "unsupported"
-        ? options?.parseFailure
-        : undefined;
+    this.parseFailure = isFormatTargetFailureKind(reason)
+      ? options?.parseFailure
+      : undefined;
   }
 
   /**
@@ -596,9 +613,7 @@ export const malformedArtifact = (
  */
 export const readFailureError = (
   failure: FormatTargetFailure | TargetFailureOf<"changed">,
-):
-  | ArtifactReaderFailure
-  | ParseFailureError<"malformed" | "truncated" | "unsupported"> =>
+): ArtifactReaderFailure | ParseFailureError<FormatTargetFailureKind> =>
   failure.kind === "changed"
     ? new ArtifactReaderFailure("integrity", failure.detail, {
         integrityCheck: "read-coverage",

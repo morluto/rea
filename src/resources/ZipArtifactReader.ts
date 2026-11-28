@@ -1,3 +1,8 @@
+import {
+  malformedInput,
+  ParseFailureError,
+  unsupportedInput,
+} from "../domain/parseFailure.js";
 import { OwnerCancellation } from "../domain/analysisErrorCore.js";
 import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import {
@@ -14,6 +19,10 @@ import {
 } from "./ArtifactReader.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
+import {
+  currentDirectoryPrefixLimitation,
+  withoutCurrentDirectoryPrefix,
+} from "./ArtifactPaths.js";
 import type { FileHandle } from "node:fs/promises";
 import { compose, Duplex, PassThrough, type Readable } from "node:stream";
 import { once } from "node:events";
@@ -257,6 +266,7 @@ export class ZipArtifactReader implements ArtifactReader {
     let index = 0;
     // A traversal owns its accounting, including overlapping or repeated passes.
     let declaredFileBytes = 0n;
+    let prefixedMembers = 0;
     // Every directory record, listed or not, claims its local entry's bytes.
     const records: ZipLocalRecord[] = [];
     const enumeration = typedZipFailures(
@@ -279,6 +289,7 @@ export class ZipArtifactReader implements ArtifactReader {
         // Logical path uniqueness belongs to the artifact inventory boundary.
         const metadata = projectZipEntry(entry, index++);
         if (metadata === undefined) continue;
+        if (metadata.sourcePath !== undefined) prefixedMembers += 1;
         // zip.js enforces each member's declared output size, so this sum bounds streamed work.
         if (
           metadata.kind === "file" &&
@@ -331,7 +342,7 @@ export class ZipArtifactReader implements ArtifactReader {
       this.#assertOpen(signal);
       await this.#source.verify();
       this.#assertOpen(signal);
-      options?.onCoverage?.(zipListingCoverage(account));
+      options?.onCoverage?.(zipListingCoverage(account, prefixedMembers));
     } finally {
       this.#enumerations.delete(enumeration);
       await enumeration.return();
@@ -433,15 +444,23 @@ export class ZipArtifactReader implements ArtifactReader {
 /** Coverage of a central-directory listing, given the member region's byte account. */
 export const zipListingCoverage = (
   account: ZipMemberRegionAccount | undefined,
+  /** Listed members whose leading `./` the logical path omits. */
+  prefixedMembers = 0,
 ): ArtifactReaderTraversal => {
+  const prefixed =
+    prefixedMembers === 0
+      ? []
+      : [currentDirectoryPrefixLimitation("ZIP", prefixedMembers)];
   if (account === undefined)
     return {
       status: "unknown",
       limitations: [
         "ZIP central directory offset was not established; bytes outside the listed members were not accounted for.",
+        ...prefixed,
       ],
     };
-  const limitations = [
+  // Coverage follows the byte account alone; a normalized name is not a gap.
+  const gaps = [
     ...(account.unaccountedRanges === 0
       ? []
       : [
@@ -459,8 +478,8 @@ export const zipListingCoverage = (
         ]),
   ];
   return {
-    status: limitations.length === 0 ? "complete" : "unknown",
-    limitations,
+    status: gaps.length === 0 ? "complete" : "unknown",
+    limitations: [...gaps, ...prefixed],
   };
 };
 
@@ -474,7 +493,7 @@ const projectZipEntry = (
       ? "directory"
       : "file";
   const sourcePath = zipEntryPath(entry);
-  const path = sourcePath.replace(/^(?:\.\/)+/u, "");
+  const path = withoutCurrentDirectoryPrefix(sourcePath);
   // Root directory markers carry no inventory occurrence. A file with this
   // spelling is still passed to the shared path validator and rejected there.
   if (kind === "directory" && (path === "" || path === ".")) return undefined;
@@ -491,11 +510,6 @@ const projectZipEntry = (
     unpacked: false,
     limitations: [
       ...(kind === "symlink" ? ["Archive symlink target was not read."] : []),
-      ...(path === sourcePath
-        ? []
-        : [
-            `ZIP member name ${JSON.stringify(sourcePath)} has a leading current-directory prefix omitted from its logical path.`,
-          ]),
       ...zipEntryNameLimitations(entry),
     ],
     adapterKey: `zip-entry:${index}`,
@@ -633,7 +647,7 @@ const ZIP_FAILURE_REASONS: ReadonlyMap<string, "malformed" | "unavailable"> =
   ]);
 
 /** Type a zip.js archive fault so consumers do not report it as file I/O. */
-export const typedZipFailure = (
+const typedZipFailure = (
   cause: unknown,
   compressionMethod?: number,
 ): unknown => {
@@ -701,6 +715,32 @@ export const typedZipFailure = (
         `ZIP archive uses an unsupported feature: ${cause.message}`,
         { cause: failureCause },
       );
+};
+
+/** Preserve reader failures and attach the package format to newly classified ZIP faults. */
+export const throwZipPackageFailure = (
+  cause: unknown,
+  format: string,
+  packageName: string,
+  compressionMethod?: number,
+): never => {
+  if (
+    cause instanceof ArtifactReaderFailure ||
+    cause instanceof ParseFailureError
+  )
+    throw cause;
+  const typed = typedZipFailure(cause, compressionMethod);
+  if (!(typed instanceof ArtifactReaderFailure)) throw cause;
+  if (typed.reason === "limit") throw typed;
+  if (typed.reason === "unavailable")
+    throw unsupportedInput(
+      format,
+      `${packageName} ZIP uses an unsupported layout: ${typed.message}`,
+      { cause: typed },
+    );
+  if (typed.parseFailure !== undefined)
+    throw malformedInput(format, typed.message, { cause: typed });
+  throw cause;
 };
 
 async function* typedZipFailures<T>(

@@ -90,15 +90,46 @@ it("admits a segment's VM sizes, section table and file range", () => {
     sectionCount: 1,
     flags: 0,
   };
-  const admit = (facts: typeof segment, commandBytes = 152, image = 24) =>
-    admitMachoSegmentCommand(facts, commandBytes, 64, image);
+  const admit = (
+    facts: typeof segment,
+    commandBytes = 152,
+    image = 24,
+    bits: 32 | 64 = 64,
+  ) => admitMachoSegmentCommand(facts, commandBytes, bits, image);
   expect(admit(segment)).toMatchObject({
     ok: true,
     value: { unmapped: false },
   });
-  expect(admit({ ...segment, memorySize: 15n }).ok).toBe(false);
-  expect(admit(segment, 151).ok).toBe(false);
-  expect(admit(segment, 152, 23).ok).toBe(false);
+  expect(admit({ ...segment, memorySize: 15n })).toMatchObject({
+    ok: false,
+    error: { kind: "malformed", code: "file-exceeds-vm" },
+  });
+  expect(admit({ ...segment, memorySize: 0n, protection: 1 })).toMatchObject({
+    ok: false,
+    error: { kind: "malformed", code: "file-exceeds-vm" },
+  });
+  expect(admit({ ...segment, memorySize: 0n, protection: 0 })).toMatchObject({
+    ok: true,
+    value: { unmapped: true },
+  });
+  expect(admit({ ...segment, address: (1n << 64n) - 16n })).toMatchObject({
+    ok: false,
+    error: { kind: "malformed", code: "vm-overflow" },
+  });
+  expect(
+    admit({ ...segment, address: 0xffff_fff0n, headerSize: 56 }, 124, 24, 32),
+  ).toMatchObject({
+    ok: false,
+    error: { kind: "malformed", code: "vm-overflow" },
+  });
+  expect(admit(segment, 151)).toMatchObject({
+    ok: false,
+    error: { kind: "malformed", code: "section-table-overflow" },
+  });
+  expect(admit(segment, 152, 23)).toMatchObject({
+    ok: false,
+    error: { kind: "malformed", code: "file-range-overflow" },
+  });
   // A segment with no file bytes owns no file range, wherever fileoff points.
   expect(admit({ ...segment, fileOffset: 1n << 40n, fileSize: 0n }).ok).toBe(
     true,

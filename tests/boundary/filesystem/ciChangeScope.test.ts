@@ -10,9 +10,10 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join, matchesGlob } from "node:path";
+import { dirname, join, matchesGlob, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import ts from "typescript6";
 import { afterAll, beforeAll, expect, it as sequentialIt } from "vitest";
 import { parse } from "yaml";
 import { z } from "zod";
@@ -452,6 +453,30 @@ it.for([
   },
 );
 
+// Linux may skip every module of such a selection; the macOS lane runs them.
+it.for([
+  [`it.skipIf(process.platform !== "darwin")("runs", () => {});\n`, true],
+  [`it("runs everywhere", () => {});\n`, false],
+] as const)(
+  "selects the macOS lane when every affected test may be gated to it: %j",
+  async ([gate, apple]) => {
+    const { directory } = await fixture();
+    const source = "src/example/Probe.ts";
+    const test = "tests/boundary/filesystem/probe.test.ts";
+    await change(
+      directory,
+      [test],
+      `import { value } from "../../../src/example/Probe.js";\nvoid value;\n${gate}`,
+    );
+    const base = await change(directory, [source]);
+    const head = await change(directory, [source], "changed\n");
+    expect(await classify(directory, base, head)).toMatchObject({
+      apple,
+      testSelection: { mode: "selected", files: [test] },
+    });
+  },
+);
+
 it("does not select the macOS lane for a deleted macOS-gated test", async () => {
   const { directory } = await fixture();
   const test = "tests/boundary/filesystem/gated.test.ts";
@@ -484,6 +509,54 @@ it("does not credit a fixture test as coverage for an unrelated shared script", 
     testSelection: {
       mode: "full",
       reason: `No test reaches shared script module: ${module}`,
+    },
+  });
+});
+
+it("does not let an unrelated changed test mask an untraced fixture module", async () => {
+  const { directory } = await fixture();
+  const implementation = "tests/fixtures/dynamic/provider.ts";
+  const consumer = "tests/boundary/filesystem/dynamicFixture.test.ts";
+  const unrelated = "tests/boundary/filesystem/unrelated.test.ts";
+  await change(
+    directory,
+    [consumer],
+    "await import(`../../fixtures/dynamic/${fixtureName}.js`);\n",
+  );
+  const base = await change(directory, [implementation, unrelated]);
+  const head = await change(
+    directory,
+    [implementation, unrelated],
+    "changed\n",
+  );
+  expect(await runPlanScript(directory, base, head)).toMatchObject({
+    testSelection: {
+      mode: "full",
+      reason: `Input is not traced to tests: ${implementation}`,
+    },
+  });
+});
+
+it("keeps selection narrow when a changed fixture module has a traced consumer", async () => {
+  const { directory } = await fixture();
+  const implementation = "tests/fixtures/dynamic/provider.ts";
+  const consumer = "tests/boundary/filesystem/dynamicFixture.test.ts";
+  const unrelated = "tests/boundary/filesystem/unrelated.test.ts";
+  await change(
+    directory,
+    [consumer],
+    'await import("../../fixtures/dynamic/provider.js");\n',
+  );
+  const base = await change(directory, [implementation, unrelated]);
+  const head = await change(
+    directory,
+    [implementation, unrelated],
+    "changed\n",
+  );
+  expect(await runPlanScript(directory, base, head)).toMatchObject({
+    testSelection: {
+      mode: "selected",
+      files: [consumer, unrelated],
     },
   });
 });
@@ -782,6 +855,7 @@ it.each([
   "stryker.semantics.config.mjs",
   "tsconfig.reverse-tools-mutation.json",
   "scripts/prepare-reverse-tools-mutation.mjs",
+  "scripts/verify/mutation-target-tsconfig.mjs",
   "scripts/lib/reverse-tools-mutation-targets.mjs",
 ])(
   "selects the reverse-tool coverage and mutation gate for %s",
@@ -808,17 +882,24 @@ const reverseToolsVitestInputs = (
     ([, path]) => path!.replace(/^\.\//u, ""),
   ),
 );
-const reverseToolsMutationConfig = JSON.parse(
-  await readFile(
-    new URL("../../../tsconfig.reverse-tools-mutation.json", import.meta.url),
-    "utf8",
-  ),
-) as { include: string[] };
+const reverseToolsRoot = fileURLToPath(new URL("../../../", import.meta.url));
+const reverseToolsMutationConfig = ts.getParsedCommandLineOfConfigFile(
+  join(reverseToolsRoot, "tsconfig.reverse-tools-mutation.json"),
+  {},
+  {
+    ...ts.sys,
+    onUnRecoverableConfigFileDiagnostic: (diagnostic) => {
+      throw new Error(
+        ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"),
+      );
+    },
+  },
+)!;
 const reverseToolsInputs = [
   ...new Set([
     ...reverseToolsVitestInputs,
-    ...reverseToolsMutationConfig.include.map((path) =>
-      path.replace(/^\.\//u, ""),
+    ...reverseToolsMutationConfig.fileNames.map((path) =>
+      relative(reverseToolsRoot, path).split(sep).join("/"),
     ),
   ]),
 ];
@@ -1282,6 +1363,18 @@ it.each([
     { code: true, ghidra_bridge: true, runtime: false, package: false },
   ],
   [
+    "scripts/verify-real-ghidra-project-coverage.mjs",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
+    "tests/conformance/ghidra/selected-project-coverage.c",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
+    "tests/conformance/ghidra/ReaSelectedProjectSeeds.java",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
     "scripts/verify-ghidra-loader-relocation.mjs",
     { code: true, ghidra_bridge: true, runtime: false, package: false },
   ],
@@ -1437,6 +1530,7 @@ it.each([
       package: true,
       binary_layout: true,
       signal_recording: true,
+      packet_capture: true,
       recorded_crash: false,
       workflows: true,
     },
@@ -1449,6 +1543,7 @@ it.each([
       package: true,
       binary_layout: true,
       signal_recording: true,
+      packet_capture: true,
       recorded_crash: false,
       workflows: true,
     },
@@ -2323,7 +2418,13 @@ const workflowFile = async (name: string): Promise<unknown> =>
 
 const scopesSchema = z.object({
   CI_FLAGS: z.array(z.string()),
-  CI_LANES: z.record(z.string(), z.object({ paths: z.array(z.string()) })),
+  CI_LANES: z.record(
+    z.string(),
+    z.object({
+      paths: z.array(z.string()),
+      earlyInputs: z.array(z.string()).optional(),
+    }),
+  ),
   MANUAL_VERIFIERS: z.array(z.string()),
 });
 
@@ -2376,7 +2477,10 @@ it("owns every explicit native-host test path with the lane that runs it", async
 });
 
 it("never runs a manual-only verifier from an automatic workflow", async () => {
-  const { MANUAL_VERIFIERS } = await loadScopes();
+  const { MANUAL_VERIFIERS, CI_LANES } = await loadScopes();
+  const ownedAutomaticInputs = Object.values(CI_LANES).flatMap(
+    (lane) => lane.earlyInputs ?? [],
+  );
   const scripts = z
     .object({ scripts: z.record(z.string(), z.string()) })
     .parse(
@@ -2416,8 +2520,10 @@ it("never runs a manual-only verifier from an automatic workflow", async () => {
   }
   expect(files.size).toBeGreaterThan(0);
   expect(
-    [...files].filter((file) =>
-      MANUAL_VERIFIERS.some((pattern) => matchesGlob(file, pattern)),
+    [...files].filter(
+      (file) =>
+        MANUAL_VERIFIERS.some((pattern) => matchesGlob(file, pattern)) &&
+        !ownedAutomaticInputs.some((pattern) => matchesGlob(file, pattern)),
     ),
   ).toEqual([]);
 });

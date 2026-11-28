@@ -715,6 +715,63 @@ describe("JavaScript semantic values after mutable references escape", () => {
     `)?.status,
     ).toBe("unknown");
   });
+
+  it.each([
+    ["the escaped object", "const holder = {}; holder.child = source;"],
+    [
+      "an alias of the escaped object",
+      "const holder = {}; const alias = holder; alias.child = source;",
+    ],
+    [
+      "a nested slot of the escaped object",
+      "const holder = { box: {} }; holder.box.child = source;",
+    ],
+    ["a computed slot", "const holder = {}; holder[key] = source;"],
+  ])("follows a value stored into %s before it escapes", (_name, store) => {
+    expect(
+      resultValue(`
+      const source = { value: 1 };
+      ${store}
+      mutate(holder);
+      return source.value;
+    `)?.status,
+    ).toBe("unknown");
+  });
+
+  it("follows a stored value when the slot holding it escapes", () => {
+    expect(
+      resultValue(`
+      const source = { value: 1 };
+      const holder = {};
+      holder.child = source;
+      mutate(holder.child);
+      return source.value;
+    `)?.status,
+    ).toBe("unknown");
+  });
+
+  it.each([
+    [
+      "a sibling slot escapes",
+      "const holder = { other: {} }; holder.child = source; mutate(holder.other);",
+    ],
+    [
+      "the store follows the escape",
+      "const holder = {}; mutate(holder); holder.child = source;",
+    ],
+    [
+      "only a child of the stored value escapes",
+      "const holder = {}; holder.child = source; mutate(holder.child.nested);",
+    ],
+  ])("keeps a stored value known when %s", (_name, body) => {
+    expect(
+      resultValue(`
+      const source = { value: 1, nested: {} };
+      ${body}
+      return source.value;
+    `),
+    ).toEqual({ status: "literal", value: 1 });
+  });
 });
 
 describe("JavaScript escaped references through async and destructuring syntax", () => {

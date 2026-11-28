@@ -17,15 +17,11 @@ import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { namePrefixesSchema, startsWithAny } from "./namePrefixFilter.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
-  pageViewCoverage,
+  selectedViewPage,
 } from "./analysisViewCoverage.js";
-import {
-  pickFields,
-  selectIndexedViewRows,
-  selectViewRows,
-} from "./selectViewRows.js";
+import { filterSet, pickFields, selectViewRows } from "./selectViewRows.js";
 
 const peRow = pe.shape.exports.element;
 const elfRow = elf.shape.exports.element;
@@ -91,8 +87,7 @@ const exportNameMatcher = (
   prefixes: readonly string[] | undefined,
 ): ((row: ExportRow) => boolean) | undefined => {
   if (selectedNames === undefined && prefixes === undefined) return undefined;
-  const names =
-    selectedNames === undefined ? undefined : new Set(selectedNames);
+  const names = filterSet(selectedNames);
   const encodedNames =
     names === undefined
       ? undefined
@@ -162,11 +157,7 @@ export const projectNativeExportsView = (
     parent_operation: "inspect_native_exports" as const,
     parent_digest: parent.evidenceId.slice(3),
     artifact: { path: report.artifact.path, sha256: report.artifact.sha256 },
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, limitations),
     unknowns:
       report.coverage.status === "complete"
         ? []
@@ -183,33 +174,24 @@ export const projectNativeExportsView = (
       summary,
       coverage: completeWithinViewCoverage(exports.length),
     });
-  const indices =
-    view.indices === undefined ? undefined : new Set(view.indices);
+  const indices = filterSet(view.indices);
   if (view.collection === "issues") {
-    const selected =
-      indices === undefined
-        ? selectViewRows(issues, view, undefined, (row, source_index) => ({
-            ...row,
-            source_index,
-          }))
-        : selectIndexedViewRows(
-            issues,
-            indices,
-            view,
-            undefined,
-            (row, source_index) => ({ ...row, source_index }),
-          );
+    const selected = selectViewRows(
+      issues,
+      view,
+      undefined,
+      (row, source_index) => ({
+        ...row,
+        source_index,
+      }),
+      indices,
+    );
     return ok({
       ...shared,
       kind: "native-exports" as const,
       view,
       exports: summary,
-      items: selected.rows,
-      coverage: pageViewCoverage(
-        view.offset,
-        selected.rows.length,
-        selected.total,
-      ),
+      ...selectedViewPage(view.offset, selected),
     });
   }
   const allowed =
@@ -236,20 +218,12 @@ export const projectNativeExportsView = (
     source_index,
   });
   const matchesName = exportNameMatcher(view.names, view.name_prefixes);
-  const selected =
-    indices !== undefined
-      ? selectIndexedViewRows(rows, indices, view, matchesName, projectRow)
-      : selectViewRows(rows, view, matchesName, projectRow);
+  const selected = selectViewRows(rows, view, matchesName, projectRow, indices);
   return ok({
     ...shared,
     kind: "native-exports" as const,
     view,
     exports: summary,
-    items: selected.rows,
-    coverage: pageViewCoverage(
-      view.offset,
-      selected.rows.length,
-      selected.total,
-    ),
+    ...selectedViewPage(view.offset, selected),
   });
 };
