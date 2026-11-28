@@ -25,6 +25,8 @@ export const DEFAULT_LITERAL_POOL_MAX_SCAN_BYTES = 1024 * 1024;
 export const MAX_LITERAL_POOL_SCAN_BYTES = 16 * 1024 * 1024;
 export const DEFAULT_LITERAL_POOL_MAX_REFERENCES = 16_384;
 export const MAX_LITERAL_POOL_REFERENCES = 131_072;
+export const DEFAULT_LITERAL_POOL_MAX_REPRESENTATION_BYTES = 16 * 1024 * 1024;
+export const MAX_LITERAL_POOL_REPRESENTATION_BYTES = 64 * 1024 * 1024;
 export const DEFAULT_LITERAL_POOL_MAX_SVD_XML_NODES = 200_000;
 export const MAX_LITERAL_POOL_SVD_XML_NODES = 1_000_000;
 export const MAX_LITERAL_POOL_SVD_XML_CHARS = 16 * 1024 * 1024;
@@ -48,6 +50,12 @@ export const FIRMWARE_LITERAL_POOL_BUDGETS = {
     maximum: MAX_LITERAL_POOL_REFERENCES,
     default_value: DEFAULT_LITERAL_POOL_MAX_REFERENCES,
     unit: "count",
+  },
+  max_representation_bytes: {
+    minimum: 1024,
+    maximum: MAX_LITERAL_POOL_REPRESENTATION_BYTES,
+    default_value: DEFAULT_LITERAL_POOL_MAX_REPRESENTATION_BYTES,
+    unit: "bytes",
   },
   max_svd_nodes: {
     minimum: 16,
@@ -101,6 +109,11 @@ export const inspectFirmwareLiteralPoolsInputSchema = z.strictObject({
     FIRMWARE_LITERAL_POOL_BUDGETS.max_references,
   ).describe(
     "Maximum resolved literal-pool load instructions accepted for the scanned window before refusing; complete Evidence retains all resolved references, and detail summary pages mmio_summary and references via inspect_analysis_view.",
+  ),
+  max_representation_bytes: parameterBudgetSchema(
+    FIRMWARE_LITERAL_POOL_BUDGETS.max_representation_bytes,
+  ).describe(
+    "Maximum cumulative UTF-8 JSON representation bytes accepted across resolved references and MMIO summaries before refusing prior to Evidence allocation. Defaults to 16777216 (16 MiB).",
   ),
   svd_xml: z
     .string()

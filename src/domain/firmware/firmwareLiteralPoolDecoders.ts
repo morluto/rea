@@ -14,7 +14,7 @@ export interface DecodedPoolLoadInstruction {
   readonly loadedValue: number;
 }
 
-const CANDIDATE_CHUNK_SHIFT = 16;
+const CANDIDATE_CHUNK_SHIFT = 10;
 const CANDIDATE_CHUNK_SIZE = 1 << CANDIDATE_CHUNK_SHIFT;
 const CANDIDATE_CHUNK_MASK = CANDIDATE_CHUNK_SIZE - 1;
 
@@ -173,15 +173,23 @@ const A32_COND_SUFFIX = [
   "",
 ] as const;
 
-const resolvePoolOffsetOnly = (
+const resolveBytePoolOffset = (
+  fileByteLength: number,
+  baseAddress: number,
+  poolAddrBig: bigint,
+): number | null => {
+  const relBig = poolAddrBig - BigInt(baseAddress >>> 0);
+  if (relBig < 0n || relBig + 4n > BigInt(fileByteLength)) return null;
+  return Number(relBig);
+};
+
+const resolveWordAlignedPoolOffset = (
   fileByteLength: number,
   baseAddress: number,
   poolAddrBig: bigint,
 ): number | null => {
   if ((poolAddrBig & 3n) !== 0n) return null;
-  const relBig = poolAddrBig - BigInt(baseAddress >>> 0);
-  if (relBig < 0n || relBig + 4n > BigInt(fileByteLength)) return null;
-  return Number(relBig);
+  return resolveBytePoolOffset(fileByteLength, baseAddress, poolAddrBig);
 };
 
 const probeThumb32PoolOffset = (
@@ -199,7 +207,7 @@ const probeThumb32PoolOffset = (
   const poolAddrBig = uAdd
     ? alignedPc + BigInt(imm12)
     : alignedPc - BigInt(imm12);
-  const poolOffset = resolvePoolOffsetOnly(
+  const poolOffset = resolveBytePoolOffset(
     fileByteLength,
     baseAddress,
     poolAddrBig,
@@ -218,7 +226,7 @@ const probeThumb16PoolOffset = (
   const insnAddress = (baseAddress + off) >>> 0;
   const alignedPc = (BigInt(insnAddress) + 4n) & ~3n;
   const poolAddrBig = alignedPc + BigInt(immBytes);
-  const poolOffset = resolvePoolOffsetOnly(
+  const poolOffset = resolveWordAlignedPoolOffset(
     fileByteLength,
     baseAddress,
     poolAddrBig,
@@ -303,7 +311,7 @@ function* runThumbSinglePassSteps(
       yield "step";
       nextYield = off + SCAN_COOPERATIVE_BYTE_STEP;
     }
-    if (poolBytes.hasByte(off)) {
+    if (poolBytes.overlaps(off, 2)) {
       if (thumbPoolHalfwordLooksLikeLoad(fileBytes, baseAddress, off, scanEnd))
         suppressedForwardOverlaps += 1;
       off += 2;
@@ -412,7 +420,7 @@ const probeA32LiteralWord = (
   const insnAddress = (baseAddress + off) >>> 0;
   const poolAddrBig =
     BigInt(insnAddress) + 8n + (uAdd ? BigInt(imm12) : -BigInt(imm12));
-  const poolOffset = resolvePoolOffsetOnly(
+  const poolOffset = resolveBytePoolOffset(
     fileBytes.length,
     baseAddress,
     poolAddrBig,
@@ -542,7 +550,7 @@ const probeXtensaL32rPoolOffset = (
   const insnAddress = (baseAddress + off) >>> 0;
   const alignedPc = (BigInt(insnAddress) + 3n) & ~3n;
   const poolAddrBig = alignedPc + BigInt(signedWords) * 4n;
-  const poolOffset = resolvePoolOffsetOnly(
+  const poolOffset = resolveWordAlignedPoolOffset(
     fileBytes.length,
     baseAddress,
     poolAddrBig,
@@ -614,7 +622,8 @@ const stepXtensaRaw = (
 
 interface PendingAlignedTrace {
   readonly alignedOff: number;
-  readonly candidates: CompactCandidateBuffer;
+  readonly candStart: number;
+  readonly candEnd: number;
   readonly nearInvalid: boolean;
 }
 
@@ -637,16 +646,28 @@ const filterSelfConsistentXtensaPools = (
   return confirmed;
 };
 
-const markRunSpans = (
+function* markXtensaRunFullSpansSteps(
   visited: PoolByteBitset,
-  runSpans: readonly { readonly off: number; readonly width: number }[],
-  fullSpan: boolean,
-): void => {
-  for (const span of runSpans) {
-    if (fullSpan) visited.markSpan(span.off, span.width);
-    else visited.markByte(span.off);
+  fileBytes: Uint8Array,
+  baseAddress: number,
+  runStart: number,
+  runStop: number,
+  scanEnd: number,
+): Generator<"step", void, void> {
+  let cursor = runStart;
+  let nextYield = runStart + SCAN_COOPERATIVE_BYTE_STEP;
+  while (cursor < runStop && cursor + 2 <= scanEnd) {
+    if (cursor >= nextYield) {
+      yield "step";
+      nextYield = cursor + SCAN_COOPERATIVE_BYTE_STEP;
+    }
+    const step = stepXtensaRaw(fileBytes, baseAddress, cursor, scanEnd);
+    if (step.invalidEncoding) break;
+    visited.markSpan(cursor, step.insnWidth);
+    if (step.nextOff === "stop") break;
+    cursor = step.nextOff;
   }
-};
+}
 
 function* walkPrimaryXtensaSteps(
   fileBytes: Uint8Array,
@@ -657,7 +678,7 @@ function* walkPrimaryXtensaSteps(
   const visited = new PoolByteBitset(fileBytes.length);
   const invalidBytes = new PoolByteBitset(fileBytes.length);
   const accepted = new CompactCandidateBuffer();
-  let runSpans: { readonly off: number; readonly width: number }[] = [];
+  let runStartOff = scanStart;
   let runHasL32r = false;
   let off = scanStart;
   let nextYield = scanStart + SCAN_COOPERATIVE_BYTE_STEP;
@@ -680,31 +701,66 @@ function* walkPrimaryXtensaSteps(
     const step = stepXtensaRaw(fileBytes, baseAddress, off, scanEnd);
     if (step.invalidEncoding) {
       invalidBytes.markByte(off);
-      markRunSpans(visited, runSpans, runHasL32r);
-      runSpans = [];
+      if (runHasL32r) {
+        yield* markXtensaRunFullSpansSteps(
+          visited,
+          fileBytes,
+          baseAddress,
+          runStartOff,
+          off,
+          scanEnd,
+        );
+      }
       runHasL32r = false;
-      if (step.nextOff === "stop") break;
+      if (step.nextOff === "stop") {
+        runStartOff = scanEnd;
+        break;
+      }
       off = step.nextOff;
+      runStartOff = off;
       continue;
     }
-    runSpans.push({ off, width: step.insnWidth });
-    if (step.nextOff === "stop") break;
+    visited.markByte(off);
+    if (step.nextOff === "stop") {
+      visited.markSpan(off, step.insnWidth);
+      yield* markXtensaRunFullSpansSteps(
+        visited,
+        fileBytes,
+        baseAddress,
+        runStartOff,
+        off,
+        scanEnd,
+      );
+      runStartOff = scanEnd;
+      break;
+    }
     off = step.nextOff;
   }
-  markRunSpans(visited, runSpans, true);
+  if (runStartOff < off) {
+    yield* markXtensaRunFullSpansSteps(
+      visited,
+      fileBytes,
+      baseAddress,
+      runStartOff,
+      off,
+      scanEnd,
+    );
+  }
   return { visited, invalidBytes, accepted };
 }
 
 const alignedPrecededByPool = (
   alignedOff: number,
-  traceCands: CompactCandidateBuffer,
+  tracePool: CompactCandidateBuffer,
+  candStart: number,
+  candEnd: number,
   knownPoolBytes: PoolByteBitset,
 ): boolean => {
   if (alignedOff < 4) return false;
   const prevWord = alignedOff - 4;
   if (knownPoolBytes.hasByte(prevWord)) return true;
-  for (let i = 0; i < traceCands.length; i += 1) {
-    if (traceCands.poolOffsetAt(i) === prevWord) return true;
+  for (let i = candStart; i < candEnd; i += 1) {
+    if (tracePool.poolOffsetAt(i) === prevWord) return true;
   }
   return false;
 };
@@ -739,6 +795,7 @@ function* discoverXtensaPoolBytesSteps(
     }
   }
 
+  const tracePool = new CompactCandidateBuffer();
   const pendingTraces: PendingAlignedTrace[] = [];
   const firstRem = ((baseAddress >>> 0) + scanStart) & 3;
   const firstAligned = firstRem === 0 ? scanStart : scanStart + (4 - firstRem);
@@ -754,7 +811,8 @@ function* discoverXtensaPoolBytesSteps(
       nextYield = alignedOff + SCAN_COOPERATIVE_BYTE_STEP;
     }
     if (visited.hasByte(alignedOff)) continue;
-    const traceCands = new CompactCandidateBuffer();
+    const candStart = tracePool.length;
+    let validTraceCount = 0;
     let cursor = alignedOff;
     let hitInvalid = false;
     while (cursor + 2 <= scanEnd) {
@@ -772,32 +830,40 @@ function* discoverXtensaPoolBytesSteps(
         scanEnd,
       );
       if (poolOff !== null && poolOff !== "out_of_image") {
-        traceCands.push(cursor, 3, poolOff);
+        tracePool.push(cursor, 3, poolOff);
+        validTraceCount += 1;
       }
       if (step.nextOff === "stop") break;
       cursor = step.nextOff;
     }
-    if (hitInvalid || traceCands.length === 0) continue;
+    if (hitInvalid || validTraceCount === 0) continue;
     const nearInvalid = invalidBytes.overlaps(
       Math.max(scanStart, alignedOff - 4),
       8,
     );
-    pendingTraces.push({ alignedOff, candidates: traceCands, nearInvalid });
+    pendingTraces.push({
+      alignedOff,
+      candStart,
+      candEnd: candStart + validTraceCount,
+      nearInvalid,
+    });
   }
 
   for (const trace of pendingTraces) {
     const precedesKnownPool = alignedPrecededByPool(
       trace.alignedOff,
-      trace.candidates,
+      tracePool,
+      trace.candStart,
+      trace.candEnd,
       knownPoolBytes,
     );
     if (!trace.nearInvalid && !precedesKnownPool) continue;
-    for (let i = 0; i < trace.candidates.length; i += 1) {
-      const poolOff = trace.candidates.poolOffsetAt(i);
+    for (let i = trace.candStart; i < trace.candEnd; i += 1) {
+      const poolOff = tracePool.poolOffsetAt(i);
       if (protectedPrimarySpans.overlaps(poolOff, 4)) continue;
       accepted.push(
-        trace.candidates.insnOffsetAt(i),
-        trace.candidates.insnSizeAt(i),
+        tracePool.insnOffsetAt(i),
+        tracePool.insnSizeAt(i),
         poolOff,
       );
       knownPoolBytes.markWord(poolOff);

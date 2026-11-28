@@ -9,6 +9,7 @@ const DEFAULTS = {
   scan_offset: 0,
   max_scan_bytes: 1024 * 1024,
   max_references: 16_384,
+  max_representation_bytes: 16 * 1024 * 1024,
   max_svd_nodes: 200_000,
   max_file_bytes: 32 * 1024 * 1024,
 } as const;
@@ -167,6 +168,42 @@ describe("FirmwareLiteralPoolsProvider", () => {
       effective_value: 1,
       required_value: 2,
     });
+
+    const longName = "P".repeat(2048);
+    const repLoads = Buffer.alloc(32, 0x00);
+    repLoads.writeUInt16LE(0x4803, 0x00);
+    repLoads.writeUInt16LE(0x4903, 0x02);
+    repLoads.writeUInt16LE(0x4a02, 0x04);
+    repLoads.writeUInt16LE(0x4b02, 0x06);
+    repLoads.writeUInt32LE(0x4000_0000, 0x10);
+    const repLoadsPath = join(dir, "rep_loads.bin");
+    await writeFile(repLoadsPath, repLoads);
+    const repLimitRes = await provider.inspect({
+      ...DEFAULTS,
+      path: repLoadsPath,
+      isa: "arm-thumb",
+      base_address: "0x08000000",
+      svd_xml: `<device><peripherals><peripheral><name>${longName}</name><baseAddress>0x40000000</baseAddress><addressBlock><offset>0x0</offset><size>0x10</size><usage>registers</usage></addressBlock></peripheral></peripherals></device>`,
+      max_representation_bytes: 4096,
+    });
+    expect(repLimitRes.ok).toBe(false);
+    if (repLimitRes.ok) throw new Error("expected representation byte limit");
+    expect(repLimitRes.error._tag).toBe("AnalysisResourceConstraintError");
+    expect(repLimitRes.error.limit).toMatchObject({
+      control_kind: "parameter",
+      parameter: "max_representation_bytes",
+      effective_value: 4096,
+      required_value: expect.any(Number),
+    });
+    const repLimit = repLimitRes.error.limit;
+    if (
+      repLimit === undefined ||
+      !("required_value" in repLimit) ||
+      typeof repLimit.required_value !== "number"
+    ) {
+      throw new Error("expected parameter limit with numeric required_value");
+    }
+    expect(repLimit.required_value).toBeGreaterThan(4 * 2048);
 
     await provider.close();
   });

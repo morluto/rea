@@ -739,4 +739,101 @@ describe("firmwareLiteralPools domain scanner", () => {
       required: 1024,
     });
   });
+
+  it("decodes unaligned Thumb-2 and A32 literal loads, bounds Xtensa alternate-trace discovery, and checks representation expansion", () => {
+    // 1. Thumb-2 `0xf8df 0x0002` at offset 0 loads the unaligned 32-bit word at offset 6 (`0x40011004`).
+    const unalignedThumb = Buffer.alloc(12, 0x00);
+    unalignedThumb.writeUInt16LE(0xf8df, 0x00);
+    unalignedThumb.writeUInt16LE(0x0002, 0x02);
+    unalignedThumb.writeUInt16LE(0xbf00, 0x04); // nop
+    unalignedThumb.writeUInt32LE(0x4001_1004, 0x06); // unaligned pool word at offset 6..9
+    const thumbRes = scanFirmwareLiteralPools({
+      artifact: {
+        path: "/tmp/unaligned_thumb2.bin",
+        sha256: "8".repeat(64),
+        bytes: unalignedThumb.length,
+      },
+      fileBytes: unalignedThumb,
+      isa: "arm-thumb",
+      baseAddressHex: "0x08000000",
+      scanOffset: 0,
+      maxScanBytes: unalignedThumb.length,
+      maxReferences: 64,
+      svdSupplied: false,
+    });
+    expect(thumbRes.ok).toBe(true);
+    if (!thumbRes.ok) return;
+    expect(thumbRes.value.counts.out_of_image_pool_targets).toBe(0);
+    expect(thumbRes.value.references).toEqual([
+      expect.objectContaining({
+        instruction_offset: 0,
+        mnemonic: "ldr.w",
+        target_register: "r0",
+        pool_offset: 6,
+        pool_address: "0x8000006",
+        loaded_value: "0x40011004",
+      }),
+    ]);
+
+    // 2. Repeating 8-byte Xtensa pattern `00 03 00 60 21 ff ff 0d` across 8 KiB shares one compact trace pool.
+    const xtensaStress = Buffer.alloc(8192);
+    const pat = Buffer.from([0x00, 0x03, 0x00, 0x60, 0x21, 0xff, 0xff, 0x0d]);
+    for (let p = 0; p < xtensaStress.length; p += 8) {
+      pat.copy(xtensaStress, p);
+    }
+    const xtensaRes = scanFirmwareLiteralPools({
+      artifact: {
+        path: "/tmp/xtensa_traces.bin",
+        sha256: "7".repeat(64),
+        bytes: xtensaStress.length,
+      },
+      fileBytes: xtensaStress,
+      isa: "xtensa",
+      baseAddressHex: "0x400d0000",
+      scanOffset: 0,
+      maxScanBytes: xtensaStress.length,
+      maxReferences: 4096,
+      svdSupplied: false,
+    });
+    expect(xtensaRes.ok).toBe(true);
+
+    // 3. Repeated long SVD peripheral name across multiple loads fails max_representation_bytes before Reference allocation.
+    const bigName = "PERIPH_".repeat(512);
+    const svdParsed = parseSvdPeripheralSpans(
+      `<device><peripherals><peripheral><name>${bigName}</name><baseAddress>0x40011000</baseAddress><addressBlock><offset>0x0</offset><size>0x10</size><usage>registers</usage></addressBlock></peripheral></peripherals></device>`,
+    );
+    expect(svdParsed.ok).toBe(true);
+    if (!svdParsed.ok) return;
+    const repRefused = scanFirmwareLiteralPools({
+      artifact: {
+        path: "/tmp/unaligned_thumb2.bin",
+        sha256: "8".repeat(64),
+        bytes: unalignedThumb.length,
+      },
+      fileBytes: unalignedThumb,
+      isa: "arm-thumb",
+      baseAddressHex: "0x08000000",
+      scanOffset: 0,
+      maxScanBytes: unalignedThumb.length,
+      maxReferences: 64,
+      maxRepresentationBytes: 2048,
+      svdSupplied: true,
+      svdProfile: svdParsed.value,
+    });
+    expect(repRefused.ok).toBe(false);
+    if (
+      repRefused.ok ||
+      !("failure" in repRefused.error) ||
+      repRefused.error.failure.kind !== "limit"
+    ) {
+      return;
+    }
+    expect(repRefused.error.failure.limit).toMatchObject({
+      name: "max_representation_bytes",
+      maximum: 2048,
+    });
+    expect(Number(repRefused.error.failure.limit.required)).toBeGreaterThan(
+      3 * bigName.length,
+    );
+  });
 });

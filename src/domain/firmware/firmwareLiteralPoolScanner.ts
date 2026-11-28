@@ -1,3 +1,4 @@
+import { readUint32At } from "../binaryContainer.js";
 import type { AnalysisInputIssue } from "../analysisErrorCore.js";
 import { knownCoverage } from "../coverageAccumulator.js";
 import { decodeLimit, type ParseFailureError } from "../parseFailure.js";
@@ -18,13 +19,14 @@ import {
   formatHexCompact,
   type SvdPeripheralProfile,
 } from "./firmwareLiteralPoolRegions.js";
-import type {
-  FirmwareLiteralPoolIsa,
-  FirmwareLiteralPoolsReport,
-  LiteralPoolAttributionBasis,
-  LiteralPoolMmioSummary,
-  LiteralPoolReference,
-  LiteralPoolRegionKind,
+import {
+  DEFAULT_LITERAL_POOL_MAX_REPRESENTATION_BYTES,
+  type FirmwareLiteralPoolIsa,
+  type FirmwareLiteralPoolsReport,
+  type LiteralPoolAttributionBasis,
+  type LiteralPoolMmioSummary,
+  type LiteralPoolReference,
+  type LiteralPoolRegionKind,
 } from "./firmwareLiteralPools.js";
 
 export interface ScanFirmwareLiteralPoolsOptions {
@@ -39,6 +41,7 @@ export interface ScanFirmwareLiteralPoolsOptions {
   readonly scanOffset: number;
   readonly maxScanBytes: number;
   readonly maxReferences: number;
+  readonly maxRepresentationBytes?: number;
   readonly svdSupplied: boolean;
   readonly svdProfile?: SvdPeripheralProfile;
 }
@@ -66,6 +69,9 @@ interface MmioAccumulator {
 const SAMPLE_ADDRESS_DISPLAY_COUNT = 6;
 const DISTINCT_CONSTANT_DISPLAY_COUNT = 16;
 const CANDIDATE_COOPERATIVE_STEP = 16_384;
+const BASE_REFERENCE_JSON_BYTES = 260;
+const BASE_MMIO_SUMMARY_JSON_BYTES = 260;
+const REPRESENTATION_YIELD_BYTES = 262_144;
 
 /** Validate caller-selected base_address and scan_offset alignment before or during scanning. */
 export const validateLiteralPoolAddressAlignment = (params: {
@@ -299,6 +305,62 @@ function* runIsaCandidateScanSteps(
   );
 }
 
+function* measureRepresentationBytesSteps(params: {
+  readonly candidates: CompactCandidateBuffer;
+  readonly confirmedPoolBytes: PoolByteBitset;
+  readonly fileBytes: Uint8Array;
+  readonly isa: FirmwareLiteralPoolIsa;
+  readonly baseAddress: number;
+  readonly svdProfile: SvdPeripheralProfile;
+}): Generator<"step", number, void> {
+  const classify = createConstantClassifier({
+    isa: params.isa,
+    baseAddress: params.baseAddress,
+    fileBytes: params.fileBytes.length,
+    svdProfile: params.svdProfile,
+  });
+  const utf8LengthCache = new Map<string, number>();
+  const utf8Length = (text: string | null): number => {
+    if (text === null) return 0;
+    const cached = utf8LengthCache.get(text);
+    if (cached !== undefined) return cached;
+    const len = Buffer.byteLength(text, "utf8");
+    utf8LengthCache.set(text, len);
+    return len;
+  };
+  const seenGroups = new Set<string>();
+  let totalBytes = 512;
+
+  for (let i = 0; i < params.candidates.length; i += 1) {
+    if (i > 0 && i % CANDIDATE_COOPERATIVE_STEP === 0) yield "step";
+    const insnOffset = params.candidates.insnOffsetAt(i);
+    const insnSize = params.candidates.insnSizeAt(i);
+    if (params.confirmedPoolBytes.overlaps(insnOffset, insnSize)) continue;
+
+    const poolOffset = params.candidates.poolOffsetAt(i);
+    const loadedValue = readUint32At(params.fileBytes, poolOffset, true) ?? 0;
+    const classified = classify(loadedValue);
+    const svdBytes = utf8Length(classified.svdPeripheral);
+    const archBytes = utf8Length(classified.architecturalBlock);
+    totalBytes += BASE_REFERENCE_JSON_BYTES + svdBytes + archBytes;
+
+    if (classified.mmioBaseAddress !== null) {
+      const groupKey =
+        classified.svdPeripheral !== null
+          ? `svd:${classified.svdPeripheral}`
+          : classified.architecturalBlock !== null
+            ? `arch:${classified.architecturalBlock}`
+            : `page:${String(classified.mmioBaseAddress)}`;
+      if (!seenGroups.has(groupKey)) {
+        seenGroups.add(groupKey);
+        totalBytes +=
+          BASE_MMIO_SUMMARY_JSON_BYTES + 2 * svdBytes + 2 * archBytes;
+      }
+    }
+  }
+  return totalBytes;
+}
+
 function* classifyAndCollectReferencesSteps(params: {
   readonly candidates: CompactCandidateBuffer;
   readonly confirmedPoolBytes: PoolByteBitset;
@@ -320,9 +382,17 @@ function* classifyAndCollectReferencesSteps(params: {
   let mmioLoadCount = 0;
   // not-an-allowance: tally of literal-pool loads matched against supplied CMSIS-SVD
   let svdMatchedLoadCount = 0;
+  // not-an-allowance: cooperative byte accumulator for yielding during Reference construction
+  let bytesSinceYield = 0;
 
   for (let i = 0; i < params.candidates.length; i += 1) {
-    if (i > 0 && i % CANDIDATE_COOPERATIVE_STEP === 0) yield "step" as const;
+    if (
+      (i > 0 && i % CANDIDATE_COOPERATIVE_STEP === 0) ||
+      bytesSinceYield >= REPRESENTATION_YIELD_BYTES
+    ) {
+      bytesSinceYield = 0;
+      yield "step" as const;
+    }
     const insnOffset = params.candidates.insnOffsetAt(i);
     const insnSize = params.candidates.insnSizeAt(i);
     if (params.confirmedPoolBytes.overlaps(insnOffset, insnSize)) continue;
@@ -337,6 +407,10 @@ function* classifyAndCollectReferencesSteps(params: {
     });
     distinctSlots.add(cand.poolOffset);
     const classified = classify(cand.loadedValue);
+    bytesSinceYield +=
+      BASE_REFERENCE_JSON_BYTES +
+      (classified.svdPeripheral?.length ?? 0) +
+      (classified.architecturalBlock?.length ?? 0);
     const ref: LiteralPoolReference = {
       instruction_offset: cand.insnOffset,
       instruction_address: formatHexCompact(cand.insnAddress),
@@ -420,6 +494,30 @@ export function* scanFirmwareLiteralPoolsSteps(
           name: "max_references",
           maximum: options.maxReferences,
           required: retainedCount,
+        },
+      ),
+    );
+  }
+  const maxRepresentationBytes =
+    options.maxRepresentationBytes ??
+    DEFAULT_LITERAL_POOL_MAX_REPRESENTATION_BYTES;
+  const requiredRepresentationBytes = yield* measureRepresentationBytesSteps({
+    candidates: rawScan.candidates,
+    confirmedPoolBytes,
+    fileBytes: options.fileBytes,
+    isa: options.isa,
+    baseAddress,
+    svdProfile,
+  });
+  if (requiredRepresentationBytes > maxRepresentationBytes) {
+    return err(
+      decodeLimit(
+        "firmware-literal-pools",
+        `Resolved literal-pool references and SVD/MMIO attributions expand to ${String(requiredRepresentationBytes)} UTF-8 representation bytes, exceeding max_representation_bytes (${String(maxRepresentationBytes)}).`,
+        {
+          name: "max_representation_bytes",
+          maximum: maxRepresentationBytes,
+          required: requiredRepresentationBytes,
         },
       ),
     );

@@ -679,6 +679,10 @@ export const registerBinaryDiagnosticsCommands = (
           description:
             "Maximum resolved literal-pool load references accepted before refusing",
         },
+        max_representation_bytes: {
+          description:
+            "Maximum cumulative UTF-8 representation bytes accepted before building Evidence",
+        },
         svd_xml: {
           description:
             "Optional CMSIS-SVD XML document for <peripheral> address-block attribution",

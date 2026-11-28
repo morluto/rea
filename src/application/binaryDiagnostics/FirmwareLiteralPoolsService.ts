@@ -1,9 +1,23 @@
+import { setImmediate as immediate } from "node:timers/promises";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
-import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type {
+  ExecutionOptions,
+  ProviderIdentity,
+} from "../../ports/AnalysisProvider.js";
 import type { FirmwareLiteralPoolsPort } from "../../ports/binaryDiagnostics/FirmwareLiteralPoolsPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
-import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import {
+  AnalysisInputError,
+  AnalysisOutputError,
+  cancelledBy,
+} from "../../domain/analysisErrorCore.js";
+import {
+  createEvidence,
+  createImmutableEvidenceSteps,
+  type Evidence,
+} from "../../domain/evidence.js";
+import { freezeOwnedJsonSnapshotSteps } from "../../domain/immutableJson.js";
+import { jsonValueValidationSteps } from "../../domain/jsonValue.js";
 import {
   firmwareLiteralPoolsReportSchema,
   inspectFirmwareLiteralPoolsInputSchema,
@@ -16,7 +30,10 @@ import {
   callerAnalysisParameters,
   parseAnalysisInput,
 } from "../AnalysisInput.js";
-import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
+import {
+  completeProviderEvidence,
+  retainCompletedArtifactEvidence,
+} from "../ProviderOperationExecution.js";
 
 const OPERATION = "inspect_firmware_literal_pools";
 
@@ -38,7 +55,81 @@ const validLiteralPoolsReport = (
   return true;
 };
 
-/** Shared caller validation, output parsing, and Evidence provenance for CLI/MCP. */
+const isSignalAborted = (signal: AbortSignal | undefined): boolean =>
+  signal?.aborted === true;
+
+const stepCooperatively = async <T>(
+  steps: Generator<void, T>,
+  signal: AbortSignal | undefined,
+): Promise<T> => {
+  if (isSignalAborted(signal)) throw cancelledBy(OPERATION, signal!);
+  for (;;) {
+    const next = steps.next();
+    if (next.done === true) return next.value;
+    await immediate();
+    if (isSignalAborted(signal)) throw cancelledBy(OPERATION, signal!);
+  }
+};
+
+const buildEvidenceObservation = (
+  value: FirmwareLiteralPoolsReport,
+  selected: Readonly<Record<string, unknown>>,
+) => {
+  const { svd_xml, ...restSelected } = selected;
+  const evidenceParams =
+    typeof svd_xml !== "string"
+      ? restSelected
+      : {
+          ...restSelected,
+          svd_xml_sha256: sha256Hex(svd_xml),
+        };
+  return {
+    operation: OPERATION,
+    parameters: evidenceParams as FirmwareLiteralPoolsEvidenceParameters,
+    result: value,
+    confidence: "derived" as const,
+    limitations: value.limitations,
+    locations: [
+      { kind: "artifact-path" as const, path: value.artifact.path },
+      {
+        kind: "file-offset-range" as const,
+        start: value.scan_range.start,
+        end: value.scan_range.end,
+      },
+    ],
+  };
+};
+
+type FirmwareLiteralPoolsEvidenceParameters = Readonly<
+  Record<string, string | number | boolean | null>
+>;
+
+const createLiteralPoolsEvidenceCooperatively = async (
+  value: FirmwareLiteralPoolsReport,
+  identity: ProviderIdentity,
+  selected: Readonly<Record<string, unknown>>,
+  signal: AbortSignal | undefined,
+): Promise<Evidence> => {
+  const snapshot = await stepCooperatively(
+    freezeOwnedJsonSnapshotSteps(value),
+    signal,
+  );
+  await stepCooperatively(jsonValueValidationSteps(snapshot), signal);
+  return stepCooperatively(
+    createImmutableEvidenceSteps(
+      {
+        path: snapshot.artifact.path,
+        format: "file",
+        sha256: snapshot.artifact.sha256,
+      },
+      identity,
+      buildEvidenceObservation(snapshot, selected),
+    ),
+    signal,
+  );
+};
+
+/** Shared caller validation, output parsing, and cooperative Evidence provenance for CLI/MCP. */
 export class FirmwareLiteralPoolsService {
   constructor(readonly provider: FirmwareLiteralPoolsPort) {}
 
@@ -68,55 +159,53 @@ export class FirmwareLiteralPoolsService {
       );
     }
 
+    const parameters = parsedInput.value;
     const selectCallerParameters = callerAnalysisParameters(rawInput);
-    return executeArtifactInspection(
-      {
-        operation: OPERATION,
-        inputSchema: inspectFirmwareLiteralPoolsInputSchema,
-        outputSchema: firmwareLiteralPoolsReportSchema,
-        provider: this.provider,
-        retainCompletedReport: true,
-        invalidOutputMessage:
-          "Firmware literal-pools provider returned malformed output or mismatched artifact identity.",
-        toParameters: (input) => input,
-        validateReport: validLiteralPoolsReport,
-        buildEvidence: (value, identity, parameters) => {
-          const selected = selectCallerParameters(parameters);
-          const { svd_xml, ...restSelected } = selected;
-          const evidenceParams =
-            svd_xml === undefined
-              ? restSelected
-              : {
-                  ...restSelected,
-                  svd_xml_sha256: sha256Hex(svd_xml),
-                };
-          return createEvidence(
-            {
-              path: value.artifact.path,
-              format: "file",
-              sha256: value.artifact.sha256,
-            },
-            identity,
-            {
-              operation: OPERATION,
-              parameters: evidenceParams,
-              result: value,
-              confidence: "derived",
-              limitations: value.limitations,
-              locations: [
-                { kind: "artifact-path", path: value.artifact.path },
-                {
-                  kind: "file-offset-range",
-                  start: value.scan_range.start,
-                  end: value.scan_range.end,
-                },
-              ],
-            },
-          );
+    const inspected = await this.provider.inspect(parameters, options);
+    const rawReport = inspected.ok
+      ? inspected.value
+      : inspected.error.partialObservation;
+    if (!inspected.ok && rawReport === undefined) return inspected;
+
+    const checked = firmwareLiteralPoolsReportSchema.safeParse(rawReport);
+    if (!checked.success || !validLiteralPoolsReport(checked.data, parameters))
+      return inspected.ok
+        ? err(
+            new AnalysisOutputError(
+              OPERATION,
+              "Firmware literal-pools provider returned malformed output or mismatched artifact identity.",
+            ),
+          )
+        : inspected;
+
+    const selected = selectCallerParameters(parameters);
+    if (!inspected.ok) {
+      const retained = createEvidence(
+        {
+          path: checked.data.artifact.path,
+          format: "file",
+          sha256: checked.data.artifact.sha256,
         },
-      },
-      rawInput,
-      options,
-    );
+        this.provider.identity,
+        buildEvidenceObservation(checked.data, selected),
+      );
+      retainCompletedArtifactEvidence(inspected.error, retained);
+      return inspected;
+    }
+
+    try {
+      const evidence = await createLiteralPoolsEvidenceCooperatively(
+        checked.data,
+        this.provider.identity,
+        selected,
+        options?.signal,
+      );
+      return completeProviderEvidence(evidence, options?.signal);
+    } catch (cause) {
+      if (options?.signal?.aborted === true) {
+        return err(cancelledBy(OPERATION, options.signal));
+      }
+      throw cause;
+    }
   }
 }

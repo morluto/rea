@@ -112,6 +112,7 @@ export class FirmwareLiteralPoolsProvider implements FirmwareLiteralPoolsPort {
             scanOffset: input.scan_offset,
             maxScanBytes: input.max_scan_bytes,
             maxReferences: input.max_references,
+            maxRepresentationBytes: input.max_representation_bytes,
             svdSupplied: input.svd_xml !== undefined,
             svdProfile: svdResult.value,
           }),
@@ -136,7 +137,11 @@ export class FirmwareLiteralPoolsProvider implements FirmwareLiteralPoolsPort {
 }
 
 const withRequiredBudgetValue = (
-  parameter: "max_svd_nodes" | "max_references" | "max_file_bytes",
+  parameter:
+    | "max_svd_nodes"
+    | "max_references"
+    | "max_representation_bytes"
+    | "max_file_bytes",
   effectiveValue: number,
   required: number | bigint | undefined,
 ) => ({
@@ -178,6 +183,19 @@ const literalPoolsFailure = (
             limit: withRequiredBudgetValue(
               "max_references",
               input.max_references,
+              failure.failure.limit.required,
+            ),
+          });
+        }
+        if (
+          isParseLimit(failure, "firmware-literal-pools") &&
+          failure.failure.limit.name === "max_representation_bytes"
+        ) {
+          return parseLimitConstraint(OPERATION, "capacity", failure, {
+            retryable: false,
+            limit: withRequiredBudgetValue(
+              "max_representation_bytes",
+              input.max_representation_bytes,
               failure.failure.limit.required,
             ),
           });
