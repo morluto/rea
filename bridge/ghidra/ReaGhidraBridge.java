@@ -2852,7 +2852,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
         Utf8CountingWriter counter = new Utf8CountingWriter();
         JsonWriter plain = GSON.newJsonWriter(new SurrogateEscapingWriter(counter));
         plain.setSerializeNulls(true);
-        writeProcedureEntries(plain, entries, Map.of());
+        plain.beginArray();
+        for (ProcedureEntry entry : entries) {
+            monitor.checkCancelled();
+            writeProcedureEntry(plain, entry, null);
+        }
+        plain.endArray();
         ExportMetadataBudget budget = new ExportMetadataBudget(
             Math.min(4 * 1024 * 1024L, replyBytes - counter.bytes - 64)
         );
@@ -6177,11 +6182,15 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private static void writeProcedureEntries(JsonWriter out, List<ProcedureEntry> entries,
             Map<ProcedureEntry, JsonObject> metadata) throws IOException {
         out.beginArray();
-        for (ProcedureEntry entry : entries) {
-            writeResultItem(out, entry.address(), entry.value(), "procedure", entry.facts(), entry.symbol(),
-                List.of(), metadata.get(entry));
-        }
+        for (ProcedureEntry entry : entries)
+            writeProcedureEntry(out, entry, metadata.get(entry));
         out.endArray();
+    }
+
+    private static void writeProcedureEntry(JsonWriter out, ProcedureEntry entry, JsonObject metadata)
+            throws IOException {
+        writeResultItem(out, entry.address(), entry.value(), "procedure", entry.facts(), entry.symbol(),
+            List.of(), metadata);
     }
 
     private static void writeMatchedProcedures(JsonWriter out, List<MatchedProcedure> matches) throws IOException {

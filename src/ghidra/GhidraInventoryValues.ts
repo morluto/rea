@@ -351,9 +351,16 @@ const resultSchemas = {
   list_documents: z.array(z.string().min(1)).length(1),
   list_names: z.array(symbolItem),
   list_procedures: z.array(
-    procedureItem.extend({
-      export_body_metadata: exportBodyMetadataSchema.exactOptional(),
-    }),
+    procedureItem
+      .extend({ export_body_metadata: z.unknown().exactOptional() })
+      .transform(({ export_body_metadata: advisory, ...row }) => {
+        if (advisory === undefined) return row;
+        const parsed = exportBodyMetadataSchema.safeParse(advisory);
+        return parsed.success &&
+          functionBodyEntryAgrees(parsed.data.body, row.address)
+          ? { ...row, export_body_metadata: parsed.data }
+          : row;
+      }),
   ),
   list_segments: z.array(segment),
   list_strings: z.array(stringItem),

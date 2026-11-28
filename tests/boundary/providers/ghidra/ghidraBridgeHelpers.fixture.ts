@@ -351,6 +351,15 @@ const JAVA_GSON_STUBS = String.raw`
         JsonWriter newJsonWriter(Writer out) {
             return new JsonWriter(out, this);
         }
+        void toJson(JsonElement element, JsonWriter writer) {
+            try {
+                writer.beforeValue();
+                writeElement(writer.out, element);
+            }
+            catch (IOException exception) {
+                throw new JsonIOException(exception);
+            }
+        }
         void toJson(JsonElement element, Appendable appendable) {
             Writer out = (Writer) appendable;
             try {
@@ -935,7 +944,7 @@ const JAVA_PROBE_DRIVER = String.raw`
 
         StreamingResult[] streams = new StreamingResult[] {
             out -> writeNameEntries(out, names),
-            out -> writeProcedureEntries(out, List.of(proc1, proc2)),
+            out -> writeProcedureEntries(out, List.of(proc1, proc2), Map.of()),
             out -> writeMatchedProcedures(out, matched),
             out -> writeStringEntries(out, strings),
         };

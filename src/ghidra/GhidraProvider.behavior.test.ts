@@ -1490,6 +1490,23 @@ describe("Ghidra client projection", () => {
                 },
                 export_body_metadata: { body, limitations },
               },
+              {
+                address: "0x2000",
+                value: "fixture_second",
+                procedure: {
+                  external: false,
+                  thunk: false,
+                  thunk_target: null,
+                },
+                export_body_metadata: {
+                  body: {
+                    ...body,
+                    ranges: [{ start: "0x2000", end: "0x2000" }],
+                    total_bytes: 2,
+                  },
+                  limitations,
+                },
+              },
             ])
           : ok({
               value: {
@@ -1540,9 +1557,16 @@ describe("Ghidra client projection", () => {
       );
       expect(inventory.value.result).toMatchObject([
         {
+          address: "0x1000",
           export_body_metadata: { body, limitations: direct.value.limitations },
         },
+        { address: "0x2000", value: "fixture_second" },
       ]);
+      if (!Array.isArray(inventory.value.result))
+        throw new Error("Expected procedure rows");
+      expect(inventory.value.result[1]).not.toHaveProperty(
+        "export_body_metadata",
+      );
     } finally {
       await client.close();
     }
