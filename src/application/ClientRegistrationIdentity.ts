@@ -3,10 +3,11 @@ import {
   accessSync,
   constants,
   lstatSync,
+  readFileSync,
   readlinkSync,
   realpathSync,
 } from "node:fs";
-import { isAbsolute, posix } from "node:path";
+import { dirname, isAbsolute, join, posix } from "node:path";
 import {
   CURRENT_ENTRYPOINT_PATH,
   normalizeEntrypointPath,
@@ -17,7 +18,10 @@ import {
   javaScriptRuntime,
   type JavaScriptRuntime,
 } from "../domain/runtimeVersion.js";
-import { posixPathCandidates } from "../process/executableSearch.js";
+import {
+  posixPathCandidates,
+  windowsPathCandidates,
+} from "../process/executableSearch.js";
 import {
   absoluteCallerPath,
   appendCallerPath,
@@ -177,6 +181,66 @@ const unwrapCmdCommand = (command: readonly string[]): readonly string[] => {
   if (command[1]?.toLowerCase() === "/d" && command[2]?.toLowerCase() === "/c")
     return command.slice(3);
   return [];
+};
+
+/** First PATH hit for a bare CLI name that exists as a file. */
+const resolveBareCliOnPath = (name: string): string | undefined => {
+  if (HOST_PLATFORM.platform === "win32") {
+    const search = windowsPathCandidates(name, process.env, {
+      allowBatch: true,
+      relativeEntries: "skip",
+    });
+    if (!search.ok) return undefined;
+    for (const candidate of search.value) {
+      try {
+        accessSync(candidate.path, constants.F_OK);
+        return candidate.path;
+      } catch {
+        // Missing PATH hits are skipped; a later entry may still resolve.
+      }
+    }
+    return undefined;
+  }
+  for (const { path } of posixPathCandidates(name, process.env.PATH ?? "", {
+    relativeEntries: "skip",
+  })) {
+    try {
+      accessSync(path, constants.X_OK);
+      return path;
+    } catch {
+      // Missing or non-executable PATH hits are skipped.
+    }
+  }
+  return undefined;
+};
+
+/** True when a launcher resolves into an install whose package.json names REA. */
+const launcherBelongsToProduct = (launcher: string): boolean => {
+  const script = normalizeEntrypointPath(launcher, "node") ?? launcher;
+  let resolved = script;
+  try {
+    resolved = realpathSync.native(script);
+  } catch {
+    // Keep the spelled path when realpath cannot prove the leaf.
+  }
+  let directory = dirname(resolved);
+  for (let depth = 0; depth < 8; depth++) {
+    try {
+      const name = (
+        JSON.parse(readFileSync(join(directory, "package.json"), "utf8")) as {
+          name?: unknown;
+        }
+      ).name;
+      if (typeof name === "string")
+        return name === PRODUCT_IDENTITY.packageName;
+    } catch {
+      // Climb until a package.json is readable or the root is reached.
+    }
+    const parent = dirname(directory);
+    if (parent === directory) break;
+    directory = parent;
+  }
+  return false;
 };
 
 /** Preserve the package argument from a supported package-runner command. */
@@ -579,13 +643,41 @@ const inspectDirectRegistrationCommand = (
   }
   if (command.length === 2 && command[1] === "mcp") {
     const executable = command[0] ?? "";
-    if (executable === PRODUCT_IDENTITY.cliBinary)
+    if (executable === PRODUCT_IDENTITY.cliBinary) {
+      const resolved = resolveBareCliOnPath(executable);
+      if (resolved === undefined)
+        return {
+          identity: "unknown",
+          launch: "direct",
+          entrypoint: undefined,
+          package: undefined,
+        };
+      if (currentPathAvailable) {
+        const pathIdentity = directEntrypointIdentity(
+          resolved,
+          currentCommandPath,
+        );
+        if (pathIdentity === "owned" || launcherBelongsToProduct(resolved))
+          return {
+            launch: "direct",
+            identity: "owned",
+            entrypoint: resolved,
+            package: undefined,
+          };
+        return {
+          launch: "direct",
+          identity: pathIdentity,
+          entrypoint: resolved,
+          package: undefined,
+        };
+      }
       return {
-        identity: "owned",
         launch: "direct",
-        entrypoint: undefined,
+        identity: launcherBelongsToProduct(resolved) ? "owned" : "unknown",
+        entrypoint: resolved,
         package: undefined,
       };
+    }
     const managedTarget =
       HOST_PLATFORM.platform !== "win32" &&
       javaScriptRuntime(process.versions).id === "node"
