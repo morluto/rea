@@ -99,7 +99,10 @@ export const parseKubernetesAuditLine = (
     const frame = top();
     if (frame?.kind === "strings")
       return frame.target === "sourceIPs" ? "list:sourceIPs" : "list:groups";
+    if (frame?.kind === "root" && pendingKey === "sourceIPs")
+      return "list:sourceIPs";
     if (frame?.kind === "root") return `root:${pendingKey}`;
+    if (frame?.kind === "user" && pendingKey === "groups") return "list:groups";
     if (frame?.kind === "user" && pendingKey === "username")
       return "user:username";
     if (frame?.kind === "objectRef" && pendingKey !== undefined)
@@ -260,11 +263,13 @@ export const parseKubernetesAuditLine = (
     if (frame?.kind === "user" && pendingKey === "groups") {
       sawUser = true;
       user.groups = null;
+      forgetOmission();
       return;
     }
     if (frame?.kind === "user" && pendingKey === "username") {
       sawUser = true;
       user.username = null;
+      forgetOmission();
       return;
     }
     if (
@@ -294,10 +299,15 @@ export const parseKubernetesAuditLine = (
       if (pendingKey === "user") {
         sawUser = true;
         for (const key of Object.keys(user)) delete user[key];
+        budgetOmittedFields.delete("user:username");
+        budgetOmittedFields.delete("list:groups");
         stack.push({ kind: "user" });
       } else if (pendingKey === "objectRef") {
         sawObject = true;
         for (const key of Object.keys(objectRef)) delete objectRef[key];
+        budgetOmittedFields.delete("object:resource");
+        budgetOmittedFields.delete("object:namespace");
+        budgetOmittedFields.delete("object:name");
         stack.push({ kind: "objectRef" });
       } else if (pendingKey === "responseStatus") {
         sawStatus = true;

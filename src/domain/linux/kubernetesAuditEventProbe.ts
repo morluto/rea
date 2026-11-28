@@ -155,6 +155,7 @@ export class KubernetesAuditEventProbe {
             if (!isTokenizerDepth(cause)) {
               this.#failed = true;
               this.#done = true;
+              this.#recordSlices.length = 0;
               return;
             }
             this.#rereadRecord();
@@ -171,6 +172,7 @@ export class KubernetesAuditEventProbe {
       if (isHostLimitFailure(cause)) throw cause;
       this.#failed = true;
       this.#done = true;
+      this.#recordSlices.length = 0;
     }
   }
 
