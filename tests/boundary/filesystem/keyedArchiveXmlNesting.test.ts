@@ -8,8 +8,10 @@ import { inspectBundleKeyedArchive } from "../../../src/artifacts/apple/KeyedArc
 import type { OpenStepPropertyListCode } from "../../../src/domain/propertyListOpenStep.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { deeplyNestedXmlPlist } from "../../fixtures/keyedArchiveXmlNesting.js";
+import { XML_ELEMENT_DEPTH_LIMIT } from "../../../src/domain/xmlDocument.js";
 
-it.each([129, 3000])(
+// XML_ELEMENT_DEPTH_LIMIT - 2 leaves room for the plist envelope and the string.
+it.each([129, XML_ELEMENT_DEPTH_LIMIT - 2])(
   "reports XML nesting of %i levels as the keyed archive decode limit",
   async (depth) => {
     const root = await createTestTempDirectory("rea-keyed-depth-");

@@ -7,17 +7,26 @@ import { build } from "plist";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { deeplyNestedXmlPlist } from "../../fixtures/keyedArchiveXmlNesting.js";
+import { XML_ELEMENT_DEPTH_LIMIT } from "../../../src/domain/xmlDocument.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
+// The plist envelope and the innermost string sit outside the container chain.
+const syntaxLegalDepth = XML_ELEMENT_DEPTH_LIMIT - 2;
+
 for (const [name, xml] of [
-  ["dictionaries", deeplyNestedXmlPlist(3000)],
+  ["dictionaries", deeplyNestedXmlPlist(syntaxLegalDepth)],
   [
     "quoted attributes",
-    deeplyNestedXmlPlist(3000).replaceAll("<dict>", '<dict note="/>">'),
+    deeplyNestedXmlPlist(syntaxLegalDepth).replaceAll(
+      "<dict>",
+      '<dict note="/>">',
+    ),
   ],
   [
     "plist wrappers",
-    "<plist>".repeat(3000) + "<string>x</string>" + "</plist>".repeat(3000),
+    "<plist>".repeat(XML_ELEMENT_DEPTH_LIMIT - 1) +
+      "<string>x</string>" +
+      "</plist>".repeat(XML_ELEMENT_DEPTH_LIMIT - 1),
   ],
 ] as const) {
   cliTest(
