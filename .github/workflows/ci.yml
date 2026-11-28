@@ -503,10 +503,13 @@ jobs:
       - name: Run reverse tools tests with coverage
         run: npm run test:coverage:reverse-tools
       - name: Preflight both reverse tools mutation configurations
+        shell: bash
         run: |
+          npm run --if-present pretest:mutation:reverse-tools
           node scripts/prepare-reverse-tools-mutation.mjs
           npx --no-install stryker run stryker.config.mjs --dryRunOnly
           npx --no-install stryker run stryker.semantics.config.mjs --dryRunOnly
+          npm run --if-present posttest:mutation:reverse-tools
       - name: Retain available reverse tools diagnostics
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

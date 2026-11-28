@@ -183,9 +183,11 @@ it.each(["fast", "full"] as const)(
     );
     expect(mutationCommands).toEqual([
       "npm run verify:mutation-targets",
+      "npm run --if-present pretest:mutation:reverse-tools",
       "node scripts/prepare-reverse-tools-mutation.mjs",
       "npx --no-install stryker run stryker.config.mjs --dryRunOnly",
       "npx --no-install stryker run stryker.semantics.config.mjs --dryRunOnly",
+      "npm run --if-present posttest:mutation:reverse-tools",
     ]);
     const guard = commands.indexOf("npm run verify:mutation-targets");
     const coverage = commands.indexOf("npm run test:coverage:reverse-tools");
