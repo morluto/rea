@@ -823,6 +823,44 @@ it.each([
   },
 );
 
+it.each(["[2620:0:860:ed1a::1]", "[::1]"])(
+  "retains Firefox DevTools bracketed IPv6 spelling in reported Evidence: %s",
+  (address) => {
+    const fixture = historicalHar();
+    const first = fixture.log.entries[0];
+    if (first === undefined) throw new Error("Fixture must have one entry");
+    const input = {
+      ...fixture,
+      log: {
+        ...fixture.log,
+        creator: { name: "Firefox", version: "135.0" },
+        entries: [
+          { ...first, serverIPAddress: address },
+          structuredClone(first),
+        ],
+      },
+    };
+    const decoded = decodeHarCapture(JSON.stringify(input), []);
+    expect(decoded.records[0]).toMatchObject({
+      reported: { serverIPAddress: address },
+    });
+    const limitation = decoded.records[0]?.limitations.find((line) =>
+      line.includes("Firefox DevTools (135.0)"),
+    );
+    expect(limitation).toMatch(
+      /Firefox DevTools.*bracketed IPv6.*serverIPAddress/iu,
+    );
+    expect(limitation).toMatch(/original spellings.*retained/iu);
+    expect(limitation).toMatch(/brackets.*only.*valid IPv6.*validation copy/iu);
+    expect(limitation).toMatch(/producer declarations.*not authenticated/iu);
+    expect(
+      decoded.records[1]?.limitations.some((limitation) =>
+        limitation.includes("bracketed IPv6 serverIPAddress"),
+      ),
+    ).toBe(false);
+  },
+);
+
 it.each([
   { name: "other", version: "1.58.2", address: "[2001:db8::1]" },
   { name: "Playwright", version: "1.58.1", address: "[2001:db8::1]" },

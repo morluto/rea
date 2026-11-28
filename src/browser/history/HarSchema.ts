@@ -63,6 +63,18 @@ const HAR_PRODUCER_PROFILES: readonly HarProducerProfile[] = [
     bracketedIpv6: true,
     emptyServerAddress: true,
   },
+  {
+    name: "Firefox",
+    version: "135.0",
+    label: "Firefox DevTools (135.0)",
+    bracketedIpv6: true,
+  },
+  {
+    name: "Firefox",
+    version: "136.0",
+    label: "Firefox DevTools (136.0)",
+    bracketedIpv6: true,
+  },
   { name: "mitmproxy", version: "12.2.3", nullPostDataText: true },
   { name: "mitmproxy", version: "12.3.1", nullPostDataText: true },
 ];
