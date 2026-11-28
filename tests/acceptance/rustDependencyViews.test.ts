@@ -13,7 +13,6 @@ import { createEvidenceBundle } from "../../src/domain/evidenceBundle.js";
 import { rustBinarySchema } from "../../src/domain/rust/rustBinary.js";
 import { analysisViewResultSchema } from "../../src/domain/analysisView/analysisViewResult.js";
 import { readEvidenceBundle } from "../../src/application/EvidenceBundleFiles.js";
-import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import {
   createRustImage,
@@ -22,7 +21,11 @@ import {
   rustDependencyPayload,
 } from "../fixtures/rust/image.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { cliTest, type TestCli } from "../support/cli/cliFixture.js";
+import {
+  cliTest,
+  type TestCli,
+  type SharedMcpCall,
+} from "../support/cli/cliFixture.js";
 
 /** One synthetic cargo-auditable artifact for each supported container. */
 const rustArtifact = (
@@ -99,7 +102,7 @@ cliTest(
 
 /** Both authenticated retention and portable imports query the same captured facts. */
 const assertRetainedPages = async (
-  call: Awaited<ReturnType<typeof connectLocalToolsMcp>>["call"],
+  call: SharedMcpCall,
   evidenceId: string,
   exported: string,
 ) => {
@@ -200,7 +203,7 @@ const readCycloneDx = (response: unknown) => {
 };
 
 const expectCycloneDxView = async (
-  call: Awaited<ReturnType<typeof connectLocalToolsMcp>>["call"],
+  call: SharedMcpCall,
   cli: Pick<TestCli, "run">,
   input: { exported: string; format: string; root: string; parent: Evidence },
 ): Promise<void> => {
@@ -306,7 +309,8 @@ cliTest(
   "queries stable Rust packages and edges through real CLI/MCP and portable Evidence",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-rust-views-");
-    const { call } = await connectLocalToolsMcp();
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
     for (const format of ["elf", "pe", "macho", "wasm"] as const) {
       const path = join(root, `source.${format}`);
       const output = join(root, `${format}-source.json`);
@@ -465,7 +469,8 @@ cliTest(
         }),
       }),
     );
-    const { call } = await connectLocalToolsMcp();
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
     const captured = await call("inspect_rust_binary", { path });
     expect(captured.isError, JSON.stringify(captured.content)).not.toBe(true);
     const full = parseEvidence(captured.structuredContent);
@@ -571,7 +576,8 @@ cliTest(
       path,
       createRustImage({ format: "elf", omitSection: true }),
     );
-    const { call } = await connectLocalToolsMcp();
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
     const summary = await call("inspect_rust_binary", {
       path,
       detail: "summary",
