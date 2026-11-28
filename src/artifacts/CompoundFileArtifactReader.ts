@@ -219,6 +219,11 @@ export class CompoundFileArtifactReader implements ArtifactReader {
 
   async #prepare(signal?: AbortSignal): Promise<void> {
     const image = await this.#decode(signal);
+    // Entry 0 is the carrier. Type 0 denotes unused capacity, not a record
+    // that will keep an ordinal or any other path in the inventory.
+    const publishable = image.entries.filter(
+      (entry) => entry.index !== 0 && entry.declaredType !== 0,
+    );
     // Directory entries are keyed by their source ordinal, not by path: a
     // damaged tree can hold two entries with the same logical path, and one
     // must not silently replace the other.
@@ -231,8 +236,9 @@ export class CompoundFileArtifactReader implements ArtifactReader {
     // numbers are bounded by the directory count. Release each reservation
     // immediately before selecting and charging the retained path.
     const maxOrdinal = String(image.entries.length);
-    const fallbackReservation = `entry-${maxOrdinal}-${maxOrdinal}`.length;
-    pathBudget.charge(image.entries.length * fallbackReservation, () =>
+    const maxSuffix = String(publishable.length);
+    const fallbackReservation = `entry-${maxOrdinal}-${maxSuffix}`.length;
+    pathBudget.charge(publishable.length * fallbackReservation, () =>
       invariantViolation(
         "Compound file directory exceeds its fallback path reservation",
       ),
@@ -253,7 +259,6 @@ export class CompoundFileArtifactReader implements ArtifactReader {
     const place = (entry: CompoundFileDirectoryEntry): void => {
       pathBudget.refund(fallbackReservation);
       const artifact = toArtifactEntry(entry);
-      if (artifact === null) return;
       const key = String(entry.index);
       const declaredParent = entry.parentIndex;
       const parent =
@@ -326,7 +331,7 @@ export class CompoundFileArtifactReader implements ArtifactReader {
         settle(child);
       }
     };
-    for (const entry of image.entries) {
+    for (const entry of publishable) {
       const parent = entry.parentIndex;
       if (parent !== null && !placedByIndex.has(parent)) {
         const siblings = waiting.get(parent) ?? [];
@@ -542,23 +547,11 @@ const entryMetadata = (
   };
 };
 
-const toArtifactEntry = (
-  entry: CompoundFileDirectoryEntry,
-): ArtifactEntry | null => {
+const toArtifactEntry = (entry: CompoundFileDirectoryEntry): ArtifactEntry => {
   const path = entry.path;
-  // The root storage is the container itself, not a member of it. An entry
-  // outside the root's tree keeps its declared facts under its source ordinal;
-  // the parse counts orphans.
-  if (entry.type === "root-storage" && entry.index === 0) return null;
-  // A record whose declared type the format does not define keeps its readable
-  // name and declaration facts as metadata: the parser's count says these are
-  // listed without a role, and dropping them here would leave that count
-  // describing entries the inventory never shows. A zero byte is an
-  // unallocated slot, not a declaration, and is still dropped.
-  if (
-    entry.type === "root-storage" ||
-    (entry.type === "unknown" && entry.declaredType !== 0)
-  )
+  // Preserve noncanonical root records and undefined directory types as
+  // declarations. Neither can own a child tree.
+  if (entry.type === "root-storage" || entry.type === "unknown")
     return {
       path: path ?? "",
       kind: "metadata",
@@ -583,7 +576,6 @@ const toArtifactEntry = (
       formatMetadata: entryMetadata(entry),
       adapterKey: `compound-file/${String(entry.index)}`,
     };
-  if (entry.type !== "storage" && entry.type !== "stream") return null;
   const unnamed = path === null && entry.name === null;
   const limitation = (): string[] => {
     if (unnamed)

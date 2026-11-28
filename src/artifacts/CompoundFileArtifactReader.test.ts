@@ -88,10 +88,13 @@ const compoundFile = (options: {
  * need. `compoundFile` fixes the layout its small fixtures use; a directory
  * past one 512-byte sector needs its own FAT sector and sector count.
  */
-const sprawlingFixture = (entries: readonly FixtureEntry[]): Buffer => {
+const sprawlingFixture = (
+  entries: readonly FixtureEntry[],
+  directorySlots = entries.length,
+): Buffer => {
   const directorySectors = Math.max(
     1,
-    Math.ceil((entries.length * 128) / SECTOR),
+    Math.ceil((directorySlots * 128) / SECTOR),
   );
   let fatSectors = 1;
   while (fatSectors * 128 < directorySectors + fatSectors) fatSectors += 1;
@@ -587,27 +590,39 @@ it("moves a projected storage's child under the path it was listed at", async ()
 it.each([
   {
     name: "unique",
+    depth: 60,
+    leaves: 40_000,
     leafName: (ordinal: number) => `leaf-${ordinal}`,
     expectLimit: true,
   },
   {
     name: "colliding",
+    depth: 60,
+    leaves: 17_200,
     leafName: (ordinal: number) =>
       ordinal === 17_199 ? "payload" : "n".repeat(31),
     expectLimit: false,
   },
+  {
+    name: "unique beneath unused directory capacity",
+    depth: 63,
+    leaves: 16_150,
+    directorySlots: 52_000,
+    leafName: (ordinal: number) =>
+      ordinal === 16_149 ? "payload" : `leaf-${ordinal}`.padEnd(31, "x"),
+    expectLimit: false,
+  },
 ])(
   "accounts for the paths it keeps with $name names",
-  async ({ leafName, expectLimit }) => {
+  async ({ depth, leaves, directorySlots, leafName, expectLimit }) => {
     // The parser's allowance covers the paths it can name, but a member of a
     // storage whose own name cannot name a path is placed here, and those
     // rebuilt paths are charged against the same ceiling. Unique leaves exhaust
-    // it; repeated leaves need only the short ordinals for the duplicates.
-    const depth = 60;
+    // it; repeated leaves need only short ordinal components, and unused
+    // directory slots reserve no paths.
     const name = "s".repeat(31);
-    const leaves = expectLimit ? 40_000 : 17_200;
     const entries: FixtureEntry[] = [
-      // Ordinal 1 is the unusable storage; storages 2..61 nest under each other.
+      // Ordinal 1 is the unusable storage; the remaining storages nest below it.
       { name: "bad/name", type: 1, start: 0, size: 0, child: 2 },
     ];
     for (let level = 0; level < depth; level += 1)
@@ -629,7 +644,7 @@ it.each([
       });
     const path = await write(
       "path-allowance.automaticDestinations-ms",
-      sprawlingFixture(rootWith(1, entries)),
+      sprawlingFixture(rootWith(1, entries), directorySlots),
     );
     const reader = new CompoundFileArtifactReader(path);
     try {
