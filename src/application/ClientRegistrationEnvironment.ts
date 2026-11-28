@@ -27,7 +27,10 @@ import {
 import { clientConfigurationRecordSchema } from "./ClientConfigurationValues.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
-import { mergeEnvironmentOverrides, snapshotEnvironment } from "../process/snapshotEnvironment.js";
+import {
+  mergeEnvironmentOverrides,
+  snapshotEnvironment,
+} from "../process/snapshotEnvironment.js";
 import { dshDocument } from "./DshCordisPatch.js";
 import { mergeRegistrationEnvironment } from "./UserConfigurationLocation.js";
 import type { McpToolTimeoutInputs } from "../config/mcpStartupPolicy.js";
