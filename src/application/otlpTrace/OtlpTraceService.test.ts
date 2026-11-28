@@ -506,3 +506,35 @@ it("refuses JSON whose decoded structure would exceed the heap allowance", async
     path,
   });
 });
+
+it("reports rounded source drop counts as unreadable instead of inventing integers", async () => {
+  const ids = `"traceId":"${"1".repeat(32)}","spanId":"${"2".repeat(16)}"`;
+  const rounded = "1.0000000000000001";
+  const input = `{"resourceSpans":[{"resource":{"droppedAttributesCount":${rounded}},"scopeSpans":[{"spans":[{${ids},"droppedEventsCount":${rounded},"droppedLinksCount":${rounded},"droppedAttributesCount":${rounded}},{${ids.replace("2".repeat(16), "3".repeat(16))},"droppedEventsCount":1e1}]}]}]}`;
+  const path = join(
+    await createTestTempDirectory("rea-otlp-rounded-drops-"),
+    "trace.json",
+  );
+  await writeFile(path, input);
+  const resources = new ArtifactResourceScope();
+  onTestFinished(() => resources.close());
+  const result = await inspectOtlpTraceEvidence({ path }, resources);
+  if (!result.ok) throw result.error;
+  const report = otlpTraceSchema.parse(result.value.evidence.normalized_result);
+  expect(report.resources[0]).not.toHaveProperty("dropped_attributes_count");
+  for (const field of [
+    "dropped_events_count",
+    "dropped_links_count",
+    "dropped_attributes_count",
+  ])
+    expect(report.spans[0]).not.toHaveProperty(field);
+  expect(report.spans[1]).toMatchObject({ dropped_events_count: 10 });
+  expect(
+    report.diagnostics.map((entry) => entry.source_pointer).sort(),
+  ).toEqual([
+    "/resourceSpans/0/resource/droppedAttributesCount",
+    "/resourceSpans/0/scopeSpans/0/spans/0/droppedAttributesCount",
+    "/resourceSpans/0/scopeSpans/0/spans/0/droppedEventsCount",
+    "/resourceSpans/0/scopeSpans/0/spans/0/droppedLinksCount",
+  ]);
+});

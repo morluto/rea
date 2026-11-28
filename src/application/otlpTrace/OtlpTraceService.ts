@@ -170,7 +170,7 @@ const decodeExport = (
     // loss-aware path even when no literal matches.
     if (
       !text.includes("\\") &&
-      !/"(?:parentSpanId|startTimeUnixNano|endTimeUnixNano|intValue|stringValue|boolValue|bytesValue)"\s*:\s*-?[0-9]/u.test(
+      !/"(?:parentSpanId|startTimeUnixNano|endTimeUnixNano|droppedEventsCount|droppedLinksCount|droppedAttributesCount|intValue|stringValue|boolValue|bytesValue)"\s*:\s*-?[0-9]/u.test(
         text,
       )
     )

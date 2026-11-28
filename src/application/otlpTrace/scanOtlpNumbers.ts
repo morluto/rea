@@ -53,6 +53,9 @@ const span: Plan = {
     parentSpanId: numeric,
     startTimeUnixNano: numeric,
     endTimeUnixNano: numeric,
+    droppedEventsCount: numeric,
+    droppedLinksCount: numeric,
+    droppedAttributesCount: numeric,
     attributes: attributes("span"),
   },
 };
@@ -62,7 +65,10 @@ const scope: Plan = {
 };
 const resource: Plan = {
   kind: "object",
-  fields: { attributes: attributes("resource") },
+  fields: {
+    attributes: attributes("resource"),
+    droppedAttributesCount: numeric,
+  },
 };
 const group: Plan = {
   kind: "object",

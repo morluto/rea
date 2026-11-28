@@ -329,6 +329,7 @@ export const readOtlpSpanIds = (record: Record<string, unknown>) => {
 
 const readDropCount = (
   value: unknown,
+  lossy: boolean,
   report: () => void,
 ): number | undefined => {
   if (value === undefined || value === null) return undefined;
@@ -337,6 +338,7 @@ const readDropCount = (
       ? Number(value)
       : value;
   if (
+    !lossy &&
     typeof count === "number" &&
     Number.isInteger(count) &&
     count >= 0 &&
@@ -521,15 +523,13 @@ const parseSpan = (
     damagedField("events");
   if (record.links != null && !Array.isArray(record.links))
     damagedField("links");
-  const droppedEvents = readDropCount(record.droppedEventsCount, () =>
-    damagedField("droppedEventsCount"),
-  );
-  const droppedLinks = readDropCount(record.droppedLinksCount, () =>
-    damagedField("droppedLinksCount"),
-  );
-  const droppedAttributes = readDropCount(record.droppedAttributesCount, () =>
-    damagedField("droppedAttributesCount"),
-  );
+  const dropCount = (field: string) =>
+    readDropCount(record[field], lossyNumber?.(record, field) === true, () =>
+      damagedField(field),
+    );
+  const droppedEvents = dropCount("droppedEventsCount");
+  const droppedLinks = dropCount("droppedLinksCount");
+  const droppedAttributes = dropCount("droppedAttributesCount");
   const span: OtlpSpan = {
     span_id: spanId,
     trace_id: traceId,
@@ -706,9 +706,13 @@ const walkResourceSpans = (
     if (capture.problem !== undefined)
       return { walked, unsupported: false, problem: capture.problem };
     if (resourceDropped > 0) walked.resourceAttributesTruncated = true;
-    const resource = resourceSpans.resource;
+    const resource = isRecord(resourceSpans.resource)
+      ? resourceSpans.resource
+      : undefined;
     const droppedAttributes = readDropCount(
-      isRecord(resource) ? resource.droppedAttributesCount : undefined,
+      resource?.droppedAttributesCount,
+      resource !== undefined &&
+        lossyNumber?.(resource, "droppedAttributesCount") === true,
       () =>
         problems.add(() => ({
           code: "invalid-record",
