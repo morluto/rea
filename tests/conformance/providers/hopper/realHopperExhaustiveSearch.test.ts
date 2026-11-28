@@ -60,6 +60,9 @@ const fixtureClient = (
       if (operation === "open_binary") return { isError: false };
       if (operation !== "search_procedures" && operation !== "search_strings")
         throw new Error(`Unsupported fixture operation: ${String(operation)}`);
+      // Like the product does above its inline bound, summarize a search that
+      // does not request complete Evidence.
+      if (!requestsCompleteDetail(request)) return { kind: "summary" };
       const procedures = operation === "search_procedures";
       const items = Array.from({ length: count }, (_, index) => {
         const duplicateIndex = fault === "duplicate" && index === 1 ? 0 : index;
@@ -73,3 +76,10 @@ const fixtureClient = (
     },
   };
 };
+
+const requestsCompleteDetail = (request: object): boolean =>
+  "arguments" in request &&
+  typeof request.arguments === "object" &&
+  request.arguments !== null &&
+  "detail" in request.arguments &&
+  request.arguments.detail === "complete";

@@ -66,6 +66,9 @@ describe("Hopper verifier fixture receipt", () => {
       ["branch", receiptDossier("branch", "entry", "leaf", "BRANCH")],
       ["leaf", receiptDossier("leaf", "branch", "main", "LEAF")],
     ]);
+    const evidenceId = (procedure: string) =>
+      `ev_${procedure.replace(/^0x/u, "").padStart(64, "0")}`;
+    const comparisons: unknown[] = [];
     const client = {
       async callTool(request: { name: string; arguments: unknown }) {
         const input = z
@@ -79,7 +82,8 @@ describe("Hopper verifier fixture receipt", () => {
             { address: receiptAddress(input.pattern), value: input.pattern },
           ];
         if (request.name === "set_comment") return true;
-        if (request.name === "compare_functions")
+        if (request.name === "compare_functions") {
+          comparisons.push(request.arguments);
           return {
             dimensions: Object.keys(receiptFacets)
               .concat("identity")
@@ -92,6 +96,7 @@ describe("Hopper verifier fixture receipt", () => {
                     : "unchanged",
               })),
           };
+        }
         const dossier = [...dossiers.values()].find(
           (value) => value.procedure.address === input.procedure,
         );
@@ -100,6 +105,7 @@ describe("Hopper verifier fixture receipt", () => {
           return {
             normalized_result: dossier,
             structuredContent: {
+              evidence_id: evidenceId(dossier.procedure.address),
               // The coverage the Hopper provider declares for analyze_function.
               relationship_coverage: {
                 status: "unknown",
@@ -153,6 +159,17 @@ describe("Hopper verifier fixture receipt", () => {
       leafStrings: 1,
       leafNames: 1,
     });
+    // Complete dossiers inline exceed the MCP input element allowance, so each
+    // comparison must reference the retained analyze_function record.
+    expect(comparisons).toEqual(
+      ["entry", "branch", "leaf"].map((name) => {
+        const retained = {
+          kind: "retained-evidence",
+          evidence_id: evidenceId(receiptAddress(name)),
+        };
+        return { left: retained, right: retained };
+      }),
+    );
   });
 });
 
