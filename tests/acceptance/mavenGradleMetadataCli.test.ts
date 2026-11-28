@@ -8,10 +8,6 @@ import { SESSION_TOOL_CONTRACTS } from "../../src/contracts/sessionToolContracts
 import { parseEvidenceBundle } from "../../src/domain/evidenceBundle.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import {
-  connectLocalToolsMcp,
-  lazyLocalToolsMcp,
-} from "../fixtures/localToolsMcp.js";
-import {
   gradleModuleFixture,
   mavenPomFixture,
   mavenPropertyValuesFixture,
@@ -628,8 +624,6 @@ cliTest(
   },
 );
 
-const malformedPomMcp = lazyLocalToolsMcp();
-
 cliTest.for([
   {
     label: "invalid XML syntax",
@@ -674,7 +668,8 @@ cliTest.for([
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject(expected);
-    const { call } = await malformedPomMcp();
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
     const response = await call("inspect_maven_gradle_metadata", { path });
     expect(parseMcpToolError(response).error).toMatchObject(expected);
   },
