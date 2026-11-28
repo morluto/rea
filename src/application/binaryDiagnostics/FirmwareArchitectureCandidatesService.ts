@@ -55,6 +55,12 @@ const validReport = (
   ) {
     return false;
   }
+  if (
+    report.elf_census.tallies.length + report.elf_census.omitted_tallies !==
+    report.elf_census.distinct_buckets
+  ) {
+    return false;
+  }
   return true;
 };
 

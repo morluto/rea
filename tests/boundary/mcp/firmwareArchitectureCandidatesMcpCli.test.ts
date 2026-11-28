@@ -77,6 +77,7 @@ mcpTest(
     const mcpEvidence = toolContract(
       "inspect_firmware_architecture_candidates",
     ).outputSchema.parse(mcpResponse.structuredContent);
+    expect(mcpEvidence.parameters).toEqual({ path: blobPath });
     expect(mcpEvidence.normalized_result.status).toBe("candidates_found");
     expect(mcpEvidence.normalized_result.candidates[0]).toMatchObject({
       cpu_family: "arm",
@@ -102,6 +103,7 @@ mcpTest(
     const cliEvidence = toolContract(
       "inspect_firmware_architecture_candidates",
     ).outputSchema.parse(JSON.parse(stdout));
+    expect(cliEvidence.parameters).toEqual(mcpEvidence.parameters);
     expect(cliEvidence.normalized_result).toEqual(
       mcpEvidence.normalized_result,
     );

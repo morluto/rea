@@ -38,9 +38,12 @@ Every call runs four static byte detectors over the examined prefix
   header facts for the payload following the 64-byte header (possibly compressed
   per `ih_comp_name`), never a file-offset-0 mapping of the input file.
 - **Embedded ELF consensus**: `elf_census.consensus` reports `unanimous`,
-  `majority` (strictly above half of validated headers), `mixed`, or `absent`.
-  When no strict majority exists, `consensus` stays `mixed` with a limitation
-  rather than picking a winner.
+  `majority` (strictly above half of validated headers), `mixed`, or `absent`
+  across all `distinct_buckets`, retaining the top 32 buckets inline in
+  `tallies` with `omitted_tallies` for any remainder. When no strict majority
+  exists, `consensus` stays `mixed` with a bounded limitation rather than
+  picking a winner. ILP32 64-bit ABIs such as x32 (`ELFCLASS32` + `EM_X86_64`)
+  keep `elf_class: 32` in `tallies` while deriving a 64-bit instruction decoder.
 - **Cortex-M load-base candidates**: When a qualifying M-profile vector table is
   present in the leading 64 KiB (including offset tables such as `0x100` boot2
   prefixes or `0x200` MCUboot headers), `load_base_candidates` reports the

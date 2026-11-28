@@ -188,7 +188,7 @@ export const OFFLINE_INSPECTION_TOOL_BINDINGS = {
   })) satisfies Bind<WindowsShortcutService>,
   firmwareArchitectureCandidates: ((service) => ({
     inspect_firmware_architecture_candidates: {
-      admission: "sdk",
+      admission: "application",
       run: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<FirmwareArchitectureCandidatesService>,

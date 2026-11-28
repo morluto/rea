@@ -6,6 +6,7 @@ import {
 } from "./firmwareArchitectureCandidates.js";
 import {
   HEADER_SCAN_WINDOW_BYTES,
+  MAX_RETAINED_ELF_TALLIES,
   MAX_RETAINED_UIMAGE_HEADERS,
   MAX_RETAINED_VECTOR_TABLES,
   scanUImageHeaders,
@@ -181,6 +182,73 @@ describe("scanFirmwareArchitectureCandidates", () => {
     expect(
       tiedReport.limitations.some((l) => l.includes("no strict majority")),
     ).toBe(true);
+
+    // x32 ABI (ELFCLASS32 + EM_X86_64 = 62) retains elf_class 32 in tallies while deriving 64-bit decoder hints.
+    const x32Elf = buildMinimalElfHeader({
+      elfClass: 32,
+      littleEndian: true,
+      machine: 62, // EM_X86_64
+    });
+    const x32Report = await scanFirmwareArchitectureCandidates({
+      artifact: {
+        path: "/tmp/x32.elf",
+        sha256: "d".repeat(64),
+        bytes: x32Elf.length,
+      },
+      prefixBytes: x32Elf,
+    });
+    expect(x32Report.elf_census.tallies[0]).toMatchObject({
+      machine: 62,
+      cpu_family: "x86_64",
+      elf_class: 32,
+      byte_order: "little",
+    });
+    expect(x32Report.candidates[0]).toMatchObject({
+      cpu_family: "x86_64",
+      word_size: 64,
+      byte_order: "little",
+      detector: "embedded-elf-census",
+      raw_binary_support: {
+        admitted_today: true,
+        rizin_decoder_hint: { asm_arch: "x86", asm_bits: 64 },
+      },
+    });
+    expect(x32Report.candidates[0]?.rationale).toContain("ELFCLASS32");
+
+    // Distinct ELF e_machine buckets beyond MAX_RETAINED_ELF_TALLIES remain bounded inline while preserving full consensus counts.
+    const distinctBuckets = MAX_RETAINED_ELF_TALLIES + 18;
+    const manyElfParts: Buffer[] = [];
+    for (let m = 1; m <= distinctBuckets; m += 1) {
+      manyElfParts.push(
+        buildMinimalElfHeader({
+          elfClass: 32,
+          littleEndian: true,
+          machine: 1000 + m,
+        }),
+      );
+    }
+    const manyElfBlob = Buffer.concat(manyElfParts);
+    const manyElfReport = await scanFirmwareArchitectureCandidates({
+      artifact: {
+        path: "/tmp/many-elf-machines.bin",
+        sha256: "e".repeat(64),
+        bytes: manyElfBlob.length,
+      },
+      prefixBytes: manyElfBlob,
+    });
+    expect(
+      firmwareArchitectureCandidatesSchema.safeParse(manyElfReport).success,
+    ).toBe(true);
+    expect(manyElfReport.elf_census).toMatchObject({
+      total_valid_headers: distinctBuckets,
+      distinct_buckets: distinctBuckets,
+      omitted_tallies: 18,
+      consensus: "mixed",
+    });
+    expect(manyElfReport.elf_census.tallies).toHaveLength(
+      MAX_RETAINED_ELF_TALLIES,
+    );
+    expect(manyElfReport.limitations.join("\n")).toContain("and 42 more");
   });
 });
 

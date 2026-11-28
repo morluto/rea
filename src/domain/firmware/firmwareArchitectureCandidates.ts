@@ -269,6 +269,8 @@ export const firmwareArchitectureCandidatesSchema = z.strictObject({
   }),
   elf_census: z.strictObject({
     total_valid_headers: z.number().int().min(0),
+    distinct_buckets: z.number().int().min(0),
+    omitted_tallies: z.number().int().min(0),
     consensus: z.enum(["absent", "unanimous", "majority", "mixed"]),
     tallies: z.array(elfMachineTallySchema),
   }),
@@ -349,6 +351,19 @@ const buildThumbRawBinarySuggestion = (
   };
 };
 
+const SIXTY_FOUR_BIT_FAMILIES: ReadonlySet<FirmwareCpuFamily> = new Set([
+  "x86_64",
+  "arm64",
+  "mips64",
+  "sparc64",
+]);
+
+/** Derive architectural decoder bit width without conflating ILP32 ELF classes (such as x32) with 32-bit ISAs. */
+export const elfCpuDecoderWordSize = (
+  cpuFamily: FirmwareCpuFamily,
+  elfClass: 32 | 64,
+): 32 | 64 => (SIXTY_FOUR_BIT_FAMILIES.has(cpuFamily) ? 64 : elfClass);
+
 const computeRizinHint = (
   cpuFamily: FirmwareCpuFamily,
   wordSize: FirmwareWordSize,
@@ -356,6 +371,9 @@ const computeRizinHint = (
   const arch = RIZIN_ARCH_BY_FAMILY[cpuFamily];
   if (arch === undefined) return null;
   if (cpuFamily === "6502") return { asm_arch: arch, asm_bits: 16 };
+  if (SIXTY_FOUR_BIT_FAMILIES.has(cpuFamily)) {
+    return { asm_arch: arch, asm_bits: 64 };
+  }
   if (wordSize === 16 || wordSize === 32 || wordSize === 64) {
     return { asm_arch: arch, asm_bits: wordSize };
   }

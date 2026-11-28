@@ -1,7 +1,9 @@
+import { boundedList, describeBoundedList } from "../boundedList.js";
 import { knownCoverage } from "../coverageAccumulator.js";
 import {
   FIRMWARE_DETECTOR_IDS,
   buildRawBinarySuggestion,
+  elfCpuDecoderWordSize,
   type DetectorRunSummary,
   type FirmwareArchitectureCandidate,
   type FirmwareArchitectureCandidates,
@@ -31,7 +33,13 @@ const emptyCandidateReport = (
   })),
   candidates: [],
   uimage_headers: { total: 0, omitted: 0, items: [] },
-  elf_census: { total_valid_headers: 0, consensus: "absent", tallies: [] },
+  elf_census: {
+    total_valid_headers: 0,
+    distinct_buckets: 0,
+    omitted_tallies: 0,
+    consensus: "absent",
+    tallies: [],
+  },
   instruction_census: {
     examined_bytes: 0,
     leader_profile_id: null,
@@ -55,6 +63,10 @@ const appendElfAndUImageCandidates = (
     elf.tallies[0] !== undefined
   ) {
     const top = elf.tallies[0];
+    const decoderWordSize = elfCpuDecoderWordSize(
+      top.cpu_family,
+      top.elf_class,
+    );
     const ratio =
       elf.consensus === "unanimous"
         ? "All"
@@ -62,22 +74,30 @@ const appendElfAndUImageCandidates = (
     unranked.push({
       cpu_family: top.cpu_family,
       isa_mode: "standard",
-      word_size: top.elf_class,
+      word_size: decoderWordSize,
       byte_order: top.byte_order,
       detector: "embedded-elf-census",
       confidence: "observed",
-      rationale: `${ratio} validated ELF headers declare e_machine ${String(top.machine)} (${top.cpu_family}, ${String(top.elf_class)}-bit, ${top.byte_order}-endian).`,
+      rationale: `${ratio} validated ELF headers declare e_machine ${String(top.machine)} (${top.cpu_family}, ELFCLASS${String(top.elf_class)}, ${top.byte_order}-endian).`,
       locations: top.sample_locations,
       omitted_locations: top.omitted_locations,
       raw_binary_support: buildRawBinarySuggestion({
         cpuFamily: top.cpu_family,
         byteOrder: top.byte_order,
-        wordSize: top.elf_class,
+        wordSize: decoderWordSize,
       }),
     });
   } else if (elf.consensus === "mixed") {
+    const labels = elf.tallies.map(
+      (t) =>
+        `${t.cpu_family}/e_machine=${String(t.machine)}/${t.byte_order} (${String(t.count)})`,
+    );
+    const preview = describeBoundedList(
+      boundedList(labels, 8, elf.omitted_tallies),
+      ", ",
+    );
     limitations.push(
-      `Embedded ELF census found ${String(elf.total_valid_headers)} valid ELF headers with no strict majority across ${elf.tallies.map((t) => `${t.cpu_family}/${t.byte_order} (${String(t.count)})`).join(", ")}.`,
+      `Embedded ELF census found ${String(elf.total_valid_headers)} valid ELF headers with no strict majority across ${String(elf.distinct_buckets)} bucket(s): ${preview}.`,
     );
   }
 
@@ -197,7 +217,7 @@ const summarizeDetectors = (options: {
       detail:
         elf.total_valid_headers === 0
           ? "No valid ELF32/ELF64 headers found."
-          : `Validated ${String(elf.total_valid_headers)} ELF header(s); consensus: ${elf.consensus}.`,
+          : `Validated ${String(elf.total_valid_headers)} ELF header(s) across ${String(elf.distinct_buckets)} bucket(s)${elf.omitted_tallies > 0 ? ` (${String(elf.tallies.length)} retained, ${String(elf.omitted_tallies)} omitted)` : ""}; consensus: ${elf.consensus}.`,
     },
     {
       detector: "cortex-m-vector-table",

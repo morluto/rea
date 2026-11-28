@@ -1,5 +1,5 @@
 import { readUint32At } from "../binaryContainer.js";
-import { BoundedListCollector } from "../boundedList.js";
+import { BoundedListCollector, boundedList } from "../boundedList.js";
 import { elfFixedHeaderWidth, readElfFixedHeader } from "../elfFixedHeader.js";
 import {
   UIMAGE_HEADER_SIZE,
@@ -19,6 +19,7 @@ const UIMAGE_MAGIC_BYTES = Buffer.from([0x27, 0x05, 0x19, 0x56]);
 const ELF_MAGIC_BYTES = Buffer.from([0x7f, 0x45, 0x4c, 0x46]);
 export const HEADER_SCAN_WINDOW_BYTES = 1024 * 1024;
 export const MAX_RETAINED_UIMAGE_HEADERS = 64;
+export const MAX_RETAINED_ELF_TALLIES = 32;
 export const MAX_RETAINED_VECTOR_TABLES = 8;
 export const MAX_SAMPLE_LOCATIONS = 16;
 export const MAX_VECTOR_SCAN_OFFSET = 65536;
@@ -289,34 +290,45 @@ export const scanEmbeddedElfHeaders = async (
     },
   });
 
-  const tallies: ElfMachineTally[] = [...buckets.values()]
-    .sort((a, b) =>
-      b.count !== a.count ? b.count - a.count : a.machine - b.machine,
-    )
-    .map((b) => {
-      const locs = b.locations.toList();
-      return {
-        machine: b.machine,
-        cpu_family: b.cpuFamily,
-        elf_class: b.elfClass,
-        byte_order: b.byteOrder,
-        count: b.count,
-        sample_locations: [...locs.items],
-        omitted_locations: locs.omitted,
-      };
-    });
+  const sortedBuckets = [...buckets.values()].sort((a, b) => {
+    if (b.count !== a.count) return b.count - a.count;
+    if (a.machine !== b.machine) return a.machine - b.machine;
+    if (a.elfClass !== b.elfClass) return a.elfClass - b.elfClass;
+    return a.byteOrder === b.byteOrder ? 0 : a.byteOrder === "little" ? -1 : 1;
+  });
 
   let consensus: "absent" | "unanimous" | "majority" | "mixed" = "absent";
-  if (tallies.length === 1) consensus = "unanimous";
-  else if (tallies.length > 1) {
-    const top = tallies[0]!;
-    const second = tallies[1]!;
+  if (sortedBuckets.length === 1) consensus = "unanimous";
+  else if (sortedBuckets.length > 1) {
+    const top = sortedBuckets[0]!;
+    const second = sortedBuckets[1]!;
     consensus =
       top.count * 2 > totalValid && top.count > second.count
         ? "majority"
         : "mixed";
   }
-  return { total_valid_headers: totalValid, consensus, tallies };
+
+  const boundedBuckets = boundedList(sortedBuckets, MAX_RETAINED_ELF_TALLIES);
+  const tallies: ElfMachineTally[] = boundedBuckets.items.map((b) => {
+    const locs = b.locations.toList();
+    return {
+      machine: b.machine,
+      cpu_family: b.cpuFamily,
+      elf_class: b.elfClass,
+      byte_order: b.byteOrder,
+      count: b.count,
+      sample_locations: [...locs.items],
+      omitted_locations: locs.omitted,
+    };
+  });
+
+  return {
+    total_valid_headers: totalValid,
+    distinct_buckets: sortedBuckets.length,
+    omitted_tallies: boundedBuckets.omitted,
+    consensus,
+    tallies,
+  };
 };
 
 const isCortexMSramPointer = (sp: number): boolean =>
