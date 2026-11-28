@@ -98,10 +98,9 @@ export async function withCommands(
         cwd: options.cwd,
       });
       let resolvedCommand = selected.ok ? selected.value : undefined;
-      if (!selected.ok && selected.error.kind === "not_found") {
-        // The surviving resolver searches runnable image extensions only, so a
-        // bare command that names a batch launcher stays this caller's wrapping
-        // boundary; resolve it here through the batch-aware search before failing.
+      if (resolvedCommand === undefined) {
+        // One ordered, batch-aware search: batch launchers stay this caller's
+        // wrapping boundary, so stop at the first matching candidate.
         const batch = windowsPathCandidates(command, environment, {
           cwd: options.cwd,
           allowBatch: true,
@@ -112,8 +111,10 @@ export async function withCommands(
               (windowsExecutableLookup.isFile ?? isRegularFileSync)(
                 candidate.path,
               )
-            )
+            ) {
               resolvedCommand = candidate.path;
+              break;
+            }
           }
         }
       }
