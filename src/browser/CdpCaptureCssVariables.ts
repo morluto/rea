@@ -25,6 +25,7 @@ import { optionalCdpCommand } from "./CdpOptionalCommand.js";
 import type { CdpCommand, CdpCommandParams } from "./protocol/CdpCommands.js";
 
 const MAX_INTAKE_CSS_VARIABLES = 2000;
+const MAX_RETAINED_CSS_PAYLOAD_UNITS = 4 * 1024 * 1024;
 const MAX_REJECTED_PREVIEWS = 3;
 const MAX_PREVIEW_NAME_LENGTH = 64;
 
@@ -563,6 +564,8 @@ export const captureCssVariables = async (
   const maxIntake = Math.max(MAX_INTAKE_CSS_VARIABLES, maxRetainedVariables);
 
   const validItems: BrowserCssVariableItem[] = [];
+  let retainedPayloadUnits = 0;
+  let payloadBudgetExhausted = false;
   let totalObserved = 0;
   let rejectedCount = 0;
   let malformedProtocolEntries = 0;
@@ -636,8 +639,18 @@ export const captureCssVariables = async (
       redacted,
     });
     if (parsed.success) {
-      if (validItems.length < maxIntake) {
+      const itemUnits = parsed.data.name.length + parsed.data.value.length;
+      if (
+        validItems.length < maxIntake &&
+        retainedPayloadUnits + itemUnits <= MAX_RETAINED_CSS_PAYLOAD_UNITS
+      ) {
         validItems.push(parsed.data);
+        retainedPayloadUnits += itemUnits;
+      } else if (
+        retainedPayloadUnits + itemUnits >
+        MAX_RETAINED_CSS_PAYLOAD_UNITS
+      ) {
+        payloadBudgetExhausted = true;
       }
     } else {
       rejectedCount += 1;
@@ -698,6 +711,11 @@ export const captureCssVariables = async (
   if (total > maxRetainedVariables) {
     limitations.push(
       `CSS custom properties were truncated to ${String(maxRetainedVariables)} items (${String(total)} were observed on the root element).`,
+    );
+  }
+  if (payloadBudgetExhausted) {
+    limitations.push(
+      `Retained CSS custom properties were bounded to ${String(MAX_RETAINED_CSS_PAYLOAD_UNITS)} UTF-16 code units (${String(items.length)} of ${String(total)} observed items retained).`,
     );
   }
 

@@ -265,7 +265,9 @@ export const MAX_CSS_VARIABLE_VALUE_LENGTH_CEILING = 65_536;
 export const browserCssVariableItemSchema = z.object({
   name: z
     .string()
-    .regex(/^--[\p{L}\p{N}\p{M}_\-]+$/u)
+    .regex(
+      /^--(?:[A-Za-z0-9_\-]|[^\u0000-\u009F\u202A-\u202E\u2066-\u2069])+$/u,
+    )
     .max(128),
   value: z
     .string()

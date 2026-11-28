@@ -1085,3 +1085,86 @@ it("reapplies max_css_variable_value_length after URL redaction expands length",
     ),
   ).toBe(true);
 });
+
+it("admits valid Unicode symbol code points such as emoji in custom property names", async () => {
+  const connection = makeMockConnection({
+    "DOM.getDocument": {
+      root: {
+        nodeId: 1,
+        children: [{ nodeId: 2, nodeType: 1, nodeName: "HTML" }],
+      },
+    },
+    "CSS.enable": {},
+    "CSS.getComputedStyleForNode": {
+      computedStyle: [
+        { name: "--🎨", value: "#ff00aa" },
+        { name: "--★-accent", value: "gold" },
+      ],
+    },
+    "CSS.disable": {},
+  });
+
+  const limitations: string[] = [];
+  const result = await captureCssVariables(
+    {
+      connection,
+      sessionId: undefined,
+      input: inspectWebPageInputSchema.parse({
+        cdp_endpoint: "http://127.0.0.1:9222",
+        target_id: "target_1",
+        include_css_variables: true,
+      }),
+    },
+    limitations,
+  );
+
+  expect(result.status).toBe("included");
+  expect(result.items).toEqual([
+    { name: "--★-accent", value: "gold", redacted: false },
+    { name: "--🎨", value: "#ff00aa", redacted: false },
+  ]);
+});
+
+it("bounds aggregate retained CSS variable payload size and marks section truncated", async () => {
+  const bigValue = "x".repeat(65_000);
+  const computedStyle = Array.from({ length: 80 }, (_, index) => ({
+    name: `--big-${String(index).padStart(3, "0")}`,
+    value: bigValue,
+  }));
+
+  const connection = makeMockConnection({
+    "DOM.getDocument": {
+      root: {
+        nodeId: 1,
+        children: [{ nodeId: 2, nodeType: 1, nodeName: "HTML" }],
+      },
+    },
+    "CSS.enable": {},
+    "CSS.getComputedStyleForNode": { computedStyle },
+    "CSS.disable": {},
+  });
+
+  const limitations: string[] = [];
+  const result = await captureCssVariables(
+    {
+      connection,
+      sessionId: undefined,
+      input: inspectWebPageInputSchema.parse({
+        cdp_endpoint: "http://127.0.0.1:9222",
+        target_id: "target_1",
+        include_css_variables: true,
+        max_css_variables: 500,
+        max_css_variable_value_length: 65_536,
+      }),
+    },
+    limitations,
+  );
+
+  expect(result.status).toBe("truncated");
+  expect(result.total).toBe(80);
+  expect(result.retained_count).toBeLessThan(80);
+  expect(result.retained_count).toBeGreaterThan(0);
+  expect(limitations.some((lim) => lim.includes("UTF-16 code units"))).toBe(
+    true,
+  );
+});
