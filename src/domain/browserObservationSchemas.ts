@@ -266,7 +266,7 @@ export const MAX_CSS_VARIABLES_TOTAL_CHARS = 33_554_432;
 export const browserCssVariableItemSchema = z.object({
   name: z
     .string()
-    .regex(/^--.+$/u)
+    .regex(/^--.+$/su)
     .refine(
       (val) =>
         !/[\u0000-\u001F\u007F-\u009F\u202A-\u202E\u2066-\u2069]/u.test(val),

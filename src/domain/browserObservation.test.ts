@@ -364,6 +364,7 @@ describe("browser CSS variables item and summary schemas", () => {
           { name: `--${"x".repeat(130)}`, value: "red" },
           { name: "--brand+tone", value: "red" },
           { name: "--brand\\+tone", value: "red" },
+          { name: "--line\u2028sep", value: "red" },
         ],
       }).success,
     ).toBe(true);
