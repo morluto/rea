@@ -497,4 +497,219 @@ describe("firmwareLiteralPools domain scanner", () => {
       ["base_address"],
     ]);
   });
+
+  it("recovers real Thumb loads after an earlier fake pool word is invalidated by a backward ldr.w", () => {
+    // offset 0: 0x40004801 (halfword 0x4801 looks like `ldr r0, [pc, #0x4]` targeting 8..11)
+    // offset 4: 0xf85f 0x1008 (`ldr.w r1, [pc, #-0x8]` targeting 0..3 -> proves 0..3 is pool data!)
+    // offset 8: 0x4a01 (`ldr r2, [pc, #0x4]` targeting 16..19 -> real MMIO load!)
+    // offset 16: 0x40011004 (USART1)
+    const buf = Buffer.alloc(20, 0x00);
+    buf.writeUInt32LE(0x4000_4801, 0x00);
+    buf.writeUInt16LE(0xf85f, 0x04);
+    buf.writeUInt16LE(0x1008, 0x06);
+    buf.writeUInt16LE(0x4a01, 0x08);
+    for (let p = 0x0a; p < 0x10; p += 2) buf.writeUInt16LE(0xbf00, p);
+    buf.writeUInt32LE(0x4001_1004, 0x10);
+
+    const res = scanFirmwareLiteralPools({
+      artifact: {
+        path: "/tmp/thumb_backward_invalidate.bin",
+        sha256: "7".repeat(64),
+        bytes: buf.length,
+      },
+      fileBytes: buf,
+      isa: "arm-thumb",
+      baseAddressHex: "0x08000000",
+      scanOffset: 0,
+      maxScanBytes: 64,
+      maxReferences: 16,
+      svdSupplied: false,
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.value.counts.suppressed_pool_slot_overlaps).toBe(1);
+    expect(res.value.references).toHaveLength(2);
+    expect(res.value.references[0]).toMatchObject({
+      instruction_offset: 4,
+      mnemonic: "ldr.w",
+      target_register: "r1",
+      pool_offset: 0,
+      loaded_value: "0x40004801",
+    });
+    expect(res.value.references[1]).toMatchObject({
+      instruction_offset: 8,
+      mnemonic: "ldr",
+      target_register: "r2",
+      pool_offset: 16,
+      loaded_value: "0x40011004",
+    });
+  });
+
+  it("prevents alternate Xtensa traces inside 3-byte instruction operands from overriding established L32R loads", () => {
+    const bytes = Uint8Array.from([
+      0x00, 0x03, 0x00, 0x60, 0x21, 0xff, 0xff, 0x22, 0x21, 0xff, 0xff, 0x08,
+      0xf0, 0x08, 0x00, 0x0d, 0xf0,
+    ]);
+    const res = scanFirmwareLiteralPools({
+      artifact: {
+        path: "/tmp/xtensa_operand_guard.bin",
+        sha256: "8".repeat(64),
+        bytes: bytes.length,
+      },
+      fileBytes: bytes,
+      isa: "xtensa",
+      baseAddressHex: "0x400d0000",
+      scanOffset: 4,
+      maxScanBytes: 64,
+      maxReferences: 16,
+      svdSupplied: false,
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.value.references).toHaveLength(1);
+    expect(res.value.references[0]).toMatchObject({
+      instruction_offset: 4,
+      instruction_address: "0x400d0004",
+      mnemonic: "l32r",
+      target_register: "a2",
+      pool_offset: 0,
+      loaded_value: "0x60000300",
+    });
+  });
+
+  it("preserves gapped SVD register arrays, detects duplicate-span peripheral ties, and bounds derivedFrom interval amplification", () => {
+    const gappedAndTiedSvd = `<device>
+      <name>TieAndGapMCU</name>
+      <peripherals>
+        <peripheral>
+          <name>GAPPED_PERIPH</name>
+          <baseAddress>0x40020000</baseAddress>
+          <registers>
+            <register>
+              <name>CH%s_CR</name>
+              <addressOffset>0x0</addressOffset>
+              <size>32</size>
+              <dim>2</dim>
+              <dimIncrement>0x1000</dimIncrement>
+            </register>
+          </registers>
+        </peripheral>
+        <peripheral>
+          <name>TIE_A</name>
+          <baseAddress>0x40030000</baseAddress>
+          <registers>
+            <register><name>ALT0</name><addressOffset>0x0</addressOffset><size>32</size></register>
+            <register><name>ALT1</name><addressOffset>0x0</addressOffset><size>32</size></register>
+          </registers>
+        </peripheral>
+        <peripheral>
+          <name>TIE_B</name>
+          <baseAddress>0x40030000</baseAddress>
+          <registers>
+            <register><name>REG0</name><addressOffset>0x0</addressOffset><size>32</size></register>
+          </registers>
+        </peripheral>
+      </peripherals>
+    </device>`;
+
+    const parsed = parseSvdPeripheralSpans(gappedAndTiedSvd);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    // Element 0 (0x40020000) and element 1 (0x40021000) match, while unmapped gap 0x40020800 stays null.
+    expect(
+      classifyLoadedConstant({
+        value: 0x4002_0000,
+        isa: "arm-thumb",
+        baseAddress: 0x0800_0000,
+        fileBytes: 64,
+        svdProfile: parsed.value,
+      }).svdPeripheral,
+    ).toBe("GAPPED_PERIPH");
+    expect(
+      classifyLoadedConstant({
+        value: 0x4002_1000,
+        isa: "arm-thumb",
+        baseAddress: 0x0800_0000,
+        fileBytes: 64,
+        svdProfile: parsed.value,
+      }).svdPeripheral,
+    ).toBe("GAPPED_PERIPH");
+    expect(
+      classifyLoadedConstant({
+        value: 0x4002_0800,
+        isa: "arm-thumb",
+        baseAddress: 0x0800_0000,
+        fileBytes: 64,
+        svdProfile: parsed.value,
+      }).svdPeripheral,
+    ).toBeNull();
+
+    // Duplicate alternate registers in TIE_A must not hide competing equal-span TIE_B.
+    expect(
+      classifyLoadedConstant({
+        value: 0x4003_0000,
+        isa: "arm-thumb",
+        baseAddress: 0x0800_0000,
+        fileBytes: 64,
+        svdProfile: parsed.value,
+      }).svdPeripheral,
+    ).toBeNull();
+
+    // Derived peripheral amplification exceeding max_svd_nodes fails before allocating intervals and reports required count.
+    const baseBlocks = Array.from(
+      { length: 32 },
+      (_, idx) =>
+        `<addressBlock><offset>0x${(idx * 16).toString(16)}</offset><size>0x4</size><usage>registers</usage></addressBlock>`,
+    ).join("");
+    const derivedClones = Array.from(
+      { length: 32 },
+      (_, idx) =>
+        `<peripheral derivedFrom="BASE_P"><name>CLONE_${String(idx)}</name><baseAddress>0x${(0x4000_0000 + (idx + 1) * 0x1000).toString(16)}</baseAddress></peripheral>`,
+    ).join("");
+    const amplifiedXml = `<device><peripherals><peripheral><name>BASE_P</name><baseAddress>0x40000000</baseAddress>${baseBlocks}</peripheral>${derivedClones}</peripherals></device>`;
+    const amplifiedRes = parseSvdPeripheralSpans(amplifiedXml, 500);
+    expect(amplifiedRes.ok).toBe(false);
+    if (amplifiedRes.ok || amplifiedRes.error.failure.kind !== "limit") return;
+    expect(amplifiedRes.error.failure.limit).toMatchObject({
+      name: "max_svd_nodes",
+      maximum: 500,
+      required: 33 * 32,
+    });
+  });
+
+  it("counts compact self-targeting A32 literal loads and reports exact required_value on max_references refusal", () => {
+    // 1024 words of 0xe51f0008 (`ldr r0, [pc, #-0x8]` targeting its own instruction word)
+    const selfLoads = Buffer.alloc(1024 * 4);
+    for (let off = 0; off < selfLoads.length; off += 4) {
+      selfLoads.writeUInt32LE(0xe51f_0008, off);
+    }
+    const refused = scanFirmwareLiteralPools({
+      artifact: {
+        path: "/tmp/self_loads.bin",
+        sha256: "9".repeat(64),
+        bytes: selfLoads.length,
+      },
+      fileBytes: selfLoads,
+      isa: "arm-a32",
+      baseAddressHex: "0x08000000",
+      scanOffset: 0,
+      maxScanBytes: selfLoads.length,
+      maxReferences: 1,
+      svdSupplied: false,
+    });
+    expect(refused.ok).toBe(false);
+    if (
+      refused.ok ||
+      !("failure" in refused.error) ||
+      refused.error.failure.kind !== "limit"
+    ) {
+      return;
+    }
+    expect(refused.error.failure.limit).toMatchObject({
+      name: "max_references",
+      maximum: 1,
+      required: 1024,
+    });
+  });
 });

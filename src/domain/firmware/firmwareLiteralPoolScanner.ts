@@ -4,11 +4,12 @@ import { decodeLimit, type ParseFailureError } from "../parseFailure.js";
 import { err, ok, type Result } from "../result.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import {
+  type CompactCandidateBuffer,
   PoolByteBitset,
   collectA32CandidatesSteps,
   collectThumbCandidatesSteps,
   collectXtensaCandidatesSteps,
-  type RawPoolLoadCandidate,
+  decodeAdmittedPoolLoad,
 } from "./firmwareLiteralPoolDecoders.js";
 import {
   EMPTY_SVD_PERIPHERAL_PROFILE,
@@ -140,12 +141,13 @@ export const validateLiteralPoolAddressAlignment = (params: {
 };
 
 function* filterPoolSlotOverlapsSteps(
-  candidates: readonly RawPoolLoadCandidate[],
+  candidates: CompactCandidateBuffer,
   fileByteLength: number,
 ): Generator<
   "step",
   {
-    readonly retained: readonly RawPoolLoadCandidate[];
+    readonly confirmedPoolBytes: PoolByteBitset;
+    readonly retainedCount: number;
     readonly suppressedCount: number;
   },
   void
@@ -153,27 +155,34 @@ function* filterPoolSlotOverlapsSteps(
   const allTargets = new PoolByteBitset(fileByteLength);
   for (let i = 0; i < candidates.length; i += 1) {
     if (i > 0 && i % CANDIDATE_COOPERATIVE_STEP === 0) yield "step";
-    allTargets.markWord(candidates[i]!.poolOffset);
+    allTargets.markWord(candidates.poolOffsetAt(i));
   }
   const confirmedPoolBytes = new PoolByteBitset(fileByteLength);
   for (let i = 0; i < candidates.length; i += 1) {
     if (i > 0 && i % CANDIDATE_COOPERATIVE_STEP === 0) yield "step";
-    const cand = candidates[i]!;
-    if (!allTargets.overlaps(cand.insnOffset, cand.insnSize)) {
-      confirmedPoolBytes.markWord(cand.poolOffset);
+    const insnOff = candidates.insnOffsetAt(i);
+    const insnSize = candidates.insnSizeAt(i);
+    if (!allTargets.overlaps(insnOff, insnSize)) {
+      confirmedPoolBytes.markWord(candidates.poolOffsetAt(i));
     }
   }
-  const retained: RawPoolLoadCandidate[] = [];
+  // Count surviving entries before materializing any Reference objects or strings.
+  let retainedCount = 0;
   for (let i = 0; i < candidates.length; i += 1) {
     if (i > 0 && i % CANDIDATE_COOPERATIVE_STEP === 0) yield "step";
-    const cand = candidates[i]!;
-    if (!confirmedPoolBytes.overlaps(cand.insnOffset, cand.insnSize)) {
-      retained.push(cand);
+    if (
+      !confirmedPoolBytes.overlaps(
+        candidates.insnOffsetAt(i),
+        candidates.insnSizeAt(i),
+      )
+    ) {
+      retainedCount += 1;
     }
   }
   return {
-    retained,
-    suppressedCount: candidates.length - retained.length,
+    confirmedPoolBytes,
+    retainedCount,
+    suppressedCount: candidates.length - retainedCount,
   };
 }
 
@@ -291,16 +300,17 @@ function* runIsaCandidateScanSteps(
 }
 
 function* classifyAndCollectReferencesSteps(params: {
-  readonly retained: readonly RawPoolLoadCandidate[];
+  readonly candidates: CompactCandidateBuffer;
+  readonly confirmedPoolBytes: PoolByteBitset;
+  readonly fileBytes: Uint8Array;
   readonly isa: FirmwareLiteralPoolIsa;
   readonly baseAddress: number;
-  readonly fileByteLength: number;
   readonly svdProfile: SvdPeripheralProfile;
 }) {
   const classify = createConstantClassifier({
     isa: params.isa,
     baseAddress: params.baseAddress,
-    fileBytes: params.fileByteLength,
+    fileBytes: params.fileBytes.length,
     svdProfile: params.svdProfile,
   });
   const references: LiteralPoolReference[] = [];
@@ -311,9 +321,20 @@ function* classifyAndCollectReferencesSteps(params: {
   // not-an-allowance: tally of literal-pool loads matched against supplied CMSIS-SVD
   let svdMatchedLoadCount = 0;
 
-  for (let i = 0; i < params.retained.length; i += 1) {
+  for (let i = 0; i < params.candidates.length; i += 1) {
     if (i > 0 && i % CANDIDATE_COOPERATIVE_STEP === 0) yield "step" as const;
-    const cand = params.retained[i]!;
+    const insnOffset = params.candidates.insnOffsetAt(i);
+    const insnSize = params.candidates.insnSizeAt(i);
+    if (params.confirmedPoolBytes.overlaps(insnOffset, insnSize)) continue;
+
+    const cand = decodeAdmittedPoolLoad({
+      isa: params.isa,
+      fileBytes: params.fileBytes,
+      baseAddress: params.baseAddress,
+      insnOffset,
+      insnSize,
+      poolOffset: params.candidates.poolOffsetAt(i),
+    });
     distinctSlots.add(cand.poolOffset);
     const classified = classify(cand.loadedValue);
     const ref: LiteralPoolReference = {
@@ -385,24 +406,30 @@ export function* scanFirmwareLiteralPoolsSteps(
     baseAddress,
     { start: scanStart, end: scanEnd },
   );
-  const { retained, suppressedCount } = yield* filterPoolSlotOverlapsSteps(
-    rawScan.candidates,
-    options.fileBytes.length,
-  );
-  if (retained.length > options.maxReferences) {
+  const { confirmedPoolBytes, retainedCount, suppressedCount } =
+    yield* filterPoolSlotOverlapsSteps(
+      rawScan.candidates,
+      options.fileBytes.length,
+    );
+  if (retainedCount > options.maxReferences) {
     return err(
       decodeLimit(
         "firmware-literal-pools",
-        `Scanned window resolved ${String(retained.length)} literal-pool loads, exceeding max_references (${String(options.maxReferences)}).`,
-        { name: "max_references", maximum: options.maxReferences },
+        `Scanned window resolved ${String(retainedCount)} literal-pool loads, exceeding max_references (${String(options.maxReferences)}).`,
+        {
+          name: "max_references",
+          maximum: options.maxReferences,
+          required: retainedCount,
+        },
       ),
     );
   }
   const collected = yield* classifyAndCollectReferencesSteps({
-    retained,
+    candidates: rawScan.candidates,
+    confirmedPoolBytes,
+    fileBytes: options.fileBytes,
     isa: options.isa,
     baseAddress,
-    fileByteLength: options.fileBytes.length,
     svdProfile,
   });
 
@@ -423,7 +450,7 @@ export function* scanFirmwareLiteralPoolsSteps(
       omitted_references: 0,
     },
     counts: {
-      resolved_pool_loads: retained.length,
+      resolved_pool_loads: retainedCount,
       distinct_pool_slots: collected.distinctSlotCount,
       mmio_pool_loads: collected.mmioLoadCount,
       out_of_image_pool_targets: rawScan.outOfImageTargets,

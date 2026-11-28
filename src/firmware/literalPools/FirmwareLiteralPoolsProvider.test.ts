@@ -1,7 +1,8 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import * as scannerModule from "../../domain/firmware/firmwareLiteralPoolScanner.js";
 import { FirmwareLiteralPoolsProvider } from "./FirmwareLiteralPoolsProvider.js";
 
 const DEFAULTS = {
@@ -13,7 +14,7 @@ const DEFAULTS = {
 } as const;
 
 describe("FirmwareLiteralPoolsProvider", () => {
-  it("honors cancellation during literal-pool scanning and returns typed failures", async () => {
+  it("honors deterministic mid-scan cancellation and reports required_value on budget refusals", async () => {
     const dir = await createTestTempDirectory("rea-literal-pools-provider-");
     const fwPath = join(dir, "large_thumb.bin");
     const image = Buffer.alloc(192 * 1024, 0x00);
@@ -39,14 +40,31 @@ describe("FirmwareLiteralPoolsProvider", () => {
       { signal: preAbort.signal },
     );
     expect(cancelledBefore.ok).toBe(false);
-    if (!cancelledBefore.ok) {
-      expect(cancelledBefore.error._tag).toBe("AnalysisCancelledError");
-      expect(cancelledBefore.error.cause).toBe(preReason);
-    }
+    if (cancelledBefore.ok) throw new Error("expected pre-scan cancellation");
+    expect(cancelledBefore.error._tag).toBe("AnalysisCancelledError");
+    expect(cancelledBefore.error.cause).toBe(preReason);
 
     const midAbort = new AbortController();
     const midReason = new Error("caller-cancelled-mid-scan");
-    const running = provider.inspect(
+    const realSteps = scannerModule.scanFirmwareLiteralPoolsSteps;
+    const scanSpy = vi
+      .spyOn(scannerModule, "scanFirmwareLiteralPoolsSteps")
+      .mockImplementationOnce(function* (opts) {
+        const inner = realSteps(opts);
+        let next = inner.next();
+        expect(next.done).toBe(false);
+        if (!next.done) {
+          midAbort.abort(midReason);
+          yield next.value;
+          next = inner.next();
+        }
+        while (!next.done) {
+          yield next.value;
+          next = inner.next();
+        }
+        return next.value;
+      });
+    const cancelledMid = await provider.inspect(
       {
         ...DEFAULTS,
         path: fwPath,
@@ -55,11 +73,11 @@ describe("FirmwareLiteralPoolsProvider", () => {
       },
       { signal: midAbort.signal },
     );
-    setTimeout(() => midAbort.abort(midReason), 0);
-    const cancelledMid = await running;
-    if (!cancelledMid.ok) {
-      expect(cancelledMid.error._tag).toBe("AnalysisCancelledError");
-    }
+    scanSpy.mockRestore();
+    expect(cancelledMid.ok).toBe(false);
+    if (cancelledMid.ok) throw new Error("expected mid-scan cancellation");
+    expect(cancelledMid.error._tag).toBe("AnalysisCancelledError");
+    expect(cancelledMid.error.cause).toBe(midReason);
 
     const badAlign = await provider.inspect({
       ...DEFAULTS,
@@ -68,9 +86,8 @@ describe("FirmwareLiteralPoolsProvider", () => {
       base_address: "0x08000001",
     });
     expect(badAlign.ok).toBe(false);
-    if (!badAlign.ok) {
-      expect(badAlign.error._tag).toBe("AnalysisInputError");
-    }
+    if (badAlign.ok) throw new Error("expected alignment error");
+    expect(badAlign.error._tag).toBe("AnalysisInputError");
 
     const badSvd = await provider.inspect({
       ...DEFAULTS,
@@ -80,32 +97,36 @@ describe("FirmwareLiteralPoolsProvider", () => {
       svd_xml: "<notDevice/>",
     });
     expect(badSvd.ok).toBe(false);
-    if (!badSvd.ok) {
-      expect(badSvd.error._tag).toBe("AnalysisInputError");
-    }
+    if (badSvd.ok) throw new Error("expected SVD format error");
+    expect(badSvd.error._tag).toBe("AnalysisInputError");
 
-    const manyPeripherals = Array.from(
+    const baseBlocks = Array.from(
       { length: 20 },
       (_, idx) =>
-        `<peripheral><name>P${String(idx)}</name><baseAddress>0x40000000</baseAddress><addressBlock><offset>0x0</offset><size>0x10</size><usage>registers</usage></addressBlock></peripheral>`,
+        `<addressBlock><offset>0x${(idx * 16).toString(16)}</offset><size>0x4</size><usage>registers</usage></addressBlock>`,
+    ).join("");
+    const derivedClones = Array.from(
+      { length: 20 },
+      (_, idx) =>
+        `<peripheral derivedFrom="BASE_P"><name>P${String(idx)}</name><baseAddress>0x${(0x4000_0000 + (idx + 1) * 0x1000).toString(16)}</baseAddress></peripheral>`,
     ).join("");
     const svdLimitRes = await provider.inspect({
       ...DEFAULTS,
       path: fwPath,
       isa: "arm-thumb",
       base_address: "0x08000000",
-      svd_xml: `<device><peripherals>${manyPeripherals}</peripherals></device>`,
-      max_svd_nodes: 24,
+      svd_xml: `<device><peripherals><peripheral><name>BASE_P</name><baseAddress>0x40000000</baseAddress>${baseBlocks}</peripheral>${derivedClones}</peripherals></device>`,
+      max_svd_nodes: 300,
     });
     expect(svdLimitRes.ok).toBe(false);
-    if (!svdLimitRes.ok) {
-      expect(svdLimitRes.error._tag).toBe("AnalysisResourceConstraintError");
-      expect(svdLimitRes.error.limit).toMatchObject({
-        control_kind: "parameter",
-        parameter: "max_svd_nodes",
-        effective_value: 24,
-      });
-    }
+    if (svdLimitRes.ok) throw new Error("expected SVD expansion limit");
+    expect(svdLimitRes.error._tag).toBe("AnalysisResourceConstraintError");
+    expect(svdLimitRes.error.limit).toMatchObject({
+      control_kind: "parameter",
+      parameter: "max_svd_nodes",
+      effective_value: 300,
+      required_value: 21 * 20,
+    });
 
     const fileLimitRes = await provider.inspect({
       ...DEFAULTS,
@@ -115,14 +136,14 @@ describe("FirmwareLiteralPoolsProvider", () => {
       max_file_bytes: 64,
     });
     expect(fileLimitRes.ok).toBe(false);
-    if (!fileLimitRes.ok) {
-      expect(fileLimitRes.error._tag).toBe("AnalysisResourceConstraintError");
-      expect(fileLimitRes.error.limit).toMatchObject({
-        control_kind: "parameter",
-        parameter: "max_file_bytes",
-        effective_value: 64,
-      });
-    }
+    if (fileLimitRes.ok) throw new Error("expected file size limit");
+    expect(fileLimitRes.error._tag).toBe("AnalysisResourceConstraintError");
+    expect(fileLimitRes.error.limit).toMatchObject({
+      control_kind: "parameter",
+      parameter: "max_file_bytes",
+      effective_value: 64,
+      required_value: image.length,
+    });
 
     const twoLoads = Buffer.alloc(16, 0x00);
     twoLoads.writeUInt16LE(0x4801, 0x00);
@@ -138,14 +159,14 @@ describe("FirmwareLiteralPoolsProvider", () => {
       max_references: 1,
     });
     expect(refLimitRes.ok).toBe(false);
-    if (!refLimitRes.ok) {
-      expect(refLimitRes.error._tag).toBe("AnalysisResourceConstraintError");
-      expect(refLimitRes.error.limit).toMatchObject({
-        control_kind: "parameter",
-        parameter: "max_references",
-        effective_value: 1,
-      });
-    }
+    if (refLimitRes.ok) throw new Error("expected max_references limit");
+    expect(refLimitRes.error._tag).toBe("AnalysisResourceConstraintError");
+    expect(refLimitRes.error.limit).toMatchObject({
+      control_kind: "parameter",
+      parameter: "max_references",
+      effective_value: 1,
+      required_value: 2,
+    });
 
     await provider.close();
   });

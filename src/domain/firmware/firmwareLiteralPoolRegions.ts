@@ -63,19 +63,23 @@ export interface ConstantClassification {
   readonly mmioBaseAddress: number | null;
 }
 
-interface RelativeInterval {
+interface RelativeSpanDescriptor {
   readonly offset: number;
   readonly size: number;
+  readonly count: number;
+  readonly stride: number;
 }
 
 interface RawSvdPeripheral {
   readonly name: string;
   readonly baseAddress: number;
   readonly derivedFrom: string | null;
-  readonly ownIntervals: readonly RelativeInterval[];
+  readonly ownDescriptors: readonly RelativeSpanDescriptor[];
+  readonly ownExpandedCount: number;
 }
 
 const CLASSIFICATION_CACHE_CAPACITY = 65_536;
+const SVD_COOPERATIVE_STEP = 16_384;
 
 export const formatHex32 = (value: number): string =>
   `0x${(value >>> 0).toString(16).padStart(8, "0")}`;
@@ -102,10 +106,10 @@ const parseUnsigned32 = (raw: string): number | null => {
   return parsed;
 };
 
-const extractAddressBlockIntervals = (
+const extractAddressBlockDescriptors = (
   peripheralEl: Element,
-): RelativeInterval[] => {
-  const blocks: RelativeInterval[] = [];
+): RelativeSpanDescriptor[] => {
+  const blocks: RelativeSpanDescriptor[] = [];
   for (const block of xmlChildrenNamed(peripheralEl, "addressBlock")) {
     const usage = (
       trimmedText(xmlFirstChildNamed(block, "usage")) ?? ""
@@ -117,34 +121,48 @@ const extractAddressBlockIntervals = (
     const blockOffset = parseUnsigned32(offsetText);
     const blockSize = parseUnsigned32(sizeText);
     if (blockOffset === null || blockSize === null || blockSize === 0) continue;
-    blocks.push({ offset: blockOffset, size: blockSize });
+    blocks.push({ offset: blockOffset, size: blockSize, count: 1, stride: 0 });
   }
   return blocks;
 };
 
-const registerByteSize = (
+const parseRegisterDescriptor = (
   regEl: Element,
   defaultBitWidth: number | null,
-): number | null => {
+): RelativeSpanDescriptor | null => {
+  const offsetText = trimmedText(xmlFirstChildNamed(regEl, "addressOffset"));
+  if (offsetText === null) return null;
+  const offset = parseUnsigned32(offsetText);
+  if (offset === null) return null;
+
   const ownSizeText = trimmedText(xmlFirstChildNamed(regEl, "size"));
   const bitWidth =
     ownSizeText !== null ? parseUnsigned32(ownSizeText) : defaultBitWidth;
   if (bitWidth === null || bitWidth === 0) return null;
   const singleBytes = Math.ceil(bitWidth / 8);
+  if (singleBytes <= 0) return null;
+
   const dimText = trimmedText(xmlFirstChildNamed(regEl, "dim"));
-  if (dimText === null) return singleBytes;
+  if (dimText === null) {
+    return { offset, size: singleBytes, count: 1, stride: 0 };
+  }
   const dim = parseUnsigned32(dimText);
   const incText = trimmedText(xmlFirstChildNamed(regEl, "dimIncrement"));
   const inc = incText !== null ? parseUnsigned32(incText) : singleBytes;
-  if (dim === null || dim === 0 || inc === null || inc === 0)
-    return singleBytes;
-  return (dim - 1) * inc + singleBytes;
+  if (dim === null || dim === 0 || inc === null || inc < singleBytes) {
+    return null;
+  }
+  if (inc === singleBytes) {
+    const contiguousBytes = Math.min(0x1_0000_0000, dim * singleBytes);
+    return { offset, size: contiguousBytes, count: 1, stride: 0 };
+  }
+  return { offset, size: singleBytes, count: dim, stride: inc };
 };
 
-const extractRegisterIntervals = (
+const extractRegisterDescriptors = (
   peripheralEl: Element,
   deviceDefaultBits: number | null,
-): RelativeInterval[] => {
+): RelativeSpanDescriptor[] => {
   const registersEl = xmlFirstChildNamed(peripheralEl, "registers");
   if (registersEl === undefined) return [];
   const periphSizeText = trimmedText(xmlFirstChildNamed(peripheralEl, "size"));
@@ -152,35 +170,47 @@ const extractRegisterIntervals = (
     periphSizeText !== null
       ? parseUnsigned32(periphSizeText)
       : deviceDefaultBits;
-  const intervals: RelativeInterval[] = [];
+  const descriptors: RelativeSpanDescriptor[] = [];
   for (const regEl of xmlChildrenNamed(registersEl, "register")) {
-    const offsetText = trimmedText(xmlFirstChildNamed(regEl, "addressOffset"));
-    if (offsetText === null) continue;
-    const offset = parseUnsigned32(offsetText);
-    const size = registerByteSize(regEl, defaultBits);
-    if (offset === null || size === null || size === 0) continue;
-    intervals.push({ offset, size });
+    const desc = parseRegisterDescriptor(regEl, defaultBits);
+    if (desc !== null) descriptors.push(desc);
   }
-  return intervals;
+  return descriptors;
 };
 
-const resolvePeripheralIntervals = (
+interface ResolvedPeripheralSpans {
+  readonly descriptors: readonly RelativeSpanDescriptor[];
+  readonly expandedCount: number;
+}
+
+const EMPTY_RESOLVED_SPANS: ResolvedPeripheralSpans = Object.freeze({
+  descriptors: [],
+  expandedCount: 0,
+});
+
+const resolvePeripheralDescriptors = (
   name: string,
   byName: ReadonlyMap<string, RawSvdPeripheral>,
   visiting: Set<string>,
-  memo: Map<string, readonly RelativeInterval[]>,
-): readonly RelativeInterval[] => {
+  memo: Map<string, ResolvedPeripheralSpans>,
+): ResolvedPeripheralSpans => {
   const cached = memo.get(name);
   if (cached !== undefined) return cached;
   const entry = byName.get(name);
-  if (entry === undefined) return [];
-  if (entry.ownIntervals.length > 0) {
-    memo.set(name, entry.ownIntervals);
-    return entry.ownIntervals;
+  if (entry === undefined) return EMPTY_RESOLVED_SPANS;
+  if (entry.ownDescriptors.length > 0) {
+    const own: ResolvedPeripheralSpans = {
+      descriptors: entry.ownDescriptors,
+      expandedCount: entry.ownExpandedCount,
+    };
+    memo.set(name, own);
+    return own;
   }
-  if (entry.derivedFrom === null || visiting.has(name)) return [];
+  if (entry.derivedFrom === null || visiting.has(name)) {
+    return EMPTY_RESOLVED_SPANS;
+  }
   visiting.add(name);
-  const inherited = resolvePeripheralIntervals(
+  const inherited = resolvePeripheralDescriptors(
     entry.derivedFrom,
     byName,
     visiting,
@@ -203,10 +233,6 @@ const compareHeapItems = (a: HeapItem, b: HeapItem): number =>
 
 class MinSpanHeap {
   readonly #items: HeapItem[] = [];
-
-  get size(): number {
-    return this.#items.length;
-  }
 
   peek(): HeapItem | undefined {
     return this.#items[0];
@@ -273,38 +299,52 @@ const activeSegmentMatch = (
   }
   const first = heap.pop();
   if (first === undefined) return "empty";
-  while (
-    heap.peek() !== undefined &&
-    (heap.peek()!.endAddress <= segStart || heap.peek()!.name === first.name)
-  ) {
-    if (heap.peek()!.endAddress <= segStart) {
+
+  const bestByBase = new Map<number, HeapItem>([[first.peripheralBase, first]]);
+  while (heap.peek() !== undefined) {
+    const top = heap.peek()!;
+    if (top.endAddress <= segStart) {
       heap.pop();
-    } else {
-      // Duplicate block from the same peripheral with identical or wider span.
-      break;
+      continue;
     }
+    if (top.name === first.name && top.span === first.span) {
+      const dup = heap.pop()!;
+      const prev = bestByBase.get(dup.peripheralBase);
+      if (prev === undefined || dup.endAddress > prev.endAddress) {
+        bestByBase.set(dup.peripheralBase, dup);
+      }
+      continue;
+    }
+    break;
   }
-  const second = heap.peek();
-  heap.push(first);
+
+  const contender = heap.peek();
+  for (const rep of bestByBase.values()) {
+    heap.push(rep);
+  }
+
+  if (bestByBase.size > 1) return null;
   if (
-    second !== undefined &&
-    second.name !== first.name &&
-    second.span === first.span
+    contender !== undefined &&
+    contender.name !== first.name &&
+    contender.span === first.span
   ) {
     return null;
   }
   return { name: first.name, baseAddress: first.peripheralBase };
 };
 
-const buildDisjointSegments = (
+function* buildDisjointSegmentsSteps(
   intervals: readonly SvdAddressInterval[],
-): SvdDisjointSegment[] => {
+): Generator<"step", SvdDisjointSegment[], void> {
   if (intervals.length === 0) return [];
   const sortedStarts = [...intervals].sort(
     (a, b) => a.startAddress - b.startAddress || a.endAddress - b.endAddress,
   );
   const coords = new Set<number>();
-  for (const iv of sortedStarts) {
+  for (let i = 0; i < sortedStarts.length; i += 1) {
+    if (i > 0 && i % SVD_COOPERATIVE_STEP === 0) yield "step";
+    const iv = sortedStarts[i]!;
     coords.add(iv.startAddress);
     coords.add(iv.endAddress);
   }
@@ -314,6 +354,7 @@ const buildDisjointSegments = (
   let ivIndex = 0;
 
   for (let i = 0; i + 1 < points.length; i += 1) {
+    if (i > 0 && i % SVD_COOPERATIVE_STEP === 0) yield "step";
     const segStart = points[i]!;
     const segEnd = points[i + 1]!;
     while (
@@ -353,13 +394,97 @@ const buildDisjointSegments = (
     }
   }
   return segments;
+}
+
+const collectRawSvdPeripherals = (
+  peripheralsEl: Element,
+  deviceDefaultBits: number | null,
+): {
+  readonly rawEntries: readonly RawSvdPeripheral[];
+  readonly byName: ReadonlyMap<string, RawSvdPeripheral>;
+} => {
+  const rawEntries: RawSvdPeripheral[] = [];
+  const byName = new Map<string, RawSvdPeripheral>();
+
+  for (const periphEl of xmlChildrenNamed(peripheralsEl, "peripheral")) {
+    const name = trimmedText(xmlFirstChildNamed(periphEl, "name"));
+    const baseText = trimmedText(xmlFirstChildNamed(periphEl, "baseAddress"));
+    if (name === null || baseText === null) continue;
+    const baseAddress = parseUnsigned32(baseText);
+    if (baseAddress === null) continue;
+    const rawDerived = periphEl.getAttribute("derivedFrom") as string | null;
+    const derivedAttr = (rawDerived ?? "").trim();
+    const derivedFrom = derivedAttr.length > 0 ? derivedAttr : null;
+    const blockDescriptors = extractAddressBlockDescriptors(periphEl);
+    const ownDescriptors =
+      blockDescriptors.length > 0
+        ? blockDescriptors
+        : extractRegisterDescriptors(periphEl, deviceDefaultBits);
+    let ownExpandedCount = 0;
+    for (const desc of ownDescriptors) ownExpandedCount += desc.count;
+    const entry: RawSvdPeripheral = {
+      name,
+      baseAddress,
+      derivedFrom,
+      ownDescriptors,
+      ownExpandedCount,
+    };
+    rawEntries.push(entry);
+    byName.set(name, entry);
+  }
+  return { rawEntries, byName };
 };
 
-/** Parse CMSIS-SVD `<peripheral>` address blocks and multi-hop `derivedFrom` chains. */
-export const parseSvdPeripheralSpans = (
+function* expandSvdIntervalsSteps(
+  rawEntries: readonly RawSvdPeripheral[],
+  byName: ReadonlyMap<string, RawSvdPeripheral>,
+  memo: Map<string, ResolvedPeripheralSpans>,
+  visiting: Set<string>,
+): Generator<"step", SvdAddressInterval[], void> {
+  const intervals: SvdAddressInterval[] = [];
+  // not-an-allowance: cooperative yield step counter during bounded SVD interval materialization
+  let emittedSinceYield = 0;
+
+  for (const entry of rawEntries) {
+    const resolved = resolvePeripheralDescriptors(
+      entry.name,
+      byName,
+      visiting,
+      memo,
+    );
+    for (const desc of resolved.descriptors) {
+      for (let idx = 0; idx < desc.count; idx += 1) {
+        emittedSinceYield += 1;
+        if (emittedSinceYield >= SVD_COOPERATIVE_STEP) {
+          emittedSinceYield = 0;
+          yield "step";
+        }
+        const relOffset = desc.offset + idx * desc.stride;
+        const startAddress = entry.baseAddress + relOffset;
+        if (startAddress >= 0x1_0000_0000) break;
+        const endAddress = Math.min(0x1_0000_0000, startAddress + desc.size);
+        if (endAddress <= startAddress) continue;
+        intervals.push({
+          name: entry.name,
+          peripheralBase: entry.baseAddress,
+          startAddress,
+          endAddress,
+        });
+      }
+    }
+  }
+  return intervals;
+}
+
+/** Cooperative generator parsing CMSIS-SVD `<peripheral>` spans and multi-hop `derivedFrom` chains. */
+export function* parseSvdPeripheralSpansSteps(
   svdXml: string,
   maxSvdNodes: number = DEFAULT_LITERAL_POOL_MAX_SVD_XML_NODES,
-): Result<SvdPeripheralProfile, SvdPeripheralParseError> => {
+): Generator<
+  "step",
+  Result<SvdPeripheralProfile, SvdPeripheralParseError>,
+  void
+> {
   const docResult = parseXmlDocumentWithinNodeLimit(svdXml, {
     maximumNodes: maxSvdNodes,
     lineEndings: "normalize",
@@ -392,63 +517,62 @@ export const parseSvdPeripheralSpans = (
   const deviceDefaultBits =
     devSizeText !== null ? parseUnsigned32(devSizeText) : null;
 
-  const rawEntries: RawSvdPeripheral[] = [];
-  const byName = new Map<string, RawSvdPeripheral>();
-
-  for (const periphEl of xmlChildrenNamed(peripheralsEl, "peripheral")) {
-    const name = trimmedText(xmlFirstChildNamed(periphEl, "name"));
-    const baseText = trimmedText(xmlFirstChildNamed(periphEl, "baseAddress"));
-    if (name === null || baseText === null) continue;
-    const baseAddress = parseUnsigned32(baseText);
-    if (baseAddress === null) continue;
-    const rawDerived = periphEl.getAttribute("derivedFrom") as string | null;
-    const derivedAttr = (rawDerived ?? "").trim();
-    const derivedFrom = derivedAttr.length > 0 ? derivedAttr : null;
-    const blockIntervals = extractAddressBlockIntervals(periphEl);
-    const ownIntervals =
-      blockIntervals.length > 0
-        ? blockIntervals
-        : extractRegisterIntervals(periphEl, deviceDefaultBits);
-    const entry: RawSvdPeripheral = {
-      name,
-      baseAddress,
-      derivedFrom,
-      ownIntervals,
-    };
-    rawEntries.push(entry);
-    byName.set(name, entry);
-  }
-
-  const memo = new Map<string, readonly RelativeInterval[]>();
+  const { rawEntries, byName } = collectRawSvdPeripherals(
+    peripheralsEl,
+    deviceDefaultBits,
+  );
+  const memo = new Map<string, ResolvedPeripheralSpans>();
   const visiting = new Set<string>();
-  const intervals: SvdAddressInterval[] = [];
 
-  for (const entry of rawEntries) {
-    const relList = resolvePeripheralIntervals(
-      entry.name,
+  // Account for inherited and array-expanded intervals before allocating them.
+  let requiredIntervals = 0;
+  for (let i = 0; i < rawEntries.length; i += 1) {
+    if (i > 0 && i % SVD_COOPERATIVE_STEP === 0) yield "step";
+    const resolved = resolvePeripheralDescriptors(
+      rawEntries[i]!.name,
       byName,
       visiting,
       memo,
     );
-    for (const rel of relList) {
-      const startAddress = entry.baseAddress + rel.offset;
-      if (startAddress >= 0x1_0000_0000) continue;
-      const endAddress = Math.min(0x1_0000_0000, startAddress + rel.size);
-      if (endAddress <= startAddress) continue;
-      intervals.push({
-        name: entry.name,
-        peripheralBase: entry.baseAddress,
-        startAddress,
-        endAddress,
-      });
-    }
+    requiredIntervals += resolved.expandedCount;
+  }
+  if (requiredIntervals > maxSvdNodes) {
+    return err(
+      decodeLimit(
+        "cmsis-svd",
+        `svd_xml peripheral inheritance and register arrays expand to ${String(requiredIntervals)} intervals, exceeding max_svd_nodes (${String(maxSvdNodes)}).`,
+        {
+          name: "max_svd_nodes",
+          maximum: maxSvdNodes,
+          required: requiredIntervals,
+        },
+      ),
+    );
   }
 
+  const intervals = yield* expandSvdIntervalsSteps(
+    rawEntries,
+    byName,
+    memo,
+    visiting,
+  );
+  const segments = yield* buildDisjointSegmentsSteps(intervals);
   return ok({
     peripheralCount: rawEntries.length,
     intervals,
-    segments: buildDisjointSegments(intervals),
+    segments,
   });
+}
+
+/** Synchronous drain of `parseSvdPeripheralSpansSteps` for callers without an event loop. */
+export const parseSvdPeripheralSpans = (
+  svdXml: string,
+  maxSvdNodes: number = DEFAULT_LITERAL_POOL_MAX_SVD_XML_NODES,
+): Result<SvdPeripheralProfile, SvdPeripheralParseError> => {
+  const steps = parseSvdPeripheralSpansSteps(svdXml, maxSvdNodes);
+  let next = steps.next();
+  while (!next.done) next = steps.next();
+  return next.value;
 };
 
 const CORTEX_M_EXACT_REGISTERS: ReadonlyMap<number, string> = new Map([
