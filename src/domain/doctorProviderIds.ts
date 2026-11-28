@@ -8,6 +8,7 @@ export const DOCTOR_PROVIDER_IDS = [
   "ida",
   "jadx",
   "kuna",
+  "radare2",
   DESKTOP_BUILD_PROVIDER_ID,
 ] as const;
 

@@ -11,6 +11,8 @@ import {
 } from "../application/analysisView/AnalysisViewRetention.js";
 import type { ToolContract } from "../contracts/toolContractTypes.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { ok, type Result } from "../domain/result.js";
@@ -82,6 +84,15 @@ export type ExternalMutation<Input = unknown> =
         signal: AbortSignal,
       ) => Promise<Result<MutationValue, AnalysisError>>;
       readonly retryCleanup: () => Promise<Result<null, AnalysisError>>;
+      /**
+       * Releases the resource `run` created when admission reports a
+       * cancellation after the operation settled, such as while retiring the
+       * previously open target. Without it the caller loses both the
+       * cancellation and the handle to what now keeps running.
+       */
+      readonly release?: (
+        retained: Readonly<Record<string, string>>,
+      ) => Promise<Result<null, AnalysisError>>;
     }
   | {
       readonly kind: "owned-cleanup";
@@ -126,18 +137,35 @@ export const createExternalMutationToolHandler =
         : failed(closed.error);
     }
     if (mutation.kind === "value") {
+      let created: MutationValue | undefined;
       const changed = await runWithExternalMutationAdmission(
         session,
         name,
         signal,
-        () => logToolExecution(logger, name, () => mutation.run(input, signal)),
+        async () => {
+          const settled = await logToolExecution(logger, name, () =>
+            mutation.run(input, signal),
+          );
+          if (settled.ok) created = settled.value;
+          return settled;
+        },
         undefined,
         mutation.retryCleanup,
         (value) => value.retained ?? {},
       );
-      return changed.ok
-        ? server.delivery.toCallToolResult(ok(changed.value.value), contract)
-        : failed(changed.error);
+      if (changed.ok)
+        return server.delivery.toCallToolResult(
+          ok(changed.value.value),
+          contract,
+        );
+      return failed(
+        await releaseCancelledValue(
+          name,
+          changed.error,
+          created,
+          mutation.release,
+        ),
+      );
     }
     const summary =
       mutation.detail === "delivery" && deliveryDetail(input) === "summary";
@@ -168,6 +196,36 @@ export const createExternalMutationToolHandler =
       retention.recordEvidence,
     );
   };
+
+/**
+ * Release a value whose creation a later cancellation overrides, and keep a
+ * failed release owned by the reported error.
+ */
+const releaseCancelledValue = async (
+  operationName: string,
+  error: AnalysisError,
+  created: MutationValue | undefined,
+  release:
+    | ((
+        retained: Readonly<Record<string, string>>,
+      ) => Promise<Result<null, AnalysisError>>)
+    | undefined,
+): Promise<AnalysisError> => {
+  if (
+    release === undefined ||
+    created === undefined ||
+    !(error instanceof AnalysisCancelledError)
+  )
+    return error;
+  const released = await release(created.retained ?? {});
+  return released.ok
+    ? error
+    : analysisErrorWithCleanupDependencies(
+        error,
+        released.error,
+        operationName,
+      );
+};
 
 const deliveryDetail = (input: unknown): unknown =>
   typeof input === "object" && input !== null && "detail" in input

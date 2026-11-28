@@ -7,6 +7,7 @@ import { err, ok } from "../domain/result.js";
 import { INSPECT_YARA_MATCHES_OPERATION } from "../domain/yara/yaraMatches.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { resolveWindowsProviderExecutable } from "../process/resolveWindowsProviderExecutable.js";
 import {
   YARA_COMMAND_REMEDIATION,
   YARA_COMMAND_SETTING,
@@ -16,7 +17,6 @@ import {
   YaraMatchesProvider,
   type YaraCommandSelection,
 } from "../yara/YaraMatchesProvider.js";
-import { resolveWindowsProviderExecutable } from "./resolveWindowsProviderExecutable.js";
 
 /**
  * Bind the configured yara executable. Relative paths are resolved against the

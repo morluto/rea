@@ -46,7 +46,12 @@ it.each(["objdump", "rizin"] as const)(
       },
     };
     const service = new ReverseEngineeringService({
-      commands: { objdump: () => ok(profile), rizin: () => ok(profile) },
+      commands: {
+        objdump: () => ok(profile),
+        rizin: () => ok(profile),
+        radare2: () => ok(profile),
+        radiff2: () => ok(profile),
+      },
     });
     const inspect = (max_output_bytes: number) =>
       provider === "objdump"
@@ -1168,4 +1173,97 @@ it("preserves provider facts when cancellation interrupts the post-run digest", 
       ]),
     });
   }
+});
+
+describe("Radare2 command service", () => {
+  it("returns radare2 evidence for a successful command", async () => {
+    const directory = await createTestTempDirectory("rea-radare2-happy-");
+    const path = join(directory, "fixture.bin");
+    await writeFile(path, "fixture");
+    const service = new ReverseEngineeringService({
+      runOwned: async () => ownedOutput("bin info"),
+    });
+
+    const result = await service.executeRadare2Command({
+      path,
+      command: "ij",
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.provider.id).toBe("radare2");
+    expect(result.value.normalized_result).toMatchObject({
+      stdout: "bin info",
+      stderr: "",
+      exit_code: 0,
+      completion_status: "complete",
+    });
+    expect(result.value.limitations.join(" ")).toContain(
+      "not bound to Evidence",
+    );
+  });
+
+  it("rejects multiline Radare2 command input before launching the provider", async () => {
+    const directory = await createTestTempDirectory("rea-radare2-input-");
+    const path = join(directory, "fixture.bin");
+    await writeFile(path, "fixture");
+    let invoked = false;
+    const service = new ReverseEngineeringService({
+      runOwned: async () => {
+        invoked = true;
+        return ownedOutput();
+      },
+    });
+
+    const result = await service.executeRadare2Command({
+      path,
+      command: "ij\nq",
+    });
+    expect(result.ok).toBe(false);
+    expect(invoked).toBe(false);
+    if (!result.ok) expect(result.error._tag).toBe("AnalysisInputError");
+  });
+});
+
+describe("radiff2 comparison service", () => {
+  it("returns radiff2 evidence for a function-level comparison", async () => {
+    const directory = await createTestTempDirectory("rea-radiff2-");
+    const pathA = join(directory, "a.bin");
+    const pathB = join(directory, "b.bin");
+    await writeFile(pathA, "fixture-a");
+    await writeFile(pathB, "fixture-b");
+    const service = new ReverseEngineeringService({
+      runOwned: async () => ownedOutput('[{"match":"MATCH"}]'),
+    });
+
+    const result = await service.compareWithRadiff2({
+      path_a: pathA,
+      path_b: pathB,
+      operation: "functions",
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.provider.id).toBe("radiff2");
+    expect(result.value.normalized_result).toMatchObject({
+      stdout: '[{"match":"MATCH"}]',
+      exit_code: 0,
+      completion_status: "complete",
+    });
+  });
+
+  it("rejects an unknown operation before launching the provider", async () => {
+    let invoked = false;
+    const service = new ReverseEngineeringService({
+      runOwned: async () => {
+        invoked = true;
+        return ownedOutput();
+      },
+    });
+    const result = await service.compareWithRadiff2({
+      path_a: "/tmp/a",
+      path_b: "/tmp/b",
+      operation: "unknown" as "functions",
+    });
+    expect(result.ok).toBe(false);
+    expect(invoked).toBe(false);
+  });
 });

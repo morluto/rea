@@ -39,7 +39,12 @@ it.each([false, true])(
       identity: { id: "fixture", name: "fixture", version: null },
     };
     const service = new ReverseEngineeringService({
-      commands: { objdump: () => ok(profile), rizin: () => ok(profile) },
+      commands: {
+        objdump: () => ok(profile),
+        rizin: () => ok(profile),
+        radare2: () => ok(profile),
+        radiff2: () => ok(profile),
+      },
       processes: {
         lookup: findsNoExecutable,
         runOwned: async () => {
@@ -78,7 +83,12 @@ it("keeps the owned producer cancellation reason authoritative", async () => {
     identity: { id: "fixture", name: "fixture", version: null },
   };
   const service = new ReverseEngineeringService({
-    commands: { objdump: () => ok(profile), rizin: () => ok(profile) },
+    commands: {
+      objdump: () => ok(profile),
+      rizin: () => ok(profile),
+      radare2: () => ok(profile),
+      radiff2: () => ok(profile),
+    },
     processes: {
       lookup: findsNoExecutable,
       runOwned: async () => {
@@ -138,6 +148,28 @@ it.each([
             arguments: [path],
             repair: fixtureCommandRepair,
             identity: { id: "test.rizin", name: "Test Rizin", version: null },
+          }),
+        radare2: () =>
+          ok({
+            executable: "unused-radare2",
+            arguments: [path],
+            repair: fixtureCommandRepair,
+            identity: {
+              id: "test.radare2",
+              name: "Test Radare2",
+              version: null,
+            },
+          }),
+        radiff2: () =>
+          ok({
+            executable: "unused-radiff2",
+            arguments: [path],
+            repair: fixtureCommandRepair,
+            identity: {
+              id: "test.radiff2",
+              name: "Test radiff2",
+              version: null,
+            },
           }),
       },
     });

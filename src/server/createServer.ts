@@ -236,6 +236,7 @@ export const createServer = (
     firmwareAnalysis,
     gdbSessions,
     rizinDebugSessions,
+    radare2Sessions,
     android,
     pcap,
     flutter,
@@ -394,6 +395,7 @@ export const createServer = (
           cutter: { service: cutter, session },
           gdb: { manager: gdbSessions, session },
           rizinDebug: { manager: rizinDebugSessions, session },
+          radare2: { manager: radare2Sessions, session },
         },
         { logger: toolLogger, recordEvidence, evidenceById },
       );

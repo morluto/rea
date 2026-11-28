@@ -8,14 +8,19 @@ import {
   startFridaSession,
 } from "../application/frida/fridaContractRequests.js";
 import type { CutterBridgeService } from "../cutter/CutterBridgeService.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import {
   GDB_SESSION_TOOLS,
+  RADARE2_SESSION_TOOLS,
   RIZIN_DEBUG_SESSION_TOOLS,
   unknownDebuggerSessionError,
 } from "../domain/debuggerSessionErrors.js";
+import type { Evidence } from "../domain/evidence.js";
 import { ownedJsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { GdbSessionManager } from "../gdb/GdbSessionManager.js";
+import type { Radare2SessionManager } from "../radare2/Radare2SessionManager.js";
 import type { RizinDebugSessionManager } from "../rizin/RizinDebugSessionManager.js";
 import type { ContractToolBindings } from "./contractToolBindings.js";
 import type { ExternalMutationAdmission } from "./externalMutationAdmission.js";
@@ -24,6 +29,15 @@ import type { ExternalMutationAdmission } from "./externalMutationAdmission.js";
 export interface RizinDebugToolOptions {
   readonly manager: Pick<
     RizinDebugSessionManager,
+    "start" | "execute" | "status" | "close" | "retryCleanupFailures"
+  >;
+  readonly session: ExternalMutationAdmission | undefined;
+}
+
+/** Persistent Radare2 sessions a manager owns and the session they may change. */
+export interface Radare2SessionToolOptions {
+  readonly manager: Pick<
+    Radare2SessionManager,
     "start" | "execute" | "status" | "close" | "retryCleanupFailures"
   >;
   readonly session: ExternalMutationAdmission | undefined;
@@ -141,6 +155,135 @@ export const bindRizinDebugTools = ({
       },
     },
     close_rizin_debug_session: {
+      admission: "sdk",
+      session,
+      mutation: {
+        kind: "owned-cleanup",
+        resource: (input) => input.session_id,
+        run: (input) => manager.close(input.session_id),
+      },
+    },
+  };
+};
+
+/** Bind Radare2 session lifecycle and external-mutation command tools. */
+export const bindRadare2Tools = ({
+  manager,
+  session,
+}: Radare2SessionToolOptions): ContractToolBindings => {
+  const retryCleanup = () => manager.retryCleanupFailures();
+  return {
+    start_radare2_session: {
+      admission: "sdk",
+      session,
+      mutation: {
+        kind: "value",
+        retryCleanup,
+        // The engine starts before admission retires the previously open
+        // target; a cancellation during that retirement must close it, or it
+        // keeps running without the caller ever receiving its identifier.
+        release: async (retained) => {
+          const sessionId = retained.session_id;
+          if (sessionId === undefined) return ok(null);
+          const closed = await manager.close(sessionId);
+          return closed.ok ? ok(null) : closed;
+        },
+        run: async (input, signal) => {
+          const started = await manager.start({ path: input.path }, signal);
+          if (!started.ok) return started;
+          const observed: Array<{
+            readonly argument: string;
+            readonly observation: Evidence;
+          }> = [];
+          for (const [index, initialCommand] of (
+            input.initial_commands ?? []
+          ).entries()) {
+            const executed = await manager.execute(
+              started.value.session_id,
+              initialCommand,
+              signal,
+            );
+            if (
+              executed.ok &&
+              !executed.value.result.command_error &&
+              executed.value.result.completion_status === "complete"
+            ) {
+              // Keep each completed command's observation: a later failure
+              // must not make the caller repeat work that already succeeded.
+              observed.push({
+                argument: `initial_commands[${index}]`,
+                observation: executed.value.evidence,
+              });
+              continue;
+            }
+            const closed = await manager
+              .close(started.value.session_id)
+              .catch(() => undefined);
+            const failure = executed.ok
+              ? new AnalysisOutputError(
+                  "start_radare2_session",
+                  executed.value.result.completion_status === "unknown"
+                    ? `An initial Radare2 command could not complete (output or frame limit reached): ${initialCommand}`
+                    : `An initial Radare2 command reported an error: ${executed.value.result.command_logs.map((log) => log.message).join("; ") || executed.value.result.command}`,
+                  { partialObservation: executed.value.evidence },
+                )
+              : executed.error;
+            for (const kept of observed)
+              failure.retainArgumentObservation(
+                kept.argument,
+                kept.observation,
+              );
+            return closed === undefined || closed.ok
+              ? err(failure)
+              : err(
+                  // A failed close keeps the engine owned; binding the
+                  // manager-retained failure lets a verified retry clear
+                  // this wrapper's cleanup status too.
+                  analysisErrorWithCleanupDependencies(
+                    failure,
+                    closed.error,
+                    "start_radare2_session",
+                  ),
+                );
+          }
+          return ok({
+            value: started.value,
+            retained: { session_id: started.value.session_id },
+          });
+        },
+      },
+    },
+    radare2_command: {
+      admission: "sdk",
+      session,
+      mutation: {
+        kind: "evidence",
+        retryCleanup,
+        run: async (input, signal) => {
+          const executed = await manager.execute(
+            input.session_id,
+            input.command,
+            signal,
+          );
+          return executed.ok ? ok(executed.value.evidence) : executed;
+        },
+      },
+    },
+    radare2_session_status: {
+      admission: "sdk",
+      value: async (input) => {
+        const status = manager.status(input.session_id);
+        return status === undefined
+          ? err(
+              unknownDebuggerSessionError(
+                RADARE2_SESSION_TOOLS,
+                "radare2_session_status",
+              ),
+            )
+          : ok({ ...status, recent_output: [...status.recent_output] });
+      },
+    },
+    close_radare2_session: {
       admission: "sdk",
       session,
       mutation: {

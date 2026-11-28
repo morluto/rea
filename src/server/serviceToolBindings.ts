@@ -51,6 +51,7 @@ import { captureSensitiveValues } from "../domain/webNetworkCapture.js";
 import type { WebNetworkCaptureService } from "../application/WebNetworkCaptureService.js";
 import type { FridaInstrumentationService } from "../application/frida/FridaInstrumentationService.js";
 import {
+  resolveRadare2CommandRequest,
   resolveRizinCommandRequest,
   type ReverseEngineeringService,
 } from "../application/reverse/ReverseEngineeringService.js";
@@ -60,9 +61,11 @@ import {
   bindCutterTools,
   bindFridaTools,
   bindGdbTools,
+  bindRadare2Tools,
   bindRizinDebugTools,
   type CutterToolOptions,
   type GdbToolOptions,
+  type Radare2SessionToolOptions,
   type RizinDebugToolOptions,
 } from "./debuggerToolBindings.js";
 import {
@@ -145,11 +148,15 @@ export interface AnalysisSettingsToolOptions {
   readonly delivery: ToolResultDelivery;
 }
 
-/** objdump and Rizin commands, and the session a Rizin command may change. */
+/** One-shot objdump, Rizin, Radare2, and radiff2 commands and the session they may change. */
 export interface ReverseEngineeringToolOptions {
   readonly service: Pick<
     ReverseEngineeringService,
-    "inspectWithObjdump" | "executeRizinCommandValidated" | "retryCleanup"
+    | "inspectWithObjdump"
+    | "executeRizinCommandValidated"
+    | "executeRadare2CommandValidated"
+    | "compareWithRadiff2"
+    | "retryCleanup"
   >;
   readonly session: ExternalMutationAdmission | undefined;
 }
@@ -167,6 +174,19 @@ const prepareRizinCommand =
     if (!cleanup.ok) return cleanup;
     return ok((signal) =>
       service.executeRizinCommandValidated(request.value, { signal }),
+    );
+  };
+
+/** Validate a Radare2 request the same way a Rizin command is validated. */
+const prepareRadare2Command =
+  (service: ReverseEngineeringToolOptions["service"]) =>
+  async (input: unknown): Promise<Result<EvidenceCommand, AnalysisError>> => {
+    const request = resolveRadare2CommandRequest(input);
+    if (!request.ok) return request;
+    const cleanup = await service.retryCleanup("execute_radare2_command");
+    if (!cleanup.ok) return cleanup;
+    return ok((signal) =>
+      service.executeRadare2CommandValidated(request.value, { signal }),
     );
   };
 
@@ -546,10 +566,26 @@ const SERVICE_TOOL_BINDINGS = {
         prepare: prepareRizinCommand(service),
       },
     },
+    execute_radare2_command: {
+      admission: "sdk",
+      session,
+      mutation: {
+        kind: "evidence",
+        retryCleanup: () => service.retryCleanup("execute_radare2_command"),
+        prepare: prepareRadare2Command(service),
+      },
+    },
+    compare_with_radiff2: {
+      admission: "sdk",
+      run: (input, options) => service.compareWithRadiff2(input, options),
+    },
   })) satisfies Bind<ReverseEngineeringToolOptions>,
   // Rizin debugger sessions may change the bound artifact; each command
   // runs under external-mutation admission and keeps a failed cleanup owned.
   rizinDebug: bindRizinDebugTools satisfies Bind<RizinDebugToolOptions>,
+  // Radare2 sessions may change the bound artifact through commands and
+  // plugins; each operation keeps a failed cleanup owned and retryable.
+  radare2: bindRadare2Tools satisfies Bind<Radare2SessionToolOptions>,
   // Starting GDB may load a selected file without running it, outside mutation admission; a console
   // command may change the bound artifact and runs under external-mutation
   // admission, keeping a failed cleanup owned for the next retry.
