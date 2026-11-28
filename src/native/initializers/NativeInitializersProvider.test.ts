@@ -8,6 +8,45 @@ import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.
 import { DEFAULT_NATIVE_STRUCTURE_BYTES } from "../../domain/binaryContainer.js";
 import { inspectNativeInitializersInputSchema } from "../../domain/native/nativeInitializers.js";
 import { NativeInitializersProvider } from "./NativeInitializersProvider.js";
+import { elfMips64RelocatableInitializer } from "./NativeInitializers.fixture.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
+
+it.each([true, false])(
+  "reports MIPS64 initializer uncertainty only when relocations are present (relocated=%s)",
+  async (relocated) => {
+    const dir = await createTestTempDirectory("rea-native-init-mips64-");
+    const path = join(dir, "initializer.o");
+    const bytes = elfMips64RelocatableInitializer(relocated);
+    await writeFile(path, bytes);
+    const provider = new NativeInitializersProvider();
+    try {
+      const result = await provider.inspect(
+        inspectNativeInitializersInputSchema.parse({ path }),
+      );
+      if (!result.ok) throw result.error;
+      expect(result.value.artifact).toMatchObject({
+        path,
+        sha256: sha256Hex(bytes),
+        bytes: bytes.length,
+      });
+      expect(result.value.coverage.status).toBe(
+        relocated ? "unknown" : "complete",
+      );
+      expect(result.value.entries).toEqual([
+        expect.objectContaining({
+          kind: "init_array",
+          slot_file_offset: 0x88,
+          value_va: relocated ? null : "0xfeed",
+          value_file_offset: null,
+          resolution: relocated ? "unresolved" : "raw",
+          symbol: null,
+        }),
+      ]);
+    } finally {
+      await provider.close();
+    }
+  },
+);
 
 const elf64WithAndroidPackedRela = (packed: Buffer): Buffer => {
   const file = Buffer.alloc(Math.max(0x600, 0x300 + packed.length));

@@ -106,6 +106,8 @@ relocations are decoded for x86-64, i386, AArch64, 32-bit ARM and RISC-V
 (RV32/RV64). RISC-V word-sized absolute relocations also resolve defined
 symbols in section tables; imported symbols remain unresolved imports. TLS
 and indirect-function resolver results are not treated as function addresses.
+MIPS64 section REL/RELA records use an unsupported compound encoding; affected
+slots remain unresolved rather than falling back to their stored words.
 A slot is also `unresolved` when a dynamic relocation writes only part of it, starts
 inside it, or writes it more than once with different values.
 
