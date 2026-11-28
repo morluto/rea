@@ -531,6 +531,17 @@ it("keeps size words decoded before a truncated hunk table", () => {
   expect(file.limitations.map((item) => item.kind)).toEqual(["truncated"]);
 });
 
+it("caps retained rows in a truncated hunk size table", () => {
+  const maxHunks = 4;
+  const bytes = Buffer.alloc(20 + 6 * 4);
+  bytes.writeUInt32BE(0x3f3, 0);
+  bytes.writeUInt32BE(100, 8);
+  bytes.writeUInt32BE(99, 16);
+  const file = parseAmigaHunk(bytes, { maxHunks });
+  expect(file.hunks.map((hunk) => hunk.index)).toEqual([0, 1, 2, 3]);
+  expect(file.limitations.map((item) => item.kind)).toEqual(["truncated"]);
+});
+
 it("treats an impossible hunk table as truncation and a possible one as the hunk ceiling", () => {
   const header = Buffer.alloc(20);
   header.writeUInt32BE(0x3f3, 0);

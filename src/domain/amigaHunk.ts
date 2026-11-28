@@ -590,8 +590,8 @@ class AmigaHunkParser {
     }
     const count = last - first + 1;
     // One size word per hunk is the smallest table this count can occupy.
-    // A count whose table cannot fit is a truncated header, not an over-limit
-    // file: the hunk ceiling applies only once that table is possible.
+    // Reject an over-limit count only when its minimum table can fit.
+    // For a truncated table, retain at most the hunk limit in partial rows.
     const minimumTableBytes = count * 4;
     const tableFits =
       Number.isSafeInteger(count) &&
@@ -611,7 +611,13 @@ class AmigaHunkParser {
         at,
         `Hunk header table size ${tableSize} does not cover last hunk ${last}.`,
       );
-    if (!this.readSizeTable(first, count)) return;
+    const tableAt = this.offset;
+    const retainedCount = Math.min(count, this.limits.maxHunks);
+    if (!this.readSizeTable(first, retainedCount)) return;
+    if (!tableFits) {
+      this.failTruncated(tableAt, "hunk size table");
+      return;
+    }
     this.walk();
   }
 
