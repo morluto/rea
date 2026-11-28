@@ -317,6 +317,8 @@ export const parseXarTocXml = (
   });
   if (!document.ok) {
     const failure = document.error;
+    if (failure instanceof ParseFailureError && failure.kind === "limit")
+      return err(failure);
     return err(
       failure instanceof ParseFailureError
         ? malformedInput(MACOS_PKG_FORMAT, failure.failure.detail, {
