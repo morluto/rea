@@ -156,7 +156,7 @@ type AsarExtentRefusal = keyof typeof ASAR_EXTENT_REFUSALS;
  * the ASAR header schema belong to the decoder at the interpretation boundary.
  * Refusals are plain tags: the signature probe refuses most streams it sees.
  */
-const parseAsarHeaderExtents = (
+export const parseAsarHeaderExtents = (
   prefix: Uint8Array,
   archiveBytes?: number,
 ): Result<Omit<AsarHeaderExtents, "archiveBytes">, AsarExtentRefusal> => {
@@ -185,6 +185,15 @@ const parseAsarHeaderExtents = (
     return err("leaves-container");
   return ok({ headerBytes, jsonBytes });
 };
+
+/**
+ * Build the reader failure the owner raises for a two-Pickle extent refusal, so
+ * every caller that holds a refusal tag reports it the one owned way rather than
+ * reconstructing the message, offset and reason itself.
+ */
+export const asarExtentRefusal = (
+  refusal: AsarExtentRefusal,
+): ArtifactReaderFailure => ASAR_EXTENT_REFUSALS[refusal]();
 
 /**
  * Bounded ASAR signature probe. It retains only the 16-byte fixed prefix and
@@ -436,7 +445,7 @@ export const admitAsarHeader = async (
           { integrityCheck: "read-coverage" },
         );
   const parsed = parseAsarHeaderExtents(prefix, observed.size);
-  if (!parsed.ok) throw ASAR_EXTENT_REFUSALS[parsed.error]();
+  if (!parsed.ok) throw asarExtentRefusal(parsed.error);
   if (parsed.value.headerBytes > admission.maximumBytes)
     throw asarHeaderAdmissionFailure(admission, parsed.value.headerBytes);
   return {
@@ -467,6 +476,16 @@ export const readAsarHeader = async (
       "ASAR JSON header read ended before its admitted extent",
       { integrityCheck: "read-coverage" },
     );
+  return parseAsarHeaderJson(bytes);
+};
+
+/**
+ * Decode admitted ASAR header JSON bytes as strict UTF-8 and parse them,
+ * rejecting duplicate member names. A consumer that already holds the admitted
+ * header bytes interprets them through this one function, so none decodes or
+ * accepts them differently from {@link readAsarHeader}.
+ */
+export const parseAsarHeaderJson = (bytes: Uint8Array): unknown => {
   let json: string;
   try {
     json = strictUtf8Decoder("preserve").decode(bytes);

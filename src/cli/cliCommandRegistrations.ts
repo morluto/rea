@@ -57,6 +57,15 @@ export const CLI_COMMAND_REGISTRATIONS = {
     () => import("./binaryDiagnosticsCommands.js"),
     "registerBinaryDiagnosticsCommands",
   ),
+  canonicalize: plain(
+    () => import("./canonicalizeCommands.js"),
+    (module, context) =>
+      module.registerCanonicalizeCommands(
+        context.cli,
+        context.logger,
+        context.environment,
+      ),
+  ),
   wasm: cliRegistrarWithEnvironment(
     () => import("./wasmCommands.js"),
     "registerWasmCommands",
@@ -309,7 +318,13 @@ const CLI_FAMILY_REGISTRATIONS: {
   setup: ["setup", "userConfig"],
   direct: ["coreAnalysis"],
   enhanced: [],
-  native: ["reverseEngineering", "cutter", "utility", "binaryDiagnostics"],
+  native: [
+    "reverseEngineering",
+    "cutter",
+    "utility",
+    "binaryDiagnostics",
+    "canonicalize",
+  ],
   artifact: [
     "wasm",
     "apkSignature",

@@ -107,6 +107,7 @@ import { createAppleIpsService } from "./binaryDiagnostics/appleIps.js";
 import { createKernelModuleService } from "./binaryDiagnostics/kernelModule.js";
 import { createElfDependenciesService } from "./binaryDiagnostics/elfDependencies.js";
 import { createKernelBuildConfigService } from "./binaryDiagnostics/kernelBuildConfig.js";
+import { createCanonicalizeService } from "./canonicalize.js";
 import { pwntoolsHostSupported } from "../native/pwntools/PwntoolsDecoder.js";
 
 import type { PacketCaptureService } from "../application/captures/PacketCaptureService.js";
@@ -418,6 +419,7 @@ const modules = {
   espNvs: service(() => createEspNvsService()),
   firmwareVectorTable: service(() => createFirmwareVectorTableService()),
   elfNotes: service(() => createElfNotesService()),
+  canonicalizeArtifact: service(() => createCanonicalizeService()),
   dwarfUnits: service(() => createDwarfUnitsService()),
   elfDebugLink: service(() => createElfDebugLinkService()),
   nativeInitializers: service(() => createNativeInitializersService()),

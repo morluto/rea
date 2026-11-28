@@ -136,6 +136,30 @@ Review the setup changes and restart your agent. See
 [update and uninstall instructions](docs/getting-started/installation.md#diagnose-update-and-remove)
 for package runner options and troubleshooting.
 
+### Antidote: neutralize anti-analysis shields
+
+Some artifacts are hardened against AI analysis without changing how the program
+runs: decoy control flow and honey metadata, format-valid padding that inflates
+artifacts past an analyzer's resource limits, and truncated or ambiguous
+structure meant to push an agent into confident but wrong summaries. The
+`antidote` pass is a generalized, shield-agnostic answer to that whole class
+(the Blind-LLM-Agents project is one reference target, not the only one).
+
+It is a deterministic, static preprocessing step — it never executes, imports or
+mutates the artifact, and it is lossless for behavior-relevant data: it only
+changes what the analyzer ingests. It separates cheap extraction from reasoning
+so adversarial bytes never reach a token budget, canonicalizes each artifact to
+its behavior-relevant core (dropping non-semantic padding such as WASM custom
+sections, inflated `.asar` header inventory, and oversized or deeply nested
+JSON to an exemplar, a count and a digest), prioritizes structure reachable from
+real entrypoints, flags unreferenced decoys, and reports truncated or unverified
+state as a first-class result rather than guessing. It bounds its own memory and
+work so an inflated input cannot exhaust the pass itself.
+
+Run it from the terminal with `rea antidote <path>` (optionally
+`--antidote-format wasm`, `asar` or `json`), or call the `canonicalize_artifact`
+MCP tool.
+
 ## Showcases
 
 <a href="https://rea.tools/showcase/">
