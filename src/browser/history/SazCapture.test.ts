@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { expect, it } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import { runWithAnalysisOperationSnapshot } from "../../domain/analysisOperationSnapshot.js";
 import { decodeSazCapture } from "./SazCapture.js";
 
 it("preserves mixed source spellings and session ordering within one SAZ", async () => {
@@ -92,5 +93,28 @@ it("keeps rejecting distinct source names that collide on one logical session me
   await expect(decodeSazCapture(path, [])).rejects.toMatchObject({
     failure: { kind: "malformed" },
     message: "SAZ contains duplicate archive member names.",
+  });
+});
+
+it("reports a SAZ archive past the session member count as a count", async () => {
+  const writer = new ZipWriter(new Uint8ArrayWriter(), {
+    useWebWorkers: false,
+  });
+  await writer.add("a.txt", new TextReader("a"));
+  await writer.add("b.txt", new TextReader("b"));
+  const root = await createTestTempDirectory("rea-saz-member-count-");
+  const path = join(root, "capture.saz");
+  await writeFile(path, Buffer.from(await writer.close()));
+  await expect(
+    runWithAnalysisOperationSnapshot(
+      { revision: 1, overrides: { "artifact.member_count": 1 } },
+      () => decodeSazCapture(path, []),
+    ),
+  ).rejects.toMatchObject({
+    message: expect.stringContaining("artifact_limits.zip.member_count"),
+    failure: {
+      kind: "limit",
+      limit: { name: "zip-member-count", maximum: 1 },
+    },
   });
 });
