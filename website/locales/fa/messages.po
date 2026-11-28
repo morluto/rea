@@ -13918,14 +13918,13 @@ msgstr ""
 "به‌جای {ph0} نام یا نشانی تابع را از فهرست توابع هدف قرار دهید. Ghidra باید "
 "از قبل پیکربندی شده باشد."
 
-#: website/public/get-started/index.html:1694
+#: website/public/get-started/index.html:1710
 msgctxt "page:get-started/index.html"
 msgid ""
-"On macOS or Linux, you can also use the curl installer after preparing "
-"Node.js:"
+"On macOS or Linux, review a release-tagged installer before running it. This "
+"example pins 6.10.1. The default-branch script tracks main and is not a "
+"pinned release."
 msgstr ""
-"در macOS یا Linux می‌توانید پس از آماده‌سازی Node.js از نصب‌کنندهٔ curl هم "
-"استفاده کنید:"
 
 #: website/public/get-started/index.html:1732
 msgctxt "page:get-started/index.html"
@@ -17354,3 +17353,11 @@ msgstr ""
 #~ msgstr ""
 #~ "REA-پیدا کردن چگونه نرم افزار کار می کند. مهندسی معکوس با عامل برنامه نویسی "
 #~ "شما."
+
+#~ msgctxt "page:get-started/index.html"
+#~ msgid ""
+#~ "On macOS or Linux, you can also use the curl installer after preparing "
+#~ "Node.js:"
+#~ msgstr ""
+#~ "در macOS یا Linux می‌توانید پس از آماده‌سازی Node.js از نصب‌کنندهٔ curl هم "
+#~ "استفاده کنید:"

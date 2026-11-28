@@ -13127,12 +13127,13 @@ msgid ""
 "list. Ghidra must be configured first."
 msgstr "{ph0}を、対象の関数一覧にある関数名またはアドレスに置き換えてください。先にGhidraの設定が必要です。"
 
-#: website/public/get-started/index.html:1694
+#: website/public/get-started/index.html:1710
 msgctxt "page:get-started/index.html"
 msgid ""
-"On macOS or Linux, you can also use the curl installer after preparing "
-"Node.js:"
-msgstr "macOSまたはLinuxでは、Node.jsを準備した後にcurlインストーラーも使えます。"
+"On macOS or Linux, review a release-tagged installer before running it. This "
+"example pins 6.10.1. The default-branch script tracks main and is not a "
+"pinned release."
+msgstr ""
 
 #: website/public/get-started/index.html:1732
 msgctxt "page:get-started/index.html"
@@ -16376,3 +16377,9 @@ msgstr ""
 #~ "REA: Find out how software works. Reverse engineering with your coding "
 #~ "agent."
 #~ msgstr "REA: ソフトウェアがどのように動作するかを調べます。 コーディングエージェントとのリバースエンジニアリング。"
+
+#~ msgctxt "page:get-started/index.html"
+#~ msgid ""
+#~ "On macOS or Linux, you can also use the curl installer after preparing "
+#~ "Node.js:"
+#~ msgstr "macOSまたはLinuxでは、Node.jsを準備した後にcurlインストーラーも使えます。"

@@ -5714,11 +5714,12 @@ msgid ""
 "list. Ghidra must be configured first."
 msgstr ""
 
-#: website/public/get-started/index.html:1694
+#: website/public/get-started/index.html:1710
 msgctxt "page:get-started/index.html"
 msgid ""
-"On macOS or Linux, you can also use the curl installer after preparing "
-"Node.js:"
+"On macOS or Linux, review a release-tagged installer before running it. This "
+"example pins 6.10.1. The default-branch script tracks main and is not a "
+"pinned release."
 msgstr ""
 
 #. {ph0}: <code>rea setup</code>
@@ -14152,4 +14153,10 @@ msgstr ""
 #~ msgid ""
 #~ "REA: Find out how software works. Reverse engineering with your coding "
 #~ "agent."
+#~ msgstr ""
+
+#~ msgctxt "page:get-started/index.html"
+#~ msgid ""
+#~ "On macOS or Linux, you can also use the curl installer after preparing "
+#~ "Node.js:"
 #~ msgstr ""

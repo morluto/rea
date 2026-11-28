@@ -14354,14 +14354,13 @@ msgstr ""
 "Ersetzen Sie {ph0} durch einen Funktionsnamen oder eine Adresse aus der "
 "Funktionsliste des Ziels. Ghidra muss vorher eingerichtet sein."
 
-#: website/public/get-started/index.html:1694
+#: website/public/get-started/index.html:1710
 msgctxt "page:get-started/index.html"
 msgid ""
-"On macOS or Linux, you can also use the curl installer after preparing "
-"Node.js:"
+"On macOS or Linux, review a release-tagged installer before running it. This "
+"example pins 6.10.1. The default-branch script tracks main and is not a "
+"pinned release."
 msgstr ""
-"Unter macOS oder Linux können Sie nach der Einrichtung von Node.js auch den "
-"curl-Installer verwenden:"
 
 #: website/public/get-started/index.html:1732
 msgctxt "page:get-started/index.html"
@@ -17870,3 +17869,11 @@ msgstr ""
 #~ msgstr ""
 #~ "REA - Finden Sie heraus, wie Software funktioniert. Reverse Engineering mit "
 #~ "Ihrem Codierungsagenten."
+
+#~ msgctxt "page:get-started/index.html"
+#~ msgid ""
+#~ "On macOS or Linux, you can also use the curl installer after preparing "
+#~ "Node.js:"
+#~ msgstr ""
+#~ "Unter macOS oder Linux können Sie nach der Einrichtung von Node.js auch den "
+#~ "curl-Installer verwenden:"

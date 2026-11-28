@@ -14569,14 +14569,13 @@ msgstr ""
 "Αντικαταστήστε το {ph0} με ένα όνομα ή μια διεύθυνση συνάρτησης από τη λίστα"
 " συναρτήσεων του στόχου. Το Ghidra πρέπει να έχει ρυθμιστεί πρώτα."
 
-#: website/public/get-started/index.html:1694
+#: website/public/get-started/index.html:1710
 msgctxt "page:get-started/index.html"
 msgid ""
-"On macOS or Linux, you can also use the curl installer after preparing "
-"Node.js:"
+"On macOS or Linux, review a release-tagged installer before running it. This "
+"example pins 6.10.1. The default-branch script tracks main and is not a "
+"pinned release."
 msgstr ""
-"Σε macOS ή Linux, μπορείτε επίσης να χρησιμοποιήσετε το πρόγραμμα "
-"εγκατάστασης μέσω curl αφού προετοιμάσετε το Node.js:"
 
 #. {ph0}: <code>rea setup</code>
 #: website/public/get-started/index.html:1712
@@ -16888,3 +16887,11 @@ msgstr ""
 #~ msgstr ""
 #~ "REA: Μάθετε πώς λειτουργεί το λογισμικό. Αντίστροφη μηχανική με τον βοηθό "
 #~ "προγραμματισμού σας."
+
+#~ msgctxt "page:get-started/index.html"
+#~ msgid ""
+#~ "On macOS or Linux, you can also use the curl installer after preparing "
+#~ "Node.js:"
+#~ msgstr ""
+#~ "Σε macOS ή Linux, μπορείτε επίσης να χρησιμοποιήσετε το πρόγραμμα "
+#~ "εγκατάστασης μέσω curl αφού προετοιμάσετε το Node.js:"
