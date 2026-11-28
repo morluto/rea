@@ -629,6 +629,7 @@
 * **sqlite:** state the runtime requirement in supported-runtime terms ([#14206](https://github.com/morluto/rea/issues/14206)) ([7b056d2](https://github.com/morluto/rea/commit/7b056d2ff86b742dd68ffab2bdad865cc359d943))
 * **state-view:** preserve partial list status when total count is invalid ([1d78e6a](https://github.com/morluto/rea/commit/1d78e6abe61ab9ed49669ee0a2ecf7c691acf81d))
 * **state-view:** reject unsafe integers in recorded item counts ([00b4082](https://github.com/morluto/rea/commit/00b4082d4c3040116a625cd492c8cc5b7a5bf96e))
+* **tar:** compare stored symlink targets ([#14964](https://github.com/morluto/rea/issues/14964)) ([a04fcd8](https://github.com/morluto/rea/commit/a04fcd85ab2fd7ef3fa26e4f6ffc798f9973dd88))
 * **target:** preserve IDA signatures across short reads ([#13613](https://github.com/morluto/rea/issues/13613)) ([bb51d8e](https://github.com/morluto/rea/commit/bb51d8e7ea82324fa216c99b840aae0119b1d0de))
 * **tar:** read pax values that hdrcharset=BINARY leaves as raw bytes ([#14632](https://github.com/morluto/rea/issues/14632)) ([b4fd7f7](https://github.com/morluto/rea/commit/b4fd7f7b8c49b80382d7391081e3b04d5bc503a7))
 * **tar:** recognize gzip archives with long extra fields ([#14861](https://github.com/morluto/rea/issues/14861)) ([f1ca91e](https://github.com/morluto/rea/commit/f1ca91efd31003a194c4e2886759f96b3237a507))
