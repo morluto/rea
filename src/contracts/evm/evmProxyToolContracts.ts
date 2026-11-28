@@ -14,7 +14,7 @@ export const INSPECT_EVM_PROXY_CONTRACT = {
   ...toolContractMetadata("inspect_evm_proxy", evidenceEffects),
   kind: "artifact-provider",
   description:
-    "Recognize the standard ERC-1167 minimal proxy clone in explicit local EVM runtime bytecode (raw or hex) and report the embedded implementation address with its decoded-byte range. Offline: no engine, execution, chain/RPC access or address lookup. Shortened-address clones, ERC-1967 slots and other proxy patterns are not inspected, so none_recognized does not show the code is not a proxy.",
+    "Recognize the standard ERC-1167 minimal proxy clone in explicit local EVM runtime bytecode (raw or hex) and report the embedded implementation address with its decoded-byte range. Optionally interpret caller-recorded ERC-1967 implementation, admin and beacon slot words (omitted is unavailable, not zero) and infer implementation/beacon edges. Offline: no engine, execution, chain/RPC access or address lookup. Shortened-address clones and other proxy patterns are not inspected, so none_recognized does not show the code is not a proxy.",
   inputSchema: inspectEvmProxyInputSchema,
   outputSchema: evidenceResultOf(evmProxySchema),
   examples: [

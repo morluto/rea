@@ -22,8 +22,21 @@ cliTest(
         "hex",
       ),
     );
+    const snapshot = {
+      chain_id: 1,
+      block: 100,
+      account: `0x${"11".repeat(20)}`,
+      slots: { admin: `0x${"00".repeat(32)}` },
+    };
     const result = await cli.run({
-      arguments: ["inspect-evm-proxy", path, "raw", "--json"],
+      arguments: [
+        "inspect-evm-proxy",
+        path,
+        "raw",
+        "--snapshot",
+        JSON.stringify(snapshot),
+        "--json",
+      ],
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const call = await cli.sharedMcpCall?.();
@@ -31,16 +44,19 @@ cliTest(
     const response = await call("inspect_evm_proxy", {
       path,
       encoding: "raw",
+      snapshot,
     });
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
-    for (const value of [result.json, response.structuredContent])
-      expect(
-        INSPECT_EVM_PROXY_CONTRACT.outputSchema.parse(value).normalized_result
-          .pattern,
-      ).toEqual({
+    for (const value of [result.json, response.structuredContent]) {
+      const report =
+        INSPECT_EVM_PROXY_CONTRACT.outputSchema.parse(value).normalized_result;
+      expect(report.pattern).toEqual({
         kind: "erc1167",
         implementation: `0x${ADDRESS}`,
         implementation_byte_range: { start: 10, end: 30 },
       });
+      expect(report.slots.admin.status).toBe("zero");
+      expect(report.slots.beacon.status).toBe("unavailable");
+    }
   },
 );

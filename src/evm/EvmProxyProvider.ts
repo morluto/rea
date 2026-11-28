@@ -1,7 +1,7 @@
 import { AnalysisTargetFailureError } from "../domain/analysisErrorCore.js";
 import {
   evmProxyBudgetLimit,
-  matchErc1167Clone,
+  deriveProxyFacts,
   type InspectEvmProxyInput,
 } from "../domain/evm/evmProxy.js";
 import { decodeLimit } from "../domain/parseFailure.js";
@@ -62,10 +62,11 @@ export class EvmProxyProvider implements EvmProxyPort {
             encoding: input.encoding,
           },
           bytecode: { sha256: sha256Hex(code), bytes: code.length },
-          pattern: matchErc1167Clone(code),
+          ...deriveProxyFacts(code, input.snapshot),
           limitations: [
             "Only the exact 45-byte ERC-1167 runtime is recognized; shortened-address clones and other proxy patterns are not, so none_recognized does not show the code is not a proxy.",
-            "The embedded address is read from the selected bytes. Deployment, the code at that address and any executed delegatecall are not established.",
+            "Edges are inferred from the selected bytes and caller-supplied slot words. Deployment, snapshot authenticity, whether the bytecode belongs to the snapshot account, code at a target address and any executed delegatecall are not established.",
+            "A beacon's implementation is not resolved; implementation() is never called.",
           ],
         });
       });

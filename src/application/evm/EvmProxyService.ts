@@ -1,5 +1,5 @@
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import type { Evidence } from "../../domain/evidence.js";
+import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
   evmProxySchema,
   inspectEvmProxyInputSchema,
@@ -8,7 +8,6 @@ import type { Result } from "../../domain/result.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { EvmProxyPort } from "../../ports/evm/EvmProxyPort.js";
 import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
-import { observedFileEvidence } from "../observedFileEvidence.js";
 
 const OPERATION = "inspect_evm_proxy";
 
@@ -38,7 +37,24 @@ export class EvmProxyService {
           report.artifact.encoding === input.encoding &&
           report.artifact.bytes <= input.max_file_bytes,
         buildEvidence: (report, identity, parameters) =>
-          observedFileEvidence(report, identity, OPERATION, parameters),
+          createEvidence(
+            {
+              path: report.artifact.path,
+              format: "file",
+              sha256: report.artifact.sha256,
+            },
+            identity,
+            {
+              operation: OPERATION,
+              parameters,
+              result: report,
+              confidence: "derived",
+              limitations: report.limitations,
+              locations: [
+                { kind: "artifact-path", path: report.artifact.path },
+              ],
+            },
+          ),
       },
       rawInput,
       options,
