@@ -233,6 +233,7 @@
 * **artifacts:** keep directory growth probes out of delivered bytes ([#13467](https://github.com/morluto/rea/issues/13467)) ([a3e7ed6](https://github.com/morluto/rea/commit/a3e7ed6d3b1a557be5b7e3ec2b535239525c3217))
 * **artifacts:** keep each extracted file's limitations on that file ([0a80c0b](https://github.com/morluto/rea/commit/0a80c0bee2e63d64c1b35377271380709db853eb))
 * **artifacts:** keep uImage coverage unknown when bytes follow the declared payload ([#14896](https://github.com/morluto/rea/issues/14896)) ([99d5ff7](https://github.com/morluto/rea/commit/99d5ff736136b6eda15a238538fd2ca3b0eee449)), refs [#14893](https://github.com/morluto/rea/issues/14893)
+* **artifacts:** keep wxapkg coverage unknown when bytes lie outside every member ([#14922](https://github.com/morluto/rea/issues/14922)) ([1c9415d](https://github.com/morluto/rea/commit/1c9415da3bc1bc8b1266da5b62c33d3e7a69e775))
 * **artifacts:** keep ZIP coverage on the byte account alone ([bd3c265](https://github.com/morluto/rea/commit/bd3c265212519600decd96d2a074684ef001b30d))
 * **artifacts:** note omitted ./ member prefixes once per ZIP or tar reader ([72ef5d2](https://github.com/morluto/rea/commit/72ef5d20e0c700877e6b654c97e6e52937e03f5f))
 * **artifacts:** omit required_value where reader limits know only a lower bound ([#14646](https://github.com/morluto/rea/issues/14646)) ([b41399d](https://github.com/morluto/rea/commit/b41399d8a61bb86586a2bfbd1b6fb11799ae325e))
