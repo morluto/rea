@@ -279,6 +279,22 @@ describe("parseLabviewRsrc", () => {
     );
   });
 
+  it("reads a name list that follows LabVIEW's declared list extent", () => {
+    // LabVIEW counts the extent from the info header, so it ends where the
+    // name list begins and the names run to the end of the info section.
+    const name = "MDFBuildDevPartMerger_PopulateMsiDriverPackagesTable.vi";
+    const container = buildLabviewRsrc(
+      [{ ident: "LVSR", sections: [Buffer.from("x")] }],
+      [name],
+    );
+    const infoOffset = container.readUInt32BE(16);
+    const infoBytes = container.readUInt32BE(20);
+    container.writeUInt32BE(infoBytes - 1 - name.length, infoOffset + 48);
+    const parsed = parseLabviewRsrc(container);
+    if (!parsed.ok) throw new Error(parsed.failure.message);
+    expect(parsed.value.blocks[0]?.sections[0]?.name).toBe(name);
+  });
+
   it("accepts a list extent that runs past the resource payload", () => {
     // A real LabVIEW-built PE declares more list bytes than its resource
     // payload holds; the records it actually uses still fit.
