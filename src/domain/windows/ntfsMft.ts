@@ -910,6 +910,7 @@ interface MftDecoder {
  */
 class StreamingMftDecoder implements MftDecoder {
   readonly #fileBytes: number;
+  readonly #recordHeaderStartOrdinal: number;
   readonly #headerPrefix = Buffer.allocUnsafe(NTFS_MFT_MIN_RECORD_BYTES);
   #headerFill = 0;
   #written = 0;
@@ -941,8 +942,9 @@ class StreamingMftDecoder implements MftDecoder {
   #firstInvalidExtentOffset: number | undefined;
   #firstInvalidOffset: number | undefined;
 
-  constructor(fileBytes: number) {
+  constructor(fileBytes: number, recordHeaderStartOrdinal: number) {
     this.#fileBytes = fileBytes;
+    this.#recordHeaderStartOrdinal = recordHeaderStartOrdinal;
   }
 
   write(chunk: Uint8Array): Result<void, RegionDecodeFailure> {
@@ -1018,7 +1020,11 @@ class StreamingMftDecoder implements MftDecoder {
     }
     const slotIndex = offset / this.#recordBytes;
     const restored = this.#restored!;
-    const inDetailWindow = this.#recordHeaders.length < MFT_INLINE_HEADER_LIMIT;
+    // Page offsets count FILE rows, not physical slots. Invalid slots have
+    // already been counted above and do not consume a continuation offset.
+    const atOrAfterStart = this.#recordCount >= this.#recordHeaderStartOrdinal;
+    const inDetailWindow =
+      atOrAfterStart && this.#recordHeaders.length < MFT_INLINE_HEADER_LIMIT;
     if (inDetailWindow) {
       const record = readRecordSlice(slice, offset, restored);
       this.#recordHeaders.push(record);
@@ -1047,7 +1053,7 @@ class StreamingMftDecoder implements MftDecoder {
       this.#fileNameCount += summary.fileNameCount;
       if (summary.attributeCoverage === "incomplete")
         this.#incompleteAttributes += 1;
-      this.#nextRecordHeaderIndex ??= slotIndex;
+      if (atOrAfterStart) this.#nextRecordHeaderIndex ??= slotIndex;
       this.#recordCount += 1;
       if (summary.inUse) this.#inUseCount += 1;
       if (summary.directory) this.#directoryCount += 1;
@@ -1137,7 +1143,10 @@ class StreamingMftDecoder implements MftDecoder {
       truncated_tail_bytes: truncatedTailBytes,
       record_headers: step.value,
       omitted_record_headers: this.#recordCount - this.#recordHeaders.length,
-      record_header_start_index: 0,
+      record_header_start_index:
+        this.#recordHeaderStartOrdinal === 0
+          ? 0
+          : (this.#recordHeaders[0]?.index ?? totalSlots),
       next_record_header_index: this.#nextRecordHeaderIndex,
       file_name_count: this.#fileNameCount,
       file_name_incomplete_record_count: this.#incompleteNames,
@@ -1150,11 +1159,12 @@ class StreamingMftDecoder implements MftDecoder {
 
 export const createMftDecoder = (
   fileBytes: number,
+  recordHeaderStartOrdinal = 0,
 ): Result<MftDecoder, RegionDecodeFailure> =>
   Number.isSafeInteger(fileBytes) &&
   fileBytes >= 0 &&
   fileBytes <= MFT_MAX_FILE_BYTES
-    ? ok(new StreamingMftDecoder(fileBytes))
+    ? ok(new StreamingMftDecoder(fileBytes, recordHeaderStartOrdinal))
     : err(
         limit(
           `file is ${String(fileBytes)} bytes, exceeding the fixed ${String(MFT_MAX_FILE_BYTES)}-byte (512 MiB) ceiling`,

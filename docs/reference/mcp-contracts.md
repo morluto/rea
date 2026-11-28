@@ -964,8 +964,12 @@ and ties keep inventory order. The container's own `.` row has a size, so add
 `path_globs: ["**"]` to rank only its entries.
 These selectors do not reopen the artifact or resolve filesystem paths.
 The exception is `format_record_headers`, which pages the per-record headers a
-root artifact retains only a window of inline, such as a systemd journal's
-object headers past the first 32. The caller names the root file in the view's
+root artifact shows only a bounded window of inline, such as a systemd journal's
+object headers or an NTFS $MFT stream's FILE records past the first 32. For
+$MFT, the page offset counts FILE records in physical order, excluding non-FILE
+slots. Each result retains its physical slot index and byte offset. Follow the
+page's `coverage.next_offset`, not the inventory's physical
+`next_record_header_index`. The caller names the root file in the view's
 required absolute `artifact_path`; Evidence's subject path is display metadata and never
 selects what is opened. Each page re-reads that file through its format reader,
 starting at `offset`, after binding it to the inventory's root digest. A changed file fails with

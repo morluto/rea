@@ -51,7 +51,10 @@ import {
 import { androidOtaPayloadSummaryMetadataSchema } from "./androidOtaPayloadSummary.js";
 import { androidVbmetaSummaryMetadataSchema } from "./androidVbmetaSummary.js";
 import { ubiImageSummaryMetadataSchema } from "./ubiImageSummary.js";
-import { systemdJournalObjectHeaderSchema } from "../formatMetadata/androidAndSystemMetadata.js";
+import {
+  ntfsMftMetadataSchema,
+  systemdJournalObjectHeaderSchema,
+} from "../formatMetadata/androidAndSystemMetadata.js";
 import {
   espFlashImageSummaryMetadataSchema,
   summaryRootMetadata,
@@ -137,6 +140,7 @@ export const artifactInventoryItemsSchema = z.array(
     artifactEdgeSchema,
     integrityContradictionSchema,
     systemdJournalObjectHeaderSchema,
+    ntfsMftMetadataSchema.shape.record_headers.element,
   ]),
 );
 
@@ -148,6 +152,8 @@ export const artifactInventoryItemsSchema = z.array(
 const FORMAT_RECORD_HEADER_TOTALS: Readonly<
   Partial<Record<string, (metadata: ArtifactFormatMetadata) => number | null>>
 > = {
+  "ntfs-mft": (metadata) =>
+    metadata.kind === "ntfs-mft" ? metadata.record_count : null,
   "systemd-journal": (metadata) =>
     metadata.kind === "systemd-journal" ? metadata.object_count : null,
 };
