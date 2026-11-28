@@ -4,29 +4,47 @@ import {
   AnalysisResourceConstraintError,
   type AnalysisInputIssue,
 } from "../analysisErrorCore.js";
+import { fixedAllowanceOptions } from "../fixedAllowanceRemediation.js";
 
 export const INSPECT_ANALYSIS_VIEW_OPERATION = "inspect_analysis_view" as const;
 
 export const ANALYSIS_VIEW_PAGE_BYTES = 1024 * 1024;
 
+export const ANALYSIS_VIEW_PAGE_ALLOWANCE =
+  "The 1,048,576-byte analysis-view page allowance";
+
+export const ANALYSIS_VIEW_REFUSAL_PARENT_NOTE =
+  "Only the requested view projection was refused; the completed parent Evidence record remains available.";
+
+const ANALYSIS_VIEW_PAGE_NARROWING = `${ANALYSIS_VIEW_REFUSAL_PARENT_NOTE} For a pageable collection, select fewer fields or a smaller selection; if the error includes details.partial_observation, use that complete parent Evidence, or read or export the parent from its local bundle or retained MCP session. Reading the parent does not increase the page allowance.`;
+
+const withParentNote = (narrowing: string): string =>
+  narrowing.startsWith(ANALYSIS_VIEW_REFUSAL_PARENT_NOTE)
+    ? narrowing
+    : `${ANALYSIS_VIEW_REFUSAL_PARENT_NOTE} ${narrowing}`;
+
 /** Recovery belongs to the view projection, not to the MCP transport. */
-export const ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY = {
-  retryable: false,
-  remediationAction:
-    "The 1,048,576-byte analysis-view page allowance is fixed and has no runtime override. For a pageable collection, select fewer fields or a smaller selection; one oversized field may not fit even in a one-row page. If the error includes details.partial_observation, use that complete parent Evidence. Otherwise, read the parent directly from the caller-supplied bundle, or retrieve/export the retained parent in the same MCP session. Reading the parent does not increase the page allowance.",
-} as const;
+export const ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY = fixedAllowanceOptions(
+  ANALYSIS_VIEW_PAGE_ALLOWANCE,
+  "bytes",
+  {
+    limit: ANALYSIS_VIEW_PAGE_BYTES,
+    unit: "bytes",
+    narrowing: ANALYSIS_VIEW_PAGE_NARROWING,
+  },
+);
 
 /** Refuse an oversized page while retaining the view's selection and recovery. */
 export const analysisViewPageTooLarge = (
   parentEvidenceId: string,
   reason: string,
   {
-    remediationAction = ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY.remediationAction,
+    narrowing = ANALYSIS_VIEW_PAGE_NARROWING,
     ...selection
   }: {
     readonly collection?: string;
     readonly facet?: string;
-    readonly remediationAction?: string;
+    readonly narrowing?: string;
   } = {},
 ): Result<never, AnalysisResourceConstraintError> =>
   err(
@@ -39,7 +57,11 @@ export const analysisViewPageTooLarge = (
         limit_bytes: ANALYSIS_VIEW_PAGE_BYTES,
         ...selection,
       },
-      { retryable: false, remediationAction },
+      fixedAllowanceOptions(ANALYSIS_VIEW_PAGE_ALLOWANCE, "bytes", {
+        limit: ANALYSIS_VIEW_PAGE_BYTES,
+        unit: "bytes",
+        narrowing: withParentNote(narrowing),
+      }),
     ),
   );
 

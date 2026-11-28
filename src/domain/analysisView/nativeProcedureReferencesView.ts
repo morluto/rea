@@ -141,8 +141,8 @@ export const projectNativeProcedureReferencesView = (
       parent.evidenceId,
       "The selected procedure-reference view cannot fit the analysis-view byte budget.",
       {
-        remediationAction:
-          "An individual row or the page context exceeds the fixed 1,048,576-byte projection allowance. Use the complete input Evidence or its local bundle, or retrieve or export the retained parent by the reported ID. If a CLI failure includes a partial observation, that observation is the completed parent.",
+        narrowing:
+          "Use the complete input Evidence or its local bundle, or retrieve or export the retained parent by the reported ID; if a CLI failure includes a partial observation, that observation is the completed parent.",
       },
     );
   if (view.kind === "summary") {

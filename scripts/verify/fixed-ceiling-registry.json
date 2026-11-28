@@ -197,6 +197,28 @@
       "reason": "The analysis-view projection allowance is a resource policy."
     }
   },
+  "src/domain/analysisView/analysisViewErrors.ts": {
+    "ANALYSIS_VIEW_PAGE_ALLOWANCE": {
+      "class": "protocol",
+      "reason": "Sizes each inspect_analysis_view page at 1 MiB so the Evidence envelope plus duplicated MCP text and structuredContent output fit within a single 4 MiB MCP frame and FastMCP's 1 MiB client event cap; complete parent Evidence remains retrievable separately."
+    }
+  },
+  "src/domain/analysisView/nativeFunctionMatchingView.ts": {
+    "ANALYSIS_VIEW_PAGE_ALLOWANCE": {
+      "class": "forwarding",
+      "reason": "Reuses ANALYSIS_VIEW_PAGE_ALLOWANCE declared by analysisViewErrors.ts for byte-sources view pages."
+    }
+  },
+  "src/domain/analysisView/recordedArrayView.ts": {
+    "\"The Evidence JSON nesting depth limit\"": {
+      "class": "representation",
+      "reason": "Recorded array rows nest inside Evidence JSON, whose depth is bounded by MAX_JSON_DEPTH before recursive validation and result cloning."
+    },
+    "ANALYSIS_VIEW_PAGE_ALLOWANCE": {
+      "class": "forwarding",
+      "reason": "Reuses ANALYSIS_VIEW_PAGE_ALLOWANCE declared by analysisViewErrors.ts for recorded-array view pages."
+    }
+  },
   "src/domain/apiContract/GraphqlDocuments.ts": {
     "`The GraphQL AST nesting allowance of ${String(GRAPHQL_CONTRACT_LIMITS.astDepth)} levels`": {
       "class": "representation",
@@ -238,6 +260,12 @@
     "\"The Ghidra installation-properties read allowance\"": {
       "class": "protocol",
       "reason": "Bounds Ghidra's own Ghidra/application.properties, a short key=value installation descriptor of the bring-your-own provider (about 1 KiB); no analysis input passes through it, and a larger file is not a Ghidra installation REA can drive."
+    }
+  },
+  "src/ghidra/GhidraLanguageCatalog.ts": {
+    "\"The Ghidra language-definition read allowance\"": {
+      "class": "protocol",
+      "reason": "Bounds Ghidra's own .ldefs processor language XML descriptors in the bring-your-own installation; no analysis input passes through them."
     }
   },
   "src/ghidra/GhidraSessionErrorProjection.ts": {
@@ -298,6 +326,12 @@
       "class": "pending",
       "issue": 14235,
       "reason": "The RSRC block, total-section, directory-walk, directory-entry and embedded-container allowances are structural resource policies of one read; no per-call control exists yet."
+    }
+  },
+  "src/main/StdioStartupInput.ts": {
+    "\"The MCP startup stdio buffer capacity\"": {
+      "class": "protocol",
+      "reason": "Bounds raw stdin bytes buffered before the MCP SDK's StdioServerTransport attaches; STDIO_DEFAULT_MAX_BUFFER_SIZE is the SDK's own stdio frame buffer capacity."
     }
   },
   "src/native/LldbCallTracer.ts": {

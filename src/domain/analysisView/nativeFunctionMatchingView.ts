@@ -11,7 +11,11 @@ import {
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import { filterSet } from "./selectViewRows.js";
-import { invalidAnalysisView } from "./analysisViewErrors.js";
+import {
+  ANALYSIS_VIEW_PAGE_ALLOWANCE,
+  ANALYSIS_VIEW_REFUSAL_PARENT_NOTE,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import {
   boundedViewLimitations,
   completeWithinViewCoverage,
@@ -28,6 +32,7 @@ import {
 import type { JsonValue } from "../jsonValue.js";
 import { jsonValueByteLength } from "../jsonValueByteLength.js";
 import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
+import { fixedAllowanceOptions } from "../fixedAllowanceRemediation.js";
 
 const matchRow = nativeFunctionMatchSchema.extend({
   left_count: z.number().int().nonnegative(),
@@ -355,13 +360,14 @@ export const projectNativeFunctionMatchingView = (
                   next_offset: source.next_offset,
                 }),
           },
-          {
-            retryable: false,
-            remediationAction:
+          fixedAllowanceOptions(ANALYSIS_VIEW_PAGE_ALLOWANCE, "bytes", {
+            limit: BYTE_SOURCE_PAGE_BYTES,
+            unit: "bytes",
+            narrowing:
               source === undefined
-                ? "Narrow the selection or inspect the original matching Evidence."
-                : "Inspect the original matching Evidence, or export it if retained; use next_offset to continue after the oversized source.",
-          },
+                ? `${ANALYSIS_VIEW_REFUSAL_PARENT_NOTE} Narrow the selection or inspect the original matching Evidence.`
+                : `${ANALYSIS_VIEW_REFUSAL_PARENT_NOTE} Inspect the original matching Evidence, or export it if retained; use next_offset to continue after the oversized source.`,
+          }),
         ),
       );
     if (bytes > BYTE_SOURCE_PROJECTION_BYTES) return tooLarge();
