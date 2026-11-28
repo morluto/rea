@@ -29,6 +29,8 @@ export interface BrowserScenarioSessionPort {
   };
   /** Gaps in selected event families that prevent complete capture claims. */
   eventLimitations?(): readonly string[];
+  /** True only after selected event/body collection and privacy finalization settled. */
+  captureFinalized?(): boolean;
   /** Gaps in establishing the caller's declared initial storage state. */
   storageLimitations?(): readonly string[];
   perform(action: BrowserScenarioAction, signal?: AbortSignal): Promise<void>;

@@ -526,3 +526,94 @@ it.each([
     ],
   });
 });
+
+it("parses many sections with large details and matches indexed glue references", () => {
+  let cursor = 8;
+  const rows: string[] = [];
+  const names: string[] = [];
+  for (let i = 0; i < 60; i++) {
+    const start = cursor + 2;
+    const end = start + 16;
+    rows.push(
+      `   Custom start=0x${start.toString(16).padStart(8, "0")} end=0x${end.toString(16).padStart(8, "0")} (size=0x00000010) "s${i}"`,
+    );
+    names.push(`s${i}\0ignored`);
+    cursor = end;
+  }
+  const dump = [
+    "",
+    "module.wasm:\tfile format wasm 0x1",
+    "",
+    "Sections:",
+    "",
+    ...rows,
+    "",
+    "Section Details:",
+    "",
+    "x".repeat(200_000),
+  ].join("\n");
+  const parsed = parseWabtOutput(dump, cursor, names);
+  expect(parsed.sections).toHaveLength(60);
+  expect(parsed.sections[59]).toEqual({
+    kind: "Custom",
+    start: cursor - 16,
+    end: cursor,
+    bytes: 16,
+    description: '"s59"',
+  });
+
+  const candidates = ["/app/a.wasm", "/other/a.wasm", "/other/b.wasm"];
+  const glue = associateWasmGlue(
+    'fetch("A.WASM#frag"); fetch("./a.wasm"); fetch("https://cdn.example/b.WASM?q=1");',
+    "/app/glue.js",
+    candidates,
+  );
+  expect(glue.references).toMatchObject([
+    {
+      value: "A.WASM#frag",
+      association: "unresolved",
+      candidate_paths: [],
+    },
+    {
+      value: "./a.wasm",
+      association: "local-path-candidate",
+      candidate_paths: ["/app/a.wasm"],
+    },
+    {
+      value: "https://cdn.example/b.WASM?q=1",
+      association: "unresolved",
+      candidate_paths: [],
+    },
+  ]);
+  const upperGlue = associateWasmGlue(
+    'fetch("./A.WASM"); fetch("https://cdn.example/a.wasm?q=1");',
+    "/app/glue.js",
+    ["/app/A.WASM", "/other/a.wasm"],
+  );
+  expect(upperGlue.references).toMatchObject([
+    {
+      value: "./A.WASM",
+      association: "local-path-candidate",
+      candidate_paths: ["/app/A.WASM"],
+    },
+    {
+      value: "https://cdn.example/a.wasm?q=1",
+      association: "basename-candidates",
+      candidate_paths: ["/other/a.wasm"],
+    },
+  ]);
+
+  const decorated = associateWasmGlue(
+    'class C { m(@dec("./a.wasm") x) {} }',
+    "/app/glue.js",
+    ["/app/a.wasm"],
+  );
+  expect(decorated.parse_status).toBe("complete");
+  expect(decorated.references).toMatchObject([
+    {
+      value: "./a.wasm",
+      association: "local-path-candidate",
+      candidate_paths: ["/app/a.wasm"],
+    },
+  ]);
+});

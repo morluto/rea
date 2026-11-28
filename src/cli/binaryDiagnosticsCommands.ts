@@ -1,39 +1,26 @@
-import {
-  createByteEntropyService,
-  createRecordedCrashService,
-  createBinaryLayoutService,
-  createElfNotesService,
-  createDwarfUnitsService,
-  createElfDebugLinkService,
-  createNativeInitializersService,
-  createElfUnwindRangesService,
-  createAppleIpsService,
-  createDevicetreeService,
-  createKernelModuleService,
-  createKernelBuildConfigService,
-  createPeLoadConfigService,
-  createBinaryHardeningService,
-  createPeResourcesService,
-  createPeCertificatesService,
-  createPeImportsService,
-  createWindowsShortcutService,
-  createNativeExportsService,
-  createElfDependenciesService,
-} from "../composition/binaryDiagnostics.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { withEvidenceCallerInputPath } from "../domain/evidence.js";
+import {
+  withEvidenceCallerInputPath,
+  type Evidence,
+} from "../domain/evidence.js";
 import { BYTE_ENTROPY_PROVIDER } from "../domain/investigationProviders.js";
+import { ok } from "../domain/result.js";
 import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../contracts/native/binaryDiagnosticsToolContracts.js";
+import { deliverCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
+import { cliPublicationInvocation } from "./cliEvidencePublication.js";
 import { contractNamed } from "./contractCliDescription.js";
 import {
   callerTargetPath,
-  deliverWithService,
-  inspectWithService,
   registerContractCommand,
 } from "./contractCommand.js";
+import {
+  deliverWithService,
+  inspectWithService,
+} from "./contractCommandRunners.js";
 import { PRODUCER_LIMITS_HELP } from "./producerLimitsOption.js";
+import { UNIVERSAL_SLICE_ARCHITECTURE_HELP } from "./universalSliceOption.js";
 
 type BinaryDiagnosticsOperation =
   (typeof BINARY_DIAGNOSTICS_TOOL_CONTRACTS)[number]["name"];
@@ -58,7 +45,13 @@ export const registerBinaryDiagnosticsCommands = (
       callerPaths: ["path"],
       fields: { path: { description: "Local ELF32/ELF64 image" } },
     },
-    inspectWithService(createElfNotesService, "rea-elf-notes"),
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/elfNotes.js")
+        ).createElfNotesService(),
+      "rea-elf-notes",
+    ),
   );
   registerContractCommand(
     cli,
@@ -74,12 +67,17 @@ export const registerBinaryDiagnosticsCommands = (
             "Local ELF, Mach-O, or PE image, or a DWARF file inside a .dSYM bundle",
         },
         architecture: {
-          description:
-            "CPU family of the slice to read from a universal Mach-O; required for universal files",
+          description: UNIVERSAL_SLICE_ARCHITECTURE_HELP,
         },
       },
     },
-    inspectWithService(createDwarfUnitsService, "rea-dwarf-units"),
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/dwarfUnits.js")
+        ).createDwarfUnitsService(),
+      "rea-dwarf-units",
+    ),
   );
   registerContractCommand(
     cli,
@@ -97,7 +95,13 @@ export const registerBinaryDiagnosticsCommands = (
         },
       },
     },
-    inspectWithService(createElfDebugLinkService, "rea-elf-debug-link"),
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/elfDebugLink.js")
+        ).createElfDebugLinkService(),
+      "rea-elf-debug-link",
+    ),
   );
   registerContractCommand(
     cli,
@@ -114,13 +118,15 @@ export const registerBinaryDiagnosticsCommands = (
             "Local ELF32/ELF64, thin Mach-O or universal Mach-O image",
         },
         architecture: {
-          description:
-            "Slice to read from a universal Mach-O, by CPU family; when several slices share a family, arm64 (arm64 or arm64v8), arm64e (arm64e or arm64e.x1) or x86_64 names the subtype, and a value matching several slices is refused; required for universal files",
+          description: UNIVERSAL_SLICE_ARCHITECTURE_HELP,
         },
       },
     },
     inspectWithService(
-      createNativeInitializersService,
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/nativeInitializers.js")
+        ).createNativeInitializersService(),
       "rea-native-initializers",
     ),
   );
@@ -135,7 +141,58 @@ export const registerBinaryDiagnosticsCommands = (
       callerPaths: ["path"],
       fields: { path: { description: "Local ELF32/ELF64 image" } },
     },
-    inspectWithService(createElfUnwindRangesService, "rea-elf-unwind-ranges"),
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/elfUnwindRanges.js")
+        ).createElfUnwindRangesService(),
+      "rea-elf-unwind-ranges",
+    ),
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_pe_unwind_ranges"),
+    {
+      description:
+        "Inspect x64 PE exception-directory function ranges without executing the image",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      fields: { path: { description: "Local PE32+ image" } },
+    },
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/peUnwindRanges.js")
+        ).createPeUnwindRangesService(),
+      "rea-pe-unwind-ranges",
+    ),
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_macho_function_starts"),
+    {
+      description:
+        "List Mach-O function starts and data-in-code entries without executing the image",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      fields: {
+        path: {
+          description: "Local thin Mach-O or universal Mach-O image",
+        },
+        architecture: {
+          description: UNIVERSAL_SLICE_ARCHITECTURE_HELP,
+        },
+      },
+    },
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/machoFunctionStarts.js")
+        ).createMachoFunctionStartsService(),
+      "rea-macho-function-starts",
+    ),
   );
   registerContractCommand(
     cli,
@@ -154,7 +211,13 @@ export const registerBinaryDiagnosticsCommands = (
         },
       },
     },
-    inspectWithService(createAppleIpsService, "rea-apple-ips"),
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/appleIps.js")
+        ).createAppleIpsService(),
+      "rea-apple-ips",
+    ),
   );
   registerContractCommand(
     cli,
@@ -172,7 +235,13 @@ export const registerBinaryDiagnosticsCommands = (
         },
       },
     },
-    inspectWithService(createKernelModuleService, "rea-kernel-module"),
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/kernelModule.js")
+        ).createKernelModuleService(),
+      "rea-kernel-module",
+    ),
   );
   registerContractCommand(
     cli,
@@ -191,7 +260,10 @@ export const registerBinaryDiagnosticsCommands = (
       },
     },
     inspectWithService(
-      createKernelBuildConfigService,
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/kernelBuildConfig.js")
+        ).createKernelBuildConfigService(),
       "rea-kernel-build-config",
     ),
   );
@@ -206,7 +278,32 @@ export const registerBinaryDiagnosticsCommands = (
       callerPaths: ["path"],
       fields: { path: { description: "Local PE32/PE32+ image" } },
     },
-    inspectWithService(createPeLoadConfigService, "rea-pe-load-config"),
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/peLoadConfig.js")
+        ).createPeLoadConfigService(),
+      "rea-pe-load-config",
+    ),
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_pe_overlay"),
+    {
+      description:
+        "Report bytes appended after a PE image, including a certificate-table split",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      fields: { path: { description: "Local PE32/PE32+ image" } },
+    },
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/peOverlay.js")
+        ).createPeOverlayService(),
+      "rea-pe-overlay",
+    ),
   );
   registerContractCommand(
     cli,
@@ -219,9 +316,14 @@ export const registerBinaryDiagnosticsCommands = (
       callerPaths: ["path"],
       fields: { path: { description: "Local ELF, PE, or Mach-O image" } },
     },
-    inspectWithService(createBinaryHardeningService, "rea-binary-hardening"),
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/binaryHardening.js")
+        ).createBinaryHardeningService(),
+      "rea-binary-hardening",
+    ),
   );
-  const entropy = createByteEntropyService();
   registerContractCommand(
     cli,
     logger,
@@ -231,6 +333,7 @@ export const registerBinaryDiagnosticsCommands = (
         "Inspect file-wide and block byte entropy without executing the file",
       positionals: ["path"],
       callerPaths: ["path"],
+      evidenceDelivery: true,
       fields: {
         path: { description: "Local file" },
         block_size: {
@@ -241,12 +344,14 @@ export const registerBinaryDiagnosticsCommands = (
           description: "Window length in bytes; omit to extend through EOF",
         },
       },
-      omit: {
-        detail:
-          "One-shot output is complete Evidence; this command has no summary delivery",
-      },
     },
-    inspectWithService(() => entropy, BYTE_ENTROPY_PROVIDER.id),
+    deliverWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/byteEntropy.js")
+        ).createByteEntropyService(),
+      BYTE_ENTROPY_PROVIDER.id,
+    ),
   );
   registerContractCommand(
     cli,
@@ -259,7 +364,13 @@ export const registerBinaryDiagnosticsCommands = (
       callerPaths: ["path"],
       fields: { path: { description: "Local PE32/PE32+ image" } },
     },
-    inspectWithService(createPeCertificatesService, "rea-pe-certificates"),
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/peCertificates.js")
+        ).createPeCertificatesService(),
+      "rea-pe-certificates",
+    ),
   );
   registerContractCommand(
     cli,
@@ -272,7 +383,13 @@ export const registerBinaryDiagnosticsCommands = (
       callerPaths: ["path"],
       fields: { path: { description: "Local PE32/PE32+ image" } },
     },
-    inspectWithService(createPeImportsService, "rea-pe-imports"),
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/peImports.js")
+        ).createPeImportsService(),
+      "rea-pe-imports",
+    ),
   );
   registerContractCommand(
     cli,
@@ -287,7 +404,13 @@ export const registerBinaryDiagnosticsCommands = (
         path: { description: "Local Windows Shell Link (.lnk) file" },
       },
     },
-    inspectWithService(createWindowsShortcutService, "rea-windows-shortcut"),
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/windowsShortcut.js")
+        ).createWindowsShortcutService(),
+      "rea-windows-shortcut",
+    ),
   );
   registerContractCommand(
     cli,
@@ -300,7 +423,13 @@ export const registerBinaryDiagnosticsCommands = (
       callerPaths: ["path"],
       fields: { path: { description: "Local PE32/PE32+ image" } },
     },
-    inspectWithService(createPeResourcesService, "rea-pe-resources"),
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/peResources.js")
+        ).createPeResourcesService(),
+      "rea-pe-resources",
+    ),
   );
   registerContractCommand(
     cli,
@@ -319,9 +448,19 @@ export const registerBinaryDiagnosticsCommands = (
           description: "Maximum number of device-tree properties",
         },
         max_depth: { description: "Maximum device-tree nesting depth" },
+        max_decoded_bytes: {
+          description:
+            "Maximum estimated bytes of the decoded report, charged before allocation",
+        },
       },
     },
-    deliverWithService(createDevicetreeService, "rea-devicetree"),
+    deliverWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/devicetree.js")
+        ).createDevicetreeService(),
+      "rea-devicetree",
+    ),
   );
   registerContractCommand(
     cli,
@@ -329,13 +468,19 @@ export const registerBinaryDiagnosticsCommands = (
     contract("inspect_native_exports"),
     {
       description:
-        "Inspect a PE or ELF image's export table without executing it",
+        "Inspect PE or ELF image's export table without executing it",
       positionals: ["path"],
       callerPaths: ["path"],
       evidenceDelivery: true,
       fields: { path: { description: "Local PE or ELF image" } },
     },
-    deliverWithService(createNativeExportsService, "rea-native-exports"),
+    deliverWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/nativeExports.js")
+        ).createNativeExportsService(),
+      "rea-native-exports",
+    ),
   );
   registerContractCommand(
     cli,
@@ -351,16 +496,21 @@ export const registerBinaryDiagnosticsCommands = (
         path: { description: "Local ELF32/ELF64 ET_EXEC or ET_DYN image" },
       },
     },
-    deliverWithService(createElfDependenciesService, "rea-elf-dependencies"),
+    deliverWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/elfDependencies.js")
+        ).createElfDependenciesService(),
+      "rea-elf-dependencies",
+    ),
   );
-  const layout = createBinaryLayoutService(environment);
   registerContractCommand(
     cli,
     logger,
     contract("inspect_binary_layout"),
     {
       description:
-        "Inspect binary file/linked layout without executing the selected object",
+        "Inspect ELF file/linked layout without executing the selected object; Linux x64 with caller-supplied pwntools only",
       positionals: ["path"],
       callerPaths: ["path"],
       jsonText: ["producer_limits"],
@@ -374,7 +524,11 @@ export const registerBinaryDiagnosticsCommands = (
       },
     },
     async (input, context) => {
-      const result = await layout.inspectAndClose(input, {
+      const { createBinaryLayoutService } =
+        await import("../composition/binaryDiagnostics/binaryLayout.js");
+      const result = await createBinaryLayoutService(
+        environment,
+      ).inspectAndClose(input, {
         signal: context.signal,
       });
       return result.ok
@@ -382,7 +536,6 @@ export const registerBinaryDiagnosticsCommands = (
         : projectAnalysisError(result.error);
     },
   );
-  const recorded = createRecordedCrashService(environment);
   registerContractCommand(
     cli,
     logger,
@@ -405,12 +558,139 @@ export const registerBinaryDiagnosticsCommands = (
       },
     },
     async (input, context) => {
-      const result = await recorded.inspectAndClose(input, {
+      const { createRecordedCrashService } =
+        await import("../composition/binaryDiagnostics/recordedCrash.js");
+      const result = await createRecordedCrashService(
+        environment,
+      ).inspectAndClose(input, {
         signal: context.signal,
       });
       return result.ok
         ? withEvidenceCallerInputPath(result.value, callerTargetPath(context))
         : projectAnalysisError(result.error);
     },
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_esp_nvs"),
+    {
+      description:
+        "Decode an ESP-IDF v1/v2 Non-Volatile Storage (NVS) partition or flash slice without executing it",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      evidenceDelivery: true,
+      fields: {
+        path: { description: "Local NVS partition image or ESP flash dump" },
+        partition_offset: {
+          description: "4096-byte aligned NVS start offset inside path",
+        },
+        partition_bytes: {
+          description: "Optional 4096-byte multiple NVS slice length",
+        },
+        max_entries: {
+          description:
+            "Optional inline cap on decoded NVS entries; complete entries remain in --evidence_output",
+        },
+        max_file_bytes: { description: "Maximum input file size in bytes" },
+        max_decoded_bytes: {
+          description:
+            "Maximum estimated decoded NVS representation size in bytes",
+        },
+      },
+    },
+    async (input, context) => {
+      const { createEspNvsService } =
+        await import("../composition/binaryDiagnostics/espNvs.js");
+      const service = createEspNvsService();
+      const retainedSources: Evidence[] = [];
+      const retention =
+        context.delivery?.evidenceOutput !== undefined ||
+        (context.delivery?.detail === undefined &&
+          cliPublicationInvocation().retention !== undefined)
+          ? {
+              recordEvidence: (evidence: Evidence) => {
+                retainedSources.push(evidence);
+                return ok("added" as const);
+              },
+              evidenceById: (id: string) =>
+                retainedSources.find((record) => record.evidence_id === id),
+            }
+          : undefined;
+      return deliverCliAnalysisEvidence({
+        callerInputPath: callerTargetPath(context),
+        run: async () => {
+          const result = await service.inspect(
+            input,
+            { signal: context.signal },
+            retention,
+          );
+          // Summary delivery returns no inline entries; project the summary and
+          // publish its bundle from the uncapped parent Evidence.
+          if (
+            result.ok &&
+            context.delivery?.detail === "summary" &&
+            retainedSources.length > 0
+          ) {
+            return ok(retainedSources.pop()!);
+          }
+          return result;
+        },
+        service,
+        providerId: "rea-esp-nvs",
+        operation: context.operation,
+        signal: context.signal,
+        detail: context.delivery?.detail,
+        evidenceOutput: context.delivery?.evidenceOutput,
+        ...(context.delivery?.view === undefined
+          ? {}
+          : { view: context.delivery.view }),
+        sourceEvidence: retainedSources,
+      });
+    },
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_firmware_vector_table"),
+    {
+      description:
+        "Decode an ARM M-profile or RISC-V mtvec interrupt/trap vector table without executing it",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      evidenceDelivery: true,
+      fields: {
+        path: { description: "Local firmware binary or flash dump" },
+        architecture: {
+          description:
+            "Target profile: an ARM M-profile variant (armv6-m, armv7-m, armv7e-m, armv8-m.base, armv8-m.main, armv8.1-m.main) or riscv",
+        },
+        base_address: {
+          description: "32-bit load base address for file offset 0",
+        },
+        vector_table_offset: {
+          description: "4-byte aligned byte offset of the vector table",
+        },
+        max_entries: { description: "Maximum 32-bit slots to decode" },
+        svd_xml: {
+          description: "Optional CMSIS-SVD XML text for external IRQ names",
+        },
+        max_svd_xml_nodes: {
+          description: "Maximum XML nodes admitted when parsing svd_xml",
+        },
+        max_svd_expanded_chars: {
+          description:
+            "Maximum cumulative CMSIS-SVD interrupt metadata characters",
+        },
+        max_file_bytes: { description: "Maximum input file size in bytes" },
+      },
+    },
+    deliverWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/firmwareVectorTable.js")
+        ).createFirmwareVectorTableService(),
+      "rea-firmware-vector-table",
+    ),
   );
 };

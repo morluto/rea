@@ -1,3 +1,4 @@
+import { analysisViewPageFields } from "./analysisViewPageFields.js";
 import { z } from "zod";
 import { canonicalJson } from "../comparisonSemantics.js";
 import { jsonValueSchema } from "../jsonValue.js";
@@ -7,7 +8,7 @@ import {
   unresolvedCallSchema,
 } from "../native/nativeReference.js";
 import { procedureReferencesSchema } from "../native/procedureReferences.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import {
   createAnalysisViewResultReader,
   type AnalysisViewParent,
@@ -17,21 +18,20 @@ import {
   type AdmittedView,
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
-import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
+import {
+  ANALYSIS_VIEW_PAGE_BYTES as PAGE_BYTES,
+  analysisViewPageTooLarge,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import type { JsonValue } from "../jsonValue.js";
 import { jsonValueByteLength } from "../jsonValueByteLength.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
 
-const page = {
-  kind: z.literal("native-procedure-references"),
-  offset: z.int().nonnegative().default(0),
-  limit: z.int().positive().default(64),
-};
+const page = analysisViewPageFields("native-procedure-references");
 export const procedureReferenceViewRequests = {
   references: z.strictObject({
     ...page,
@@ -98,7 +98,6 @@ export const procedureReferenceSummarySchema = z.strictObject({
 const readSource = createAnalysisViewResultReader(procedureReferencesSchema);
 // The analysis-view projection allowance leaves room for Evidence and MCP
 // encoding expansion. Count JSON without serializing the full page.
-const PAGE_BYTES = 1024 * 1024;
 const DIGEST_BYTES = jsonValueByteLength({ view_digest: "0".repeat(64) }) - 1;
 
 /** Page the retained result without re-querying the provider or changing source coverage. */
@@ -107,15 +106,8 @@ export const projectNativeProcedureReferencesView = (
   view: AdmittedView,
 ) => {
   if (view.kind !== "summary" && view.kind !== "native-procedure-references")
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Procedure-reference Evidence supports summary and native-procedure-references views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Procedure-reference Evidence supports summary and native-procedure-references views.",
     );
   assertOwnedView<
     | SummaryAnalysisView
@@ -139,28 +131,19 @@ export const projectNativeProcedureReferencesView = (
     source_provider: parent.provider ?? null,
     source_analysis_profile_digest: parent.analysisProfile?.digest ?? null,
     source_parameters: jsonValueSchema.parse(parent.parameters ?? null),
-    limitations: boundedViewMessages(
-      parent.limitations,
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent),
     unknowns: [
       "Page coverage describes retained references, not provider discovery completeness or runtime execution.",
     ],
   };
   const tooLarge = () =>
-    err(
-      new AnalysisResourceConstraintError(
-        "inspect_analysis_view",
-        "transport",
-        "The selected procedure-reference view cannot fit the analysis-view byte budget.",
-        { parent_evidence_id: parent.evidenceId, limit_bytes: PAGE_BYTES },
-        {
-          retryable: false,
-          remediationAction:
-            "An individual row or the page context exceeds the fixed 1,048,576-byte projection allowance. Use the complete input Evidence or its local bundle, or retrieve or export the retained parent by the reported ID. If a CLI failure includes a partial observation, that observation is the completed parent.",
-        },
-      ),
+    analysisViewPageTooLarge(
+      parent.evidenceId,
+      "The selected procedure-reference view cannot fit the analysis-view byte budget.",
+      {
+        remediationAction:
+          "An individual row or the page context exceeds the fixed 1,048,576-byte projection allowance. Use the complete input Evidence or its local bundle, or retrieve or export the retained parent by the reported ID. If a CLI failure includes a partial observation, that observation is the completed parent.",
+      },
     );
   if (view.kind === "summary") {
     const result = {

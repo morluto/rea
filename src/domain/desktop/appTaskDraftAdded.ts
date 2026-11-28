@@ -20,7 +20,12 @@ import {
   rankAttributes,
 } from "./attributeRank.js";
 import { pairMembers } from "./memberPairing.js";
-import { elementText, isXmlElement, resolvePointer } from "./viewPointer.js";
+import {
+  elementText,
+  isXmlElement,
+  resolvePointer,
+  xmlParentPointer,
+} from "./viewPointer.js";
 import { selectorOf } from "./viewSelector.js";
 import { isRecord } from "../../kernel/isRecord.js";
 
@@ -69,12 +74,7 @@ type Element = Extract<JsonValue, Record<string, JsonValue>> & {
   readonly children: JsonValue[];
 };
 
-const attributesOf = (element: Element) =>
-  isRecord(element.attributes) ? element.attributes : {};
-
 const listOf = (pointer: string) => pointer.replace(/\/[^/]+$/u, "");
-const parentElementOf = (pointer: string): string | undefined =>
-  /^(?<parent>.+)\/children\/[^/]+$/u.exec(pointer)?.groups?.parent;
 
 /** How many elements with a tag the list a member sits in holds, in a view. */
 const likeCount = (view: JsonValue | null, pointer: string, tag: string) => {
@@ -101,9 +101,7 @@ const copiesSibling = (
           item !== element &&
           isXmlElement(item) &&
           item.name === element.name &&
-          attributes.every(
-            ({ key, value }) => attributesOf(item)[key] === value,
-          ),
+          attributes.every(({ key, value }) => item.attributes[key] === value),
       )
     );
   });
@@ -129,15 +127,17 @@ const idsIn = (roots: readonly JsonValue[]): ReadonlySet<string> => {
   return ids;
 };
 
+/** The conditions encoded in a pointer's final member selector. */
+const lastSelector = (pointer: string) =>
+  selectorOf(unescapeJsonPointerToken(pointer.split("/").at(-1) ?? "")) ?? [];
+
 /** The attribute keys the last segment of a pointer selects by. */
-const selectorKeys = (pointer: string): ReadonlySet<string> => {
-  const segment = unescapeJsonPointerToken(pointer.split("/").at(-1) ?? "");
-  return new Set(
-    [...segment.matchAll(/\[@(?<key>[^=\]]+)=/gu)].map(
-      (match) => match.groups?.key ?? "",
-    ),
+const selectorKeys = (pointer: string): ReadonlySet<string> =>
+  new Set(
+    lastSelector(pointer)
+      .filter(({ prefix }) => prefix === "@")
+      .map(({ key }) => key),
   );
-};
 
 /**
  * A `value_equals` per attribute of an element added whole to a list, as
@@ -188,9 +188,7 @@ export const attributeChecks = (
       item !== element && isXmlElement(item) && item.name === element.name,
   );
   const everywhere = (key: string, value: string) =>
-    likes.every(
-      (item) => isXmlElement(item) && attributesOf(item)[key] === value,
-    );
+    likes.every((item) => isXmlElement(item) && item.attributes[key] === value);
   // A value two or more like siblings all hold, as Grisbi's `Cu="1"`, is a default: it comes after what varies.
   const usual = (key: string, value: string) =>
     likes.length > 1 && everywhere(key, value) ? 1 : 0;
@@ -280,9 +278,9 @@ const plainText = (node: JsonValue | null, bookkeeping = false): string => {
 const keptNamedAncestor = (context: AddedContext, pointer: string) => {
   const { ends } = context;
   for (
-    let at = parentElementOf(pointer);
+    let at = xmlParentPointer(pointer);
     at !== undefined;
-    at = parentElementOf(at)
+    at = xmlParentPointer(at)
   )
     if (
       context.named(ends.final, at) &&
@@ -349,10 +347,7 @@ export const fieldChecks = (
         alreadySeen = true;
         continue;
       }
-      if (value.length > context.chars) {
-        context.long?.push(fieldAt);
-        continue;
-      }
+      if (!checkFits(context, fieldAt, value)) continue;
       texts.push(text);
     }
   });
@@ -420,10 +415,7 @@ const sharedFields = (
 /** The child fields a pointer's last selector names its member by, `[>first_name=Delphine]`, as tag NUL text. */
 const selectorFields = (pointer: string): ReadonlySet<string> =>
   new Set(
-    (
-      selectorOf(unescapeJsonPointerToken(pointer.split("/").at(-1) ?? "")) ??
-      []
-    )
+    lastSelector(pointer)
       .filter(({ prefix }) => prefix === ">")
       .map(({ key, value }) => `${key}\u0000${value}`),
   );
@@ -535,18 +527,14 @@ const fieldsOf = (
     if (pieces.length === 0 || holdsIds(field)) return [];
     // The evaluator reads the field's text as saved, including the line breaks around it.
     const whole = elementText(field);
-    if (pieces.length === 1 && pieces[0]?.trim() === whole.trim()) {
-      const value = whole;
-      if (value.length > context.chars) {
-        context.long?.push(at);
-        return [];
-      }
-      return [wholeTextCheck(file, at, value, undefined)];
-    }
+    if (pieces.length === 1 && pieces[0]?.trim() === whole.trim())
+      return checkFits(context, at, whole)
+        ? [wholeTextCheck(file, at, whole, undefined)]
+        : [];
     return pieces.flatMap((value) =>
-      value.length > context.chars
-        ? []
-        : [{ kind: "text_contains" as const, file, pointer: at, value }],
+      checkFits(context, at, value)
+        ? [{ kind: "text_contains" as const, file, pointer: at, value }]
+        : [],
     ) satisfies Suggestion[];
   });
 };

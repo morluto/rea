@@ -8,9 +8,16 @@ import {
 } from "../domain/binaryContainer.js";
 import { assertArtifactReadActive } from "../resources/index.js";
 import {
+  DEFAULT_GPU_OBJECT_BYTES,
+  DEFAULT_GPU_PARSER_ENTRIES,
+  DEFAULT_GPU_REPORT_BYTES,
+  DEFAULT_GPU_TOKEN_BYTES,
+  GPU_OBJECT_BYTES_LIMIT,
+  type GpuCodeObjectsBudgets,
+} from "../domain/gpu/gpuCodeObjectsBudgets.js";
+import {
+  CONTAINER_SCAN_CHUNK_BYTES,
   gpuCount,
-  GPU_OBJECT_BYTES,
-  GPU_REPORT_BYTES,
   rejectGpu,
   type GpuSource,
 } from "./GpuSource.js";
@@ -24,16 +31,21 @@ export const CLANG_BUNDLE_MAGIC = Buffer.from("__CLANG_OFFLOAD_BUNDLE__");
 export const CCOB_MAGIC = Buffer.from("CCOB");
 const CLANG_BUNDLE_HEADER_BYTES = 32;
 const CLANG_BUNDLE_ENTRY_BYTES = 24;
-const CLANG_BUNDLE_MAX_ENTRIES = 65_536;
-const CLANG_BUNDLE_MAX_ID_BYTES = 65_536;
 export const readClangBundleDirectory = async (
   source: GpuSource,
   base: number,
   signal?: AbortSignal,
+  budgets?: Pick<
+    GpuCodeObjectsBudgets,
+    "maxParserEntries" | "maxTokenBytes" | "maxReportBytes"
+  >,
 ): Promise<{
   declarations: { object: GpuObject; amdTarget: AmdGpuTargetIdentity | null }[];
   end: number;
 }> => {
+  const maxEntries = budgets?.maxParserEntries ?? DEFAULT_GPU_PARSER_ENTRIES;
+  const maxIdBytes = budgets?.maxTokenBytes ?? DEFAULT_GPU_TOKEN_BYTES;
+  const maxDirectoryBytes = budgets?.maxReportBytes ?? DEFAULT_GPU_REPORT_BYTES;
   const header = await source.read(base, CLANG_BUNDLE_HEADER_BYTES);
   if (!header.subarray(0, CLANG_BUNDLE_MAGIC.length).equals(CLANG_BUNDLE_MAGIC))
     rejectGpu("Invalid Clang offload bundle magic");
@@ -51,17 +63,17 @@ export const readClangBundleDirectory = async (
   )
     rejectGpu("Clang offload bundle directory is truncated");
   const count = gpuCount(declaredCount);
-  if (count > CLANG_BUNDLE_MAX_ENTRIES)
+  if (count > maxEntries)
     throw new BinaryResourceFailure(
       "structure",
-      CLANG_BUNDLE_MAX_ENTRIES,
+      maxEntries,
       "HIP bundle entry count exceeds the inventory budget",
       "hip-bundle-entries",
       "entries",
     );
   // One wrapper/identity per admitted entry. Processor text is
   // no longer than its admitted name; cumulative name bytes remain
-  // within the 16 MiB directory bound before identities are allocated.
+  // within the retained report directory budget before identities are allocated.
   const declarations: {
     object: GpuObject;
     amdTarget: AmdGpuTargetIdentity | null;
@@ -100,18 +112,18 @@ export const readClangBundleDirectory = async (
     if (minimumDirectoryEnd > firstPayload)
       rejectGpu("HIP entry overlaps its bundle directory");
     const nameSize = Number(rawNameSize);
-    if (nameSize > CLANG_BUNDLE_MAX_ID_BYTES)
+    if (nameSize > maxIdBytes)
       throw new BinaryResourceFailure(
         "structure",
-        CLANG_BUNDLE_MAX_ID_BYTES,
-        `HIP bundle ID exceeds ${String(CLANG_BUNDLE_MAX_ID_BYTES)} bytes`,
+        maxIdBytes,
+        `HIP bundle ID exceeds ${String(maxIdBytes)} bytes`,
         "hip-bundle-id-bytes",
         "bytes",
       );
-    if (nameOffset - base + nameSize > GPU_REPORT_BYTES)
+    if (nameOffset - base + nameSize > maxDirectoryBytes)
       throw new BinaryResourceFailure(
         "structure",
-        GPU_REPORT_BYTES,
+        maxDirectoryBytes,
         "HIP bundle directory exceeds its retained byte budget",
         "hip-bundle-directory-bytes",
         "bytes",
@@ -185,26 +197,66 @@ export const readCcobHeader = (bytes: Buffer, remaining: number) => {
 export const findLegacyCcobRecoveryTotal = async (
   source: GpuSource,
   base: number,
+  maxObjectBytes: number = DEFAULT_GPU_OBJECT_BYTES,
 ): Promise<number> => {
-  const searchEnd = Math.min(source.size, base + GPU_OBJECT_BYTES);
+  const maxStart = Math.min(source.size, base + maxObjectBytes);
+  // Read up to 4 bytes past `maxStart` so a valid following CCOB magic starting
+  // at `base + maxObjectBytes` (when the corrupt v1 extent equals maxObjectBytes)
+  // is still observed without admitting markers starting beyond `maxStart`.
+  const searchEnd = Math.min(source.size, maxStart + CCOB_MAGIC.length);
+  const maxChunk = Math.max(
+    1,
+    Math.min(CONTAINER_SCAN_CHUNK_BYTES, maxObjectBytes),
+  );
   let position = base + 20;
-  let tail: Buffer = Buffer.alloc(0);
+  const seam = Buffer.allocUnsafe(6);
+  let tailLen = 0;
   while (position < searchEnd) {
     const bytes = await source.read(
       position,
-      Math.min(64 * 1024, searchEnd - position),
+      Math.min(maxChunk, searchEnd - position),
     );
-    const haystack = tail.length === 0 ? bytes : Buffer.concat([tail, bytes]);
-    const index = haystack.indexOf("CCOB");
-    if (index >= 0) return position - tail.length + index - base;
-    tail = haystack.subarray(Math.max(0, haystack.length - 3));
+    if (bytes.length === 0) break;
+    if (tailLen > 0) {
+      const headLen = Math.min(3, bytes.length);
+      bytes.copy(seam, tailLen, 0, headLen);
+      const seamIndex = seam.subarray(0, tailLen + headLen).indexOf("CCOB");
+      if (seamIndex >= 0) {
+        const matchOffset = position - tailLen + seamIndex;
+        if (matchOffset <= maxStart) return matchOffset - base;
+        break;
+      }
+    }
+    const index = bytes.indexOf("CCOB");
+    if (index >= 0) {
+      const matchOffset = position + index;
+      if (matchOffset <= maxStart) return matchOffset - base;
+      break;
+    }
+    if (bytes.length >= 3) {
+      bytes.copy(seam, 0, bytes.length - 3, bytes.length);
+      tailLen = 3;
+    } else {
+      const total = tailLen + bytes.length;
+      if (total <= 3) {
+        bytes.copy(seam, tailLen);
+        tailLen = total;
+      } else {
+        const drop = total - 3;
+        seam.copyWithin(0, drop, tailLen);
+        bytes.copy(seam, tailLen - drop);
+        tailLen = 3;
+      }
+    }
     position += bytes.length;
   }
-  if (searchEnd < source.size)
+  if (maxStart < source.size)
     throw new BinaryResourceFailure(
       "structure",
-      GPU_OBJECT_BYTES,
-      "Legacy CCOB v1 extent exceeds the 128 MiB decoding budget",
+      maxObjectBytes,
+      `Legacy CCOB v1 extent exceeds the ${String(maxObjectBytes)}-byte decoding budget`,
+      GPU_OBJECT_BYTES_LIMIT,
+      "bytes",
     );
   return source.size - base;
 };

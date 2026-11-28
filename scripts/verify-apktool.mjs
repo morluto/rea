@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto";
-import { readFile, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 
-import { ApktoolResourceAnalysisService } from "../dist/application/apktool/ApktoolResourceAnalysisService.js";
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
+import { createApktoolResourceAnalysisService } from "../dist/application/ProviderOperationServices.js";
 import { createApktoolResourceAnalysisProvider } from "../dist/composition/apktool.js";
 
 const options = parseArguments(process.argv.slice(2));
@@ -16,7 +16,7 @@ if (options.help) {
 }
 
 const provider = createApktoolResourceAnalysisProvider(process.env);
-const service = new ApktoolResourceAnalysisService(provider);
+const service = createApktoolResourceAnalysisService(provider);
 let failures = 0;
 const check = (name, condition, detail = "") => {
   const mark = condition ? "ok" : "FAIL";
@@ -64,9 +64,7 @@ try {
     });
     if (decoded !== null) {
       const bytes = await stat(options.apk).then((info) => info.size);
-      const digest = createHash("sha256")
-        .update(await readFile(options.apk))
-        .digest("hex");
+      const digest = await sha256File(options.apk);
       check(
         "decoded target identity matches the file on disk",
         decoded.target.bytes === bytes && decoded.target.sha256 === digest,

@@ -1,4 +1,7 @@
-import { accessSync, constants, statSync } from "node:fs";
+import {
+  isExecutableFileSync,
+  isRegularFileSync,
+} from "../filesystem/regularFileProbe.js";
 import { isAbsolute } from "node:path";
 
 import {
@@ -21,12 +24,15 @@ export interface WiresharkExecutableIdentity {
   readonly sha256: string;
 }
 
-/** Retain only identity facts after a bounded executable read. */
+/** Retain only identity facts after a bounded executable read or stream hash. */
 export const wiresharkExecutableIdentity = (snapshot: {
-  readonly bytes: Uint8Array;
+  readonly bytes: Uint8Array | number;
   readonly sha256: string;
 }): WiresharkExecutableIdentity => ({
-  bytes: snapshot.bytes.byteLength,
+  bytes:
+    typeof snapshot.bytes === "number"
+      ? snapshot.bytes
+      : snapshot.bytes.byteLength,
   sha256: snapshot.sha256,
 });
 
@@ -110,14 +116,6 @@ export const selectWiresharkTool = (
   return { command: configured, source: "environment" };
 };
 
-const isRegularFile = (path: string): boolean => {
-  try {
-    return statSync(path).isFile();
-  } catch {
-    return false;
-  }
-};
-
 /**
  * The first `.com` or `.exe` image Windows' PATH/PATHEXT search would start
  * for a bare tool name, from absolute PATH entries only, as on POSIX. The
@@ -150,7 +148,7 @@ const locateWiresharkToolOnWindowsPath = (
 export const resolvePcapTools = (
   environment: Readonly<Record<string, string | undefined>>,
   platform: NodeJS.Platform,
-  isFile: (path: string) => boolean = isRegularFile,
+  isFile: (path: string) => boolean = isRegularFileSync,
 ): PcapToolSelection => {
   // Report every configuration error before consulting PATH for either tool.
   const selected = {
@@ -192,12 +190,7 @@ export const locateWiresharkTool = (
     environment.PATH ?? "",
     { relativeEntries: "skip" },
   )) {
-    try {
-      accessSync(candidate, constants.X_OK);
-      if (statSync(candidate).isFile()) return candidate;
-    } catch {
-      // Absent or non-executable candidates leave later PATH entries eligible.
-    }
+    if (isExecutableFileSync(candidate)) return candidate;
   }
   return undefined;
 };

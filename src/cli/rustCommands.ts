@@ -3,12 +3,11 @@ import type { Logger } from "pino";
 import { createRustBinaryService } from "../composition/rust.js";
 import { RUST_TOOL_CONTRACTS } from "../contracts/rust/rustToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
-import {
-  deliverWithService,
-  registerContractCommand,
-} from "./contractCommand.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { deliverWithService } from "./contractCommandRunners.js";
 import { PRODUCER_LIMITS_HELP } from "./producerLimitsOption.js";
 import type { CliInstance } from "./types.js";
+import { UNIVERSAL_SLICE_ARCHITECTURE_HELP } from "./universalSliceOption.js";
 
 /** Resolve caller paths and inspect embedded Rust dependencies through the shared workflow. */
 export const registerRustCommands = (
@@ -38,8 +37,7 @@ export const registerRustCommands = (
         },
         producer_limits: { description: PRODUCER_LIMITS_HELP },
         architecture: {
-          description:
-            "Slice to read from a universal Mach-O, by CPU family; when several slices share a family, arm64 (arm64 or arm64v8), arm64e (arm64e or arm64e.x1) or x86_64 names the subtype, and a value matching several slices is refused; required for universal files",
+          description: UNIVERSAL_SLICE_ARCHITECTURE_HELP,
         },
         detail: {
           description:

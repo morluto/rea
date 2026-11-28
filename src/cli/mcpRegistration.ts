@@ -1,5 +1,5 @@
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
-import { Writable } from "node:stream";
+import { cliResultDestination } from "./cliDestination.js";
 
 import { z } from "zod";
 
@@ -33,7 +33,7 @@ import {
   renderCliDocument,
   renderCliOutputArgumentError,
   type CliOutputArgumentValidation,
-} from "../cliOutput.js";
+} from "./cliOutput.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import {
   mcpRegistrationOptionsSchema,
@@ -51,6 +51,7 @@ import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { createCliResultOutput } from "./cliResultOutput.js";
+import { isMcpRegistrationCommand } from "./mcpBuiltinCommands.js";
 import { formatCommandHelp } from "./help.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import type { CliInstance } from "./types.js";
@@ -91,27 +92,14 @@ interface RegistrationPresentation {
   fail(): void;
 }
 
-const precedingFlags = [
-  "--llms",
-  "--llms-full",
-  "--mcp",
-  "--update",
-  "--incur-update-check",
-];
-
 /** Route only the named REA registration operation; other builtin commands keep their owners. */
 export const serveMcpRegistration = (
   global: CliGlobalArguments,
   environment: Readonly<NodeJS.ProcessEnv>,
   options: ServeOptions,
 ): Promise<void> | undefined => {
+  if (!isMcpRegistrationCommand(global)) return undefined;
   const offset = global.command[0] === PRODUCT_IDENTITY.cliBinary ? 1 : 0;
-  if (
-    global.command[offset] !== "mcp" ||
-    global.command[offset + 1] !== "add" ||
-    precedingFlags.some((flag) => global.flags.has(flag))
-  )
-    return undefined;
   return (async () => {
     const presentation = createRegistrationPresentation(global, options);
     if (
@@ -145,7 +133,10 @@ const createRegistrationPresentation = (
 ): RegistrationPresentation | undefined => {
   const write =
     options.stdout ?? ((text: string) => process.stdout.write(text));
+  let exitRequested = false;
   const fail = () => {
+    if (exitRequested) return;
+    exitRequested = true;
     if (options.exit !== undefined) options.exit(1);
     else process.exitCode = 1;
   };
@@ -165,21 +156,7 @@ const createRegistrationPresentation = (
     fail();
     return undefined;
   }
-  const destination =
-    options.stdout === undefined
-      ? process.stdout
-      : new Writable({
-          write(chunk: Buffer, _encoding, callback) {
-            try {
-              write(chunk.toString());
-              callback();
-            } catch (error) {
-              callback(
-                error instanceof Error ? error : new Error(String(error)),
-              );
-            }
-          },
-        });
+  const destination = cliResultDestination(options.stdout);
   const result = createCliResultOutput(output, destination);
   const document = async (value: unknown, failure = false) => {
     const handled = await result?.write(value, {

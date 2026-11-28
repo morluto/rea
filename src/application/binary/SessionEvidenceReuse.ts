@@ -1,8 +1,20 @@
 import {
   evidenceSubjectDisplay,
+  withEvidenceProviderSelection,
+  type ProviderSelectionProvenance,
   type Evidence,
 } from "../../domain/evidence.js";
+import {
+  analysisProfilesEqual,
+  type AnalysisProfileCommitment,
+} from "../../domain/analysisProfile.js";
+import type { SessionProviderRoute } from "./SessionProviderRouter.js";
+import { selectionProvenanceForRoute } from "./ProviderSelectionProvenance.js";
 import { basename } from "node:path";
+import {
+  immutableJsonSnapshotMember,
+  freezeJsonSnapshot,
+} from "../../domain/immutableJson.js";
 import type { AnalysisExecution } from "../../ports/AnalysisProvider.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { equalJsonText } from "../../domain/jsonSerialization.js";
@@ -13,6 +25,127 @@ import { ok, type Result } from "../../domain/result.js";
 import { admitCompletedAnalysis } from "../investigation/admitCompletedAnalysis.js";
 import type { RecoveryAdmission } from "../investigation/InvestigationRetention.js";
 
+const NATIVE_PROVIDERS = new Set(["hopper", "ghidra", "ida", "kuna"]);
+const executionSelections = new WeakMap<
+  AnalysisExecution,
+  | {
+      readonly kind: "fresh";
+      readonly providerId: string;
+      readonly profile: AnalysisProfileCommitment | null;
+      readonly selection: ProviderSelectionProvenance;
+    }
+  | {
+      readonly kind: "replay";
+      readonly selection: ProviderSelectionProvenance | undefined;
+    }
+>();
+
+/** Capture facts from this dispatch's route, never from a later active target. */
+export const bindFreshNativeExecution = (
+  execution: AnalysisExecution,
+  route: SessionProviderRoute,
+): AnalysisExecution => {
+  const binding = route.binding;
+  if (
+    binding === null ||
+    !NATIVE_PROVIDERS.has(binding.identity.id) ||
+    execution.provider.id !== binding.identity.id ||
+    (execution.provider.version !== null &&
+      binding.identity.version !== null &&
+      execution.provider.version !== binding.identity.version) ||
+    (execution.analysisProfile !== undefined &&
+      route.profile !== null &&
+      !analysisProfilesEqual(execution.analysisProfile, route.profile))
+  )
+    return execution;
+  const selection = selectionProvenanceForRoute(route);
+  if (selection === undefined) return execution;
+  // Own the returned envelope so a provider reusing its result object cannot
+  // overwrite the provenance associated with an earlier execution.
+  const observed = { ...execution };
+  executionSelections.set(observed, {
+    kind: "fresh",
+    providerId: binding.identity.id,
+    profile: route.profile,
+    selection: freezeJsonSnapshot(selection),
+  });
+  return observed;
+};
+
+/** Keep the original record's metadata when the snapshot owner authenticates a replay. */
+export const bindSnapshotReplayExecution = (
+  execution: AnalysisExecution,
+  source: Evidence,
+): AnalysisExecution => {
+  if (execution.evidenceId !== source.evidence_id) return execution;
+  executionSelections.set(execution, {
+    kind: "replay",
+    selection: source.provider_selection,
+  });
+  return execution;
+};
+
+/** Carry provenance only across an owner-controlled execution projection. */
+export const carrySessionExecutionProvenance = <
+  Execution extends AnalysisExecution,
+>(
+  source: AnalysisExecution,
+  projected: Execution,
+): Execution => {
+  const selection = executionSelections.get(source);
+  if (selection !== undefined) executionSelections.set(projected, selection);
+  return projected;
+};
+
+/** Resolve captured metadata against the observation identity at the owning boundary. */
+const selectionForObservation = (
+  execution: AnalysisExecution,
+  providerId: string,
+  profile: AnalysisProfileCommitment | null,
+): ProviderSelectionProvenance | undefined => {
+  const captured = executionSelections.get(execution);
+  if (captured === undefined) return undefined;
+  if (captured.kind === "replay") return captured.selection;
+  if (
+    providerId !== captured.providerId ||
+    (profile !== null &&
+      captured.profile !== null &&
+      !analysisProfilesEqual(profile, captured.profile))
+  )
+    return undefined;
+  return captured.selection;
+};
+
+/** Borrow only the captured metadata that recovery must budget before materialization. */
+export const sessionExecutionEvidenceMetadata = (
+  execution: AnalysisExecution,
+): Readonly<Pick<Evidence, "provider_selection">> => {
+  const selection = selectionForObservation(
+    execution,
+    execution.provider.id,
+    execution.analysisProfile ?? null,
+  );
+  return Object.freeze(
+    selection === undefined ? {} : { provider_selection: selection },
+  );
+};
+
+/** Use captured native dispatch facts or authenticated historical replay metadata. */
+export const withSessionExecutionProvenance = (
+  execution: AnalysisExecution,
+  evidence: Evidence,
+): Evidence => {
+  if (evidence.provider_selection !== undefined) return evidence;
+  const selection = selectionForObservation(
+    execution,
+    evidence.provider.id,
+    evidence.analysis_profile,
+  );
+  return selection === undefined
+    ? evidence
+    : withEvidenceProviderSelection(evidence, selection);
+};
+
 // Proof belongs to the exact object issued by the session. A wrapper that
 // copies or transforms the observation cannot carry it forward.
 const issued = new WeakMap<AnalysisExecution, Evidence>();
@@ -22,9 +155,15 @@ export const bindSessionEvidenceExecution = (
   evidence: Evidence,
   callerInputPath: string | undefined,
 ): AnalysisExecution => {
+  // A sourced execution reuses its record only when that record links exactly
+  // the sources the execution carries, in order, so the reused Evidence keeps
+  // its authenticated provenance.
+  const sources = execution.sourceEvidence ?? [];
   if (
-    (execution.sourceEvidence !== undefined &&
-      execution.sourceEvidence.length > 0) ||
+    sources.length !== evidence.evidence_links.length ||
+    sources.some(
+      (source, index) => source.evidence_id !== evidence.evidence_links[index],
+    ) ||
     evidence.caller_input_path !== callerInputPath
   )
     return execution;
@@ -46,8 +185,12 @@ export const bindSessionEvidenceExecution = (
       : Object.freeze({ ...execution.subject });
   const result = Object.freeze({
     ...execution,
-    result: evidence.normalized_result,
-    rawResult: evidence.raw_result,
+    result:
+      immutableJsonSnapshotMember(evidence, "normalized_result") ??
+      evidence.normalized_result,
+    rawResult:
+      immutableJsonSnapshotMember(evidence, "raw_result") ??
+      evidence.raw_result,
     provider: evidence.provider,
     ...(evidence.analysis_profile === null
       ? {}
@@ -60,7 +203,7 @@ export const bindSessionEvidenceExecution = (
     ...(subject === undefined ? {} : { subject }),
   });
   issued.set(result, evidence);
-  return result;
+  return carrySessionExecutionProvenance(execution, result);
 };
 
 const sessionEvidenceForExecution = (
@@ -118,16 +261,20 @@ export const completedOperationEvidence = (
   };
   const admitted = admitCompletedAnalysis(operation, parameters, observation, {
     callerTarget: options.target,
+    metadata: sessionExecutionEvidenceMetadata(execution),
     admit: options.admitRecovery,
   });
   if (!admitted.ok) return admitted;
   return ok(
-    createAnalysisExecutionEvidence(
-      operation,
-      parameters,
-      observation,
-      "observed",
-      { callerTarget: options.target },
+    withSessionExecutionProvenance(
+      execution,
+      createAnalysisExecutionEvidence(
+        operation,
+        parameters,
+        observation,
+        "observed",
+        { callerTarget: options.target, immutable: true },
+      ),
     ),
   );
 };

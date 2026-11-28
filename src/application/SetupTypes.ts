@@ -39,7 +39,7 @@ export interface SetupInitialState {
 export type ClientConfigurationResult =
   | {
       readonly status: "failed";
-      readonly reason: "registration_ownership";
+      readonly reason: "registration_ownership" | "invalid_configuration";
       readonly detail: string;
     }
   | {

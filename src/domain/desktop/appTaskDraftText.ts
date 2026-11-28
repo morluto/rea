@@ -11,8 +11,13 @@ import { isPlacedItem, placedItemCheck } from "./appTaskDraftItems.js";
 import { valueEqualsCheck } from "./appTaskDraftScalars.js";
 import { rankAttributes } from "./attributeRank.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
-import { elementText, isXmlElement, resolvePointer } from "./viewPointer.js";
-import { isRecord } from "../../kernel/isRecord.js";
+import {
+  elementText,
+  isXmlElement,
+  lastSelectorOf,
+  resolvePointer,
+  xmlParentPointer,
+} from "./viewPointer.js";
 
 /** The pointers a diff lists, of every kind. */
 type Listed = Pick<DesktopStateDifference, "added" | "changed" | "removed">;
@@ -44,10 +49,6 @@ export interface WholeTextSuggestions {
   readonly covers: (pointer: string) => boolean;
 }
 
-/** The element a member of `children` sits in: the pointer up to its last `/children/N`; none for the root. */
-const parentOf = (pointer: string): string | undefined =>
-  /^(?<parent>.+)\/children\/[^/]+$/u.exec(pointer)?.groups?.parent;
-
 const isWhitespace = (text: string) => /^[ \t\r\n]*$/u.test(text);
 
 /** The element whose name or attribute a pointer reaches; none for text or a whole element. */
@@ -70,29 +71,14 @@ const holdsText = (value: JsonValue | undefined): boolean =>
 
 /** An element's parent below the document's root, whose text a check could read instead; none for a child of the root. */
 const parentBelowRoot = (pointer: string): string | undefined => {
-  const parent = parentOf(pointer);
-  return parent === undefined || parentOf(parent) === undefined
+  const parent = xmlParentPointer(pointer);
+  return parent === undefined || xmlParentPointer(parent) === undefined
     ? undefined
     : parent;
 };
 
-/** Whether the diff names an element by one of its attributes, as `[name=p][@xid=6]`, rather than by its tag alone or its position. */
-const namedByAttribute = (pointer: string) =>
-  (pointer.split("/").at(-1) ?? "").includes("[@");
-
-/** An element's attributes; none for any other value. */
-const attributesOf = (value: JsonValue | undefined) =>
-  isXmlElement(value) && isRecord(value.attributes) ? value.attributes : {};
-
 /** Whether an attribute identifies its element, as `id`, `xml:id` or AbiWord's `xid` do, rather than formatting it. */
 const isIdentifier = (key: string) => /^(?:[^:]*:)?x?id$/iu.test(key);
-
-/** Whether the diff names an element by an identifier, as `[name=p][@xid=6]`. */
-const namedByIdentifier = (pointer: string) => {
-  const key = /\]\[@(?<key>[^=]+)=/u.exec(pointer.split("/").at(-1) ?? "")
-    ?.groups?.key;
-  return key !== undefined && isIdentifier(key);
-};
 
 /**
  * Whether an end holds an element whose text a check reads as nothing, as an
@@ -130,12 +116,12 @@ interface Candidate {
  * among its siblings at each; none when no attribute does.
  */
 const byOwnAttribute = (element: string, ends: Ends): Candidate | undefined => {
-  const parent = parentOf(element);
+  const parent = xmlParentPointer(element);
   const before = resolvePointer(ends.baseline, element, "xml");
   const after = resolvePointer(ends.final, element, "xml");
   if (parent === undefined || !isXmlElement(before) || !isXmlElement(after))
     return undefined;
-  const attributes = attributesOf(after);
+  const attributes = after.attributes;
   const keys = Object.keys(attributes);
   for (const key of [
     ...keys.filter(isIdentifier),
@@ -151,7 +137,7 @@ const byOwnAttribute = (element: string, ends: Ends): Candidate | undefined => {
     const value = attributes[key];
     if (
       typeof value !== "string" ||
-      attributesOf(before)[key] !== value ||
+      before.attributes[key] !== value ||
       /[=[\]]/u.test(key) ||
       value.includes("][") ||
       isStamp(value)
@@ -176,7 +162,7 @@ const byOwnAttribute = (element: string, ends: Ends): Candidate | undefined => {
  * beside its geometry is the shape's text.
  */
 const isField = (pointer: string, ends: Ends) => {
-  const parent = parentOf(pointer);
+  const parent = xmlParentPointer(pointer);
   const tag = /^\[name=(?<tag>[^\]]+)\]$/u.exec(pointer.split("/").at(-1) ?? "")
     ?.groups?.tag;
   return (
@@ -262,19 +248,20 @@ const outsideRuns = (pointer: string, ends: Ends): readonly Candidate[] => {
   let current = pointer;
   // A paragraph may be the document's root.
   for (
-    let parent = parentOf(current);
+    let parent = xmlParentPointer(current);
     parent !== undefined && mixedAt(parent, ends);
-    parent = parentOf(current)
+    parent = xmlParentPointer(current)
   )
     current = parent;
   if (isField(current, ends))
     return [{ element: current, pointer: current, identifier: false }];
   const passed: string[] = [];
   let named = current;
-  while (!namedByAttribute(named)) {
+  let conditions = lastSelectorOf(named);
+  while (!conditions.some(({ prefix }) => prefix === "@")) {
     const parent = parentBelowRoot(named);
     if (parent === undefined) {
-      const stopped = parentOf(named);
+      const stopped = xmlParentPointer(named);
       const chain = [...passed, named].filter(
         (element, index, all) => all.indexOf(element) === index,
       );
@@ -300,6 +287,7 @@ const outsideRuns = (pointer: string, ends: Ends): readonly Candidate[] => {
     }
     passed.push(named);
     named = parent;
+    conditions = lastSelectorOf(named);
   }
   const noisy = (element: string) =>
     holdsNoisyText(resolvePointer(ends.final, element, "xml"));
@@ -320,7 +308,13 @@ const outsideRuns = (pointer: string, ends: Ends): readonly Candidate[] => {
       }));
   }
   const ranked = [
-    { element: named, pointer: named, identifier: namedByIdentifier(named) },
+    {
+      element: named,
+      pointer: named,
+      identifier: conditions.some(
+        ({ prefix, key }) => prefix === "@" && isIdentifier(key),
+      ),
+    },
     ...passed
       .toReversed()
       .flatMap((element) => byOwnAttribute(element, ends) ?? []),
@@ -347,7 +341,7 @@ const abovePosition = (pointer: string, ends: Ends): readonly Candidate[] => {
   );
   if (step < 0) return [];
   const element = segments.slice(0, step - 1).join("/");
-  if (parentOf(element) === undefined) return [];
+  if (xmlParentPointer(element) === undefined) return [];
   const own = byOwnAttribute(element, ends);
   return [
     ...(own === undefined ? [] : [own]),
@@ -412,9 +406,9 @@ export const holdsFields = (value: JsonValue | undefined): boolean =>
 /** Whether an element at a pointer sits in a paragraph or other text, an ancestor's tag naming one (`TEXT_TAG`), as Word's `<w:r>` run in its `<w:p>`. */
 const inText = (view: JsonValue | null, pointer: string): boolean => {
   for (
-    let parent = parentOf(pointer);
+    let parent = xmlParentPointer(pointer);
     parent !== undefined;
-    parent = parentOf(parent)
+    parent = xmlParentPointer(parent)
   ) {
     const element = resolvePointer(view, parent, "xml");
     if (
@@ -476,11 +470,11 @@ const listOf = (
  * text of its own, whose whole text a check would read instead.
  */
 const keptAncestor = (pointer: string, ends: Ends): string | undefined => {
-  let parent = parentOf(pointer);
+  let parent = xmlParentPointer(pointer);
   while (parent !== undefined && !keptAt(parent, ends))
-    parent = parentOf(parent);
+    parent = xmlParentPointer(parent);
   return parent === undefined ||
-    (parentOf(parent) === undefined && !mixedAt(parent, ends))
+    (xmlParentPointer(parent) === undefined && !mixedAt(parent, ends))
     ? undefined
     : parent;
 };
@@ -594,7 +588,6 @@ const textCheck = (
     !relaidOut &&
     value.length <= context.place.limit.chars &&
     !isStamp(value) &&
-    !holdsNoisyText(now) &&
     !holdsSplitDate(context.ends.final, pointer)
     ? {
         element: candidate.element,
@@ -630,7 +623,7 @@ const textHolders = (change: Listed, ends: Ends, place: TextPlacement) => {
     how: "changed" | "added" | "removed",
   ) => {
     const value = resolvePointer(view, pointer, "xml");
-    const parent = parentOf(pointer);
+    const parent = xmlParentPointer(pointer);
     // Noise, such as a time the app stamps, never makes its ancestor's whole text a check.
     if (place.noise(pointer)) return;
     if (typeof value === "string") {

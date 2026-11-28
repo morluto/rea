@@ -79,7 +79,24 @@ export function isWindowUniform(
   if (boundedStart >= boundedEnd) {
     return false;
   }
-  for (let index = boundedStart; index < boundedEnd; index += 1) {
+  let index = boundedStart;
+  const unrolledEnd = boundedEnd - 7;
+  while (index < unrolledEnd) {
+    if (
+      buffer[index] !== byte ||
+      buffer[index + 1] !== byte ||
+      buffer[index + 2] !== byte ||
+      buffer[index + 3] !== byte ||
+      buffer[index + 4] !== byte ||
+      buffer[index + 5] !== byte ||
+      buffer[index + 6] !== byte ||
+      buffer[index + 7] !== byte
+    ) {
+      return false;
+    }
+    index += 8;
+  }
+  for (; index < boundedEnd; index += 1) {
     if (buffer[index] !== byte) {
       return false;
     }

@@ -255,6 +255,19 @@ class BridgeTest(unittest.TestCase):
             batch_rows[1]["callees"],
         )
         self.assertEqual(batch_rows[1], batch_rows[2])
+        self.query("callees", {"addrs": ["0x1000"], "limit": 500})
+        self.assertEqual(enum_calls, [0])
+
+    def test_list_funcs_filter_and_string_at(self):
+        filtered = self.query("list_funcs", {"queries": {"offset": 0, "count": 10, "filter": "help"}})
+        self.assertEqual(
+            filtered,
+            [{"data": [{"addr": "0x2000", "name": "helper", "size": "0x8"}], "next_offset": None}],
+        )
+        found = self.query("string_at", {"addr": "0x6002"})
+        self.assertEqual(found, {"matches": [{"addr": "0x6002", "string": "string 2"}], "cursor": {"done": True}})
+        missing = self.query("string_at", {"addr": "0x9999"})
+        self.assertEqual(missing, {"matches": [], "cursor": {"done": True}})
 
     def test_callgraph_reports_function_entries_only(self):
         [row] = self.query("callgraph", {"roots": ["0x1000"], "max_depth": 0})

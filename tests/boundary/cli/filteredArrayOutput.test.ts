@@ -10,7 +10,7 @@ import { formatCliOutput } from "../../../src/cli/cliOutputFormatter.js";
 import {
   parseCliOutputArguments,
   renderCliDocument,
-} from "../../../src/cliOutput.js";
+} from "../../../src/cli/cliOutput.js";
 import { createCliResultOutput } from "../../../src/cli/cliResultOutput.js";
 
 const source = [{ selected: 1 }, { other: 2 }, { selected: null }];
@@ -362,7 +362,7 @@ it.each(["json", "jsonl"] as const)(
       },
     });
     expect(Buffer.concat(chunks).toString()).toBe(
-      `${estimateTokenCount(formatCliOutput([1, null, null], format))}\n`,
+      `${estimateTokenCount(format === "json" ? renderCliDocument([1, null, null], "json", false) : formatCliOutput([1, null, null], format) + "\n")}\n`,
     );
     expect(fallback).toBe("");
   },

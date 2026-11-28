@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { metroContext } from "../../../tests/fixtures/javascriptMetroContext.js";
 import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
 import {
@@ -645,7 +646,8 @@ it("inventories Expo Router context keys without claiming page classification", 
   const result = build([
     source(
       "index-abc.js",
-      `__d(function(g,r,i,a,m,e,d){const t=Object.defineProperties({},{"./(app)/_layout.tsx":{enumerable:!0,get(){return r(d[0])}},"./(app)/reports/[id]/edit.tsx":{enumerable:!0,get(){return r(d[1])}}});m.exports=t},1,[2,3]);const back='/reports/archive';`,
+      metroContext(["./(app)/_layout.tsx", "./(app)/reports/[id]/edit.tsx"]) +
+        "const back='/reports/archive';",
     ),
   ]);
   expect(result.routes).toEqual([

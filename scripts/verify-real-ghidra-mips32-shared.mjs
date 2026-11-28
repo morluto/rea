@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { parseAnalysisSnapshot } from "../dist/domain/analysisSnapshot.js";
 import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
-import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
+import { requireVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
 import { buildMipsSharedFixture } from "../tests/conformance/ghidra/mips-fixture.mjs";
 import {
   assertMipsSharedLoad,
@@ -27,6 +27,10 @@ import {
 } from "./lib/verifier-run.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import { requireLaneToolchain } from "../tests/conformance/ghidra/fixture-toolchain.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./lib/complete-evidence.mjs";
 
 // Optional cross-target lane for plain MIPS32 PIC shared libraries (ET_DYN).
 // No tool acquisition, no dynamic loading and no target execution.
@@ -36,19 +40,7 @@ if (!["linux", "darwin"].includes(process.platform))
   throw new Error(
     "MIPS verification requires a supported Linux/macOS Ghidra host",
   );
-if (process.env.GHIDRA_INSTALL_DIR === undefined)
-  throw new Error("Missing prerequisite: caller-supplied GHIDRA_INSTALL_DIR");
-const installation = await inspectVerifierGhidraInstallation({
-  environment: process.env,
-  installDir: process.env.GHIDRA_INSTALL_DIR,
-  ...(process.env.JAVA_HOME === undefined
-    ? {}
-    : { javaHome: process.env.JAVA_HOME }),
-});
-if (installation.status !== "available")
-  throw new Error(
-    `Ghidra prerequisite unavailable: ${JSON.stringify(installation)}`,
-  );
+const installation = await requireVerifierGhidraInstallation(process.env);
 const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const run = createVerifierRun();
 // Refuse a host without the fixture toolchain before allocating anything. The
@@ -60,11 +52,6 @@ const workspaceFixture = await VerifierFixture.open({
   private: false,
 });
 const workspace = workspaceFixture.path;
-// A failed run keeps its workspace for diagnosis; the fixture records why.
-const retainWorkspace = (message, options) => {
-  workspaceFixture.retain(message);
-  return new Error(message, options);
-};
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const env = {
@@ -165,10 +152,12 @@ async function verifyFixture(byteOrder, softFloat) {
     env,
     stderr: "pipe",
   });
-  const client = new Client({
-    name: "rea-real-mips32-shared-proof",
-    version: "1",
-  });
+  const client = completeEvidenceClient(
+    new Client({
+      name: "rea-real-mips32-shared-proof",
+      version: "1",
+    }),
+  );
   let stderr = "";
   transport.stderr?.on("data", (chunk) => {
     stderr = (stderr + chunk.toString()).slice(-65536);
@@ -296,12 +285,14 @@ async function verifyFixture(byteOrder, softFloat) {
       process.execPath,
       [
         entrypoint,
-        "function",
-        fixture.path,
-        "rea_mips_so_entry",
-        "--provider",
-        "ghidra",
-        "--json",
+        ...(await completeEvidenceCliArguments([
+          "function",
+          fixture.path,
+          "rea_mips_so_entry",
+          "--provider",
+          "ghidra",
+          "--json",
+        ])),
       ],
       { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
     );
@@ -313,9 +304,7 @@ async function verifyFixture(byteOrder, softFloat) {
       dossier.procedure.address,
     );
     assert.equal(
-      createHash("sha256")
-        .update(await readFile(fixture.path))
-        .digest("hex"),
+      await sha256File(fixture.path),
       fixture.sha256,
       "Analysis modified the source library",
     );
@@ -365,7 +354,7 @@ try {
   cleanupFailure = cause;
 }
 if (cleanupFailure !== undefined)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `MIPS32 shared command cleanup failed; retained diagnostic workspace: ${workspace}`,
     {
       cause:
@@ -385,7 +374,7 @@ try {
   lineageFailure = cause;
 }
 if (lineageFailure !== undefined)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `Cleanup unverified; retained diagnostic workspace: ${workspace}`,
     {
       cause:
@@ -398,13 +387,13 @@ if (lineageFailure !== undefined)
     },
   );
 if (primaryFailure !== undefined)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `MIPS32 shared-library verification failed; retained workspace: ${workspace}`,
     { cause: primaryFailure },
   );
 const interrupted = commandInterruption.reason();
 if (interrupted !== undefined)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `MIPS32 shared-library verification interrupted; retained diagnostic workspace: ${workspace}`,
     { cause: interrupted },
   );

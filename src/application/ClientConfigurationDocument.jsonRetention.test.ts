@@ -1,3 +1,4 @@
+import { expectResultValue } from "../../tests/support/expectResultValue.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { expect, it } from "vitest";
 
@@ -10,7 +11,7 @@ import {
 } from "./ClientConfigurationDocument.js";
 
 const replaceLauncher = (source: string, format: ClientConfigurationFormat) => {
-  const parsed = parseClientConfiguration(source, format);
+  const parsed = expectResultValue(parseClientConfiguration(source, format));
   const existing = parsed.servers.rea;
   if (typeof existing !== "object" || existing === null)
     throw new Error("fixture registration missing");
@@ -62,7 +63,7 @@ it("keeps the exact JSONC source outside the changed launcher value", () => {
 
 it("retains nested array tokens while changing siblings, shrinking and extending arrays", () => {
   const source = `{"mcpServers":{"rea":{"command":"rea","items":[{"opaque":9007199254740993,"label":"old"},2,3],"grow":[9007199254740993]}}}`;
-  const parsed = parseClientConfiguration(source, "json");
+  const parsed = expectResultValue(parseClientConfiguration(source, "json"));
   const result = serializeClientConfiguration(
     withClientServers(
       parsed,
@@ -89,7 +90,7 @@ it("retains nested array tokens while changing siblings, shrinking and extending
 
 it("retains source tokens when the caller supplies a whole edited document", () => {
   const source = `{"opaque":9007199254740993,"mcpServers":{"rea":{"command":"old"}}}`;
-  const parsed = parseClientConfiguration(source, "fx");
+  const parsed = expectResultValue(parseClientConfiguration(source, "fx"));
   const result = serializeClientConfiguration(
     withClientServers(
       parsed,
@@ -106,7 +107,7 @@ it("retains source tokens when the caller supplies a whole edited document", () 
 
 it("removes all repeated nested fields without activating an earlier value", () => {
   const source = `{"mcpServers":{"rea":{"remove":1,"remove":2,"retain":9007199254740993,"command":"old"}}}`;
-  const parsed = parseClientConfiguration(source, "json");
+  const parsed = expectResultValue(parseClientConfiguration(source, "json"));
   const result = serializeClientConfiguration(
     withClientServers(
       parsed,
@@ -134,7 +135,7 @@ it("removes all repeated nested fields without activating an earlier value", () 
 
 it("keeps native JSON separators valid across replaced and emptied collections", () => {
   const source = `{"mcpServers":{"rea":{"replace":{"old":1,},"empty":{"old":2,},"shrink":[1,2,],"clear":[3,4,],}}}`;
-  const parsed = parseClientConfiguration(source, "fx");
+  const parsed = expectResultValue(parseClientConfiguration(source, "fx"));
   const rea = {
     replace: { replacement: true },
     empty: {},

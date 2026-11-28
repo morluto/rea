@@ -170,12 +170,13 @@ const readTimes = (value: BinaryReader, offset: number) => ({
   accessedFileTime: value.word(offset + 24, 64).toString(),
 });
 
+const isStandardInformationSize = (size: number): boolean =>
+  size === 48 || size >= 72;
+
 const readStandardInformation = (
   value: BinaryReader,
-): z.infer<typeof standardInformationSchema> | undefined => {
-  const size = value.bytes.length;
-  const extended = size >= 72;
-  if (size !== 48 && !extended) return undefined;
+): z.infer<typeof standardInformationSchema> => {
+  const extended = value.bytes.length >= 72;
   return {
     ...readTimes(value, 0),
     fileAttributes: value.u32(32),
@@ -189,11 +190,7 @@ const readStandardInformation = (
   };
 };
 
-const readFileName = (
-  value: BinaryReader,
-  fileOffset: number,
-): Result<MftFileName, string> => {
-  const { bytes } = value;
+const fileNameByteLength = (bytes: Buffer): Result<number, string> => {
   if (bytes.length < 66) return err("Truncated FILE_NAME value");
   const nameBytes = bytes[64]! * 2;
   if (66 + nameBytes > bytes.length)
@@ -201,36 +198,40 @@ const readFileName = (
   const namespace = bytes[65]!;
   if (namespace > 3)
     return err("FILE_NAME namespace is outside the NTFS range");
-  return ok({
+  return ok(nameBytes);
+};
+
+const readFileName = (
+  value: BinaryReader,
+  fileOffset: number,
+  nameBytes: number,
+): MftFileName => {
+  const { bytes } = value;
+  return {
     fileOffset,
     parent: decodeMftFileReference(value.word(0, 64)),
     ...readTimes(value, 8),
-    namespace,
+    namespace: bytes[65]!,
     name: bytes.toString("utf16le", 66, 66 + nameBytes),
     allocatedBytes: value.word(40, 64).toString(),
     dataBytes: value.word(48, 64).toString(),
     fileAttributes: value.u32(56),
     reparseOrEa: value.u32(60),
-  });
+  };
 };
 
-const readList = (
+type ListEntry = z.infer<typeof listEntrySchema>;
+
+const walkList = (
   value: BinaryReader,
   fileOffset: number,
-): Result<
-  z.infer<typeof listEntrySchema>[],
-  AttributeIssue & {
-    readonly partialEntries: z.infer<typeof listEntrySchema>[];
-  }
-> => {
-  const entries: z.infer<typeof listEntrySchema>[] = [];
-  const malformed = (cursor: number, message: string) =>
-    err({
-      kind: "malformed" as const,
-      fileOffset: fileOffset + cursor,
-      message,
-      partialEntries: entries,
-    });
+  entries: ListEntry[] | null,
+): AttributeIssue | null => {
+  const malformed = (cursor: number, message: string): AttributeIssue => ({
+    kind: "malformed",
+    fileOffset: fileOffset + cursor,
+    message,
+  });
   const { bytes } = value;
   for (let cursor = 0; cursor < bytes.length;) {
     if (bytes.length - cursor < 26)
@@ -248,7 +249,7 @@ const readList = (
           nameOffset + nameBytes > length))
     )
       return malformed(cursor, "Invalid attribute-list entry length or name");
-    entries.push({
+    entries?.push({
       fileOffset: fileOffset + cursor,
       recordBytes: length,
       type: value.u32(cursor),
@@ -266,7 +267,7 @@ const readList = (
     });
     cursor += length;
   }
-  return ok(entries);
+  return null;
 };
 
 /** Packed runs advance only within this attribute. Sparse runs do not change LCN. */
@@ -318,14 +319,16 @@ const readRuns = (bytes: Buffer, expectedClusters: bigint) => {
 };
 
 type DecodedAttribute = {
-  readonly attribute: MftAttribute;
+  readonly attribute: MftAttribute | null;
   readonly fileName: MftFileName | null;
+  readonly listIssue: AttributeIssue | null;
 };
 
 const readAttribute = (
   reader: BinaryReader,
   type: number,
   fileOffset: number,
+  detail: boolean,
 ): Result<DecodedAttribute, AttributeIssue> => {
   const malformed = (message: string): Result<never, AttributeIssue> =>
     err({ kind: "malformed", fileOffset, message });
@@ -344,16 +347,21 @@ const readAttribute = (
   )
     return malformed("Attribute name is outside its declared extent");
   const nameEnd = nameBytes === 0 ? headerBytes : nameOffset + nameBytes;
-  const common = {
-    fileOffset,
-    recordBytes: attribute.length,
-    type,
-    id: reader.u16(14),
-    flags: reader.u16(12),
-    name:
-      nameBytes === 0 ? "" : attribute.toString("utf16le", nameOffset, nameEnd),
-  };
-  if (form === 1 && (common.type === 0x10 || common.type === 0x30))
+  const flags = reader.u16(12);
+  const common = detail
+    ? {
+        fileOffset,
+        recordBytes: attribute.length,
+        type,
+        id: reader.u16(14),
+        flags,
+        name:
+          nameBytes === 0
+            ? ""
+            : attribute.toString("utf16le", nameOffset, nameEnd),
+      }
+    : null;
+  if (form === 1 && (type === 0x10 || type === 0x30))
     return malformed("Standard information and FILE_NAME must be resident");
   if (form === 0) {
     const valueBytes = reader.u32(16),
@@ -368,27 +376,28 @@ const readAttribute = (
       "resident attribute value",
     );
     const valueFileOffset = fileOffset + valueOffset;
+    if (type === 0x10 && !isStandardInformationSize(valueBytes))
+      return malformed("Invalid standard-information value");
+    const fileNameLength = type === 0x30 ? fileNameByteLength(value) : null;
+    if (fileNameLength !== null && !fileNameLength.ok)
+      return malformed(fileNameLength.error);
+    const listEntries: ListEntry[] | null = type === 0x20 && detail ? [] : null;
+    const listIssue =
+      type === 0x20
+        ? walkList(attributeReader(value), valueFileOffset, listEntries)
+        : null;
+    if (common === null)
+      return ok({ attribute: null, fileName: null, listIssue });
     const standardInformation =
       type === 0x10 ? readStandardInformation(attributeReader(value)) : null;
-    if (standardInformation === undefined)
-      return malformed("Invalid standard-information value");
     const fileName =
-      type === 0x30
-        ? readFileName(attributeReader(value), valueFileOffset)
-        : null;
-    if (fileName !== null && !fileName.ok) return malformed(fileName.error);
-    const list =
-      type === 0x20 ? readList(attributeReader(value), valueFileOffset) : null;
-    const listEntries =
-      list === null ? null : list.ok ? list.value : list.error.partialEntries;
-    const listIssue =
-      list !== null && !list.ok
-        ? {
-            kind: list.error.kind,
-            fileOffset: list.error.fileOffset,
-            message: list.error.message,
-          }
-        : null;
+      fileNameLength === null
+        ? null
+        : readFileName(
+            attributeReader(value),
+            valueFileOffset,
+            fileNameLength.value,
+          );
     return ok({
       attribute: {
         ...common,
@@ -401,12 +410,13 @@ const readAttribute = (
           listIssue,
         },
       },
-      fileName: fileName?.value ?? null,
+      fileName,
+      listIssue,
     });
   }
   const lowestVcn = reader.word(16, 64),
     highestVcn = reader.word(24, 64);
-  const extended = (common.flags & 0x8001) !== 0 && lowestVcn === 0n;
+  const extended = (flags & 0x8001) !== 0 && lowestVcn === 0n;
   const runsOffset = reader.u16(32);
   if (
     runsOffset < Math.max(nameEnd, extended ? 72 : 64) ||
@@ -427,6 +437,8 @@ const readAttribute = (
     initializedBytes = reader.word(56, 64);
   if (lowestVcn === 0n && initializedBytes > dataBytes)
     return malformed("Initialized size exceeds the declared data size");
+  if (common === null)
+    return ok({ attribute: null, fileName: null, listIssue: null });
   return ok({
     attribute: {
       ...common,
@@ -450,18 +462,23 @@ const readAttribute = (
       },
     },
     fileName: null,
+    listIssue: null,
   });
 };
 
-/** The caller restores and verifies sector trailers before this owning boundary. */
-export const readMftAttributes = (
+interface MftAttributeDetails {
+  readonly fileNames: MftFileName[];
+  readonly attributes: MftAttribute[];
+}
+
+const walkMftAttributes = (
   record: Buffer,
   first: number,
   usedBytes: number,
   fileOffset: number,
-): MftAttributeScan => {
-  const fileNames: MftFileName[] = [],
-    attributes: MftAttribute[] = [];
+  details?: MftAttributeDetails,
+): MftAttributeSummary & Pick<MftAttributeScan, "attributeIssue"> => {
+  let fileNameCount = 0;
   const reader = attributeReader(record.subarray(0, usedBytes));
   let complete = false,
     hasList = false;
@@ -492,27 +509,24 @@ export const readMftAttributes = (
       attributeReader(reader.range(cursor, length, "attribute record")),
       type,
       fileOffset + cursor,
+      details !== undefined,
     );
     if (!decoded.ok) {
       attributeIssue ??= decoded.error;
       break;
     }
-    const { attribute, fileName } = decoded.value;
-    if (
-      attribute.storage.kind === "resident" &&
-      attribute.storage.listIssue !== null
-    )
-      attributeIssue ??= attribute.storage.listIssue;
-    if (fileName !== null) fileNames.push(fileName);
-    hasList ||= attribute.type === 0x20;
-    attributes.push(attribute);
+    const { attribute, fileName, listIssue } = decoded.value;
+    if (listIssue !== null) attributeIssue ??= listIssue;
+    if (type === 0x30) fileNameCount += 1;
+    if (fileName !== null) details?.fileNames.push(fileName);
+    if (attribute !== null) details?.attributes.push(attribute);
+    hasList ||= type === 0x20;
     cursor += length;
   }
   if (!complete && attributeIssue === null)
     malformed(usedBytes, "Missing attribute end marker");
   return {
-    fileNames,
-    attributes,
+    fileNameCount,
     attributeIssue,
     fileNameCoverage:
       complete && attributeIssue === null && !hasList
@@ -521,4 +535,35 @@ export const readMftAttributes = (
     attributeCoverage:
       complete && attributeIssue === null ? "complete" : "incomplete",
   };
+};
+
+export interface MftAttributeSummary {
+  readonly fileNameCount: number;
+  readonly fileNameCoverage: "complete" | "incomplete";
+  readonly attributeCoverage: "complete" | "incomplete";
+}
+
+/** The caller restores and verifies sector trailers before this owning boundary. */
+export const readMftAttributes = (
+  record: Buffer,
+  first: number,
+  usedBytes: number,
+  fileOffset: number,
+): MftAttributeScan => {
+  const details: MftAttributeDetails = { fileNames: [], attributes: [] };
+  const { attributeIssue, fileNameCoverage, attributeCoverage } =
+    walkMftAttributes(record, first, usedBytes, fileOffset, details);
+  return { ...details, attributeIssue, fileNameCoverage, attributeCoverage };
+};
+
+/** Validate the same physical records without materializing detail objects. */
+export const summarizeMftAttributes = (
+  record: Buffer,
+  first: number,
+  usedBytes: number,
+  fileOffset: number,
+): MftAttributeSummary => {
+  const { fileNameCount, fileNameCoverage, attributeCoverage } =
+    walkMftAttributes(record, first, usedBytes, fileOffset);
+  return { fileNameCount, fileNameCoverage, attributeCoverage };
 };

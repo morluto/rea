@@ -7,11 +7,12 @@ import {
   readFatContainerHeader,
   readFatContainerTable,
   readMachoHeaderPrefixFacts,
+  type FatContainerHeader,
   type FatContainerTable,
   type MachoHeaderPrefixFacts,
-  type FatSliceHeaderEvidence,
 } from "../domain/apple/machoContainer.js";
 import {
+  hasDosMzMagic,
   observeMzWindowsHeader,
   type MzWindowsHeaderRecordEvidence,
   type MzWindowsHeaderSignatureEvidence,
@@ -21,6 +22,11 @@ import {
   PE_RECORD_HEADER_BYTES,
 } from "../domain/binaryTarget.js";
 import { DFUSE_SUFFIX_BYTES } from "../domain/firmware/dfuse.js";
+import {
+  ISO9660_DESCRIPTOR_OFFSET,
+  ISO9660_SIGNATURE_BYTES,
+} from "../domain/iso9660/iso9660Structures.js";
+import { gzipTarExtraFieldProbeBytes } from "../domain/tarFormat.js";
 import {
   createAsarHeaderSignatureProbe,
   type FinalAsarHeaderProbeObservation,
@@ -36,8 +42,15 @@ export interface ArtifactClassificationEvidence {
   readonly prefix: Buffer;
   /** The last bytes of the stream, when the producer observed its end. */
   readonly suffix?: Buffer;
+  /** The first ISO 9660 descriptor signature, when the stream reached it. */
+  readonly iso9660Descriptor?: Buffer;
+  /** The probe matched an XML plist prolog in the retained prefix. */
+  readonly xmlPlistSignature: boolean;
   readonly asarHeader: FinalAsarHeaderProbeObservation;
-  readonly fatSliceHeaders?: FatSliceHeaderEvidence;
+  /** The FAT header decided once for the finished stream size. */
+  readonly fatHeader: FatContainerHeader;
+  /** Thin headers observed at slice offsets; empty unless `fatHeader` parsed. */
+  readonly fatSliceHeadersByOffset: ReadonlyMap<number, MachoHeaderPrefixFacts>;
   readonly mzWindowsHeaderSignature?: MzWindowsHeaderSignatureEvidence;
   readonly mzWindowsHeaderRecord?: MzWindowsHeaderRecordEvidence;
 }
@@ -85,9 +98,14 @@ const observeFatSliceHeaders = (input: {
   }
 };
 
+const NO_FAT_SLICE_HEADERS: ReadonlyMap<number, MachoHeaderPrefixFacts> =
+  new Map();
+
 const finishClassificationEvidence = (
   prefix: Buffer,
   suffix: Buffer | undefined,
+  iso9660Descriptor: Buffer | undefined,
+  xmlPlistSignature: boolean,
   archiveBytes: number,
   finishAsar: (archiveBytes: number) => FinalAsarHeaderProbeObservation,
   sliceHeadersByOffset: Map<number, MachoHeaderPrefixFacts>,
@@ -113,15 +131,17 @@ const finishClassificationEvidence = (
       );
     }
   }
-  const fatSliceHeaders =
-    finalHeader.state === "parsed"
-      ? { header: finalHeader, sliceHeadersByOffset }
-      : undefined;
   return {
     prefix,
     ...(suffix === undefined ? {} : { suffix }),
+    ...(iso9660Descriptor === undefined ? {} : { iso9660Descriptor }),
+    xmlPlistSignature,
     asarHeader: finishAsar(archiveBytes),
-    ...(fatSliceHeaders === undefined ? {} : { fatSliceHeaders }),
+    fatHeader: finalHeader,
+    fatSliceHeadersByOffset:
+      finalHeader.state === "parsed"
+        ? sliceHeadersByOffset
+        : NO_FAT_SLICE_HEADERS,
     ...(mzWindowsHeaderSignature === undefined
       ? {}
       : { mzWindowsHeaderSignature }),
@@ -148,74 +168,100 @@ export const createArtifactClassificationProbe = (
   let mzWindowsHeaderRecord: MzWindowsHeaderRecordEvidence | undefined;
   let mzWindowsHeaderOffset: number | undefined;
   let mzHeaderChecked = false;
-  let suffix = Buffer.alloc(0);
-  const observeSuffix = (bytes: Uint8Array): void => {
-    const joined =
-      bytes.length >= ARTIFACT_CLASSIFICATION_SUFFIX_BYTES
-        ? bytes
-        : Buffer.concat([suffix, bytes]);
-    suffix = Buffer.from(
-      joined.subarray(
-        Math.max(0, joined.length - ARTIFACT_CLASSIFICATION_SUFFIX_BYTES),
-      ),
+  const suffixBuffer = Buffer.allocUnsafe(ARTIFACT_CLASSIFICATION_SUFFIX_BYTES);
+  let suffixLength = 0;
+  // The descriptor lies past the retained prefix; keep its signature window.
+  const isoDescriptor = Buffer.alloc(ISO9660_SIGNATURE_BYTES);
+  let isoDescriptorBytes = 0;
+  const observeIsoDescriptor = (
+    sourceOffset: number,
+    bytes: Uint8Array,
+  ): void => {
+    const start = Math.max(
+      ISO9660_DESCRIPTOR_OFFSET + isoDescriptorBytes,
+      sourceOffset,
     );
+    const end = Math.min(
+      ISO9660_DESCRIPTOR_OFFSET + ISO9660_SIGNATURE_BYTES,
+      sourceOffset + bytes.length,
+    );
+    if (start >= end) return;
+    isoDescriptor.set(
+      bytes.subarray(start - sourceOffset, end - sourceOffset),
+      start - ISO9660_DESCRIPTOR_OFFSET,
+    );
+    isoDescriptorBytes = end - ISO9660_DESCRIPTOR_OFFSET;
+  };
+  const observeSuffix = (bytes: Uint8Array): void => {
+    if (bytes.length === 0) return;
+    if (bytes.length >= ARTIFACT_CLASSIFICATION_SUFFIX_BYTES) {
+      suffixBuffer.set(
+        bytes.subarray(bytes.length - ARTIFACT_CLASSIFICATION_SUFFIX_BYTES),
+        0,
+      );
+      suffixLength = ARTIFACT_CLASSIFICATION_SUFFIX_BYTES;
+      return;
+    }
+    if (suffixLength + bytes.length <= ARTIFACT_CLASSIFICATION_SUFFIX_BYTES) {
+      suffixBuffer.set(bytes, suffixLength);
+      suffixLength += bytes.length;
+      return;
+    }
+    const keep = ARTIFACT_CLASSIFICATION_SUFFIX_BYTES - bytes.length;
+    suffixBuffer.copyWithin(0, suffixLength - keep, suffixLength);
+    suffixBuffer.set(bytes, keep);
+    suffixLength = ARTIFACT_CLASSIFICATION_SUFFIX_BYTES;
+  };
+  const observeWindow = (
+    current: { readonly offset: number; readonly bytes: Buffer } | undefined,
+    maximum: number,
+    offset: number,
+    sourceOffset: number,
+    sourceBytes: Uint8Array,
+  ): { readonly offset: number; readonly bytes: Buffer } | undefined => {
+    if (!Number.isSafeInteger(offset) || offset < 0) return current;
+    const start = Math.max(offset, sourceOffset);
+    const end = Math.min(offset + maximum, sourceOffset + sourceBytes.length);
+    if (start >= end) return current;
+    const window = Buffer.alloc(maximum);
+    const previous = current?.offset === offset ? current.bytes : undefined;
+    previous?.copy(window);
+    let observedLength = previous?.length ?? 0;
+    if (start <= offset + observedLength) {
+      window.set(
+        sourceBytes.subarray(start - sourceOffset, end - sourceOffset),
+        start - offset,
+      );
+      observedLength = Math.max(observedLength, end - offset);
+    }
+    if (observedLength === 0) return current;
+    return { offset, bytes: window.subarray(0, observedLength) };
   };
   const observeSignatureWindow = (
     offset: number,
     sourceOffset: number,
     sourceBytes: Uint8Array,
   ): void => {
-    if (!Number.isSafeInteger(offset) || offset < 0) return;
-    const start = Math.max(offset, sourceOffset);
-    const end = Math.min(offset + 4, sourceOffset + sourceBytes.length);
-    if (start >= end) return;
-    const window = Buffer.alloc(4);
-    const previous =
-      mzWindowsHeaderSignature?.offset === offset
-        ? mzWindowsHeaderSignature.bytes
-        : undefined;
-    previous?.copy(window);
-    let observedLength = previous?.length ?? 0;
-    if (start < end && start <= offset + observedLength) {
-      Buffer.from(
-        sourceBytes.subarray(start - sourceOffset, end - sourceOffset),
-      ).copy(window, start - offset);
-      observedLength = Math.max(observedLength, end - offset);
-    }
-    if (observedLength === 0) return;
-    mzWindowsHeaderSignature = {
+    mzWindowsHeaderSignature = observeWindow(
+      mzWindowsHeaderSignature,
+      4,
       offset,
-      bytes: window.subarray(0, observedLength),
-    };
+      sourceOffset,
+      sourceBytes,
+    );
   };
   const observeRecordWindow = (
     offset: number,
     sourceOffset: number,
     sourceBytes: Uint8Array,
   ): void => {
-    if (!Number.isSafeInteger(offset) || offset < 0) return;
-    const maximum = PE_RECORD_HEADER_BYTES + MAX_PE_OPTIONAL_HEADER_BYTES;
-    const start = Math.max(offset, sourceOffset);
-    const end = Math.min(offset + maximum, sourceOffset + sourceBytes.length);
-    if (start >= end) return;
-    const window = Buffer.alloc(maximum);
-    const previous =
-      mzWindowsHeaderRecord?.offset === offset
-        ? mzWindowsHeaderRecord.bytes
-        : undefined;
-    previous?.copy(window);
-    let observedLength = previous?.length ?? 0;
-    if (start <= offset + observedLength) {
-      Buffer.from(
-        sourceBytes.subarray(start - sourceOffset, end - sourceOffset),
-      ).copy(window, start - offset);
-      observedLength = Math.max(observedLength, end - offset);
-    }
-    if (observedLength === 0) return;
-    mzWindowsHeaderRecord = {
+    mzWindowsHeaderRecord = observeWindow(
+      mzWindowsHeaderRecord,
+      PE_RECORD_HEADER_BYTES + MAX_PE_OPTIONAL_HEADER_BYTES,
       offset,
-      bytes: window.subarray(0, observedLength),
-    };
+      sourceOffset,
+      sourceBytes,
+    );
   };
   const retain = (bytes: Uint8Array): void => {
     let offset = 0;
@@ -236,6 +282,8 @@ export const createArtifactClassificationProbe = (
     }
   };
   const retainedPrefix = (): Buffer => {
+    if (blocks.length === 0) return Buffer.alloc(0);
+    if (blocks.length === 1) return blocks[0]!.subarray(0, retainedBytes);
     const prefix = Buffer.allocUnsafe(retainedBytes);
     let copied = 0;
     for (const block of blocks) {
@@ -245,6 +293,12 @@ export const createArtifactClassificationProbe = (
     }
     return prefix;
   };
+  const signaturePrefixLimit = (): number =>
+    Math.max(
+      ARTIFACT_CLASSIFICATION_PREFIX_BYTES,
+      retainedBytes < 12 ? 0 : gzipTarExtraFieldProbeBytes(blocks[0]!),
+    );
+
   return {
     get length(): number {
       return observedBytes;
@@ -253,7 +307,7 @@ export const createArtifactClassificationProbe = (
       if (observedBytes < ARTIFACT_CLASSIFICATION_PREFIX_BYTES)
         return ARTIFACT_CLASSIFICATION_PREFIX_BYTES;
       return Math.max(
-        ARTIFACT_CLASSIFICATION_PREFIX_BYTES,
+        signaturePrefixLimit(),
         xml.state === "pending" ? MAX_XML_PLIST_PROBE_BYTES : 0,
         asar.observation.state === "pending" ? asar.limit : 0,
       );
@@ -263,12 +317,13 @@ export const createArtifactClassificationProbe = (
       asar.write(bytes);
       let offset = 0;
       while (offset < bytes.length) {
-        const limit =
-          retainedBytes < ARTIFACT_CLASSIFICATION_PREFIX_BYTES
-            ? ARTIFACT_CLASSIFICATION_PREFIX_BYTES
-            : xml.state === "pending"
-              ? MAX_XML_PLIST_PROBE_BYTES
-              : retainedBytes;
+        const limit = Math.max(
+          signaturePrefixLimit(),
+          xml.state === "pending" &&
+            retainedBytes >= ARTIFACT_CLASSIFICATION_PREFIX_BYTES
+            ? MAX_XML_PLIST_PROBE_BYTES
+            : 0,
+        );
         if (retainedBytes >= limit) break;
         const selected = bytes.subarray(
           offset,
@@ -293,7 +348,7 @@ export const createArtifactClassificationProbe = (
       if (!mzHeaderChecked && retainedBytes >= 64) {
         mzHeaderChecked = true;
         const prefix = retainedPrefix();
-        if (prefix[0] === 0x4d && prefix[1] === 0x5a) {
+        if (hasDosMzMagic(prefix)) {
           const windowsHeader = observeMzWindowsHeader(
             prefix,
             Number.MAX_SAFE_INTEGER,
@@ -322,13 +377,20 @@ export const createArtifactClassificationProbe = (
         observeRecordWindow(mzWindowsHeaderOffset, streamOffset, bytes);
       }
       observeSuffix(bytes);
+      observeIsoDescriptor(streamOffset, bytes);
       observedBytes += bytes.length;
     },
     finish(archiveBytes: number): ArtifactClassificationEvidence {
       return finishClassificationEvidence(
         retainedPrefix(),
         // Bytes the probe did not observe could still follow its last write.
-        observedBytes === archiveBytes ? suffix : undefined,
+        observedBytes === archiveBytes
+          ? suffixBuffer.subarray(0, suffixLength)
+          : undefined,
+        isoDescriptorBytes === ISO9660_SIGNATURE_BYTES
+          ? Buffer.from(isoDescriptor)
+          : undefined,
+        xml.state === "matched",
         archiveBytes,
         (bytes) => asar.finish(bytes),
         fatSliceHeadersByOffset,

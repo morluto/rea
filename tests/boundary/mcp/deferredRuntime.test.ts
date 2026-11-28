@@ -24,11 +24,17 @@ import { PROMPT_CONTRACTS } from "../../../src/contracts/promptContracts.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
-import { SERVER_START_FAILED } from "../../../src/main/messages.js";
+import { SERVER_START_FAILED } from "../../../src/server/serverStartFailure.js";
 import { parseConfig } from "../../../src/config/parseConfig.js";
 import type { McpServerHandle, McpServe } from "../../../src/main/types.js";
 import { phaseGate, settledCause } from "../../support/lifecycleHarness.js";
-import { HOT_TOOL_NAMES } from "../../../src/contracts/catalog/catalogDiscovery.js";
+import {
+  DISCOVER_TOOLS,
+  HOT_TOOL_NAMES,
+} from "../../../src/contracts/catalog/catalogDiscovery.js";
+import { presentAdvertisedOutputSchema } from "../../../src/contracts/compactOutputSchema.js";
+import { COMPACT_OUTPUT_SCHEMA_PRESENTATION } from "../../../src/contracts/mcpSchemaPresentation.js";
+import { isRecord } from "../../../src/kernel/isRecord.js";
 import { DatabaseSync } from "node:sqlite";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchemaObject } from "ajv";
@@ -161,6 +167,21 @@ it.each([
       limit: { type: "integer", minimum: 1, maximum: 20 },
     });
     expect(JSON.stringify(discovery.inputSchema)).not.toContain('"default"');
+    if (environment.REA_MCP_OUTPUT_SCHEMA_PROFILE === "compact") {
+      const canonical = DISCOVER_TOOLS.outputSchema[
+        "~standard"
+      ].jsonSchema.output({
+        target: "draft-2020-12",
+      });
+      if (!isRecord(canonical)) throw new Error("discover_tools output schema");
+      expect(canonical.type).toBe("object");
+      expect(discovery.outputSchema).toEqual(
+        presentAdvertisedOutputSchema(
+          canonical,
+          COMPACT_OUTPUT_SCHEMA_PRESENTATION,
+        ),
+      );
+    }
     const call = async (name: string, args: Record<string, unknown>) => {
       // Without a listed output schema, call with the listed definition.
       if (environment.REA_MCP_OUTPUT_SCHEMA_PROFILE !== "compact") {
@@ -255,7 +276,7 @@ registerHooks({
     const loaded = next(url, context);
     const source = loaded.source?.toString() ?? "";
     const names = modules.filter((name) =>
-      url.endsWith("/dist/" + name) || source.includes("//#region dist/" + name + "\\n"));
+      url.endsWith("/dist/" + name) || source.includes("\\n// dist/" + name + "\\n"));
     if (url.endsWith("/scripts/rea.mjs")) names.push("entrypoint");
     for (const name of names)
       appendFileSync(${JSON.stringify(log)}, JSON.stringify(name) + "\\n");
@@ -294,9 +315,9 @@ it.each([
     eager: false,
   },
   {
-    name: "output-compact eager",
+    name: "output-compact deferred",
     environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: "compact" },
-    eager: true,
+    eager: false,
   },
 ])(
   "loads compiled analysis at the intended phase for $name startup",
@@ -329,6 +350,9 @@ it.each([
       { toolDefinition },
     );
     expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toEqual({
+      result: { items: [], total: 0, offset: 0, next_offset: null },
+    });
     expect(await loadedModules()).toEqual(
       new Set(["entrypoint", ...analysisModules]),
     );
@@ -426,8 +450,8 @@ it.each([
     }: {
       outputSchema?: unknown;
     }) => tool;
-    // Compact output schemas select independent eager composition. The rest
-    // of each tool's wire definition must match the deferred catalog.
+    // Compact output schemas come from the recorded catalog. The rest of
+    // each tool's wire definition must match the deferred off-profile listing.
     if (mode === "legacy") {
       const eager = await connect(mode, {
         REA_MCP_OUTPUT_SCHEMA_PROFILE: "compact",
@@ -806,6 +830,135 @@ it("joins late transport publication and seals the deferred server registry befo
   }
 });
 
+it.each([
+  { eagerResult: 0, exitCodes: [] as const, settled: "resolved" },
+  { eagerResult: 1, exitCodes: [1] as const, settled: "rejected" },
+])(
+  "keeps eager startup result $eagerResult when close aborts during its cleanup",
+  async ({ eagerResult, exitCodes, settled }) => {
+    const directory = await createTestTempDirectory("rea-deferred-startup-");
+    const stub = join(directory, "eager-stub.mjs");
+    const hook = join(directory, "register-eager-hook.mjs");
+    const resolver = join(directory, "resolve-eager.mjs");
+    await writeFile(
+      stub,
+      `export const runEager = async (dependencies) => {
+  dependencies.captureShutdown?.(async () => {});
+  globalThis.__markEagerEntered();
+  await globalThis.__cleanupHold;
+  globalThis.__eagerSawAbort = dependencies.startupSignal?.aborted === true;
+  return globalThis.__eagerResult;
+};
+`,
+    );
+    await writeFile(
+      resolver,
+      `import { pathToFileURL } from "node:url";
+const stub = pathToFileURL(${JSON.stringify(stub)}).href;
+export async function resolve(specifier, context, next) {
+  const fromDeferred = context.parentURL?.includes("/dist/main/deferredRuntime.js") === true;
+  const eager = specifier === "./eagerRuntime.js" || specifier.endsWith("/main/eagerRuntime.js");
+  if (fromDeferred && eager) return { url: stub, shortCircuit: true };
+  return next(specifier, context);
+}
+`,
+    );
+    await writeFile(
+      hook,
+      `import { register } from "node:module";
+import { pathToFileURL } from "node:url";
+register(pathToFileURL(${JSON.stringify(resolver)}).href, import.meta.url);
+`,
+    );
+    const child = spawnSync(
+      process.execPath,
+      [
+        `--import=${hook}`,
+        "--input-type=module",
+        "--eval",
+        `
+import { runDeferred } from "./dist/main/deferredRuntime.js";
+import { parseConfig } from "./dist/config/parseConfig.js";
+const parsed = parseConfig({ HOME: process.env.HOME, REA_LOG_LEVEL: "silent" });
+if (!parsed.ok) throw parsed.error;
+const exitCodes = [];
+let releaseCleanup;
+globalThis.__cleanupHold = new Promise((resolve) => { releaseCleanup = resolve; });
+globalThis.__eagerResult = ${String(eagerResult)};
+globalThis.__eagerEntered = new Promise((resolve) => { globalThis.__markEagerEntered = resolve; });
+const outcome = {};
+const result = await runDeferred({
+  env: {},
+  writeStderr: () => {},
+  setExitCode: (code) => { exitCodes.push(code); },
+  registerShutdown: () => () => {},
+  serve: async (factory) => {
+    const server = factory({});
+    const loading = server.ensureRuntime().then(
+      () => ({ settled: "resolved" }),
+      (cause) => ({
+        settled: "rejected",
+        message: cause instanceof Error ? cause.message : "",
+      }),
+    );
+    await globalThis.__eagerEntered;
+    const closing = server.close();
+    releaseCleanup();
+    outcome.loading = await loading;
+    outcome.close = await closing.then(
+      () => ({ settled: "resolved" }),
+      (cause) => ({
+        settled: "rejected",
+        name: cause instanceof AggregateError ? "AggregateError" : cause instanceof Error ? cause.name : "",
+        message: cause instanceof Error ? cause.message : "",
+      }),
+    );
+    return { close: async () => {} };
+  },
+}, parsed.value);
+const loading = outcome.loading;
+console.log(JSON.stringify({
+  result,
+  exitCodes,
+  sawAbort: globalThis.__eagerSawAbort === true,
+  loading: loading.settled === "rejected"
+    ? { settled: loading.settled, message: loading.message }
+    : { settled: loading.settled },
+  close: outcome.close,
+}));
+`,
+      ],
+      {
+        cwd: process.cwd(),
+        env: withCompileCache({
+          ...process.env,
+          EAGER_RESULT: String(eagerResult),
+        }),
+        encoding: "utf8",
+        timeout: 15000,
+      },
+    );
+    expect(child.error).toBeUndefined();
+    expect(child.status, child.stderr).toBe(0);
+    const report = JSON.parse(child.stdout) as {
+      readonly result: number;
+      readonly exitCodes: readonly number[];
+      readonly sawAbort: boolean;
+      readonly loading: { readonly settled: string; readonly message?: string };
+      readonly close: { readonly settled: string };
+    };
+    expect(report.result).toBe(0);
+    expect(report.sawAbort).toBe(true);
+    expect(report.exitCodes).toEqual([...exitCodes]);
+    expect(report.close).toEqual({ settled: "resolved" });
+    expect(report.loading).toEqual(
+      settled === "rejected"
+        ? { settled: "rejected", message: SERVER_START_FAILED }
+        : { settled: "resolved" },
+    );
+  },
+);
+
 it("runs the real static artifact workflow after deferred initialization", async () => {
   const { client } = await connect("legacy");
   const opened = await client.callTool({
@@ -996,7 +1149,14 @@ registerHooks({
         .split("\n")
         .map((line): unknown => JSON.parse(line))
         .sort(),
-    ).toEqual(["client", "server", "session"]);
+    ).toEqual(
+      // A successful listing also records compact output schemas, which owns
+      // a second server and client. A producer failure stops before that.
+      (producerFails
+        ? ["client", "server", "session"]
+        : ["client", "client", "server", "server", "session"]
+      ).sort(),
+    );
     for (const owner of failures)
       expect(child.stderr).toContain(`${owner} cleanup failed`);
     if (producerFails) {
@@ -1077,9 +1237,14 @@ let entered = false;
 let release;
 const held = new Promise(resolve => { release = resolve; });
 let close;
+let hookCloses = 0;
 const result = await runDeferred({
   env: { REA_LOG_LEVEL: "silent" }, stdin: input,
-  serve: (factory, options) => serveStdio(factory, { ...options, transport: new StdioServerTransport(input, output) }),
+  serve: (factory, options) => serveStdio(context => {
+    const server = factory(context);
+    server.registerCloseHook(async () => { hookCloses++; });
+    return server;
+  }, { ...options, transport: new StdioServerTransport(input, output) }),
   loadOptionalProviders: async () => { entered = true; await held; return {}; },
   captureShutdown: owned => { close = owned; },
   registerShutdown: () => () => {}, writeStderr: text => { throw new Error(text); }, setExitCode: () => {},
@@ -1096,6 +1261,8 @@ try {
   release();
   await until(() => responses.some(value => value.id === 2) && responses.some(value => value.id === 3));
   await close();
+  await close();
+  assert.equal(hookCloses, 1);
   assert.deepEqual(Buffer.concat(received), Buffer.concat(writes));
   assert.equal(responses.filter(value => value.id === 2).length, 1);
   assert.equal(responses.filter(value => value.id === 3).length, 1);

@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import { open, readFile, stat, writeFile } from "node:fs/promises";
+import { sha256 } from "../../../tests/support/sha256.js";
+import { open, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
 
@@ -7,11 +7,15 @@ import { expect, it, vi } from "vitest";
 
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
+import { collectEntries } from "../../../tests/fixtures/artifactEntries.js";
 import {
   materializeArtifactInventory,
   scanCanonicalArtifactInventory,
 } from "../../../tests/fixtures/artifactInventory.js";
-import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import {
+  createTestTempDirectory,
+  createTestTempFile,
+} from "../../../tests/fixtures/temporaryDirectory.js";
 import { PyInstallerArtifactReader } from "../PyInstallerArtifactReader.js";
 import { reconstructedPycHeader } from "./PythonBytecode.js";
 import { parsePythonPyc } from "../../python/PythonPycParser.js";
@@ -25,17 +29,14 @@ import {
   type CArchiveFixtureMember,
 } from "./CArchive.fixture.js";
 
-const sha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
-
 const PYTHON_313_MAGIC = Buffer.from("f30d0d0a", "hex");
 
 it.each(["close", "cancel"] as const)(
   "does not complete a PyInstaller inventory after %s while paused",
   async (interruption) => {
-    const path = join(await createTestTempDirectory("rea-pyi-paused-"), "app");
-    await writeFile(
-      path,
+    const path = await createTestTempFile(
+      "rea-pyi-paused-",
+      "app",
       cArchiveExecutable({
         layout: "2.1",
         pythonVersion: 311,
@@ -110,12 +111,8 @@ const pyzWithInternedModuleName = (name: string, body: Buffer): Buffer => {
   return Buffer.concat([ordinary.subarray(0, tableOffset), table]);
 };
 
-const writeArchive = async (name: string, bytes: Buffer): Promise<string> => {
-  const directory = await createTestTempDirectory("rea-pyinstaller-");
-  const path = join(directory, name);
-  await writeFile(path, bytes);
-  return path;
-};
+const writeArchive = (name: string, bytes: Buffer): Promise<string> =>
+  createTestTempFile("rea-pyinstaller-", name, bytes);
 
 const sampleMembers = (
   script: Buffer,
@@ -138,8 +135,7 @@ it("preserves legacy pyc bytes and derives only modern headerless CArchive bytec
   const path = await writeArchive("bytecode-layouts", fixture.archive);
   const reader = new PyInstallerArtifactReader(path);
   try {
-    const entries = [];
-    for await (const entry of reader.entries()) entries.push(entry);
+    const entries = await collectEntries(reader);
     for (const module of fixture.modules) {
       const entry = entries.find((item) => item.path === module.name)!;
       expect(entry.formatMetadata).toMatchObject({
@@ -629,7 +625,7 @@ it("rejects a truncated table of contents", async () => {
     (error: unknown) => error,
   );
   expect(failure).toBeInstanceOf(ArtifactReaderFailure);
-  expect(failure).toMatchObject({ reason: "format" });
+  expect(failure).toMatchObject({ reason: "malformed" });
 });
 
 it("rejects a cookie whose package range is outside the file", async () => {
@@ -638,57 +634,51 @@ it("rejects a cookie whose package range is outside the file", async () => {
   await expect(async () => {
     for await (const entry of reader.entries()) void entry;
   }).rejects.toMatchObject({
-    reason: "format",
+    reason: "malformed",
     message: expect.stringContaining("outside the file"),
   });
   await reader.close();
 });
 
-it("rejects a member whose declared size exceeds the decompression budget", async () => {
-  const path = await writeArchive(
-    "bomb",
-    cArchiveExecutable({
-      layout: "2.1",
-      pythonVersion: 314,
-      pythonLibrary: "libpython3.14.dylib",
-      members: [
-        {
-          name: "bomb.bin",
-          typeCode: "b",
-          payload: Buffer.alloc(0),
-          compress: true,
-          declaredUncompressedSize: 300 * 1024 * 1024,
-        },
-      ],
-    }),
-  );
-  await expect(scanCanonicalArtifactInventory(path)).rejects.toMatchObject({
-    reason: "limit",
-  });
-});
-
-it("rejects a zlib member that expands past its declared size", async () => {
-  const path = await writeArchive(
-    "expand",
-    cArchiveExecutable({
-      layout: "2.1",
-      pythonVersion: 314,
-      pythonLibrary: "libpython3.14.dylib",
-      members: [
-        {
-          name: "expand.bin",
-          typeCode: "b",
-          payload: Buffer.from("hello world hello world"),
-          compress: true,
-          declaredUncompressedSize: 4,
-        },
-      ],
-    }),
-  );
-  await expect(scanCanonicalArtifactInventory(path)).rejects.toMatchObject({
-    reason: "limit",
-  });
-});
+it.each([
+  ["an oversized declaration", "", 300 * 1024 * 1024, { reason: "limit" }],
+  [
+    "plaintext longer than declared",
+    "hello world",
+    4,
+    { reason: "integrity", integrityCheck: "declared-size" },
+  ],
+  [
+    "nonempty plaintext declared empty",
+    "x",
+    0,
+    { reason: "integrity", integrityCheck: "declared-size" },
+  ],
+] as const)(
+  "distinguishes %s when hashing a compressed CArchive member",
+  async (_, body, declaredSize, expected) => {
+    const path = await writeArchive(
+      "compressed-size",
+      cArchiveExecutable({
+        layout: "2.1",
+        pythonVersion: 314,
+        pythonLibrary: "libpython3.14.dylib",
+        members: [
+          {
+            name: "member.bin",
+            typeCode: "b",
+            payload: Buffer.from(body),
+            compress: true,
+            declaredUncompressedSize: declaredSize,
+          },
+        ],
+      }),
+    );
+    await expect(scanCanonicalArtifactInventory(path)).rejects.toMatchObject(
+      expected,
+    );
+  },
+);
 
 it("reads a compressed member whose uncompressed size is zero", async () => {
   const path = await writeArchive(
@@ -731,27 +721,6 @@ it("reads a compressed member whose uncompressed size is zero", async () => {
       (node) => node.sha256 === sha256(derived(Buffer.alloc(0))),
     ),
   ).toMatchObject({ size: derived(Buffer.alloc(0)).length });
-
-  const expanded = await writeArchive(
-    "zero-declared",
-    cArchiveExecutable({
-      layout: "2.1",
-      pythonVersion: 309,
-      pythonLibrary: "libpython3.9.so",
-      members: [
-        {
-          name: "expand.bin",
-          typeCode: "x",
-          payload: Buffer.from("x"),
-          compress: true,
-          declaredUncompressedSize: 0,
-        },
-      ],
-    }),
-  );
-  await expect(scanCanonicalArtifactInventory(expanded)).rejects.toMatchObject({
-    reason: "limit",
-  });
 });
 
 it("preserves an uppercase Z ZIP member as a readable file", async () => {
@@ -955,7 +924,7 @@ it("retains the descriptor owner when admission cleanup fails", async () => {
     await expect(
       reader.entries()[Symbol.asyncIterator]().next(),
     ).rejects.toMatchObject({
-      reason: "format",
+      reason: "path",
       message: expect.stringContaining(directory),
       cleanup: {
         reason: closeFailure.message,
@@ -1116,8 +1085,7 @@ it("reads a PE signature beyond the carrier prefix before projecting paths", asy
   );
   const reader = new PyInstallerArtifactReader(path);
   try {
-    const entries = [];
-    for await (const entry of reader.entries()) entries.push(entry);
+    const entries = await collectEntries(reader);
     expect(entries.map((entry) => entry.path)).toContain("pkg/data.bin");
   } finally {
     await reader.close();
@@ -1149,8 +1117,7 @@ it("requires DOS magic before a PE-like record can select Windows path semantics
       await writeArchive("carrier", bytes),
     );
     try {
-      const entries = [];
-      for await (const entry of reader.entries()) entries.push(entry);
+      const entries = await collectEntries(reader);
       expect(entries).toContainEqual(
         expect.objectContaining({
           path: expectedPath,
@@ -1316,8 +1283,7 @@ it("opens selected PYZ modules lazily and permits repeat reads without retaining
   );
   const reader = new PyInstallerArtifactReader(path);
   try {
-    const entries = [];
-    for await (const entry of reader.entries()) entries.push(entry);
+    const entries = await collectEntries(reader);
     const selected = entries.find(
       (entry) => entry.path === "PYZ.pyz/selected.pyc",
     );
@@ -1330,7 +1296,7 @@ it("opens selected PYZ modules lazily and permits repeat reads without retaining
     for (let attempt = 0; attempt < 2; attempt += 1)
       expect(await buffer(await reader.open(selected))).toEqual(derived(good));
     await expect(buffer(await reader.open(damaged))).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
     });
   } finally {
     await reader.close();
@@ -1364,8 +1330,7 @@ it.each([false, true])(
     );
     const reader = new PyInstallerArtifactReader(path);
     try {
-      const entries = [];
-      for await (const entry of reader.entries()) entries.push(entry);
+      const entries = await collectEntries(reader);
       const selected = entries.find(
         (entry) => entry.path === "PYZ.pyz/selected.pyc",
       );
@@ -1660,8 +1625,7 @@ it.each([
     );
     const reader = new PyInstallerArtifactReader(path);
     try {
-      const entries = [];
-      for await (const entry of reader.entries()) entries.push(entry);
+      const entries = await collectEntries(reader);
       const framed = entries.find((entry) => entry.path === "framed");
       if (framed === undefined) throw new Error("Missing framed module");
       expect(framed.formatMetadata).toMatchObject({
@@ -1739,8 +1703,7 @@ it("keeps mixed CArchive roles distinct across declarations, bytecode, and store
   const path = await writeArchive("mixed-roles", fixture.archive);
   const reader = new PyInstallerArtifactReader(path);
   try {
-    const entries = [];
-    for await (const entry of reader.entries()) entries.push(entry);
+    const entries = await collectEntries(reader);
     expect(reader.formatMetadata()).toMatchObject({
       entry_count: 9,
       runtime_option_count: 1,

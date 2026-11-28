@@ -4,6 +4,8 @@ export interface ChangePlanRequest {
   readonly event: string | undefined;
   readonly full: boolean;
   readonly skipFull: boolean;
+  readonly pushWarmOnly?: boolean | undefined;
+  readonly scheduleFast?: boolean | undefined;
   readonly base: string | undefined;
   readonly head: string | undefined;
   readonly baselineReason?: string | undefined;
@@ -26,7 +28,7 @@ export interface ChangePlanRepository {
 }
 
 export type ChangePlan = Readonly<Record<string, unknown>> & {
-  readonly tier: "full" | "fast" | "reused";
+  readonly tier: "full" | "fast" | "reused" | "warm";
   readonly matrix: {
     readonly include: readonly {
       readonly os: string;
@@ -38,6 +40,8 @@ export type ChangePlan = Readonly<Record<string, unknown>> & {
   readonly reasons: readonly string[];
   readonly testSelection: TestSelectionPlan;
   readonly testShards: readonly string[];
+  /** null requests full typed lint when the file list exceeds the output bound. */
+  readonly typedLintFiles: readonly string[] | null;
 };
 
 export function planChanges(

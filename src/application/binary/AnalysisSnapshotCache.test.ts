@@ -42,6 +42,7 @@ import type {
 import {
   AnalysisSnapshotCache,
   isSnapshotCacheable,
+  replaysOnlyFromImportedSnapshot,
   isSourceEvidenceRetainable,
 } from "./AnalysisSnapshotCache.js";
 import { EvidenceLedger } from "../investigation/EvidenceLedger.js";
@@ -71,6 +72,7 @@ it.each(["provider", "workflow"] as const)(
         relationshipCoverage: {
           status: "partial",
           limitations: ["original coverage"],
+          limited_directions: ["callers", "callees"],
         },
       },
     );
@@ -866,6 +868,45 @@ describe("document-scoped snapshot admission", () => {
         "one-shot-target",
       ),
     ).toBe(true);
+    // A direct tool call on a session's sole Program is recorded the same
+    // way, and replays only once the caller has opened from a snapshot.
+    expect(
+      isSnapshotCacheable(
+        "procedure_pseudo_code",
+        ghidra,
+        parameters,
+        "session-target",
+      ),
+    ).toBe(true);
+    expect(
+      isSnapshotCacheable(
+        "procedure_pseudo_code",
+        pseudocode,
+        parameters,
+        "session-target",
+      ),
+    ).toBe(false);
+    expect(
+      replaysOnlyFromImportedSnapshot(
+        "procedure_pseudo_code",
+        parameters,
+        "session-target",
+      ),
+    ).toBe(true);
+    expect(
+      replaysOnlyFromImportedSnapshot(
+        "procedure_pseudo_code",
+        { ...parameters, document: "image" },
+        "session-target",
+      ),
+    ).toBe(false);
+    expect(
+      replaysOnlyFromImportedSnapshot(
+        "procedure_pseudo_code",
+        parameters,
+        "one-shot-target",
+      ),
+    ).toBe(false);
     for (const refused of [
       pseudocode,
       { ...ghidra, cachePolicy: "live" as const },
@@ -1201,6 +1242,7 @@ describe("relationship coverage snapshot replay", () => {
     ).toEqual({
       status: "unknown",
       reason: "Snapshot entry does not report relationship coverage.",
+      limited_directions: ["callees"],
     });
   });
 });
@@ -1715,4 +1757,44 @@ it("detaches sealed bundle and staged entry payloads on export", () => {
     true,
   );
   expect(sealedBundle.records[0]?.normalized_result).toEqual(result);
+});
+
+describe("snapshot recording refusals", () => {
+  const recording = (address: string, extra: object = {}) => ({
+    target: structuredClone(ANALYSIS_SNAPSHOT_TARGET),
+    profile: structuredClone(ANALYSIS_SNAPSHOT_PROFILE),
+    operation: "xrefs" as const,
+    parameters: { address, document: "fixture" },
+    execution: {
+      ...createAnalysisExecution([], ANALYSIS_SNAPSHOT_PROVIDER, {
+        subject: ANALYSIS_SNAPSHOT_TARGET,
+        analysisProfile: ANALYSIS_SNAPSHOT_PROFILE,
+      }),
+      ...extra,
+    },
+  });
+
+  it("names a reference truncation the record would drop", () => {
+    const cache = new AnalysisSnapshotCache();
+    const truncated = recording("0x1000", { referencesTruncated: true });
+    expect(cache.recordingRefusal(truncated)).toContain("reference truncation");
+    cache.record(truncated);
+    expect(cache.entries()).toEqual([]);
+    const plain = recording("0x1000");
+    expect(cache.recordingRefusal(plain)).toBeUndefined();
+    cache.record(plain);
+    expect(cache.entries()).toHaveLength(1);
+  });
+
+  it("names a full cache only for a query it does not already hold", () => {
+    const cache = new AnalysisSnapshotCache();
+    for (let index = 0; index < 10_000; index++)
+      cache.record(recording(`0x${(0x1000 + index).toString(16)}`));
+    expect(cache.entries()).toHaveLength(10_000);
+    expect(cache.recordingRefusal(recording("0x1000"))).toBeUndefined();
+    const extra = recording("0x900000");
+    expect(cache.recordingRefusal(extra)).toContain("10000-entry maximum");
+    cache.record(extra);
+    expect(cache.entries()).toHaveLength(10_000);
+  });
 });

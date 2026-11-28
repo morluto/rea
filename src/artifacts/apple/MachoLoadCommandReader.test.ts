@@ -14,9 +14,11 @@ import {
   dylibCommand,
   dylibUseCommand,
   fatImage,
+  fatSliceRange,
   lazyLoadDylibInfoCommand,
   lazyLoadDylibInfoPayload,
   machoImage,
+  machoImageWithUnknownCommand,
   machoImageWithLazyLoadDylibInfo,
   segmentCommand,
   readerOf,
@@ -25,6 +27,7 @@ import {
 } from "./MachoImage.fixture.js";
 import {
   MAX_LOAD_COMMAND_BYTES,
+  readMachoContainer,
   readMachoImage,
 } from "../../domain/apple/machoLoadCommandReader.js";
 import { hasMachoMagic } from "../../domain/apple/machoContainer.js";
@@ -185,6 +188,25 @@ it.each([
     );
     if (facts.status !== "parsed") throw new Error(facts.status);
     expect(facts.slices[0]).toMatchObject({ platform, platforms: [platform] });
+  },
+);
+
+// LC_BUILD_VERSION platform 1 is macOS and 6 is macCatalyst; dyld folds that
+// pair into a zippered image. `platform` names one platform only, so the
+// declarations stay distinguishable from no declaration through `platforms`.
+it.each([
+  { declared: [], platform: null },
+  { declared: [1], platform: 1 },
+  { declared: [1, 1], platform: 1 },
+  { declared: [1, 6], platform: null },
+])(
+  "keeps each build platform declaration $declared",
+  async ({ declared, platform }) => {
+    const facts = await read(
+      machoImage({ commands: declared.map((id) => buildVersionCommand(id)) }),
+    );
+    if (facts.status !== "parsed") throw new Error(facts.status);
+    expect(facts.slices[0]).toMatchObject({ platform, platforms: declared });
   },
 );
 
@@ -831,8 +853,11 @@ it.each([false, true])(
     if (hidden) bytes.writeUInt32BE(1, 4);
     const readAt = vi.fn(readerOf(bytes));
     expect(await readMachoImage(readAt, bytes.length)).toEqual({
-      status: "malformed",
-      reason: "Mach-O slices 0 and 1 overlap.",
+      status: "failed",
+      failure: expect.objectContaining({
+        kind: "malformed",
+        detail: "Mach-O slices 0 and 1 overlap.",
+      }),
     });
     // Header identity probes are allowed; load-command payloads are not.
     const firstOffset = bytes.readUInt32BE(16);
@@ -858,6 +883,23 @@ it("keeps Apple's hidden ARM64 FAT row outside the raw declared slice list", asy
     status: "parsed",
     slices: [{ architecture: "arm" }],
     hiddenSlices: [{ architecture: "arm64", cpu_type: CPU.arm64.type }],
+  });
+});
+
+it("reports a hidden ARM64 FAT row declared past the end of the file as truncated", async () => {
+  const armv7 = { type: 12, subtype: 9 };
+  const bytes = Buffer.from(
+    fatImage([
+      { cpu: armv7, bytes: machoImage({ cpu: armv7 }) },
+      { cpu: CPU.arm64, bytes: machoImage({ cpu: CPU.arm64 }) },
+    ]),
+  );
+  bytes.writeUInt32BE(1, 4);
+  // The hidden row is the second table row; its size field sits at byte 40.
+  bytes.writeUInt32BE(bytes.length, 40);
+  expect(await readMachoImage(readerOf(bytes), bytes.length)).toMatchObject({
+    status: "failed",
+    failure: { kind: "truncated", format: "macho", field: "fat_arch[1]" },
   });
 });
 
@@ -939,67 +981,42 @@ describe("Mach-O load command reader: decodes thin-image load commands", () => {
     });
   });
 
-  it("keeps marker-shaped timestamps on legacy lazy dylib commands", async () => {
-    const facts = await read(
-      machoImage({
-        commands: [
-          dylibUseCommand(LC.LAZY_LOAD_DYLIB, "@rpath/libLazy.dylib", 0x09),
-        ],
-      }),
-    );
-    if (facts.status !== "parsed") throw new Error(facts.status);
-    expect(facts.slices[0]?.dependencies[0]).toMatchObject({
-      command: "LC_LAZY_LOAD_DYLIB",
-      encoding: "dylib_command",
-      install_name: "@rpath/libLazy.dylib",
-      weak: false,
-      delayed_init: false,
+  it("decodes modern flags while retaining the classic lazy dependency", async () => {
+    const image = machoImage({
+      commands: [
+        dylibUseCommand(LC.LOAD_DYLIB, "@rpath/delay", 0x8),
+        dylibUseCommand(LC.LOAD_DYLIB, "@rpath/weakup", 0x1 | 0x4),
+        dylibUseCommand(LC.LOAD_DYLIB, "@rpath/reexport", 0x2),
+        dylibUseCommand(LC.LAZY_LOAD_DYLIB, "@rpath/lazy", 0x09),
+      ],
     });
-  });
-
-  it("decodes dylib_use_command flags", async () => {
-    const facts = await read(
-      machoImage({
-        commands: [
-          dylibUseCommand(LC.LOAD_DYLIB, "@rpath/libdelay.dylib", 0x8),
-          dylibUseCommand(LC.LOAD_DYLIB, "@rpath/libweakup.dylib", 0x1 | 0x4),
-          dylibUseCommand(LC.LOAD_DYLIB, "@rpath/libre.dylib", 0x2),
-        ],
-      }),
-    );
+    const facts = await read(image);
     if (facts.status !== "parsed") throw new Error(facts.status);
+    const dependencies = facts.slices[0]?.dependencies;
     expect(
-      facts.slices[0]?.dependencies.map(
-        ({ encoding, weak, upward, reexport, delayed_init: delayed }) => ({
-          encoding,
-          weak,
-          upward,
-          reexport,
-          delayed,
-        }),
-      ),
+      dependencies?.map(({ command, install_name, encoding }) => [
+        command,
+        install_name,
+        encoding,
+      ]),
     ).toEqual([
-      {
-        encoding: "dylib_use_command",
-        weak: false,
-        upward: false,
-        reexport: false,
-        delayed: true,
-      },
-      {
-        encoding: "dylib_use_command",
-        weak: true,
-        upward: true,
-        reexport: false,
-        delayed: false,
-      },
-      {
-        encoding: "dylib_use_command",
-        weak: false,
-        upward: false,
-        reexport: true,
-        delayed: false,
-      },
+      ["LC_LOAD_DYLIB", "@rpath/delay", "dylib_use_command"],
+      ["LC_LOAD_DYLIB", "@rpath/weakup", "dylib_use_command"],
+      ["LC_LOAD_DYLIB", "@rpath/reexport", "dylib_use_command"],
+      ["LC_LAZY_LOAD_DYLIB", "@rpath/lazy", "dylib_command"],
+    ]);
+    expect(
+      dependencies?.map(({ weak, upward, reexport, delayed_init }) => [
+        weak,
+        upward,
+        reexport,
+        delayed_init,
+      ]),
+    ).toEqual([
+      [false, false, false, true],
+      [true, true, false, false],
+      [false, false, true, false],
+      [false, false, false, false],
     ]);
   });
 });
@@ -1022,7 +1039,7 @@ describe("LC_LAZY_LOAD_DYLIB_INFO payload", () => {
     const facts = await read(image);
     if (facts.status !== "parsed")
       throw new Error(
-        facts.status === "not-mach-o" ? facts.status : facts.reason,
+        facts.status === "not-mach-o" ? facts.status : facts.failure.detail,
       );
     expect(
       facts.slices[0]?.dependencies.map(
@@ -1064,7 +1081,9 @@ describe("LC_LAZY_LOAD_DYLIB_INFO payload", () => {
       }),
     );
     if (weak.status !== "parsed")
-      throw new Error(weak.status === "not-mach-o" ? weak.status : weak.reason);
+      throw new Error(
+        weak.status === "not-mach-o" ? weak.status : weak.failure.detail,
+      );
     expect(weak.slices[0]?.dependencies[0]).toMatchObject({ weak: true });
     const universal = await read(
       fatImage([
@@ -1079,11 +1098,33 @@ describe("LC_LAZY_LOAD_DYLIB_INFO payload", () => {
     );
     if (universal.status !== "parsed")
       throw new Error(
-        universal.status === "not-mach-o" ? universal.status : universal.reason,
+        universal.status === "not-mach-o"
+          ? universal.status
+          : universal.failure.detail,
       );
     expect(universal.slices[0]?.dependencies[0]?.install_name).toBe(
       "@rpath/libl.dylib",
     );
+  });
+
+  it("reports a lazy-info payload read that comes up short of the measured slice as changed", async () => {
+    const image = machoImageWithLazyLoadDylibInfo({
+      path: "@rpath/libl.dylib",
+    });
+    const payloadAt =
+      image.length -
+      lazyLoadDylibInfoPayload({
+        path: "@rpath/libl.dylib",
+      }).length;
+    // The file measured `image.length` bytes but shrank before the payload read.
+    const shrunk = async (offset: number, length: number) =>
+      offset >= payloadAt
+        ? image.subarray(offset, offset + length - 1)
+        : image.subarray(offset, offset + length);
+    expect(await readMachoImage(shrunk, image.length)).toMatchObject({
+      status: "failed",
+      failure: { kind: "changed", format: "macho", offset: payloadAt },
+    });
   });
 
   it("rejects a lazy-info payload that is truncated, mis-pointed, or has unknown flags", async () => {
@@ -1093,7 +1134,7 @@ describe("LC_LAZY_LOAD_DYLIB_INFO payload", () => {
     const view = new DataView(outside.buffer);
     const commandAt = 32;
     view.setUint32(commandAt + 8, outside.length, true);
-    expect((await read(outside)).status).toBe("malformed");
+    expect((await read(outside)).status).toBe("failed");
 
     const badPayload = lazyLoadDylibInfoPayload({
       path: "@rpath/libl.dylib",
@@ -1104,8 +1145,11 @@ describe("LC_LAZY_LOAD_DYLIB_INFO payload", () => {
     const payloadAt = badPath.length - badPayload.length;
     new DataView(badPath.buffer).setUint32(payloadAt, badPath.length, true);
     expect(await read(badPath)).toMatchObject({
-      status: "malformed",
-      reason: expect.stringContaining("load path"),
+      status: "failed",
+      failure: expect.objectContaining({
+        kind: "malformed",
+        detail: expect.stringContaining("load path"),
+      }),
     });
 
     const unknownFlags = machoImageWithLazyLoadDylibInfo({
@@ -1113,8 +1157,11 @@ describe("LC_LAZY_LOAD_DYLIB_INFO payload", () => {
       flags: 0x2,
     });
     expect(await read(unknownFlags)).toMatchObject({
-      status: "unsupported",
-      reason: expect.stringContaining("unrecognized bits"),
+      status: "failed",
+      failure: expect.objectContaining({
+        kind: "unsupported",
+        detail: expect.stringContaining("unrecognized bits"),
+      }),
     });
   });
 });
@@ -1128,8 +1175,11 @@ describe("LC_LAZY_LOAD_DYLIB_INFO image offsets", () => {
       }),
     );
     expect(beyondPage).toMatchObject({
-      status: "malformed",
-      reason: expect.stringContaining("flag image offset 0x4001"),
+      status: "failed",
+      failure: expect.objectContaining({
+        kind: "malformed",
+        detail: expect.stringContaining("flag image offset 0x4001"),
+      }),
     });
     const beyondChain = await read(
       machoImageWithLazyLoadDylibInfo({
@@ -1138,8 +1188,11 @@ describe("LC_LAZY_LOAD_DYLIB_INFO image offsets", () => {
       }),
     );
     expect(beyondChain).toMatchObject({
-      status: "malformed",
-      reason: expect.stringContaining("chain start image offset 0x4001"),
+      status: "failed",
+      failure: expect.objectContaining({
+        kind: "malformed",
+        detail: expect.stringContaining("chain start image offset 0x4001"),
+      }),
     });
     const onPage = await read(
       machoImageWithLazyLoadDylibInfo({
@@ -1151,107 +1204,140 @@ describe("LC_LAZY_LOAD_DYLIB_INFO image offsets", () => {
     expect(onPage.status).toBe("parsed");
   });
 
-  it("measures the VM range from __TEXT and ignores __LINKEDIT", async () => {
-    const text = segmentCommand({
-      name: "__TEXT",
-      vmaddr: 0x100000000n,
-      vmsize: 0x8000n,
+  it("measures the mapped end from the first __TEXT even when data precedes it", async () => {
+    const base = 0x8000000100000000n;
+    const commandsBefore = (
+      [
+        ["__DATA", 0x6001n, 0x4000n],
+        ["__TEXT", 0n, 0x8000n],
+        ["__TEXT", 0x1000n, 0x1000n],
+        ["__LINKEDIT", 0x20000n, 0x8000n],
+      ] as const
+    ).map(([name, offset, vmsize]) =>
+      segmentCommand({ name, vmaddr: base + offset, vmsize }),
+    );
+    const readAtOffset = (offset: number) =>
+      read(
+        machoImageWithLazyLoadDylibInfo({
+          path: "@rpath/libl.dylib",
+          flagImageOffset: offset,
+          chainStartImageOffset: offset,
+          commandsBefore,
+        }),
+      );
+    expect((await readAtOffset(0xa001)).status).toBe("parsed");
+    expect(await readAtOffset(0xa002)).toMatchObject({
+      status: "failed",
+      failure: expect.objectContaining({
+        kind: "malformed",
+        detail: expect.stringContaining("slice VM range 0xa001"),
+      }),
     });
-    const inside = await read(
-      machoImageWithLazyLoadDylibInfo({
-        path: "@rpath/libl.dylib",
-        flagImageOffset: 0x8000,
-        commandsBefore: [text],
-      }),
-    );
-    expect(inside.status).toBe("parsed");
-    const outside = await read(
-      machoImageWithLazyLoadDylibInfo({
-        path: "@rpath/libl.dylib",
-        chainStartImageOffset: 0x8001,
-        commandsBefore: [text],
-      }),
-    );
-    expect(outside).toMatchObject({
-      status: "malformed",
-      reason: expect.stringContaining("slice VM range 0x8000"),
-    });
-    const linkedit = await read(
-      machoImageWithLazyLoadDylibInfo({
-        path: "@rpath/libl.dylib",
-        flagImageOffset: 0x4001,
-        commandsBefore: [
-          segmentCommand({
-            name: "__LINKEDIT",
-            vmaddr: 0n,
-            vmsize: 0x100000n,
-          }),
-        ],
-      }),
-    );
-    expect(linkedit.status).toBe("malformed");
   });
 
-  it("does not alias a BOM-prefixed segment name to __LINKEDIT", async () => {
-    const result = await read(
-      machoImageWithLazyLoadDylibInfo({
-        path: "@rpath/libl.dylib",
-        flagImageOffset: 0x4001,
-        commandsBefore: [
-          segmentCommand({
-            name: "\uFEFF__LINKEDIT",
-            vmaddr: 0n,
-            vmsize: 0x100000n,
-          }),
-        ],
+  it("excludes only the exact __LINKEDIT name when no __TEXT supplies a base", async () => {
+    const readNamed = (name: string) =>
+      read(
+        machoImageWithLazyLoadDylibInfo({
+          path: "@rpath/libl.dylib",
+          flagImageOffset: 0x4001,
+          commandsBefore: [
+            segmentCommand({ name, vmaddr: 0n, vmsize: 0x100000n }),
+          ],
+        }),
+      );
+    expect(await readNamed("__LINKEDIT")).toMatchObject({
+      status: "failed",
+      failure: expect.objectContaining({
+        kind: "malformed",
+        detail: expect.stringContaining("slice VM range 0x4000"),
       }),
-    );
-    expect(result.status).toBe("parsed");
+    });
+    expect((await readNamed("\uFEFF__LINKEDIT")).status).toBe("parsed");
   });
+
   it("keeps a short segment parseable until a lazy-info command needs its VM range", async () => {
     const short = new Uint8Array(16);
     const view = new DataView(short.buffer);
-    view.setUint32(0, 0x19, true);
+    view.setUint32(0, LC.SEGMENT_64, true);
     view.setUint32(4, short.length, true);
     expect((await read(machoImage({ commands: [short] }))).status).toBe(
       "parsed",
     );
-    const withLazy = await read(
-      machoImageWithLazyLoadDylibInfo({
-        path: "@rpath/libl.dylib",
-        commandsBefore: [short],
+    const readLazy = (commandsBefore: readonly Uint8Array[]) =>
+      read(
+        machoImageWithLazyLoadDylibInfo({
+          path: "@rpath/libl.dylib",
+          commandsBefore,
+        }),
+      );
+    expect(await readLazy([short])).toEqual({
+      status: "failed",
+      failure: expect.objectContaining({
+        kind: "malformed",
+        detail:
+          "load command 0 is too short to establish the slice VM range for LC_LAZY_LOAD_DYLIB_INFO",
       }),
-    );
-    expect(withLazy).toMatchObject({
-      status: "malformed",
-      reason: expect.stringContaining("slice VM range"),
+    });
+    const unterminated = rpathCommand("x");
+    unterminated.fill(0x61, 12);
+    expect(await readLazy([short, unterminated])).toEqual({
+      status: "failed",
+      failure: expect.objectContaining({
+        kind: "malformed",
+        detail: "load command 1 has an unterminated string",
+      }),
     });
   });
 });
 
+const imageWithLazyPayload = (
+  payload: Uint8Array,
+  windows: readonly (readonly [offset: number, size: number])[] = [
+    [0, payload.length],
+  ],
+): Uint8Array => {
+  const image = machoImage({
+    commands: windows.map(([, size]) => lazyLoadDylibInfoCommand(0, size)),
+  });
+  const bytes = new Uint8Array(image.length + payload.length);
+  bytes.set(image);
+  bytes.set(payload, image.length);
+  const view = new DataView(bytes.buffer);
+  windows.forEach(([offset], index) =>
+    view.setUint32(32 + index * 16 + 8, image.length + offset, true),
+  );
+  return bytes;
+};
+
+const readPayloadOnce = async (
+  payload: Uint8Array,
+  windows: Parameters<typeof imageWithLazyPayload>[1],
+) => {
+  const image = imageWithLazyPayload(payload, windows);
+  const payloadStart = image.length - payload.length;
+  const payloadReads: number[][] = [];
+  const facts = await readMachoImage(async (offset, length) => {
+    if (offset >= payloadStart) payloadReads.push([offset, length]);
+    return image.subarray(offset, offset + length);
+  }, image.length);
+  expect(payloadReads).toEqual([[payloadStart, payload.length]]);
+  return facts;
+};
+
 describe("LC_LAZY_LOAD_DYLIB_INFO payload budget", () => {
-  it("reads one shared payload range once", async () => {
-    const payload = lazyLoadDylibInfoPayload({
-      path: "@rpath/libl.dylib",
-      symbols: ["_lf"],
-    });
-    const dataOffset = 32 + 16 + 16 + 16;
-    const image = machoImage({
-      commands: [
-        lazyLoadDylibInfoCommand(dataOffset, payload.length),
-        lazyLoadDylibInfoCommand(dataOffset, payload.length),
-      ],
-    });
-    const bytes = new Uint8Array(image.length + payload.length);
-    bytes.set(image);
-    bytes.set(payload, image.length);
-    let payloadReads = 0;
-    const facts = await readMachoImage(async (offset, length) => {
-      if (offset === image.length && length === payload.length)
-        payloadReads += 1;
-      return bytes.subarray(offset, offset + length);
-    }, bytes.length);
-    expect(payloadReads).toBe(1);
+  it("reuses identical payload facts and reads containing bytes only once", async () => {
+    const first = lazyInfoPayloadWithSymbolCount(
+      MAX_LAZY_INFO_SYMBOL_REFERENCES,
+      "@rpath/libl.dylib",
+    );
+    const inner = lazyInfoPayloadWithSymbolCount(0, "@rpath/libm.dylib");
+    const outer = Buffer.concat([first, inner]);
+    const facts = await readPayloadOnce(outer, [
+      [0, outer.length],
+      [0, outer.length],
+      [first.length, inner.length],
+    ]);
     expect(facts).toMatchObject({
       status: "parsed",
       slices: [
@@ -1259,6 +1345,7 @@ describe("LC_LAZY_LOAD_DYLIB_INFO payload budget", () => {
           dependencies: [
             { install_name: "@rpath/libl.dylib" },
             { install_name: "@rpath/libl.dylib" },
+            { install_name: "@rpath/libm.dylib" },
           ],
         },
       ],
@@ -1274,101 +1361,80 @@ describe("LC_LAZY_LOAD_DYLIB_INFO payload budget", () => {
         lazyLoadDylibInfoCommand(0, MAX_LOAD_COMMAND_BYTES),
       ],
     });
-    const bytes = new Uint8Array(MAX_LOAD_COMMAND_BYTES);
-    bytes.set(image);
-    bytes.set(payload, image.length);
-    expect(await read(bytes)).toMatchObject({
-      status: "unsupported",
-      reason: expect.stringContaining("aggregate limit"),
+    const prefix = new Uint8Array(image.length + payload.length);
+    prefix.set(image);
+    prefix.set(payload, image.length);
+    const facts = await readMachoImage(async (offset, length) => {
+      if (offset + length > prefix.length)
+        throw new Error(
+          "Requested payload bytes before enforcing the aggregate limit",
+        );
+      return prefix.subarray(offset, offset + length);
+    }, MAX_LOAD_COMMAND_BYTES);
+    expect(facts).toMatchObject({
+      status: "failed",
+      failure: expect.objectContaining({
+        kind: "unsupported",
+        detail: expect.stringContaining("aggregate limit"),
+      }),
     });
   });
 
-  it("does not reread a payload range contained in an earlier read", async () => {
-    const payload = lazyLoadDylibInfoPayload({
-      path: "@rpath/libl.dylib",
-      symbols: ["_lf"],
-    });
-    const image = machoImage({
-      commands: [
-        lazyLoadDylibInfoCommand(0, payload.length + 8),
-        lazyLoadDylibInfoCommand(0, payload.length),
-      ],
-    });
-    const bytes = new Uint8Array(image.length + payload.length + 8);
-    bytes.set(image);
-    bytes.set(payload, image.length);
-    const view = new DataView(bytes.buffer);
-    view.setUint32(32 + 8, image.length, true);
-    view.setUint32(48 + 8, image.length, true);
-    let payloadReads = 0;
-    const facts = await readMachoImage(async (offset, length) => {
-      if (offset === image.length) payloadReads += 1;
-      return bytes.subarray(offset, offset + length);
-    }, bytes.length);
-    expect(payloadReads).toBe(1);
-    expect(facts).toMatchObject({
+  it("keeps equal-size payload identities in load-command order", async () => {
+    const second = lazyInfoPayloadWithSymbolCount(0, "@rpath/libm.dylib");
+    const first = Buffer.alloc(second.length);
+    first.set(lazyInfoPayloadWithSymbolCount(0, ""));
+    const image = imageWithLazyPayload(Buffer.concat([first, second]), [
+      [first.length, second.length],
+      [0, first.length],
+    ]);
+    expect(await read(image)).toMatchObject({
       status: "parsed",
       slices: [
         {
           dependencies: [
-            { install_name: "@rpath/libl.dylib" },
-            { install_name: "@rpath/libl.dylib" },
+            { install_name: "@rpath/libm.dylib" },
+            { install_name: "" },
           ],
         },
       ],
     });
-  });
-
-  it("parses distinct non-nested lazy-info payloads under the dependency limit", async () => {
-    const count = 8;
-    const payloadSize = 26;
-    const payload = new Uint8Array(payloadSize);
-    new DataView(payload.buffer).setUint32(0, 24, true);
-    new DataView(payload.buffer).setUint32(20, 24, true);
-    const dataOffset = 32 + 16 + count * 16;
-    const commands = Array.from({ length: count }, (_, index) =>
-      lazyLoadDylibInfoCommand(dataOffset + index * payloadSize, payloadSize),
-    );
-    const image = machoImage({ commands });
-    const bytes = new Uint8Array(image.length + count * payloadSize);
-    bytes.set(image);
-    for (let index = 0; index < count; index += 1)
-      bytes.set(payload, image.length + index * payloadSize);
-    const facts = await read(bytes);
-    if (facts.status !== "parsed")
-      throw new Error(
-        facts.status === "not-mach-o" ? facts.status : facts.reason,
-      );
-    expect(facts.slices[0]?.dependencies).toHaveLength(count);
   });
 });
 
 describe("LC_LAZY_LOAD_DYLIB_INFO dependency limit", () => {
   it("retains one result per command until the dependency limit", async () => {
     const payload = lazyLoadDylibInfoPayload({ path: "@rpath/libl.dylib" });
-    const imageFor = (count: number) => {
-      const dataOffset = 32 + 16 + count * 16;
-      const image = machoImage({
-        commands: Array.from({ length: count }, () =>
-          lazyLoadDylibInfoCommand(dataOffset, payload.length),
-        ),
-      });
-      const bytes = new Uint8Array(image.length + payload.length);
-      bytes.set(image);
-      bytes.set(payload, image.length);
-      return bytes;
-    };
+    const imageFor = (count: number) =>
+      imageWithLazyPayload(
+        payload,
+        Array.from({ length: count }, () => [0, payload.length]),
+      );
     const atLimit = await read(imageFor(MAX_LAZY_INFO_DEPENDENCIES));
     if (atLimit.status !== "parsed")
       throw new Error(
-        atLimit.status === "not-mach-o" ? atLimit.status : atLimit.reason,
+        atLimit.status === "not-mach-o"
+          ? atLimit.status
+          : atLimit.failure.detail,
       );
     expect(atLimit.slices[0]?.dependencies).toHaveLength(
       MAX_LAZY_INFO_DEPENDENCIES,
     );
-    expect(await read(imageFor(MAX_LAZY_INFO_DEPENDENCIES + 1))).toMatchObject({
-      status: "unsupported",
-      reason: expect.stringContaining("dependency limit"),
+    const over = imageFor(MAX_LAZY_INFO_DEPENDENCIES + 1);
+    const payloadStart = over.length - payload.length;
+    const refused = await readMachoImage(async (offset, size) => {
+      if (offset + size > payloadStart)
+        throw new Error(
+          "Read a lazy payload before enforcing the dependency limit",
+        );
+      return over.subarray(offset, offset + size);
+    }, over.length);
+    expect(refused).toMatchObject({
+      status: "failed",
+      failure: expect.objectContaining({
+        kind: "unsupported",
+        detail: expect.stringContaining("dependency limit"),
+      }),
     });
   });
 });
@@ -1381,38 +1447,25 @@ describe("LC_LAZY_LOAD_DYLIB_INFO string bounds", () => {
     view.setUint32(0, 24, true);
     view.setUint32(20, 24, true);
     payload.set(path, 24);
-    const image = machoImage({
-      commands: [
-        lazyLoadDylibInfoCommand(0, payload.length),
-        lazyLoadDylibInfoCommand(0, 24),
-      ],
-    });
-    const bytes = new Uint8Array(image.length + payload.length);
-    bytes.set(image);
-    bytes.set(payload, image.length);
-    const patched = new DataView(bytes.buffer);
-    patched.setUint32(32 + 8, image.length, true);
-    patched.setUint32(48 + 8, image.length, true);
-    expect(await read(bytes)).toMatchObject({
-      status: "malformed",
-      reason: expect.stringContaining("outside the payload"),
-    });
-    const truncated = machoImage({
-      commands: [
-        lazyLoadDylibInfoCommand(0, payload.length),
-        lazyLoadDylibInfoCommand(0, 40),
-      ],
-    });
-    const truncatedBytes = new Uint8Array(truncated.length + payload.length);
-    truncatedBytes.set(truncated);
-    truncatedBytes.set(payload, truncated.length);
-    const truncatedView = new DataView(truncatedBytes.buffer);
-    truncatedView.setUint32(32 + 8, truncated.length, true);
-    truncatedView.setUint32(48 + 8, truncated.length, true);
-    expect(await read(truncatedBytes)).toMatchObject({
-      status: "malformed",
-      reason: expect.stringContaining("unterminated"),
-    });
+    const readShorter = (size: number) =>
+      readPayloadOnce(payload, [
+        [0, payload.length],
+        [0, size],
+      ]);
+    const afterNul = 24 + path.length + 2;
+    expect((await readShorter(afterNul)).status).toBe("parsed");
+    for (const [size, diagnostic] of [
+      [24, "outside the payload"],
+      [afterNul - 2, "unterminated"],
+      [afterNul - 1, "unterminated"],
+    ] as const)
+      expect(await readShorter(size)).toMatchObject({
+        status: "failed",
+        failure: expect.objectContaining({
+          kind: "malformed",
+          detail: expect.stringContaining(diagnostic),
+        }),
+      });
   });
 
   it("rejects a load path taken from the payload header", async () => {
@@ -1420,38 +1473,24 @@ describe("LC_LAZY_LOAD_DYLIB_INFO string bounds", () => {
     const view = new DataView(payload.buffer);
     view.setUint32(0, 4, true);
     view.setUint32(20, 24, true);
-    const image = machoImage({
-      commands: [lazyLoadDylibInfoCommand(0, payload.length)],
-    });
-    const bytes = new Uint8Array(image.length + payload.length);
-    bytes.set(image);
-    bytes.set(payload, image.length);
-    new DataView(bytes.buffer).setUint32(32 + 8, image.length, true);
-    expect(await read(bytes)).toMatchObject({
-      status: "malformed",
-      reason: expect.stringContaining("inside the payload header"),
+    expect(await read(imageWithLazyPayload(payload))).toMatchObject({
+      status: "failed",
+      failure: expect.objectContaining({
+        kind: "malformed",
+        detail: expect.stringContaining("inside the payload header"),
+      }),
     });
     const symbolPayload = lazyLoadDylibInfoPayload({
       path: "@rpath/libl.dylib",
       symbols: ["_lf"],
     });
     new DataView(symbolPayload.buffer).setUint32(24, 4, true);
-    const symbolImage = machoImage({
-      commands: [lazyLoadDylibInfoCommand(0, symbolPayload.length)],
-    });
-    const symbolBytes = new Uint8Array(
-      symbolImage.length + symbolPayload.length,
-    );
-    symbolBytes.set(symbolImage);
-    symbolBytes.set(symbolPayload, symbolImage.length);
-    new DataView(symbolBytes.buffer).setUint32(
-      32 + 8,
-      symbolImage.length,
-      true,
-    );
-    expect(await read(symbolBytes)).toMatchObject({
-      status: "malformed",
-      reason: expect.stringContaining("symbol 0"),
+    expect(await read(imageWithLazyPayload(symbolPayload))).toMatchObject({
+      status: "failed",
+      failure: expect.objectContaining({
+        kind: "malformed",
+        detail: expect.stringContaining("symbol 0"),
+      }),
     });
   });
 
@@ -1474,14 +1513,7 @@ describe("LC_LAZY_LOAD_DYLIB_INFO string bounds", () => {
           stringOffset + (step === 0 ? 0 : symbol % 8),
           true,
         );
-      const image = machoImage({
-        commands: [lazyLoadDylibInfoCommand(0, payload.length)],
-      });
-      const bytes = new Uint8Array(image.length + payload.length);
-      bytes.set(image);
-      bytes.set(payload, image.length);
-      new DataView(bytes.buffer).setUint32(32 + 8, image.length, true);
-      return bytes;
+      return imageWithLazyPayload(payload);
     };
     expect(imageFor(2, 0).length).toBeLessThan(MAX_LOAD_COMMAND_BYTES);
     expect(await read(imageFor(2, 0))).toMatchObject({
@@ -1490,12 +1522,18 @@ describe("LC_LAZY_LOAD_DYLIB_INFO string bounds", () => {
     });
     const over = Math.floor(MAX_LOAD_COMMAND_BYTES / (stringBytes + 1)) + 2;
     expect(await read(imageFor(over, 0))).toMatchObject({
-      status: "unsupported",
-      reason: expect.stringContaining("string validation"),
+      status: "failed",
+      failure: expect.objectContaining({
+        kind: "unsupported",
+        detail: expect.stringContaining("string validation"),
+      }),
     });
     expect(await read(imageFor(over, 1))).toMatchObject({
-      status: "unsupported",
-      reason: expect.stringContaining("string validation"),
+      status: "failed",
+      failure: expect.objectContaining({
+        kind: "unsupported",
+        detail: expect.stringContaining("string validation"),
+      }),
     });
   });
 });
@@ -1520,36 +1558,18 @@ const lazyInfoPayloadWithSymbolCount = (
   return payload;
 };
 
-const imageWithLazyPayload = (payload: Uint8Array): Uint8Array => {
-  const image = machoImage({
-    commands: [lazyLoadDylibInfoCommand(0, payload.length)],
-  });
-  const bytes = new Uint8Array(image.length + payload.length);
-  bytes.set(image);
-  bytes.set(payload, image.length);
-  const view = new DataView(bytes.buffer);
-  view.setUint32(32 + 8, image.length, true);
-  view.setUint32(32 + 12, payload.length, true);
-  return bytes;
-};
-
 describe("LC_LAZY_LOAD_DYLIB_INFO symbol cardinality", () => {
-  it("stops before caching one string for every symbol offset", async () => {
-    const atLimit = lazyInfoPayloadWithSymbolCount(
-      MAX_LAZY_INFO_SYMBOL_REFERENCES,
-      "@rpath/libl.dylib",
-    );
-    expect(await read(imageWithLazyPayload(atLimit))).toMatchObject({
-      status: "parsed",
-      slices: [{ dependencies: [{ install_name: "@rpath/libl.dylib" }] }],
-    });
+  it("refuses one payload above the symbol reference limit", async () => {
     const overLimit = lazyInfoPayloadWithSymbolCount(
       MAX_LAZY_INFO_SYMBOL_REFERENCES + 1,
       "@rpath/libl.dylib",
     );
     expect(await read(imageWithLazyPayload(overLimit))).toMatchObject({
-      status: "unsupported",
-      reason: expect.stringContaining("65536-reference limit"),
+      status: "failed",
+      failure: expect.objectContaining({
+        kind: "unsupported",
+        detail: expect.stringContaining("65536-reference limit"),
+      }),
     });
   });
 
@@ -1559,24 +1579,16 @@ describe("LC_LAZY_LOAD_DYLIB_INFO symbol cardinality", () => {
       "@rpath/libl.dylib",
     );
     const second = lazyInfoPayloadWithSymbolCount(1, "@rpath/libm.dylib");
-    const image = machoImage({
-      commands: [
-        lazyLoadDylibInfoCommand(0, first.length),
-        lazyLoadDylibInfoCommand(0, second.length),
-      ],
-    });
-    const bytes = new Uint8Array(image.length + first.length + second.length);
-    bytes.set(image);
-    bytes.set(first, image.length);
-    bytes.set(second, image.length + first.length);
-    const view = new DataView(bytes.buffer);
-    view.setUint32(32 + 8, image.length, true);
-    view.setUint32(32 + 12, first.length, true);
-    view.setUint32(48 + 8, image.length + first.length, true);
-    view.setUint32(48 + 12, second.length, true);
+    const bytes = imageWithLazyPayload(Buffer.concat([first, second]), [
+      [0, first.length],
+      [first.length, second.length],
+    ]);
     expect(await read(bytes)).toMatchObject({
-      status: "unsupported",
-      reason: expect.stringContaining("65536-reference limit"),
+      status: "failed",
+      failure: expect.objectContaining({
+        kind: "unsupported",
+        detail: expect.stringContaining("65536-reference limit"),
+      }),
     });
   });
 });
@@ -1588,21 +1600,13 @@ describe("LC_LAZY_LOAD_DYLIB_INFO path terminator", () => {
     view.setUint32(0, 24, true);
     view.setUint32(20, 24, true);
     payload[24] = 0x61;
-    const imageFor = (size: number) => {
-      const image = machoImage({
-        commands: [lazyLoadDylibInfoCommand(0, size)],
-      });
-      const bytes = new Uint8Array(image.length + payload.length);
-      bytes.set(image);
-      bytes.set(payload, image.length);
-      new DataView(bytes.buffer).setUint32(32 + 8, image.length, true);
-      new DataView(bytes.buffer).setUint32(32 + 12, size, true);
-      return bytes;
-    };
-    expect((await read(imageFor(payload.length))).status).toBe("parsed");
-    expect(await read(imageFor(26))).toMatchObject({
-      status: "malformed",
-      reason: expect.stringContaining("unterminated"),
+    expect((await read(imageWithLazyPayload(payload))).status).toBe("parsed");
+    expect(await read(imageWithLazyPayload(payload, [[0, 26]]))).toMatchObject({
+      status: "failed",
+      failure: expect.objectContaining({
+        kind: "malformed",
+        detail: expect.stringContaining("unterminated"),
+      }),
     });
   });
 });
@@ -1758,15 +1762,21 @@ describe("Mach-O load command reader: reads and validates universal binary slice
       const mismatch = original.slice();
       new DataView(mismatch.buffer).setUint32(fieldOffset, value, false);
       expect(await read(mismatch)).toMatchObject({
-        status: "malformed",
-        reason: expect.stringContaining("disagrees"),
+        status: "failed",
+        failure: expect.objectContaining({
+          kind: "malformed",
+          detail: expect.stringContaining("disagrees"),
+        }),
       });
     }
     const unaligned = original.slice();
     new DataView(unaligned.buffer).setUint32(16, 4097, false);
     expect(await read(unaligned)).toMatchObject({
-      status: "malformed",
-      reason: expect.stringContaining("not aligned"),
+      status: "failed",
+      failure: expect.objectContaining({
+        kind: "malformed",
+        detail: expect.stringContaining("not aligned"),
+      }),
     });
   });
 
@@ -1809,8 +1819,11 @@ describe("Mach-O load command reader inputs", () => {
     malformedFat.writeUInt32BE(32, 20);
     malformedFat.writeUInt32BE(12, 24);
     expect(await read(malformedFat)).toMatchObject({
-      status: "malformed",
-      reason: expect.stringContaining("slice range extends beyond the file"),
+      status: "failed",
+      failure: expect.objectContaining({
+        kind: "truncated",
+        detail: expect.stringContaining("slice range extends beyond the file"),
+      }),
     });
     expect(await read(new TextEncoder().encode("#!/bin/sh\n"))).toEqual({
       status: "not-mach-o",
@@ -1821,7 +1834,13 @@ describe("Mach-O load command reader inputs", () => {
     // A recognized magic without room for a header is a truncated image.
     expect(
       await read(Uint8Array.from([0xcf, 0xfa, 0xed, 0xfe, 0x0c, 0x00])),
-    ).toEqual({ status: "malformed", reason: "Mach-O header is truncated" });
+    ).toEqual({
+      status: "failed",
+      failure: expect.objectContaining({
+        kind: "truncated",
+        detail: "Mach-O header is truncated",
+      }),
+    });
   });
 
   it.each([MAX_JVM_CLASS_IDENTITY_BYTES, MAX_JVM_CLASS_IDENTITY_BYTES + 1])(
@@ -1837,8 +1856,13 @@ describe("Mach-O load command reader inputs", () => {
         header.subarray(offset, offset + length),
       );
       expect(await readMachoImage(readAt, size)).toMatchObject({
-        status: "malformed",
-        reason: expect.stringContaining("slice range extends beyond the file"),
+        status: "failed",
+        failure: expect.objectContaining({
+          kind: "truncated",
+          detail: expect.stringContaining(
+            "slice range extends beyond the file",
+          ),
+        }),
       });
       expect(Math.max(...readAt.mock.calls.map(([, length]) => length))).toBe(
         28,
@@ -1868,10 +1892,13 @@ describe("Mach-O load command reader inputs", () => {
     };
 
     expect(await readMachoImage(sparseReadAt, size)).toEqual({
-      status: "unsupported",
-      reason: expect.stringContaining(
-        "class identity scan exceeds the 16 MiB limit",
-      ),
+      status: "failed",
+      failure: expect.objectContaining({
+        kind: "unsupported",
+        detail: expect.stringContaining(
+          "class identity scan exceeds the 16 MiB limit",
+        ),
+      }),
     });
   });
 });
@@ -1884,41 +1911,44 @@ describe("Mach-O load command reader failures", () => {
   };
 
   it("reports malformed command tables with the failing command", async () => {
-    expect(await read(withCommandSize(0))).toMatchObject({
-      status: "malformed",
-      reason: expect.stringContaining("load command 0"),
-    });
-    expect(await read(withCommandSize(4096))).toMatchObject({
-      status: "malformed",
-      reason: expect.stringContaining("invalid cmdsize"),
-    });
+    for (const size of [0, 4096])
+      expect(await read(withCommandSize(size))).toMatchObject({
+        status: "failed",
+        failure: expect.objectContaining({
+          kind: "malformed",
+          detail: expect.stringMatching(
+            new RegExp(
+              `load command 0\\b.*offset 0\\b.*invalid.*cmdsize ${size}\\b`,
+              "iu",
+            ),
+          ),
+        }),
+      });
     const extraCommand = machoImage({ commands: [rpathCommand("x")] });
     new DataView(extraCommand.buffer).setUint32(16, 2, true);
     expect(await read(extraCommand)).toMatchObject({
-      status: "malformed",
-      reason: "load command 1 starts beyond sizeofcmds",
+      status: "failed",
+      failure: expect.objectContaining({
+        kind: "malformed",
+        detail: "load command 1 starts beyond sizeofcmds",
+      }),
     });
   });
 
   it("requires 8-byte command alignment in 64-bit images", async () => {
-    // A command the reader does not decode; only its size is checked.
-    const command = new Uint8Array(12);
-    const view = new DataView(command.buffer);
-    view.setUint32(0, 0x7f000001, true);
-    view.setUint32(4, 12, true);
-    expect(await read(machoImage({ commands: [command] }))).toMatchObject({
-      status: "malformed",
-      reason: expect.stringContaining("invalid cmdsize 12"),
+    expect(await read(machoImageWithUnknownCommand(true, 12))).toMatchObject({
+      status: "failed",
+      failure: expect.objectContaining({
+        kind: "malformed",
+        detail: expect.stringMatching(
+          /load command 0\b.*invalid.*cmdsize 12\b/iu,
+        ),
+      }),
     });
-    expect(
-      await read(
-        machoImage({
-          cpu: { type: 7, subtype: 3 },
-          wide: false,
-          commands: [command],
-        }),
-      ),
-    ).toMatchObject({ status: "parsed" });
+    expect(await read(machoImageWithUnknownCommand(false, 12))).toMatchObject({
+      status: "parsed",
+      slices: [{ architecture: "i386" }],
+    });
   });
 
   it("accepts FAT tables up to 128 records that name a Mach-O CPU", async () => {
@@ -1934,79 +1964,105 @@ describe("Mach-O load command reader failures", () => {
       [0xbf, 0xba, 0xfe, 0xca],
     ])
       expect(await read(Uint8Array.from([...magic, 0, 0, 0, 0]))).toEqual({
-        status: "malformed",
-        reason: "FAT header declares no architectures",
+        status: "failed",
+        failure: expect.objectContaining({
+          kind: "malformed",
+          detail: "FAT header declares no architectures",
+        }),
       });
   });
 
-  it("rejects string commands too short to hold their string offset", async () => {
-    const short = new Uint8Array(8);
-    const view = new DataView(short.buffer);
-    view.setUint32(0, LC.RPATH, true);
-    view.setUint32(4, 8, true);
-    expect(await read(machoImage({ commands: [short] }))).toMatchObject({
-      status: "malformed",
-      reason: expect.stringMatching(
-        /load command 0\b.*too short.*string offset/iu,
-      ),
-    });
-    view.setUint32(0, LC.CODE_SIGNATURE, true);
-    expect(await read(machoImage({ commands: [short] }))).toMatchObject({
-      status: "malformed",
-      reason: "load command 0 is too short for LC_CODE_SIGNATURE",
-    });
-  });
-
-  it("rejects strings that are unterminated, misplaced or not UTF-8", async () => {
-    const unterminated = rpathCommand("abcd");
+  it("reports command-specific payload defects after accepting the frame", async () => {
+    const short = Uint8Array.of(LC.CODE_SIGNATURE, 0, 0, 0, 8, 0, 0, 0);
+    const shortRpath = short.slice();
+    new DataView(shortRpath.buffer).setUint32(0, LC.RPATH, true);
+    const withOffset = (command: Uint8Array, offset: number) => {
+      new DataView(command.buffer).setUint32(8, offset, true);
+      return command;
+    };
+    const unterminated = rpathCommand("ab");
     unterminated.fill(0x41, 12);
-    expect(await read(machoImage({ commands: [unterminated] }))).toMatchObject({
-      status: "malformed",
-      reason: expect.stringContaining("unterminated"),
-    });
-    const misplaced = rpathCommand("abcd");
-    new DataView(misplaced.buffer).setUint32(8, 4, true);
-    expect(await read(machoImage({ commands: [misplaced] }))).toMatchObject({
-      status: "malformed",
-      reason: expect.stringContaining("string offset 4"),
-    });
     const invalid = rpathCommand("ab");
     invalid[12] = 0xff;
-    expect(await read(machoImage({ commands: [invalid] }))).toMatchObject({
-      status: "malformed",
-      reason: expect.stringContaining("not UTF-8"),
-    });
+    const atEnd = rpathCommand("ab");
+    for (const [command, issue] of [
+      [short, /too short.*LC_CODE_SIGNATURE/iu],
+      [shortRpath, /too short.*string offset/iu],
+      [unterminated, /unterminated/iu],
+      [withOffset(rpathCommand("ab"), 11), /string offset 11\b.*outside/iu],
+      [
+        withOffset(atEnd, atEnd.length),
+        new RegExp(`string offset ${atEnd.length}\\b.*outside`, "iu"),
+      ],
+      [
+        withOffset(dylibCommand(LC.LOAD_DYLIB, "ab"), 23),
+        /string offset 23\b.*outside/iu,
+      ],
+      [invalid, /not UTF-8/iu],
+    ] as const) {
+      const result = await read(machoImage({ commands: [command] }));
+      expect(result).toMatchObject({
+        status: "failed",
+        failure: { kind: "malformed" },
+      });
+      if (result.status !== "failed")
+        throw new Error("Expected a malformed command");
+      expect(result.failure.detail).toMatch(/load command 0\b/iu);
+      expect(result.failure.detail).toMatch(issue);
+    }
   });
 
   it("refuses truncated, oversized, big-endian and out-of-range images", async () => {
     const image = machoImage({ commands: [rpathCommand("@loader_path")] });
     expect(await read(image.subarray(0, 20))).toMatchObject({
-      status: "malformed",
-      reason: "Mach-O header is truncated",
+      status: "failed",
+      failure: expect.objectContaining({
+        kind: "truncated",
+        detail: "Mach-O header is truncated",
+      }),
     });
-    const commandBytes = MAX_LOAD_COMMAND_BYTES + 8;
-    const header = machoImage({});
-    const oversized = Buffer.alloc(header.byteLength + commandBytes);
-    oversized.set(header);
-    oversized.writeUInt32LE(commandBytes, 20);
-    expect(await read(oversized)).toMatchObject({
-      status: "unsupported",
-      reason: expect.stringMatching(/above the .* limit/iu),
+    const payloadRead = new Error("Mach-O command table read");
+    const readDeclaredTable = (commandBytes: number) => {
+      const prefix = machoImage({}).subarray(0, 32);
+      new DataView(prefix.buffer).setUint32(20, commandBytes, true);
+      return readMachoImage(async (offset, length) => {
+        if (offset + length > prefix.length) throw payloadRead;
+        return prefix.subarray(offset, offset + length);
+      }, prefix.length + commandBytes);
+    };
+    await expect(readDeclaredTable(MAX_LOAD_COMMAND_BYTES)).rejects.toBe(
+      payloadRead,
+    );
+    expect(await readDeclaredTable(MAX_LOAD_COMMAND_BYTES + 8)).toMatchObject({
+      status: "failed",
+      failure: expect.objectContaining({
+        kind: "unsupported",
+        detail: expect.stringMatching(/above the .* limit/iu),
+      }),
     });
     const beyond = machoImage({ commands: [rpathCommand("x")] });
     new DataView(beyond.buffer).setUint32(20, beyond.length, true);
     expect(await read(beyond)).toMatchObject({
-      status: "malformed",
-      reason: "load commands extend beyond the Mach-O slice",
+      status: "failed",
+      failure: expect.objectContaining({
+        kind: "malformed",
+        detail: "load commands extend beyond the Mach-O slice",
+      }),
     });
     const bigEndian = Uint8Array.from([0xfe, 0xed, 0xfa, 0xcf, 0, 0, 0, 0]);
-    expect(await read(bigEndian)).toMatchObject({ status: "unsupported" });
+    expect(await read(bigEndian)).toMatchObject({
+      status: "failed",
+      failure: { kind: "unsupported" },
+    });
     const fat = fatImage([{ cpu: CPU.arm64, bytes: machoImage({}) }]);
     expect(await read(fat.subarray(0, 4100))).toMatchObject({
-      status: "malformed",
-      reason: expect.stringMatching(
-        /FAT architecture 0\b.*slice range.*beyond.*file/iu,
-      ),
+      status: "failed",
+      failure: expect.objectContaining({
+        kind: "truncated",
+        detail: expect.stringMatching(
+          /FAT architecture 0\b.*slice range.*beyond.*file/iu,
+        ),
+      }),
     });
   });
 
@@ -2015,8 +2071,11 @@ describe("Mach-O load command reader failures", () => {
     new DataView(fat.buffer).setUint32(24, 53, false);
 
     expect(await read(fat)).toMatchObject({
-      status: "unsupported",
-      reason: expect.stringContaining("alignment exponent 53 is unsupported"),
+      status: "failed",
+      failure: expect.objectContaining({
+        kind: "unsupported",
+        detail: expect.stringContaining("alignment exponent 53 is unsupported"),
+      }),
     });
   });
 });
@@ -2030,10 +2089,13 @@ describe("Mach-O load command reader defect precedence", () => {
     const unsized = new Uint8Array(16);
     new DataView(unsized.buffer).setUint32(0, LC.RPATH, true);
     const decodeFirst = {
-      status: "malformed",
-      reason: expect.stringMatching(
-        /load command 0\b.*too short.*string offset/iu,
-      ),
+      status: "failed",
+      failure: expect.objectContaining({
+        kind: "malformed",
+        detail: expect.stringMatching(
+          /load command 0\b.*too short.*string offset/iu,
+        ),
+      }),
     };
     // An earlier command's decode defect wins over a later framing defect,
     expect(await read(machoImage({ commands: [shortRpath, unsized] }))).toEqual(
@@ -2043,8 +2105,11 @@ describe("Mach-O load command reader defect precedence", () => {
     const missing = machoImage({ commands: [shortRpath] });
     new DataView(missing.buffer).setUint32(16, 2, true);
     expect(await read(missing)).toMatchObject({
-      status: "malformed",
-      reason: expect.stringMatching(/count 2 cannot fit/iu),
+      status: "failed",
+      failure: expect.objectContaining({
+        kind: "malformed",
+        detail: expect.stringMatching(/count 2 cannot fit/iu),
+      }),
     });
     // An earlier decode defect wins over unconsumed command bytes.
     const unconsumed = machoImage({
@@ -2061,8 +2126,11 @@ describe("Mach-O load command reader defect precedence", () => {
       true,
     );
     expect(await read(oversized)).toMatchObject({
-      status: "malformed",
-      reason: expect.stringMatching(/extend beyond.*slice/iu),
+      status: "failed",
+      failure: expect.objectContaining({
+        kind: "malformed",
+        detail: expect.stringMatching(/extend beyond.*slice/iu),
+      }),
     });
 
     // A malformed FAT slice wins over an earlier or later unsupported one.
@@ -2076,8 +2144,11 @@ describe("Mach-O load command reader defect precedence", () => {
     ]) {
       const fat = fatImage(slices.map((bytes) => ({ cpu: CPU.arm64, bytes })));
       expect(await read(fat)).toEqual({
-        status: "malformed",
-        reason: "load commands extend beyond the Mach-O slice",
+        status: "failed",
+        failure: expect.objectContaining({
+          kind: "malformed",
+          detail: "load commands extend beyond the Mach-O slice",
+        }),
       });
     }
 
@@ -2089,10 +2160,13 @@ describe("Mach-O load command reader defect precedence", () => {
     new DataView(ranged.buffer).setUint32(8 + 16, 53, false);
     new DataView(ranged.buffer).setUint32(8 + 20 + 12, ranged.length, false);
     expect(await read(ranged)).toEqual({
-      status: "unsupported",
-      reason: expect.stringMatching(
-        /FAT architecture 0\b.*alignment exponent 53\b.*unsupported/iu,
-      ),
+      status: "failed",
+      failure: expect.objectContaining({
+        kind: "unsupported",
+        detail: expect.stringMatching(
+          /FAT architecture 0\b.*alignment exponent 53\b.*unsupported/iu,
+        ),
+      }),
     });
   });
 });
@@ -2103,26 +2177,137 @@ it.each([true, false])(
     const bytes = machoImage({ wide, commands: [rpathCommand("ignored")] });
     new DataView(bytes.buffer).setUint32(16, 0, true);
     expect(await read(bytes)).toMatchObject({
-      status: "malformed",
-      reason: expect.stringContaining("sizeofcmds"),
+      status: "failed",
+      failure: expect.objectContaining({
+        kind: "malformed",
+        detail: expect.stringContaining("sizeofcmds"),
+      }),
     });
   },
 );
 
-it("observes only the common 28-byte header of a 64-bit slice", async () => {
-  const bytes = machoImage({ fileType: FILE_TYPE.dylib }).subarray(0, 28);
-  const readAt = vi.fn(readerOf(bytes));
-  expect(await readMachoImage(readAt, 32)).toMatchObject({
-    status: "parsed",
-    slices: [{ file_type: "dylib", file_type_code: FILE_TYPE.dylib }],
+it("reads the common header at exactly its supported physical boundaries", async () => {
+  const common = (wide: boolean) =>
+    machoImage({
+      wide,
+      cpu: wide ? CPU.arm64 : CPU.i386,
+      fileType: FILE_TYPE.dylib,
+    }).subarray(0, 28);
+  for (const [wide, fileLength] of [
+    [true, 32],
+    [false, 28],
+  ] as const) {
+    const bytes = common(wide);
+    const readAt = vi.fn(readerOf(bytes));
+    expect(await readMachoImage(readAt, fileLength)).toMatchObject({
+      status: "parsed",
+      slices: [{ file_type: "dylib", file_type_code: FILE_TYPE.dylib }],
+    });
+    expect(
+      readAt.mock.calls.every(
+        ([offset, length]) => length === 0 || offset + length <= bytes.length,
+      ),
+    ).toBe(true);
+  }
+  expect(await readMachoImage(readerOf(common(true)), 28)).toEqual({
+    status: "failed",
+    failure: expect.objectContaining({
+      kind: "malformed",
+      detail: "load commands extend beyond the Mach-O slice",
+    }),
   });
-  expect(readAt.mock.calls).toEqual([
-    [0, 8],
-    [0, 28],
-    [32, 0],
+});
+
+it("does not borrow Mach-O header bytes beyond a short FAT declaration", async () => {
+  const short = machoImage({ cpu: CPU.arm64 });
+  const bytes = fatImage([
+    { cpu: CPU.x86_64, bytes: machoImage({ cpu: CPU.x86_64 }) },
+    { cpu: CPU.arm64, bytes: short.subarray(0, 12) },
   ]);
-  expect(await readMachoImage(readerOf(bytes), 28)).toEqual({
-    status: "malformed",
-    reason: "load commands extend beyond the Mach-O slice",
+  const { offset, size } = fatSliceRange(bytes, 1);
+  // Keep a complete header physically readable after the declared slice ends.
+  bytes.set(short, offset);
+  const readAt = vi.fn(readerOf(bytes));
+  const result = await readMachoImage(readAt, bytes.length);
+  expect(
+    readAt.mock.calls.filter(
+      ([start, length]) =>
+        start >= offset &&
+        start < offset + short.length &&
+        start + length > offset + size,
+    ),
+  ).toEqual([]);
+  expect(result).toEqual({
+    status: "failed",
+    failure: expect.objectContaining({
+      kind: "truncated",
+      detail: "Mach-O header is truncated",
+    }),
+  });
+});
+
+describe("Mach-O container read failures", () => {
+  const universal = () =>
+    Buffer.from(
+      fatImage([
+        { cpu: CPU.arm64, bytes: machoImage({ cpu: CPU.arm64, wide: true }) },
+        {
+          cpu: CPU.x86_64,
+          bytes: machoImage({ cpu: CPU.x86_64, wide: true }),
+        },
+      ]),
+    );
+
+  it("reports a FAT table cut off by the file's end as truncated, with its extent", async () => {
+    const cut = universal().subarray(0, 20);
+    expect(await readMachoContainer(readerOf(cut), cut.length)).toMatchObject({
+      kind: "issue",
+      failure: {
+        kind: "truncated",
+        format: "macho",
+        extent: { availableBytes: 20, requiredBytes: 48 },
+      },
+    });
+  });
+
+  it("reports a short magic-only file as truncated and a short re-read as changed", async () => {
+    const magic = universal().subarray(0, 4);
+    expect(await readMachoContainer(readerOf(magic), 4)).toMatchObject({
+      kind: "issue",
+      failure: { kind: "truncated", format: "macho" },
+    });
+    // The file measured 64 bytes, but the read returned four: it changed.
+    expect(await readMachoContainer(readerOf(magic), 64)).toMatchObject({
+      kind: "issue",
+      failure: { kind: "changed", format: "macho" },
+    });
+  });
+
+  it("reports a FAT table re-read that comes up short as changed, not as foreign bytes", async () => {
+    const bytes = universal();
+    // The file shrinks to two bytes after its eight-byte FAT header was read.
+    let reads = 0;
+    const shrinking = (offset: number, length: number) =>
+      Promise.resolve(
+        bytes.subarray(offset, offset + (reads++ === 0 ? length : 2)),
+      );
+    expect(await readMachoContainer(shrinking, bytes.length)).toMatchObject({
+      kind: "issue",
+      failure: { kind: "changed", format: "macho" },
+    });
+  });
+
+  it("reports a slice header re-read that comes up short as changed", async () => {
+    const bytes = universal();
+    const tableEnd = 8 + 2 * 20;
+    // The FAT table reads whole, then the file shrinks to the end of it.
+    const shrinking = (offset: number, length: number) =>
+      Promise.resolve(
+        bytes.subarray(offset, Math.min(offset + length, tableEnd)),
+      );
+    expect(await readMachoContainer(shrinking, bytes.length)).toMatchObject({
+      kind: "issue",
+      failure: { kind: "changed", format: "macho" },
+    });
   });
 });

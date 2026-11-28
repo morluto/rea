@@ -10,7 +10,7 @@ import { readMergedReleasePullRequest } from "./release-pull-request.mjs";
 const execute = promisify(execFile);
 const require = createRequire(import.meta.url);
 const patch = fileURLToPath(
-  new URL("../../patches/release-please+17.3.0.patch", import.meta.url),
+  new URL("../../patches/release-please+17.11.2.patch", import.meta.url),
 );
 
 export function describeReleaseProposalError(error) {
@@ -32,9 +32,9 @@ export async function applyReleasePleasePatch(
   const metadata = JSON.parse(
     await readFile(`${directory}/package.json`, "utf8"),
   );
-  if (metadata.version !== "17.3.0") {
+  if (metadata.version !== "17.11.2") {
     throw new Error(
-      "The release proposal patch requires release-please 17.3.0",
+      "The release proposal patch requires release-please 17.11.2",
     );
   }
   // The patch names files relative to the dependency, which may resolve

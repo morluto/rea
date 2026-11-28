@@ -1,3 +1,4 @@
+import { appendToMapList } from "../../domain/appendToMapList.js";
 import {
   compareJavaScriptSourcePoints,
   javascriptSourceRangeKey,
@@ -373,12 +374,21 @@ const addLiteralPairings = (state: IpcGraphState): void => {
 };
 
 const addValidationObservations = (state: IpcGraphState): void => {
+  const handlersByPath = new Map<string, ElectronIpcRecord[]>();
+  for (const record of state.records) {
+    if (record.finding.handler_location === null) continue;
+    appendToMapList(handlersByPath, record.file.path, record);
+  }
   for (const analyzed of state.context.analysis.files) {
     const { file, javascript } = analyzed;
     if (javascript === null) continue;
     const coverage = javascriptAnalysisCoverage(javascript);
+    const fileHandlers = handlersByPath.get(file.path);
     for (const validation of javascript.electron.sender_validations) {
-      const handlerRecord = containingHandler(state.records, file, validation);
+      const handlerRecord =
+        fileHandlers === undefined
+          ? undefined
+          : containingHandler(fileHandlers, validation);
       const target =
         handlerRecord === undefined
           ? electronFindingSourceNode(
@@ -438,14 +448,12 @@ const addValidationObservation = (input: ValidationObservationInput): void => {
 
 const containingHandler = (
   records: readonly ElectronIpcRecord[],
-  file: JavaScriptArtifactFile,
   validation: ElectronSenderValidationFinding,
 ): ElectronIpcRecord | undefined => {
   let selected: ElectronIpcRecord | undefined;
   for (const record of records) {
     const location = record.finding.handler_location;
     if (
-      record.file.path !== file.path ||
       location === null ||
       !javascriptSourceRangeContains(location, validation.location)
     )
@@ -468,9 +476,13 @@ const coverageFor = (
   context: JavaScriptArtifactGraphContext,
   file: JavaScriptArtifactFile,
 ): JavaScriptArtifactGraphCoverage | undefined => {
-  const javascript = context.analysis.files.find(
-    ({ file: candidate }) => candidate.path === file.path,
-  )?.javascript;
+  const analyzed =
+    context.analyzedFilesByPath !== undefined
+      ? context.analyzedFilesByPath.get(file.path)
+      : context.analysis.files.find(
+          ({ file: candidate }) => candidate.path === file.path,
+        );
+  const javascript = analyzed?.javascript;
   return javascript === null || javascript === undefined
     ? undefined
     : javascriptAnalysisCoverage(javascript);

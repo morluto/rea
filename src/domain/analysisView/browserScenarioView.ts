@@ -1,13 +1,14 @@
+import { selectViewRows } from "./selectViewRows.js";
 import type { z } from "zod";
-import type { AnalysisError } from "../analysisErrorBase.js";
 import {
   retainedBrowserScenarioCaptureSchema,
   type RetainedBrowserScenarioCapture as BrowserScenarioCapture,
 } from "../browserScenarioCapture.js";
 import type { BrowserScenarioStep as Step } from "../browserScenarioCaptureValues.js";
-import { compareAsciiStrings } from "../canonicalOrdering.js";
-import { err, ok } from "../result.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { incrementCount } from "../valueCounts.js";
+import { sortedCountEntries } from "./analysisViewCounts.js";
+import { ok } from "../result.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import {
   completeWithinViewCoverage,
   pageViewCoverage,
@@ -43,16 +44,6 @@ const OPERATION = "capture_browser_scenario" as const;
 const readCapture = createAnalysisViewResultReader(
   retainedBrowserScenarioCaptureSchema,
 );
-
-const unsupportedView = (): AnalysisError =>
-  analysisViewInputError([
-    {
-      path: ["view"],
-      reason: "invalid_value",
-      message:
-        'Parent Evidence operation "capture_browser_scenario" supports summary and browser-scenario views, plus compatible environment views.',
-    },
-  ]);
 
 const sameUrl = (
   left: Step["after_url"] | undefined,
@@ -125,24 +116,6 @@ const focusAccessibility = (
   };
 };
 
-/** Counts in canonical key order; a null origin sorts first. */
-const sortedCounts = <Key extends string | null>(
-  counts: ReadonlyMap<Key, number>,
-): [Key, number][] =>
-  [...counts].sort(([left], [right]) =>
-    left === right
-      ? 0
-      : left === null
-        ? -1
-        : right === null
-          ? 1
-          : compareAsciiStrings(left, right),
-  );
-
-const increment = <Key>(counts: Map<Key, number>, key: Key): void => {
-  counts.set(key, (counts.get(key) ?? 0) + 1);
-};
-
 const eventCounts = (
   capture: BrowserScenarioCapture,
 ): z.infer<typeof browserScenarioSummarySchema>["events"] => {
@@ -150,12 +123,15 @@ const eventCounts = (
     BrowserScenarioCapture["events"]["items"][number]["kind"],
     number
   >();
-  for (const event of capture.events.items) increment(kinds, event.kind);
+  for (const event of capture.events.items) incrementCount(kinds, event.kind);
   const { omissions } = capture.events;
   return {
     retained: capture.events.retained,
     dropped: capture.events.dropped,
-    by_kind: sortedCounts(kinds).map(([kind, count]) => ({ kind, count })),
+    by_kind: sortedCountEntries(kinds).map(([kind, count]) => ({
+      kind,
+      count,
+    })),
     omissions: {
       by_kind: omissions.by_kind,
       network_transactions: omissions.network_transactions.length,
@@ -195,14 +171,7 @@ const selectedPage = <Input, Row>(
   matches: (item: Input, index: number) => boolean,
   project: (item: Input, index: number) => Row,
 ): { rows: Row[]; coverage: AnalysisViewCoverage } => {
-  const rows: Row[] = [];
-  let total = 0;
-  for (const [index, item] of source.entries()) {
-    if (!matches(item, index)) continue;
-    if (total >= view.offset && rows.length < view.limit)
-      rows.push(project(item, index));
-    total += 1;
-  }
+  const { rows, total } = selectViewRows(source, view, matches, project);
   return { rows, coverage: pageViewCoverage(view.offset, rows.length, total) };
 };
 
@@ -324,7 +293,9 @@ export const projectBrowserScenarioView = (
   view: AdmittedView,
 ) => {
   if (view.kind !== "summary" && view.kind !== "browser-scenario")
-    return err(unsupportedView());
+    return invalidAnalysisView(
+      'Parent Evidence operation "capture_browser_scenario" supports summary and browser-scenario views, plus compatible environment views.',
+    );
   assertOwnedView<SummaryAnalysisView | BrowserScenarioViewRequest>(
     view,
     "summary",
@@ -373,14 +344,9 @@ export const projectBrowserScenarioView = (
     view.collection === "text" &&
     capture.steps[view.step_index] === undefined
   )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view", "step_index"],
-          reason: "invalid_value",
-          message: "The selected step is not present in the retained capture.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "The selected step is not present in the retained capture.",
+      "step_index",
     );
   const page =
     view.collection === "text"

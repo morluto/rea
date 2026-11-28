@@ -22,7 +22,9 @@ import {
 } from "../../domain/evidence.js";
 import {
   byteEntropySchema,
-  computeBlockEntropy,
+  byteEntropyWindowLimit,
+  createBlockEntropyCalculator,
+  MAX_BYTE_ENTROPY_BLOCKS,
   entropyFromCounts,
   countByteValues,
   wholeFileByteCounts,
@@ -38,7 +40,7 @@ import {
   ArtifactFileCleanupFailure,
   artifactFileCompletion,
   assertArtifactReadActive,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   artifactSelectedPathErrno,
   ArtifactReaderFailure,
 } from "../../resources/index.js";
@@ -46,9 +48,6 @@ import { analysisErrorWithCleanupDependencies } from "../../domain/analysisError
 import { sameRegularFileState } from "../../filesystem/RegularFile.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
-
-/** Bound retained result rows before constructing the Evidence representation. */
-const MAX_BYTE_ENTROPY_BLOCKS = 32_768;
 
 /** Generated files such as Linux /proc entries report size 0 but still hold bytes. */
 const ZERO_SIZE_LIMITATION =
@@ -190,6 +189,7 @@ export class ByteEntropyService {
     };
     try {
       const before = await this.files.stat(input.path, { bigint: true });
+      assertArtifactReadActive(options?.signal);
       if (!before.isFile()) throw invalid("path", "Expected a regular file.");
       admitted = true;
       // Only an admitted selected file may consult filesystem spelling. Do not
@@ -250,8 +250,11 @@ export class ByteEntropyService {
               },
               {
                 retryable: false,
-                remediationAction:
-                  "Reduce the selected window length or increase block_size so the selected window contains at most 32768 blocks.",
+                limit: byteEntropyWindowLimit(
+                  input.block_size,
+                  length,
+                  size - input.offset,
+                ),
               },
             );
           const end = input.offset + length;
@@ -261,6 +264,7 @@ export class ByteEntropyService {
           // size divides this buffer, so only the window's final block is short.
           const buffer = Buffer.alloc(65_536);
           const counts = wholeFileByteCounts();
+          const computeBlockEntropy = createBlockEntropyCalculator(counts);
           const hash = createHash("sha256");
           let position = 0;
           while (position < size) {
@@ -283,8 +287,7 @@ export class ByteEntropyService {
             }
             const bytes = buffer.subarray(0, filled);
             hash.update(bytes);
-            countByteValues(bytes, counts);
-            if (selected)
+            if (selected) {
               for (
                 let offset = 0;
                 offset < filled;
@@ -297,6 +300,9 @@ export class ByteEntropyService {
                   entropy: computeBlockEntropy(block),
                 });
               }
+            } else {
+              countByteValues(bytes, counts);
+            }
             position += filled;
           }
           if (
@@ -355,9 +361,9 @@ export class ByteEntropyService {
           outcome.cause instanceof ArtifactReaderFailure &&
           outcome.cause.reason === "cancelled"
         ) {
-          const cancelled = cancelledBy(
+          const cancelled = artifactFileCancellationError(
             OPERATION,
-            carriedReason(artifactFileCancellationCause(outcome.cause)),
+            outcome.cause,
             { cleanup: cause.cleanup },
           ).retainSecondaryFailure(cleanup);
           bindArtifactFileCleanup(cause, cancelled);
@@ -386,9 +392,9 @@ export class ByteEntropyService {
       }
       if (cause instanceof ArtifactReaderFailure) {
         if (cause.reason === "cancelled") {
-          const cancelled = cancelledBy(
+          const cancelled = artifactFileCancellationError(
             OPERATION,
-            carriedReason(artifactFileCancellationCause(cause)),
+            cause,
             completion === undefined
               ? {}
               : {

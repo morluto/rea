@@ -15,7 +15,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
 import { functionBodySchema } from "../dist/domain/native/functionBody.js";
-import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
+import { inspectVerifierGhidraFromEnvironment } from "./lib/ghidra-installation-inspection.mjs";
 import { buildDosMzFixture } from "../tests/conformance/ghidra/dos-mz-fixture.mjs";
 import {
   assertVerifierCleanupComplete,
@@ -28,6 +28,7 @@ import {
   VerifierFixture,
   withVerifierFixture,
 } from "./lib/verifier-fixture.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 // This lane intentionally has no game paths, binary seeds or compiler dependency.
 if (process.argv.length !== 2)
@@ -40,13 +41,7 @@ if (process.env.GHIDRA_INSTALL_DIR === undefined)
   throw new Error(
     "verify:ghidra:dos prerequisite missing: GHIDRA_INSTALL_DIR (bring your own Ghidra).",
   );
-const installation = await inspectVerifierGhidraInstallation({
-  environment: process.env,
-  installDir: process.env.GHIDRA_INSTALL_DIR,
-  ...(process.env.JAVA_HOME === undefined
-    ? {}
-    : { javaHome: process.env.JAVA_HOME }),
-});
+const installation = await inspectVerifierGhidraFromEnvironment(process.env);
 if (installation.status !== "available")
   throw new Error(
     `verify:ghidra:dos prerequisite unavailable: ${JSON.stringify(installation)}`,
@@ -101,7 +96,9 @@ const transport = new StdioClientTransport({
   env,
   stderr: "pipe",
 });
-const client = new Client({ name: "rea-real-dos-proof", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "rea-real-dos-proof", version: "1" }),
+);
 let stderr = "";
 let connected = false;
 let verifierRun;
@@ -272,7 +269,10 @@ await withVerifierFixture(workspaceFixture, async () => {
     for (const [key, identity] of Object.entries(identities)) {
       const procedure = identity.address; // Use returned addresses, never symbol-name heuristics.
       assert.match(procedure, /^0x[0-9a-f]+$/u);
-      const resolved = await call("procedure_address", { procedure });
+      const resolved = await call("procedure_address", {
+        detail: "complete",
+        procedure,
+      });
       assert.equal(resolved, procedure, "Flat address round-trip drifted");
       const info = await call("procedure_info", { procedure });
       const dossierResult = await evidenceCall("analyze_function", {
@@ -290,6 +290,7 @@ await withVerifierFixture(workspaceFixture, async () => {
       const containingQueries = [procedure, info.body.ranges.at(-1).end];
       for (const query of containingQueries) {
         const containing = await call("resolve_containing_procedure", {
+          detail: "complete",
           address: query,
         });
         assert.equal(containing.found, true);
@@ -299,6 +300,7 @@ await withVerifierFixture(workspaceFixture, async () => {
       }
       if (key === "entry") {
         const gap = await call("resolve_containing_procedure", {
+          detail: "complete",
           address: address(0x10),
         });
         assert.equal(

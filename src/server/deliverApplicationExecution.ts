@@ -11,7 +11,7 @@ import { recordEvidenceSources } from "../application/investigation/recordEviden
 import type { ToolContract } from "../contracts/toolContractTypes.js";
 import { cancelledBy } from "../domain/analysisErrorCore.js";
 import type { AnalysisViewRequest } from "../domain/analysisView/analysisViewRequest.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
+import { ownedJsonValueSchema } from "../domain/jsonValue.js";
 import { ok } from "../domain/result.js";
 import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 
@@ -72,12 +72,18 @@ export const deliverApplicationExecution = async (
       ? records.recordEvidence?.(parent)
       : records.recordEvidenceWithUnknown?.(parent, execution.unknown);
   if (view === undefined)
-    return delivery.toEvidenceToolResult(parent, contract, saved);
+    return delivery.toEvidenceToolResult(
+      parent,
+      contract,
+      saved,
+      undefined,
+      records.recordEvidence,
+    );
   if (saved !== undefined && !saved.ok)
     return delivery.toCallToolResult(saved, contract);
   return delivery.toSelectedViewToolResult(
     selected.value,
-    { parent, request: jsonValueSchema.parse(view) },
+    { parent, request: ownedJsonValueSchema.parse(view) },
     contract,
     records.recordEvidence?.(selected.value),
   );

@@ -1,3 +1,4 @@
+import { finalizedResult, runOwned } from "../providers/runOwned.js";
 import { addAbortListener } from "node:events";
 import { isAbortOf } from "../process/SignalAbort.js";
 import type { Readable } from "node:stream";
@@ -18,7 +19,7 @@ import {
   RegularFileCleanupFailure,
   regularFileCancellation,
 } from "../filesystem/OwnedRegularFile.js";
-import { ownCliProcessResource } from "./cliResources.js";
+import { registerCliScopeCleanup } from "./cliResources.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -38,6 +39,7 @@ import {
   JSON_INPUT_RESOURCE_REMEDIATION,
   parseUtf8Json,
 } from "../application/Utf8JsonInput.js";
+import { reportedSystemCode } from "../kernel/reportedSystemCode.js";
 
 /**
  * Scopes of JSON-input files whose close still failed after their owner's
@@ -45,20 +47,10 @@ import {
  * a handle never loses its owner when parsing returns, and a later read never
  * inherits an earlier file's cleanup.
  */
-const retainedJsonInputs = new Set<ArtifactResourceScope>();
-ownCliProcessResource("json-input", async () => {
-  const failures: unknown[] = [];
-  for (const resources of retainedJsonInputs)
-    try {
-      await resources.close();
-      retainedJsonInputs.delete(resources);
-    } catch (cause: unknown) {
-      failures.push(cause);
-    }
-  if (failures.length === 1) throw failures[0];
-  if (failures.length > 1)
-    throw new AggregateError(failures, "JSON input cleanup failed");
-});
+const retainJsonInput = registerCliScopeCleanup(
+  "json-input",
+  "JSON input cleanup failed",
+);
 
 /** Parse inline JSON, standard input ('-'), or one local JSON file, honoring optional caller cancellation. */
 export const parseCliJsonInput = async (
@@ -108,24 +100,35 @@ export const parseCliJsonInput = async (
             resources,
             options?.snapshot ?? false,
           );
-    if (parsed.ok && signal?.aborted) return cancelled(signal.reason);
-    return parsed.ok
-      ? { ok: true, value: parsed.value }
+    const finalized = finalizedResult(
+      await runOwned(async () => parsed, {
+        providerId: "rea",
+        operation,
+        signal,
+        diagnostics: () => undefined,
+      }),
+    );
+    return finalized.ok
+      ? { ok: true, value: finalized.value }
       : {
           ok: false,
           error: {
             error: "Application workflow failed",
-            ...projectAnalysisError(parsed.error),
-            input_path: value,
-            input_reason:
-              parsed.error._tag === "AnalysisInputError"
-                ? "invalid-json"
-                : "too-large",
+            ...projectAnalysisError(finalized.error),
+            ...(parsed.ok
+              ? {}
+              : {
+                  input_path: value,
+                  input_reason:
+                    parsed.error._tag === "AnalysisInputError"
+                      ? "invalid-json"
+                      : "too-large",
+                }),
           },
         };
   } catch (cause: unknown) {
     if (cause instanceof RegularFileCleanupFailure) {
-      retainedJsonInputs.add(resources);
+      retainJsonInput(resources);
       return jsonFileCleanupError(value, operation, cause);
     }
     if (cause instanceof JsonInputCancellationFailure)
@@ -463,19 +466,14 @@ const jsonFileReadError = (
 
 /** Preserve file-selection and system failures alongside the requested path. */
 const readFailureIssue = (path: string, cause: unknown) => {
-  const code =
-    typeof cause === "object" &&
-    cause !== null &&
-    "code" in cause &&
-    typeof cause.code === "string"
-      ? ` (${cause.code})`
-      : "";
+  const code = reportedSystemCode(cause);
+  const suffix = code === undefined ? "" : ` (${code})`;
   return {
     path: [],
     reason: "invalid_value" as const,
     message:
-      cause instanceof NonRegularFileReadError && cause.code === "ENOTFILE"
-        ? `The JSON input must be a regular file${code}: ${path}`
-        : `The JSON input file could not be read${code}: ${path}`,
+      cause instanceof NonRegularFileReadError && code === "ENOTFILE"
+        ? `The JSON input must be a regular file${suffix}: ${path}`
+        : `The JSON input file could not be read${suffix}: ${path}`,
   };
 };
