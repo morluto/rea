@@ -16,11 +16,17 @@ import {
 
 const it = nativeTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE);
 
-const createDatabase = async (sql: string): Promise<string> => {
+const createDatabase = async (
+  sql: string,
+  options?: { defensive?: boolean },
+): Promise<string> => {
   const workspace = await createTestWorkspace("rea-sqlite-expansion-");
   onTestFinished(() => removeTestWorkspace(workspace.root));
   const path = workspace.path("private.db");
-  const producer = new DatabaseSync(path);
+  const producer =
+    options === undefined
+      ? new DatabaseSync(path)
+      : new DatabaseSync(path, options);
   try {
     producer.exec(sql);
   } finally {
@@ -135,15 +141,21 @@ it("accounts for JSON escape expansion of a stored declaration in the reply limi
   ]);
 });
 
-it("attributes triggers declared with another ASCII case to the stored table name", async () => {
-  const path = await createDatabase(`
+it("attributes indexes and triggers declared with another ASCII case to the stored table name", async () => {
+  const path = await createDatabase(
+    `
     CREATE TABLE Users(id INTEGER PRIMARY KEY, email TEXT);
     CREATE INDEX users_email ON users(email);
     CREATE TRIGGER audit_insert AFTER INSERT ON users BEGIN SELECT 1; END;
     CREATE TRIGGER audit_delete AFTER DELETE ON USERS BEGIN SELECT 1; END;
     CREATE VIEW recent AS SELECT 1;
     CREATE TRIGGER recent_insert INSTEAD OF INSERT ON Recent BEGIN SELECT 1; END;
-  `);
+    PRAGMA writable_schema = ON;
+    UPDATE sqlite_schema SET tbl_name = 'users' WHERE type = 'index' AND name = 'users_email';
+    PRAGMA writable_schema = OFF;
+  `,
+    { defensive: false },
+  );
   const selected = inspectSqliteDatabaseSnapshot(path, {
     path,
     table: "Users",
@@ -156,13 +168,33 @@ it("attributes triggers declared with another ASCII case to the stored table nam
     views: [],
   });
   expect(
+    selected.schema.indexes.map(({ name, table }) => ({ name, table })),
+  ).toEqual([{ name: "users_email", table: "Users" }]);
+  expect(
     selected.schema.triggers.map(({ name, table }) => ({ name, table })),
   ).toEqual([
     { name: "audit_insert", table: "Users" },
     { name: "audit_delete", table: "Users" },
   ]);
   const inventory = inspectSqliteDatabaseSnapshot(path, { path });
+  expect(
+    inventory.schema.indexes.map(({ name, table }) => ({ name, table })),
+  ).toEqual([{ name: "users_email", table: "Users" }]);
   expect(inventory.schema.triggers).toEqual([
+    { name: "audit_insert", table: "Users" },
+    { name: "audit_delete", table: "Users" },
+    { name: "recent_insert", table: "recent" },
+  ]);
+  const database = inspectSqliteDatabaseSnapshot(path, {
+    path,
+    schema_scope: "database",
+  });
+  expect(
+    database.schema.indexes.map(({ name, table }) => ({ name, table })),
+  ).toEqual([{ name: "users_email", table: "Users" }]);
+  expect(
+    database.schema.triggers.map(({ name, table }) => ({ name, table })),
+  ).toEqual([
     { name: "audit_insert", table: "Users" },
     { name: "audit_delete", table: "Users" },
     { name: "recent_insert", table: "recent" },
