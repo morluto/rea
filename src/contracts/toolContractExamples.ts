@@ -15,6 +15,8 @@ export const TOOL_EXAMPLE_OVERRIDES: Readonly<
   ...UNKNOWN_CONTRACT_EXAMPLES,
   ...INVESTIGATION_EXAMPLES,
   inspect_byte_entropy: { path: "/artifacts/firmware.bin" },
+  inspect_raw_bytes: { path: "/artifacts/data.bin", offset: 0, length: 16 },
+  search_raw_bytes: { path: "/artifacts/data.bin", pattern: "50 45 00 00" },
   goto_address: { address: "0x1000" },
   procedure_address: { procedure: "main" },
   procedure_assembly: { procedure: "main" },

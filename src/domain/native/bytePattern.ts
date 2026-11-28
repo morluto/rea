@@ -98,6 +98,34 @@ const validateBytePatternValue = (
   return invalid("pattern", "Pattern must constrain at least one bit");
 };
 
+/**
+ * Decode an already validated pattern into value and mask bytes, reading pairs
+ * with the same helpers as the validator. Wildcards select no bits and the
+ * value is stored pre-masked, so a byte matches when `(byte & mask) === value`.
+ */
+export const decodeBytePattern = (value: {
+  pattern: string;
+  mask?: string | undefined;
+}): { readonly value: Uint8Array; readonly mask: Uint8Array } => {
+  const values: number[] = [];
+  const masks: number[] = [];
+  let patternOffset = 0;
+  let maskOffset = 0;
+  while (patternOffset >= 0 && patternOffset < value.pattern.length) {
+    const byte = readBytePair(value.pattern, patternOffset);
+    const selected =
+      value.mask === undefined ? 255 : readBytePair(value.mask, maskOffset);
+    const mask =
+      typeof byte === "number" && typeof selected === "number" ? selected : 0;
+    values.push(typeof byte === "number" ? byte & mask : 0);
+    masks.push(mask);
+    patternOffset = nextPairOffset(value.pattern, patternOffset);
+    if (value.mask !== undefined)
+      maskOffset = nextPairOffset(value.mask, maskOffset);
+  }
+  return { value: Uint8Array.from(values), mask: Uint8Array.from(masks) };
+};
+
 /** Shared semantic validation for public and provider inputs. */
 export const validateBytePattern = (
   value: { pattern: string; mask?: string | undefined },
