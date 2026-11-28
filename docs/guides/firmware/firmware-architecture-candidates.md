@@ -48,15 +48,19 @@ Every call runs four static byte detectors over the examined prefix
   present in the leading 64 KiB (including offset tables such as `0x100` boot2
   prefixes or `0x200` MCUboot headers), `load_base_candidates` reports the
   candidate `base_address`, `vector_table_address`, `initial_sp`, and
-  `reset_code_address`.
+  `reset_code_address`. Because the vector table does not identify a specific M
+  profile (`armv6-m` vs. `armv7-m` vs. `armv8-m.main`), `open_binary_arguments`
+  leaves `architecture_variant` unresolved (`architecture_variant_required: true`)
+  for the caller to select.
 - **Instruction census margin**: `instruction_census` reports per-signature hit
   counts, alignment, density per KiB, `leader_profile_id`,
   `runner_up_profile_id`, and `margin_hits` across qualifying profiles. Profiles
   require at least two distinct prologue/return signature families and a
   size-scaled hit floor so single-opcode runs, random bytes, zero-filled spans,
   and `0xFF` erased flash return `status: "unknown"`. Shared RV32/RV64 RISC-V
-  compressed and base prologue/return signatures preserve `word_size: "unknown"`
-  unless container headers establish 32-bit or 64-bit width.
+  and PPC32/PPC64 PowerPC prologue/return signatures preserve
+  `word_size: "unknown"` unless container headers establish 32-bit or 64-bit
+  width.
 
 ## Explicit unknowns and `open_binary` handoff
 

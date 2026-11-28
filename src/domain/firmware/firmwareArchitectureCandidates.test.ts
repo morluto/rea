@@ -279,11 +279,14 @@ describe("scanFirmwareArchitectureCandidates Cortex-M vector tables", () => {
       open_binary_arguments: {
         format: "raw-binary",
         architecture: "arm",
-        architecture_variant: "armv7-m",
+        architecture_variant_required: true,
         base_address: "0x8000000",
         entry_point_required: false,
       },
     });
+    expect(
+      vtCandidate?.raw_binary_support.open_binary_arguments,
+    ).not.toHaveProperty("architecture_variant");
 
     const rp2040 = buildCortexMImage({
       baseAddress: 0x10000000,
@@ -367,8 +370,35 @@ describe("scanFirmwareArchitectureCandidates instruction census and controls", (
     expect(ppcReport.instruction_census.leader_profile_id).toBe("powerpc-be");
     expect(ppcReport.candidates[0]).toMatchObject({
       cpu_family: "powerpc",
+      word_size: "unknown",
       byte_order: "big",
-      raw_binary_support: { admitted_today: false },
+      raw_binary_support: {
+        admitted_today: false,
+        rizin_decoder_hint: null,
+      },
+    });
+
+    // Shared PPC32/PPC64 mflr r0 + blr sequences keep word_size unknown rather than claiming 32-bit PPC.
+    const ppc64Shared = Buffer.alloc(128, 0);
+    for (let i = 0; i < 6; i += 1) {
+      const base = i * 16;
+      ppc64Shared.writeUInt32BE(0xf821ffe1, base); // stdu r1, -32(r1)
+      ppc64Shared.writeUInt32BE(0x7c0802a6, base + 4); // mflr r0
+      ppc64Shared.writeUInt32BE(0x4e800020, base + 8); // blr
+    }
+    const ppc64Report = await scanFirmwareArchitectureCandidates({
+      artifact: {
+        path: "/tmp/skiboot-ppc64.bin",
+        sha256: "2".repeat(64),
+        bytes: ppc64Shared.length,
+      },
+      prefixBytes: ppc64Shared,
+    });
+    expect(ppc64Report.candidates[0]).toMatchObject({
+      cpu_family: "powerpc",
+      word_size: "unknown",
+      byte_order: "big",
+      raw_binary_support: { rizin_decoder_hint: null },
     });
   });
 

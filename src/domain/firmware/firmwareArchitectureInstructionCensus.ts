@@ -130,14 +130,18 @@ const PROFILE_SPECS: readonly ProfileSpec[] = [
     profileId: "powerpc-be",
     cpuFamily: "powerpc",
     isaMode: "standard",
-    wordSize: 32,
+    wordSize: "unknown",
     byteOrder: "big",
     alignment: 4,
-    randomProbPerSite: 8193 / WORD32_SPACE,
+    randomProbPerSite: 12289 / WORD32_SPACE,
     signatures: [
       { id: "ppc_blr", mnemonic: "blr", alignment: 4 },
       { id: "ppc_mflr_r0", mnemonic: "mflr r0", alignment: 4 },
-      { id: "ppc_stwu_r1", mnemonic: "stwu r1, -imm(r1)", alignment: 4 },
+      {
+        id: "ppc_stwu_r1",
+        mnemonic: "stwu/stdu r1, -imm(r1)",
+        alignment: 4,
+      },
     ],
   },
   {
@@ -246,7 +250,10 @@ const scoreWord32Be = (
 
   if (be === 0x4e800020) p.ppcBe!.signatures[0]!.hits += 1;
   else if (be === 0x7c0802a6) p.ppcBe!.signatures[1]!.hits += 1;
-  else if ((be & 0xffff8003) >>> 0 === 0x94218000 && (be & 0x7ffc) !== 0)
+  else if (
+    ((be & 0xffff8003) >>> 0 === 0x94218000 && (be & 0x7ffc) !== 0) ||
+    ((be & 0xffff8003) >>> 0 === 0xf8218001 && (be & 0x7ffc) !== 0)
+  )
     p.ppcBe!.signatures[2]!.hits += 1;
 };
 

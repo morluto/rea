@@ -11,7 +11,6 @@ import {
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { FirmwareArchitectureCandidatesPort } from "../../ports/binaryDiagnostics/FirmwareArchitectureCandidatesPort.js";
 import {
-  MAX_FIRMWARE_ARCH_FILE_BYTES,
   firmwareArchBudgetLimit,
   type FirmwareArchitectureCandidates,
   type InspectFirmwareArchitectureCandidatesInput,
@@ -89,12 +88,10 @@ export class FirmwareArchitectureCandidatesProvider implements FirmwareArchitect
   }
 }
 
-const fileSizeRemediation = (
-  input: InspectFirmwareArchitectureCandidatesInput,
-): string =>
-  input.max_file_bytes >= MAX_FIRMWARE_ARCH_FILE_BYTES
-    ? `The image exceeds the ${String(MAX_FIRMWARE_ARCH_FILE_BYTES)}-byte input ceiling this operation accepts; select a smaller artifact or slice.`
-    : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes within its ${String(MAX_FIRMWARE_ARCH_FILE_BYTES)}-byte ceiling, or select a smaller artifact.`;
+const observedSafeBytes = (observed: bigint | undefined): number | undefined =>
+  observed !== undefined && observed <= BigInt(Number.MAX_SAFE_INTEGER)
+    ? Number(observed)
+    : undefined;
 
 const candidateScanFailure = (
   cause: unknown,
@@ -118,7 +115,13 @@ const candidateScanFailure = (
           decodeLimit(
             "firmware-architecture-candidates",
             failure.message,
-            { name: "max_file_bytes", maximum: input.max_file_bytes },
+            {
+              name: "max_file_bytes",
+              maximum: input.max_file_bytes,
+              ...(failure.observedBytes === undefined
+                ? {}
+                : { required: failure.observedBytes }),
+            },
             { cause: failure },
           ),
           {
@@ -126,8 +129,8 @@ const candidateScanFailure = (
             limit: firmwareArchBudgetLimit(
               "max_file_bytes",
               input.max_file_bytes,
+              observedSafeBytes(failure.observedBytes),
             ),
-            remediationAction: fileSizeRemediation(input),
           },
         ),
     }),

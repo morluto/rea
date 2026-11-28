@@ -1,6 +1,5 @@
 import { z } from "zod";
 import type { AnalysisParameterLimit } from "../analysisSettings.js";
-import { ARCHITECTURE_VARIANT_NAMES } from "../architectureVariant.js";
 import { coverageStatusSchema } from "../coverage.js";
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
@@ -39,10 +38,12 @@ export const FIRMWARE_ARCH_CANDIDATE_BUDGETS = {
 export const firmwareArchBudgetLimit = (
   parameter: keyof typeof FIRMWARE_ARCH_CANDIDATE_BUDGETS,
   effectiveValue: number,
+  requiredValue?: number,
 ): AnalysisParameterLimit => ({
   control_kind: "parameter",
   parameter,
   effective_value: effectiveValue,
+  ...(requiredValue === undefined ? {} : { required_value: requiredValue }),
   unit: "bytes",
   ...FIRMWARE_ARCH_CANDIDATE_BUDGETS[parameter],
   applies_at: "next_call",
@@ -139,7 +140,7 @@ export const rawBinarySuggestionSchema = z.strictObject({
     .strictObject({
       format: z.literal("raw-binary"),
       architecture: z.enum(BINARY_ARCHITECTURES),
-      architecture_variant: z.enum(ARCHITECTURE_VARIANT_NAMES).optional(),
+      architecture_variant_required: z.boolean().optional(),
       base_address: hexAddress.optional(),
       vector_table_address: hexAddress.optional(),
       entry_point_required: z.boolean(),
@@ -334,13 +335,13 @@ const buildThumbRawBinarySuggestion = (
       open_binary_arguments: {
         format: "raw-binary",
         architecture: "arm",
-        architecture_variant: "armv7-m",
+        architecture_variant_required: true,
         base_address: base,
         ...(vtor !== base ? { vector_table_address: vtor } : {}),
         entry_point_required: false,
       },
       rizin_decoder_hint: { asm_arch: "arm", asm_bits: 16 },
-      note: "M-profile Thumb raw images open with architecture 'arm', a caller-selected M-profile architecture_variant (such as 'armv7-m'), and an explicit base_address; omit entry_point to derive Reset from the vector table.",
+      note: "The vector table establishes base_address and Reset, not the specific ARM M profile; choose architecture_variant explicitly ('armv6-m', 'armv7-m', 'armv7e-m', 'armv8-m.base', 'armv8-m.main', or 'armv8.1-m.main') alongside base_address when calling open_binary, and omit entry_point to derive Reset from the vector table.",
     };
   }
   return {

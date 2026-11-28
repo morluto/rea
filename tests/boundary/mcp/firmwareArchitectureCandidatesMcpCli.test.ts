@@ -151,6 +151,7 @@ it("returns typed resource and cancellation failures", async () => {
       control_kind: "parameter",
       parameter: "max_file_bytes",
       effective_value: 32,
+      required_value: 128,
       applies_at: "next_call",
     },
   });
