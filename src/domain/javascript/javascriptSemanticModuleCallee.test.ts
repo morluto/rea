@@ -319,6 +319,15 @@ describe("module members that are not the imported ones", () => {
     ).toEqual([undefined]);
   });
 
+  it.each([
+    'const v = require("vscode"); v.window[key] = noop; v.commands.registerCommand("a", f);',
+    'const v = require("vscode"); v.window[key].title = noop; v.commands.registerCommand("a", f);',
+    'const v = require("vscode"); require("vscode").window[key] = noop; v.commands.registerCommand("a", f);',
+    'const { window: w } = require("vscode"); w[key] = noop; require("vscode").commands.registerCommand("a", f);',
+  ])("keeps a member beside a computed sibling write: %s", (source) => {
+    expect(replacements(source)).toEqual([undefined]);
+  });
+
   it("keeps a member when only a sibling is written", () => {
     expect(
       replacements(

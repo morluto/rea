@@ -188,7 +188,7 @@ const wrappedRequire = (
 };
 
 /** Follow static member reads from a callee down to its lexical root. */
-export const semanticCalleeAccess = (
+const semanticCalleeAccess = (
   callee: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): JavaScriptSemanticCallSite["calleeAccess"] => {

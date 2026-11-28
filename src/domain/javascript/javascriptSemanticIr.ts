@@ -424,6 +424,8 @@ export interface JavaScriptSemanticObjectOperation {
   readonly objectBindingId: string | null;
   /** A write rooted directly in a `require(...)` call. */
   readonly requireOrigin?: JavaScriptModuleOrigin;
+  /** For a write with a computed key, the static keys below the first one. */
+  readonly knownPathPrefix?: readonly string[];
   readonly targetBindingId: string | null;
   readonly propertyPath: readonly string[] | null;
   readonly resolution: "complete" | "partial";
