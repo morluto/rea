@@ -417,7 +417,35 @@ it("leaves a stream whose chain reaches the mini FAT unresolved", () => {
   const image = parse(file);
   const big = image.entries.find((entry) => entry.name === "big");
   expect(big).toMatchObject({ structuralOverlap: true, byteOffset: null });
+  expect(image.limitations).toContainEqual(
+    expect.stringContaining("FAT, DIFAT, mini FAT or directory already owns"),
+  );
 });
+
+it.each([
+  { allocationTable: "FAT", miniFatStart: 0 },
+  { allocationTable: "DIFAT", miniFatStart: 2 },
+])(
+  "reports a mini FAT that aliases the $allocationTable",
+  ({ allocationTable, miniFatStart }) => {
+    const fixture = compoundFile({
+      entries: root(undefined, []),
+      fat: [END, END, END],
+    });
+    if (allocationTable === "DIFAT") {
+      fixture.writeUInt32LE(miniFatStart, 0x44);
+      fixture.writeUInt32LE(1, 0x48);
+      const offset = (miniFatStart + 1) * SECTOR;
+      fixture.fill(0xff, offset, offset + SECTOR);
+      fixture.writeUInt32LE(END, offset + SECTOR - 4);
+    }
+    fixture.writeUInt32LE(miniFatStart, 0x3c);
+    fixture.writeUInt32LE(1, 0x40);
+    expect(parse(fixture).limitations).toContain(
+      "the mini FAT chain shares sectors with a FAT or DIFAT allocation table; those sectors cannot establish mini stream contents",
+    );
+  },
+);
 
 it.each([
   { start: 1000, count: 1, next: END, reached: 0, broken: true },

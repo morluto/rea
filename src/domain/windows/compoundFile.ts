@@ -179,8 +179,8 @@ export interface CompoundFileDirectoryEntry {
   /** True when the entry's FAT chain occupies consecutive sectors. */
   readonly contiguous: boolean | null;
   /**
-   * True when the chain reaches a sector the FAT, the DIFAT or the directory
-   * already owns, so its bytes are container structure rather than content.
+   * True when the chain reaches a sector already owned by the FAT, DIFAT,
+   * mini FAT or directory. Those bytes belong to container structure.
    * Null means the inspection allowance left the chain unchecked.
    */
   readonly structuralOverlap: boolean | null;
@@ -740,6 +740,14 @@ export const parseCompoundFile = (
     limitations.push(
       "the mini FAT chain shares sectors with the directory chain; both claim the same bytes as different structures, so mini stream contents are not resolved",
     );
+  if (
+    miniFatChain.sectors.some(
+      (sector) => seenFatSectors.has(sector) || seenDifat.has(sector),
+    )
+  )
+    limitations.push(
+      "the mini FAT chain shares sectors with a FAT or DIFAT allocation table; those sectors cannot establish mini stream contents",
+    );
   // The FAT, the DIFAT, the directory and the mini FAT are container
   // structure, not content, so a stream whose chain reaches one of those
   // sectors is published as an unresolved range instead of as that structure's
@@ -1147,7 +1155,7 @@ export const parseCompoundFile = (
 
   if (overlappingChains !== 0)
     limitations.push(
-      `${String(overlappingChains)} stream(s) reach sectors the FAT, the DIFAT or the directory already owns; their byte ranges are left unresolved rather than reading container structure as content`,
+      `${String(overlappingChains)} stream(s) reach sectors the FAT, DIFAT, mini FAT or directory already owns; their byte ranges are left unresolved rather than reading container structure as content`,
     );
   if (sharedChains !== 0)
     limitations.push(

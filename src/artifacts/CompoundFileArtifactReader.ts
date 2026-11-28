@@ -630,7 +630,7 @@ const toArtifactEntry = (entry: CompoundFileDirectoryEntry): ArtifactEntry => {
     limitations.push(chainProblemLimitation(entry.chainProblem));
   if (entry.structuralOverlap)
     limitations.push(
-      "This stream's chain reaches sectors the FAT, the DIFAT or the directory already owns, so its byte range is not resolved in this step.",
+      "This stream's chain reaches sectors the FAT, DIFAT, mini FAT or directory already owns, so its byte range is not resolved in this step.",
     );
   if (entry.sharedOverlap)
     limitations.push(
