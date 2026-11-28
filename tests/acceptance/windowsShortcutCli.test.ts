@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { expect } from "vitest";
 import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../../src/contracts/native/binaryDiagnosticsToolContracts.js";
 import {
+  LINK_FLAG,
   powershellHiddenIconSpoofShortcut,
   TRACKER_MAC,
   truncatedStringDataShortcut,
@@ -22,6 +23,179 @@ const shortcutContract = (() => {
     throw new Error("Missing inspect_windows_shortcut contract");
   return contract;
 })();
+
+cliTest.for([
+  {
+    label: "link-info-enabled",
+    flag: 0,
+    environment: false,
+    damage: "none",
+    extension: ".exe",
+    difference: true,
+    coverage: "complete",
+  },
+  {
+    label: "link-info-disabled",
+    flag: 0x100,
+    environment: false,
+    damage: "none",
+    extension: null,
+    difference: null,
+    coverage: "complete",
+  },
+  {
+    label: "link-info-disabled-fallback",
+    flag: 0x100,
+    environment: true,
+    damage: "none",
+    extension: ".txt",
+    difference: false,
+    coverage: "complete",
+  },
+  {
+    label: "environment-disabled",
+    flag: 0x100000,
+    environment: true,
+    damage: "none",
+    extension: ".exe",
+    difference: true,
+    coverage: "complete",
+  },
+  {
+    label: "both-sources-disabled",
+    flag: 0x100100,
+    environment: true,
+    damage: "none",
+    extension: null,
+    difference: null,
+    coverage: "complete",
+  },
+  {
+    label: "unreadable-link-info-enabled",
+    flag: 0,
+    environment: true,
+    damage: "link_info",
+    extension: null,
+    difference: false,
+    coverage: "partial",
+  },
+  {
+    label: "unreadable-link-info-disabled",
+    flag: 0x100,
+    environment: true,
+    damage: "link_info",
+    extension: ".txt",
+    difference: false,
+    coverage: "partial",
+  },
+  {
+    label: "unreadable-environment-enabled",
+    flag: 0,
+    environment: true,
+    damage: "environment",
+    extension: null,
+    difference: null,
+    coverage: "partial",
+  },
+  {
+    label: "unreadable-environment-disabled",
+    flag: 0x100000,
+    environment: true,
+    damage: "environment",
+    extension: ".exe",
+    difference: true,
+    coverage: "partial",
+  },
+  {
+    label: "stopped-environment-disabled",
+    flag: 0x100000,
+    environment: true,
+    damage: "stopped",
+    extension: null,
+    difference: null,
+    coverage: "partial",
+  },
+] as const)(
+  "honors ignored shortcut target sources in CLI and stdio MCP: $label",
+  async (
+    { label, flag, environment, damage, extension, difference, coverage },
+    { cli },
+  ) => {
+    const root = await createTestTempDirectory("rea-shortcut-source-flags-");
+    const path = join(root, `${label}.lnk`);
+    const flags =
+      LINK_FLAG.HasLinkInfo |
+      LINK_FLAG.HasIconLocation |
+      LINK_FLAG.IsUnicode |
+      (environment ? LINK_FLAG.HasExpString : 0) |
+      flag;
+    const valid = windowsShortcutBytes({
+      flags,
+      idList: null,
+      linkInfo: { localBasePath: "C:\\Cached\\stale.exe", unicode: true },
+      iconLocation: "D:\\Active\\selected.txt",
+      extraData: environment
+        ? [{ kind: "environment", unicode: "D:\\Active\\selected.txt" }]
+        : [],
+    });
+    let bytes: Buffer;
+    if (damage === "link_info") {
+      bytes = valid;
+      bytes.writeUInt32LE(4, 76 + 28);
+    } else if (damage === "environment") {
+      const terminal = valid.length - 4;
+      const blockOffset = terminal - 0x314;
+      bytes = Buffer.concat([
+        valid.subarray(0, terminal),
+        Buffer.from([0xab, 0xcd]),
+        valid.subarray(terminal),
+      ]);
+      bytes.writeUInt32LE(0x316, blockOffset);
+    } else if (damage === "stopped") {
+      const blockOffset = valid.length - 4 - 0x314;
+      bytes = valid.subarray(0, blockOffset + 8);
+    } else {
+      bytes = valid;
+    }
+    await writeFile(path, bytes);
+    const result = await cli.run({
+      arguments: ["inspect-windows-shortcut", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
+    const response = await call("inspect_windows_shortcut", { path });
+    expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
+    const report = shortcutContract.outputSchema.parse(
+      result.json,
+    ).normalized_result;
+    const mcpReport = shortcutContract.outputSchema.parse(
+      response.structuredContent,
+    ).normalized_result;
+    expect(mcpReport).toEqual(report);
+    expect(report.artifact).toMatchObject({
+      path,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      bytes: bytes.length,
+    });
+    expect(report.coverage.status).toBe(coverage);
+    expect(report.header.link_flags.raw).toBe(flags);
+    expect(report.link_info?.local_base_path_unicode).toBe(
+      damage === "link_info" ? null : "C:\\Cached\\stale.exe",
+    );
+    expect(report.observations).toEqual(
+      expect.arrayContaining([
+        { kind: "target_extension", evidence_kind: "derived", extension },
+        {
+          kind: "icon_location_differs_from_target",
+          evidence_kind: "derived",
+          value: difference,
+        },
+      ]),
+    );
+    expect((await readFile(path)).equals(bytes)).toBe(true);
+  },
+);
 
 cliTest.for([
   { target: "C:\\Tools\\\x83A.exe", icon: "C:\\Tools\\\x83a.exe" },

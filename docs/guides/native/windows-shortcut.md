@@ -71,6 +71,13 @@ declares a block, the terminal record lets REA report a missing block and mark
 coverage partial. If parsing stops before the terminal, an unseen block remains
 unknown.
 
+The report retains stored `LinkInfo` fields and environment target strings.
+Derived target observations skip paths from `LinkInfo` when `ForceNoLinkInfo`
+is set, and skip paths from `EnvironmentVariableDataBlock` when
+`DisableLinkPathTracking` is set.
+Unreadable ignored paths do not obscure other recorded targets when parsing
+continues; if parsing stops early, existing path uncertainty remains.
+
 `observations` are derived only from those documented fields: whether
 arguments are present, argument character length, target extension, whether
 `ShowCommand` is minimized, and whether the icon location differs from the

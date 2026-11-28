@@ -33,6 +33,8 @@ const ENTRIES_PER_YIELD = 32;
 const LINK_INFO_FIXED_HEADER_BYTES = 0x1c;
 const LINK_INFO_UNICODE_HEADER_BYTES = 0x24;
 const VOLUME_UNICODE_LABEL_SELECTOR = 0x14;
+const FORCE_NO_LINK_INFO = 0x00000100;
+const DISABLE_LINK_PATH_TRACKING = 0x00100000;
 // MS-SHLLINK §2.4 exempts COMMAND_LINE_ARGUMENTS from this format limit.
 const MAX_STRING_DATA_CHARACTERS = 260;
 /** ECMAScript Date range: 8.64e15 ms either side of the Unix epoch. */
@@ -64,7 +66,7 @@ const LINK_FLAGS: ReadonlyArray<
   [0x00000020, "HasArguments"],
   [0x00000040, "HasIconLocation"],
   [0x00000080, "IsUnicode"],
-  [0x00000100, "ForceNoLinkInfo"],
+  [FORCE_NO_LINK_INFO, "ForceNoLinkInfo"],
   [0x00000200, "HasExpString", 0xa0000001],
   [0x00000400, "RunInSeparateProcess"],
   [0x00001000, "HasDarwinID", 0xa0000006],
@@ -74,7 +76,7 @@ const LINK_FLAGS: ReadonlyArray<
   [0x00020000, "RunWithShimLayer", 0xa0000008],
   [0x00040000, "ForceNoLinkTrack"],
   [0x00080000, "EnableTargetMetadata"],
-  [0x00100000, "DisableLinkPathTracking"],
+  [DISABLE_LINK_PATH_TRACKING, "DisableLinkPathTracking"],
   [0x00200000, "DisableKnownFolderTracking"],
   [0x00400000, "DisableKnownFolderAlias"],
   [0x00800000, "AllowLinkToLink"],
@@ -457,6 +459,7 @@ const linkInfoTargets = (
 
 const targetPaths = (
   report: {
+    readonly header: WindowsShortcut["header"];
     readonly link_info: WindowsShortcut["link_info"];
     readonly string_data: WindowsShortcut["string_data"];
     readonly id_list: WindowsShortcut["id_list"];
@@ -464,8 +467,9 @@ const targetPaths = (
   },
   uncertainty: TargetPathUncertainty,
 ): RecordedPath[] => {
+  const flags = report.header.link_flags.raw;
   const values: RecordedPath[] =
-    report.link_info === null
+    report.link_info === null || (flags & FORCE_NO_LINK_INFO) !== 0
       ? []
       : linkInfoTargets(report.link_info, uncertainty);
   const relative = report.string_data.relative_path;
@@ -481,6 +485,7 @@ const targetPaths = (
         recorded(lastFile.short_name, (lastFile.type_byte & 0x04) === 0),
       );
   }
+  if ((flags & DISABLE_LINK_PATH_TRACKING) !== 0) return values;
   // A stored literal target, never expanded: `%VAR%` text stays as written.
   for (const block of report.extra_data.blocks) {
     if (block.decoded.kind !== "environment_variable") continue;
@@ -499,6 +504,7 @@ const observationsOf = (
     "header" | "link_info" | "string_data" | "id_list" | "extra_data"
   >,
   uncertainty: TargetPathUncertainty,
+  stopped: boolean,
 ): WindowsShortcut["observations"] => {
   const argumentsDeclared = (report.header.link_flags.raw & 0x00000020) !== 0;
   const argumentsField = report.string_data.arguments;
@@ -510,11 +516,16 @@ const observationsOf = (
         ? null
         : "";
   const targets = targetPaths(report, uncertainty);
+  const flags = report.header.link_flags.raw;
+  // Keep the existing conservative uncertainty when an early stop may have
+  // prevented later eligible fields from being examined.
+  const linkInfoRelevant = stopped || (flags & FORCE_NO_LINK_INFO) === 0;
+  const environmentRelevant =
+    stopped || (flags & DISABLE_LINK_PATH_TRACKING) === 0;
   const targetPathUnknown =
-    uncertainty.local ||
-    uncertainty.network ||
-    uncertainty.suffix ||
-    uncertainty.environment;
+    (linkInfoRelevant &&
+      (uncertainty.local || uncertainty.network || uncertainty.suffix)) ||
+    (environmentRelevant && uncertainty.environment);
   const iconDifference = iconDiffersFromTarget(
     report.string_data.icon_location,
     targets,
@@ -1466,7 +1477,11 @@ export const parseWindowsShortcut = async (
   const partial = walk.issues.length > 0;
   return {
     ...reportBase,
-    observations: observationsOf(reportBase, walk.pathUncertainty),
+    observations: observationsOf(
+      reportBase,
+      walk.pathUncertainty,
+      walk.stopped,
+    ),
     coverage: {
       status: partial ? "partial" : "complete",
       reason: partial
