@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  isSubpathExportsObject,
+  isWildcardPackageTarget,
   resolveEntryPoint,
   resolveNodeFileEntry,
+  selectableConditionKeys,
   NODE_FILE_CANDIDATES,
   NODE_INDEX_CANDIDATES,
 } from "./nodePackageEntry.js";
@@ -51,5 +54,51 @@ describe("resolveNodeFileEntry", () => {
       path: "missing",
       present: false,
     });
+  });
+});
+
+describe("isSubpathExportsObject", () => {
+  it("classifies a leading subpath key as a subpath map", () => {
+    expect(isSubpathExportsObject(["."])).toBe(true);
+    expect(isSubpathExportsObject(["./feature", "./other"])).toBe(true);
+  });
+
+  it("classifies a leading condition name as a conditions object", () => {
+    expect(isSubpathExportsObject(["import", "require"])).toBe(false);
+    expect(isSubpathExportsObject(["default", "node"])).toBe(false);
+  });
+
+  it("treats an empty object as a subpath map that exposes nothing", () => {
+    expect(isSubpathExportsObject([])).toBe(true);
+  });
+});
+
+describe("selectableConditionKeys", () => {
+  it("stops at the first default, since no later branch can be selected", () => {
+    expect(selectableConditionKeys(["import", "default", "node"])).toEqual([
+      "import",
+      "default",
+    ]);
+  });
+
+  it("keeps every key when there is no default", () => {
+    expect(selectableConditionKeys(["import", "require"])).toEqual([
+      "import",
+      "require",
+    ]);
+  });
+
+  it("drops conditions that follow a leading default", () => {
+    expect(selectableConditionKeys(["default", "node"])).toEqual(["default"]);
+  });
+});
+
+describe("isWildcardPackageTarget", () => {
+  it("marks a subpath pattern target as a wildcard", () => {
+    expect(isWildcardPackageTarget("./dist/*.js")).toBe(true);
+  });
+
+  it("treats a fully specified target as concrete", () => {
+    expect(isWildcardPackageTarget("./dist/index.js")).toBe(false);
   });
 });

@@ -53,3 +53,38 @@ export const resolveNodeFileEntry = (
     ? asFile
     : resolveEntryPoint(declared, NODE_INDEX_CANDIDATES, memberPaths);
 };
+
+/**
+ * Whether a package.json `exports`/`imports` object is a subpath map rather than
+ * a conditions object. Node never mixes the two in one object: a subpath map's
+ * keys are subpaths beginning with `.` (`"."`, `"./feature"`, `"./*"`), while a
+ * conditions object's keys are condition names (`import`, `node`, `default`).
+ * The first key settles it. An empty object is neither; it exposes nothing, so
+ * treating it as a subpath map (visit its — no — keys) is correct.
+ */
+export const isSubpathExportsObject = (keys: readonly string[]): boolean =>
+  keys[0]?.startsWith(".") ?? true;
+
+/**
+ * The condition branches that may still be selected from a conditions object,
+ * in declared order. Node resolves a conditions object to the FIRST matching
+ * condition in order, and the `default` condition always matches — so no branch
+ * after the first `default` can ever be selected. Returns every key through the
+ * first `default` (all of them when there is none), so a consumer enumerating
+ * reachable targets does not count a branch Node can never reach.
+ */
+export const selectableConditionKeys = (
+  keys: readonly string[],
+): readonly string[] => {
+  const terminal = keys.indexOf("default");
+  return terminal === -1 ? keys : keys.slice(0, terminal + 1);
+};
+
+/**
+ * Whether a package target is a subpath pattern. Node expands a `*` in an
+ * `exports`/`imports` target only against a concrete request, so static
+ * analysis cannot resolve it to one member and must leave it unresolved rather
+ * than record a literal `*` path that names no file.
+ */
+export const isWildcardPackageTarget = (target: string): boolean =>
+  target.includes("*");
