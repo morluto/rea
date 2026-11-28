@@ -15,7 +15,7 @@ import { access, stat, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { z } from "zod";
+import type { z } from "zod";
 import {
   classifyProviderFailure,
   type ProviderFailureDialect,
@@ -52,6 +52,7 @@ import {
 import {
   type AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
+  AnalysisInputError,
   AnalysisTargetFailureError,
   AnalysisOutputError,
   cancelledBy,
@@ -69,8 +70,9 @@ import {
   selectedEvmProducerLimits,
   type InspectEvmInterfaceInput,
   evmInterfaceSchema,
+  evmCompilerSelection,
+  evmProducerLimitRecovery,
 } from "../domain/evm/evmInterface.js";
-import { solidityMetadataSchema } from "../domain/evm/solidityMetadata.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -83,21 +85,26 @@ import {
 } from "../process/LinuxResourceLimits.js";
 import {
   evmFailureDialect,
+  compilerJsonLimitRefusal,
   evmReplyBudgetFailure,
   type EvmFileSizeFailureEvidence,
 } from "./EvmoleFailures.js";
-import {
-  evmoleInterfaceReplySchema,
-  projectEvmoleFunctions,
-} from "./EvmoleInterfaceAdapter.js";
+import { projectEvmoleFunctions } from "./EvmoleInterfaceAdapter.js";
 import {
   EVM_WORKER_HEAP_MIB,
   EVM_FILE_SIZE_FAILURE_EXIT,
 } from "./EvmoleRelease.js";
 import {
-  EVMOLE_PROVIDER_IDENTITY,
-  EVMOLE_VERSION,
-} from "./EvmoleProviderIdentity.js";
+  MAX_EVM_WORKER_REQUEST_BYTES,
+  evmWorkerReplySchema,
+} from "./EvmInterfaceWorkerContract.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
+import { SOLC_JSON_LIMITS } from "../domain/evm/solcCompilerJson.js";
+import {
+  compilerDiagnosticsBindCarrier,
+  compilerIdentityBytes,
+} from "../domain/evm/solcArtifact.js";
+import { EVMOLE_PROVIDER_IDENTITY } from "./EvmoleProviderIdentity.js";
 import { decodeEvmBytecodeCarrier } from "./EvmBytecodeCarrier.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
@@ -245,24 +252,7 @@ export const evmLimiterAvailability = async (
       };
 };
 
-const replySchema = z.discriminatedUnion("ok", [
-  z.strictObject({
-    ok: z.literal(true),
-    version: z.literal(EVMOLE_VERSION),
-    bytecode: z.strictObject({
-      sha256: z.string().regex(/^[a-f0-9]{64}$/),
-      bytes: z.int().nonnegative(),
-      hex: z.string().regex(/^(?:[a-f0-9]{2})*$/),
-      metadata: solidityMetadataSchema.optional(),
-    }),
-    raw: evmoleInterfaceReplySchema,
-  }),
-  z.strictObject({
-    ok: z.literal(false),
-    reason: z.enum(["malformed", "decoder", "output-limit", "unsupported"]),
-    message: z.string(),
-  }),
-]);
+const replySchema = evmWorkerReplySchema;
 type Launcher = NonNullable<Parameters<typeof runOwnedCommand>[2]>["launcher"];
 type EvmOutcome = Result<EvmInterfaceExecution, AnalysisError>;
 type EvmRuntimeRoot = Pick<PrivateRuntimeRoot, "path" | "close">;
@@ -502,6 +492,8 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
     environment: Readonly<NodeJS.ProcessEnv>,
     options?: ExecutionOptions,
   ): Promise<Result<EvmInterfaceExecution, AnalysisError>> {
+    const { encoding } = input;
+    const compilerSelection = evmCompilerSelection(input);
     const pending = await this.#retire();
     if (pending !== undefined) return err(pending);
     let root: Pick<PrivateRuntimeRoot, "path" | "close"> | undefined;
@@ -557,10 +549,45 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
     let workerLimits: LinuxResourceLimits | undefined;
     let limiter =
       environment.REA_EVM_PRLIMIT_COMMAND ?? EVM_PRLIMIT_COMMAND_DEFAULT;
+    // A solc-json carrier above the fixed parser ceiling can never be parsed,
+    // so that ceiling also bounds what is read and copied.
+    const carrierBudget =
+      compilerSelection === undefined
+        ? producerLimits.input_bytes
+        : Math.min(producerLimits.input_bytes, SOLC_JSON_LIMITS.inputBytes);
     let result: Result<EvmInterfaceExecution, AnalysisError>;
     try {
       if (options?.signal?.aborted)
         throw cancelledBy(OPERATION, options.signal);
+      if (compilerSelection !== undefined) {
+        // The worker request carries these identities verbatim, so refuse
+        // sizes no admitted carrier could contain before any process effect.
+        const identityBytes = compilerIdentityBytes(compilerSelection);
+        if (identityBytes > carrierBudget)
+          throw new AnalysisInputError(
+            OPERATION,
+            {
+              conformsToInputContract: true,
+              ...(identityBytes > producerLimits.input_bytes
+                ? {
+                    remediationAction: evmProducerLimitRecovery(
+                      producerLimits,
+                      "input_bytes",
+                    ),
+                  }
+                : {}),
+            },
+            [
+              {
+                path: ["encoding"],
+                reason: "out_of_range",
+                message: `Exact compiler identities occupy ${String(identityBytes)} UTF-8 bytes above the admitted carrier budget of ${String(carrierBudget)} bytes; no admitted carrier can contain these exact keys.`,
+                maximum: carrierBudget,
+                observed: identityBytes,
+              },
+            ],
+          );
+      }
       if (!evmHostSupported(this.host.platform, this.host.architecture))
         throw new AnalysisCapabilityUnavailableError(
           EVMOLE_PROVIDER_IDENTITY.id,
@@ -606,7 +633,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
       phase = "artifact-read";
       const carrier = await readStableArtifact(
         input.path,
-        producerLimits.input_bytes,
+        carrierBudget,
         options?.signal,
         undefined,
         this.#resources,
@@ -622,17 +649,23 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
         mode: 0o600,
         ...(options?.signal === undefined ? {} : { signal: options.signal }),
       });
-      await writeFile(
-        requestPath,
-        JSON.stringify({
-          snapshot_path: snapshotPath,
-          reply_path: replyPath,
-          failure_marker_path: join(root.path, "resource.failure"),
-          encoding: input.encoding,
-          producer_limits: producerLimits,
-        }),
-        { flag: "wx", mode: 0o600 },
-      );
+      const requestJson = JSON.stringify({
+        snapshot_path: snapshotPath,
+        reply_path: replyPath,
+        failure_marker_path: join(root.path, "resource.failure"),
+        file_size_bytes: workerLimits.file_bytes,
+        encoding: input.encoding,
+        ...(input.compiler_selection === undefined
+          ? {}
+          : { compiler_selection: input.compiler_selection }),
+        producer_limits: producerLimits,
+      });
+      // The worker reads this file under the same ceiling; refuse before it starts.
+      if (Buffer.byteLength(requestJson) > MAX_EVM_WORKER_REQUEST_BYTES)
+        throw invariantViolation(
+          "Encoded worker request exceeds the shared request ceiling.",
+        );
+      await writeFile(requestPath, requestJson, { flag: "wx", mode: 0o600 });
       const { NODE_OPTIONS: _ambientNodeOptions, ...workerEnvironment } =
         environment;
       const execution = await runOwnedCommand(
@@ -747,86 +780,241 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
         throw failure;
       }
       if (!reply.ok) {
+        if (
+          compilerSelection !== undefined
+            ? reply.carrier_sha256 !== carrier.sha256 ||
+              !compilerDiagnosticsBindCarrier(
+                reply.compiler_diagnostics,
+                carrier.bytes,
+              )
+            : reply.compiler_diagnostics !== undefined ||
+              reply.compiler_diagnostics_omitted !== undefined ||
+              reply.carrier_sha256 !== undefined
+        )
+          throw new AnalysisOutputError(
+            OPERATION,
+            "Compiler failure evidence does not bind to the selected carrier.",
+            { capturedOutput },
+          );
+        const diagnostics =
+          compilerSelection === undefined
+            ? undefined
+            : {
+                carrier_path: input.path,
+                carrier_sha256: carrier.sha256,
+                carrier_bytes: carrier.bytes.length,
+                compiler_selection: compilerSelection,
+                ...(reply.compiler_diagnostics === undefined
+                  ? {}
+                  : { compiler_diagnostics: reply.compiler_diagnostics }),
+                ...(reply.compiler_diagnostics_omitted === undefined
+                  ? {}
+                  : {
+                      compiler_diagnostics_omitted:
+                        reply.compiler_diagnostics_omitted,
+                    }),
+              };
         if (reply.reason === "unsupported")
           throw unsupportedTarget(
             OPERATION,
             input.path,
             "evm-bytecode",
             reply.message,
-            { capturedOutput },
+            { capturedOutput, diagnostics },
           );
-        // The worker rejected the selected bytecode, not the request.
+        if (reply.reason === "resource") {
+          if (reply.limit === undefined)
+            throw invariantViolation(
+              "A compiler JSON resource refusal carries the parser ceiling that stopped it.",
+            );
+          const { name, maximum, required } = reply.limit;
+          throw compilerJsonLimitRefusal(
+            reply.message,
+            required === undefined
+              ? { name, maximum }
+              : { name, maximum, required },
+            { capturedOutput, diagnostics },
+          );
+        }
+        // The worker rejected the selected file's bytes, not the request.
         if (reply.reason === "malformed")
           throw new AnalysisTargetFailureError(
             OPERATION,
             input.path,
             {
               kind: "malformed",
-              format: "evm-bytecode",
+              format:
+                compilerSelection === undefined ? "evm-bytecode" : "solc-json",
               detail: reply.message,
             },
-            { capturedOutput },
+            { capturedOutput, diagnostics },
+          );
+        if (reply.reason === "selection")
+          throw new AnalysisInputError(
+            OPERATION,
+            {
+              capturedOutput,
+              diagnostics,
+              conformsToInputContract: true,
+              remediationAction:
+                "Check the exact source-unit and contract keys in the selected compiler output and select an existing contract.",
+            },
+            [
+              {
+                path: ["encoding"],
+                reason: "invalid_value",
+                message: reply.message,
+              },
+            ],
           );
         if (reply.reason === "output-limit")
           throw evmReplyBudgetFailure(
             reply.message,
             {
               capturedOutput,
+              diagnostics,
             },
             producerLimits,
+            workerLimits.file_bytes,
           );
         throw new ProviderAdapterError(EVMOLE_PROVIDER_IDENTITY.id, OPERATION, {
           diagnostics: {
             phase,
             failure_kind: reply.reason,
             reason: reply.message,
+            ...diagnostics,
             stdout: capturedOutput.stdout,
             stderr: capturedOutput.stderr,
             captured_output: { ...capturedOutput },
           },
         });
       }
-      const selectedBytes = decodeEvmBytecodeCarrier(
-        carrier.bytes,
-        input.encoding,
-      );
-      const selectedHex = Buffer.from(selectedBytes).toString("hex");
-      const decodedHash = sha256Hex(selectedBytes);
+      const compilerArtifact = reply.compiler_artifact;
+      if (compilerSelection !== undefined) {
+        if (
+          compilerArtifact === undefined ||
+          reply.carrier_sha256 !== carrier.sha256 ||
+          compilerArtifact.selection.source_unit !==
+            compilerSelection.source_unit ||
+          compilerArtifact.selection.contract_name !==
+            compilerSelection.contract_name ||
+          compilerArtifact.selection.bytecode_kind !==
+            compilerSelection.bytecode_kind ||
+          (compilerArtifact.status === "concrete"
+            ? compilerArtifact.object?.toLowerCase() !== reply.bytecode.hex ||
+              reply.raw === null
+            : reply.raw !== null)
+        )
+          throw new AnalysisOutputError(
+            OPERATION,
+            "Compiler worker changed the selected carrier or exact compiler selection.",
+            { capturedOutput },
+          );
+        if (
+          !compilerDiagnosticsBindCarrier(
+            compilerArtifact.diagnostics,
+            carrier.bytes,
+          )
+        )
+          throw new AnalysisOutputError(
+            OPERATION,
+            "Compiler worker diagnostics do not match the retained carrier text.",
+            { capturedOutput },
+          );
+      } else {
+        if (input.encoding === "solc-json")
+          throw new AnalysisOutputError(
+            OPERATION,
+            "Compiler encoding has no parsed compiler selection.",
+            { capturedOutput },
+          );
+        const selectedBytes = decodeEvmBytecodeCarrier(
+          carrier.bytes,
+          input.encoding,
+        );
+        if (
+          compilerArtifact !== undefined ||
+          reply.raw === null ||
+          Buffer.from(selectedBytes).toString("hex") !== reply.bytecode.hex
+        )
+          throw new AnalysisOutputError(
+            OPERATION,
+            "Decoded bytecode does not match the selected raw/hex carrier.",
+            { capturedOutput },
+          );
+      }
       if (
-        decodedHash !== reply.bytecode.sha256 ||
-        selectedHex !== reply.bytecode.hex ||
-        selectedBytes.length !== reply.bytecode.bytes
+        reply.bytecode.hex !== null &&
+        (sha256Hex(Buffer.from(reply.bytecode.hex, "hex")) !==
+          reply.bytecode.sha256 ||
+          reply.bytecode.hex.length / 2 !== reply.bytecode.bytes)
       )
         throw new AnalysisOutputError(
           OPERATION,
-          "Decoded bytecode representation does not match the selected carrier, encoding or reported SHA-256.",
+          "Decoded byte identity does not match reported bytecode.",
           { capturedOutput },
         );
       const limitations = [
         `Configured worker resource soft limits: address_space_bytes=${String(workerLimits.address_space_bytes)}, cpu_seconds=${String(workerLimits.cpu_seconds)}, file_size_bytes=${String(workerLimits.file_bytes)}. Selected from inherited tighter limits; original hard limits are retained. Effective worker limits are not independently probed.`,
         "Upstream may also report terminal metadata while recovering selectors. Its reported values are retained in raw_result, but integer precision and non-text-key coverage are unknown in the JS binding; complete original bytecode remains available.",
         "Recovered selectors, argument strings and mutability are upstream inferences, not verified ABI signatures or names. Empty results do not prove the absence of callable dispatch.",
-        "Bytecode kind, hardfork and deployed-contract authenticity are unknown. This inspection performs no target runtime execution, chain/RPC lookup or network request.",
+        compilerArtifact === undefined
+          ? "Bytecode kind, hardfork and deployed-contract authenticity are unknown. This inspection performs no target runtime execution, chain/RPC lookup or network request."
+          : "Creation/deployed kind and compiler metadata are recorded compiler-artifact facts, not authenticated compilation or deployment evidence. Hardfork and deployed-contract authenticity remain unknown. No compiler, source acquisition, chain/RPC lookup or target runtime execution is performed.",
         "Original carrier and decoded bytecode SHA-256 are distinct identities; SHA-256 is not the Ethereum Keccak code hash.",
         "Terminal CBOR metadata is an independently decoded candidate, not proof of Solidity origin, source identity or deployment. Nested or unsupported values retain explicit unavailable interpretation and original byte ranges.",
         `The owned worker has a 256 MiB JavaScript heap. The profile maxima are ${String(producerLimits.address_space_bytes)} address-space bytes and ${String(producerLimits.cpu_seconds)} CPU seconds; the configured soft limits above retain tighter inherited limits. The command deadline is timeout_ms at ${String(timeoutMs)} ms (default ${String(DEFAULT_EVM_TIMEOUT_MS)}). producer_limits can change those requested byte, address-space and CPU allowances on the next call without restart; timeout_ms does not raise them. The 256 MiB worker heap remains independent. Virtual address space is distinct from resident memory; limits fail without partial success.`,
       ];
+      if (compilerArtifact !== undefined) {
+        if (compilerArtifact.status !== "concrete")
+          limitations.push(
+            "Interface inference is unavailable because the selected compiler object is absent or contains unresolved library placeholders. Decoded hex and byte digest are unavailable; no addresses were substituted.",
+          );
+        if (
+          compilerArtifact.link_references === null ||
+          compilerArtifact.immutable_references === null
+        )
+          limitations.push(
+            "Omitted compiler link/immutable reference facets were not supplied; missing facets do not establish absence of references.",
+          );
+        if (compilerArtifact.reference_bounds === "unavailable")
+          limitations.push(
+            "Selected compiler bytecode is absent; recorded reference spans are retained but their byte bounds cannot be verified.",
+          );
+        if (compilerArtifact.metadata.parse_status !== "valid")
+          limitations.push(
+            "Recorded selected-contract metadata is absent, malformed or resource-limited; compiler version and settings are unavailable.",
+          );
+        if (compilerArtifact.diagnostics === null)
+          limitations.push(
+            "Compiler diagnostics were not supplied; their absence does not establish successful compilation.",
+          );
+      }
       const validated = evmInterfaceSchema.safeParse({
         artifact: {
           path: input.path,
           sha256: carrier.sha256,
           bytes: carrier.bytes.length,
-          encoding: input.encoding,
+          encoding,
         },
         bytecode: {
           ...reply.bytecode,
           digest_algorithm: "sha256",
-          kind: "unknown",
+          kind: compilerArtifact?.selection.bytecode_kind ?? "unknown",
           deployment_authenticity: "unknown",
           hardfork: "unknown",
         },
+        ...(compilerArtifact === undefined
+          ? {}
+          : {
+              compiler_artifact: compilerArtifact,
+              inference_status:
+                compilerArtifact.status === "concrete"
+                  ? "examined"
+                  : "unavailable",
+            }),
         evidence_kind: "inferred",
-        functions: projectEvmoleFunctions(reply.raw),
+        functions: reply.raw === null ? [] : projectEvmoleFunctions(reply.raw),
         discovery_completeness: "unknown",
         runtime_execution: "not-performed",
         diagnostics: providerResultDiagnostics(capturedOutput),
@@ -912,6 +1100,10 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
               fileFailure,
               timeoutMs,
               producerLimits,
+              fixedInputBytes:
+                carrierBudget < producerLimits.input_bytes
+                  ? carrierBudget
+                  : undefined,
             }),
           );
       if (markerCleanupFailure !== undefined) {

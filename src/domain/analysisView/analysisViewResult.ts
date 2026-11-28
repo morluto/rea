@@ -24,6 +24,7 @@ import {
 import {
   analysisViewCoverageSchema,
   nullableCollectionViewCoverageSchema,
+  unknownableViewCoverageSchema,
 } from "./analysisViewCoverage.js";
 import { artifactSchema, viewResultBaseFields } from "./analysisViewBase.js";
 import { recordedArrayViewSchema } from "./analysisViewRequest.js";
@@ -1059,6 +1060,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     view: evmViewRequestSchema,
     item: evmViewItemSchema,
     ...viewResultBase,
+    coverage: unknownableViewCoverageSchema,
     parent_operation: z.literal("inspect_evm_interface"),
   }),
   z.strictObject({

@@ -1,11 +1,22 @@
 import {
+  analysisViewInputError,
   invalidAnalysisViewSubject,
   invalidAnalysisView,
 } from "./analysisViewErrors.js";
 import { z } from "zod";
 import { uniqueSorted } from "../canonicalOrdering.js";
-import { evmInterfaceSchema } from "../evm/evmInterface.js";
-import { ok } from "../result.js";
+import { boundedList } from "../boundedList.js";
+import {
+  evmInterfaceSchema,
+  inspectEvmInterfaceInputSchema,
+  matchesEvmInterfaceInput,
+} from "../evm/evmInterface.js";
+import {
+  solcArtifactSchema,
+  solcSourceRangeSchema,
+  type SolcArtifact,
+} from "../evm/solcArtifact.js";
+import { err, ok, type Result } from "../result.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
@@ -16,6 +27,7 @@ import {
 import {
   completeWithinViewCoverage,
   pageViewCoverage,
+  unknownViewCoverage,
 } from "./analysisViewCoverage.js";
 import {
   analysisTextPage,
@@ -36,6 +48,164 @@ export const evmViewItemSchema = z.union([
   analysisTextPageItemSchema,
 ]);
 
+// A carrier within the node cap can hold tens of thousands of diagnostic rows.
+const DIAGNOSTIC_PREVIEW_ROWS = 16;
+const REFERENCE_PREVIEW_ROWS = 16;
+// Longest carrier-controlled string a summary repeats; longer ones are counted.
+const SUMMARY_TEXT_CODE_UNITS = 256;
+
+const summaryTextSchema = z.union([
+  z.string().max(SUMMARY_TEXT_CODE_UNITS),
+  z.strictObject({ omitted_code_units: z.number().int().positive() }),
+]);
+
+const summaryText = (value: string | null) =>
+  value === null || value.length <= SUMMARY_TEXT_CODE_UNITS
+    ? value
+    : { omitted_code_units: value.length };
+
+type PreviewRow = {
+  json_pointer: string;
+  severity: ReturnType<typeof summaryText>;
+  source_range: z.output<typeof solcSourceRangeSchema>;
+};
+
+const diagnosticSummary = (
+  diagnostics: NonNullable<SolcArtifact["diagnostics"]>,
+) => {
+  // One pass: count everything, keep at most one preview's worth of each kind.
+  const errors: PreviewRow[] = [];
+  const others: PreviewRow[] = [];
+  let errorCount = 0;
+  for (const { json_pointer, severity, source_range } of diagnostics) {
+    const isError = severity === "error";
+    if (isError) errorCount += 1;
+    const kept = isError ? errors : others;
+    if (kept.length < DIAGNOSTIC_PREVIEW_ROWS)
+      kept.push({
+        json_pointer,
+        severity: summaryText(severity),
+        source_range,
+      });
+  }
+  const { items: preview } = boundedList(
+    [...errors, ...others],
+    DIAGNOSTIC_PREVIEW_ROWS,
+  );
+  return {
+    total: diagnostics.length,
+    error_count: errorCount,
+    preview: [...preview],
+    preview_omitted: diagnostics.length - preview.length,
+  };
+};
+
+/** Counted preview; the exact rows stay in the parent Evidence. */
+const boundedRowsSchema = <T extends z.ZodType>(row: T) =>
+  z.strictObject({
+    total: z.number().int().nonnegative(),
+    preview: z.array(row).max(REFERENCE_PREVIEW_ROWS),
+    preview_omitted: z.number().int().nonnegative(),
+  });
+
+const boundedRows = <T>(rows: readonly T[]) => {
+  const { items, omitted } = boundedList(rows, REFERENCE_PREVIEW_ROWS);
+  return { total: rows.length, preview: [...items], preview_omitted: omitted };
+};
+
+const referenceRowSchema = z.strictObject({
+  ...solcArtifactSchema.shape.link_references.unwrap().element.shape,
+  source_unit: summaryTextSchema.nullable(),
+  library_name: summaryTextSchema.nullable(),
+  immutable_id: summaryTextSchema.nullable(),
+});
+
+const boundedReferences = (
+  rows: NonNullable<SolcArtifact["link_references"]>,
+) => {
+  const bounded = boundedRows(rows);
+  return {
+    ...bounded,
+    preview: bounded.preview.map((row) => ({
+      ...row,
+      source_unit: summaryText(row.source_unit),
+      library_name: summaryText(row.library_name),
+      immutable_id: summaryText(row.immutable_id),
+    })),
+  };
+};
+
+/** Selected compiler facts without duplicate bytecode, raw metadata, settings or diagnostic JSON. */
+const {
+  object: _objectSchema,
+  metadata: _metadataSchema,
+  ...compilerFactsShape
+} = solcArtifactSchema.shape;
+const compilerArtifactSummarySchema = z.strictObject({
+  ...compilerFactsShape,
+  link_references: boundedRowsSchema(referenceRowSchema).nullable(),
+  immutable_references: boundedRowsSchema(referenceRowSchema).nullable(),
+  placeholders: boundedRowsSchema(
+    solcArtifactSchema.shape.placeholders.element,
+  ),
+  // Counts plus a bounded, errors-first preview; every exact row stays in the parent Evidence.
+  diagnostics: z
+    .strictObject({
+      total: z.number().int().nonnegative(),
+      error_count: z.number().int().nonnegative(),
+      preview: z
+        .array(
+          z.strictObject({
+            json_pointer: z.string(),
+            severity: summaryTextSchema.nullable(),
+            source_range: solcSourceRangeSchema,
+          }),
+        )
+        .max(DIAGNOSTIC_PREVIEW_ROWS),
+      preview_omitted: z.number().int().nonnegative(),
+    })
+    .nullable(),
+  object_code_units: z.number().int().nonnegative().nullable(),
+  metadata: solcArtifactSchema.shape.metadata
+    .omit({ raw: true, settings_json: true })
+    .extend({
+      compiler_version: summaryTextSchema.nullable(),
+      raw_code_units: z.number().int().nonnegative().nullable(),
+      settings_code_units: z.number().int().nonnegative().nullable(),
+    }),
+});
+
+const compilerArtifactSummary = (artifact: SolcArtifact) => {
+  const {
+    object,
+    metadata,
+    diagnostics,
+    link_references,
+    immutable_references,
+    placeholders,
+    ...facts
+  } = artifact;
+  const { raw, settings_json: settings, ...metadataFacts } = metadata;
+  return {
+    ...facts,
+    link_references:
+      link_references === null ? null : boundedReferences(link_references),
+    immutable_references:
+      immutable_references === null
+        ? null
+        : boundedReferences(immutable_references),
+    placeholders: boundedRows(placeholders),
+    diagnostics: diagnostics === null ? null : diagnosticSummary(diagnostics),
+    object_code_units: object?.length ?? null,
+    metadata: {
+      ...metadataFacts,
+      compiler_version: summaryText(metadataFacts.compiler_version),
+      raw_code_units: raw?.length ?? null,
+      settings_code_units: settings?.length ?? null,
+    },
+  };
+};
+
 /** Complete inferred interface facts without the unrequested hex or duplicated stdout. */
 export const evmSummarySchema = z.strictObject({
   artifact: evmInterfaceSchema.shape.artifact,
@@ -44,6 +214,8 @@ export const evmSummarySchema = z.strictObject({
   functions: evmInterfaceSchema.shape.functions,
   discovery_completeness: evmInterfaceSchema.shape.discovery_completeness,
   runtime_execution: evmInterfaceSchema.shape.runtime_execution,
+  compiler_artifact: compilerArtifactSummarySchema.optional(),
+  inference_status: evmInterfaceSchema.shape.inference_status,
   diagnostics: evmInterfaceSchema.shape.diagnostics
     .omit({ stdout: true })
     .extend({
@@ -76,6 +248,20 @@ export const projectEvmInterfaceView = (
     return invalidAnalysisViewSubject(
       "EVM parent subject must identify the report's carrier format and SHA-256.",
     );
+  if (report.compiler_artifact !== undefined) {
+    const input = inspectEvmInterfaceInputSchema.safeParse(parent.parameters);
+    if (!input.success || !matchesEvmInterfaceInput(report, input.data))
+      return err(
+        analysisViewInputError([
+          {
+            path: ["source", "parameters"],
+            reason: "invalid_value",
+            message:
+              "EVM compiler parent parameters must identify the exact carrier, encoding and compiler selection.",
+          },
+        ]),
+      );
+  }
   const shared = {
     parent_evidence_id: parent.evidenceId,
     parent_operation: "inspect_evm_interface" as const,
@@ -83,7 +269,12 @@ export const projectEvmInterfaceView = (
     artifact: { path: report.artifact.path, sha256: report.artifact.sha256 },
     limitations: uniqueSorted([...parent.limitations, ...report.limitations]),
     unknowns: [
-      "Candidates remain inferred; discovery completeness, bytecode kind, hardfork and deployment authenticity are unknown. Runtime execution was not performed.",
+      `Candidates remain inferred; discovery completeness, ${report.bytecode.kind === "unknown" ? "bytecode kind, " : ""}hardfork and deployment authenticity are unknown. Runtime execution was not performed.`,
+      ...(report.inference_status === "unavailable"
+        ? [
+            "Interface inference is unavailable for the selected compiler object; candidate total and exhaustion are unknown.",
+          ]
+        : []),
     ],
   };
   if (view.kind === "summary") {
@@ -100,10 +291,23 @@ export const projectEvmInterfaceView = (
         functions: report.functions,
         discovery_completeness: report.discovery_completeness,
         runtime_execution: report.runtime_execution,
+        ...(report.compiler_artifact === undefined
+          ? {}
+          : {
+              compiler_artifact: compilerArtifactSummary(
+                report.compiler_artifact,
+              ),
+            }),
+        ...(report.inference_status === undefined
+          ? {}
+          : { inference_status: report.inference_status }),
         diagnostics: { ...diagnostics, stdout_code_units: stdout.length },
         limitations: report.limitations,
       },
-      coverage: completeWithinViewCoverage(report.functions.length),
+      coverage:
+        report.inference_status === "unavailable"
+          ? unknownViewCoverage()
+          : completeWithinViewCoverage(report.functions.length),
     });
   }
   if (view.facet === "functions") {
@@ -113,17 +317,27 @@ export const projectEvmInterfaceView = (
       view,
       item,
       ...shared,
-      coverage: pageViewCoverage(
-        view.offset,
-        item.length,
-        report.functions.length,
-      ),
+      coverage:
+        report.inference_status === "unavailable"
+          ? unknownViewCoverage()
+          : pageViewCoverage(view.offset, item.length, report.functions.length),
     });
   }
   const text =
     view.facet === "bytecode_hex"
       ? report.bytecode.hex
       : report.diagnostics[view.facet];
+  if (text === null)
+    return err(
+      analysisViewInputError([
+        {
+          path: ["view", "facet"],
+          reason: "invalid_value",
+          message:
+            "Decoded bytecode hex is unavailable for the selected compiler object; inspect its compiler artifact evidence.",
+        },
+      ]),
+    );
   const page = analysisTextPage(text, view.offset, view.limit, view.facet);
   return page.ok
     ? ok({ kind: "evm" as const, view, ...page.value, ...shared })

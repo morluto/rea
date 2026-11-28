@@ -2,12 +2,17 @@ import { z } from "zod";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { EvmInterfacePort } from "../../ports/evm/EvmInterfacePort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisInputError,
+  AnalysisOutputError,
+} from "../../domain/analysisErrorCore.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { evmInterfaceEvidence } from "../../domain/evm/evmInterfaceEvidence.js";
 import {
   inspectEvmInterfaceInputSchema,
+  evmCompilerSelectionIssue,
   evmInterfaceSchema,
+  matchesEvmInterfaceInput,
 } from "../../domain/evm/evmInterface.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
@@ -38,6 +43,17 @@ export class EvmInterfaceService {
       options?.signal,
     );
     if (!input.ok) return input;
+    const selectionIssue = evmCompilerSelectionIssue(input.value);
+    if (selectionIssue !== undefined)
+      return err(
+        new AnalysisInputError(OPERATION, undefined, [
+          {
+            path: ["compiler_selection"],
+            reason: "invalid_value",
+            message: selectionIssue,
+          },
+        ]),
+      );
     const inspected = await this.provider.inspect(input.value, options);
     if (!inspected.ok) return inspected;
     const diagnostics = diagnosticsSchema.safeParse(inspected.value.result);
@@ -48,8 +64,7 @@ export class EvmInterfaceService {
     const report = evmInterfaceSchema.safeParse(execution.result);
     if (
       !report.success ||
-      report.data.artifact.path !== input.value.path ||
-      report.data.artifact.encoding !== input.value.encoding ||
+      !matchesEvmInterfaceInput(report.data, input.value) ||
       execution.subject?.format !== "file" ||
       execution.subject?.path !== input.value.path ||
       execution.subject.sha256 !== report.data.artifact.sha256
@@ -62,7 +77,10 @@ export class EvmInterfaceService {
         ),
       );
     return completeProviderEvidence(
-      evmInterfaceEvidence(input.value, execution),
+      evmInterfaceEvidence(input.value, {
+        ...execution,
+        result: report.data,
+      }),
       options?.signal,
       outputOptions?.capturedOutput,
     );

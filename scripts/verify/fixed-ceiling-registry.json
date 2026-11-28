@@ -222,6 +222,13 @@
       "reason": "Electron fuse input bytes and sentinel inventory are resource policies."
     }
   },
+  "src/evm/EvmoleFailures.ts": {
+    "`Compiler JSON limits of ${SOLC_JSON_LIMITS.inputBytes} input bytes, ${SOLC_JSON_LIMITS.depth} nesting levels and ${SOLC_JSON_LIMITS.nodes} AST nodes (no runtime override)`": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "Compiler-output JSON input, nesting and node counts are resource policies without a per-call control."
+    }
+  },
   "src/flutter/FlutterBuildProvider.ts": {
     "\"The Flutter APK expansion allowance (derived from the APK size)\"": {
       "class": "derived",

@@ -10,6 +10,21 @@ export const analysisViewCoverageSchema = z.strictObject({
   exhausted: z.boolean(),
 });
 
+/** No selected inference was examined; neither total nor exhaustion is established. */
+const unknownViewCoverageSchema = z.strictObject({
+  status: z.literal("unknown"),
+  examined: z.literal(0),
+  total: z.null(),
+  next_offset: z.null(),
+  exhausted: z.null(),
+});
+
+/** Views whose producer may report no examined inference accept unknown coverage. */
+export const unknownableViewCoverageSchema = z.union([
+  analysisViewCoverageSchema,
+  unknownViewCoverageSchema,
+]);
+
 const unavailableViewCoverageSchema = z.strictObject({
   status: z.literal("unavailable"),
   examined: z.literal(0),
@@ -26,6 +41,15 @@ export const nullableCollectionViewCoverageSchema = z.discriminatedUnion(
 
 export type AnalysisViewCoverage = z.output<typeof analysisViewCoverageSchema>;
 
+export const unknownViewCoverage = (): z.output<
+  typeof unknownViewCoverageSchema
+> => ({
+  status: "unknown",
+  examined: 0,
+  total: null,
+  next_offset: null,
+  exhausted: null,
+});
 /** Unrecorded or inapplicable collections have no known total or continuation. */
 export const unavailableViewCoverage = (): z.output<
   typeof unavailableViewCoverageSchema
