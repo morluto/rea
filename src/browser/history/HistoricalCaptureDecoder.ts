@@ -274,11 +274,7 @@ export class HistoricalCaptureDecoder {
                 reply.ceiling,
               );
             if (reply.reason === "member-count")
-              throw zipMemberCountRefusal(
-                OPERATION,
-                reply.message,
-                reply.member_count,
-              );
+              throw zipMemberCountRefusal(OPERATION, reply.member_count);
             const limit = captureLimitForReply(reply.reason);
             if (limit !== undefined) {
               const { parameter, expected } = CAPTURE_LIMITS[limit];

@@ -111,7 +111,7 @@ it("reports a SAZ archive past the session member count as a count", async () =>
       () => decodeSazCapture(path, []),
     ),
   ).rejects.toMatchObject({
-    message: expect.stringContaining("artifact_limits.zip.member_count"),
+    message: expect.stringContaining("artifact.member_count"),
     failure: {
       kind: "limit",
       limit: { name: "zip-member-count", maximum: 1 },

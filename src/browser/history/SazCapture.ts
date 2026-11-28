@@ -13,6 +13,7 @@ import { projectSazRecord, type SazValue } from "./SazProjection.js";
 import {
   operationZipMemberCount,
   ZIP_MEMBER_COUNT_PARAMETER,
+  zipMemberCountReason,
 } from "../../config/artifactMemberCount.js";
 
 const SESSION_MEMBER_KINDS = {
@@ -217,7 +218,7 @@ export const decodeSazCapture = async (
             name: "zip-member-count",
             maximum: cause.readerLimit.effective_value,
           },
-          cause.message,
+          zipMemberCountReason(cause.readerLimit.effective_value),
         );
       throw new CaptureFormatError(
         { name: "expanded-input", maximum: captureBudgets().inputBytes },

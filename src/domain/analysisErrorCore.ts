@@ -227,6 +227,29 @@ export const fixedCeilingConstraint = (
     fixedAllowance: ceiling,
   });
 
+/**
+ * Refuse at a session setting the caller can change. The structured limit is
+ * that setting. A parser limit still goes through `parseLimitConstraint`.
+ */
+export const sessionSettingConstraint = (
+  operation: string,
+  resource: (typeof ANALYSIS_RESOURCE_KINDS)[number],
+  reason: string,
+  reportedLimits: Readonly<Record<string, JsonValue>> | null,
+  options: Omit<AnalysisErrorOptions, "limit"> &
+    ResourceConstraintRecovery & {
+      readonly limit: NonNullable<AnalysisErrorOptions["limit"]>;
+      readonly requestSent?: boolean;
+    },
+): AnalysisResourceConstraintError =>
+  new AnalysisResourceConstraintError(
+    operation,
+    resource,
+    reason,
+    reportedLimits,
+    { ...options, retryable: false },
+  );
+
 /** Carry one refusal's recovery to an error re-attributed or redacted elsewhere. */
 export const resourceConstraintRecovery = (
   error: AnalysisResourceConstraintError,

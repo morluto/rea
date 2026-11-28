@@ -1,7 +1,10 @@
 import { positiveDecimalIntegerSchema } from "./positiveDecimalInteger.js";
 
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
-import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
+import {
+  type AnalysisResourceConstraintError,
+  sessionSettingConstraint,
+} from "../domain/analysisErrorCore.js";
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { currentAnalysisSettingOverride } from "../domain/analysisOperationSnapshot.js";
 import {
@@ -16,6 +19,8 @@ import { ConfigurationError } from "../domain/configurationErrors.js";
 export const ZIP_MEMBER_COUNT_PARAMETER = "artifact_limits.zip.member_count";
 
 const CONSTRAINT = `REA_ARTIFACT_MEMBER_COUNT must be a decimal integer from 1 to ${String(MAXIMUM_ARTIFACT_READER_COUNT)} members; the default is ${String(DEFAULT_ARTIFACT_MEMBER_COUNT)}.`;
+
+const memberCountRecovery = `On a running MCP session, call update_analysis_settings for ${ARTIFACT_MEMBER_COUNT_SETTING}, then retry. For CLI or future REA processes, correct REA_ARTIFACT_MEMBER_COUNT in the launch environment.`;
 
 /** Launch seed for `artifact.member_count`, shared with launch admission. */
 export const artifactMemberCountSchema = positiveDecimalIntegerSchema(
@@ -43,7 +48,7 @@ export const runtimeArtifactMemberCount = (
   const parsed = artifactMemberCountSchema.safeParse(raw);
   if (!parsed.success)
     throw new ConfigurationError(CONSTRAINT, {
-      remediationAction: `On a running MCP session, call update_analysis_settings for ${ARTIFACT_MEMBER_COUNT_SETTING}, then retry. For CLI or future REA processes, correct REA_ARTIFACT_MEMBER_COUNT in the launch environment.`,
+      remediationAction: memberCountRecovery,
       settings: [
         {
           setting: "REA_ARTIFACT_MEMBER_COUNT",
@@ -64,32 +69,33 @@ export const operationZipMemberCount = (): number =>
   runtimeArtifactMemberCount(process.env).value;
 
 /**
- * A central-directory count refusal. The reader's message stays a count.
- * Recovery names `artifact.member_count`, the setting that supplied the cap.
+ * The public count sentence for a ZIP reader that has no `artifact_limits`
+ * argument. Recovery names `artifact.member_count`, the setting that supplied
+ * the cap.
  */
+export const zipMemberCountReason = (effectiveValue: number): string =>
+  `ZIP admission reached ${ARTIFACT_MEMBER_COUNT_SETTING} at ${String(effectiveValue)} count. ${memberCountRecovery}`;
+
+/** A central-directory count refusal for that same setting. */
 export const zipMemberCountRefusal = (
   operation: string,
-  message: string,
   effectiveValue: number,
   cause?: unknown,
 ): AnalysisResourceConstraintError => {
   const resolved = runtimeArtifactMemberCount(process.env);
-  return new AnalysisResourceConstraintError(
+  return sessionSettingConstraint(
     operation,
     "capacity",
-    message,
+    zipMemberCountReason(effectiveValue),
     { member_count: effectiveValue },
     {
       ...(cause === undefined ? {} : { cause }),
-      retryable: false,
-      limit: {
-        ...analysisSettingLimit(
-          ARTIFACT_MEMBER_COUNT_SETTING,
-          effectiveValue,
-          resolved.source,
-        ),
-        parameter: ZIP_MEMBER_COUNT_PARAMETER,
-      },
+      remediationAction: memberCountRecovery,
+      limit: analysisSettingLimit(
+        ARTIFACT_MEMBER_COUNT_SETTING,
+        effectiveValue,
+        resolved.source,
+      ),
     },
   );
 };
@@ -98,7 +104,6 @@ export const zipMemberCountRefusal = (
 export const zipMemberCountConstraint = (
   operation: string,
   cause: {
-    readonly message: string;
     readonly readerLimit?:
       | { readonly parameter: string; readonly effective_value: number }
       | undefined;
@@ -106,10 +111,5 @@ export const zipMemberCountConstraint = (
 ): AnalysisResourceConstraintError | undefined => {
   const limit = cause.readerLimit;
   if (limit?.parameter !== ZIP_MEMBER_COUNT_PARAMETER) return undefined;
-  return zipMemberCountRefusal(
-    operation,
-    cause.message,
-    limit.effective_value,
-    cause,
-  );
+  return zipMemberCountRefusal(operation, limit.effective_value, cause);
 };

@@ -39,15 +39,16 @@ it("reports a Flutter ZIP past the session member count as a count", async () =>
   const result = await identify(path);
   expect(result.ok).toBe(false);
   if (result.ok) return;
-  expect(result.error.message).toContain("artifact_limits.zip.member_count");
+  expect(result.error.message).toContain("artifact.member_count");
+  expect(result.error.message).not.toContain("artifact_limits");
   expect(result.error.message).not.toContain("expansion allowance");
   expect(result.error.limit).toMatchObject({
     setting: "artifact.member_count",
     effective_value: 1,
     unit: "count",
-    parameter: "artifact_limits.zip.member_count",
     source: "runtime",
   });
+  expect(result.error.limit).not.toHaveProperty("parameter");
 });
 
 it("identifies a one-member APK at the session member count", async () => {
