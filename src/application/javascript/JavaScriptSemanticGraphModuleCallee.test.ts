@@ -29,6 +29,22 @@ describe("VS Code callee facts", () => {
     ]);
   });
 
+  it("omits a callee too large to transfer and records why", () => {
+    const graph = graphForJavaScript(
+      `const v = require("vscode"); v["${"k".repeat(8 * 1024 * 1024)}"]();`,
+    );
+    expect(
+      graph.nodes.filter(({ properties }) => "module_callee" in properties),
+    ).toEqual([]);
+    expect(graph.unknowns).toContainEqual(
+      expect.objectContaining({
+        family: "call-flow",
+        reason: "resource-limit",
+        detail: expect.stringContaining("module callee"),
+      }),
+    );
+  });
+
   it("leaves calls into other modules unchanged", () => {
     const found = calls('const fs = require("fs"); fs.readFile(p);');
     expect(found.every(({ properties }) => !properties.module_callee)).toBe(

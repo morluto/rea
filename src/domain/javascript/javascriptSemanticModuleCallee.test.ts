@@ -8,9 +8,9 @@ import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { semanticModuleCallees } from "./javascriptSemanticModuleCallee.js";
 
 const callees = (source: string) =>
-  [...semanticModuleCallees(analyzeJavaScriptSemantics(source)).values()].map(
-    ({ specifier, path }) => `${specifier}:${path.join(".")}`,
-  );
+  [...semanticModuleCallees(analyzeJavaScriptSemantics(source)).values()]
+    .filter(({ identity }) => identity === undefined)
+    .map(({ specifier, path }) => `${specifier}:${path.join(".")}`);
 const REGISTER = "vscode:commands.registerCommand";
 const replacements = (source: string) =>
   [...semanticModuleCallees(analyzeJavaScriptSemantics(source)).values()]
@@ -170,6 +170,37 @@ describe("module-rooted callees", () => {
   });
 });
 
+describe("callees whose module identity is not established", () => {
+  it.each([
+    [
+      "a conditional import",
+      'const v = flag ? require("vscode") : fake; v.commands.registerCommand("a");',
+    ],
+    [
+      "a fallback import",
+      'const v = flag || require("vscode"); v.commands.registerCommand("a");',
+    ],
+    [
+      "one of two modules",
+      'const v = flag ? require("other") : require("vscode"); v.commands.registerCommand("a");',
+    ],
+    [
+      "a module assigned after declaration",
+      'let v; v = require("vscode"); v.commands.registerCommand("a");',
+    ],
+  ])("marks %s as a possible identity", (_, source) => {
+    const found = [
+      ...semanticModuleCallees(
+        analyzeJavaScriptSemantics(source),
+        "vscode",
+      ).values(),
+    ].filter(({ path }) => path.at(-1) === "registerCommand");
+    expect(found).toEqual([
+      expect.objectContaining({ specifier: "vscode", identity: "possible" }),
+    ]);
+  });
+});
+
 describe("module members that are not the imported ones", () => {
   it("does not resolve an explicit default member of a require", () => {
     expect(
@@ -216,6 +247,22 @@ describe("module members that are not the imported ones", () => {
       "a member written through require and called through a binding",
       'require("vscode").commands.registerCommand = noop; const v = require("vscode"); v.commands.registerCommand("a", f);',
     ],
+    [
+      "a computed write on the module",
+      'const v = require("vscode"); v.commands[key] = noop; v.commands.registerCommand("a", f);',
+    ],
+    [
+      "a computed write on a destructured member",
+      'const { commands: c } = require("vscode"); c[key] = noop; require("vscode").commands.registerCommand("a", f);',
+    ],
+    [
+      "a computed write directly on require",
+      'const key = "registerCommand"; require("vscode").commands[key] = noop; require("vscode").commands.registerCommand("a", f);',
+    ],
+    [
+      "a write below a computed key of require",
+      'require("vscode")[key].registerCommand = noop; const v = require("vscode"); v.commands.registerCommand("a", f);',
+    ],
   ])("marks %s as possibly replaced", (_, source) => {
     expect(replacements(source)).toEqual(["possible"]);
   });
@@ -254,6 +301,22 @@ describe("module members that are not the imported ones", () => {
     expect(
       ir.bindings.find(({ name }) => name === "w")?.provenance.origins,
     ).toHaveLength(1);
+  });
+
+  it("keeps a member when a computed write is on a sibling object", () => {
+    expect(
+      replacements(
+        'const v = require("vscode"); const w = v.window; w[key] = noop; v.commands.registerCommand("a", f);',
+      ),
+    ).toEqual([undefined]);
+  });
+
+  it("keeps a member when a computed write is on a sibling of require", () => {
+    expect(
+      replacements(
+        'require("vscode").window[key] = noop; require("vscode").commands.registerCommand("a", f);',
+      ),
+    ).toEqual([undefined]);
   });
 
   it("keeps a member when only a sibling is written", () => {

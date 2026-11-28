@@ -806,7 +806,7 @@ function* createCallSiteNodes(
   state: BuilderState,
 ): Generator<void, Map<string, JavaScriptSemanticGraphNode>> {
   const result = new Map<string, JavaScriptSemanticGraphNode>();
-  const moduleCallees = semanticModuleCallees(ir);
+  const moduleCallees = semanticModuleCallees(ir, CALLEE_FACT_MODULE);
   for (const [index, call] of ir.callSites.entries()) {
     if (index % 64 === 0) yield;
     const owner =
@@ -821,7 +821,7 @@ function* createCallSiteNodes(
       functionNodeId: owner,
     };
     const callee = moduleCallees.get(call.callSiteId);
-    const calleeProperties =
+    let calleeProperties: { module_callee?: JsonValue } =
       callee?.specifier === CALLEE_FACT_MODULE
         ? { module_callee: { ...callee, path: [...callee.path] } }
         : {};
@@ -829,11 +829,22 @@ function* createCallSiteNodes(
     // arguments. Each entry is charged by its encoded size and comma, so even
     // worst-case escaping cannot overflow the worker's single-record ceiling.
     let recordBytes = 0;
-    if (call.arguments.some((argument) => Object.hasOwn(argument, "literal"))) {
+    let calleeOmitted = false;
+    if (
+      "module_callee" in calleeProperties ||
+      call.arguments.some((argument) => Object.hasOwn(argument, "literal"))
+    ) {
       const baseline = constructSemanticGraphNode(file, nodeInput, state);
-      recordBytes = Buffer.byteLength(
-        `${JSON.stringify({ kind: "node", value: { ...baseline, properties: { ...calleeProperties, arguments: [] } } })}\n`,
-      );
+      const bytes = () =>
+        Buffer.byteLength(
+          `${JSON.stringify({ kind: "node", value: { ...baseline, properties: { ...calleeProperties, arguments: [] } } })}\n`,
+        );
+      recordBytes = bytes();
+      if (recordBytes > JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES) {
+        calleeOmitted = "module_callee" in calleeProperties;
+        calleeProperties = {};
+        recordBytes = bytes();
+      }
     }
     const argumentsValue: JsonValue[] = [];
     let transferOmitted = 0;
@@ -875,8 +886,14 @@ function* createCallSiteNodes(
     });
     if (node !== null) {
       result.set(call.callSiteId, node);
-      if (transferOmitted > 0) {
-        const detail = `${String(transferOmitted)} direct call arguments exceeded the ${String(JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES)}-byte worker transfer record ceiling.`;
+      const omitted = [
+        ...(calleeOmitted ? ["the module callee"] : []),
+        ...(transferOmitted > 0
+          ? [`${String(transferOmitted)} direct call arguments`]
+          : []),
+      ];
+      if (omitted.length > 0) {
+        const detail = `${omitted.join(" and ")} exceeded the ${String(JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES)}-byte worker transfer record ceiling.`;
         addSemanticGraphUnknown(state, {
           node_id: node.node_id,
           family: "call-flow",

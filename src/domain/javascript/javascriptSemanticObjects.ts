@@ -136,6 +136,36 @@ const isNestedReceiver = (occurrence: t.Node | null): boolean => {
   return t.isObjectPattern(target) || t.isArrayPattern(target);
 };
 
+/**
+ * The module member a write rooted directly in `require` targets. Below a
+ * computed key the origin names the last known object and the path is unknown.
+ */
+const requiredWriteTarget = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+) => {
+  let target = node;
+  let access = semanticCalleeAccess(target, state);
+  while (
+    access === undefined &&
+    (t.isMemberExpression(target) || t.isOptionalMemberExpression(target))
+  ) {
+    target = unwrapJavaScriptExpression(target.object).node;
+    access = semanticCalleeAccess(target, state);
+  }
+  const origin = access?.requireOrigin;
+  if (access === undefined || origin === undefined) return undefined;
+  return target === node
+    ? { requireOrigin: origin, path: access.path }
+    : {
+        requireOrigin: {
+          ...origin,
+          importedPath: [...origin.importedPath, ...access.path],
+        },
+        path: null,
+      };
+};
+
 const collectMember = (
   node: t.MemberExpression | t.OptionalMemberExpression,
   parent: t.Node | null,
@@ -171,17 +201,15 @@ const collectMember = (
     );
   const required =
     write && identity.bindingId === null
-      ? semanticCalleeAccess(node, state)
+      ? requiredWriteTarget(node, state)
       : undefined;
   addObjectOperation(
     {
       node,
       kind: write ? "write" : "read",
-      ...(required?.requireOrigin === undefined
+      ...(required === undefined
         ? {}
-        : {
-            requireOrigin: required.requireOrigin,
-          }),
+        : { requireOrigin: required.requireOrigin }),
       provenOwnSlot:
         !write &&
         identity.path !== null &&
@@ -190,8 +218,7 @@ const collectMember = (
       ownerCallableId,
       objectBindingId: identity.bindingId,
       targetBindingId: null,
-      propertyPath:
-        required?.requireOrigin === undefined ? identity.path : required.path,
+      propertyPath: required === undefined ? identity.path : required.path,
     },
     state,
     output,

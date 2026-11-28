@@ -25,6 +25,7 @@ const registrationSchema = z.strictObject({
   loader_authority: z.literal("candidate").nullable(),
   wrapper: z.literal("unverified").nullable(),
   replacement: z.literal("possible").nullable(),
+  identity: z.literal("possible").nullable(),
 });
 type Registration = z.output<typeof registrationSchema>;
 
@@ -89,6 +90,7 @@ const calleeSchema = z.object({
   loader_authority: z.literal("candidate").optional(),
   wrapper: z.literal("unverified").optional(),
   replacement: z.literal("possible").optional(),
+  identity: z.literal("possible").optional(),
 });
 const argumentsSchema = z.array(
   z.object({ index: z.number(), value: z.unknown() }),
@@ -111,6 +113,7 @@ const registrationsOf = (graph: JavaScriptSemanticGraph) => {
       loader_authority: callee.data.loader_authority ?? null,
       wrapper: callee.data.wrapper ?? null,
       replacement: callee.data.replacement ?? null,
+      identity: callee.data.identity ?? null,
     };
     const literals = argumentsSchema.safeParse(node.properties.arguments);
     const id = literals.data?.find(({ index }) => index === 0)?.value;
@@ -224,9 +227,10 @@ export const correlateVsixRegistrations = ({
     .sort(compareUnicodeCodePoints)
     .map((command) => {
       const registrations = byCommand.get(command) ?? [];
-      // A call to a possibly replaced function may not register anything.
+      // A call that may not reach the VS Code function proves no registration.
       const firm = registrations.some(
-        ({ replacement }) => replacement === null,
+        ({ replacement, identity }) =>
+          replacement === null && identity === null,
       );
       const status = !declared.has(command)
         ? allDeclared && firm
