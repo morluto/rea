@@ -349,21 +349,11 @@ const buildRiscvVectorReport = (ctx: ReportContext): FirmwareVectorTable => {
     limitations.push(
       "CMSIS-SVD interrupt values are bound to RISC-V slots as mcause codes 16 and up; a platform whose SVD numbers its interrupts differently binds the wrong names.",
     );
-  let jumpSlots = 0;
-  for (const slot of slots) {
-    if (
-      slot.encoding === "jal" ||
-      slot.encoding === "c_j" ||
-      slot.encoding === "auipc_jalr"
-    ) {
-      jumpSlots += 1;
-    }
-  }
+  const recognizedSlots = activeTargets.length;
   const shape: FirmwareVectorTable["riscv_table_shape"] =
-    jumpSlots >= 2
+    recognizedSlots >= 2
       ? "vectored_jumps"
-      : slots[0]?.encoding !== "zero_or_erased" &&
-          slots[0]?.encoding !== "unrecognized"
+      : recognizedSlots === 1
         ? "single_entry_or_inline"
         : "empty_or_unrecognized";
 
@@ -389,7 +379,7 @@ const buildRiscvVectorReport = (ctx: ReportContext): FirmwareVectorTable => {
     active_arm_entry_count: 0,
     riscv_slots: slots,
     // Every slot with a jump target is an active target.
-    recognized_riscv_slot_count: activeTargets.length,
+    recognized_riscv_slot_count: recognizedSlots,
     shared_handler_groups: collectSharedHandlers(activeTargets),
     svd_interrupts: summarizeSvdBindings({
       supplied: options.svdSupplied,
