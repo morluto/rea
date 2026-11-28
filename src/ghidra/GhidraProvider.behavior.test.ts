@@ -1463,6 +1463,146 @@ it("reobserves value-flow budgets on the same session while ordinary address loo
 });
 
 describe("Ghidra client projection", () => {
+  it("projects export inventory body caveats like a direct procedure read", async () => {
+    const body = {
+      available: true,
+      provenance: "ghidra-function-body-address-set",
+      ranges: [{ start: "0x1000", end: "0x1000" }],
+      total_bytes: 1,
+      span_bytes: 1,
+      non_contiguous: false,
+      contains_entry: true,
+    };
+    const emptyBody = {
+      ...body,
+      ranges: [],
+      total_bytes: 0,
+      span_bytes: 0,
+      contains_entry: false,
+    };
+    const limitations = [
+      "Ghidra Listing reports a terminal call in the fixture.",
+    ];
+    const callTool = vi.fn<ReturnType<GhidraProviderClientFactory>["callTool"]>(
+      async (operation) =>
+        operation === "list_procedures"
+          ? ok([
+              {
+                address: "0x1000",
+                value: "fixture_main",
+                procedure: {
+                  external: false,
+                  thunk: false,
+                  thunk_target: null,
+                },
+                export_body_metadata: { body, limitations },
+              },
+              {
+                address: "0x2000",
+                value: "fixture_second",
+                procedure: {
+                  external: false,
+                  thunk: false,
+                  thunk_target: null,
+                },
+                export_body_metadata: {
+                  body: {
+                    ...body,
+                    ranges: [{ start: "0x2000", end: "0x2000" }],
+                    total_bytes: 2,
+                  },
+                  limitations,
+                },
+              },
+              {
+                address: "0x3000",
+                value: "fixture_empty_local",
+                procedure: {
+                  external: false,
+                  thunk: false,
+                  thunk_target: null,
+                },
+                export_body_metadata: { body: emptyBody, limitations },
+              },
+              {
+                address: "EXTERNAL:0x4000",
+                value: "fixture_external",
+                procedure: { external: true, thunk: false, thunk_target: null },
+                export_body_metadata: { body: emptyBody, limitations },
+              },
+            ])
+          : ok({
+              value: {
+                name: "fixture_main",
+                entrypoint: "0x1000",
+                basicblock_count: 1,
+                length: 1,
+                signature: null,
+                locals: [],
+                classification: {
+                  external: false,
+                  thunk: false,
+                  thunk_target: null,
+                  provenance: "ghidra-function-manager",
+                },
+                body,
+              },
+              limitations,
+            }),
+    );
+    const client = await createElfClient(
+      provider(installationHost(), () => ({
+        start: async () => ok(sessionInfo()),
+        callTool,
+        close: async () => ok(null),
+      })),
+    );
+    try {
+      const inventory = await client.execute(
+        "list_procedures",
+        {},
+        {
+          includeExportBodyMetadata: true,
+        },
+      );
+      const direct = await client.execute("procedure_info", {
+        procedure: "0x1000",
+      });
+      expect(callTool).toHaveBeenCalledWith(
+        "list_procedures",
+        { document: null, export_body_metadata: true },
+        {},
+      );
+      if (!inventory.ok) throw inventory.error;
+      if (!direct.ok) throw direct.error;
+      expect(direct.value.limitations).toEqual(
+        expect.arrayContaining(limitations),
+      );
+      expect(inventory.value.result).toMatchObject([
+        {
+          address: "0x1000",
+          export_body_metadata: { body, limitations: direct.value.limitations },
+        },
+        { address: "0x2000", value: "fixture_second" },
+        { address: "0x3000", value: "fixture_empty_local" },
+        {
+          address: "EXTERNAL:0x4000",
+          export_body_metadata: { body: emptyBody },
+        },
+      ]);
+      if (!Array.isArray(inventory.value.result))
+        throw new Error("Expected procedure rows");
+      expect(inventory.value.result[1]).not.toHaveProperty(
+        "export_body_metadata",
+      );
+      expect(inventory.value.result[2]).not.toHaveProperty(
+        "export_body_metadata",
+      );
+    } finally {
+      await client.close();
+    }
+  });
+
   it("commits exact provider, isolation, and resource semantics", async () => {
     const toolCalls: Array<{
       readonly operation: string;

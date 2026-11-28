@@ -134,11 +134,25 @@ export class GhidraWire {
         ),
       );
     const timeoutMs = options.timeoutMs;
+    const limits =
+      options.limits === undefined ? this.admitLimits() : ok(options.limits);
+    if (!limits.ok) return limits;
+    const { requestLimit, replyLimit } = limits.value;
     const payloadValue = {
       id,
       token,
       method,
-      params,
+      params:
+        method === "list_procedures" &&
+        params !== null &&
+        typeof params === "object" &&
+        !Array.isArray(params) &&
+        params.export_body_metadata === true
+          ? {
+              ...params,
+              export_body_metadata: replyLimit.maximumBytes,
+            }
+          : params,
       ...(options.decompileTimeoutSeconds === undefined
         ? {}
         : { decompile_timeout_seconds: options.decompileTimeoutSeconds }),
@@ -152,10 +166,6 @@ export class GhidraWire {
         ? {}
         : { decompile_read_ahead: [...options.decompileReadAhead] }),
     };
-    const limits =
-      options.limits === undefined ? this.admitLimits() : ok(options.limits);
-    if (!limits.ok) return limits;
-    const { requestLimit, replyLimit } = limits.value;
     const payloadBytes = jsonValueByteLength(
       payloadValue,
       requestLimit.maximumBytes,

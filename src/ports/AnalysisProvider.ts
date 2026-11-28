@@ -50,6 +50,8 @@ import {
 export const UPCOMING_DECOMPILES_WINDOW = 32;
 
 export interface ExecutionOptions {
+  /** Request available export-body facts with the procedure inventory. */
+  readonly includeExportBodyMetadata?: true;
   /** Ephemeral state shared only by one composed workflow. */
   readonly workScope?: AnalysisWorkScope;
   /**

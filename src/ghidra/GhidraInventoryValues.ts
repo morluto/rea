@@ -3,6 +3,7 @@ import {
   parseGhidraAddressNameResult,
 } from "./GhidraAddressNameValues.js";
 import { GHIDRA_INVENTORY_OPERATIONS } from "./GhidraInventoryOperations.js";
+import { exportBodyMetadataSchema } from "../domain/native/nativeOperationFacts.js";
 import { nativeSearchFields } from "../domain/native/nativeSearch.js";
 import { nativeSymbolMetadataSchema } from "../domain/native/nativeSymbol.js";
 import { nativeAddressObservationSchema } from "../domain/native/nativeAddress.js";
@@ -30,6 +31,7 @@ import { outputContractDiagnostics } from "../domain/native/nativeProviderOutput
 import {
   availableFunctionBodySchema,
   functionBodyEntryAgrees,
+  type functionBodySchema,
 } from "../domain/native/functionBody.js";
 import { procedureIdentitySchema } from "../domain/native/procedureInfo.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -200,6 +202,15 @@ export const ghidraFunctionBodySchema = availableFunctionBodySchema.safeExtend({
   ),
 });
 
+/** A reported local function body must cover its own entry point. */
+export const ghidraProcedureBodyEntryAgrees = (
+  body: z.infer<typeof functionBodySchema>,
+  entry: string,
+  external: boolean,
+): boolean =>
+  functionBodyEntryAgrees(body, entry) &&
+  (!body.available || external || body.contains_entry);
+
 /** Canonical Ghidra identity, retaining the generic dossier's name and symbol admission. */
 export const ghidraFunctionIdentitySchema = procedureIdentitySchema
   .safeExtend({
@@ -349,7 +360,22 @@ const resultSchemas = {
   address_name: z.string().nullable(),
   list_documents: z.array(z.string().min(1)).length(1),
   list_names: z.array(symbolItem),
-  list_procedures: z.array(procedureItem),
+  list_procedures: z.array(
+    procedureItem
+      .extend({ export_body_metadata: z.unknown().exactOptional() })
+      .transform(({ export_body_metadata: advisory, ...row }) => {
+        if (advisory === undefined) return row;
+        const parsed = exportBodyMetadataSchema.safeParse(advisory);
+        return parsed.success &&
+          ghidraProcedureBodyEntryAgrees(
+            parsed.data.body,
+            row.address,
+            row.procedure.external,
+          )
+          ? { ...row, export_body_metadata: parsed.data }
+          : row;
+      }),
+  ),
   list_segments: z.array(segment),
   list_strings: z.array(stringItem),
   procedure_address: nativeAddressObservationSchema,

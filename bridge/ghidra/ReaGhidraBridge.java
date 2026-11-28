@@ -4260,11 +4260,83 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     private StreamingResult listProcedures(JsonObject params) throws Exception {
-        requireKeys(params, Set.of("document"));
+        boolean enriched = params.has("export_body_metadata");
+        requireKeys(params, enriched ? Set.of("document", "export_body_metadata") : Set.of("document"));
         requireDocument(params);
         List<ProcedureEntry> entries = procedures();
+        Map<ProcedureEntry, JsonObject> metadata = enriched
+            ? exportBodyMetadata(entries, requireInteger(params, "export_body_metadata")) : Map.of();
         monitor.checkCancelled();
-        return out -> writeProcedureEntries(out, entries);
+        return out -> writeProcedureEntries(out, entries, metadata);
+    }
+
+    private Map<ProcedureEntry, JsonObject> exportBodyMetadata(List<ProcedureEntry> entries, int replyBytes)
+            throws Exception {
+        // Count the ordinary rows with the real encoder. Reserve framing for the
+        // response object, request ID and newline before admitting any extra work.
+        Utf8CountingWriter counter = new Utf8CountingWriter();
+        JsonWriter plain = GSON.newJsonWriter(new SurrogateEscapingWriter(counter));
+        plain.setSerializeNulls(true);
+        plain.beginArray();
+        for (ProcedureEntry entry : entries) {
+            monitor.checkCancelled();
+            writeProcedureEntry(plain, entry, null);
+        }
+        plain.endArray();
+        ExportMetadataBudget budget = new ExportMetadataBudget(
+            Math.min(4 * 1024 * 1024L, replyBytes - counter.bytes - 64)
+        );
+        Map<ProcedureEntry, JsonObject> metadata = new IdentityHashMap<>();
+        for (ProcedureEntry entry : entries) {
+            monitor.checkCancelled();
+            // Covers the field name, fixed JSON members, extra punctuation and
+            // the single shared inferred-no-return explanation.
+            if (!budget.claim(1024)) break;
+            Function function = entry.function();
+            JsonObject body;
+            try {
+                body = functionBody(function, budget);
+            } catch (IllegalStateException unsupportedBody) {
+                continue; // The ordinary procedure_info path projects the refusal.
+            }
+            if (body == null) break;
+            FunctionBoundaryLimitations boundary = new FunctionBoundaryLimitations(function, budget);
+            for (Instruction instruction : currentProgram.getListing().getInstructions(function.getBody(), true)) {
+                boundary.observe(instruction);
+                if (boundary.budgetExhausted) break;
+            }
+            if (boundary.budgetExhausted) break;
+            JsonObject item = new JsonObject();
+            item.add("body", body);
+            item.add("limitations", GSON.toJsonTree(boundary.values()));
+            metadata.put(entry, item);
+        }
+        return metadata;
+    }
+
+    private static final class ExportMetadataBudget {
+        private long remaining;
+        private ExportMetadataBudget(long remaining) {
+            this.remaining = remaining;
+        }
+        private boolean claim(long bytes) {
+            if (bytes > remaining) return false;
+            remaining -= bytes;
+            return true;
+        }
+    }
+
+    private static final class Utf8CountingWriter extends Writer {
+        private long bytes;
+        @Override
+        public void write(char[] chars, int offset, int length) {
+            for (int i = offset; i < offset + length; i++) {
+                char ch = chars[i];
+                bytes += ch < 0x80 ? 1 : ch < 0x800 ? 2 : 3;
+            }
+        }
+        @Override public void flush() {}
+        @Override public void close() {}
     }
 
     private JsonArray listSegments(JsonObject params) {
@@ -6776,6 +6848,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
     private final class FunctionBoundaryLimitations {
         private final Function function;
+        private final ExportMetadataBudget budget;
+        private boolean budgetExhausted;
         private final boolean checkLoaderRelocations = !loaderInitializedRelocations.isEmpty();
         private final boolean checkBorlandSeh = isX86_32Program();
         private final List<String> limitations = new ArrayList<>();
@@ -6785,7 +6859,21 @@ public final class ReaGhidraBridge extends HeadlessScript {
         private Instruction previous;
 
         private FunctionBoundaryLimitations(Function function) {
+            this(function, null);
+        }
+
+        private FunctionBoundaryLimitations(Function function, ExportMetadataBudget budget) {
             this.function = function;
+            this.budget = budget;
+        }
+
+        private boolean retain(String limitation) {
+            if (budget != null && !budget.claim(4L + 6L * limitation.length())) {
+                budgetExhausted = true;
+                return false;
+            }
+            limitations.add(limitation);
+            return true;
         }
 
         private void observe(Instruction instruction) throws Exception {
@@ -6796,7 +6884,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             monitor.checkCancelled();
             TerminalCall terminal = terminalCall(instruction);
             if (terminal != null) {
-                limitations.add(terminal.limitation());
+                if (!retain(terminal.limitation())) return;
                 if (terminal.inferredNoReturn()) inferredNoReturnCall = true;
             }
             if (checkLoaderRelocations && referencesFrom != null) {
@@ -6807,14 +6895,14 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     );
                     if (relocation == null || !observedLoaderRelocations.add(relocation.address()))
                         continue;
-                    limitations.add(loaderInitializedRelocationLimitation(relocation));
+                    if (!retain(loaderInitializedRelocationLimitation(relocation))) return;
                 }
             }
             if (checkBorlandSeh) {
                 if (beforePrevious != null && previous != null) {
                     String seh = borlandSehHandlerLimitation(
                         function, beforePrevious, previous, instruction);
-                    if (seh != null) limitations.add(seh);
+                    if (seh != null && !retain(seh)) return;
                 }
                 beforePrevious = previous;
                 previous = instruction;
@@ -7798,12 +7886,18 @@ public final class ReaGhidraBridge extends HeadlessScript {
         out.endArray();
     }
 
-    private static void writeProcedureEntries(JsonWriter out, List<ProcedureEntry> entries) throws IOException {
+    private static void writeProcedureEntries(JsonWriter out, List<ProcedureEntry> entries,
+            Map<ProcedureEntry, JsonObject> metadata) throws IOException {
         out.beginArray();
-        for (ProcedureEntry entry : entries) {
-            writeResultItem(out, entry.address(), entry.value(), "procedure", entry.facts(), entry.symbol(), List.of());
-        }
+        for (ProcedureEntry entry : entries)
+            writeProcedureEntry(out, entry, metadata.get(entry));
         out.endArray();
+    }
+
+    private static void writeProcedureEntry(JsonWriter out, ProcedureEntry entry, JsonObject metadata)
+            throws IOException {
+        writeResultItem(out, entry.address(), entry.value(), "procedure", entry.facts(), entry.symbol(),
+            List.of(), metadata);
     }
 
     private static void writeMatchedProcedures(JsonWriter out, List<MatchedProcedure> matches) throws IOException {
@@ -7865,7 +7959,24 @@ public final class ReaGhidraBridge extends HeadlessScript {
         SymbolFacts symbol,
         List<String> matchedAliases
     ) throws IOException {
+        writeResultItem(out, address, value, factsName, facts, symbol, matchedAliases, null);
+    }
+
+    private static void writeResultItem(
+        JsonWriter out,
+        Address address,
+        String value,
+        String factsName,
+        InventoryFacts facts,
+        SymbolFacts symbol,
+        List<String> matchedAliases,
+        JsonObject exportBodyMetadata
+    ) throws IOException {
         out.beginObject();
+        if (exportBodyMetadata != null) {
+            out.name("export_body_metadata");
+            GSON.toJson(exportBodyMetadata, out);
+        }
         out.name("address").value(canonicalAddress(address));
         out.name("value").value(value);
         if (factsName != null) {
@@ -7920,6 +8031,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
     /** Observe the entire AddressSet; range endpoints are inclusive, not a guessed span. */
     private static JsonObject functionBody(Function function) {
+        return functionBody(function, null);
+    }
+
+    private static JsonObject functionBody(Function function, ExportMetadataBudget budget) {
         JsonArray ranges = new JsonArray();
         BigInteger total = BigInteger.ZERO;
         Address first = null;
@@ -7934,9 +8049,13 @@ public final class ReaGhidraBridge extends HeadlessScript {
             if (start.getAddressSpace().getAddressableUnitSize() != 1) {
                 throw new IllegalStateException("Function body byte coverage requires a byte-addressed space");
             }
+            String startText = canonicalAddress(start);
+            String endText = canonicalAddress(end);
+            if (budget != null && !budget.claim(40L + 6L * (startText.length() + endText.length())))
+                return null;
             JsonObject value = new JsonObject();
-            value.addProperty("start", canonicalAddress(start));
-            value.addProperty("end", canonicalAddress(end));
+            value.addProperty("start", startText);
+            value.addProperty("end", endText);
             ranges.add(value);
             BigInteger begin = new BigInteger(Long.toUnsignedString(start.getOffset()));
             BigInteger finish = new BigInteger(Long.toUnsignedString(end.getOffset()));
@@ -8585,10 +8704,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
     // writer while escaping surrogates so large replies avoid multi-x heap copies.
     private static final class SurrogateEscapingWriter extends Writer {
         private static final char[] HEX_DIGITS = "0123456789abcdef".toCharArray();
-        private final BufferedWriter delegate;
+        private final Writer delegate;
         private final char[] surrogateEscape = { '\\', 'u', '0', '0', '0', '0' };
 
-        private SurrogateEscapingWriter(BufferedWriter delegate) {
+        private SurrogateEscapingWriter(Writer delegate) {
             this.delegate = delegate;
         }
 

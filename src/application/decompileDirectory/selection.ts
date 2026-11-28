@@ -1,3 +1,5 @@
+import type { z } from "zod";
+import type { exportBodyMetadataSchema } from "../../domain/native/nativeOperationFacts.js";
 import type { DecompileDirectoryInput } from "../../contracts/decompileDirectory.js";
 import {
   addressCoordinate,
@@ -12,6 +14,9 @@ import { decompileInputError } from "./inputError.js";
 export interface SelectedProcedure {
   readonly address: string;
   readonly name: string | null;
+  readonly exportBodyMetadata?: z.infer<typeof exportBodyMetadataSchema> & {
+    readonly external: boolean;
+  };
 }
 
 interface AddressBound {

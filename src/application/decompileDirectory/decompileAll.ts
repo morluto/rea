@@ -37,8 +37,9 @@ import {
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import { functionBodyEntryAgrees } from "../../domain/native/functionBody.js";
 import { procedureInfoSchema } from "../../domain/native/procedureInfo.js";
-import { listProceduresFact } from "../../domain/native/nativeOperationFacts.js";
+import { decompileExportInventoryFact } from "../../domain/native/nativeOperationFacts.js";
 import { executeFact } from "../AnalysisOperationFacts.js";
 import { addressCoordinate } from "../../domain/native/addressCoordinate.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
@@ -167,7 +168,7 @@ export const decompileAll = async (
   );
   if (!placement.ok) return placement;
   if (isAborted(signal)) return err(cancelledBy("decompile_all", signal));
-  const loaded = await loadProcedures(analysis, input.layout, signal);
+  const loaded = await loadProcedures(analysis, input, signal);
   if (!loaded.ok) return loaded;
   if (isAborted(signal)) return err(cancelledBy("decompile_all", signal));
   const selection = selectProcedures(
@@ -327,7 +328,7 @@ const attemptOrder = (
 
 const loadProcedures = async (
   analysis: AnalysisOperationPort,
-  layout: DecompileDirectoryInput["layout"],
+  input: DecompileDirectoryInput,
   signal: AbortSignal | undefined,
 ): Promise<
   Result<
@@ -340,14 +341,24 @@ const loadProcedures = async (
     AnalysisError
   >
 > => {
+  const options = executionOptions(signal);
+  // Selected and resumed exports may need only a few bodies. Keep their
+  // per-function reads so verified or excluded functions incur no body work.
+  const enrich =
+    !input.resume &&
+    input.limit === undefined &&
+    input.name === undefined &&
+    input.namespace === undefined &&
+    input.address_start === undefined &&
+    input.address_end === undefined;
   const inventory = await executeFact(
     analysis,
-    listProceduresFact,
+    decompileExportInventoryFact,
     {},
-    executionOptions(signal),
+    enrich ? { ...options, includeExportBodyMetadata: true } : options,
   );
   if (!inventory.ok) return inventory;
-  const identity = identityFrom(inventory.value.execution, layout);
+  const identity = identityFrom(inventory.value.execution, input.layout);
   if (!identity.ok) return identity;
   // An empty address cannot name a file or a journal record.
   const addressed = inventory.value.fact.filter(
@@ -357,6 +368,16 @@ const loadProcedures = async (
     procedures: addressed.map((row) => ({
       address: row.address,
       name: row.value.length === 0 ? null : row.value,
+      ...(row.export_body_metadata !== undefined &&
+      row.procedure !== undefined &&
+      functionBodyEntryAgrees(row.export_body_metadata.body, row.address)
+        ? {
+            exportBodyMetadata: {
+              ...row.export_body_metadata,
+              external: row.procedure.external,
+            },
+          }
+        : {}),
     })),
     identity: identity.value,
     unaddressed: inventory.value.fact.length - addressed.length,
@@ -992,14 +1013,29 @@ const observeOne = async (input: {
   readonly state: PublishState;
   readonly providerWait: ProviderWait;
 }): Promise<Attempt> => {
-  const body = await readBody(
-    input.analysis,
-    input.procedure.address,
-    input.identity,
-    input.signal,
-    input.bodySupport,
-    input.providerWait,
-  );
+  const metadata = input.procedure.exportBodyMetadata;
+  if (metadata !== undefined)
+    input.analysis.recordItemLimitations?.("procedure_info", {
+      provider: input.identity.provider,
+      limitations: metadata.limitations,
+    });
+  const body =
+    metadata === undefined
+      ? await readBody(
+          input.analysis,
+          input.procedure.address,
+          input.identity,
+          input.signal,
+          input.bodySupport,
+          input.providerWait,
+        )
+      : {
+          kind: "body" as const,
+          fact: metadata.body,
+          support: input.bodySupport,
+          limitations: metadata.limitations,
+          ...(metadata.external ? { external: true as const } : {}),
+        };
   if (body.kind === "error")
     return {
       outcome: { kind: "stopped", error: body.error },
