@@ -2,9 +2,7 @@ import {
   closeVerifierResources,
   withVerifierCleanup,
 } from "../../../scripts/lib/verifier-cleanup.mjs";
-import { access, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { access, rm } from "node:fs/promises";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished, vi } from "vitest";
@@ -24,9 +22,10 @@ import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { ToolResultDelivery } from "../../../src/server/ToolResultDelivery.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const createTemporaryRoot = (): Promise<string> =>
-  mkdtemp(join(tmpdir(), "rea-mcp-process-cleanup-retry-"));
+  createTestTempDirectory("rea-mcp-process-cleanup-retry-");
 
 const cleanupOptions = (
   root: string,
@@ -166,9 +165,6 @@ it("projects the retained process root through close_binary and resolves its ret
     async () => {
       await closeSession(resources);
     },
-    async () => {
-      await rm(root, { recursive: true, force: true });
-    },
   ]);
 });
 
@@ -268,9 +264,6 @@ it.each(["returned", "thrown", "synchronous"] as const)(
       },
       async () => {
         await closeSession(resources);
-      },
-      async () => {
-        await rm(root, { recursive: true, force: true });
       },
     ]);
   },

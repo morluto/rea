@@ -2,6 +2,8 @@ import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionOperations.js";
 import { nativeAddressObservationSchema } from "../domain/native/nativeAddress.js";
 import { addressDistance } from "../domain/native/addressCoordinate.js";
 import { procedureInfoSchema } from "../domain/native/procedureInfo.js";
+import { nativeSymbolMetadataSchema } from "../domain/native/nativeSymbol.js";
+import { unavailableNativeFactSchema } from "../domain/native/nativeFactAvailability.js";
 import { z } from "zod";
 import {
   ghidraNativeApiBoundary,
@@ -11,7 +13,11 @@ import {
   nativeFunctionAnnotationsInputSchema,
   nativeFunctionAnnotationsSchema,
 } from "../domain/native/nativeFunctionAnnotations.js";
-import { nativeDataTypeSchema } from "../domain/native/nativeDataType.js";
+import {
+  nativeDataTypeDefinitionsInputSchema,
+  nativeDataTypeDefinitionsSchema,
+  nativeDataTypeSchema,
+} from "../domain/native/nativeDataType.js";
 import {
   nativeInstructionSchema,
   nativeCallTargetsSchema,
@@ -22,6 +28,7 @@ import {
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import {
+  functionDossierLimitationCodeSchema,
   functionInstructionWindowSchema,
   functionDossierSchema,
 } from "../domain/native/functionDossier.js";
@@ -36,11 +43,7 @@ import {
   swiftLargeStringLiteralOmissionSchema,
 } from "../domain/native/swiftStringLiteral.js";
 import { functionBodyEntryAgrees } from "../domain/native/functionBody.js";
-import {
-  jsonObjectSchema,
-  jsonValueSchema,
-  type JsonValue,
-} from "../domain/jsonValue.js";
+import { ownedJsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import type { EvidenceLocation } from "../domain/evidence.js";
 import {
   relationshipCoverageSchema,
@@ -75,6 +78,7 @@ const directProcedure = { document, procedure };
 
 const inputSchemas = {
   annotate_native_function: nativeFunctionAnnotationsInputSchema,
+  define_native_data_types: nativeDataTypeDefinitionsInputSchema,
   inspect_native_data_type: z
     .object({
       document,
@@ -116,7 +120,7 @@ export const parseGhidraFunctionInput = (
   const parsed = inputSchemas[operation].safeParse(value);
   return parsed.success
     ? ok(
-        jsonObjectSchema.parse(
+        ownedJsonObjectSchema.parse(
           Object.fromEntries(
             Object.entries(parsed.data).filter(
               ([, value]) => value !== undefined,
@@ -150,9 +154,21 @@ const referenceEdge = z
     kind: referenceKind,
   })
   .strict();
+/**
+ * The target of incoming references selected by an explicit address outside
+ * every function, such as an import address-table slot: its primary symbol
+ * when one exists, and no function classification or body.
+ */
+const nonFunctionTarget = z.strictObject({
+  address: nativeAddressObservationSchema,
+  name: z.string().min(1),
+  symbol: nativeSymbolMetadataSchema.nullable(),
+  classification: z.null(),
+  body: unavailableNativeFactSchema,
+});
 const procedureReferences = z
   .object({
-    procedure: procedureIdentity,
+    procedure: z.union([procedureIdentity, nonFunctionTarget]),
     direction: z.enum(["incoming", "outgoing"]),
     references: z.array(referenceEdge),
     reference_kinds_available: z.boolean(),
@@ -265,12 +281,15 @@ const ghidraFunctionDossier = functionDossierSchema
     ),
     native_api: ghidraNativeApiBoundary,
     native_value_flow: ghidraNativeValueFlow,
+    limitation_codes: z.array(functionDossierLimitationCodeSchema),
   })
   .strict()
   .superRefine((value, context) => {
+    const codes = new Set(value.limitation_codes);
     if (
-      !value.limitations.some((item) => /indirect|computed/u.test(item)) ||
-      !value.limitations.some((item) => /provider|Ghidra|Hopper/u.test(item))
+      value.limitations.length === 0 ||
+      !codes.has("unresolved_computed_or_indirect_flows") ||
+      !codes.has("provider_specific_representations")
     )
       context.addIssue({
         code: "custom",
@@ -338,6 +357,7 @@ const resultSchemas = {
   procedure_pseudo_code: z.string().nullable(),
   read_function_instructions: ghidraFunctionInstructionWindow,
   inspect_native_instruction: ghidraInstruction,
+  define_native_data_types: nativeDataTypeDefinitionsSchema,
   inspect_native_data_type: nativeDataTypeSchema,
   resolve_native_call_targets: nativeCallTargetsSchema,
   procedure_references: procedureReferences,
@@ -425,7 +445,9 @@ export const parseGhidraFunctionResult = (
   const parsed = resultSchemas[operation].safeParse(observation.value);
   return parsed.success
     ? ok({
-        value: jsonValueSchema.parse(parsed.data),
+        // `observation.value` comes from an admitted JsonValue and `resultSchemas[operation]`
+        // outputs fresh plain objects/arrays whose fields are all JSON-safe.
+        value: parsed.data as JsonValue,
         limitations: observation.limitations,
         ...(observation.cache_policy === undefined
           ? {}

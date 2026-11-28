@@ -30,14 +30,12 @@ it("derives a wait or child deadline from the test deadline, keeping a reporting
   expect(remainingTestDeadline(0, 0)).toBeUndefined();
 });
 
-it("bounds expect.poll by the project deadline", async () => {
+it("bounds both wait helpers by the project deadline", async () => {
   const ready = performance.now() + PAST_VITEST_WAIT_DEFAULT_MS;
-  await expect.poll(() => performance.now() >= ready).toBe(true);
-});
-
-it("bounds waitFor by its test's deadline", async () => {
-  const ready = performance.now() + PAST_VITEST_WAIT_DEFAULT_MS;
-  await waitFor(() => {
-    if (performance.now() < ready) throw new Error("not ready yet");
-  });
+  await Promise.all([
+    expect.poll(() => performance.now() >= ready).toBe(true),
+    waitFor(() => {
+      if (performance.now() < ready) throw new Error("not ready yet");
+    }),
+  ]);
 });

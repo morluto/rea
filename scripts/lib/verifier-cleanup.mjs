@@ -66,3 +66,17 @@ export function verifierFailureReasons(cause) {
     return cause.errors.flatMap(verifierFailureReasons);
   return [cause instanceof Error ? cause.message : String(cause)];
 }
+
+/** Only ESRCH confirms that the observed PID is absent. @param {number} pid */
+export function processMayExist(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (cause) {
+    return !(
+      cause instanceof Error &&
+      "code" in cause &&
+      cause.code === "ESRCH"
+    );
+  }
+}

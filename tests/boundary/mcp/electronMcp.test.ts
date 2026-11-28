@@ -9,7 +9,7 @@ import { pathToFileURL } from "node:url";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -46,7 +46,6 @@ const testClient = (name: string) =>
 
 const browsers: FakeCdpBrowser[] = [];
 const resources: Array<{ close(): Promise<unknown> }> = [];
-const temporary: string[] = [];
 
 it("retains failed JavaScript inventory cleanup through server shutdown retries", async () => {
   const { archive } = await createStrippedAsarAddon();
@@ -103,11 +102,6 @@ it("retains failed JavaScript inventory cleanup through server shutdown retries"
 afterEach(async () => {
   await Promise.all(resources.splice(0).map(async (item) => item.close()));
   await Promise.all(browsers.splice(0).map(async (browser) => browser.close()));
-  await Promise.all(
-    temporary
-      .splice(0)
-      .map(async (path) => rm(path, { recursive: true, force: true })),
-  );
 });
 
 it("records completed Electron facts after final detach as server Evidence", async () => {
@@ -288,7 +282,6 @@ it("advertises owned JavaScript analysis effects without foreign target executio
 
 it("exposes endpoint-scoped Electron discovery and inspection as Evidence", async () => {
   const root = await createTestTempDirectory("rea-electron-mcp-");
-  temporary.push(root);
   await writeFile(join(root, "index.html"), "<script src='app.js'></script>");
   await writeFile(
     join(root, "app.js"),
@@ -437,7 +430,6 @@ it("exposes endpoint-scoped Electron discovery and inspection as Evidence", asyn
 /** Create the selected-path aliases and retained IPC-gap capture for the public workflow. */
 const activeElectronScenarioFixture = async () => {
   const root = await createTestTempDirectory("rea-electron-active-mcp-");
-  temporary.push(root);
   const applicationPath = join(root, "main.js");
   await writeFile(applicationPath, "module.exports = {};\n");
   const aliasedRoot = join(root, "..", `${basename(root)}-alias`);
@@ -447,11 +439,10 @@ const activeElectronScenarioFixture = async () => {
     aliasedRoot,
     process.platform === "win32" ? "junction" : "dir",
   );
-  temporary.push(aliasedRoot);
+  onTestFinished(() => rm(aliasedRoot, { recursive: true, force: true }));
   const workingDirectory = await createTestTempDirectory(
     "rea-electron-working-directory-",
   );
-  temporary.push(workingDirectory);
   const activeResult =
     createElectronActiveObservationFixtureResult(applicationPath);
   const capturedEvent = activeResult.timeline.events[0];
@@ -629,7 +620,6 @@ it("runs active Electron scenarios with selected paths and inferred working dire
 
 it("exposes the target-free static JavaScript application workflow", async () => {
   const root = await createTestTempDirectory("rea-electron-static-mcp-");
-  temporary.push(root);
   await writeElectronBoundaryFixture(root);
   const session = createTestBinarySession(() => ({
     execute: () => Promise.resolve(observed(null)),
@@ -857,7 +847,7 @@ it("reports every unresolved Electron path without starting a provider", async (
 it("refuses an Electron wait longer than Node can schedule", async () => {
   const capture = vi.fn();
   const client = await activePathAdmissionClient(capture);
-  // Playwright's waitForTimeout(2 ** 31) returns after 1 ms.
+  // A delay above the Node timer range returns after 1 ms.
   const result = await client.callTool({
     name: "capture_electron_scenario",
     arguments: {

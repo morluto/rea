@@ -43,12 +43,13 @@ const segment = (
     readonly vmAddress: bigint;
     /** Defaults to the file size, as linkers emit for file-backed segments. */
     readonly vmSize?: bigint;
-    readonly fileOffset: number;
-    readonly fileSize: number;
+    readonly fileOffset: number | bigint;
+    readonly fileSize: number | bigint;
+    readonly protection?: number;
     readonly sections?: readonly {
       readonly name: string;
       readonly offset: number;
-      readonly size: number;
+      readonly size: number | bigint;
       readonly flags?: number;
     }[];
   },
@@ -63,17 +64,24 @@ const segment = (
   view.setUint32(0, wide ? LC_SEGMENT_64 : LC_SEGMENT, true);
   view.setUint32(4, bytes.length, true);
   bytes.set(encoder.encode(name), 8);
+  const fileOffset = BigInt(fields.fileOffset);
+  const fileSize = BigInt(fields.fileSize);
+  const protection = fields.protection ?? 0;
   if (wide) {
     view.setBigUint64(24, fields.vmAddress, true);
-    view.setBigUint64(32, fields.vmSize ?? BigInt(fields.fileSize), true);
-    view.setBigUint64(40, BigInt(fields.fileOffset), true);
-    view.setBigUint64(48, BigInt(fields.fileSize), true);
+    view.setBigUint64(32, fields.vmSize ?? fileSize, true);
+    view.setBigUint64(40, fileOffset, true);
+    view.setBigUint64(48, fileSize, true);
+    view.setUint32(56, protection, true);
+    view.setUint32(60, protection, true);
     view.setUint32(64, sections.length, true);
   } else {
     view.setUint32(24, Number(fields.vmAddress), true);
-    view.setUint32(28, Number(fields.vmSize ?? BigInt(fields.fileSize)), true);
-    view.setUint32(32, fields.fileOffset, true);
-    view.setUint32(36, fields.fileSize, true);
+    view.setUint32(28, Number(fields.vmSize ?? fileSize), true);
+    view.setUint32(32, Number(fileOffset), true);
+    view.setUint32(36, Number(fileSize), true);
+    view.setUint32(40, protection, true);
+    view.setUint32(44, protection, true);
     view.setUint32(48, sections.length, true);
   }
   sections.forEach((section, index) => {
@@ -85,7 +93,7 @@ const segment = (
       view.setUint32(at + 48, section.offset, true);
       view.setUint32(at + 64, section.flags ?? 0, true);
     } else {
-      view.setUint32(at + 36, section.size, true);
+      view.setUint32(at + 36, Number(section.size), true);
       view.setUint32(at + 40, section.offset, true);
       view.setUint32(at + 56, section.flags ?? 0, true);
     }
@@ -121,6 +129,24 @@ const onlySlice = async (bytes: Uint8Array) => {
   if (facts.status !== "parsed" || facts.slices.length !== 1)
     throw new Error(`expected one parsed slice, got ${JSON.stringify(facts)}`);
   return facts.slices[0]!;
+};
+
+const fullTextMapping = {
+  status: "mapped",
+  fragments: [
+    {
+      slice_start: 0x4000,
+      slice_end: 0x8000,
+      segment: "__TEXT",
+      vm_start: "0x100004000",
+      vm_end: "0x100008000",
+    },
+  ],
+  // Zero-fill sections occupy no file bytes, whatever their offset.
+  sections: [
+    { segment: "__TEXT", section: "__text" },
+    { segment: "__TEXT", section: "__cstring" },
+  ],
 };
 
 describe("Mach-O encryption reader: thin images", () => {
@@ -170,23 +196,7 @@ describe("Mach-O encryption reader: thin images", () => {
         slice_end: 0x8000,
         container_start: 0x4000,
         container_end: 0x8000,
-        mapping: {
-          status: "mapped",
-          fragments: [
-            {
-              slice_start: 0x4000,
-              slice_end: 0x8000,
-              segment: "__TEXT",
-              vm_start: "0x100004000",
-              vm_end: "0x100008000",
-            },
-          ],
-          // Zero-fill sections occupy no file bytes, whatever their offset.
-          sections: [
-            { segment: "__TEXT", section: "__text" },
-            { segment: "__TEXT", section: "__cstring" },
-          ],
-        },
+        mapping: fullTextMapping,
       },
     });
   });
@@ -271,9 +281,13 @@ describe("Mach-O encryption reader: thin image edge cases", () => {
     });
   });
 
-  it("reports an unreadable segment mapping as unknown, not unmapped", async () => {
-    const broken = text();
-    new DataView(broken.buffer).setUint32(64, 9, true);
+  it("reports a disjoint segment's malformed section table as unknown mapping", async () => {
+    const broken = segment("__BROKEN", {
+      vmAddress: 0x100008000n,
+      fileOffset: 0x8000,
+      fileSize: 0x2000,
+    });
+    new DataView(broken.buffer).setUint32(64, 1, true);
     const slice = await onlySlice(
       padded(
         machoImage({
@@ -303,12 +317,14 @@ describe("Mach-O encryption reader: segment mapping", () => {
     cryptid: 1,
   });
 
-  it("never reports a byte twice when segment file ranges overlap", async () => {
+  it("maps a high-VM segment without reporting overlapping bytes twice", async () => {
     const first = segment("__A", {
       vmAddress: 0x1000n,
+      vmSize: 0x3000n,
       fileOffset: 0x4000,
       fileSize: 0x1800,
     });
+    new DataView(first.buffer).setUint32(68, 0x1, true); // SG_HIGHVM
     const second = segment("__B", {
       vmAddress: 0x9000n,
       fileOffset: 0x5000,
@@ -320,7 +336,13 @@ describe("Mach-O encryption reader: segment mapping", () => {
     expect(slice.range?.mapping).toMatchObject({
       status: "mapped",
       fragments: [
-        { slice_start: 0x4000, slice_end: 0x5800, segment: "__A" },
+        {
+          slice_start: 0x4000,
+          slice_end: 0x5800,
+          segment: "__A",
+          vm_start: "0x2800",
+          vm_end: "0x4000",
+        },
         {
           slice_start: 0x5800,
           slice_end: 0x6000,
@@ -368,6 +390,8 @@ describe("Mach-O encryption reader: segment mapping", () => {
       fileSize: 0x2000,
       sections: [
         { name: "__text", offset: 0x3000, size: 0x2000 },
+        { name: "__empty", offset: 0x4200, size: 0 },
+        { name: "__zero", offset: 0x4300, size: 0x100, flags: S_ZEROFILL },
         // Declared past the segment's file-backed bytes.
         { name: "__stray", offset: 0x7000, size: 0x1000 },
       ],
@@ -477,6 +501,323 @@ describe("Mach-O encryption reader: segment VM extent", () => {
       });
     },
   );
+
+  it("rejects a protected segment with zero VM size and file bytes", async () => {
+    const invalid = segment("__BAD", {
+      vmAddress: 0x4000n,
+      vmSize: 0n,
+      fileOffset: 0x4000,
+      fileSize: 0x2000,
+      protection: 1,
+    });
+    const slice = await onlySlice(
+      padded(machoImage({ commands: [invalid, ciphertext] })),
+    );
+    expect(slice.status).toBe("encrypted");
+    expect(slice.range?.mapping).toEqual({
+      status: "unknown",
+      reason:
+        "load command 0 segment __BAD file size 8192 exceeds its VM size 0",
+    });
+  });
+
+  it("admits a segment with no file bytes regardless of its declared file offset", async () => {
+    const noFile = segment("__NOFILE", {
+      vmAddress: 0n,
+      vmSize: 0x1000n,
+      fileOffset: 1n << 60n,
+      fileSize: 0n,
+    });
+    const slice = await onlySlice(
+      padded(
+        machoImage({
+          commands: [
+            noFile,
+            text(),
+            encryption({ cryptoff: 0x4000, cryptsize: 0x4000, cryptid: 1 }),
+          ],
+        }),
+      ),
+    );
+    expect(slice.status).toBe("encrypted");
+    expect(slice.range?.mapping).toEqual(fullTextMapping);
+  });
+});
+
+describe("Mach-O encryption reader: segment and section slice bounds", () => {
+  const ciphertext = encryption({
+    cryptoff: 0x4000,
+    cryptsize: 0x2000,
+    cryptid: 1,
+  });
+
+  it("admits segments and sections ending exactly at the slice boundary", async () => {
+    const atBoundary = segment("__TEXT", {
+      vmAddress: 0x100000000n,
+      fileOffset: 0,
+      fileSize: 0x8000,
+      sections: [
+        { name: "__tail", offset: 0x5000, size: 0x3000 },
+        { name: "__empty", offset: 0xffffffff, size: 0 },
+        {
+          name: "__zero",
+          offset: 0xffffffff,
+          size: 0xffffffffffffffffn,
+          flags: S_ZEROFILL,
+        },
+      ],
+    });
+    const slice = await onlySlice(
+      padded(machoImage({ commands: [atBoundary, ciphertext] }), 0x8000),
+    );
+    expect(slice.status).toBe("encrypted");
+    expect(slice.range?.mapping).toEqual({
+      status: "mapped",
+      fragments: [
+        {
+          slice_start: 0x4000,
+          slice_end: 0x6000,
+          segment: "__TEXT",
+          vm_start: "0x100004000",
+          vm_end: "0x100006000",
+        },
+      ],
+      sections: [{ segment: "__TEXT", section: "__tail" }],
+    });
+  });
+
+  it.each([
+    [
+      "a segment ending one byte past the slice",
+      [
+        segment("__TEXT", {
+          vmAddress: 0x100000000n,
+          fileOffset: 0,
+          fileSize: 0x8001,
+        }),
+        ciphertext,
+      ],
+      "load command 0 segment __TEXT file range ends at 32769, beyond the 32768-byte slice",
+    ],
+    [
+      "a disjoint segment past the slice",
+      [
+        text(),
+        segment("__EXTRA", {
+          vmAddress: 0x100010000n,
+          fileOffset: 0x8000,
+          fileSize: 0x1000,
+        }),
+        ciphertext,
+      ],
+      "load command 1 segment __EXTRA file range ends at 36864, beyond the 32768-byte slice",
+    ],
+    [
+      "a 64-bit section whose UINT64_MAX size overflows safe integers",
+      [
+        segment("__TEXT", {
+          vmAddress: 0x100000000n,
+          fileOffset: 0,
+          fileSize: 0x8000,
+          sections: [
+            { name: "__bogus", offset: 0x1000, size: 0xffffffffffffffffn },
+          ],
+        }),
+        ciphertext,
+      ],
+      "load command 0 segment __TEXT section __bogus file range ends at 18446744073709555711, beyond the 32768-byte slice",
+    ],
+    [
+      "a section payload extending one byte past the slice",
+      [
+        segment("__TEXT", {
+          vmAddress: 0x100000000n,
+          fileOffset: 0,
+          fileSize: 0x8000,
+          sections: [{ name: "__past", offset: 0x4000, size: 0x4001 }],
+        }),
+        ciphertext,
+      ],
+      "load command 0 segment __TEXT section __past file range ends at 32769, beyond the 32768-byte slice",
+    ],
+    [
+      "a disjoint segment carrying an out-of-slice section",
+      [
+        segment("__TEXT", {
+          vmAddress: 0x100000000n,
+          fileOffset: 0,
+          fileSize: 0x6000,
+        }),
+        segment("__DATA", {
+          vmAddress: 0x100006000n,
+          fileOffset: 0x6000,
+          fileSize: 0x2000,
+          sections: [{ name: "__past", offset: 0x7000, size: 0x2000 }],
+        }),
+        ciphertext,
+      ],
+      "load command 1 segment __DATA section __past file range ends at 36864, beyond the 32768-byte slice",
+    ],
+    [
+      "a zero-fileSize segment carrying an out-of-slice section",
+      [
+        segment("__NOFILE", {
+          vmAddress: 0n,
+          vmSize: 0x1000n,
+          fileOffset: 1n << 60n,
+          fileSize: 0n,
+          sections: [{ name: "__bad", offset: 0x9000, size: 0x100 }],
+        }),
+        text(),
+        ciphertext,
+      ],
+      "load command 0 segment __NOFILE section __bad file range ends at 37120, beyond the 32768-byte slice",
+    ],
+    [
+      "an out-of-slice section even when the encrypted range is empty",
+      [
+        segment("__TEXT", {
+          vmAddress: 0x100000000n,
+          fileOffset: 0,
+          fileSize: 0x8000,
+          sections: [{ name: "__past", offset: 0x4000, size: 0x5000 }],
+        }),
+        encryption({ cryptoff: 0x4000, cryptsize: 0, cryptid: 1 }),
+      ],
+      "load command 0 segment __TEXT section __past file range ends at 36864, beyond the 32768-byte slice",
+    ],
+  ] as const)(
+    "reports %s as an unknown mapping without losing the encryption status",
+    async (_label, commands, reason) => {
+      const slice = await onlySlice(padded(machoImage({ commands }), 0x8000));
+      expect(slice.status).toBe("encrypted");
+      expect(slice.range?.content).toBe("ciphertext");
+      expect(slice.range?.mapping).toEqual({ status: "unknown", reason });
+    },
+  );
+
+  it("checks 32-bit segment and section payloads against the slice size", async () => {
+    const enc32 = encryption(
+      { cryptoff: 0x1000, cryptsize: 0x1000, cryptid: 1 },
+      false,
+    );
+    const badSegment = await onlySlice(
+      padded(
+        machoImage({
+          cpu: CPU.i386,
+          wide: false,
+          commands: [
+            segment(
+              "__TEXT",
+              { vmAddress: 0x1000n, fileOffset: 0, fileSize: 0x9000 },
+              false,
+            ),
+            enc32,
+          ],
+        }),
+        0x8000,
+      ),
+    );
+    expect(badSegment.range?.mapping).toEqual({
+      status: "unknown",
+      reason:
+        "load command 0 segment __TEXT file range ends at 36864, beyond the 32768-byte slice",
+    });
+
+    const badSection = await onlySlice(
+      padded(
+        machoImage({
+          cpu: CPU.i386,
+          wide: false,
+          commands: [
+            segment(
+              "__TEXT",
+              {
+                vmAddress: 0x1000n,
+                fileOffset: 0,
+                fileSize: 0x8000,
+                sections: [{ name: "__past", offset: 0x4000, size: 0x4001 }],
+              },
+              false,
+            ),
+            enc32,
+          ],
+        }),
+        0x8000,
+      ),
+    );
+    expect(badSection.range?.mapping).toEqual({
+      status: "unknown",
+      reason:
+        "load command 0 segment __TEXT section __past file range ends at 32769, beyond the 32768-byte slice",
+    });
+  });
+
+  it("checks universal slice bounds against the slice size rather than the container size", async () => {
+    // Each slice is 32 KiB inside a >64 KiB FAT container; a segment or
+    // section extending past the slice but inside the container is rejected.
+    const oversizedSegment = padded(
+      machoImage({
+        cpu: CPU.x86_64,
+        commands: [
+          segment("__TEXT", {
+            vmAddress: 0x100000000n,
+            fileOffset: 0,
+            fileSize: 0xc000,
+          }),
+          ciphertext,
+        ],
+      }),
+      0x8000,
+    );
+    const oversizedSection = padded(
+      machoImage({
+        cpu: CPU.arm64e,
+        commands: [
+          segment("__TEXT", {
+            vmAddress: 0x100000000n,
+            fileOffset: 0,
+            fileSize: 0x8000,
+            sections: [{ name: "__past", offset: 0x4000, size: 0x8000 }],
+          }),
+          ciphertext,
+        ],
+      }),
+      0x8000,
+    );
+    const healthyArm = encrypted();
+    const facts = await read(
+      fatImage([
+        { cpu: CPU.x86_64, bytes: oversizedSegment },
+        { cpu: CPU.arm64e, bytes: oversizedSection },
+        { cpu: CPU.arm64, bytes: healthyArm },
+      ]),
+    );
+    if (facts.status !== "parsed") throw new Error(facts.status);
+    expect(facts.slices[0]).toMatchObject({
+      status: "encrypted",
+      size: 0x8000,
+      range: {
+        mapping: {
+          status: "unknown",
+          reason:
+            "load command 0 segment __TEXT file range ends at 49152, beyond the 32768-byte slice",
+        },
+      },
+    });
+    expect(facts.slices[1]).toMatchObject({
+      status: "encrypted",
+      size: 0x8000,
+      range: {
+        mapping: {
+          status: "unknown",
+          reason:
+            "load command 0 segment __TEXT section __past file range ends at 49152, beyond the 32768-byte slice",
+        },
+      },
+    });
+    expect(facts.slices[2]?.range?.mapping).toEqual(fullTextMapping);
+  });
 });
 
 describe("Mach-O encryption reader: defects are never absent", () => {
@@ -606,19 +947,6 @@ describe("Mach-O encryption reader: defects are never absent", () => {
     });
   });
 
-  it("reports unread load commands as unknown", async () => {
-    const oversized = machoImage({});
-    new DataView(oversized.buffer).setUint32(
-      20,
-      MAX_LOAD_COMMAND_BYTES + 8,
-      true,
-    );
-    expect(await onlySlice(oversized)).toMatchObject({
-      status: "unknown",
-      reason: expect.stringContaining("above the"),
-    });
-  });
-
   it("keeps file-level failures distinct from slice status", async () => {
     expect(await read(Uint8Array.from([1, 2, 3, 4, 5, 6, 7, 8]))).toEqual({
       status: "not-mach-o",
@@ -626,9 +954,30 @@ describe("Mach-O encryption reader: defects are never absent", () => {
     expect(
       await read(Uint8Array.from([0xfe, 0xed, 0xfa, 0xcf, 0, 0, 0, 0])),
     ).toEqual({
-      status: "unsupported",
-      reason: "big-endian Mach-O images are not supported",
+      status: "failed",
+      failure: expect.objectContaining({
+        kind: "unsupported",
+        detail: "big-endian Mach-O images are not supported",
+      }),
     });
+  });
+});
+
+it("distinguishes unread load commands from a table outside the slice", async () => {
+  const commandBytes = MAX_LOAD_COMMAND_BYTES + 8;
+  const image = machoImage({ commands: [text()] });
+  const header = new DataView(image.buffer, image.byteOffset, image.byteLength);
+  header.setUint32(20, commandBytes, true);
+  const oversized = padded(image, 32 + commandBytes);
+  expect(await onlySlice(oversized)).toMatchObject({
+    status: "unknown",
+    malformed_kind: null,
+    reason: expect.stringContaining("above the"),
+  });
+  expect(await onlySlice(image)).toMatchObject({
+    status: "malformed",
+    malformed_kind: "structure",
+    commands: [],
   });
 });
 
@@ -836,38 +1185,64 @@ describe("Mach-O encryption reader: large universal files", () => {
     // The confirmed container reports the sibling's real fault, not an
     // unresolved JVM identity.
     expect(await readMachoImage(sparseReadAt, size)).toEqual({
-      status: "malformed",
-      reason: expect.stringMatching(
-        /FAT architecture 1\b.*slice range.*beyond.*file/iu,
-      ),
+      status: "failed",
+      failure: expect.objectContaining({
+        kind: "truncated",
+        detail: expect.stringMatching(
+          /FAT architecture 1\b.*slice range.*beyond.*file/iu,
+        ),
+      }),
     });
   });
 });
 
 describe("Mach-O encryption reader: mapping budget", () => {
   it.each([
-    "section bytes",
-    "VM size",
-    "VM overflow",
-    "command width",
+    ["section bytes", "load command 0 section records exceed cmdsize"],
+    [
+      "VM size",
+      "load command 0 segment __BROKEN file size 65536 exceeds its VM size 65535",
+    ],
+    [
+      "VM overflow",
+      "load command 0 segment __BROKEN VM range exceeds the 64-bit address space",
+    ],
+    ["command width", "load command 0 LC_SEGMENT appears in a 64-bit image"],
+    [
+      "file range",
+      "load command 0 segment __BROKEN file range ends at 65537, beyond the 65536-byte slice",
+    ],
+    [
+      "section payload",
+      "load command 0 segment __BROKEN section __past file range ends at 65537, beyond the 65536-byte slice",
+    ],
   ] as const)(
     "releases failed %s mappings before admitting the next slice",
-    async (failure) => {
+    async (failure, reason) => {
       const invalid = segment(
         "__BROKEN",
         {
           vmAddress:
             failure === "VM overflow" ? 0xffffffffffffffffn : 0x100000000n,
-          vmSize: failure === "VM size" ? 0xffffn : 0x10000n,
+          vmSize:
+            failure === "VM size"
+              ? 0xffffn
+              : failure === "file range"
+                ? 0x10001n
+                : 0x10000n,
           fileOffset: 0,
-          fileSize: 0x10000,
+          fileSize: failure === "file range" ? 0x10001 : 0x10000,
+          ...(failure === "section payload"
+            ? { sections: [{ name: "__past", offset: 0x1000, size: 0xf001 }] }
+            : {}),
         },
         failure !== "command width",
       );
       if (failure === "section bytes")
         new DataView(invalid.buffer).setUint32(64, 1, true);
-      // Two records for the bad segment and five for text(): the first
-      // slice fills admission but discards its mapping on validation failure.
+      // Two records (three with a section) for the bad segment and five for
+      // text(): the first slice fills admission but discards its mapping on
+      // validation failure.
       const facts = await read(
         fatImage([
           {
@@ -889,19 +1264,14 @@ describe("Mach-O encryption reader: mapping budget", () => {
           },
           { cpu: CPU.arm64, bytes: encrypted() },
         ]),
-        7,
+        failure === "section payload" ? 8 : 7,
       );
       if (facts.status !== "parsed") throw new Error(facts.status);
       expect(facts.slices[0]).toMatchObject({
         status: "encrypted",
-        range: { mapping: { status: "unknown", reason: expect.any(String) } },
+        range: { mapping: { status: "unknown", reason } },
       });
-      const healthy = await read(encrypted());
-      if (healthy.status !== "parsed") throw new Error(healthy.status);
-      expect(facts.slices[1]?.range?.mapping).toEqual(
-        healthy.slices[0]?.range?.mapping,
-      );
-      expect(facts.slices[1]?.range?.mapping.status).toBe("mapped");
+      expect(facts.slices[1]?.range?.mapping).toEqual(fullTextMapping);
     },
   );
 

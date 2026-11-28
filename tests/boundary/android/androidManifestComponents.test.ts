@@ -1,10 +1,10 @@
 import { expect, it, vi } from "vitest";
+import { parseManifestPackage } from "../../../src/apktool/ApktoolDecodeOutput.js";
 import { androidResultSchemas } from "../../../src/domain/android/androidAnalysis.js";
 
 import {
   ANDROID_MANIFEST_LIMITS,
   parseAndroidManifestComponents,
-  resolveAndroidComponentName,
 } from "../../../src/android/AndroidManifestComponents.js";
 
 it.each([
@@ -212,7 +212,7 @@ const MANIFEST = `<?xml version="1.0" encoding="utf-8"?>
       android:name=".SyncService"
       android:permission="com.example.app.SYNC"
       android:foregroundServiceType="dataSync" />
-    <receiver android:name=".BootReceiver">
+    <receiver android:name="org.other.BootReceiver">
       <intent-filter>
         <action android:name="android.intent.action.BOOT_COMPLETED" />
       </intent-filter>
@@ -357,14 +357,21 @@ it.each([
   },
 );
 
-it("refuses a namespaced manifest root", () => {
-  const inventory = parseAndroidManifestComponents(
-    '<manifest xmlns="urn:vendor" xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application><activity android:name=".Decoy"/></application></manifest>',
-    "complete",
-    "30",
+it("admits the same unqualified manifest root in both Android readers", () => {
+  const manifest = (namespace: string) =>
+    `<manifest xmlns="${namespace}" xmlns:a="http://schemas.android.com/apk/res/android" xmlns:vendor="urn:vendor" package="com.example" vendor:package="com.decoy"><application><activity a:name=".Main"/></application></manifest>`;
+  const valid = manifest("");
+  expect(parseManifestPackage(valid)).toBe("com.example");
+  expect(parseAndroidManifestComponents(valid, "complete", "30")).toMatchObject(
+    { status: "complete", items: [{ name: "com.example.Main" }] },
   );
-  expect(inventory.status).toBe("unavailable");
-  expect(inventory.items).toEqual([]);
+  const unexpected = manifest("urn:vendor");
+  expect(
+    parseAndroidManifestComponents(unexpected, "complete", "30"),
+  ).toMatchObject({ status: "unavailable", items: [] });
+  expect(() => parseManifestPackage(unexpected)).toThrow(
+    "AndroidManifest.xml root must be <manifest>",
+  );
 });
 
 it("does not index foreign activities as alias targets", () => {
@@ -390,7 +397,7 @@ it("projects declared components with resolved names and export defaults", () =>
     ["activity", "com.example.app.HiddenActivity"],
     ["activity-alias", "com.example.app.AliasActivity"],
     ["service", "com.example.app.SyncService"],
-    ["receiver", "com.example.app.BootReceiver"],
+    ["receiver", "org.other.BootReceiver"],
     ["provider", "com.example.app.DataProvider"],
   ]);
   expect(inventory.items[0]).toMatchObject({
@@ -762,19 +769,6 @@ it("ignores same-local-name attributes from other namespaces", () => {
   });
 });
 
-it("resolves relative names against the manifest package", () => {
-  expect(resolveAndroidComponentName("com.example.app", ".Main")).toBe(
-    "com.example.app.Main",
-  );
-  expect(resolveAndroidComponentName("com.example.app", "Main")).toBe(
-    "com.example.app.Main",
-  );
-  expect(resolveAndroidComponentName("com.example.app", "org.other.Main")).toBe(
-    "org.other.Main",
-  );
-  expect(resolveAndroidComponentName(null, ".Main")).toBe(".Main");
-});
-
 it("keeps relative names unresolved when the manifest package is absent", () => {
   const inventory = parseAndroidManifestComponents(
     '<manifest xmlns:android="http://schemas.android.com/apk/res/android"><application><activity android:name=".Relative"/><activity android:name="Absolute.Name"/></application></manifest>',
@@ -927,12 +921,12 @@ it("reports unavailable inventory for malformed or unexpected manifests", () => 
       "complete",
     ),
   ).toMatchObject({ status: "unavailable", items: [] });
-  expect(
-    parseAndroidManifestComponents(
-      '<?xml version="1.0" encoding="utf-8"?><!DOCTYPE manifest><manifest />',
-      "complete",
-    ),
-  ).toMatchObject({ status: "unavailable", items: [] });
+  const withDoctype =
+    '<?xml version="1.0" encoding="utf-8"?><!DOCTYPE manifest><manifest package="com.example" />';
+  expect(parseAndroidManifestComponents(withDoctype, "complete")).toMatchObject(
+    { status: "unavailable", items: [] },
+  );
+  expect(parseManifestPackage(withDoctype)).toBe("com.example");
 });
 
 it("bounds the component inventory and says so", () => {
@@ -1330,6 +1324,34 @@ it("makes unsupported modern filter constructs partial while retaining their sou
     intent_filters: [{ actions: ["VIEW"], data: [], coverage: "partial" }],
   });
   expect(result.limitations.join(" ")).toContain("unsupported constructs");
+});
+
+it("reports unnamed intent-filter members while retaining named siblings", () => {
+  const xml = [
+    '<manifest xmlns:a="http://schemas.android.com/apk/res/android" xmlns:other="urn:other" package="com.example"><application>',
+    '<activity a:name=".Main"><intent-filter><action other:name="DECOY"/><category/><action a:name="VIEW"/><category a:name="DEFAULT"/></intent-filter>',
+    '<intent-filter><action a:name="EDIT"/></intent-filter></activity>',
+    "</application></manifest>",
+  ].join("\n");
+  const result = parseAndroidManifestComponents(xml, "complete", "30");
+  expect(result.status).toBe("partial");
+  expect(result.items).toMatchObject([
+    {
+      exported_default: true,
+      declaration_coverage: "partial",
+      actions: ["VIEW", "EDIT"],
+      categories: ["DEFAULT"],
+      intent_filters: [
+        { actions: ["VIEW"], categories: ["DEFAULT"], coverage: "partial" },
+        { actions: ["EDIT"], categories: [], coverage: "complete" },
+      ],
+    },
+  ]);
+  expect(result.limitations).toContainEqual(
+    expect.stringContaining(
+      "2 intent-filter action or category declaration(s) without android:name",
+    ),
+  );
 });
 
 it.each([

@@ -5,7 +5,14 @@ import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
 import { pwntoolsHostSupported } from "./PwntoolsDecoder.js";
 import { pwntoolsFailureDialect } from "./PwntoolsFailures.js";
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
-import { resolvePwntoolsLimits } from "../../domain/native/pwntoolsResourceLimits.js";
+import {
+  PWNTOOLS_LIMITS,
+  resolvePwntoolsLimits,
+} from "../../domain/native/pwntoolsResourceLimits.js";
+import { DEFAULT_PWNTOOLS_TIMEOUT_MS } from "../../domain/native/nativeDeadlines.js";
+
+// The bridge's omitted file-size cap follows its omitted output allowance.
+const DEFAULT_FILE_BYTES = PWNTOOLS_LIMITS.output_bytes;
 
 const pwntoolsDecoderFailure = (
   cause: unknown,
@@ -50,21 +57,57 @@ it("keeps the caller-selected pwntools input-limit source", () => {
         providerId: "pwntools",
         producerLimits: resolvePwntoolsLimits(undefined, 4096),
         inputBytesSource: "request",
+        omittedInputBytes: 67_108_864,
       },
     ),
   );
+  // The per-call parameter stopped the read, so the limit names it and the
+  // ceiling that applies when it is omitted, not the registered setting.
+  expect(projected.details?.limit).toStrictEqual({
+    control_kind: "parameter",
+    parameter: "producer_limits.input_bytes",
+    effective_value: 4096,
+    unit: "bytes",
+    minimum: 1,
+    maximum: Number.MAX_SAFE_INTEGER,
+    default_value: 67_108_864,
+    applies_at: "next_call",
+  });
+  expect(projected.recovery).toStrictEqual({
+    kind: "inspect_input_contract",
+    operation: "inspect_binary_layout",
+  });
+});
+
+it("keeps the setting limit when omitting the per-call ceiling would fail configuration", () => {
+  const projected = projectAnalysisError(
+    pwntoolsDecoderFailure(
+      new ArtifactReaderFailure(
+        "limit",
+        "artifact exceeds the input allowance",
+        { boundary: "file-size" },
+      ),
+      "artifact-read",
+      "/selected",
+      "/python",
+      {},
+      {
+        operation: "inspect_binary_layout",
+        providerId: "pwntools",
+        producerLimits: resolvePwntoolsLimits(undefined, 4096),
+        inputBytesSource: "request",
+        omittedInputBytes: undefined,
+      },
+    ),
+  );
+  // No usable default exists, so no parameter limit with an invented
+  // default_value is reported.
+  expect(projected.details?.limit).not.toHaveProperty("control_kind");
   expect(projected.details?.limit).toMatchObject({
     setting: "pwntools.max_input_bytes",
     effective_value: 4096,
     source: "request",
-    update_mode: "parameter",
-    pending_restart: false,
-    parameter: "producer_limits.input_bytes",
   });
-  expect(projected.remediation.action).toContain(
-    "producer_limits.input_bytes is 4096 bytes",
-  );
-  expect(projected.remediation.action).not.toContain("launch default of");
 });
 
 it("names a runtime pwntools ceiling instead of the built-in default", () => {
@@ -88,17 +131,15 @@ it("names a runtime pwntools ceiling instead of the built-in default", () => {
     ),
   );
   expect(projected.details?.limit).toMatchObject({
+    setting: "pwntools.max_input_bytes",
     effective_value: 67_108_864,
     source: "runtime",
+    unit: "bytes",
     update_mode: "runtime",
+    parameter: "producer_limits.input_bytes",
   });
-  expect(projected.remediation.action).toContain(
-    "67108864 bytes (source runtime)",
-  );
+  // The operation that changes a runtime setting is part of the recovery.
   expect(projected.remediation.action).toContain("update_analysis_settings");
-  expect(projected.message).not.toContain(
-    "Selected producer_limits.input_bytes is",
-  );
 });
 
 it("distinguishes the wall deadline from caller-selected producer resource budgets", () => {
@@ -116,18 +157,28 @@ it("distinguishes the wall deadline from caller-selected producer resource budge
       },
     ),
   );
-  expect(projected.code).toBe("provider_timeout");
-  expect(projected.message).toContain("4500 ms");
-  expect(projected.details?.limit).toMatchObject({
-    control_kind: "parameter",
-    parameter: "pwntools_timeout_ms",
-    effective_value: 4_500,
-    default_value: 30_000,
+  expect(projected).toMatchObject({
+    code: "provider_timeout",
+    recovery: { kind: "inspect_timeout_state", timeout_ms: 4_500 },
+    details: {
+      timeout_ms: 4_500,
+      limit: {
+        control_kind: "parameter",
+        parameter: "pwntools_timeout_ms",
+        effective_value: 4_500,
+        default_value: DEFAULT_PWNTOOLS_TIMEOUT_MS,
+        applies_at: "next_call",
+      },
+    },
   });
-  expect(projected.remediation.action).toContain("cpu_seconds=30");
-  expect(projected.remediation.action).toContain("producer_limits");
-  expect(projected.remediation.action).toContain("no REA restart");
-  expect(projected.remediation.action).toContain("67108864");
+  // The independent producer budgets have no structured field on a deadline
+  // failure, so the recovery states their selected values.
+  expect(projected.remediation.action).toContain(
+    `cpu_seconds=${String(PWNTOOLS_LIMITS.cpu_seconds)}`,
+  );
+  expect(projected.remediation.action).toContain(
+    `output_bytes=${String(PWNTOOLS_LIMITS.output_bytes)}`,
+  );
 });
 
 it("names the reported file-size allowance instead of address space", () => {
@@ -154,22 +205,24 @@ it("names the reported file-size allowance instead of address space", () => {
       },
     ),
   );
-  expect(projected.code).toBe("resource_constraint");
-  expect(projected.message).toContain("file_size_bytes");
-  expect(projected.message).toContain("4096");
-  expect(projected.message).toContain("producer_limits.file_bytes");
-  expect(projected.message).toContain("67108864");
-  expect(projected.remediation.action).toContain("4096");
-  expect(projected.remediation.action).toContain("67108864");
-  expect(projected.remediation.action).toContain("tighter inherited limit");
-  expect(projected.remediation.action).not.toContain("address_space_bytes");
-  expect(projected.remediation.action).not.toContain("1111");
-  expect(projected.remediation.action).not.toContain("3221225472");
-  expect(projected.remediation.action).not.toContain("--");
-  expect(projected.details?.limit).toMatchObject({
-    control_kind: "parameter",
-    parameter: "producer_limits.file_bytes",
-    effective_value: 67108864,
+  // The file-size resource and its cap identify the exhausted allowance; the
+  // reported address-space value stays a reported fact, not the control.
+  expect(projected).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      resource: "file-size",
+      reported_limits: {
+        address_space_bytes: 1_111,
+        cpu_seconds: 2,
+        file_size_bytes: 4_096,
+      },
+      limit: {
+        control_kind: "parameter",
+        parameter: "producer_limits.file_bytes",
+        effective_value: DEFAULT_FILE_BYTES,
+        default_value: DEFAULT_FILE_BYTES,
+      },
+    },
   });
 });
 
@@ -226,23 +279,20 @@ it("binds diagnostic_bytes as the only control of the command output budget", ()
       },
     ),
   );
+  // output_bytes bounds the reply file, not this budget.
   expect(projected).toMatchObject({
     code: "resource_constraint",
     details: {
+      reported_limits: { diagnostic_bytes: 64 },
       limit: {
         control_kind: "parameter",
         parameter: "producer_limits.diagnostic_bytes",
         effective_value: 64,
-        default_value: 1048576,
+        default_value: PWNTOOLS_LIMITS.diagnostic_bytes,
+        applies_at: "next_call",
       },
     },
   });
-  // output_bytes bounds the reply file, not this budget.
-  expect(projected.message).not.toContain("output_bytes");
-  expect(projected.remediation.action).toContain(
-    "Increase producer_limits.diagnostic_bytes above 64",
-  );
-  expect(projected.remediation.action).not.toContain("--");
 });
 
 it("names the file-size cap when SIGXFSZ has no reported limit", () => {
@@ -260,15 +310,16 @@ it("names the file-size cap when SIGXFSZ has no reported limit", () => {
       { marker: { resource: "file-size", failure: null } },
     ),
   );
-  expect(projected.remediation.action).toContain("producer_limits.file_bytes");
-  expect(projected.remediation.action).toContain("67108864");
-  expect(projected.remediation.action).toContain("file_size_bytes");
-  expect(projected.remediation.action).toContain("not reported");
-  expect(projected.remediation.action).toContain("tighter inherited limit");
-  expect(projected.remediation.action).not.toContain("address_space_bytes");
-  expect(projected.remediation.action).not.toContain("3221225472");
-  expect(projected.details?.limit).toMatchObject({
-    parameter: "producer_limits.file_bytes",
+  expect(projected).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      resource: "file-size",
+      reported_limits: null,
+      limit: {
+        parameter: "producer_limits.file_bytes",
+        effective_value: DEFAULT_FILE_BYTES,
+      },
+    },
   });
 });
 
@@ -287,11 +338,14 @@ it("names memory in the marker recovery for an allocation failure", () => {
       { marker: { resource: "memory", failure: null } },
     ),
   );
-  expect(projected.code).toBe("resource_constraint");
-  expect(projected.details).toMatchObject({ resource: "memory" });
-  expect(projected.remediation.action).toContain("memory");
-  expect(projected.remediation.action).toContain("address_space_bytes");
-  expect(projected.remediation.action).toContain("3221225472");
+  expect(projected).toMatchObject({
+    code: "resource_constraint",
+    details: { resource: "memory", reported_limits: null },
+  });
+  // No structured limit names the memory budget, so the recovery states it.
+  expect(projected.remediation.action).toContain(
+    `address_space_bytes=${String(PWNTOOLS_LIMITS.address_space_bytes)}`,
+  );
 });
 
 it("retains legacy owner causes without guessing cancellation from error text", () => {
@@ -361,7 +415,10 @@ it("keeps the launch owner's cause and facts on an unavailable selected Python",
   });
   expect(projectAnalysisError(failure)).toMatchObject({
     code: "provider_unavailable",
-    message: expect.stringContaining("EIO from spawn /python"),
+    details: {
+      diagnostics: { system_code: "EIO", syscall: "spawn /python" },
+      rejections: [{ diagnostics: { system_code: "EIO" } }],
+    },
   });
 });
 

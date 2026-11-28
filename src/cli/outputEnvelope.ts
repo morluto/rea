@@ -21,10 +21,11 @@
  * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
  * IN THE SOFTWARE.
  */
-import { estimateTokenCount, sliceByTokens } from "tokenx";
+import { estimateTokenCount } from "tokenx";
 
-import { renderCliDocument, type CliOutputFormat } from "../cliOutput.js";
+import { renderCliDocument, type CliOutputFormat } from "./cliOutput.js";
 import { jsonLinesErrorRecord } from "./jsonLines.js";
+import { formatTokenWindow } from "./tokenWindow.js";
 
 /** Suggested commands that follow a document. */
 export interface CallToAction {
@@ -75,30 +76,6 @@ export const formatCliCallToAction = ({
 const line = (text: string): string =>
   text.endsWith("\n") ? text : `${text}\n`;
 
-const tokenWindow = (
-  text: string,
-  { tokenLimit, tokenOffset }: EnvelopePresentation,
-):
-  | { readonly truncated: false; readonly text: string }
-  | {
-      readonly truncated: true;
-      readonly text: string;
-      readonly nextOffset: number | undefined;
-    } => {
-  if (tokenLimit === undefined && tokenOffset === undefined)
-    return { truncated: false, text };
-  const total = estimateTokenCount(text);
-  const offset = tokenOffset ?? 0;
-  const end = tokenLimit === undefined ? total : offset + tokenLimit;
-  if (offset === 0 && end >= total) return { truncated: false, text };
-  const shown = Math.min(end, total);
-  return {
-    truncated: true,
-    text: `${sliceByTokens(text, offset, end)}\n[truncated: showing tokens ${offset}–${shown} of ${total}]`,
-    nextOffset: shown < total ? shown : undefined,
-  };
-};
-
 /**
  * Render a failure the dispatcher reports itself, such as an unknown command.
  * A person on a terminal reads the error and the suggested commands as text;
@@ -134,7 +111,7 @@ export const renderFailure = (
     const document = presentation.fullOutput
       ? { ok: false, error: failure, meta }
       : bare;
-    return line(String(estimateTokenCount(encode(document))));
+    return line(String(estimateTokenCount(line(encode(document)))));
   }
   if (
     presentation.human &&
@@ -147,7 +124,7 @@ export const renderFailure = (
       (cta === undefined ? "" : line(formatCliCallToAction(cta)))
     );
   if (presentation.fullOutput) {
-    const window = tokenWindow(encode(failure), presentation);
+    const window = formatTokenWindow(encode(failure), presentation);
     return line(
       encode(
         window.truncated
@@ -165,5 +142,5 @@ export const renderFailure = (
       ),
     );
   }
-  return line(tokenWindow(encode(bare), presentation).text);
+  return line(formatTokenWindow(encode(bare), presentation).text);
 };

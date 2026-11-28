@@ -8,7 +8,12 @@ import {
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
 } from "./analysisErrorCore.js";
-import { analysisErrorWithCleanupFailure } from "./analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupFailure,
+  providerCleanupErrorFromFailures,
+  withInheritedCleanupOwnership,
+  withSecondaryCleanupFailure,
+} from "./analysisErrorCleanup.js";
 import {
   projectAnalysisError,
   projectAnalysisErrorWithoutCapturedOutput,
@@ -120,6 +125,7 @@ it("reads completion through nested compositions from the releasing owner only",
     new ProviderCleanupError("fixture", ["later"], {}),
   ]);
   expect(outer.cleanupIncomplete).toBe(false);
+  expect(outer.cleanupResources).toEqual([]);
 });
 
 it("keeps completion when a dependency is bound after release without an intermediate read", () => {
@@ -526,3 +532,158 @@ it.each(["primary", "cleanup", "default", "cleanup-continuing"] as const)(
     expect(projectAnalysisError(composed).code).toBe("cleanup_incomplete");
   },
 );
+
+it("tracks a shared resource until both cleanup owners release", () => {
+  const first = new ProviderCleanupError(
+    "fixture",
+    ["shared-handle", "first-handle"],
+    { reason: "first" },
+    { operation: "fixture_close" },
+  );
+  const second = new ProviderCleanupError(
+    "fixture",
+    ["shared-handle", "second-handle"],
+    { reason: "second" },
+    { operation: "fixture_close" },
+  );
+  const untyped = new Error("untyped close failure");
+
+  const composite = providerCleanupErrorFromFailures(
+    "fixture-provider",
+    [first, second],
+    "Fixture cleanup remains incomplete",
+    {
+      operation: "fixture_close",
+      causes: [first, untyped, second],
+      message: "Fixture cleanup failed",
+    },
+  );
+
+  expect(composite).toBeInstanceOf(ProviderCleanupError);
+  expect(composite).toMatchObject({
+    providerId: "fixture-provider",
+    operation: "fixture_close",
+    cleanupIncomplete: true,
+    cleanupResources: ["shared-handle", "first-handle", "second-handle"],
+    diagnostics: { reason: "Fixture cleanup remains incomplete" },
+  });
+  expect(composite.cause).toBeInstanceOf(AggregateError);
+  expect((composite.cause as AggregateError).errors).toEqual([
+    first,
+    untyped,
+    second,
+  ]);
+  expect((composite.cause as AggregateError).message).toBe(
+    "Fixture cleanup failed",
+  );
+
+  releaseOwnedCleanup(first);
+  expect(composite).toMatchObject({
+    cleanupIncomplete: true,
+    cleanupResources: ["shared-handle", "second-handle"],
+  });
+  releaseOwnedCleanup(second);
+  expect(composite).toMatchObject({
+    cleanupIncomplete: false,
+    cleanupResources: [],
+  });
+});
+
+it("defaults the aggregate cause to the owned failures", () => {
+  const only = new ProviderCleanupError(
+    "fixture",
+    ["only-handle"],
+    { reason: "only" },
+    { operation: "fixture_close" },
+  );
+  const composite = providerCleanupErrorFromFailures(
+    "fixture-provider",
+    [only],
+    "Fixture cleanup remains incomplete",
+    { operation: "fixture_close" },
+  );
+  expect((composite.cause as AggregateError).errors).toEqual([only]);
+  expect((composite.cause as AggregateError).message).toBe("");
+});
+
+it("follows an existing owner's release via withInheritedCleanupOwnership", () => {
+  const owner = new ProviderCleanupError("fixture", ["owned-handle"], {});
+  const cleanup = { reason: owner.message, resources: owner.cleanupResources };
+  const wrapper = withInheritedCleanupOwnership(
+    new AnalysisCapabilityUnavailableError("fixture", "open", "wrapped", {
+      cleanup,
+    }),
+    owner,
+  );
+  expect(wrapper.cleanupIncomplete).toBe(true);
+  expect(wrapper.cleanupResources).toEqual(["owned-handle"]);
+
+  releaseOwnedCleanup(owner);
+  expect(wrapper.cleanupIncomplete).toBe(false);
+  expect(wrapper.cleanupResources).toEqual([]);
+
+  const unownedCleanup = new AnalysisCapabilityUnavailableError(
+    "fixture",
+    "open",
+    "wrapped",
+    {
+      cleanup,
+    },
+  );
+  const retainedUnknown = withInheritedCleanupOwnership(unownedCleanup, owner);
+  expect(retainedUnknown.cleanupIncomplete).toBe(true);
+
+  const cleanOwner = new AnalysisInputError("open", undefined, []);
+  const cleanWrapper = withInheritedCleanupOwnership(
+    new AnalysisInputError("open", undefined, []),
+    cleanOwner,
+  );
+  expect(cleanWrapper.hasCleanupOwner).toBe(false);
+  expect(cleanWrapper.cleanupIncomplete).toBe(false);
+});
+
+it("reports a capability refusal as retryable once its cleanup settles", () => {
+  // The refusal is retryable only after the bound cleanup owner releases, so the
+  // flag has to follow the live cleanup state rather than the build-time one.
+  const error = new AnalysisCapabilityUnavailableError(
+    "ghidra",
+    "inspect",
+    "the selected provider is unavailable",
+    {
+      retryable: true,
+      cleanup: { reason: "close denied", resources: ["owned-worker"] },
+    },
+  );
+  expect(error.cleanupIncomplete).toBe(true);
+  expect(error.retryable).toBe(false);
+  releaseOwnedCleanup(error);
+  expect(error.cleanupIncomplete).toBe(false);
+  expect(error.retryable).toBe(true);
+});
+
+it("keeps a refusal the owner did not mark retryable non-retryable", () => {
+  const error = new AnalysisCapabilityUnavailableError(
+    "ghidra",
+    "inspect",
+    "the selected provider is unavailable",
+  );
+  expect(error.retryable).toBe(false);
+});
+
+it("keeps cleanupIncomplete and cleanupResources consistent when attaching secondary cleanup to a non-cleanup error", () => {
+  const primary = new AnalysisInputError("open", undefined, []);
+  const secondary = new ProviderCleanupError("fixture", ["leaked-fd"], {});
+  withSecondaryCleanupFailure(primary, secondary);
+  expect(primary.cleanupIncomplete).toBe(true);
+  expect(primary.cleanupResources).toEqual(["leaked-fd"]);
+
+  releaseOwnedCleanup(secondary);
+  expect(primary.cleanupIncomplete).toBe(false);
+  expect(primary.cleanupResources).toEqual([]);
+
+  primary.bindCleanupDependencies([
+    new ProviderCleanupError("fixture", ["after-settlement"], {}),
+  ]);
+  expect(primary.cleanupIncomplete).toBe(false);
+  expect(primary.cleanupResources).toEqual([]);
+});

@@ -14,6 +14,7 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisCancelledError,
+  AnalysisOutputError,
   AnalysisResourceConstraintError,
   cancelledBy,
   carriedReason,
@@ -31,8 +32,9 @@ import {
   withOwnedFileHandle,
 } from "../filesystem/OwnedRegularFile.js";
 import { AbortedWait, waitForAbortable } from "../process/AbortablePromise.js";
-import type { KunaProject } from "./KunaProjectCache.js";
+import type { KunaProject } from "./KunaCacheManifest.js";
 import {
+  decodeKunaProjectText,
   scanKunaAssembly,
   type KunaAssemblyIndex,
   type KunaProjectFunction,
@@ -78,6 +80,29 @@ interface KunaSpanOwnership {
   /** Close one admitted descriptor before another span may open. */
   readonly finishSpan: <T>(finish: () => Promise<T>) => Promise<T>;
 }
+
+/** Project a refused text span without treating it as a provider-wide failure. */
+const invalidSpanText = (
+  cause: unknown,
+  operation: string,
+  path: string,
+  offset: number,
+  length: number,
+): AnalysisOutputError | undefined =>
+  cause instanceof KunaDocumentError && cause.code === "invalid_utf8"
+    ? new AnalysisOutputError(
+        operation,
+        "Kuna's cached project text is not valid UTF-8",
+        {
+          cause,
+          diagnostics: {
+            file: path,
+            byte_offset: offset,
+            byte_length: length,
+          },
+        },
+      )
+    : undefined;
 
 const readSpan = async (
   operation: string,
@@ -142,7 +167,7 @@ const readSpan = async (
     if (!sameRegularFileState(expected, await owner.handle.stat()))
       throw new RegularFileChangedError(path);
     await assertKunaFileState(path, expected);
-    read = ok(buffer.toString("utf8"));
+    read = decodeKunaProjectText(buffer, offset);
   } catch (cause: unknown) {
     read = err(cause);
   }
@@ -178,9 +203,16 @@ const readSpan = async (
       if (cause.operationCause instanceof RegularFileChangedError)
         throw cause.operationCause;
       return err(
-        new ProviderAdapterError(KUNA_PROVIDER_ID, operation, {
-          cause: cause.operationCause,
-        }),
+        invalidSpanText(
+          cause.operationCause,
+          operation,
+          path,
+          offset,
+          length,
+        ) ??
+          new ProviderAdapterError(KUNA_PROVIDER_ID, operation, {
+            cause: cause.operationCause,
+          }),
       );
     }
     if (cause instanceof RegularFileCleanupFailure)
@@ -273,10 +305,11 @@ const spanCloseFailure = (
     failure.operationFailure === undefined &&
     primaryCause instanceof AnalysisError
       ? primaryCause
-      : new ProviderAdapterError(KUNA_PROVIDER_ID, operation, {
+      : (invalidSpanText(primaryCause, operation, path, offset, length) ??
+        new ProviderAdapterError(KUNA_PROVIDER_ID, operation, {
           cause: primaryCause,
           userMessage: errorMessage(primaryCause),
-        });
+        }));
   return analysisErrorWithCleanupDependencies(primary, marker, operation);
 };
 
@@ -334,7 +367,7 @@ export class KunaProjectReader {
         files,
         limitations: [
           reason,
-          "To try an independent decompile, call procedure_pseudo_code with analysis: independent_fresh, or use rea decompile --analysis independent_fresh. It may use different analysis context and does not replace this observation.",
+          "To try an independent decompile, call procedure_pseudo_code with analysis: independent_fresh. It may use different analysis context and does not replace this observation.",
         ],
       });
     }

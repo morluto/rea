@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -29,6 +28,7 @@ import {
   fakeGdbModeledReplies,
   fakeGdbStartupPreamble,
 } from "../providers/gdbTestHelpers.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const selectedBytes = Buffer.from("caller-selected executable bytes\n");
 const selectedDigest = createHash("sha256").update(selectedBytes).digest("hex");
@@ -141,7 +141,7 @@ const fixture = async (
     "stopProcess"
   > = {},
 ) => {
-  const root = await mkdtemp(join(tmpdir(), "rea-gdb-selected-file-"));
+  const root = await createTestTempDirectory("rea-gdb-selected-file-");
   const owner = createGdbFixtureOwner();
   const managers: GdbSessionManager[] = [];
   const connections: Array<() => void | Promise<void>> = [];
@@ -151,11 +151,7 @@ const fixture = async (
       ...connections,
       () =>
         owner.cleanup(managers, async () => {
-          try {
-            await expectNoUnmodeledGdbCommands(unmodeled);
-          } finally {
-            await rm(root, { recursive: true, force: true });
-          }
+          await expectNoUnmodeledGdbCommands(unmodeled);
         }),
     ]),
   );

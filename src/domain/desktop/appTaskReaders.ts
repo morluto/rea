@@ -27,8 +27,8 @@ export const PYTHON_READER_RUNNER = String.raw`"""REA's reader runner: one task 
 It joins its JSON argument chunks and prints one JSON line: {"view": ...}, {"absent": true} when the file is not there, or
 {"error": ...}. The command runs in a temporary folder with a fresh home, without the desktop's display (unless the
 reader asks for it), the session bus or the computer's AGENTENV_ variables, so it reads none of the user's settings,
-cannot hand the file to the running app and holds no control token; it can change only its copy, which goes with the
-folder. Lines it prints starting with MARKER make its view; everything else it prints is left out.
+cannot hand the file to the running app and holds no control token. Its copy, home and ordinary temporary files stay in
+that folder. Lines it prints starting with MARKER make its view; everything else it prints is left out.
 """
 import json
 import math
@@ -69,13 +69,15 @@ def _say(answer: dict) -> int:
     return 0
 
 
-def _environment(home: str, display: bool) -> dict:
+def _environment(home: str, temporary: str, display: bool) -> dict:
     """The session's environment without what ties a command to the session or the computer, in a fresh home."""
     kept = {name: value for name, value in os.environ.items()
             if not name.startswith("AGENTENV_") and name not in NEVER and (display or name not in SESSION)}
     if display and "XAUTHORITY" not in kept and os.path.isfile(os.path.expanduser("~/.Xauthority")):
         kept["XAUTHORITY"] = os.path.expanduser("~/.Xauthority")
     kept["HOME"] = home
+    for name in ("TMPDIR", "TMP", "TEMP"):
+        kept[name] = temporary
     for name, folder in FRESH:
         kept[name] = os.path.join(home, folder)
     return kept
@@ -90,11 +92,11 @@ def _view(output: str, lines: list) -> dict:
         return {"view": {"format": "text", "view": {"lines": lines[:MAX_LINES], "line_count": len(lines),
                                                     "truncated": len(lines) > MAX_LINES}}}
     try:
-        value = json.loads("\n".join(lines), parse_int=_exact_number, parse_float=_exact_number, parse_constant=_not_json)
-    except _Inexact:
-        return {"error": "a number in the reader's view cannot be read exactly, such as an integer above 2^53"}
+        value = json.loads("\n".join(lines), parse_int=_number_or_mark, parse_float=_number_or_mark, parse_constant=_not_json)
     except (ValueError, RecursionError) as error:
         return {"error": f"the reader's marked lines are not one JSON value: {error}"}
+    if _holds_inexact(value):
+        return {"error": "a number in the reader's view cannot be read exactly, such as an integer above 2^53"}
     return {"view": {"format": "json", "view": value}}
 
 
@@ -130,11 +132,13 @@ def _run(arguments: dict, source: str, work: str) -> dict:
     shutil.copyfile(source, copy)
     home = os.path.join(work, "home")
     os.makedirs(home)
+    temporary = os.path.join(work, "t")
+    os.mkdir(temporary, 0o700)
     argv = [part.replace(PLACEHOLDER, copy) for part in arguments["argv"]]
     stdin = arguments.get("stdin")
     timeout = arguments["timeout_s"]
     try:
-        process = subprocess.Popen(argv, cwd=os.path.dirname(copy), env=_environment(home, arguments.get("display") is True),
+        process = subprocess.Popen(argv, cwd=os.path.dirname(copy), env=_environment(home, temporary, arguments.get("display") is True),
                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                    start_new_session=True)
     except OSError as error:
@@ -199,8 +203,11 @@ def main(arguments: dict) -> int:
         with open(work + ".owner", "x", encoding="ascii") as owner:
             owner.write(lease["token"])
         return _say(_run(arguments, source, work))
-    # A caller that names a work folder removes it itself, even when this runner is killed.
-    work = os.path.realpath(tempfile.mkdtemp(prefix="rea-reader-", dir=arguments.get("work")))
+    # A caller that names a work folder owns it and removes it, even when this runner is killed.
+    # Working in it directly keeps paths short enough for the command's temporary Unix sockets.
+    if "work" in arguments:
+        return _say(_run(arguments, source, os.path.realpath(arguments["work"])))
+    work = os.path.realpath(tempfile.mkdtemp(prefix="rea-reader-"))
     try:
         return _say(_run(arguments, source, work))
     finally:

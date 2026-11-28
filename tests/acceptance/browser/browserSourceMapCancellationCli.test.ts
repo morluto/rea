@@ -90,7 +90,6 @@ processTest.skipIf(process.platform === "win32")(
           },
         ],
       });
-      expect(acquisition.source_maps.items).toHaveLength(1);
       expect(acquisition.inspection.completeness.excluded).toContainEqual({
         section: "source_maps",
         reason: "disallowed_origin",

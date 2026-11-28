@@ -132,11 +132,14 @@ it.each([
           Data: { $plist_type: "data", base64: "AAE=" },
         },
       });
+      const operand = commands[0]?.at(-1);
+      expect(operand).toBeDefined();
+      expect(operand).not.toBe(path);
       expect(commands).toEqual([
-        ["file", "-b", path],
-        ["plutil", "-lint", "--", path],
+        ["file", "-b", operand],
+        ["plutil", "-lint", "--", operand],
       ]);
-      expect(fault.reads).toBeGreaterThan(bytes.length);
+      expect(fault.reads).toBe(bytes.length);
       expect(fault.handles.every((handle) => handle.fd === -1)).toBe(true);
     } finally {
       await client.close();
@@ -144,25 +147,8 @@ it.each([
   },
 );
 
-it("treats true EOF in an incomplete plist markup probe as unknown", async () => {
-  const { path, client } = await nativePlistFixture(Buffer.from("<"));
-  const resources = new ArtifactResourceScope();
-  fault.path = path;
-  fault.maximum = 1;
-  try {
-    expect(
-      await plistSourceFormat("ASCII text", {
-        selection: { path, origin: "selected" },
-        resources,
-        signal: undefined,
-      }),
-    ).toEqual({ ok: true, value: "unknown" });
-    expect(fault.reads).toBe(2);
-    expect(fault.handles.every((handle) => handle.fd === -1)).toBe(true);
-  } finally {
-    await resources.close();
-    await client.close();
-  }
+it("keeps an incomplete markup prefix unknown", () => {
+  expect(plistSourceFormat("ASCII text", Buffer.from("<"))).toBe("unknown");
 });
 
 it("preserves a native plist probe read denial over a simultaneous abort", async () => {
@@ -349,7 +335,7 @@ it("keeps fuse sentinel offsets, states and complete-file digest across short re
   }
 });
 
-it("returns malformed dyld header facts when short positive data ends at true EOF", async () => {
+it("reports changed dyld header facts when short positive data ends before the measured size", async () => {
   const root = await createTestTempDirectory("rea-dyld-read-eof-");
   const path = join(root, "Main");
   await writeFile(path, machoImage({}));
@@ -359,7 +345,11 @@ it("returns malformed dyld header facts when short positive data ends at true EO
   const resources = new ArtifactResourceScope();
   try {
     const image = await new DylibFileAccess(resources, root).image(path);
-    expect(image.facts).toMatchObject({ status: "malformed" });
+    // The file measured larger than the bytes it returned, so it changed.
+    expect(image.facts).toMatchObject({
+      status: "failed",
+      failure: { kind: "changed", format: "macho" },
+    });
     expect(fault.reads).toBeGreaterThan(1);
     expect(fault.handles.every((handle) => handle.fd === -1)).toBe(true);
   } finally {

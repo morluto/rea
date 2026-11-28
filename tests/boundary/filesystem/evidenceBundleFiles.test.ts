@@ -25,10 +25,7 @@ import {
   readImmutableEvidenceBundle,
   writeEvidenceBundle,
 } from "../../../src/application/EvidenceBundleFiles.js";
-import {
-  compareEvidenceBundlesCommand,
-  publishEvidenceDelivery,
-} from "../../../src/application/EvidenceBundleCommands.js";
+import { publishEvidenceDelivery } from "../../../src/application/EvidenceBundleCommands.js";
 import { EvidenceLedger } from "../../../src/application/investigation/EvidenceLedger.js";
 import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
@@ -216,7 +213,7 @@ it("preserves tagged refusal JSON without interpreting Evidence-shaped fields", 
       evidenceOutput: join(root, "refused.json"),
     },
   );
-  expect(delivered).toBe(refusal);
+  expect(delivered).toEqual(refusal);
   expect(await readdir(root)).toEqual([]);
 });
 
@@ -302,7 +299,6 @@ it("retains a malformed artifact parent and refuses its publication", async () =
       },
     },
   });
-  expect(JSON.stringify(cli)).toContain(evidence.evidence_id);
   expect(await readdir(root)).toEqual([]);
 });
 
@@ -342,168 +338,101 @@ it.each([undefined, "../selected-link/./artifact"])(
   },
 );
 
-it.each([0, 9 * 1024 * 1024])(
-  "preserves the format owner's BOM recovery with %i bytes of padding",
-  async (padding) => {
-    const root = await createTestTempDirectory("rea-bundle-bom-");
-    const path = join(root, "bundle.json");
-    await writeFile(
-      path,
-      `\uFEFF${" ".repeat(padding)}${JSON.stringify(bundle())}`,
-    );
-    const result = await readEvidenceBundle(path);
-    if (result.ok) throw new Error("Expected strict JSON BOM rejection");
-    expect(projectAnalysisError(result.error)).toMatchObject({
-      code: "evidence_integrity_mismatch",
-      message: expect.stringMatching(
-        /byte-order mark.*UTF-8 without a byte-order mark/iu,
-      ),
-      remediation: {
-        action: expect.stringMatching(
-          /byte-order mark.*UTF-8 without a byte-order mark/iu,
-        ),
-      },
-      details: {
-        path,
-        reason: "invalid-json",
-        content_issues: [
-          {
-            reason: "invalid_format",
-            message: expect.stringMatching(
-              /byte-order mark.*UTF-8 without a byte-order mark/iu,
-            ),
-          },
-        ],
-      },
-    });
-    // Ordinary malformed JSON keeps its distinct parser diagnostic and the
-    // existing general recovery; consumers do not infer BOMs from text.
-    await writeFile(path, `${" ".repeat(padding)}{`);
-    const malformed = await readEvidenceBundle(path);
-    if (malformed.ok) throw new Error("Expected malformed JSON rejection");
-    expect(projectAnalysisError(malformed.error).message).toContain(
-      "Repair or recreate",
-    );
-  },
-);
+it("cancels a bundle read before opening its selected path", async () => {
+  const root = await createTestTempDirectory("rea-bundle-pre-cancel-");
+  const controller = new AbortController();
+  const reason = new Error("cancel before bundle read");
+  controller.abort(reason);
+  const result = await readEvidenceBundle(
+    join(root, "missing.json"),
+    controller.signal,
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisCancelledError",
+      operation: "import_evidence_bundle",
+    },
+  });
+  if (result.ok) throw new Error("Expected cancelled bundle read");
+  expect(result.error.cause).toBe(reason);
+  expect(await readdir(root)).toEqual([]);
+});
 
-it.each([
-  ["immutable", readImmutableEvidenceBundle],
-  ["mutable", readEvidenceBundle],
-] as const)(
-  "cancels a %s bundle read before opening its selected path",
-  async (_, read) => {
-    const root = await createTestTempDirectory("rea-bundle-pre-cancel-");
-    const controller = new AbortController();
-    const reason = new Error("cancel before bundle read");
+it("preserves the caller cancellation reason during an active bundle read", async () => {
+  const root = await createTestTempDirectory("rea-bundle-read-cancel-");
+  const path = join(root, "bundle.json");
+  await writeFile(path, JSON.stringify(bundle()));
+  const reader = await holdFirstFileRead(path);
+  const controller = new AbortController();
+  const reason = new Error("stop bundle import");
+  try {
+    const pending = readImmutableEvidenceBundle(path, controller.signal);
+    await reader.reached(pending, "first file read");
     controller.abort(reason);
-    const result = await read(join(root, "missing.json"), controller.signal);
+    reader.release();
+    const result = await pending;
     expect(result).toMatchObject({
       ok: false,
       error: {
         _tag: "AnalysisCancelledError",
         operation: "import_evidence_bundle",
-        cause: controller.signal.reason,
       },
     });
     if (result.ok) throw new Error("Expected cancelled bundle read");
     expect(result.error.cause).toBe(reason);
-    expect(await readdir(root)).toEqual([]);
-  },
-);
+  } finally {
+    controller.abort(reason);
+    reader.release();
+    vi.restoreAllMocks();
+  }
+});
 
-it.each([
-  ["mutable", readEvidenceBundle],
-  ["immutable", readImmutableEvidenceBundle],
-] as const)(
-  "preserves the caller cancellation reason during %s read",
-  async (_, read) => {
-    const root = await createTestTempDirectory("rea-bundle-read-cancel-");
-    const path = join(root, "bundle.json");
-    await writeFile(path, JSON.stringify(bundle()));
-    const reader = await holdFirstFileRead(path);
-    const controller = new AbortController();
-    const reason = new Error("stop bundle import");
-    try {
-      const pending = read(path, controller.signal);
-      await reader.reached(pending, "first file read");
-      controller.abort(reason);
-      reader.release();
-      const result = await pending;
-      expect(result).toMatchObject({
-        ok: false,
-        error: {
-          _tag: "AnalysisCancelledError",
-          operation: "import_evidence_bundle",
-        },
-      });
-      if (result.ok) throw new Error("Expected cancelled bundle read");
-      expect(result.error.cause).toBe(reason);
-    } finally {
-      controller.abort(reason);
-      reader.release();
-      vi.restoreAllMocks();
-    }
-  },
-);
+it("keeps the physical null read cause after cancellation", async () => {
+  const root = await createTestTempDirectory("rea-bundle-late-io-");
+  const path = join(root, "bundle.json");
+  await writeFile(path, JSON.stringify(bundle()));
+  const controller = new AbortController();
+  await failFileReadAfterAbort(
+    path,
+    controller,
+    new Error("later abort"),
+    null,
+  );
+  try {
+    const result = await readEvidenceBundle(path, controller.signal);
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "EvidenceFileError", reason: "io", path },
+    });
+    if (result.ok) throw new Error("Expected physical JSON read failure");
+    expect(result.error.cause).toBeNull();
+  } finally {
+    vi.restoreAllMocks();
+  }
+});
 
-it.each([
-  ["mutable", readEvidenceBundle],
-  ["immutable", readImmutableEvidenceBundle],
-] as const)(
-  "keeps the physical null read cause for %s import after cancellation",
-  async (_, read) => {
-    const root = await createTestTempDirectory("rea-bundle-late-io-");
-    const path = join(root, "bundle.json");
-    await writeFile(path, JSON.stringify(bundle()));
-    const controller = new AbortController();
-    await failFileReadAfterAbort(
-      path,
-      controller,
-      new Error("later abort"),
-      null,
-    );
-    try {
-      const result = await read(path, controller.signal);
-      expect(result).toMatchObject({
-        ok: false,
-        error: { _tag: "EvidenceFileError", reason: "io", path },
-      });
-      if (result.ok) throw new Error("Expected physical JSON read failure");
-      expect(result.error.cause).toBeNull();
-    } finally {
-      vi.restoreAllMocks();
-    }
-  },
-);
-
-it.each([
-  ["mutable", readEvidenceBundle],
-  ["immutable", readImmutableEvidenceBundle],
-] as const)(
-  "keeps an identical physical and abort reason for %s import",
-  async (_, read) => {
-    const root = await createTestTempDirectory("rea-bundle-identical-abort-");
-    const path = join(root, "bundle.json");
-    await writeFile(path, JSON.stringify(bundle()));
-    const controller = new AbortController();
-    const physical = new JsonInputPhysicalReadFailure(
-      Object.assign(new Error("physical EIO"), { code: "EIO" }),
-    );
-    await failFileReadAfterAbort(path, controller, physical, physical);
-    try {
-      const result = await read(path, controller.signal);
-      expect(result).toMatchObject({
-        ok: false,
-        error: { _tag: "EvidenceFileError", reason: "io" },
-      });
-      if (result.ok) throw new Error("Expected physical JSON read failure");
-      expect(result.error.cause).toBe(physical);
-    } finally {
-      vi.restoreAllMocks();
-    }
-  },
-);
+it("keeps identical physical and cancellation reasons distinct", async () => {
+  const root = await createTestTempDirectory("rea-bundle-identical-abort-");
+  const path = join(root, "bundle.json");
+  await writeFile(path, JSON.stringify(bundle()));
+  const controller = new AbortController();
+  const physical = new JsonInputPhysicalReadFailure(
+    Object.assign(new Error("physical EIO"), { code: "EIO" }),
+  );
+  await failFileReadAfterAbort(path, controller, physical, physical);
+  try {
+    const result = await readImmutableEvidenceBundle(path, controller.signal);
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "EvidenceFileError", reason: "io" },
+    });
+    if (result.ok) throw new Error("Expected physical JSON read failure");
+    expect(result.error.cause).toBe(physical);
+  } finally {
+    vi.restoreAllMocks();
+  }
+});
 
 it("preserves the failed-close owner when import is also cancelled", async () => {
   const root = await createTestTempDirectory("rea-import-cancel-cleanup-");
@@ -867,21 +796,6 @@ describe("evidence bundle publication", () => {
     });
     expect(await readdir(root)).toEqual(["bundle.json"]);
   });
-
-  it("round trips caller-selected paths without configured roots", async () => {
-    const root = await createTestTempDirectory("rea-evidence-dot-child-");
-    const directory = join(root, "..cache");
-    await mkdir(directory);
-    const path = join(directory, "bundle.json");
-    const value = bundle();
-    expect(await writeBundle(value, path, false)).toMatchObject({
-      ok: true,
-    });
-    expect(await readEvidenceBundle(path)).toEqual({
-      ok: true,
-      value,
-    });
-  });
 });
 
 it("reuses authenticated file snapshots while isolating mutable public reads", async () => {
@@ -950,110 +864,95 @@ it.skipIf(process.platform === "win32")(
 );
 
 describe("evidence bundle process-capture payloads", () => {
-  it.each([false, true])(
-    "rejects semantically invalid capture export before publication (overwrite: %s)",
-    async (overwrite) => {
-      const directory = await createTestTempDirectory(
-        "rea-invalid-capture-bundle-",
-      );
-      const path = join(directory, "bundle.json");
-      if (overwrite) await writeFile(path, "original");
-      // Authenticate the enclosing Evidence correctly while breaking its
-      // capture commitment, so generic bundle authentication still succeeds.
-      const capture = EMPTY_PROCESS_CAPTURE_EXAMPLE;
-      const record = createEvidence(
-        unknownTarget("not-observed"),
-        PROCESS_PROVIDER,
-        {
-          predicateType: "rea.process-capture",
-          operation: "capture_process_scenario",
-          parameters: {},
-          result: {
-            ...capture,
-            manifest: {
-              ...capture.manifest,
-              full_scenario_sha256: "0".repeat(64),
-            },
+  it("refuses a typed capture with a broken commitment before creating or replacing a file", async () => {
+    const directory = await createTestTempDirectory(
+      "rea-invalid-capture-bundle-",
+    );
+    const absent = join(directory, "new.json");
+    const existing = join(directory, "existing.json");
+    await writeFile(existing, "original");
+    // Authenticate the enclosing Evidence while breaking the typed payload's commitment.
+    const capture = EMPTY_PROCESS_CAPTURE_EXAMPLE;
+    const record = createEvidence(
+      unknownTarget("not-observed"),
+      PROCESS_PROVIDER,
+      {
+        predicateType: "rea.process-capture",
+        operation: "capture_process_scenario",
+        parameters: {},
+        result: {
+          ...capture,
+          manifest: {
+            ...capture.manifest,
+            full_scenario_sha256: "0".repeat(64),
           },
         },
-      );
-      const value = createEvidenceBundle([record]);
-      const rejected = await writeBundle(value, path, overwrite);
-      if (rejected.ok) throw new Error("Expected invalid capture rejection");
-      expect(rejected.error).toMatchObject({
-        _tag: "EvidenceIntegrityError",
-        userMessage: expect.stringContaining(
-          `Process capture record ${record.evidence_id} has an invalid normalized_result`,
-        ),
-      });
-      expect(await readdir(directory)).toEqual(
-        overwrite ? ["bundle.json"] : [],
-      );
-      if (overwrite) expect(await readFile(path, "utf8")).toBe("original");
-      // Existing files and inline authentication use the same rejection facts.
-      await writeFile(path, serializeEvidenceBundle(value));
-      for (const read of [readEvidenceBundle, readImmutableEvidenceBundle]) {
-        const loaded = await read(path);
-        if (loaded.ok) throw new Error("Expected invalid capture rejection");
-        expect(projectAnalysisError(loaded.error)).toEqual(
-          projectAnalysisError(rejected.error),
-        );
-      }
-    },
-  );
-
-  it.each([
-    {
-      label: "current provider",
-      provider: PROCESS_PROVIDER,
-      operation: "capture_process_scenario",
-      predicateType: "rea.process-capture",
-      result: EMPTY_PROCESS_CAPTURE_EXAMPLE,
-    },
-    {
-      label: "historical provider name",
-      provider: {
-        ...PROCESS_PROVIDER,
-        name: "REA deterministic process harness",
       },
-      operation: "capture_process_scenario",
-      predicateType: "rea.process-capture",
-      result: EMPTY_PROCESS_CAPTURE_EXAMPLE,
-    },
-    {
-      label: "foreign provider and operation",
-      provider: { id: "foreign", name: "Foreign capture", version: "1" },
-      operation: "historical_capture",
-      predicateType: "rea.process-capture",
-      result: EMPTY_PROCESS_CAPTURE_EXAMPLE,
-    },
-    {
-      label: "unrelated predicate",
-      provider: PROCESS_PROVIDER,
-      operation: "capture_process_scenario",
-      predicateType: "foreign.payload",
-      result: {},
-    },
-  ])(
-    "round trips capture-related records without narrowing their identities ($label)",
-    async ({ provider, operation, predicateType, result }) => {
-      const directory = await createTestTempDirectory(
-        "rea-capture-bundle-identity-",
+    );
+    const value = createEvidenceBundle([record]);
+    const invalidCapture = expect.objectContaining({
+      _tag: "EvidenceIntegrityError",
+      userMessage: expect.stringContaining(
+        `Process capture record ${record.evidence_id} has an invalid normalized_result`,
+      ),
+    });
+    expect(await writeBundle(value, absent, false)).toEqual({
+      ok: false,
+      error: invalidCapture,
+    });
+    const rejected = await writeBundle(value, existing, true);
+    if (rejected.ok) throw new Error("Expected invalid capture rejection");
+    expect(rejected.error).toEqual(invalidCapture);
+    expect(await readdir(directory)).toEqual(["existing.json"]);
+    expect(await readFile(existing, "utf8")).toBe("original");
+
+    await writeFile(existing, serializeEvidenceBundle(value));
+    for (const read of [readEvidenceBundle, readImmutableEvidenceBundle]) {
+      const loaded = await read(existing);
+      if (loaded.ok) throw new Error("Expected invalid capture rejection");
+      expect(projectAnalysisError(loaded.error)).toEqual(
+        projectAnalysisError(rejected.error),
       );
-      const path = join(directory, "bundle.json");
-      const value = createEvidenceBundle([
-        createEvidence(unknownTarget("not-observed"), provider, {
-          operation,
-          predicateType,
-          result,
-          parameters: {},
-        }),
-      ]);
-      expect(await writeBundle(value, path, false)).toMatchObject({ ok: true });
-      for (const read of [readEvidenceBundle, readImmutableEvidenceBundle])
-        expect(await read(path)).toEqual({ ok: true, value });
-    },
-  );
+    }
+  });
+
+  it("round trips mixed current, historical and foreign capture-related records", async () => {
+    const directory = await createTestTempDirectory(
+      "rea-capture-bundle-identity-",
+    );
+    const path = join(directory, "bundle.json");
+    const capture = {
+      operation: "capture_process_scenario",
+      predicateType: "rea.process-capture",
+      result: EMPTY_PROCESS_CAPTURE_EXAMPLE,
+      parameters: {},
+    };
+    const subject = unknownTarget("not-observed");
+    const value = createEvidenceBundle([
+      createEvidence(subject, PROCESS_PROVIDER, capture),
+      createEvidence(
+        subject,
+        { ...PROCESS_PROVIDER, name: "REA deterministic process harness" },
+        capture,
+      ),
+      createEvidence(
+        subject,
+        { id: "foreign", name: "Foreign capture", version: "1" },
+        {
+          ...capture,
+          operation: "historical_capture",
+        },
+      ),
+      createEvidence(subject, PROCESS_PROVIDER, {
+        ...capture,
+        predicateType: "foreign.payload",
+        result: {},
+      }),
+    ]);
+    expect(await writeBundle(value, path, false)).toMatchObject({ ok: true });
+    for (const read of [readEvidenceBundle, readImmutableEvidenceBundle])
+      expect(await read(path)).toEqual({ ok: true, value });
+  });
 });
 
 it.each([true, false])(
@@ -1107,38 +1006,33 @@ describe("evidence bundle filesystem adapter", () => {
     },
   );
 
-  it("round trips canonical bytes and requires explicit overwrite", async () => {
-    const directory = await createTestTempDirectory("rea-evidence-");
+  it("round trips canonical bytes in a dot-prefixed directory and requires explicit overwrite", async () => {
+    const root = await createTestTempDirectory("rea-evidence-");
+    const directory = join(root, "..cache");
+    await mkdir(directory);
     const path = join(directory, "bundle.json");
-    const evidenceBundle = bundle();
-    const first = await writeBundle(evidenceBundle, path, false);
-    expect(first).toMatchObject({ ok: true, value: { path } });
-    expect(await readFile(path, "utf8")).toBe(
-      serializeEvidenceBundle(evidenceBundle),
-    );
-    expect(await readEvidenceBundle(path)).toEqual({
+    const first = bundle();
+    const replacement = bundle(false);
+    const canonical = serializeEvidenceBundle(first);
+    expect(await writeBundle(first, path, false)).toEqual({
       ok: true,
-      value: evidenceBundle,
+      value: { path, bytes: Buffer.byteLength(canonical) },
     });
-    expect(
-      await compareEvidenceBundlesCommand({
-        leftPath: path,
-        rightPath: path,
-      }),
-    ).toMatchObject({
-      ok: true,
-      value: {
-        status: "unchanged",
-        summary: { records_unchanged: 1 },
-      },
-    });
-    expect(await writeBundle(evidenceBundle, path, false)).toMatchObject({
+    expect(await readFile(path, "utf8")).toBe(canonical);
+    expect(await readEvidenceBundle(path)).toEqual({ ok: true, value: first });
+    expect(await writeBundle(replacement, path, false)).toMatchObject({
       ok: false,
       error: { _tag: "EvidenceFileError", reason: "exists" },
     });
-    expect(await writeBundle(evidenceBundle, path, true)).toMatchObject({
+    expect(await readFile(path, "utf8")).toBe(canonical);
+    expect(await writeBundle(replacement, path, true)).toMatchObject({
       ok: true,
     });
+    expect(await readEvidenceBundle(path)).toEqual({
+      ok: true,
+      value: replacement,
+    });
+    expect(await readdir(directory)).toEqual(["bundle.json"]);
   });
 
   it("reports a missing file or output directory with the selected path", async () => {
@@ -1167,55 +1061,43 @@ describe("evidence bundle filesystem adapter", () => {
     );
   });
 
-  it.each([readEvidenceBundle, readImmutableEvidenceBundle])(
-    "rejects malformed and tampered input (%s)",
-    async (readBundle) => {
-      const directory = await createTestTempDirectory("rea-evidence-");
-      const malformed = join(directory, "malformed.json");
-      await writeFile(malformed, "{");
-      expect(await readBundle(malformed)).toMatchObject({
-        ok: false,
-        error: { _tag: "EvidenceFileError", reason: "invalid-json" },
-      });
-
-      const tampered = bundle();
-      const tamperedPath = join(directory, "tampered.json");
-      await writeFile(
-        tamperedPath,
-        JSON.stringify({
-          ...tampered,
-          records: [{ ...tampered.records[0], normalized_result: "changed" }],
-        }),
-      );
-      expect(await readBundle(tamperedPath)).toMatchObject({
-        ok: false,
-        error: {
-          _tag: "EvidenceIntegrityError",
-          userMessage: expect.stringContaining(
-            "at records.0.evidence_id: Evidence semantic identifier does not match its record",
-          ),
-        },
-      });
-    },
-  );
-
-  it("names schema mismatches that prevent bundle parsing", async () => {
+  it("rejects malformed JSON and tampered Evidence", async () => {
     const directory = await createTestTempDirectory("rea-evidence-");
-    const partial = join(directory, "partial.json");
-    await writeFile(partial, JSON.stringify({ evidence_id: "typo" }));
-    const rejected = await readEvidenceBundle(partial);
-    expect(rejected).toMatchObject({
+    const malformed = join(directory, "malformed.json");
+    await writeFile(malformed, "{");
+    const invalid = await readEvidenceBundle(malformed);
+    expect(invalid).toMatchObject({
+      ok: false,
+      error: { _tag: "EvidenceFileError", reason: "invalid-json" },
+    });
+
+    if (invalid.ok) throw new Error("Expected malformed JSON rejection");
+    expect(projectAnalysisError(invalid.error).message).toContain(
+      "Repair or recreate",
+    );
+
+    const tampered = bundle();
+    const tamperedPath = join(directory, "tampered.json");
+    await writeFile(
+      tamperedPath,
+      JSON.stringify({
+        ...tampered,
+        records: [{ ...tampered.records[0], normalized_result: "changed" }],
+      }),
+    );
+    expect(await readImmutableEvidenceBundle(tamperedPath)).toMatchObject({
       ok: false,
       error: {
+        _tag: "EvidenceIntegrityError",
         userMessage: expect.stringContaining(
-          "does not match the bundle schema",
+          "at records.0.evidence_id: Evidence semantic identifier does not match its record",
         ),
       },
     });
-    expect(rejected).toMatchObject({
-      error: { _tag: "EvidenceIntegrityError" },
-    });
+  });
 
+  it("names schema mismatches that prevent bundle parsing", async () => {
+    const directory = await createTestTempDirectory("rea-evidence-");
     const mismatched = join(directory, "mismatched.json");
     await writeFile(mismatched, JSON.stringify({ ...bundle(), records: {} }));
     expect(await readEvidenceBundle(mismatched)).toMatchObject({

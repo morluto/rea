@@ -1,4 +1,5 @@
 import { uniqueSorted } from "../canonicalOrdering.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 import { z } from "zod";
 
 export const analysisViewCoverageSchema = z.strictObject({
@@ -18,10 +19,10 @@ const unavailableViewCoverageSchema = z.strictObject({
 });
 
 /** Only views with nullable collections can report unavailable page coverage. */
-export const nullableCollectionViewCoverageSchema = z.union([
-  analysisViewCoverageSchema,
-  unavailableViewCoverageSchema,
-]);
+export const nullableCollectionViewCoverageSchema = z.discriminatedUnion(
+  "status",
+  [analysisViewCoverageSchema, unavailableViewCoverageSchema],
+);
 
 export type AnalysisViewCoverage = z.output<typeof analysisViewCoverageSchema>;
 
@@ -68,6 +69,17 @@ export const pageViewCoverage = (
   };
 };
 
+/** Pair a page's selected items with coverage over all matching rows. */
+export const selectedViewPage = <
+  Page extends { readonly rows: readonly unknown[]; readonly total: number },
+>(
+  offset: number,
+  { rows, total }: Page,
+): { items: Page["rows"]; coverage: AnalysisViewCoverage } => ({
+  items: rows,
+  coverage: pageViewCoverage(offset, rows.length, total),
+});
+
 /** Per-field repeated MCP message budget, independent of the selected page. */
 export const ANALYSIS_VIEW_MESSAGE_BYTE_LIMIT = 256 * 1024;
 
@@ -109,3 +121,18 @@ export const boundedViewMessages = (
     ? unique
     : [...uniqueSorted([...retained]), notice(omitted)];
 };
+
+/** Bound parent and report limitations together and link omissions to the parent Evidence. */
+export const boundedViewLimitations = (
+  parent: Pick<AnalysisViewParent, "evidenceId" | "limitations">,
+  reportLimitations?: readonly string[],
+  required?: readonly string[],
+): string[] =>
+  boundedViewMessages(
+    reportLimitations === undefined
+      ? parent.limitations
+      : [...parent.limitations, ...reportLimitations],
+    parent.evidenceId,
+    "limitations",
+    required,
+  );

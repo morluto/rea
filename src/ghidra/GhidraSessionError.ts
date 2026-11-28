@@ -1,3 +1,4 @@
+import type { ConfigurationError } from "../domain/configurationErrors.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisError,
@@ -10,6 +11,10 @@ import type { GhidraDiagnosticsScope } from "./GhidraDiagnostics.js";
 import { isGhidraByteSearchCursorMismatch } from "./GhidraByteSearchCursorFailure.js";
 import { ghidraFileOffsetOutcome } from "./GhidraFileOffsetFailure.js";
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
+import {
+  GhidraCheckpointBusyError,
+  GhidraCheckpointSupersededError,
+} from "./GhidraCheckpoint.js";
 import { GhidraLaunchSupportError } from "./GhidraJavaLaunch.js";
 import {
   GhidraLaunchError,
@@ -38,9 +43,22 @@ export type GhidraSessionFailureKind =
 export const GHIDRA_STARTUP_DEADLINE_ELAPSED =
   "Ghidra startup deadline elapsed";
 
+/**
+ * Whether the bridge reports that it stopped the request because its monitor
+ * was cancelled: `decompile_cancelled` from the native decompiler, or
+ * `request_cancelled` from a cancellation check elsewhere in the handler.
+ */
+export const isGhidraRemoteCancellation = (
+  failure: GhidraSessionError,
+): boolean =>
+  failure.kind === "remote" &&
+  (failure.remoteCode === "decompile_cancelled" ||
+    failure.remoteCode === "request_cancelled");
+
 /** Additional structured context for a Ghidra session failure. */
 export interface GhidraSessionErrorOptions extends ErrorOptions {
   readonly cancellation?: { readonly reason: unknown };
+  readonly configurationFailure?: ConfigurationError;
   readonly partialObservation?: AnalysisPartialObservation;
   readonly timeoutMs?: number;
   readonly remoteCode?: string;
@@ -56,8 +74,11 @@ export class GhidraSessionError extends Error {
   readonly remoteCode: string | undefined;
   readonly cleanupFailure: AnalysisError | undefined;
   readonly cancellation: { readonly reason: unknown } | undefined;
+  readonly configurationFailure: ConfigurationError | undefined;
   readonly partialObservation: AnalysisPartialObservation | undefined;
   readonly concurrentCancellation: { readonly reason: unknown } | undefined;
+  /** Read failures that do not own cleanup, kept beside the primary outcome. */
+  #secondaryFailures: AnalysisError[] = [];
 
   constructor(
     readonly kind: GhidraSessionFailureKind,
@@ -72,8 +93,20 @@ export class GhidraSessionError extends Error {
     this.remoteCode = options.remoteCode;
     this.cleanupFailure = options.cleanupFailure;
     this.cancellation = options.cancellation;
+    this.configurationFailure = options.configurationFailure;
     this.partialObservation = options.partialObservation;
     this.concurrentCancellation = options.concurrentCancellation;
+  }
+
+  /** Failures recorded beside this outcome that do not own its cleanup. */
+  get secondaryFailures(): readonly AnalysisError[] {
+    return [...this.#secondaryFailures];
+  }
+
+  /** Keep a non-cleanup fact, such as a manifest read that opened no handle. */
+  retainSecondaryFailure(failure: AnalysisError): this {
+    this.#secondaryFailures.push(failure);
+    return this;
   }
 
   /** Refresh diagnostics without discarding owned failure or cleanup facts. */
@@ -131,11 +164,14 @@ export class GhidraSessionError extends Error {
     partialObservation = this.partialObservation,
     concurrentCancellation = this.concurrentCancellation,
   ): GhidraSessionError {
-    return new GhidraSessionError(this.kind, message, diagnostics, {
+    const copied = new GhidraSessionError(this.kind, message, diagnostics, {
       ...(Object.hasOwn(this, "cause") ? { cause: this.cause } : {}),
       ...(this.cancellation === undefined
         ? {}
         : { cancellation: this.cancellation }),
+      ...(this.configurationFailure === undefined
+        ? {}
+        : { configurationFailure: this.configurationFailure }),
       ...(this.timeoutMs === undefined ? {} : { timeoutMs: this.timeoutMs }),
       ...(this.remoteCode === undefined ? {} : { remoteCode: this.remoteCode }),
       ...(cleanupFailure === undefined ? {} : { cleanupFailure }),
@@ -144,6 +180,12 @@ export class GhidraSessionError extends Error {
         ? {}
         : { concurrentCancellation }),
     });
+    // A diagnostic refresh is not a new failure. Secondary facts recorded
+    // on this error, such as a manifest read that failed without owning
+    // cleanup, stay with the copy.
+    for (const secondary of this.secondaryFailures)
+      copied.retainSecondaryFailure(secondary);
+    return copied;
   }
 }
 
@@ -156,6 +198,7 @@ const createGhidraSessionError = (failure: {
   readonly timeoutMs?: number;
   readonly remoteCode?: string;
   readonly cancellation?: { readonly reason: unknown };
+  readonly configurationFailure?: ConfigurationError;
   readonly redact: (value: string, incomplete?: boolean) => string;
 }): GhidraSessionError =>
   new GhidraSessionError(
@@ -177,6 +220,9 @@ const createGhidraSessionError = (failure: {
         ? {}
         : { cancellation: failure.cancellation }),
       ...(failure.cause === undefined ? {} : { cause: failure.cause }),
+      ...(failure.configurationFailure === undefined
+        ? {}
+        : { configurationFailure: failure.configurationFailure }),
       ...(failure.timeoutMs === undefined
         ? {}
         : { timeoutMs: failure.timeoutMs }),
@@ -185,6 +231,45 @@ const createGhidraSessionError = (failure: {
         : { remoteCode: failure.remoteCode }),
     },
   );
+
+/**
+ * Refusals of a prototype or type definition. The bridge rolled the call back
+ * and the session is unaffected, so their diagnostics are request-scoped.
+ */
+export type GhidraTypeEditRefusalCode =
+  | "invalid_function_signature"
+  | "unknown_data_type"
+  | "ambiguous_data_type"
+  | "invalid_type_declarations"
+  | "data_type_conflict"
+  | "conflicting_type_definitions";
+
+/** Bridge refusals of caller C text over a bound on Ghidra's uncancellable parser. */
+export const GHIDRA_C_PARSER_LIMIT_CODES = [
+  "signature_length_limit",
+  "declarations_length_limit",
+  "parenthesis_depth_limit",
+  "type_depth_limit",
+] as const;
+export type GhidraCParserLimitCode =
+  (typeof GHIDRA_C_PARSER_LIMIT_CODES)[number];
+
+export const isGhidraCParserLimitCode = (
+  code: string | undefined,
+): code is GhidraCParserLimitCode =>
+  (GHIDRA_C_PARSER_LIMIT_CODES as readonly (string | undefined)[]).includes(
+    code,
+  );
+
+export const isGhidraTypeEditRefusalCode = (
+  code: string | undefined,
+): code is GhidraTypeEditRefusalCode =>
+  code === "invalid_function_signature" ||
+  code === "unknown_data_type" ||
+  code === "ambiguous_data_type" ||
+  code === "invalid_type_declarations" ||
+  code === "data_type_conflict" ||
+  code === "conflicting_type_definitions";
 
 /** Bridge input failures share classification with their domain error projection. */
 export const isGhidraInputFailureCode = (code: string | undefined): boolean =>
@@ -198,6 +283,27 @@ export const isGhidraInputFailureCode = (code: string | undefined): boolean =>
   code === "ambiguous";
 
 /** Bind session-failure construction to its causal diagnostic scope. */
+/**
+ * Ghidra lifecycle errors that carry a cleanup failure beside their own
+ * outcome. Every consumer of a raw cause recognizes carriers here, so one
+ * carrier type cannot be read by one consumer and missed by another.
+ */
+const GHIDRA_CLEANUP_CARRIERS = [
+  DarwinProcessOwnershipInspectionError,
+  GhidraLaunchError,
+  GhidraCheckpointSupersededError,
+  GhidraCheckpointBusyError,
+] as const;
+
+export type GhidraCleanupCarrier = InstanceType<
+  (typeof GHIDRA_CLEANUP_CARRIERS)[number]
+>;
+
+export const isGhidraCleanupCarrier = (
+  cause: unknown,
+): cause is GhidraCleanupCarrier =>
+  GHIDRA_CLEANUP_CARRIERS.some((carrier) => cause instanceof carrier);
+
 export const bindGhidraSessionFailure =
   (
     diagnostics: (
@@ -211,7 +317,7 @@ export const bindGhidraSessionFailure =
     cause?: unknown,
     options: Pick<
       GhidraSessionErrorOptions,
-      "timeoutMs" | "remoteCode" | "cancellation"
+      "timeoutMs" | "remoteCode" | "cancellation" | "configurationFailure"
     > = {},
   ): GhidraSessionError => {
     const failure = createGhidraSessionError({
@@ -222,6 +328,8 @@ export const bindGhidraSessionFailure =
           kind === "remote" &&
             (isGhidraInputFailureCode(options.remoteCode) ||
               options.remoteCode === "invalid_function_name" ||
+              isGhidraTypeEditRefusalCode(options.remoteCode) ||
+              isGhidraCParserLimitCode(options.remoteCode) ||
               ghidraFileOffsetOutcome(options.remoteCode) !== undefined ||
               isGhidraByteSearchCursorMismatch(options.remoteCode))
             ? "request"
@@ -235,13 +343,11 @@ export const bindGhidraSessionFailure =
       ...(cause === undefined ? {} : { cause }),
       ...options,
     });
-    const cleanup =
-      cause instanceof DarwinProcessOwnershipInspectionError ||
-      cause instanceof GhidraLaunchError
-        ? cause.cleanupFailure
-        : cause instanceof AnalysisError && cause.cleanupIncomplete
-          ? cause
-          : undefined;
+    const cleanup = isGhidraCleanupCarrier(cause)
+      ? cause.cleanupFailure
+      : cause instanceof AnalysisError && cause.cleanupIncomplete
+        ? cause
+        : undefined;
     return cleanup === undefined
       ? failure
       : failure.withCleanupFailure(cleanup);

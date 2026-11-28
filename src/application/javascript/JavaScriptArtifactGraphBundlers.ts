@@ -5,9 +5,8 @@ import { compositeKey } from "../../domain/unicodeCodePointOrder.js";
 import {
   addAstContainsEdge,
   artifactLocalIdentity,
-  chunkLookupKey,
+  bundlerLookupKey,
   javascriptAnalysisCoverage,
-  moduleLookupKey,
   selfReferenceOmissions,
   type JavaScriptArtifactGraphContext,
   type JavaScriptArtifactGraphCoverage,
@@ -46,7 +45,7 @@ export const addJavaScriptBundlerNodes = (
       });
       for (const key of registration.chunk_keys)
         context.chunkNodes.set(
-          chunkLookupKey(file.path, registration.runtime, key),
+          bundlerLookupKey(file.path, registration.runtime, key),
           chunk,
         );
       records.push({ file, registration, chunk, coverage });
@@ -121,6 +120,7 @@ const addBundlerModuleNodes = (
   input: BundlerModuleProjectionInput,
 ): void => {
   const { file, registration, chunk, coverage, limitations } = input;
+  const entryModuleKeys = new Set(registration.entry_module_keys);
   for (const moduleValue of registration.modules) {
     const module = context.accumulator.addNode({
       kind: "javascript-module",
@@ -139,9 +139,7 @@ const addBundlerModuleNodes = (
             chunk_keys: registration.chunk_keys,
             module_key: moduleValue.module_key,
             factory_require_name: moduleValue.factory_require_name,
-            runtime_entry: registration.entry_module_keys.includes(
-              moduleValue.module_key,
-            ),
+            runtime_entry: entryModuleKeys.has(moduleValue.module_key),
             source_sha256: moduleValue.source_sha256,
             structural_fingerprint_sha256:
               moduleValue.structural_fingerprint_sha256,
@@ -161,7 +159,7 @@ const addBundlerModuleNodes = (
       ],
     });
     context.moduleNodes.set(
-      moduleLookupKey(file.path, registration.runtime, moduleValue.module_key),
+      bundlerLookupKey(file.path, registration.runtime, moduleValue.module_key),
       module,
     );
     addAstContainsEdge(context, {
@@ -195,10 +193,10 @@ const addBundlerRuntimeEdges = (
   const { file, registration, chunk, coverage } = record;
   for (const moduleKey of registration.entry_module_keys) {
     const resolved = context.moduleNodes.get(
-      moduleLookupKey(file.path, registration.runtime, moduleKey),
+      bundlerLookupKey(file.path, registration.runtime, moduleKey),
     );
     const target =
-      resolved ?? unresolvedBundlerModuleNode(context, record, moduleKey);
+      resolved ?? unresolvedBundlerNode(context, record, "module", moduleKey);
     context.accumulator.addEdge({
       source_node_id: chunk.node_id,
       target_node_id: target.node_id,
@@ -221,14 +219,14 @@ const addBundlerRuntimeEdges = (
     });
   }
   for (const chunkKey of registration.async_chunk_keys) {
-    const lookup = chunkLookupKey(file.path, registration.runtime, chunkKey);
+    const lookup = bundlerLookupKey(file.path, registration.runtime, chunkKey);
     const resolved = context.chunkNodes.get(lookup);
     if (resolved?.node_id === chunk.node_id) {
       selfAsyncChunks++;
       continue;
     }
     const target =
-      resolved ?? unresolvedBundlerChunkNode(context, record, chunkKey);
+      resolved ?? unresolvedBundlerNode(context, record, "chunk", chunkKey);
     context.accumulator.addEdge({
       source_node_id: chunk.node_id,
       target_node_id: target.node_id,
@@ -253,70 +251,39 @@ const addBundlerRuntimeEdges = (
   return selfAsyncChunks;
 };
 
-const unresolvedBundlerModuleNode = (
+const unresolvedBundlerNode = (
   context: JavaScriptArtifactGraphContext,
   record: BundlerGraphRecord,
-  moduleKey: string,
-): ApplicationNode =>
-  context.accumulator.addNode({
-    kind: "javascript-module",
+  kind: "module" | "chunk",
+  key: string,
+): ApplicationNode => {
+  const reference = kind === "module" ? "entry-module" : "async-chunk";
+  return context.accumulator.addNode({
+    kind: `javascript-${kind}`,
     identity: artifactLocalIdentity(
       record.file.sha256,
-      `${record.registration.runtime}:unresolved-entry-module`,
-      moduleKey,
+      `${record.registration.runtime}:unresolved-${reference}`,
+      key,
     ),
     observations: [
       {
-        label: moduleKey,
+        label: key,
         properties: {
-          semantic_role: "bundler-module-reference",
+          semantic_role: `bundler-${kind}-reference`,
           bundler: record.registration.bundler,
           runtime: record.registration.runtime,
-          module_key: moduleKey,
+          [`${kind}_key`]: key,
           resolution_status: "not-found",
         },
         evidence: staticInferenceEvidence({
           sha256: record.file.sha256,
           path: record.file.path,
           range: record.registration.location,
-          operation: "retain-unresolved-bundler-entry-module",
+          operation: `retain-unresolved-bundler-${reference}`,
           coverage: record.coverage,
           confidence: "low",
         }),
       },
     ],
   });
-
-const unresolvedBundlerChunkNode = (
-  context: JavaScriptArtifactGraphContext,
-  record: BundlerGraphRecord,
-  chunkKey: string,
-): ApplicationNode =>
-  context.accumulator.addNode({
-    kind: "javascript-chunk",
-    identity: artifactLocalIdentity(
-      record.file.sha256,
-      `${record.registration.runtime}:unresolved-async-chunk`,
-      chunkKey,
-    ),
-    observations: [
-      {
-        label: chunkKey,
-        properties: {
-          semantic_role: "bundler-chunk-reference",
-          bundler: record.registration.bundler,
-          runtime: record.registration.runtime,
-          chunk_key: chunkKey,
-          resolution_status: "not-found",
-        },
-        evidence: staticInferenceEvidence({
-          sha256: record.file.sha256,
-          path: record.file.path,
-          range: record.registration.location,
-          operation: "retain-unresolved-bundler-async-chunk",
-          coverage: record.coverage,
-          confidence: "low",
-        }),
-      },
-    ],
-  });
+};

@@ -1,5 +1,3 @@
-import { binaryMetadataArchitecture } from "../binaryMetadataArchitecture.js";
-import { metadataReportSubjectFormat } from "../apple/machoTargetSelection.js";
 import { z } from "zod";
 import {
   goBinarySchema,
@@ -8,24 +6,26 @@ import {
   goModuleSchema,
   goStringLiteralSchema,
   goStringLiteralsSchema,
+  type GoBinary,
 } from "../go/goBinary.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
+import { requireMetadataReportSubject } from "./metadataReportSubject.js";
 import {
   ownedView,
   type AdmittedView,
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
 import {
+  boundedViewLimitations,
   boundedViewMessages,
   completeWithinViewCoverage,
   pageViewCoverage,
   unavailableViewCoverage,
 } from "./analysisViewCoverage.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
-import { selectViewRows } from "./selectViewRows.js";
-import { evidenceFileTarget } from "../evidence.js";
+import { filterSet, selectViewRows } from "./selectViewRows.js";
 
 const indexSchema = z.number().int().nonnegative();
 const count = z.number().int().nonnegative();
@@ -82,6 +82,7 @@ export const goBinaryViewContextSchema = z.strictObject({
     build_info_available: z.boolean(),
     module_parse_complete: z.boolean().nullable(),
     runtime_dependencies: z.literal("unknown"),
+    // domain-vocabulary: whether the optional static (ptr, len) scan was not requested, finished within its budgets, or stopped at a budget.
     string_literals: z.enum(["not-requested", "complete", "truncated"]),
   }),
 });
@@ -126,6 +127,52 @@ export const goBinarySummarySchema = z.strictObject({
 
 const parseReport = createAnalysisViewResultReader(goBinarySchema);
 
+const GO_BINARY_RUNTIME_UNKNOWN =
+  "Embedded build records do not establish complete runtime dependencies or target behavior.";
+
+/** Unknowns owned by the Go build-information view. Other projections reuse them. */
+export const goBinaryUnknowns = (
+  report: GoBinary,
+): {
+  readonly values: readonly string[];
+  readonly required: readonly string[];
+} => {
+  const info = report.build_info;
+  const stringLiterals = report.string_literals;
+  return {
+    required: [GO_BINARY_RUNTIME_UNKNOWN],
+    values: [
+      GO_BINARY_RUNTIME_UNKNOWN,
+      ...(info === null
+        ? [
+            "Build information is unavailable; language and dependencies remain unknown.",
+          ]
+        : [
+            ...(info.module.complete
+              ? []
+              : [
+                  "Some module records were not parsed; consult the complete parent Evidence for original lines and bytes.",
+                ]),
+            ...(info.module.main === null
+              ? [
+                  "No main module was decoded; embedded dependency coverage remains unknown.",
+                ]
+              : []),
+          ]),
+      ...(stringLiterals === undefined
+        ? []
+        : [
+            "Recovered string_literals reflect static (ptr, len) pairs into read-only data; stack/immediate strings and runtime reachability remain unknown.",
+            ...(stringLiterals.truncated
+              ? [
+                  "Static (ptr, len) string_literals were truncated by item, aggregate-byte or scan budgets; additional candidates remain uninspected.",
+                ]
+              : []),
+          ]),
+    ],
+  };
+};
+
 /** Query the existing metadata owner's facts; never reopen or reinterpret a file. */
 export const projectGoBinaryView = (
   parent: AnalysisViewParent,
@@ -135,69 +182,21 @@ export const projectGoBinaryView = (
     SummaryAnalysisView | z.output<typeof goBinaryViewRequestSchema>
   >(admitted, "summary", "go");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message: "Go build Evidence supports summary and go views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Go build Evidence supports summary, go and cyclonedx views.",
     );
   const parsed = parseReport(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
-  const subject = evidenceFileTarget(parent);
-  if (
-    subject == null ||
-    subject.sha256 !== report.artifact.sha256 ||
-    subject.format !== metadataReportSubjectFormat(report) ||
-    subject.architecture !==
-      (binaryMetadataArchitecture(report.architecture) ?? null)
-  )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message:
-            "Go parent subject must identify the report's exact artifact.",
-        },
-      ]),
-    );
+  const subject = requireMetadataReportSubject(
+    parent,
+    report,
+    "Go parent subject must identify the report's exact artifact.",
+  );
+  if (!subject.ok) return subject;
   const info = report.build_info;
+  const unknowns = goBinaryUnknowns(report);
   const stringLiterals = report.string_literals;
-  const runtimeUnknown =
-    "Embedded build records do not establish complete runtime dependencies or target behavior.";
-  const unknowns = [
-    runtimeUnknown,
-    ...(info === null
-      ? [
-          "Build information is unavailable; language and dependencies remain unknown.",
-        ]
-      : [
-          ...(info.module.complete
-            ? []
-            : [
-                "Some module records were not parsed; consult the complete parent Evidence for original lines and bytes.",
-              ]),
-          ...(info.module.main === null
-            ? [
-                "No main module was decoded; embedded dependency coverage remains unknown.",
-              ]
-            : []),
-        ]),
-    ...(stringLiterals === undefined
-      ? []
-      : [
-          "Recovered string_literals reflect static (ptr, len) pairs into read-only data; stack/immediate strings and runtime reachability remain unknown.",
-          ...(stringLiterals.truncated
-            ? [
-                "Static (ptr, len) string_literals were truncated by item, aggregate-byte or scan budgets; additional candidates remain uninspected.",
-              ]
-            : []),
-        ]),
-  ];
   const shared = {
     parent_evidence_id: parent.evidenceId,
     parent_operation: "inspect_go_binary" as const,
@@ -214,14 +213,13 @@ export const projectGoBinaryView = (
             ? ("truncated" as const)
             : ("complete" as const),
     },
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...report.limitations],
+    limitations: boundedViewLimitations(parent, report.limitations),
+    unknowns: boundedViewMessages(
+      unknowns.values,
       parent.evidenceId,
-      "limitations",
+      "unknowns",
+      unknowns.required,
     ),
-    unknowns: boundedViewMessages(unknowns, parent.evidenceId, "unknowns", [
-      runtimeUnknown,
-    ]),
   };
   if (view.kind === "summary") {
     let stringSummary: z.output<
@@ -275,42 +273,42 @@ export const projectGoBinaryView = (
       coverage: completeWithinViewCoverage(1),
     });
   }
-  const indices =
-    view.indices === undefined ? undefined : new Set(view.indices);
-  const fields =
-    view.fields === undefined ? undefined : new Set<string>(view.fields);
+  const indices = filterSet(view.indices);
+  const fields = filterSet<string>(view.fields);
   if (view.collection === "string_literals") {
     if (stringLiterals === undefined)
-      return err(
-        analysisViewInputError([
-          {
-            path: ["view", "collection"],
-            reason: "invalid_value",
-            message:
-              "Parent Go Evidence did not collect string_literals; re-run inspect_go_binary with include_string_literals: true.",
-          },
-        ]),
+      return invalidAnalysisView(
+        "Parent Go Evidence did not collect string_literals; re-run inspect_go_binary with include_string_literals: true.",
+        "collection",
       );
-    const values = view.values === undefined ? undefined : new Set(view.values);
+    const values = filterSet(view.values);
     const needle = view.contains;
+    const matchLiteral =
+      values === undefined && needle === undefined
+        ? undefined
+        : (row: (typeof stringLiterals.items)[number]) =>
+            (values?.has(row.value) ?? true) &&
+            (needle === undefined || row.value.includes(needle));
+    const projectLiteral = (
+      row: (typeof stringLiterals.items)[number],
+      index: number,
+    ) => ({
+      index,
+      ...((fields?.has("value") ?? true) && { value: row.value }),
+      ...((fields?.has("location") ?? true) && { location: row.location }),
+      ...((fields?.has("first_header_offset") ?? true) && {
+        first_header_offset: row.first_header_offset,
+      }),
+      ...((fields?.has("reference_count") ?? true) && {
+        reference_count: row.reference_count,
+      }),
+    });
     const selected = selectViewRows(
       stringLiterals.items,
       view,
-      (row, index) =>
-        (indices?.has(index) ?? true) &&
-        (values?.has(row.value) ?? true) &&
-        (needle === undefined || row.value.includes(needle)),
-      (row, index) => ({
-        index,
-        ...((fields?.has("value") ?? true) && { value: row.value }),
-        ...((fields?.has("location") ?? true) && { location: row.location }),
-        ...((fields?.has("first_header_offset") ?? true) && {
-          first_header_offset: row.first_header_offset,
-        }),
-        ...((fields?.has("reference_count") ?? true) && {
-          reference_count: row.reference_count,
-        }),
-      }),
+      matchLiteral,
+      projectLiteral,
+      indices,
     );
     return ok({
       kind: "go" as const,
@@ -333,21 +331,30 @@ export const projectGoBinaryView = (
       coverage: unavailableViewCoverage(),
     });
   if (view.collection === "dependencies") {
-    const paths = view.paths === undefined ? undefined : new Set(view.paths);
+    const paths = filterSet(view.paths);
+    const matchDep =
+      paths === undefined
+        ? undefined
+        : (row: (typeof info.module.dependencies)[number]) =>
+            paths.has(row.path);
+    const projectDep = (
+      row: (typeof info.module.dependencies)[number],
+      index: number,
+    ) => ({
+      index,
+      ...((fields?.has("path") ?? true) && { path: row.path }),
+      ...((fields?.has("version") ?? true) && { version: row.version }),
+      ...((fields?.has("sum") ?? true) && { sum: row.sum }),
+      ...((fields?.has("replacement") ?? true) && {
+        replacement: row.replacement,
+      }),
+    });
     const selected = selectViewRows(
       info.module.dependencies,
       view,
-      (row, index) =>
-        (indices?.has(index) ?? true) && (paths?.has(row.path) ?? true),
-      (row, index) => ({
-        index,
-        ...((fields?.has("path") ?? true) && { path: row.path }),
-        ...((fields?.has("version") ?? true) && { version: row.version }),
-        ...((fields?.has("sum") ?? true) && { sum: row.sum }),
-        ...((fields?.has("replacement") ?? true) && {
-          replacement: row.replacement,
-        }),
-      }),
+      matchDep,
+      projectDep,
+      indices,
     );
     return ok({
       kind: "go" as const,
@@ -361,17 +368,25 @@ export const projectGoBinaryView = (
       ),
     });
   }
-  const keys = view.keys === undefined ? undefined : new Set(view.keys);
+  const keys = filterSet(view.keys);
+  const matchSetting =
+    keys === undefined
+      ? undefined
+      : (row: (typeof info.module.settings)[number]) => keys.has(row.key);
+  const projectSetting = (
+    row: (typeof info.module.settings)[number],
+    index: number,
+  ) => ({
+    index,
+    ...((fields?.has("key") ?? true) && { key: row.key }),
+    ...((fields?.has("value") ?? true) && { value: row.value }),
+  });
   const selected = selectViewRows(
     info.module.settings,
     view,
-    (row, index) =>
-      (indices?.has(index) ?? true) && (keys?.has(row.key) ?? true),
-    (row, index) => ({
-      index,
-      ...((fields?.has("key") ?? true) && { key: row.key }),
-      ...((fields?.has("value") ?? true) && { value: row.value }),
-    }),
+    matchSetting,
+    projectSetting,
+    indices,
   );
   return ok({
     kind: "go" as const,

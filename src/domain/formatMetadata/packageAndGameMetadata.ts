@@ -1,0 +1,630 @@
+import { z } from "zod";
+import { jsonRecordSchema } from "../jsonRecord.js";
+import { jsonValueSchema } from "../jsonValue.js";
+import { offset, sha256Hex, uint16, uint32, uint8 } from "./primitives.js";
+
+/** Parsed source fields owned by the PCK adapter, independent of content hashes. */
+export const godotPckMetadataSchema = z.strictObject({
+  kind: z.literal("godot-pck"),
+  format_version: uint32,
+  engine_major: uint32,
+  engine_minor: uint32,
+  engine_patch: uint32,
+  pack_start: offset,
+  pack_end: offset,
+  embedded: z.boolean(),
+  pack_flags: uint32,
+  file_base: offset,
+  directory_start: offset,
+  declared_file_count: uint32,
+  directory_status: z.enum(["available", "encrypted", "sparse-bundle"]),
+});
+export type GodotPckMetadata = z.infer<typeof godotPckMetadataSchema>;
+
+export const godotPckEntryMetadataSchema = z.strictObject({
+  kind: z.literal("godot-pck-entry"),
+  index: uint32,
+  source_path: z.string(),
+  declared_offset: offset,
+  flags: uint32,
+  md5_status: z.enum(["declared", "all-zero"]),
+});
+
+/** Parsed source fields owned by the UnityFS adapter, independent of member bytes. */
+export const unityFsMetadataSchema = z.strictObject({
+  kind: z.literal("unityfs"),
+  signature: z.string(),
+  format_version: uint32,
+  player_version: z.string(),
+  engine_version: z.string(),
+  declared_size: offset,
+  flags: uint32,
+  blocks_info_compressed_size: uint32,
+  blocks_info_uncompressed_size: uint32,
+  blocks_info_at_end: z.boolean(),
+  data_start: offset.nullable(),
+  block_count: uint32.nullable(),
+  /** The 16-byte producer hash of the uncompressed block stream, as declared. */
+  data_hash: z.string().nullable(),
+  directory_status: z.enum([
+    "available",
+    "encrypted",
+    "unsupported-compression",
+    "unsupported-layout",
+  ]),
+});
+export type UnityFsMetadata = z.infer<typeof unityFsMetadataSchema>;
+
+export const unityFsEntryMetadataSchema = z.strictObject({
+  kind: z.literal("unityfs-entry"),
+  index: uint32,
+  source_path: z.string(),
+  declared_offset: offset,
+  flags: uint32,
+});
+
+/** Parsed source fields owned by the wxapkg adapter, independent of member bytes. */
+export const wxapkgMetadataSchema = z.strictObject({
+  kind: z.literal("wxapkg"),
+  info: uint32.nullable(),
+  index_length: uint32.nullable(),
+  data_length: uint32.nullable(),
+  file_count: uint32.nullable(),
+  directory_status: z.enum(["available", "encrypted"]),
+});
+export type WxapkgMetadata = z.infer<typeof wxapkgMetadataSchema>;
+
+export const wxapkgEntryMetadataSchema = z.strictObject({
+  kind: z.literal("wxapkg-entry"),
+  index: uint32,
+  source_path: z.string(),
+  declared_offset: offset,
+});
+
+/** Source cookie fields and derived directory counts without Python execution. */
+export const pyInstallerMetadataSchema = z.strictObject({
+  kind: z.literal("pyinstaller"),
+  layout_version: z.enum(["2.0", "2.1"]),
+  archive_start: offset,
+  archive_size: offset,
+  cookie_offset: offset,
+  toc_offset: offset,
+  toc_size: offset,
+  entry_count: offset,
+  runtime_option_count: offset,
+  external_dependency_count: offset,
+  python_version_raw: uint32,
+  python_major: uint32.nullable(),
+  python_minor: uint32.nullable(),
+  python_library: z.string().nullable(),
+  encryption_marker_present: z.boolean(),
+});
+export type PyInstallerMetadata = z.infer<typeof pyInstallerMetadataSchema>;
+
+/** Primitive facts preserve source spelling and keep metadata copies independent. */
+export const pyInstallerEntryMetadataSchema = z.strictObject({
+  kind: z.literal("pyinstaller-entry"),
+  container: z.enum(["carchive", "pyz"]),
+  container_name: z.string().nullable(),
+  index: offset,
+  source_name: z.string(),
+  type_code: z.union([z.string().length(1), uint32]),
+  relative_offset: offset,
+  directory_record_offset: offset.nullable(),
+  directory_record_size: offset.nullable(),
+  compression_flag: z.union([z.literal(0), z.literal(1)]),
+  bytecode_header: z.enum(["not-bytecode", "unknown", "derived"]),
+  bytecode_magic: z
+    .string()
+    .regex(/^[0-9a-f]{8}$/u)
+    .nullable(),
+  pyz_status: z.enum(["not-pyz", "decoded", "opaque"]),
+  pyz_sha256: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/u)
+    .nullable(),
+  pyz_python_magic: z
+    .string()
+    .regex(/^[0-9a-f]{8}$/u)
+    .nullable(),
+  pyz_python_version: z.string().nullable(),
+  pyz_entry_count: offset.nullable(),
+  encryption_source: z.literal("carchive-marker").nullable(),
+  dependency_status: z
+    .enum(["unresolved", "invalid-reference"])
+    .exactOptional(),
+  dependency_archive: z.string().nullable().exactOptional(),
+  dependency_member: z.string().nullable().exactOptional(),
+});
+export type PyInstallerEntryMetadata = z.infer<
+  typeof pyInstallerEntryMetadataSchema
+>;
+
+/** Ordinary .NET bundle manifest facts, not proof of managed assembly validity. */
+export const dotnetBundleEntryMetadataSchema = z.strictObject({
+  kind: z.literal("dotnet-bundle-entry"),
+  major_version: uint32,
+  minor_version: uint32,
+  file_type: z.number().int().min(0).max(255),
+});
+
+/**
+ * Node.js single-executable blob facts. Lengths use 64-bit little-endian
+ * `size_t`. The fuse sentinel is a separate carrier scan.
+ */
+export const nodeSeaMetadataSchema = z.strictObject({
+  kind: z.literal("node-sea"),
+  magic: z.literal(0x143da20),
+  flags: uint32,
+  disable_experimental_sea_warning: z.boolean(),
+  use_snapshot: z.boolean(),
+  use_code_cache: z.boolean(),
+  include_assets: z.boolean(),
+  include_exec_argv: z.boolean(),
+  exec_argv_extension: z.enum(["none", "env", "cli"]),
+  exec_argv: z.array(z.string()),
+  main_code_format: z.enum(["commonjs", "module"]).exactOptional(),
+  code_path: z.string(),
+  carrier: z.enum(["mach-o", "elf", "pe"]),
+  blob_offset: offset,
+  blob_length: offset,
+  fuse_state: z.enum(["set", "unset", "absent", "conflicting"]),
+  fuse_sentinel: z.string().nullable(),
+  fuse_contradiction: z.string().nullable(),
+});
+export type NodeSeaMetadata = z.infer<typeof nodeSeaMetadataSchema>;
+export type NodeSeaMainCodeFormat = NonNullable<
+  NodeSeaMetadata["main_code_format"]
+>;
+
+/** One injected script, snapshot, code cache, or asset. Bytes stay opaque. */
+export const nodeSeaEntryMetadataSchema = z.strictObject({
+  kind: z.literal("node-sea-entry"),
+  role: z.enum(["main-script", "snapshot", "code-cache", "asset"]),
+  source_path: z.string(),
+  index: uint32,
+});
+
+const bunHex = z
+  .string()
+  .regex(/^[0-9a-f]+$/u)
+  .nullable();
+
+/**
+ * Container facts for one Bun standalone module graph. `flags` stays the raw
+ * u32 because Bun 1.3 and 1.4 reuse the low bits for different meanings.
+ */
+export const bunStandaloneMetadataSchema = z.strictObject({
+  kind: z.literal("bun-standalone"),
+  layout_revision: z.enum(["bun-1.3.3", "bun-1.3.9"]),
+  carrier: z.enum([
+    "mach-o-section",
+    "pe-section",
+    "elf-section",
+    "appended-trailer",
+  ]),
+  payload_offset: offset,
+  payload_length: offset,
+  module_count: uint32,
+  entry_point_id: uint32,
+  entry_point_source_name: z.string().nullable(),
+  entry_point_logical_path: z.string().nullable(),
+  compile_exec_argv: z.string().nullable(),
+  compile_exec_argv_hex: bunHex,
+  flags: uint32,
+});
+export type BunStandaloneMetadata = z.infer<typeof bunStandaloneMetadataSchema>;
+
+/** One stored region of a Bun module. Siblings repeat the module's source facts. */
+export const bunStandaloneEntryMetadataSchema = z.strictObject({
+  kind: z.literal("bun-standalone-entry"),
+  index: uint32,
+  region: z.enum(["contents", "sourcemap", "bytecode", "module-info"]),
+  source_name: z.string().nullable(),
+  source_name_hex: bunHex,
+  encoding: uint32,
+  encoding_name: z.enum(["binary", "latin1", "utf8", "utf16"]).nullable(),
+  loader: uint32,
+  loader_name: z.string().nullable(),
+  module_format: uint32,
+  module_format_name: z.enum(["none", "esm", "cjs"]).nullable(),
+  side: uint32,
+  side_name: z.enum(["server", "client"]).nullable(),
+  entry_point: z.boolean(),
+  sourcemap_bytes: offset,
+  bytecode_bytes: offset,
+  module_info_bytes: offset,
+  bytecode_origin: z.string().nullable(),
+  bytecode_origin_hex: bunHex,
+});
+export type BunStandaloneEntryMetadata = z.infer<
+  typeof bunStandaloneEntryMetadataSchema
+>;
+
+const denoListingSchema = z.enum(["listed", "unsupported"]);
+
+const denoEnvVarSchema = z.strictObject({
+  name: z.string(),
+  value: z.string(),
+  value_byte_length: offset,
+});
+
+/**
+ * Container facts for one Deno compile section. The metadata JSON has no Deno
+ * version field. Environment-file values and CA bytes are retained as local evidence.
+ */
+export const denoStandaloneMetadataSchema = z.strictObject({
+  kind: z.literal("deno-standalone"),
+  carrier: z.enum(["mach-o", "elf", "pe"]),
+  embedding: z.enum([
+    "mach-o-section",
+    "mach-o-intel-trailer",
+    "elf-note",
+    "pe-resource",
+  ]),
+  section_offset: offset,
+  section_length: offset,
+  entrypoint_key: z.string(),
+  argv: z.array(z.string()).nullable(),
+  v8_flags: z.array(z.string()).nullable(),
+  permissions: jsonRecordSchema(jsonValueSchema).nullable(),
+  unstable_config: jsonRecordSchema(jsonValueSchema).nullable(),
+  app_name: z.string().nullable(),
+  self_extracting: z.string().nullable(),
+  npm_snapshot_byte_length: offset,
+  env_var_count: uint32.nullable(),
+  env_vars: z.array(denoEnvVarSchema).nullable(),
+  ca_data: z.array(z.number().int().min(0).max(255)).nullable(),
+  ca_data_byte_length: offset.nullable(),
+  specifier_count: uint32,
+  specifier_byte_length: offset,
+  specifier_listing: denoListingSchema,
+  redirect_count: uint32,
+  redirect_byte_length: offset,
+  redirect_listing: denoListingSchema,
+  remote_module_count: uint32,
+  remote_module_byte_length: offset,
+  remote_module_listing: denoListingSchema,
+  vfs_header_byte_length: offset,
+  vfs_file_data_byte_length: offset,
+  vfs_listing: denoListingSchema,
+  vfs_case_sensitivity: z.enum(["sensitive", "insensitive"]).nullable(),
+});
+export type DenoStandaloneMetadata = z.infer<
+  typeof denoStandaloneMetadataSchema
+>;
+
+/** One stored region of a Deno virtual file, symlink, or remote module. */
+export const denoStandaloneEntryMetadataSchema = z.strictObject({
+  kind: z.literal("deno-standalone-entry"),
+  role: z.enum([
+    "vfs-file",
+    "vfs-transpiled",
+    "vfs-cjs-export-analysis",
+    "vfs-source-map",
+    "vfs-symlink",
+    "remote-module",
+    "remote-transpiled",
+    "remote-source-map",
+    "remote-cjs-export-analysis",
+  ]),
+  index: uint32,
+  source_path: z.string().nullable(),
+  entry_point: z.boolean(),
+  executable: z.boolean(),
+  is_valid_utf8: z.boolean().nullable(),
+  symlink_dest_parts: z.array(z.string()).nullable(),
+  media_type: z.number().int().min(0).max(255).nullable(),
+  media_type_name: z.string().nullable(),
+});
+export type DenoStandaloneEntryMetadata = z.infer<
+  typeof denoStandaloneEntryMetadataSchema
+>;
+
+/** What the tar walk observed about the archive, independent of member bytes. */
+export const tarMetadataSchema = z.strictObject({
+  kind: z.literal("tar"),
+  /** `gzip` when the tar stream is the RFC 1952 decompression of the file. */
+  compression: z.enum(["none", "gzip"]),
+  /** Header dialects seen, from each header's magic: POSIX ustar or GNU. */
+  dialects: z.array(z.enum(["gnu", "ustar"])),
+  pax_headers: offset,
+  member_count: offset,
+  /** Bytes of the tar stream examined; for gzip, the decompressed bytes. */
+  tar_stream_bytes: offset,
+  /**
+   * `end-marker`: a zero block ended the archive. `eof`: the stream ended at a
+   * header boundary without one. `malformed` and `truncated` stopped the walk.
+   */
+  end_state: z.enum(["end-marker", "eof", "malformed", "truncated"]),
+  /** Tar-stream offset of the end marker or of the failure. */
+  end_offset: offset,
+  trailing_nonzero_bytes: offset,
+});
+export type TarMetadata = z.infer<typeof tarMetadataSchema>;
+
+/** One tar header's declared fields after pax and GNU long-name records apply. */
+export const tarEntryMetadataSchema = z.strictObject({
+  kind: z.literal("tar-entry"),
+  /** Tar-stream offsets; for gzip, offsets in the decompressed stream. */
+  header_offset: offset,
+  data_offset: offset,
+  typeflag: z.string().length(1),
+  /** Permission bits, including set-ID and sticky bits. */
+  mode: z.int().min(0).max(0o7777),
+  uid: offset.nullable(),
+  gid: offset.nullable(),
+  /** Seconds since the epoch, negative before 1970; null past a safe integer. */
+  mtime: z.int().nullable(),
+  uname: z.string().nullable(),
+  gname: z.string().nullable(),
+  link_name: z.string().nullable(),
+});
+
+const switchExtentSchema = z.strictObject({ offset: uint32, size: uint32 });
+
+/**
+ * Nintendo Switch NSO or NRO header facts. Offsets and sizes are the header's
+ * declarations; `asset_section` is null when an NRO has no `ASET` trailer.
+ */
+export const switchExecutableMetadataSchema = z.strictObject({
+  kind: z.literal("switch-executable"),
+  format: z.enum(["nso", "nro"]),
+  version: uint32,
+  flags: uint32,
+  /** NSO flag bits outside compression and hash checks; 0 for NRO. */
+  unknown_flags: uint32,
+  /** Build id that pairs the module with crash logs and patches. */
+  module_id: z.string().regex(/^[0-9a-f]{64}$/u),
+  bss_size: uint32,
+  /**
+   * MOD0 header offset, when it could be read: for NSO relative to the start
+   * of text (read at text+4); for NRO the header's file-relative field at 0x4.
+   */
+  mod0_offset: uint32.nullable(),
+  /** NRO: whether `MOD0` is at that file offset; null for NSO or when unread. */
+  mod0_present: z.boolean().nullable(),
+  embedded: switchExtentSchema,
+  dynstr: switchExtentSchema,
+  dynsym: switchExtentSchema,
+  /** NRO declared image size; null for NSO. */
+  image_size: uint32.nullable(),
+  asset_section: z.strictObject({ offset, version: uint32 }).nullable(),
+});
+export type SwitchExecutableMetadata = z.infer<
+  typeof switchExecutableMetadataSchema
+>;
+
+/** One NSO/NRO segment or NRO asset as the header declares it. */
+export const switchExecutableEntryMetadataSchema = z.strictObject({
+  kind: z.literal("switch-executable-entry"),
+  role: z.enum(["text", "rodata", "data", "icon", "nacp", "romfs"]),
+  file_offset: offset,
+  /** Load offset of a segment; null for assets. */
+  memory_offset: offset.nullable(),
+  /** Bytes stored in the file; differs from the entry size when compressed. */
+  file_size: offset,
+  compressed: z.boolean(),
+  /** Declared SHA-256 of the loaded segment (NSO only). */
+  declared_sha256: sha256Hex.nullable(),
+  /** SHA-256 REA computed over the loaded segment, when it was read. */
+  observed_sha256: sha256Hex.nullable(),
+  /**
+   * `match`/`mismatch`: the header asked for a hash check and REA compared.
+   * `not-checked`: the header does not request a check. `unavailable`: the
+   * segment could not be read or decompressed within budget.
+   */
+  hash_status: z.enum(["match", "mismatch", "not-checked", "unavailable"]),
+});
+export type SwitchExecutableEntryMetadata = z.infer<
+  typeof switchExecutableEntryMetadataSchema
+>;
+
+const megaDriveRawHex = z.string().regex(/^(?:[0-9a-f]{2})+$/u);
+
+/** One fixed-width header string: trailing spaces removed, raw bytes kept. */
+const megaDriveTextSchema = z.strictObject({
+  text: z.string(),
+  raw_hex: megaDriveRawHex,
+});
+
+const megaDriveVectorSchema = z.strictObject({
+  index: uint8,
+  /** 68000 exception name. Unassigned slots are `reserved`. */
+  name: z.string(),
+  value: uint32,
+});
+
+const megaDriveChecksumSchema = z.strictObject({
+  /** Big-endian word at header offset 0x18E. */
+  declared: uint16,
+  /** Word sum from image offset 0x200 through the declared ROM end. */
+  computed: uint16,
+  matches: z.boolean(),
+  /** Bytes that were both inside the declared window and inside the image. */
+  summed_bytes: offset,
+});
+
+/**
+ * A declared header range. `start` and `end` are the stored longwords;
+ * `bus_start` and `bus_end` are the 24-bit addresses the 68000 drives for
+ * them, which every check uses and a raw m68k load should use.
+ */
+const megaDriveAddressRangeSchema = z.strictObject({
+  start: uint32,
+  end: uint32,
+  bus_start: uint32,
+  bus_end: uint32,
+});
+
+/**
+ * External RAM descriptor at 0x1B0. Structured fields are set only when the
+ * marker is `RA`; `raw_hex` is the 12 stored bytes either way.
+ */
+const megaDriveExternalRamSchema = z.strictObject({
+  present: z.boolean(),
+  raw_hex: megaDriveRawHex,
+  /** Type byte at 0x1B2 when the marker is present. */
+  type: uint8.nullable(),
+  battery_backed: z.boolean().nullable(),
+  access: z.enum(["word", "byte-even", "byte-odd"]).nullable(),
+  start: uint32.nullable(),
+  end: uint32.nullable(),
+});
+
+/** Sega Mega Drive / Genesis cartridge header and vector table. */
+export const megaDriveRomMetadataSchema = z.strictObject({
+  kind: z.literal("mega-drive-rom"),
+  /** `plain` is a linear image. `smd` is a de-interleaved copier dump. */
+  layout: z.enum(["plain", "smd"]),
+  /**
+   * `32x` and `sega-cd` name the system string only. Their extra structures
+   * are not decoded.
+   */
+  system_kind: z.enum(["mega-drive", "genesis", "32x", "sega-cd", "other"]),
+  system: megaDriveTextSchema,
+  copyright: megaDriveTextSchema,
+  domestic_title: megaDriveTextSchema,
+  overseas_title: megaDriveTextSchema,
+  /** Twelve bytes at 0x180. */
+  serial: megaDriveTextSchema,
+  /** Two bytes at 0x18C. */
+  revision: megaDriveTextSchema,
+  device_support: megaDriveTextSchema,
+  /** Known device letters, in header order, with spaces skipped. */
+  devices: z.array(z.string().regex(/^[046BCFJKLMPRSTV]$/u)),
+  /** Non-space characters outside the known device set. */
+  unknown_device_characters: z.string(),
+  region: megaDriveTextSchema,
+  region_characters: z.array(z.string().length(1)).max(16),
+  /**
+   * `letters` is the classic J/U/E/A/B set. `hex` is one hex digit and sets
+   * `region_mask`. `ambiguous` is a single `A`, `B` or `E`, which is both a
+   * letter and a hex digit: `region_characters` and `region_mask` hold both
+   * readings. `empty` is only padding. Anything else is `other`.
+   */
+  region_style: z.enum(["letters", "hex", "ambiguous", "empty", "other"]),
+  region_mask: uint8.nullable(),
+  modem: megaDriveTextSchema,
+  memo: megaDriveTextSchema,
+  /** Vector 0, initial supervisor stack pointer. */
+  initial_ssp: uint32,
+  /** Vector 1, reset program counter, as stored. */
+  reset_pc: uint32,
+  /** The 24-bit address the 68000 fetches the first instruction from. */
+  reset_pc_bus: uint32,
+  vectors: z.array(megaDriveVectorSchema).length(64),
+  checksum: megaDriveChecksumSchema,
+  rom: megaDriveAddressRangeSchema,
+  ram: megaDriveAddressRangeSchema,
+  external_ram: megaDriveExternalRamSchema,
+  /** Byte length of the linear image, after SMD de-interleave. */
+  image_bytes: offset,
+  /** SMD block count; null for a plain image. */
+  smd_blocks: uint16.nullable(),
+});
+export type MegaDriveRomMetadata = z.infer<typeof megaDriveRomMetadataSchema>;
+
+/** One extracted range of the linear Mega Drive image. */
+export const megaDriveRomEntryMetadataSchema = z.strictObject({
+  kind: z.literal("mega-drive-rom-entry"),
+  role: z.enum(["vectors", "header", "program"]),
+  /** Offset in the linear image. For SMD this is not a file offset. */
+  image_offset: offset,
+});
+export type MegaDriveRomEntryMetadata = z.infer<
+  typeof megaDriveRomEntryMetadataSchema
+>;
+/** Byte order of a Nintendo 64 ROM image, named by its usual extension. */
+export const N64_BYTE_ORDERS = ["z64", "v64", "n64"] as const;
+/**
+ * IPL3/CIC variant named by the CRC32 of bytes 0x40..0x1000. NTSC and PAL
+ * partners share one boot image. `unknown` is a hash outside this table.
+ */
+export const N64_CIC_IDS = [
+  "6101",
+  "6102/7101",
+  "6103/7103",
+  "6105/7105",
+  "6106/7106",
+  "unknown",
+] as const;
+/** Media byte at header 0x3B, when it is one of the documented values. */
+export const N64_MEDIA_NAMES = [
+  "cartridge",
+  "64dd",
+  "expandable-cartridge",
+  "expandable-64dd",
+  "aleck64",
+] as const;
+/** Destination byte at header 0x3E, when it is one of the documented codes. */
+export const N64_DESTINATION_NAMES = [
+  "Asia",
+  "Brazil",
+  "China",
+  "Germany",
+  "North America",
+  "France",
+  "Gateway 64 NTSC",
+  "Netherlands",
+  "Italy",
+  "Japan",
+  "Korea",
+  "Gateway 64 PAL",
+  "Canada",
+  "Europe",
+  "Spain",
+  "Australia",
+  "Scandinavia",
+  "Beta",
+] as const;
+
+const n64CrcSchema = z.strictObject({
+  status: z.enum(["match", "mismatch", "not-checked"]),
+  declared_crc1: uint32,
+  declared_crc2: uint32,
+  computed_crc1: uint32.nullable(),
+  computed_crc2: uint32.nullable(),
+});
+
+/**
+ * Nintendo 64 cartridge header after the image is normalized to big-endian
+ * (z64) order. Title bytes stay in `title_raw_hex`; `title_ascii` renders
+ * printable ASCII and replaces every other byte with `.`.
+ */
+export const n64RomMetadataSchema = z.strictObject({
+  kind: z.literal("n64-rom"),
+  source_order: z.enum(N64_BYTE_ORDERS),
+  rom_bytes: offset,
+  /** First header word. A normalized image carries 0x80371240. */
+  pi_dom1_config: uint32,
+  clock_rate: uint32,
+  boot_address: uint32,
+  /** Raw word at 0x0C. REA does not map it to a libultra version name. */
+  libultra_release: uint32,
+  crc: n64CrcSchema,
+  /** IEEE CRC32 of IPL3 (0x40..0x1000); null when those bytes are absent. */
+  ipl3_crc32: uint32.nullable(),
+  cic: z.enum(N64_CIC_IDS),
+  title_raw_hex: z.string().regex(/^[0-9a-f]{40}$/u),
+  title_ascii: z.string().length(20),
+  media_byte: uint8,
+  media_name: z.enum(N64_MEDIA_NAMES).nullable(),
+  cartridge_id: z.string().length(2),
+  cartridge_id_hex: z.string().regex(/^[0-9a-f]{4}$/u),
+  destination_byte: uint8,
+  destination_code: z.string().length(1),
+  destination_name: z.enum(N64_DESTINATION_NAMES).nullable(),
+  version: uint8,
+});
+export type N64RomMetadata = z.infer<typeof n64RomMetadataSchema>;
+
+/** One normalized range of an N64 ROM: header, IPL3, or the whole image. */
+export const n64RomEntryMetadataSchema = z.strictObject({
+  kind: z.literal("n64-rom-entry"),
+  role: z.enum(["header", "ipl3", "program"]),
+  source_order: z.enum(N64_BYTE_ORDERS),
+  /** True when the served bytes were swapped out of v64 or n64 order. */
+  decoded: z.boolean(),
+});
+export type N64RomEntryMetadata = z.infer<typeof n64RomEntryMetadataSchema>;

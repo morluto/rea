@@ -8,6 +8,7 @@ import { electronActiveObservationInputSchema } from "../../domain/javascript/el
 import { err, ok } from "../../domain/result.js";
 import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
 import { createElectronActiveObservationFixtureResult } from "../../domain/javascript/electronActiveObservation.fixture.js";
+import { withoutSearchPermission } from "../../../tests/fixtures/permissionDenial.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import type { ElectronActiveObservationPort } from "../../ports/javascript/ElectronActiveObservationPort.js";
 import { captureElectronScenario } from "./ElectronActiveObservationService.js";
@@ -46,19 +47,6 @@ const fixture = async () => {
   await writeFile(join(denied, "main.js"), "module.exports = {};\n");
   await writeFile(join(readable, "main.js"), "module.exports = {};\n");
   return { root, denied, readable, executable };
-};
-
-/** Remove search permission from `directory` for the duration of `run`. */
-const withoutSearchPermission = async <T>(
-  directory: string,
-  run: () => Promise<T>,
-): Promise<T> => {
-  await chmod(directory, 0o000);
-  try {
-    return await run();
-  } finally {
-    await chmod(directory, 0o700);
-  }
 };
 
 it

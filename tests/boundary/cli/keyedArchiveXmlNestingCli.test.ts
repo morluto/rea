@@ -32,11 +32,12 @@ for (const [name, xml] of [
       });
       expect(output.exitCode, output.stderr).toBe(1);
       expect(output.json).toMatchObject({
-        code: "truncated",
-        category: "truncated",
+        code: "partial",
+        category: "partial",
         details: {
           reason: "limit",
           truncated: true,
+          reported_limits: { boundary: "plist-nesting-depth", maximum: 128 },
           detail: expect.stringMatching(
             /keyed archive.*128 nesting levels.*no runtime override/iu,
           ),

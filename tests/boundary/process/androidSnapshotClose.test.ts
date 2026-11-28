@@ -17,10 +17,8 @@ import {
   RegularFileCancelled,
   RegularFileCleanupFailure,
 } from "../../../src/filesystem/OwnedRegularFile.js";
-import {
-  createJadxProtocolFixture,
-  verifyJadxFixtureCleanup,
-} from "../../fixtures/android/jadx.js";
+import { expectProviderLaunchCleanup } from "../../support/process/expectProviderLaunchCleanup.js";
+import { createJadxProtocolFixture } from "../../fixtures/android/jadx.js";
 
 const state = vi.hoisted(() => ({
   enabled: false,
@@ -152,7 +150,7 @@ test("keeps the stable-file diagnosis when snapshot close succeeds", async () =>
     state.enabled = false;
     state.fail = false;
     await fixture.provider.close().catch(() => undefined);
-    await verifyJadxFixtureCleanup(fixture.launches);
+    await expectProviderLaunchCleanup(fixture.launches);
   }
 });
 
@@ -266,7 +264,7 @@ for (const mode of [
       await fixture.provider.close().catch(() => undefined);
       for (const owned of [...state.handles, ...state.sourceHandles])
         if (owned.handle.fd >= 0) await owned.close().catch(() => undefined);
-      await verifyJadxFixtureCleanup(fixture.launches);
+      await expectProviderLaunchCleanup(fixture.launches);
     }
   });
 
@@ -382,7 +380,7 @@ for (const mode of ["source-close-failure", "both-close-failure"] as const)
       await fixture.provider.close().catch(() => undefined);
       for (const owned of [...state.handles, ...state.sourceHandles])
         if (owned.handle.fd >= 0) await owned.close().catch(() => undefined);
-      await verifyJadxFixtureCleanup(fixture.launches);
+      await expectProviderLaunchCleanup(fixture.launches);
     }
   });
 
@@ -431,7 +429,7 @@ test("keeps the changed-file diagnosis when both snapshot closes fail", async ()
     await fixture.provider.close().catch(() => undefined);
     for (const owned of [...state.handles, ...state.sourceHandles])
       if (owned.handle.fd >= 0) await owned.close().catch(() => undefined);
-    await verifyJadxFixtureCleanup(fixture.launches);
+    await expectProviderLaunchCleanup(fixture.launches);
   }
 });
 
@@ -480,7 +478,7 @@ test("retains the source descriptor when snapshot admission cleanup fails", asyn
     await fixture.provider.close().catch(() => undefined);
     for (const owned of [...state.handles, ...state.sourceHandles])
       if (owned.handle.fd >= 0) await owned.close().catch(() => undefined);
-    await verifyJadxFixtureCleanup(fixture.launches);
+    await expectProviderLaunchCleanup(fixture.launches);
   }
 });
 

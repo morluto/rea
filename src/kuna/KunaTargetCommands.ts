@@ -1,4 +1,5 @@
 import {
+  artifactFileCleanupError,
   ArtifactFileCleanupFailure,
   artifactFilePrimaryFacts,
   bindArtifactFileCleanup,
@@ -26,7 +27,10 @@ import {
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  providerCleanupErrorFromFailures,
+} from "../domain/analysisErrorCleanup.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { prepareProcessOwnershipInspection } from "../process/ProcessOwnershipObservation.js";
@@ -328,23 +332,19 @@ export class KunaTargetCommands {
     return failures.length === 0
       ? ok(null)
       : err(
-          new ProviderCleanupError(
+          providerCleanupErrorFromFailures(
             KUNA_PROVIDER_ID,
-            failures.flatMap((failure) => failure.cleanupResources),
+            failures,
+            failures
+              .map((failure) =>
+                String(failure.diagnostics?.["reason"] ?? failure.message),
+              )
+              .join("; "),
             {
-              reason: failures
-                .map((failure) =>
-                  String(failure.diagnostics?.["reason"] ?? failure.message),
-                )
-                .join("; "),
+              operation: "close_binary",
+              message: "Kuna command cleanup remains incomplete",
             },
-            {
-              cause: new AggregateError(
-                failures,
-                "Kuna command cleanup remains incomplete",
-              ),
-            },
-          ).bindCleanupDependencies(failures),
+          ),
         );
   }
 
@@ -355,19 +355,12 @@ export class KunaTargetCommands {
     try {
       return await this.#resources.run(work);
     } catch (cause: unknown) {
-      if (
-        cause instanceof ArtifactReaderFailure &&
-        cause.cleanup !== undefined
-      ) {
-        const failure = new ProviderCleanupError(
-          KUNA_PROVIDER_ID,
-          cause.cleanup.resources,
-          { reason: cause.cleanup.reason },
-          { cause, operation },
-        );
-        bindArtifactFileCleanup(cause, failure);
-        return err(failure);
-      }
+      const fileCleanup = artifactFileCleanupError(
+        cause,
+        KUNA_PROVIDER_ID,
+        operation,
+      );
+      if (fileCleanup !== undefined) return err(fileCleanup);
       if (this.#closing && cause instanceof ArtifactReaderFailure)
         return err(cancelledBy(operation, carriedReason(cause)));
       throw cause;

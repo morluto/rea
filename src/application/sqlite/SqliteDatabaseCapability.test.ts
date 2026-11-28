@@ -21,9 +21,8 @@ it.each([
     expect(capability).toMatchObject({
       operation: "inspect_sqlite_database",
       available,
-      reason: available
-        ? null
-        : expect.stringContaining("Node.js 24.x >=24.15 or 26+"),
+      // The code classifies the refusal; the reason only explains it.
+      reason: available ? null : expect.any(String),
       availability_code: available ? null : "unsupported_version",
       limitations: [expect.stringContaining("DatabaseSync.limits")],
     });

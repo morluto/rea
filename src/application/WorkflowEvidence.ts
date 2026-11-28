@@ -2,13 +2,17 @@ import { unknownTarget } from "../domain/targetIdentity.js";
 import { AnalysisWorkScope } from "../ports/AnalysisWorkScope.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
-import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
+import {
+  completedOperationEvidence,
+  carrySessionExecutionProvenance,
+} from "./binary/SessionEvidenceReuse.js";
 import { REA_WORKFLOW_PROVIDER } from "../domain/investigationProviders.js";
 import {
   workflowAnalysisProfile,
   workflowAnalysisProfileParameters,
 } from "./WorkflowAnalysisProfile.js";
 import type {
+  AnalysisExecution,
   AnalysisOperation,
   AnalysisOperationPort,
 } from "../ports/AnalysisProvider.js";
@@ -25,7 +29,6 @@ import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
   createEvidence,
   evidenceEnvelopeForAdmission,
-  evidenceSubjectTarget,
   type Evidence,
   type EvidenceLocation,
 } from "../domain/evidence.js";
@@ -59,7 +62,7 @@ import {
  * with the number of items.
  */
 export interface ComposedLimitationBudget {
-  /** Operations the workflow calls once per item. */
+  /** Operations whose caveats the workflow admits after checking the item. */
   readonly perItemOperations: ReadonlySet<AnalysisOperation>;
   /**
    * First distinct per-item caveats retained, grouped by provider and text.
@@ -99,10 +102,18 @@ export type ComposedWorkflowResult =
     readonly partial?: ComposedWorkflowObservation;
   };
 
+export interface WorkflowAnalysisPort extends AnalysisOperationPort {
+  /** Publish caveats only after admitting an observation for a workflow item. */
+  recordItemLimitations?(
+    operation: AnalysisOperation,
+    execution: AnalysisExecution,
+  ): void;
+}
+
 /** Retain the limits of exactly the observations used by one composed call. */
 export const executeComposedWorkflow = async (
   analysis: AnalysisOperationPort,
-  execute: (observed: AnalysisOperationPort) => EnhancedResult,
+  execute: (observed: WorkflowAnalysisPort) => EnhancedResult,
   budget?: ComposedLimitationBudget,
 ): Promise<ComposedWorkflowResult> => {
   const limitations = new Map<string, SourceLimitation>();
@@ -113,7 +124,46 @@ export const executeComposedWorkflow = async (
   let omittedObservations = 0;
   let cachePolicy: "live" | undefined;
   const workScope = new AnalysisWorkScope();
-  const observed: AnalysisOperationPort = {
+  const recordLimitations = (
+    operation: AnalysisOperation,
+    execution: AnalysisExecution,
+  ): void => {
+    for (const limitation of execution.limitations) {
+      const fact = {
+        provider: execution.provider,
+        operation,
+        limitation,
+      } satisfies SourceLimitation;
+      if (budget?.perItemOperations.has(operation) === true) {
+        // Reject oversized text before allocating a grouping key. Complete
+        // caveats are already retained by the export's per-function owner.
+        const maxBytes = budget.maxBytes ?? 8_000;
+        const bytes = jsonStringByteLength(limitation, maxBytes);
+        if (bytes > maxBytes) {
+          omittedObservations += 1;
+          continue;
+        }
+        const group = sourceLimitationGroupKey(fact);
+        if (!perItemGroups.has(group)) {
+          if (
+            perItemGroups.size >= budget.maxDistinct ||
+            perItemBytes + bytes > maxBytes
+          ) {
+            omittedObservations += 1;
+            continue;
+          }
+          perItemGroups.add(group);
+          perItemBytes += bytes;
+        }
+      }
+      limitations.set(sourceLimitationKey(fact), fact);
+    }
+  };
+  const observed: WorkflowAnalysisPort = {
+    recordItemLimitations: (operation, execution) => {
+      if (budget?.perItemOperations.has(operation) === true)
+        recordLimitations(operation, execution);
+    },
     resourceScope: analysis.resourceScope,
     execute: async (operation, parameters, options) => {
       let execution = await analysis.execute(operation, parameters, {
@@ -132,54 +182,32 @@ export const executeComposedWorkflow = async (
         options?.retainEvidence === true &&
         execution.value.evidenceId === undefined
       ) {
-        const source = createAnalysisExecutionEvidence(
+        const materialized = completedOperationEvidence(
           operation,
           parameters,
           execution.value,
-          "observed",
+          { target: null },
         );
+        if (!materialized.ok) return materialized;
+        const source = materialized.value;
         const recorded = recordEvidenceSources(
           (evidence) => sourceLedger.record(evidence),
           [source],
         );
         if (!recorded.ok) return recorded;
-        execution = ok({ ...execution.value, evidenceId: source.evidence_id });
+        execution = ok(
+          carrySessionExecutionProvenance(execution.value, {
+            ...execution.value,
+            evidenceId: source.evidence_id,
+          }),
+        );
       }
       if (execution.ok && execution.value.evidenceId !== undefined)
         evidenceLinks.add(execution.value.evidenceId);
       if (execution.ok && execution.value.cachePolicy === "live")
         cachePolicy = "live";
-      if (execution.ok)
-        for (const limitation of execution.value.limitations) {
-          const fact = {
-            provider: execution.value.provider,
-            operation,
-            limitation,
-          } satisfies SourceLimitation;
-          if (budget?.perItemOperations.has(operation) === true) {
-            // Reject oversized text before allocating a grouping key. Complete
-            // caveats are already retained by the export's per-function owner.
-            const maxBytes = budget.maxBytes ?? 8_000;
-            const bytes = jsonStringByteLength(limitation, maxBytes);
-            if (bytes > maxBytes) {
-              omittedObservations += 1;
-              continue;
-            }
-            const group = sourceLimitationGroupKey(fact);
-            if (!perItemGroups.has(group)) {
-              if (
-                perItemGroups.size >= budget.maxDistinct ||
-                perItemBytes + bytes > maxBytes
-              ) {
-                omittedObservations += 1;
-                continue;
-              }
-              perItemGroups.add(group);
-              perItemBytes += bytes;
-            }
-          }
-          limitations.set(sourceLimitationKey(fact), fact);
-        }
+      if (execution.ok && budget?.perItemOperations.has(operation) !== true)
+        recordLimitations(operation, execution.value);
       return execution;
     },
   };
@@ -234,9 +262,7 @@ export interface WorkflowEvidenceInput {
 
 const WORKFLOW_DERIVATION_LIMITATION = "Derived by an REA composed workflow.";
 
-const workflowLimitations = (
-  operation: AnalysisOperation,
-): readonly string[] =>
+const workflowLimitations = (operation: AnalysisOperation): readonly string[] =>
   operation === "trace_feature"
     ? [WORKFLOW_DERIVATION_LIMITATION, TRACE_FEATURE_REFERENCE_LIMITATION]
     : [WORKFLOW_DERIVATION_LIMITATION];
@@ -248,30 +274,35 @@ const workflowSubject = (target: BinaryTarget | undefined) =>
 export const createWorkflowEvidence = (
   input: WorkflowEvidenceInput,
 ): Evidence =>
-  createEvidence(workflowSubject(input.target), REA_WORKFLOW_PROVIDER, {
-    operation: input.operation,
-    parameters: input.parameters,
-    result: input.result,
-    ...(input.upstreamProfile === undefined
-      ? {}
-      : {
-          analysisProfile: workflowAnalysisProfile(
-            input.upstreamProfile,
-            input.operation,
-          ),
-        }),
-    confidence: "derived",
-    ...(input.upstreamEvidenceLinks === undefined
-      ? {}
-      : { evidenceLinks: input.upstreamEvidenceLinks }),
-    limitations: [
-      ...workflowLimitations(input.operation),
-      ...input.upstreamLimitations,
-    ],
-    ...(input.operation === "batch_decompile"
-      ? { locations: batchProcedureLocations(input.result) }
-      : {}),
-  });
+  createEvidence(
+    workflowSubject(input.target),
+    REA_WORKFLOW_PROVIDER,
+    {
+      operation: input.operation,
+      parameters: input.parameters,
+      result: input.result,
+      ...(input.upstreamProfile === undefined
+        ? {}
+        : {
+            analysisProfile: workflowAnalysisProfile(
+              input.upstreamProfile,
+              input.operation,
+            ),
+          }),
+      confidence: "derived",
+      ...(input.upstreamEvidenceLinks === undefined
+        ? {}
+        : { evidenceLinks: input.upstreamEvidenceLinks }),
+      limitations: [
+        ...workflowLimitations(input.operation),
+        ...input.upstreamLimitations,
+      ],
+      ...(input.operation === "batch_decompile"
+        ? { locations: batchProcedureLocations(input.result) }
+        : {}),
+    },
+    { callerTarget: input.target },
+  );
 
 const admitWorkflowRecovery = (
   observation: ComposedWorkflowObservation,
@@ -325,6 +356,7 @@ const admitWorkflowRecovery = (
       locations: [],
       evidenceLinks: [],
     },
+    evidenceInput.target,
   );
   const additional = estimateJsonStorage([
     observation.result,

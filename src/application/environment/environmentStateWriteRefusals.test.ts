@@ -22,12 +22,16 @@ import { STATE_INTAKE_LIMIT_BYTES } from "./environmentStateDocument.js";
 const DARK = { theme: "dark", meta: { n: 1 } };
 const LIGHT = { theme: "light", meta: { n: 2 } };
 
-/** One organisation's settings document, read, patched with both members and read again. */
-const SETTINGS_ROWS: readonly TimedCaptureRow[] = [
-  ["GET", "/api/orgs/1/settings", DARK],
-  ["PATCH", "/api/orgs/1/settings", LIGHT, 200, LIGHT],
-  ["GET", "/api/orgs/1/settings", LIGHT],
+const SETTINGS_PATH = "/api/orgs/1/settings";
+const settingsRows = (
+  patchPath = SETTINGS_PATH,
+  updated: JsonValue = LIGHT,
+): readonly TimedCaptureRow[] => [
+  ["GET", SETTINGS_PATH, DARK],
+  ["PATCH", patchPath, updated, 200, updated],
+  ["GET", SETTINGS_PATH, updated],
 ];
+const SETTINGS_ROWS = settingsRows();
 
 const READ_SETTINGS = "get_orgs_settings_by_id";
 const PATCH_SETTINGS = "patch_orgs_settings_by_id";
@@ -58,13 +62,25 @@ const nested = (depth: number): JsonValue =>
   Array.from({ length: depth }).reduce<JsonValue>((inner) => [inner], 1);
 
 describe("served document writes", () => {
-  it("accepts only the members the capture sent, as the JSON types the document holds", () => {
-    const settings = servedFrom(SETTINGS_ROWS);
+  it("changes only the recorded document path with the learned member names and types", () => {
+    const query = "scope=panel&view=full";
+    const reversed = "view=full&scope=panel";
+    const gray = { ...LIGHT, theme: "gray" };
+    const settings = servedFrom([
+      ...settingsRows(`${SETTINGS_PATH}?${query}`),
+      ["PATCH", `${SETTINGS_PATH}?${reversed}`, gray, 200, gray],
+      ["GET", SETTINGS_PATH, gray],
+    ]);
     expect(settings.state.writes.get(PATCH_SETTINGS)).toMatchObject({
       served: true,
       effect: "document",
     });
     expectRefusedUnchanged(settings, [
+      [
+        PATCH_SETTINGS,
+        { id: "2", body: { theme: "blue" } },
+        "holds this document only at /api/orgs/1/settings",
+      ],
       [
         PATCH_SETTINGS,
         { id: "1", body: { theme: 5, extra: true } },
@@ -76,51 +92,52 @@ describe("served document writes", () => {
         "Member extra is not one the capture showed stored",
       ],
     ]);
-    const blue = { theme: "blue", meta: DARK.meta };
-    expect(
-      settings.answer(PATCH_SETTINGS, { id: "1", body: { theme: "blue" } }),
-    ).toMatchObject({
-      body: blue,
-      state: { view: "document-write", path: "/api/orgs/1/settings" },
-    });
-    expect(settings.answer(READ_SETTINGS, { id: "1" }).body).toEqual(blue);
-  });
-
-  it("leaves a document write unserved when its recording changed a member's JSON type, which serving would refuse", () => {
-    const retyped = { theme: 5, meta: LIGHT.meta };
-    const settings = servedFrom([
-      ["GET", "/api/orgs/1/settings", DARK],
-      ["PATCH", "/api/orgs/1/settings", retyped, 200, retyped],
-      ["GET", "/api/orgs/1/settings", retyped],
-    ]);
-    expect(settings.state.writes.get(PATCH_SETTINGS)).toMatchObject({
-      served: false,
-      reason: "unexplained-change",
-    });
-  });
-
-  it("does not confirm a document write at another path, which serving refuses", () => {
-    const settings = servedFrom([
-      ["GET", "/api/orgs/1/settings", DARK],
-      ["PATCH", "/api/orgs/2/settings", LIGHT, 200, LIGHT],
-      ["GET", "/api/orgs/1/settings", LIGHT],
-    ]);
-    expect(settings.state.writes.get(PATCH_SETTINGS)).toMatchObject({
-      served: false,
-    });
-  });
-
-  it("changes the document only at the path the state holds it", () => {
-    const settings = servedFrom(SETTINGS_ROWS);
-    expectRefusedUnchanged(settings, [
-      [
-        PATCH_SETTINGS,
-        { id: "2", body: { theme: "blue" } },
-        "holds this document only at /api/orgs/1/settings",
-      ],
-    ]);
     expect(settings.answer(READ_SETTINGS, { id: "1" }).body).toEqual(DARK);
+    const patch = settings.source.manifest.tools.find(
+      ({ name }) => name === PATCH_SETTINGS,
+    )!;
+    const respond = environmentToolAnswer(settings.source, settings.store);
+    for (const [rawQuery, queryArgs, theme, exact] of [
+      [query, {}, "blue", true],
+      [reversed, {}, "green", false],
+      [undefined, { scope: "panel", view: "full" }, "yellow", false],
+      [undefined, {}, "purple", true],
+    ] as const) {
+      const body = { theme, meta: DARK.meta };
+      expect
+        .soft(
+          respond(patch, { id: "1", ...queryArgs, body: { theme } }, rawQuery),
+        )
+        .toMatchObject({
+          ok: true,
+          value: {
+            body,
+            replay: { exact_match: exact, record_ordinal: 1 },
+            state: { view: "document-write", path: "/api/orgs/1/settings" },
+          },
+        });
+      expect(settings.answer(READ_SETTINGS, { id: "1" }).body).toEqual(body);
+    }
   });
+
+  it.each([
+    [
+      "changes a member's type",
+      SETTINGS_PATH,
+      { theme: 5, meta: LIGHT.meta },
+      { reason: "unexplained-change" },
+    ],
+    ["targets another path", "/api/orgs/2/settings", LIGHT, {}],
+  ] as const)(
+    "withholds a recorded document write that %s",
+    (_, path, updated, reason) => {
+      const settings = servedFrom(settingsRows(path, updated));
+      expect(settings.state.writes.get(PATCH_SETTINGS)).toMatchObject({
+        served: false,
+        ...reason,
+      });
+    },
+  );
 });
 
 describe("values the state can load back", () => {

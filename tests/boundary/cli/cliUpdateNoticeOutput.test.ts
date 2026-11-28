@@ -2,7 +2,7 @@ import { Writable } from "node:stream";
 import { expect, it } from "vitest";
 
 import { createCliResultOutput } from "../../../src/cli/cliResultOutput.js";
-import { parseCliOutputArguments } from "../../../src/cliOutput.js";
+import { parseCliOutputArguments } from "../../../src/cli/cliOutput.js";
 
 it("retains failed output ownership when a terminal notice cannot be written", async () => {
   const cause = Object.assign(new Error("broken pipe during notice"), {

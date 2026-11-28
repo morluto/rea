@@ -2,19 +2,19 @@ import { readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { recordPredicateCounts } from "./record-predicate-guard.mjs";
+import { mapWithConcurrency } from "./bounded-file-reads.mjs";
 import {
   compareCountedBaseline,
   recordLoweredBaseline,
   reconcileBaselineFile,
 } from "./counted-baseline.mjs";
 import { localCompletenessEnumCount } from "./completeness-enum-guard.mjs";
+import { adhocCompletenessTernaryCount } from "./completeness-ternary-guard.mjs";
 import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
-import {
-  incurImportedNameCount,
-  incurZodImportCount,
-} from "./incur-import-guard.mjs";
 import { budgetArithmeticCount } from "./budget-arithmetic-guard.mjs";
 import { localLimitErrorClassCount } from "./limit-class-guard.mjs";
+import { usesRetiredTargetFailureVocabulary } from "./retired-target-failure-vocabulary.mjs";
+import { completedAbortReclassificationCount } from "./completed-abort-guard.mjs";
 import { countDefaultValidationClients } from "./mcp-client-validation.mjs";
 import {
   isComparisonOrCountFile,
@@ -22,6 +22,7 @@ import {
 } from "./optional-fact-default-guard.mjs";
 import { unmarkedMatchCount } from "./reason-marker.mjs";
 import { blankComments } from "./source-tokens.mjs";
+import { moduleReExportCount } from "./module-re-export-guard.mjs";
 import {
   cliTextGuardSelects,
   cliTextOutsideCliCount,
@@ -42,6 +43,16 @@ import { findTypedScriptSiblingDeclarations } from "./typed-script-declarations-
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 
+// The source, test and vocabulary checks overlap within this invocation.
+const sourceTextByPath = new Map();
+const readSourceText = async (path) => {
+  const cached = sourceTextByPath.get(path);
+  if (cached !== undefined) return cached;
+  const source = await readFile(path, "utf8");
+  sourceTextByPath.set(path, source);
+  return source;
+};
+
 const listFiles = async (dir) => {
   const output = [];
   for (const entry of await readdir(dir, { withFileTypes: true })) {
@@ -59,16 +70,14 @@ const listFiles = async (dir) => {
 };
 
 const sources = await listFiles(join(root, "src"));
-const files = await Promise.all(
-  sources.map(async (path) => {
-    const source = await readFile(path, "utf8");
-    return {
-      path: relative(root, path).split(sep).join("/"),
-      content: blankComments(source),
-      source,
-    };
-  }),
-);
+const files = await mapWithConcurrency(sources, async (path) => {
+  const source = await readSourceText(path);
+  return {
+    path: relative(root, path).split(sep).join("/"),
+    content: blankComments(source),
+    source,
+  };
+});
 const failures = [];
 const check = (label, selected, pattern, allow = []) => {
   const offenders = selected.filter(
@@ -97,7 +106,6 @@ check(
 
 check("NUL-joined list key (use compositeKey)", files, /\.join\(["']\\0["']\)/);
 
-// Pushed effect invalidation (docs/adr/javascript/pushed-effect-invalidation.md).
 // Opaque-effect checks are private to javascriptSemanticEffectLog.ts, so the
 // compiler keeps readers on its questions, and only the log and its record
 // module read the recorded sites. A method read on an intrinsic
@@ -141,9 +149,8 @@ check(
 // prlimitCeilingArguments because PcapCommand appends the producer command.
 // Its CPU ceiling stays 300 seconds and it has no resident-input budget;
 // address space and file size use those shared fields.
-// selectEvmWorkerLimits stays a separate selector: Result failures, unit
-// checks, and a refusal when soft exceeds hard. It must not call
-// clampLinuxResourceLimits.
+// EVMole reads and validates inherited limits through the same foundation
+// reader. It still selects soft-only arguments as a separate launch policy.
 check(
   "inline paired prlimit ceilings (use prlimitArgumentVector from src/process/LinuxResourceLimits)",
   files,
@@ -247,22 +254,8 @@ check(
 );
 
 // "Non-null object other than an array" has one owner: src/kernel/isRecord.ts.
-// A local predicate with that body, under any name, is a copy. The listed files
-// still hold one and may only be removed from the list; a listed file that no
-// longer matches fails so the list shrinks with the code.
-const RECORD_PREDICATE_COPIES = [
-  // Exported under a module-specific name; importers still use that name.
-  "src/browser/history/CaptureRedaction.ts",
-  "src/contracts/compactJsonSchema.ts",
-  "src/domain/analysisView/environmentStateRules.ts",
-  // Owned by the advertised-schema workstream.
-  "src/contracts/inputSchemaPresentation.ts",
-  // Narrows a protocol-specific parameter type, not unknown.
-  "src/browser/execution/CdpRuntimeInitiator.ts",
-  // Named `object`, which also spells the typeof result in these files.
-  "src/pcap/PcapDnsWire.ts",
-  "src/pcap/PcapOutput.ts",
-];
+// A local predicate with that body, under any name, is a copy.
+const RECORD_PREDICATE_COPIES = [];
 const mismatchedRecordCopies = files.filter(({ path, content }) => {
   if (path === "src/kernel/isRecord.ts") return false;
   const { named, bodies } = recordPredicateCounts(content);
@@ -309,9 +302,9 @@ check(
   ],
 );
 
-// Native inventory results parse once against their named fact contract
-// (docs/adr/native/typed-operation-facts.md). Hopper's reply table and the
-// advertised output schemas own their own protocol and catalog contracts.
+// Native inventory results parse once against their named fact contract.
+// Hopper's reply table and the advertised output schemas own their protocol
+// and catalog contracts.
 check(
   "native inventory rows parsed outside their fact contract (use executeFact or a contract from src/domain/native/nativeOperationFacts)",
   files,
@@ -415,7 +408,6 @@ checkCounted(
   ["src/process/capturedProviderOutput.ts"],
 );
 
-// Pushed effect invalidation (docs/adr/javascript/pushed-effect-invalidation.md).
 // Recorded effects belong to the effect log. A reader that reads an effect
 // index itself decides on its own which effect kinds and proofs apply; readers
 // ask the log instead. Every reader has moved; the remaining counts are the
@@ -656,7 +648,7 @@ checkCounted(
   "completed result reclassified by a hand-read abort signal (finalize through runOwned in src/providers/runOwned)",
   "completed-abort-reclassification",
   files,
-  /\.ok\s*&&\s*(?:isAborted\(|[\w.?]*signal\??\.aborted)/gu,
+  completedAbortReclassificationCount,
   ["src/providers/runOwned.ts"],
 );
 
@@ -712,6 +704,27 @@ checkCounted(
   files,
   /\bcause instanceof ConfigurationError\b/gu,
   ["src/config/runtimeAnalysisSettings.ts"],
+);
+
+// A re-export leaves a second import path for a symbol, so moved code keeps a
+// shim and consumers never learn its owner. Import from the owning module.
+// The resource-scope entrypoint and the lazily loaded CLI bundle entries are
+// the only declared re-export boundaries.
+checkCounted(
+  "re-export from another module (import the symbol from its owning module)",
+  "module-re-export",
+  files.filter(({ path }) => path.startsWith("src/")),
+  (content, { source }) =>
+    /\bexport\s*(?:type\s*)?[*{]/u.test(content)
+      ? moduleReExportCount(source)
+      : 0,
+  [
+    "src/resources/index.ts",
+    // Loaded by src/cliLoader.ts through a dynamic import.
+    "src/cli.ts",
+    // Loaded by src/cliOneShot.ts through a dynamic import.
+    "src/cli/cliResultOutput.ts",
+  ],
 );
 
 // Byte-format parsers read untrusted input. Bounds, truncation and failure
@@ -933,33 +946,22 @@ const listTestFiles = async (dir) => {
   }
   return output;
 };
-const testFiles = await Promise.all(
+const testFiles = await mapWithConcurrency(
   [
     ...(await listTestFiles(join(root, "src"))),
     ...(await listFiles(join(root, "tests"))),
     ...(await listTestFiles(join(root, "tests"))),
-  ].map(async (path) => ({
+  ],
+  async (path) => ({
     path: relative(root, path).split(sep).join("/"),
-    content: await readFile(path, "utf8"),
-  })),
+    content: await readSourceText(path),
+  }),
 );
 checkCounted(
   "test redefines process.platform or process.arch (inject the platform: pass it as a parameter or host option, or mock src/platform/HostPlatform)",
   "test-host-platform-stub",
   testFiles,
   /\b(?:defineProperty|spyOn)\(\s*(?:globalThis\.)?process\s*,\s*["'`](?:platform|arch)["'`]/gu,
-  [],
-);
-
-// Schemas import zod directly. incur's `z` is a re-export of the same package;
-// importing it through the CLI framework ties schemas to a dependency REA is
-// removing (#11654). Declarations are read from code tokens, so the text in a
-// comment or string fixture does not count.
-checkCounted(
-  'zod imported through incur (import { z } from "zod")',
-  "incur-zod-reexport",
-  [...files, ...testFiles],
-  (_content, file) => incurZodImportCount(file.source ?? file.content),
   [],
 );
 
@@ -975,21 +977,10 @@ checkCounted(
   ["src/cli/commandRegistry.ts"],
 );
 
-// REA is replacing incur with its own CLI owners (#11654). Each replacement
-// removes the names it superseded; this counted list only shrinks until incur
-// leaves package.json.
-checkCounted(
-  "name imported from incur (use REA's CLI owner in src/cli)",
-  "incur-import",
-  [...files, ...testFiles],
-  (_content, file) => incurImportedNameCount(file.source ?? file.content),
-  [],
-);
-
 // `find` on a parsed section, program-header or load-command table silently
 // keeps the first of repeated declarations. Select keyed entries through
 // src/domain/keyedCollection (`uniqueKeyed`, `allKeyed`, or
-// `firstKeyed`/`lastKeyed` with the format's precedence rule); an
+// `firstKeyed` with the format's precedence rule); an
 // address-containment test that selects nothing uses `some`. GuidanceAccess
 // looks up a guidance document's heading section by its locator identity,
 // not a parsed binary section table.
@@ -1016,20 +1007,18 @@ checkCounted(
 // processes that may still use it confirm cleanup; otherwise it is retained
 // and named. scripts/lib/verifier-fixture.mjs owns that ordering on a
 // src/process PrivateRuntimeRoot, so verifiers allocate roots through it.
-const verifierScripts = await Promise.all(
+const verifierScripts = await mapWithConcurrency(
   (await readdir(join(root, "scripts"), { recursive: true }))
     .map((path) => path.split(sep).join("/"))
     .filter(
       (path) =>
         /^(?:verify-[^/]+|verify\/.+)\.mjs$/u.test(path) &&
         path !== "verify/architecture-guards.mjs",
-    )
-    .map(async (path) => ({
-      path: `scripts/${path}`,
-      content: blankComments(
-        await readFile(join(root, "scripts", path), "utf8"),
-      ),
-    })),
+    ),
+  async (path) => ({
+    path: `scripts/${path}`,
+    content: blankComments(await readSourceText(join(root, "scripts", path))),
+  }),
 );
 // The Windows native lane tests PrivateRuntimeRoot itself: it calls
 // PrivateRuntimeRoot.create under a parent whose DELETE lease forces a sharing
@@ -1079,6 +1068,37 @@ checkCounted(
   ],
 );
 
+// Application services load the analysis-view module only when a summary or
+// view is actually requested (await import), so one-shot CLI chunks do not
+// statically link it. The remaining static importers are the two synchronous
+// view-projection helpers and Frida's synchronous status path, counted here
+// so new static links cannot return silently (see #14112).
+checkCounted(
+  "static AnalysisViewService import in an application service (load it with await import on the summary branch, or shrink this baseline with its own change)",
+  "static-analysis-view-import",
+  files.filter(
+    (file) =>
+      file.path.startsWith("src/application/") &&
+      !file.path.startsWith("src/application/analysisView/") &&
+      !file.path.endsWith(".test.ts"),
+  ),
+  /from\s+["'][^"']*analysisView\/AnalysisViewService\.js["']/gu,
+  [],
+);
+
+// Completeness is a derived claim built monotonically from examined input.
+// Ad-hoc `? "complete" :` / `: "complete"` ternaries drop newly added omission
+// or trailing-byte checks; use CoverageAccumulator / joinCoverageStatus in
+// src/domain/coverageAccumulator.ts instead. Existing sites are ratcheted here
+// so the count can only shrink.
+checkCounted(
+  'ad-hoc "complete" ternary in src/domain (use CoverageAccumulator or joinCoverageStatus from src/domain/coverageAccumulator)',
+  "adhoc-completeness-ternary",
+  files.filter((file) => file.path.startsWith("src/domain/")),
+  adhocCompletenessTernaryCount,
+  ["src/domain/coverage.ts", "src/domain/coverageAccumulator.ts"],
+);
+
 // Scripts covered by tsconfig.scripts.json declare and check their types in
 // JSDoc inside the .mjs source itself (#11616). A sibling .d.ts / .d.mts file
 // creates a second, unchecked type source that hides signature drift.
@@ -1086,6 +1106,49 @@ const siblingDeclarationFiles = await findTypedScriptSiblingDeclarations(root);
 if (siblingDeclarationFiles.length > 0)
   failures.push(
     `typed script in tsconfig.scripts.json has a sibling declaration file (inline JSDoc types in the .mjs source instead):\n${siblingDeclarationFiles.map((file) => `  ${file}`).join("\n")}`,
+  );
+
+const listVocabularyFiles = async (dir, extensions) => {
+  const output = [];
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.name === "node_modules") continue;
+    if (entry.isDirectory())
+      output.push(...(await listVocabularyFiles(path, extensions)));
+    else if (extensions.some((extension) => entry.name.endsWith(extension)))
+      output.push(path);
+  }
+  return output;
+};
+const vocabularyGuardPath =
+  "scripts/verify/retired-target-failure-vocabulary.mjs";
+const vocabularyGuardTestPath =
+  "tests/evaluation/retiredTargetFailureVocabulary.test.ts";
+const vocabularyFiles = await mapWithConcurrency(
+  [
+    ...(await listVocabularyFiles(join(root, "src"), [".ts", ".mts", ".py"])),
+    ...(await listVocabularyFiles(join(root, "tests"), [".ts", ".mjs", ".py"])),
+    ...(await listVocabularyFiles(join(root, "scripts"), [
+      ".mjs",
+      ".ts",
+      ".py",
+    ])),
+    ...(await listVocabularyFiles(join(root, "bridge"), [".py"])),
+  ],
+  async (path) => ({
+    path: relative(root, path).split(sep).join("/"),
+    content: await readSourceText(path),
+  }),
+);
+const retiredVocabulary = vocabularyFiles.filter(
+  ({ path, content }) =>
+    path !== vocabularyGuardPath &&
+    path !== vocabularyGuardTestPath &&
+    usesRetiredTargetFailureVocabulary(content),
+);
+if (retiredVocabulary.length > 0)
+  failures.push(
+    `retired target-failure vocabulary (raise a TargetFailure kind instead; see docs/reference/target-failures.md):\n${retiredVocabulary.map(({ path }) => `  ${path}`).join("\n")}`,
   );
 
 for (const key of baselineTexts.keys())

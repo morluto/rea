@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   DEFAULT_WASM_INTERFACE_REPRESENTATION_BYTES,
@@ -8,16 +9,12 @@ import { WasmInterfaceBudget } from "../domain/wasm/wasmInterfaceBudget.js";
 
 it("refuses typed WASM interface growth without asking the caller to wait", () => {
   const budget = new WasmInterfaceBudget();
-  expect(() =>
-    budget.reserve(DEFAULT_WASM_INTERFACE_REPRESENTATION_BYTES + 1),
-  ).toThrowError();
   try {
     budget.reserve(DEFAULT_WASM_INTERFACE_REPRESENTATION_BYTES + 1);
     throw new Error("Expected a representation refusal");
   } catch (error) {
-    const projected = projectAnalysisError(
-      error as Parameters<typeof projectAnalysisError>[0],
-    );
+    if (!(error instanceof AnalysisResourceConstraintError)) throw error;
+    const projected = projectAnalysisError(error);
     expect(projected).toMatchObject({
       retryable: false,
       details: {
@@ -25,8 +22,31 @@ it("refuses typed WASM interface growth without asking the caller to wait", () =
         reported_limits: {
           maximum_bytes: DEFAULT_WASM_INTERFACE_REPRESENTATION_BYTES,
         },
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_interface_bytes",
+          effective_value: DEFAULT_WASM_INTERFACE_REPRESENTATION_BYTES,
+          unit: "bytes",
+          minimum: 1,
+          maximum: MAX_WASM_INTERFACE_REPRESENTATION_BYTES,
+          default_value: DEFAULT_WASM_INTERFACE_REPRESENTATION_BYTES,
+          applies_at: "next_call",
+        },
+        refusal: {
+          kind: "adjustable_budget",
+          operation: "inspect_wasm_artifact",
+          control: "max_interface_bytes",
+          effective_value: DEFAULT_WASM_INTERFACE_REPRESENTATION_BYTES,
+          unit: "bytes",
+          range: {
+            minimum: 1,
+            maximum: MAX_WASM_INTERFACE_REPRESENTATION_BYTES,
+          },
+          default_value: DEFAULT_WASM_INTERFACE_REPRESENTATION_BYTES,
+        },
       },
     });
+    expect(projected.details?.limit).not.toHaveProperty("required_value");
     expect(projected.remediation.action).toContain("max_interface_bytes");
     expect(projected.remediation.action).not.toContain("fixed count");
     expect(projected.remediation.action).not.toMatch(
@@ -43,15 +63,40 @@ it("does not suggest an impossible increase at the runtime representation maximu
     budget.reserve(MAX_WASM_INTERFACE_REPRESENTATION_BYTES + 1);
     throw new Error("Expected serialization capacity refusal");
   } catch (error) {
-    const projected = projectAnalysisError(
-      error as Parameters<typeof projectAnalysisError>[0],
-    );
+    if (!(error instanceof AnalysisResourceConstraintError)) throw error;
+    const projected = projectAnalysisError(error);
     expect(projected).toMatchObject({
-      details: { reported_limits: { source: "request" } },
+      details: {
+        reported_limits: {
+          source: "request",
+          maximum_bytes: MAX_WASM_INTERFACE_REPRESENTATION_BYTES,
+          maximum_supported_bytes: MAX_WASM_INTERFACE_REPRESENTATION_BYTES,
+        },
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_interface_bytes",
+          effective_value: MAX_WASM_INTERFACE_REPRESENTATION_BYTES,
+          unit: "bytes",
+          minimum: 1,
+          maximum: MAX_WASM_INTERFACE_REPRESENTATION_BYTES,
+          default_value: DEFAULT_WASM_INTERFACE_REPRESENTATION_BYTES,
+          applies_at: "next_call",
+        },
+        refusal: {
+          kind: "adjustable_budget",
+          operation: "inspect_wasm_artifact",
+          control: "max_interface_bytes",
+          effective_value: MAX_WASM_INTERFACE_REPRESENTATION_BYTES,
+          unit: "bytes",
+          range: {
+            minimum: 1,
+            maximum: MAX_WASM_INTERFACE_REPRESENTATION_BYTES,
+          },
+          default_value: DEFAULT_WASM_INTERFACE_REPRESENTATION_BYTES,
+        },
+      },
     });
-    expect(projected.remediation.action).toContain(
-      "already at the runtime representation maximum",
-    );
+    expect(projected.details?.limit).not.toHaveProperty("required_value");
     expect(projected.remediation.action).not.toContain(
       "Raise max_interface_bytes",
     );
