@@ -51,6 +51,7 @@ import {
   semanticOriginsProvenance,
   semanticUnresolvedProvenance,
   uniqueSemanticOrigins,
+  UNKNOWN_REQUIRE_LOADER_REASON,
 } from "./javascriptSemanticProvenance.js";
 import {
   semanticPrimitiveCandidates as primitiveCandidates,
@@ -1379,8 +1380,10 @@ const provenanceForExpression = (
     const origins = uniqueSemanticOrigins(
       candidates.flatMap((candidate) => candidate.origins),
     );
+    // An unestablished `require` loader still yields only that module.
     const allModuleOrigins = candidates.every(
-      ({ status }) => status === "module",
+      ({ status, reason }) =>
+        status === "module" || reason === UNKNOWN_REQUIRE_LOADER_REASON,
     );
     if (allModuleOrigins && origins.length === 1)
       return semanticOriginsProvenance(origins);

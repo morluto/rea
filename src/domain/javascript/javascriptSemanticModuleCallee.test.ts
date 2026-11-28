@@ -47,6 +47,19 @@ describe("module-rooted callees", () => {
     expect(callees(source)).toContain(REGISTER);
   });
 
+  it.each([
+    [
+      "a selected fallback",
+      'const v = false || require("vscode"); v.commands.registerCommand("a");',
+    ],
+    [
+      "two branches requiring the same module",
+      'const v = flag ? require("vscode") : require("vscode"); v.commands.registerCommand("a");',
+    ],
+  ])("resolves %s", (_, source) => {
+    expect(callees(source)).toContain(REGISTER);
+  });
+
   it("labels a require-based origin as a candidate", () => {
     const [callee] = semanticModuleCallees(
       analyzeJavaScriptSemantics('const v = require("vscode"); v.f();'),
