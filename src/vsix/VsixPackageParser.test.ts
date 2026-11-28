@@ -2111,6 +2111,25 @@ it.each([
   expect(report.contributes.commands_omitted).toBe(1);
 });
 
+it.each(["demo", null, []])(
+  "keeps menus and keybindings unknown when contributes is %j",
+  async (contributes) => {
+    const bytes = await vsixPackageFixture({
+      packageJson: JSON.stringify({
+        name: "hello",
+        publisher: "demo",
+        version: "1.2.3",
+        contributes,
+      }),
+    });
+    const report = vsixPackageSchema.parse(
+      await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+    );
+    expect(report.contributes.menus).toBeNull();
+    expect(report.contributes.keybindings).toBeNull();
+  },
+);
+
 it.each(["demo", null, 1])(
   "keeps menus and keybindings declared as %j unknown",
   async (unsupported) => {

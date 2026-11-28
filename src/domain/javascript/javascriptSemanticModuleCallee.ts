@@ -42,8 +42,9 @@ const isBefore = (
   (left.line === right.line && left.column < right.column);
 
 /**
- * Whether source earlier than the call writes the called member or an object
- * containing it, through the same binding or another binding of the module.
+ * Whether source earlier than a member's read writes it or an object containing
+ * it, through the same binding or another binding of the module. Members the
+ * root binding already holds were read at its definition, the rest at the call.
  */
 const replacedMembers = (
   ir: Pick<JavaScriptSemanticIr, "objectOperations">,
@@ -81,10 +82,15 @@ const replacedMembers = (
     root: string,
     path: readonly string[],
     call: JavaScriptSourceRange["start"],
+    held?: {
+      readonly depth: number;
+      readonly since: JavaScriptSourceRange["start"];
+    },
   ): boolean =>
     path.some((_, end) => {
       const at = written.get(JSON.stringify([root, ...path.slice(0, end + 1)]));
-      return at !== undefined && isBefore(at, call);
+      const readAt = held !== undefined && end < held.depth ? held.since : call;
+      return at !== undefined && isBefore(at, readAt);
     });
 };
 
@@ -117,6 +123,7 @@ export const semanticModuleCallees = (
       continue;
     }
     let origin = requireOrigin;
+    let definedAt: JavaScriptSourceRange["start"] | undefined;
     if (bindingId !== null) {
       const binding = bindings.get(bindingId);
       if (binding === undefined) continue;
@@ -131,12 +138,20 @@ export const semanticModuleCallees = (
         continue;
       if (definitions.some(({ kind }) => kind === "assignment")) continue;
       origin = only;
+      definedAt = definitions[0]?.location.start;
     }
     if (origin === undefined) continue;
     const member = [...originPath(origin), ...path];
     if (
       (bindingId !== null && replaced(bindingId, path, location.start)) ||
-      replaced(origin.specifier, member, location.start)
+      replaced(
+        origin.specifier,
+        member,
+        location.start,
+        definedAt === undefined
+          ? undefined
+          : { depth: originPath(origin).length, since: definedAt },
+      )
     )
       continue;
     callees.set(callSiteId, {

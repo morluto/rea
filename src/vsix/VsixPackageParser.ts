@@ -706,8 +706,10 @@ const parsePackageJsonDocument = (
     : commandsRaw !== null && typeof commandsRaw === "object"
       ? [commandsRaw]
       : [];
+  const unreadContributes =
+    record.contributes !== undefined && contributesRaw === undefined;
   const unreadCommands =
-    (record.contributes !== undefined && contributesRaw === undefined) ||
+    unreadContributes ||
     (commandsRaw !== undefined &&
       (commandsRaw === null || typeof commandsRaw !== "object"));
   const keys = entries
@@ -753,16 +755,18 @@ const parsePackageJsonDocument = (
       commands_omitted: unreadCommands ? 1 : 0,
       // Menus are one object keyed by menu name, so an array is unread too.
       menus:
+        unreadContributes ||
         unreadableShape(contributesRaw?.menus) ||
         Array.isArray(contributesRaw?.menus)
           ? null
           : menuGroups(contributesRaw?.menus),
-      keybindings: unreadableShape(contributesRaw?.keybindings)
-        ? null
-        : rowsOf(contributesRaw?.keybindings).map((row) => ({
-            command: exactText(row.command),
-            key: exactText(row.key),
-          })),
+      keybindings:
+        unreadContributes || unreadableShape(contributesRaw?.keybindings)
+          ? null
+          : rowsOf(contributesRaw?.keybindings).map((row) => ({
+              command: exactText(row.command),
+              key: exactText(row.key),
+            })),
     },
     extensionDependencies: parseExtensionList(record.extensionDependencies),
     extensionPack: parseExtensionList(record.extensionPack),

@@ -238,6 +238,32 @@ describe("module members that are not the imported ones", () => {
     ).toEqual([["commands", "registerCommand"]]);
   });
 
+  it("keeps one origin when a file mixes import and require of a module", () => {
+    const file = parseJavaScriptSource(
+      'import * as v from "vscode"; const w = flag ? v : require("vscode");',
+    );
+    if (file === null) throw new Error("Expected a parsed source");
+    const ir = analyzeParsedJavaScriptSemantics(file, "require");
+    expect(
+      ir.bindings.find(({ name }) => name === "w")?.provenance.origins,
+    ).toHaveLength(1);
+  });
+
+  it.each([
+    'const { commands: c } = require("vscode"); require("vscode").commands = fake; c.registerCommand("a", f);',
+    'const v = require("vscode"); const c = v.commands; v.commands = fake; c.registerCommand("a", f);',
+  ])("keeps an object taken before its slot is replaced: %s", (source) => {
+    expect(callees(source)).toContain(REGISTER);
+  });
+
+  it("does not resolve an object taken after its slot is replaced", () => {
+    expect(
+      callees(
+        'const v = require("vscode"); v.commands = fake; const c = v.commands; c.registerCommand("a", f);',
+      ),
+    ).not.toContain(REGISTER);
+  });
+
   it("keeps a member when only a sibling is written", () => {
     expect(
       callees(
