@@ -132,7 +132,7 @@ export const ENHANCED_TOOL_CONTRACTS = [
       toolEffects({ mutatesSession: true, idempotent: false }),
       providerRemoteEffects,
     ),
-    "Resolve start and optional goal symbols or addresses, then trace direct callers or callees. Returns observed edges and a shortest path within the provider-observed graph. search_scope distinguishes the observed-graph result from whether discovery is established; a missing goal is unknown when relationship reads or discovery are incomplete. Unresolved indirect calls remain unknown.",
+    "Resolve start and an optional goal or nonempty goals array, then trace direct callers or callees. A single goal stops when reached; goals share a search of the provider-observed graph within optional max_depth and max_nodes limits, with a shortest path and status per goal. Missing goals remain unknown when reads or discovery are incomplete. search_scope reports discovery and the observed single-goal result. Backward roots have complete, empty caller reads. Unresolved indirect calls remain unknown.",
     enhancedInputSchemas.trace_call_path,
   ),
   enhanced(
