@@ -308,6 +308,68 @@ process.stdout.write(JSON.stringify({executable:basename(process.execPath),abiVe
       () => native.call("cutter_bridge_verify_directory", [sourceDirectory]),
       /owner|DACL/u,
     );
+    const threeTrusteesDirectory = join(workspace, "dacl-three-trustees");
+    const unrelatedPrincipalDirectory = join(
+      workspace,
+      "dacl-unrelated-principal",
+    );
+    await mkdir(threeTrusteesDirectory);
+    await mkdir(unrelatedPrincipalDirectory);
+    observeWithWindowsPowerShell(
+      String.raw`
+        $sid = [Security.Principal.SecurityIdentifier]
+        $u = [Security.Principal.WindowsIdentity]::GetCurrent().User
+        $sys = $sid::new('S-1-5-18')
+        $auth = $sid::new('S-1-5-11')
+        $rights = [Security.AccessControl.FileSystemRights]::FullControl
+        $inh = [Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
+        $prop = [Security.AccessControl.PropagationFlags]::None
+        $allow = [Security.AccessControl.AccessControlType]::Allow
+        function Set-ProtectedDirectoryTrustees([string]$target, [Security.Principal.SecurityIdentifier[]]$trustees) {
+          $ds = [Security.AccessControl.DirectorySecurity]::new()
+          $ds.SetOwner($u)
+          $ds.SetAccessRuleProtection($true, $false)
+          foreach ($t in $trustees) {
+            $ds.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($t, $rights, $inh, $prop, $allow))
+          }
+          [IO.Directory]::SetAccessControl($target, $ds)
+        }
+        Set-ProtectedDirectoryTrustees $env:REA_TEST_DACL_THREE_PATH @($u, $sys, $auth)
+        Set-ProtectedDirectoryTrustees $env:REA_TEST_DACL_UNRELATED_PATH @($u, $auth)
+      `,
+      {
+        REA_TEST_DACL_THREE_PATH: threeTrusteesDirectory,
+        REA_TEST_DACL_UNRELATED_PATH: unrelatedPrincipalDirectory,
+      },
+    );
+    assert.throws(
+      () =>
+        native.call("cutter_bridge_verify_directory", [threeTrusteesDirectory]),
+      (failure) => {
+        assert.equal(failure.code, "EACCES");
+        assert.equal(failure.win32Code, 5);
+        assert.equal(
+          failure.constraint,
+          "Private DACL contains unexpected trustees; ace_count=3 protected=1 token_user_equals_system=0",
+        );
+        return true;
+      },
+    );
+    assert.throws(
+      () =>
+        native.call("cutter_bridge_verify_directory", [
+          unrelatedPrincipalDirectory,
+        ]),
+      (failure) => {
+        assert.equal(failure.code, "EACCES");
+        assert.equal(failure.win32Code, 5);
+        assert.equal(
+          failure.constraint,
+          "Private DACL permits an unrelated principal; ace_count=2 protected=1 token_user_equals_system=0",
+        );
+        return true;
+      },
+    );
     report.controls.ordinaryDriveSeparatorsAndRequestedIdentity = true;
     // An owned runtime's DELETE lease conflicts with a fresh parent admission.
     // This produces a genuine sharing failure after successful authority caching,
