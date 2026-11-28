@@ -56,7 +56,14 @@ const emitMainWebMcpTools = (
           },
           required: ["orderId"],
         },
-        annotations: webMcpToolAnnotations,
+        annotations: Object.hasOwn(options, "webMcpAnnotations")
+          ? options.webMcpAnnotations
+          : {
+              ...webMcpToolAnnotations,
+              consequential: Object.hasOwn(options, "webMcpConsequential")
+                ? options.webMcpConsequential
+                : true,
+            },
         stackTrace:
           options.webMcpStackTrace !== undefined
             ? options.webMcpStackTrace(`http://127.0.0.1:${String(port)}`)
