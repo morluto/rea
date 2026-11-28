@@ -186,6 +186,64 @@ Current inventory Evidence requires scoped `coverage` with a `complete` or
 `unknown` status. Consumers use this producer-owned fact and reject records
 without it; limitations are explanatory and do not supply or infer coverage.
 Pages from one inventory must carry the same coverage declaration.
+`cluster_artifacts` extends this to many artifacts at once. Pass two or more
+`inspect_artifact` inventories inline as `{ "label": ..., "evidence": ... }`, or
+as `{ "label": ..., "evidence_id": ... }` naming retained Evidence in the session
+(or an `inspect_analysis_view` summary record), and it partitions them by exact
+root content digest (`root-sha256` is the only family tier) and indexes every graph
+member as shared, partially shared or unique. Labels are caller text and are never
+parsed as identity. A member whose
+inventory is incomplete, carries integrity contradictions, or declares a
+different `coverage.scope` than the strict majority is reported in
+`unknown_members` with its reason, never as different from the others. A
+re-packed container with identical members has no family and appears only in
+the member index; a member whose root digest no other member shares is counted
+in `summary.members_without_family` and is likewise not evidence of
+difference. `status` is `partitioned` when every examined member was compared,
+`partial` when some could not be, and `unknown` when none could.
+`offset`/`limit` page family rows only: `shared_members`,
+`partially_shared_members` and `unique_members` are never paged away.
+`shared_member_minimum` defaults to every member;
+`coverage.shared_member_minimum` reports the value used, and
+`coverage.member_index_withheld` is set when the examined node budget or the
+serialized-size budget of the index array was exhausted; the index is reported
+complete or withheld, never partial because a budget ran out. On MCP that size
+budget is a third of the response budget less the envelope headroom, because
+delivery repeats the result as structured content and as an escaped text copy
+that escaping can push past the structured copy; after the Evidence is built
+the complete repeated form is measured against the response budget, and an
+index whose call cannot ship is withheld behind `coverage.member_index_withheld`
+instead of becoming a delivery error with no clustering result: the families and
+coverage the call already computed still ship, no inventory is parsed a second
+time to drop rows, and the measured reason appears in `limitations`.
+A family asserts byte identity at the inspected root, so it needs a producer
+digest of that root's own bytes. A root whose digest is derived from its
+inventory graph instead (a directory root, whose digest covers member names and
+child identities, with unread entries such as symlink targets uncommitted) is
+compared and counted but excluded from the member index, and never placed in a
+family;
+`coverage.members_without_byte_root_digest` reports how many, counted over every
+complete inventory the call read whether or not a scope settled, and the reason
+appears in `limitations`. Both producer facts are required: a `manifest.root_format`
+that disagrees with the root node's own format stays unresolved rather than
+aligned. Directory nodes are likewise left out of the member
+index because their identity is graph-derived;
+`coverage.nodes_without_byte_identity` counts them on the same complete-member set,
+so a tie that settles no scope reports the omissions instead of zeros. Each index row carries
+`observations` of `{ label, evidence_id }` and a `member_count` counted per
+member, so repeated caller labels never merge two members and a row keeps its
+source Evidence even when no family row exists. Its `formats` array lists every
+distinct classification the members reported for that artifact id: identity
+commits to the digest, not to a format, so no input order picks the winner. Inventory completeness and
+coverage scope are separate facts: `members_with_complete_inventory` and
+`members_with_unknown_inventory` describe what each member declared, while
+`members_outside_member_scope` counts members with complete inventories
+whose declared scope is not the clustered scope (with no strict majority, every
+complete member). An incomplete member is explained by
+`members_with_unknown_inventory` instead and keeps its own declared scope in its
+row.
+`coverage.families_offset` and `coverage.families_limit` state the page the
+call returned.
 
 Function dossiers can declare per-facet coverage in the optional
 `normalized_result.facet_availability` map. Each supplied facet is either

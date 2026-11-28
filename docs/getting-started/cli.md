@@ -1287,6 +1287,18 @@ For an artifact summary selected from a bundle, include its complete parent
 inventory in the same bundle. The command resolves that parent from the
 authenticated file records; a summary-only file cannot supply missing facts.
 
+`rea cluster-artifacts` partitions two or more complete `inspect_artifact`
+Evidence documents into families by exact root content digest and indexes every
+graph member as shared, partially shared or unique; `--shared-member-minimum`
+sets how many members a graph member must appear in to count as shared, and
+`--offset` and `--limit` page the family rows only. The JSON result repeats the
+caller's own mapping as `members`: each supplied path next to the `evidence_id`
+of the document it named, so the mapping survives the inputs that carry no index
+rows at all — a set whose inventories are all graph-derived, or an index
+withheld over its budget. The MCP result keeps the same roster in its retained
+record instead; see [MCP tool results](../reference/mcp-contracts.md#tool-results) for the
+fields both adapters share.
+
 ## Import historical source
 
 Historical source inventories preserve exact filenames, including literal backslashes

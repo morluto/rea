@@ -12,6 +12,8 @@ import type { ProviderAvailability } from "../ports/AnalysisProvider.js";
 import { registerServiceTools } from "./serviceToolBindings.js";
 import type { SessionLifecycleOptions } from "./sessionLifecycle.js";
 import type { SessionStatusToolOptions } from "./sessionStatusTool.js";
+import { registerArtifactFamilyClusteringTool } from "./registerArtifactFamilyClusteringTool.js";
+import { toolContract } from "../contracts/toolContracts.js";
 import { sessionAvailabilityPolicy } from "./sessionAvailabilityPolicy.js";
 import type { AvailabilityPolicy } from "../application/CapabilityInventory.js";
 import { withAdmittedAnalysis } from "./analysisAdmission.js";
@@ -104,6 +106,11 @@ export const registerSessionTools = (
       );
     });
   });
+  registerArtifactFamilyClusteringTool(
+    server,
+    session,
+    toolContract("cluster_artifacts"),
+  );
   registerServiceTools(
     server,
     {

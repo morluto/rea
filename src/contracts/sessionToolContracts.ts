@@ -2,6 +2,8 @@ import { requireOutputSchema } from "./toolOutputSchemaPrimitives.js";
 import { matchNativeFunctionsInputSchema } from "./native/functionMatchingContracts.js";
 import { z } from "zod";
 
+import { artifactFamilyClusteringInputSchema } from "../domain/artifactFamilyClustering.js";
+import { bundleComparisonInputSchema } from "../domain/bundleComparison.js";
 import { absoluteLocalPathStringSchema } from "../domain/localPath.js";
 import {
   callPathRequestSchema,
@@ -50,6 +52,7 @@ import {
 const SESSION_CLI_CONTRACTS: ReadonlySet<string> = new Set([
   "compare_process_captures",
   "compare_artifacts",
+  "cluster_artifacts",
   "match_native_functions",
 ]);
 
@@ -166,6 +169,12 @@ export const SESSION_TOOL_CONTRACTS = [
     artifactInspectionEffects,
     'Compare complete artifact inventories by occurrence path, content identity, metadata and graph relations; root . identifies the outer container separately. Accepts complete inline Evidence, {kind:"retained-evidence",evidence_id} for inspect_artifact/nested inventory/retained summary, {kind:"evidence-file",path:"/absolute/bundle.json"} with optional evidence_id, or {kind:"path",path:"/absolute/dir"} to inventory a file or directory in place. Summaries resolve to their complete parent in that session/source bundle; summary facts alone are insufficient. Returns every delta inline with both source identities; coverage gaps remain truncated or unknown, never equivalence. Includes FIT and legacy uImage components.',
     artifactComparisonInputSchema,
+  ),
+  session(
+    "cluster_artifacts",
+    evidenceEffects,
+    "Partition two or more authenticated inspect_artifact inventories into families by exact root content digest, and index every graph member as shared, partially shared or unique. Pass the inventory Evidence nested in each inspect_artifact result inline, or pass its retained Evidence ID or inspect_analysis_view summary while the complete parent Evidence remains retained in this session. Family rows cite the member Evidence that established them; a member whose inventory is incomplete, contradictory or declared under a different coverage scope is reported as unplaced with its reason instead of being described as different. A re-packed container with identical members has no family and appears only in the member index. Labels are caller text and never parsed as identity. Returns every family inline; the member index is never paged away, and it is reported complete or withheld with coverage.member_index_withheld when its node or serialized-size budget is exhausted.",
+    artifactFamilyClusteringInputSchema,
   ),
   session(
     "match_native_functions",

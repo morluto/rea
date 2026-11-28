@@ -80,6 +80,14 @@ export const TOOL_EXAMPLE_OVERRIDES: Readonly<
     left: ARTIFACT_COMPARISON_EXAMPLE.left,
     right: ARTIFACT_COMPARISON_EXAMPLE.right,
   },
+  cluster_artifacts: {
+    members: [
+      { label: "left", evidence: ARTIFACT_COMPARISON_EXAMPLE.left },
+      // The same artifact inspected twice: a family, without inventing bytes.
+      { label: "left-repeat", evidence: ARTIFACT_COMPARISON_EXAMPLE.left },
+      { label: "right", evidence: ARTIFACT_COMPARISON_EXAMPLE.right },
+    ],
+  },
   match_native_functions: {
     left: { kind: "retained-evidence", evidence_id: `ev_${"1".repeat(64)}` },
     right: { kind: "retained-evidence", evidence_id: `ev_${"2".repeat(64)}` },

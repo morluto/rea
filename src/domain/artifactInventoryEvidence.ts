@@ -56,14 +56,23 @@ export interface InventorySet {
   readonly coverage: ArtifactInventoryCoverage;
 }
 
+/**
+ * Whether every graph member is present and the producer declares complete
+ * child coverage. A root whose children were not enumerated (a universal
+ * Mach-O on a host without a slice adapter, for instance) lists every node it
+ * observed and still declares `unknown` coverage: its counts match while its
+ * inventory is incomplete, so both facts are required.
+ */
+export const declaresCompleteInventory = (inventory: InventorySet): boolean =>
+  inventory.complete && inventory.coverage.status === "complete";
+
 /** Whether all graph members are present and the producer reports full coverage. */
 export const hasCompleteInventoryCoverage = (
   inventory: InventorySet,
   requiredScope: ArtifactInventoryCoverage["scope"],
 ): boolean =>
-  inventory.complete &&
-  inventory.coverage.scope === requiredScope &&
-  inventory.coverage.status === "complete";
+  declaresCompleteInventory(inventory) &&
+  inventory.coverage.scope === requiredScope;
 
 export interface ParsedInventorySet {
   readonly evidence: readonly Evidence[];

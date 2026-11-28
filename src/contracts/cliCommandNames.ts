@@ -37,6 +37,7 @@ export const CLI_COMMANDS = Object.freeze({
   inspectEvidenceBundle: "inspect-evidence-bundle",
   evidenceImport: "evidence-import",
   evidenceExport: "evidence-export",
+  clusterArtifacts: "cluster-artifacts",
   environmentServe: "environment-serve",
   environmentExport: "environment-export",
   environmentCompare: "environment-compare",

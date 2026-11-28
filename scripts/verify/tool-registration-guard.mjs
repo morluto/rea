@@ -24,6 +24,10 @@ export const TOOL_REGISTRATION_OWNERS = new Map([
     "src/server/environment/serveEnvironment.ts",
     "The agent environment server serves its own catalog, not REA's.",
   ],
+  [
+    "src/server/registerArtifactFamilyClusteringTool.ts",
+    "Measures wire-repeated response budget before delivery and withholds member index on overflow.",
+  ],
 ]);
 
 /** @param {string} content */
