@@ -233,6 +233,36 @@ const rejectsFlagOrModeLiteral = (value: t.Node): boolean => {
 };
 
 /**
+ * File opens require a string, Buffer or URL path. Primitive non-strings and
+ * literal strings containing NUL are rejected before a descriptor can exist.
+ * Other expressions may still supply a path; streams also have an fd override,
+ * so this proof belongs only to open/openSync, not stream constructors.
+ */
+const rejectsOpenPathLiteral = (
+  node: t.CallExpression | t.OptionalCallExpression,
+): boolean => {
+  const path = node.arguments[0];
+  if (path === undefined || t.isSpreadElement(path)) return false;
+  const value = unwrapJavaScriptExpression(path).node;
+  if (
+    t.isNullLiteral(value) ||
+    t.isBooleanLiteral(value) ||
+    t.isNumericLiteral(value) ||
+    t.isBigIntLiteral(value)
+  )
+    return true;
+  // Every unary result except typeof's string is a non-path primitive, or the
+  // operand throws first. Neither outcome gives this open call a descriptor.
+  if (t.isUnaryExpression(value)) return value.operator !== "typeof";
+  const text = t.isStringLiteral(value)
+    ? value.value
+    : t.isTemplateLiteral(value) && value.expressions.length === 0
+      ? value.quasis[0]?.value.cooked
+      : undefined;
+  return text?.includes("\0") ?? false;
+};
+
+/**
  * `fs.createReadStream` and `fs.createWriteStream` take their options object in slot 1.
  *
  * Node validates `start`, `end`, `fd`, `highWaterMark` and `encoding` there before it
@@ -965,6 +995,7 @@ const collectAcquisitions = (
       openFlagInFirstArgument(reference) &&
       reference.builtinAuthority !== "candidate"
     ) {
+      if (rejectsOpenPathLiteral(node)) return;
       const callbackForm =
         reference.specifier === "fs" && reference.method === "open";
       if (callbackForm && rejectsOpenCallbackLiteral(node)) return;

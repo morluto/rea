@@ -254,6 +254,11 @@ registrations/removals and dispatch, Node timers and cancellation handles, async
 `node:child_process` creation and ownership, configuration sources and direct
 defaults, request construction and response consumers, parse/coercion/
 validation boundaries, and built-in resource acquisition/release.
+For known Node file-open calls, acquisitions omit primitive path arguments Node
+rejects and literal strings containing NUL. String, Buffer, URL, computed and spread paths remain
+undecided when they may be accepted; stream constructors retain their separate
+`fd` override behavior. This argument proof does not check that a path exists
+or execute the analyzed source.
 For `fs/promises.open`, a binding receiving the Promise is distinct from one
 receiving the awaited FileHandle. Awaiting the Promise later does not replace
 the original binding, but `h = await h` can replace it with the FileHandle.
