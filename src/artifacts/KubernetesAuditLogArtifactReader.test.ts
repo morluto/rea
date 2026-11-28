@@ -307,6 +307,7 @@ it.each([
   ["2.5e2", 250],
   ["2.010e2", 201],
   [`200.${"0".repeat(80)}`, 200],
+  [`0.${"0".repeat(41)}2e44`, 200],
 ])(
   "keeps the safe integer a long number lexeme evaluates to (%s)",
   async (lexeme, expected) => {

@@ -1,5 +1,6 @@
 import { getManyValues, isMany, none, type Many } from "stream-chain/defs.js";
 import { jsonParser, type Token } from "stream-json/core/parser.js";
+import { MAX_KUBERNETES_AUDIT_LINE_BYTES } from "../artifactReaderLimits.js";
 import { isHostLimitFailure } from "../parseFailure.js";
 
 /**
@@ -523,8 +524,9 @@ export const parseKubernetesAuditLine = (
             }
             numberExpDigits += 1;
             numberExp = numberExp * 10 + (char.charCodeAt(0) - 48);
-            // A shift this large cannot land on a nonzero safe integer.
-            if (numberExp > 40) {
+            // The fractional scale cannot exceed the line, so a larger
+            // exponent cannot cancel down to a safe integer.
+            if (numberExp > MAX_KUBERNETES_AUDIT_LINE_BYTES) {
               numberInexact = true;
               break;
             }
