@@ -292,6 +292,24 @@ function* readElfTableDeclarationsWithPolicy(
   });
 }
 
+/** Work batches for an admitted table; the byte size is not an admission limit. */
+export function* elfHeaderTableBatches(
+  table: ElfDeclaredTable,
+): Generator<
+  ElfDeclarationRead & { readonly index: number; readonly count: number }
+> {
+  const perRead = Math.max(1, Math.floor((64 * 1024) / table.width));
+  for (let index = 0; index < table.count; index += perRead) {
+    const count = Math.min(perRead, table.count - index);
+    yield {
+      index,
+      count,
+      offset: Number(table.offset) + index * table.width,
+      size: count * table.width,
+    };
+  }
+}
+
 /** Canonical table declarations, including extended counts in inactive section zero. */
 export function* readElfTableDeclarations(
   bytes: Buffer,
@@ -324,14 +342,8 @@ function* inspectTableRanges(
   Buffer
 > {
   let hasInterpreter = false;
-  const perRead = Math.max(1, Math.floor((64 * 1024) / table.width));
-  for (let index = 0; index < table.count; index += perRead) {
-    const count = Math.min(perRead, table.count - index);
-    const size = count * table.width;
-    const bytes = yield {
-      offset: Number(table.offset) + index * table.width,
-      size,
-    };
+  for (const { index, count, offset, size } of elfHeaderTableBatches(table)) {
+    const bytes = yield { offset, size };
     if (bytes.length !== size) return err(`truncated ELF ${kind} header table`);
     for (let item = 0; item < count; item++) {
       const at = item * table.width;

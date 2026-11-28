@@ -94,8 +94,14 @@ strings share one scan and retained-text budget fixed by the admitted image
 length, so names repeated by many rows cannot expand past the input size; this
 budget has no runtime override. A failure after the file was read keeps its
 path, SHA-256, and byte count as a partial observation. Cyclic `vn_next` /
-`vna_next` chains, duplicate unique dynamic tags, malformed ELF headers, and
-unsupported ELF extended numbering return no complete inventory.
+`vna_next` chains, duplicate unique dynamic tags, and malformed ELF headers
+return no complete inventory. Extended program counts, section counts, and
+section-name indices are resolved through inactive section zero using the shared
+ELF declaration reader. Invalid escape values and tables that extend past the
+file are rejected before an inventory is returned. Header traversal uses
+64 KiB batches and yields between them for cancellation. Section lookup retains
+only the table kinds used by the inventory and follows string-table links by
+their original section indices.
 
 Each dynamic string and `PT_INTERP` path is scanned for its terminator across at
 most 65536 bytes. A scan-limit issue means the admitted extent continues beyond

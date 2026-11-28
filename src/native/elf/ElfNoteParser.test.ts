@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
+import { withElfExtendedNumbering } from "../../../tests/fixtures/elfExtendedNumbering.js";
 import { inspectElfNotesInputSchema } from "../../domain/native/elfNotes.js";
 import {
   decodeElfSectionNameRequest,
@@ -49,6 +50,183 @@ const parse = (bytes: Buffer, input: typeof defaults = defaults) =>
     input,
     async () => {},
   );
+
+it.each(["sections", "programs"] as const)(
+  "bounds extended %s header reads and yields before completing the table",
+  async (kind) => {
+    const bytes = withElfExtendedNumbering(
+      elfNoteFixture({ ownership: "both" }),
+      kind,
+    );
+    const tableOffset = Number(
+      bytes.readBigUInt64LE(kind === "sections" ? 40 : 32),
+    );
+    const source = bufferByteSource(bytes, 64);
+    const reads: number[] = [];
+    let headerBytes = 0;
+    let firstPauseBytes: number | undefined;
+    const artifact = {
+      path: defaults.path,
+      sha256: "ab".repeat(32),
+      bytes: bytes.length,
+    };
+    const report = await parseElfNotesFromHandle(
+      {
+        ...source,
+        readRange: async (offset, length) => {
+          reads.push(length);
+          if (offset >= tableOffset) headerBytes += length;
+          return source.readRange(offset, length);
+        },
+      },
+      artifact,
+      defaults,
+      async () => {
+        firstPauseBytes ??= headerBytes;
+      },
+    );
+    expect(report.tables.map(({ kind }) => kind)).toEqual([
+      "program",
+      "section",
+    ]);
+    expect(Math.max(...reads)).toBeLessThanOrEqual(64 * 1024);
+    expect(firstPauseBytes).toBeGreaterThan(0);
+    expect(firstPauseBytes).toBeLessThan(headerBytes);
+    const cancelled = new Error("cancel extended header traversal");
+    await expect(
+      parseElfNotesFromHandle(
+        bufferByteSource(bytes),
+        artifact,
+        defaults,
+        async () => {
+          throw cancelled;
+        },
+      ),
+    ).rejects.toBe(cancelled);
+  },
+);
+
+it.each(["sections", "programs"] as const)(
+  "preserves the original note index in later %s header batches",
+  async (kind) => {
+    const original = elfNoteFixture({ ownership: "both" });
+    const control = await parse(original);
+    const bytes = withElfExtendedNumbering(original, kind);
+    const sectionZero = Number(bytes.readBigUInt64LE(40));
+    const table = Number(bytes.readBigUInt64LE(kind === "sections" ? 40 : 32));
+    const width = bytes.readUInt16LE(kind === "sections" ? 58 : 54);
+    const count =
+      kind === "sections"
+        ? Number(bytes.readBigUInt64LE(sectionZero + 32))
+        : bytes.readUInt32LE(sectionZero + 44);
+    const tableKind = kind === "sections" ? "section" : "program";
+    const sourceIndex = control.tables.find(
+      ({ kind }) => kind === tableKind,
+    )!.index;
+    const sourceHeader = table + sourceIndex * width;
+    bytes.copy(
+      bytes,
+      table + (count - 1) * width,
+      sourceHeader,
+      sourceHeader + width,
+    );
+    bytes.fill(0, sourceHeader, sourceHeader + width);
+    const report = await parse(bytes);
+    expect(report.tables).toContainEqual(
+      expect.objectContaining({ kind: tableKind, index: count - 1 }),
+    );
+    expect(report.entries.map(({ gnu }) => gnu?.build_id_hex)).toEqual(
+      control.entries.map(({ gnu }) => gnu?.build_id_hex),
+    );
+  },
+);
+
+it("cancels while processing notes after the extended section-header scan", async () => {
+  const bytes = withElfExtendedNumbering(
+    elfNoteFixture({ ownership: "section", notes: Buffer.alloc(0) }),
+    "sections",
+  );
+  const table = Number(bytes.readBigUInt64LE(40));
+  const width = bytes.readUInt16LE(58);
+  // Each empty note has its own four-byte padding range. These declarations
+  // consume no entry budget, but processing them must still allow cancellation.
+  for (let index = 3; index < 4099; index += 1) {
+    const at = table + index * width;
+    bytes.writeUInt32LE(7, at + 4);
+    bytes.writeBigUInt64LE(BigInt(at + 8), at + 24);
+    bytes.writeBigUInt64LE(4n, at + 32);
+  }
+  const source = bufferByteSource(bytes, 64);
+  let noteReads = 0;
+  const cancelled = new Error("cancel note sections after header traversal");
+  let observed: unknown;
+  try {
+    await parseElfNotesFromHandle(
+      {
+        ...source,
+        readRange: async (offset, length) => {
+          if (offset >= table && length === 4) noteReads += 1;
+          return source.readRange(offset, length);
+        },
+      },
+      { path: defaults.path, sha256: "ab".repeat(32), bytes: bytes.length },
+      defaults,
+      async () => {
+        if (noteReads > 0) throw cancelled;
+      },
+    );
+  } catch (cause) {
+    observed = cause;
+  }
+  expect(noteReads).toBeGreaterThan(0);
+  expect(observed).toBe(cancelled);
+  const retried = await parse(bytes);
+  expect(retried.entries).toHaveLength(0);
+  expect(retried.tables).toHaveLength(4097);
+  expect(retried.tables.at(-1)?.index).toBe(4098);
+});
+
+it.each([
+  { bits: 32, little: false, kind: "sections" },
+  { bits: 64, little: true, kind: "sections" },
+  { bits: 32, little: true, kind: "names" },
+  { bits: 64, little: false, kind: "names" },
+  { bits: 32, little: false, kind: "programs" },
+  { bits: 64, little: true, kind: "programs" },
+] as const)(
+  "retains notes with extended $kind numbering in ELF$bits (little=$little)",
+  async ({ bits, little, kind }) => {
+    const original = elfNoteFixture({ bits, little, ownership: "both" });
+    const control = await parse(original);
+    const report = await parse(withElfExtendedNumbering(original, kind));
+    expect({ ...report, artifact: control.artifact }).toEqual(control);
+    expect(report.tables.map(({ kind }) => kind)).toEqual([
+      "program",
+      "section",
+    ]);
+    expect(report.entries[0]?.gnu?.build_id_hex).toBe(
+      "0123456789abcdef0123456789abcdef01234567",
+    );
+  },
+);
+
+it.each([
+  { field: "type", at: 4, value: 1, reason: /inactive SHT_NULL/u },
+  {
+    field: "count",
+    at: 32,
+    value: 0xfeff,
+    reason: /invalid ELF extended section count/u,
+  },
+])(
+  "rejects an invalid section-zero $field before reading notes",
+  async ({ at, value, reason }) => {
+    const bytes = elfExtendedSectionCountFixture();
+    const sectionZero = Number(bytes.readBigUInt64LE(40));
+    bytes.writeUInt32LE(value, sectionZero + at);
+    await expect(parse(bytes)).rejects.toThrow(reason);
+  },
+);
 
 const noteTextLimit = (maximum: number) => ({
   failure: {
@@ -757,17 +935,17 @@ it("rejects note text that repeats beyond the shared byte budget", async () => {
 it("rejects program and section header tables that do not fit", async () => {
   await expect(
     parse(elf64({ phoff: 64, phnum: 1 }, Buffer.from([1, 0, 0, 0]))),
-  ).rejects.toThrow(/leaves the artifact/u);
+  ).rejects.toThrow(/truncated ELF .* header table/u);
   await expect(
     parse(
       elf64({ shoff: 64, shnum: 1, shentsize: 64 }, Buffer.from([0, 0, 0, 0])),
     ),
-  ).rejects.toThrow(/leaves the artifact/u);
+  ).rejects.toThrow(/truncated ELF .* header table/u);
 });
 
-it("rejects an extended section count stored in section zero", async () => {
+it("rejects extended section numbering without section zero", async () => {
   await expect(parse(elf64({ shoff: 64, shnum: 0 }))).rejects.toThrow(
-    /extended numbering/u,
+    /truncated ELF section header table/u,
   );
 });
 
@@ -848,6 +1026,7 @@ it("checks extended ELF header size using the whole file for note and build-ID r
     defaults,
     64,
     async (request) => decodeElfSectionNameRequest(request),
+    async () => {},
   );
   expect(positional.sources).toEqual(expected);
 });
@@ -1008,7 +1187,7 @@ it("reads a glibc-sized note table with the default entry budget", async () => {
   expect(report.entries).toHaveLength(81);
 });
 
-it("keeps unsafe table offsets ahead of unsupported extended numbering", async () => {
+it("rejects unsafe inactive table offsets beside extended numbering", async () => {
   const bytes = elfExtendedSectionCountFixture();
   bytes.writeBigUInt64LE(0xffffffffffffffffn, 32);
   await expect(parse(bytes)).rejects.toThrow(

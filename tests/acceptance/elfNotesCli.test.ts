@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -164,7 +165,7 @@ cliTest(
 );
 
 cliTest(
-  "reports valid extended numbering as unsupported without mutation",
+  "reads notes from valid extended numbering without mutation",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-elf-notes-extended-cli-");
     const path = join(root, "extended-count.elf");
@@ -173,10 +174,19 @@ cliTest(
     const result = await cli.run({
       arguments: ["inspect-elf-notes", path, "--json"],
     });
-    expect(result.exitCode).toBe(1);
-    expect(result.json).toMatchObject({
-      code: "unsupported_target",
-      message: expect.stringMatching(/extended.*number/iu),
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = toolContract("inspect_elf_notes").outputSchema.parse(
+      result.json,
+    );
+    expect(evidence.normalized_result).toMatchObject({
+      artifact: {
+        path,
+        bytes: before.length,
+        sha256: createHash("sha256").update(before).digest("hex"),
+      },
+      tables: [{ kind: "section", name: ".note.gnu.build-id" }],
+      entries: [{ gnu: { build_id_hex: "12345678" } }],
+      coverage: { status: "complete" },
     });
     expect((await readFile(path)).equals(before)).toBe(true);
   },

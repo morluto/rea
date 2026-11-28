@@ -927,6 +927,7 @@ const prepareBuildIdNotes = async (
         input,
         MAX_ELF_DEBUG_ALT_BUILD_ID_BYTES,
         decode,
+        debugLinkPause(signal),
       ),
     );
   } catch (cause) {
