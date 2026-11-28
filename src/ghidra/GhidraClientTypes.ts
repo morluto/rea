@@ -4,6 +4,7 @@ import type { BridgeMaxRequestBytes } from "../config/bridgeMaxRequestBytes.js";
 import type { GhidraCancelGrace } from "../config/ghidraCancelGrace.js";
 import type { GhidraCheckpointSaveWait } from "../config/ghidraCheckpointSaveWait.js";
 import type { BridgeMaxReplyBytes } from "../config/bridgeMaxReplyBytes.js";
+import type { UniversalMachOSlice } from "../domain/binaryTargetTypes.js";
 import type { Result } from "../domain/result.js";
 import type { LinuxCgroupMemoryState } from "../process/LinuxCgroupMemory.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
@@ -80,6 +81,10 @@ export interface GhidraClientOptions {
   readonly targetSha256: string;
   readonly existingProject?: boolean;
   readonly checkpoint?: GhidraCheckpointSelection;
+  /** Selected universal Mach-O slice that Ghidra imports. */
+  readonly universalSlice?: UniversalMachOSlice;
+  /** Import the whole container; Ghidra's loader then selects its one slice. */
+  readonly universalContainerImport?: boolean;
   /** Bound on a checkpoint save's wait for another session; absent keeps the default. */
   readonly checkpointSaveWait?: GhidraCheckpointSaveWait;
   /** Installation host shared by runtime allocation and snapshot admission. */
