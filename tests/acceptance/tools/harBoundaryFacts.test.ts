@@ -7,7 +7,6 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { PACKAGE_METADATA } from "../../../src/generatedPackageMetadata.js";
 import { webNetworkCaptureSchema } from "../../../src/domain/webNetworkCapture.js";
 import { historicalHar } from "../../fixtures/historicalHar.js";
-import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
@@ -55,7 +54,8 @@ cliTest(
       capture.stderr || JSON.stringify(capture.json),
     ).toBe(0);
     const evidence = parseEvidence(capture.json);
-    const { call } = await connectLocalToolsMcp();
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
     for (const detail of ["preview", "complete"] as const) {
       const request = {
         source: { kind: "inline", evidence },
@@ -121,7 +121,8 @@ cliTest(
   "refuses malformed HAR schema facts before record selection through CLI and MCP",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-har-timing-facts-");
-    const { call } = await connectLocalToolsMcp();
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
     const fixture = historicalHar();
     const entry = fixture.log.entries[0];
     if (entry === undefined) throw new Error("fixture missing");
@@ -267,7 +268,8 @@ cliTest(
       response: { content: { encoding: "custom-json", text: bodies[2]?.text } },
     });
     expect(capture.records[2]?.binary_fields).toEqual([]);
-    const { call } = await connectLocalToolsMcp();
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
     const imported = await call("inspect_web_network_capture", {
       capture_path: path,
       format: "har",
