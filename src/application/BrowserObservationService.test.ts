@@ -220,7 +220,22 @@ it("retains captured page Evidence when bundle analysis fails after capture", as
     expect(failure.operation).toBe("analyze_web_bundle");
     expect(parseEvidence(result.error.partialObservation)).toMatchObject({
       operation: "inspect_web_page",
-      normalized_result: inspection,
+      normalized_result: {
+        ...inspection,
+        completeness: {
+          ...inspection.completeness,
+          status: "policy_filtered",
+          conditions: ["policy_filtered"],
+          policy_filtered_sections: ["css_variables"],
+          excluded: [
+            {
+              section: "css_variables",
+              reason: "not_approved",
+              count: null,
+            },
+          ],
+        },
+      },
     });
   }
 });

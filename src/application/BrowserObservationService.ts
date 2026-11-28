@@ -453,7 +453,9 @@ const promoteBrowserObservation = (
                     count: null,
                   },
                 ],
-                droppedEvents: inspection.data.completeness.dropped_events,
+                droppedEvents: (({ total: _droppedTotal, ...rest }) => rest)(
+                  inspection.data.completeness.dropped_events,
+                ),
               }),
             }
           : inspection.data;

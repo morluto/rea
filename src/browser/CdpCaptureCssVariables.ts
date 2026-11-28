@@ -364,6 +364,65 @@ const findCssUrlMatches = (text: string): readonly CssUrlMatch[] => {
   return matches;
 };
 
+const startsWithUrlBoundary = (token: string, start: number): boolean => {
+  const len = token.length;
+  if (token.startsWith("//", start)) {
+    let seenColon = false;
+    for (let i = start + 2; i < len; i++) {
+      const c = token[i]!;
+      if (c === "@") return seenColon && i > start + 2;
+      if (c === ":") {
+        seenColon = true;
+      } else if (
+        c === "/" ||
+        c === "," ||
+        c === " " ||
+        c === "\t" ||
+        c === "\r" ||
+        c === "\n" ||
+        c === "\f"
+      ) {
+        return false;
+      }
+    }
+    return false;
+  }
+
+  if (start >= len) return false;
+  const first = token.charCodeAt(start);
+  const isFirstAlpha =
+    (first >= 65 && first <= 90) || (first >= 97 && first <= 122);
+  if (!isFirstAlpha) return false;
+  for (let i = start + 1; i < len; i++) {
+    const code = token.charCodeAt(i);
+    if (code === 58 /* ':' */) {
+      return token.startsWith("://", i);
+    }
+    const isSchemeChar =
+      (code >= 65 && code <= 90) ||
+      (code >= 97 && code <= 122) ||
+      (code >= 48 && code <= 57) ||
+      code === 43 /* '+' */ ||
+      code === 45 /* '-' */ ||
+      code === 46; /* '.' */
+    if (!isSchemeChar) return false;
+  }
+  return false;
+};
+
+const splitUrlListToken = (token: string): string[] => {
+  const parts: string[] = [];
+  let partStart = 0;
+  for (let i = 0; i < token.length; i++) {
+    if (token[i] === "," && startsWithUrlBoundary(token, i + 1)) {
+      parts.push(token.slice(partStart, i));
+      partStart = i + 1;
+    }
+  }
+  parts.push(token.slice(partStart));
+  return parts;
+};
+
 const redactStandaloneCssUrl = (value: string): string => {
   let result = "";
   let pos = 0;
@@ -402,9 +461,7 @@ const redactStandaloneCssUrl = (value: string): string => {
       tokenEnd++;
     }
     const token = value.slice(pos, tokenEnd);
-    const parts = token.split(
-      /,(?=(?:[a-zA-Z][a-zA-Z0-9+.-]*:\/\/|\/\/[^,\s/]+:[^,\s/@]+@))/u,
-    );
+    const parts = splitUrlListToken(token);
     result += parts
       .map((part) => {
         const partTrailingComma = part.endsWith(",");

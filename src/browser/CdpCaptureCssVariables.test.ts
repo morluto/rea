@@ -1371,3 +1371,43 @@ it("rejects malformed element child nodeId before falling back to document root 
     { section: "css_variables", reason: "invalid_protocol_value", count: 1 },
   ]);
 });
+
+it("splits URL list tokens in linear time even with long colon runs", async () => {
+  const input = `@x,//${":".repeat(60_000)}`;
+  const connection = makeMockConnection({
+    "DOM.getDocument": {
+      root: {
+        nodeId: 1,
+        children: [{ nodeId: 2, nodeType: 1, nodeName: "HTML" }],
+      },
+    },
+    "CSS.enable": {},
+    "CSS.getComputedStyleForNode": {
+      computedStyle: [{ name: "--colon-run", value: input }],
+    },
+    "CSS.disable": {},
+  });
+
+  const limitations: string[] = [];
+  const start = performance.now();
+  const result = await captureCssVariables(
+    {
+      connection,
+      sessionId: undefined,
+      input: inspectWebPageInputSchema.parse({
+        cdp_endpoint: "http://127.0.0.1:9222",
+        target_id: "target_1",
+        include_css_variables: true,
+        max_css_variable_value_length: 65_536,
+      }),
+    },
+    limitations,
+  );
+  const elapsedMs = performance.now() - start;
+
+  expect(result.status).toBe("included");
+  expect(result.items).toEqual([
+    { name: "--colon-run", value: input, redacted: false },
+  ]);
+  expect(elapsedMs).toBeLessThan(200);
+});
