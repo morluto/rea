@@ -46,6 +46,18 @@ cliTest(
       source: "env",
     });
 
+    const unsetGhidra = await run([
+      "config",
+      "--get",
+      "GHIDRA_INSTALL_DIR",
+      "--json",
+    ]);
+    expect(unsetGhidra.json).toEqual({
+      setting: "GHIDRA_INSTALL_DIR",
+      value: null,
+      source: "none",
+    });
+
     const emptyOverride = { ...environment, JAVA_HOME: "" };
     const effective = { value: "", source: "env" };
     expect.soft((await run(get, emptyOverride)).json).toMatchObject(effective);
